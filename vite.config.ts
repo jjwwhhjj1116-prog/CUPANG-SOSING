@@ -3,9 +3,7 @@ import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
 import { defineConfig } from 'vite';
 import hostingConfig from './.openai/hosting.json';
-
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  '00000000-0000-4000-8000-000000000000';
+import { COMPATIBILITY_DATE, LOCAL_DATABASE_ID, SITES_PROJECT_ID, assertSitesProject, productionConfig } from './deployment/cloudflare-config.mjs';
 
 const { d1, r2 } = hostingConfig;
 
@@ -14,13 +12,17 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 
 const localBindingConfig = {
   main: 'vinext/server/app-router-entry',
+  compatibility_date: COMPATIBILITY_DATE,
   compatibility_flags: ['nodejs_compat'],
+  workers_dev: false,
+  preview_urls: false,
+  vars: { SOURCEFLOW_DEPLOYMENT_MODE: 'local-preview', SOURCEFLOW_SITES_PROJECT_ID: SITES_PROJECT_ID },
   d1_databases: d1
     ? [
         {
           binding: d1,
           database_name: 'site-creator-d1',
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_id: LOCAL_DATABASE_ID,
         },
       ]
     : [],
@@ -34,7 +36,12 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command }) => {
+  assertSitesProject(hostingConfig);
+  const deploy = process.env.SOURCEFLOW_DEPLOY_TARGET === 'cloudflare';
+  if (deploy && command !== 'build') throw new Error('운영 바인딩은 빌드에서만 사용합니다. 로컬 개발에서는 SOURCEFLOW_DEPLOY_TARGET을 해제해주세요.');
+  if (process.env.SOURCEFLOW_DEPLOY_TARGET && !deploy) throw new Error('지원하지 않는 SOURCEFLOW_DEPLOY_TARGET입니다.');
+  const bindingConfig = deploy ? productionConfig(process.env, hostingConfig) : localBindingConfig;
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= 'false';
@@ -54,7 +61,9 @@ export default defineConfig(async () => {
       sites(),
       cloudflare({
         viteEnvironment: { name: 'rsc', childEnvironments: ['ssr'] },
-        config: localBindingConfig,
+        config: bindingConfig,
+        // Never attach local dev/build to remote resources implicitly.
+        remoteBindings: false,
       }),
     ],
   };

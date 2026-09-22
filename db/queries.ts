@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import type { PricePolicy } from '@/app/pricing';
 
 export type ProductRecord = {
   id: string; owner_id: string; source_url: string; title: string;
@@ -7,6 +8,7 @@ export type ProductRecord = {
   options_count: number; seo_status: string; image_status: string; quote_status: string;
   registration_status: string; supplier_hub_status: string; image_keys: string;
   goal_stage: string; created_at: string; updated_at: string;
+  pricing_policy?: string | null;
 };
 
 function database() {
@@ -32,6 +34,9 @@ export async function ensureDatabase() {
     db.prepare(`CREATE TABLE IF NOT EXISTS workspace_settings (
       owner_id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS product_price_policy (
+      product_id TEXT PRIMARY KEY REFERENCES products(id), payload TEXT NOT NULL
+    )`),
   ]);
   await db.prepare('PRAGMA optimize').run();
 }
@@ -39,7 +44,7 @@ export async function ensureDatabase() {
 export async function listProducts(ownerId: string) {
   await ensureDatabase();
   const result = await database().prepare(
-    'SELECT * FROM products WHERE owner_id = ? ORDER BY updated_at DESC LIMIT 200',
+    'SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy FROM products p WHERE owner_id = ? ORDER BY updated_at DESC LIMIT 200',
   ).bind(ownerId).all<ProductRecord>();
   return result.results;
 }
@@ -63,7 +68,7 @@ export async function insertProduct(product: ProductRecord) {
   return product;
 }
 
-export async function updateProduct(ownerId: string, id: string, updates: Record<string, string | number>) {
+export async function updateProduct(ownerId: string, id: string, updates: Record<string, string | number>, expectedVersion?: string) {
   await ensureDatabase();
   const allowed = new Set([
     'title', 'source_price_cny', 'exchange_rate', 'supply_margin', 'coupang_margin',
@@ -72,12 +77,16 @@ export async function updateProduct(ownerId: string, id: string, updates: Record
   ]);
   const entries = Object.entries(updates).filter(([key]) => allowed.has(key));
   if (!entries.length) return null;
-  entries.push(['updated_at', new Date().toISOString()]);
   const setters = entries.map(([key]) => `${key} = ?`).join(', ');
-  await database().prepare(`UPDATE products SET ${setters} WHERE id = ? AND owner_id = ?`)
-    .bind(...entries.map(([, value]) => value), id, ownerId).run();
-  return database().prepare('SELECT * FROM products WHERE id = ? AND owner_id = ?')
-    .bind(id, ownerId).first<ProductRecord>();
+  const now = new Date().toISOString();
+  // Advance the version inside the same SQL mutation, including same-millisecond
+  // legacy title edits or a server clock behind the stored version.
+  return database().prepare(`UPDATE products SET ${setters}, updated_at = CASE
+      WHEN updated_at >= ? THEN strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0.001 seconds') ELSE ? END
+    WHERE id = ? AND owner_id = ?${expectedVersion === undefined ? '' : ' AND updated_at = ?'}
+    RETURNING *, (SELECT payload FROM product_price_policy WHERE product_id = products.id) AS pricing_policy`)
+    .bind(...entries.map(([, value]) => value), now, now, id, ownerId, ...(expectedVersion === undefined ? [] : [expectedVersion]))
+    .first<ProductRecord>();
 }
 
 export async function getSettings(ownerId: string) {
@@ -92,4 +101,29 @@ export async function saveSettings(ownerId: string, payload: string) {
   await database().prepare(`INSERT INTO workspace_settings (owner_id, payload, updated_at)
     VALUES (?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`)
     .bind(ownerId, payload, now).run();
+}
+
+export async function findProduct(ownerId: string, id: string) {
+  await ensureDatabase();
+  return database().prepare('SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy FROM products p WHERE owner_id = ? AND id = ?').bind(ownerId, id).first<ProductRecord>();
+}
+
+export async function applyProductPrice(ownerId: string, id: string, expectedVersion: string, values: {
+  exchangeRate: number; supplyMargin: number; coupangMargin: number; supplyPrice: number; salePrice: number; msrp: number;
+}, policy: PricePolicy) {
+  await ensureDatabase();
+  // A second editor must reload instead of overwriting a more recent price.
+  const version = new Date(Math.max(Date.now(), Date.parse(expectedVersion) + 1)).toISOString();
+  const payload = JSON.stringify(policy);
+  const result = await database().batch<ProductRecord>([database().prepare(`UPDATE products SET exchange_rate=?, supply_margin=?, coupang_margin=?,
+    supply_price=?, sale_price=?, msrp=?, quote_status='대기', updated_at=?
+    WHERE owner_id=? AND id=? AND updated_at=? RETURNING *`)
+    .bind(values.exchangeRate, values.supplyMargin, values.coupangMargin, values.supplyPrice, values.salePrice, values.msrp,
+      version, ownerId, id, expectedVersion),
+    database().prepare(`INSERT INTO product_price_policy(product_id, payload)
+      SELECT id, ? FROM products WHERE owner_id=? AND id=? AND updated_at=? AND changes()=1
+      ON CONFLICT(product_id) DO UPDATE SET payload=excluded.payload`).bind(payload,ownerId,id,version),
+  ]);
+  const saved = result[0].results[0];
+  return saved ? { ...saved, pricing_policy: payload } : null;
 }
