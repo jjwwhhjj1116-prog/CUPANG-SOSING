@@ -169,3 +169,66 @@ button:focus-visible, a:focus-visible { outline:3px solid #3778ff; outline-offse
 .batch-work-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; max-height: 50vh; overflow: auto; }
 .batch-work-list li { padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
 .batch-work-list p { font-size: 13px; color: var(--muted); }
+
+/* Seven editable preparation steps share the same mounted product workspace. */
+.product-work-table { min-width: 1180px; }
+.product-work-table td { vertical-align: top; }
+.product-info-cell { min-width: 320px; max-width: 460px; }
+.product-info-cell .product-cell { width: 100%; max-width: 430px; text-align: left; align-items: flex-start; white-space: normal; }
+.product-info-cell .product-thumb { flex-shrink: 0; }
+.product-info-cell .product-cell strong { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.product-source-url { display: block; margin-top: 9px; color: #3e70bf; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; white-space: normal; text-decoration: none; }
+a.product-source-url:hover { text-decoration: underline; }
+.product-created-cell { width: 150px; min-width: 150px; white-space: normal; color: #657188; line-height: 1.7; }
+.registration-workspace { width: min(1180px, calc(100vw - 40px)); }
+.registration-workspace>header { padding: 22px 28px 16px; }
+.detail-heading { min-width: 0; width: 100%; }
+.detail-heading h2 { font-size: 20px; line-height: 1.5; overflow-wrap: anywhere; }
+.detail-product-meta { display: flex; flex-wrap: wrap; gap: 5px 14px; color: #738199; font-size: 11px; margin: 7px 0 10px; }
+.detail-source { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 9px; padding: 8px 10px; border: 1px solid #e6ecf5; border-radius: 7px; background: #f7f9fd; }
+.detail-source>span:first-child { color: #677c9c; font-size: 11px; font-weight: 750; white-space: nowrap; }
+.detail-drawer header .detail-source a, .detail-source-value { font-size: 12px; line-height: 1.5; color: #3d6caf; overflow-wrap: anywhere; white-space: normal; }
+.detail-drawer header .detail-source a:hover { text-decoration: underline; }
+.registration-steps { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; padding: 12px 24px; border-top: 1px solid #edf0f6; border-bottom: 1px solid #e8edf5; flex-shrink: 0; background: #fff; }
+.registration-steps button { display: flex; justify-content: center; align-items: center; gap: 7px; border: 1px solid #e3e8f1; border-radius: 9px; padding: 12px 6px; background: #fafbfe; color: #71809a; min-width: 0; }
+.registration-steps button span { flex-shrink: 0; width: 23px; height: 23px; display: grid; place-items: center; border-radius: 50%; color: #64748b; background: #eaf0f7; font-size: 11px; font-weight: 800; }
+.registration-steps button strong { font-size: 12px; white-space: nowrap; }
+.registration-steps button.active { color: #285ebc; border-color: #96b8fc; background: #edf4ff; box-shadow: 0 3px 10px #3778ff0c; }
+.registration-steps button.active span { background: #3778ff; color: #fff; }
+.registration-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 9px 26px; border-bottom: 1px solid #edf0f5; flex-shrink: 0; background: #fff; }
+.registration-tools>span { font-size: 11px; color: #8691a4; margin-right: 4px; }
+.registration-tools button { border: 1px solid transparent; border-radius: 6px; padding: 6px 9px; font-size: 11px; color: #64748b; background: #f2f5fa; }
+.registration-tools button.active { color: #354da8; background: #edf0ff; border-color: #c8d3f5; }
+.registration-tools>small { margin-left: auto; color: #8a95a8; font-size: 11px; }
+.registration-workspace .detail-body { padding: 22px 28px 30px; }
+.registration-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; padding: 14px 26px; border-top: 1px solid #e3e9f2; background: #fff; }
+.registration-navigation>div { text-align: center; }
+.registration-navigation strong { display: block; font-size: 12px; color: #506482; }
+.registration-navigation small { display: block; font-size: 10px; color: #8a95a8; margin-top: 4px; }
+.registration-navigation>span { font-size: 12px; color: #64748b; }
+.registration-workspace .upload-btn { align-self: flex-start; }
+.image-step-summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #dce7f8; border-radius: 12px; padding: 15px 18px; background: #f5f9ff; }
+.image-step-summary strong { font-size: 14px; color: #3c5c89; }
+.image-step-summary b { display: inline-block; margin-left: 8px; color: #3778ff; }
+.image-step-summary p { margin: 6px 0 0; font-size: 12px; color: #6d7e98; line-height: 1.65; }
+.image-step-summary .btn { flex-shrink: 0; }
+.image-asset-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.image-asset-card { display: flex; flex-direction: column; gap: 11px; padding: 12px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; min-width: 0; }
+.image-asset-card.chosen { border-color: #82aaf4; box-shadow: 0 0 0 2px #dbe8ff; }
+.image-asset-preview { position: relative; border: 0; padding: 0; background: #f5f7fb; border-radius: 7px; overflow: hidden; cursor: zoom-in; }
+.image-asset-preview img { display: block; width: 100%; height: 180px; object-fit: contain; }
+.image-asset-preview>span { position: absolute; right: 6px; bottom: 6px; border-radius: 5px; padding: 3px 5px; background: #ffffffeb; font-size: 10px; color: #65758c; }
+.image-asset-card .btn { font-size: 12px; padding: 8px 10px; }
+.image-asset-card .field>span { font-size: 11px; }
+.image-asset-card .field select { font-size: 12px; }
+.image-asset-order { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: auto; }
+.image-asset-order>span { color: #748199; font-size: 11px; }
+.image-asset-order>div { display: flex; gap: 5px; }
+.image-asset-order .btn { padding: 5px 10px; }
+.content-editor-save { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 20px; }
+.content-editor-save>span { font-size: 12px; color: #64748b; }
+.content-editor-save small { display: block; margin-top: 5px; font-size: 11px; line-height: 1.6; }
+@media (max-width: 1050px) { .registration-steps button { flex-direction: column; gap: 6px; }.registration-tools>small { flex-basis: 100%; margin-left: 0; }.image-asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .registration-workspace { width: 100vw; }.registration-workspace>header { padding: 16px 16px 12px; }.detail-heading h2 { font-size: 17px; }.detail-source { grid-template-columns: 1fr; gap: 4px; }.registration-steps { display: flex; padding: 9px 12px; overflow-x: auto; }.registration-steps button { min-width: 84px; padding: 8px 7px; }.registration-tools { padding: 9px 14px; }.registration-workspace .detail-body { padding: 18px 16px 24px; }.registration-navigation { gap: 8px; padding: 11px 13px; }.registration-navigation .btn { padding: 9px 10px; font-size: 11px; }.registration-navigation small { max-width: 130px; line-height: 1.4; }.image-step-summary { flex-direction: column; align-items: flex-start; }.image-asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }.image-asset-card { padding: 9px; }.image-asset-preview img { height: 140px; }.image-asset-order { flex-wrap: wrap; }.content-editor-save { align-items: flex-start; }.content-editor-save .btn { flex-shrink: 0; } }
+@media (max-width: 420px) { .image-asset-grid { grid-template-columns: 1fr; }.registration-navigation small { display: none; } }
+@media print { .registration-steps,.registration-tools,.registration-navigation { display: none !important; }.registration-workspace { width: 100%; } }

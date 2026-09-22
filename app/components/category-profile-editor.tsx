@@ -1,42 +1,54 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryProfileIssues, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
 import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
+import { suggestQuotationMappings } from '@/app/quotation-mapping';
 
-type Props = { value?: CategoryProfile | null; onSave: (profile: CategoryProfile) => void; onClose: () => void };
+type Props = { value?: CategoryProfile | null; initialDraft?: CategoryProfileInput; onSave: (profile: CategoryProfile) => void; onClose: () => void };
 const empty: CategoryProfileInput = { name: '', categoryId: '', categoryPath: [], template: null, mappings: [] };
 
-export function CategoryProfileEditor({ value, onSave, onClose }: Props) {
-  const [draft, setDraft] = useState<CategoryProfileInput>(value ?? empty);
-  const [path, setPath] = useState(value?.categoryPath.join(' > ') ?? '');
-  const [headerRow, setHeaderRow] = useState(value?.template?.headerRow ?? 1);
+export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: Props) {
+  const [draft, setDraft] = useState<CategoryProfileInput>(value ?? initialDraft ?? empty);
+  const [path, setPath] = useState((value??initialDraft)?.categoryPath.join(' > ') ?? '');
+  const [headerRow, setHeaderRow] = useState((value ?? initialDraft)?.template?.headerRow ?? 1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [workbook, setWorkbook] = useState<XlsxInspection | null>(null);
+  const [textTemplate, setTextTemplate] = useState<{ text: string; format: 'csv' | 'tsv' } | null>(null);
+  const templateGeneration = useRef(0);
   useEffect(() => {
-    const template = value?.template;
-    if (template?.format !== 'xlsx' || !template.storageKey) return;
+    const template = (value ?? initialDraft)?.template;
+    if (!template?.storageKey) return;
+    const generation = ++templateGeneration.current;
     let active = true;
     void (async () => {
       try {
         const response = await fetch(`/api/category-profiles/template?key=${encodeURIComponent(template.storageKey!)}`);
-        if (!response.ok) throw new Error('저장된 Excel 원본을 읽지 못했습니다.');
-        const inspection = await inspectXlsx(await response.arrayBuffer());
-        if (active) setWorkbook(inspection);
-      } catch (error) { if (active) setError(error instanceof Error ? error.message : '저장된 Excel을 확인해주세요.'); }
+        if (!response.ok) throw new Error('저장된 견적서 원본을 읽지 못했습니다.');
+        const bytes = await response.arrayBuffer();
+        if (!active || generation !== templateGeneration.current) return;
+        if (template.format === 'xlsx') {
+          const inspection = await inspectXlsx(bytes);
+          if (active && generation === templateGeneration.current) { setWorkbook(inspection); setTextTemplate(null); }
+        } else {
+          const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+          if (active && generation === templateGeneration.current) { setTextTemplate({ text, format: template.format }); setWorkbook(null); }
+        }
+      } catch (error) { if (active && generation === templateGeneration.current) setError(error instanceof Error ? error.message : '저장된 원본을 확인해주세요.'); }
     })();
     return () => { active = false; };
-  }, [value]);
+  }, [value, initialDraft]);
 
   const importTemplate = async (file: File) => {
     setBusy(true); setError(''); setMessage('');
+    const generation = templateGeneration.current;
     try {
       if (file.size > CATEGORY_TEMPLATE_FILE_LIMIT) throw new Error('견적서 파일은 5MB 이하로 선택해주세요.');
       const extension = file.name.split('.').at(-1)?.toLowerCase();
       if (extension !== 'csv' && extension !== 'tsv' && extension !== 'xlsx') throw new Error('XLSX·UTF-8 CSV·TSV 파일을 선택해주세요.');
       const bytes = await file.arrayBuffer();
-      let headers: string[]; let inspection: XlsxInspection | null = null; let sheetName = ''; let selectedRow = headerRow;
+      let headers: string[]; let inspection: XlsxInspection | null = null; let textSource: { text: string; format: 'csv' | 'tsv' } | null = null; let sheetName = ''; let selectedRow = headerRow;
       if (extension === 'xlsx') {
         inspection = await inspectXlsx(bytes); sheetName = inspection.sheets[0].name;
         selectedRow = inspection.sheets[0].rows.find(row => row.rowNumber === headerRow)?.rowNumber ?? inspection.sheets[0].rows[0]?.rowNumber ?? headerRow;
@@ -46,26 +58,35 @@ export function CategoryProfileEditor({ value, onSave, onClose }: Props) {
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
         catch { throw new Error('UTF-8 형식으로 저장한 CSV·TSV 파일을 선택해주세요.'); }
         headers = parseTemplateText(text, extension === 'tsv' ? '\t' : ',', headerRow);
+        textSource = { text, format: extension };
       }
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))).map(byte => byte.toString(16).padStart(2, '0')).join('');
       const form = new FormData(); form.set('file', file);
       const response = await fetch('/api/category-profiles/template', { method: 'POST', body: form });
       const result = await response.json() as { template?: { storageKey: string; sha256: string }; error?: string };
       if (!response.ok || !result.template?.storageKey || result.template.sha256 !== hash) throw new Error(result.error ?? '견적서 원본 저장 결과를 확인하지 못했습니다.');
+      if (generation !== templateGeneration.current) return;
+      templateGeneration.current++;
       const template = { name: file.name, format: extension, sha256: hash, sheetName, headerRow: selectedRow, headers, storageKey: result.template.storageKey } as const;
-      // A new template invalidates every existing column mapping, even if some labels match.
-      setDraft(current => ({ ...current, template, mappings: [] }));
-      setWorkbook(inspection); setHeaderRow(selectedRow);
-      setMessage(`${headers.length}개 열과 원본 파일을 저장했습니다. 시트·머리글 행과 연결 항목을 확인해주세요. ${inspection?.warnings.join(' ') ?? ''}`);
+      // Discard old column positions, then suggest exact labels in this category.
+      const suggested = suggestQuotationMappings(headers, draft.categoryId);
+      setDraft(current => ({ ...current, template, mappings: suggested.mappings }));
+      setWorkbook(inspection); setTextTemplate(textSource); setHeaderRow(selectedRow);
+      setMessage(`${headers.length}개 열 중 ${suggested.mappings.length}개를 이름으로 자동 연결했습니다. 미연결 ${suggested.unmatchedColumns.length}개 · 중복/모호 ${suggested.ambiguousColumns.length}개. 시트·머리글 행과 연결 결과를 확인한 뒤 설정을 저장해주세요. ${inspection?.warnings.join(' ') ?? ''}`);
     } catch (error) { setError(error instanceof Error ? error.message : '양식을 읽지 못했습니다.'); }
     finally { setBusy(false); }
   };
   const selectHeaders = (sheetName: string, rowNumber: number) => {
-    if (!workbook || !draft.template) return;
+    if (!draft.template) { setHeaderRow(rowNumber); return; }
     try {
-      const headers = xlsxHeaders(workbook, sheetName, rowNumber);
-      setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, headers } : null, mappings: [] }));
+      if (draft.template.sheetName === sheetName && draft.template.headerRow === rowNumber) return;
+      const headers = workbook ? xlsxHeaders(workbook, sheetName, rowNumber)
+        : textTemplate ? parseTemplateText(textTemplate.text, textTemplate.format === 'tsv' ? '\t' : ',', rowNumber)
+          : (() => { throw new Error('저장된 원본을 불러온 뒤 머리글 행을 변경해주세요.'); })();
+      const suggested = suggestQuotationMappings(headers, draft.categoryId);
+      setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, headers } : null, mappings: suggested.mappings }));
       setHeaderRow(rowNumber); setError('');
+      setMessage(`${suggested.mappings.length}개 열 자동 연결 · 미연결 ${suggested.unmatchedColumns.length}개 · 중복/모호 ${suggested.ambiguousColumns.length}개. 바뀐 시트와 행의 연결을 확인해주세요.`);
     } catch (error) { setError(error instanceof Error ? error.message : '머리글을 확인해주세요.'); }
   };
   const setMapping = (column: number, change: Partial<ColumnMapping> | null) => {
@@ -101,12 +122,12 @@ export function CategoryProfileEditor({ value, onSave, onClose }: Props) {
         <label className="field"><span>Supplier Hub 카테고리 번호</span><input maxLength={120} value={draft.categoryId} disabled={busy} onChange={event => setDraft(current => ({ ...current, categoryId: event.target.value }))} placeholder="실제 확인한 번호 · 미확인 시 비워두기" /></label>
         <label className="field full"><span>카테고리 경로</span><input required maxLength={1210} value={path} disabled={busy} onChange={event => setPath(event.target.value)} placeholder="상위 카테고리 > 하위 카테고리" /></label>
       </div>
-      <p>공식 카테고리 목록은 아직 연결되지 않았습니다. 이 설정은 직접 확인한 카테고리의 초안이며, 저장만으로 Supplier Hub와 매칭되거나 검증되지는 않습니다.</p>
+      <p>선택한 카테고리의 원본 양식을 연결합니다. 분류 코드 확인과 실제 견적서 제출 검증은 별도로 기록합니다.</p>
     </section>
     <section>
       <h3>견적서 열 연결</h3>
       <div className="form-grid">
-        <label className="field"><span>파일의 머리글 행</span><input type="number" min={1} max={1000} value={headerRow} disabled={busy} onChange={event => { const row = Number(event.target.value); if (workbook && draft.template) selectHeaders(draft.template.sheetName, row); else setHeaderRow(row); }} /></label>
+        <label className="field"><span>파일의 머리글 행</span><input type="number" min={1} max={1000} value={headerRow} disabled={busy} onChange={event => selectHeaders(draft.template?.sheetName ?? '', Number(event.target.value))} /></label>
         <label className="field"><span>Excel·CSV·TSV 견적서 원본</span><input type="file" accept=".xlsx,.csv,.tsv" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void importTemplate(file); event.target.value = ''; }} /></label>
         {workbook && draft.template && <label className="field"><span>Excel 시트</span><select value={draft.template.sheetName} disabled={busy} onChange={event => { const sheet = workbook.sheets.find(sheet => sheet.name === event.target.value); selectHeaders(event.target.value, sheet?.rows.find(row => row.rowNumber === headerRow)?.rowNumber ?? sheet?.rows[0]?.rowNumber ?? 1); }}>{workbook.sheets.map(sheet => <option value={sheet.name} key={sheet.name}>{sheet.name}</option>)}</select></label>}
       </div>
@@ -114,6 +135,13 @@ export function CategoryProfileEditor({ value, onSave, onClose }: Props) {
       <p>견적서 파일은 5MB 이하 한 개, 카테고리 설정 전체는 UTF-8 JSON 기준 300KB 이하입니다. 한글 등 다중 바이트 문자는 바이트 수로 계산됩니다.</p>
       {draft.template && <>
         <p><strong>{draft.template.name}</strong> · {draft.template.sheetName && `${draft.template.sheetName} · `}{draft.template.headers.length}열 · 머리글 {draft.template.headerRow}행 {draft.template.storageKey && <a href={`/api/category-profiles/template?key=${encodeURIComponent(draft.template.storageKey)}`}>원본 다운로드</a>}</p>
+        <button type="button" className="btn ghost" disabled={busy} onClick={() => {
+          const suggested = suggestQuotationMappings(draft.template!.headers, draft.categoryId);
+          const occupied = new Set(draft.mappings.map(mapping => mapping.column));
+          const additions = suggested.mappings.filter(mapping => !occupied.has(mapping.column));
+          setDraft(current => ({ ...current, mappings: [...current.mappings, ...additions].sort((a, b) => a.column - b.column) }));
+          setMessage(`기존 연결을 유지하고 ${additions.length}개 열을 자동 연결했습니다. 저장 전에 결과를 확인해주세요.`);
+        }}>미연결 열 자동 연결</button>
         <div style={{ overflowX: 'auto', maxHeight: 340, overflowY: 'auto' }}>
           <table style={{ width: '100%', textAlign: 'left' }}><thead><tr><th>견적서 열</th><th>상품 자료</th><th>필수</th><th>고정값</th></tr></thead><tbody>
             {draft.template.headers.map((header, column) => {
@@ -122,7 +150,7 @@ export function CategoryProfileEditor({ value, onSave, onClose }: Props) {
             })}
           </tbody></table>
         </div>
-        <button type="button" className="btn ghost" disabled={busy} onClick={() => { setDraft(current => ({ ...current, template: null, mappings: [] })); setWorkbook(null); setMessage(''); }}>양식 연결 해제</button>
+        <button type="button" className="btn ghost" disabled={busy} onClick={() => { templateGeneration.current++; setDraft(current => ({ ...current, template: null, mappings: [] })); setWorkbook(null); setTextTemplate(null); setMessage(''); }}>양식 연결 해제</button>
       </>}
     </section>
     <section><h3>초안 상태</h3><p>실제 Supplier Hub 업로드 검증 전까지는 제출 검증 완료로 표시하지 않습니다.</p>{issues.length > 0 && <ul>{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}</section>

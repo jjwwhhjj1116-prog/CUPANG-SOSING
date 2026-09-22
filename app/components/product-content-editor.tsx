@@ -7,6 +7,7 @@ import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
   section: 'SEO' | '표시사항' | '이미지';
+  focusedAssetRole?: 'main' | 'additional' | 'detail';
   onSaved?: () => void;
 };
 type Draft = {
@@ -34,7 +35,7 @@ async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<Pro
 
 export function ProductContentEditor(props: Props) { return <ContentEditor key={props.product.id} {...props} />; }
 
-function ContentEditor({ product, section, onSaved }: Props) {
+function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const [content, setContent] = useState<ProductContent>(() => emptyProductContent(product.id));
   const [draft, setDraft] = useState<Draft>(() => draftFrom(emptyProductContent(product.id)));
   const [loading, setLoading] = useState(true);
@@ -45,7 +46,10 @@ function ContentEditor({ product, section, onSaved }: Props) {
   const [message, setMessage] = useState('');
   const [snapshotVersion, setSnapshotVersion] = useState(product.updated_at);
   const [refreshNotice, setRefreshNotice] = useState('');
-  const [assetFilter, setAssetFilter] = useState<AssetEditorFilter>('all');
+  const [assetFilterOverride, setAssetFilterOverride] = useState<{step:string;filter:AssetEditorFilter}|null>(null);
+  const filterStep=focusedAssetRole??'all';
+  const assetFilter:AssetEditorFilter=assetFilterOverride?.step===filterStep?assetFilterOverride.filter:'all';
+  const setAssetFilter=(filter:AssetEditorFilter)=>setAssetFilterOverride({step:filterStep,filter});
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/content`;
   const applyLoaded = useCallback((saved: ProductContent) => {
@@ -87,6 +91,7 @@ function ContentEditor({ product, section, onSaved }: Props) {
   try { imageKeys = productImageKeys(product.image_keys); } catch { /* API reports invalid stored references on save. */ }
   const visibleImages = orderedEditorImages(imageKeys, draft.assets, assetFilter);
   const unavailableImages = [...new Set(Object.values(draft.assets).flat())].filter(key => !imageKeys.includes(key));
+  const sectionTitle = section === '이미지' && focusedAssetRole ? assetRoles[focusedAssetRole] : section;
 
   async function save() {
     setBusy(true); setError(''); setMessage('');
@@ -121,7 +126,7 @@ function ContentEditor({ product, section, onSaved }: Props) {
   }
 
   return <div className="panel-stack" aria-busy={busy || loading}>
-    <div className="panel-note"><div><strong>{section} 작업 자료</strong><p>{section === '표시사항' ? '필요한 표시사항을 기록하고 수정합니다. 빈 항목과 인증·법적 적합성은 카테고리 기준 확인이 필요합니다.' : section === '이미지' ? '업로드한 이미지를 역할과 순서에 맞게 배치합니다. 파일을 지정해도 번역·배경 제거가 실행되지는 않습니다.' : '수집·번역 결과를 검토하고 상품명, 검색어, 설명을 수정하는 작업 공간입니다. 작성하지 않은 내용은 자동으로 채우지 않습니다.'}</p></div></div>
+    <div className="panel-note"><div><strong>{sectionTitle} 작업 자료</strong><p>{section === '표시사항' ? '필요한 표시사항을 기록하고 수정합니다. 빈 항목과 인증·법적 적합성은 카테고리 기준 확인이 필요합니다.' : section === '이미지' ? '업로드한 이미지를 역할과 순서에 맞게 배치합니다. 파일을 지정해도 번역·배경 제거가 실행되지는 않습니다.' : '수집·번역 결과를 검토하고 상품명, 검색어, 설명을 수정하는 작업 공간입니다. 작성하지 않은 내용은 자동으로 채우지 않습니다.'}</p></div></div>
     {loading && <p role="status">저장한 작업 자료를 불러오는 중입니다.</p>}
     {error && <div role="alert" className="panel-note"><div><strong>{error}</strong>{conflict && <p>현재 입력을 복사해 보관한 뒤 저장본을 불러와 변경 내용을 확인해주세요.</p>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => { setLoading(true); void load(); }}>{loaded ? '입력 버리고 저장본 불러오기' : '다시 불러오기'}</button></div></div>}
     {message && <p role="status">{message}</p>}
@@ -135,6 +140,7 @@ function ContentEditor({ product, section, onSaved }: Props) {
       </div>}
       {section === '표시사항' && <div className="form-grid">{(Object.keys(labelFields) as LabelField[]).map(key => <label className={`field ${key === 'precautions' || key === 'qualityAssurance' ? 'full' : ''}`} key={key}><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, label: { ...previous.label, [key]: event.target.value } }))} /></label>)}</div>}
       {section === '이미지' && <div className="panel-stack">
+        {focusedAssetRole&&<div className="image-step-summary"><div><strong>{assetRoles[focusedAssetRole]} <b>{draft.assets[focusedAssetRole].length}장</b></strong><p>{focusedAssetRole==='main'?'상품을 대표할 이미지 한 장을 선택하세요.':focusedAssetRole==='additional'?'상품의 다른 모습과 옵션 이미지를 선택하고 순서를 조정하세요.':'상세페이지에 사용할 이미지를 선택하고 읽는 순서대로 배치하세요.'} 저장한 선택은 견적 자료에 반영됩니다.</p></div><button type="button" className="btn ghost" disabled={!draft.assets[focusedAssetRole].length} onClick={()=>setAssetFilter(focusedAssetRole)}>선택한 이미지 보기</button></div>}
         {!imageKeys.length && <p>위 업로드 버튼으로 이미지 파일을 추가하면 역할을 지정할 수 있습니다.</p>}
         {imageKeys.length > 0 && <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}><button type="button" className={`btn ${assetFilter === 'all' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'all'} onClick={() => setAssetFilter('all')}>전체 {imageKeys.length}</button>{(Object.entries(assetRoles) as [AssetRole, string][]).map(([role, label]) => <button type="button" key={role} className={`btn ${assetFilter === role ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === role} onClick={() => setAssetFilter(role)}>{label} {draft.assets[role].filter(key => imageKeys.includes(key)).length}</button>)}<button type="button" className={`btn ${assetFilter === 'unassigned' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'unassigned'} onClick={() => setAssetFilter('unassigned')}>미지정 {orderedEditorImages(imageKeys, draft.assets, 'unassigned').length}</button></div><small style={{ color: '#64748b' }}>역할별 저장 순서로 표시합니다. ↑↓로 순서를 바꾸고 이미지를 누르면 크게 볼 수 있습니다.</small></>}
         {unavailableImages.length > 0 && <div className="panel-note"><div><p>현재 상품 이미지 목록에 없는 역할 참조가 {unavailableImages.length}개 있습니다.</p><button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, assets: Object.fromEntries(Object.entries(previous.assets).map(([role, keys]) => [role, keys.filter(key => imageKeys.includes(key))])) as Draft['assets'] }))}>연결이 없는 역할 참조 제외</button></div></div>}
@@ -143,21 +149,23 @@ function ContentEditor({ product, section, onSaved }: Props) {
           <img src={`/api/files/${previewKey.split('/').map(encodeURIComponent).join('/')}`} alt={`이미지 ${imageKeys.indexOf(previewKey) + 1} 큰 미리보기`} style={{ display: 'block', maxWidth: '100%', maxHeight: 520, margin: 'auto', objectFit: 'contain' }} />
         </figure>}
         {imageKeys.length > 0 && !visibleImages.length && <p>이 역할에 지정한 이미지가 없습니다.</p>}
-        {visibleImages.map(key => {
+        <div className="image-asset-grid">{visibleImages.map(key => {
           const index = imageKeys.indexOf(key);
           const role = (Object.keys(assetRoles) as AssetRole[]).find(value => draft.assets[value].includes(key)) ?? '';
           const position = role ? draft.assets[role].indexOf(key) : -1;
-          return <div key={key} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: 12, border: '1px solid #dfe4ec', borderRadius: 12 }}>
-            <button type="button" aria-label={`이미지 ${index + 1} 크게 보기`} onClick={() => setPreviewKey(key)} style={{ border: 0, padding: 0, background: 'transparent', cursor: 'zoom-in' }}>
+          return <div key={key} className={`image-asset-card ${role===focusedAssetRole?'chosen':''}`}>
+            <button type="button" className="image-asset-preview" aria-label={`이미지 ${index + 1} 크게 보기`} onClick={() => setPreviewKey(key)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} width={80} height={80} style={{ display: 'block', objectFit: 'contain', background: '#f8fafc' }} />
+              <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} width={200} height={180} loading="lazy" />
+              <span>이미지 {index + 1} · 확대</span>
             </button>
-            <label className="field" style={{ flex: 1 }}><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} onChange={event => assign(key, event.target.value as AssetRole | '')} style={{ padding: 10, border: '1px solid #dfe4ec', borderRadius: 8 }}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-            {role && <div><span>{assetRoles[role]} {position + 1}번째</span><div style={{ display: 'flex', gap: 6, marginTop: 6 }}><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}
+            {focusedAssetRole&&<button type="button" className={`btn ${role===focusedAssetRole?'primary':'ghost'}`} aria-pressed={role===focusedAssetRole} onClick={()=>assign(key,role===focusedAssetRole?'':focusedAssetRole)}>{role===focusedAssetRole?'선택 해제':`${assetRoles[focusedAssetRole]}로 선택`}</button>}
+            <label className="field"><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} onChange={event => assign(key, event.target.value as AssetRole | '')}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+            {role && <div className="image-asset-order"><span>{assetRoles[role]} {position + 1}번째</span><div><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}
           </div>;
-        })}
+        })}</div>
       </div>}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 20 }}><span style={{ fontSize: 12, color: '#64748b' }}>{dirty ? '저장하지 않은 변경' : content.revision ? `저장 버전 ${content.revision}` : '아직 저장한 내용 없음'}</span><button type="button" className="btn primary" disabled={busy || !dirty || conflict} onClick={() => void save()}>{busy ? '저장 중…' : `${section} 저장`}</button></div>
+      <div className="content-editor-save"><span>{dirty ? '저장하지 않은 변경' : content.revision ? `저장 버전 ${content.revision}` : '아직 저장한 내용 없음'}{section==='이미지'&&<small>대표·추가·상세 이미지의 역할과 순서는 함께 저장됩니다.</small>}</span><button type="button" className="btn primary" disabled={busy || !dirty || conflict} onClick={() => void save()}>{busy ? '저장 중…' : section==='이미지'?'이미지 역할·순서 저장':`${section} 저장`}</button></div>
     </fieldset>}
   </div>;
 }

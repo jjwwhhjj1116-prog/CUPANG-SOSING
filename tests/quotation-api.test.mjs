@@ -4,17 +4,18 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { webcrypto, createHash } from 'node:crypto';
-import { unzipSync } from 'fflate';
+import { unzipSync, zipSync } from 'fflate';
 
-function load(file, overrides = {}, mode = 'development') {
+function load(file, overrides = {}, mode = 'development', cache = new Map()) {
+  if (cache.has(file)) return cache.get(file);
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const exports = {};
-  vm.runInNewContext(output, { exports, Response, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, structuredClone, Blob, CompressionStream, DecompressionStream, crypto: webcrypto,
+  const exports = {}; cache.set(file, exports);
+  vm.runInNewContext(output, { exports, Error, Response, URL, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, structuredClone, Blob, CompressionStream, DecompressionStream, crypto: webcrypto,
     process: { env: { NODE_ENV: mode } }, require(name) {
       if (name in overrides) return overrides[name];
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
-      if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode);
+      if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode, cache);
       throw Error(name);
     } });
   return exports;
@@ -61,12 +62,15 @@ test('quotation data keeps representative product price separate and does not cr
 });
 
 function routeWith({ find = async () => product, readOptions = async () => options, readContent = async () => content, readProfile = async () => profile,
+  readFields = async () => ({ schemaVersion: 1, productId: 'test', revision: 0, overrides: { common: {}, options: {} }, updatedAt: null }),
+  readSettings = async () => null, sourcesCurrent = async () => true,
   get = async key => key === templateKey ? { size: templateBytes.length, arrayBuffer: async () => templateBytes.slice().buffer } : { size: png.length, arrayBuffer: async () => png.slice().buffer },
   mode,
 } = {}) {
   return load('app/api/products/[id]/quotation/route.ts', {
-    '@/db/queries': { findProduct: find, getSettings: async () => null }, '@/db/product-options': { readProductOptions: readOptions },
+    '@/db/queries': { findProduct: find, getSettings: readSettings }, '@/db/product-options': { readProductOptions: readOptions },
     '@/db/product-content': { readProductContent: readContent }, '@/db/category-profiles': { getCategoryProfile: readProfile },
+    '@/db/quotation-fields': { readQuotationFields: readFields, readQuotationCollectionSource: async () => null, quotationSourcesCurrent: sourcesCurrent },
     'cloudflare:workers': { env: { FILES: { get } } },
   }, mode);
 }
@@ -82,7 +86,7 @@ test('real preview/export pipeline fills mapped CSV, includes option assets and 
   assert.equal(exported.status, 200); assert.equal(exported.headers.get('content-type'), 'application/zip'); assert.equal(exported.headers.get('cache-control'), 'no-store');
   const files = unzipSync(new Uint8Array(await exported.arrayBuffer()));
   const csv = new TextDecoder().decode(files['quotation-filled.csv']);
-  assert.ok(csv.includes('"\'=SUM(1,1)"')); assert.ok(csv.includes('"첫 번째","10","assets/image-001.png"'));
+  assert.ok(csv.includes('"\'=SUM(1,1)"')); assert.ok(csv.includes('"첫 번째","10","image-001.png"'));
   assert.ok(!csv.includes('제외됨')); assert.deepEqual(files['assets/image-001.png'], png);
   const exportedOptions = JSON.parse(new TextDecoder().decode(files['options.json']));
   assert.equal(exportedOptions.rows.length, 3); assert.equal(exportedOptions.rows[0].provenance.originalName, 'manual');
@@ -120,4 +124,99 @@ test('quotation API validates action/start rows/size and is closed in production
   assert.equal((await production.POST(request(preview), context)).status, 503);
   const failed = await routeWith({ find: async () => { throw Error('private SQL data'); } }).POST(request(preview), context);
   assert.equal(failed.status, 503); assert.ok(!(await failed.text()).includes('private SQL'));
+});
+
+
+test('saved common/option overrides populate mapped cells and preserve blanks, inactive fields and exact image filenames', async () => {
+  const state = { schemaVersion: 1, productId: 'test', revision: 4, updatedAt: product.updated_at,
+    overrides: { common: { title: '견적 전용 이름', model: 'MODEL-007', boxSkuQuantity: '12', noticeMaterial: '확인한 재질', barcode: '00123456', searchTags: '수동태그', mainImage: 'owner/manual.png', retiredField: '다른 분류에서 작성' },
+      options: { first: { title: '', supplyPrice: '12345', noticeMaterial: '첫 옵션 재질' }, excluded: { model: '제외 옵션 수정' }, deleted: { color: '삭제 옵션 수정' } } } };
+  const bytes = new TextEncoder().encode('상품명,공급가,박스수량,재질,모델명,이미지,바코드\r\n');
+  const digest = createHash('sha256').update(bytes).digest('hex'); const key = `owner/category-templates/${digest}.csv`;
+  const advanced = { ...profile, categoryId: '80719', categoryPath: ['주방용품'], template: { ...profile.template, sha256: digest, headers: ['상품명','공급가','박스수량','재질','모델명','이미지','바코드'], storageKey: key },
+    mappings: ['title','supplyPrice','boxQuantity','material','model','mainImage','barcode'].map((field,column) => ({ field,column,required:false })) };
+  const requested = [];
+  const route = routeWith({ find: async () => ({ ...product, image_keys: '["owner/option.png","owner/manual.png"]' }), readFields: async () => state, readProfile: async () => advanced,
+    get: async path => { requested.push(path); const data = path === key ? bytes : png; return { size: data.length, arrayBuffer: async () => data.slice().buffer }; },
+  });
+  const reviewResponse = await route.POST(request(preview),context); assert.equal(reviewResponse.status,200); const review = await reviewResponse.json();
+  assert.deepEqual(review.rows[0], ['',12345,12,'첫 옵션 재질','MODEL-007','image-002.png','00123456']);
+  assert.equal(review.rows[1][0],'견적 전용 이름'); assert.equal(review.rows[1][3],'확인한 재질');
+  assert.equal(review.report.quotationRevision,4); assert.ok(review.report.warnings.some(value=>value.includes('검색태그')&&value.includes('미연결')));
+  assert.ok(requested.includes('owner/manual.png')); assert.ok(review.report.warnings.some(value=>value.includes('retiredField')));
+  const response = await route.POST(request({...preview, action:'export', fingerprint:review.fingerprint}),context); assert.equal(response.status,200);
+  const files=unzipSync(new Uint8Array(await response.arrayBuffer())); const decode=value=>new TextDecoder().decode(value);
+  const doc=JSON.parse(decode(files['quotation-fields.json'])); assert.equal(doc.submissionReady,false); assert.equal(doc.categoryContext.categoryId,'80719');
+  assert.equal(doc.rows.filter(row=>row.included).length,2); assert.equal(doc.rows.find(row=>row.optionId==='first').fields.title.source,'manual-option');
+  assert.equal(doc.overrides.options.deleted.color,'삭제 옵션 수정'); assert.equal(doc.assets['owner/manual.png'],'assets/image-002.png'); assert.equal(doc.uploadFilenames['owner/manual.png'],'image-002.png');
+  assert.ok(decode(files['quotation-filled.csv']).includes('"","12345","12","첫 옵션 재질","MODEL-007","image-002.png","00123456"'));
+  assert.ok(decode(files['quotation-fields.csv']).includes('"product","2. Product Page · 상품 페이지","model"'));
+  assert.ok(decode(files['quotation-overrides.csv']).includes('삭제 옵션 수정')); assert.ok(decode(files['quotation-overrides.csv']).includes('제외 옵션 수정')); assert.ok(decode(files['quotation-overrides.csv']).includes('다른 분류에서 작성'));
+  assert.deepEqual(files['assets/image-002.png'],png); assert.ok(files['product-snapshot.csv']); assert.ok(!files['quotation-review.csv']);
+});
+
+test('quotation preview fingerprint binds override state, settings, selected profile and stable source reads', async () => {
+  const state={schemaVersion:1,productId:'test',revision:1,overrides:{common:{title:'검토한 값'},options:{}},updatedAt:product.updated_at};
+  let current=state, storageReads=0;
+  const route=routeWith({readFields:async()=>current,get:async key=>{storageReads++; const bytes=key===templateKey?templateBytes:png;return{size:bytes.length,arrayBuffer:async()=>bytes.slice().buffer};}});
+  const review=await (await route.POST(request(preview),context)).json(); const before=storageReads;
+  current={...state,revision:2,overrides:{common:{title:'검토한 값',model:'수정'},options:{}}};
+  assert.equal((await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context)).status,409); assert.equal(storageReads,before);
+  for(const changed of ['fields','settings','profile']) {
+    let downloaded=false;
+    const modifying=routeWith({readFields:async()=>downloaded&&changed==='fields'?current:state,
+      readSettings:async()=>downloaded&&changed==='settings'?{payload:JSON.stringify({...defaultSettings,brand:'수정 브랜드'})}:null,
+      readProfile:async()=>({...profile,revision:downloaded&&changed==='profile'?2:1}),
+      get:async key=>{downloaded=true;const bytes=key===templateKey?templateBytes:png;return{size:bytes.length,arrayBuffer:async()=>bytes.slice().buffer};},
+    });
+    assert.equal((await modifying.POST(request(preview),context)).status,409,changed);
+  }
+  assert.equal((await routeWith({sourcesCurrent:async()=>false,get:async()=>{throw Error('no R2 read for mixed source snapshot');}}).POST(request(preview),context)).status,409);
+});
+
+test('manual image overrides cannot export foreign or phantom keys even when stored JSON is stale',async()=>{
+  for(const key of ['other/private.png','owner/missing.png']) {
+    const route=routeWith({readFields:async()=>({schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{mainImage:key},options:{}}}),get:async()=>{throw Error('must not fetch unowned images');}});
+    assert.equal((await route.POST(request(preview),context)).status,409);
+  }
+});
+
+test('real XLSX pipeline writes final override values, identifiers and attachment basenames into preserved template',async()=>{
+  const encode=value=>new TextEncoder().encode(value);
+  const bytes=zipSync({
+    '[Content_Types].xml':encode('<Types><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>'),
+    '_rels/.rels':encode('<Relationships><Relationship Id="main" Type="x/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
+    'xl/workbook.xml':encode('<workbook xmlns:r="relationship"><sheets><sheet name="견적" r:id="one"/></sheets></workbook>'),
+    'xl/_rels/workbook.xml.rels':encode('<Relationships><Relationship Id="one" Type="x/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'),
+    'xl/worksheets/sheet1.xml':encode('<worksheet><dimension ref="A1:D2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>상품명</t></is></c><c r="B1" t="inlineStr"><is><t>모델명</t></is></c><c r="C1" t="inlineStr"><is><t>바코드</t></is></c><c r="D1" t="inlineStr"><is><t>이미지</t></is></c></row><row r="2"><c r="E2"><f>1+1</f><v>2</v></c></row></sheetData></worksheet>'),
+  },{level:0});
+  const digest=createHash('sha256').update(bytes).digest('hex');const key=`owner/category-templates/${digest}.xlsx`;
+  const advanced={...profile,categoryId:'80719',template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers:['상품명','모델명','바코드','이미지']},
+    mappings:['title','model','barcode','mainImage'].map((field,column)=>({field,column,required:false}))};
+  const route=routeWith({readProfile:async()=>advanced,readFields:async()=>({schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{model:'수동 모델',barcode:'00001234'},options:{first:{title:'첫 옵션 견적명'}}}}),
+    get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};},
+  });
+  const reviewResponse=await route.POST(request(preview),context);assert.equal(reviewResponse.status,200);const review=await reviewResponse.json();
+  const response=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(response.status,200);
+  const files=unzipSync(new Uint8Array(await response.arrayBuffer()));const workbook=unzipSync(files['quotation-filled.xlsx']);const sheet=new TextDecoder().decode(workbook['xl/worksheets/sheet1.xml']);
+  assert.ok(sheet.includes('첫 옵션 견적명'));assert.ok(sheet.includes('수동 모델'));assert.ok(sheet.includes('<c r="C2" t="inlineStr"><is><t xml:space="preserve">00001234</t>'));
+  assert.ok(sheet.includes('image-001.png'));assert.ok(!sheet.includes('assets/image-001.png'));assert.ok(sheet.includes('<c r="E2"><f>1+1</f><v>2</v></c>'));
+  assert.deepEqual(workbook['xl/workbook.xml'],unzipSync(bytes)['xl/workbook.xml']);assert.deepEqual(files['assets/image-001.png'],png);
+});
+
+test('advanced Excel mapping contains every observed/common field without claiming unknown category compatibility',()=>{
+  const {categoryFields,validateCategoryProfile}=load('app/category-profiles.ts'); const {getQuotationSchema}=load('app/quotation-schema.ts');
+  for(const field of getQuotationSchema('80719').fields)assert.ok(Object.hasOwn(categoryFields,field.id),field.id);
+  const raw={...profile,mappings:[{column:0,field:'packagedDimensionsMm',required:false},{column:1,field:'noticeNameModel',required:false}]};
+  assert.equal(validateCategoryProfile(raw).mappings[0].field,'packagedDimensionsMm');
+  assert.equal(getQuotationSchema('not-observed').status,'unconfirmed');assert.ok(!getQuotationSchema('not-observed').fields.some(field=>field.id==='noticeNameModel'));
+});
+
+test('large common HTML fails with explicit 413 before full quotation JSON/CSV expansion and excluded rows stop contributing',async()=>{
+  const rows=Array.from({length:200},(_,i)=>({...options.rows[0],id:`many-${i}`,imageKey:null}));
+  const state={schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{detailHtml:'x'.repeat(150000)},options:{}}};
+  const huge=routeWith({readOptions:async()=>({...options,rows}),readFields:async()=>state});
+  const rejected=await huge.POST(request(preview),context);assert.equal(rejected.status,413);assert.match((await rejected.json()).error,/6MB/);
+  const bounded=routeWith({readOptions:async()=>({...options,rows:rows.map((row,index)=>({...row,included:index===0}))}),readFields:async()=>state});
+  const response=await bounded.POST(request(preview),context);assert.equal(response.status,200);const review=await response.json();assert.equal(review.report.rowCount,1);
 });

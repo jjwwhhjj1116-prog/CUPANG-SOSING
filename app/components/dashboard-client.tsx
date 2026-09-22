@@ -1,7 +1,9 @@
 'use client';
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CategoryProfileEditor } from '@/app/components/category-profile-editor';
+import { CategoryPicker } from '@/app/components/category-picker';
+import { ProductArchive } from '@/app/components/product-archive';
 import { ProductContentEditor } from '@/app/components/product-content-editor';
 import { AutomationPanel } from '@/app/components/automation-panel';
 import { ProductOptionsEditor } from '@/app/components/product-options-editor';
@@ -11,7 +13,7 @@ import ImageGenerationPanel from '@/app/components/image-generation-panel';
 import { DocumentImagePanel } from '@/app/components/document-image-panel';
 import type { ProductContent } from '@/app/product-content';
 import { BatchWorkPanel } from '@/app/components/batch-work-panel';
-import type { CategoryProfile } from '@/app/category-profiles';
+import type { CategoryProfile, CategoryProfileInput } from '@/app/category-profiles';
 import { WorkspaceSettingsEditor } from '@/app/components/workspace-settings-editor';
 import { defaultSettings as defaults, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
 import { PriceEditor } from '@/app/components/price-editor';
@@ -44,6 +46,16 @@ const stages = [
   { label:'상품 수집', detail:'1688 URL', tone:'blue' }, { label:'AI 최적화', detail:'SEO · 가격', tone:'purple' },
   { label:'콘텐츠 제작', detail:'이미지 · 상세', tone:'orange' }, { label:'제안 전송', detail:'견적서 · Supplier Hub', tone:'green' },
 ];
+const registrationSteps = ['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서'];
+const imageSteps = ['대표 이미지','추가 이미지','상세 이미지'];
+const supportingTabs = [{value:'작업',label:'작업 이력'},{value:'번역',label:'번역·SEO 생성'},{value:'옵션',label:'옵션·사이즈표'}];
+function sourceLink(value: string) {
+  try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; }
+}
+function registrationDate(value: string) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString('ko-KR', { timeZone:'Asia/Seoul', dateStyle:'medium', timeStyle:'short' }) : '등록일 미확인';
+}
 
 function fetchWorkspace() {
   return Promise.allSettled([
@@ -63,6 +75,7 @@ const goalOptions = [
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 export default function DashboardClient({ userName }: { userName: string }) {
   const [products, setProducts] = useState<Product[]>([]);
+  const [view, setView] = useState<'work'|'archive'>('work');
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState(defaults);
@@ -74,6 +87,8 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [transmitOpen, setTransmitOpen] = useState(false);
   const [detail, setDetail] = useState<Product | null>(null);
   const [tab, setTab] = useState('SEO');
+  const [lastRegistrationStep, setLastRegistrationStep] = useState('SEO');
+  const detailBody = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -93,7 +108,17 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [profileId, setProfileId] = useState('');
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CategoryProfile|null>(null);
+  const [categorySeed,setCategorySeed]=useState<CategoryProfileInput|undefined>();
   const [intakeStep, setIntakeStep] = useState<'category'|'urls'>('category');
+  function selectDetailTab(value: string) {
+    setTab(value);
+    if (registrationSteps.includes(value)) setLastRegistrationStep(value);
+    detailBody.current?.scrollTo({ top: 0 });
+  }
+  function openProduct(product: Product, initialTab = 'SEO') {
+    setDetail(product); setTab(initialTab); setLastRegistrationStep('SEO');
+  }
+  const detailStepIndex = registrationSteps.indexOf(tab);
   const collectionPreview = useMemo(() => {
     if (!urlInput.trim()) return { count: 0, duplicates: 0, error: '' };
     const urls = urlInput.trim().split(/\s+/);
@@ -111,7 +136,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const applyWorkspace = useCallback((results: Awaited<ReturnType<typeof fetchWorkspace>>) => {
     const [productData, settingData, collectionData, categoriesData] = results;
     if (productData.status === 'fulfilled') setProducts(productData.value.products);
-    if (productData.status === 'fulfilled') setDetail(current=>current?productData.value.products.find(product=>product.id===current.id)??null:null);
+    if (productData.status === 'fulfilled') setDetail(current=>current?productData.value.products.find(product=>product.id===current.id)??current:null);
     if (settingData.status === 'fulfilled' && settingData.value.settings) setSettings({ ...defaults, ...settingData.value.settings });
     if (collectionData.status === 'fulfilled') setCollectionJobs(collectionData.value.jobs);
     if (categoriesData.status === 'fulfilled') setCategoryProfiles(categoriesData.value.profiles);
@@ -119,7 +144,17 @@ export default function DashboardClient({ userName }: { userName: string }) {
     setLoading(false);
   }, []);
   async function loadWorkspace() {
-    applyWorkspace(await fetchWorkspace());
+    const detailId=detail?.id;
+    const [workspace,currentDetail]=await Promise.all([
+      fetchWorkspace(),
+      detailId?readJson<{product:Product}>(`/api/products/${encodeURIComponent(detailId)}`).catch(()=>null):Promise.resolve(null),
+    ]);
+    applyWorkspace(workspace);
+    if(currentDetail)setDetail(current=>current?.id===detailId?currentDetail.product:current);
+  }
+  async function openArchivedProduct(id: string) {
+    const result=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(id)}`);
+    openProduct(result.product);
   }
   useEffect(() => {
     let active = true;
@@ -206,7 +241,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
       if (!response.ok) throw new Error(result.error);
       setPendingUpload({productId,key:result.key});
       await attachUploadedImage(productId,result.key);setPendingUpload(null);
-      showToast('이미지를 추가했습니다. 이미지 탭에서 역할을 지정할 수 있습니다.');
+      showToast('이미지를 추가했습니다. 대표·추가·상세 이미지 단계에서 역할을 지정하세요.');
     } catch (error) { showToast(error instanceof Error ? error.message : '업로드하지 못했습니다.'); }
     finally { setBusy(false); event.target.value=''; }
   }
@@ -220,8 +255,8 @@ export default function DashboardClient({ userName }: { userName: string }) {
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">S</span><span>SOURCEFLOW</span></div>
         <nav aria-label="주 메뉴"><p className="nav-caption">WORKSPACE</p>
-          <button className="nav-item active"><span>✦</span>AI 상품등록</button>
-          <button className="nav-item"><span>▦</span>상품 관리</button><button className="nav-item"><span>◫</span>공급 관리</button><button className="nav-item"><span>▤</span>판매 장부</button>
+          <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>setView('work')}><span>✦</span>AI 상품등록</button>
+          <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>setView('archive')}><span>▦</span>상품 관리</button><button className="nav-item"><span>◫</span>공급 관리</button><button className="nav-item"><span>▤</span>판매 장부</button>
           <p className="nav-caption nav-gap">AUTOMATION</p><button className="nav-item" onClick={()=>void checkConnections()}><span>⌁</span>연동 설정</button><button className="nav-item" onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span>↻</span>작업 이력</button>
         </nav>
         <div className="sidebar-status"><span className="status-dot" /><div><strong>자동화 엔진</strong><small>작업별 연결 상태 확인</small></div></div>
@@ -236,6 +271,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
         {pendingUpload&&<div className="panel-note" role="status"><div><strong>업로드 파일 연결 대기</strong><p>파일은 보관돼 있습니다. 상품에 연결하기를 다시 시도할 수 있습니다.</p></div><button className="btn ghost" disabled={busy} onClick={()=>void retryUploadedImage()}>보관된 이미지 연결 재시도</button></div>}
         <section className="pipeline" aria-label="자동화 진행 단계">{stages.map((stage,index)=><div className="step" key={stage.label}><span className={`step-number ${stage.tone}`}>{index+1}</span><div><strong>{stage.label}</strong><small>{stage.detail}</small></div>{index<3&&<span className="step-arrow">→</span>}</div>)}</section>
 
+        {view==='archive'?<ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/>:<>
         <section className="collection-panel" aria-label="수집 대기열">
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>
           <label className="collection-history"><input type="checkbox" checked={showCancelled} onChange={event=>setShowCancelled(event.target.checked)} />취소한 요청 보기 · 최근 200건</label>
@@ -252,18 +288,19 @@ export default function DashboardClient({ userName }: { userName: string }) {
 
         <section className="workspace"><div className="workspace-head"><div><h2>상품 작업 보드</h2><p>각 단계를 확인하고 필요한 항목만 바로 수정할 수 있습니다.</p></div><div className="workspace-actions"><button className="btn ghost" onClick={()=>{setIntakeStep('category');setAddOpen(true);}}>카테고리·견적서 설정</button><button className="btn dark" disabled={busy} onClick={runAutomation}>{busy?'처리 중…':'작업 개시'}</button><button className="btn rose" onClick={()=>setTransmitOpen(true)}>등록 전송</button></div></div>
           <div className="filters"><label className="search"><span>⌕</span><input aria-label="상품 검색" value={query} onChange={e=>setQuery(e.target.value)} placeholder="상품명 또는 URL 검색" /></label>{['전체','작업 중','검토 대기','전송 가능'].map(value=><button key={value} onClick={()=>setFilter(value)} className={`filter-chip ${filter===value?'active':''}`}>{value}</button>)}</div>
-          <div className="table-wrap"><table><thead><tr><th><input type="checkbox" aria-label="전체 선택" checked={selected.size===products.length&&products.length>0} onChange={e=>setSelected(e.target.checked?new Set(products.map(p=>p.id)):new Set())}/></th><th>상품</th><th>소싱 원가</th><th>판매가 / 공급가</th><th>AI 작업</th><th>이미지</th><th>견적서</th><th>상태</th><th /></tr></thead>
-            <tbody>{filtered.map((p,index)=><tr key={p.id}><td><input type="checkbox" aria-label={`${p.title} 선택`} checked={selected.has(p.id)} onChange={e=>setSelected(current=>{const next=new Set(current); if (e.target.checked) next.add(p.id); else next.delete(p.id); return next;})}/></td><td><button className="product-cell" onClick={()=>{setDetail(p);setTab('SEO')}}><div className={`product-thumb ${index%3===1?'coral':index%3===2?'violet':''}`}>1688</div><div><strong>{p.title}</strong><span>SF-{p.id.slice(0,8).toUpperCase()} · {p.options_count}개 옵션</span></div></button></td><td><strong>¥ {p.source_price_cny.toFixed(2)}</strong><span className="sub">환율 {p.exchange_rate}원</span></td><td><strong>{won(p.sale_price)}</strong><span className="sub">공급가 {won(p.supply_price)}</span></td><td><Status value={p.seo_status}/></td><td><Status value={p.image_status}/></td><td><Status value={p.quote_status}/></td><td><Status value={p.registration_status}/></td><td><button className="more" aria-label={`${p.title} 상세`} onClick={()=>setDetail(p)}>•••</button></td></tr>)}</tbody></table>{!filtered.length&&<div className="empty"><span>⌕</span><strong>{loading?'상품을 불러오는 중입니다.':loadError?'목록을 확인하지 못했습니다.':'조건에 맞는 상품이 없습니다.'}</strong><small>{loadError?'위 오류를 확인하고 다시 불러와주세요.':'URL을 추가해 수집을 요청하거나 검색 조건을 확인하세요.'}</small></div>}</div>
-        </section>
+          <div className="table-wrap"><table className="product-work-table"><thead><tr><th><input type="checkbox" aria-label="전체 선택" checked={selected.size===products.length&&products.length>0} onChange={e=>setSelected(e.target.checked?new Set(products.map(p=>p.id)):new Set())}/></th><th>상품 · 원본 URL</th><th>등록일 · 한국시간</th><th>소싱 원가</th><th>판매가 / 공급가</th><th>AI 작업</th><th>이미지</th><th>견적서</th><th>상태</th><th /></tr></thead>
+            <tbody>{filtered.map((p,index)=><tr key={p.id}>
+              <td><input type="checkbox" aria-label={`${p.title} 선택`} checked={selected.has(p.id)} onChange={e=>setSelected(current=>{const next=new Set(current); if (e.target.checked) next.add(p.id); else next.delete(p.id); return next;})}/></td>
+              <td className="product-info-cell"><button className="product-cell" onClick={()=>openProduct(p)}><div className={`product-thumb ${index%3===1?'coral':index%3===2?'violet':''}`}>1688</div><div><strong>{p.title}</strong><span>SF-{p.id.slice(0,8).toUpperCase()} · {p.options_count}개 옵션</span></div></button>{sourceLink(p.source_url)?<a className="product-source-url" href={sourceLink(p.source_url)} target="_blank" rel="noopener noreferrer" aria-label={`${p.title} 원본 URL`}>{p.source_url}</a>:<span className="product-source-url">{p.source_url||'원본 URL 미입력'}</span>}</td>
+              <td className="product-created-cell"><time dateTime={p.created_at}>{registrationDate(p.created_at)}</time></td>
+              <td><strong>¥ {p.source_price_cny.toFixed(2)}</strong><span className="sub">환율 {p.exchange_rate}원</span></td><td><strong>{won(p.sale_price)}</strong><span className="sub">공급가 {won(p.supply_price)}</span></td><td><Status value={p.seo_status}/></td><td><Status value={p.image_status}/></td><td><Status value={p.quote_status}/></td><td><Status value={p.registration_status}/></td><td><button className="more" aria-label={`${p.title} 상세`} onClick={()=>openProduct(p)}>•••</button></td>
+            </tr>)}</tbody></table>{!filtered.length&&<div className="empty"><span>⌕</span><strong>{loading?'상품을 불러오는 중입니다.':loadError?'목록을 확인하지 못했습니다.':'조건에 맞는 상품이 없습니다.'}</strong><small>{loadError?'위 오류를 확인하고 다시 불러와주세요.':'URL을 추가해 수집을 요청하거나 검색 조건을 확인하세요.'}</small></div>}</div>
+        </section></>}
       </section>
 
       {addOpen&&<Modal wide title="상품 수집 준비" subtitle="카테고리·견적서 연결을 선택한 다음 URL을 입력합니다." onClose={()=>{if(!busy)setAddOpen(false);}}>
         <div className="intake-steps"><button className={intakeStep==='category'?'active':''} onClick={()=>setIntakeStep('category')}>1. 카테고리·견적서</button><button disabled={!profileId} className={intakeStep==='urls'?'active':''} onClick={()=>setIntakeStep('urls')}>2. URL·작업 목표</button></div>
-        {intakeStep==='category'?<div className="modal-form"><p>저장한 카테고리 연결을 선택하세요. 공식 목록 동기화와 Supplier Hub 검증은 아직 연결되지 않았습니다.</p>
-          <div className="category-options">{categoryProfiles.map(profile=><label className="goal-card" key={profile.id}><input type="radio" name="categoryProfile" value={profile.id} checked={profileId===profile.id} onChange={()=>setProfileId(profile.id)}/><span><strong>{profile.name}</strong><small>{profile.categoryPath.join(' > ')}</small><small>{profile.template?.name??'견적서 양식 미연결'} · 연결 초안 v{profile.revision}</small></span></label>)}</div>
-          {!categoryProfiles.length&&<p>저장된 연결이 없습니다. 견적서 양식과 카테고리 연결을 추가해주세요.</p>}
-          <div className="modal-actions"><button className="btn ghost" onClick={()=>{setEditingCategory(null);setAddOpen(false);setCategoryOpen(true);}}>카테고리 연결 추가</button><button className="btn ghost" disabled={!profileId} onClick={()=>{setEditingCategory(categoryProfiles.find(profile=>profile.id===profileId)??null);setAddOpen(false);setCategoryOpen(true);}}>연결 수정</button><button className="btn primary" disabled={!profileId} onClick={()=>setIntakeStep('urls')}>선택 후 URL 입력</button></div>
-        </div>:<form onSubmit={createProducts} className="modal-form">
+        {intakeStep==='category'?<CategoryPicker profiles={categoryProfiles} selectedId={profileId} onSelected={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setProfileId(profile.id);setIntakeStep('urls');}} onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:seed?null:categoryProfiles.find(profile=>profile.id===profileId)??null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>:<form onSubmit={createProducts} className="modal-form">
           <p><strong>{categoryProfiles.find(profile=>profile.id===profileId)?.categoryPath.join(' > ')}</strong></p>
           <label className="field full"><span>1688 상품 URL <b>필수 · 최대 50개</b></span><textarea name="urls" value={urlInput} onChange={event=>{setUrlInput(event.target.value);setCollectionError('');}} disabled={busy} required placeholder={'https://detail.1688.com/offer/…\n여러 URL은 줄바꿈으로 구분'} aria-describedby="collection-validation" /></label>
           <p id="collection-validation" aria-live="polite">{collectionPreview.error || (collectionPreview.count + '개 상품 · 중복 ' + collectionPreview.duplicates + '개 제외')}</p>
@@ -274,13 +311,19 @@ export default function DashboardClient({ userName }: { userName: string }) {
           <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={()=>setIntakeStep('category')}>이전</button><button className="btn primary" disabled={busy||!profileId||!collectionPreview.count||!!collectionPreview.error}>{busy?'저장 중…':'수집 요청 보관'}</button></div>
         </form>}
       </Modal>}
-      {categoryOpen&&<Modal wide title="카테고리·견적서 연결" subtitle="상품 자료를 견적서 열에 연결하고 카테고리별 설정을 보관합니다." onClose={()=>setCategoryOpen(false)}><CategoryProfileEditor value={editingCategory} onClose={()=>setCategoryOpen(false)} onSave={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setProfileId(profile.id);setCategoryOpen(false);setIntakeStep('category');setAddOpen(true);}}/></Modal>}
+      {categoryOpen&&<Modal wide title="카테고리·견적서 연결" subtitle="상품 자료를 견적서 열에 연결하고 카테고리별 설정을 보관합니다." onClose={()=>setCategoryOpen(false)}><CategoryProfileEditor value={editingCategory} initialDraft={categorySeed} onClose={()=>setCategoryOpen(false)} onSave={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setProfileId(profile.id);setCategoryOpen(false);setIntakeStep('category');setAddOpen(true);}}/></Modal>}
 
       {settingsOpen&&<Modal wide title="기본 등록 정보 설정" subtitle="가격·물류·이미지 작업의 기본값을 관리합니다. 취소하면 변경은 반영되지 않습니다." onClose={()=>setSettingsOpen(false)}><WorkspaceSettingsEditor value={settings} onSave={saveWorkspaceSettings} onClose={()=>setSettingsOpen(false)}/></Modal>}
-      {batchOpen&&<Modal wide title="선택 상품 일괄 작업" subtitle="저장한 상품을 순서대로 처리하고 각 결과를 기록합니다." onClose={()=>setBatchOpen(false)}><BatchWorkPanel products={products.filter(product=>selected.has(product.id))} onOpen={id=>{setBatchOpen(false);setDetail(products.find(product=>product.id===id)??null);setTab('작업');}}/></Modal>}
+      {batchOpen&&<Modal wide title="선택 상품 일괄 작업" subtitle="저장한 상품을 순서대로 처리하고 각 결과를 기록합니다." onClose={()=>setBatchOpen(false)}><BatchWorkPanel products={products.filter(product=>selected.has(product.id))} onOpen={id=>{setBatchOpen(false);const product=products.find(product=>product.id===id);if(product)openProduct(product,'작업');}}/></Modal>}
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div></Modal>}
 
-      {detail&&<div className="drawer-backdrop" onMouseDown={()=>setDetail(null)}><aside className="detail-drawer" onMouseDown={e=>e.stopPropagation()}><header><div><span className="drawer-eyebrow">PRODUCT WORKSPACE</span><h2>{detail.title}</h2><a href={detail.source_url} target="_blank" rel="noreferrer">1688 원본 보기 ↗</a></div><button className="icon-close" onClick={()=>setDetail(null)}>×</button></header><nav className="detail-tabs">{['작업','번역','SEO','옵션','가격','이미지','표시사항','견적서'].map(value=><button key={value} onClick={()=>setTab(value)} className={tab===value?'active':''}>{value}</button>)}</nav><div className="detail-body"><DetailPanel key={detail.id} onSaved={()=>void loadWorkspace()} onManageCategories={()=>{setDetail(null);setIntakeStep('category');setAddOpen(true);}} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div></aside></div>}
+      {detail&&<div className="drawer-backdrop" onMouseDown={()=>setDetail(null)}><aside className="detail-drawer registration-workspace" role="dialog" aria-modal="true" aria-label="상품 등록 작업 공간" onMouseDown={e=>e.stopPropagation()}>
+        <header><div className="detail-heading"><span className="drawer-eyebrow">PRODUCT WORKSPACE · 등록 자료 준비</span><h2>{detail.title}</h2><div className="detail-product-meta"><span>SF-{detail.id.slice(0,8).toUpperCase()}</span><time dateTime={detail.created_at}>등록 {registrationDate(detail.created_at)}</time><span>{detail.options_count}개 옵션</span></div><div className="detail-source"><span>1688 원본 URL</span>{sourceLink(detail.source_url)?<a href={sourceLink(detail.source_url)} target="_blank" rel="noopener noreferrer">{detail.source_url}</a>:<span className="detail-source-value">{detail.source_url||'원본 URL 미입력'}</span>}</div></div><button className="icon-close" aria-label="상품 작업 공간 닫기" onClick={()=>setDetail(null)}>×</button></header>
+        <nav className="registration-steps" aria-label="상품 등록 7단계">{registrationSteps.map((value,index)=><button type="button" key={value} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={tab===value?'active':''}><span>{index+1}</span><strong>{value}</strong></button>)}</nav>
+        <nav className="registration-tools" aria-label="상품 보조 작업"><span>보조 작업</span>{supportingTabs.map(item=><button key={item.value} type="button" onClick={()=>selectDetailTab(item.value)} aria-pressed={tab===item.value} className={tab===item.value?'active':''}>{item.label}</button>)}<small>단계 이동 시 입력 유지 · 각 단계에서 저장</small></nav>
+        <div className="detail-body" ref={detailBody}><DetailPanel key={detail.id} onSaved={()=>void loadWorkspace()} onManageCategories={()=>{setDetail(null);setIntakeStep('category');setAddOpen(true);}} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div>
+        <footer className="registration-navigation">{detailStepIndex>=0?<><button type="button" className="btn ghost" disabled={detailStepIndex===0} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex-1])}>← 이전{detailStepIndex>0?` · ${registrationSteps[detailStepIndex-1]}`:''}</button><div><strong>{detailStepIndex+1} / {registrationSteps.length} · {tab}</strong><small>입력 단계이며 자동화 완료 상태를 뜻하지 않습니다.</small></div><button type="button" className="btn primary" disabled={detailStepIndex===registrationSteps.length-1} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex+1])}>{detailStepIndex===registrationSteps.length-1?'마지막 단계':`다음 · ${registrationSteps[detailStepIndex+1]} →`}</button></>:<><span>보조 작업 · {supportingTabs.find(item=>item.value===tab)?.label}</span><button type="button" className="btn primary" onClick={()=>selectDetailTab(lastRegistrationStep)}>{registrationSteps.indexOf(lastRegistrationStep)+1}. {lastRegistrationStep} 단계로 돌아가기 →</button></>}</footer>
+      </aside></div>}
 
       {transmitOpen&&<Modal title="Supplier Hub 등록 전송" subtitle="확장·로그인된 Supplier Hub 탭·제안 규격의 확인이 필요합니다." onClose={()=>setTransmitOpen(false)}><div className="transmit-summary"><div className="send-icon">↗</div><strong>전송 차단 · 연결 미검증</strong><p>아래는 과거 코드에서 전송 가능으로 표시한 상품입니다. 실제 준비 완료를 의미하지 않습니다. 운영 전송은 구현·검증 및 사용자 승인 후 가능합니다.</p><ul>{ready.map(p=><li key={p.id}><span>{p.title}</span><strong>{won(p.supply_price)}</strong></li>)}</ul><label className="confirm-check"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/><span>전송 대상과 가격 정보를 확인했습니다.</span></label></div><div className="modal-actions"><button className="btn ghost" onClick={()=>setTransmitOpen(false)}>취소</button><button className="btn rose" disabled onClick={transmit}>{busy?'전송 중…':'Supplier Hub 전송'}</button></div></Modal>}
 
@@ -316,24 +359,26 @@ function Modal({ title, subtitle, onClose, children, wide=false }: { title:strin
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" onClick={onClose}>×</button></header>{children}</section></div>;
 }
 function DetailPanel({ tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories }: { onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
-  const contentSection = tab==='이미지' ? '이미지' : tab==='표시사항' ? '표시사항' : 'SEO';
+  const isImageStep=imageSteps.includes(tab);
+  const contentSection = isImageStep ? '이미지' : tab==='표시사항' ? '표시사항' : 'SEO';
+  const focusedAssetRole=tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='상세 이미지'?'detail':undefined;
   let imageKeys:string[]=[];try{const keys:unknown=JSON.parse(product.image_keys);if(Array.isArray(keys))imageKeys=keys.filter((key):key is string=>typeof key==='string');}catch{/* The file and content APIs report invalid stored references. */}
   return <>
-    <div hidden={!['SEO','이미지','표시사항'].includes(tab)} className="panel-stack">
-      {tab==='이미지'&&<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" onChange={onUpload}/></label>}
-      <ProductContentEditor product={product} section={contentSection} onSaved={onSaved}/>
+    <div hidden={!['SEO','표시사항',...imageSteps].includes(tab)} className="panel-stack">
+      {isImageStep&&<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" onChange={onUpload}/></label>}
+      <ProductContentEditor product={product} section={contentSection} focusedAssetRole={focusedAssetRole} onSaved={onSaved}/>
     </div>
-    <div hidden={tab!=='이미지'} className="panel-stack"><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={onSaved}/></div>
+    <div hidden={!isImageStep} className="panel-stack"><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={onSaved}/></div>
     <div hidden={tab!=='표시사항'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={onSaved}/></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div hidden={tab!=='번역'}><TranslationPanel productId={product.id} version={product.updated_at} title={product.title} onContentSaved={onSaved}/></div>
     <div hidden={tab!=='옵션'} className="panel-stack"><ProductOptionsEditor product={product} onSaved={onSaved}/><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={onSaved}/></div>
-    {tab==='가격'&&<PriceEditor sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={onSavePrice}/>}
-    {tab==='견적서'&&<div className="panel-stack"><QuotationPanel productId={product.id} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>}
+    <div hidden={tab!=='가격'}><PriceEditor sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={onSavePrice}/></div>
+    <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel productId={product.id} refreshToken={`${product.updated_at}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
   </>;
 }
 function LegacyQuotePanel({ product, settings }: {product:Product;settings:Settings}) {
-  return <div className="panel-stack"><article className="quote-sheet"><header><div><span>SUPPLY QUOTATION</span><h3>대표 상품 가격 참고</h3></div><strong>SF-{product.id.slice(0,8).toUpperCase()}</strong></header><dl><div><dt>상품명</dt><dd>{product.title}</dd></div><div><dt>옵션 수</dt><dd>{product.options_count}개</dd></div><div><dt>공급가</dt><dd>{won(product.supply_price)}</dd></div><div><dt>권장 판매가</dt><dd>{won(product.sale_price)}</dd></div><div><dt>시장가격(MSRP)</dt><dd>{won(product.msrp)}</dd></div><div><dt>수입·판매원</dt><dd>{settings.importer}</dd></div></dl><footer><span>내부 검토용 · Supplier Hub 호환 미검증</span><strong>SOURCEFLOW</strong></footer></article><p>SEO·표시사항·이미지 탭에서 저장한 자료는 검토 ZIP에 포함됩니다. 연결된 원본 양식을 채우려면 위에서 카테고리와 입력 행을 선택하세요.</p><div className="quote-actions"><a className="btn primary" href={'/api/products/'+product.id+'/bundle'}>첨부 자료 ZIP 다운로드</a><button className="btn ghost" onClick={()=>window.print()}>견적서 인쇄 / PDF</button><button className="btn primary" onClick={()=>downloadQuote(product,settings)}>견적 CSV 다운로드</button></div></div>;
+  return <div className="panel-stack"><article className="quote-sheet"><header><div><span>SUPPLY QUOTATION</span><h3>대표 상품 가격 참고</h3></div><strong>SF-{product.id.slice(0,8).toUpperCase()}</strong></header><dl><div><dt>상품명</dt><dd>{product.title}</dd></div><div><dt>옵션 수</dt><dd>{product.options_count}개</dd></div><div><dt>공급가</dt><dd>{won(product.supply_price)}</dd></div><div><dt>권장 판매가</dt><dd>{won(product.sale_price)}</dd></div><div><dt>시장가격(MSRP)</dt><dd>{won(product.msrp)}</dd></div><div><dt>수입·판매원</dt><dd>{settings.importer}</dd></div></dl><footer><span>내부 검토용 · Supplier Hub 호환 미검증</span><strong>SOURCEFLOW</strong></footer></article><p>SEO·표시사항·이미지 탭에서 저장한 자료는 검토 ZIP에 포함됩니다. 연결된 원본 양식을 채우려면 위에서 카테고리와 입력 행을 선택하세요.</p><div className="quote-actions"><button className="btn ghost" onClick={()=>window.print()}>견적서 인쇄 / PDF</button><button className="btn primary" onClick={()=>downloadQuote(product,settings)}>견적 CSV 다운로드</button></div></div>;
 }
 
 function downloadQuote(product: Product, settings: Settings) {

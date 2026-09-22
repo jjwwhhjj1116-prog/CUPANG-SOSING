@@ -44,7 +44,7 @@ await json(`/api/products/${product.id}/content`,{expectedRevision:content.revis
 const state=await json(`/api/products/${product.id}/options`);
 await json(`/api/products/${product.id}/options`,{expectedRevision:state.options.revision,expectedProductVersion:state.productVersion,rows:[{id:state.options.rows[0]?.id??crypto.randomUUID(),originalName:'LOCAL TEST 原文',translatedName:'로컬 검증 옵션',supplierSku:'LOCAL-TEST-SKU',unitCostCny:3.25,unitsPerPack:2,minimumOrderQuantity:1,widthCm:10,lengthCm:20,heightCm:3,weightKg:0.2,included:true,imageKey}]},'PATCH');
 const preview=await json(`/api/products/${product.id}/quotation`,{action:'preview',profileId:profile.id,dataStartRow:2});
-assert.equal(preview.report.rowCount,1);assert.equal(preview.rows[0][0],title);assert.equal(preview.rows[0][1],'로컬 검증 옵션');assert.equal(preview.rows[0][3],'assets/image-001.png');
+assert.equal(preview.report.rowCount,1);assert.equal(preview.rows[0][0],title);assert.equal(preview.rows[0][1],'로컬 검증 옵션');assert.equal(preview.rows[0][3],'image-001.png');
 assert.ok(preview.report.missingRequired.some(field=>field.header==='제조국'));
 const response=await fetch(`${base}/api/products/${product.id}/quotation`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'export',profileId:profile.id,dataStartRow:2,fingerprint:preview.fingerprint})});
 assert.equal(response.status,200,await (response.status===200?Promise.resolve(''):response.text()));
@@ -52,7 +52,7 @@ const zip=new Uint8Array(await response.arrayBuffer());const files=unzipSync(zip
 assert.deepEqual(files['assets/image-001.png'],new Uint8Array(png));
 assert.equal(strFromU8(workbook['xl/worksheets/sheet2.xml']),raw['xl/worksheets/sheet2.xml']);
 assert.ok(strFromU8(workbook['xl/worksheets/sheet1.xml']).includes('로컬 검증 옵션'));
-assert.ok(strFromU8(workbook['xl/worksheets/sheet1.xml']).includes('assets/image-001.png'));
+assert.ok(strFromU8(workbook['xl/worksheets/sheet1.xml']).includes('image-001.png'));
 const current=(await json(`/api/products/${product.id}/content`)).content;
 await json(`/api/products/${product.id}/content`,{expectedRevision:current.revision,patch:{seo:{description:'수정 후 이전 견적서 지문 무효화 확인. 실상품 아님.'}}},'PATCH');
 const stale=await fetch(`${base}/api/products/${product.id}/quotation`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'export',profileId:profile.id,dataStartRow:2,fingerprint:preview.fingerprint})});assert.equal(stale.status,409);

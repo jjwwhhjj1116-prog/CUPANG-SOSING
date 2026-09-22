@@ -1,0 +1,275 @@
+{
+  "source": "https://supplier.coupang.com/sr/registration",
+  "observedDate": "2026-09-22",
+  "surface": "Chrome rendered category selector and visible category textbox",
+  "status": "partial-observation",
+  "subtree": [
+    "주방용품",
+    "주방수납/정리"
+  ],
+  "comparisonSource": "docs/couplus-category-dom-2026-09-22.json",
+  "expectedLeafCount": 22,
+  "verifiedLeafCount": 20,
+  "categoryIds": [
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "기타수납/정리용품"
+      ],
+      "categoryId": "80720",
+      "displayedValue": "주방용품>주방수납/정리>기타수납/정리용품 (80720)",
+      "observedAt": "2026-09-22T11:48:25.746Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "바나나걸이"
+      ],
+      "categoryId": "109047",
+      "displayedValue": "주방용품>주방수납/정리>바나나걸이 (109047)",
+      "observedAt": "2026-09-22T11:48:36.726Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "주방수납바구니/바스켓"
+      ],
+      "categoryId": "80719",
+      "displayedValue": "주방용품>주방수납/정리>주방수납바구니/바스켓 (80719)",
+      "observedAt": "2026-09-22T11:48:49.434Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "냉장고/냉동실정리용품",
+        "냉장고슬라이드선반"
+      ],
+      "categoryId": "80717",
+      "displayedValue": "주방용품>주방수납/정리>냉장고/냉동실정리용품>냉장고슬라이드선반 (80717)",
+      "observedAt": "2026-09-22T11:49:38.876Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "냉장고/냉동실정리용품",
+        "정리수납함/트레이"
+      ],
+      "categoryId": "80718",
+      "displayedValue": "주방용품>주방수납/정리>냉장고/냉동실정리용품>정리수납함/트레이 (80718)",
+      "observedAt": "2026-09-22T11:49:50.177Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "개수대"
+      ],
+      "categoryId": "80701",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>개수대 (80701)",
+      "observedAt": "2026-09-22T11:53:54.749Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "거치식 식기건조대/싱크선반"
+      ],
+      "categoryId": "80699",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>거치식 식기건조대/싱크선반 (80699)",
+      "observedAt": "2026-09-22T11:54:27.530Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "국자받침/조리도구받침"
+      ],
+      "categoryId": "80709",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>국자받침/조리도구받침 (80709)",
+      "observedAt": "2026-09-22T11:54:50.867Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "기둥식 식기건조대/싱크선반"
+      ],
+      "categoryId": "80700",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>기둥식 식기건조대/싱크선반 (80700)",
+      "observedAt": "2026-09-22T11:55:04.930Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "도마정리대/쟁반정리대"
+      ],
+      "categoryId": "80708",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>도마정리대/쟁반정리대 (80708)",
+      "observedAt": "2026-09-22T11:55:23.509Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "부착식 식기건조대/싱크선반"
+      ],
+      "categoryId": "110583",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>부착식 식기건조대/싱크선반 (110583)",
+      "observedAt": "2026-09-22T11:55:43.139Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "설거지통"
+      ],
+      "categoryId": "80703",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>설거지통 (80703)",
+      "observedAt": "2026-09-22T11:56:16.574Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "싱크롤"
+      ],
+      "categoryId": "80702",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>싱크롤 (80702)",
+      "observedAt": "2026-09-22T11:56:31.282Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "싱크수저정리함/서랍정리함"
+      ],
+      "categoryId": "80710",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>싱크수저정리함/서랍정리함 (80710)",
+      "observedAt": "2026-09-22T11:56:49.225Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "접시꽂이"
+      ],
+      "categoryId": "80707",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>접시꽂이 (80707)",
+      "observedAt": "2026-09-22T11:57:17.443Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "정리선반/다용도선반"
+      ],
+      "categoryId": "80704",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>정리선반/다용도선반 (80704)",
+      "observedAt": "2026-09-22T11:57:33.629Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "컵걸이"
+      ],
+      "categoryId": "80706",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>컵걸이 (80706)",
+      "observedAt": "2026-09-22T11:57:47.731Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "프라이팬정리대"
+      ],
+      "categoryId": "80705",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>프라이팬정리대 (80705)",
+      "observedAt": "2026-09-22T11:58:04.742Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "주방걸이/정리홀더",
+        "수세미걸이/수세미받침"
+      ],
+      "categoryId": "80712",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>주방걸이/정리홀더>수세미걸이/수세미받침 (80712)",
+      "observedAt": "2026-09-22T11:58:48.175Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "주방걸이/정리홀더",
+        "조리도구걸이"
+      ],
+      "categoryId": "80713",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>주방걸이/정리홀더>조리도구걸이 (80713)",
+      "observedAt": "2026-09-22T11:59:06.035Z"
+    }
+  ],
+  "remainingPaths": [
+    [
+      "주방용품",
+      "주방수납/정리",
+      "식기건조대/싱크대정리",
+      "주방걸이/정리홀더",
+      "키친타올걸이/홀더"
+    ],
+    [
+      "주방용품",
+      "주방수납/정리",
+      "식기건조대/싱크대정리",
+      "주방걸이/정리홀더",
+      "행주걸이/주방수건걸이"
+    ]
+  ],
+  "comparison": {
+    "observedSubtreeNamesMatch": true,
+    "verifiedPathsMatchCouplus": true,
+    "completeSubtreeIdsVerified": false,
+    "unknownCategoryIdsInvented": false
+  },
+  "blockingObservation": {
+    "recordedAt": "2026-09-22T12:04:12Z",
+    "status": "login-required",
+    "detail": "The last two leaf selections closed the modal but did not update the category textbox. Reopening the same registration page then displayed the Supplier Hub login form. No authentication bypass or alternate account was attempted."
+  },
+  "actions": {
+    "productNameEntered": false,
+    "nextClicked": false,
+    "saveClicked": false,
+    "previewClicked": false,
+    "registeredOrSubmitted": false
+  },
+  "limitations": [
+    "Twenty category paths and IDs were read directly from the visible category textbox after normal category selection; the last two IDs remain unconfirmed.",
+    "The displayed subtree names matched the Couplus observation, including the four final 주방걸이/정리홀더 leaves. This does not establish the complete Supplier Hub taxonomy.",
+    "Category paths and IDs do not verify category-specific quotation field definitions or final Supplier Hub acceptance.",
+    "Only category selection and one category-name search in a blank form were used. No product name, next, save, preview, registration or submission action was executed.",
+    "No hidden application state, network request replay, cookies, session values or private API calls were inspected."
+  ]
+}

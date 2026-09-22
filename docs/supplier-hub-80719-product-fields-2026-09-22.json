@@ -1,0 +1,778 @@
+{
+  "observedAt": "2026-09-22",
+  "source": "https://supplier.coupang.com/sr/registration/step/productPage",
+  "categoryId": "80719",
+  "categoryPath": [
+    "주방용품",
+    "주방수납/정리",
+    "주방수납바구니/바스켓"
+  ],
+  "evidence": "Supplier Hub live Product Page DOM. Labels and order independently read from accessibility snapshot. No final submission.",
+  "exposedRequired": [
+    "color",
+    "quantity",
+    "size"
+  ],
+  "fields": [
+    {
+      "id": "lidIncluded",
+      "label": "뚜껑 포함여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "뚜껑포함",
+          "selected": false,
+          "value": "뚜껑포함"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "heightAdjustable",
+      "label": "높이조절 여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "높이조절 가능",
+          "selected": false,
+          "value": "높이조절 가능"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "basketShape",
+      "label": "바구니 형태",
+      "type": "select",
+      "options": [
+        {
+          "label": "원형",
+          "selected": false,
+          "value": "원형"
+        },
+        {
+          "label": "사각형",
+          "selected": false,
+          "value": "사각형"
+        },
+        {
+          "label": "다각형",
+          "selected": false,
+          "value": "다각형"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "storageMaterial",
+      "label": "수납/정리용품 재질",
+      "type": "select",
+      "options": [
+        {
+          "label": "플라스틱",
+          "selected": false,
+          "value": "플라스틱"
+        },
+        {
+          "label": "패브릭",
+          "selected": false,
+          "value": "패브릭"
+        },
+        {
+          "label": "부직포",
+          "selected": false,
+          "value": "부직포"
+        },
+        {
+          "label": "PVC",
+          "selected": false,
+          "value": "PVC"
+        },
+        {
+          "label": "라탄",
+          "selected": false,
+          "value": "라탄"
+        },
+        {
+          "label": "원목/우드",
+          "selected": false,
+          "value": "원목/우드"
+        },
+        {
+          "label": "강철/철제",
+          "selected": false,
+          "value": "강철/철제"
+        },
+        {
+          "label": "스테인리스",
+          "selected": false,
+          "value": "스테인리스"
+        },
+        {
+          "label": "아크릴",
+          "selected": false,
+          "value": "아크릴"
+        },
+        {
+          "label": "ABS",
+          "selected": false,
+          "value": "ABS"
+        },
+        {
+          "label": "고무",
+          "selected": false,
+          "value": "고무"
+        },
+        {
+          "label": "폴리프로필렌(PP)",
+          "selected": false,
+          "value": "폴리프로필렌(PP)"
+        },
+        {
+          "label": "폴리에스터(PE)",
+          "selected": false,
+          "value": "폴리에스터(PE)"
+        },
+        {
+          "label": "벨벳",
+          "selected": false,
+          "value": "벨벳"
+        },
+        {
+          "label": "종이",
+          "selected": false,
+          "value": "종이"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "handleIncluded",
+      "label": "손잡이 포함여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "손잡이 포함",
+          "selected": false,
+          "value": "손잡이 포함"
+        },
+        {
+          "label": "미포함",
+          "selected": false,
+          "value": "미포함"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "foldable",
+      "label": "접이식 가능여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "접이식가능",
+          "selected": false,
+          "value": "접이식가능"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "transparent",
+      "label": "투명 여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "투명",
+          "selected": false,
+          "value": "투명"
+        },
+        {
+          "label": "반투명",
+          "selected": false,
+          "value": "반투명"
+        },
+        {
+          "label": "불투명",
+          "selected": false,
+          "value": "불투명"
+        },
+        {
+          "label": "해당없음",
+          "selected": false,
+          "value": "해당없음"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "storageShape",
+      "label": "수납/정리함 형태",
+      "type": "select",
+      "options": [
+        {
+          "label": "선반형",
+          "selected": false,
+          "value": "선반형"
+        },
+        {
+          "label": "박스형",
+          "selected": false,
+          "value": "박스형"
+        },
+        {
+          "label": "그물형",
+          "selected": false,
+          "value": "그물형"
+        },
+        {
+          "label": "바구니형",
+          "selected": false,
+          "value": "바구니형"
+        },
+        {
+          "label": "서랍형",
+          "selected": false,
+          "value": "서랍형"
+        },
+        {
+          "label": "혼합형",
+          "selected": false,
+          "value": "혼합형"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "ventilationFan",
+      "label": "환기팬 유무",
+      "type": "select",
+      "options": [
+        {
+          "label": "환기팬있음",
+          "selected": false,
+          "value": "환기팬있음"
+        },
+        {
+          "label": "환기팬없음",
+          "selected": false,
+          "value": "환기팬없음"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "storageMethod",
+      "label": "보관방식",
+      "type": "select",
+      "options": [
+        {
+          "label": "실온보관",
+          "selected": false,
+          "value": "실온보관"
+        },
+        {
+          "label": "냉동보관",
+          "selected": false,
+          "value": "냉동보관"
+        },
+        {
+          "label": "냉장보관",
+          "selected": false,
+          "value": "냉장보관"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "storageAvailable",
+      "label": "수납가능여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "수납가능",
+          "selected": false,
+          "value": "수납가능"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "storageLocation",
+      "label": "수납정리공간 위치",
+      "type": "select",
+      "options": [
+        {
+          "label": "싱크대 상부장",
+          "selected": false,
+          "value": "싱크대 상부장"
+        },
+        {
+          "label": "싱크대 하부장",
+          "selected": false,
+          "value": "싱크대 하부장"
+        },
+        {
+          "label": "조리대 윗공간",
+          "selected": false,
+          "value": "조리대 윗공간"
+        },
+        {
+          "label": "싱크대/개수대 주변",
+          "selected": false,
+          "value": "싱크대/개수대 주변"
+        },
+        {
+          "label": "냉장고 선반/바스켓",
+          "selected": false,
+          "value": "냉장고 선반/바스켓"
+        },
+        {
+          "label": "기타/틈새수납",
+          "selected": false,
+          "value": "기타/틈새수납"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "basketUse",
+      "label": "바구니 용도",
+      "type": "select",
+      "options": [
+        {
+          "label": "수납/정리바구니",
+          "selected": false,
+          "value": "수납/정리바구니"
+        },
+        {
+          "label": "빨래바구니",
+          "selected": false,
+          "value": "빨래바구니"
+        },
+        {
+          "label": "목욕바구니",
+          "selected": false,
+          "value": "목욕바구니"
+        },
+        {
+          "label": "소풍바구니",
+          "selected": false,
+          "value": "소풍바구니"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "shelfShape",
+      "label": "선반형태",
+      "type": "select",
+      "options": [
+        {
+          "label": "스탠드형",
+          "selected": false,
+          "value": "스탠드형"
+        },
+        {
+          "label": "설치형 (못없이)",
+          "selected": false,
+          "value": "설치형 (못없이)"
+        },
+        {
+          "label": "설치형 (타공)",
+          "selected": false,
+          "value": "설치형 (타공)"
+        },
+        {
+          "label": "부착/흡착형",
+          "selected": false,
+          "value": "부착/흡착형"
+        },
+        {
+          "label": "걸이형",
+          "selected": false,
+          "value": "걸이형"
+        },
+        {
+          "label": "기둥/행거형",
+          "selected": false,
+          "value": "기둥/행거형"
+        },
+        {
+          "label": "압축 (스프링)형",
+          "selected": false,
+          "value": "압축 (스프링)형"
+        },
+        {
+          "label": "싱크바구니형",
+          "selected": false,
+          "value": "싱크바구니형"
+        },
+        {
+          "label": "싱크롤형",
+          "selected": false,
+          "value": "싱크롤형"
+        },
+        {
+          "label": "매트형",
+          "selected": false,
+          "value": "매트형"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "widthAdjustable",
+      "label": "폭조절 가능 여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "폭조절 가능",
+          "selected": false,
+          "value": "폭조절 가능"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "assemblyRequired",
+      "label": "조립식 여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "조립식",
+          "selected": false,
+          "value": "조립식"
+        },
+        {
+          "label": "비조립식",
+          "selected": false,
+          "value": "비조립식"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "sliding",
+      "label": "슬라이딩 여부",
+      "type": "select",
+      "options": [
+        {
+          "label": "슬라이딩",
+          "selected": false,
+          "value": "슬라이딩"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "kitchenShelfUse",
+      "label": "주방선반 용도",
+      "type": "select",
+      "options": [
+        {
+          "label": "다용도",
+          "selected": false,
+          "value": "다용도"
+        },
+        {
+          "label": "식기 건조용",
+          "selected": false,
+          "value": "식기 건조용"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "finishType",
+      "label": "마감 유형",
+      "type": "select",
+      "options": [
+        {
+          "label": "브러쉬 처리",
+          "selected": false,
+          "value": "브러쉬 처리"
+        },
+        {
+          "label": "래커 처리",
+          "selected": false,
+          "value": "래커 처리"
+        },
+        {
+          "label": "오일 마감",
+          "selected": false,
+          "value": "오일 마감"
+        },
+        {
+          "label": "도장",
+          "selected": false,
+          "value": "도장"
+        },
+        {
+          "label": "광택 처리",
+          "selected": false,
+          "value": "광택 처리"
+        },
+        {
+          "label": "분체 도장",
+          "selected": false,
+          "value": "분체 도장"
+        },
+        {
+          "label": "무광택",
+          "selected": false,
+          "value": "무광택"
+        },
+        {
+          "label": "고광택",
+          "selected": false,
+          "value": "고광택"
+        },
+        {
+          "label": "고민 처리",
+          "selected": false,
+          "value": "고민 처리"
+        },
+        {
+          "label": "광택 처리되지 않음",
+          "selected": false,
+          "value": "광택 처리되지 않음"
+        },
+        {
+          "label": "글로시",
+          "selected": false,
+          "value": "글로시"
+        },
+        {
+          "label": "매트",
+          "selected": false,
+          "value": "매트"
+        },
+        {
+          "label": "미완성",
+          "selected": false,
+          "value": "미완성"
+        },
+        {
+          "label": "반광택",
+          "selected": false,
+          "value": "반광택"
+        },
+        {
+          "label": "반무광",
+          "selected": false,
+          "value": "반무광"
+        },
+        {
+          "label": "반짝임",
+          "selected": false,
+          "value": "반짝임"
+        },
+        {
+          "label": "새틴",
+          "selected": false,
+          "value": "새틴"
+        },
+        {
+          "label": "쉬머리",
+          "selected": false,
+          "value": "쉬머리"
+        },
+        {
+          "label": "쉬어",
+          "selected": false,
+          "value": "쉬어"
+        },
+        {
+          "label": "페인트 처리",
+          "selected": false,
+          "value": "페인트 처리"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "includedComponents",
+      "label": "포함 구성 요소",
+      "type": "select",
+      "options": [
+        {
+          "label": "갓",
+          "selected": false,
+          "value": "갓"
+        },
+        {
+          "label": "나사",
+          "selected": false,
+          "value": "나사"
+        },
+        {
+          "label": "리모콘",
+          "selected": false,
+          "value": "리모콘"
+        },
+        {
+          "label": "반사판",
+          "selected": false,
+          "value": "반사판"
+        },
+        {
+          "label": "배터리",
+          "selected": false,
+          "value": "배터리"
+        },
+        {
+          "label": "본품",
+          "selected": false,
+          "value": "본품"
+        },
+        {
+          "label": "설명서",
+          "selected": false,
+          "value": "설명서"
+        },
+        {
+          "label": "스탠드",
+          "selected": false,
+          "value": "스탠드"
+        },
+        {
+          "label": "어댑터",
+          "selected": false,
+          "value": "어댑터"
+        },
+        {
+          "label": "전구",
+          "selected": false,
+          "value": "전구"
+        },
+        {
+          "label": "전원 케이블",
+          "selected": false,
+          "value": "전원 케이블"
+        },
+        {
+          "label": "조광기",
+          "selected": false,
+          "value": "조광기"
+        },
+        {
+          "label": "콘센트",
+          "selected": false,
+          "value": "콘센트"
+        },
+        {
+          "label": "해당없음",
+          "selected": false,
+          "value": "해당없음"
+        },
+        {
+          "label": "On-Off 스위치",
+          "selected": false,
+          "value": "On-Off 스위치"
+        },
+        {
+          "label": "USB포트",
+          "selected": false,
+          "value": "USB포트"
+        },
+        {
+          "label": "어플리케이터 브러시",
+          "selected": false,
+          "value": "어플리케이터 브러시"
+        },
+        {
+          "label": "주걱",
+          "selected": false,
+          "value": "주걱"
+        },
+        {
+          "label": "추출 도구",
+          "selected": false,
+          "value": "추출 도구"
+        },
+        {
+          "label": "해당사항없음",
+          "selected": true,
+          "value": ""
+        }
+      ]
+    }
+  ]
+}

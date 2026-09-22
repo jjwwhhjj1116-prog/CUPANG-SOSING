@@ -80,7 +80,7 @@ Access 인증은 사이트 계정을 확인하는 단계다. 유료 AI 작업 �
 
 ## D1 스키마 기준 파일과 로컬 검증
 
-`db/migrations/0001_sourceflow_bootstrap.sql`은 현재 `db/` 런타임 코드의 테이블 13개와 명시적 인덱스 7개를 한 파일로 모은 기준 스키마다. 기존 런타임의 `CREATE IF NOT EXISTS` 호출은 호환성을 위해 유지했다. 이 파일에는 테이블·인덱스 생성만 있으며, 상품·설정·작업 기록을 지우거나 덮어쓰는 구문은 없다. 실제 로컬 D1·원격 D1에 이 파일을 적용하지 않았다.
+`db/migrations/0001_sourceflow_bootstrap.sql`은 기존 13개 테이블·7개 명시적 인덱스의 기준 스키마다. `0002_quotation_fields.sql`이 견적 수정 저장을, `0003_archive_indexes.sql`이 날짜별 상품 조회 인덱스를 추가한다. 전체는 14개 테이블·10개 명시적 인덱스다. 기존 런타임의 `CREATE IF NOT EXISTS` 호출은 호환성을 위해 유지하며 상품·설정·작업 기록을 지우지 않는다. 2026-09-22 전용 원격 `sourceflow-db`에 세 migration을 적용하고 스키마와 상품0건을 확인했다. 실제 계정/배포 진행은 HANDOFF 16절을 참고한다.
 
 | 영역 | 테이블 |
 | --- | --- |
@@ -88,6 +88,7 @@ Access 인증은 사이트 계정을 확인하는 단계다. 유료 AI 작업 �
 | 수집 요청과 선택 당시 설정 | `collection_jobs`, `collection_context` |
 | 카테고리·견적서 연결 | `category_profiles` |
 | 상품 콘텐츠·옵션 | `product_content`, `product_options` |
+| 견적 공통·옵션별 수정 | `product_quotation_fields` |
 | 자동화 상태·중복 요청 영수증·이력 | `product_automation`, `product_automation_receipts`, `product_automation_history` |
 | 승인된 번역·이미지 작업 기록 | `translation_jobs`, `image_jobs` |
 
@@ -100,7 +101,7 @@ node --test tests/db-schema.test.mjs
 
 첫 명령은 TypeScript 구문 트리에서 `db/`의 정적 DDL을 읽고, 기준 SQL과 각각 빈 메모리 DB에 적용한다. 테이블·열·기본값·CHECK·외래 키·복합 UNIQUE·부분 인덱스를 비교한다. 같은 테이블의 중복 선언은 정의가 동일할 때만 허용한다. 동적 DDL이나 지원하지 않는 런타임 스키마 변경을 발견하면 실패한다. 실제 DB 경로나 바인딩을 전달하는 옵션은 없다.
 
-회귀 테스트는 새 스키마 생성, 두 번 적용해도 변하지 않는 결과, `drizzle/0000_spooky_wendell_rand.sql` 기반의 기존 스키마 확장, 모든 13개 테이블의 합성 데이터 보존을 검사한다. 처리 중·결과 불확실 상태의 유료 작업과 중복 요청 기록도 그대로 남는지 확인한다. 외래 키, 활성 수집 요청 중복 방지, 양수 버전 제약과 스키마 누락 탐지도 검사한다. D1이 외래 키를 기본 적용하는 동작에 맞춰 테스트에서도 외래 키를 활성화했다. [Cloudflare 외래 키 문서](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)
+회귀 테스트는 새 스키마 생성, 순서대로 두 번 적용해도 변하지 않는 결과, `drizzle/0000_spooky_wendell_rand.sql` 기반의 기존 스키마 확장, 기존 상품·수정값·작업 기록 보존을 검사한다. 처리 중·결과 불확실 상태의 유료 작업과 중복 요청 기록도 그대로 남는지 확인한다. 외래 키, 활성 수집 요청 중복 방지, 양수 버전 제약과 스키마 누락 탐지도 검사한다. D1이 외래 키를 기본 적용하는 동작에 맞춰 테스트에서도 외래 키를 활성화했다. [Cloudflare 외래 키 문서](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)
 
 기존 Drizzle 마이그레이션의 상품·설정 PK에는 `NOT NULL`이 명시되어 있고, 기존 런타임 DDL에는 그 표기가 없다. 기준 SQL은 현재 런타임 정의와 일치하며, 기존 테이블에는 `IF NOT EXISTS`로 아무 변경도 가하지 않는다. 따라서 기존의 더 엄격한 PK 선언·기본값·인덱스와 저장 행을 그대로 보존한다. 이전 데이터를 새 Access 사용자에게 자동 이관하지 않는다.
 

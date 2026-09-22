@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { assertAdditiveBootstrap, checkDatabaseSchema, ddlFromSource, memoryDatabase, readBootstrap, runtimeDDL, schemaSnapshot } from '../scripts/check-db-schema.mjs';
+import { assertAdditiveBootstrap, checkDatabaseSchema, ddlFromSource, memoryDatabase, readBootstrap, readMigrationFiles, readMigrations, runtimeDDL, schemaSnapshot } from '../scripts/check-db-schema.mjs';
 
 const bootstrap = readBootstrap();
+const migrations = readMigrations();
 const legacy = fs.readFileSync(new URL('../drizzle/0000_spooky_wendell_rand.sql', import.meta.url), 'utf8');
 const owner = 'local-demo'; const productId = 'synthetic-product'; const now = '2026-09-22T00:00:00.000Z';
 const json = JSON.stringify({ text: '한글 · 원본 보존', result: 'review only', revision: 2 });
@@ -39,7 +40,7 @@ function seedCompanions(db) {
 
 test('checked-in bootstrap matches every runtime table, constraint, column and named index on fresh SQLite', () => {
   const result = checkDatabaseSchema();
-  assert.equal(result.tables, 13); assert.equal(result.indexes, 7); assert.equal(result.runtimeModules, 8);
+  assert.equal(result.tables, 14); assert.equal(result.indexes, 10); assert.equal(result.runtimeModules, 10);
 });
 
 test('legacy Drizzle schema upgrade preserves product/settings rows, defaults, PK declarations and indexes', () => {
@@ -68,9 +69,10 @@ test('reapplying bootstrap preserves every current table including uncertain/run
     // tracked migration is applied. None of its rows should be reinitialized.
     for (const statement of runtimeDDL()) db.exec(statement.sql);
     seedLegacy(db); seedCompanions(db);
+    db.prepare('INSERT INTO product_quotation_fields(product_id,owner_id,revision,payload,updated_at) VALUES (?,?,?,?,?)').run(productId,owner,2,json,now);
     const before = tableData(db); const schema = schemaSnapshot(db);
-    assert.equal(before.length, 13); assert.ok(before.every(table => table.rows.length === 1));
-    db.exec(bootstrap); db.exec(bootstrap);
+    assert.equal(before.length, 14); assert.ok(before.every(table => table.rows.length === 1));
+    db.exec(migrations); db.exec(migrations);
     assert.deepEqual(tableData(db), before); assert.deepEqual(schemaSnapshot(db), schema);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
@@ -102,14 +104,34 @@ test('bootstrap enforces foreign keys, revision checks, active-offer uniqueness 
 
 test('schema checker detects missing indexes, changed CHECK/default/unique definitions and destructive bootstrap statements', () => {
   for (const changed of [
-    bootstrap.replace('CREATE INDEX IF NOT EXISTS idx_products_owner_updated ON products(owner_id, updated_at);', ''),
-    bootstrap.replace('CHECK(revision > 0)', 'CHECK(revision >= 0)'),
-    bootstrap.replace("DEFAULT 'price'", "DEFAULT 'transmit'"),
-    bootstrap.replace('UNIQUE(owner_id,product_id,idempotency_key), FOREIGN KEY', 'FOREIGN KEY'),
+    migrations.replace('CREATE INDEX IF NOT EXISTS idx_products_owner_updated ON products(owner_id, updated_at);', ''),
+    migrations.replace('CHECK(revision > 0)', 'CHECK(revision >= 0)'),
+    migrations.replace("DEFAULT 'price'", "DEFAULT 'transmit'"),
+    migrations.replace('UNIQUE(owner_id,product_id,idempotency_key), FOREIGN KEY', 'FOREIGN KEY'),
   ]) assert.throws(() => checkDatabaseSchema(changed), /differs from runtime DDL/);
   assert.throws(() => assertAdditiveBootstrap(`${bootstrap}\nDELETE FROM products;`), /only create missing/);
   assert.throws(() => assertAdditiveBootstrap('DROP TABLE products;'), /only create missing/);
   assert.throws(() => assertAdditiveBootstrap('CREATE TABLE unguarded (id TEXT);'), /only create missing/);
+});
+
+test('quotation-fields migration adds one guarded table without changing the existing thirteen tables or rows', () => {
+  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql']);
+  const db=memoryDatabase();
+  try {
+    db.exec(bootstrap);seedLegacy(db);seedCompanions(db);
+    const previousSchema=schemaSnapshot(db);const previousData=tableData(db);
+    assert.equal(previousData.length,13);
+    db.exec(files[1].sql);
+    const current=schemaSnapshot(db);const data=tableData(db);
+    for(const before of previousSchema)assert.deepEqual(current.find(item=>item.name===before.name),before);
+    for(const before of previousData)assert.deepEqual(data.find(item=>item.name===before.name),before);
+    assert.equal(data.length,14);
+    assert.throws(()=>db.prepare('INSERT INTO product_quotation_fields VALUES (?,?,?,?,?)').run('missing',owner,1,json,now),/FOREIGN KEY/);
+    assert.throws(()=>db.prepare('INSERT INTO product_quotation_fields VALUES (?,?,?,?,?)').run(productId,owner,0,json,now),/CHECK/);
+    db.prepare('INSERT INTO product_quotation_fields VALUES (?,?,?,?,?)').run(productId,owner,1,json,now);
+    const withOverride=tableData(db);db.exec(files[1].sql);assert.deepEqual(tableData(db),withOverride);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+  } finally {db.close();}
 });
 
 test('runtime DDL discovery reads literal TypeScript and rejects dynamic or destructive schema changes', () => {

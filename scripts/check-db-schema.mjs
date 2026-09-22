@@ -49,6 +49,12 @@ export function runtimeDDL() {
 }
 
 export function readBootstrap() { return fs.readFileSync(bootstrapPath, 'utf8'); }
+export function readMigrationFiles() {
+  const directory = path.dirname(bootstrapPath);
+  return fs.readdirSync(directory).filter(name => /^\d{4}_[a-zA-Z0-9_-]+\.sql$/.test(name)).sort()
+    .map(name => ({ name, sql: fs.readFileSync(path.join(directory, name), 'utf8') }));
+}
+export function readMigrations() { return readMigrationFiles().map(file => file.sql).join('\n'); }
 
 // Token normalization ignores spacing/case in keywords, preserves quoted text,
 // CHECK expressions, partial-index predicates and the order of definitions.
@@ -91,7 +97,7 @@ export function schemaSnapshot(db) {
   }));
 }
 
-export function checkDatabaseSchema(sql = readBootstrap(), statements = runtimeDDL()) {
+export function checkDatabaseSchema(sql = readMigrations(), statements = runtimeDDL()) {
   assertAdditiveBootstrap(sql);
   const runtime = memoryDatabase(); const migrated = memoryDatabase();
   try {
@@ -114,7 +120,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   } else {
     try {
       const result = checkDatabaseSchema();
-      console.log(`Schema matches: ${result.tables} tables, ${result.indexes} indexes from ${result.runtimeModules} runtime modules. Fresh/repeated bootstrap checked in memory; no local or remote database opened.`);
+      console.log(`Schema matches: ${result.tables} tables, ${result.indexes} indexes from ${result.runtimeModules} runtime modules. Ordered migrations checked fresh/repeated in memory; no local or remote database opened.`);
     } catch (error) { console.error(error instanceof Error ? error.message : 'Schema verification failed.'); process.exitCode = 1; }
   }
 }

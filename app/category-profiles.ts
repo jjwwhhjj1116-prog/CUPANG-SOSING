@@ -2,6 +2,14 @@
 export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
 export const CATEGORY_TEMPLATE_FILE_LIMIT = 5_000_000;
 export const categoryFields = {
+  category: '견적 편집: 카테고리 경로', model: '견적 편집: 모델명', tradeType: '견적 편집: 거래타입', taxType: '견적 편집: 과세여부', importType: '견적 편집: 수입여부',
+  searchTags: '견적 편집: 검색태그', barcodeMode: '견적 편집: 바코드 입력 방식',
+  additionalImages: '견적 편집: 추가 이미지', labelImages: '견적 편집: 표시사항 이미지', detailImages: '견적 편집: 상세 이미지', detailHtml: '견적 편집: HTML 상세 내용', altText: '견적 편집: 대체 텍스트',
+  kcMarkType: '견적 편집: KC 마크 타입', kcCertificationNumber: '견적 편집: KC 인증번호', emcCertificationNumber: '견적 편집: EMC 인증번호', safetyDeclarationNumber: '견적 편집: 안전기준 신고번호', kcsCertificationNumber: '견적 편집: KCS 인증번호',
+  boxSkuQuantity: '견적 편집: 박스 내 SKU 수량', shelfLifeDays: '견적 편집: 유통·소비기간', handlingReason: '견적 편집: 취급주의 사유', packagedWeightG: '견적 편집: 포장 무게 g', packagedDimensionsMm: '견적 편집: 포장 사이즈 mm',
+  color: '관찰 카테고리: 색상', quantity: '관찰 카테고리: 수량', size: '관찰 카테고리: 사이즈',
+  lidIncluded: '관찰 카테고리: 뚜껑 포함여부', heightAdjustable: '관찰 카테고리: 높이조절 여부', basketShape: '관찰 카테고리: 바구니 형태', storageMaterial: '관찰 카테고리: 수납 재질', totalQuantity: '관찰 카테고리: 총 수량', width: '관찰 카테고리: 가로길이', handleIncluded: '관찰 카테고리: 손잡이', foldable: '관찰 카테고리: 접이식', weight: '관찰 카테고리: 중량', transparent: '관찰 카테고리: 투명 여부', storageShape: '관찰 카테고리: 수납 형태', ventilationFan: '관찰 카테고리: 환기팬', storageMethod: '관찰 카테고리: 보관방식', storageAvailable: '관찰 카테고리: 수납가능', storageLocation: '관찰 카테고리: 수납 위치', shelfLevels: '관찰 카테고리: 가구 단수', basketUse: '관찰 카테고리: 바구니 용도', shelfShape: '관찰 카테고리: 선반 형태', widthAdjustable: '관찰 카테고리: 폭조절', assemblyRequired: '관찰 카테고리: 조립식', sliding: '관찰 카테고리: 슬라이딩', kitchenShelfUse: '관찰 카테고리: 주방선반 용도', finishType: '관찰 카테고리: 마감', itemHeight: '관찰 카테고리: 높이', includedComponents: '관찰 카테고리: 구성 요소', gtin: '관찰 카테고리: GTIN', parentManufacturerPartNumber: '관찰 카테고리: 상위 제조사 부품번호', manufacturerPartNumber: '관찰 카테고리: 제조사 부품번호',
+  noticeNameModel: '상품고시: 품명 및 모델명', noticeMaterial: '상품고시: 재질', noticeComponents: '상품고시: 구성품', noticeDimensions: '상품고시: 크기', noticeReleaseDate: '상품고시: 출시년월', noticeManufacturerImporter: '상품고시: 제조자·수입자', noticeCountryOfOrigin: '상품고시: 제조국', noticeImportDeclaration: '상품고시: 수입신고 문구', noticeQualityAssurance: '상품고시: 품질보증', noticeServiceContact: '상품고시: A/S 연락처',
   title: '한국어 상품명', skuName: '옵션명', skuId: '원본 SKU 번호', categoryId: '카테고리 번호',
   brand: '브랜드', manufacturer: '제조사', importer: '수입·판매원', serviceContact: 'A/S 연락처',
   sourceUrl: '1688 상품 URL', sourcePriceCny: '원가 (CNY)', supplyPrice: '공급가 (KRW)',

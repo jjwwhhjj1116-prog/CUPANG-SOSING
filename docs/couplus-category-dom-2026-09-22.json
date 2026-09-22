@@ -1,0 +1,995 @@
+{
+  "source": "https://www.couplus.co.kr/AIRocketReg",
+  "observedAt": "2026-09-22T10:22:48.043Z",
+  "surface": "Chrome rendered category selector DOM",
+  "rootLabels": [
+    "패션의류잡화",
+    "뷰티",
+    "출산/유아동",
+    "식품",
+    "주방용품",
+    "생활용품",
+    "가구/홈데코",
+    "가전/디지털",
+    "스포츠/레져",
+    "자동차용품",
+    "도서",
+    "문구/오피스",
+    "음반/DVD",
+    "완구/취미",
+    "반려/애완용품",
+    "기프트카드"
+  ],
+  "nodes": [
+    {
+      "path": [
+        "패션의류잡화"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "남성패션"
+        },
+        {
+          "isLeaf": false,
+          "label": "베이비 의류/신발/잡화(~24개월)"
+        },
+        {
+          "isLeaf": false,
+          "label": "여성패션"
+        },
+        {
+          "isLeaf": false,
+          "label": "영유아동 신발/잡화/기타의류(0~17세)"
+        },
+        {
+          "isLeaf": false,
+          "label": "유니섹스/남녀공용 패션"
+        },
+        {
+          "isLeaf": false,
+          "label": "주니어 의류(9~17세)"
+        },
+        {
+          "isLeaf": false,
+          "label": "키즈 의류(3~8세)"
+        }
+      ]
+    },
+    {
+      "path": [
+        "뷰티"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "남성화장품"
+        },
+        {
+          "isLeaf": false,
+          "label": "네일"
+        },
+        {
+          "isLeaf": false,
+          "label": "메이크업"
+        },
+        {
+          "isLeaf": false,
+          "label": "바디"
+        },
+        {
+          "isLeaf": false,
+          "label": "뷰티소품"
+        },
+        {
+          "isLeaf": false,
+          "label": "선물세트"
+        },
+        {
+          "isLeaf": false,
+          "label": "스킨"
+        },
+        {
+          "isLeaf": false,
+          "label": "어린이화장품"
+        },
+        {
+          "isLeaf": false,
+          "label": "임산부화장품"
+        },
+        {
+          "isLeaf": false,
+          "label": "향수"
+        },
+        {
+          "isLeaf": false,
+          "label": "헤어"
+        }
+      ]
+    },
+    {
+      "path": [
+        "출산/유아동"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "기저귀/교체용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "놀이매트/안전용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "분유/유아식품"
+        },
+        {
+          "isLeaf": false,
+          "label": "수유/이유용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "외출용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "유아가구/인테리어"
+        },
+        {
+          "isLeaf": false,
+          "label": "유아동침구"
+        },
+        {
+          "isLeaf": false,
+          "label": "유아목욕/스킨케어"
+        },
+        {
+          "isLeaf": false,
+          "label": "유아물티슈/캡/홀더"
+        },
+        {
+          "isLeaf": false,
+          "label": "유아위생/건강/세제"
+        },
+        {
+          "isLeaf": false,
+          "label": "이유/유아식기"
+        },
+        {
+          "isLeaf": false,
+          "label": "임부용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "출산준비물/선물"
+        }
+      ]
+    },
+    {
+      "path": [
+        "식품"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "가공/즉석식품"
+        },
+        {
+          "isLeaf": false,
+          "label": "가루/조미료/향신료"
+        },
+        {
+          "isLeaf": false,
+          "label": "건강식품"
+        },
+        {
+          "isLeaf": false,
+          "label": "냉장/냉동식품"
+        },
+        {
+          "isLeaf": false,
+          "label": "생수/음료"
+        },
+        {
+          "isLeaf": false,
+          "label": "스낵/간식"
+        },
+        {
+          "isLeaf": false,
+          "label": "신선식품"
+        },
+        {
+          "isLeaf": false,
+          "label": "유제품/아이스크림/디저트"
+        },
+        {
+          "isLeaf": false,
+          "label": "장/소스"
+        },
+        {
+          "isLeaf": false,
+          "label": "커피/차"
+        }
+      ]
+    },
+    {
+      "path": [
+        "생활용품"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "건강용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "공구"
+        },
+        {
+          "isLeaf": false,
+          "label": "구강/면도"
+        },
+        {
+          "isLeaf": false,
+          "label": "도장용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "방충용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "방향/탈취/제습/살충"
+        },
+        {
+          "isLeaf": false,
+          "label": "배관/건축자재"
+        },
+        {
+          "isLeaf": false,
+          "label": "보수용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "생리대/성인기저귀"
+        },
+        {
+          "isLeaf": false,
+          "label": "생활소품"
+        },
+        {
+          "isLeaf": false,
+          "label": "생활잡화"
+        },
+        {
+          "isLeaf": false,
+          "label": "성인용품(19)"
+        },
+        {
+          "isLeaf": false,
+          "label": "세제"
+        },
+        {
+          "isLeaf": false,
+          "label": "세탁용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "수납/정리"
+        },
+        {
+          "isLeaf": false,
+          "label": "안전용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "욕실용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "의료/간호용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "접착용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "조명/전기용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "철물"
+        },
+        {
+          "isLeaf": false,
+          "label": "청소용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "화장지/물티슈"
+        }
+      ]
+    },
+    {
+      "path": [
+        "가구/홈데코"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "가구"
+        },
+        {
+          "isLeaf": false,
+          "label": "금고"
+        },
+        {
+          "isLeaf": false,
+          "label": "수선/수예도구"
+        },
+        {
+          "isLeaf": false,
+          "label": "원예/가드닝"
+        },
+        {
+          "isLeaf": false,
+          "label": "인테리어용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "인테리어자재"
+        },
+        {
+          "isLeaf": false,
+          "label": "침구"
+        },
+        {
+          "isLeaf": false,
+          "label": "카페트/매트"
+        },
+        {
+          "isLeaf": false,
+          "label": "커튼/침장"
+        },
+        {
+          "isLeaf": false,
+          "label": "쿠션/방석"
+        },
+        {
+          "isLeaf": false,
+          "label": "패브릭소품/커버"
+        }
+      ]
+    },
+    {
+      "path": [
+        "가전/디지털"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "TV/영상가전"
+        },
+        {
+          "isLeaf": false,
+          "label": "계절환경가전"
+        },
+        {
+          "isLeaf": false,
+          "label": "냉장고/밥솥/주방가전"
+        },
+        {
+          "isLeaf": false,
+          "label": "생활가전"
+        },
+        {
+          "isLeaf": false,
+          "label": "음향기기/이어폰/스피커"
+        },
+        {
+          "isLeaf": false,
+          "label": "이미용건강가전"
+        },
+        {
+          "isLeaf": false,
+          "label": "카메라/캠코더"
+        },
+        {
+          "isLeaf": false,
+          "label": "컴퓨터/게임/SW"
+        },
+        {
+          "isLeaf": false,
+          "label": "휴대폰/태블릿PC/액세서리"
+        }
+      ]
+    },
+    {
+      "path": [
+        "스포츠/레져"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "검도/격투/무술"
+        },
+        {
+          "isLeaf": false,
+          "label": "골프"
+        },
+        {
+          "isLeaf": false,
+          "label": "구기스포츠"
+        },
+        {
+          "isLeaf": false,
+          "label": "기타스포츠"
+        },
+        {
+          "isLeaf": false,
+          "label": "낚시"
+        },
+        {
+          "isLeaf": false,
+          "label": "등산"
+        },
+        {
+          "isLeaf": false,
+          "label": "라켓스포츠"
+        },
+        {
+          "isLeaf": false,
+          "label": "발레/댄스/에어로빅"
+        },
+        {
+          "isLeaf": false,
+          "label": "수영/수상스포츠"
+        },
+        {
+          "isLeaf": false,
+          "label": "스키/겨울스포츠"
+        },
+        {
+          "isLeaf": false,
+          "label": "스포츠 신발"
+        },
+        {
+          "isLeaf": false,
+          "label": "스포츠 잡화"
+        },
+        {
+          "isLeaf": false,
+          "label": "심판용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "자전거"
+        },
+        {
+          "isLeaf": false,
+          "label": "철인3종경기"
+        },
+        {
+          "isLeaf": false,
+          "label": "측정용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "캠핑"
+        },
+        {
+          "isLeaf": false,
+          "label": "킥보드/스케이트"
+        },
+        {
+          "isLeaf": false,
+          "label": "헬스/요가"
+        }
+      ]
+    },
+    {
+      "path": [
+        "자동차용품"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "DIY/공구용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "공기청정/방향/탈취"
+        },
+        {
+          "isLeaf": false,
+          "label": "램프/배터리/전기"
+        },
+        {
+          "isLeaf": false,
+          "label": "매트/시트/쿠션"
+        },
+        {
+          "isLeaf": false,
+          "label": "비상/안전/차량가전"
+        },
+        {
+          "isLeaf": false,
+          "label": "세차/관리용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "실내용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "실외용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "오일/정비/소모품"
+        },
+        {
+          "isLeaf": false,
+          "label": "오토바이용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "차량용디지털기기"
+        },
+        {
+          "isLeaf": false,
+          "label": "차량용튜닝용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "타이어/휠/체인"
+        }
+      ]
+    },
+    {
+      "path": [
+        "도서"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "교육수강권"
+        },
+        {
+          "isLeaf": false,
+          "label": "국내도서"
+        },
+        {
+          "isLeaf": false,
+          "label": "외국도서"
+        }
+      ]
+    },
+    {
+      "path": [
+        "문구/오피스"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "문구/학용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "미술/화방용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "사무기기"
+        },
+        {
+          "isLeaf": false,
+          "label": "사무용품"
+        }
+      ]
+    },
+    {
+      "path": [
+        "음반/DVD"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "CD/LP"
+        },
+        {
+          "isLeaf": false,
+          "label": "DVD/블루레이"
+        },
+        {
+          "isLeaf": false,
+          "label": "굿즈/스타샵"
+        }
+      ]
+    },
+    {
+      "path": [
+        "완구/취미"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "DIY"
+        },
+        {
+          "isLeaf": false,
+          "label": "RC완구/부품"
+        },
+        {
+          "isLeaf": false,
+          "label": "STEAM/학습완구"
+        },
+        {
+          "isLeaf": false,
+          "label": "로봇/작동완구"
+        },
+        {
+          "isLeaf": false,
+          "label": "마술용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "물놀이/계절완구"
+        },
+        {
+          "isLeaf": false,
+          "label": "보드게임"
+        },
+        {
+          "isLeaf": false,
+          "label": "블록놀이"
+        },
+        {
+          "isLeaf": false,
+          "label": "수집품"
+        },
+        {
+          "isLeaf": false,
+          "label": "스포츠/야외완구"
+        },
+        {
+          "isLeaf": false,
+          "label": "승용완구"
+        },
+        {
+          "isLeaf": false,
+          "label": "신생아/영아완구"
+        },
+        {
+          "isLeaf": false,
+          "label": "실내대형완구"
+        },
+        {
+          "isLeaf": false,
+          "label": "악기/음향기기"
+        },
+        {
+          "isLeaf": false,
+          "label": "역할놀이"
+        },
+        {
+          "isLeaf": false,
+          "label": "인형"
+        },
+        {
+          "isLeaf": false,
+          "label": "퍼즐/큐브/피젯토이"
+        },
+        {
+          "isLeaf": false,
+          "label": "프라모델"
+        },
+        {
+          "isLeaf": false,
+          "label": "피규어/다이캐스트"
+        }
+      ]
+    },
+    {
+      "path": [
+        "반려/애완용품"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "가축사료/용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "강아지 사료/간식/영양제"
+        },
+        {
+          "isLeaf": false,
+          "label": "강아지/고양이 겸용"
+        },
+        {
+          "isLeaf": false,
+          "label": "강아지용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "거북이/달팽이용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "고슴도치용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "고양이 사료/간식/영양제"
+        },
+        {
+          "isLeaf": false,
+          "label": "고양이용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "관상어용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "장수풍뎅이/곤충용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "조류용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "파충류용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "페럿용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "햄스터/토끼/기니피그용품"
+        }
+      ]
+    },
+    {
+      "path": [
+        "주방용품"
+      ],
+      "children": [
+        {
+          "isLeaf": false,
+          "label": "교자상/밥상/상커버"
+        },
+        {
+          "isLeaf": false,
+          "label": "베이킹&포장용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "보관/밀폐용기"
+        },
+        {
+          "isLeaf": false,
+          "label": "보온/보냉용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "수저/컵/식기"
+        },
+        {
+          "isLeaf": false,
+          "label": "이유/유아식기"
+        },
+        {
+          "isLeaf": false,
+          "label": "제기/제수용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "조리용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "주방수납/정리"
+        },
+        {
+          "isLeaf": false,
+          "label": "주방일회용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "주방잡화"
+        },
+        {
+          "isLeaf": false,
+          "label": "취사도구"
+        },
+        {
+          "isLeaf": false,
+          "label": "칼/가위/도마"
+        },
+        {
+          "isLeaf": false,
+          "label": "커피/티/와인"
+        }
+      ]
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리"
+      ],
+      "children": [
+        {
+          "isLeaf": true,
+          "label": "기타수납/정리용품"
+        },
+        {
+          "isLeaf": false,
+          "label": "냉장고/냉동실정리용품"
+        },
+        {
+          "isLeaf": true,
+          "label": "바나나걸이"
+        },
+        {
+          "isLeaf": false,
+          "label": "식기건조대/싱크대정리"
+        },
+        {
+          "isLeaf": true,
+          "label": "주방수납바구니/바스켓"
+        }
+      ]
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "냉장고/냉동실정리용품"
+      ],
+      "children": [
+        {
+          "isLeaf": true,
+          "label": "냉장고슬라이드선반"
+        },
+        {
+          "isLeaf": true,
+          "label": "정리수납함/트레이"
+        }
+      ]
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리"
+      ],
+      "children": [
+        {
+          "isLeaf": true,
+          "label": "개수대"
+        },
+        {
+          "isLeaf": true,
+          "label": "거치식 식기건조대/싱크선반"
+        },
+        {
+          "isLeaf": true,
+          "label": "국자받침/조리도구받침"
+        },
+        {
+          "isLeaf": true,
+          "label": "기둥식 식기건조대/싱크선반"
+        },
+        {
+          "isLeaf": true,
+          "label": "도마정리대/쟁반정리대"
+        },
+        {
+          "isLeaf": true,
+          "label": "부착식 식기건조대/싱크선반"
+        },
+        {
+          "isLeaf": true,
+          "label": "설거지통"
+        },
+        {
+          "isLeaf": true,
+          "label": "싱크롤"
+        },
+        {
+          "isLeaf": true,
+          "label": "싱크수저정리함/서랍정리함"
+        },
+        {
+          "isLeaf": true,
+          "label": "접시꽂이"
+        },
+        {
+          "isLeaf": true,
+          "label": "정리선반/다용도선반"
+        },
+        {
+          "isLeaf": false,
+          "label": "주방걸이/정리홀더"
+        },
+        {
+          "isLeaf": true,
+          "label": "컵걸이"
+        },
+        {
+          "isLeaf": true,
+          "label": "프라이팬정리대"
+        }
+      ]
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "주방걸이/정리홀더"
+      ],
+      "children": [
+        {
+          "isLeaf": true,
+          "label": "수세미걸이/수세미받침"
+        },
+        {
+          "isLeaf": true,
+          "label": "조리도구걸이"
+        },
+        {
+          "isLeaf": true,
+          "label": "키친타올걸이/홀더"
+        },
+        {
+          "isLeaf": true,
+          "label": "행주걸이/주방수건걸이"
+        }
+      ]
+    }
+  ],
+  "anomalies": [
+    {
+      "parent": "기프트카드",
+      "state": "selected-root-with-stale-children",
+      "detail": "Selecting 기프트카드 left the previous 반려/애완용품 second-level list displayed after a five-second DOM wait; those children were not attributed to 기프트카드."
+    }
+  ],
+  "status": "partial-observation",
+  "categoryIdsObserved": false,
+  "supplierHubMappingVerified": false,
+  "exportControlObserved": false,
+  "searchObservations": [
+    {
+      "query": "주방용품",
+      "result": "No search results although the root label exists."
+    },
+    {
+      "query": "주방수납바구니",
+      "result": "One final-category result with full path; no category code rendered."
+    }
+  ],
+  "completeObservedSubtrees": [
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리"
+      ],
+      "leafLabels": 22,
+      "categoryIdsVerified": false
+    }
+  ],
+  "limitations": [
+    "Only displayed DOM and normal UI actions were used; no app state, network request replay, CDP or hidden data inspection.",
+    "Second-level labels are complete for the 15 captured parent roots, not the complete leaf taxonomy.",
+    "The remaining descendants and category IDs are not observed.",
+    "A new blank queue row created by 선택 완료 was immediately removed; the queue was confirmed empty and no URL, full-start, AI, product registration or transmission action was submitted."
+  ]
+}

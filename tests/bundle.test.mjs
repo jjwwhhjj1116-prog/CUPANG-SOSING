@@ -3,19 +3,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { webcrypto } from 'node:crypto';
 // Independent ZIP reader already present in the locked development toolchain.
 // The application creates ZIP files without a runtime dependency on this package.
 import { unzipSync } from 'fflate';
 
-function load(file, overrides = {}, mode = 'development') {
+function load(file, overrides = {}, mode = 'development', cache = new Map()) {
+  if (cache.has(file)) return cache.get(file);
   const source = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const exports = {};
-  vm.runInNewContext(source, { exports, Response, TextEncoder, Uint8Array, ArrayBuffer, DataView, structuredClone, process: { env: { NODE_ENV: mode } }, require(name) {
+  const exports = {}; cache.set(file, exports);
+  vm.runInNewContext(source, { exports, Error, Response, URL, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, structuredClone, crypto: webcrypto, process: { env: { NODE_ENV: mode } }, require(name) {
     if (name in overrides) return overrides[name];
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
-    const files = { '@/app/product-content': 'app/product-content.ts', '@/app/exports/zip': 'app/exports/zip.ts', '@/app/exports/review-bundle': 'app/exports/review-bundle.ts', '@/app/pricing': 'app/pricing.ts' };
-    if (files[name]) return load(files[name], overrides, mode);
+    if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode, cache);
     throw Error(name);
   } });
   return exports;
@@ -103,9 +104,15 @@ test('image export recognizes supported signatures including bounded AVIF brands
   for (const value of ['<svg onload="alert(1)"></svg>', '<html>bad</html>', 'pretend.png']) assert.throws(() => bundle.imageExtension(new TextEncoder().encode(value)));
 });
 
-function routeWith({ find = async () => product, read = async () => contentWithAssets(), get = async () => ({ size: png.length, arrayBuffer: async () => png.slice().buffer }), mode } = {}) {
+function routeWith({ find = async () => product, read = async () => contentWithAssets(), get = async () => ({ size: png.length, arrayBuffer: async () => png.slice().buffer }), mode,
+  readFields = async () => ({ schemaVersion: 1, productId: product.id, revision: 0, overrides: { common: {}, options: {} }, updatedAt: null }),
+  readOptions = async () => ({ schemaVersion: 1, productId: product.id, revision: 0, rows: [], updatedAt: null }), readSettings = async () => null,
+  readProfile = async () => null, readCollection = async () => null, sourcesCurrent = async () => true,
+} = {}) {
   return load('app/api/products/[id]/bundle/route.ts', {
-    '@/db/queries': { findProduct: find }, '@/db/product-content': { readProductContent: read },
+    '@/db/queries': { findProduct: find, getSettings: readSettings }, '@/db/product-content': { readProductContent: read },
+    '@/db/product-options': { readProductOptions: readOptions }, '@/db/category-profiles': { getCategoryProfile: readProfile },
+    '@/db/quotation-fields': { readQuotationFields: readFields, readQuotationCollectionSource: readCollection, quotationSourcesCurrent: sourcesCurrent },
     'cloudflare:workers': { env: { FILES: { get } } },
   }, mode);
 }
@@ -128,7 +135,7 @@ test('bundle route rejects missing products, foreign/unlinked keys, absent objec
   let reads = 0;
   const missing = routeWith({ find: async () => null, read: async () => { reads++; } });
   assert.equal((await missing.GET(getRequest(), context)).status, 404); assert.equal(reads, 0);
-  for (const key of ['other/private.png', 'owner/unlinked.png']) {
+  for (const key of ['other/private.png', 'owner/unlinked.png', 'owner/../private.png']) {
     const content = model.emptyProductContent(product.id); content.assets.main.value = [key];
     const response = await routeWith({ read: async () => content, get: async () => { throw Error('must not read unowned asset'); } }).GET(getRequest(), context);
     assert.equal(response.status, 409);
@@ -170,4 +177,51 @@ test('bundle limits cover cumulative image bytes and role reference count before
     get: async () => { throw Error('must not fetch oversized image list'); },
   });
   assert.equal((await tooMany.GET(getRequest(), context)).status, 409);
+});
+
+test('CRC table preserves standard CRC for arbitrary offsets and full-byte-range binary data',()=>{
+  const bytes=new Uint8Array(8193); for(let i=0;i<bytes.length;i++)bytes[i]=(i*37+i%13)&255;
+  const reference=bytes=>{let crc=0xffffffff;for(const byte of bytes){crc^=byte;for(let bit=0;bit<8;bit++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return(crc^0xffffffff)>>>0;};
+  for(const view of [bytes,bytes.subarray(3,7777),new Uint8Array(),new Uint8Array([0,255,128])])assert.equal(zip.crc32(view),reference(view));
+  const files=unzipSync(zip.zipFiles([{name:'arbitrary.bin',data:bytes.subarray(3,7777)}]));assert.deepEqual(files['arbitrary.bin'],bytes.subarray(3,7777));
+});
+
+test('plain bundle preserves final quotation overrides and rejects changes in every export source',async()=>{
+  const state={schemaVersion:1,productId:product.id,revision:2,updatedAt:null,overrides:{common:{title:'견적용 이름',model:'새 모델'},options:{removed:{color:'저장한 색상'}}}};
+  const route=routeWith({readFields:async()=>state});const response=await route.GET(getRequest(),context);assert.equal(response.status,200);
+  const files=readArchive(new Uint8Array(await response.arrayBuffer()));const doc=JSON.parse(decode(files['quotation-fields.json']));
+  assert.equal(doc.rows.filter(row=>row.included)[0].fields.title.value,'견적용 이름');assert.equal(doc.rows[0].fields.title.source,'manual-common');assert.equal(doc.quotationRevision,2);
+  assert.equal(doc.overrides.options.removed.color,'저장한 색상');assert.ok(decode(files['quotation-overrides.csv']).includes('저장한 색상'));assert.ok(files['quotation-fields.csv']);
+  for(const changed of ['fields','settings','options']){
+    let downloaded=false;
+    const modifying=routeWith({readFields:async()=>({...state,revision:downloaded&&changed==='fields'?3:2}),
+      readSettings:async()=>downloaded&&changed==='settings'?{payload:JSON.stringify({...load('app/workspace-settings.ts').defaultSettings,brand:'새 브랜드'})}:null,
+      readOptions:async()=>({schemaVersion:1,productId:product.id,revision:downloaded&&changed==='options'?1:0,rows:[],updatedAt:null}),
+      get:async()=>{downloaded=true;return{size:png.length,arrayBuffer:async()=>png.slice().buffer};}});
+    assert.equal((await modifying.GET(getRequest(),context)).status,409,changed);
+  }
+});
+
+test('bundle uses only the owned selected or captured category and tracks collection-context changes',async()=>{
+  const profile={id:'chosen',revision:1,name:'관찰한 카테고리',categoryId:'80719',categoryPath:['주방용품'],template:null,mappings:[]};
+  const chosen=new Request('http://localhost/api/products/product-1/bundle?profileId=chosen');
+  assert.equal((await routeWith().GET(chosen,context)).status,404);
+  const response=await routeWith({readProfile:async()=>profile}).GET(chosen,context);assert.equal(response.status,200);
+  let doc=JSON.parse(decode(readArchive(new Uint8Array(await response.arrayBuffer()))['quotation-fields.json']));assert.equal(doc.categoryContext.source,'profile');assert.equal(doc.schema.status,'observed');
+  const sourceProduct={...product,source_url:'https://detail.1688.com/offer/100001.html'};
+  const captured={id:'job',payload:JSON.stringify({category:profile}),updatedAt:product.updated_at};
+  const fromCollection=await routeWith({find:async()=>sourceProduct,readCollection:async()=>captured}).GET(getRequest(),context);
+  assert.equal(fromCollection.status,200);doc=JSON.parse(decode(readArchive(new Uint8Array(await fromCollection.arrayBuffer()))['quotation-fields.json']));assert.equal(doc.categoryContext.source,'collection');assert.equal(doc.schema.categoryId,'80719');
+  let downloaded=false;
+  const changed=routeWith({find:async()=>sourceProduct,readCollection:async()=>downloaded?{...captured,payload:JSON.stringify({category:{...profile,categoryId:'unknown-new'}})}:captured,
+    get:async()=>{downloaded=true;return{size:png.length,arrayBuffer:async()=>png.slice().buffer};}});
+  assert.equal((await changed.GET(getRequest(),context)).status,409);
+});
+
+test('ZIP preflight covers central-directory bytes and UTF-8 text without mutating binary inputs',()=>{
+  const text='한글🙂\\uD800'+String.fromCharCode(0xd800)+'tail';const data=new TextEncoder().encode(text);
+  assert.equal(zip.utf8ByteLength(text),data.length);
+  const binary=new Uint8Array([1,2,3,255]);const files=readArchive(zip.zipFiles([{name:'unicode.txt',data:text},{name:'binary.dat',data:binary}]));
+  assert.deepEqual(files['unicode.txt'],data);assert.deepEqual(binary,new Uint8Array([1,2,3,255]));
+  assert.throws(()=>zip.zipFiles([{name:'exact.bin',data:new Uint8Array(zip.MAX_ZIP_BYTES-31)}]),error=>error.status===413);
 });
