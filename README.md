@@ -51,7 +51,7 @@ node tests/smoke-files.mjs --allow-test-records
 
 ## 서버 설정
 
-Cloudflare Workers + D1 `DB` + R2 `FILES` 구조입니다. 운영에서는 Cloudflare Access JWT의 서명·issuer·audience·만료를 검증하며 신뢰되지 않은 사용자 헤더나 `local-demo`로 접근하지 않습니다. [Cloudflare 연결 문서](docs/CLOUDFLARE.md)를 참고하세요. 실제 Access/Worker/DB/R2 배포는 아직 하지 않았습니다.
+Cloudflare Workers + D1 `DB` + R2 `FILES` 구조입니다. 운영에서는 Cloudflare Access JWT의 서명·issuer·audience·만료를 검증하며 신뢰되지 않은 사용자 헤더나 `local-demo`로 접근하지 않습니다. [Cloudflare 연결 문서](docs/CLOUDFLARE.md)를 참고하세요. 전용 원격 D1 생성과 초기 스키마 적용은 완료했습니다. R2·Access 가입과 Worker 배포는 아직 완료되지 않았으며 최신 계정 연결 상태는 HANDOFF 15절을 확인하세요.
 
 비밀값은 서버에만 설정합니다. 로컬 Cloudflare는 Git에서 제외된 `.dev.vars`를 사용하고 `.env.example`의 항목을 참고하세요.
 
@@ -69,7 +69,7 @@ Cloudflare Workers + D1 `DB` + R2 `FILES` 구조입니다. 운영에서는 Cloud
 
 `db/migrations/0001_sourceflow_bootstrap.sql`에 런타임 13개 테이블·7개 명시적 인덱스를 모았습니다. `node scripts/check-db-schema.mjs`는 메모리 SQLite에서 런타임 DDL과 비교하며 실제 DB에 적용하지 않습니다. 기존 Drizzle `db/schema.ts`는 두 테이블만 기술하므로 `db:generate`만으로 전체 스키마를 관리할 수 없습니다.
 
-운영 준비에 남은 항목: 실제 계정/리소스와 migration 경로 설정, 기존 DB 조사·백업·승인 후 적용, 다중 환경 통합 검증, 접근 정책과 운영 데이터 이관, 의존성 보안 업데이트. 기존 npm audit 결과 17건(critical 1/high 12/moderate 4)은 강제 업데이트하지 않았으며 최신 재평가가 필요합니다.
+운영 준비에 남은 항목: R2·Access 활성화 및 실제 식별자 연결, 운영 빌드·배포와 통합 검증, 접근 정책과 운영 데이터 이관, 의존성 보안 업데이트. 신규 D1에는 검증된 초기 스키마만 적용했고 기존 다른 앱의 DB는 변경하지 않았습니다. 기존 npm audit 결과 17건(critical 1/high 12/moderate 4)은 강제 업데이트하지 않았으며 최신 재평가가 필요합니다.
 
 ## 참조 분석의 범위
 

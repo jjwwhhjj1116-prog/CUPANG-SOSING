@@ -531,3 +531,10 @@ AI등록 화면 확인:
 2. SourceFlow 전용 비공개 R2 버킷과 본인 이메일만 허용하는 Access 애플리케이션을 만든다. 기존 다른 앱의 접근 정책은 변경하지 않는다. 실제 team domain/AUD를 확인해 `.env.production.local`에 입력한다.
 3. 운영 빌드·산출물 검사·배포 dry-run 후 해당 계정에 배포하고 실제 URL에서 미인증 차단/인증된 화면·API·DB/R2를 검증한다. 생성 전 계획한 Worker 이름은 `sourceflow`이며 배포 완료 URL로 보고하지 않는다.
 4. 배포와 별개로 실제 1688 수집기·AI 일괄 처리·공식 Hub 양식·최종 전송 adapter/접수번호 회수는 14절의 미완성 항목 그대로다. `/api/supplier-hub`는501이며 실제 등록 완료로 설명하지 않는다.
+
+### 15절 인증·푸시 대기 기록
+- 구현과 배포 준비 코드를 로컬 `43d13a3a90f887c80e8cfe2e0f5173880e6c4e43`에 커밋했다. 일반 Git push는 이 PC의 Git 인증 부재로 완료하지 못했고, 연결된 GitHub 앱의 Git tree 생성도 `403 Resource not accessible by integration`이었다. 원격 main을 다시 조회했을 때 여전히 `2d5fb66`이므로 **푸시 완료가 아니다**.
+- 공식 Git Credential Manager `github login --device --no-ui --username jjwwhhjj1116-prog`는 Windows에서 `tty:true`로 실행해야 기기 인증 안내가 보였다. 토큰을 직접 읽거나 복사하지 않았다. Chrome GitHub 로그인을 사용자에게 요청했다. 인증이 만료되면 이 공식 절차를 새로 시작하고, 성공 후 `git push origin main` 및 원격 SHA 일치를 확인한다.
+- 사용자는 이후 **카드를 연결하고 무료 한도 내 사용**을 선택했다. R2/Access 구성을 유지하며 자체 로그인·D1 파일 저장으로 변경하지 않는다. 실제 청구주소를 모르므로 사용자에게 활성화 화면 직접 입력을 안내했다. 무료 가입이라고 무제한 무료·자동 과금 차단을 보장하면 안 된다.
+- Workers 요금제 화면에서 현재 **Free $0**, 일 100,000 요청·요청당 CPU 10ms를 확인했다. 유료 플랜으로 변경하지 않았다. 이 제한에서 실제 앱이 동작하는지는 배포 후 검증해야 한다.
+- 작업 중 사용자 응답 이후 기존 도구 탭이 사라질 수 있으므로 다음 시작 때 `chrome.tabs.list()`와 실제 사용자 탭을 확인한 뒤 상태를 다시 연결한다. 완료하지 않은 가입·로그인 화면을 완료로 가정하지 않는다.
