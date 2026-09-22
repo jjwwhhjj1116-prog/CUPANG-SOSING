@@ -597,3 +597,7 @@ AI등록 화면 확인:
 - 로컬 통합 smoke를 다시 실행해 합성 상품의 D1/R2 저장, Excel 셀, 옵션 가격, 첨부 파일명·바이트 일치, 비대상 시트 보존, 미입력 제조국 공란, 오래된 견적 지문의409를 확인했다. 결과는 `outputs/local-smoke-result.json`, 시각 `2026-09-22T12:04:43Z`. 유료 호출0·Supplier Hub 제출0·실상품 수집false다.
 - **최종 `npm test` 243/243 통과**, 실패/skip0 (`outputs/category-final-tests.log`). 전체 TypeScript·ESLint·일반 production build 통과 (`outputs/category-final-build.log`). 운영 Access 구성이 없는 일반 빌드이므로 Cloudflare 배포 완료를 뜻하지 않는다. `git diff --check`도 통과했다.
 - 커밋 후보 파일에서 private key·OpenAI/GitHub token·JWT 패턴을 값 노출 없이 검사했고 발견0건이었다. Git 제외된 `.env.production.local`, `.wrangler`, `outputs`, `dist`는 커밋하지 않는다. 원격 fetch 시 HEAD/origin/main은 `17e1315`, 분기 차이0/0이었다.
+- 기능 변경50개 파일을 **`e0af093e59e87346bedfd3bce6aba11ffef8a561`**에 커밋하고 GitHub main으로 push했다. `git ls-remote`로 원격SHA 일치를 확인했다. 이후 다운로드 비활성 링크 보완과 이 검증 기록은 후속 커밋으로 보관한다.
+- 최종 Chrome UI 확인: 상품추가16개 대분류/공식20개 코드 표시, 코드 미확인 말단 진행 차단,80719 선택 후 URL1개 인식. 기존80719설정이 없어 로컬 카테고리 프로필1개를 정상 UI로 생성했으며 상품·수집 요청은 만들지 않았다. 상품관리에서 최근7일2건→전체3건→2026-09-22 기간과XLSX검색1건을 확인했다.
+- 합성 상품에서80719의 공식 select20개 선택값, `뚜껑포함` 수동 선택 후 대표 이미지와 견적 단계 왕복 시 초안 유지, 미저장 시 프로필 변경 차단을 확인했다. 다운로드 링크는 `href` 자체를 제거하여 중간버튼/새탭 열기로 이전 저장 자료를 받지 않게 보완했고 실제 DOM에서 `href=null`, `aria-disabled=true`를 확인했다. 보완 후 TypeScript·관련 ESLint·최종 빌드도 통과했다.
+- 마지막 UI 검증 뒤 시험용 견적 값과 SEO `[FINAL UI DRAFT]`는 저장 없이 폐기했다. 편집창을 다시 열어 원래 SEO·버전10·저장 버튼 비활성 상태 복원을 확인했다. 최종 UI 검증에서 상품·견적·수집 변경은0건이며 로컬80719 프로필1개(`32c7479b-1ef8-4176-b5d8-00f1bd5bca67`)만 생성했다. 로컬 smoke에서 만든 명시적인 합성 자료와 이 UI 검증을 구분한다. 추가 운영 등록·유료 호출·Worker 배포는 실행하지 않았다.
