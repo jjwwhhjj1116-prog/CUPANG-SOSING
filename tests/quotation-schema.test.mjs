@@ -40,15 +40,36 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('81452 follows official empty select values, required attributes, option cap, price and barcode rules', () => {
+  const input = fixture(); input.categoryId = '81452';
+  const schema = model.getQuotationSchema('81452');
+  const evidence = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-81452-product-2026-09-24.json', import.meta.url), 'utf8'));
+  const selects = schema.fields.filter(field => field.id.startsWith('brace_') && field.type === 'select');
+  assert.equal(selects.length, 7);
+  selects.forEach((field, index) => assert.deepEqual(clone(field.choices), evidence.selects[index]));
+  for (const key of ['color', 'quantity', 'size', 'supplyPrice', 'salePrice']) assert.equal(schema.fields.find(field => field.id === key).required, true);
+  assert.equal(schema.fields.find(field => field.id === 'searchTags').required, false);
+  assert.equal(model.quotationOptionLimitIssue(schema, 100), null);
+  assert.match(model.quotationOptionLimitIssue(schema, 101), /100/);
+  assert.ok(model.quotationPriceIssues(schema, '5000', '4999').length);
+  const ctx = { ...context(input), schema };
+  assert.throws(() => model.validateQuotationChanges([change('barcodeMode', 'existing'), change('barcode', 'bad')], ctx), /바코드/);
+  assert.throws(() => model.validateQuotationChanges([change('brace_direction', '해당사항없음')], ctx), /선택/);
+  assert.equal(model.validateQuotationChanges([change('brace_direction', '')], ctx)[0].value, '');
+  input.overrides = { common: { brace_direction: '해당사항없음' }, options: {} };
+  const previous = model.resolveQuotationFields(input).rows[1].fields.brace_direction;
+  assert.equal(previous.value, '해당사항없음'); assert.ok(previous.issues.some(issue => issue.includes('선택')));
+});
+
 test('observed brace quotation exposes its own attributes and notices without certifying saved example values', () => {
   const input = fixture(); input.categoryId = '81452';
   const resolved = model.resolveQuotationFields(input);
   const schema = resolved.schema;
-  assert.equal(schema.status, 'unconfirmed'); assert.equal(schema.submissionReady, false);
+  assert.equal(schema.status, 'observed'); assert.equal(schema.submissionReady, false);
   assert.equal(schema.categoryPath.at(-1), '헬스보호대');
   assert.equal(schema.fields.filter(field => field.visibility === 'hidden').length, 10);
   assert.equal(schema.fields.filter(field => field.section === 'legal' && (field.id.startsWith('notice') || field.id.startsWith('brace_notice'))).length, 12);
-  assert.deepEqual(clone(schema.fields.find(field => field.id === 'brace_direction').choices.map(choice => choice.label)), ['해당사항없음', '좌우겸용', '오른쪽', '왼쪽', '좌우세트']);
+  assert.deepEqual(clone(schema.fields.find(field => field.id === 'brace_direction').choices.map(choice => choice.label)), ['좌우겸용', '오른쪽', '왼쪽', '좌우세트', '해당사항없음']);
   assert.equal(resolved.rows[1].fields.brace_purpose.value, '');
   assert.equal(resolved.rows[1].fields.brace_noticeKc.value, '');
   assert.equal(resolved.rows[1].fields.noticeMaterial.value, '면');

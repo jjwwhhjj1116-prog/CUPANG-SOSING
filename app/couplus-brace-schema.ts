@@ -1,7 +1,8 @@
 import type { QuotationField } from '@/app/quotation-schema';
 
 // Rendered Couplus quotation 260923003001, 2026-09-23.
-// Choices are visible UI labels, not verified Supplier Hub transport values.
+// Product Page choices independently checked in Supplier Hub DOM, 2026-09-24.
+// Legal notices remain Couplus-only evidence.
 export const couplus81452Path = ['스포츠/레져', '헬스/요가', '헬스기구/용품', '헬스보호대'];
 const attributes: [string, string, string[]?][] = [
   ['bodyPart', '사용부위', ['종아리', '다리', '목/어깨', '팔/손목', '손/손가락', '발/발가락', '엉덩이', '허리', '무릎', '팔꿈치', '발목']],
@@ -20,7 +21,8 @@ const make = (id: string, label: string, section: QuotationField['section'], vis
 export const couplus81452Fields: QuotationField[] = [
   ...[['color', '색상'], ['quantity', '수량'], ['size', '사이즈']].map(([id, label]) => make(id, label, 'product', 'exposed')),
   ...attributes.map(([id, label, values]) => ({ ...make(`brace_${id}`, label, 'product', 'hidden'),
-    ...(values ? { type: 'select' as const, choices: ['해당사항없음', ...values].map(value => ({ value, label: value })) } : {}),
+    ...(values ? { type: 'select' as const, choices: [...values, ''].map(value => ({ value, label: value || '해당사항없음' })),
+      help: 'Supplier Hub 상품정보에서 확인한 선택값입니다. 해당사항없음의 실제 값은 빈 문자열입니다. 이전 문자열 값은 직접 재선택해주세요.' } : {}),
   })),
   ...[['noticeNameModel', '품명 및 모델명'], ['brace_noticeKc', 'KC 인증정보'], ['brace_noticeSizeWeight', '크기, 중량'],
     ['brace_noticeColor', '색상'], ['noticeMaterial', '재질'], ['noticeComponents', '제품 구성'], ['noticeReleaseDate', '출시년월'],

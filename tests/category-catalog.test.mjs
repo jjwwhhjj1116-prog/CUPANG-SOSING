@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const observation = JSON.parse(fs.readFileSync(new URL('../docs/couplus-category-dom-2026-09-22.json', import.meta.url), 'utf8'));
 const hubObservation = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-category-ids-2026-09-22.json', import.meta.url), 'utf8'));
+const braceObservation = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-81452-product-2026-09-24.json', import.meta.url), 'utf8'));
 const source = ts.transpileModule(fs.readFileSync(new URL('../app/category-catalog.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
 function load(hub = hubObservation) {
   const model = {};
@@ -36,7 +37,7 @@ test('hierarchy imports only observed root/child paths with exact order and all 
   const verified = choices.filter(choice => choice.codeEvidence === 'supplier-hub');
   assert.equal(verified.length, model.categoryObservationScope.supplierHubCodes);
   assert.ok(verified.length >= 5);
-  for (const choice of verified) assert.ok(hubObservation.categoryIds.some(record => record.categoryId === choice.categoryId && JSON.stringify(record.path) === JSON.stringify(choice.path)));
+  for (const choice of verified) assert.ok([...hubObservation.categoryIds, braceObservation].some(record => record.categoryId === choice.categoryId && JSON.stringify(record.path) === JSON.stringify(choice.path)));
   assert.deepEqual(plain(model.categoryLevel(choices, ['기프트카드'], 1)), []);
   assert.equal(choices.find(choice => choice.path.join() === '기프트카드').childrenObserved, false);
   assert.equal(model.categoryObservationScope.fullCatalogVerified, false);
@@ -51,7 +52,7 @@ test('unknown leaves and unobserved branches cannot become 80719 profiles, but o
       assert.equal(result.categoryId, '80719'); assert.equal(result.template, null); assert.deepEqual(plain(result.mappings), []);
     } else if (['77442', '81452'].includes(choice.categoryId)) {
       assert.equal(partial.canConfirmCategory(choice), true);
-      assert.equal(choice.codeEvidence, 'couplus');
+      assert.equal(choice.codeEvidence, choice.categoryId === '81452' ? 'supplier-hub' : 'couplus');
     } else {
       assert.equal(partial.canConfirmCategory(choice), false);
       assert.throws(() => partial.categoryProfileForChoice(choice), /코드/);
@@ -63,10 +64,10 @@ test('unknown leaves and unobserved branches cannot become 80719 profiles, but o
   assert.equal(seed.profileId, undefined);
 });
 
-test('brace category keeps its observed Couplus path without claiming Supplier Hub verification', () => {
+test('brace category preserves its path with independently observed Supplier Hub code evidence', () => {
   const leaf = model.categoryChoices([]).find(choice => choice.categoryId === '81452');
   assert.deepEqual(plain(leaf.path), ['스포츠/레져', '헬스/요가', '헬스기구/용품', '헬스보호대']);
-  assert.equal(leaf.codeEvidence, 'couplus');
+  assert.equal(leaf.codeEvidence, 'supplier-hub'); assert.equal(leaf.codeObservedAt, '2026-09-24');
   const profile = model.categoryProfileForChoice(leaf);
   assert.equal(profile.categoryId, '81452'); assert.equal(profile.template, null);
 });
@@ -113,7 +114,7 @@ test('only exact observed leaf paths receive Hub IDs; branches, similar labels a
   ];
   const bounded = load({ ...hubObservation, categoryIds: records, verifiedLeafCount: 9999 });
   const choices = bounded.categoryChoices([]);
-  assert.equal(bounded.categoryObservationScope.supplierHubCodes, 1);
+  assert.equal(bounded.categoryObservationScope.supplierHubCodes, 2);
   assert.equal(bounded.categoryObservationScope.knownCodes, 4);
   assert.equal(choices.find(choice => choice.categoryId === '109047').codeEvidence, 'supplier-hub');
   assert.equal(choices.find(choice => choice.categoryId === '80719').codeEvidence, 'couplus');

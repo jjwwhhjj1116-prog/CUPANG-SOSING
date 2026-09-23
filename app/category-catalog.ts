@@ -12,8 +12,8 @@ const pathKey = (path: readonly string[]) => JSON.stringify(path);
 const samePath = (left: readonly string[], right: readonly string[]) => pathKey(left) === pathKey(right);
 // This leaf and ID were read from the user's Couplus quotation screen. Other
 // leaves must come from an observed catalog or the owner's saved profiles.
-const knownCodes = [
-  { categoryId: '81452', path: ['스포츠/레져', '헬스/요가', '헬스기구/용품', '헬스보호대'], observedAt: '2026-09-23' },
+const knownCodes: { categoryId: string; path: string[]; observedAt: string; codeEvidence?: 'supplier-hub' | 'couplus' }[] = [
+  { categoryId: '81452', path: ['스포츠/레져', '헬스/요가', '헬스기구/용품', '헬스보호대'], observedAt: '2026-09-24', codeEvidence: 'supplier-hub' },
   { categoryId: '80719', path: ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'], observedAt: observation.observedAt },
   // Full breadcrumb and code observed in saved Couplus quotation; siblings are not fully observed.
   { categoryId: '77442', path: ['완구/취미', '보드게임', '바둑/체스/윷놀이', '바둑', '바둑알+바둑판'], observedAt: '2026-09-23' },
@@ -43,7 +43,7 @@ function observedChoices(): CategoryChoice[] {
     const id = hubCode?.categoryId ?? (couplusCode?.categoryId ?? '');
     items.set(pathKey(path), { key: id ? `observed:${id}` : `observed-path:${pathKey(path)}`, categoryId: id, path,
       evidence: 'observed', isLeaf, childrenObserved: branches.has(pathKey(path)), templateLinked: false,
-      codeEvidence: hubCode ? 'supplier-hub' : couplusCode ? 'couplus' : 'unconfirmed', codeObservedAt: hubCode?.observedAt ?? (couplusCode?.observedAt ?? null) });
+      codeEvidence: hubCode ? 'supplier-hub' : couplusCode ? couplusCode.codeEvidence ?? 'couplus' : 'unconfirmed', codeObservedAt: hubCode?.observedAt ?? (couplusCode?.observedAt ?? null) });
   };
   for (const root of observation.rootLabels) add([root], false);
   for (const node of observation.nodes) for (const child of node.children) add([...node.path, child.label], child.isLeaf);

@@ -1,0 +1,211 @@
+{
+  "categoryId": "81452",
+  "path": [
+    "스포츠/레져",
+    "헬스/요가",
+    "헬스기구/용품",
+    "헬스보호대"
+  ],
+  "observedAt": "2026-09-24",
+  "snapshot": "- banner:\n  - generic: 웨비나\n  - strong: 9월 29일~30일\n  - text: 프리미엄 데이터 신규 패키지 실전 활용법을 확인하세요!\n  - link \"신청하기 →\":\n    - /url: https://forms.cloud.microsoft/r/uxE1fR3gGC\n  - link:\n    - /url: /\n  - button \"한국어\": 한국어\n  - button \"와이홉\": 와이홉\n  - link \"온라인 문의\":\n    - /url: /supplier/qna/ko/requests/new\n  - link \"나의 문의내역\":\n    - /url: /supplier/qna/ko/requests\n  - link \"도움말\":\n    - /url: /help\n  - list:\n    - link \"홈\":\n      - /url: /dashboard\n    - button \"상품\": 상품\n    - button \"물류\": 물류\n    - button \"정산\": 정산\n    - button \"애널리틱스\": 애널리틱스\n    - link \"마이샵\":\n      - /url: /retail/store/guide\n    - link \"광고 관리\":\n      - /url: /marketing/ads-center/home\n    - button \"라이브 & 숏츠\": 라이브 & 숏츠\n    - button \"프로모션\": 프로모션\n    - link \"계약\":\n      - /url: /contract/list\n  - link \"개별 상품 등록\":\n    - /url: /sr/registration\n  - link \"대량 상품 등록\":\n    - /url: /qvt/registration\n  - link \"상품 등록 상태 확인\":\n    - /url: /qvt/wims\n  - link \"상품 수정 요청\":\n    - /url: /sr/retail-edit\n  - link \"상품 추출\":\n    - /url: /qvt/conversion\n  - link \"쿠팡 상품 공급 요청\":\n    - /url: /enigma/vsss\n- link \"info 견적서 등록에 어려움을 겪고 계시나요? 여기서 지원 요청을 접수해보세요.\":\n  - /url: https://helpseller.coupangcorp.com/hc/ko/requests/new?ticket_form_id=900002904263\n  - generic: info\n  - text: 견적서 등록에 어려움을 겪고 계시나요? 여기서 지원 요청을 접수해보세요.\n- link \"info Wing 에서 판매하는 상품을 '상품추출' 기능을 이용하여 더 간편하게 로켓배송으로 전환해 보세요.\":\n  - /url: /qvt/conversion/wing\n  - generic: info\n  - text: Wing 에서 판매하는 상품을 '상품추출' 기능을 이용하여 더 간편하게 로켓배송으로 전환해 보세요.\n- list:\n  - generic: 기본정보\n  - generic: \"2\"\n  - generic: 상품정보\n  - generic: \"3\"\n  - generic: 이미지/콘텐츠\n  - generic: \"4\"\n  - generic: 법적정보\n  - generic: \"5\"\n  - generic: 물류\n- heading \"와이홉 허리 보호대\" [level=4]\n- generic: \"카테고리: 스포츠/레져>헬스/요가>헬스기구/용품>헬스보호대 (81452)\"\n- group \"Product Page\":\n  - text: 모델명\n  - generic: \"*\"\n  - generic: help\n  - textbox \"예) ModelNumber123\"\n  - text: 브랜드\n  - generic: \"*\"\n  - generic: help\n  - textbox \"예) 탐사\"\n  - checkbox \"브랜드 없음\"\n  - generic: 브랜드 없음\n  - text: 옵션 및 가격\n  - generic: \"*\"\n  - generic: help\n  - generic: (* 녹색 별이 표시된 옵션은 택1 필수입력)\n  - table:\n    - rowgroup:\n      - row \"예) 블랙(색상), 스킨(색상), 화이트(색상), 네이비(색상), 로고(패턴), 무지(색상), 매쉬(패턴), 스트라이프(패턴) 예) 1개, 2개, 4개, 1세트, 1박스 예) S, Medium, Free, 대, one size 등 예) 6500 예) 9900 예) 9900 예) 8805864565456\":\n        - cell \"예) 블랙(색상), 스킨(색상), 화이트(색상), 네이비(색상), 로고(패턴), 무지(색상), 매쉬(패턴), 스트라이프(패턴)\"\n        - cell \"예) 1개, 2개, 4개, 1세트, 1박스\"\n        - cell \"예) S, Medium, Free, 대, one size 등\"\n        - cell \"예) 6500\"\n        - cell \"예) 9900\"\n        - cell \"예) 9900\"\n        - cell \"예) 8805864565456\"\n        - cell:\n          - checkbox\n        - cell\n  - table:\n    - rowgroup:\n      - row \"색상 * help 수량 * help 사이즈 * help 공급가 * help 쿠팡 판매가 * help 권장소비자가격 help 상품 바코드 * help 쿠팡 바코드 help 전체삭제\":\n        - columnheader \"색상 * help\":\n          - 'generic \"* 노출 속성은 고객이 상품을 구매할 때 선택 옵션으로 사용되는 정보입니다. 노출 속성은 필수로 입력해야 하며, 정확한 값을 기재해야 합니다. * 속성에는 없지만 필수 정보가 있다면 상품명에 기입해주세요 (노출속성에 모델명, 수량으로 구성되어 있는데 색상으로 제품이 구분된다면 색상을 상품명에 기입해주세요) * 속성에 중량(g), 용량(ml)이 같이 있다면 상품에 표기된 정보 1개만 작성해주세요 * 법정계량단위만 등록이 가능합니다. - 길이 : 미터(m) / 센티미터(㎝) / 킬로미터(㎞) - 넓이 : 제곱미터(㎡) / 제곱킬로미터(㎢) / 헥타아르(㏊) - 부피 : 세제곱미터(㎥) / 세제곱센티미터(㎤) / 리터(ℓ) - 질량 : 그램(g) / 킬로그램(㎏)) / 톤(t) - 온도 : 섭씨도(℃) - 전류 : 암페어(A), 켈빈(K), 볼트(V), 헤르츠(Hz) - A4, B4, 16절, 8절 규격화된 종이 사이즈는 허용\"':\n            - text: 색상 *\n            - generic: help\n        - columnheader \"수량 * help\":\n          - 'generic \"* 노출 속성은 고객이 상품을 구매할 때 선택 옵션으로 사용되는 정보입니다. 노출 속성은 필수로 입력해야 하며, 정확한 값을 기재해야 합니다. * 속성에는 없지만 필수 정보가 있다면 상품명에 기입해주세요 (노출속성에 모델명, 수량으로 구성되어 있는데 색상으로 제품이 구분된다면 색상을 상품명에 기입해주세요) * 속성에 중량(g), 용량(ml)이 같이 있다면 상품에 표기된 정보 1개만 작성해주세요 * 법정계량단위만 등록이 가능합니다. - 길이 : 미터(m) / 센티미터(㎝) / 킬로미터(㎞) - 넓이 : 제곱미터(㎡) / 제곱킬로미터(㎢) / 헥타아르(㏊) - 부피 : 세제곱미터(㎥) / 세제곱센티미터(㎤) / 리터(ℓ) - 질량 : 그램(g) / 킬로그램(㎏)) / 톤(t) - 온도 : 섭씨도(℃) - 전류 : 암페어(A), 켈빈(K), 볼트(V), 헤르츠(Hz) - A4, B4, 16절, 8절 규격화된 종이 사이즈는 허용\"':\n            - text: 수량 *\n            - generic: help\n        - columnheader \"사이즈 * help\":\n          - 'generic \"* 노출 속성은 고객이 상품을 구매할 때 선택 옵션으로 사용되는 정보입니다. 노출 속성은 필수로 입력해야 하며, 정확한 값을 기재해야 합니다. * 속성에는 없지만 필수 정보가 있다면 상품명에 기입해주세요 (노출속성에 모델명, 수량으로 구성되어 있는데 색상으로 제품이 구분된다면 색상을 상품명에 기입해주세요) * 속성에 중량(g), 용량(ml)이 같이 있다면 상품에 표기된 정보 1개만 작성해주세요 * 법정계량단위만 등록이 가능합니다. - 길이 : 미터(m) / 센티미터(㎝) / 킬로미터(㎞) - 넓이 : 제곱미터(㎡) / 제곱킬로미터(㎢) / 헥타아르(㏊) - 부피 : 세제곱미터(㎥) / 세제곱센티미터(㎤) / 리터(ℓ) - 질량 : 그램(g) / 킬로그램(㎏)) / 톤(t) - 온도 : 섭씨도(℃) - 전류 : 암페어(A), 켈빈(K), 볼트(V), 헤르츠(Hz) - A4, B4, 16절, 8절 규격화된 종이 사이즈는 허용\"':\n            - text: 사이즈 *\n            - generic: help\n        - columnheader \"공급가 * help\":\n          - generic \"* 공급사가 쿠팡에 제공하는 가격입니다.\":\n            - text: 공급가 *\n            - generic: help\n        - columnheader \"쿠팡 판매가 * help\":\n          - generic \"* 공급사가 제안하는 소비자 판매가를 입력하여주세요. * 값이 비어있거나, 공급가보다 금액이 작을 수 없습니다.\":\n            - text: 쿠팡 판매가 *\n            - generic: help\n        - columnheader \"권장소비자가격 help\":\n          - generic \"* 도서 정가 또는 제조사 권장 소비가격을 입력하여 주세요.\":\n            - text: 권장소비자가격\n            - generic: help\n        - columnheader \"상품 바코드 * help\":\n          - generic \"상품의 바코드를 입력하여 주세요. 아래는 사용할 수 있는 바코드 형태입니다. * 알파벳 대문자, 숫자, 하이픈(-)만 사용 가능 * 6자 ~ 14자 범위 내 사용 가능 * 공백 허용 가능 단, 맨 앞과 뒤, 연속적인 공백은 사용불가 만약, 상품의 고유 바코드가 없거나, 바코드 운영 규정에 부합하지 않는 경우 '바코드 없음(쿠팡 바코드 생성 요청)'을 선택하세요. 바코드 생성 이후에는 수정이 어려울 수 있으니 잘못 입력된 부분은 없는지 반드시 확인 해주세요\":\n            - text: 상품 바코드 *\n            - generic: help\n        - columnheader \"쿠팡 바코드 help\":\n          - generic \"상품의 고유 바코드가 없거나, 바코드 운영 규정에 부합하지 않는 경우 '쿠팡 바코드'를 선택해주세요\":\n            - text: 쿠팡 바코드\n            - generic: help\n        - columnheader \"전체삭제\":\n          - button \"전체삭제\" [disabled]\n    - rowgroup\n  - table:\n    - rowgroup:\n      - row\n    - rowgroup\n  - table:\n    - rowgroup\n  - button \"add\":\n    - generic: add\n  - button \"옵션 추가 (최대 100개)\"\n  - button \"모든 옵션 한 번에 입력하기\"\n  - generic: MSRP, OSRP 데이터 이용 약관 *\n  - button \"자세히보기\"\n  - checkbox \"이용약관을 읽고 동의합니다.\"\n  - generic: 이용약관을 읽고 동의합니다.\n  - text: 제조사\n  - generic: \"*\"\n  - generic: help\n  - textbox \"예) 쿠팡\"\n  - text: 거래타입\n  - generic: \"*\"\n  - generic: help\n  - radio \"제조사\" [checked]\n  - generic: 제조사\n  - radio \"공식총판사\"\n  - generic: 공식총판사\n  - radio \"공식대리점\"\n  - generic: 공식대리점\n  - radio \"기타 도소매업자\"\n  - generic: 기타 도소매업자\n  - generic: info\n  - text: 거래타입은 쿠팡에서 상품 관리에 중요하게 사용되므로 정확히 선택해주세요. 여러 유형에 해당되는 경우 쿠팡 로켓배송 매입 비중이 가장 높은 타입으로 선택해주세요.\n  - text: \"- 제조사 : 제조사 직거래, 글로벌 업체의 한국법인 또는 제조사가 브랜드 라이선스를 보유하며 수입, 생산, 판매\"\n  - text: \"- 공식총판사 : 제조사 지정 공식 총판사가 쿠팡과 거래하며, 제조사의 물류 운영을 담당\"\n  - text: \"- 공식대리점 : 제조사 지정 공식 대리점 또는 제조사 혹은 글로벌브랜드의 법인이 아니면서 글로벌 브랜드로부터 공식 라이선스를 받아 수입 판매하는 경우\"\n  - text: \"- 기타 도소매업자 : 위를 제외한 모든 거래업체, 병행수입사\"\n  - text: 과세여부\n  - generic: \"*\"\n  - generic: help\n  - radio \"과세\" [checked]\n  - generic: 과세\n  - radio \"면세\"\n  - generic: 면세\n  - radio \"영세\"\n  - generic: 영세\n  - generic: info\n  - text: 만약 내 상품의 과세 여부를 모를 경우 아래 사이트에서 과세 법령을 검색해 주세요.\n  - text: https://txsi.hometax.go.kr/docs/main.jsp\n  - text: 수입여부\n  - generic: \"*\"\n  - generic: help\n  - radio \"수입대상아님\" [checked]\n  - generic: 수입대상아님\n  - radio \"수입상품\"\n  - generic: 수입상품\n  - radio \"병행수입상품\"\n  - generic: 병행수입상품\n  - text: 검색태그\n  - generic: help\n  - textbox \"검색태그 입력 시, 콤마를 넣어 구분해주세요. (,)\"\n  - text: 검색 부가 정보\n  - generic: help\n  - generic: 사용부위\n  - combobox:\n    - option \"종아리\"\n    - option \"다리\"\n    - option \"목/어깨\"\n    - option \"팔/손목\"\n    - option \"손/손가락\"\n    - option \"발/발가락\"\n    - option \"엉덩이\"\n    - option \"허리\"\n    - option \"무릎\"\n    - option \"팔꿈치\"\n    - option \"발목\"\n    - option \"해당사항없음\" [selected]\n  - generic: 패션잡화 사이즈\n  - combobox:\n    - option \"S\"\n    - option \"M\"\n    - option \"L\"\n    - option \"XL\"\n    - option \"Free Size\"\n    - option \"XXS\"\n    - option \"XS\"\n    - option \"XXL이상\"\n    - option \"해당사항없음\" [selected]\n  - generic: 잠금/고정방식\n  - combobox:\n    - option \"지퍼형\"\n    - option \"자석형\"\n    - option \"벨크로형\"\n    - option \"똑딱이형\"\n    - option \"끈 조임형\"\n    - option \"잠금장치없음\"\n    - option \"밴드형\"\n    - option \"해당사항없음\" [selected]\n  - generic: 구성\n  - combobox:\n    - option \"단품\"\n    - option \"단품세트\"\n    - option \"혼합세트\"\n    - option \"해당사항없음\" [selected]\n  - generic: 보호대 사용대상\n  - combobox:\n    - option \"일반/성인\"\n    - option \"임산부\"\n    - option \"어린이\"\n    - option \"해당사항없음\" [selected]\n  - generic: 보호대/교정용품 용도\n  - combobox:\n    - option \"스포츠/레저용\"\n    - option \"의료용\"\n    - option \"일상생활용\"\n    - option \"해당사항없음\" [selected]\n  - generic: 착용방향\n  - combobox:\n    - option \"좌우겸용\"\n    - option \"오른쪽\"\n    - option \"왼쪽\"\n    - option \"좌우세트\"\n    - option \"해당사항없음\" [selected]\n  - generic: Global Trade Item Number\n  - textbox \"예)\":\n    - /placeholder: \"예) \"\n  - generic: Parent Manufacturer Part Number\n  - textbox \"예)\":\n    - /placeholder: \"예) \"\n  - generic: Manufacturer Part Number\n  - textbox \"예) RF-1400,i10,NK-PRO-01,AD-PRO-02,P-PRO-03,S-PRO-04\"\n- button \"arrow_back\":\n  - generic: arrow_back\n- generic: \"마지막 저장: 2026.09.24 00:05\"\n- button \"저장하기\"\n- button \"미리보기\"\n- button \"다음 arrow_forward\":\n  - text: 다음\n  - generic: arrow_forward\n- contentinfo:\n  - generic: \"서플라이어 콜센터 : 1600-9879 (월-금 9:00-19:00)\"\n  - generic: © Copyright 2026 Coupang.com, or its affiliates. All rights reserved.\n  - list:\n    - link \"Speak Up 채널/ Ethics 웹사이트\":\n      - /url: https://ethics.coupang.com/ko/index.html\n    - link \"공정거래 업무지침\":\n      - /url: /pdf/gnb/fair-trade-guidelines.ko.pdf\n    - link \"이용약관\":\n      - /url: /policies/terms\n    - link \"개인정보 처리방침\":\n      - /url: /policies/privacy-policy\n    - link \"고객지원\":\n      - /url: /help/cs\n    - link \"온라인 문의\":\n      - /url: /supplier/qna/ko/requests/new\n    - link \"나의 문의내역\":\n      - /url: /supplier/qna/ko/requests\n    - link \"도움말\":\n      - /url: /help\n- tab \"\":\n  - generic: \n- tab \"\":\n  - generic: \n- tab \" 0\":\n  - generic: \n  - text: \"0\"\n- tab:\n- generic: \n- text:  \n- textbox",
+  "selects": [
+    [
+      {
+        "label": "종아리",
+        "value": "종아리"
+      },
+      {
+        "label": "다리",
+        "value": "다리"
+      },
+      {
+        "label": "목/어깨",
+        "value": "목/어깨"
+      },
+      {
+        "label": "팔/손목",
+        "value": "팔/손목"
+      },
+      {
+        "label": "손/손가락",
+        "value": "손/손가락"
+      },
+      {
+        "label": "발/발가락",
+        "value": "발/발가락"
+      },
+      {
+        "label": "엉덩이",
+        "value": "엉덩이"
+      },
+      {
+        "label": "허리",
+        "value": "허리"
+      },
+      {
+        "label": "무릎",
+        "value": "무릎"
+      },
+      {
+        "label": "팔꿈치",
+        "value": "팔꿈치"
+      },
+      {
+        "label": "발목",
+        "value": "발목"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "S",
+        "value": "S"
+      },
+      {
+        "label": "M",
+        "value": "M"
+      },
+      {
+        "label": "L",
+        "value": "L"
+      },
+      {
+        "label": "XL",
+        "value": "XL"
+      },
+      {
+        "label": "Free Size",
+        "value": "Free Size"
+      },
+      {
+        "label": "XXS",
+        "value": "XXS"
+      },
+      {
+        "label": "XS",
+        "value": "XS"
+      },
+      {
+        "label": "XXL이상",
+        "value": "XXL이상"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "지퍼형",
+        "value": "지퍼형"
+      },
+      {
+        "label": "자석형",
+        "value": "자석형"
+      },
+      {
+        "label": "벨크로형",
+        "value": "벨크로형"
+      },
+      {
+        "label": "똑딱이형",
+        "value": "똑딱이형"
+      },
+      {
+        "label": "끈 조임형",
+        "value": "끈 조임형"
+      },
+      {
+        "label": "잠금장치없음",
+        "value": "잠금장치없음"
+      },
+      {
+        "label": "밴드형",
+        "value": "밴드형"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "단품",
+        "value": "단품"
+      },
+      {
+        "label": "단품세트",
+        "value": "단품세트"
+      },
+      {
+        "label": "혼합세트",
+        "value": "혼합세트"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "일반/성인",
+        "value": "일반/성인"
+      },
+      {
+        "label": "임산부",
+        "value": "임산부"
+      },
+      {
+        "label": "어린이",
+        "value": "어린이"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "스포츠/레저용",
+        "value": "스포츠/레저용"
+      },
+      {
+        "label": "의료용",
+        "value": "의료용"
+      },
+      {
+        "label": "일상생활용",
+        "value": "일상생활용"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "좌우겸용",
+        "value": "좌우겸용"
+      },
+      {
+        "label": "오른쪽",
+        "value": "오른쪽"
+      },
+      {
+        "label": "왼쪽",
+        "value": "왼쪽"
+      },
+      {
+        "label": "좌우세트",
+        "value": "좌우세트"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ]
+  ]
+}

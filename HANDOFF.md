@@ -949,3 +949,12 @@ AI등록 화면 확인:
 - 전체351/351, TypeScript/ESLint/production build 통과. 추가한 resolver→Excel 행 검증을 포함한 스키마27개도 재통과했다. 새 카테고리 경로/근거, 필드 수/선택지, 미확인 인증값 공란, 수동값, 기존 자료 연동, 분류 불일치 거절, 모호한 헤더 처리를 검증했다. 카탈로그의 기존 고정 개수/허용 코드 테스트는 새 관찰 분류에 맞게 수정했다. outputs/brace-all-tests.log, brace-build.log, brace-export-final.log.
 - 브라우저 상태: nextCouTab은81452 첫 옵션 견적 화면, hubCheckTab은Supplier Hub 개별등록 기본정보 화면이다. 실제 설정 저장·AI 처리·등록 전송·유료 호출·Cloudflare 배포 없음. 앱의 신규 양식 브라우저 클릭과 공식 Excel/운영 접수는 미검증.
 - 다음: Supplier Hub81452 공식 코드/규격 독립 검증, 공식 Excel 원본 확보 및 전체 카테고리 확장, 실제1688/AI 공급원·Supplier Hub 업로드/검증/접수 adapter 연결. 전체 자동화는 여전히 미완성이다.
+
+## 53. 헬스보호대81452 Supplier Hub 공식 상품정보 규격 대조 — 2026-09-24
+
+- 시작 main8e93e1c, 미커밋 변경 없음. supplierChrome에서 새 hubCheckTab을 열고 카테고리 구조를 단계별 클릭하여 공식 코드81452와 경로를 확인했다. 검색 결과 대신 구조 선택으로 진행했다. 상품명 fill만으로는 다음 이동시 공란이 되었고 End/Space/Tab 입력 후 상품정보 단계로 이동했다.
+- 공식 화면의 노출3개/공급가/판매가 필수, 검색태그 선택, 옵션100개 한도, 판매가≥공급가, 실제 바코드 형식을 반영했다. 7개 select의 DOM option.value를 읽어 해당사항없음의 값이 빈 문자열임을 확인했다. 기존 brace_ ID는 유지하며 이전 문자열 해당사항없음은 자동 이관하지 않고 검증 경고로 재선택을 요구한다. 수동 공란과 수정값은 보존한다.
+- 카테고리 코드 근거를 Supplier Hub로 갱신했다. 상품정보 규격 관찰 상태와 법적/이미지/물류/접수 검증은 별개다. 상품고시12개는 아직 쿠플러스 근거이며 공식 확인으로 표시하지 않는다. docs/supplier-hub-81452-product-2026-09-24.json 및 docs/couplus-81452-analysis.md에 대조 근거를 보존했다.
+- 저장 버튼/등록 전송/약관 동의는 누르지 않았다. 다만 다음 이동 후 마지막 저장2026.09.24 00:05 표시가 나타나 자동 중간 저장 가능성을 기록했다. 실제 저장 위치와 최종 접수는 미확인이다. 유료 호출·Cloudflare 배포 없음.
+- 검증: 전체352/352, TypeScript/ESLint/production build/diff 검사 통과. 공식 DOM 선택값7개 비교, 필수 항목, 옵션100/101 경계, 판매가 오류, 바코드 오류, 이전값 보존/경고와 공란 선택, 카탈로그의 공식 근거를 확인했다. outputs/brace-hub-all-tests.log 및 brace-hub-build.log. 신규 앱 UI 브라우저 클릭/공식 Excel 업로드/운영 접수는 미검증.
+- 다음: hubCheckTab은81452 상품정보 화면. 공식 상품고시·이미지·법적·물류 양식과 Excel 원본을 대조하고, 실제1688 수집/AI/Hub 업로드·검증·접수 adapter를 연결해야 한다. 전체 자동화 미완성.

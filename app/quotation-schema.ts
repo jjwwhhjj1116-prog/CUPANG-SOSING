@@ -143,7 +143,7 @@ const category80719: QuotationField[] = [
 
 export function getQuotationSchema(categoryId: string | null, categoryPath: readonly string[] = []): QuotationSchema {
   const hub = categoryId && Object.hasOwn(hubProductSchemas, categoryId) ? hubProductSchemas[categoryId] : undefined;
-  const observed = Boolean(hub) || categoryId === '80719';
+  const observed = Boolean(hub) || categoryId === '80719' || categoryId === '81452';
   const fields = commonFields.map(item => observed && ['supplyPrice', 'salePrice', 'searchTags'].includes(item.id)
     ? { ...item, required: item.id !== 'searchTags' }
     : observed && item.id === 'barcode' ? { ...item, help: '실제 바코드 입력 방식에서는 6~14자의 영문 대문자·숫자·하이픈·공백을 사용합니다. 앞뒤 공백과 연속 공백은 허용되지 않습니다.' } : item);
@@ -163,20 +163,21 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
   const couplusFields = categoryId === '77442' ? couplus77442Fields : categoryId === '81452' ? couplus81452Fields : null;
   const couplusPath = categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
   if (couplusFields && !hub) {
-    fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product'));
+    fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product').map(item => categoryId === '81452'
+      ? { ...item, required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : 'Supplier Hub 상품정보 화면에서 확인한 항목입니다. 실제 상품값을 입력해주세요.' } : item));
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...couplusFields.filter(item => item.section === 'legal'));
     fields.splice(fields.findIndex(item => item.id === 'kcsCertificationNumber'), 1);
   }
-  const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' ? 100 : undefined);
+  const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' || categoryId === '81452' ? 100 : undefined);
   return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : couplusPath ? [...couplusPath] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
-    status: observed ? 'observed' : 'unconfirmed', evidence: observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : couplusFields ? '쿠플러스 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
+    status: observed ? 'observed' : 'unconfirmed', evidence: categoryId === '81452' ? '81452 코드·경로·상품정보 필수 항목·선택값·옵션 100개 한도는 Supplier Hub에서 대조했습니다. 상품고시는 쿠플러스 관찰 기준이며 이미지·인증·물류·최종 접수는 미검증입니다.' : observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : couplusFields ? '쿠플러스 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
     fields: structuredClone(fields), submissionReady: false, ...(maxIncludedOptions ? { maxIncludedOptions } : {}),
-    ...(hub?.salePriceMustCoverSupply ? { salePriceMustCoverSupply: true } : {}) };
+    ...(hub?.salePriceMustCoverSupply || categoryId === '81452' ? { salePriceMustCoverSupply: true } : {}) };
 }
 export function emptyQuotationOverrides(): QuotationOverrides { return { common: {}, options: {} }; }
 
 export function quotationBarcodeIssues(categoryId: string | null, mode: string, value: string): string[] {
-  if (((!categoryId || !Object.hasOwn(hubProductSchemas, categoryId)) && categoryId !== '80719') || mode !== 'existing' || !value.trim()) return [];
+  if (((!categoryId || !Object.hasOwn(hubProductSchemas, categoryId)) && categoryId !== '80719' && categoryId !== '81452') || mode !== 'existing' || !value.trim()) return [];
   const issues: string[] = [];
   if (!/^[A-Z0-9 -]{6,14}$/.test(value)) issues.push('실제 바코드는 6~14자의 영문 대문자·숫자·하이픈·공백만 사용할 수 있습니다.');
   if (/^ | $| {2}/.test(value)) issues.push('실제 바코드의 앞뒤 공백과 연속 공백은 허용되지 않습니다.');
@@ -233,7 +234,7 @@ export function validateQuotationChanges(input: unknown, context: { schema: Quot
     return { fieldKey: item.fieldKey, optionId: item.optionId, value: item.value };
   });
   const barcodeChanges = changes.filter(change => change.fieldKey === 'barcode' || change.fieldKey === 'barcodeMode');
-  if (barcodeChanges.length && context.schema.categoryId === '80719') {
+  if (barcodeChanges.length && ['80719', '81452'].includes(context.schema.categoryId ?? '')) {
     const next = applyQuotationChanges(context.overrides ?? emptyQuotationOverrides(), changes);
     const targets = barcodeChanges.some(change => change.optionId === null) ? [null, ...context.optionIds] : [...new Set(barcodeChanges.map(change => change.optionId))];
     for (const optionId of targets) {
