@@ -3,10 +3,11 @@ import type { ProductOption, ProductOptions } from '@/app/product-options';
 import { calculateOptionPrices, resolveOptionPricePolicy } from '@/app/product-options';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
+import { hubProductSchemas } from '@/app/hub-product-schemas';
 
-// Base fields/limits come from Couplus screenshots 15–23. Twenty category 80719
-// Product Page choices and its three required exposed attributes were additionally
-// observed in Supplier Hub DOM (2026-09-22). Other sections and submission remain unverified.
+// Base fields come from Couplus screenshots 15–23. Product attributes and preview
+// notice names for 22 kitchen-storage categories were observed in Supplier Hub
+// (2026-09-23). Image/certification/logistics forms and submission remain unverified.
 export const quotationSections = {
   start: '1. Start Page · 시작 페이지', product: '2. Product Page · 상품 페이지',
   image: '3. Image Page · 이미지 페이지', legal: '4. Legal Page · 법적 정보',
@@ -26,6 +27,7 @@ export type QuotationSchema = {
   status: 'observed' | 'unconfirmed'; evidence: string; fields: QuotationField[];
   submissionReady: false;
   maxIncludedOptions?: number;
+  salePriceMustCoverSupply?: boolean;
 };
 export type QuotationOverrides = { common: Record<string, string>; options: Record<string, Record<string, string>> };
 export type QuotationChange = { fieldKey: string; optionId: string | null; value: string | null };
@@ -137,22 +139,34 @@ const category80719: QuotationField[] = [
 ];
 
 export function getQuotationSchema(categoryId: string | null, categoryPath: readonly string[] = []): QuotationSchema {
-  const observed = categoryId === '80719';
+  const hub = categoryId && Object.hasOwn(hubProductSchemas, categoryId) ? hubProductSchemas[categoryId] : undefined;
+  const observed = Boolean(hub) || categoryId === '80719';
   const fields = commonFields.map(item => observed && ['supplyPrice', 'salePrice', 'searchTags'].includes(item.id)
     ? { ...item, required: item.id !== 'searchTags' }
     : observed && item.id === 'barcode' ? { ...item, help: '실제 바코드 입력 방식에서는 6~14자의 영문 대문자·숫자·하이픈·공백을 사용합니다. 앞뒤 공백과 연속 공백은 허용되지 않습니다.' } : item);
-  if (observed) {
+  if (categoryId === '80719') {
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...category80719.filter(item => item.section === 'product'));
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...category80719.filter(item => item.section === 'legal'));
+  } else if (hub) {
+    const attributes = [
+      ...hub.exposed.map(item => field(item.id, 'product', item.label, { visibility: 'exposed', required: item.required, reviewRequired: true })),
+      ...hub.hidden.map(item => field(item.id, 'product', item.label, { visibility: 'hidden', type: item.type, choices: item.choices,
+        reviewRequired: true, help: item.placeholder ? `공식 입력 예시: ${item.placeholder.replace(/^예\)\s*/, '')}` : '선택한 카테고리의 공식 상품정보 화면에서 확인한 항목입니다.' })),
+    ];
+    fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...attributes);
+    fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...hub.notices.map(item => field(item.id, 'legal', item.label,
+      { reviewRequired: true, help: '공식 상품 미리보기의 상품고시 항목입니다. 실제 상품·증빙에 맞게 작성해주세요.' })));
   }
-  return { version: 1, categoryId, categoryPath: observed ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
-    status: observed ? 'observed' : 'unconfirmed', evidence: observed ? '80719 상품 페이지의 선택 항목 20개, 필수 색상·수량·사이즈와 공급가·판매가, 선택 검색태그, 실제 바코드 형식과 옵션 100개 한도는 2026-09-22 Supplier Hub DOM에서 확인했습니다. 그 외 상품 항목과 이미지·법적·물류 규격은 쿠플러스 참조 화면 기준이며 공식 확인 전입니다. 최종 접수 미검증.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
-    fields: structuredClone(fields), submissionReady: false, ...(observed ? { maxIncludedOptions: 100 } : {}) };
+  const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' ? 100 : undefined);
+  return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
+    status: observed ? 'observed' : 'unconfirmed', evidence: observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
+    fields: structuredClone(fields), submissionReady: false, ...(maxIncludedOptions ? { maxIncludedOptions } : {}),
+    ...(hub?.salePriceMustCoverSupply ? { salePriceMustCoverSupply: true } : {}) };
 }
 export function emptyQuotationOverrides(): QuotationOverrides { return { common: {}, options: {} }; }
 
 export function quotationBarcodeIssues(categoryId: string | null, mode: string, value: string): string[] {
-  if (categoryId !== '80719' || mode !== 'existing' || !value.trim()) return [];
+  if (((!categoryId || !Object.hasOwn(hubProductSchemas, categoryId)) && categoryId !== '80719') || mode !== 'existing' || !value.trim()) return [];
   const issues: string[] = [];
   if (!/^[A-Z0-9 -]{6,14}$/.test(value)) issues.push('실제 바코드는 6~14자의 영문 대문자·숫자·하이픈·공백만 사용할 수 있습니다.');
   if (/^ | $| {2}/.test(value)) issues.push('실제 바코드의 앞뒤 공백과 연속 공백은 허용되지 않습니다.');
@@ -161,6 +175,12 @@ export function quotationBarcodeIssues(categoryId: string | null, mode: string, 
 export function quotationOptionLimitIssue(schema: QuotationSchema, includedCount: number): string | null {
   return schema.maxIncludedOptions !== undefined && includedCount > schema.maxIncludedOptions
     ? `현재 견적 포함 옵션 ${includedCount}개가 Supplier Hub ${schema.categoryId}의 ${schema.maxIncludedOptions}개 한도를 초과했습니다. 로컬 옵션은 모두 보존됩니다. 포함 범위를 조정한 후 등록 자료를 검토해주세요.` : null;
+}
+export function quotationPriceIssues(schema: QuotationSchema, supply: string, sale: string): string[] {
+  if (!schema.salePriceMustCoverSupply || !/^\d+$/.test(supply) || !/^\d+$/.test(sale)) return [];
+  const supplyValue = Number(supply); const saleValue = Number(sale);
+  return Number.isSafeInteger(supplyValue) && Number.isSafeInteger(saleValue) && supplyValue > 0 && saleValue > 0 && saleValue < supplyValue
+    ? ['판매가는 공급가보다 작을 수 없습니다.'] : [];
 }
 
 export function quotationValueIssues(field: QuotationField, value: string, ownedKeys?: readonly string[]) {
@@ -317,6 +337,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     const barcodeIssues = quotationBarcodeIssues(schema.categoryId, fields.barcodeMode.value, fields.barcode.value);
     if (barcodeIssues.length) { fields.barcode.needsReview = true; fields.barcode.issues.push(...barcodeIssues); }
     if (fields.barcodeMode.value === 'request-coupang' && fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); }
+    const priceIssues = quotationPriceIssues(schema, fields.supplyPrice.value, fields.salePrice.value);
+    if (priceIssues.length) { fields.salePrice.needsReview = true; fields.salePrice.issues.push(...priceIssues); }
     return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : options.length === 0, fields };
   });
   return { schema, rows, issues };

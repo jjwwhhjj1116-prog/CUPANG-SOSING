@@ -9,7 +9,7 @@
   ],
   "comparisonSource": "docs/couplus-category-dom-2026-09-22.json",
   "expectedLeafCount": 22,
-  "verifiedLeafCount": 20,
+  "verifiedLeafCount": 22,
   "categoryIds": [
     {
       "path": [
@@ -229,34 +229,45 @@
       "categoryId": "80713",
       "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>주방걸이/정리홀더>조리도구걸이 (80713)",
       "observedAt": "2026-09-22T11:59:06.035Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "주방걸이/정리홀더",
+        "키친타올걸이/홀더"
+      ],
+      "categoryId": "80714",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>주방걸이/정리홀더>키친타올걸이/홀더 (80714)",
+      "observedAt": "2026-09-22T23:58:59.050Z"
+    },
+    {
+      "path": [
+        "주방용품",
+        "주방수납/정리",
+        "식기건조대/싱크대정리",
+        "주방걸이/정리홀더",
+        "행주걸이/주방수건걸이"
+      ],
+      "categoryId": "80715",
+      "displayedValue": "주방용품>주방수납/정리>식기건조대/싱크대정리>주방걸이/정리홀더>행주걸이/주방수건걸이 (80715)",
+      "observedAt": "2026-09-22T23:58:59.050Z"
     }
   ],
-  "remainingPaths": [
-    [
-      "주방용품",
-      "주방수납/정리",
-      "식기건조대/싱크대정리",
-      "주방걸이/정리홀더",
-      "키친타올걸이/홀더"
-    ],
-    [
-      "주방용품",
-      "주방수납/정리",
-      "식기건조대/싱크대정리",
-      "주방걸이/정리홀더",
-      "행주걸이/주방수건걸이"
-    ]
-  ],
+  "remainingPaths": [],
   "comparison": {
     "observedSubtreeNamesMatch": true,
     "verifiedPathsMatchCouplus": true,
-    "completeSubtreeIdsVerified": false,
+    "completeSubtreeIdsVerified": true,
     "unknownCategoryIdsInvented": false
   },
   "blockingObservation": {
     "recordedAt": "2026-09-22T12:04:12Z",
-    "status": "login-required",
-    "detail": "The last two leaf selections closed the modal but did not update the category textbox. Reopening the same registration page then displayed the Supplier Hub login form. No authentication bypass or alternate account was attempted."
+    "status": "resolved",
+    "detail": "The last two leaf selections closed the modal but did not update the category textbox. Reopening the same registration page then displayed the Supplier Hub login form. No authentication bypass or alternate account was attempted.",
+    "resolvedAt": "2026-09-22T23:58:59.050Z",
+    "resolution": "User re-authenticated in Chrome. Both remaining leaves selected through the visible category tree and IDs read from the rendered textbox."
   },
   "actions": {
     "productNameEntered": false,
@@ -266,7 +277,7 @@
     "registeredOrSubmitted": false
   },
   "limitations": [
-    "Twenty category paths and IDs were read directly from the visible category textbox after normal category selection; the last two IDs remain unconfirmed.",
+    "All 22 category paths and IDs in this observed kitchen-storage subtree were read from the visible category textbox. The full category catalog remains incomplete.",
     "The displayed subtree names matched the Couplus observation, including the four final 주방걸이/정리홀더 leaves. This does not establish the complete Supplier Hub taxonomy.",
     "Category paths and IDs do not verify category-specific quotation field definitions or final Supplier Hub acceptance.",
     "Only category selection and one category-name search in a blank form were used. No product name, next, save, preview, registration or submission action was executed.",

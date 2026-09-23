@@ -38,6 +38,58 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('all 22 official kitchen-storage schemas match independently recorded option columns, choices and notice order', () => {
+  const evidence = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-product-schemas-2026-09-23.json', import.meta.url), 'utf8'));
+  assert.equal(evidence.records.length, 22);
+  const profileModel = load('app/category-profiles.ts');
+  for (const record of evidence.records) {
+    const schema = model.getQuotationSchema(record.categoryId);
+    assert.equal(schema.status, 'observed'); assert.equal(schema.submissionReady, false);
+    assert.deepEqual(clone(schema.categoryPath), record.path);
+    const exposed = record.columns.slice(0, record.columns.findIndex(column => column.label === '공급가 *'));
+    assert.deepEqual(clone(schema.fields.filter(field => field.visibility === 'exposed').map(field => ({label: field.label, required: field.required}))), exposed.map(column => ({label: column.label.replace(/\s*\*\s*$/, ''), required: column.label.endsWith('*')})));
+    const hidden = schema.fields.filter(field => field.visibility === 'hidden');
+    assert.deepEqual(clone(hidden.map(field => field.label)), record.hidden.map(field => field.label));
+    for (let i = 0; i < hidden.length; i++) {
+      assert.equal(hidden[i].type, record.hidden[i].type === 'select' ? 'select' : 'text');
+      assert.deepEqual(clone(hidden[i].choices ?? []), record.hidden[i].choices ?? []);
+    }
+    assert.deepEqual(clone(schema.fields.filter(field => field.id.startsWith('notice')).map(field => field.label)), record.noticeLabels);
+    assert.equal(schema.maxIncludedOptions, 100);
+    assert.equal(schema.salePriceMustCoverSupply, true);
+    assert.equal(new Set(schema.fields.map(field => field.id)).size, schema.fields.length);
+    for (const field of schema.fields) assert.ok(Object.hasOwn(profileModel.categoryFields, field.id), `${record.categoryId}/${field.id} must export`);
+  }
+});
+
+test('category-specific values cannot leak between same-named attributes; unknown categories stay unconfirmed', () => {
+  const a = model.getQuotationSchema('80714'); const b = model.getQuotationSchema('80715');
+  assert.ok(!a.fields.some(field => field.id === 'size'));
+  assert.ok(b.fields.some(field => field.id === 'size'));
+  const fieldA = a.fields.find(field => field.visibility === 'hidden' && field.label === '설치 유형');
+  const fieldB = b.fields.find(field => field.visibility === 'hidden' && field.label === '설치 유형');
+  assert.notEqual(fieldA.id, fieldB.id);
+  const input = fixture(); input.categoryId = '80715';
+  input.overrides = {common: {[fieldA.id]: fieldA.choices.find(choice => choice.value).value}, options: {}};
+  const row = model.resolveQuotationFields(input).rows[1];
+  assert.equal(row.fields[fieldA.id], undefined); assert.equal(row.fields[fieldB.id].value, '');
+  assert.throws(() => model.validateQuotationChanges([change(fieldA.id, '')], context(input)), /견적 필드/);
+  for (const id of ['unobserved-category', '__proto__', 'constructor']) assert.equal(model.getQuotationSchema(id).status, 'unconfirmed');
+});
+
+test('official price relationship uses final option overrides and never silently adjusts entered prices', () => {
+  const input = fixture(); input.categoryId = '80714';
+  input.overrides = {common: {supplyPrice: '5000', salePrice: '4500'}, options: {red: {salePrice: '6000'}}};
+  let rows = model.resolveQuotationFields(input).rows;
+  assert.ok(rows[0].fields.salePrice.issues.some(issue => issue.includes('공급가보다')));
+  assert.equal(rows[0].fields.salePrice.value, '4500');
+  assert.ok(!rows[1].fields.salePrice.issues.some(issue => issue.includes('공급가보다')));
+  input.overrides.options.red.salePrice = '4999'; rows = model.resolveQuotationFields(input).rows;
+  assert.ok(rows[1].fields.salePrice.issues.some(issue => issue.includes('공급가보다')));
+  assert.equal(rows[1].fields.salePrice.value, '4999');
+  assert.equal(model.quotationPriceIssues(model.getQuotationSchema('80714'), '5000', '5000').length, 0);
+});
+
 test('observed screenshot schema has five sections, all 80719 attributes and keeps unsupported categories separate', () => {
   const known = model.getQuotationSchema('80719');
   assert.equal(known.status, 'observed'); assert.equal(known.submissionReady, false);
@@ -144,7 +196,7 @@ test('Supplier Hub Product Page select values exactly match observed DOM includi
   const transparent=schema.fields.find(field=>field.id==='transparent');assert.ok(transparent.choices.some(choice=>choice.value==='해당없음'));
   assert.equal(schema.fields.find(field=>field.id==='totalQuantity').type,'text');
   for(const id of observed.exposedRequired){const field=schema.fields.find(field=>field.id===id);assert.equal(field.required,true);assert.ok(model.quotationValueIssues(field,'').some(issue=>issue.includes('필수')));}
-  assert.match(schema.evidence,/Supplier Hub DOM/);assert.match(schema.evidence,/이미지·법적·물류/);assert.equal(schema.submissionReady,false);
+  assert.match(schema.evidence,/Supplier Hub 공식 화면/);assert.match(schema.evidence,/이미지·인증·물류/);assert.equal(schema.submissionReady,false);
   assert.ok(model.getQuotationSchema('not-80719').fields.every(field=>field.visibility==='common'));
 });
 
@@ -161,7 +213,7 @@ test('out-of-list saved material stays unchanged and blank official choices rema
   assert.equal(model.resolveQuotationFields(input).rows[1].fields.storageMaterial.value,'폴리프로필렌(PP)');
 });
 
-test('80719 alone requires supply and sale prices, makes search tags optional, and distinguishes blank optional values from required or evidentiary review', () => {
+test('Observed 80719 requires supply and sale prices, makes search tags optional, and distinguishes blank optional values from required or evidentiary review', () => {
   const input = fixture(); input.content.seo.keywords.value = [];
   input.overrides = { common: { supplyPrice: '', salePrice: '', msrp: '', mainImage: '' }, options: {} };
   const resolved = model.resolveQuotationFields(input);
@@ -173,7 +225,7 @@ test('80719 alone requires supply and sale prices, makes search tags optional, a
   for (const id of ['searchTags', 'msrp', 'mainImage']) { assert.equal(row.fields[id].value, ''); assert.equal(row.fields[id].issues.length, 0); assert.equal(row.fields[id].needsReview, false); }
   assert.equal(row.fields.kcCertificationNumber.needsReview, true, 'Evidence review remains even if an optional legal value is empty');
   assert.doesNotThrow(() => model.validateQuotationChanges([change('supplyPrice', ''), change('salePrice', '')], context(input)));
-  const unknown = model.getQuotationSchema('80720');
+  const unknown = model.getQuotationSchema('unobserved-category');
   assert.equal(unknown.fields.find(field => field.id === 'supplyPrice').required, false);
   assert.equal(unknown.fields.find(field => field.id === 'salePrice').required, false);
   assert.equal(unknown.fields.find(field => field.id === 'searchTags').required, true);
@@ -192,7 +244,7 @@ test('80719 existing barcode validates exact raw length, uppercase characters an
     assert.equal(model.quotationBarcodeIssues('80719', 'existing', valid).length, 0);
   }
   assert.doesNotThrow(() => model.validateQuotationChanges([change('barcode', '')], context(input)));
-  assert.equal(model.quotationBarcodeIssues('80720', 'existing', 'lowercase').length, 0);
+  assert.equal(model.quotationBarcodeIssues('unobserved-category', 'existing', 'lowercase').length, 0);
   assert.equal(model.quotationBarcodeIssues('80719', 'request-coupang', 'lowercase').length, 0);
 });
 
@@ -216,6 +268,6 @@ test('80719 warns above 100 included options while preserving all 200 local rows
   assert.equal(resolved.rows.at(-1).optionId, 'option-199');
   input.options.rows[100].included = false; resolved = model.resolveQuotationFields(input);
   assert.ok(!resolved.issues.some(issue => issue.includes('한도를 초과'))); assert.equal(resolved.rows.length, 201);
-  input.categoryId = '80720'; input.options.rows[100].included = true; resolved = model.resolveQuotationFields(input);
+  input.categoryId = 'unobserved-category'; input.options.rows[100].included = true; resolved = model.resolveQuotationFields(input);
   assert.equal(resolved.schema.maxIncludedOptions, undefined); assert.ok(!resolved.issues.some(issue => issue.includes('한도를 초과')));
 });

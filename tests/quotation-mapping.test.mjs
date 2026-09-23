@@ -20,6 +20,20 @@ function load(file) {
 const { suggestQuotationMappings: suggest } = load('app/quotation-mapping.ts');
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('a category-specific dropdown maps and exports only for the selected category', () => {
+  const schema = load('app/quotation-schema.ts').getQuotationSchema('80714');
+  const field = schema.fields.find(field => field.visibility === 'hidden' && field.type === 'select');
+  const result = suggest([field.label, '색상', '수량', '사이즈'], '80714');
+  assert.deepEqual(plain(result.mappings.map(item => item.field)), [field.id, 'color', 'quantity']);
+  assert.deepEqual(plain(result.unmatchedColumns), [3]);
+  const profiles = load('app/category-profiles.ts');
+  const draft = {name: '홀더', categoryId: '80714', categoryPath: schema.categoryPath, template: {name: 'test.csv', format: 'csv', sha256: 'a'.repeat(64), sheetName: '', headerRow: 1, headers: [field.label]}, mappings: [result.mappings[0]]};
+  const value = field.choices.find(choice => choice.value).value;
+  assert.equal(profiles.mapQuotationRow(draft, {[field.id]: value}).values[0], value);
+  assert.throws(() => profiles.validateCategoryProfile({...draft, categoryId: '80715'}), /다른 카테고리/);
+  assert.deepEqual(plain(suggest([field.label], 'unknown').mappings), []);
+});
+
 test('maps exact category fields, formatting marks and known aliases to editable column drafts', () => {
   const result = suggest(['상품명 *', '쿠팡 판매가', '뚜껑 포함여부', '수량', '박스 내 SKU 수량', '수입 및 판매원'], '80719');
   assert.deepEqual(plain(result.mappings.map(item => item.field)), ['title', 'salePrice', 'lidIncluded', 'quantity', 'boxSkuQuantity', 'importer']);

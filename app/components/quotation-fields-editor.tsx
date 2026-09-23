@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { quotationOptionLimitIssue, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
+import { quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import './quotation-fields-editor.css';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
@@ -44,9 +44,14 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
   const commonValue = draftManual(view, changes, null, fieldKey);
   const value = optionValue ?? commonValue;
   const source = optionValue !== null ? 'manual-option' : commonValue !== null ? 'manual-common' : fallback.source;
-  if (value === null) return fallback;
-  const issues = [...new Set([...(saved?.value === value && saved.source === source ? saved.issues : []), ...(definition ? quotationValueIssues(definition, value, view.imageKeys) : [])])];
-  return { ...fallback, value, source, issues, needsReview: Boolean(definition?.reviewRequired) || issues.length > 0 };
+  const resolvedValue = value ?? fallback.value;
+  const inheritedIssues = value === null ? fallback.issues : saved?.value === value && saved.source === source ? saved.issues : [];
+  // Price validation depends on BOTH draft cells, so a saved price issue must
+  // disappear when the other cell is corrected without changing this cell.
+  const issues = [...new Set([...inheritedIssues.filter(issue => fieldKey !== 'salePrice' || issue !== '판매가는 공급가보다 작을 수 없습니다.'),
+    ...(definition ? quotationValueIssues(definition, resolvedValue, view.imageKeys) : []),
+    ...(fieldKey === 'salePrice' ? quotationPriceIssues(view.resolved.schema, resolveQuotationEditorCell(view, changes, optionId, 'supplyPrice').value, resolvedValue) : [])])];
+  return { ...fallback, value: resolvedValue, source, issues, needsReview: Boolean(definition?.reviewRequired) || issues.length > 0 };
 }
 export function reconcileQuotationEditorDraft(previous: QuotationFieldsView, next: QuotationFieldsView, changes: readonly QuotationEditorChange[], pending: readonly Conflict[] = []) {
   const conflicts: Conflict[] = [];

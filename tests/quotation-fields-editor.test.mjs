@@ -42,6 +42,15 @@ function fixture(overrides = model.emptyQuotationOverrides(), brand = '기본 �
     categoryContext: { source: 'collection', profileId: null, categoryId: '80719', categoryPath: [] }, productVersion: '2026-09-24T00:00:00.000Z', contentRevision: 0, optionRevision: 1, updatedAt: null };
 }
 
+test('price relationship responds to both unsaved price cells, option inheritance and resets', () => {
+  const view = fixture({common: {supplyPrice: '4000', salePrice: '3000'}, options: {}});
+  const issue = cell => cell.issues.some(text => text.includes('공급가보다'));
+  assert.equal(issue(editor.resolveQuotationEditorCell(view, [], 'red', 'salePrice')), true);
+  assert.equal(issue(editor.resolveQuotationEditorCell(view, [change('supplyPrice', '2000')], 'red', 'salePrice')), false);
+  assert.equal(issue(editor.resolveQuotationEditorCell(view, [change('salePrice', '5000', 'red')], 'red', 'salePrice')), false);
+  assert.equal(issue(editor.resolveQuotationEditorCell(view, [change('salePrice', '5000', 'red')], 'blue', 'salePrice')), true);
+});
+
 test('editor keeps explicit empty manual values distinct from resetting to common or automatic values', () => {
   const view = fixture({ common: { brand: '공통 수정' }, options: { red: { brand: '빨강 전용' } } });
   let draft = editor.updateQuotationEditorDraft(view.overrides, [], change('brand', '', 'red'));
@@ -130,7 +139,7 @@ test('rendered editor has five groups, marks schema uncertainty, keeps unknown l
   const view = fixture();
   const start = renderEditor(view);
   for (const section of ['시작 정보', '상품 정보', '이미지', '법적 정보', '물류 정보']) assert.ok(start.includes(section));
-  assert.ok(start.includes('Supplier Hub DOM')); assert.ok(start.includes('최종 접수 미검증'));
+  assert.ok(start.includes('Supplier Hub 공식 화면')); assert.ok(start.includes('최종 접수는 추가 검증'));
   const legal = renderEditor(view, 'legal');
   assert.ok(legal.includes('인증')); assert.ok(!legal.includes('value="해당사항없음" selected'));
   const malicious = '<script>alert("x")</script><img src="https://external.invalid/secret">';
@@ -150,7 +159,7 @@ test('rendered official dropdowns have a single blank choice and preserve an out
   const material=select('storageMaterial');assert.ok(material.includes('면 · 목록 외 저장값'));assert.ok(material.includes('value="면" selected'));assert.ok(html.includes('지원하는 선택값을 확인해주세요.'));
   assert.ok(select('transparent').includes('value="해당없음"'));assert.ok(select('tradeType').includes('선택하지 않음'));
   for(const label of ['색상','수량','사이즈'])assert.ok(html.includes(`${label}<b>*</b>`));
-  assert.ok(html.includes('Supplier Hub DOM'));assert.ok(html.includes('이미지·법적·물류'));assert.ok(!html.includes('value="해당사항없음" selected'));
+  assert.ok(html.includes('Supplier Hub 공식 화면'));assert.ok(html.includes('이미지·인증·물류'));assert.ok(!html.includes('value="해당사항없음" selected'));
 });
 
 test('blank optional drafts do not receive a review badge while required blanks, invalid values and evidence review remain', () => {
