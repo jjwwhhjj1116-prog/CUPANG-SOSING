@@ -236,3 +236,27 @@ test('legacy comparison renders explicit selection and escapes previous HTML val
  assert.ok(html.includes('현재 양식에서 수정할 수 없는 항목'));
  assert.ok(html.includes('선택한 0개를 편집 초안에 적용'));
 });
+
+test('all-option overview reflects unsaved inherited values, resets, defaults and excluded rows without mutation',()=>{
+ const view=fixture({common:{brand:'공통 브랜드'},options:{red:{brand:''}}});const before=JSON.stringify(view);
+ const rows=editor.quotationOptionOverview(view,[]);
+ assert.deepEqual(Array.from(rows,row=>row.optionId),['red','blue']);
+ assert.equal(rows[0].missing,rows[1].missing+1);assert.ok(rows[0].defaults>0);assert.ok(rows[0].manual>0);assert.ok(rows[0].linked>0);
+ const draft=[change('brand',null,'red'),change('brand','새 브랜드'),change('packagedWeightG','500'),change('packagedDimensionsMm','20*30*40')];
+ const next=editor.quotationOptionOverview(view,draft);
+ assert.equal(next[0].missing,next[1].missing);assert.equal(next[1].missing,rows[1].missing-2);
+ assert.equal(next[0].problems.some(item=>item.fieldKey==='brand'),false);assert.equal(JSON.stringify(view),before);
+ const empty=clone(view);empty.resolved.rows.forEach(row=>row.included=false);assert.equal(editor.quotationOptionOverview(empty,[]).length,0);
+ const common=clone(empty);common.resolved.rows[0].included=true;assert.equal(editor.quotationOptionOverview(common,[])[0].optionId,null);
+});
+
+test('overview validates current draft prices and barcode mode together and renders per-option navigation',()=>{
+ const view=fixture();view.resolved.schema.salePriceMustCoverSupply=true;
+ const draft=[change('supplyPrice','5000'),change('salePrice','4000'),change('barcodeMode','existing'),change('barcode','bad','red')];
+ const rows=editor.quotationOptionOverview(view,draft);
+ assert.ok(rows[0].problems.some(item=>item.fieldKey==='salePrice'));assert.ok(rows[0].problems.some(item=>item.fieldKey==='barcode'));
+ const fixed=[...draft,change('salePrice','6000','red'),change('barcode','ABC123','blue')];
+ const next=editor.quotationOptionOverview(view,fixed);assert.equal(next[0].problems.some(item=>item.fieldKey==='salePrice'),false);assert.equal(next[1].problems.some(item=>item.fieldKey==='barcode'),false);
+ const markup=renderToStaticMarkup(React.createElement(editor.QuotationOptionOverview,{view,changes:draft,disabled:true,onOpen(){}}));
+ assert.match(markup,/전체 견적 작성 현황/);assert.match(markup,/바코드 구역 열기/);assert.match(markup,/disabled/);assert.doesNotMatch(markup,/>excluded</);
+});

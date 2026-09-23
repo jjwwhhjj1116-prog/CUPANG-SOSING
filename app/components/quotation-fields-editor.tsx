@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
+import { quotationBarcodeIssues, quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import './quotation-fields-editor.css';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
@@ -98,6 +98,44 @@ export function quotationEditorIssues(field: QuotationField, cell: Cell, imageKe
   return [...new Set([...cell.issues, ...quotationValueIssues(field, cell.value, imageKeys)])];
 }
 function imageValues(value: string) { return [...new Set(value.split('\n').map(key => key.trim()).filter(Boolean))]; }
+export function quotationOptionOverview(view: QuotationFieldsView, changes: readonly QuotationEditorChange[]) {
+  return view.resolved.rows.filter(row => row.included).map(row => {
+    let linked = 0; let defaults = 0; let manual = 0; let missing = 0;
+    const problems: { fieldKey: string; label: string; section: QuotationField['section']; issues: string[] }[] = [];
+    for (const field of view.resolved.schema.fields) {
+      const cell = resolveQuotationEditorCell(view, changes, row.optionId, field.id);
+      if (cell.source.startsWith('manual-')) manual++;
+      else if (cell.source === 'couplus-default') defaults++;
+      else if (cell.source !== 'empty' && cell.value.trim()) linked++;
+      if (field.required && !cell.value.trim()) missing++;
+      const issues = quotationValueIssues(field, cell.value, view.imageKeys);
+      if (field.id === 'salePrice') issues.push(...quotationPriceIssues(view.resolved.schema,
+        resolveQuotationEditorCell(view, changes, row.optionId, 'supplyPrice').value, cell.value));
+      if (field.id === 'barcode') {
+        const mode = resolveQuotationEditorCell(view, changes, row.optionId, 'barcodeMode').value;
+        issues.push(...quotationBarcodeIssues(view.resolved.schema.categoryId, mode, cell.value));
+        if (mode === 'existing' && !cell.value.trim()) issues.push('실제 바코드 번호를 입력해주세요.');
+        if (mode === 'request-coupang' && cell.value.trim()) issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.');
+      }
+      if (issues.length) problems.push({ fieldKey: field.id, label: field.label, section: field.section, issues });
+    }
+    return { optionId: row.optionId, optionLabel: row.optionLabel, linked, defaults, manual, missing, problems };
+  });
+}
+export function QuotationOptionOverview({ view, changes, disabled, onOpen }: {
+  view: QuotationFieldsView; changes: readonly QuotationEditorChange[]; disabled: boolean;
+  onOpen: (optionId: string | null, section: QuotationField['section']) => void;
+}) {
+  const rows = quotationOptionOverview(view, changes);
+  return <details className="quotation-fields-notice" open><summary>전체 견적 작성 현황 · 포함 {rows.length}개 · 필수 미입력 {rows.reduce((sum, row) => sum + row.missing, 0)}개</summary>
+    <p>미저장 입력까지 반영한 항목 수입니다. 직접 수정한 공란도 수정으로 집계합니다. 양식 기본값과 입력 형식 확인은 실제 상품 검증·등록 가능 판정과 다릅니다. 제외 옵션은 집계하지 않습니다.</p>
+    {rows.length > 0 && <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션</th><th>저장 자료 연동</th><th>양식 기본값</th><th>직접 수정</th><th>필수 미입력</th><th>입력 확인</th></tr></thead><tbody>{rows.map(row => <tr key={row.optionId ?? 'common'}>
+      <td><button type="button" className="quotation-field-text-button" disabled={disabled} onClick={() => onOpen(row.optionId, 'start')}>{row.optionLabel}</button></td>
+      <td>{row.linked}</td><td>{row.defaults}</td><td>{row.manual}</td><td>{row.missing}</td>
+      <td>{row.problems.length ? row.problems.map(problem => <div key={problem.fieldKey}><button type="button" className="quotation-field-text-button" disabled={disabled} onClick={() => onOpen(row.optionId, problem.section)}>{problem.label} 구역 열기</button><small> · {problem.issues.join(' / ')}</small></div>) : '필수·형식 오류 없음 · 별도 검토 필요'}</td>
+    </tr>)}</tbody></table></div>}
+  </details>;
+}
 export function legacyQuotationCandidates(view: QuotationFieldsView, changes: readonly QuotationEditorChange[]) {
   if (!view.categoryContext.categoryId || !view.legacyOverrides) return [];
   const entries: [string | null, Record<string, string>][] = [[null, view.legacyOverrides.common], ...Object.entries(view.legacyOverrides.options)];
@@ -229,6 +267,7 @@ function QuotationFieldsForm({ productId, profileId, refreshToken, onSaved, onDi
     {message && <p role="status" className="quotation-fields-notice">{message}</p>}
     {schema && <div className="quotation-fields-category"><strong>{schema.categoryPath.join(' › ') || '카테고리 미연결'}{schema.categoryId ? ` · ${schema.categoryId}` : ''}</strong><small>{schema.status === 'observed' ? schema.evidence : '이 카테고리의 세부 규격은 미확인입니다. 공통 입력을 작성하고 실제 견적서 양식과 대조해주세요.'}</small></div>}
     {view && <>
+      <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section) => { setSelectedOption(optionId); setActive(section); setBulk(null); }}/>
       <LegacyQuotationImport key={JSON.stringify([view.revision, view.inputFingerprint, changes])} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={keys => {
         try { setChanges(importLegacyQuotationDraft(view, changes, keys)); setBulk(null); setError(''); setMessage('선택한 이전 입력을 초안에 반영했습니다. 현재 분류에 저장하려면 견적 입력 저장을 눌러주세요.'); }
         catch (cause) { setError(cause instanceof Error ? cause.message : '이전 입력을 확인해주세요.'); }
