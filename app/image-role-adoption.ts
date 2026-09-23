@@ -17,3 +17,22 @@ export function generatedImageRolePatch(content:ProductContent,job:ImageEditJob,
  if(!Object.keys(assets).length)throw new Error('원본이 대표·추가·상세 역할에 없습니다. 이미지 편집에서 결과를 직접 선택해주세요.');
  return {assets};
 }
+
+/** Combine reviewed results against one snapshot, then save with one revision check. */
+export function generatedImagesRolePatch(content:ProductContent,jobs:readonly ImageEditJob[],imageKeys:readonly string[]):ContentPatch {
+ if(!jobs.length||jobs.length>50)throw new Error('검토한 결과를 1~50개 선택해주세요.');
+ const replacements=new Map<string,string>();const outputs=new Set<string>();
+ for(const job of jobs){
+  generatedImageRolePatch(content,job,imageKeys);
+  const source=job.review.sourceKey;const output=job.result!.storageKey;
+  if(replacements.has(source)||outputs.has(output))throw new Error('같은 원본 또는 결과가 중복 선택되었습니다. 원본당 결과 하나를 선택해주세요.');
+  replacements.set(source,output);outputs.add(output);
+ }
+ if([...outputs].some(key=>replacements.has(key)))throw new Error('다른 선택 작업의 원본을 결과로 사용하는 연결은 한 번에 적용할 수 없습니다.');
+ const assets:NonNullable<ContentPatch['assets']>={};
+ for(const role of ['main','additional','detail'] as const){
+  const current=content.assets[role].value;
+  if(current.some(key=>replacements.has(key)))assets[role]=current.map(key=>replacements.get(key)??key);
+ }
+ return {assets};
+}
