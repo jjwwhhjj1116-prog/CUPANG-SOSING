@@ -1,5 +1,5 @@
 import type { CategoryField } from '@/app/category-profiles';
-import type { ProductContent } from '@/app/product-content';
+import { savedTextOrFallback, type ProductContent } from '@/app/product-content';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
 import { calculatePrice } from '@/app/pricing';
@@ -22,8 +22,8 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
   };
   const base: QuotationRowData = {
     title: content.seo.title.value || product.title, sourceUrl: product.source_url,
-    brand: settings.brand, manufacturer: content.label.manufacturer.value || settings.manufacturer,
-    importer: content.label.importer.value || settings.importer, serviceContact: content.label.contact.value || settings.serviceContact,
+    brand: settings.brand, manufacturer: savedTextOrFallback(content.label.manufacturer, settings.manufacturer),
+    importer: savedTextOrFallback(content.label.importer, settings.importer), serviceContact: savedTextOrFallback(content.label.contact, settings.serviceContact),
     boxQuantity: settings.boxSkuQuantity, material: content.label.material.value,
     countryOfOrigin: content.label.countryOfOrigin.value, barcode: '',
     mainImage: filename(content.assets.main.value[0]),

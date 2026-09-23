@@ -9,7 +9,7 @@ function load(file) {
   if (cache.has(file)) return cache.get(file);
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(compiled, { exports, structuredClone, require(name) {
+  vm.runInNewContext(compiled, { exports, structuredClone, TextEncoder, require(name) {
     if (!name.startsWith('@/app/')) throw Error(name);
     return load(name.slice(2) + '.ts');
   } });
@@ -37,6 +37,32 @@ function fixture() {
 }
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
+
+test('cleared saved label facts stay empty in quotation cells and exported Excel mappings',()=>{
+ const input=fixture();
+ const keys=['manufacturer','importer','contact','countryOfOrigin','material','qualityAssurance','productName','model'];
+ const initial=Object.fromEntries(keys.map(key=>[key,'이전 입력']));
+ input.content=contentModel.applyContentPatch(input.content,{label:initial},'before');
+ input.content=contentModel.applyContentPatch(input.content,{label:Object.fromEntries(keys.map(key=>[key,'']))},'after');
+ const resolved=model.resolveQuotationFields(input);
+ for(const row of resolved.rows) for(const key of ['manufacturer','noticeManufacturerImporter','noticeServiceContact','noticeCountryOfOrigin','noticeMaterial','noticeQualityAssurance','noticeNameModel','model']){
+  assert.equal(row.fields[key].value,'',key);assert.equal(row.fields[key].source,'content',key);
+ }
+ const {resolvedQuotationRows}=load('app/exports/quotation-fields.ts');
+ const rows=resolvedQuotationRows({...input,profile:null},resolved,[{key:'owner/option.png',name:'assets/option.png'},{key:'owner/main.png',name:'assets/main.png'},{key:'owner/detail.png',name:'assets/detail.png'}]);
+ assert.equal(rows[0].manufacturer,'');assert.equal(rows[0].importer,'');assert.equal(rows[0].serviceContact,'');assert.equal(rows[0].countryOfOrigin,'');assert.equal(rows[0].material,'');
+});
+
+test('untouched label blanks still inherit settings and observed category defaults',()=>{
+ const input=fixture();input.content=contentModel.emptyProductContent('p1');
+ const row=model.resolveQuotationFields(input).rows[1];
+ assert.equal(row.fields.manufacturer.value,input.settings.manufacturer);
+ assert.equal(row.fields.noticeManufacturerImporter.value,'제조자: 기본 제조사 / 수입자: 수입사');
+ assert.equal(row.fields.noticeCountryOfOrigin.value,'해당사항없음');
+ input.overrides={common:{manufacturer:'견적에서 수정'},options:{}};
+ input.content.label.manufacturer={value:'',provenance:'manual',updatedAt:'now'};
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.manufacturer.value,'견적에서 수정');
+});
 
 test('observed Couplus defaults fill only 80719 missing fields and preserve source edits',()=>{
  const input=fixture();let row=model.resolveQuotationFields(input).rows[1];

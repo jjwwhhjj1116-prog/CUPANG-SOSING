@@ -9,6 +9,10 @@ export const assetRoles = { main: '대표 이미지', additional: '추가 이미
 export type LabelField = keyof typeof labelFields;
 export type AssetRole = keyof typeof assetRoles;
 export type ContentField<T> = { value: T; provenance: 'unverified' | 'collected' | 'translated' | 'generated' | 'manual'; updatedAt: string | null };
+/** A deliberately cleared saved value must not resurrect a workspace default. */
+export function savedTextOrFallback(field: ContentField<string>, fallback = ''): string {
+  return field.provenance === 'manual' ? field.value : field.value || fallback;
+}
 export type ProductContent = {
   schemaVersion: 1; productId: string; revision: number; updatedAt: string | null;
   seo: { title: ContentField<string>; keywords: ContentField<string[]>; description: ContentField<string> };

@@ -1,5 +1,5 @@
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
-import type { ProductContent } from '@/app/product-content';
+import { savedTextOrFallback, type ContentField, type ProductContent } from '@/app/product-content';
 import type { ProductOption, ProductOptions } from '@/app/product-options';
 import { calculateOptionPrices, resolveOptionPricePolicy } from '@/app/product-options';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
@@ -277,7 +277,9 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   let prices: ReturnType<typeof calculateOptionPrices> = [];
   try { prices = calculateOptionPrices(options, resolveOptionPricePolicy(product, settings).policy); }
   catch { issues.push('저장된 가격 설정을 확인해주세요. 옵션 가격을 자동 계산하지 않았습니다.'); }
-  const contentValue = (value: string, fallback?: string) => literal(value || fallback || '', value ? 'content' : fallback ? 'settings' : 'empty');
+  const contentValue = (field: ContentField<string>, fallback?: string): Automatic => field.provenance === 'manual'
+    ? { value: field.value, source: 'content' }
+    : literal(savedTextOrFallback(field, fallback), field.value ? 'content' : fallback ? 'settings' : 'empty');
   const images = (keys: readonly string[]): Automatic => {
     const missing = keys.filter(key => !ownedKeys.includes(key));
     return { value: keys.filter(key => ownedKeys.includes(key)).join('\n'), source: keys.some(key => ownedKeys.includes(key)) ? 'content' : 'empty',
@@ -289,9 +291,9 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     switch (id) {
       case 'title': return literal(title, content.seo.title.value ? 'content' : 'product');
       case 'category': return literal(schema.categoryId ? `${schema.categoryPath.join(' > ')}${schema.categoryPath.length ? ' ' : ''}(${schema.categoryId})` : '', 'schema');
-      case 'model': return contentValue(content.label.model.value);
+      case 'model': return contentValue(content.label.model);
       case 'brand': return literal(settings.brand, 'settings');
-      case 'manufacturer': return contentValue(content.label.manufacturer.value, settings.manufacturer);
+      case 'manufacturer': return contentValue(content.label.manufacturer, settings.manufacturer);
       case 'tradeType': return literal(settings.tradeType, 'settings');
       case 'importType': return literal(settings.importType, 'settings');
       case 'searchTags': return literal(content.seo.keywords.value.join(', '), 'content');
@@ -300,8 +302,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { ...literal(pricing?.calculation?.[id], 'pricing'), issues: pricing?.error ? [pricing.error] : !option.included ? ['견적 제외 옵션의 가격은 자동 계산하지 않았습니다.'] : !pricing?.calculation ? ['옵션 가격 계산을 확인해주세요.'] : [] };
       }
       case 'quantity': return literal(option?.unitsPerPack, 'option');
-      case 'size': return option && option.widthCm && option.lengthCm && option.heightCm ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions.value);
-      case 'storageMaterial': case 'noticeMaterial': return contentValue(content.label.material.value);
+      case 'size': return option && option.widthCm && option.lengthCm && option.heightCm ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
+      case 'storageMaterial': case 'noticeMaterial': return contentValue(content.label.material);
       case 'mainImage': {
         const selected = option?.imageKey ? images([option.imageKey]) : images(content.assets.main.value);
         return { ...selected, source: selected.value && option?.imageKey ? 'option' : selected.source };
@@ -311,15 +313,19 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'detailImages': return images(content.assets.detail.value);
       case 'detailHtml': return literal(content.seo.description.value ? `<p>${htmlEscape(content.seo.description.value).replace(/\r?\n/g, '<br>')}</p>` : '', 'content');
       case 'altText': return literal(title, content.seo.title.value ? 'content' : 'product');
-      case 'noticeNameModel': return literal([content.label.productName.value || title, content.label.model.value].filter(Boolean).join(' / '), 'content');
+      case 'noticeNameModel': {
+        const value = [savedTextOrFallback(content.label.productName, title), content.label.model.value].filter(Boolean).join(' / ');
+        return content.label.productName.provenance === 'manual' || content.label.model.provenance === 'manual' ? { value, source: 'content' } : literal(value, 'content');
+      }
       case 'noticeDimensions': return auto('size', option);
       case 'noticeManufacturerImporter': {
-        const manufacturer = content.label.manufacturer.value || settings.manufacturer; const importer = content.label.importer.value || settings.importer;
-        return literal([manufacturer && `제조자: ${manufacturer}`, importer && `수입자: ${importer}`].filter(Boolean).join(' / '), content.label.manufacturer.value && content.label.importer.value ? 'content' : 'settings');
+        const manufacturer = savedTextOrFallback(content.label.manufacturer, settings.manufacturer); const importer = savedTextOrFallback(content.label.importer, settings.importer);
+        const value = [manufacturer && `제조자: ${manufacturer}`, importer && `수입자: ${importer}`].filter(Boolean).join(' / ');
+        return { value, source: (content.label.manufacturer.value && content.label.importer.value) || content.label.manufacturer.provenance === 'manual' || content.label.importer.provenance === 'manual' ? 'content' : value ? 'settings' : 'empty' };
       }
-      case 'noticeCountryOfOrigin': return contentValue(content.label.countryOfOrigin.value);
-      case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance.value);
-      case 'noticeServiceContact': return contentValue(content.label.contact.value, settings.serviceContact);
+      case 'noticeCountryOfOrigin': return contentValue(content.label.countryOfOrigin);
+      case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance);
+      case 'noticeServiceContact': return contentValue(content.label.contact, settings.serviceContact);
       case 'boxSkuQuantity': return literal(settings.boxSkuQuantity, 'settings');
       // Certification applicability, country, packaging measurements, barcode,
       // and attribute values never come from category names or blanket defaults.

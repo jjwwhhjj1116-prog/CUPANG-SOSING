@@ -1,4 +1,5 @@
 import { categoryFields, type CategoryField } from '@/app/category-profiles';
+import { savedTextOrFallback } from '@/app/product-content';
 import { quotationSections, type ResolvedQuotation } from '@/app/quotation-schema';
 import { quotationCsv } from '@/app/pricing';
 import { optionSourceCostCny } from '@/app/product-options';
@@ -44,8 +45,8 @@ export function resolvedQuotationRows(saved: QuotationExportSource, resolved: Re
     const data: QuotationRowData = {
       sourceUrl: saved.product.source_url, sourcePriceCny: option ? optionSourceCostCny(option.unitCostCny!, option.unitsPerPack) : saved.product.source_price_cny,
       ...(option ? { skuName: option.translatedName || option.originalName, skuId: option.supplierSku } : {}),
-      importer: saved.content.label.importer.value || saved.settings.importer,
-      serviceContact: saved.content.label.contact.value || saved.settings.serviceContact,
+      importer: savedTextOrFallback(saved.content.label.importer, saved.settings.importer),
+      serviceContact: savedTextOrFallback(saved.content.label.contact, saved.settings.serviceContact),
       material: saved.content.label.material.value, countryOfOrigin: saved.content.label.countryOfOrigin.value,
     };
     for (const field of resolved.schema.fields) {
