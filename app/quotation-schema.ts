@@ -1,3 +1,4 @@
+import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOption, ProductOptions } from '@/app/product-options';
 import { calculateOptionPrices, resolveOptionPricePolicy } from '@/app/product-options';
@@ -158,9 +159,14 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...hub.notices.map(item => field(item.id, 'legal', item.label,
       { reviewRequired: true, help: '공식 상품 미리보기의 상품고시 항목입니다. 실제 상품·증빙에 맞게 작성해주세요.' })));
   }
+  if (categoryId === '77442' && !hub) {
+    fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplus77442Fields.filter(item => item.section === 'product'));
+    fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...couplus77442Fields.filter(item => item.section === 'legal'));
+    fields.splice(fields.findIndex(item => item.id === 'kcsCertificationNumber'), 1);
+  }
   const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' ? 100 : undefined);
-  return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
-    status: observed ? 'observed' : 'unconfirmed', evidence: observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
+  return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : categoryId === '77442' ? [...couplus77442Path] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
+    status: observed ? 'observed' : 'unconfirmed', evidence: observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : categoryId === '77442' ? '쿠플러스 저장 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
     fields: structuredClone(fields), submissionReady: false, ...(maxIncludedOptions ? { maxIncludedOptions } : {}),
     ...(hub?.salePriceMustCoverSupply ? { salePriceMustCoverSupply: true } : {}) };
 }

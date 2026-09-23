@@ -291,3 +291,24 @@ test('80719 warns above 100 included options while preserving all 200 local rows
   input.categoryId = 'unobserved-category'; input.options.rows[100].included = true; resolved = model.resolveQuotationFields(input);
   assert.equal(resolved.schema.maxIncludedOptions, undefined); assert.ok(!resolved.issues.some(issue => issue.includes('한도를 초과')));
 });
+
+test('77442 uses observed Couplus board fields without claiming official verification or copying saved product values',()=>{
+ const input=fixture();input.categoryId='77442';const schema=model.getQuotationSchema('77442');
+ assert.equal(schema.status,'unconfirmed');assert.equal(schema.submissionReady,false);
+ assert.deepEqual(clone(schema.categoryPath),['완구/취미','보드게임','바둑/체스/윷놀이','바둑','바둑알+바둑판']);
+ assert.equal(schema.fields.filter(f=>f.visibility==='exposed').length,2);
+ assert.equal(schema.fields.filter(f=>f.visibility==='hidden').length,16);
+ assert.equal(schema.fields.filter(f=>f.id.startsWith('notice')).length,5);
+ assert.equal(schema.fields.some(f=>f.id==='kcsCertificationNumber'),false);
+ const row=model.resolveQuotationFields(input).rows[1];
+ for(const id of ['board_magnetic','board_width','noticePermission','packagedWeightG','packagedDimensionsMm','taxType'])assert.equal(row.fields[id].value,'');
+ assert.equal(row.fields.title.value,'번역된 가방');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
+ input.overrides={common:{board_magnetic:'자석부착가능',noticePermission:'확인된 증빙'},options:{}};
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.board_magnetic.value,'자석부착가능');
+ assert.equal(model.getQuotationSchema('80719').fields.some(f=>f.id.startsWith('board_')),false);
+ assert.equal(model.getQuotationSchema('unknown').fields.some(f=>f.id.startsWith('board_')),false);
+});
+test('77442 schema clones choices so one form cannot alter future category forms',()=>{
+ const first=model.getQuotationSchema('77442');first.fields.find(f=>f.id==='board_magnetic').choices[0].label='변경';
+ assert.equal(model.getQuotationSchema('77442').fields.find(f=>f.id==='board_magnetic').choices[0].label,'해당사항없음');
+});
