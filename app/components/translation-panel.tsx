@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
+import { optionTranslationAttributes, adoptOptionTranslations } from '@/app/option-translation';
+import type { ProductOptionsResponse } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
@@ -56,6 +58,33 @@ export default function TranslationPanel({ productId, version, title, onContentS
     }catch(reason){setError(reason instanceof Error?reason.message:'원문 조회 실패');}
     finally{setBusy(false);}
   }
+  async function loadOptionSource() {
+    setBusy(true);setError('');setNotice('');
+    try {
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store'});
+      const value=await response.json() as ProductOptionsResponse & {error?:string};
+      if(!response.ok)throw Error(value.error??'옵션 조회 실패');
+      if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
+      const pairs=optionTranslationAttributes(value.options);
+      if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
+      setAttributes(pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n'));
+      setNotice(`한국어 이름이 비어 있는 옵션 ${pairs.length}개를 번역 검토에 넣었습니다. 아직 유료 호출하지 않았습니다.`);
+    }catch(reason){setError(reason instanceof Error?reason.message:'옵션 조회 실패');}
+    finally{setBusy(false);}
+  }
+  async function adoptOptions() {
+    if(!job)return;setBusy(true);setError('');setNotice('');
+    try {
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store'});
+      const current=await response.json() as ProductOptionsResponse & {error?:string};
+      if(!response.ok)throw Error(current.error??'옵션 조회 실패');
+      const next=adoptOptionTranslations(current.options,job,current.productVersion);
+      const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.options.revision,expectedProductVersion:current.productVersion,rows:next.rows})});
+      const value=await saved.json() as {error?:string};if(!saved.ok)throw Error(value.error??'옵션 저장 실패');
+      setNotice(`빈 한국어 옵션명 ${next.changed}개에 검토한 초안을 적용했습니다. 기존 이름·가격·수량은 보존했습니다.`);onContentSaved?.();
+    }catch(reason){setError(reason instanceof Error?reason.message:'옵션 적용 실패');}
+    finally{setBusy(false);}
+  }
   function prepare() {
     const pairs: { name: string; value: string }[] = [];
     for (const line of attributes.split('\n').map(value => value.trim()).filter(Boolean)) {
@@ -87,7 +116,7 @@ export default function TranslationPanel({ productId, version, title, onContentS
       {!view.configuration.configured && <div className="connection-note"><strong>서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
       <button className="btn" type="button" disabled={busy} onClick={()=>void loadCollectedSource()}>수집 원문 불러오기 · 상품명·설명 입력 교체</button><small>옵션·이미지 번역은 별도입니다. 불러온 원문도 전송 전에 수정하고 검토할 수 있습니다.</small><label>상품명 원문<input value={sourceTitle} maxLength={1000} onChange={event => setSourceTitle(event.target.value)} disabled={busy} /></label>
       <label>상품 설명 원문<textarea rows={5} value={description} maxLength={20000} onChange={event => setDescription(event.target.value)} disabled={busy} /></label>
-      <label>속성 원문 · 한 줄에 속성명=값<textarea rows={3} value={attributes} onChange={event => setAttributes(event.target.value)} disabled={busy} placeholder={'材质=棉\n颜色=白色'} /></label>
+      <button className="btn" type="button" disabled={busy} onClick={()=>void loadOptionSource()}>미번역 옵션 불러오기 · 속성 입력 교체</button><label>속성 원문 · 한 줄에 속성명=값<textarea rows={3} value={attributes} onChange={event => setAttributes(event.target.value)} disabled={busy} placeholder={'材质=棉\n颜色=白色'} /></label>
       <button className="btn" type="button" onClick={prepare} disabled={busy || !view.configuration.configured || (!sourceTitle.trim() && !description.trim())}>번역 요청 검토하기 · 무료</button>
       {view.jobs.length > 1 && <label>이전 번역 요청<select value={job?.id ?? ''} onChange={event => { setSelectedId(event.target.value); setConfirmed(false); }} disabled={busy}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
       {job && <div className="translation-review">
@@ -106,7 +135,7 @@ export default function TranslationPanel({ productId, version, title, onContentS
           {job.result.usage && <p>입력 {job.result.usage.inputTokens.toLocaleString()}토큰 · 출력 {job.result.usage.outputTokens.toLocaleString()}토큰</p>}
           {job.result.draft.warnings.length > 0 && <ul>{job.result.draft.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
           {(['title', 'keywords', 'description'] as const).map(field => <div key={field} className="translation-field"><strong>{field === 'title' ? '한국어 상품명' : field === 'keywords' ? 'SEO 검색어' : '한국어 설명'}</strong><pre>{Array.isArray(job.result!.draft[field]) ? (job.result!.draft[field] as string[]).join(', ') : job.result!.draft[field]}</pre><details><summary>현재 저장된 내용과 비교</summary><pre>{content ? JSON.stringify(content.seo[field].value, null, 2) : '불러오지 못함'}</pre></details><button className="btn" type="button" disabled={busy || !content} onClick={() => void adopt(field)}>검토한 초안을 이 항목에 적용 · 기존 내용 교체</button></div>)}
-          {job.result.draft.attributes.length > 0 && <details><summary>번역된 속성 확인 · 표시사항 자동 적용 안 함</summary><ul>{job.result.draft.attributes.map(attribute => <li key={attribute.sourceIndex}>{attribute.name}: {attribute.value}</li>)}</ul></details>}
+          {job.result.draft.attributes.length > 0 && <details><summary>번역된 속성·옵션 확인</summary><ul>{job.result.draft.attributes.map(attribute => <li key={attribute.sourceIndex}>{attribute.name}: {attribute.value}</li>)}</ul><button className="btn" type="button" disabled={busy || job.productVersion !== version} onClick={()=>void adoptOptions()}>검토한 옵션 번역 적용 · 빈 한국어 이름만</button></details>}
         </>}
       </div>}
     </>}
