@@ -20,6 +20,32 @@ function load(file) {
 const { suggestQuotationMappings: suggest } = load('app/quotation-mapping.ts');
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('category changes refresh only session automatic mappings and preserve manual disconnections', () => {
+  const { refreshCategoryMappings: refresh } = load('app/quotation-mapping.ts');
+  const headers = ['상품명', '뚜껑 포함여부', '공급가', '판매가'];
+  const automatic = suggest(headers, '80719').mappings;
+  const original = plain(automatic);
+  const manual = { column: 2, field: 'constant', required: true, constant: '직접 입력' };
+  const current = [...automatic.filter(item => item.column < 2), manual];
+  const changed = refresh(headers, '77442', current, automatic, new Set([2, 3]));
+  assert.deepEqual(plain(changed.mappings.map(item => item.column)), [0, 2]);
+  assert.deepEqual(plain(changed.mappings[1]), manual);
+  const restored = refresh(headers, '80719', changed.mappings, changed.automatic, new Set([2, 3]));
+  assert.deepEqual(plain(restored.mappings.map(item => item.field)), ['title', 'lidIncluded', 'constant']);
+  assert.deepEqual(plain(automatic), original);
+});
+
+test('saved mappings and edited required flags are never inferred to be automatic', () => {
+  const { refreshCategoryMappings: refresh } = load('app/quotation-mapping.ts');
+  const headers = ['뚜껑 포함여부', '상품명'];
+  const saved = suggest(headers, '80719').mappings;
+  assert.deepEqual(plain(refresh(headers, '77442', saved, [], new Set()).mappings), plain(saved));
+  const edited = saved.map(item => ({ ...item, required: !item.required }));
+  assert.deepEqual(plain(refresh(headers, '77442', edited, saved, new Set()).mappings), plain(edited));
+  const unknown = refresh(headers, '', saved, saved, new Set());
+  assert.equal(unknown.mappings.some(item => item.field === 'lidIncluded'), false);
+});
+
 test('a category-specific dropdown maps and exports only for the selected category', () => {
   const schema = load('app/quotation-schema.ts').getQuotationSchema('80714');
   const field = schema.fields.find(field => field.visibility === 'hidden' && field.type === 'select');

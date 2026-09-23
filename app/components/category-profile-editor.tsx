@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
 import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
-import { suggestQuotationMappings } from '@/app/quotation-mapping';
+import { refreshCategoryMappings, suggestQuotationMappings } from '@/app/quotation-mapping';
 
 type Props = { value?: CategoryProfile | null; initialDraft?: CategoryProfileInput; onSave: (profile: CategoryProfile) => void; onClose: () => void };
 const empty: CategoryProfileInput = { name: '', categoryId: '', categoryPath: [], template: null, mappings: [] };
@@ -17,6 +17,14 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
   const [workbook, setWorkbook] = useState<XlsxInspection | null>(null);
   const [textTemplate, setTextTemplate] = useState<{ text: string; format: 'csv' | 'tsv' } | null>(null);
   const templateGeneration = useRef(0);
+  const automaticMappings = useRef<ColumnMapping[]>([]);
+  const protectedColumns = useRef(new Set<number>());
+  const changeCategory = (categoryId: string) => {
+    const next = refreshCategoryMappings(draft.template?.headers ?? [], categoryId, draft.mappings, automaticMappings.current, protectedColumns.current);
+    automaticMappings.current = next.automatic;
+    setDraft({ ...draft, categoryId, mappings: next.mappings });
+    if (draft.template) setMessage('카테고리에 맞춰 자동 연결을 갱신했습니다. 저장된 연결·직접 수정한 연결·고정값은 보존합니다. 원본 양식이 새 카테고리에 맞는지 확인해주세요.');
+  };
   useEffect(() => {
     const template = (value ?? initialDraft)?.template;
     if (!template?.storageKey) return;
@@ -70,6 +78,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       const template = { name: file.name, format: extension, sha256: hash, sheetName, headerRow: selectedRow, headers, storageKey: result.template.storageKey } as const;
       // Discard old column positions, then suggest exact labels in this category.
       const suggested = suggestQuotationMappings(headers, draft.categoryId);
+      automaticMappings.current = suggested.mappings; protectedColumns.current.clear();
       setDraft(current => ({ ...current, template, mappings: suggested.mappings }));
       setWorkbook(inspection); setTextTemplate(textSource); setHeaderRow(selectedRow);
       setMessage(`${headers.length}개 열 중 ${suggested.mappings.length}개를 이름으로 자동 연결했습니다. 미연결 ${suggested.unmatchedColumns.length}개 · 중복/모호 ${suggested.ambiguousColumns.length}개. 시트·머리글 행과 연결 결과를 확인한 뒤 설정을 저장해주세요. ${inspection?.warnings.join(' ') ?? ''}`);
@@ -84,12 +93,15 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
         : textTemplate ? parseTemplateText(textTemplate.text, textTemplate.format === 'tsv' ? '\t' : ',', rowNumber)
           : (() => { throw new Error('저장된 원본을 불러온 뒤 머리글 행을 변경해주세요.'); })();
       const suggested = suggestQuotationMappings(headers, draft.categoryId);
+      automaticMappings.current = suggested.mappings; protectedColumns.current.clear();
       setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, headers } : null, mappings: suggested.mappings }));
       setHeaderRow(rowNumber); setError('');
       setMessage(`${suggested.mappings.length}개 열 자동 연결 · 미연결 ${suggested.unmatchedColumns.length}개 · 중복/모호 ${suggested.ambiguousColumns.length}개. 바뀐 시트와 행의 연결을 확인해주세요.`);
     } catch (error) { setError(error instanceof Error ? error.message : '머리글을 확인해주세요.'); }
   };
   const setMapping = (column: number, change: Partial<ColumnMapping> | null) => {
+    protectedColumns.current.add(column);
+    automaticMappings.current = automaticMappings.current.filter(mapping => mapping.column !== column);
     setDraft(current => {
       const existing = current.mappings.find(mapping => mapping.column === column);
       const mappings = current.mappings.filter(mapping => mapping.column !== column);
@@ -119,7 +131,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       <p>URL을 추가하기 전에 상품의 카테고리와 견적서 열 연결을 선택합니다. 저장한 설정은 다음 상품에도 재사용됩니다.</p>
       <div className="form-grid">
         <label className="field"><span>설정 이름</span><input required maxLength={120} value={draft.name} disabled={busy} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="카테고리와 양식을 구분할 이름" /></label>
-        <label className="field"><span>Supplier Hub 카테고리 번호</span><input maxLength={120} value={draft.categoryId} disabled={busy} onChange={event => setDraft(current => ({ ...current, categoryId: event.target.value }))} placeholder="실제 확인한 번호 · 미확인 시 비워두기" /></label>
+        <label className="field"><span>Supplier Hub 카테고리 번호</span><input maxLength={120} value={draft.categoryId} disabled={busy} onChange={event => changeCategory(event.target.value)} placeholder="실제 확인한 번호 · 미확인 시 비워두기" /></label>
         <label className="field full"><span>카테고리 경로</span><input required maxLength={1210} value={path} disabled={busy} onChange={event => setPath(event.target.value)} placeholder="상위 카테고리 > 하위 카테고리" /></label>
       </div>
       <p>선택한 카테고리의 원본 양식을 연결합니다. 분류 코드 확인과 실제 견적서 제출 검증은 별도로 기록합니다.</p>
@@ -139,6 +151,8 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
           const suggested = suggestQuotationMappings(draft.template!.headers, draft.categoryId);
           const occupied = new Set(draft.mappings.map(mapping => mapping.column));
           const additions = suggested.mappings.filter(mapping => !occupied.has(mapping.column));
+          automaticMappings.current = [...automaticMappings.current, ...additions];
+          for (const mapping of additions) protectedColumns.current.delete(mapping.column);
           setDraft(current => ({ ...current, mappings: [...current.mappings, ...additions].sort((a, b) => a.column - b.column) }));
           setMessage(`기존 연결을 유지하고 ${additions.length}개 열을 자동 연결했습니다. 저장 전에 결과를 확인해주세요.`);
         }}>미연결 열 자동 연결</button>

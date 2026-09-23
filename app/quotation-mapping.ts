@@ -16,6 +16,25 @@ export type QuotationMappingSuggestion = {
   mappings: ColumnMapping[]; unmatchedColumns: number[]; ambiguousColumns: number[];
 };
 
+/** Only this editing session's automatic connections may be replaced.
+ * Saved connections and explicit edits (including disconnects) are protected.
+ */
+export function refreshCategoryMappings(
+  headers: readonly string[], categoryId: string | null, mappings: readonly ColumnMapping[],
+  automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>,
+) {
+  const previous = new Map(automatic.map(mapping => [mapping.column, mapping]));
+  const retained = mappings.filter(mapping => {
+    const before = previous.get(mapping.column);
+    return protectedColumns.has(mapping.column) || !before || before.field !== mapping.field
+      || before.required !== mapping.required || before.constant !== mapping.constant;
+  });
+  const occupied = new Set(retained.map(mapping => mapping.column));
+  const suggestion = suggestQuotationMappings(headers, categoryId);
+  const nextAutomatic = suggestion.mappings.filter(mapping => !occupied.has(mapping.column) && !protectedColumns.has(mapping.column));
+  return { ...suggestion, mappings: [...retained, ...nextAutomatic].sort((a, b) => a.column - b.column), automatic: nextAutomatic };
+}
+
 /** Creates an editable draft from exact labels in the chosen category only. */
 export function suggestQuotationMappings(headers: readonly string[], categoryId: string | null): QuotationMappingSuggestion {
   const schema = getQuotationSchema(categoryId);
