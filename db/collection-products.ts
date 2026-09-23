@@ -29,3 +29,9 @@ export async function promoteCollection(owner:string,job:CollectionJob,receipt:C
  ]);
  const saved=await findCollectionProduct(owner,job.id);if(!saved)throw new Error('수집 요청이나 원문이 변경되어 상품 반영을 중단했습니다.');return saved;
 }
+
+/** Exact product link only; never select another receipt just because the URL matches. */
+export async function findProductCollection(owner:string,productId:string){
+ if(!env.DB)throw new Error('D1 unavailable');await env.DB.prepare(collectionProductSchema).run();
+ return env.DB.prepare('SELECT job_id FROM collection_products WHERE product_id=? AND owner_id=?').bind(productId,owner).first<{job_id:string}>();
+}

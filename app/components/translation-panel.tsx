@@ -12,6 +12,7 @@ export default function TranslationPanel({ productId, version, title, onContentS
   const [content, setContent] = useState<ProductContent | null>(null);
   const [sourceTitle, setSourceTitle] = useState(title);
   const [description, setDescription] = useState('');
+  const [sourceReference,setSourceReference]=useState('저장 상품명과 사용자가 검토한 직접 입력 원문');
   const [attributes, setAttributes] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -42,6 +43,19 @@ export default function TranslationPanel({ productId, version, title, onContentS
     } catch (reason) { setError(reason instanceof Error ? reason.message : '요청 실패'); }
     finally { setBusy(false); }
   }
+  async function loadCollectedSource() {
+    setBusy(true);setError('');setNotice('');
+    try {
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store'});
+      const value=await response.json() as {error?:string;title:string;description:string;jobId:string;sourceUrl:string;productVersion:string;message:string};
+      if(!response.ok)throw Error(value.error??'원문 조회 실패');
+      if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
+      setSourceTitle(value.title);setDescription(value.description);
+      setSourceReference(`수집 요청 ${value.jobId} (${value.sourceUrl})에서 가져와 사용자가 검토·편집한 원문`);
+      setNotice(value.message+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.');
+    }catch(reason){setError(reason instanceof Error?reason.message:'원문 조회 실패');}
+    finally{setBusy(false);}
+  }
   function prepare() {
     const pairs: { name: string; value: string }[] = [];
     for (const line of attributes.split('\n').map(value => value.trim()).filter(Boolean)) {
@@ -50,7 +64,7 @@ export default function TranslationPanel({ productId, version, title, onContentS
       pairs.push({ name: line.slice(0, index).trim(), value: line.slice(index + 1).trim() });
     }
     void action({ action: 'prepare', expectedVersion: version, idempotencyKey: crypto.randomUUID(),
-      source: { title: sourceTitle, description, attributes: pairs, provenance: 'manual', reference: '저장 상품명과 사용자가 검토한 직접 입력 원문' } });
+      source: { title: sourceTitle, description, attributes: pairs, provenance: 'manual', reference: sourceReference } });
   }
   async function adopt(field: 'title' | 'keywords' | 'description') {
     if (!content || !job?.result) return;
@@ -71,7 +85,7 @@ export default function TranslationPanel({ productId, version, title, onContentS
     {!view && !error && <p>번역 설정을 확인하고 있습니다.</p>}
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
-      <label>상품명 원문 · 저장 상품명에서 가져온 직접 입력값<input value={sourceTitle} maxLength={1000} onChange={event => setSourceTitle(event.target.value)} disabled={busy} /></label>
+      <button className="btn" type="button" disabled={busy} onClick={()=>void loadCollectedSource()}>수집 원문 불러오기 · 상품명·설명 입력 교체</button><small>옵션·이미지 번역은 별도입니다. 불러온 원문도 전송 전에 수정하고 검토할 수 있습니다.</small><label>상품명 원문<input value={sourceTitle} maxLength={1000} onChange={event => setSourceTitle(event.target.value)} disabled={busy} /></label>
       <label>상품 설명 원문<textarea rows={5} value={description} maxLength={20000} onChange={event => setDescription(event.target.value)} disabled={busy} /></label>
       <label>속성 원문 · 한 줄에 속성명=값<textarea rows={3} value={attributes} onChange={event => setAttributes(event.target.value)} disabled={busy} placeholder={'材质=棉\n颜色=白色'} /></label>
       <button className="btn" type="button" onClick={prepare} disabled={busy || !view.configuration.configured || (!sourceTitle.trim() && !description.trim())}>번역 요청 검토하기 · 무료</button>
