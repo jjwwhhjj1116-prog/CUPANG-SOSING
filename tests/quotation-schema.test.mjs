@@ -338,3 +338,22 @@ test('77442 schema clones choices so one form cannot alter future category forms
  const first=model.getQuotationSchema('77442');first.fields.find(f=>f.id==='board_magnetic').choices[0].label='변경';
  assert.equal(model.getQuotationSchema('77442').fields.find(f=>f.id==='board_magnetic').choices[0].label,'해당사항없음');
 });
+
+test('deliberately cleared SEO title remains empty in quotation, alt text and both Excel row paths',()=>{
+ const input=fixture();
+ input.content=contentModel.applyContentPatch(input.content,{seo:{title:'검토한 이름'}},'before');
+ input.content=contentModel.applyContentPatch(input.content,{seo:{title:''}},'after');
+ const resolved=model.resolveQuotationFields(input);
+ for(const row of resolved.rows){
+  assert.equal(row.fields.title.value,'');assert.equal(row.fields.title.source,'content');
+  assert.equal(row.fields.altText.value,'');assert.ok(row.fields.title.issues.length);
+ }
+ const assets=[{key:'owner/option.png',name:'assets/option.png'},{key:'owner/main.png',name:'assets/main.png'},{key:'owner/detail.png',name:'assets/detail.png'}];
+ const mapped=load('app/exports/quotation-fields.ts').resolvedQuotationRows({...input,profile:null},resolved,assets);
+ const legacy=load('app/exports/quotation-data.ts').quotationData(input.product,input.content,input.settings,input.options.rows,assets);
+ assert.equal(mapped[0].title,'');assert.equal(legacy[0].title,'');
+ input.overrides={common:{title:'견적 전용 이름'},options:{}};
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.title.value,'견적 전용 이름');
+ input.content=contentModel.emptyProductContent('p1');delete input.overrides;
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.title.value,input.product.title);
+});

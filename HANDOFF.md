@@ -856,3 +856,11 @@ AI등록 화면 확인:
 - 상품/버전 전환 시 번역 패널을 초기화해 이전 상품의 원문·결과·선택이 남지 않도록 했다. 다른 번역 요청 선택 및 저장 완료 시 항목 선택을 초기화한다. 유료 번역 실행 경로는 변경하지 않았다.
 - 검증: 전체322/322, TypeScript/ESLint/production build 통과. 신규3개 테스트로 단일 revision 저장·미선택 데이터 보존·입력 불변·잘못된 상품/버전/선택/결과의 거절을 확인했다. 최초 테스트의 VM 객체 prototype 비교 문제를 직렬화 비교로 수정 후 전체 재통과. outputs/translation-adoption-tests.log, translation-adoption-build.log. 실제 브라우저 클릭·유료 번역·공식 견적 출력 검증은 미실시다.
 - 다음: 실제1688 공급원과 AI 서비스 연결, 공식 Excel 원본 확보·카테고리별 규격 대조, Supplier Hub 전송/검증/접수 adapter. 전체 자동화는 미완성이다. 이번 턴 유료 호출·운영 등록·Cloudflare 배포 없음.
+
+## 42. 삭제한 SEO 상품명의 견적·검토 자료 재유입 수정 — 2026-09-23
+
+- 시작 main e87c5df, 미커밋 변경 없음. 사용자 요청에 따라 실수로 첨부한 YouTube 링크는 개발 참고에서 제외했다.
+- SEO 상품명을 직접 비워 저장하면 수집 당시 상품명으로 되돌아가던 견적 resolver, 구형 Excel 행 데이터, 검토 ZIP HTML/CSV를 수정했다. 수동 삭제는 빈칸으로 보존하고 견적 필수 상품명 누락으로 표시한다. 대체 텍스트에도 삭제한 이름을 다시 넣지 않는다. 미작성 상태의 원문 fallback 및 견적 전용 직접 수정 우선순위는 유지한다.
+- 신규 회귀 검증은 SEO 저장→삭제→견적 셀/Excel 매핑 데이터, 검토 ZIP 실제 압축 해제 후 HTML/CSV 및 누락 표시를 대조한다. 공식 Excel 양식이나 실제 Supplier Hub 접수 검증을 뜻하지 않는다.
+- 다음: 실제1688 공급원·AI 서비스 연결, 공식 Excel 원본과 전체 카테고리 규격 대조, Supplier Hub 전송/검증/접수 adapter. 전체 자동화 미완성. 이번 턴 유료 호출·운영 등록·Cloudflare 배포 없음.
+- 검증 결과: 전체324/324, TypeScript/ESLint/production build 및 diff 검사 통과. outputs/quotation-title-tests.log, quotation-title-build.log. 최초에는 검토 ZIP 모듈의 새 런타임 의존성을 기존 라우트 테스트 로더가 처리하지 못해 실패했고, 의존성 추가 없이 동일한 저장값 보존 규칙을 적용한 뒤 전체 재통과했다. 브라우저 클릭 검증은 미실시.

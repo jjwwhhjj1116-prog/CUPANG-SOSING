@@ -225,3 +225,13 @@ test('ZIP preflight covers central-directory bytes and UTF-8 text without mutati
   assert.deepEqual(files['unicode.txt'],data);assert.deepEqual(binary,new Uint8Array([1,2,3,255]));
   assert.throws(()=>zip.zipFiles([{name:'exact.bin',data:new Uint8Array(zip.MAX_ZIP_BYTES-31)}]),error=>error.status===413);
 });
+
+test('explicitly cleared SEO title is not resurrected in review HTML or CSV',()=>{
+ let content=model.applyContentPatch(model.emptyProductContent(product.id),{seo:{title:'이전 제목'}},'before');
+ content=model.applyContentPatch(content,{seo:{title:''}},'after');
+ const files=readArchive(bundle.createReviewBundle(product,content,[]));
+ assert.ok(decode(files['detail-review.html']).includes('<h1></h1>'));
+ assert.ok(!decode(files['detail-review.html']).includes(product.title));
+ assert.ok(!decode(files['quotation-review.csv']).includes(product.title));
+ assert.ok(JSON.parse(decode(files['manifest.json'])).missing.includes('노출 상품명'));
+});

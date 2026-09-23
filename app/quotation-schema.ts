@@ -286,10 +286,11 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       issues: missing.length ? ['상품에 저장되지 않은 이미지 참조를 제외했습니다. 연결을 다시 확인해주세요.'] : [] };
   };
   function auto(id: string, option: ProductOption | null): Automatic {
-    const title = content.seo.title.value || product.title;
+    const title = savedTextOrFallback(content.seo.title, product.title);
+    const titleSource = content.seo.title.provenance === 'manual' || content.seo.title.value ? 'content' as const : 'product' as const;
     const pricing = option ? prices.find(row => row.optionId === option.id) : null;
     switch (id) {
-      case 'title': return literal(title, content.seo.title.value ? 'content' : 'product');
+      case 'title': return { value: title, source: titleSource };
       case 'category': return literal(schema.categoryId ? `${schema.categoryPath.join(' > ')}${schema.categoryPath.length ? ' ' : ''}(${schema.categoryId})` : '', 'schema');
       case 'model': return contentValue(content.label.model);
       case 'brand': return literal(settings.brand, 'settings');
@@ -312,7 +313,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'labelImages': return images(content.assets.label.value);
       case 'detailImages': return images(content.assets.detail.value);
       case 'detailHtml': return literal(content.seo.description.value ? `<p>${htmlEscape(content.seo.description.value).replace(/\r?\n/g, '<br>')}</p>` : '', 'content');
-      case 'altText': return literal(title, content.seo.title.value ? 'content' : 'product');
+      case 'altText': return { value: title, source: titleSource };
       case 'noticeNameModel': {
         const value = [savedTextOrFallback(content.label.productName, title), content.label.model.value].filter(Boolean).join(' / ');
         return content.label.productName.provenance === 'manual' || content.label.model.provenance === 'manual' ? { value, source: 'content' } : literal(value, 'content');

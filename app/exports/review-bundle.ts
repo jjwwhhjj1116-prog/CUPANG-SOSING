@@ -24,7 +24,7 @@ export function imageExtension(bytes: Uint8Array) {
 export function createReviewBundle(product: ProductRecord, content: ProductContent, assets: BundleAsset[], extraFiles: {name:string;data:string|Uint8Array}[] = []) {
   const hasQuotationFields=extraFiles.some(file=>file.name==='quotation-fields.json');
   const exportedAt=new Date().toISOString();
-  const title=content.seo.title.value || product.title;
+  const title=content.seo.title.provenance === 'manual' ? content.seo.title.value : content.seo.title.value || product.title;
   const roleFiles=Object.fromEntries(Object.entries(content.assets).map(([role,field])=>[role,field.value.map(key=>{
     const asset=assets.find(item=>item.key===key);if(!asset)throw new Error('첨부 파일이 누락되었습니다.');return asset.name;
   })]));

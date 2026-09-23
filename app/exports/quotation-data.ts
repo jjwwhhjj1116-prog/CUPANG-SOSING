@@ -21,7 +21,7 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
     return asset.name;
   };
   const base: QuotationRowData = {
-    title: content.seo.title.value || product.title, sourceUrl: product.source_url,
+    title: savedTextOrFallback(content.seo.title, product.title), sourceUrl: product.source_url,
     brand: settings.brand, manufacturer: savedTextOrFallback(content.label.manufacturer, settings.manufacturer),
     importer: savedTextOrFallback(content.label.importer, settings.importer), serviceContact: savedTextOrFallback(content.label.contact, settings.serviceContact),
     boxQuantity: settings.boxSkuQuantity, material: content.label.material.value,
