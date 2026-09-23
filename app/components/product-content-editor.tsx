@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { assetRoles, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
 import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor-tools';
+import { fillLabelDraft } from '@/app/label-autofill';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -95,6 +96,21 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const unavailableImages = [...new Set(Object.values(draft.assets).flat())].filter(key => !imageKeys.includes(key));
   const sectionTitle = section === '이미지' && focusedAssetRole ? assetRoles[focusedAssetRole] : section;
 
+  async function fillLabel() {
+    setBusy(true); setError(''); setMessage('');
+    try {
+      const response = await fetch('/api/settings', { cache: 'no-store' });
+      const body = await response.json() as { settings?: unknown; error?: string };
+      if (!response.ok) throw new Error(body.error || '저장된 기본설정을 읽지 못했습니다.');
+      const next = fillLabelDraft(draft.label, content, product.title, body.settings);
+      setDraft(previous => ({ ...previous, label: next.label }));
+      setMessage(next.filled.length
+        ? `${next.filled.map(key => labelFields[key]).join(' · ')} 입력을 채웠습니다. 실제 상품과 대조한 뒤 표시사항을 저장하면 PNG와 견적 자료에 반영됩니다.`
+        : '채울 수 있는 빈 항목이 없습니다. 직접 입력·직접 비운 항목은 보존했습니다.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '기본설정 반영 실패'); }
+    finally { setBusy(false); }
+  }
+
   async function save() {
     setBusy(true); setError(''); setMessage('');
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
@@ -134,6 +150,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     {message && <p role="status">{message}</p>}
     {refreshNotice && <div role="status" className="panel-note"><div><p>{refreshNotice}</p><button type="button" className="btn ghost" disabled={busy || loading} onClick={() => { setLoading(true); void load(); }}>입력 버리고 최신 저장본 불러오기</button></div></div>}
     {loaded && <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} disabled={busy || loading}>
+      {section === '표시사항' && <button type="button" className="btn ghost" onClick={() => void fillLabel()}>상품명·저장 기본설정으로 빈 표시사항 채우기</button>}
       {section === 'SEO' && <div className="panel-stack">
         <label className="field"><span>노출 상품명 <Origin field={content.seo.title} /></span><input maxLength={500} value={draft.seo.title} placeholder={product.title} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))} /></label>
         {!draft.seo.title && <button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, seo: { ...previous.seo, title: product.title } }))}>현재 상품명 사용</button>}
