@@ -9,6 +9,25 @@ function load(file,deps={},mode='development'){
  vm.runInNewContext(code,{exports,fetch:deps.fetch,crypto,URL,Date,Response,Request,Uint8Array,TextEncoder,TextDecoder,structuredClone,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(name.slice(2)+'.ts',deps,mode);throw Error(name);}});return exports;
 }
 const model=load('app/collection-image.ts');const empty=load('app/product-content.ts').emptyProductContent;
+const optionsModel=load('app/product-options.ts');
+function collectedOptions(){
+ const current=optionsModel.emptyProductOptions('p');current.revision=1;
+ current.rows=['a','b','c','d'].map(id=>({...optionsModel.emptyOptionInput(id),supplierSku:id,updatedAt:'before',provenance:{supplierSku:'collected',imageKey:'unverified'}}));
+ return current;
+}
+
+test('exact SKU images preserve manual blanks, translated work and edited supplier identities',()=>{
+ const current=collectedOptions();current.rows[1].provenance.imageKey='manual';
+ current.rows[2].imageKey='owner/translated.png';current.rows[2].provenance.imageKey='translated';
+ current.rows[3].provenance.supplierSku='manual';
+ const before=JSON.stringify(current);
+ const next=model.attachCollectedOptionImage(current,['a','b','c','d'],'owner/raw.png','now');
+ assert.equal(next.rows[0].imageKey,'owner/raw.png');assert.equal(next.rows[0].provenance.imageKey,'collected');
+ assert.equal(next.rows[1].imageKey,null);assert.equal(next.rows[2].imageKey,'owner/translated.png');assert.equal(next.rows[3].imageKey,null);
+ assert.equal(next.revision,2);assert.equal(JSON.stringify(current),before);
+ assert.equal(model.attachCollectedOptionImage(next,['a'],'owner/other.png','later').revision,2);
+ assert.equal(model.attachCollectedOptionImage(current,['missing'],'owner/raw.png','now').revision,1);
+});
 const png=new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'));
 test('download bounds its trust to receipt CDN and rejects redirects and non-images',async()=>{
  let calls=0;const fetcher=async(url,init)=>{calls++;assert.equal(init.redirect,'manual');assert.equal(init.credentials,'omit');return new Response(png);};
@@ -41,6 +60,32 @@ test('atomic image registration retries without duplicates or overwriting later 
  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,1);assert.equal(h.sqlite.prepare('SELECT image_keys FROM products').get().image_keys,'["owner/a.png"]');assert.equal(JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload).seo.title.value,'manual');
  }finally{h.sqlite.close();}
 });
+
+test('image and matching SKU linkage commit together and reach option quotation images',async()=>{
+ const h=storage();try{
+  const options=collectedOptions();
+  h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(options),'before');
+  await h.store.saveCollectionImage('owner','job',0,'owner/a.png','additional',h.product,h.current,['a','b']);
+  const saved=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  assert.equal(saved.revision,2);assert.equal(saved.rows[0].imageKey,'owner/a.png');assert.equal(saved.rows[1].imageKey,'owner/a.png');assert.equal(saved.rows[2].imageKey,null);
+  const resolved=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'77442',product:h.sqlite.prepare('SELECT * FROM products').get(),content:h.current,options:saved,settings:load('app/workspace-settings.ts').defaultSettings});
+  assert.equal(resolved.rows.find(row=>row.optionId==='a').fields.mainImage.value,'owner/a.png');
+  assert.equal(resolved.rows.find(row=>row.optionId==='a').fields.mainImage.source,'option');
+  await h.store.saveCollectionImage('owner','job',0,'owner/b.png','additional',h.product,h.current,['a']);
+  assert.equal(h.sqlite.prepare('SELECT revision FROM product_options').get().revision,2);
+ }finally{h.sqlite.close();}
+});
+
+test('failure updating SKU images rolls back content and image receipts',async()=>{
+ const h=storage();try{
+  h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(collectedOptions()),'before');
+  h.sqlite.exec("CREATE TRIGGER fail_option BEFORE UPDATE ON product_options BEGIN SELECT RAISE(ABORT,'test'); END");
+  await assert.rejects(()=>h.store.saveCollectionImage('owner','job',0,'owner/a.png','main',h.product,h.current,['a']));
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,0);
+  assert.equal(h.sqlite.prepare('SELECT revision FROM product_content').get().revision,1);
+  assert.equal(h.sqlite.prepare('SELECT image_keys FROM products').get().image_keys,'[]');
+ }finally{h.sqlite.close();}
+});
 test('failed companion update rolls back receipt and product; concurrent edits reject import',async()=>{
  for(const scenario of ['failure','conflict']){const h=storage();try{
  if(scenario==='failure')h.sqlite.exec("CREATE TRIGGER fail BEFORE UPDATE ON products BEGIN SELECT RAISE(ABORT,'test'); END");else h.sqlite.exec("UPDATE product_content SET revision=2");
@@ -54,7 +99,8 @@ test('production route rejects unauthenticated requests before storage or outbou
 
 test('API imports a receipt image once and retry skips download and object writes',async()=>{
  const h=storage();try{
-  h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',JSON.stringify({images:[{url:'https://cbu01.alicdn.com/test.png',role:'main'}]}),'now');
+  h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(collectedOptions()),'before');
+  h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',JSON.stringify({options:[{sku:'a',imageIndex:0}],images:[{url:'https://cbu01.alicdn.com/test.png',role:'main'}]}),'now');
   let downloads=0,writes=0;const deps={'cloudflare:workers':{env:{DB:h.db,FILES:{put:async()=>{writes++;return {};}}}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},fetch:async()=>{downloads++;return new Response(png);}};
   const api=load('app/api/collection-jobs/[id]/images/route.ts',deps);const context={params:Promise.resolve({id:'job'})};
   const request=()=>new Request('http://localhost/api/collection-jobs/job/images',{method:'POST',headers:{'content-type':'application/json'},body:'{"index":0}'});
@@ -62,5 +108,7 @@ test('API imports a receipt image once and retry skips download and object write
   const second=await api.POST(request(),context);assert.equal(second.status,200);assert.equal((await second.json()).reused,true);
   assert.equal(downloads,1);assert.equal(writes,1);
   const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);assert.equal(content.assets.main.value.length,1);assert.equal(content.assets.main.provenance,'collected');
+  const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  assert.equal(options.rows[0].imageKey,content.assets.main.value[0]);assert.equal(options.rows[1].imageKey,null);assert.equal(options.revision,2);
  }finally{h.sqlite.close();}
 });

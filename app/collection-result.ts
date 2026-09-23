@@ -4,7 +4,7 @@ export const COLLECTION_RESULT_LIMIT = 512 * 1024;
 export type CollectionResult = {
   schemaVersion: 1; sourceUrl: string; offerId: string; provider: string; collectedAt: string;
   title: string; description: string;
-  options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number; stock: number | null }[];
+  options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number; stock: number | null; imageIndex?: number }[];
   images: { url: string; role: 'main' | 'additional' | 'detail' }[];
 };
 function record(value: unknown, keys: string[]) {
@@ -27,12 +27,13 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
   if(!Array.isArray(body.options)||body.options.length<1||body.options.length>200)throw new Error('실제 옵션 1~200개가 필요합니다.');
   const skus=new Set<string>();
   const options=body.options.map(value=>{
-    const row=record(value,['sku','name','unitPriceCny','minimumOrder','stock']);
+    const row=record(value,['sku','name','unitPriceCny','minimumOrder','stock','imageIndex']);
     const sku=text(row.sku,200);if(skus.has(sku))throw new Error('중복 SKU가 있습니다.');skus.add(sku);
     if(typeof row.unitPriceCny!=='number'||!Number.isFinite(row.unitPriceCny)||row.unitPriceCny<=0||row.unitPriceCny>100000000)throw new Error('옵션 원가는 양수 CNY 숫자여야 합니다.');
     if(!Number.isSafeInteger(row.minimumOrder)||(row.minimumOrder as number)<1)throw new Error('최소 주문 수량을 확인해주세요.');
     if(row.stock!==null&&(!Number.isSafeInteger(row.stock)||(row.stock as number)<0))throw new Error('재고 미확인은 null, 확인된 재고는 0 이상 정수여야 합니다.');
-    return {sku,name:text(row.name,500),unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder as number,stock:row.stock as number|null};
+    if(row.imageIndex!==undefined&&(!Number.isInteger(row.imageIndex)||!Array.isArray(body.images)||(row.imageIndex as number)<0||(row.imageIndex as number)>=body.images.length))throw new Error('옵션 이미지 번호는 수집 이미지 목록의 0부터 시작하는 번호여야 합니다.');
+    return {sku,name:text(row.name,500),unitPriceCny:row.unitPriceCny,minimumOrder:row.minimumOrder as number,stock:row.stock as number|null,...(row.imageIndex!==undefined?{imageIndex:row.imageIndex as number}:{})};
   });
   if(!Array.isArray(body.images)||body.images.length>200)throw new Error('이미지 주소는 200개 이하여야 합니다.');
   const seen=new Set<string>();let mainCount=0;

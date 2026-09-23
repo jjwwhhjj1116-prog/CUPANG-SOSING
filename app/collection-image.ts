@@ -1,6 +1,18 @@
 import { imageFileType, MAX_IMAGE_BYTES, isOwnedImageKey } from '@/app/image-files';
 import { readBoundedStream } from '@/app/request-body';
 import type { ProductContent } from '@/app/product-content';
+import type { ProductOptions } from '@/app/product-options';
+
+/** Only the receipt's exact supplier SKU may receive an original image. */
+export function attachCollectedOptionImage(current:ProductOptions,skus:readonly string[],key:string,now:string):ProductOptions {
+ const next=structuredClone(current);const selected=new Set(skus);let changed=false;
+ for(const row of next.rows){
+  if(!selected.has(row.supplierSku)||row.provenance.supplierSku!=='collected'||row.provenance.imageKey!=='unverified'||row.imageKey)continue;
+  row.imageKey=key;row.provenance.imageKey='collected';row.updatedAt=now;changed=true;
+ }
+ if(changed){next.revision++;next.updatedAt=now;}
+ return next;
+}
 
 export async function downloadCollectionImage(source:string,owner:string,fetcher:typeof fetch=fetch){
  const url=new URL(source);

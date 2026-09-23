@@ -11,6 +11,15 @@ function load(file,deps={},mode='development'){
 const {validateCollectionResult:validate}=load('app/collection-result.ts');
 const sample=()=>({schemaVersion:1,sourceUrl:'https://detail.1688.com/offer/123.html?tracking=x',provider:'fixture-provider',collectedAt:'2026-01-01T00:00:00Z',title:'原文商品',description:'原文',options:[{sku:'sku-1',name:'黑色',unitPriceCny:3.25,minimumOrder:2,stock:null}],images:[{url:'https://cbu01.alicdn.com/img/test.jpg',role:'main'}]});
 test('collection validates observed source fields without inventing translation or stock',()=>{const r=validate(sample(),'123');assert.equal(r.sourceUrl,'https://detail.1688.com/offer/123.html');assert.equal(r.title,'原文商品');assert.equal(r.options[0].stock,null);assert.equal(r.options[0].unitPriceCny,3.25);});
+
+test('optional SKU image index is validated against the original image array and preserves old receipts',()=>{
+ const raw=sample();assert.equal(Object.hasOwn(validate(raw,'123').options[0],'imageIndex'),false);
+ raw.options[0].imageIndex=0;assert.equal(validate(raw,'123').options[0].imageIndex,0);
+ for(const imageIndex of [-1,1,0.5,'0',null])assert.throws(()=>validate({...raw,options:[{...raw.options[0],imageIndex}]},'123'));
+ assert.throws(()=>validate({...raw,images:[]},'123'));
+ raw.options.push({...raw.options[0],sku:'sku-2'});
+ assert.equal(validate(raw,'123').options[1].imageIndex,0);
+});
 test('wrong offer, unknown fields, future timestamps and invalid prices rejected',()=>{assert.throws(()=>validate(sample(),'456'));for(const patch of [{cookie:'secret'},{collectedAt:'2999-01-01T00:00:00Z'},{options:[]},{options:[{...sample().options[0],unitPriceCny:0}]},{options:[{...sample().options[0],stock:-1}]}])assert.throws(()=>validate({...sample(),...patch},'123'));});
 test('duplicate SKU and unsafe or duplicate images rejected',()=>{assert.throws(()=>validate({...sample(),options:[...sample().options,...sample().options]},'123'));for(const url of ['http://cbu01.alicdn.com/a','https://127.0.0.1/a','https://alicdn.com.evil.test/a','https://user:pass@cbu01.alicdn.com/a'])assert.throws(()=>validate({...sample(),images:[{url,role:'main'}]},'123'));assert.throws(()=>validate({...sample(),images:[...sample().images,...sample().images]},'123'));});
 function store(){const sqlite=new DatabaseSync(':memory:');sqlite.exec("CREATE TABLE collection_jobs(id TEXT PRIMARY KEY,owner_id TEXT,status TEXT); INSERT INTO collection_jobs VALUES('j','owner','awaiting_connector'),('c','owner','cancelled')");const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},async run(){return sqlite.prepare(sql).run(...args);},async first(){return sqlite.prepare(sql).get(...args)??null;}};return q;}};return {sqlite,...load('db/collection-results.ts',{'cloudflare:workers':{env:{DB:db}}})};}

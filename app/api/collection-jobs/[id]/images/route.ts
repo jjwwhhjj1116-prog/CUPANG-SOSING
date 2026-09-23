@@ -28,7 +28,8 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   const downloaded=await downloadCollectionImage(image.url,owner);
   const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected'}});
   if(!stored)throw new Error('이미지 저장 확인 실패');
-  const saved=await saveCollectionImage(owner,id,body.index,downloaded.key,image.role,product,current);
+  const skus=(receipt?.result.options??[]).filter(option=>option.imageIndex===body.index).map(option=>option.sku);
+  const saved=await saveCollectionImage(owner,id,body.index,downloaded.key,image.role,product,current,skus);
   return reply({key:saved.object_key,message:'원본 이미지를 저장했습니다. 번역·가공은 실행하지 않았습니다.'});
  }catch(error){return reply({error:error instanceof RequestBodyError?error.message:'이미지 반영을 완료하지 못했습니다. 다시 시도해도 완료된 이미지는 중복 반영되지 않습니다.'},error instanceof RequestBodyError?error.status:503);}
 }
