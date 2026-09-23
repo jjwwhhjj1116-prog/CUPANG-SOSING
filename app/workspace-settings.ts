@@ -6,7 +6,7 @@ export const defaultSettings = {
   exchangeRate: 190, supplyMargin: 40, coupangMargin: 35, minimumMargin: 3000,
   minimumMarginEnabled: true, msrpMultiple: 1.3, roundingUnit: 100, roundingMode: 'up' as 'up' | 'nearest',
   bundleEnabled: false, translateImages: true, removeBackground: true, addCopyright: true,
-  topImageEnabled: false, bottomImageEnabled: false, translationPrompt: '', hiddenAttributes: false,
+  topImageEnabled: false, bottomImageEnabled: false, topImageKey: '', bottomImageKey: '', translationPrompt: '', hiddenAttributes: false,
 };
 export type WorkspaceSettings = typeof defaultSettings;
 /** Runtime registration facts must come from an explicit saved payload, not UI examples. */
@@ -23,7 +23,7 @@ export function validateSettings(input: unknown): WorkspaceSettings {
   const p = { ...defaultSettings, ...input } as WorkspaceSettings;
   pricePolicy(p);
   if (!Number.isInteger(p.boxSkuQuantity) || p.boxSkuQuantity < 1 || p.boxSkuQuantity > 100000) throw new Error('박스 내 SKU 수량은 1~100,000 사이 정수여야 합니다.');
-  for (const key of ['brand','manufacturer','importer','tradeType','importType','serviceContact','translationPrompt'] as const) {
+  for (const key of ['brand','manufacturer','importer','tradeType','importType','serviceContact','translationPrompt','topImageKey','bottomImageKey'] as const) {
     if (typeof p[key] !== 'string' || p[key].length > (key === 'translationPrompt' ? 10000 : 500)) throw new Error('등록 정보 또는 번역 지침의 길이를 확인해주세요.');
   }
   if (!['제조사','공식총판사','공식대리점','기타 도소매업자'].includes(p.tradeType) || !['수입대상아님','수입상품','병행수입상품'].includes(p.importType)) throw new Error('거래타입과 수입여부를 확인해주세요.');

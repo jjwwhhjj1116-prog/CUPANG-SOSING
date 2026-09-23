@@ -9,6 +9,8 @@ function load(file, dependencies = {}, mode = 'production') {
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   vm.runInNewContext(output, { exports, crypto, TextEncoder, TextDecoder, URL, Response, atob, btoa, AbortController, setTimeout, clearTimeout, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in dependencies) return dependencies[name];
+    if (name === 'cloudflare:workers') return {env:{}};
+    if (name === '@/db/workspace-banners') return load('db/workspace-banners.ts', dependencies, mode);
     if (name === 'next/server') return { NextResponse: Response };
     if (name === 'next/navigation') return { redirect: () => { throw Error('Redirect not expected'); } };
     if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts', {}, mode);

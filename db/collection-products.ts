@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { ensureDatabase } from '@/db/queries';
 import { readProductOptions } from '@/db/product-options';
 import { readProductContent } from '@/db/product-content';
+import { verifyWorkspaceBannerFiles } from '@/db/workspace-banners';
 import { prepareCollectionProduct } from '@/app/collection-product';
 import type { CollectionJob } from '@/app/sourcing';
 import type { CollectionResult } from '@/app/collection-result';
@@ -13,6 +14,7 @@ export async function findCollectionProduct(owner:string,jobId:string){
 export async function promoteCollection(owner:string,job:CollectionJob,receipt:CollectionResult){
  await ensureDatabase();const existing=await findCollectionProduct(owner,job.id);if(existing)return existing;
  const id=crypto.randomUUID();const now=new Date().toISOString();const prepared=prepareCollectionProduct(owner,job,receipt,id,now);
+ await verifyWorkspaceBannerFiles(owner, job.context!.settings, true);
  await readProductOptions(owner,id);await readProductContent(owner,id);
  const db=env.DB;const entries=Object.entries(prepared.product);
  // A single D1 batch transaction: cancellation, duplicate attempts and failures cannot leave partial products.

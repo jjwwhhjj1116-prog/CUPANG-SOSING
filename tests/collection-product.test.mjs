@@ -6,7 +6,7 @@ import ts from 'typescript';
 import {memoryDatabase,runtimeDDL} from '../scripts/check-db-schema.mjs';
 function load(file,deps={},mode='development'){
  const exports={};const code=ts.transpileModule(fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(code,{exports,crypto,URL,Date,Response,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,deps,mode);throw Error(name);}});return exports;
+ vm.runInNewContext(code,{exports,crypto,URL,Date,Response,TextEncoder,TextDecoder,Uint8Array,DataView,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,deps,mode);throw Error(name);}});return exports;
 }
 const settings=load('app/workspace-settings.ts').defaultSettings;
 const prepare=load('app/collection-product.ts').prepareCollectionProduct;
@@ -25,12 +25,12 @@ test('structured collection attributes preserve facts without guessing or claimi
 });
 test('promotion preserves original facts, captured policy and unverified fields',()=>{const r=prepare('owner',job,result,'p',now);assert.equal(r.product.source_price_cny,3.25);assert.equal(r.product.options_count,2);assert.equal(r.options.rows[0].translatedName,'');assert.equal(r.options.rows[0].unitsPerPack,1);assert.equal(r.options.rows[0].minimumOrderQuantity,2);assert.equal(r.options.rows[0].provenance.originalName,'collected');assert.equal(r.content.seo.title.provenance,'collected');assert.equal(r.content.label.material.value,'');assert.equal(r.product.image_keys,'[]');assert.equal(r.product.supplier_hub_status,'미전송');assert.equal(r.product.seo_status,'대기');assert.equal(r.policy.exchangeRate,settings.exchangeRate);});
 test('promotion rejects missing context or malformed SKU and obeys disabled minimum margin',()=>{assert.throws(()=>prepare('owner',{...job,context:null},result,'p',now));assert.throws(()=>prepare('owner',job,{...result,options:[{...result.options[0],minimumOrder:1e12}]},'p',now));const r=prepare('owner',{...job,context:{...job.context,settings:{...settings,minimumMarginEnabled:false}}},result,'p',now);assert.equal(r.policy.minimumMargin,0);});
-function storage(){const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
+function storage(files){const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  sqlite.prepare('INSERT INTO collection_jobs VALUES (?,?,?,?,?,?,?,?)').run(job.id,'owner','123',job.source_url,job.goal,job.status,now,now);
  sqlite.prepare('INSERT INTO collection_context VALUES (?,?)').run(job.id,JSON.stringify(job.context));
  sqlite.prepare('INSERT INTO collection_results VALUES (?,?,?,?)').run(job.id,'owner',JSON.stringify(result),now);
  const db={prepare(sql){let args=[];const q={bind(...v){args=v;return q;},execute(){return sqlite.prepare(sql).all(...args);},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const results=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return results;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
- const deps={'cloudflare:workers':{env:{DB:db}},'@/db/queries':{ensureDatabase:async()=>{}},'@/db/product-options':{readProductOptions:async()=>{}},'@/db/product-content':{readProductContent:async()=>{}}};return {sqlite,...load('db/collection-products.ts',deps),jobs:load('db/collection-jobs.ts',deps)};}
+ const deps={'cloudflare:workers':{env:{DB:db,FILES:files}},'@/db/queries':{ensureDatabase:async()=>{}},'@/db/product-options':{readProductOptions:async()=>{}},'@/db/product-content':{readProductContent:async()=>{}}};return {sqlite,...load('db/collection-products.ts',deps),jobs:load('db/collection-jobs.ts',deps)};}
 test('transaction creates all companion rows once and retry preserves manual edits',async()=>{const s=storage();const first=await s.promoteCollection('owner',job,result);s.sqlite.prepare('UPDATE products SET title=? WHERE id=?').run('수동 수정',first.product_id);const second=await s.promoteCollection('owner',job,result);assert.equal(first.product_id,second.product_id);for(const table of ['products','product_options','product_content','product_price_policy','collection_products'])assert.equal(s.sqlite.prepare(`SELECT count(*) n FROM ${table}`).get().n,1);assert.equal(s.sqlite.prepare('SELECT title FROM products').get().title,'수동 수정');assert.equal(await s.jobs.cancelCollection('owner',job.id),null);assert.equal(s.sqlite.prepare('SELECT status FROM collection_jobs').get().status,'awaiting_connector');s.sqlite.close();});
 test('failed companion insert rolls back product and all earlier writes',async()=>{const s=storage();s.sqlite.exec("CREATE TRIGGER fail_content BEFORE INSERT ON product_content BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");await assert.rejects(()=>s.promoteCollection('owner',job,result));for(const table of ['products','product_options','product_price_policy','collection_products'])assert.equal(s.sqlite.prepare(`SELECT count(*) n FROM ${table}`).get().n,0);s.sqlite.exec('DROP TRIGGER fail_content');assert.ok((await s.promoteCollection('owner',job,result)).product_id);s.sqlite.close();});
 test('cancellation, other owner and changed receipt/context create no products',async()=>{for(const mutation of ['cancel','owner','receipt','context']){const s=storage();if(mutation==='cancel')s.sqlite.exec("UPDATE collection_jobs SET status='cancelled'");if(mutation==='receipt')s.sqlite.exec("UPDATE collection_results SET payload='{}'");if(mutation==='context')s.sqlite.exec("UPDATE collection_context SET payload='{}'");await assert.rejects(()=>s.promoteCollection(mutation==='owner'?'other':'owner',job,result));assert.equal(s.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);s.sqlite.close();}});
@@ -46,4 +46,30 @@ test('promotion persists supplier stock by SKU including zero without changing q
  await s.promoteCollection('owner',job,result);
  assert.equal(JSON.parse(s.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(saved.product_id).payload).rows[1].stock,17);
  s.sqlite.close();
+});
+
+
+test('collection captures selected banners without changing originals and ignores disabled banners',()=>{
+ const captured={...job,context:{...job.context,settings:{...settings,topImageEnabled:true,topImageKey:'owner/top.png',bottomImageEnabled:true,bottomImageKey:'owner/bottom.png'}}};
+ const before=JSON.stringify(captured);const prepared=prepare('owner',captured,result,'p',now);
+ assert.equal(prepared.product.image_keys,JSON.stringify(['owner/top.png','owner/bottom.png']));
+ assert.equal(prepared.content.assets.detailTop.value[0],'owner/top.png');assert.equal(prepared.content.assets.detailBottom.value[0],'owner/bottom.png');
+ assert.equal(prepared.content.assets.detail.value.length,0);assert.equal(JSON.stringify(captured),before);
+ captured.context.settings.topImageKey='owner/new.png';assert.equal(prepared.content.assets.detailTop.value[0],'owner/top.png');
+ captured.context.settings.topImageEnabled=false;assert.equal(prepare('owner',captured,result,'p',now).content.assets.detailTop.value.length,0);
+ captured.context.settings.bottomImageKey='other/private.png';assert.throws(()=>prepare('owner',captured,result,'p',now));
+});
+
+
+test('banner verification precedes atomic promotion and completed retries preserve the captured file',async()=>{
+ let available=false,reads=0;
+ const s=storage({get:async()=>{reads++;return available?{size:8,body:new Response(new Uint8Array([137,80,78,71,13,10,26,10])).body}:null;}});
+ const captured={...job,context:{...job.context,settings:{...settings,topImageEnabled:true,topImageKey:'owner/top.png'}}};
+ s.sqlite.prepare('UPDATE collection_context SET payload=?').run(JSON.stringify(captured.context));
+ await assert.rejects(()=>s.promoteCollection('owner',captured,result));assert.equal(s.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);
+ available=true;const saved=await s.promoteCollection('owner',captured,result);
+ assert.equal(s.sqlite.prepare('SELECT image_keys FROM products').get().image_keys,'["owner/top.png"]');
+ assert.equal(JSON.parse(s.sqlite.prepare('SELECT payload FROM product_content').get().payload).assets.detailTop.value[0],'owner/top.png');
+ const checked=reads;available=false;
+ assert.equal((await s.promoteCollection('owner',captured,result)).product_id,saved.product_id);assert.equal(reads,checked);s.sqlite.close();
 });

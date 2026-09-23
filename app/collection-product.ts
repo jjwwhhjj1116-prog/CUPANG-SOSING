@@ -2,6 +2,7 @@ import { validateCollectionResult, type CollectionResult } from '@/app/collectio
 import { validateSettings } from '@/app/workspace-settings';
 import { calculatePrice, pricePolicy } from '@/app/pricing';
 import { emptyProductOptions, emptyOptionInput, optionFieldNames, validateOptionsInput, type ProductOption } from '@/app/product-options';
+import { workspaceBannerAssignments } from '@/app/workspace-banners';
 import { emptyProductContent } from '@/app/product-content';
 import { initialStatuses } from '@/app/workflow';
 import type { CollectionJob } from '@/app/sourcing';
@@ -22,5 +23,8 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   const content=emptyProductContent(id);content.revision=1;content.updatedAt=now;
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
   const product:ProductRecord={id,owner_id:owner,source_url:result.sourceUrl,title:result.title,source_price_cny:cost,exchange_rate:policy.exchangeRate,supply_margin:policy.supplyMargin,coupang_margin:policy.coupangMargin,supply_price:price.supplyPrice,sale_price:price.salePrice,msrp:price.msrp,options_count:rows.length,...initialStatuses,registration_status:'수집 원문 반영',image_keys:'[]',goal_stage:job.goal,created_at:now,updated_at:now};
+  const banners=workspaceBannerAssignments(settings,owner);
+  for(const [role,key] of banners)content.assets[role]={value:[key],provenance:'manual',updatedAt:now};
+  product.image_keys=JSON.stringify(banners.map(([,key])=>key));
   return {product,policy,options,content};
 }
