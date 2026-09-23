@@ -30,6 +30,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     const revision = await quotationExportFingerprint(saved,input.dataStartRow);
     if(input.action === 'export' && input.fingerprint !== revision) return json({error:'검토 후 상품·옵션·설정·카테고리 또는 견적 수정값이 변경됐습니다. 자료 검토를 다시 실행해주세요.'},409);
     const resolved = resolveQuotationExport(saved);
+    if(!resolved.rows.some(row => row.included)) return json({error:'견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션은 출력하지 않습니다.'},400);
     const requestedKeys = quotationAttachmentKeys(saved,resolved);
     const assets = await loadAttachments(owner,product.image_keys,requestedKeys);
     const original = await env.FILES.get(template.storageKey);

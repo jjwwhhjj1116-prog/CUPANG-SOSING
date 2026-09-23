@@ -40,6 +40,25 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('deleted or fully excluded options never resurrect the representative quotation row', () => {
+  const input = fixture();
+  input.overrides = { common: { title: '보존할 공통값' }, options: { red: { model: '보존할 옵션값' } } };
+  const original = clone(input);
+  for (const options of [
+    optionModel.applyOptionRows(input.options, [], 'deleted'),
+    { ...input.options, rows: input.options.rows.map(row => ({ ...row, included: false })) },
+  ]) {
+    const resolved = model.resolveQuotationFields({ ...input, options });
+    assert.equal(resolved.rows.some(row => row.included), false);
+    assert.equal(resolved.rows[0].fields.title.value, '보존할 공통값');
+    assert.match(resolved.issues.join(' '), /포함할 옵션/);
+    assert.throws(() => load('app/exports/quotation-fields.ts').resolvedQuotationRows({ ...input, options }, resolved, []), /포함할 옵션/);
+  }
+  assert.equal(model.resolveQuotationFields({ ...input, options: optionModel.emptyProductOptions('p1') }).rows[0].included, true);
+  assert.equal(model.resolveQuotationFields(input).rows[1].included, true);
+  assert.deepEqual(clone(input), original);
+});
+
 test('cleared saved label facts stay empty in quotation cells and exported Excel mappings',()=>{
  const input=fixture();
  const keys=['manufacturer','importer','contact','countryOfOrigin','material','qualityAssurance','productName','model'];
@@ -229,7 +248,7 @@ test('common row is the only export row without options; excluded options stay e
   const input = fixture(); input.options.rows[0].included = false; input.options.rows[0].unitCostCny = null;
   let result = model.resolveQuotationFields(input); assert.equal(result.rows.filter(row => row.included).length, 0);
   assert.equal(result.rows[1].fields.supplyPrice.value, ''); assert.ok(result.rows[1].fields.supplyPrice.issues.length);
-  input.options.rows = []; result = model.resolveQuotationFields(input); assert.equal(result.rows.length, 1); assert.equal(result.rows[0].included, true);
+  input.options = optionModel.emptyProductOptions('p1'); result = model.resolveQuotationFields(input); assert.equal(result.rows.length, 1); assert.equal(result.rows[0].included, true);
   input.categoryId = 'unknown'; result = model.resolveQuotationFields(input); assert.equal(result.schema.status, 'unconfirmed'); assert.equal(result.rows[0].fields.color, undefined);
 });
 

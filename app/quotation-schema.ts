@@ -265,9 +265,12 @@ const htmlEscape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g,
 export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQuotation {
   const { product, content, settings } = input;
   const options: readonly ProductOption[] = Array.isArray(input.options) ? input.options : (input.options as ProductOptions).rows;
+  const untouchedOptions = Array.isArray(input.options) || (input.options as ProductOptions).revision === 0;
+  const includeCommonRow = options.length === 0 && untouchedOptions;
   const overrides = input.overrides ?? emptyQuotationOverrides();
   const schema = getQuotationSchema(input.categoryId, input.categoryPath);
   let ownedKeys: string[] = []; const issues = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
+  if (!includeCommonRow && !options.some(option => option.included)) issues.unshift('견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션을 상품 대표 가격으로 대체하지 않습니다.');
   const optionLimitIssue = quotationOptionLimitIssue(schema, options.filter(option => option.included).length);
   if (optionLimitIssue) issues.unshift(optionLimitIssue);
   try { const keys: unknown = JSON.parse(product.image_keys); if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string')) throw new Error(); ownedKeys = keys; }
@@ -359,7 +362,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     if (fields.barcodeMode.value === 'request-coupang' && fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); }
     const priceIssues = quotationPriceIssues(schema, fields.supplyPrice.value, fields.salePrice.value);
     if (priceIssues.length) { fields.salePrice.needsReview = true; fields.salePrice.issues.push(...priceIssues); }
-    return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : options.length === 0, fields };
+    return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : includeCommonRow, fields };
   });
   return { schema, rows, issues };
 }

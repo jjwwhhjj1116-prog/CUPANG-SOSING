@@ -77,6 +77,20 @@ function routeWith({ find = async () => product, readOptions = async () => optio
 const request = body => new Request('http://localhost', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const context = { params: Promise.resolve({ id: 'test' }) }; const preview = { action: 'preview', profileId: profile.id, dataStartRow: 2 };
 
+test('deleted and excluded option sets stop quotation preview before reading attachments or templates', async () => {
+  for (const rows of [[], options.rows.map(row => ({ ...row, included: false }))]) {
+    let reads = 0;
+    const route = routeWith({ readOptions: async () => ({ ...options, revision: 2, rows }), get: async () => { reads++; throw Error('must not read'); } });
+    const response = await route.POST(request(preview), context);
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /포함할 옵션/);
+    assert.equal(reads, 0);
+  }
+  const untouched = await routeWith({ readOptions: async () => optionsModel.emptyProductOptions('test') }).POST(request(preview), context);
+  assert.equal(untouched.status, 200);
+  assert.equal((await untouched.json()).report.rowCount, 1);
+});
+
 test('real preview/export pipeline fills mapped CSV, includes option assets and preserves manual provenance', async () => {
   const route = routeWith(); const response = await route.POST(request(preview), context);
   assert.equal(response.status, 200); const review = await response.json();
