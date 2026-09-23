@@ -9,7 +9,11 @@ type Preview = {
   fingerprint:string;filename:string;headers:string[];rows:(string|number)[][];
   report:{rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-export function QuotationPanel({productId,onManageCategories,refreshToken,preferredProfileId}:{productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string}) {
+type QuotationPanelProps = {productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+export function QuotationPanel(props: QuotationPanelProps) {
+  return <QuotationPanelContent key={`${props.productId}:${props.preferredProfileId ?? ''}`} {...props}/>;
+}
+function QuotationPanelContent({productId,onManageCategories,refreshToken,preferredProfileId}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [preview,setPreview]=useState<Preview|null>(null);const [busy,setBusy]=useState(false);
@@ -18,6 +22,7 @@ export function QuotationPanel({productId,onManageCategories,refreshToken,prefer
   const [overrideProfileId,setOverrideProfileId]=useState<string|undefined>();
   const [contextLoaded,setContextLoaded]=useState(false);
   const [contextError,setContextError]=useState('');
+  const [capturedCategoryId,setCapturedCategoryId]=useState<string|null>(null);
   useEffect(()=>{
     const controller=new AbortController();
     Promise.all([
@@ -31,6 +36,7 @@ export function QuotationPanel({productId,onManageCategories,refreshToken,prefer
       const capturedId=preferredProfileId??data?.categoryContext.profileId;
       const savedId=savedProfiles.some(profile=>profile.id===capturedId)?capturedId! : '';
       setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);
+      setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
       setStartRow((savedProfiles.find(profile=>profile.id===savedId)?.template?.headerRow??1)+1);
     }).catch(cause=>{if(!controller.signal.aborted)setContextError(cause instanceof Error?cause.message:'카테고리 연결 확인 실패');})
       .finally(()=>{if(!controller.signal.aborted)setContextLoaded(true);});
@@ -56,6 +62,13 @@ export function QuotationPanel({productId,onManageCategories,refreshToken,prefer
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
     <details><summary>Excel 원본 양식에 출력하기</summary>
+    <div className="panel-note"><div><strong>공식 Excel 양식 준비</strong><ol>
+      <li><a href="https://supplier.coupang.com/qvt/registration" target="_blank" rel="noreferrer">Supplier Hub 대량 상품 등록</a>에서 ‘최신 견적서 파일 다운로드’를 누르세요.</li>
+      <li>다운로드 창에서 실제 상품의 마지막 카테고리를 선택하세요. 한 번에 최대 6개를 선택할 수 있습니다.</li>
+      <li>내려받은 원본을 아래 ‘카테고리·양식 관리’에서 연결하고 시트·머리글·입력 시작 행을 확인하세요.</li>
+    </ol>
+    {(selected?.categoryId ?? capturedCategoryId)==='80719' && <p>바스켓 이름으로 확인한 공식 탐색 경로: 주방용품 → 주방수납/잡화 → 건조대/진열대/정리대 → 주방수납바구니/바스켓</p>}
+    <small>2026-09-23 다운로드 화면 관찰 기준입니다. 이 화면의 ‘칸 카테고리 아이디’와 앱의 상품 카테고리 코드는 동일하다고 검증되지 않았습니다. 코드가 검색되지 않으면 분류명으로 탐색하세요. 경로 안내만으로 Excel 원본 연결이 완료되지는 않습니다.</small></div></div>
     <div className="panel-note"><div><strong>저장한 양식으로 견적서 만들기</strong><p>상품·옵션·이미지 자료를 연결된 Excel 열에 채웁니다. 원본은 보존하고 채운 사본과 첨부 이미지를 ZIP으로 내려받습니다.</p></div></div>
     <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setPreview(null);setStartRow((profiles.find(profile=>profile.id===event.target.value)?.template?.headerRow??1)+1);}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
     {selected&&<p>{selected.categoryPath.join(' > ')}<br/>{selected.template?.name??'원본 양식을 먼저 연결해주세요.'}</p>}
