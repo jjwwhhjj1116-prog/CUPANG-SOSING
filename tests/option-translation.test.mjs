@@ -22,3 +22,42 @@ test('no partial application on invalid translated text and manual attributes ne
  for(const value of ['', 'x'.repeat(501),'a\nb']){const {options,job}=fixture();job.result.draft.attributes[1].value=value;assert.throws(()=>model.adoptOptionTranslations(options,job,'v'));assert.equal(options.rows[0].translatedName,'');}
  const {options,job}=fixture();job.review.source.attributes.forEach(a=>a.name='색상');assert.throws(()=>model.adoptOptionTranslations(options,job,'v'),/없습니다/);
 });
+
+test('collected color and size translate by exact field binding and preserve manual attributes',()=>{
+ const {options,job}=fixture();
+ options.rows[0].color='白色';options.rows[0].size='小号';options.rows[0].provenance.color='collected';options.rows[0].provenance.size='collected';
+ options.rows[1].color='직접 입력';options.rows[1].provenance.color='manual';
+ const source=model.optionTranslationAttributes(options);
+ assert.deepEqual(JSON.parse(JSON.stringify(source)),[{name:'option:a',value:'白色'},{name:'option-color:a',value:'白色'},{name:'option-size:a',value:'小号'}]);
+ job.review.source.attributes=source;
+ job.result.draft.attributes=[{sourceIndex:2,name:'ignored',value:'소형'},{sourceIndex:1,name:'ignored',value:'흰색'},{sourceIndex:0,name:'ignored',value:'화이트 옵션'}];
+ const before=JSON.stringify(options);const result=model.adoptOptionTranslations(options,job,'v');
+ assert.equal(result.changed,3);assert.equal(result.rows[0].color,'흰색');assert.equal(result.rows[0].size,'소형');assert.equal(result.rows[0].translatedName,'화이트 옵션');
+ assert.equal(result.rows[1].color,'직접 입력');assert.equal(JSON.stringify(options),before);
+ const saved=optionsModel.applyOptionRows(options,result.rows,'saved');
+ assert.equal(saved.rows[0].provenance.color,'manual');assert.equal(saved.rows[0].provenance.size,'manual');
+ assert.throws(()=>model.optionTranslationAttributes(saved),/없습니다/);
+});
+
+test('attribute adoption preserves manual clear, rejects changed collected source and never partially writes',()=>{
+ for(const mutation of ['manual','changed','long','duplicate']){
+  const {options,job}=fixture();options.rows[0].color='白';options.rows[0].provenance.color='collected';
+  job.review.source.attributes=[{name:'option:a',value:'白色'},{name:'option-color:a',value:'白'}];
+  job.result.draft.attributes=[{sourceIndex:0,value:'화이트'},{sourceIndex:1,value:'흰색'}];
+  if(mutation==='manual'){options.rows[0].color='';options.rows[0].provenance.color='manual';}
+  if(mutation==='changed')options.rows[0].color='黑';
+  if(mutation==='long')job.result.draft.attributes[1].value='x'.repeat(201);
+  if(mutation==='duplicate')job.result.draft.attributes.push(job.result.draft.attributes[1]);
+  const before=JSON.stringify(options);
+  if(mutation==='manual'){const result=model.adoptOptionTranslations(options,job,'v');assert.equal(result.changed,1);assert.equal(result.rows[0].color,'');}
+  else assert.throws(()=>model.adoptOptionTranslations(options,job,'v'));
+  assert.equal(JSON.stringify(options),before);
+ }
+});
+
+test('translation limit counts attributes rather than just option rows',()=>{
+ const {options}=fixture();options.rows=[];
+ for(let i=0;i<17;i++)options.rows.push({...optionsModel.emptyOptionInput(`a${i}`),originalName:'原文',color:'白',size:'小',provenance:{color:'collected',size:'collected'}});
+ assert.throws(()=>model.optionTranslationAttributes(options),/50/);
+ options.rows[16].size='';assert.equal(model.optionTranslationAttributes(options).length,50);
+});

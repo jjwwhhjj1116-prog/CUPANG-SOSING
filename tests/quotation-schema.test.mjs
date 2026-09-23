@@ -152,6 +152,26 @@ test('structured option color and size reach quotation and export while old clie
   assert.equal(model.resolveQuotationFields(input).rows[1].fields.color.value, '흰색');
 });
 
+test('reviewed attribute translation reaches saved quotation and Excel rows', () => {
+  const input = fixture(); input.categoryId = '81452';
+  input.options.rows[0].color = '黑色'; input.options.rows[0].size = '小号';
+  input.options.rows[0].provenance.color = 'collected'; input.options.rows[0].provenance.size = 'collected';
+  const translation = load('app/option-translation.ts');
+  const attributes = translation.optionTranslationAttributes(input.options);
+  const job = { productId: 'p1', productVersion: 'current', status: 'completed', review: { source: { attributes } },
+    result: { draft: { attributes: attributes.map((item, sourceIndex) => ({ sourceIndex, name: 'ignored', value: item.name.startsWith('option-color:') ? '검정' : '소형' })) } } };
+  const adopted = translation.adoptOptionTranslations(input.options, job, 'current');
+  input.options = optionModel.applyOptionRows(input.options, adopted.rows, 'saved');
+  const resolved = model.resolveQuotationFields(input);
+  assert.equal(resolved.rows[1].fields.color.value, '검정');
+  assert.equal(resolved.rows[1].fields.brace_noticeColor.value, '검정');
+  assert.equal(resolved.rows[1].fields.size.value, '소형');
+  const exported = load('app/exports/quotation-fields.ts').resolvedQuotationRows(input, resolved, [
+    { key: 'owner/main.png', name: 'assets/main.png' }, { key: 'owner/option.png', name: 'assets/option.png' }, { key: 'owner/detail.png', name: 'assets/detail.png' },
+  ]);
+  assert.equal(exported[0].color, '검정'); assert.equal(exported[0].size, '소형');
+});
+
 test('deleted or fully excluded options never resurrect the representative quotation row', () => {
   const input = fixture();
   input.overrides = { common: { title: '보존할 공통값' }, options: { red: { model: '보존할 옵션값' } } };

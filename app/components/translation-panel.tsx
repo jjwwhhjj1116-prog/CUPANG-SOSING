@@ -71,7 +71,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
       const pairs=optionTranslationAttributes(value.options);
       if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
       setAttributes(pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n'));
-      setNotice(`한국어 이름이 비어 있는 옵션 ${pairs.length}개를 번역 검토에 넣었습니다. 아직 유료 호출하지 않았습니다.`);
+      setNotice(`미번역 옵션명·수집 색상·사이즈 ${pairs.length}개 항목을 번역 검토에 넣었습니다. 아직 유료 호출하지 않았습니다.`);
     }catch(reason){setError(reason instanceof Error?reason.message:'옵션 조회 실패');}
     finally{setBusy(false);}
   }
@@ -84,7 +84,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
       const next=adoptOptionTranslations(current.options,job,current.productVersion);
       const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.options.revision,expectedProductVersion:current.productVersion,rows:next.rows})});
       const value=await saved.json() as {error?:string};if(!saved.ok)throw Error(value.error??'옵션 저장 실패');
-      setNotice(`빈 한국어 옵션명 ${next.changed}개에 검토한 초안을 적용했습니다. 기존 이름·가격·수량은 보존했습니다.`);onContentSaved?.();
+      setNotice(`옵션명·색상·사이즈 ${next.changed}개 항목에 검토한 초안을 적용했습니다. 직접 수정한 값·가격·수량은 보존했습니다.`);onContentSaved?.();
     }catch(reason){setError(reason instanceof Error?reason.message:'옵션 적용 실패');}
     finally{setBusy(false);}
   }
@@ -139,7 +139,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
           {job.result.draft.warnings.length > 0 && <ul>{job.result.draft.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
           {translationSeoFields.map(field => <div key={field} className="translation-field"><label><input type="checkbox" checked={selectedFields.includes(field)} disabled={busy || !content || job.productVersion !== version} onChange={event => setSelectedFields(previous => event.target.checked ? [...previous, field] : previous.filter(item => item !== field))} />함께 저장할 항목 선택</label><strong>{field === 'title' ? '한국어 상품명' : field === 'keywords' ? 'SEO 검색어' : '한국어 설명'}</strong><pre>{Array.isArray(job.result!.draft[field]) ? (job.result!.draft[field] as string[]).join(', ') : job.result!.draft[field]}</pre><details><summary>현재 저장된 내용과 비교</summary><pre>{content ? JSON.stringify(content.seo[field].value, null, 2) : '불러오지 못함'}</pre></details><button className="btn" type="button" disabled={busy || !content || job.productVersion !== version} onClick={() => void adopt([field])}>검토한 초안을 이 항목에 적용 · 기존 내용 교체</button></div>)}
           <button className="btn blue" type="button" disabled={busy || !content || !selectedFields.length || job.productVersion !== version} onClick={() => void adopt(selectedFields)}>검토한 {selectedFields.length}개 항목 함께 저장 · 선택한 기존 내용 교체</button>
-          {job.result.draft.attributes.length > 0 && <details><summary>번역된 속성·옵션 확인</summary><ul>{job.result.draft.attributes.map(attribute => <li key={attribute.sourceIndex}>{attribute.name}: {attribute.value}</li>)}</ul><button className="btn" type="button" disabled={busy || job.productVersion !== version} onClick={()=>void adoptOptions()}>검토한 옵션 번역 적용 · 빈 한국어 이름만</button></details>}
+          {job.result.draft.attributes.length > 0 && <details><summary>번역된 속성·옵션 확인</summary><ul>{job.result.draft.attributes.map(attribute => <li key={attribute.sourceIndex}>{attribute.name}: {attribute.value}</li>)}</ul><button className="btn" type="button" disabled={busy || job.productVersion !== version} onClick={()=>void adoptOptions()}>검토한 옵션 번역 적용 · 미번역 이름·수집 속성</button></details>}
         </>}
       </div>}
     </>}
