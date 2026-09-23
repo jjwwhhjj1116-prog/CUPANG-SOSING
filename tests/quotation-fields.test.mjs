@@ -286,3 +286,14 @@ test('legacy unclassified edits remain recoverable and never silently enter a kn
   assert.equal((await get(h)).overrides.common.brand,'이전 브랜드');
  }finally{h.sqlite.close();}
 });
+
+test('legacy selection can be saved to one category while legacy source and other category remain unchanged',async()=>{
+ const h=await harness();try{
+  await h.store.saveQuotationFields('owner','product',{common:{brand:'검토할 이전값'},options:{}},0,baseGuard());
+  const a=await profile(h,'80719'),b=await profile(h,'77442');const view=await get(h,a.id);
+  assert.equal(view.legacyOverrides.common.brand,'검토할 이전값');assert.equal(view.overrides.common.brand,undefined);
+  const response=await put(h,view,[{fieldKey:'brand',optionId:null,value:view.legacyOverrides.common.brand}],a.id);assert.equal(response.status,200);
+  assert.equal((await get(h,a.id)).overrides.common.brand,'검토할 이전값');assert.equal((await get(h,b.id)).overrides.common.brand,undefined);
+  assert.equal((await h.store.readQuotationFields('owner','product')).overrides.common.brand,'검토할 이전값');
+ }finally{h.sqlite.close();}
+});

@@ -203,3 +203,36 @@ test('changed field rules trigger review only for affected drafts and removed fi
  next.resolved.schema.fields=next.resolved.schema.fields.filter(field=>field.id!=='brand');
  assert.equal(editor.reconcileQuotationEditorDraft(previous,next,result.changes).conflicts[0].unavailable,true);
 });
+
+test('legacy import stages only reviewed values, preserves blank intent and unrelated drafts without changing originals',()=>{
+ const view=fixture({common:{brand:'현재 브랜드'},options:{}});
+ view.legacyOverrides={common:{brand:'이전 브랜드',model:''},options:{red:{title:'빨강 이전 제목'}}};
+ const changes=[change('searchTags','유지할 태그')];const original=JSON.stringify({view,changes});
+ const candidates=editor.legacyQuotationCandidates(view,changes);
+ assert.equal(candidates.find(item=>item.change.fieldKey==='brand').before,'현재 브랜드');
+ const keys=candidates.filter(item=>item.change.fieldKey!=='title').map(item=>item.key);
+ const draft=editor.importLegacyQuotationDraft(view,changes,keys);
+ assert.equal(editor.resolveQuotationEditorCell(view,draft,null,'brand').value,'이전 브랜드');
+ assert.equal(editor.resolveQuotationEditorCell(view,draft,null,'model').value,'');
+ assert.equal(editor.resolveQuotationEditorCell(view,draft,null,'searchTags').value,'유지할 태그');
+ assert.equal(draft.some(item=>item.fieldKey==='title'),false);
+ assert.equal(JSON.stringify({view,changes}),original);
+});
+test('legacy import blocks removed options, unsupported fields, readonly cells, invalid values and foreign images',()=>{
+ const view=fixture();view.legacyOverrides={common:{category:'80719',retired:'x',mainImage:'other/foreign.png',packagedWeightG:'bad'},options:{deleted:{brand:'x'}}};
+ const candidates=editor.legacyQuotationCandidates(view,[]);assert.equal(candidates.length,5);
+ for(const item of candidates){assert.ok(item.issues.length);assert.throws(()=>editor.importLegacyQuotationDraft(view,[],[item.key]));}
+ assert.throws(()=>editor.importLegacyQuotationDraft(view,[],['missing']));
+ assert.throws(()=>editor.importLegacyQuotationDraft(view,[],[]));
+ view.categoryContext.categoryId=null;assert.equal(editor.legacyQuotationCandidates(view,[]).length,0);
+});
+
+test('legacy comparison renders explicit selection and escapes previous HTML values',()=>{
+ const view=fixture();view.legacyOverrides={common:{brand:'<script>legacy()</script>',retired:'이전 필드'},options:{}};
+ const html=renderEditor(view);
+ assert.ok(html.includes('분류 미지정 이전 입력 비교'));
+ assert.ok(html.includes('&lt;script&gt;legacy()&lt;/script&gt;'));
+ assert.ok(!html.includes('<script>legacy()'));
+ assert.ok(html.includes('현재 양식에서 수정할 수 없는 항목'));
+ assert.ok(html.includes('선택한 0개를 편집 초안에 적용'));
+});

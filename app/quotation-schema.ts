@@ -38,7 +38,7 @@ export type ResolvedQuotationField = { value: string; source: QuotationSource; n
 export type ResolvedQuotationRow = { optionId: string | null; optionLabel: string; included: boolean; fields: Record<string, ResolvedQuotationField> };
 export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[] };
 export type QuotationFieldsView = {
-  revision: number; inputFingerprint: string; overrides: QuotationOverrides; resolved: ResolvedQuotation; automatic: ResolvedQuotation;
+  revision: number; inputFingerprint: string; overrides: QuotationOverrides; legacyOverrides?: QuotationOverrides; resolved: ResolvedQuotation; automatic: ResolvedQuotation;
   categoryContext: { source: 'profile' | 'collection' | 'unknown'; profileId: string | null; categoryId: string | null; categoryPath: string[] };
   productVersion: string; contentRevision: number; optionRevision: number; updatedAt: string | null;
   imageKeys: string[]; submissionReady: false;

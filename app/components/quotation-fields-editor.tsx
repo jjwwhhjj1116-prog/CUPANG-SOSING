@@ -98,6 +98,39 @@ export function quotationEditorIssues(field: QuotationField, cell: Cell, imageKe
   return [...new Set([...cell.issues, ...quotationValueIssues(field, cell.value, imageKeys)])];
 }
 function imageValues(value: string) { return [...new Set(value.split('\n').map(key => key.trim()).filter(Boolean))]; }
+export function legacyQuotationCandidates(view: QuotationFieldsView, changes: readonly QuotationEditorChange[]) {
+  if (!view.categoryContext.categoryId || !view.legacyOverrides) return [];
+  const entries: [string | null, Record<string, string>][] = [[null, view.legacyOverrides.common], ...Object.entries(view.legacyOverrides.options)];
+  return entries.flatMap(([optionId, values]) => Object.entries(values).map(([fieldKey, value]) => {
+    const field = view.resolved.schema.fields.find(item => item.id === fieldKey);
+    const row = view.resolved.rows.find(item => item.optionId === optionId);
+    const issues = !field || field.readOnly || !row ? ['현재 양식에서 수정할 수 없는 항목 또는 삭제된 옵션입니다.'] : value.trim() ? quotationValueIssues(field, value, view.imageKeys) : [];
+    return { key: quotationEditorKey(optionId, fieldKey), change: { optionId, fieldKey, value }, label: field?.label ?? fieldKey,
+      optionLabel: row?.optionLabel ?? (optionId === null ? '공통' : optionId),
+      before: row && field ? resolveQuotationEditorCell(view, changes, optionId, fieldKey).value : '', issues };
+  }));
+}
+export function importLegacyQuotationDraft(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], keys: readonly string[]) {
+  const candidates = legacyQuotationCandidates(view, changes);
+  if (!keys.length || new Set(keys).size !== keys.length) throw new Error('가져올 이전 항목을 선택해주세요.');
+  const chosen = keys.map(key => candidates.find(item => item.key === key));
+  if (chosen.some(item => !item || item.issues.length)) throw new Error('현재 양식에 맞지 않는 이전 입력은 가져올 수 없습니다.');
+  const draft = chosen.reduce((current, item) => updateQuotationEditorDraft(view.overrides, current, item!.change), [...changes]);
+  validateQuotationChanges(draft, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(row => row.optionId === null ? [] : [row.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides });
+  return draft;
+}
+function LegacyQuotationImport({ view, changes, disabled, onApply }: { view: QuotationFieldsView; changes: QuotationEditorChange[]; disabled: boolean; onApply: (keys: string[]) => void }) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const candidates = legacyQuotationCandidates(view, changes);
+  if (!candidates.length) return null;
+  return <details className="quotation-fields-notice"><summary>분류 미지정 이전 입력 비교 · {candidates.length}개</summary>
+    <p>이전 자료에는 카테고리 기록이 없습니다. 현재 양식과 비교해 선택하세요. 선택한 현재 입력은 교체되며 이전 원본은 보존됩니다. 적용 후 견적 입력 저장을 눌러 확정하세요.</p>
+    <div className="table-wrap"><table><thead><tr><th>선택</th><th>옵션 / 항목</th><th>현재 입력</th><th>이전 입력</th><th>확인 사항</th></tr></thead><tbody>{candidates.map(item => <tr key={item.key}>
+      <td><input type="checkbox" aria-label={`${item.optionLabel} ${item.label} 가져오기`} checked={selected.includes(item.key)} disabled={disabled || item.issues.length > 0} onChange={event => setSelected(previous => event.target.checked ? [...previous, item.key] : previous.filter(key => key !== item.key))}/></td>
+      <td>{item.optionLabel}<br/>{item.label}</td><td style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{item.before || '(공란)'}</td><td style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{item.change.value || '(공란)'}</td><td>{item.issues.join(' / ')}</td>
+    </tr>)}</tbody></table></div><button type="button" className="btn primary" disabled={disabled || !selected.length} onClick={() => onApply(selected)}>선택한 {selected.length}개를 편집 초안에 적용</button>
+  </details>;
+}
 async function fetchView(endpoint: string, signal?: AbortSignal): Promise<QuotationFieldsView> {
   const response = await fetch(endpoint, { signal, cache: 'no-store' });
   const body = await response.json() as QuotationFieldsView & { error?: string };
@@ -196,6 +229,10 @@ function QuotationFieldsForm({ productId, profileId, refreshToken, onSaved, onDi
     {message && <p role="status" className="quotation-fields-notice">{message}</p>}
     {schema && <div className="quotation-fields-category"><strong>{schema.categoryPath.join(' › ') || '카테고리 미연결'}{schema.categoryId ? ` · ${schema.categoryId}` : ''}</strong><small>{schema.status === 'observed' ? schema.evidence : '이 카테고리의 세부 규격은 미확인입니다. 공통 입력을 작성하고 실제 견적서 양식과 대조해주세요.'}</small></div>}
     {view && <>
+      <LegacyQuotationImport key={JSON.stringify([view.revision, view.inputFingerprint, changes])} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={keys => {
+        try { setChanges(importLegacyQuotationDraft(view, changes, keys)); setBulk(null); setError(''); setMessage('선택한 이전 입력을 초안에 반영했습니다. 현재 분류에 저장하려면 견적 입력 저장을 눌러주세요.'); }
+        catch (cause) { setError(cause instanceof Error ? cause.message : '이전 입력을 확인해주세요.'); }
+      }}/>
       {optionLimitIssue && <p className="quotation-fields-notice" role="alert">{optionLimitIssue}</p>}
       <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { setSelectedOption(event.target.value || null); setBulk(null); }}>{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${item.optionLabel}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
       <div className="quotation-fields-summary"><span>현재 옵션 필수 미입력 <b>{missingRequired}개</b></span><span>입력 확인 <b>{allIssues.length}건</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
