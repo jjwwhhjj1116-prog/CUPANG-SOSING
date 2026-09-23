@@ -2,6 +2,13 @@
 export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
 export const CATEGORY_TEMPLATE_FILE_LIMIT = 5_000_000;
 export const categoryFields = {
+  brace_bodyPart: '헬스보호대: 사용부위', brace_size: '헬스보호대: 패션잡화 사이즈',
+  brace_fastener: '헬스보호대: 잠금/고정방식', brace_composition: '헬스보호대: 구성',
+  brace_user: '헬스보호대: 보호대 사용대상', brace_purpose: '헬스보호대: 보호대/교정용품 용도',
+  brace_direction: '헬스보호대: 착용방향', brace_gtin: '헬스보호대: Global Trade Item Number',
+  brace_parentPart: '헬스보호대: Parent Manufacturer Part Number', brace_part: '헬스보호대: Manufacturer Part Number',
+  brace_noticeKc: '헬스보호대 고시: KC 인증정보', brace_noticeSizeWeight: '헬스보호대 고시: 크기, 중량',
+  brace_noticeColor: '헬스보호대 고시: 색상', brace_noticeSpecifications: '헬스보호대 고시: 상품별 세부 사양',
   // BEGIN OBSERVED HUB MAPPING FIELDS
   optionLevels: '관찰 카테고리: 단 수',
   "hub_80714_3f61a31d7c3f": "키친타올걸이/홀더: 주방용품재질",
@@ -429,7 +436,7 @@ export const categoryFields = {
 } as const;
 export type CategoryField = keyof typeof categoryFields;
 export function categoryFieldScope(field: string): string | null {
-  return field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
+  return field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
 }
 export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;

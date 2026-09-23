@@ -1,0 +1,260 @@
+:
+  - button: ×
+  - 'heading "상품 등록 진행: 와이홉 5중 지지대 통증 완화 허리 보호대" [level=4]'
+  - progressbar
+  - generic: "1"
+  - generic: SEO 설정
+  - generic: "2"
+  - generic: 가격 설정
+  - generic: "3"
+  - generic: 대표 이미지
+  - generic: "4"
+  - generic: 추가 이미지
+  - generic: "5"
+  - generic: 상세 이미지
+  - generic: "6"
+  - generic: 한글 표시사항
+  - generic: "7"
+  - generic: 견적서 작업
+  - heading "등록 세부정보" [level=4]
+  - generic: 쿠팡 등록 정보
+  - button " AI 처리":
+    - generic: 
+    - text: AI 처리
+  - heading "1. Start Page (시작 페이지)" [level=5]
+  - generic: 상품명 *
+  - generic: "* 라벨 또는 패키지에서 확인이 가능한 상품명을 입력해주세요. * 상품명에는 반드시 속성값이 포함되어야 합니다.(속성값: 색상, 사이즈, 무게 등) * 모델명이 있는 경우 다음과 같이 기재해주세요. 예) 캐럿 긴팔 티셔츠 흰색 95 사이즈 WH1234567"
+  - textbox: 와이홉 5중 지지대 통증 완화 허리 보호대
+  - generic: 
+  - text: 상품명은 SEO 설정에서 수정해주세요.
+  - generic: 카테고리 *
+  - generic: "* 아래의 셀에서 세부 카테고리를 선택하여 주세요."
+  - textbox: 스포츠/레져>헬스/요가>헬스기구/용품>헬스보호대 (81452)
+  - heading "2. Product Page (상품 페이지)" [level=5]
+  - heading "기본 정보" [level=6]
+  - generic: 모델명 *
+  - generic: "* 제품번호 또는 모델넘버를 입력해주세요. * 등록하고자 하는 상품이 KC, 전파 인증과 같이 인증 대상인 경우에는 모델명을 반드시 입력해주세요. * 만약 모델명이 없는 경우, 상품명과 동일하게 입력해주세요."
+  - textbox
+  - generic: 모델번호는 최대 50자까지 입력 가능합니다.
+  - generic: 0/50자
+  - generic: 브랜드 *
+  - generic: "* 상품 브랜드 (한글로 입력 추천) 입력된 브랜드명은 반드시 상품 패키지 또는 상세컨텐츠에서 확인이 가능해야 합니다. '상표권'이 등록되지 않은 브랜드는 '브랜드 없음'을 선택해야 합니다."
+  - combobox:
+    - option "브랜드 없음"
+    - option "와이홉" [selected]
+  - generic: 제조사 *
+  - generic: "* 상품 제조사의 등록 사업자명을 입력하여 주세요."
+  - textbox: 와이홉 협력사
+  - generic: 거래타입 *
+  - generic: "다음 중 해당하는 항목을 선택하여 주세요. 제조사: 제조사 직거래 / 글로벌업체의 한국법인 / 제조사가 브랜드 라이선스를 보유하여 수입하거나 생산하는 경우 공식총판사 : 제조사가 물류운영을 하지않고, 공식총판을 통해서만 거래하는 경우 (제조사는 모든 거래처에 직접 납품하지 않고 공식총판만을 통해 거래) 공식대리점 : 제조사가 지정한 공식총판 (대리점 형태) / 글로벌브랜드의 법인이 아니면서, 글로벌브랜드로부터 공식 라이선스를 받아 수입하고 판매하는 업체 기타 도소매업자 : 위를 제외한 모든 거래업체, 병행수입사"
+  - combobox:
+    - option "제조사" [selected]
+    - option "공식총판사"
+    - option "공식대리점"
+    - option "기타 도소매업자"
+  - generic: 과세여부 *
+  - generic: "상품의 과세여부를 선택하여 주세요. 과세: 대한민국 세법에 따라 과세 대상 면세: 대한민국 세법에 따른 면세 대상 영세: 중소기업 세금감면 대상"
+  - combobox:
+    - option "과세" [selected]
+    - option "면세"
+    - option "영세"
+  - generic: 수입여부 *
+  - generic: "상품의 수입 여부를 선택하여 주세요. 수입대상아님: 국내 제조 수입상품: 수입된 상품 (OEM 포함) 병행수입상품: 병행수입된 상품 (병행수입면장 첨부 필요)"
+  - combobox:
+    - option "수입대상아님"
+    - option "수입상품" [selected]
+    - option "병행수입상품"
+  - generic: 검색태그 *
+  - generic: "*상품과 관련된 검색어를 입력해주세요. (쉼표(,)로 구분) *최대 150자까지 입력 가능합니다. (한 단어당 20자 이하) *타사 브랜드/상품군과 같은 태그 기재 불가합니다."
+  - textbox "검색 태그를 쉼표(,)로 구분하여 입력하세요": 허리보호대, 허리복대, 허리보호대 복대, 골반보호대, 골반밴드, 골반벨트, 디스크 허리보호대, 의료용 허리보호대, 남자 허리보호대, 여자 허리보호대, 온열 허리보호대, 헬스 허리보호대, 여름 허리보호대, 얇은 허리보호대, 빅사이즈 허리보호대, 허리 통증 완화
+  - generic: 쉼표(,)로 구분하여 입력하세요. 최대 150자
+  - generic: 144/150자
+  - heading "가격 정보" [level=6]
+  - generic: 공급가
+  - spinbutton: "4930"
+  - generic: 판매가
+  - spinbutton: "8220"
+  - generic: 권장소비자가격
+  - textbox: "10690"
+  - generic: 바코드
+  - textbox: 바코드 없음(쿠팡 바코드 생성 요청)
+  - heading "노출 속성" [level=6]
+  - generic: 상품 상세 페이지에 노출되는 상품의 주요 속성 정보입니다.
+  - textbox "속성명": 색상
+  - 'generic "예시: 블랙(색상), 스킨(색상), 화이트(색상), 네이비(색상), 로고(패턴), 무지(색상), 매쉬(패턴), 스트라이프(패턴)"': 
+  - textbox "속성값": 해당사항없음
+  - textbox "속성명": 수량
+  - 'generic "예시: 1개, 2개, 4개, 1세트, 1박스"': 
+  - textbox "속성값": 해당사항없음
+  - textbox "속성명": 사이즈
+  - 'generic "예시: S, Medium, Free, 대, one size 등"': 
+  - textbox "속성값": 해당사항없음
+  - heading "비노출 속성" [level=6]
+  - generic: 상품 상세 페이지에 노출되지 않는 상품의 부가 정보입니다.
+  - textbox "속성명": 사용부위
+  - 'generic "예시: 목/어깨, 팔/손목, 손/손가락, 발/발가락, 다리, 종아리, 엉덩이, 허리, 발목, 무릎, 팔꿈치"': 
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "종아리"
+    - option "다리"
+    - option "목/어깨"
+    - option "팔/손목"
+    - option "손/손가락"
+    - option "발/발가락"
+    - option "엉덩이"
+    - option "허리"
+    - option "무릎"
+    - option "팔꿈치"
+    - option "발목"
+  - textbox "속성명": 패션잡화 사이즈
+  - 'generic "예시: XXS, XS, S, M, L, XL, XXL이상, FREE"': 
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "S"
+    - option "M"
+    - option "L"
+    - option "XL"
+    - option "Free Size"
+    - option "XXS"
+    - option "XS"
+    - option "XXL이상"
+  - textbox "속성명": 잠금/고정방식
+  - 'generic "예시: 지퍼형, 자석형, 벨크로형, 밴드형, 똑딱이형, 끈 조임형, 잠금장치없음"': 
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "지퍼형"
+    - option "자석형"
+    - option "벨크로형"
+    - option "똑딱이형"
+    - option "끈 조임형"
+    - option "잠금장치없음"
+    - option "밴드형"
+  - textbox "속성명": 구성
+  - 'generic "예시: 단품, 단품세트, 혼합세트"': 
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "단품"
+    - option "단품세트"
+    - option "혼합세트"
+  - textbox "속성명": 보호대 사용대상
+  - 'generic "예시: 일반/성인, 임산부, 어린이"': 
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "일반/성인"
+    - option "임산부"
+    - option "어린이"
+  - textbox "속성명": 보호대/교정용품 용도
+  - 'generic "예시: 스포츠/레저용, 의료용, 일상생활용"': 
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "스포츠/레저용"
+    - option "의료용"
+    - option "일상생활용"
+  - textbox "속성명": 착용방향
+  - 'generic "예시: 좌우겸용, 오른쪽, 왼쪽, 좌우세트"': 
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "좌우겸용"
+    - option "오른쪽"
+    - option "왼쪽"
+    - option "좌우세트"
+  - textbox "속성명": Global Trade Item Number
+  - generic: 해당사항없음
+  - textbox "속성명": Parent Manufacturer Part Number
+  - generic: 해당사항없음
+  - textbox "속성명": Manufacturer Part Number
+  - 'generic "예시: RF-1400,i10,NK-PRO-01,AD-PRO-02,P-PRO-03,S-PRO-04"': 
+  - generic: 해당사항없음
+  - heading "3. Image Page (이미지 페이지)" [level=5]
+  - heading "기본 이미지" [level=6]
+  - generic: 대표 이미지
+  - textbox
+  - generic: 추가 이미지
+  - textbox
+  - heading "라벨 이미지" [level=6]
+  - generic: 제품 라벨, 사이즈 차트 등의 이미지 정보입니다.
+  - textbox "라벨 타입": 제품 한글 표시사항 라벨 또는 도안 이미지
+  - textbox "이미지 파일": 해당사항없음
+  - heading "상세 정보" [level=6]
+  - generic: 상세 이미지
+  - textbox: https://d2castnkxnguc6.cloudfront.net/rocket-registration/A01464742_260923003001_detail_full_1790147639248.jpg
+  - generic: HTML 상세 내용
+  - textbox
+  - generic: 대체 텍스트
+  - textbox: 와이홉 허리보호대 상세페이지 이미지 참조
+  - heading "4. Legal Page (법적 정보)" [level=5]
+  - heading "기본 법적 정보" [level=6]
+  - generic: 전기용품 및 생활용품, 어린이 (KC) 인증 마크 타입 *
+  - generic: "* 상품의 KC 인증 마크 유형을 선택해주세요. 해당하지 않는 경우, '해당사항없음'을 선택해주세요."
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "KC인증마크_어린이제품 공급자적합성확인"
+    - option "KC인증마크_생활용품 공급자적합성확인"
+    - option "KC인증마크_전기용품 공급자적합성확인"
+  - heading "인증 정보" [level=6]
+  - generic: 상품의 안전 인증 정보입니다.
+  - textbox "인증명": 전기용품 및 생활용품, 어린이 (KC) 인증번호
+  - textbox "인증 번호": 해당사항없음
+  - textbox "인증명": 방송통신 기자재 (EMC) 인증 번호
+  - textbox "인증 번호": 해당사항없음
+  - textbox "인증명": 안전기준적합확인 신고번호
+  - textbox "인증 번호": 해당사항없음
+  - heading "상품 고시 정보" [level=6]
+  - generic: 전자상거래법에 따른 필수 표시 정보입니다.
+  - textbox "항목": 품명 및 모델명
+  - textbox "값": 해당사항없음
+  - textbox "항목": KC 인증정보
+  - textbox "값": 해당사항없음
+  - textbox "항목": 크기, 중량
+  - textbox "값": 해당사항없음
+  - textbox "항목": 색상
+  - textbox "값": 해당사항없음
+  - textbox "항목": 재질
+  - textbox "값": 해당사항없음
+  - textbox "항목": 제품 구성
+  - textbox "값": 해당사항없음
+  - textbox "항목": 출시년월
+  - textbox "값": 해당사항없음
+  - textbox "항목": 제조자(수입자)
+  - textbox "값": 해당사항없음
+  - textbox "항목": 제조국
+  - textbox "값": 해당사항없음
+  - textbox "항목": 상품별 세부 사양
+  - textbox "값": 해당사항없음
+  - textbox "항목": 품질보증기준
+  - textbox "값": 해당사항없음
+  - textbox "항목": A/S 책임자와 전화번호
+  - textbox "값": 쿠팡 고객센터 1577-7011
+  - heading "5. Logistics Page (물류 정보)" [level=5]
+  - generic: 박스 내 SKU 수량 *
+  - generic: "상품 입고시, 쿠팡 물류 센터에 입고되는 한 박스 안의 SKU의 총 개수를 입력해주세요. 참고 : 이 항목은 초도발주 수량이 아닙니다. 초도발주는 정해진 수량 2EA로 진행 후, 리오더 부터 담당 브랜드매니져/인스탁매니저와 협의를 통해 최소 발주량을 조정 할 수 있습니다. *자세한 설명 및 작성 방법은 '견적서 용어사전' 탭을 참고해주세요."
+  - spinbutton: "50"
+  - generic: 유통기간 *식품의 경우 소비기간 (일수기재) *
+  - generic: "* 제조일로부터 실물 기준의 유통기간의 일자를 숫자로 기재해 주세요. * 식품의 경우, 2024년 1월 1일부터 시행되는 소비기한 표시제가 적용되는 상품군은 실물 기준의 소비기간의 일자를 숫자로 기재해 주세요. 해당되지 않는다면 유통기간의 일자를 숫자로 기재해 주세요. *유통기간 (또는 소비기간)이 없는 상품은, 숫자 '0' 을 입력해 주세요. *유통기간 정보를 누락 혹은 오기재 한 경우, 상품 등록시 반려 혹은 물류 입고 시 회송 될 수 있으니 정확하게 기재해주시기 바랍니다."
+  - spinbutton: "0"
+  - generic: 취급주의 사유 *
+  - generic: 유리 또는 액체류는 반드시 취급주의 항목을 선택해주세요.
+  - combobox:
+    - option "해당사항없음" [selected]
+    - option "유리"
+  - generic: 한 개 단품 포장 무게 *
+  - generic: "* 고객에게 발송되는 포장된 상태의 단품(실제 1개 상품) 무게를 기재해주세요. * 단품이 박스가 아닌 비닐/폴리백으로 포장된 경우, 비닐/폴리백의 무게를 기재해주세요. * 단위를 제외하고 숫자(정수)만 사용할 수 있습니다. (단위: 그램(g)) * 오기재시 회송될 수 있으니, 기입 전 주의사항을 반드시 읽어주세요."
+  - textbox
+  - generic: 한 개 단품 포장 사이즈 *
+  - generic: "* 고객에게 발송되는 포장된 상태의 단품(실제 1개 상품) 사이즈를 기재해주세요. * 단품이 박스가 아닌 비닐/폴리백으로 포장된 경우, 비닐/폴리백의 사이즈를 기재해주세요. * 단위(mm)를 제외하고 숫자(정수)만 사용할 수 있습니다. * 곱하기는 별표(*)로 표시해주세요. 단위: 밀리미터(mm) 형식: 가로*세로*높이 * 오기재시 회송될 수 있으니, 기입 전 주의사항을 반드시 읽어주세요."
+  - textbox
+  - button " 초기화":
+    - generic: 
+    - text: 초기화
+  - generic: 모든 옵션에 적용
+  - checkbox
+  - button " 저장":
+    - generic: 
+    - text: 저장
+  - button " 이전":
+    - generic: 
+    - text: 이전
+  - button "다음 ":
+    - text: 다음
+    - generic: 
+  - generic: 7 / 7

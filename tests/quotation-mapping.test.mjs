@@ -20,6 +20,17 @@ function load(file) {
 const { suggestQuotationMappings: suggest } = load('app/quotation-mapping.ts');
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('brace-only columns map and export while duplicate color labels require manual selection', () => {
+  const headers = ['사용부위', '착용방향', 'KC 인증정보', '색상'];
+  const result = suggest(headers, '81452');
+  assert.deepEqual(plain(result.mappings.map(item => item.field)), ['brace_bodyPart', 'brace_direction', 'brace_noticeKc']);
+  assert.deepEqual(plain(result.ambiguousColumns), [3]);
+  const profiles = load('app/category-profiles.ts');
+  const profile = { name: '보호대', categoryId: '81452', categoryPath: ['스포츠/레져', '헬스/요가', '헬스기구/용품', '헬스보호대'], template: { name: 'test.csv', format: 'csv', sha256: 'a'.repeat(64), sheetName: '', headerRow: 1, headers }, mappings: result.mappings };
+  assert.deepEqual(plain(profiles.mapQuotationRow(profile, { brace_bodyPart: '허리', brace_direction: '좌우겸용', brace_noticeKc: '' }).values), ['허리', '좌우겸용', '', '']);
+  assert.throws(() => profiles.validateCategoryProfile({ ...profile, categoryId: '80719' }), /다른 카테고리/);
+});
+
 test('category changes refresh only session automatic mappings and preserve manual disconnections', () => {
   const { refreshCategoryMappings: refresh } = load('app/quotation-mapping.ts');
   const headers = ['상품명', '뚜껑 포함여부', '공급가', '판매가'];

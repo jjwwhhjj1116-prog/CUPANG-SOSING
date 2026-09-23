@@ -31,7 +31,7 @@ test('hierarchy imports only observed root/child paths with exact order and all 
     if (node.path.length === 1) count += node.children.length;
   }
   assert.equal(count, 173);
-  assert.equal(choices.filter(choice => choice.isLeaf).length, 23);
+  assert.equal(choices.filter(choice => choice.isLeaf).length, 24);
   assert.equal(choices.filter(model.canConfirmCategory).length, model.categoryObservationScope.knownCodes);
   const verified = choices.filter(choice => choice.codeEvidence === 'supplier-hub');
   assert.equal(verified.length, model.categoryObservationScope.supplierHubCodes);
@@ -49,7 +49,7 @@ test('unknown leaves and unobserved branches cannot become 80719 profiles, but o
       assert.deepEqual(plain(choice.path), knownPath);
       const result = partial.categoryProfileForChoice(choice);
       assert.equal(result.categoryId, '80719'); assert.equal(result.template, null); assert.deepEqual(plain(result.mappings), []);
-    } else if (choice.categoryId === '77442') {
+    } else if (['77442', '81452'].includes(choice.categoryId)) {
       assert.equal(partial.canConfirmCategory(choice), true);
       assert.equal(choice.codeEvidence, 'couplus');
     } else {
@@ -61,6 +61,14 @@ test('unknown leaves and unobserved branches cannot become 80719 profiles, but o
   const seed = partial.categoryAdvancedSeed(unknown);
   assert.equal(seed.categoryId, ''); assert.deepEqual(plain(seed.categoryPath), ['주방용품', '주방수납/정리', '바나나걸이']);
   assert.equal(seed.profileId, undefined);
+});
+
+test('brace category keeps its observed Couplus path without claiming Supplier Hub verification', () => {
+  const leaf = model.categoryChoices([]).find(choice => choice.categoryId === '81452');
+  assert.deepEqual(plain(leaf.path), ['스포츠/레져', '헬스/요가', '헬스기구/용품', '헬스보호대']);
+  assert.equal(leaf.codeEvidence, 'couplus');
+  const profile = model.categoryProfileForChoice(leaf);
+  assert.equal(profile.categoryId, '81452'); assert.equal(profile.template, null);
 });
 
 test('saved profiles retain their own IDs and exact paths, including duplicate names and distinct configurations', () => {
@@ -106,7 +114,7 @@ test('only exact observed leaf paths receive Hub IDs; branches, similar labels a
   const bounded = load({ ...hubObservation, categoryIds: records, verifiedLeafCount: 9999 });
   const choices = bounded.categoryChoices([]);
   assert.equal(bounded.categoryObservationScope.supplierHubCodes, 1);
-  assert.equal(bounded.categoryObservationScope.knownCodes, 3);
+  assert.equal(bounded.categoryObservationScope.knownCodes, 4);
   assert.equal(choices.find(choice => choice.categoryId === '109047').codeEvidence, 'supplier-hub');
   assert.equal(choices.find(choice => choice.categoryId === '80719').codeEvidence, 'couplus');
   assert.equal(choices.find(choice => choice.path.at(-1) === '기타수납/정리용품').categoryId, '');

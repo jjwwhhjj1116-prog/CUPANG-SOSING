@@ -40,6 +40,34 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('observed brace quotation exposes its own attributes and notices without certifying saved example values', () => {
+  const input = fixture(); input.categoryId = '81452';
+  const resolved = model.resolveQuotationFields(input);
+  const schema = resolved.schema;
+  assert.equal(schema.status, 'unconfirmed'); assert.equal(schema.submissionReady, false);
+  assert.equal(schema.categoryPath.at(-1), '헬스보호대');
+  assert.equal(schema.fields.filter(field => field.visibility === 'hidden').length, 10);
+  assert.equal(schema.fields.filter(field => field.section === 'legal' && (field.id.startsWith('notice') || field.id.startsWith('brace_notice'))).length, 12);
+  assert.deepEqual(clone(schema.fields.find(field => field.id === 'brace_direction').choices.map(choice => choice.label)), ['해당사항없음', '좌우겸용', '오른쪽', '왼쪽', '좌우세트']);
+  assert.equal(resolved.rows[1].fields.brace_purpose.value, '');
+  assert.equal(resolved.rows[1].fields.brace_noticeKc.value, '');
+  assert.equal(resolved.rows[1].fields.noticeMaterial.value, '면');
+  assert.equal(resolved.rows[1].fields.quantity.value, '1');
+  assert.equal(schema.fields.some(field => field.id === 'kcsCertificationNumber'), false);
+  const ctx = { ...context(input), schema };
+  assert.throws(() => model.validateQuotationChanges([change('brace_direction', '추정값')], ctx), /선택/);
+  input.overrides = model.applyQuotationChanges(model.emptyQuotationOverrides(), [change('brace_direction', '좌우겸용'), change('brace_noticeKc', '', 'red')]);
+  const final = model.resolveQuotationFields(input);
+  assert.equal(final.rows[1].fields.brace_direction.value, '좌우겸용');
+  assert.equal(final.rows[1].fields.brace_noticeKc.source, 'manual-option');
+  const exported = load('app/exports/quotation-fields.ts').resolvedQuotationRows(input, final, [
+    { key: 'owner/main.png', name: 'assets/main.png' }, { key: 'owner/option.png', name: 'assets/option.png' }, { key: 'owner/detail.png', name: 'assets/detail.png' },
+  ]);
+  assert.equal(exported[0].brace_direction, '좌우겸용');
+  assert.equal(exported[0].brace_noticeKc, '');
+  assert.equal(exported[0].noticeMaterial, '면');
+});
+
 test('deleted or fully excluded options never resurrect the representative quotation row', () => {
   const input = fixture();
   input.overrides = { common: { title: '보존할 공통값' }, options: { red: { model: '보존할 옵션값' } } };

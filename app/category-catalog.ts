@@ -13,6 +13,7 @@ const samePath = (left: readonly string[], right: readonly string[]) => pathKey(
 // This leaf and ID were read from the user's Couplus quotation screen. Other
 // leaves must come from an observed catalog or the owner's saved profiles.
 const knownCodes = [
+  { categoryId: '81452', path: ['스포츠/레져', '헬스/요가', '헬스기구/용품', '헬스보호대'], observedAt: '2026-09-23' },
   { categoryId: '80719', path: ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'], observedAt: observation.observedAt },
   // Full breadcrumb and code observed in saved Couplus quotation; siblings are not fully observed.
   { categoryId: '77442', path: ['완구/취미', '보드게임', '바둑/체스/윷놀이', '바둑', '바둑알+바둑판'], observedAt: '2026-09-23' },
