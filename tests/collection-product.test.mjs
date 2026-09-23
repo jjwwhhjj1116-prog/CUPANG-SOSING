@@ -35,3 +35,15 @@ test('transaction creates all companion rows once and retry preserves manual edi
 test('failed companion insert rolls back product and all earlier writes',async()=>{const s=storage();s.sqlite.exec("CREATE TRIGGER fail_content BEFORE INSERT ON product_content BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");await assert.rejects(()=>s.promoteCollection('owner',job,result));for(const table of ['products','product_options','product_price_policy','collection_products'])assert.equal(s.sqlite.prepare(`SELECT count(*) n FROM ${table}`).get().n,0);s.sqlite.exec('DROP TRIGGER fail_content');assert.ok((await s.promoteCollection('owner',job,result)).product_id);s.sqlite.close();});
 test('cancellation, other owner and changed receipt/context create no products',async()=>{for(const mutation of ['cancel','owner','receipt','context']){const s=storage();if(mutation==='cancel')s.sqlite.exec("UPDATE collection_jobs SET status='cancelled'");if(mutation==='receipt')s.sqlite.exec("UPDATE collection_results SET payload='{}'");if(mutation==='context')s.sqlite.exec("UPDATE collection_context SET payload='{}'");await assert.rejects(()=>s.promoteCollection(mutation==='owner'?'other':'owner',job,result));assert.equal(s.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);s.sqlite.close();}});
 test('production API rejects unverified requests before any product read or write',async()=>{const api=load('app/api/collection-jobs/[id]/product/route.ts',{'@/app/chatgpt-auth':{getChatGPTUser:async()=>null},'@/db/collection-jobs':{},'@/db/collection-results':{},'@/db/collection-products':{}},'production');const r=await api.POST(new Request('https://example.test',{method:'POST'}),{params:Promise.resolve({id:'job'})});assert.equal(r.status,503);});
+
+test('promotion persists supplier stock by SKU including zero without changing quotation inclusion',async()=>{
+ const s=storage();const saved=await s.promoteCollection('owner',job,result);
+ const options=JSON.parse(s.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(saved.product_id).payload);
+ assert.equal(options.rows[0].supplierSku,'a');assert.equal(options.rows[0].stock,null);assert.equal(options.rows[0].provenance.stock,'unverified');
+ assert.equal(options.rows[1].supplierSku,'b');assert.equal(options.rows[1].stock,0);assert.equal(options.rows[1].provenance.stock,'collected');assert.equal(options.rows[1].included,true);
+ const changed={...options,rows:options.rows.map(row=>({...row,stock:17,provenance:{...row.provenance,stock:'manual'}}))};
+ s.sqlite.prepare('UPDATE product_options SET payload=? WHERE product_id=?').run(JSON.stringify(changed),saved.product_id);
+ await s.promoteCollection('owner',job,result);
+ assert.equal(JSON.parse(s.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(saved.product_id).payload).rows[1].stock,17);
+ s.sqlite.close();
+});

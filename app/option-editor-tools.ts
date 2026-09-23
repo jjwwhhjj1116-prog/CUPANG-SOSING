@@ -38,7 +38,7 @@ export function moveOption(rows: readonly OptionInput[], id: string, offset: -1 
 export function duplicateOption(rows: readonly OptionInput[], id: string, newId: string): OptionInput[] {
   if (rows.length >= OPTION_LIMIT || rows.some(row => row.id === newId)) throw new Error('옵션 개수 또는 새 식별자를 확인해주세요.');
   const index = rows.findIndex(row => row.id === id); if (index < 0) throw new Error('복제할 옵션이 없습니다.');
-  const copy = { ...rows[index], id: newId, supplierSku: '', included: false };
+  const copy = { ...rows[index], id: newId, supplierSku: '', stock: null, included: false };
   return [...rows.slice(0, index + 1), copy, ...rows.slice(index + 1)];
 }
 export type AssetEditorFilter = 'all' | 'unassigned' | AssetRole;

@@ -64,3 +64,10 @@ test('asset list displays saved role order, supports assigned/unassigned filters
   assert.deepEqual(Array.from(tools.orderedEditorImages(['a', 'b', 'm', 'unused', 'd'], assets, 'unassigned')), ['unused']);
   assets.additional.reverse(); assert.deepEqual(Array.from(tools.orderedEditorImages(['a', 'b'], assets, 'additional')), ['a', 'b']);
 });
+
+test('duplicating an option clears SKU-specific stock while bulk edits retain it',()=>{
+ const rows=[row('a',{stock:23})];const copy=tools.duplicateOption(rows,'a','copy');
+ assert.equal(copy[0].stock,23);assert.equal(copy[1].stock,null);assert.equal(copy[1].supplierSku,'');assert.equal(copy[1].included,false);
+ const preview=tools.previewOptionBulk(rows,['a'],{type:'unitsPerPack',value:3},policy);
+ assert.equal(tools.applyOptionBulk(rows,preview)[0].stock,23);assert.equal(rows[0].stock,23);
+});

@@ -5,14 +5,14 @@ export const OPTION_LIMIT = 200;
 export const OPTIONS_BODY_LIMIT = 512 * 1024;
 export const optionFieldNames = {
   originalName: '옵션명 원문', translatedName: '옵션명 한국어', supplierSku: '공급자 SKU',
-  color: '색상', size: '구매 사이즈',
+  color: '색상', size: '구매 사이즈', stock: '공급자 재고',
   unitCostCny: '개당 원가 CNY', unitsPerPack: '판매 단위당 구성 수량', minimumOrderQuantity: '최소 주문 수량',
   widthCm: '가로 cm', lengthCm: '세로 cm', heightCm: '높이 cm', weightKg: '판매 단위 무게 kg',
   included: '견적 포함', imageKey: '옵션 이미지',
 } as const;
 export type OptionField = keyof typeof optionFieldNames;
 export type OptionValues = {
-  color?: string; size?: string;
+  color?: string; size?: string; stock?: number | null;
   originalName: string; translatedName: string; supplierSku: string; unitCostCny: number | null;
   unitsPerPack: number; minimumOrderQuantity: number | null; widthCm: number | null; lengthCm: number | null;
   heightCm: number | null; weightKg: number | null; included: boolean; imageKey: string | null;
@@ -29,7 +29,7 @@ export type ProductOptionsResponse = { options: ProductOptions; pricing: OptionP
 
 export function emptyProductOptions(productId: string): ProductOptions { return { schemaVersion: 1, productId, revision: 0, updatedAt: null, rows: [] }; }
 export function emptyOptionInput(id: string): OptionInput {
-  return { id, originalName: '', translatedName: '', supplierSku: '', color: '', size: '', unitCostCny: null, unitsPerPack: 1,
+  return { id, originalName: '', translatedName: '', supplierSku: '', color: '', size: '', stock: null, unitCostCny: null, unitsPerPack: 1,
     minimumOrderQuantity: null, widthCm: null, lengthCm: null, heightCm: null, weightKg: null, included: false, imageKey: null };
 }
 function object(value: unknown, keys: readonly string[], name: string) {
@@ -65,10 +65,12 @@ export function validateOptionsInput(input: unknown, ownerId: string, imageKeys:
     if (typeof raw.included !== 'boolean') throw new Error('견적 포함 여부를 확인해주세요.');
     if (raw.imageKey !== null && (typeof raw.imageKey !== 'string' || !raw.imageKey.startsWith(`${ownerId}/`) || !imageKeys.includes(raw.imageKey))) throw new Error('이 상품에 업로드한 본인 소유 이미지만 연결할 수 있습니다.');
     const unitCostCny = number(raw.unitCostCny, 1e9, false, !raw.included, '개당 원가 CNY');
+    if (raw.stock !== undefined && raw.stock !== null && (!Number.isSafeInteger(raw.stock) || (raw.stock as number) < 0)) throw new Error('공급자 재고는 0 이상 안전한 정수로 입력해주세요. 미확인은 공란으로 두세요.');
     return {
       id: raw.id, originalName, translatedName, supplierSku, included: raw.included, imageKey: raw.imageKey as string | null, unitCostCny,
       ...(raw.color !== undefined ? { color: text(raw.color, 200, '색상') } : {}),
       ...(raw.size !== undefined ? { size: text(raw.size, 200, '구매 사이즈') } : {}),
+      ...(raw.stock !== undefined ? { stock: raw.stock as number | null } : {}),
       unitsPerPack: number(raw.unitsPerPack, 1e6, true, false, '구성 수량')!,
       minimumOrderQuantity: number(raw.minimumOrderQuantity, 1e9, true, true, '최소 주문 수량'),
       widthCm: number(raw.widthCm, 1e5, false, true, '가로 cm'), lengthCm: number(raw.lengthCm, 1e5, false, true, '세로 cm'),
@@ -83,10 +85,11 @@ export function applyOptionRows(current: ProductOptions, rows: OptionInput[], no
     rows: rows.map(row => {
       const before = previous.get(row.id); let changed = !before;
       // Older clients omit the new attributes. Omission must not erase saved facts.
-      row = { ...row, color: row.color ?? before?.color ?? '', size: row.size ?? before?.size ?? '' };
+      row = { ...row, color: row.color ?? before?.color ?? '', size: row.size ?? before?.size ?? '', stock: row.stock === undefined ? before?.stock ?? null : row.stock };
       const provenance = Object.fromEntries((Object.keys(optionFieldNames) as OptionField[]).map(key => {
         if (before && before[key] === row[key]) return [key, before.provenance[key] ?? 'unverified'];
         changed = true;
+        if (key === 'stock') return [key, row.stock === null && before?.stock == null ? 'unverified' : 'manual'];
         if (key === 'color' || key === 'size') return [key, row[key] === '' && !before?.[key] ? 'unverified' : 'manual'];
         return [key, row[key] === '' || row[key] === null ? 'unverified' : 'manual'];
       })) as ProductOption['provenance'];

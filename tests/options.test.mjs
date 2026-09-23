@@ -133,3 +133,20 @@ test('options API verifies R2 object existence/type, bounded requests and produc
   assert.equal((await production.GET(new Request('http://localhost'), context)).status, 503);
   assert.equal((await production.PATCH(request(payload([row()])), context)).status, 503);
 });
+
+test('supplier stock keeps zero distinct from unknown and survives legacy saves', () => {
+  for (const stock of [null,0,37,Number.MAX_SAFE_INTEGER]) {
+    const input=model.validateOptionsInput(payload([row('a',{stock})]),'owner',[]);
+    const saved=model.applyOptionRows(model.emptyProductOptions('test'),input.rows,version);
+    assert.equal(saved.rows[0].stock,stock);
+    saved.rows[0].provenance.stock=stock===null?'unverified':'collected';
+    const legacy={...row()};delete legacy.stock;
+    const updated=model.applyOptionRows(saved,model.validateOptionsInput(payload([legacy]),'owner',[]).rows,nextVersion);
+    assert.equal(updated.rows[0].stock,stock);assert.equal(updated.rows[0].provenance.stock,saved.rows[0].provenance.stock);
+    const cleared=model.applyOptionRows(updated,[row('a',{stock:null})],nextVersion);
+    assert.equal(cleared.rows[0].stock,null);assert.equal(cleared.rows[0].provenance.stock,stock===null?'unverified':'manual');
+    assert.equal(saved.rows[0].stock,stock);
+    assert.equal(model.calculateOptionPrices(input.rows,policy)[0].calculation.supplyPrice,1000);
+  }
+  for (const stock of [-1,0.5,'0',NaN,Infinity,Number.MAX_SAFE_INTEGER+1]) assert.throws(()=>model.validateOptionsInput(payload([row('a',{stock})]),'owner',[]));
+});
