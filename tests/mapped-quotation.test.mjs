@@ -181,3 +181,25 @@ test('defined dropdown names respect worksheet scope and preserve workbook defin
     assert.ok(output.report.warnings.some(value=>value.includes('검사하지 못했습니다')),definitions);
   }
 });
+
+test('numeric workbook constraints check final typed cells, integer requirements and inclusive boundaries', async () => {
+  const run=async(type,operator,first,second,values,extra='')=>{
+    const rule=`<dataValidation type="${type}" operator="${operator}" sqref="C5:C20" ${extra}><formula1>${first}</formula1>${second===null?'':`<formula2>${second}</formula2>`}</dataValidation>`;
+    const files=entries(value=>value.replace(/<dataValidation type="list"[\s\S]*?<\/dataValidation>/,rule));
+    return createMappedQuotation(await inputFrom(files,{rows:values.map(supplyPrice=>({title:'검증',supplyPrice,skuName:'검정'}))}));
+  };
+  const between=await run('whole','between','0','10',[0,10,11,1.5,'5','']);
+  assert.equal(between.report.warnings.filter(value=>value.includes('정수 입력 규칙')).length,4);
+  const blank=await run('whole','between','0','10',['',0],'allowBlank="1"');
+  assert.equal(blank.report.warnings.some(value=>value.includes('정수 입력 규칙')),false);
+  const decimal=await run('decimal','between','-1.5','1.5',[-1.5,0.25,1.5,1.51]);
+  assert.equal(decimal.report.warnings.filter(value=>value.includes('숫자 입력 규칙')).length,1);
+  for(const [operator,values,count] of [['notBetween',[0,5,10,11],3],['equal',[5,6],1],['notEqual',[5,6],1],['lessThan',[4,5,6],2],['lessThanOrEqual',[4,5,6],1],['greaterThan',[4,5,6],2],['greaterThanOrEqual',[4,5,6],1]]){
+    const output=await run('whole',operator,operator==='notBetween'?'0':'5',operator==='notBetween'?'10':null,values);
+    assert.equal(output.report.warnings.filter(value=>value.includes('정수 입력 규칙')).length,count,operator);
+  }
+  for(const [first,second] of [['A1','10'],['10','0'],['0',null]]){
+    const output=await run('whole','between',first,second,[5]);
+    assert.ok(output.report.warnings.some(value=>value.includes('검사하지 못했습니다')));
+  }
+});

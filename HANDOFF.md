@@ -1073,3 +1073,10 @@ AI등록 화면 확인:
 - 같은 유효 범위의 중복 정의·이름 간 별칭/순환·동적 함수·시트 없는 참조는 미검사로 유지한다. 고정 범위 읽기의1000행/200열 제한과 수식·외부 파일 제외는 유지한다. 원본 정의를 수정하지 않고 최종 출력값만 목록과 대조한다. 공식 Supplier Hub 양식 검증을 새로 수행한 것은 아니다.
 - 검증: 전체379/379, TypeScript/ESLint/production build/diff 검사 통과. 테스트용 Excel에서 현재 시트 우선/전역 fallback/다른 시트 제외/중복·순환·동적 참조 제외 및 workbook.xml 바이트 보존을 확인했다. outputs/named-list-tests.log 및 named-list-build.log. 실제 공식 Excel·브라우저 시각 검증·운영 접수는 미실시.
 - 다음 시작점: 공식 견적서 원본을 확보해 실제 규칙과 카테고리 대응을 대조한다. 실제1688 수집·AI 이미지 번역·Supplier Hub 전송 adapter 연결은 여전히 미완성이다. 운영 등록·유료 호출·Cloudflare 배포 없음.
+
+## 69. 원본 견적서의 정수·숫자 범위 검사 — 2026-09-24
+
+- 시작 main75ece89, 미커밋 변경 없음. Excel whole/decimal 입력 제한에 숫자 상수로 적힌 경계값을 최종 매핑 값과 대조한다. between/notBetween/equal/notEqual/lessThan/lessThanOrEqual/greaterThan/greaterThanOrEqual을 지원한다. 공란 허용과 필수 연결 검사는 별개로 유지한다.
+- 숫자처럼 보이는 문자열은 실제 출력 셀 타입이 문자이므로 숫자 규칙 통과로 처리하지 않는다. 정수 규칙의 소수 및 범위 밖 값을 셀 주소와 규칙으로 안내한다. 수식/셀 참조 경계값·뒤집힌 범위·필요 경계 누락은 미검사다. 기존 목록 검사와 합쳐 첫20개 불일치 위치 및 총 개수를 표시하며 출력값·원본 규칙을 자동 변경하지 않는다.
+- 검증: 전체380/380, TypeScript/ESLint/production build/diff 검사 통과. 테스트용 XLSX로 8개 비교 연산, 0/음수/소수/경계값, 숫자 문자열, 공란 허용, 미지원 경계를 확인했다. outputs/numeric-rules-tests.log 및 numeric-rules-build.log. 실제 공식 Excel·브라우저 시각·운영 접수 검증은 미실시.
+- 다음 시작점: 공식 Excel 원본을 확보해 실제 카테고리/입력 규칙과 대조한다. 실제1688 수집·AI 이미지 번역·Supplier Hub 자동전송 연결은 여전히 미완성이다. 운영 등록·유료 호출·Cloudflare 배포 없음.
