@@ -98,6 +98,19 @@ test('empty selection and failed review do not display old ready badges',()=>{
 
 const {inspectQuotationImages}=load('app/quotation-image-review.ts',{'@/app/image-files':{MAX_IMAGE_BYTES:10*1024*1024}});
 const validImage={size:100,httpMetadata:{contentType:'image/png'},customMetadata:{imageValidation:'header-v1'}};
+
+test('bulk registration requires label attachment and flags identical main/detail references only on included rows',()=>{
+ const input=resolved();input.schema.fields.push(field('labelImages','images'),field('detailImages','images'));
+ input.rows[0].fields.labelImages=cell('');input.rows[0].fields.detailImages=cell('owner/main.png');
+ const report=inspectSubmission(input,['owner/main.png','owner/label.png']);
+ assert.ok(report.issues.some(issue=>issue.code==='LABEL_ATTACHMENT_MISSING'&&issue.fieldId==='labelImages'));
+ assert.ok(report.issues.some(issue=>issue.code==='MAIN_DETAIL_DUPLICATE'&&issue.kind==='review'));
+ input.rows[0].fields.labelImages=cell('owner/label.png');input.rows[0].fields.detailImages=cell('');
+ input.rows.push({...structuredClone(input.rows[0]),included:false,fields:{labelImages:cell('')}});
+ const fixed=inspectSubmission(input,['owner/main.png','owner/label.png']);
+ assert.equal(fixed.errorCount,0);assert.equal(fixed.issues.some(issue=>issue.code==='MAIN_DETAIL_DUPLICATE'),false);
+ assert.equal(fixed.submissionReady,false);
+});
 test('image review deduplicates included owned references and does not read other owners or excluded options',async()=>{
  const input=resolved();input.rows[0].fields.mainImage.value='owner/main.png\nowner/main.png\nother/private.png';
  input.rows.push({...structuredClone(input.rows[0]),included:false,fields:{mainImage:cell('owner/excluded.png')}});

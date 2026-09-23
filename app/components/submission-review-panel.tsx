@@ -35,6 +35,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit}:{products:Targe
   const safeUrl=(value:string)=>{try{const url=new URL(value);return ['http:','https:'].includes(url.protocol)?url.href:undefined;}catch{return undefined;}};
   return <section className="panel-stack" aria-busy={busy}>
     <p>선택한 상품 {products.length}건의 저장된 견적 자료를 검사합니다. 실제 등록은 실행하지 않습니다.</p>
+    <details><summary>Supplier Hub 실제 등록 순서</summary><ol><li>최신 공식 견적 Excel을 준비합니다.</li><li>견적서에 적힌 파일명과 일치하는 상품 이미지, 제품 필수 표시사항 라벨을 각각 첨부합니다.</li><li>상품에 필요한 법적 서류와 동의 내용을 확인한 뒤 파일 검증을 진행합니다.</li><li>검증 결과를 확인하고 등록 상태를 추적합니다.</li></ol><p>2026-09-23 로그인된 대량 등록 화면 기준입니다. 앱에 저장한 이미지 참조가 Supplier Hub에 업로드되었다는 뜻은 아닙니다.</p><a href="https://supplier.coupang.com/qvt/registration" target="_blank" rel="noreferrer">Supplier Hub 대량 등록 화면 열기</a></details>
     {!products.length&&<p role="status">작업 보드에서 검사할 상품을 선택한 뒤 등록 전송을 눌러주세요.</p>}
     <label className="field"><span>검사에 적용할 카테고리</span><select value={profileId} onChange={event=>setProfileId(event.target.value)}><option value="">상품 수집 시 선택한 카테고리</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId||'코드 미입력'}</option>)}</select></label>
     <small>검사에 선택한 카테고리를 견적 수정 화면에도 이어서 적용합니다.</small>

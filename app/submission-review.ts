@@ -28,6 +28,14 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
   for (const message of new Set(resolved.issues)) general('QUOTATION_CONSTRAINT', message);
   const owned = new Set(ownedImageKeys);
   for (const row of rows) {
+    // Supplier Hub bulk registration UI observed on 2026-09-23 requires a separate label attachment.
+    if (resolved.schema.fields.some(field => field.id === 'labelImages') && !row.fields.labelImages?.value.trim()) {
+      add({kind:'error', code:'LABEL_ATTACHMENT_MISSING', message:'제품 필수 표시사항: 라벨 또는 도안 이미지를 저장하고 견적서에 연결해주세요.', optionId:row.optionId, optionLabel:row.optionLabel, fieldId:'labelImages'});
+    }
+    const mainImages = new Set((row.fields.mainImage?.value ?? '').split('\n').map(key => key.trim()).filter(Boolean));
+    if ((row.fields.detailImages?.value ?? '').split('\n').some(key => mainImages.has(key.trim()))) {
+      add({kind:'review', code:'MAIN_DETAIL_DUPLICATE', message:'대표 이미지와 상세 이미지에 같은 파일이 연결되어 있습니다. Supplier Hub 화면에서 반려 가능성을 안내하므로 구성을 확인해주세요.', optionId:row.optionId, optionLabel:row.optionLabel, fieldId:'detailImages'});
+    }
     for (const field of resolved.schema.fields) {
       const cell = row.fields[field.id];
       const errors = new Set(cell?.issues ?? []);
