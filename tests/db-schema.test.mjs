@@ -40,7 +40,7 @@ function seedCompanions(db) {
 
 test('checked-in bootstrap matches every runtime table, constraint, column and named index on fresh SQLite', () => {
   const result = checkDatabaseSchema();
-  assert.equal(result.tables, 14); assert.equal(result.indexes, 10); assert.equal(result.runtimeModules, 10);
+  assert.equal(result.tables, 15); assert.equal(result.indexes, 10); assert.equal(result.runtimeModules, 11);
 });
 
 test('legacy Drizzle schema upgrade preserves product/settings rows, defaults, PK declarations and indexes', () => {
@@ -70,8 +70,9 @@ test('reapplying bootstrap preserves every current table including uncertain/run
     for (const statement of runtimeDDL()) db.exec(statement.sql);
     seedLegacy(db); seedCompanions(db);
     db.prepare('INSERT INTO product_quotation_fields(product_id,owner_id,revision,payload,updated_at) VALUES (?,?,?,?,?)').run(productId,owner,2,json,now);
+  db.prepare('INSERT INTO collection_results(job_id,owner_id,payload,received_at) VALUES (?,?,?,?)').run('synthetic-job',owner,json,now);
     const before = tableData(db); const schema = schemaSnapshot(db);
-    assert.equal(before.length, 14); assert.ok(before.every(table => table.rows.length === 1));
+    assert.equal(before.length, 15); assert.ok(before.every(table => table.rows.length === 1));
     db.exec(migrations); db.exec(migrations);
     assert.deepEqual(tableData(db), before); assert.deepEqual(schemaSnapshot(db), schema);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
@@ -115,7 +116,7 @@ test('schema checker detects missing indexes, changed CHECK/default/unique defin
 });
 
 test('quotation-fields migration adds one guarded table without changing the existing thirteen tables or rows', () => {
-  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql']);
+  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql']);
   const db=memoryDatabase();
   try {
     db.exec(bootstrap);seedLegacy(db);seedCompanions(db);

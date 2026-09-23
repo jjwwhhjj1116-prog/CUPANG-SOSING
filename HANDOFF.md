@@ -688,3 +688,13 @@ AI등록 화면 확인:
 - 자동 테스트5개 추가: 최신 정책 재계산/초안 비변형, 서버 옵션 revision 변경, 동일revision 값·순서 변경, 타상품/오래된 버전 거절, 미완성 초안 보존. 전체261/261 통과(`outputs/price-refresh-tests.log`), TypeScript/ESLint/production build 통과(`outputs/price-refresh-build.log`), diff 공백 검사 통과.
 - Chrome 합성 상품 e84e6250에서 원가3.25→4 초안을 두고 기존 가격정책(환율190/공급40/쿠팡35/최소3000/배수1.3/올림100)을 저장했다. 옵션 저장 차단→입력 유지 최신 가격 적용→원가4 유지 및 옵션 저장 재활성화를 확인했다. 원가 초안은3.25로 복원하고 창을 닫았다. 옵션 저장은 하지 않았다. 합성 상품의 정책 명시 저장/상품 버전 갱신1회이며 운영 상품 수정/유료 호출/실제 전송0.
 - 남은 전체 카테고리·원본 Excel·실제1688공급원·Supplier Hub 전송 adapter·Cloudflare 운영 인증/배포는 이전 절과 같다. 이번 변경은 실제 자동등록 서비스 완성을 뜻하지 않는다.
+
+## 22. 수집 결과 수신·원문 보관 경로 — 2026-09-23
+
+- 시작 main19f721e, 미커밋 변경 없음. 대기열 다음의 수신 경로가 없음을 확인했다. 실제 공급원 연결 없이 성공 상태를 만들지 않고, 검증된 형식의 원문을 별도 보관하는 단계를 구현했다.
+- /api/collection-jobs/:id/result GET/POST: 소유자/운영 인증,512KiB 제한,상품번호 일치,옵션/SKU/가격/재고/이미지 URL 검증. 첫 원문 불변 보관, 동일 결과 재시도 중복 방지, 다른 결과/취소 요청409. 수신만으로 상품 생성이나 유료 작업은 하지 않는다.
+- collection_results 테이블과0004 마이그레이션 추가. 기존 테이블/행 보존 검사에 반영했고 README의 테이블 수를15개로 갱신했다. 대기열에 수집 원문 조회 패널 추가. 계약은 docs/COLLECTION-RESULT-CONTRACT.md.
+- 검증: 전체268/268 통과(신규7개), TypeScript/ESLint/일반 production build. SQLite의 중복/원문 보존/소유권/취소, API 인증/크기/상품번호 오류를 확인했다. outputs/collection-result-tests.log 및 collection-result-build.log 참조.
+- 로컬 HTTP 합성 요청0e8f01a4-5ec6-4029-a430-4fb21bf6512a로 원문2회 전송→동일 결과 조회→상품 수 불변 확인. 공급원 이름은 LOCAL-TEST-NOT-REAL-COLLECTOR, 실제 상품 아님. 결과와 요청은 감사용 보관하고 요청 상태는 정상 DELETE API로cancelled 처리했다. 기록 outputs/collection-result-smoke.json. 운영 DB 변경/실제1688접속/유료 호출/운영 제출0.
+- Chrome에서 대기열1건/원문 메뉴/조회 버튼까지 확인했다. 조회 후 화면 확인 중 CDP timeout이 발생하여 최종 표 렌더 검증은 완료하지 못했다. 로컬 HTTP 검증과 구분한다.
+- 다음: 실제 공급원 연결을 위한 권한/응답 확보 및 adapter, 수신 원문→상품/옵션/콘텐츠 승격의 원자적 저장, 이미지 검증 다운로드/R2 저장. 전체 카테고리/공식 Excel/실제 Supplier Hub 전송/운영 배포는 여전히 미완료. 이번 수신 API는 자동수집 성공을 뜻하지 않는다.

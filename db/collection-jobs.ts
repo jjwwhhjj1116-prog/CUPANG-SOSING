@@ -35,6 +35,12 @@ export async function listCollectionJobs(owner: string) {
     .bind(owner).all<JobRow>()).results.map(withContext);
 }
 
+export async function findCollectionJob(owner: string, id: string) {
+  const db=await database();
+  const row=await db.prepare(`SELECT ${selectColumns} FROM collection_jobs WHERE owner_id=? AND id=?`).bind(owner,id).first<JobRow>();
+  return row?withContext(row):null;
+}
+
 export async function enqueueCollection(owner: string, requests: CollectionRequest[], context: CollectionContext | null = null) {
   const db = await database();
   const now = new Date().toISOString();
