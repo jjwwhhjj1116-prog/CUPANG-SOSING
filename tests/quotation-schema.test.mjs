@@ -118,6 +118,40 @@ test('brace size and weight notice follows label edits through export while pres
   assert.equal(model.resolveQuotationFields(kitchen).rows[1].fields.size.value, '20 × 30 × 40 cm');
 });
 
+test('structured option color and size reach quotation and export while old clients and manual blanks preserve edits', () => {
+  const input = fixture(); input.categoryId = '81452';
+  const rows = optionModel.optionInputs(input.options);
+  rows[0].color = '검정'; rows[0].size = 'S';
+  input.options = optionModel.applyOptionRows(input.options, rows, 'attributes');
+  const resolved = model.resolveQuotationFields(input);
+  assert.equal(resolved.rows[1].fields.color.value, '검정');
+  assert.equal(resolved.rows[1].fields.brace_noticeColor.value, '검정');
+  assert.equal(resolved.rows[1].fields.size.value, 'S');
+  const exported = load('app/exports/quotation-fields.ts').resolvedQuotationRows(input, resolved, [
+    { key: 'owner/main.png', name: 'assets/main.png' }, { key: 'owner/option.png', name: 'assets/option.png' }, { key: 'owner/detail.png', name: 'assets/detail.png' },
+  ]);
+  assert.equal(exported[0].color, '검정'); assert.equal(exported[0].size, 'S');
+  const kitchen = model.resolveQuotationFields({ ...input, categoryId: '80719' });
+  assert.equal(kitchen.rows[1].fields.size.value, 'S');
+  assert.equal(kitchen.rows[1].fields.noticeDimensions.value, '20 × 30 × 40 cm');
+  const oldRows = optionModel.optionInputs(input.options);
+  delete oldRows[0].color; delete oldRows[0].size;
+  const body = { expectedRevision: 1, expectedProductVersion: '2026-09-24T00:00:00Z', rows: oldRows };
+  const validated = optionModel.validateOptionsInput(body, 'owner', JSON.parse(product.image_keys));
+  const retained = optionModel.applyOptionRows(input.options, validated.rows, 'old-client');
+  assert.equal(retained.rows[0].color, '검정'); assert.equal(retained.rows[0].size, 'S');
+  const cleared = optionModel.optionInputs(retained); cleared[0].color = ''; cleared[0].size = '';
+  input.options = optionModel.applyOptionRows(retained, cleared, 'cleared');
+  for (const key of ['color', 'size']) {
+    assert.equal(input.options.rows[0].provenance[key], 'manual');
+    assert.equal(model.resolveQuotationFields(input).rows[1].fields[key].value, '');
+    assert.throws(() => optionModel.validateOptionsInput({ ...body, rows: [{ ...cleared[0], [key]: 'x'.repeat(201) }] }, 'owner', JSON.parse(product.image_keys)));
+  }
+  input.overrides = { common: { size: 'M' }, options: { red: { color: '흰색' } } };
+  assert.equal(model.resolveQuotationFields(input).rows[1].fields.size.value, 'M');
+  assert.equal(model.resolveQuotationFields(input).rows[1].fields.color.value, '흰색');
+});
+
 test('deleted or fully excluded options never resurrect the representative quotation row', () => {
   const input = fixture();
   input.overrides = { common: { title: '보존할 공통값' }, options: { red: { model: '보존할 옵션값' } } };

@@ -13,6 +13,16 @@ const prepare=load('app/collection-product.ts').prepareCollectionProduct;
 const now='2026-01-01T00:00:00.000Z';
 const job={id:'job',offer_id:'123',source_url:'https://detail.1688.com/offer/123.html',goal:'transmit',status:'awaiting_connector',created_at:now,updated_at:now,context:{category:{id:'cat'},settings,features:'feature',keywords:'',capturedAt:now}};
 const result={schemaVersion:1,offerId:'123',sourceUrl:job.source_url,provider:'fixture',collectedAt:now,title:'原文商品',description:'原文説明',images:[],options:[{sku:'a',name:'黑',unitPriceCny:3.25,minimumOrder:2,stock:null},{sku:'b',name:'白',unitPriceCny:5,minimumOrder:1,stock:0}]};
+test('structured collection attributes preserve facts without guessing or claiming translation',()=>{
+ const receipt={...result,options:[{...result.options[0],color:'黑色',size:'S'},result.options[1]]};
+ const r=prepare('owner',job,receipt,'p',now);
+ assert.equal(r.options.rows[0].color,'黑色');assert.equal(r.options.rows[0].size,'S');
+ assert.equal(r.options.rows[0].provenance.color,'collected');assert.equal(r.options.rows[0].provenance.size,'collected');
+ assert.equal(r.options.rows[1].color,'');assert.equal(r.options.rows[1].size,'');
+ assert.equal(r.options.rows[1].provenance.color,'unverified');
+ assert.equal(r.options.rows[0].translatedName,'');
+ for(const key of ['color','size'])for(const value of [null,123,'x'.repeat(201),'bad\u0000'])assert.throws(()=>prepare('owner',job,{...result,options:[{...result.options[0],[key]:value}]},'p',now));
+});
 test('promotion preserves original facts, captured policy and unverified fields',()=>{const r=prepare('owner',job,result,'p',now);assert.equal(r.product.source_price_cny,3.25);assert.equal(r.product.options_count,2);assert.equal(r.options.rows[0].translatedName,'');assert.equal(r.options.rows[0].unitsPerPack,1);assert.equal(r.options.rows[0].minimumOrderQuantity,2);assert.equal(r.options.rows[0].provenance.originalName,'collected');assert.equal(r.content.seo.title.provenance,'collected');assert.equal(r.content.label.material.value,'');assert.equal(r.product.image_keys,'[]');assert.equal(r.product.supplier_hub_status,'미전송');assert.equal(r.product.seo_status,'대기');assert.equal(r.policy.exchangeRate,settings.exchangeRate);});
 test('promotion rejects missing context or malformed SKU and obeys disabled minimum margin',()=>{assert.throws(()=>prepare('owner',{...job,context:null},result,'p',now));assert.throws(()=>prepare('owner',job,{...result,options:[{...result.options[0],minimumOrder:1e12}]},'p',now));const r=prepare('owner',{...job,context:{...job.context,settings:{...settings,minimumMarginEnabled:false}}},result,'p',now);assert.equal(r.policy.minimumMargin,0);});
 function storage(){const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);

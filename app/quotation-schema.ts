@@ -312,7 +312,10 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { ...literal(pricing?.calculation?.[id], 'pricing'), issues: pricing?.error ? [pricing.error] : !option.included ? ['견적 제외 옵션의 가격은 자동 계산하지 않았습니다.'] : !pricing?.calculation ? ['옵션 가격 계산을 확인해주세요.'] : [] };
       }
       case 'quantity': return literal(option?.unitsPerPack, 'option');
+      case 'color': case 'brace_noticeColor': return option?.provenance.color === 'manual'
+        ? { value: option.color ?? '', source: 'option' } : literal(option?.color, 'option');
       case 'size':
+        if (option?.size || option?.provenance.size === 'manual') return { value: option.size ?? '', source: 'option' };
         // 81452 expects a purchasing size (S/Medium/Free), not physical dimensions.
         if (schema.categoryId === '81452') return literal('', 'empty');
         return option && option.widthCm && option.lengthCm && option.heightCm ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
@@ -330,7 +333,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         const value = [...new Set([savedTextOrFallback(content.label.productName, title), content.label.model.value].filter(Boolean))].join(' / ');
         return content.label.productName.provenance === 'manual' || content.label.model.provenance === 'manual' ? { value, source: 'content' } : literal(value, 'content');
       }
-      case 'noticeDimensions': return auto('size', option);
+      case 'noticeDimensions': return option && option.widthCm && option.lengthCm && option.heightCm
+        ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
       // This notice contains product size/weight, not the option's packaging dimensions.
       case 'brace_noticeSizeWeight': return contentValue(content.label.dimensions);
       case 'noticeManufacturerImporter': {
