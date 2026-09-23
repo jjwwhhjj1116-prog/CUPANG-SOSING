@@ -38,6 +38,26 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('observed Couplus defaults fill only 80719 missing fields and preserve source edits',()=>{
+ const input=fixture();let row=model.resolveQuotationFields(input).rows[1];
+ for(const [id,value] of Object.entries({taxType:'과세',barcodeMode:'request-coupang',shelfLifeDays:'0',handlingReason:'해당사항없음',color:'해당사항없음',noticeCountryOfOrigin:'해당사항없음'})){
+  assert.equal(row.fields[id].value,value);assert.equal(row.fields[id].source,'couplus-default');assert.equal(row.fields[id].needsReview,true);
+ }
+ assert.equal(row.fields.lidIncluded.value,'');assert.equal(row.fields.lidIncluded.source,'couplus-default');
+ assert.equal(row.fields.quantity.value,'1');assert.equal(row.fields.noticeMaterial.value,'면');
+ input.content.label.countryOfOrigin.value='중국';input.content.seo.title.value='수정 상품명';input.content.assets.detail.value=['owner/detail.png'];
+ row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.noticeCountryOfOrigin.value,'중국');assert.equal(row.fields.title.value,'수정 상품명');assert.equal(row.fields.detailImages.value,'owner/detail.png');
+ input.overrides={common:{taxType:'면세',handlingReason:''},options:{red:{taxType:'영세'}}};row=model.resolveQuotationFields(input).rows[1];
+ assert.equal(row.fields.taxType.value,'영세');assert.equal(row.fields.handlingReason.value,'');assert.equal(row.fields.handlingReason.source,'manual-common');
+ input.categoryId='unknown';input.overrides=undefined;row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.taxType.value,'');assert.equal(row.fields.kcMarkType.value,'');
+});
+
+test('observed category defaults never replace missing package measurements or missing image files',()=>{
+ const input=fixture();input.content=contentModel.emptyProductContent('p1');input.options.rows[0].imageKey=null;
+ const row=model.resolveQuotationFields(input).rows[1];
+ for(const id of ['mainImage','additionalImages','labelImages','detailImages','packagedWeightG','packagedDimensionsMm'])assert.equal(row.fields[id].value,'');
+});
+
 test('all 22 official kitchen-storage schemas match independently recorded option columns, choices and notice order', () => {
   const evidence = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-product-schemas-2026-09-23.json', import.meta.url), 'utf8'));
   assert.equal(evidence.records.length, 22);
@@ -120,7 +140,7 @@ test('resolver connects saved SEO/settings/options/images and computes option-sp
 
 test('unknown legal applicability and packaged measurements remain empty instead of copying product dimensions or treating zero as absent', () => {
   const input = fixture(); const row = model.resolveQuotationFields(input).rows[1];
-  for (const key of ['packagedWeightG', 'packagedDimensionsMm', 'kcMarkType', 'taxType', 'shelfLifeDays', 'handlingReason', 'barcodeMode', 'color']) {
+  for (const key of ['packagedWeightG', 'packagedDimensionsMm']) {
     assert.equal(row.fields[key].value, '', key); assert.equal(row.fields[key].needsReview, true, key);
   }
   const edits = model.validateQuotationChanges([change('shelfLifeDays', '0'), change('kcMarkType', '해당사항없음'), change('handlingReason', '유리')], context(input));
@@ -207,7 +227,7 @@ test('out-of-list saved material stays unchanged and blank official choices rema
   input.overrides=model.applyQuotationChanges(model.emptyQuotationOverrides(),model.validateQuotationChanges([change('storageMaterial',''),change('color',''),change('quantity',''),change('size','')],context(input)));
   row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.storageMaterial.value,'');assert.equal(row.fields.storageMaterial.source,'manual-common');
   for(const id of ['color','quantity','size']){assert.equal(row.fields[id].value,'');assert.equal(row.fields[id].source,'manual-common');assert.ok(row.fields[id].issues.some(issue=>issue.includes('필수')));}
-  assert.equal(row.fields.kcMarkType.value,'');assert.equal(row.fields.kcMarkType.source,'empty');assert.equal(row.fields.noticeCountryOfOrigin.value,'');
+  assert.equal(row.fields.kcMarkType.value,'해당사항없음');assert.equal(row.fields.kcMarkType.source,'couplus-default');assert.equal(row.fields.noticeCountryOfOrigin.value,'해당사항없음');
   input.overrides=model.applyQuotationChanges(input.overrides,[change('storageMaterial',null)]);row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.storageMaterial.value,'면');assert.ok(row.fields.storageMaterial.issues.some(issue=>issue.includes('선택값')));
   input.overrides=model.applyQuotationChanges(input.overrides,model.validateQuotationChanges([change('storageMaterial','폴리프로필렌(PP)')],context(input)));
   assert.equal(model.resolveQuotationFields(input).rows[1].fields.storageMaterial.value,'폴리프로필렌(PP)');

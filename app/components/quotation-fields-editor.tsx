@@ -17,7 +17,7 @@ const sections = [
   { id: 'legal', title: '법적 정보', english: 'Legal', description: '인증과 상품정보 제공 고시를 실제 자료와 대조합니다.' },
   { id: 'logistics', title: '물류 정보', english: 'Logistics', description: '입고 수량과 포장 상태의 규격을 입력합니다.' },
 ] as const;
-const sourceLabels: Record<string, string> = { 'manual-option': '옵션 직접 수정', 'manual-common': '공통 직접 수정', content: '저장 콘텐츠', settings: '기본 설정', option: '저장 옵션', pricing: '가격 계산', product: '저장 상품', schema: '선택 카테고리', empty: '미입력' };
+const sourceLabels: Record<string, string> = { 'couplus-default': '쿠플러스 양식 기본값', 'manual-option': '옵션 직접 수정', 'manual-common': '공통 직접 수정', content: '저장 콘텐츠', settings: '기본 설정', option: '저장 옵션', pricing: '가격 계산', product: '저장 상품', schema: '선택 카테고리', empty: '미입력' };
 const has = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 export const quotationEditorKey = (optionId: string | null, fieldKey: string) => JSON.stringify([optionId, fieldKey]);
 function manualValue(overrides: QuotationOverrides, optionId: string | null, fieldKey: string): string | null {

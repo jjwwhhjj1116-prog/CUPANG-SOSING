@@ -4,6 +4,7 @@ import { calculateOptionPrices, resolveOptionPricePolicy } from '@/app/product-o
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
 import { hubProductSchemas } from '@/app/hub-product-schemas';
+import { couplusQuotationDefault } from '@/app/couplus-quotation-defaults';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -31,7 +32,7 @@ export type QuotationSchema = {
 };
 export type QuotationOverrides = { common: Record<string, string>; options: Record<string, Record<string, string>> };
 export type QuotationChange = { fieldKey: string; optionId: string | null; value: string | null };
-export type QuotationSource = 'manual-option' | 'manual-common' | 'schema' | 'content' | 'settings' | 'option' | 'pricing' | 'product' | 'empty';
+export type QuotationSource = 'manual-option' | 'manual-common' | 'schema' | 'content' | 'settings' | 'option' | 'pricing' | 'product' | 'empty' | 'couplus-default';
 export type ResolvedQuotationField = { value: string; source: QuotationSource; needsReview: boolean; issues: string[] };
 export type ResolvedQuotationRow = { optionId: string | null; optionLabel: string; included: boolean; fields: Record<string, ResolvedQuotationField> };
 export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[] };
@@ -323,7 +324,12 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     const optionId = option?.id ?? null;
     const specific = optionId !== null && Object.hasOwn(overrides.options, optionId) ? overrides.options[optionId] : undefined;
     const fields = Object.fromEntries(schema.fields.map(definition => {
-      const automatic = auto(definition.id, option);
+      let automatic = auto(definition.id, option);
+      const preset = couplusQuotationDefault(schema.categoryId, definition);
+      if (automatic.source === 'empty' && preset !== undefined) automatic = {
+        value: preset, source: 'couplus-default',
+        issues: ['쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.'],
+      };
       const manualOption = !definition.readOnly && specific && Object.hasOwn(specific, definition.id);
       const manualCommon = !definition.readOnly && Object.hasOwn(overrides.common, definition.id);
       const value = manualOption ? specific![definition.id] : manualCommon ? overrides.common[definition.id] : automatic.value;

@@ -135,13 +135,14 @@ function renderEditor(view, section = 'start', changes = []) {
   const { QuotationFieldsEditor } = load('app/components/quotation-fields-editor.tsx', { react: hooks });
   return renderToStaticMarkup(React.createElement(QuotationFieldsEditor, { productId: 'p1' }));
 }
-test('rendered editor has five groups, marks schema uncertainty, keeps unknown legal facts empty and escapes manual HTML', () => {
+test('rendered editor has five groups, marks schema uncertainty, marks observed defaults as reviewable and escapes manual HTML', () => {
   const view = fixture();
   const start = renderEditor(view);
   for (const section of ['시작 정보', '상품 정보', '이미지', '법적 정보', '물류 정보']) assert.ok(start.includes(section));
   assert.ok(start.includes('Supplier Hub 공식 화면')); assert.ok(start.includes('최종 접수는 추가 검증'));
   const legal = renderEditor(view, 'legal');
-  assert.ok(legal.includes('인증')); assert.ok(!legal.includes('value="해당사항없음" selected'));
+  assert.ok(legal.includes('인증')); assert.ok(legal.includes('value="해당사항없음" selected'));
+  assert.ok(legal.includes('쿠플러스 양식 기본값')); assert.ok(legal.includes('검토 필요'));
   const malicious = '<script>alert("x")</script><img src="https://external.invalid/secret">';
   const image = renderEditor(view, 'image', [change('detailHtml', malicious)]);
   assert.ok(!image.includes('<script>alert')); assert.ok(!image.includes('<img src="https://external.invalid'));
