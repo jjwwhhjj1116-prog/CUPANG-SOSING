@@ -28,6 +28,42 @@ export type QuotationMappingSuggestion = {
   mappings: ColumnMapping[]; unmatchedColumns: number[]; ambiguousColumns: number[];
 };
 
+/** Carry connections only across unique, identical labels in the same file.
+ * Never reuse an old column position or infer an alias for a manual choice.
+ */
+export function relocateQuotationMappings(
+  previousHeaders: readonly string[], headers: readonly string[], categoryId: string | null,
+  mappings: readonly ColumnMapping[], automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>,
+) {
+  const before = previousHeaders.map(headerKey), after = headers.map(headerKey);
+  const destinations = new Map<number, number>();
+  before.forEach((key, column) => {
+    if (key && before.filter(value => value === key).length === 1 && after.filter(value => value === key).length === 1)
+      destinations.set(column, after.indexOf(key));
+  });
+  const retained = mappings.flatMap(mapping => {
+    const column = destinations.get(mapping.column);
+    return column === undefined ? [] : [{ ...mapping, column }];
+  });
+  const protectedNext = new Set([...protectedColumns].flatMap(column => {
+    const destination = destinations.get(column); return destination === undefined ? [] : [destination];
+  }));
+  const suggestion = suggestQuotationMappings(headers, categoryId);
+  const occupied = new Set(retained.map(mapping => mapping.column));
+  const additions = suggestion.mappings.filter(mapping => !occupied.has(mapping.column) && !protectedNext.has(mapping.column));
+  const carriedAutomatic = automatic.flatMap(mapping => {
+    const original = mappings.find(value => value.column === mapping.column);
+    const column = destinations.get(mapping.column);
+    return column !== undefined && !protectedNext.has(column) && original?.field === mapping.field
+      && original.required === mapping.required && original.constant === mapping.constant ? [{ ...mapping, column }] : [];
+  });
+  return { mappings: [...retained, ...additions].sort((a, b) => a.column - b.column),
+    automatic: [...carriedAutomatic, ...additions], protectedColumns: protectedNext,
+    retainedCount: retained.length, addedCount: additions.length,
+    lostColumns: [...new Set([...mappings.map(mapping => mapping.column), ...protectedColumns])].filter(column => !destinations.has(column)),
+  };
+}
+
 /** Only this editing session's automatic connections may be replaced.
  * Saved connections and explicit edits (including disconnects) are protected.
  */

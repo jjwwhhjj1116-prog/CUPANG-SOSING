@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
 import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
-import { refreshCategoryMappings, suggestQuotationMappings, suggestQuotationHeader } from '@/app/quotation-mapping';
+import { refreshCategoryMappings, relocateQuotationMappings, suggestQuotationMappings, suggestQuotationHeader } from '@/app/quotation-mapping';
 
 type Props = { value?: CategoryProfile | null; initialDraft?: CategoryProfileInput; onSave: (profile: CategoryProfile) => void; onClose: () => void };
 const empty: CategoryProfileInput = { name: '', categoryId: '', categoryPath: [], template: null, mappings: [] };
@@ -95,11 +95,11 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       const headers = workbook ? xlsxHeaders(workbook, sheetName, rowNumber)
         : textTemplate ? parseTemplateText(textTemplate.text, textTemplate.format === 'tsv' ? '\t' : ',', rowNumber)
           : (() => { throw new Error('저장된 원본을 불러온 뒤 머리글 행을 변경해주세요.'); })();
-      const suggested = suggestQuotationMappings(headers, draft.categoryId);
-      automaticMappings.current = suggested.mappings; protectedColumns.current.clear();
-      setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, headers } : null, mappings: suggested.mappings }));
+      const relocated = relocateQuotationMappings(draft.template.headers, headers, draft.categoryId, draft.mappings, automaticMappings.current, protectedColumns.current);
+      automaticMappings.current = relocated.automatic; protectedColumns.current = relocated.protectedColumns;
+      setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, headers } : null, mappings: relocated.mappings }));
       setHeaderRow(rowNumber); setError('');
-      setMessage(`${suggested.mappings.length}개 열 자동 연결 · 미연결 ${suggested.unmatchedColumns.length}개 · 중복/모호 ${suggested.ambiguousColumns.length}개. 바뀐 시트와 행의 연결을 확인해주세요.`);
+      setMessage(`동일한 열 이름의 연결 ${relocated.retainedCount}개 보존 · 새 자동 연결 ${relocated.addedCount}개. 직접 해제한 동일 항목도 유지합니다. ${relocated.lostColumns.length ? `이전 설정 중 이름이 없거나 중복·누락되어 옮기지 못한 열: ${relocated.lostColumns.map(column => `${column + 1}. ${draft.template!.headers[column] || '(이름 없는 열)'}`).join(', ')}. ` : ''}바뀐 시트와 행의 연결을 확인해주세요.`);
     } catch (error) { setError(error instanceof Error ? error.message : '머리글을 확인해주세요.'); }
   };
   const setMapping = (column: number, change: Partial<ColumnMapping> | null) => {

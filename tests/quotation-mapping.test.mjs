@@ -102,3 +102,21 @@ test('header suggestion skips cover sheets and requires a unique strong exact-la
  assert.equal(suggestQuotationHeader({...workbook,sheets:[...workbook.sheets,sheet('다른 분류',9,['상품명','공급가','판매가','브랜드'])]},'80719'),null);
  for(const headers of [['상품명','공급가'],['상품명','공급가','상품명','판매가'],['상품명 안내','공급가','판매가'],['브랜드','제조사','판매가']])assert.equal(suggestQuotationHeader({sheets:[sheet('모호',1,headers)],warnings:[]},'80719'),null);
 });
+
+test('header relocation preserves manual values and disconnections by unique label, never by position', () => {
+  const { relocateQuotationMappings: relocate, refreshCategoryMappings: refresh } = load('app/quotation-mapping.ts');
+  const old = ['상품명', '공급가', '판매가', '뚜껑 포함여부', '기타', '기타', ''];
+  const headers = ['판매가', '뚜껑 포함여부', '상품명 *', '공급가', '기타', ''];
+  const mappings = [{column:0,field:'constant',required:true,constant:'보존'}, {column:1,field:'supplyPrice',required:false},
+    {column:3,field:'lidIncluded',required:false}, {column:4,field:'constant',required:false,constant:'중복'}, {column:6,field:'constant',required:false,constant:'빈 이름'}];
+  const automatic = [mappings[2]]; const snapshot = plain(mappings);
+  const result = relocate(old,headers,'80719',mappings,automatic,new Set([0,2]));
+  assert.deepEqual(plain(result.mappings), [{column:1,field:'lidIncluded',required:false},{column:2,field:'constant',required:true,constant:'보존'},{column:3,field:'supplyPrice',required:false}]);
+  assert.deepEqual([...result.protectedColumns], [2,0]);
+  assert.deepEqual(plain(result.lostColumns), [4,6]);
+  const changed = refresh(headers,'77442',result.mappings,result.automatic,result.protectedColumns);
+  assert.deepEqual(plain(changed.mappings.map(item=>item.field)), ['constant','supplyPrice']);
+  assert.deepEqual(plain(mappings),snapshot);
+  const duplicate = relocate(['공급가'],['공급가','공급가'],'80719',[{...mappings[1],column:0}],[],new Set());
+  assert.equal(duplicate.mappings.length,0);
+});

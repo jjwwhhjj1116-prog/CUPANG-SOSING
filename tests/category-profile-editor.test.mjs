@@ -69,3 +69,14 @@ test('a late saved-XLSX fetch cannot replace a newly uploaded CSV source or rein
   h.find(node=>node.type==='input'&&node.props.type==='number').props.onChange({target:{value:'2'}});
   const saved=await h.save();assert.equal(saved.template.name,'replacement.csv');assert.equal(saved.template.format,'csv');assert.equal(saved.template.sheetName,'');assert.deepEqual(saved.template.headers,['상품명','공급가']);
 });
+
+test('changing actual header rows keeps manual constants and explicit disconnections at their new positions',async()=>{
+  const h=harness();await h.upload('상품명,공급가,판매가\n판매가,상품명,공급가\n');
+  h.find(node=>node.type==='select'&&node.props['aria-label']==='1열 연결').props.onChange({target:{value:'constant'}});
+  h.find(node=>node.type==='input'&&node.props['aria-label']==='1열 고정값').props.onChange({target:{value:'그대로 저장'}});
+  h.find(node=>node.type==='select'&&node.props['aria-label']==='3열 연결').props.onChange({target:{value:''}});
+  h.find(node=>node.type==='input'&&node.props.type==='number').props.onChange({target:{value:'2'}});
+  const saved=await h.save();
+  assert.deepEqual(saved.mappings,[{column:1,field:'constant',required:true,constant:'그대로 저장'},{column:2,field:'supplyPrice',required:true}]);
+  assert.equal(saved.template.headerRow,2);
+});
