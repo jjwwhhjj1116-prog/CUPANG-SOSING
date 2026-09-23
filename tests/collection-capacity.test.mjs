@@ -12,14 +12,14 @@ function route({linked=false,cancelled=false,missing=false,mode='development'}={
  '@/db/collection-jobs':{findCollectionJob:track('job',missing?null:{status:cancelled?'cancelled':'awaiting_connector',context:{settings:{topImageEnabled:true,topImageKey:'owner/top.png',bottomImageEnabled:true,bottomImageKey:'owner/bottom.png'}}})},
  '@/db/collection-results':{readCollectionResult:track('result',{result:{images:Array(49).fill({})}})},
  '@/db/collection-products':{findCollectionProduct:track('link',linked?{product_id:'product'}:null)},
- '@/db/collection-images':{listCollectionImageIndices:track('images',[0,1])},
+ '@/db/collection-images':{listCollectionImageIndices:track('images',[0,1]),listDisconnectedCollectionImageIndices:track('detached',[3])},
  '@/db/queries':{findProduct:track('product',{image_keys:JSON.stringify(['owner/a','owner/b','owner/c'])})}
  };
  return {reads,...load('app/api/collection-jobs/[id]/capacity/route.ts',deps,mode)};
 }
 test('capacity reserves captured banners before promotion and reads actual files for an existing product',async()=>{
- const fresh=route();const response=await fresh.GET(null,context);assert.equal(response.status,200);assert.deepEqual((await response.json()).capacity,{usedSlots:2,totalImages:49,reusableIndices:[]});
- const existing=route({linked:true});const state=await (await existing.GET(null,context)).json();assert.deepEqual(state.capacity,{usedSlots:3,totalImages:49,reusableIndices:[0,1]});
+ const fresh=route();const response=await fresh.GET(null,context);assert.equal(response.status,200);assert.deepEqual((await response.json()).capacity,{usedSlots:2,totalImages:49,reusableIndices:[],blockedIndices:[]});
+ const existing=route({linked:true});const state=await (await existing.GET(null,context)).json();assert.deepEqual(state.capacity,{usedSlots:3,totalImages:49,reusableIndices:[0,1],blockedIndices:[3]});
  assert.deepEqual(existing.reads.find(([name])=>name==='images'),['images','owner','job','product']);
  assert.ok(existing.reads.every(([,owner])=>owner==='owner'));
 });

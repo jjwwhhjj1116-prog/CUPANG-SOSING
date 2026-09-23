@@ -51,7 +51,7 @@ function storage(){const sqlite=memoryDatabase();for(const s of runtimeDDL())sql
  const now='2026-09-23T00:00:00.000Z';sqlite.prepare(`INSERT INTO products(id,owner_id,source_url,title,source_price_cny,exchange_rate,supply_margin,coupang_margin,supply_price,sale_price,msrp,created_at,updated_at) VALUES('p','owner','url','test',1,1,0,0,1,1,1,?,?)`).run(now,now);
  sqlite.prepare('INSERT INTO collection_jobs VALUES(?,?,?,?,?,?,?,?)').run('job','owner','123','url','collect','awaiting_connector',now,now);sqlite.prepare('INSERT INTO collection_products VALUES(?,?,?,?)').run('job','owner','p',now);
  const current=empty('p');current.revision=1;sqlite.prepare('INSERT INTO product_content VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(current),now);
- const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},execute(){return sqlite.prepare(sql).all(...args);},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const results=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return results;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
+ const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const results=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return results;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
  return {sqlite,db,current,product:sqlite.prepare('SELECT * FROM products').get(),store:load('db/collection-images.ts',{'cloudflare:workers':{env:{DB:db}}})};}
 test('atomic image registration retries without duplicates or overwriting later edits',async()=>{
  const h=storage();try{await h.store.saveCollectionImage('owner','job',0,'owner/a.png','detail',h.product,h.current);
@@ -101,7 +101,7 @@ test('API imports a receipt image once and retry skips download and object write
  const h=storage();try{
   h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(collectedOptions()),'before');
   h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',JSON.stringify({options:[{sku:'a',imageIndex:0}],images:[{url:'https://cbu01.alicdn.com/test.png',role:'main'}]}),'now');
-  let downloads=0,writes=0;const deps={'cloudflare:workers':{env:{DB:h.db,FILES:{put:async()=>{writes++;return {};}}}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},fetch:async()=>{downloads++;return new Response(png);}};
+  let downloads=0,writes=0;const deps={'cloudflare:workers':{env:{DB:h.db,FILES:{head:async()=>({size:png.length}),put:async()=>{writes++;return {};}}}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},fetch:async()=>{downloads++;return new Response(png);}};
   const api=load('app/api/collection-jobs/[id]/images/route.ts',deps);const context={params:Promise.resolve({id:'job'})};
   const request=()=>new Request('http://localhost/api/collection-jobs/job/images',{method:'POST',headers:{'content-type':'application/json'},body:'{"index":0}'});
   const first=await api.POST(request(),context);assert.equal(first.status,200,await first.clone().text());
@@ -111,4 +111,42 @@ test('API imports a receipt image once and retry skips download and object write
   const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
   assert.equal(options.rows[0].imageKey,content.assets.main.value[0]);assert.equal(options.rows[1].imageKey,null);assert.equal(options.revision,2);
  }finally{h.sqlite.close();}
+});
+
+
+test('identical original never duplicates a file assigned to a banner or another role',()=>{
+ for(const role of ['main','additional','detail','detailTop','detailBottom','label','size']){
+  const current=empty('p');current.assets[role]={value:['owner/shared.png'],provenance:'manual',updatedAt:'before'};const before=JSON.stringify(current);
+  const next=model.attachCollectedImage(current,['owner/shared.png'],'owner/shared.png',role==='detail'?'additional':'detail','after');
+  assert.equal(Object.values(next.content.assets).filter(field=>field.value.includes('owner/shared.png')).length,1);
+  assert.equal(next.assigned,false);assert.equal(next.keys.length,1);assert.equal(JSON.stringify(current),before);
+ }
+});
+test('capacity separates detached receipts from reusable images within owner and product scope',async()=>{
+ const h=storage();try{
+  await h.store.saveCollectionImage('owner','job',0,'owner/a.png','detail',h.product,h.current);
+  assert.deepEqual(Array.from(await h.store.listCollectionImageIndices('owner','job','p')),[0]);
+  h.sqlite.prepare('UPDATE products SET image_keys=?').run('[]');
+  assert.deepEqual(Array.from(await h.store.listCollectionImageIndices('owner','job','p')),[]);
+  assert.deepEqual(Array.from(await h.store.listDisconnectedCollectionImageIndices('owner','job','p')),[0]);
+  assert.deepEqual(Array.from(await h.store.listDisconnectedCollectionImageIndices('other','job','p')),[]);
+  assert.deepEqual(Array.from(await h.store.listDisconnectedCollectionImageIndices('owner','job','other')),[]);
+ }finally{h.sqlite.close();}
+});
+test('retry does not restore removed selections or report missing objects as stored',async()=>{
+ for(const scenario of ['detached','missing','wrong-product']){
+  const h=storage();try{
+   await h.store.saveCollectionImage('owner','job',0,'owner/a.png','detail',h.product,h.current);
+   h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',JSON.stringify({options:[],images:[{url:'https://cbu01.alicdn.com/test.png',role:'detail'}]}),'now');
+   if(scenario==='detached')h.sqlite.prepare('UPDATE products SET image_keys=?').run('[]');
+   let downloads=0,writes=0,heads=0;
+   const deps={'cloudflare:workers':{env:{DB:h.db,FILES:{head:async()=>{heads++;return null;},put:async()=>{writes++;}}}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},fetch:async()=>{downloads++;throw Error('unexpected download');}};
+   if(scenario==='wrong-product')deps['@/db/collection-images']={readCollectionImage:async()=>({object_key:'owner/a.png',product_id:'different'}),saveCollectionImage:async()=>{writes++;}};
+   const api=load('app/api/collection-jobs/[id]/images/route.ts',deps);
+   const response=await api.POST(new Request('http://localhost/api/collection-jobs/job/images',{method:'POST',headers:{'content-type':'application/json'},body:'{"index":0}'}),{params:Promise.resolve({id:'job'})});
+   assert.equal(response.status,409,await response.clone().text());assert.equal((await response.json()).code,scenario==='missing'?'IMAGE_UNAVAILABLE':'IMAGE_DETACHED');
+   assert.equal(downloads,0);assert.equal(writes,0);assert.equal(heads,scenario==='missing'?1:0);
+   assert.equal(h.sqlite.prepare('SELECT image_keys FROM products').get().image_keys,scenario==='detached'?'[]':'["owner/a.png"]');
+  }finally{h.sqlite.close();}
+ }
 });

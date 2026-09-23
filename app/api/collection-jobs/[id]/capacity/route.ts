@@ -3,7 +3,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findCollectionJob } from '@/db/collection-jobs';
 import { readCollectionResult } from '@/db/collection-results';
 import { findCollectionProduct } from '@/db/collection-products';
-import { listCollectionImageIndices } from '@/db/collection-images';
+import { listCollectionImageIndices, listDisconnectedCollectionImageIndices } from '@/db/collection-images';
 import { findProduct } from '@/db/queries';
 import { productImageKeys } from '@/app/product-content';
 import { workspaceBannerAssignments } from '@/app/workspace-banners';
@@ -19,16 +19,17 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
     const receipt = await readCollectionResult(owner, id);
     if (!receipt) return reply({ error: '수신 결과가 아직 없습니다.' }, 409);
     const link = await findCollectionProduct(owner, id);
-    let usedSlots: number; let reusableIndices: number[] = [];
+    let usedSlots: number; let reusableIndices: number[] = []; let blockedIndices: number[] = [];
     if (link) {
       const product = await findProduct(owner, link.product_id);
       if (!product) return reply({ error: '연결된 상품을 찾을 수 없습니다.' }, 409);
       usedSlots = new Set(productImageKeys(product.image_keys)).size;
       reusableIndices = await listCollectionImageIndices(owner, id, link.product_id);
+      blockedIndices = await listDisconnectedCollectionImageIndices(owner, id, link.product_id);
     } else {
       if (!job.context) return reply({ error: '요청 당시 기본설정이 없습니다.' }, 409);
       usedSlots = workspaceBannerAssignments(validateSettings(job.context.settings), owner).length;
     }
-    return reply({ capacity: { usedSlots, totalImages: receipt.result.images.length, reusableIndices } });
+    return reply({ capacity: { usedSlots, totalImages: receipt.result.images.length, reusableIndices, blockedIndices } });
   } catch { return reply({ error: '이미지 저장 여유를 조회하지 못했습니다.' }, 503); }
 }

@@ -34,8 +34,9 @@ export function attachCollectedImage(current:ProductContent,keys:string[],key:st
  if(!keys.includes(key)&&keys.length>=50)throw new Error('상품 이미지 50개 제한입니다. 이미지를 정리해주세요.');
  const next=structuredClone(current);const target=next.assets[role];
  // Manual selections (including deliberately empty ones) and translated/generated work survive imports.
+ const usedElsewhere=Object.entries(next.assets).some(([name,field])=>name!==role&&field.value.includes(key));
  const editable=target.provenance==='unverified'||target.provenance==='collected';
- if(editable&&!target.value.includes(key)&&target.value.length<(role==='main'?1:30)){
+ if(editable&&!usedElsewhere&&!target.value.includes(key)&&target.value.length<(role==='main'?1:30)){
   next.assets[role]={value:[...target.value,key],provenance:'collected',updatedAt:now};
  }
  next.revision=current.revision+1;next.updatedAt=now;

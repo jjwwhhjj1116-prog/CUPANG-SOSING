@@ -8,6 +8,8 @@ import {readCollectionResult} from '@/db/collection-results';
 import {findProduct} from '@/db/queries';
 import {readProductContent} from '@/db/product-content';
 import {readCollectionImage,saveCollectionImage} from '@/db/collection-images';
+import {productImageKeys} from '@/app/product-content';
+import {MAX_IMAGE_BYTES} from '@/app/image-files';
 import {downloadCollectionImage} from '@/app/collection-image';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function POST(request:Request,context:{params:Promise<{id:string}>}){
@@ -20,8 +22,15 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   if(!job)return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
   const link=await findCollectionProduct(owner,id);if(!link||job.status==='cancelled')return reply({error:'상품 반영을 먼저 완료해주세요.'},409);
   const receipt=await readCollectionResult(owner,id);const image=receipt?.result.images[body.index];if(!image)return reply({error:'수신한 이미지 주소가 없습니다.'},404);
-  const previous=await readCollectionImage(owner,id,body.index);if(previous)return reply({key:previous.object_key,reused:true});
+  const previous=await readCollectionImage(owner,id,body.index);
   const product=await findProduct(owner,link.product_id);if(!product)return reply({error:'상품을 찾을 수 없습니다.'},404);
+  if(previous){
+   if(previous.product_id!==product.id||!productImageKeys(product.image_keys).includes(previous.object_key))return reply({error:'이 원본은 상품 이미지에서 제외되었습니다. 기존 편집을 보존하기 위해 자동 복원하지 않습니다. 선택을 해제해주세요.',code:'IMAGE_DETACHED'},409);
+   if(!env.FILES)return reply({error:'이미지 저장소 연결이 필요합니다.'},503);
+   const stored=await env.FILES.head(previous.object_key);
+   if(!stored||stored.size<1||stored.size>MAX_IMAGE_BYTES)return reply({error:'이전에 저장한 원본 파일을 확인할 수 없습니다. 이미지 자료를 점검해주세요.',code:'IMAGE_UNAVAILABLE'},409);
+   return reply({key:previous.object_key,reused:true});
+  }
   const current=await readProductContent(owner,product.id);
   if(JSON.parse(product.image_keys).length>=50)return reply({error:'상품 이미지 50개 제한입니다. 이미지를 정리해주세요.'},409);
   if(!env.FILES)return reply({error:'이미지 저장소 연결이 필요합니다.'},503);

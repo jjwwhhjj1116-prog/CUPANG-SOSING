@@ -38,6 +38,12 @@ export async function saveCollectionImage(owner:string,jobId:string,index:number
 
 export async function listCollectionImageIndices(owner:string,jobId:string,productId:string):Promise<number[]> {
  const db=await database();
- const result=await db.prepare('SELECT image_index FROM collection_images WHERE owner_id=? AND job_id=? AND product_id=? ORDER BY image_index').bind(owner,jobId,productId).all<{image_index:number}>();
+ const result=await db.prepare(`SELECT ci.image_index FROM collection_images ci JOIN products p ON p.id=ci.product_id AND p.owner_id=ci.owner_id WHERE ci.owner_id=? AND ci.job_id=? AND ci.product_id=? AND EXISTS(SELECT 1 FROM json_each(p.image_keys) WHERE value=ci.object_key) ORDER BY ci.image_index`).bind(owner,jobId,productId).all<{image_index:number}>();
+ return result.results.map(row=>row.image_index);
+}
+
+export async function listDisconnectedCollectionImageIndices(owner:string,jobId:string,productId:string):Promise<number[]> {
+ const db=await database();
+ const result=await db.prepare('SELECT ci.image_index FROM collection_images ci JOIN products p ON p.id=ci.product_id AND p.owner_id=ci.owner_id WHERE ci.owner_id=? AND ci.job_id=? AND ci.product_id=? AND NOT EXISTS(SELECT 1 FROM json_each(p.image_keys) WHERE value=ci.object_key) ORDER BY ci.image_index').bind(owner,jobId,productId).all<{image_index:number}>();
  return result.results.map(row=>row.image_index);
 }

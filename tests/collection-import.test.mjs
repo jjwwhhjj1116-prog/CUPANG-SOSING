@@ -80,3 +80,9 @@ test('capacity errors and cancellation after the read never create a product',as
  assert.equal(outcome.status,'stopped');assert.equal(calls,1);
  const failed=await actualImport('job',1,{fetcher:async()=>reply({error:'offline'},503)});assert.equal(failed.status,'failed');assert.equal(failed.productId,null);
 });
+
+
+test('detached selections fail preflight without restoring user-removed originals',async()=>{
+ let calls=0;const result=await actualImport('job',2,{fetcher:async()=>{calls++;return reply({capacity:{usedSlots:0,totalImages:2,reusableIndices:[],blockedIndices:[1]}});}});
+ assert.equal(result.status,'failed');assert.equal(result.productId,null);assert.equal(calls,1);assert.match(result.error,/제외/);
+});
