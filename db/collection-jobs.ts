@@ -11,8 +11,13 @@ export const collectionSchema = `CREATE TABLE IF NOT EXISTS collection_jobs (
 )`;
 export const collectionUniqueIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_active_offer
   ON collection_jobs(owner_id, offer_id) WHERE status = 'awaiting_connector'`;
+export const collectionProductSchema=`CREATE TABLE IF NOT EXISTS collection_products (
+ job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), owner_id TEXT NOT NULL,
+ product_id TEXT NOT NULL UNIQUE REFERENCES products(id), created_at TEXT NOT NULL
+)`;
+
 const columns = 'id, offer_id, source_url, goal, status, created_at, updated_at';
-const selectColumns = `${columns}, (SELECT payload FROM collection_context WHERE job_id=collection_jobs.id) AS context_json`;
+const selectColumns = `${columns}, (SELECT payload FROM collection_context WHERE job_id=collection_jobs.id) AS context_json, (SELECT product_id FROM collection_products WHERE job_id=collection_jobs.id) AS product_id`;
 type JobRow = CollectionJob & { context_json?: string | null };
 function withContext(row: JobRow): CollectionJob {
   const { context_json, ...job } = row;
@@ -22,7 +27,7 @@ function withContext(row: JobRow): CollectionJob {
 async function database() {
   if (!env.DB) throw new Error('D1 unavailable');
   await env.DB.batch([
-    env.DB.prepare(collectionSchema), env.DB.prepare(collectionUniqueIndex),
+    env.DB.prepare(collectionSchema), env.DB.prepare(collectionUniqueIndex), env.DB.prepare(collectionProductSchema),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_collection_owner_time ON collection_jobs(owner_id, created_at)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)'),
   ]);
@@ -70,7 +75,7 @@ export async function cancelCollection(owner: string, id: string) {
   // Cancelling again is harmless; never expose another owner's job.
   const row = await db.prepare(`UPDATE collection_jobs SET status = 'cancelled',
     updated_at = CASE WHEN status = 'cancelled' THEN updated_at ELSE ? END
-    WHERE owner_id = ? AND id = ? AND status IN ('awaiting_connector','cancelled') RETURNING ${selectColumns}`)
+    WHERE owner_id = ? AND id = ? AND status IN ('awaiting_connector','cancelled') AND NOT EXISTS(SELECT 1 FROM collection_products WHERE job_id=collection_jobs.id) RETURNING ${selectColumns}`)
     .bind(new Date().toISOString(), owner, id).first<JobRow>();
   return row ? withContext(row) : null;
 }

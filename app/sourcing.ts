@@ -8,7 +8,7 @@ export type CollectionContext = { category: CategoryProfile; settings: Workspace
 export type CollectionJob = {
   id: string; offer_id: string; source_url: string; goal: string;
   status: 'awaiting_connector' | 'cancelled'; created_at: string; updated_at: string;
-  context?: CollectionContext | null;
+  context?: CollectionContext | null; product_id?: string | null;
 };
 
 export function parseCollectionRequest(input: unknown): CollectionRequest[] {

@@ -69,7 +69,7 @@ Cloudflare Workers + D1 `DB` + R2 `FILES` 구조입니다. 운영에서는 Cloud
 
 `.openai/hosting.json`의 기존 project_id `appgprj_6a8d4a6c78908191acecd48b7e0d1620`를 유지합니다. 새 Sites 프로젝트를 만들지 마세요. Vite의 로컬 D1 ID를 운영 리소스로 간주하거나 생성된 wrangler 설정을 그대로 배포하지 마세요. 로컬 자료는 다른 PC나 Cloudflare로 자동 이전되지 않습니다.
 
-`db/migrations/0001_sourceflow_bootstrap.sql`부터 `0004_collection_results.sql`까지 런타임 15개 테이블·10개 명시적 인덱스를 관리합니다. `node scripts/check-db-schema.mjs`는 메모리 SQLite에서 런타임 DDL과 비교하며 실제 DB에 적용하지 않습니다. 기존 Drizzle `db/schema.ts`는 두 테이블만 기술하므로 `db:generate`만으로 전체 스키마를 관리할 수 없습니다.
+`db/migrations/0001_sourceflow_bootstrap.sql`부터 `0005_collection_products.sql`까지 런타임 16개 테이블·10개 명시적 인덱스를 관리합니다. `node scripts/check-db-schema.mjs`는 메모리 SQLite에서 런타임 DDL과 비교하며 실제 DB에 적용하지 않습니다. 기존 Drizzle `db/schema.ts`는 두 테이블만 기술하므로 `db:generate`만으로 전체 스키마를 관리할 수 없습니다.
 
 운영 준비에 남은 항목: Access 앱 정책·AUD 연결, 운영 빌드·배포와 통합 검증, 운영 데이터 이관, 의존성 보안 업데이트. 전용 D1에 세 migration을 적용했고 기존 다른 앱의 DB는 변경하지 않았습니다. 기존 npm audit 결과 17건(critical 1/high 12/moderate 4)은 강제 업데이트하지 않았으며 최신 재평가가 필요합니다.
 
