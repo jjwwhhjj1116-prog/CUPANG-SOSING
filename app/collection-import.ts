@@ -1,11 +1,15 @@
 export type CollectionImportProgress = {stage:'product'|'images';completedImages:number;totalImages:number};
 export type CollectionImportOutcome = {status:'completed'|'stopped'|'failed';productId:string|null;completedImages:number;error?:string};
+export function collectionImageSelection(totalImages:number,imageIndices?:readonly number[]):number[]{
+ if(!Number.isInteger(totalImages)||totalImages<0||totalImages>200)throw new Error('수집 이미지 수를 확인해주세요.');
+ const indices=imageIndices?[...imageIndices]:Array.from({length:totalImages},(_,index)=>index);
+ if(indices.length>50||new Set(indices).size!==indices.length||indices.some(index=>!Number.isInteger(index)||index<0||index>=totalImages))throw new Error('원본 이미지 번호를 중복 없이 최대 50개 선택해주세요.');
+ return indices.sort((a,b)=>a-b);
+}
 /** Uses retry-safe server endpoints. Stop is cooperative: finish an in-flight write before stopping. */
 export async function runCollectionImport(jobId:string,totalImages:number,options:{imageIndices?:readonly number[];fetcher?:typeof fetch;shouldStop?:()=>boolean;onProgress?:(progress:CollectionImportProgress)=>void}={}):Promise<CollectionImportOutcome>{
  if(!jobId||!Number.isInteger(totalImages)||totalImages<0||totalImages>200)throw new Error('수집 요청과 이미지 수를 확인해주세요.');
- const indices=options.imageIndices?[...options.imageIndices]:Array.from({length:totalImages},(_,index)=>index);
- if(indices.length>50||new Set(indices).size!==indices.length||indices.some(index=>!Number.isInteger(index)||index<0||index>=totalImages))throw new Error('원본 이미지 번호를 중복 없이 최대 50개 선택해주세요.');
- indices.sort((a,b)=>a-b);
+ const indices=collectionImageSelection(totalImages,options.imageIndices);
  const selectedTotal=indices.length;
  const fetcher=options.fetcher??fetch;const base=`/api/collection-jobs/${encodeURIComponent(jobId)}`;
  let productId:string|null=null;let completedImages=0;let activeImageIndex:number|null=null;
