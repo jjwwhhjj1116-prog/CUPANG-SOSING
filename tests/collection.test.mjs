@@ -181,3 +181,36 @@ test('changed category settings return 409 before settings reads or enqueue; mat
  for(const revision of [undefined,null,0,-1,1.5,'2',Number.MAX_SAFE_INTEGER+1])assert.equal((await route.POST(request({...payload,expectedProfileRevision:revision}))).status,400);
  assert.equal(writes,1);
 });
+
+test('mixed intake reports only requests whose persisted context differs and never replaces original data',async()=>{
+ const {sqlite,queries}=storage();
+ try{
+  let category={id:payload.profileId,revision:1,categoryId:'80719',categoryPath:['바스켓'],template:null,mappings:[]};
+  const route=load('app/api/collection-jobs/route.ts',{'@/db/collection-jobs':queries,'@/db/category-profiles':{getCategoryProfile:async()=>category}});
+  const first=await (await route.POST(request({...payload,features:'원래 특징'}))).json();
+  assert.equal(first.preservedRequests.length,0);
+  const repeated=await (await route.POST(request({...payload,features:'원래 특징'}))).json();
+  assert.equal(repeated.preservedRequests.length,0);
+  category={...category,revision:2,categoryId:'81452',categoryPath:['보호대']};
+  const mixed=await (await route.POST(request({...payload,expectedProfileRevision:2,urls:[url,'https://detail.1688.com/offer/987654321.html'],goal:'work',features:'새 특징',keywords:'새 키워드'}))).json();
+  assert.equal(mixed.jobs.length,2);assert.equal(mixed.preservedRequests.length,1);
+  assert.equal(mixed.preservedRequests[0].sourceUrl,url);
+  assert.deepEqual(mixed.preservedRequests[0].differences,['작업 목표','카테고리·견적서 설정','상품 특징','타겟 키워드']);
+  const old=mixed.jobs.find(job=>job.id===first.jobs[0].id);
+  assert.equal(old.context.category.categoryId,'80719');assert.equal(old.context.features,'원래 특징');
+  assert.equal(mixed.jobs.find(job=>job.id!==old.id).context.category.categoryId,'81452');
+  const retry=await (await route.POST(request({...payload,expectedProfileRevision:2,urls:[url,'https://detail.1688.com/offer/987654321.html'],goal:'work',features:'새 특징',keywords:'새 키워드'}))).json();
+  assert.equal(retry.preservedRequests.length,1);assert.equal((await queries.listCollectionJobs('local-demo')).length,2);
+ }finally{sqlite.close();}
+});
+
+test('context comparison ignores capture time and object key order but reports settings and missing legacy evidence',()=>{
+ const compare=load('app/sourcing.ts').preservedCollectionRequests;
+ const context={category:{id:'a',categoryId:'80719'},settings:{exchangeRate:200,brand:'A'},features:'',keywords:'',capturedAt:'today'};
+ const job={offer_id:'123456789',source_url:url,goal:'collect',context:{...context,capturedAt:'yesterday',settings:{brand:'A',exchangeRate:200}}};
+ const before=JSON.stringify(job);
+ assert.equal(compare([job],parse(payload),context).length,0);
+ assert.equal(compare([job],parse(payload),{...context,settings:{...context.settings,exchangeRate:300}})[0].differences[0],'기본설정');
+ assert.equal(compare([{...job,context:null}],parse(payload),context)[0].differences[0],'카테고리·기본설정 기록 없음');
+ assert.equal(JSON.stringify(job),before);
+});

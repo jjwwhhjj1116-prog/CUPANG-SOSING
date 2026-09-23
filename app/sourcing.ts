@@ -11,6 +11,30 @@ export type CollectionJob = {
   context?: CollectionContext | null; product_id?: string | null;
 };
 
+export type PreservedCollectionRequest = { offerId: string; sourceUrl: string; differences: string[] };
+/** Compare the persisted result, so concurrent inserts and retries are reported truthfully. */
+export function preservedCollectionRequests(jobs: readonly CollectionJob[], requests: readonly CollectionRequest[], context: CollectionContext): PreservedCollectionRequest[] {
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+    if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
+    return JSON.stringify(value) ?? 'undefined';
+  };
+  return jobs.flatMap(job => {
+    const request = requests.find(item => item.offerId === job.offer_id);
+    if (!request) return [];
+    const differences: string[] = [];
+    if (job.goal !== request.goal) differences.push('작업 목표');
+    if (!job.context) differences.push('카테고리·기본설정 기록 없음');
+    else {
+      if (canonical(job.context.category) !== canonical(context.category)) differences.push('카테고리·견적서 설정');
+      if (canonical(job.context.settings) !== canonical(context.settings)) differences.push('기본설정');
+      if (job.context.features !== context.features) differences.push('상품 특징');
+      if (job.context.keywords !== context.keywords) differences.push('타겟 키워드');
+    }
+    return differences.length ? [{ offerId: job.offer_id, sourceUrl: job.source_url, differences }] : [];
+  });
+}
+
 export function parseCollectionRequest(input: unknown): CollectionRequest[] {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('URL 목록이 필요합니다.');
   const { urls, goal = 'collect' } = input as Record<string, unknown>;

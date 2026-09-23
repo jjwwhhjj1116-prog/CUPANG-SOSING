@@ -21,7 +21,7 @@ import { WorkspaceSettingsEditor } from '@/app/components/workspace-settings-edi
 import { defaultSettings as defaults, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
 import { PriceEditor } from '@/app/components/price-editor';
 import { quotationCsv, pricePolicy, type PricePolicy } from '@/app/pricing';
-import { collectionBlock, parseCollectionRequest, type CollectionJob } from '@/app/sourcing';
+import { collectionBlock, parseCollectionRequest, type CollectionJob, type PreservedCollectionRequest } from '@/app/sourcing';
 
 type Product = {
   id: string; source_url: string; title: string; source_price_cny: number; exchange_rate: number;
@@ -183,11 +183,16 @@ export default function DashboardClient({ userName }: { userName: string }) {
     setBusy(true); setCollectionError('');
     const data = new FormData(event.currentTarget);
     try {
-      const result = await readJson<{ jobs: CollectionJob[] }>('/api/collection-jobs', {
+      const result = await readJson<{ jobs: CollectionJob[]; preservedRequests: PreservedCollectionRequest[] }>('/api/collection-jobs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ urls: urlInput.trim().split(/\s+/), goal: String(data.get('goal')), profileId, expectedProfileRevision: selectedProfileRevision, features: String(data.get('features')??''), keywords: String(data.get('keywords')??'') }),
       });
       setCollectionJobs(current => [...result.jobs, ...current.filter(job => !result.jobs.some(saved => saved.id === job.id))]);
+      if (result.preservedRequests?.length) {
+        setUrlInput(result.preservedRequests.map(item => item.sourceUrl).join('\n'));
+        setCollectionError(`요청 ${result.jobs.length}건을 확인했습니다. 아래 ${result.preservedRequests.length}건은 기존 요청을 유지했고 새 입력을 적용하지 않았습니다: ${result.preservedRequests.map(item => `${item.offerId} (${item.differences.join(', ')})`).join(' / ')}. URL과 입력값을 보존했습니다. 대기열에서 기존 요청을 확인해주세요. 아직 상품으로 반영하지 않은 요청은 취소 후 다시 추가할 수 있습니다.`);
+        return;
+      }
       setUrlInput(''); setIntakeDraft({features:'',keywords:'',goal:'collect'}); setAddOpen(false);
       showToast(`${result.jobs.length}건의 수집 요청을 확인했습니다. 공급원 연결 대기 중입니다.`);
     } catch (error) { setCollectionError(error instanceof Error ? error.message : '수집 요청을 저장하지 못했습니다.'); }

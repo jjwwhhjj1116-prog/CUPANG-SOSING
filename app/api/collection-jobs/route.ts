@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { collectionBlock, parseCollectionRequest } from '@/app/sourcing';
+import { collectionBlock, parseCollectionRequest, preservedCollectionRequests } from '@/app/sourcing';
 import { enqueueCollection, listCollectionJobs } from '@/db/collection-jobs';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { getSettings } from '@/db/queries';
@@ -39,7 +39,8 @@ export async function POST(request: Request) {
     if(category.revision!==expectedProfileRevision)return NextResponse.json({error:'선택한 카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 최신 카테고리를 다시 선택해주세요.',code:'CATEGORY_PROFILE_CHANGED'},{status:409});
     const savedSettings=await getSettings(owner);
     const settings=validateSettings(savedSettings?JSON.parse(savedSettings.payload):{});
-    const jobs = await enqueueCollection(owner, entries, {category,settings,features,keywords,capturedAt:new Date().toISOString()});
-    return NextResponse.json({ jobs, message: collectionBlock, executionStarted: false }, { headers: { 'cache-control': 'no-store' } });
+    const context={category,settings,features,keywords,capturedAt:new Date().toISOString()};
+    const jobs = await enqueueCollection(owner, entries, context);
+    return NextResponse.json({ jobs, preservedRequests: preservedCollectionRequests(jobs, entries, context), message: collectionBlock, executionStarted: false }, { headers: { 'cache-control': 'no-store' } });
   } catch { return NextResponse.json({ error: '대기열 저장을 확인하지 못했습니다. 같은 URL로 다시 시도해도 대기 중인 요청은 중복되지 않습니다.' }, { status: 503 }); }
 }
