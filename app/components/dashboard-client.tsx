@@ -106,6 +106,8 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [showCancelled, setShowCancelled] = useState(false);
   const [categoryProfiles, setCategoryProfiles] = useState<CategoryProfile[]>([]);
   const [profileId, setProfileId] = useState('');
+  const [selectedProfileRevision, setSelectedProfileRevision] = useState<number | null>(null);
+  const [intakeDraft, setIntakeDraft] = useState({features:'',keywords:'',goal:'collect'});
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CategoryProfile|null>(null);
   const [categorySeed,setCategorySeed]=useState<CategoryProfileInput|undefined>();
@@ -165,6 +167,17 @@ export default function DashboardClient({ userName }: { userName: string }) {
 
   const showToast = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2600); };
 
+  async function refreshIntakeCategories() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await readJson<{profiles: CategoryProfile[]}>('/api/category-profiles');
+      setCategoryProfiles(result.profiles); setProfileId(''); setSelectedProfileRevision(null);
+      setIntakeStep('category'); setCollectionError('');
+    } catch (error) { setCollectionError(error instanceof Error ? error.message : '카테고리를 불러오지 못했습니다.'); }
+    finally { setBusy(false); }
+  }
+
   async function createProducts(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy) return;
     setBusy(true); setCollectionError('');
@@ -172,10 +185,10 @@ export default function DashboardClient({ userName }: { userName: string }) {
     try {
       const result = await readJson<{ jobs: CollectionJob[] }>('/api/collection-jobs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ urls: urlInput.trim().split(/\s+/), goal: String(data.get('goal')), profileId, features: String(data.get('features')??''), keywords: String(data.get('keywords')??'') }),
+        body: JSON.stringify({ urls: urlInput.trim().split(/\s+/), goal: String(data.get('goal')), profileId, expectedProfileRevision: selectedProfileRevision, features: String(data.get('features')??''), keywords: String(data.get('keywords')??'') }),
       });
       setCollectionJobs(current => [...result.jobs, ...current.filter(job => !result.jobs.some(saved => saved.id === job.id))]);
-      setUrlInput(''); setAddOpen(false);
+      setUrlInput(''); setIntakeDraft({features:'',keywords:'',goal:'collect'}); setAddOpen(false);
       showToast(`${result.jobs.length}건의 수집 요청을 확인했습니다. 공급원 연결 대기 중입니다.`);
     } catch (error) { setCollectionError(error instanceof Error ? error.message : '수집 요청을 저장하지 못했습니다.'); }
     finally { setBusy(false); }
@@ -273,16 +286,16 @@ export default function DashboardClient({ userName }: { userName: string }) {
       </section>
 
       {addOpen&&<Modal wide title="상품 수집 준비" subtitle="카테고리·견적서 연결을 선택한 다음 URL을 입력합니다." onClose={()=>{if(!busy)setAddOpen(false);}}>
-        <div className="intake-steps"><button className={intakeStep==='category'?'active':''} onClick={()=>setIntakeStep('category')}>1. 카테고리·견적서</button><button disabled={!profileId} className={intakeStep==='urls'?'active':''} onClick={()=>setIntakeStep('urls')}>2. URL·작업 목표</button></div>
-        {intakeStep==='category'?<CategoryPicker profiles={categoryProfiles} selectedId={profileId} onSelected={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setProfileId(profile.id);setIntakeStep('urls');}} onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:seed?null:categoryProfiles.find(profile=>profile.id===profileId)??null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>:<form onSubmit={createProducts} className="modal-form">
+        <div className="intake-steps"><button disabled={busy} className={intakeStep==='category'?'active':''} onClick={()=>setIntakeStep('category')}>1. 카테고리·견적서</button><button disabled={busy||!profileId||selectedProfileRevision===null} className={intakeStep==='urls'?'active':''} onClick={()=>setIntakeStep('urls')}>2. URL·작업 목표</button></div>
+        {intakeStep==='category'?<CategoryPicker profiles={categoryProfiles} selectedId={profileId} onSelected={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setProfileId(profile.id);setSelectedProfileRevision(profile.revision);setIntakeStep('urls');}} onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:seed?null:categoryProfiles.find(profile=>profile.id===profileId)??null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>:<form onSubmit={createProducts} className="modal-form">
           <p><strong>{categoryProfiles.find(profile=>profile.id===profileId)?.categoryPath.join(' > ')}</strong></p>
           <label className="field full"><span>1688 상품 URL <b>필수 · 최대 50개</b></span><textarea name="urls" value={urlInput} onChange={event=>{setUrlInput(event.target.value);setCollectionError('');}} disabled={busy} required placeholder={'https://detail.1688.com/offer/…\n여러 URL은 줄바꿈으로 구분'} aria-describedby="collection-validation" /></label>
           <p id="collection-validation" aria-live="polite">{collectionPreview.error || (collectionPreview.count + '개 상품 · 중복 ' + collectionPreview.duplicates + '개 제외')}</p>
-          <div className="form-grid"><label className="field"><span>상품 특징 (선택)</span><textarea name="features" maxLength={2000} disabled={busy}/></label><label className="field"><span>타겟 키워드 (선택)</span><textarea name="keywords" maxLength={2000} disabled={busy}/></label></div>
-          <fieldset className="goal-list" disabled={busy}><legend>작업 목표</legend>{goalOptions.map((goal,i)=><label key={goal.id} className="goal-card"><input type="radio" name="goal" value={goal.id} defaultChecked={i===0}/><span><strong>{goal.title}</strong><small>{goal.desc}</small></span></label>)}</fieldset>
+          <div className="form-grid"><label className="field"><span>상품 특징 (선택)</span><textarea name="features" value={intakeDraft.features} onChange={event=>setIntakeDraft(previous=>({...previous,features:event.target.value}))} maxLength={2000} disabled={busy}/></label><label className="field"><span>타겟 키워드 (선택)</span><textarea name="keywords" value={intakeDraft.keywords} onChange={event=>setIntakeDraft(previous=>({...previous,keywords:event.target.value}))} maxLength={2000} disabled={busy}/></label></div>
+          <fieldset className="goal-list" disabled={busy}><legend>작업 목표</legend>{goalOptions.map(goal=><label key={goal.id} className="goal-card"><input type="radio" name="goal" value={goal.id} checked={intakeDraft.goal===goal.id} onChange={()=>setIntakeDraft(previous=>({...previous,goal:goal.id}))}/><span><strong>{goal.title}</strong><small>{goal.desc}</small></span></label>)}</fieldset>
           <p className="collection-notice">{collectionBlock} 선택한 카테고리 연결과 저장된 기본설정을 요청에 함께 보관합니다.</p>
-          {collectionError&&<p role="alert" className="collection-error">{collectionError}</p>}
-          <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={()=>setIntakeStep('category')}>이전</button><button className="btn primary" disabled={busy||!profileId||!collectionPreview.count||!!collectionPreview.error}>{busy?'저장 중…':'수집 요청 보관'}</button></div>
+          {collectionError&&<div role="alert" className="collection-error"><p>{collectionError}</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void refreshIntakeCategories()}>입력 유지 · 최신 카테고리 다시 선택</button></div>}
+          <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={()=>setIntakeStep('category')}>이전</button><button className="btn primary" disabled={busy||!profileId||selectedProfileRevision===null||!collectionPreview.count||!!collectionPreview.error}>{busy?'저장 중…':'수집 요청 보관'}</button></div>
         </form>}
       </Modal>}
       {categoryOpen&&<Modal wide title="카테고리·견적서 연결" subtitle="상품 자료를 견적서 열에 연결하고 카테고리별 설정을 보관합니다." onClose={()=>setCategoryOpen(false)}><CategoryProfileEditor value={editingCategory} initialDraft={categorySeed} onClose={()=>setCategoryOpen(false)} onSave={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setProfileId(profile.id);setCategoryOpen(false);setIntakeStep('category');setAddOpen(true);}}/></Modal>}

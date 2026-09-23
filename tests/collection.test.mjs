@@ -49,7 +49,7 @@ function storage() {
 }
 const parse = load('app/sourcing.ts').parseCollectionRequest;
 const url = 'https://detail.1688.com/offer/123456789.html';
-const payload = { urls: [url], goal: 'collect', profileId:'12345678-1234-1234-1234-123456789012' };
+const payload = { urls: [url], goal: 'collect', expectedProfileRevision:1, profileId:'12345678-1234-1234-1234-123456789012' };
 const request = body => new Request('http://localhost/api/collection-jobs', { method: 'POST', body: JSON.stringify(body) });
 
 test('URL-only requests normalize tracking links and reject an entire invalid batch', () => {
@@ -164,4 +164,20 @@ test('intake requires category selection before URL staging and rejects missing 
   const route=load('app/api/collection-jobs/route.ts',{'@/db/collection-jobs':{},'@/db/category-profiles':{getCategoryProfile:async()=>null}});
   assert.equal((await route.POST(request({urls:[url]}))).status,400);
   assert.equal((await route.POST(request(payload))).status,404);
+});
+
+test('changed category settings return 409 before settings reads or enqueue; matching snapshot is preserved',async()=>{
+ let reads=0,writes=0,captured;
+ const category={id:payload.profileId,revision:2,categoryId:'81452',categoryPath:['헬스보호대'],template:null,mappings:[],verification:'draft'};
+ const route=load('app/api/collection-jobs/route.ts',{
+  '@/db/category-profiles':{getCategoryProfile:async()=>category},
+  '@/db/queries':{getSettings:async()=>{reads++;return null;}},
+  '@/db/collection-jobs':{enqueueCollection:async(owner,entries,context)=>{writes++;captured=context;return [];}}
+ });
+ const stale=await route.POST(request(payload));assert.equal(stale.status,409);assert.equal((await stale.json()).code,'CATEGORY_PROFILE_CHANGED');
+ assert.equal(reads,0);assert.equal(writes,0);
+ const current=await route.POST(request({...payload,expectedProfileRevision:2,features:'보존 특징',keywords:'보존 키워드'}));
+ assert.equal(current.status,200);assert.equal(writes,1);assert.equal(captured.category.revision,2);assert.equal(captured.category.categoryId,'81452');assert.equal(captured.features,'보존 특징');
+ for(const revision of [undefined,null,0,-1,1.5,'2',Number.MAX_SAFE_INTEGER+1])assert.equal((await route.POST(request({...payload,expectedProfileRevision:revision}))).status,400);
+ assert.equal(writes,1);
 });

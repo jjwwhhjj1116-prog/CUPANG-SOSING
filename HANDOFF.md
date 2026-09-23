@@ -990,3 +990,11 @@ AI등록 화면 확인:
 - 정적 검사 한계를 화면 limits에 추가했다. CSS/스크립트/srcset/iframe/외부 응답과 최종 렌더링은 확인하지 않으며 HTML 보안 정화기 또는 적합성 인증이 아니다. 다른 이미지 업로드 영역까지 일괄 금지하지 않는다.
 - 검증: 전체361/361, TypeScript/ESLint/production build/diff 검사 통과. 신규2개 테스트로 형식/MIME/대소문자/URL 경로 인코딩, query/fragment, 주석/텍스트 예시 오탐 방지, 옵션 위치·제외·원본 불변을 확인했다. outputs/html-media-all-tests.log 및 html-media-build.log. 실제 앱 UI 클릭/공식 Excel 검증/운영접수는 미검증.
 - 다음 시작점: hubCheckTab은 Supplier Hub 대량등록 화면. 공식 Excel 원본 및 업로드/검증/접수 계약 확보, 실제1688 수집/AI 운영 연결, 전체카테고리 법적·물류 대조가 남는다. 이번 검사는 adapter 구현을 대체하지 않는다. 전체 자동화 미완성. 파일 업로드·약관 동의·운영 등록·유료 호출·Cloudflare 배포 없음.
+
+## 58. 카테고리 선택 후 설정 변경으로 다른 견적 문맥이 저장되는 문제 방지 — 2026-09-24
+
+- 시작 main8895916, 미커밋 변경 없음. 상품 추가는 profileId만 전송하므로 선택 이후 다른 창에서 분류/양식 연결을 바꾸면 변경된 설정을 알리지 않고 사용했다. 선택 당시 revision을 함께 보내고 서버에서 소유자 범위의 저장 설정과 비교하도록 수정했다.
+- expectedProfileRevision 누락/잘못된 값은400, 저장 설정이 변경됐으면409 CATEGORY_PROFILE_CHANGED다. 충돌시 기본설정 읽기와 enqueue를 하지 않는다. 일치하면 해당 snapshot으로 기존 대기열 저장을 수행한다. 이미 존재하는 동일 URL 문맥 보존 규칙은 변경하지 않았다.
+- 입력 유지·최신 카테고리 다시 선택 버튼을 추가했다. URL/특징/키워드/목표를 컴포넌트 상태에 보관해 카테고리 왕복 시 유지하고 성공시에만 초안을 비운다. 버전을 선택하지 않았거나 처리 중이면 URL 단계/제출 이동을 제한한다. 기존 저장 상품과 양식은 수정하지 않는다.
+- 검증: 전체362/362, TypeScript/ESLint/production build 통과. 이후 버튼 비활성화 조건 보완 뒤 TypeScript 재통과. 신규 서버 테스트는 충돌409 및 쓰기 없음, 일치 snapshot 저장, 누락/0/음수/소수/문자/비안전 정수400을 확인한다. outputs/intake-revision-all-tests.log 및 intake-revision-build.log. 실제 브라우저 입력 왕복과 운영 데이터 검증은 미실시다.
+- 다음: 카테고리/Excel 공식 규격 대조, 실제1688/AI/Supplier Hub 연결 및 운영 검증이 여전히 필요하다. 이번 변경은 카테고리 선택 보존과 충돌 방지이며 전체 자동화 완성을 뜻하지 않는다. 유료 호출·운영 등록·Cloudflare 배포 없음.

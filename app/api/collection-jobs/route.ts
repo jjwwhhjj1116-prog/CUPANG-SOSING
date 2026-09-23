@@ -20,12 +20,14 @@ export async function GET() {
 }
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
-  let entries;let profileId:string;let features:string;let keywords:string;
+  let entries;let profileId:string;let expectedProfileRevision:number;let features:string;let keywords:string;
   try {
     const input:unknown=await request.json();entries = parseCollectionRequest(input);
     const body=input as Record<string,unknown>;
     if(typeof body.profileId!=='string'||!/^[a-f0-9-]{36}$/.test(body.profileId))throw new Error('URL 입력 전에 카테고리·견적서 연결을 선택해주세요.');
     profileId=body.profileId;
+    if(!Number.isSafeInteger(body.expectedProfileRevision)||(body.expectedProfileRevision as number)<1)throw new Error('카테고리 설정 버전이 없습니다. 카테고리를 다시 선택해주세요.');
+    expectedProfileRevision=body.expectedProfileRevision as number;
     for(const key of ['features','keywords'])if(body[key]!==undefined&&(typeof body[key]!=='string'||String(body[key]).length>2000))throw new Error('특징·키워드는 각각 2,000자 이하여야 합니다.');
     features=String(body.features??'');keywords=String(body.keywords??'');
   }
@@ -34,6 +36,7 @@ export async function POST(request: Request) {
     const owner=await getWorkspaceOwnerId();
     const category=await getCategoryProfile(owner,profileId);
     if(!category)return NextResponse.json({error:'선택한 카테고리 연결을 찾을 수 없습니다.'},{status:404});
+    if(category.revision!==expectedProfileRevision)return NextResponse.json({error:'선택한 카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 최신 카테고리를 다시 선택해주세요.',code:'CATEGORY_PROFILE_CHANGED'},{status:409});
     const savedSettings=await getSettings(owner);
     const settings=validateSettings(savedSettings?JSON.parse(savedSettings.payload):{});
     const jobs = await enqueueCollection(owner, entries, {category,settings,features,keywords,capturedAt:new Date().toISOString()});
