@@ -31,7 +31,7 @@ test('hierarchy imports only observed root/child paths with exact order and all 
     if (node.path.length === 1) count += node.children.length;
   }
   assert.equal(count, 173);
-  assert.equal(choices.filter(choice => choice.isLeaf).length, 22);
+  assert.equal(choices.filter(choice => choice.isLeaf).length, 23);
   assert.equal(choices.filter(model.canConfirmCategory).length, model.categoryObservationScope.knownCodes);
   const verified = choices.filter(choice => choice.codeEvidence === 'supplier-hub');
   assert.equal(verified.length, model.categoryObservationScope.supplierHubCodes);
@@ -49,6 +49,9 @@ test('unknown leaves and unobserved branches cannot become 80719 profiles, but o
       assert.deepEqual(plain(choice.path), knownPath);
       const result = partial.categoryProfileForChoice(choice);
       assert.equal(result.categoryId, '80719'); assert.equal(result.template, null); assert.deepEqual(plain(result.mappings), []);
+    } else if (choice.categoryId === '77442') {
+      assert.equal(partial.canConfirmCategory(choice), true);
+      assert.equal(choice.codeEvidence, 'couplus');
     } else {
       assert.equal(partial.canConfirmCategory(choice), false);
       assert.throws(() => partial.categoryProfileForChoice(choice), /코드/);
@@ -103,7 +106,7 @@ test('only exact observed leaf paths receive Hub IDs; branches, similar labels a
   const bounded = load({ ...hubObservation, categoryIds: records, verifiedLeafCount: 9999 });
   const choices = bounded.categoryChoices([]);
   assert.equal(bounded.categoryObservationScope.supplierHubCodes, 1);
-  assert.equal(bounded.categoryObservationScope.knownCodes, 2);
+  assert.equal(bounded.categoryObservationScope.knownCodes, 3);
   assert.equal(choices.find(choice => choice.categoryId === '109047').codeEvidence, 'supplier-hub');
   assert.equal(choices.find(choice => choice.categoryId === '80719').codeEvidence, 'couplus');
   assert.equal(choices.find(choice => choice.path.at(-1) === '기타수납/정리용품').categoryId, '');
@@ -127,4 +130,17 @@ test('search finds code, full branch paths and saved profile names without assig
   assert.equal(model.searchCategoryChoices(choices, '없는카테고리')[0], undefined);
   assert.deepEqual(plain(model.categoryLevel(choices, [], 1)), []);
   assert.deepEqual(plain(model.categoryLevel(choices, ['뷰티'], -1)), []);
+});
+
+test('board category can be reached at every level, searched, and converted to an exact quotation profile',()=>{
+ const choices=model.categoryChoices([]);const path=['완구/취미','보드게임','바둑/체스/윷놀이','바둑','바둑알+바둑판'];
+ for(let depth=0;depth<path.length;depth++)assert.ok(model.categoryLevel(choices,path.slice(0,depth),depth).includes(path[depth]));
+ const leaf=model.searchCategoryChoices(choices,'77442')[0];
+ assert.equal(model.canConfirmCategory(leaf),true);assert.equal(leaf.codeEvidence,'couplus');assert.equal(leaf.codeObservedAt,'2026-09-23');
+ assert.deepEqual(plain(model.categoryProfileForChoice(leaf)),{name:'바둑알+바둑판',categoryId:'77442',categoryPath:path,template:null,mappings:[]});
+ assert.equal(model.categoryChoicesAtPath(choices,path.slice(0,-1))[0].childrenObserved,false);
+ const saved=model.categoryChoices([profile('board','77442',path)]);
+ assert.equal(saved.filter(c=>c.categoryId==='77442').length,1);assert.equal(saved.find(c=>c.profileId==='board').codeEvidence,'couplus');
+ const wrong=model.categoryChoices([profile('wrong','77442',['다른 분류','바둑알+바둑판'])]);
+ assert.equal(wrong.find(c=>c.profileId==='wrong').codeEvidence,'saved');
 });

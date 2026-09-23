@@ -12,7 +12,11 @@ const pathKey = (path: readonly string[]) => JSON.stringify(path);
 const samePath = (left: readonly string[], right: readonly string[]) => pathKey(left) === pathKey(right);
 // This leaf and ID were read from the user's Couplus quotation screen. Other
 // leaves must come from an observed catalog or the owner's saved profiles.
-const knownCode = { categoryId: '80719', path: ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] };
+const knownCodes = [
+  { categoryId: '80719', path: ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'], observedAt: observation.observedAt },
+  // Full breadcrumb and code observed in saved Couplus quotation; siblings are not fully observed.
+  { categoryId: '77442', path: ['완구/취미', '보드게임', '바둑/체스/윷놀이', '바둑', '바둑알+바둑판'], observedAt: '2026-09-23' },
+];
 const observedLeafPaths = new Set(observation.nodes.flatMap(node => node.children.filter(child => child.isLeaf).map(child => pathKey([...node.path, child.label]))));
 // Only connect a code to a leaf whose entire path was independently observed.
 // Conflicting evidence for a path is excluded, rather than taking the last ID.
@@ -34,14 +38,20 @@ function observedChoices(): CategoryChoice[] {
   const items = new Map<string, CategoryChoice>();
   const add = (path: string[], isLeaf: boolean) => {
     const hubCode = isLeaf ? confirmedHubCodes.get(pathKey(path)) : undefined;
-    const couplusCode = isLeaf && samePath(path, knownCode.path);
-    const id = hubCode?.categoryId ?? (couplusCode ? knownCode.categoryId : '');
+    const couplusCode = isLeaf ? knownCodes.find(record => samePath(path, record.path)) : undefined;
+    const id = hubCode?.categoryId ?? (couplusCode?.categoryId ?? '');
     items.set(pathKey(path), { key: id ? `observed:${id}` : `observed-path:${pathKey(path)}`, categoryId: id, path,
       evidence: 'observed', isLeaf, childrenObserved: branches.has(pathKey(path)), templateLinked: false,
-      codeEvidence: hubCode ? 'supplier-hub' : couplusCode ? 'couplus' : 'unconfirmed', codeObservedAt: hubCode?.observedAt ?? (couplusCode ? observation.observedAt : null) });
+      codeEvidence: hubCode ? 'supplier-hub' : couplusCode ? 'couplus' : 'unconfirmed', codeObservedAt: hubCode?.observedAt ?? (couplusCode?.observedAt ?? null) });
   };
   for (const root of observation.rootLabels) add([root], false);
   for (const node of observation.nodes) for (const child of node.children) add([...node.path, child.label], child.isLeaf);
+  for (const record of knownCodes) {
+    for (let depth = 1; depth <= record.path.length; depth++) {
+      const path = record.path.slice(0, depth);
+      if (!items.has(pathKey(path))) add(path, depth === record.path.length);
+    }
+  }
   return [...items.values()];
 }
 export const observedCategories: CategoryChoice[] = observedChoices();
