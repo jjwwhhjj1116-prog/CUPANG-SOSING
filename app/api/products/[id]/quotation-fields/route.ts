@@ -40,7 +40,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     let offerId: string | null = null;
     try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* Legacy non-product URLs have no inferred category. */ }
     if (offerId) {
-      const source = await readQuotationCollectionSource(owner, offerId); collection = { offerId, snapshot: source };
+      const source = await readQuotationCollectionSource(owner, offerId, id); collection = { offerId, snapshot: source };
       const captured = source ? JSON.parse(source.payload) : null;
       if (captured?.category) {
         const category = validateCategoryProfile(captured.category);

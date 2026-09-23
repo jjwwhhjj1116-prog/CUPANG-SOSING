@@ -30,7 +30,7 @@ export async function readQuotationExportSource(owner: string, productId: string
     let offerId: string | null = null;
     try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* No inferred category for legacy/non-product URLs. */ }
     if (offerId) {
-      const captured = await readQuotationCollectionSource(owner, offerId); collection = { offerId, snapshot: captured };
+      const captured = await readQuotationCollectionSource(owner, offerId, productId); collection = { offerId, snapshot: captured };
       const payload = captured ? JSON.parse(captured.payload) : null;
       if (payload?.category) {
         const category = validateCategoryProfile(payload.category);

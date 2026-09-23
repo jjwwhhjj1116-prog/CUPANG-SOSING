@@ -1,13 +1,13 @@
 import { env } from 'cloudflare:workers';
 import { emptyQuotationOverrides, type QuotationOverrides } from '@/app/quotation-schema';
-import { collectionSchema } from '@/db/collection-jobs';
+import { collectionSchema, collectionProductSchema } from '@/db/collection-jobs';
 
 export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotation_fields (
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
   revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
 )`;
 export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; updatedAt: string | null };
-export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string };
+export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;
   contentRevision: number; optionRevision: number; settingsPayload: string | null;
@@ -17,7 +17,7 @@ export type QuotationSourceGuard = {
 type Row = { payload: string; revision: number };
 async function database() {
   if (!env.DB) throw new Error('D1 unavailable');
-  await env.DB.batch([env.DB.prepare(quotationFieldsSchema), env.DB.prepare(collectionSchema),
+  await env.DB.batch([env.DB.prepare(quotationFieldsSchema), env.DB.prepare(collectionSchema), env.DB.prepare(collectionProductSchema),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)')]);
   return env.DB;
 }
@@ -29,8 +29,17 @@ export async function readQuotationFields(owner: string, productId: string): Pro
   if (state.schemaVersion !== 1 || state.productId !== productId || state.revision !== row.revision || !state.overrides || !state.overrides.common || !state.overrides.options) throw new Error('Invalid quotation fields');
   return state;
 }
-export async function readQuotationCollectionSource(owner: string, offerId: string): Promise<QuotationCollectionSource | null> {
+export async function readQuotationCollectionSource(owner: string, offerId: string, productId?: string): Promise<QuotationCollectionSource | null> {
   const db = await database();
+  if (productId) {
+    const link = await db.prepare('SELECT job_id FROM collection_products WHERE owner_id=? AND product_id=?').bind(owner,productId).first<{job_id:string}>();
+    if (link) {
+      const captured = await db.prepare(`SELECT j.id,c.payload,j.updated_at FROM collection_jobs j JOIN collection_context c ON c.job_id=j.id
+        WHERE j.owner_id=? AND j.offer_id=? AND j.id=? AND j.status='awaiting_connector'`).bind(owner,offerId,link.job_id).first<{id:string;payload:string;updated_at:string}>();
+      if (!captured) throw new Error('상품에 연결된 카테고리 원문을 확인하지 못했습니다.');
+      return {id:captured.id,payload:captured.payload,updatedAt:captured.updated_at,linked:true};
+    }
+  }
   const row = await db.prepare(`SELECT j.id,c.payload,j.updated_at FROM collection_jobs j JOIN collection_context c ON c.job_id=j.id
     WHERE j.owner_id=? AND j.offer_id=? AND j.status='awaiting_connector' ORDER BY j.created_at DESC,j.id DESC LIMIT 1`)
     .bind(owner, offerId).first<{ id: string; payload: string; updated_at: string }>();
@@ -50,6 +59,12 @@ function sourceGuard(owner: string, productId: string, source: QuotationSourceGu
     args.push(source.profile.id, source.profile.revision);
   }
   if (source.collection) {
+    if (source.collection.snapshot?.linked) {
+      conditions.push('EXISTS(SELECT 1 FROM collection_products cp WHERE cp.product_id=p.id AND cp.owner_id=p.owner_id AND cp.job_id=?)');
+      args.push(source.collection.snapshot.id);
+    } else {
+      conditions.push('NOT EXISTS(SELECT 1 FROM collection_products cp WHERE cp.product_id=p.id AND cp.owner_id=p.owner_id)');
+    }
     if (source.collection.snapshot) {
       conditions.push(`EXISTS(SELECT 1 FROM collection_jobs j JOIN collection_context c ON c.job_id=j.id
         WHERE j.owner_id=p.owner_id AND j.offer_id=? AND j.status='awaiting_connector' AND j.id=? AND j.updated_at=? AND c.payload=?)`);

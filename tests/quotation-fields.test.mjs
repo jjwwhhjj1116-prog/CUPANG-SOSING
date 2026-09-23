@@ -39,6 +39,57 @@ function put(h,view,changes,profileId){return h.route.PUT(request({expectedRevis
 async function profile(h,id='80719'){return h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'LOCAL TEST category',categoryId:id,categoryPath:id==='80719'?['주방용품','주방수납/정리','주방수납바구니/바스켓']:['미확인 카테고리'],template:null,mappings:[]});}
 const baseGuard=()=>({productVersion:version,imageKeys:product.image_keys,pricingPolicy:null,contentRevision:0,optionRevision:0,settingsPayload:null,profile:null,collection:null});
 
+async function linkedFixture(h) {
+ const selected=await profile(h);const settings=h.load('app/workspace-settings.ts').defaultSettings;
+ const jobs=await h.load('db/collection-jobs.ts').enqueueCollection('owner',[{offerId:'123456789',sourceUrl:product.source_url,goal:'work'}],{category:selected,settings,features:'',keywords:'',capturedAt:version});
+ h.sqlite.prepare('INSERT INTO collection_products VALUES(?,?,?,?)').run(jobs[0].id,'owner','product',version);
+ return jobs[0];
+}
+
+test('product-bound category is shared by editor and export and missing context never falls back',async()=>{
+ const h=await harness();try{
+  const job=await linkedFixture(h);const view=await get(h);
+  const exports=h.load('app/exports/quotation-source.ts');const saved=await exports.readQuotationExportSource('owner','product',null);
+  assert.equal(saved.source.collection.snapshot.linked,true);assert.equal(saved.source.collection.snapshot.id,job.id);
+  assert.deepEqual(JSON.parse(JSON.stringify(exports.resolveQuotationExport(saved))),view.resolved);
+  h.sqlite.prepare('DELETE FROM collection_context WHERE job_id=?').run(job.id);
+  await assert.rejects(()=>h.store.readQuotationCollectionSource('owner','123456789','product'),/카테고리 원문/);
+  assert.equal((await h.route.GET(request(),context)).status,503);
+  assert.equal(await h.store.readQuotationCollectionSource('other','123456789','product'),null);
+ }finally{h.sqlite.close();}
+});
+
+test('category link removal between read and save rejects writes and preserves quotation draft',async()=>{
+ const h=await harness();try{
+  const job=await linkedFixture(h);const view=await get(h);
+  h.setBeforeSave(()=>h.sqlite.prepare('DELETE FROM collection_products WHERE job_id=?').run(job.id));
+  const result=await put(h,view,[{fieldKey:'brand',optionId:null,value:'must not save'}]);
+  assert.equal(result.status,409);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM product_quotation_fields').get().n,0);
+ }finally{h.sqlite.close();}
+});
+
+test('saved SEO, option pricing and stage image changes reach editor and export while manual quotation values survive',async()=>{
+ const h=await harness();try{
+  await linkedFixture(h);let before=await get(h);
+  const response=await put(h,before,[{fieldKey:'taxType',optionId:null,value:'면세'}]);assert.equal(response.status,200);
+  const content=h.load('app/product-content.ts').emptyProductContent('product');content.revision=1;content.updatedAt=version;
+  content.seo.title.value='수정된 SEO 상품명';content.seo.keywords.value=['검색어'];content.seo.description.value='수정 상세 설명';
+  for(const role of ['main','additional','detail','label'])content.assets[role].value=['owner/image.png'];
+  content.label.countryOfOrigin.value='확인 제조국';
+  h.sqlite.prepare('INSERT INTO product_content VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(content),version);
+  const optionsModel=h.load('app/product-options.ts');
+  const options=optionsModel.applyOptionRows(optionsModel.emptyProductOptions('product'),[{...optionsModel.emptyOptionInput('one'),unitCostCny:4,included:true,unitsPerPack:2}],version);
+  h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(options),version);
+  const view=await get(h);assert.notEqual(view.inputFingerprint,before.inputFingerprint);
+  const row=view.resolved.rows.find(row=>row.optionId==='one');
+  for(const [id,value] of Object.entries({title:'수정된 SEO 상품명',searchTags:'검색어',quantity:'2',taxType:'면세',noticeCountryOfOrigin:'확인 제조국'}))assert.equal(row.fields[id].value,value);
+  for(const id of ['mainImage','additionalImages','detailImages','labelImages'])assert.equal(row.fields[id].value,'owner/image.png');
+  assert.match(row.fields.detailHtml.value,/수정 상세 설명/);assert.equal(row.fields.supplyPrice.source,'pricing');
+  const exports=h.load('app/exports/quotation-source.ts');const saved=await exports.readQuotationExportSource('owner','product',null);
+  assert.deepEqual(JSON.parse(JSON.stringify(exports.resolveQuotationExport(saved))),view.resolved);
+ }finally{h.sqlite.close();}
+});
+
 test('GET resolves latest saved sources and collection category without creating overrides or claiming submission readiness',async()=>{
   const h=await harness();try{
     const selected=await profile(h);const settings=h.load('app/workspace-settings.ts').defaultSettings;
