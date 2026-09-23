@@ -118,3 +118,29 @@ test('CSV and TSV exports follow mapped column order, explicit row positions and
     assert.deepEqual(JSON.parse(JSON.stringify(result.report.missingRequired)), [{ row: 5, column: 1, header: '상품명' }]);
   }
 });
+
+test('mapped XLSX reports literal dropdown mismatches without changing values or original rules', async () => {
+  const input = await inputFrom(entries(value => value.replace('sqref="D5:D10"', 'sqref="D5 D7:D10"')),
+    {rows:[{title:'상품',supplyPrice:10,skuName:'목록 밖'},{title:'상품2',supplyPrice:20,skuName:'검사 범위 밖'}]});
+  const result = await createMappedQuotation(input);
+  assert.equal(result.report.warnings.filter(value=>value.includes('드롭다운')).length,1);
+  assert.ok(result.report.warnings.some(value=>value.includes('견적서!D5')));
+  const archive = await reader.readXlsxArchive(result.bytes.buffer);
+  const sheet = decode(archive.get('xl/worksheets/sheet1.xml'));
+  assert.ok(sheet.includes('목록 밖')); assert.ok(sheet.includes('sqref="D5 D7:D10"'));
+  const valid = await createMappedQuotation(await inputFrom());
+  assert.equal(valid.report.warnings.some(value=>value.includes('불일치')||value.includes('일치하지 않습니다')),false);
+});
+
+test('mapped XLSX distinguishes allowed blanks and unresolved list references with bounded diagnostics', async () => {
+  const blank = await createMappedQuotation(await inputFrom(entries(value=>value.replace('type="list"','type="list" allowBlank="true"')),
+    {rows:[{title:'상품',supplyPrice:10,skuName:''}]}));
+  assert.equal(blank.report.warnings.some(value=>value.includes('드롭다운')),false);
+  assert.equal(blank.report.missingRequired.length,1);
+  const referenced = await createMappedQuotation(await inputFrom(entries(value=>value.replace('"검정,흰색"',"'참고'!$A$1:$A$10"))));
+  assert.ok(referenced.report.warnings.some(value=>value.includes('검사하지 못했습니다')));
+  const many = await createMappedQuotation(await inputFrom(entries(value=>value.replace('D5:D10','D5:D204')),
+    {rows:Array.from({length:200},()=>({title:'상품',supplyPrice:10,skuName:'목록 밖'}))}));
+  assert.equal(many.report.warnings.filter(value=>value.includes('견적서!D')).length,20);
+  assert.ok(many.report.warnings.some(value=>value.includes('총 200개')));
+});

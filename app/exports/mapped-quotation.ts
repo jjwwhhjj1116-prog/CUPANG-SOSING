@@ -139,6 +139,38 @@ function safeCell(value: unknown): string | number {
 }
 function delimitedCell(value: string | number): string { const text = String(value); return `"${(/^[\s]*[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`; }
 
+/** Check literal lists only. Formula/range references are never evaluated. */
+function listValidationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number): string[] {
+  const root = spans(source);
+  const warnings: string[] = []; let mismatches = 0; let unchecked = 0;
+  const rules = root.children.filter(node => node.local === 'dataValidations').flatMap(node => node.children.filter(child => child.local === 'dataValidation'));
+  for (const rule of rules) {
+    let areas: ReturnType<typeof range>[];
+    try { areas = (rule.attributes.sqref ?? '').trim().split(/\s+/).filter(Boolean).map(range); }
+    catch { unchecked++; continue; }
+    const covered = (column: number, row: number) => areas.some(area => column >= area.start.column && column <= area.end.column && row >= area.start.row && row <= area.end.row);
+    if (!values.some((_row, index) => profile.mappings.some(mapping => covered(mapping.column, startRow + index)))) continue;
+    const formula = rule.children.find(node => node.local === 'formula1');
+    const raw = formula ? source.slice(formula.openEnd, formula.closeStart) : '';
+    const expression = decodeXml(raw).trim();
+    // Nested XML, named ranges, functions and sheet references need Excel itself.
+    if (rule.attributes.type !== 'list' || !formula || formula.children.length || raw.includes('<') || !/^"[^"]*"$/.test(expression)) { unchecked++; continue; }
+    const allowed = expression.slice(1, -1).split(',');
+    for (const [index, row] of values.entries()) for (const mapping of profile.mappings) {
+      if (!covered(mapping.column, startRow + index)) continue;
+      const value = String(row[mapping.column]);
+      if (!value && ['1', 'true'].includes(rule.attributes.allowBlank ?? '')) continue;
+      if (allowed.some(choice => choice.toLowerCase() === value.toLowerCase())) continue;
+      mismatches++;
+      if (warnings.length < 20) warnings.push(`${profile.template!.sheetName}!${columnName(mapping.column)}${startRow + index} (${profile.template!.headers[mapping.column] || '이름 없는 열'}): 원본 드롭다운 선택지와 입력값이 일치하지 않습니다.`);
+    }
+  }
+  if (mismatches > 20) warnings.push(`드롭다운 불일치 총 ${mismatches}개 중 첫 20개만 표시했습니다.`);
+  if (unchecked) warnings.push(`원본 유효성 검사 ${unchecked}개는 수식·참조·지원하지 않는 규칙이므로 검사하지 못했습니다. Excel에서 확인해주세요.`);
+  if (root.children.some(node => node.local === 'extLst')) warnings.push('Excel 확장 규칙은 검사하지 않았습니다. 원본 프로그램에서 유효성 검사를 확인해주세요.');
+  return warnings;
+}
+
 export async function createMappedQuotation(input: MappedQuotationInput): Promise<MappedQuotationResult> {
   const profile = validateCategoryProfile(input.profile); const template = profile.template;
   if (!template || !profile.mappings.length) fail('견적서 원본과 열 연결이 필요합니다.');
@@ -172,7 +204,9 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     const headers = xlsxHeaders(inspection, template.sheetName, template.headerRow);
     if (JSON.stringify(headers.map(value => value.trim())) !== JSON.stringify(template.headers)) fail('견적서 원본 머리글과 열 연결이 일치하지 않습니다.');
     const path = xlsxWorksheetPath(files, template.sheetName); const original = files.get(path); if (!original) fail('원본 시트를 찾을 수 없습니다.');
-    const updated = encoder.encode(writeWorksheet(decoder.decode(original), template.sheetName, profile, values, input.dataStartRow));
+    const source = decoder.decode(original);
+    report.warnings.push(...listValidationWarnings(source, profile, values, input.dataStartRow));
+    const updated = encoder.encode(writeWorksheet(source, template.sheetName, profile, values, input.dataStartRow));
     if (updated.byteLength > 10_000_000) fail('생성한 워크시트가 10MB를 초과합니다.');
     files.set(path, updated); inspectXlsxArchive(files);
     report.warnings.push(...inspection.warnings, '기존 수식과 유효성 검사 규칙을 보존했습니다. 수식 계산값과 신규 행의 검사 범위는 Excel에서 확인해주세요.');
