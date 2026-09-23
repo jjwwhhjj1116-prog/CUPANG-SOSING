@@ -9,6 +9,7 @@ import { AutomationPanel } from '@/app/components/automation-panel';
 import { ProductOptionsEditor } from '@/app/components/product-options-editor';
 import { QuotationPanel } from '@/app/components/quotation-panel';
 import { SubmissionReviewPanel } from '@/app/components/submission-review-panel';
+import { RegistrationBoard } from '@/app/components/registration-board';
 import TranslationPanel from '@/app/components/translation-panel';
 import ImageGenerationPanel from '@/app/components/image-generation-panel';
 import { DocumentImagePanel } from '@/app/components/document-image-panel';
@@ -43,10 +44,6 @@ async function readJson<T = unknown>(url: string, init?: RequestInit): Promise<T
   return result as T;
 }
 
-const stages = [
-  { label:'상품 수집', detail:'1688 URL', tone:'blue' }, { label:'AI 최적화', detail:'SEO · 가격', tone:'purple' },
-  { label:'콘텐츠 제작', detail:'이미지 · 상세', tone:'orange' }, { label:'제안 전송', detail:'견적서 · Supplier Hub', tone:'green' },
-];
 const registrationSteps = ['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서'];
 const imageSteps = ['대표 이미지','추가 이미지','상세 이미지'];
 const supportingTabs = [{value:'작업',label:'작업 이력'},{value:'번역',label:'번역·SEO 생성'},{value:'옵션',label:'옵션·사이즈표'}];
@@ -81,8 +78,8 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState(defaults);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('전체');
+
+
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [transmitOpen, setTransmitOpen] = useState(false);
@@ -165,14 +162,6 @@ export default function DashboardClient({ userName }: { userName: string }) {
     return () => { active = false; };
   }, [applyWorkspace]);
 
-  const filtered = useMemo(() => products.filter((p) => {
-    const matchesQuery = `${p.title} ${p.source_url}`.toLowerCase().includes(query.toLowerCase());
-    const matchesFilter = filter === '전체' || (filter === '작업 중' && !['전송 가능','전송완료'].includes(p.registration_status)) || p.registration_status === filter;
-    return matchesQuery && matchesFilter;
-  }), [products, query, filter]);
-
-  const ready = products.filter(p => p.registration_status === '전송 가능');
-  const completed = products.filter(p => p.seo_status === '완료').length;
   const showToast = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2600); };
 
   async function createProducts(event: FormEvent<HTMLFormElement>) {
@@ -263,39 +252,23 @@ export default function DashboardClient({ userName }: { userName: string }) {
       </aside>
 
       <section className="content">
-        <header className="topbar"><div><p className="eyebrow">ROCKET DELIVERY AUTOMATION</p><h1>로켓배송 AI상품등록</h1><p>소싱 URL부터 Supplier Hub 제안서까지 한 번에 준비하세요.</p></div>
-          <div className="top-actions"><div className="user-chip"><span>{userName.slice(0,1).toUpperCase()}</span><div><strong>{userName}</strong><small>Rocket seller</small></div></div><button className="btn ghost" onClick={()=>setSettingsOpen(true)}>⚙ 기본설정</button><button className="btn primary" onClick={()=>{setIntakeStep('category');setAddOpen(true);}}>＋ 상품 추가</button></div></header>
+        <header className="topbar"><div><h1>로켓배송 AI상품등록</h1><p>상품별 등록 현황 및 관리</p></div>
+          <div className="top-actions"><span className="workspace-user">{userName}</span><button className="btn settings" onClick={()=>setSettingsOpen(true)}>⚙ 기본설정</button><button className="btn primary" onClick={()=>{setIntakeStep('category');setAddOpen(true);}}>＋ 상품 추가</button><details className="bulk-action-menu"><summary className="btn ghost">전체 작업 ▾</summary><div><button type="button" onClick={()=>setSelected(new Set(products.map(product=>product.id)))}>최근 상품 전체 선택</button><button type="button" onClick={()=>setSelected(new Set())}>선택 해제</button><button type="button" onClick={()=>setBatchOpen(true)}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy} onClick={runAutomation}>작업 개시</button><button className="btn rose" onClick={()=>setTransmitOpen(true)}>등록 전송</button></div></header>
 
         <div className="panel-note" role="note"><div><strong>수집 공급원 연결 대기 · 실제 자동화 미완성</strong><p>카테고리와 양식을 선택해 수집을 요청하세요. 자동수집 공급원은 연결 대기 중이며, 저장된 상품의 자료 편집·가격 계산·견적서 출력은 사용할 수 있습니다. AI 번역·이미지 가공은 서버 설정과 유료 승인 후 실행합니다.</p></div></div>
         {loadError&&<div className="panel-note" role="alert"><p>{loadError}</p><button className="btn ghost" onClick={()=>{setLoading(true);setLoadError('');void loadWorkspace();}} disabled={loading}>다시 불러오기</button></div>}
         {pendingUpload&&<div className="panel-note" role="status"><div><strong>업로드 파일 연결 대기</strong><p>파일은 보관돼 있습니다. 상품에 연결하기를 다시 시도할 수 있습니다.</p></div><button className="btn ghost" disabled={busy} onClick={()=>void retryUploadedImage()}>보관된 이미지 연결 재시도</button></div>}
-        <section className="pipeline" aria-label="자동화 진행 단계">{stages.map((stage,index)=><div className="step" key={stage.label}><span className={`step-number ${stage.tone}`}>{index+1}</span><div><strong>{stage.label}</strong><small>{stage.detail}</small></div>{index<3&&<span className="step-arrow">→</span>}</div>)}</section>
+
 
         {view==='archive'?<ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/>:<>
-        <section className="collection-panel" aria-label="수집 대기열">
+        <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>
           <label className="collection-history"><input type="checkbox" checked={showCancelled} onChange={event=>setShowCancelled(event.target.checked)} />취소한 요청 보기 · 최근 200건</label>
           {!collectionJobs.some(job=>showCancelled || job.status !== 'cancelled') && <p className="collection-empty">{loading ? '대기열을 불러오는 중입니다.' : loadError ? '대기열 조회 상태를 확인해주세요.' : '아직 수집 요청이 없습니다. 상품 추가에서 URL을 붙여넣으세요.'}</p>}
           <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><small>{job.source_url}</small><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small></div><span className={`collection-status ${job.status}`}>{job.status === 'cancelled' ? '취소됨' : '수집 연결 대기'}</span>{job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
-        </section>
+        </details>
 
-        <section className="summary-grid">
-          <article><span className="metric-icon blue">◈</span><div><small>전체 상품</small><strong>{products.length}</strong></div><em>저장된 상품</em></article>
-          <article><span className="metric-icon purple">✦</span><div><small>기존 완료 표시 (미검증)</small><strong>{completed}</strong></div><em>완료율 {Math.round(completed/Math.max(products.length,1)*100)}%</em></article>
-          <article><span className="metric-icon orange">₩</span><div><small>기본 공급 마진</small><strong>{settings.supplyMargin}%</strong></div><em>{settings.minimumMarginEnabled?'최소 '+won(settings.minimumMargin):'최소 마진 사용 안 함'}</em></article>
-          <article><span className="metric-icon green">✓</span><div><small>기존 전송 가능 표시</small><strong>{ready.length}</strong></div><em>Supplier Hub</em></article>
-        </section>
-
-        <section className="workspace"><div className="workspace-head"><div><h2>상품 작업 보드</h2><p>각 단계를 확인하고 필요한 항목만 바로 수정할 수 있습니다.</p></div><div className="workspace-actions"><button className="btn ghost" onClick={()=>{setIntakeStep('category');setAddOpen(true);}}>카테고리·견적서 설정</button><button className="btn dark" disabled={busy} onClick={runAutomation}>{busy?'처리 중…':'작업 개시'}</button><button className="btn rose" onClick={()=>setTransmitOpen(true)}>등록 전송</button></div></div>
-          <div className="filters"><label className="search"><span>⌕</span><input aria-label="상품 검색" value={query} onChange={e=>setQuery(e.target.value)} placeholder="상품명 또는 URL 검색" /></label>{['전체','작업 중','검토 대기','전송 가능'].map(value=><button key={value} onClick={()=>setFilter(value)} className={`filter-chip ${filter===value?'active':''}`}>{value}</button>)}</div>
-          <div className="table-wrap"><table className="product-work-table"><thead><tr><th><input type="checkbox" aria-label="전체 선택" checked={selected.size===products.length&&products.length>0} onChange={e=>setSelected(e.target.checked?new Set(products.map(p=>p.id)):new Set())}/></th><th>상품 · 원본 URL</th><th>등록일 · 한국시간</th><th>소싱 원가</th><th>판매가 / 공급가</th><th>AI 작업</th><th>이미지</th><th>견적서</th><th>상태</th><th /></tr></thead>
-            <tbody>{filtered.map((p,index)=><tr key={p.id}>
-              <td><input type="checkbox" aria-label={`${p.title} 선택`} checked={selected.has(p.id)} onChange={e=>setSelected(current=>{const next=new Set(current); if (e.target.checked) next.add(p.id); else next.delete(p.id); return next;})}/></td>
-              <td className="product-info-cell"><button className="product-cell" onClick={()=>openProduct(p)}><div className={`product-thumb ${index%3===1?'coral':index%3===2?'violet':''}`}>1688</div><div><strong>{p.title}</strong><span>SF-{p.id.slice(0,8).toUpperCase()} · {p.options_count}개 옵션</span></div></button>{sourceLink(p.source_url)?<a className="product-source-url" href={sourceLink(p.source_url)} target="_blank" rel="noopener noreferrer" aria-label={`${p.title} 원본 URL`}>{p.source_url}</a>:<span className="product-source-url">{p.source_url||'원본 URL 미입력'}</span>}</td>
-              <td className="product-created-cell"><time dateTime={p.created_at}>{registrationDate(p.created_at)}</time></td>
-              <td><strong>¥ {p.source_price_cny.toFixed(2)}</strong><span className="sub">환율 {p.exchange_rate}원</span></td><td><strong>{won(p.sale_price)}</strong><span className="sub">공급가 {won(p.supply_price)}</span></td><td><Status value={p.seo_status}/></td><td><Status value={p.image_status}/></td><td><Status value={p.quote_status}/></td><td><Status value={p.registration_status}/></td><td><button className="more" aria-label={`${p.title} 상세`} onClick={()=>openProduct(p)}>•••</button></td>
-            </tr>)}</tbody></table>{!filtered.length&&<div className="empty"><span>⌕</span><strong>{loading?'상품을 불러오는 중입니다.':loadError?'목록을 확인하지 못했습니다.':'조건에 맞는 상품이 없습니다.'}</strong><small>{loadError?'위 오류를 확인하고 다시 불러와주세요.':'URL을 추가해 수집을 요청하거나 검색 조건을 확인하세요.'}</small></div>}</div>
-        </section></>}
+        <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} loading={loading} error={loadError} onArchive={()=>setView('archive')}/></>}
       </section>
 
       {addOpen&&<Modal wide title="상품 수집 준비" subtitle="카테고리·견적서 연결을 선택한 다음 URL을 입력합니다." onClose={()=>{if(!busy)setAddOpen(false);}}>
@@ -351,10 +324,6 @@ export default function DashboardClient({ userName }: { userName: string }) {
   );
 }
 
-function Status({ value }: { value: string }) {
-  const kind = value === '완료' ? 'success' : value.includes('전송') ? 'ready' : value.includes('처리') || value.includes('작업') ? 'progress' : value === '대기' ? 'muted' : 'warning';
-  return <span className={`status ${kind}`}>{value}</span>;
-}
 function Modal({ title, subtitle, onClose, children, wide=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" onClick={onClose}>×</button></header>{children}</section></div>;
 }
