@@ -9,7 +9,7 @@ import type { QuotationExportSource } from '@/app/exports/quotation-source';
 import { ExportSizeError, utf8ByteLength } from '@/app/exports/zip';
 
 const MAX_QUOTATION_TEXT_BYTES = 6 * 1024 * 1024;
-function ensureFieldBudget(document: { rows: unknown[] }, tables: (string | number)[][][]) {
+function ensureFieldBudget(document: { rows: unknown[] }, tables: (string | number)[][][], additionalBytes = 0) {
   // A common 150k-character HTML override can expand 200 times. Count each
   // bounded row first so JSON/CSV never materialize a hundred-megabyte string.
   let bytes = utf8ByteLength(JSON.stringify({ ...document, rows: [] }));
@@ -17,7 +17,7 @@ function ensureFieldBudget(document: { rows: unknown[] }, tables: (string | numb
     bytes += length;
     if (bytes > MAX_QUOTATION_TEXT_BYTES) throw new ExportSizeError('견적 항목 파일 합계가 6MB를 초과합니다. 포함 옵션 수나 반복되는 상세 HTML을 줄인 뒤 다시 내려받아주세요.');
   };
-  add(0);
+  add(additionalBytes);
   for (const row of document.rows) add(utf8ByteLength(JSON.stringify(row)) + 1);
   for (const table of tables) for (const row of table) add(utf8ByteLength(quotationCsv([row])) + 2);
 }
@@ -97,8 +97,10 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
     overrides: saved.state.overrides, assets: Object.fromEntries(fileByKey),
     uploadFilenames: Object.fromEntries(assets.map(asset => [asset.key, asset.name.split('/').at(-1)!])),
     warnings: [...new Set(warnings), 'Excel 이미지 셀은 압축 해제한 이미지 파일명과 일치시켰습니다. 실제 Hub 양식과 접수 조건은 별도 확인이 필요합니다.'] };
-  ensureFieldBudget(document, [rows, overrides]);
+  const scopeArchive = JSON.stringify({ format: 'sourceflow-quotation-scopes-v1', categoryId: saved.categoryContext.categoryId, saved: saved.savedScopes ?? saved.state });
+  ensureFieldBudget(document, [rows, overrides], utf8ByteLength(scopeArchive));
   return { warnings: document.warnings, files: [
+    { name: 'quotation-saved-scopes.json', data: scopeArchive },
     { name: 'quotation-fields.json', data: JSON.stringify(document) },
     { name: 'quotation-fields.csv', data: quotationCsv(rows) },
     { name: 'quotation-overrides.csv', data: quotationCsv(overrides) },

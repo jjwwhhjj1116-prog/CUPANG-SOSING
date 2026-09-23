@@ -882,3 +882,12 @@ AI등록 화면 확인:
 - 범위: 화면에서 아직 저장하지 않은 초안의 갱신 보호다. DB에 저장된 수동값을 카테고리별로 분리하는 저장 구조는 이번에 변경하지 않았으며, 모든 카테고리 전환 데이터 정책이 완성된 것은 아니다.
 - 다음: 저장 견적 수정값의 카테고리별 범위 설계, 공식 Excel/전체 카테고리 대조, 실제1688/AI 연결, Supplier Hub 업로드·검증·접수 adapter. 전체 자동화 미완성. 유료 호출·운영등록·Cloudflare 배포 없음.
 - 검증: 전체330/330, TypeScript/ESLint/production build 및 diff 검사 통과. 신규2개 테스트로 코드 변경·동일 저장값·반복 갱신·명시 재검토·항목 규격 변경·필드 삭제·입력 불변을 확인했다. outputs/quotation-draft-schema-tests.log 및 quotation-draft-schema-build.log. 실제 브라우저 조작 및 운영 데이터 검증은 미실시.
+
+## 45. 저장 견적 수정값을 카테고리 코드별 분리 — 2026-09-23
+
+- 시작 main4c71214, 미커밋 변경 없음. 기존 product_quotation_fields JSON에 categoryOverrides를 추가해 카테고리 코드별 공통/옵션 수정값을 저장한다. 기존 테이블과 전역 revision/상품 버전/원본 snapshot 검사 및 트랜잭션을 유지한다. D1 배포나 운영 자료 변경은 하지 않았다.
+- 편집 API와 다운로드 공통 원본은 같은 카테고리 범위를 선택한다. A→B→A 전환 시 각각 저장한 입력을 복원하며 같은 코드의 다른 양식 설정은 값을 공유한다. 다른 카테고리의 값은 현재 양식에 적용하지 않는다. 저장 직전 전체 상태 revision도 다시 확인하고 CAS로 동시 수정 시 덮어쓰기를 막는다.
+- 이전 기록의 overrides는 분류가 없는 자료로 보존하며 카테고리가 확인된 화면에 임의로 배정하지 않는다. 해당 자료가 있으면 편집 화면/출력 경고를 표시한다. 새 quotation-saved-scopes.json에 분류 미지정 원본과 모든 카테고리별 저장값을 보존한다. 기존 JSON을 삭제하거나 잘못된 분류로 자동 이관하지 않는다. 분류 미지정 상태에서는 기존 overrides를 계속 읽고 저장할 수 있다. 분류가 있는 상품의 이전 자료를 새 양식에 일괄 가져오는 UI는 아직 없다.
+- 새 백업 JSON도 견적 텍스트 6MB 예산에 포함했다. 이미지 파일은 현재 선택한 분류의 첨부만 묶으므로 다른 분류에 보존된 키가 백업에 있어도 그 파일까지 첨부된 의미는 아니다.
+- 다음: 분류 미지정 이전값의 비교·선택 이관 UI, 공식 Excel 원본/전체 카테고리 대조, 실제1688/AI 공급원 및 Supplier Hub 업로드·검증·접수 연결. 전체 자동화 미완성. 유료 호출·운영 등록·Cloudflare 배포 없음.
+- 검증: 전체332/332, TypeScript/ESLint/production build 통과. 마지막 백업 JSON 용량 계산/내용 확인 추가 후 견적 API·SQLite 통합 테스트를 다시 통과했다. A/B 복원·동일 코드 공유·편집/출력 일치·동시 수정 거절·이전값 보존/백업을 확인했다. 기존 출력 테스트 fixture는 카테고리별 저장 구조에 맞게 갱신했으며 누락 프로필 fixture의 null 처리 후 재통과했다. outputs/quotation-scopes-tests.log, quotation-scopes-final-focused.log, quotation-scopes-build.log. 실제 브라우저·공식 Excel 원본·운영 D1 검증은 미실시.

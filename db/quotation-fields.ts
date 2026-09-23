@@ -1,3 +1,4 @@
+import { quotationScope } from '@/app/quotation-scopes';
 import { env } from 'cloudflare:workers';
 import { emptyQuotationOverrides, type QuotationOverrides } from '@/app/quotation-schema';
 import { collectionSchema, collectionProductSchema } from '@/db/collection-jobs';
@@ -6,7 +7,7 @@ export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotati
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
   revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
 )`;
-export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; updatedAt: string | null };
+export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; categoryOverrides?: Record<string, QuotationOverrides>; updatedAt: string | null };
 export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;
@@ -83,11 +84,15 @@ export async function quotationSourcesCurrent(owner: string, productId: string, 
 }
 
 /** All option/common overrides are committed together; automatic values never overwrite them. */
-export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard): Promise<QuotationFieldsState | null> {
+export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null = null): Promise<QuotationFieldsState | null> {
   const db = await database(); const guard = sourceGuard(owner, productId, source);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid quotation revision');
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
-  const state: QuotationFieldsState = { schemaVersion: 1, productId, revision: expectedRevision + 1, overrides, updatedAt };
+  const previous = await readQuotationFields(owner, productId);
+  if (previous.revision !== expectedRevision) return null;
+  const state: QuotationFieldsState = { schemaVersion: 1, productId, revision: expectedRevision + 1,
+    overrides: categoryId ? previous.overrides : overrides,
+    categoryOverrides: categoryId ? { ...previous.categoryOverrides, [quotationScope(categoryId)]: overrides } : previous.categoryOverrides, updatedAt };
   const payload = JSON.stringify(state);
   if (new TextEncoder().encode(payload).length > 512 * 1024) throw new Error('Quotation overrides exceed storage limit');
   const result = await db.batch<Row>([

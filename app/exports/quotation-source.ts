@@ -1,3 +1,4 @@
+import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
 import { findProduct, getSettings } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
@@ -44,12 +45,14 @@ export async function readQuotationExportSource(owner: string, productId: string
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   // This also detects changes during the independent source reads before any R2 work starts.
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
-  return { product, content, options, settings, state, profile, categoryContext, source };
+  return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
 export function resolveQuotationExport(saved: QuotationExportSource) {
-  return resolveQuotationFields({ categoryId: saved.categoryContext.categoryId, categoryPath: saved.categoryContext.categoryPath,
+  const resolved = resolveQuotationFields({ categoryId: saved.categoryContext.categoryId, categoryPath: saved.categoryContext.categoryPath,
     product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides });
+  if (saved.categoryContext.categoryId && saved.savedScopes && hasLegacyQuotationOverrides(saved.savedScopes)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
+  return resolved;
 }
 export async function quotationExportFingerprint(saved: QuotationExportSource, dataStartRow: number | null) {
   // Raw source/state payloads matter: an override reset and an equal-valued manual

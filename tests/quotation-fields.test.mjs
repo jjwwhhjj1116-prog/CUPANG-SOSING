@@ -234,9 +234,9 @@ test('switching to an unconfirmed category preserves hidden prior overrides with
   const h=await harness();try{
     const known=await profile(h);const unknown=await profile(h,'99999');
     const initial=await get(h,known.id);assert.equal((await put(h,initial,[{fieldKey:'color',optionId:null,value:'직접 입력한 색상'}],known.id)).status,200);
-    const changed=await get(h,unknown.id);assert.equal(changed.resolved.schema.status,'unconfirmed');assert.ok(!changed.resolved.schema.fields.some(field=>field.id==='color'));assert.equal(changed.overrides.common.color,'직접 입력한 색상');
+    const changed=await get(h,unknown.id);assert.equal(changed.resolved.schema.status,'unconfirmed');assert.ok(!changed.resolved.schema.fields.some(field=>field.id==='color'));assert.equal(changed.overrides.common.color,undefined);
     assert.equal((await put(h,changed,[{fieldKey:'title',optionId:null,value:'공통 제목'}],unknown.id)).status,200);
-    const restored=await get(h,known.id);assert.equal(restored.resolved.rows[0].fields.color.value,'직접 입력한 색상');assert.equal(restored.overrides.common.title,'공통 제목');
+    const restored=await get(h,known.id);assert.equal(restored.resolved.rows[0].fields.color.value,'직접 입력한 색상');assert.equal(restored.overrides.common.title,undefined);assert.equal((await get(h,unknown.id)).overrides.common.title,'공통 제목');
   }finally{h.sqlite.close();}
 });
 
@@ -251,4 +251,38 @@ test('80719 API validates barcode edits against the stored input mode without ov
     response = await put(h, unchanged, [{ fieldKey: 'barcode', optionId: null, value: '-AB--1' }], selected.id);
     assert.equal(response.status, 200); assert.equal((await response.json()).overrides.common.barcode, '-AB--1');
   } finally { h.sqlite.close(); }
+});
+
+test('category-scoped saves restore each category, share same-code profiles and match export resolution',async()=>{
+ const h=await harness();try{
+  const a=await profile(h,'80719'),b=await profile(h,'77442'),same=await profile(h,'80719');
+  let view=await get(h,a.id);assert.equal((await put(h,view,[{fieldKey:'brand',optionId:null,value:'A 브랜드'}],a.id)).status,200);
+  view=await get(h,b.id);assert.equal(view.overrides.common.brand,undefined);
+  assert.equal((await put(h,view,[{fieldKey:'brand',optionId:null,value:'B 브랜드'}],b.id)).status,200);
+  assert.equal((await get(h,a.id)).overrides.common.brand,'A 브랜드');assert.equal((await get(h,same.id)).overrides.common.brand,'A 브랜드');
+  const exporter=h.load('app/exports/quotation-source.ts');
+  for(const [p,expected] of [[a,'A 브랜드'],[b,'B 브랜드']]){
+   const saved=await exporter.readQuotationExportSource('owner','product',p.id);
+   assert.equal(exporter.resolveQuotationExport(saved).rows[0].fields.brand.value,expected);
+  }
+  const stale=await get(h,a.id);view=await get(h,b.id);
+  assert.equal((await put(h,view,[{fieldKey:'brand',optionId:null,value:'B 갱신'}],b.id)).status,200);
+  assert.equal((await put(h,stale,[{fieldKey:'brand',optionId:null,value:'오래된 A'}],a.id)).status,409);
+  assert.equal((await get(h,a.id)).overrides.common.brand,'A 브랜드');
+ }finally{h.sqlite.close();}
+});
+test('legacy unclassified edits remain recoverable and never silently enter a known category',async()=>{
+ const h=await harness();try{
+  const legacy={common:{brand:'이전 브랜드'},options:{}};
+  assert.ok(await h.store.saveQuotationFields('owner','product',legacy,0,baseGuard()));
+  const a=await profile(h);const view=await get(h,a.id);
+  assert.equal(view.overrides.common.brand,undefined);assert.ok(view.resolved.issues.some(text=>text.includes('분류가 기록되지')));
+  assert.equal((await put(h,view,[{fieldKey:'brand',optionId:null,value:'새 브랜드'}],a.id)).status,200);
+  const exporter=h.load('app/exports/quotation-source.ts');const saved=await exporter.readQuotationExportSource('owner','product',a.id);
+  assert.equal(saved.savedScopes.overrides.common.brand,'이전 브랜드');assert.equal(saved.state.overrides.common.brand,'새 브랜드');
+  const files=h.load('app/exports/quotation-fields.ts').quotationFieldFiles(saved,exporter.resolveQuotationExport(saved),[],'test').files;
+  const archive=JSON.parse(files.find(file=>file.name==='quotation-saved-scopes.json').data);
+  assert.equal(archive.saved.overrides.common.brand,'이전 브랜드');assert.equal(archive.saved.categoryOverrides['category:80719'].common.brand,'새 브랜드');
+  assert.equal((await get(h)).overrides.common.brand,'이전 브랜드');
+ }finally{h.sqlite.close();}
 });

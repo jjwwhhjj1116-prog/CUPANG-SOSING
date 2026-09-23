@@ -70,7 +70,7 @@ function routeWith({ find = async () => product, readOptions = async () => optio
   return load('app/api/products/[id]/quotation/route.ts', {
     '@/db/queries': { findProduct: find, getSettings: readSettings }, '@/db/product-options': { readProductOptions: readOptions },
     '@/db/product-content': { readProductContent: readContent }, '@/db/category-profiles': { getCategoryProfile: readProfile },
-    '@/db/quotation-fields': { readQuotationFields: readFields, readQuotationCollectionSource: async () => null, quotationSourcesCurrent: sourcesCurrent },
+    '@/db/quotation-fields': { readQuotationFields: async (...args) => { const state=await readFields(...args); const selected=await readProfile(); if (!selected) return state; return { ...state, overrides:{common:{},options:{}}, categoryOverrides:{['category:'+selected.categoryId]:state.overrides} }; }, readQuotationCollectionSource: async () => null, quotationSourcesCurrent: sourcesCurrent },
     'cloudflare:workers': { env: { FILES: { get } } },
   }, mode);
 }

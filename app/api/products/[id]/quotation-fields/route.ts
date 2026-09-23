@@ -1,3 +1,4 @@
+import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct, getSettings } from '@/db/queries';
@@ -54,9 +55,11 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings };
   const automatic = resolveQuotationFields(inputs);
-  const resolved = resolveQuotationFields({ ...inputs, overrides: state.overrides });
+  const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);
+  const resolved = resolveQuotationFields({ ...inputs, overrides });
+  if (categoryContext.categoryId && hasLegacyQuotationOverrides(state)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   const inputFingerprint = await fingerprint({ inputs, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection });
-  const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, overrides: state.overrides, resolved, automatic, categoryContext,
+  const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, overrides, resolved, automatic, categoryContext,
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };
   return { view, source, options };
 }
@@ -92,7 +95,7 @@ export async function PUT(request: Request, context: Context) {
     catch (error) { throw new FieldsError(error instanceof Error ? error.message : '변경한 견적서 필드를 확인해주세요.', 400); }
     const overrides = applyQuotationChanges(saved.view.overrides, changes);
     if (new TextEncoder().encode(JSON.stringify(overrides)).length > 500 * 1024) throw new FieldsError('수동 수정 자료가 저장 한도를 초과했습니다. 긴 내용을 줄여주세요.', 413);
-    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, saved.source);
+    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, saved.source, saved.view.categoryContext.categoryId);
     if (!stored) throw changed();
     return json((await stableView(owner, id, profileId)).view);
   } catch (error) { return failure(error); }
