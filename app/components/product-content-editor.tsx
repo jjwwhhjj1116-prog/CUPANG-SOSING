@@ -90,6 +90,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   let imageKeys: string[] = [];
   try { imageKeys = productImageKeys(product.image_keys); } catch { /* API reports invalid stored references on save. */ }
   const visibleImages = orderedEditorImages(imageKeys, draft.assets, assetFilter);
+  const activePreview = previewKey && visibleImages.includes(previewKey) ? previewKey : visibleImages[0] ?? null;
+  const detailPreview = focusedAssetRole === 'detail' ? draft.assets.detail.filter(key => imageKeys.includes(key)) : [];
   const unavailableImages = [...new Set(Object.values(draft.assets).flat())].filter(key => !imageKeys.includes(key));
   const sectionTitle = section === '이미지' && focusedAssetRole ? assetRoles[focusedAssetRole] : section;
 
@@ -144,16 +146,23 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         {!imageKeys.length && <p>위 업로드 버튼으로 이미지 파일을 추가하면 역할을 지정할 수 있습니다.</p>}
         {imageKeys.length > 0 && <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}><button type="button" className={`btn ${assetFilter === 'all' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'all'} onClick={() => setAssetFilter('all')}>전체 {imageKeys.length}</button>{(Object.entries(assetRoles) as [AssetRole, string][]).map(([role, label]) => <button type="button" key={role} className={`btn ${assetFilter === role ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === role} onClick={() => setAssetFilter(role)}>{label} {draft.assets[role].filter(key => imageKeys.includes(key)).length}</button>)}<button type="button" className={`btn ${assetFilter === 'unassigned' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'unassigned'} onClick={() => setAssetFilter('unassigned')}>미지정 {orderedEditorImages(imageKeys, draft.assets, 'unassigned').length}</button></div><small style={{ color: '#64748b' }}>역할별 저장 순서로 표시합니다. ↑↓로 순서를 바꾸고 이미지를 누르면 크게 볼 수 있습니다.</small></>}
         {unavailableImages.length > 0 && <div className="panel-note"><div><p>현재 상품 이미지 목록에 없는 역할 참조가 {unavailableImages.length}개 있습니다.</p><button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, assets: Object.fromEntries(Object.entries(previous.assets).map(([role, keys]) => [role, keys.filter(key => imageKeys.includes(key))])) as Draft['assets'] }))}>연결이 없는 역할 참조 제외</button></div></div>}
-        {previewKey && imageKeys.includes(previewKey) && <figure style={{ margin: 0, border: '1px solid #dfe4ec', borderRadius: 12, padding: 12 }}><figcaption style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}><strong>이미지 {imageKeys.indexOf(previewKey) + 1} 크게 보기</strong><button type="button" className="btn ghost" onClick={() => setPreviewKey(null)}>미리보기 닫기</button></figcaption>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={`/api/files/${previewKey.split('/').map(encodeURIComponent).join('/')}`} alt={`이미지 ${imageKeys.indexOf(previewKey) + 1} 큰 미리보기`} style={{ display: 'block', maxWidth: '100%', maxHeight: 520, margin: 'auto', objectFit: 'contain' }} />
-        </figure>}
+        <div className="image-edit-workspace">
+        <section className="image-edit-canvas" aria-label={focusedAssetRole==='detail'?'상세페이지 배치 미리보기':'선택 이미지 미리보기'}>
+          {detailPreview.length>0 ? <div className="detail-image-strip">{detailPreview.map((key,index)=><figure key={key}><figcaption>상세 이미지 {index+1}</figcaption>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`상세페이지 순서 ${index+1}`} loading="lazy"/>
+          </figure>)}</div> : activePreview ? <figure className="image-large-preview"><figcaption>이미지 {imageKeys.indexOf(activePreview)+1} 미리보기</figcaption>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`/api/files/${activePreview.split('/').map(encodeURIComponent).join('/')}`} alt={`이미지 ${imageKeys.indexOf(activePreview)+1} 큰 미리보기`}/>
+          </figure> : <p className="empty">이미지 목록에서 미리볼 자료를 선택하세요.</p>}
+        </section>
+        <aside className="image-edit-library" aria-label="상품 이미지 선택 목록">
         {imageKeys.length > 0 && !visibleImages.length && <p>이 역할에 지정한 이미지가 없습니다.</p>}
         <div className="image-asset-grid">{visibleImages.map(key => {
           const index = imageKeys.indexOf(key);
           const role = (Object.keys(assetRoles) as AssetRole[]).find(value => draft.assets[value].includes(key)) ?? '';
           const position = role ? draft.assets[role].indexOf(key) : -1;
-          return <div key={key} className={`image-asset-card ${role===focusedAssetRole?'chosen':''}`}>
+          return <div key={key} className={`image-asset-card ${key===activePreview?'previewing':''} ${role===focusedAssetRole?'chosen':''}`}>
             <button type="button" className="image-asset-preview" aria-label={`이미지 ${index + 1} 크게 보기`} onClick={() => setPreviewKey(key)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} width={200} height={180} loading="lazy" />
@@ -163,7 +172,11 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
             <label className="field"><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} onChange={event => assign(key, event.target.value as AssetRole | '')}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
             {role && <div className="image-asset-order"><span>{assetRoles[role]} {position + 1}번째</span><div><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}
           </div>;
-        })}</div>
+        })}</div></aside></div>
+        {focusedAssetRole && <div className="image-selected-strip" aria-label="현재 선택 이미지 순서">{draft.assets[focusedAssetRole].filter(key=>imageKeys.includes(key)).map((key,index)=><button type="button" key={key} onClick={()=>{setAssetFilter(focusedAssetRole);setPreviewKey(key);}} aria-label={`선택 이미지 ${index+1} 미리보기`}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt="" width={64} height={64}/><span>{index+1}</span>
+        </button>)}</div>}
       </div>}
       <div className="content-editor-save"><span>{dirty ? '저장하지 않은 변경' : content.revision ? `저장 버전 ${content.revision}` : '아직 저장한 내용 없음'}{section==='이미지'&&<small>대표·추가·상세 이미지의 역할과 순서는 함께 저장됩니다.</small>}</span><button type="button" className="btn primary" disabled={busy || !dirty || conflict} onClick={() => void save()}>{busy ? '저장 중…' : section==='이미지'?'이미지 역할·순서 저장':`${section} 저장`}</button></div>
     </fieldset>}

@@ -341,8 +341,10 @@ function DetailPanel({ tab, product, settings, onUpload, onSavePrice, onSaved, o
     <div hidden={tab!=='표시사항'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={onSaved}/></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div hidden={tab!=='번역'}><TranslationPanel productId={product.id} version={product.updated_at} title={product.title} onContentSaved={onSaved}/></div>
-    <div hidden={tab!=='옵션'} className="panel-stack"><ProductOptionsEditor product={product} onSaved={onSaved}/><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={onSaved}/></div>
-    <div hidden={tab!=='가격'}><PriceEditor sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={onSavePrice}/></div>
+    <div hidden={!['옵션','가격'].includes(tab)} className={tab==='가격'?'pricing-workspace':'panel-stack'}>
+      <section hidden={tab!=='가격'} className="pricing-policy-panel"><h3>가격 정책 설정</h3><PriceEditor sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={onSavePrice}/></section>
+      <section className="pricing-options-panel"><ProductOptionsEditor product={product} onSaved={onSaved} pricingView={tab==='가격'}/><div hidden={tab!=='옵션'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={onSaved}/></div></section>
+    </div>
     <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel productId={product.id} preferredProfileId={preferredProfileId} refreshToken={`${product.updated_at}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
   </>;
 }
