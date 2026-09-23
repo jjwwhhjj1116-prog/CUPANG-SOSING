@@ -183,3 +183,23 @@ test('80719 option limit appears above the option editor and leaves all options 
   const invalidBarcode = renderEditor(fixture({ common: { barcodeMode: 'existing' }, options: {} }), 'product', [change('barcode', 'abc123')]);
   assert.ok(invalidBarcode.includes('실제 바코드는 6~14자'));
 });
+
+test('category changes retain unsaved values and require explicit review even when saved text matches',()=>{
+ const previous=fixture();const next=fixture({common:{brand:'내 브랜드'},options:{}});
+ next.resolved.schema.categoryId='77442';
+ const draft=[change('brand','내 브랜드')];const original=JSON.stringify({previous,next,draft});
+ const result=editor.reconcileQuotationEditorDraft(previous,next,draft);
+ assert.equal(result.changes.length,1);assert.equal(result.conflicts[0].schemaChanged,true);
+ const repeated=editor.reconcileQuotationEditorDraft(next,next,result.changes,result.conflicts);
+ assert.equal(repeated.conflicts.length,1);
+ assert.equal(editor.reconcileQuotationEditorDraft(next,next,repeated.changes,[]).changes.length,0);
+ assert.equal(JSON.stringify({previous,next,draft}),original);
+});
+test('changed field rules trigger review only for affected drafts and removed fields stay unavailable',()=>{
+ const previous=fixture();const next=clone(previous);
+ next.resolved.schema.fields.find(field=>field.id==='brand').maxLength=5;
+ const result=editor.reconcileQuotationEditorDraft(previous,next,[change('brand','브랜드'),change('model','모델')]);
+ assert.equal(result.changes.length,2);assert.equal(result.conflicts.length,1);assert.equal(result.conflicts[0].change.fieldKey,'brand');
+ next.resolved.schema.fields=next.resolved.schema.fields.filter(field=>field.id!=='brand');
+ assert.equal(editor.reconcileQuotationEditorDraft(previous,next,result.changes).conflicts[0].unavailable,true);
+});

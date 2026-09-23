@@ -7,7 +7,7 @@ import './quotation-fields-editor.css';
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
 type Cell = Row['fields'][string];
-type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean };
+type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean; schemaChanged?: boolean };
 type BulkPreview = { base: string; changes: QuotationEditorChange[]; rows: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string; manualBefore: boolean }[] };
 type Props = { productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void };
 const sections = [
@@ -59,9 +59,12 @@ export function reconcileQuotationEditorDraft(previous: QuotationFieldsView, nex
     const before = manualValue(previous.overrides, change.optionId, change.fieldKey);
     const saved = manualValue(next.overrides, change.optionId, change.fieldKey);
     const unavailable = !next.resolved.schema.fields.some(field => field.id === change.fieldKey && !field.readOnly) || !next.resolved.rows.some(row => row.optionId === change.optionId);
-    if (!unavailable && saved === change.value) return false;
     const key = quotationEditorKey(change.optionId, change.fieldKey);
-    if (unavailable || before !== saved || pending.some(conflict => conflict.key === key)) conflicts.push({ key, change, before, saved, unavailable });
+    const definition = (view: QuotationFieldsView) => view.resolved.schema.fields.find(field => field.id === change.fieldKey);
+    const schemaChanged = previous.resolved.schema.categoryId !== next.resolved.schema.categoryId ||
+      JSON.stringify(definition(previous)) !== JSON.stringify(definition(next)) || pending.some(conflict => conflict.key === key && conflict.schemaChanged);
+    if (!unavailable && !schemaChanged && saved === change.value) return false;
+    if (unavailable || schemaChanged || before !== saved || pending.some(conflict => conflict.key === key)) conflicts.push({ key, change, before, saved, unavailable, ...(schemaChanged ? { schemaChanged: true } : {}) });
     return true;
   });
   return { changes: retained.map(change => ({ ...change })), conflicts };
@@ -134,7 +137,7 @@ function QuotationFieldsForm({ productId, profileId, refreshToken, onSaved, onDi
       const reconciled = view && !discard ? reconcileQuotationEditorDraft(view, saved, changes, conflicts) : { changes: [], conflicts: [] };
       setView(saved); setChanges(reconciled.changes); setConflicts(reconciled.conflicts);
       if (!saved.resolved.rows.some(row => row.optionId === selectedOption)) setSelectedOption(null);
-      setMessage(discard ? '현재 입력을 버리고 저장본을 불러왔습니다.' : reconciled.conflicts.length ? '다른 작업에서 같은 항목이 수정되었습니다. 사용할 값을 선택해주세요.' : '최신 상품·옵션·기본값을 반영했습니다. 직접 입력한 내용은 유지했습니다.');
+      setMessage(discard ? '현재 입력을 버리고 저장본을 불러왔습니다.' : reconciled.conflicts.length ? '저장값 또는 카테고리·항목 규격이 바뀌었습니다. 입력을 검토하고 사용할 값을 선택해주세요.' : '최신 상품·옵션·기본값을 반영했습니다. 직접 입력한 내용은 유지했습니다.');
     } catch (cause) { if (id === requests.current) setError(cause instanceof Error ? cause.message : '최신 자료 확인 실패'); }
     finally { if (id === requests.current) setLoading(false); }
   }, [endpoint, view, changes, conflicts, selectedOption]);
@@ -197,7 +200,7 @@ function QuotationFieldsForm({ productId, profileId, refreshToken, onSaved, onDi
       <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { setSelectedOption(event.target.value || null); setBulk(null); }}>{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${item.optionLabel}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
       <div className="quotation-fields-summary"><span>현재 옵션 필수 미입력 <b>{missingRequired}개</b></span><span>입력 확인 <b>{allIssues.length}건</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
       <nav className="quotation-fields-section-nav" aria-label="견적 입력 구역">{counts.map((section, index) => <button key={section.id} type="button" aria-pressed={active === section.id} onClick={() => setActive(section.id)}><b>{index + 1}</b><span>{section.title}</span><small>{section.complete}/{section.required} 필수 입력</small></button>)}</nav>
-      {conflicts.length > 0 && <div className="quotation-fields-notice" role="alert"><strong>동시에 수정된 항목 {conflicts.length}개</strong><ul className="quotation-fields-conflicts">{conflicts.map(conflict => <li key={conflict.key}><strong>{schema?.fields.find(field => field.id === conflict.change.fieldKey)?.label ?? conflict.change.fieldKey} · {view.resolved.rows.find(item => item.optionId === conflict.change.optionId)?.optionLabel ?? '삭제된 옵션'}</strong><p>{conflict.unavailable ? '현재 카테고리 또는 옵션에 없는 입력입니다.' : `현재 저장값: ${conflict.saved === null ? '자동값 사용' : conflict.saved || '(공란)'}`}</p><p>내 입력: {conflict.change.value === null ? '수동 수정 해제' : conflict.change.value || '(공란)'}</p><div className="quote-actions">{!conflict.unavailable && <button type="button" className="btn ghost" disabled={busy || loading} onClick={() => setConflicts(previous => previous.filter(item => item.key !== conflict.key))}>내 입력 유지</button>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => { setChanges(previous => previous.filter(change => quotationEditorKey(change.optionId, change.fieldKey) !== conflict.key)); setConflicts(previous => previous.filter(item => item.key !== conflict.key)); setBulk(null); }}>{conflict.unavailable ? '이 입력 제외' : '저장된 값 사용'}</button></div></li>)}</ul></div>}
+      {conflicts.length > 0 && <div className="quotation-fields-notice" role="alert"><strong>다시 검토할 항목 {conflicts.length}개</strong><ul className="quotation-fields-conflicts">{conflicts.map(conflict => <li key={conflict.key}><strong>{schema?.fields.find(field => field.id === conflict.change.fieldKey)?.label ?? conflict.change.fieldKey} · {view.resolved.rows.find(item => item.optionId === conflict.change.optionId)?.optionLabel ?? '삭제된 옵션'}</strong>{conflict.schemaChanged && <p>카테고리 또는 항목 규격이 변경되었습니다. 같은 값이라도 새 양식에 맞는지 확인해주세요.</p>}<p>{conflict.unavailable ? '현재 카테고리 또는 옵션에 없는 입력입니다.' : `현재 저장값: ${conflict.saved === null ? '자동값 사용' : conflict.saved || '(공란)'}`}</p><p>내 입력: {conflict.change.value === null ? '수동 수정 해제' : conflict.change.value || '(공란)'}</p><div className="quote-actions">{!conflict.unavailable && <button type="button" className="btn ghost" disabled={busy || loading} onClick={() => setConflicts(previous => previous.filter(item => item.key !== conflict.key))}>내 입력 유지</button>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => { setChanges(previous => previous.filter(change => quotationEditorKey(change.optionId, change.fieldKey) !== conflict.key)); setConflicts(previous => previous.filter(item => item.key !== conflict.key)); setBulk(null); }}>{conflict.unavailable ? '이 입력 제외' : '저장된 값 사용'}</button></div></li>)}</ul></div>}
       {row && <fieldset className="quotation-fields-section" disabled={busy || loading} style={{ padding: 0, margin: 0, minWidth: 0 }}><header><h4>{activeSection.english} · {activeSection.title}</h4><small>* 필수 입력</small><p className="quotation-field-help" style={{ width: '100%' }}>{activeSection.description}</p></header><div className="quotation-fields-grid">{sectionFields.map(field => {
         const cell = resolveQuotationEditorCell(view, changes, selectedOption, field.id);
         const automatic = view.automatic.rows.find(item => item.optionId === selectedOption)?.fields[field.id];
