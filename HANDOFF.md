@@ -864,3 +864,12 @@ AI등록 화면 확인:
 - 신규 회귀 검증은 SEO 저장→삭제→견적 셀/Excel 매핑 데이터, 검토 ZIP 실제 압축 해제 후 HTML/CSV 및 누락 표시를 대조한다. 공식 Excel 양식이나 실제 Supplier Hub 접수 검증을 뜻하지 않는다.
 - 다음: 실제1688 공급원·AI 서비스 연결, 공식 Excel 원본과 전체 카테고리 규격 대조, Supplier Hub 전송/검증/접수 adapter. 전체 자동화 미완성. 이번 턴 유료 호출·운영 등록·Cloudflare 배포 없음.
 - 검증 결과: 전체324/324, TypeScript/ESLint/production build 및 diff 검사 통과. outputs/quotation-title-tests.log, quotation-title-build.log. 최초에는 검토 ZIP 모듈의 새 런타임 의존성을 기존 라우트 테스트 로더가 처리하지 못해 실패했고, 의존성 추가 없이 동일한 저장값 보존 규칙을 적용한 뒤 전체 재통과했다. 브라우저 클릭 검증은 미실시.
+
+## 43. 변경된 카테고리 설정의 잘못된 자동 연결 방지 — 2026-09-23
+
+- 시작 main f28b50e, 미커밋 변경 없음. 견적 패널은 수집 당시 profileId와 현재 저장 설정 ID만 비교해 자동 선택하고 있었다. 수집 후 같은 설정의 categoryId를 다른 분류로 수정하면 다른 견적 스키마가 조용히 선택될 수 있어 코드 일치 검사로 보완했다.
+- 자동 선택은 같은 설정 ID와 확인된 동일 카테고리 코드일 때만 한다. 코드 변경/누락 또는 설정 삭제 시 수집 당시 카테고리 snapshot을 계속 사용하고 안내를 표시한다. 경로 표시명만 변경한 경우 동일 코드를 유지하면 연결한다. 사용자가 검사에서 명시적으로 선택한 preferredProfileId 및 직접 선택은 유지하며, 삭제된 지정 설정은 오류로 처리한다.
+- 카테고리 문맥 조회의 HTTP 오류를 null/연결 없음으로 삼키지 않고 화면에 표시한다. 오류 화면에서 다시 확인할 수 있다. 자동 선택 검사는 초기 화면 연결에 대한 보호이며, 다른 세션에서 설정이 바뀌는 모든 시나리오의 서버 정책을 대체하지 않는다. 기존 서버 fingerprint/동시 수정 검사를 유지한다.
+- 신규4개 테스트는 동일 코드/표시경로 변경, 코드 불일치, 삭제/미확인, 명시 선택과 원본 불변을 확인한다. 실제 쿠플러스 전체 카테고리 일치나 공식 Excel/운영 접수 검증은 아니다.
+- 다음: 공식 Excel 원본 및 전체 카테고리 대조, 실제1688/AI 공급원 연결, Supplier Hub 업로드·검증·접수 adapter. 전체 자동화 미완성. 유료 호출·운영등록·Cloudflare 배포 없음.
+- 검증 결과: 전체328/328, TypeScript/ESLint/production build 및 diff 검사 통과. 재시도 상태 초기화를 effect 안에 넣어 발생한 lint 오류는 버튼 이벤트로 옮겨 해결했다. outputs/quotation-profile-selection-tests.log 및 quotation-profile-selection-build.log. 실제 브라우저 조작/공식 양식 검증은 미실시.

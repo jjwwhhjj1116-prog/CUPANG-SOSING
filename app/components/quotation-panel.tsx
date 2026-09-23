@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { CategoryProfile } from '@/app/category-profiles';
 import { QuotationFieldsEditor } from '@/app/components/quotation-fields-editor';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
+import { selectQuotationProfile } from '@/app/quotation-profile-selection';
 
 type Preview = {
   fingerprint:string;filename:string;headers:string[];rows:(string|number)[][];
@@ -22,26 +23,29 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
   const [overrideProfileId,setOverrideProfileId]=useState<string|undefined>();
   const [contextLoaded,setContextLoaded]=useState(false);
   const [contextError,setContextError]=useState('');
+  const [connectionWarning,setConnectionWarning]=useState('');
+  const [loadAttempt,setLoadAttempt]=useState(0);
   const [capturedCategoryId,setCapturedCategoryId]=useState<string|null>(null);
   useEffect(()=>{
     const controller=new AbortController();
+
     Promise.all([
       fetch('/api/category-profiles',{cache:'no-store',signal:controller.signal}).then(async response=>{
         const body=await response.json() as {profiles:CategoryProfile[];error?:string};if(!response.ok)throw new Error(body.error||'카테고리 목록을 읽지 못했습니다.');return body.profiles;
       }),
-      fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal:controller.signal}).then(async response=>response.ok?await response.json() as QuotationFieldsView:null),
+      fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal:controller.signal}).then(async response=>{const body=await response.json() as QuotationFieldsView & {error?:string};if(!response.ok)throw new Error(body.error||'수집 당시 카테고리를 읽지 못했습니다.');return body;}),
     ]).then(([savedProfiles,data])=>{
       if(controller.signal.aborted)return;
-      if(preferredProfileId && !savedProfiles.some(profile=>profile.id===preferredProfileId))throw new Error('검사에 사용한 카테고리 설정이 삭제되었습니다. 사용할 설정을 다시 선택해주세요.');
-      const capturedId=preferredProfileId??data?.categoryContext.profileId;
-      const savedId=savedProfiles.some(profile=>profile.id===capturedId)?capturedId! : '';
+      const selection=selectQuotationProfile(savedProfiles,data.categoryContext,preferredProfileId);
+      const savedId=selection.profileId;
+      setConnectionWarning(selection.warning);
       setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);
       setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
       setStartRow((savedProfiles.find(profile=>profile.id===savedId)?.template?.headerRow??1)+1);
     }).catch(cause=>{if(!controller.signal.aborted)setContextError(cause instanceof Error?cause.message:'카테고리 연결 확인 실패');})
       .finally(()=>{if(!controller.signal.aborted)setContextLoaded(true);});
     return()=>controller.abort();
-  },[productId,preferredProfileId]);
+  },[productId,preferredProfileId,loadAttempt]);
   async function request(action:'preview'|'export') {
     setBusy(true);setError('');setMessage('');
     try {
@@ -56,8 +60,9 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     finally{setBusy(false);}
   }
   const selected=profiles.find(profile=>profile.id===profileId);
-  if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
+  if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
+    {connectionWarning && !overrideProfileId && <p role="status" className="panel-note">{connectionWarning}</p>}
     {contextLoaded?<QuotationFieldsEditor productId={productId} profileId={overrideProfileId} refreshToken={refreshToken} onDirtyChange={setDirty} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
