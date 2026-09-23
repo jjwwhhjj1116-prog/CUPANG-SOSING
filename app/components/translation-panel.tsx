@@ -5,11 +5,13 @@ import type { TranslationJob, TranslationView } from '@/app/automation/translati
 import { optionTranslationAttributes, adoptOptionTranslations } from '@/app/option-translation';
 import type { ProductOptionsResponse } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
+import { translationAdoptionInput, translationSeoFields, type TranslationSeoField } from '@/app/translation-adoption';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
 const statuses: Record<TranslationJob['status'], string> = { prepared: '검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 실행 차단', completed: '초안 생성 완료', failed: '실패 · 재호출 안 함', uncertain: '결과 확인 필요 · 재호출 안 함' };
 
-export default function TranslationPanel({ productId, version, title, onContentSaved }: Props) {
+export default function TranslationPanel(props: Props) { return <TranslationContent key={`${props.productId}:${props.version}`} {...props} />; }
+function TranslationContent({ productId, version, title, onContentSaved }: Props) {
   const [view, setView] = useState<TranslationView | null>(null);
   const [content, setContent] = useState<ProductContent | null>(null);
   const [sourceTitle, setSourceTitle] = useState(title);
@@ -21,6 +23,7 @@ export default function TranslationPanel({ productId, version, title, onContentS
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [selectedFields, setSelectedFields] = useState<TranslationSeoField[]>([]);
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || (content && job.contentRevision !== content.revision)));
   useEffect(() => {
@@ -40,7 +43,7 @@ export default function TranslationPanel({ productId, version, title, onContentS
       if (!response.ok || !value.job) throw Error(value.error ?? '번역 요청을 처리하지 못했습니다.');
       const saved = value.job;
       setView(previous => ({ configuration: value.configuration ?? previous!.configuration, jobs: [saved, ...(previous?.jobs ?? []).filter(item => item.id !== saved.id)] }));
-      setSelectedId(saved.id); setConfirmed(false);
+      setSelectedId(saved.id); setConfirmed(false); setSelectedFields([]);
       if (value.message) setNotice(value.message);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '요청 실패'); }
     finally { setBusy(false); }
@@ -95,15 +98,15 @@ export default function TranslationPanel({ productId, version, title, onContentS
     void action({ action: 'prepare', expectedVersion: version, idempotencyKey: crypto.randomUUID(),
       source: { title: sourceTitle, description, attributes: pairs, provenance: 'manual', reference: sourceReference } });
   }
-  async function adopt(field: 'title' | 'keywords' | 'description') {
+  async function adopt(fields: readonly TranslationSeoField[]) {
     if (!content || !job?.result) return;
     setBusy(true); setError(''); setNotice('');
     try {
       const response = await fetch(`/api/products/${productId}/content`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ expectedRevision: content.revision, patch: { seo: { [field]: job.result.draft[field] } } }) });
+        body: JSON.stringify(translationAdoptionInput(content, job, version, fields)) });
       const value = await response.json() as { content?: ProductContent; error?: string };
       if (!response.ok || !value.content) throw Error(value.error ?? '초안을 적용하지 못했습니다.');
-      setContent(value.content); setNotice('선택한 항목만 검토 후 적용했습니다. 다른 편집 항목은 보존했습니다.'); onContentSaved?.();
+      setContent(value.content); setSelectedFields([]); setNotice('선택한 항목을 함께 저장했습니다. 선택하지 않은 편집 항목은 보존했습니다.'); onContentSaved?.();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '적용 실패'); }
     finally { setBusy(false); }
   }
@@ -118,7 +121,7 @@ export default function TranslationPanel({ productId, version, title, onContentS
       <label>상품 설명 원문<textarea rows={5} value={description} maxLength={20000} onChange={event => setDescription(event.target.value)} disabled={busy} /></label>
       <button className="btn" type="button" disabled={busy} onClick={()=>void loadOptionSource()}>미번역 옵션 불러오기 · 속성 입력 교체</button><label>속성 원문 · 한 줄에 속성명=값<textarea rows={3} value={attributes} onChange={event => setAttributes(event.target.value)} disabled={busy} placeholder={'材质=棉\n颜色=白色'} /></label>
       <button className="btn" type="button" onClick={prepare} disabled={busy || !view.configuration.configured || (!sourceTitle.trim() && !description.trim())}>번역 요청 검토하기 · 무료</button>
-      {view.jobs.length > 1 && <label>이전 번역 요청<select value={job?.id ?? ''} onChange={event => { setSelectedId(event.target.value); setConfirmed(false); }} disabled={busy}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
+      {view.jobs.length > 1 && <label>이전 번역 요청<select value={job?.id ?? ''} onChange={event => { setSelectedId(event.target.value); setConfirmed(false); setSelectedFields([]); }} disabled={busy}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}
       {job && <div className="translation-review">
         <h4>{statuses[job.status]}</h4>
         <p>모델 <strong>{job.review.model}</strong> · 원문 {job.review.inputCharacters.toLocaleString()}자 · 최대 출력 {job.review.maxOutputTokens.toLocaleString()}토큰</p>
@@ -134,7 +137,8 @@ export default function TranslationPanel({ productId, version, title, onContentS
           <p>AI 생성 초안 · 출처 검토 필요 · 기존 콘텐츠에 자동 적용하지 않았습니다.</p>
           {job.result.usage && <p>입력 {job.result.usage.inputTokens.toLocaleString()}토큰 · 출력 {job.result.usage.outputTokens.toLocaleString()}토큰</p>}
           {job.result.draft.warnings.length > 0 && <ul>{job.result.draft.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
-          {(['title', 'keywords', 'description'] as const).map(field => <div key={field} className="translation-field"><strong>{field === 'title' ? '한국어 상품명' : field === 'keywords' ? 'SEO 검색어' : '한국어 설명'}</strong><pre>{Array.isArray(job.result!.draft[field]) ? (job.result!.draft[field] as string[]).join(', ') : job.result!.draft[field]}</pre><details><summary>현재 저장된 내용과 비교</summary><pre>{content ? JSON.stringify(content.seo[field].value, null, 2) : '불러오지 못함'}</pre></details><button className="btn" type="button" disabled={busy || !content} onClick={() => void adopt(field)}>검토한 초안을 이 항목에 적용 · 기존 내용 교체</button></div>)}
+          {translationSeoFields.map(field => <div key={field} className="translation-field"><label><input type="checkbox" checked={selectedFields.includes(field)} disabled={busy || !content || job.productVersion !== version} onChange={event => setSelectedFields(previous => event.target.checked ? [...previous, field] : previous.filter(item => item !== field))} />함께 저장할 항목 선택</label><strong>{field === 'title' ? '한국어 상품명' : field === 'keywords' ? 'SEO 검색어' : '한국어 설명'}</strong><pre>{Array.isArray(job.result!.draft[field]) ? (job.result!.draft[field] as string[]).join(', ') : job.result!.draft[field]}</pre><details><summary>현재 저장된 내용과 비교</summary><pre>{content ? JSON.stringify(content.seo[field].value, null, 2) : '불러오지 못함'}</pre></details><button className="btn" type="button" disabled={busy || !content || job.productVersion !== version} onClick={() => void adopt([field])}>검토한 초안을 이 항목에 적용 · 기존 내용 교체</button></div>)}
+          <button className="btn blue" type="button" disabled={busy || !content || !selectedFields.length || job.productVersion !== version} onClick={() => void adopt(selectedFields)}>검토한 {selectedFields.length}개 항목 함께 저장 · 선택한 기존 내용 교체</button>
           {job.result.draft.attributes.length > 0 && <details><summary>번역된 속성·옵션 확인</summary><ul>{job.result.draft.attributes.map(attribute => <li key={attribute.sourceIndex}>{attribute.name}: {attribute.value}</li>)}</ul><button className="btn" type="button" disabled={busy || job.productVersion !== version} onClick={()=>void adoptOptions()}>검토한 옵션 번역 적용 · 빈 한국어 이름만</button></details>}
         </>}
       </div>}
