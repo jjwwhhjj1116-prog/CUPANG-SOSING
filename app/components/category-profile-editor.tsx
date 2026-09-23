@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryProfileIssues, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
+import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
 import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
 import { suggestQuotationMappings } from '@/app/quotation-mapping';
 
@@ -146,7 +146,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
           <table style={{ width: '100%', textAlign: 'left' }}><thead><tr><th>견적서 열</th><th>상품 자료</th><th>필수</th><th>고정값</th></tr></thead><tbody>
             {draft.template.headers.map((header, column) => {
               const mapping = draft.mappings.find(value => value.column === column);
-              return <tr key={column}><td>{column + 1}. {header || '(이름 없는 열)'}</td><td><select aria-label={`${column + 1}열 연결`} value={mapping?.field ?? ''} disabled={busy} onChange={event => setMapping(column, event.target.value ? { field: event.target.value as CategoryField } : null)}><option value="">연결 안 함</option>{Object.entries(categoryFields).filter(([field]) => !field.startsWith('hub_') || field.startsWith(`hub_${draft.categoryId}_`) || mapping?.field === field).map(([field, label]) => <option key={field} value={field}>{label}</option>)}</select></td><td><input aria-label={`${column + 1}열 필수`} type="checkbox" checked={mapping?.required ?? false} disabled={busy || !mapping} onChange={event => setMapping(column, { required: event.target.checked })} /></td><td>{mapping?.field === 'constant' && <input aria-label={`${column + 1}열 고정값`} maxLength={4000} disabled={busy} value={mapping.constant ?? ''} onChange={event => setMapping(column, { constant: event.target.value })} />}</td></tr>;
+              return <tr key={column}><td>{column + 1}. {header || '(이름 없는 열)'}</td><td><select aria-label={`${column + 1}열 연결`} value={mapping?.field ?? ''} disabled={busy} onChange={event => setMapping(column, event.target.value ? { field: event.target.value as CategoryField } : null)}><option value="">연결 안 함</option>{Object.entries(categoryFields).filter(([field]) => categoryFieldScope(field) === null || categoryFieldScope(field) === draft.categoryId || mapping?.field === field).map(([field, label]) => <option key={field} value={field}>{label}</option>)}</select></td><td><input aria-label={`${column + 1}열 필수`} type="checkbox" checked={mapping?.required ?? false} disabled={busy || !mapping} onChange={event => setMapping(column, { required: event.target.checked })} /></td><td>{mapping?.field === 'constant' && <input aria-label={`${column + 1}열 고정값`} maxLength={4000} disabled={busy} value={mapping.constant ?? ''} onChange={event => setMapping(column, { constant: event.target.value })} />}</td></tr>;
             })}
           </tbody></table>
         </div>

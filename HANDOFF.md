@@ -899,3 +899,12 @@ AI등록 화면 확인:
 - 자료 갱신이나 초안 변경 시 비교 선택을 초기화해 이전 화면의 선택이 남지 않도록 했다. 비교 표 문자열은 React 텍스트로 렌더링하며 HTML을 실행하지 않는다. 실제 R2 파일의 존속 여부는 기존 서버 저장 검사가 담당한다.
 - 검증: 전체335/335, TypeScript/ESLint/production build 통과. 이후 추가한 정적 UI 렌더링 검증을 포함한 편집기 테스트 재통과. 신규 검증은 선택값/공란/기존 초안/원본 보존, 가져오기 불가 값, SQLite API 저장 후 카테고리 격리, 초기 미선택/HTML 이스케이프를 확인한다. outputs/quotation-legacy-import-tests.log, quotation-legacy-import-ui-tests.log, quotation-legacy-import-build.log. 실제 브라우저 클릭/운영 데이터 검증은 미실시다.
 - 다음: 공식 Excel 원본 및 전체 카테고리 규격 대조, 실제1688 공급원·AI 서비스·Supplier Hub 업로드/검증/접수 연결. 이번 기능으로 실제 수집·번역·운영 등록까지 완성된 것은 아니다. 유료 호출·운영등록·Cloudflare 배포 없음.
+
+## 47. 실제 바둑 견적 재대조와 Excel 연결 누락 수정 — 2026-09-23
+
+- 시작 main8156895, 미커밋 변경 없음. 로그인된 동일 Chrome에서 쿠플러스 AI상품등록과 Supplier Hub를 다시 열었다. 바둑 상품260923001001의 옵션→견적 화면을 읽었다. 상세 확인/추정/미확인은 docs/couplus-board-followup-2026-09-23.md에 기록했다. 저장/AI 실행/등록 전송은 하지 않았다.
+- 바둑77442의 기존 16개 비노출 속성이 편집 스키마에는 있으나 categoryFields에 없어 Excel 열 자동추천·수동연결·행 출력에서 빠진 문제를 수정했다. 연결 목록에 추가하고 다른 분류로 연결하는 요청은 서버 검증에서 거절한다. 화면도 현재 분류의 고유 항목만 제시하며 기존 연결은 수정할 수 있게 표시한다.
+- 표시사항 certification→견적 noticePermission을 연결했다. 명시적인 공란과 견적 수동값 우선순위를 보존한다. 품명 및 모델명이 정확히 같으면 고시에 한번만 쓰고 다르면 둘 다 보존한다. 기존 저장 자료는 변경하지 않았다.
+- 관찰한 쿠플러스 등록완료 표시는 Supplier Hub 접수 확인이 아니다. 저장된 해당사항없음/인증/포장 수치가 자동값인지 수동값인지 미확인이므로 다른 상품의 기본값으로 복사하지 않았다. Supplier Hub 바둑 검색/구조 선택에서 이번에는 분류 결과를 확보하지 못했으며77442는 공식 미확인 상태를 유지한다.
+- 검증: 전체337/337, TypeScript/ESLint/production build/diff 검사 통과. 신규 검증은16개 속성과 고시의 자동추천→원본 값/옵션 수정값→견적 행→템플릿 열 출력, 분류 불일치 거절, 공란/수동값 우선순위, 동일/다른 모델명이다. 테스트 로더의 상대 import 지원을 추가한 뒤 재통과했다. outputs/board-mapping-all-tests.log, board-mapping-build.log. 실제 공식 Excel 출력/앱 브라우저 클릭/운영접수는 미검증.
+- 다음 시작점: Chrome의 nextCouTab은77442 저장견적, nextHubTab은개별등록 기본정보 화면이다(탭 정리 시 supplierChrome 바인딩에서 새 탭 생성). 공식 바둑 코드·규격 확인과 공식 Excel 확보를 계속하고 실제1688/AI 공급원·Supplier Hub 전송 adapter를 연결해야 한다. 전체 자동화 미완성. 유료 호출·운영등록·Cloudflare 배포 없음.

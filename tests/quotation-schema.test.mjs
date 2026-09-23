@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import path from 'node:path';
 import ts from 'typescript';
 
 const cache = new Map();
@@ -10,6 +11,7 @@ function load(file) {
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInNewContext(compiled, { exports, structuredClone, TextEncoder, require(name) {
+    if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
     if (!name.startsWith('@/app/')) throw Error(name);
     return load(name.slice(2) + '.ts');
   } });
@@ -337,6 +339,40 @@ test('77442 uses observed Couplus board fields without claiming official verific
 test('77442 schema clones choices so one form cannot alter future category forms',()=>{
  const first=model.getQuotationSchema('77442');first.fields.find(f=>f.id==='board_magnetic').choices[0].label='변경';
  assert.equal(model.getQuotationSchema('77442').fields.find(f=>f.id==='board_magnetic').choices[0].label,'해당사항없음');
+});
+
+test('board fields and saved certification reach template columns without cross-category mappings',()=>{
+ const input=fixture();input.categoryId='77442';
+ input.content=contentModel.applyContentPatch(input.content,{label:{certification:'확인한 인증 자료',productName:'동일 상품명',model:'동일 상품명'}},'now');
+ const profileModel=load('app/category-profiles.ts');
+ const schema=model.getQuotationSchema('77442');
+ const board=schema.fields.filter(field=>field.id.startsWith('board_'));
+ const values=Object.fromEntries(board.map(field=>[field.id,field.choices?.at(-1).value??'확인값']));
+ input.overrides={common:values,options:{red:{board_width:'30cm'}}};
+ const resolved=model.resolveQuotationFields(input);
+ const row=resolved.rows[1];
+ assert.equal(row.fields.noticePermission.value,'확인한 인증 자료');
+ assert.equal(row.fields.noticePermission.source,'content');
+ assert.equal(row.fields.noticeNameModel.value,'동일 상품명');
+ const fields=[...board,schema.fields.find(field=>field.id==='noticePermission')];
+ const headers=fields.map(field=>field.label);
+ const suggestion=load('app/quotation-mapping.ts').suggestQuotationMappings(headers,'77442');
+ assert.equal(suggestion.mappings.length,17);
+ const profile={name:'바둑 연결 검증',categoryId:'77442',categoryPath:schema.categoryPath,
+  template:{name:'fixture.csv',format:'csv',sha256:'a'.repeat(64),sheetName:'',headerRow:1,headers},mappings:suggestion.mappings};
+ const mapped=load('app/exports/quotation-fields.ts').resolvedQuotationRows({...input,profile},resolved,[
+  {key:'owner/option.png',name:'assets/option.png'},{key:'owner/main.png',name:'assets/main.png'},{key:'owner/detail.png',name:'assets/detail.png'}]);
+ const exported=profileModel.mapQuotationRow(profile,mapped[0]);
+ assert.deepEqual(clone(exported.values),fields.map(field=>row.fields[field.id].value));
+ assert.throws(()=>profileModel.validateCategoryProfile({...profile,categoryId:'80719'}),/다른 카테고리/);
+ assert.equal(load('app/quotation-mapping.ts').suggestQuotationMappings(['자석 부착가능 여부'],'80719').mappings.length,0);
+ assert.equal(profileModel.categoryFieldScope('board_width'),'77442');
+ input.content=contentModel.applyContentPatch(input.content,{label:{certification:''}},'later');
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticePermission.value,'');
+ input.overrides.common.noticePermission='견적 수동값';
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticePermission.value,'견적 수동값');
+ input.content.label.model.value='다른 모델';
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeNameModel.value,'동일 상품명 / 다른 모델');
 });
 
 test('deliberately cleared SEO title remains empty in quotation, alt text and both Excel row paths',()=>{

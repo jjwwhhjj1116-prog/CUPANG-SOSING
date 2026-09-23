@@ -403,6 +403,15 @@ export const categoryFields = {
   "hub_80713_019ea26a47cc": "조리도구걸이: Parent Manufacturer Part Number",
   "hub_80713_f07b53d0ab24": "조리도구걸이: Manufacturer Part Number",
   // END OBSERVED HUB MAPPING FIELDS
+  board_width: '바둑알+바둑판: 가로길이', board_length: '바둑알+바둑판: 세로길이',
+  board_foldable: '바둑알+바둑판: 접이식 가능여부', board_magnetic: '바둑알+바둑판: 자석 부착가능 여부',
+  board_doubleSided: '바둑알+바둑판: 양면사용 가능여부', board_duration: '바둑알+바둑판: 사용시간',
+  board_maxPlayers: '바둑알+바둑판: 최대사용인원', board_minimumAge: '바둑알+바둑판: 최소 연령',
+  board_stoneKind: '바둑알+바둑판: 바둑알 종류', board_genre: '바둑알+바둑판: 보드게임 장르',
+  board_language: '바둑알+바둑판: 사용언어', board_theme: '바둑알+바둑판: 테마',
+  board_components: '바둑알+바둑판: 포함 구성 요소', board_gtin: '바둑알+바둑판: Global Trade Item Number',
+  board_parentPart: '바둑알+바둑판: Parent Manufacturer Part Number', board_part: '바둑알+바둑판: Manufacturer Part Number',
+  noticePermission: '상품고시: 인증/허가 사항',
   category: '견적 편집: 카테고리 경로', model: '견적 편집: 모델명', tradeType: '견적 편집: 거래타입', taxType: '견적 편집: 과세여부', importType: '견적 편집: 수입여부',
   searchTags: '견적 편집: 검색태그', barcodeMode: '견적 편집: 바코드 입력 방식',
   additionalImages: '견적 편집: 추가 이미지', labelImages: '견적 편집: 표시사항 이미지', detailImages: '견적 편집: 상세 이미지', detailHtml: '견적 편집: HTML 상세 내용', altText: '견적 편집: 대체 텍스트',
@@ -419,6 +428,9 @@ export const categoryFields = {
   label: '표시사항 파일', constant: '고정값',
 } as const;
 export type CategoryField = keyof typeof categoryFields;
+export function categoryFieldScope(field: string): string | null {
+  return field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
+}
 export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;
   sheetName: string; headerRow: number; headers: string[];
@@ -470,7 +482,7 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
     used.add(column);
     if (typeof value.field !== 'string' || !Object.hasOwn(categoryFields, value.field) || typeof value.required !== 'boolean') throw new Error('열 연결 항목을 확인해주세요.');
     const field = value.field as CategoryField;
-    const scopedCategory = /^hub_(\d+)_/.exec(field)?.[1];
+    const scopedCategory = categoryFieldScope(field);
     if (scopedCategory && scopedCategory !== categoryId) throw new Error('다른 카테고리의 고유 속성은 연결할 수 없습니다. 선택한 카테고리의 항목으로 다시 연결해주세요.');
     return { column, field, required: value.required, ...(field === 'constant' ? { constant: string(value.constant ?? '', '고정값', 4000, true) } : {}) };
   });

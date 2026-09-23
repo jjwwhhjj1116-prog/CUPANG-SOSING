@@ -315,7 +315,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'detailHtml': return literal(content.seo.description.value ? `<p>${htmlEscape(content.seo.description.value).replace(/\r?\n/g, '<br>')}</p>` : '', 'content');
       case 'altText': return { value: title, source: titleSource };
       case 'noticeNameModel': {
-        const value = [savedTextOrFallback(content.label.productName, title), content.label.model.value].filter(Boolean).join(' / ');
+        const value = [...new Set([savedTextOrFallback(content.label.productName, title), content.label.model.value].filter(Boolean))].join(' / ');
         return content.label.productName.provenance === 'manual' || content.label.model.provenance === 'manual' ? { value, source: 'content' } : literal(value, 'content');
       }
       case 'noticeDimensions': return auto('size', option);
@@ -325,6 +325,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { value, source: (content.label.manufacturer.value && content.label.importer.value) || content.label.manufacturer.provenance === 'manual' || content.label.importer.provenance === 'manual' ? 'content' : value ? 'settings' : 'empty' };
       }
       case 'noticeCountryOfOrigin': return contentValue(content.label.countryOfOrigin);
+      case 'noticePermission': return contentValue(content.label.certification);
       case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance);
       case 'noticeServiceContact': return contentValue(content.label.contact, settings.serviceContact);
       case 'boxSkuQuantity': return literal(settings.boxSkuQuantity, 'settings');
