@@ -1029,3 +1029,10 @@ AI등록 화면 확인:
 - 검증: 전체371/371 통과. 신규 검증은 옵션 포함 범위, 미저장 상속/해제, 기본값·수동 공란 구분, 가격/바코드 연계 오류 수정, 원본 불변 및 서버 렌더링의 구역 버튼/비활성화다. 실제 브라우저 클릭·공식 Excel 업로드·운영접수는 미검증. outputs/quotation-overview-tests.log 및 quotation-overview-build.log에 검사 기록을 남긴다.
 - 다음: 실제1688 수집·AI·Supplier Hub adapter 연결, 공식 Excel/전체 카테고리 규격 대조가 여전히 필요하다. 이번 기능은 작성 현황 확인이며 전체 자동화는 미완성이다. 유료 호출·운영 등록·Cloudflare 배포 없음.
 - 추가 검증: TypeScript/ESLint/production build/diff 검사 모두 통과.
+
+## 63. 최종 견적 기준 옵션별 이미지 검토 페이지 — 2026-09-24
+
+- 시작 mainb50ea88, 미커밋 변경 없음. 기존 detail-review.html은 원래 콘텐츠 기준이라 견적에서 수정한 옵션별 이미지와 다를 수 있었다. quotation-images.html을 검토 패키지에 추가해 최종 resolved 견적의 대표/추가/상세/라벨 이미지, 순서, 실제 첨부 파일명을 표시한다. 기존 콘텐츠 검토 파일은 보존한다.
+- 포함 옵션만 표시하고 연결이 없으면 명시한다. Excel 출력과 동일한 assets 파일명을 사용한다. 원문 HTML/외부 URL을 실행하거나 요청하지 않고 로컬 assets 이미지 경로만 허용한다. 상품/옵션 텍스트는 HTML 이스케이프하며 누락 또는 허용하지 않는 첨부 경로는 출력 오류로 처리한다. 생성 HTML을 기존6MB 출력 예산에 포함하고 자체 생성 중에도 크기를 제한한다.
+- 검증: 전체372/372, TypeScript/ESLint/production build/diff 검사 통과. 신규 테스트는 옵션 수동 이미지/순서와 Excel 파일명 일치, 라벨 공란, 제외 옵션 누락, 원본 불변, 텍스트 이스케이프, 누락/외부/상위 경로 거절을 확인한다. outputs/image-index-tests.log 및 image-index-build.log. 브라우저 시각 검증·실제 공식 Excel 업로드·운영접수는 미실시.
+- 다음: 실제1688 수집·AI·Supplier Hub adapter 연결과 공식 Excel/전체 카테고리 규격 대조는 남는다. 이번 변경은 검토 패키지 기능이며 실상품 이미지 번역이나 자동전송 구현 완료가 아니다. 유료 호출·운영 등록·Cloudflare 배포 없음.

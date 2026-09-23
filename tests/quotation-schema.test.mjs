@@ -561,3 +561,22 @@ test('saved components and release month flow into category quotations and Excel
  }
  const other=fixture();other.categoryId='77442';assert.equal(model.resolveQuotationFields(other).rows[1].fields.noticeComponents,undefined);
 });
+
+test('quotation image review uses final per-option overrides and the same attachment filenames as Excel',()=>{
+ const input=fixture();input.overrides={common:{mainImage:'owner/main.png',detailHtml:'<script>evil()</script>'},options:{red:{mainImage:'owner/detail.png',additionalImages:'owner/main.png\nowner/option.png',labelImages:''}}};
+ input.options.rows.push({...clone(input.options.rows[0]),id:'excluded',translatedName:'EXCLUDED UNIQUE',included:false});
+ input.options.rows[0].translatedName='<img src=x onerror=evil()> & 상품';
+ const before=JSON.stringify(input);const resolved=model.resolveQuotationFields(input);
+ const assets=[{key:'owner/main.png',name:'assets/image-001.png'},{key:'owner/option.png',name:'assets/image-002.jpg'},{key:'owner/detail.png',name:'assets/image-003.webp'}];
+ const exporter=load('app/exports/quotation-fields.ts');
+ const rows=exporter.resolvedQuotationRows(input,resolved,assets);
+ const result=exporter.quotationFieldFiles({...input,state:{revision:1,overrides:input.overrides},categoryContext:{categoryId:'80719'}},resolved,assets,'fingerprint');
+ const html=result.files.find(file=>file.name==='quotation-images.html').data;
+ assert.equal(rows[0].mainImage,'image-003.webp');assert.ok(html.includes('src="assets/'+rows[0].mainImage+'"'));
+ assert.ok(html.indexOf('1. image-001.png')<html.indexOf('2. image-002.jpg'));
+ assert.match(html,/연결된 이미지 없음/);assert.match(html,/&lt;img src=x onerror=evil\(\)&gt; &amp; 상품/);
+ assert.doesNotMatch(html,/<script>|<img src=x|EXCLUDED UNIQUE/);assert.equal(JSON.stringify(input),before);
+ const render=load('app/exports/quotation-image-index.ts').quotationImageIndex;
+ assert.throws(()=>render(resolved,assets.slice(0,2)),/첨부 파일/);
+ for(const name of ['https://evil.test/a.png','../image.png','assets/../../image.png','assets/image.png" onerror="evil()'])assert.throws(()=>render(resolved,assets.map(asset=>({...asset,name}))),/첨부 파일/);
+});
