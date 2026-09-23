@@ -3,6 +3,7 @@ import { defaultSettings, type WorkspaceSettings } from '@/app/workspace-setting
 import type { ProductRecord } from '@/db/queries';
 import type { ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
+import { calculateOptionPrices, resolveOptionPricePolicy, type ProductOptions } from '@/app/product-options';
 
 export const automationStages = ['seo', 'pricing', 'mainImage', 'additionalImages', 'detailImage', 'sizeChart', 'koreanLabel', 'quotation'] as const;
 export type AutomationStageId = typeof automationStages[number];
@@ -121,9 +122,10 @@ function currentTranslation(product: ProductRecord, content: ProductContent | nu
   return job?.status === 'completed' && job.result && job.productId === product.id && job.productVersion === product.updated_at && job.contentRevision === (content?.revision ?? 0) ? job : null;
 }
 
-export function automationInputFingerprint(product: ProductRecord, settings: WorkspaceSettings, content: ProductContent | null, translation: TranslationJob | null = null) {
+export function automationInputFingerprint(product: ProductRecord, settings: WorkspaceSettings, content: ProductContent | null, translation: TranslationJob | null = null, options: ProductOptions | null = null) {
+  if(options && options.productId!==product.id)throw new Error('옵션과 상품이 일치하지 않습니다.');
   const current = currentTranslation(product, content, translation);
-  return fingerprint({ product, settings, content, translation: current ? { id: current.id, responseId: current.result!.responseId, fingerprint: current.review.fingerprint } : null });
+  return fingerprint({ product, settings, content, options, translation: current ? { id: current.id, responseId: current.result!.responseId, fingerprint: current.review.fingerprint } : null });
 }
 
 export function policyForProduct(product: ProductRecord, settings: WorkspaceSettings): PricePolicy {
@@ -192,9 +194,9 @@ function savedDrafts(stages: AutomationStage[], product: ProductRecord, content:
   }
 }
 
-export async function planAutomation(product: ProductRecord, settings: WorkspaceSettings = defaultSettings, previous: AutomationWorkflow | null = null, content: ProductContent | null = null, translation: TranslationJob | null = null, now = new Date().toISOString()): Promise<AutomationWorkflow> {
+export async function planAutomation(product: ProductRecord, settings: WorkspaceSettings = defaultSettings, previous: AutomationWorkflow | null = null, content: ProductContent | null = null, translation: TranslationJob | null = null, now = new Date().toISOString(), options: ProductOptions | null = null): Promise<AutomationWorkflow> {
   if (content && content.productId !== product.id) throw new Error('콘텐츠와 상품이 일치하지 않습니다.');
-  const inputFingerprint = await automationInputFingerprint(product, settings, content, translation);
+  const inputFingerprint = await automationInputFingerprint(product, settings, content, translation, options);
   const sameInput = previous?.inputFingerprint === inputFingerprint && previous.productVersion === product.updated_at;
   const stages: AutomationStage[] = automationStages.map(id => {
     const prior = previous?.stages.find(stage => stage.id === id);
@@ -222,7 +224,8 @@ export async function planAutomation(product: ProductRecord, settings: Workspace
 }
 
 /** Only deterministic, free work runs here. Provider side effects require a durable claim before an adapter can be enabled. */
-export function executeLocalAutomation(workflow: AutomationWorkflow, product: ProductRecord, settings: WorkspaceSettings, command: AutomationCommand, now = new Date().toISOString()): AutomationWorkflow {
+export function executeLocalAutomation(workflow: AutomationWorkflow, product: ProductRecord, settings: WorkspaceSettings, command: AutomationCommand, now = new Date().toISOString(), options: ProductOptions | null = null): AutomationWorkflow {
+  if(options && options.productId!==product.id)throw new Error('옵션과 상품이 일치하지 않습니다.');
   const result = structuredClone(workflow);
   if (command.action === 'plan') return result;
   for (const stage of result.stages) {
@@ -234,18 +237,34 @@ export function executeLocalAutomation(workflow: AutomationWorkflow, product: Pr
     stage.attempts += 1;
     stage.updatedAt = now;
     try {
-      const policy = policyForProduct(product, settings);
-      const calculation = calculatePrice(product.source_price_cny, policy);
-      stage.artifacts = [{ id: `pricing-${stage.revision}`, kind: 'priceCalculation', label: '저장 원가 기준 가격 계산',
-        data: { sourcePriceCny: product.source_price_cny, policy, calculation, appliedToProduct: false }, submissionReady: false }];
+      const policy = resolveOptionPricePolicy(product, settings).policy;
+      if(options && (options.rows.length || options.revision>0)) {
+        const included=options.rows.filter(row=>row.included);
+        if(!included.length)throw new Error('견적에 포함할 옵션을 선택해주세요.');
+        const rows=calculateOptionPrices(included,policy);
+        stage.artifacts=rows.map(row=>({id:`pricing-${stage.revision}-${row.optionId}`,kind:'priceCalculation',
+          label:`${included.find(option=>option.id===row.optionId)!.translatedName || included.find(option=>option.id===row.optionId)!.originalName || row.optionId} · 옵션 가격`,
+          data:{...row,policy,optionRevision:options.revision,appliedToProduct:false},submissionReady:false}));
+        const failed=rows.filter(row=>row.error||!row.calculation);
+        if(failed.length){
+          stage.status='failed';stage.reason={code:'INVALID_OPTION_PRICE_INPUT',message:`옵션 ${failed.length}개의 원가·구성 수량을 확인해주세요. 각 옵션의 계산 결과에 실패 원인을 표시했습니다.`};
+          stage.retryable=false;stage.evidence=[{kind:'localCalculation',reference:`sourceflow.calculateOptionPrices:options@${options.revision}`,observedAt:now}];
+          continue;
+        }
+      } else {
+        const calculation = calculatePrice(product.source_price_cny, policy);
+        stage.artifacts = [{ id: `pricing-${stage.revision}`, kind: 'priceCalculation', label: '저장 원가 기준 가격 계산',
+          data: { sourcePriceCny: product.source_price_cny, policy, calculation, appliedToProduct: false }, submissionReady: false }];
+      }
       stage.evidence = [
         { kind: 'storedProduct', reference: `${product.id}@${product.updated_at}`, observedAt: now },
         { kind: 'savedSettings', reference: product.pricing_policy ? 'product.pricing_policy' : 'workspace_settings + product exchange/margins', observedAt: now },
         { kind: 'localCalculation', reference: 'sourceflow.calculatePrice.v1', observedAt: now },
+        ...(options ? [{kind:'localCalculation' as const,reference:`sourceflow.calculateOptionPrices:options@${options.revision}`,observedAt:now}] : []),
       ];
       stage.status = 'complete'; stage.reason = null; stage.retryable = false;
-    } catch {
-      stage.status = 'failed'; stage.reason = { code: 'INVALID_PRICE_INPUT', message: '저장된 원가나 가격 정책을 수정한 뒤 다시 실행해주세요.' };
+    } catch (error) {
+      stage.status = 'failed'; stage.reason = { code: 'INVALID_PRICE_INPUT', message: error instanceof Error ? error.message : '저장된 원가나 가격 정책을 수정한 뒤 다시 실행해주세요.' };
       stage.retryable = false; stage.artifacts = []; stage.evidence = [];
     }
   }

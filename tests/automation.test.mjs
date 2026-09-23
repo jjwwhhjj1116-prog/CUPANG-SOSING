@@ -20,6 +20,8 @@ function load(file, overrides = {}, mode = 'development') {
       if (name === '@/app/automation/translation') return load('app/automation/translation.ts');
       if (name === '@/app/automation/image-edit') return load('app/automation/image-edit.ts');
       if (name === '@/app/product-content') return load('app/product-content.ts');
+      if (name === '@/app/product-options') return load('app/product-options.ts');
+      if (name === '@/db/product-options') return {readProductOptions:async(_owner,id)=>load('app/product-options.ts').emptyProductOptions(id)};
       if (name === '@/db/product-content') return { readProductContent: async (_owner, id) => load('app/product-content.ts').emptyProductContent(id) };
       if (name === '@/db/translation-jobs') return { listTranslationJobs: async () => [] };
       if (name === 'cloudflare:workers') return { env: {} };
@@ -36,6 +38,59 @@ const product = { id: 'test', owner_id: 'owner', title: 'LOCAL TEST', source_url
 const command = (action = 'run', key = 'request_1234') => ({ action, expectedVersion: version, idempotencyKey: key, stages: [...model.automationStages] });
 const context = { params: Promise.resolve({ id: 'test' }) };
 const request = body => new Request('http://localhost/api/products/test/automation', { method: 'POST', body: JSON.stringify(body) });
+
+function optionFixture(){
+ const optionModel=load('app/product-options.ts');return {...optionModel.emptyProductOptions(product.id),revision:1,
+ rows:[{...optionModel.emptyOptionInput('a'),originalName:'단품',included:true,unitCostCny:2},
+ {...optionModel.emptyOptionInput('b'),originalName:'세트',included:true,unitCostCny:3,unitsPerPack:4},
+ {...optionModel.emptyOptionInput('excluded'),originalName:'제외',included:false,unitCostCny:null}]};
+}
+test('automation calculates every included SKU with the quotation price engine and invalidates changed options',async()=>{
+ const options=optionFixture();const before=JSON.stringify(options);
+ const plan=await model.planAutomation(product,settings,null,null,null,version,options);
+ const run=model.executeLocalAutomation(plan,product,settings,command(),version,options);
+ const price=run.stages.find(stage=>stage.id==='pricing');
+ assert.equal(price.status,'complete');assert.equal(price.artifacts.length,2);
+ const expected=load('app/product-options.ts').calculateOptionPrices(options.rows,model.policyForProduct(product,settings)).filter(row=>row.included);
+ assert.deepEqual(price.artifacts.map(a=>a.data.calculation.salePrice),expected.map(row=>row.calculation.salePrice));
+ assert.equal(price.artifacts[1].data.sourceCostCny,12);assert.equal(price.artifacts[1].data.appliedToProduct,false);
+ assert.equal(JSON.stringify(options),before);
+ const unchanged=await model.planAutomation(product,settings,run,null,null,version,options);
+ assert.equal(unchanged.stages.find(stage=>stage.id==='pricing').status,'complete');
+ options.rows[1].unitsPerPack=5;options.revision++;
+ const changed=await model.planAutomation(product,settings,run,null,null,version,options);
+ assert.equal(changed.stages.find(stage=>stage.id==='pricing').status,'ready');
+ assert.notEqual(changed.inputFingerprint,run.inputFingerprint);
+ await assert.rejects(()=>model.planAutomation(product,settings,null,null,null,version,{...options,productId:'other'}));
+});
+test('partial invalid SKU input and an empty saved selection cannot complete representative pricing',async()=>{
+ for(const scenario of ['invalid','excluded','deleted']){
+ const options=optionFixture();
+ if(scenario==='invalid')options.rows[1].unitCostCny=null;
+ else if(scenario==='excluded')options.rows.forEach(row=>row.included=false);
+ else options.rows=[];
+ const plan=await model.planAutomation(product,settings,null,null,null,version,options);
+ const price=model.executeLocalAutomation(plan,product,settings,command(),version,options).stages.find(stage=>stage.id==='pricing');
+ assert.equal(price.status,'failed');
+ if(scenario==='invalid'){assert.equal(price.artifacts.length,2);assert.equal(price.artifacts[0].data.calculation.salePrice,200);assert.ok(price.artifacts[1].data.error);}
+ else assert.match(price.reason.message,/옵션/);
+ }
+});
+
+test('automation API persists SKU calculations and GET marks changed option input stale',async()=>{
+ const h=sqliteHarness();let options=optionFixture();
+ try{
+ const route=load('app/api/products/[id]/automation/route.ts',{
+  '@/db/queries':{findProduct:async()=>product,getSettings:async()=>null},'@/db/automation':h.store,
+  '@/db/product-options':{readProductOptions:async()=>options}});
+ const response=await route.POST(request(command()),context);assert.equal(response.status,200);
+ const saved=(await response.json()).workflow.stages.find(stage=>stage.id==='pricing');
+ assert.equal(saved.artifacts.length,2);assert.equal(saved.artifacts[1].data.calculation.salePrice,1200);
+ assert.equal((await (await route.GET(new Request('http://localhost'),context)).json()).stale,false);
+ options={...options,revision:2,rows:options.rows.map(row=>({...row,unitsPerPack:2}))};
+ assert.equal((await (await route.GET(new Request('http://localhost'),context)).json()).stale,true);
+ }finally{h.sqlite.close();}
+});
 
 test('runs actual free price calculation while every unavailable preparation stage stays blocked', async () => {
   const plan = await model.planAutomation(product, settings);

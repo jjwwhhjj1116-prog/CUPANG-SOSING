@@ -18,6 +18,7 @@ function load(relative, overrides = {}) {
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'test-owner' }), getWorkspaceOwnerId: async () => 'test-owner' };
       if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
       if (name === '@/app/pricing') return load('app/pricing.ts');
+      if (name === '@/app/product-options') return load('app/product-options.ts');
       if (name === '@/app/workflow') return load('app/workflow.ts');
       if (name === 'cloudflare:workers') return { env: {} };
       if (name === '@/app/request-body') return load('app/request-body.ts');

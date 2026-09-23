@@ -917,3 +917,12 @@ AI등록 화면 확인:
 - 원문 옵션 표에 이미지 번호와 저장 선택 여부를 표시한다. 선택하지 않은 이미지는 연결하지 않는다. 이전 수신 원문에 없는 이미지 관계를 추정하거나 기존 원문을 변경하지 않았다.
 - 검증: 전체341/341, TypeScript/ESLint/production build 통과. imageIndex 호환/범위/공유, 수동편집 보존, 실제 SQLite 트랜잭션 롤백/재시도, API→옵션 이미지 저장, 옵션별 견적 대표 이미지 연동을 확인했다. outputs/sku-image-all-tests.log, sku-image-build.log. 실제1688 응답/운영 R2/앱 브라우저 클릭은 미검증.
 - 다음: 실제 권한 있는1688 수집 공급원 연결과 실상품 원문 확보, 전체 카테고리/공식 Excel 대조, AI 공급원 및 Supplier Hub 업로드·검증·접수 adapter. 전체 자동화 미완성. 유료 호출·운영 등록·Cloudflare 배포 없음. 수신 규격은 docs/COLLECTION-RESULT-CONTRACT.md 참조.
+
+## 49. 전체 작업 가격 단계를 옵션·번들 기준으로 연결 — 2026-09-23
+
+- 시작 main e227833, 미커밋 변경 없음. 전체 작업 자동화는 상품 대표 원가만 계산하여 옵션 원가가 누락돼도 가격 완료로 표시할 수 있었다. 자동화 API가 저장 옵션을 조회하고 견적과 동일한 resolveOptionPricePolicy/calculateOptionPrices로 포함된 옵션 전체를 계산하도록 수정했다.
+- 옵션별 원가×구성 수량, 저장 가격정책, 공급가/판매가/권장소비자가격을 계산 산출물로 보존한다. 제외 옵션은 계산하지 않는다. 일부 실패시 정상 계산값과 실패 원인을 함께 보존하고 가격 단계를 실패로 표시한다. 저장된 옵션이 모두 제외/삭제되면 상품 대표 원가로 대체하지 않는다. 옵션을 작성한 적 없는 상품만 기존 대표 가격 계산을 유지한다.
+- 옵션 전체 snapshot을 작업 fingerprint에 포함하고 다른 상품의 옵션은 거절한다. 옵션 수정 후 이전 완료 결과가 재사용되지 않으며 GET에서 stale로 표시한다. 기존 상품 버전/DB 저장/idempotency 검사를 유지한다. 이 계산 결과는 가격/옵션 저장값을 덮어쓰거나 Supplier Hub에 전송하지 않는다.
+- 작업 화면에서 가격 산출물을 옵션별 원가·공급가·판매가·권장소비자가격과 실패 문구로 표시한다. 다른 산출물의 기존 상세 조회는 유지한다.
+- 검증: 전체344/344, TypeScript/ESLint/production build/diff 검사 통과. 신규3개 테스트로 옵션/번들 계산과 견적 계산 함수 일치, 제외/삭제/일부 실패, 옵션 변경 무효화, 상품 불일치, API 저장 및 GET stale를 확인했다. 최초 전체 테스트의 로더 의존성 누락과 lint의 module 변수명 문제를 수정 후 재통과했다. outputs/option-automation-all-tests.log, option-automation-api-tests.log, option-automation-build.log. 실제 브라우저 클릭과 운영 데이터는 미검증.
+- 다음: 실제 권한 있는1688 수집 공급원과 실상품 원문 확보, 전체 카테고리/공식 Excel 대조, AI 공급원 및 Supplier Hub 업로드·검증·접수 adapter. 전체 자동화 미완성. 이번 턴 유료 호출·운영 등록·Cloudflare 배포 없음.
