@@ -1,5 +1,17 @@
 import { categoryFields, type CategoryField, type ColumnMapping } from './category-profiles';
 import { getQuotationSchema } from './quotation-schema';
+import type { XlsxInspection } from './xlsx-template';
+
+/** A draft suggestion, never a claim that a workbook is an official category template. */
+export function suggestQuotationHeader(workbook: XlsxInspection, categoryId: string | null) {
+  const candidates = workbook.sheets.flatMap(sheet => sheet.rows.flatMap(row => {
+    const result = suggestQuotationMappings(row.values, categoryId);
+    const fields = new Set(result.mappings.map(mapping => mapping.field));
+    if (result.ambiguousColumns.length || fields.size < 3 || !fields.has('title') || !fields.has('supplyPrice')) return [];
+    return [{ sheetName: sheet.name, rowNumber: row.rowNumber, matchedFields: fields.size }];
+  })).sort((a, b) => b.matchedFields - a.matchedFields);
+  return candidates.length && (candidates.length === 1 || candidates[0].matchedFields > candidates[1].matchedFields) ? candidates[0] : null;
+}
 
 // Match observed field labels, never substrings: 상품 무게 and 포장 무게 are
 // different facts, just as 판매 수량 and 박스 내 SKU 수량 are different facts.

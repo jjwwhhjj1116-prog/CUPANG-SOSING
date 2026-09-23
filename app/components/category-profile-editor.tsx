@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
 import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
-import { refreshCategoryMappings, suggestQuotationMappings } from '@/app/quotation-mapping';
+import { refreshCategoryMappings, suggestQuotationMappings, suggestQuotationHeader } from '@/app/quotation-mapping';
 
 type Props = { value?: CategoryProfile | null; initialDraft?: CategoryProfileInput; onSave: (profile: CategoryProfile) => void; onClose: () => void };
 const empty: CategoryProfileInput = { name: '', categoryId: '', categoryPath: [], template: null, mappings: [] };
@@ -56,10 +56,13 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       const extension = file.name.split('.').at(-1)?.toLowerCase();
       if (extension !== 'csv' && extension !== 'tsv' && extension !== 'xlsx') throw new Error('XLSX·UTF-8 CSV·TSV 파일을 선택해주세요.');
       const bytes = await file.arrayBuffer();
-      let headers: string[]; let inspection: XlsxInspection | null = null; let textSource: { text: string; format: 'csv' | 'tsv' } | null = null; let sheetName = ''; let selectedRow = headerRow;
+      let headers: string[]; let inspection: XlsxInspection | null = null; let textSource: { text: string; format: 'csv' | 'tsv' } | null = null; let sheetName = ''; let selectedRow = headerRow; let headerNotice = '';
       if (extension === 'xlsx') {
-        inspection = await inspectXlsx(bytes); sheetName = inspection.sheets[0].name;
-        selectedRow = inspection.sheets[0].rows.find(row => row.rowNumber === headerRow)?.rowNumber ?? inspection.sheets[0].rows[0]?.rowNumber ?? headerRow;
+        inspection = await inspectXlsx(bytes);
+        const candidate = suggestQuotationHeader(inspection, draft.categoryId);
+        headerNotice = candidate ? '열 이름을 기준으로 작성 시트·머리글 행을 추천했습니다. 공식 분류 일치 여부는 별도 확인이 필요합니다. ' : '작성 시트를 확정할 근거가 부족하거나 후보가 여러 개입니다. 시트·머리글 행을 직접 선택해주세요. ';
+        sheetName = candidate?.sheetName ?? inspection.sheets[0].name;
+        selectedRow = candidate?.rowNumber ?? inspection.sheets[0].rows.find(row => row.rowNumber === headerRow)?.rowNumber ?? inspection.sheets[0].rows[0]?.rowNumber ?? headerRow;
         headers = xlsxHeaders(inspection, sheetName, selectedRow);
       } else {
         let text: string;
@@ -81,7 +84,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       automaticMappings.current = suggested.mappings; protectedColumns.current.clear();
       setDraft(current => ({ ...current, template, mappings: suggested.mappings }));
       setWorkbook(inspection); setTextTemplate(textSource); setHeaderRow(selectedRow);
-      setMessage(`${headers.length}개 열 중 ${suggested.mappings.length}개를 이름으로 자동 연결했습니다. 미연결 ${suggested.unmatchedColumns.length}개 · 중복/모호 ${suggested.ambiguousColumns.length}개. 시트·머리글 행과 연결 결과를 확인한 뒤 설정을 저장해주세요. ${inspection?.warnings.join(' ') ?? ''}`);
+      setMessage(`${headerNotice}${headers.length}개 열 중 ${suggested.mappings.length}개를 이름으로 자동 연결했습니다. 미연결 ${suggested.unmatchedColumns.length}개 · 중복/모호 ${suggested.ambiguousColumns.length}개. 시트·머리글 행과 연결 결과를 확인한 뒤 설정을 저장해주세요. ${inspection?.warnings.join(' ') ?? ''}`);
     } catch (error) { setError(error instanceof Error ? error.message : '양식을 읽지 못했습니다.'); }
     finally { setBusy(false); }
   };

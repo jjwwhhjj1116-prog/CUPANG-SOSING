@@ -91,3 +91,14 @@ test('ambiguous duplicate headers and unrecognized unit-bearing headers remain u
   assert.deepEqual(plain(result.unmatchedColumns), [2, 3, 4, 7]);
   assert.deepEqual(plain(result.mappings.map(item => item.field)), ['packagedWeightG', 'weight']);
 });
+
+test('header suggestion skips cover sheets and requires a unique strong exact-label candidate',()=>{
+ const {suggestQuotationHeader}=load('app/quotation-mapping.ts');
+ const sheet=(name,rowNumber,values)=>({name,rows:[{rowNumber,values}]});
+ const workbook={sheets:[sheet('안내',1,['견적서 작성 가이드']),sheet('상품',7,['상품명','공급가','판매가','브랜드'])],warnings:[]};
+ const before=JSON.stringify(workbook);
+ assert.deepEqual(plain(suggestQuotationHeader(workbook,'80719')),{sheetName:'상품',rowNumber:7,matchedFields:4});
+ assert.equal(JSON.stringify(workbook),before);
+ assert.equal(suggestQuotationHeader({...workbook,sheets:[...workbook.sheets,sheet('다른 분류',9,['상품명','공급가','판매가','브랜드'])]},'80719'),null);
+ for(const headers of [['상품명','공급가'],['상품명','공급가','상품명','판매가'],['상품명 안내','공급가','판매가'],['브랜드','제조사','판매가']])assert.equal(suggestQuotationHeader({sheets:[sheet('모호',1,headers)],warnings:[]},'80719'),null);
+});
