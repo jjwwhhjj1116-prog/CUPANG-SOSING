@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { assetRoles, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
+import { assetRoles, detailImageKeys, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
 import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor-tools';
 import { fillLabelDraft } from '@/app/label-autofill';
 
@@ -92,7 +92,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   try { imageKeys = productImageKeys(product.image_keys); } catch { /* API reports invalid stored references on save. */ }
   const visibleImages = orderedEditorImages(imageKeys, draft.assets, assetFilter);
   const activePreview = previewKey && visibleImages.includes(previewKey) ? previewKey : visibleImages[0] ?? null;
-  const detailPreview = focusedAssetRole === 'detail' ? draft.assets.detail.filter(key => imageKeys.includes(key)) : [];
+  const detailPreview = focusedAssetRole === 'detail' ? detailImageKeys(draft.assets).filter(key => imageKeys.includes(key)) : [];
   const unavailableImages = [...new Set(Object.values(draft.assets).flat())].filter(key => !imageKeys.includes(key));
   const sectionTitle = section === '이미지' && focusedAssetRole ? assetRoles[focusedAssetRole] : section;
 
@@ -130,7 +130,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   function assign(key: string, role: AssetRole | '') {
     setDraft(previous => {
       const assets = Object.fromEntries(Object.entries(previous.assets).map(([name, keys]) => [name, keys.filter(value => value !== key)])) as Draft['assets'];
-      if (role) assets[role] = role === 'main' ? [key] : [...assets[role], key];
+      if (role) assets[role] = ['main', 'detailTop', 'detailBottom'].includes(role) ? [key] : [...assets[role], key];
       return { ...previous, assets };
     });
   }
@@ -159,13 +159,13 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       </div>}
       {section === '표시사항' && <div className="form-grid">{(Object.keys(labelFields) as LabelField[]).map(key => <label className={`field ${key === 'precautions' || key === 'qualityAssurance' ? 'full' : ''}`} key={key}><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, label: { ...previous.label, [key]: event.target.value } }))} /></label>)}</div>}
       {section === '이미지' && <div className="panel-stack">
-        {focusedAssetRole&&<div className="image-step-summary"><div><strong>{assetRoles[focusedAssetRole]} <b>{draft.assets[focusedAssetRole].length}장</b></strong><p>{focusedAssetRole==='main'?'상품을 대표할 이미지 한 장을 선택하세요.':focusedAssetRole==='additional'?'상품의 다른 모습과 옵션 이미지를 선택하고 순서를 조정하세요.':'상세페이지에 사용할 이미지를 선택하고 읽는 순서대로 배치하세요.'} 저장한 선택은 견적 자료에 반영됩니다.</p></div><button type="button" className="btn ghost" disabled={!draft.assets[focusedAssetRole].length} onClick={()=>setAssetFilter(focusedAssetRole)}>선택한 이미지 보기</button></div>}
+        {focusedAssetRole&&<div className="image-step-summary"><div><strong>{assetRoles[focusedAssetRole]} <b>{draft.assets[focusedAssetRole].length}장</b></strong><p>{focusedAssetRole==='main'?'상품을 대표할 이미지 한 장을 선택하세요.':focusedAssetRole==='additional'?'상품의 다른 모습과 옵션 이미지를 선택하고 순서를 조정하세요.':'이미지 역할에서 상단·본문·하단을 선택하세요. 상단과 하단은 각각 한 장이며 본문 순서는 ↑↓로 조정합니다.'} 저장한 선택은 견적 자료에 반영됩니다.</p></div><button type="button" className="btn ghost" disabled={!draft.assets[focusedAssetRole].length} onClick={()=>setAssetFilter(focusedAssetRole)}>선택한 이미지 보기</button></div>}
         {!imageKeys.length && <p>위 업로드 버튼으로 이미지 파일을 추가하면 역할을 지정할 수 있습니다.</p>}
         {imageKeys.length > 0 && <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}><button type="button" className={`btn ${assetFilter === 'all' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'all'} onClick={() => setAssetFilter('all')}>전체 {imageKeys.length}</button>{(Object.entries(assetRoles) as [AssetRole, string][]).map(([role, label]) => <button type="button" key={role} className={`btn ${assetFilter === role ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === role} onClick={() => setAssetFilter(role)}>{label} {draft.assets[role].filter(key => imageKeys.includes(key)).length}</button>)}<button type="button" className={`btn ${assetFilter === 'unassigned' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'unassigned'} onClick={() => setAssetFilter('unassigned')}>미지정 {orderedEditorImages(imageKeys, draft.assets, 'unassigned').length}</button></div><small style={{ color: '#64748b' }}>역할별 저장 순서로 표시합니다. ↑↓로 순서를 바꾸고 이미지를 누르면 크게 볼 수 있습니다.</small></>}
         {unavailableImages.length > 0 && <div className="panel-note"><div><p>현재 상품 이미지 목록에 없는 역할 참조가 {unavailableImages.length}개 있습니다.</p><button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, assets: Object.fromEntries(Object.entries(previous.assets).map(([role, keys]) => [role, keys.filter(key => imageKeys.includes(key))])) as Draft['assets'] }))}>연결이 없는 역할 참조 제외</button></div></div>}
         <div className="image-edit-workspace">
         <section className="image-edit-canvas" aria-label={focusedAssetRole==='detail'?'상세페이지 배치 미리보기':'선택 이미지 미리보기'}>
-          {detailPreview.length>0 ? <div className="detail-image-strip">{detailPreview.map((key,index)=><figure key={key}><figcaption>상세 이미지 {index+1}</figcaption>
+          {detailPreview.length>0 ? <div className="detail-image-strip">{detailPreview.map((key,index)=><figure key={key}><figcaption>{draft.assets.detailTop.includes(key)?'상단 이미지':draft.assets.detailBottom.includes(key)?'하단 이미지':`본문 이미지 ${draft.assets.detail.indexOf(key)+1}`}</figcaption>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`상세페이지 순서 ${index+1}`} loading="lazy"/>
           </figure>)}</div> : activePreview ? <figure className="image-large-preview"><figcaption>이미지 {imageKeys.indexOf(activePreview)+1} 미리보기</figcaption>

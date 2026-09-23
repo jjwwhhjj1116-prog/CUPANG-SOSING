@@ -592,3 +592,14 @@ test('final option image overrides detect main/detail overlap without changing a
  assert.deepEqual(clone(input.content),original.content);
  assert.deepEqual(clone(model.quotationImageRoleIssues('', '')),[]);
 });
+
+
+test('quotation detail images compose banners and preserve explicit manual overrides', () => {
+ const input=fixture();input.content.assets.detailTop.value=['owner/top'];input.content.assets.detailBottom.value=['owner/bottom'];
+ input.product.image_keys=JSON.stringify([...JSON.parse(input.product.image_keys),'owner/top','owner/bottom']);
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.detailImages.value,'owner/top\nowner/detail.png\nowner/bottom');
+ input.overrides={common:{detailImages:'owner/detail.png'},options:{}};
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.detailImages.value,'owner/detail.png');
+ input.overrides.common.detailImages='';
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.detailImages.value,'');
+});

@@ -5,7 +5,7 @@ export const labelFields = {
   contact: 'A/S 책임자·연락처', certification: '인증·허가 사항', precautions: '취급·사용 주의사항',
   qualityAssurance: '품질보증기준', components: '제품 구성품', releaseDate: '출시년월',
 } as const;
-export const assetRoles = { main: '대표 이미지', additional: '추가 이미지', detail: '상세 이미지', size: '사이즈표', label: '한글 표시사항' } as const;
+export const assetRoles = { main: '대표 이미지', additional: '추가 이미지', detailTop: '상세 상단 이미지', detail: '상세 이미지', detailBottom: '상세 하단 이미지', size: '사이즈표', label: '한글 표시사항' } as const;
 export type LabelField = keyof typeof labelFields;
 export type AssetRole = keyof typeof assetRoles;
 export type ContentField<T> = { value: T; provenance: 'unverified' | 'collected' | 'translated' | 'generated' | 'manual'; updatedAt: string | null };
@@ -25,7 +25,7 @@ export type ContentPatch = {
   assets?: Partial<Record<AssetRole, string[]>>;
 };
 
-const fresh = <T>(value: T): ContentField<T> => ({ value, provenance: 'unverified', updatedAt: null });
+const fresh = <T,>(value: T): ContentField<T> => ({ value, provenance: 'unverified', updatedAt: null });
 export function emptyProductContent(productId: string): ProductContent {
   return {
     schemaVersion: 1, productId, revision: 0, updatedAt: null,
@@ -37,7 +37,16 @@ export function emptyProductContent(productId: string): ProductContent {
 
 /** Add only newly introduced fields to old saved documents without changing revisions or facts. */
 export function withCurrentLabelFields(content: ProductContent): ProductContent {
-  return { ...content, label: { ...emptyProductContent(content.productId).label, ...content.label } };
+  const defaults = emptyProductContent(content.productId);
+  return { ...content, label: { ...defaults.label, ...content.label }, assets: { ...defaults.assets, ...content.assets } };
+}
+
+/** Shared ordering for previews and quotation attachments; legacy documents have no banners. */
+export function detailImageKeys(assets: Partial<Record<AssetRole, readonly string[]>>): string[] {
+  return [...(assets.detailTop ?? []), ...(assets.detail ?? []), ...(assets.detailBottom ?? [])];
+}
+export function contentDetailImageKeys(content: ProductContent): string[] {
+  return detailImageKeys(Object.fromEntries(Object.entries(content.assets).map(([key, field]) => [key, field.value])));
 }
 
 function object(value: unknown, allowed: readonly string[], name: string): Record<string, unknown> {
@@ -77,7 +86,7 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
     patch.assets = {};
     for (const key of Object.keys(assets) as AssetRole[]) {
       const values = assets[key];
-      if (!Array.isArray(values) || values.length > (key === 'main' ? 1 : 30)) throw new Error(`${assetRoles[key]} 개수를 확인해주세요.`);
+      if (!Array.isArray(values) || values.length > (['main', 'detailTop', 'detailBottom'].includes(key) ? 1 : 30)) throw new Error(`${assetRoles[key]} 개수를 확인해주세요.`);
       patch.assets[key] = values.map(value => {
         if (typeof value !== 'string' || value.length > 512 || !value.startsWith(`${ownerId}/`) || !ownedKeys.includes(value)) throw new Error('이 상품에 업로드한 본인 소유 이미지만 지정할 수 있습니다.');
         return value;

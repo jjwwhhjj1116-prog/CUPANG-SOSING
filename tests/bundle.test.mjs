@@ -235,3 +235,15 @@ test('explicitly cleared SEO title is not resurrected in review HTML or CSV',()=
  assert.ok(!decode(files['quotation-review.csv']).includes(product.title));
  assert.ok(JSON.parse(decode(files['manifest.json'])).missing.includes('노출 상품명'));
 });
+
+
+test('review detail page keeps banner-body-footer order and includes all attachments', () => {
+ const content=contentWithAssets();content.assets.detailTop.value=['owner/top'];content.assets.detailBottom.value=['owner/bottom'];
+ const assets=[['owner/main.png','assets/main.png'],['owner/detail.png','assets/body.png'],['owner/top','assets/top.png'],['owner/bottom','assets/bottom.png']].map(([key,name])=>({key,name,data:png}));
+ const files=readArchive(bundle.createReviewBundle(product,content,assets));
+ const html=decode(files['detail-review.html']);
+ assert.ok(html.indexOf('assets/top.png')<html.indexOf('assets/body.png'));
+ assert.ok(html.indexOf('assets/body.png')<html.indexOf('assets/bottom.png'));
+ for(const asset of assets)assert.ok(files[asset.name]);
+ assert.throws(()=>bundle.createReviewBundle(product,content,assets.filter(a=>a.key!=='owner/top')));
+});

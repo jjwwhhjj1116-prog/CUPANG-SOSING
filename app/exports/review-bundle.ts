@@ -1,4 +1,4 @@
-import type { ProductContent } from '@/app/product-content';
+import { detailImageKeys, type ProductContent } from '@/app/product-content';
 import type { ProductRecord } from '@/db/queries';
 import { quotationCsv } from '@/app/pricing';
 import { zipFiles } from '@/app/exports/zip';
@@ -41,7 +41,7 @@ export function createReviewBundle(product: ProductRecord, content: ProductConte
     return text.match(/.{1,45}/gu)??[text];
   })];
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="840" height="${70+labelLines.length*30}" viewBox="0 0 840 ${70+labelLines.length*30}"><rect width="100%" height="100%" fill="white"/><g font-family="sans-serif" font-size="18" fill="#111827">${labelLines.map((text,index)=>`<text x="24" y="${36+index*30}">${escape(text)}</text>`).join('')}</g></svg>`;
-  const html=`<!doctype html><html lang="ko"><meta charset="utf-8"><title>${escape(title)}</title><style>body{max-width:860px;margin:32px auto;padding:20px;font-family:sans-serif;line-height:1.7}img{max-width:100%;height:auto}.note{background:#fff2ce;padding:12px}pre{white-space:pre-wrap;font-family:inherit}</style><body><p class="note">내부 검토 자료 · 자동 번역/공식 견적서 검증을 의미하지 않습니다.</p><h1>${escape(title)}</h1><p>${escape(content.seo.keywords.value.join(', '))}</p><pre>${escape(content.seo.description.value)}</pre>${(roleFiles.detail||[]).map(name=>`<img src="${escape(name)}" alt="상세 이미지">`).join('')}</body></html>`;
+  const html=`<!doctype html><html lang="ko"><meta charset="utf-8"><title>${escape(title)}</title><style>body{max-width:860px;margin:32px auto;padding:20px;font-family:sans-serif;line-height:1.7}img{max-width:100%;height:auto}.note{background:#fff2ce;padding:12px}pre{white-space:pre-wrap;font-family:inherit}</style><body><p class="note">내부 검토 자료 · 자동 번역/공식 견적서 검증을 의미하지 않습니다.</p><h1>${escape(title)}</h1><p>${escape(content.seo.keywords.value.join(', '))}</p><pre>${escape(content.seo.description.value)}</pre>${detailImageKeys(roleFiles).map(name=>`<img src="${escape(name)}" alt="상세 이미지">`).join('')}</body></html>`;
   const manifest={format:'sourceflow-review-bundle-v1',productId:product.id,contentRevision:content.revision,productUpdatedAt:product.updated_at,exportedAt,submissionReady:false,missing,assets:roleFiles,pricePolicy:product.pricing_policy?JSON.parse(product.pricing_policy):null};
   return zipFiles([
     {name:'README.txt',data:'SourceFlow 내부 검토 패키지\nSupplier Hub 공식 Excel/등록 패키지가 아닙니다.\n원문 수집·자동 번역·필수 서류 검증 상태는 manifest.json을 확인하세요.\nlabel-review.svg는 사용자가 저장한 표시사항을 조판한 초안입니다.\n'+(hasQuotationFields?'옵션별 최종 이미지와 Excel 첨부 파일명은 quotation-images.html에서 확인하세요.\n견적서 최종 수정값은 quotation-fields.json/CSV, 모든 수동 수정 원본은 quotation-overrides.csv에 있습니다.\nproduct-snapshot.csv와 content.json/HTML/SVG는 원래 저장한 상품·콘텐츠 자료이며 견적 전용 수정값과 다를 수 있습니다.\nJSON의 이미지 참조는 assets 매핑에서 첨부 파일명으로 확인하세요.\n':'')},

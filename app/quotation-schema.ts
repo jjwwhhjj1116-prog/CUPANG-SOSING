@@ -1,6 +1,6 @@
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema';
-import { savedTextOrFallback, type ContentField, type ProductContent } from '@/app/product-content';
+import { contentDetailImageKeys, savedTextOrFallback, type ContentField, type ProductContent } from '@/app/product-content';
 import type { ProductOption, ProductOptions } from '@/app/product-options';
 import { calculateOptionPrices, resolveOptionPricePolicy } from '@/app/product-options';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
@@ -331,7 +331,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'additionalImages': return images(content.assets.additional.value);
       case 'labelImages': return images(content.assets.label.value);
-      case 'detailImages': return images(content.assets.detail.value);
+      case 'detailImages': return images(contentDetailImageKeys(content));
       case 'detailHtml': return literal(content.seo.description.value ? `<p>${htmlEscape(content.seo.description.value).replace(/\r?\n/g, '<br>')}</p>` : '', 'content');
       case 'altText': return { value: title, source: titleSource };
       case 'noticeNameModel': {

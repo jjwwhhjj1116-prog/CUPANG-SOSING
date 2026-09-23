@@ -168,3 +168,19 @@ test('new label fields normalize legacy reads without writes and support validat
  assert.equal(cleared.label.components.provenance,'manual');assert.equal(cleared.label.releaseDate.value,'');
  for(const value of [null,123,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{components:value}}),[],'owner'));
 });
+
+
+test('detail banners preserve legacy content and require owned single images', () => {
+ const old=model.emptyProductContent('test');delete old.assets.detailTop;delete old.assets.detailBottom;
+ old.assets.detail.value=['owner/body'];const before=JSON.stringify(old);
+ const normalized=model.withCurrentLabelFields(old);
+ assert.equal(JSON.stringify(old),before);assert.equal(normalized.revision,old.revision);
+ assert.deepEqual(Array.from(model.contentDetailImageKeys(normalized)),['owner/body']);
+ const {patch}=model.validateContentInput(input({assets:{detailTop:['owner/top'],detailBottom:['owner/bottom']}}),['owner/top','owner/bottom'],'owner');
+ const next=model.applyContentPatch(old,patch,now);
+ assert.deepEqual(Array.from(model.contentDetailImageKeys(next)),['owner/top','owner/body','owner/bottom']);
+ assert.equal(next.assets.detailTop.provenance,'manual');
+ assert.throws(()=>model.validateContentInput(input({assets:{detailTop:['owner/top','owner/bottom']}}),['owner/top','owner/bottom'],'owner'));
+ assert.throws(()=>model.validateContentInput(input({assets:{detailBottom:['other/private']}}),['other/private'],'owner'));
+ assert.throws(()=>model.applyContentPatch(next,{assets:{detail:['owner/top']}},now));
+});

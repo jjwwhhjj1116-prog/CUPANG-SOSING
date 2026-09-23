@@ -42,9 +42,9 @@ export function duplicateOption(rows: readonly OptionInput[], id: string, newId:
   return [...rows.slice(0, index + 1), copy, ...rows.slice(index + 1)];
 }
 export type AssetEditorFilter = 'all' | 'unassigned' | AssetRole;
-const roles: AssetRole[] = ['main', 'additional', 'detail', 'size', 'label'];
+const roles: AssetRole[] = ['main', 'additional', 'detailTop', 'detail', 'detailBottom', 'size', 'label'];
 export function orderedEditorImages(available: readonly string[], assets: Record<AssetRole, string[]>, filter: AssetEditorFilter): string[] {
-  const assigned = [...new Set(roles.flatMap(role => assets[role]))];
+  const assigned = [...new Set(roles.flatMap(role => assets[role] ?? []))];
   const unassigned = available.filter(key => !assigned.includes(key));
   if (filter === 'unassigned') return unassigned;
   if (filter !== 'all') return assets[filter].filter(key => available.includes(key));

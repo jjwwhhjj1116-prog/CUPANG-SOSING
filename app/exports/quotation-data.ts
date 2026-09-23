@@ -1,5 +1,5 @@
 import type { CategoryField } from '@/app/category-profiles';
-import { savedTextOrFallback, type ProductContent } from '@/app/product-content';
+import { contentDetailImageKeys, savedTextOrFallback, type ProductContent } from '@/app/product-content';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
 import { calculatePrice } from '@/app/pricing';
@@ -27,7 +27,7 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
     boxQuantity: settings.boxSkuQuantity, material: content.label.material.value,
     countryOfOrigin: content.label.countryOfOrigin.value, barcode: '',
     mainImage: filename(content.assets.main.value[0]),
-    detailImage: content.assets.detail.value.map(filename).join('\n'),
+    detailImage: contentDetailImageKeys(content).map(filename).join('\n'),
     label: content.assets.label.value.map(filename).join('\n'),
   };
   if (!options.length) return [{ ...base, sourcePriceCny: product.source_price_cny, supplyPrice: product.supply_price, salePrice: product.sale_price, msrp: product.msrp }];

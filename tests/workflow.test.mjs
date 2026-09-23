@@ -17,6 +17,7 @@ function load(relative, overrides = {}) {
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'test-owner' }), getWorkspaceOwnerId: async () => 'test-owner' };
       if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
+      if (name === '@/app/product-content') return load('app/product-content.ts');
       if (name === '@/app/pricing') return load('app/pricing.ts');
       if (name === '@/app/product-options') return load('app/product-options.ts');
       if (name === '@/app/workflow') return load('app/workflow.ts');
