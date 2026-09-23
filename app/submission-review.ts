@@ -1,3 +1,4 @@
+import type { ImageCheck } from '@/app/quotation-image-review';
 import type { ResolvedQuotation } from '@/app/quotation-schema';
 
 export type SubmissionIssue = {
@@ -12,7 +13,7 @@ export type SubmissionReview = {
 };
 
 /** Readiness is derived from final saved cells, never legacy status badges. */
-export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[]) {
+export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[], imageChecks?: ReadonlyMap<string,ImageCheck>) {
   const issues: SubmissionIssue[] = [];
   let errorCount = 0; let reviewCount = 0;
   const add = (issue: SubmissionIssue) => {
@@ -33,6 +34,7 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
       if (field.required && !cell?.value.trim() && !errors.size) errors.add('필수값을 입력해주세요.');
       if (field.type === 'images') for (const key of (cell?.value ?? '').split('\n').map(item => item.trim()).filter(Boolean)) {
         if (!owned.has(key)) errors.add('이 상품에 저장된 이미지 연결이 아닙니다.');
+        else { const check=imageChecks?.get(key); if(check?.kind==='error') errors.add(check.message); else if(check) add({kind:'review',code:'IMAGE_VERIFICATION',message:`${field.label}: ${check.message}`,optionId:row.optionId,optionLabel:row.optionLabel,fieldId:field.id}); }
       }
       for (const message of errors) add({kind:'error', code:'FIELD_INVALID', message:`${field.label}: ${message}`, optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
       if (!errors.size && cell?.needsReview && cell.value.trim()) add({kind:'review', code:'EVIDENCE_REVIEW',
@@ -43,7 +45,7 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
     includedOptions:rows.length, errorCount, reviewCount, issues, omittedIssueCount:errorCount+reviewCount-issues.length,
     submissionReady:false as const, transport:'not-connected' as const,
     limits:['저장된 자료만 검사합니다. 편집 중인 내용은 저장 후 다시 검사해주세요.',
-      '이미지 연결 소유권을 검사하며 실제 파일 내용·Supplier Hub 업로드 성공은 검사하지 않습니다.',
+      imageChecks ? '이미지 소유권과 저장소 파일 존재·크기·형식검사 기록을 확인했습니다. 파일 내용 전체·번역 품질·Supplier Hub 업로드 성공은 미검증입니다.' : '이미지 연결 소유권을 검사하며 실제 파일 내용·Supplier Hub 업로드 성공은 검사하지 않습니다.',
       '공식 Excel·이미지·인증·물류 규격과 실제 접수는 미검증입니다. 오류가 없어도 등록 완료를 뜻하지 않습니다.',
       'Supplier Hub 전송 연결이 아직 구현되지 않았습니다. 이 검사는 자료를 전송하거나 등록하지 않습니다.']};
 }

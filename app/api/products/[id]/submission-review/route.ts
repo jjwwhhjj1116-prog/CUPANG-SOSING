@@ -1,3 +1,5 @@
+import { env } from 'cloudflare:workers';
+import { inspectQuotationImages } from '@/app/quotation-image-review';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { readQuotationExportSource, resolveQuotationExport, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
@@ -14,7 +16,10 @@ export async function GET(request: Request, context: {params:Promise<{id:string}
     if (profileId !== null && !/^[a-zA-Z0-9_-]{1,100}$/.test(profileId)) return json({error:'카테고리 설정을 확인해주세요.'},400);
     const owner = await getWorkspaceOwnerId(); const {id} = await context.params;
     const saved = await readQuotationExportSource(owner,id,profileId);
-    const report = inspectSubmission(resolveQuotationExport(saved),productImageKeys(saved.product.image_keys).filter(key=>isOwnedImageKey(owner,key)));
+    const resolved = resolveQuotationExport(saved);
+    const keys = productImageKeys(saved.product.image_keys).filter(key=>isOwnedImageKey(owner,key));
+    const checks = await inspectQuotationImages(resolved,keys,env.FILES ? key=>env.FILES.head(key) : undefined);
+    const report = inspectSubmission(resolved,keys,checks);
     const fingerprint = await quotationExportFingerprint(saved,null);
     if (!await quotationSourcesCurrent(owner,id,saved.source) || (await readQuotationFields(owner,id)).revision !== saved.state.revision) {
       return json({error:'검사 중 자료가 변경되었습니다. 저장을 마친 뒤 다시 검사해주세요.'},409);

@@ -51,6 +51,7 @@ function route({current=true,revision=2,verified=false,mode='development',missin
   const calls=[];class QuotationExportError extends Error{constructor(message,status){super(message);this.status=status;}}
   const saved={product:{id:'p',title:'상품',source_url:'https://detail.1688.com/offer/123.html',image_keys:'["owner/main.png"]'},source:{},state:{revision:2}};
   const handlers=load('app/api/products/[id]/submission-review/route.ts',{
+    'cloudflare:workers':{env:{FILES:{head:async()=>({size:100,httpMetadata:{contentType:'image/png'},customMetadata:{imageValidation:'header-v1'}})}}},
     '@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:verified}),getWorkspaceOwnerId:async()=>'owner'},
     '@/app/exports/quotation-source':{QuotationExportError,readQuotationExportSource:async(...args)=>{calls.push(args);if(missing)throw new QuotationExportError('없음',404);return saved;},resolveQuotationExport:()=>resolved(),quotationExportFingerprint:async()=>'a'.repeat(64)},
     '@/db/quotation-fields':{quotationSourcesCurrent:async()=>current,readQuotationFields:async()=>({revision})},
@@ -93,4 +94,30 @@ test('empty selection and failed review do not display old ready badges',()=>{
   assert.ok(renderPanel([]).includes('검사할 상품을 선택'));
   const html=renderPanel([{id:'p',title:'상품',source_url:'https://example.com/p'}],[{id:'p',error:'검사 중 변경'}]);
   assert.ok(html.includes('role="alert"'));assert.ok(html.includes('검사 중 변경'));assert.ok(!html.includes('입력 오류 0개'));
+});
+
+const {inspectQuotationImages}=load('app/quotation-image-review.ts',{'@/app/image-files':{MAX_IMAGE_BYTES:10*1024*1024}});
+const validImage={size:100,httpMetadata:{contentType:'image/png'},customMetadata:{imageValidation:'header-v1'}};
+test('image review deduplicates included owned references and does not read other owners or excluded options',async()=>{
+ const input=resolved();input.rows[0].fields.mainImage.value='owner/main.png\nowner/main.png\nother/private.png';
+ input.rows.push({...structuredClone(input.rows[0]),included:false,fields:{mainImage:cell('owner/excluded.png')}});
+ const calls=[];const checks=await inspectQuotationImages(input,['owner/main.png','owner/excluded.png'],async key=>{calls.push(key);return validImage;});
+ assert.deepEqual(calls,['owner/main.png']);assert.equal(checks.size,0);
+});
+test('image review reports missing invalid oversized and unavailable objects, while old validation metadata needs review',async()=>{
+ for(const object of [null,{...validImage,size:0},{...validImage,size:10485761},{...validImage,httpMetadata:{contentType:'text/html'}}]){
+  const checks=await inspectQuotationImages(resolved(),['owner/main.png'],async()=>object);
+  assert.equal(checks.get('owner/main.png').kind,'error');
+  assert.equal(inspectSubmission(resolved(),['owner/main.png'],checks).errorCount,1);
+ }
+ const old=await inspectQuotationImages(resolved(),['owner/main.png'],async()=>({...validImage,customMetadata:{}}));
+ assert.equal(old.get('owner/main.png').kind,'review');
+ assert.equal(inspectSubmission(resolved(),['owner/main.png'],old).issues[0].code,'IMAGE_VERIFICATION');
+ for(const head of [undefined,async()=>{throw Error('offline');}])assert.equal((await inspectQuotationImages(resolved(),['owner/main.png'],head)).get('owner/main.png').kind,'error');
+});
+test('image review bounds concurrent storage reads to three and checks every unique image',async()=>{
+ const input=resolved();const keys=Array.from({length:12},(_,i)=>`owner/${i}.png`);input.rows[0].fields.mainImage.value=keys.join('\n');
+ let active=0,max=0,total=0;
+ await inspectQuotationImages(input,keys,async()=>{active++;total++;max=Math.max(max,active);await new Promise(resolve=>setTimeout(resolve,1));active--;return validImage;});
+ assert.equal(total,12);assert.equal(max,3);
 });
