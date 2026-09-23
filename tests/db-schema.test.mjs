@@ -40,7 +40,7 @@ function seedCompanions(db) {
 
 test('checked-in bootstrap matches every runtime table, constraint, column and named index on fresh SQLite', () => {
   const result = checkDatabaseSchema();
-  assert.equal(result.tables, 16); assert.equal(result.indexes, 10); assert.equal(result.runtimeModules, 11);
+  assert.equal(result.tables, 17); assert.equal(result.indexes, 10); assert.equal(result.runtimeModules, 12);
 });
 
 test('legacy Drizzle schema upgrade preserves product/settings rows, defaults, PK declarations and indexes', () => {
@@ -72,8 +72,9 @@ test('reapplying bootstrap preserves every current table including uncertain/run
     db.prepare('INSERT INTO product_quotation_fields(product_id,owner_id,revision,payload,updated_at) VALUES (?,?,?,?,?)').run(productId,owner,2,json,now);
   db.prepare('INSERT INTO collection_results(job_id,owner_id,payload,received_at) VALUES (?,?,?,?)').run('synthetic-job',owner,json,now);
     db.prepare('INSERT INTO collection_products(job_id,owner_id,product_id,created_at) VALUES (?,?,?,?)').run('synthetic-job',owner,productId,now);
+    db.prepare('INSERT INTO collection_images VALUES(?,?,?,?,?,?,?)').run('synthetic-job',0,owner,productId,'local-demo/original.png','operation',now);
     const before = tableData(db); const schema = schemaSnapshot(db);
-    assert.equal(before.length, 16); assert.ok(before.every(table => table.rows.length === 1));
+    assert.equal(before.length, 17); assert.ok(before.every(table => table.rows.length === 1));
     db.exec(migrations); db.exec(migrations);
     assert.deepEqual(tableData(db), before); assert.deepEqual(schemaSnapshot(db), schema);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
@@ -117,7 +118,7 @@ test('schema checker detects missing indexes, changed CHECK/default/unique defin
 });
 
 test('quotation-fields migration adds one guarded table without changing the existing thirteen tables or rows', () => {
-  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql']);
+  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql']);
   const db=memoryDatabase();
   try {
     db.exec(bootstrap);seedLegacy(db);seedCompanions(db);
