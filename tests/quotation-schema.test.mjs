@@ -544,3 +544,20 @@ test('deliberately cleared SEO title remains empty in quotation, alt text and bo
  input.content=contentModel.emptyProductContent('p1');delete input.overrides;
  assert.equal(model.resolveQuotationFields(input).rows[1].fields.title.value,input.product.title);
 });
+
+test('saved components and release month flow into category quotations and Excel while manual clears win',()=>{
+ for(const categoryId of ['80719','80699','81452']){
+  const input=fixture();input.categoryId=categoryId;
+  input.content=contentModel.applyContentPatch(input.content,{label:{components:'본체 1개 / 파우치 1개',releaseDate:'2026년 9월'}},'2026-09-24T00:00:00Z');
+  const before=JSON.stringify(input);const resolved=model.resolveQuotationFields(input);
+  const assets=[{key:'owner/option.png',name:'assets/option.png'},{key:'owner/main.png',name:'assets/main.png'},{key:'owner/detail.png',name:'assets/detail.png'}];
+  const rows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets);
+  assert.equal(resolved.rows[1].fields.noticeComponents.value,'본체 1개 / 파우치 1개');assert.equal(resolved.rows[1].fields.noticeReleaseDate.source,'content');
+  assert.equal(rows[0].noticeComponents,'본체 1개 / 파우치 1개');assert.equal(rows[0].noticeReleaseDate,'2026년 9월');assert.equal(JSON.stringify(input),before);
+  input.content=contentModel.applyContentPatch(input.content,{label:{components:'',releaseDate:''}},'2026-09-24T00:00:01Z');
+  const cleared=model.resolveQuotationFields(input).rows[1].fields;assert.equal(cleared.noticeComponents.value,'');assert.equal(cleared.noticeComponents.source,'content');assert.equal(cleared.noticeReleaseDate.value,'');
+  input.overrides={common:{noticeComponents:'견적 공통'},options:{red:{noticeComponents:'옵션 직접 수정',noticeReleaseDate:''}}};
+  const edited=model.resolveQuotationFields(input).rows[1].fields;assert.equal(edited.noticeComponents.value,'옵션 직접 수정');assert.equal(edited.noticeReleaseDate.source,'manual-option');
+ }
+ const other=fixture();other.categoryId='77442';assert.equal(model.resolveQuotationFields(other).rows[1].fields.noticeComponents,undefined);
+});

@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { emptyProductContent, type ProductContent } from '@/app/product-content';
+import { emptyProductContent, withCurrentLabelFields, type ProductContent } from '@/app/product-content';
 
 type ContentRow = { payload: string; revision: number };
 async function database() {
@@ -17,7 +17,7 @@ export async function readProductContent(ownerId: string, productId: string): Pr
   if (!row) return emptyProductContent(productId);
   const content: ProductContent = JSON.parse(row.payload);
   if (content.schemaVersion !== 1 || content.productId !== productId || content.revision !== row.revision) throw new Error('Invalid stored content');
-  return content;
+  return withCurrentLabelFields(content);
 }
 
 export async function saveProductContent(ownerId: string, content: ProductContent, expectedRevision: number, expectedImageKeys?: string): Promise<ProductContent | null> {

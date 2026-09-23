@@ -344,6 +344,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'noticeCountryOfOrigin': return contentValue(content.label.countryOfOrigin);
       case 'noticePermission': return contentValue(content.label.certification);
+      case 'noticeComponents': return contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });
+      case 'noticeReleaseDate': return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance);
       case 'noticeServiceContact': return contentValue(content.label.contact, settings.serviceContact);
       case 'boxSkuQuantity': return literal(settings.boxSkuQuantity, 'settings');

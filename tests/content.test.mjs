@@ -152,3 +152,19 @@ test('image role save uses SQLite CAS when product references change during the 
     assert.equal(sqlite.prepare('SELECT image_keys FROM products').get().image_keys, '[]');
   } finally { sqlite.close(); }
 });
+
+test('new label fields normalize legacy reads without writes and support validated edits', async()=>{
+ const legacy=model.emptyProductContent('test');delete legacy.label.components;delete legacy.label.releaseDate;
+ legacy.revision=4;legacy.updatedAt=now;legacy.label.material={value:'면',provenance:'manual',updatedAt:now};
+ const before=JSON.stringify(legacy);let writes=0;
+ const db={prepare(sql){return {async run(){if(!sql.startsWith('CREATE TABLE'))writes++;},bind(){return this;},async first(){return {payload:JSON.stringify(legacy),revision:4};}};}};
+ const stored=load('db/product-content.ts',{'cloudflare:workers':{env:{DB:db}}});
+ const loaded=await stored.readProductContent('owner','test');
+ assert.equal(loaded.revision,4);assert.equal(loaded.label.components.value,'');assert.equal(loaded.label.releaseDate.provenance,'unverified');assert.equal(loaded.label.material.value,'면');assert.equal(writes,0);
+ const {patch}=model.validateContentInput(input({label:{components:'본체 1개, 파우치 1개',releaseDate:'2026년 9월'}},4),[],'owner');
+ const saved=model.applyContentPatch(legacy,patch,now);
+ assert.equal(saved.label.components.provenance,'manual');assert.equal(saved.label.releaseDate.value,'2026년 9월');assert.equal(JSON.stringify(legacy),before);
+ const cleared=model.applyContentPatch(saved,{label:{components:'',releaseDate:''}},now);
+ assert.equal(cleared.label.components.provenance,'manual');assert.equal(cleared.label.releaseDate.value,'');
+ for(const value of [null,123,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{components:value}}),[],'owner'));
+});

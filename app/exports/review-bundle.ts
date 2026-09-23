@@ -35,7 +35,7 @@ export function createReviewBundle(product: ProductRecord, content: ProductConte
   if(!content.assets.detail.value.length)missing.push('상세 이미지');
   for(const key of ['productName','manufacturer','importer','countryOfOrigin','contact'] as const)if(!content.label[key].value.trim())missing.push('표시사항: '+key);
   missing.push('공식 Supplier Hub 카테고리/Excel 매핑','실상품 수집 증거','카테고리별 필수 서류 검토');
-  const labelNames:Record<string,string>={productName:'품명',model:'모델',material:'재질',dimensions:'크기',manufacturer:'제조사',importer:'수입자',countryOfOrigin:'제조국',contact:'문의 연락처',certification:'인증 정보',precautions:'주의사항',qualityAssurance:'품질보증'};
+  const labelNames:Record<string,string>={productName:'품명',model:'모델',material:'재질',dimensions:'크기',manufacturer:'제조사',importer:'수입자',countryOfOrigin:'제조국',contact:'문의 연락처',certification:'인증 정보',precautions:'주의사항',qualityAssurance:'품질보증',components:'제품 구성품',releaseDate:'출시년월'};
   const labelLines=['검토용 표시사항 · 입력값 기준',...Object.entries(content.label).flatMap(([key,field])=>{
     const text=(labelNames[key]||key)+': '+(field.value || '[미입력]');
     return text.match(/.{1,45}/gu)??[text];
