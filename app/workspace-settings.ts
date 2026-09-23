@@ -9,6 +9,15 @@ export const defaultSettings = {
   topImageEnabled: false, bottomImageEnabled: false, translationPrompt: '', hiddenAttributes: false,
 };
 export type WorkspaceSettings = typeof defaultSettings;
+/** Runtime registration facts must come from an explicit saved payload, not UI examples. */
+export function savedRegistrationSettings(input: unknown): WorkspaceSettings {
+  const settings = input === null || input === undefined ? { ...defaultSettings } : validateSettings(input);
+  const stored = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
+  for (const key of ['brand', 'manufacturer', 'importer', 'serviceContact', 'tradeType', 'importType'] as const) {
+    if (!Object.hasOwn(stored, key)) settings[key] = '';
+  }
+  return settings;
+}
 export function validateSettings(input: unknown): WorkspaceSettings {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('설정 객체가 필요합니다.');
   const p = { ...defaultSettings, ...input } as WorkspaceSettings;

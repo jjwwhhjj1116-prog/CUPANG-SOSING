@@ -1,5 +1,5 @@
 import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
-import { defaultSettings, validateSettings } from '@/app/workspace-settings';
+import { defaultSettings } from '@/app/workspace-settings';
 
 export const OPTION_LIMIT = 200;
 export const OPTIONS_BODY_LIMIT = 512 * 1024;
@@ -111,6 +111,10 @@ export function calculateOptionPrices(rows: readonly OptionInput[], policy: Pric
 }
 export function resolveOptionPricePolicy(product: { pricing_policy?: string | null; exchange_rate: number; supply_margin: number; coupang_margin: number }, workspaceInput: unknown = defaultSettings): Pick<OptionPricing, 'policy' | 'policySource'> {
   if (product.pricing_policy) return { policy: pricePolicy(JSON.parse(product.pricing_policy)), policySource: 'saved-product' };
-  const settings = validateSettings(workspaceInput);
+  if (!workspaceInput || typeof workspaceInput !== 'object' || Array.isArray(workspaceInput)) throw new Error('가격 설정 객체가 필요합니다.');
+  const settings = { ...defaultSettings, ...workspaceInput };
+  // Registration facts can be intentionally absent; only price inputs affect this calculation.
+  pricePolicy(settings);
+  if (typeof settings.minimumMarginEnabled !== 'boolean') throw new Error('최소 마진 적용 여부를 확인해주세요.');
   return { policy: pricePolicy({ ...settings, exchangeRate: product.exchange_rate, supplyMargin: product.supply_margin, coupangMargin: product.coupang_margin, minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0 }), policySource: 'product-and-workspace' };
 }

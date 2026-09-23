@@ -90,6 +90,39 @@ test('saved SEO, option pricing and stage image changes reach editor and export 
  }finally{h.sqlite.close();}
 });
 
+test('unsaved and partial settings do not inject example registration facts into editor or export',async()=>{
+ const h=await harness();try{
+  const selected=await profile(h);
+  for(const payload of [null,{exchangeRate:200},{brand:'실제 브랜드',manufacturer:'실제 제조사'}]){
+   if(payload)await h.queries.saveSettings('owner',JSON.stringify(payload));
+   const view=await get(h,selected.id);
+   const fields=view.resolved.rows[0].fields;
+   assert.equal(fields.brand.value,payload?.brand??'');assert.equal(fields.manufacturer.value,payload?.manufacturer??'');
+   assert.equal(fields.tradeType.value,'');assert.equal(fields.importType.value,'');
+   const exports=h.load('app/exports/quotation-source.ts');
+   const saved=await exports.readQuotationExportSource('owner','product',selected.id);
+   assert.equal(saved.settings.importer,'');assert.equal(saved.settings.serviceContact,'');
+   assert.equal(saved.settings.exchangeRate,payload?.exchangeRate??190);
+   assert.deepEqual(JSON.parse(JSON.stringify(exports.resolveQuotationExport(saved))),view.resolved);
+  }
+ }finally{h.sqlite.close();}
+});
+
+test('price policy remains valid without registration facts and still rejects malformed price inputs',async()=>{
+ const h=await harness();try{
+  const settingsModel=h.load('app/workspace-settings.ts');
+  const options=h.load('app/product-options.ts');
+  const empty=settingsModel.savedRegistrationSettings(null);
+  assert.equal(empty.brand,'');assert.equal(empty.tradeType,'');
+  const actual=options.resolveOptionPricePolicy(product,empty);
+  const baseline=options.resolveOptionPricePolicy(product,settingsModel.defaultSettings);
+  assert.deepEqual(JSON.parse(JSON.stringify(actual)),JSON.parse(JSON.stringify(baseline)));
+  for(const change of [{roundingUnit:7},{minimumMarginEnabled:'false'},{minimumMargin:-1}])assert.throws(()=>options.resolveOptionPricePolicy(product,{...empty,...change}));
+  assert.throws(()=>settingsModel.savedRegistrationSettings({tradeType:'invalid'}));
+  assert.equal(settingsModel.defaultSettings.brand,'SourceFlow Select');
+ }finally{h.sqlite.close();}
+});
+
 test('GET resolves latest saved sources and collection category without creating overrides or claiming submission readiness',async()=>{
   const h=await harness();try{
     const selected=await profile(h);const settings=h.load('app/workspace-settings.ts').defaultSettings;

@@ -4,7 +4,7 @@ import { readProductOptions } from '@/db/product-options';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { readQuotationFields, readQuotationCollectionSource, quotationSourcesCurrent, type QuotationSourceGuard } from '@/db/quotation-fields';
 import { getQuotationSchema, resolveQuotationFields, type QuotationFieldsView } from '@/app/quotation-schema';
-import { defaultSettings, validateSettings } from '@/app/workspace-settings';
+import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { validateCategoryProfile } from '@/app/category-profiles';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { fingerprint } from '@/app/automation/model';
@@ -22,7 +22,7 @@ export async function readQuotationExportSource(owner: string, productId: string
     profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null),
   ]);
   if (profileId && !profile) throw new QuotationExportError('카테고리 연결을 찾을 수 없습니다.', 404);
-  const settings = savedSettings ? validateSettings(JSON.parse(savedSettings.payload)) : defaultSettings;
+  const settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };

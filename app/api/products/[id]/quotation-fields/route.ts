@@ -6,7 +6,7 @@ import { readProductOptions } from '@/db/product-options';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { readQuotationFields, readQuotationCollectionSource, quotationSourcesCurrent, saveQuotationFields, type QuotationSourceGuard } from '@/db/quotation-fields';
 import { applyQuotationChanges, resolveQuotationFields, validateQuotationChanges, type QuotationFieldsView } from '@/app/quotation-schema';
-import { defaultSettings, validateSettings } from '@/app/workspace-settings';
+import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { validateCategoryProfile } from '@/app/category-profiles';
 import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
@@ -31,7 +31,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null),
   ]);
   if (profileId && !profile) throw new FieldsError('카테고리 프로필을 찾을 수 없습니다.', 404);
-  const settings = savedSettings ? validateSettings(JSON.parse(savedSettings.payload)) : defaultSettings;
+  const settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
   const imageKeys = productImageKeys(product.image_keys).filter(key => isOwnedImageKey(owner, key));
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;

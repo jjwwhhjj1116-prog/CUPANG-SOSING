@@ -8,7 +8,7 @@ import { translationConfiguration, type TranslationSecrets } from '@/app/automat
 import { imageConfiguration, type ImageSecrets } from '@/app/automation/image-edit';
 import { getAutomation, getAutomationReceipt, getAutomationHistory, saveAutomation } from '@/db/automation';
 import { automationCapabilities, parseAutomationCommand, fingerprint, automationInputFingerprint, planAutomation, executeLocalAutomation, explainProviderAvailability } from '@/app/automation/model';
-import { defaultSettings, validateSettings } from '@/app/workspace-settings';
+import { savedRegistrationSettings } from '@/app/workspace-settings';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -24,7 +24,7 @@ export async function GET(_request: Request, context: Context) {
     const product = await findProduct(owner, id);
     if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
     const [workflow, history, savedSettings, content, translations] = await Promise.all([getAutomation(owner, id), getAutomationHistory(owner, id), getSettings(owner), readProductContent(owner, id), listTranslationJobs(owner, id)]);
-    const settings = savedSettings ? validateSettings(JSON.parse(savedSettings.payload)) : defaultSettings;
+    const settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
     const translation = translations.find(job => job.status === 'completed' && job.productVersion === product.updated_at && job.contentRevision === content.revision) ?? null;
     const inputFingerprint = workflow ? await automationInputFingerprint(product, settings, content, translation) : null;
     return json({ workflow: workflow ? explainProviderAvailability(workflow, capabilities()) : null, history, stale: Boolean(workflow && workflow.inputFingerprint !== inputFingerprint), capabilities: capabilities() });
@@ -48,7 +48,7 @@ export async function POST(request: Request, context: Context) {
       : json({ error: '같은 중복 방지 키를 다른 요청에 사용할 수 없습니다.', code: 'IDEMPOTENCY_CONFLICT' }, 409);
     if (product.updated_at !== command.expectedVersion) return conflict();
     const [previous, savedSettings, content, translations] = await Promise.all([getAutomation(owner, id), getSettings(owner), readProductContent(owner, id), listTranslationJobs(owner, id)]);
-    const settings = savedSettings ? validateSettings(JSON.parse(savedSettings.payload)) : defaultSettings;
+    const settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
     const translation = translations.find(job => job.status === 'completed' && job.productVersion === product.updated_at && job.contentRevision === content.revision) ?? null;
     const plan = explainProviderAvailability(await planAutomation(product, settings, previous, content, translation), capabilities());
     if (command.action === 'retry' && !plan.stages.some(stage => command.stages.includes(stage.id) && stage.status === 'failed' && stage.retryable)) {
