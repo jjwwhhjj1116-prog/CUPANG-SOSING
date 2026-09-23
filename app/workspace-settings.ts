@@ -4,7 +4,7 @@ export const defaultSettings = {
   brand: 'SourceFlow Select', manufacturer: '해외 협력 제조사', importer: '로켓셀러',
   tradeType: '제조사', importType: '수입상품', serviceContact: '', boxSkuQuantity: 1,
   exchangeRate: 190, supplyMargin: 40, coupangMargin: 35, minimumMargin: 3000,
-  minimumMarginEnabled: true, msrpMultiple: 1.3, roundingUnit: 100,
+  minimumMarginEnabled: true, msrpMultiple: 1.3, roundingUnit: 100, roundingMode: 'up' as 'up' | 'nearest',
   bundleEnabled: false, translateImages: true, removeBackground: true, addCopyright: true,
   topImageEnabled: false, bottomImageEnabled: false, translationPrompt: '', hiddenAttributes: false,
 };

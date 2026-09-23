@@ -385,5 +385,5 @@ function downloadQuote(product: Product, settings: Settings) {
 
 function savedPricePolicy(product: Product, settings: Settings): PricePolicy {
   if (product.pricing_policy) { try { return pricePolicy(JSON.parse(product.pricing_policy)); } catch { /* Older records use current defaults. */ } }
-  return {exchangeRate:product.exchange_rate,supplyMargin:product.supply_margin,coupangMargin:product.coupang_margin,minimumMargin:settings.minimumMarginEnabled?settings.minimumMargin:0,msrpMultiple:settings.msrpMultiple,roundingUnit:settings.roundingUnit};
+  return {exchangeRate:product.exchange_rate,supplyMargin:product.supply_margin,coupangMargin:product.coupang_margin,minimumMargin:settings.minimumMarginEnabled?settings.minimumMargin:0,msrpMultiple:settings.msrpMultiple,roundingUnit:settings.roundingUnit,roundingMode:settings.roundingMode};
 }

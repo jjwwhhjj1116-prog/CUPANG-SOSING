@@ -1,4 +1,4 @@
-export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number };
+export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest' };
 export function pricePolicy(input: unknown): PricePolicy {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('가격 설정을 확인해주세요.');
   const record = input as Record<string, unknown>;
@@ -6,7 +6,8 @@ export function pricePolicy(input: unknown): PricePolicy {
   for (const key of keys) if (typeof record[key] !== 'number' || !Number.isFinite(record[key])) throw new Error('가격 설정은 유효한 숫자여야 합니다.');
   const p = record as PricePolicy;
   if (p.exchangeRate <= 0 || p.supplyMargin < 0 || p.supplyMargin >= 100 || p.coupangMargin < 0 || p.coupangMargin >= 100 || p.minimumMargin < 0 || p.msrpMultiple < 1 || ![1,10,100,1000].includes(p.roundingUnit)) throw new Error('환율·마진·최소 마진·시장가격 배수·올림 단위를 확인해주세요.');
-  return Object.fromEntries(keys.map(key => [key, p[key]])) as PricePolicy;
+  if (record.roundingMode !== undefined && record.roundingMode !== 'up' && record.roundingMode !== 'nearest') throw new Error('가격 처리 방식을 확인해주세요.');
+  return { ...Object.fromEntries(keys.map(key => [key, p[key]])), ...(record.roundingMode === 'nearest' ? { roundingMode: 'nearest' as const } : {}) } as PricePolicy;
 }
 export function calculatePrice(sourcePriceCny: number, input: PricePolicy) {
   const p = pricePolicy(input);
@@ -17,9 +18,10 @@ export function calculatePrice(sourcePriceCny: number, input: PricePolicy) {
   const cost = multiply(decimal(sourcePriceCny), decimal(p.exchangeRate));
   const supplyTarget = divide(multiply(cost, hundred), subtract(hundred, decimal(p.supplyMargin)));
   const minimumTarget = add(cost, decimal(p.minimumMargin));
-  const supply = roundCurrency(compare(supplyTarget, minimumTarget) >= 0 ? supplyTarget : minimumTarget, p.roundingUnit);
-  const sale = roundCurrency(divide(multiply(rational(supply), hundred), subtract(hundred, decimal(p.coupangMargin))), p.roundingUnit);
-  const market = roundCurrency(multiply(rational(sale), decimal(p.msrpMultiple)), p.roundingUnit);
+  let supply = roundCurrency(compare(supplyTarget, minimumTarget) >= 0 ? supplyTarget : minimumTarget, p.roundingUnit, p.roundingMode);
+  if (compare(rational(supply), minimumTarget) < 0) supply = roundCurrency(minimumTarget, p.roundingUnit);
+  const sale = roundCurrency(divide(multiply(rational(supply), hundred), subtract(hundred, decimal(p.coupangMargin))), p.roundingUnit, p.roundingMode);
+  const market = roundCurrency(multiply(rational(sale), decimal(p.msrpMultiple)), p.roundingUnit, p.roundingMode);
   const margin = subtract(rational(supply), cost);
   return { costKrw: toNumber(cost), supplyPrice: Number(supply), salePrice: Number(sale), msrp: Number(market),
     marginKrw: toNumber(margin), actualMargin: toNumber(divide(multiply(margin, hundred), rational(supply))) };
@@ -53,9 +55,9 @@ function subtract(a: Rational, b: Rational) { return rational(a.numerator * b.de
 function multiply(a: Rational, b: Rational) { return rational(a.numerator * b.numerator, a.denominator * b.denominator); }
 function divide(a: Rational, b: Rational) { return rational(a.numerator * b.denominator, a.denominator * b.numerator); }
 function compare(a: Rational, b: Rational) { const difference = a.numerator * b.denominator - b.numerator * a.denominator; return difference < zero ? -1 : difference > zero ? 1 : 0; }
-function roundCurrency(value: Rational, unit: number): bigint {
+function roundCurrency(value: Rational, unit: number, mode: PricePolicy['roundingMode'] = 'up'): bigint {
   const increment = BigInt(unit); const denominator = value.denominator * increment;
-  const amount = ((value.numerator + denominator - one) / denominator) * increment;
+  const amount = (mode === 'nearest' ? (value.numerator * two + denominator) / (denominator * two) : (value.numerator + denominator - one) / denominator) * increment;
   if (amount < zero || amount > maximumMoney) throw new Error('계산 가능한 가격 범위를 초과했습니다.');
   return amount;
 }

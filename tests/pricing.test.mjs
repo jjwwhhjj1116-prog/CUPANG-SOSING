@@ -169,3 +169,14 @@ test('real SQLite atomically preserves saved policy when a stale writer has the 
     assert.equal((await queries.listProducts('other')).length,0);
   }finally{sqlite.close();}
 });
+
+test('nearest rounding matches the observed example while legacy ceilings and minimum margin remain intact',()=>{
+ const observed={exchangeRate:350,supplyMargin:50,coupangMargin:40,minimumMargin:3000,msrpMultiple:1.3,roundingUnit:10};
+ const nearest=pricing.calculatePrice(25.6,{...observed,roundingMode:'nearest'});
+ assert.equal(nearest.supplyPrice,17920);assert.equal(nearest.salePrice,29870);assert.equal(nearest.msrp,38830);
+ assert.equal(pricing.calculatePrice(25.6,observed).msrp,38840);
+ assert.equal(pricing.calculatePrice(1,{...policy,minimumMargin:305,roundingMode:'nearest'}).supplyPrice,410);
+ assert.equal(pricing.calculatePrice(1,{...policy,msrpMultiple:1.05,roundingMode:'nearest'}).msrp,110);
+ assert.equal(pricing.pricePolicy({...policy,roundingMode:'nearest'}).roundingMode,'nearest');
+ assert.throws(()=>pricing.pricePolicy({...policy,roundingMode:'invalid'}));
+});

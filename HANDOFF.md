@@ -1096,3 +1096,11 @@ AI등록 화면 확인:
 - docs/chrome-connection-and-image-check-2026-09-24.md에 확인/추정/미확인을 기록했다. connectionCheckTab은 Hub, couConnectionTab은 쿠플러스에 연결되어 있다. 기존 supplierChrome 바인딩 재사용. 1688 정책 차단 경로를 우회하지 않았다.
 - 검증: 전체385/385, TypeScript/ESLint/production build/diff 통과. 옵션별 최종 수정, 공란, 원본 보존 및 미저장 대표 이미지 수정에 따른 경고 해제를 테스트했다. outputs/image-role-all-tests.log 및 image-role-build.log. SourceFlow 브라우저 시각 검증/공식 파일 접수는 미실시.
 - 다음: 실제 허용 수집 공급원과 전달 함수 호출부 연결, 공식 Excel/전체 카테고리 대조, AI·Supplier Hub 전송 adapter 구현이 남아 있다. 운영 등록·유료 호출·Cloudflare 배포 없음. 전체 자동화 미완성.
+
+## 72. 쿠플러스 기본설정 대조와 반올림 가격 정책 — 2026-09-24
+
+- 시작 main2a12617, 미커밋 변경 없음. supplierChrome의 settingsCompareTab에서 쿠플러스 기본설정을 읽었다. 관찰한 가격 조건과 미완성 이미지 설정은 docs/couplus-price-settings-2026-09-24.md에 확인/미확인으로 기록했다. 계정 설정을 변경/저장하지 않았다.
+- 기존 올림 전용 가격 정책에 선택 가능한 nearest 반올림을 추가했다. 기본설정·상품 가격 편집·옵션 정책 표시·대시보드 fallback에 연결했다. 수집 상품 정책/옵션/견적은 기존 pricePolicy 경로를 통해 유지된다. 과거 정책의 미지정/up는 기존 올림이며 기존 저장 상품을 재계산하지 않는다. 정수 유리수 연산으로 정확히 반올림하고 원가+최소마진 미달은 올림 보정한다.
+- 첨부25.6CNY/환율350/마진50·40/10원/1.3배 사례가 공급17920·판매29870·MSRP38830과 일치했다. 쿠플러스의 모든 경계 조건 구현을 검증한 것은 아니다.
+- 검증: 전체386/386, TypeScript/ESLint/production build/diff 통과. 관찰 사례·기존 올림 보존·최소마진·정확한 반올림 경계·정책 검증을 테스트했다. outputs/rounding-all-tests.log 및 rounding-build.log. SourceFlow 브라우저 시각 검증/운영 DB 반영은 미실시.
+- 다음: 전역 상하단 이미지 연결, 실제 허용1688 공급원/전달함수 호출부, 공식 Excel·전체 카테고리 대조 및 AI/Hub 전송 연결이 남아 있다. 전체 자동화 미완성. 유료 호출·운영 등록·Cloudflare 배포 없음.
