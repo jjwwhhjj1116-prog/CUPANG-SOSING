@@ -89,6 +89,35 @@ test('observed brace quotation exposes its own attributes and notices without ce
   assert.equal(exported[0].noticeMaterial, '면');
 });
 
+test('brace size and weight notice follows label edits through export while preserving manual blanks', () => {
+  const input = fixture(); input.categoryId = '81452';
+  input.content.label.dimensions = { value: '허리둘레 70~85 cm / 180 g', provenance: 'manual', updatedAt: 'now' };
+  const original = clone(input);
+  const resolve = () => model.resolveQuotationFields(input);
+  assert.equal(resolve().rows[1].fields.size.value, '');
+  assert.ok(resolve().rows[1].fields.size.issues.length > 0);
+  assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.value, '허리둘레 70~85 cm / 180 g');
+  assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.source, 'content');
+  const exported = load('app/exports/quotation-fields.ts').resolvedQuotationRows(input, resolve(), [
+    { key: 'owner/main.png', name: 'assets/main.png' }, { key: 'owner/option.png', name: 'assets/option.png' }, { key: 'owner/detail.png', name: 'assets/detail.png' },
+  ]);
+  assert.equal(exported[0].brace_noticeSizeWeight, '허리둘레 70~85 cm / 180 g');
+  assert.deepEqual(clone(input), original);
+  input.content.label.dimensions.value = '';
+  assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.value, '');
+  input.overrides = { common: { brace_noticeSizeWeight: '공통 크기' }, options: { red: { brace_noticeSizeWeight: '' } } };
+  assert.equal(resolve().rows[0].fields.brace_noticeSizeWeight.value, '공통 크기');
+  assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.source, 'manual-option');
+  assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.value, '');
+  input.content.label.certification.value = '일반 허가사항';
+  assert.equal(resolve().rows[1].fields.brace_noticeKc.value, '');
+  input.overrides.options.red.size = 'S';
+  assert.equal(resolve().rows[1].fields.size.value, 'S');
+  assert.equal(resolve().rows[1].fields.size.source, 'manual-option');
+  const kitchen = fixture();
+  assert.equal(model.resolveQuotationFields(kitchen).rows[1].fields.size.value, '20 × 30 × 40 cm');
+});
+
 test('deleted or fully excluded options never resurrect the representative quotation row', () => {
   const input = fixture();
   input.overrides = { common: { title: '보존할 공통값' }, options: { red: { model: '보존할 옵션값' } } };

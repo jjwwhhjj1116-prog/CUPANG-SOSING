@@ -164,7 +164,9 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
   const couplusPath = categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
   if (couplusFields && !hub) {
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product').map(item => categoryId === '81452'
-      ? { ...item, required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : 'Supplier Hub 상품정보 화면에서 확인한 항목입니다. 실제 상품값을 입력해주세요.' } : item));
+      ? { ...item, required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : item.id === 'size'
+        ? '공식 입력 예시: S, Medium, Free, 대, one size 등. 구매 옵션의 사이즈를 입력해주세요. 크기·중량 표시사항과 별도로 관리합니다.'
+        : 'Supplier Hub 상품정보 화면에서 확인한 항목입니다. 실제 상품값을 입력해주세요.' } : item));
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...couplusFields.filter(item => item.section === 'legal'));
     fields.splice(fields.findIndex(item => item.id === 'kcsCertificationNumber'), 1);
   }
@@ -310,7 +312,10 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { ...literal(pricing?.calculation?.[id], 'pricing'), issues: pricing?.error ? [pricing.error] : !option.included ? ['견적 제외 옵션의 가격은 자동 계산하지 않았습니다.'] : !pricing?.calculation ? ['옵션 가격 계산을 확인해주세요.'] : [] };
       }
       case 'quantity': return literal(option?.unitsPerPack, 'option');
-      case 'size': return option && option.widthCm && option.lengthCm && option.heightCm ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
+      case 'size':
+        // 81452 expects a purchasing size (S/Medium/Free), not physical dimensions.
+        if (schema.categoryId === '81452') return literal('', 'empty');
+        return option && option.widthCm && option.lengthCm && option.heightCm ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
       case 'storageMaterial': case 'noticeMaterial': return contentValue(content.label.material);
       case 'mainImage': {
         const selected = option?.imageKey ? images([option.imageKey]) : images(content.assets.main.value);
@@ -326,6 +331,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return content.label.productName.provenance === 'manual' || content.label.model.provenance === 'manual' ? { value, source: 'content' } : literal(value, 'content');
       }
       case 'noticeDimensions': return auto('size', option);
+      // This notice contains product size/weight, not the option's packaging dimensions.
+      case 'brace_noticeSizeWeight': return contentValue(content.label.dimensions);
       case 'noticeManufacturerImporter': {
         const manufacturer = savedTextOrFallback(content.label.manufacturer, settings.manufacturer); const importer = savedTextOrFallback(content.label.importer, settings.importer);
         const value = [manufacturer && `제조자: ${manufacturer}`, importer && `수입자: ${importer}`].filter(Boolean).join(' / ');
