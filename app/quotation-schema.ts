@@ -196,6 +196,11 @@ export function quotationPriceIssues(schema: QuotationSchema, supply: string, sa
     ? ['판매가는 공급가보다 작을 수 없습니다.'] : [];
 }
 
+export const duplicateQuotationImageIssue = '대표 이미지가 상세 이미지에도 포함되어 있습니다. Supplier Hub 반려 가능성이 있으므로 구성을 확인해주세요.';
+export function quotationImageRoleIssues(main: string, detail: string): string[] {
+  const keys = new Set(main.split('\n').map(key => key.trim()).filter(Boolean));
+  return detail.split('\n').some(key => keys.has(key.trim())) ? [duplicateQuotationImageIssue] : [];
+}
 export function quotationValueIssues(field: QuotationField, value: string, ownedKeys?: readonly string[]) {
   const issues: string[] = [];
   if (!value.trim()) return field.required ? ['필수 값이 비어 있습니다.'] : [];
@@ -379,6 +384,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     if (fields.barcodeMode.value === 'request-coupang' && fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); }
     const priceIssues = quotationPriceIssues(schema, fields.supplyPrice.value, fields.salePrice.value);
     if (priceIssues.length) { fields.salePrice.needsReview = true; fields.salePrice.issues.push(...priceIssues); }
+    const imageIssues = quotationImageRoleIssues(fields.mainImage?.value ?? '', fields.detailImages?.value ?? '');
+    if (imageIssues.length && fields.detailImages) { fields.detailImages.needsReview = true; fields.detailImages.issues.push(...imageIssues); }
     return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : includeCommonRow, fields };
   });
   return { schema, rows, issues };

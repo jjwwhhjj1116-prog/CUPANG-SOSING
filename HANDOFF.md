@@ -1088,3 +1088,11 @@ AI등록 화면 확인:
 - 이 함수는 공급원이 확보한 원문을 전달하는 개발용 진입점이며 UI나 설치 확장에 아직 연결되지 않았다. 1688 수집기 또는 실제 확장 연결 완료가 아니다. 계약 문서에 사용 범위와 인증 책임을 기록했다.
 - 검증: 전체383/383, TypeScript/ESLint/production build/diff 검사 통과. 모의 HTTP로 수신 확인→상품→이미지 순서, 잘못된 상품/선택 시 무호출, 응답 유실/불일치 시 상품 생성 차단, 수신 후 중단과 이미지 실패 후 재시도를 확인했다. outputs/collection-delivery-tests.log 및 collection-delivery-build.log. 실제1688/운영 API/브라우저 연결은 미검증.
 - 다음 시작점: 사용 권한이 있는 실제 수집 공급원의 응답/인증을 확인하여 전달 함수의 호출부를 구현한다. 공식 Excel/전체 카테고리 대조·AI 서비스·Supplier Hub 전송도 남아 있다. 운영 등록·유료 호출·Cloudflare 배포 없음.
+
+## 71. Chrome 재확인과 대표·상세 이미지 중복 검토 — 2026-09-24
+
+- 시작 mainb1d7705, 미커밋 변경 없음. 기존 supplierChrome에서 새 탭으로 Supplier Hub 대량등록과 쿠플러스 AI상품등록에 로그인된 상태를 확인했다. 쿠플러스는 CLI1.2.12 연결됨/1.3.2 업데이트 필요를 표시했다. 확장/CLI 설치·업데이트나 실제 수집은 실행하지 않았다. 자동수집 버튼 이후 추가 결과는 확인되지 않았다.
+- Hub에서 대표/상세 동일 이미지가 반려 사유가 될 수 있다는 안내를 관찰했다. 최종 견적 resolver와 미저장 편집/전체 옵션 현황에 파일 참조 중복 검토를 추가했다. 옵션 수동 대표값을 우선하며 변경/공란 시 이전 경고를 재계산한다. 원본 삭제·자동 교체 없이 안내한다. 다른 키의 동일 바이트/시각 유사성 판별은 미구현이다.
+- docs/chrome-connection-and-image-check-2026-09-24.md에 확인/추정/미확인을 기록했다. connectionCheckTab은 Hub, couConnectionTab은 쿠플러스에 연결되어 있다. 기존 supplierChrome 바인딩 재사용. 1688 정책 차단 경로를 우회하지 않았다.
+- 검증: 전체385/385, TypeScript/ESLint/production build/diff 통과. 옵션별 최종 수정, 공란, 원본 보존 및 미저장 대표 이미지 수정에 따른 경고 해제를 테스트했다. outputs/image-role-all-tests.log 및 image-role-build.log. SourceFlow 브라우저 시각 검증/공식 파일 접수는 미실시.
+- 다음: 실제 허용 수집 공급원과 전달 함수 호출부 연결, 공식 Excel/전체 카테고리 대조, AI·Supplier Hub 전송 adapter 구현이 남아 있다. 운영 등록·유료 호출·Cloudflare 배포 없음. 전체 자동화 미완성.

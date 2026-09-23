@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { quotationBarcodeIssues, quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
+import { duplicateQuotationImageIssue, quotationImageRoleIssues, quotationBarcodeIssues, quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import './quotation-fields-editor.css';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
@@ -48,7 +48,8 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
   const inheritedIssues = value === null ? fallback.issues : saved?.value === value && saved.source === source ? saved.issues : [];
   // Price validation depends on BOTH draft cells, so a saved price issue must
   // disappear when the other cell is corrected without changing this cell.
-  const issues = [...new Set([...inheritedIssues.filter(issue => fieldKey !== 'salePrice' || issue !== '판매가는 공급가보다 작을 수 없습니다.'),
+  const issues = [...new Set([...inheritedIssues.filter(issue => (fieldKey !== 'salePrice' || issue !== '판매가는 공급가보다 작을 수 없습니다.') && (fieldKey !== 'detailImages' || issue !== duplicateQuotationImageIssue)),
+    ...(fieldKey === 'detailImages' ? quotationImageRoleIssues(resolveQuotationEditorCell(view, changes, optionId, 'mainImage').value, resolvedValue) : []),
     ...(definition ? quotationValueIssues(definition, resolvedValue, view.imageKeys) : []),
     ...(fieldKey === 'salePrice' ? quotationPriceIssues(view.resolved.schema, resolveQuotationEditorCell(view, changes, optionId, 'supplyPrice').value, resolvedValue) : [])])];
   return { ...fallback, value: resolvedValue, source, issues, needsReview: Boolean(definition?.reviewRequired) || issues.length > 0 };
@@ -111,6 +112,7 @@ export function quotationOptionOverview(view: QuotationFieldsView, changes: read
       const issues = quotationValueIssues(field, cell.value, view.imageKeys);
       if (field.id === 'salePrice') issues.push(...quotationPriceIssues(view.resolved.schema,
         resolveQuotationEditorCell(view, changes, row.optionId, 'supplyPrice').value, cell.value));
+      if (field.id === 'detailImages') issues.push(...quotationImageRoleIssues(resolveQuotationEditorCell(view, changes, row.optionId, 'mainImage').value, cell.value));
       if (field.id === 'barcode') {
         const mode = resolveQuotationEditorCell(view, changes, row.optionId, 'barcodeMode').value;
         issues.push(...quotationBarcodeIssues(view.resolved.schema.categoryId, mode, cell.value));

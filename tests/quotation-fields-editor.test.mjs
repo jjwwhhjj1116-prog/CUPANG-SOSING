@@ -260,3 +260,13 @@ test('overview validates current draft prices and barcode mode together and rend
  const markup=renderToStaticMarkup(React.createElement(editor.QuotationOptionOverview,{view,changes:draft,disabled:true,onOpen(){}}));
  assert.match(markup,/전체 견적 작성 현황/);assert.match(markup,/바코드 구역 열기/);assert.match(markup,/disabled/);assert.doesNotMatch(markup,/>excluded</);
 });
+
+test('image role overlap warnings update when only the unsaved main image changes',()=>{
+ const view=fixture({common:{detailImages:'owner/main.png'},options:{}});
+ const has=changes=>editor.resolveQuotationEditorCell(view,changes,'red','detailImages').issues.includes(model.duplicateQuotationImageIssue);
+ assert.equal(has([]),true);
+ assert.equal(has([change('mainImage','owner/second.png','red')]),false);
+ assert.equal(has([change('detailImages','','red')]),false);
+ const overview=editor.quotationOptionOverview(view,[change('mainImage','owner/second.png','red')]);
+ assert.equal(JSON.stringify(overview.find(row=>row.optionId==='red')).includes(model.duplicateQuotationImageIssue),false);
+});

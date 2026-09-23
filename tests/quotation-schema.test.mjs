@@ -580,3 +580,15 @@ test('quotation image review uses final per-option overrides and the same attach
  assert.throws(()=>render(resolved,assets.slice(0,2)),/첨부 파일/);
  for(const name of ['https://evil.test/a.png','../image.png','assets/../../image.png','assets/image.png" onerror="evil()'])assert.throws(()=>render(resolved,assets.map(asset=>({...asset,name}))),/첨부 파일/);
 });
+
+test('final option image overrides detect main/detail overlap without changing assets',()=>{
+ const input=fixture();const original=clone(input);
+ input.overrides={common:{detailImages:'owner/option.png'},options:{}};
+ let resolved=model.resolveQuotationFields(input);
+ assert.ok(resolved.rows.find(row=>row.optionId==='red').fields.detailImages.issues.includes(model.duplicateQuotationImageIssue));
+ input.overrides.options.red={mainImage:'owner/main.png'};
+ resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows.find(row=>row.optionId==='red').fields.detailImages.issues.includes(model.duplicateQuotationImageIssue),false);
+ assert.deepEqual(clone(input.content),original.content);
+ assert.deepEqual(clone(model.quotationImageRoleIssues('', '')),[]);
+});
