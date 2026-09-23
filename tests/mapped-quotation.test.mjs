@@ -162,3 +162,22 @@ test('absolute workbook list references use final saved cells and reject formula
   const same=await createMappedQuotation(await inputFrom(make('$A$5'),{rows:[{title:'검정',supplyPrice:10,skuName:'검정'}]}));
   assert.equal(same.report.warnings.some(value=>value.includes('드롭다운')),false);
 });
+
+test('defined dropdown names respect worksheet scope and preserve workbook definitions', async () => {
+  const make = definitions => entries(value=>value.replace('"검정,흰색"','=AllowedColors')).map(([name,text])=>[name,name==='xl/workbook.xml'?text.replace('<calcPr',`<definedNames>${definitions}</definedNames><calcPr`):text]);
+  const global='<definedName name="AllowedColors">\'참고\'!$A$1</definedName>';
+  const local='<definedName name="allowedcolors" localSheetId="0">\'견적서\'!$A$5</definedName>';
+  const rows=[{title:'검정',supplyPrice:10,skuName:'검정'}];
+  const scopedInput=await inputFrom(make(global+local),{rows});
+  const scoped=await createMappedQuotation(scopedInput);
+  assert.equal(scoped.report.warnings.some(value=>value.includes('드롭다운')||value.includes('검사하지 못했습니다')),false);
+  const before=await reader.readXlsxArchive(scopedInput.originalBytes), after=await reader.readXlsxArchive(scoped.bytes.buffer);
+  assert.deepEqual(Buffer.from(after.get('xl/workbook.xml')),Buffer.from(before.get('xl/workbook.xml')));
+  const otherLocal=local.replace('localSheetId="0"','localSheetId="1"');
+  const fallback=await createMappedQuotation(await inputFrom(make(global+otherLocal),{rows}));
+  assert.ok(fallback.report.warnings.some(value=>value.includes('견적서!D5')));
+  for(const definitions of [local+local, '<definedName name="AllowedColors">AllowedColors</definedName>', '<definedName name="AllowedColors">OFFSET(참고!$A$1,0,0,2)</definedName>', '<definedName name="AllowedColors">$A$1</definedName>',otherLocal]){
+    const output=await createMappedQuotation(await inputFrom(make(definitions),{rows}));
+    assert.ok(output.report.warnings.some(value=>value.includes('검사하지 못했습니다')),definitions);
+  }
+});

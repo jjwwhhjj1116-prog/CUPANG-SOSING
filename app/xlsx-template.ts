@@ -182,9 +182,26 @@ export function xlsxHeaders(inspection: XlsxInspection, sheetName: string, heade
 }
 
 /** Read a bounded absolute, one-dimensional list; never evaluate Excel formulas.
- * Relative references and named ranges need a separate resolution model.
+ * Defined names may resolve to a fixed sheet-qualified range, never a formula.
  */
 export function xlsxStaticListValues(files: Map<string, Uint8Array>, inspection: XlsxInspection, expression: string, currentSheet: string): string[] | null {
+  const identifier = expression.replace(/^=/, '');
+  if (/^[\p{L}_\\][\p{L}\p{N}_.\\]*$/u.test(identifier)) {
+    const main = relationships(files, '_rels/.rels').find(value => /\/officeDocument$/.test(value.Type));
+    if (!main || main.TargetMode === 'External') return null;
+    const workbook = xml(files.get(relationshipPath('', main.Target)));
+    const sheetIndex = children(workbook, 'sheets').flatMap(node => children(node, 'sheet')).findIndex(node => node.attributes.name === currentSheet);
+    if (sheetIndex < 0) return null;
+    const definitions = children(workbook, 'definedNames').flatMap(node => children(node, 'definedName'))
+      .filter(node => node.attributes.name?.toLowerCase() === identifier.toLowerCase());
+    const local = definitions.filter(node => node.attributes.localSheetId === String(sheetIndex));
+    const candidates = local.length ? local : definitions.filter(node => node.attributes.localSheetId === undefined);
+    if (candidates.length !== 1 || candidates[0].children.length) return null;
+    expression = candidates[0].text.trim();
+    // A name without a sheet-qualified absolute target has context-dependent
+    // semantics. Do not follow aliases, cycles or calculated/dynamic ranges.
+    if (!expression.includes('!')) return null;
+  }
   const match = /^=?(?:(?:'((?:[^']|'')+)'|([^'!\[\]]+))!)?(\$[A-Z]{1,3}\$[1-9]\d*)(?::(\$[A-Z]{1,3}\$[1-9]\d*))?$/.exec(expression);
   if (!match) return null;
   const name = match[1]?.replace(/''/g, "'") ?? match[2] ?? currentSheet;
