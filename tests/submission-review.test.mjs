@@ -134,3 +134,23 @@ test('image review bounds concurrent storage reads to three and checks every uni
  await inspectQuotationImages(input,keys,async()=>{active++;total++;max=Math.max(max,active);await new Promise(resolve=>setTimeout(resolve,1));active--;return validImage;});
  assert.equal(total,12);assert.equal(max,3);
 });
+
+test('HTML review flags observed unsupported embedded formats without following URLs',()=>{
+ const input=resolved();input.schema.fields.push(field('detailHtml','textarea'));
+ input.rows[0].fields.detailHtml=cell('<IMG SRC="https://example.test/a%2eGIF?q=.png"><object data="/a.PDF"></object><embed src=/a.psd><video src="/a.mp4"></video>');
+ const before=JSON.stringify(input);const report=inspectSubmission(input,['owner/main.png']);
+ const issue=report.issues.find(item=>item.code==='HTML_MEDIA_UNSUPPORTED');
+ assert.equal(issue.optionId,'red');assert.equal(issue.fieldId,'detailHtml');
+ for(const format of ['GIF','PDF','PSD','동영상'])assert.ok(issue.message.includes(format));
+ assert.equal(report.errorCount,1);assert.equal(JSON.stringify(input),before);assert.equal(report.submissionReady,false);
+ input.rows[0].included=false;
+ assert.equal(inspectSubmission(input,[]).issues.some(item=>item.code==='HTML_MEDIA_UNSUPPORTED'),false);
+});
+
+test('HTML media detection distinguishes examples, comments and query text from embedded content',()=>{
+ const {unsupportedQuotationMedia:check}=load('app/quotation-html-review.ts');
+ for(const html of ['<p>파일명 a.gif</p>','&lt;img src="a.gif"&gt;','<!-- <video src="a.mp4"> -->','<img src="a.png?name=a.gif">','<img alt="a.gif" src="a.jpg">','<a href="a.pdf">참고</a>'])assert.equal(check(html).length,0);
+ for(const html of ['<img src="data:image/gif;base64,AAAA">','<source type="video/mp4" src="/unknown">','<object type="application/pdf" data="/unknown">','<embed src="a.psd#page">','<video></video>'])assert.equal(check(html).length,1);
+ assert.equal(check('<img alt="a > b" src="a.gif">')[0],'GIF');
+ assert.equal(check('<img src="a.gif"><img src="b.GIF">').length,1);
+});

@@ -982,3 +982,11 @@ AI등록 화면 확인:
 - 검토 후 저장한 변경값은 기존 방식대로 manual 출처다. 실제 번역 출처 메타데이터를 새로 저장하지 않았다. 원문 receipt 보존과 견적 수동값 우선순위를 유지한다. 번역 후 상품 속성이 견적과 Excel 출력에 반영되는 경로를 검증했다.
 - 검증: 전체359/359, TypeScript/ESLint/production build/diff 검사 통과. 신규4개 검증은 색상/사이즈별 정확한 연결·저장·견적·Excel, 수동값/공란 보존, 원문 변경/중복/과길이 거절과 원본 불변,50개 경계다. outputs/option-attribute-translation-tests.log 및 option-attribute-translation-build.log. 실제 앱 브라우저 클릭·AI 공급원 호출·운영접수는 미검증.
 - 다음: 실제 권한 있는1688 수집 공급원, AI 서비스의 운영 연결/실상품 검증, 공식 Excel/카테고리별 법적·물류 대조, Supplier Hub 업로드·검증·접수 adapter 구현. 이번 변경은 검토 결과 연결이며 전체 자동화 완성이 아니다. 유료 호출·운영 등록·Cloudflare 배포 없음.
+
+## 57. 실제 Supplier Hub HTML 미디어 제한 대조 및 등록 전 검사 — 2026-09-24
+
+- 시작 main51b03ae, 미커밋 변경 없음. 수집 configured:false와 전송501 상태를 코드에서 재확인했다. supplierChrome에서 새 hubCheckTab을 열어 대량등록 화면을 관찰했다. HTML에 포함된 GIF/PSD/PDF/동영상 지원 불가 안내를 확인했다. 자세한 근거/범위는 docs/supplier-hub-bulk-registration-2026-09-23.md 후속 절에 기록했다.
+- 최종 저장 견적 detailHtml에서 명시적인 미지원 미디어를 검출하고 등록 전 검사에 옵션별 HTML_MEDIA_UNSUPPORTED 오류를 추가했다. HTML 원문과 수동값은 수정하지 않는다. 제외 옵션은 검사 대상에 넣지 않는다. URL을 방문하거나 파일을 다운로드하지 않는다.
+- 정적 검사 한계를 화면 limits에 추가했다. CSS/스크립트/srcset/iframe/외부 응답과 최종 렌더링은 확인하지 않으며 HTML 보안 정화기 또는 적합성 인증이 아니다. 다른 이미지 업로드 영역까지 일괄 금지하지 않는다.
+- 검증: 전체361/361, TypeScript/ESLint/production build/diff 검사 통과. 신규2개 테스트로 형식/MIME/대소문자/URL 경로 인코딩, query/fragment, 주석/텍스트 예시 오탐 방지, 옵션 위치·제외·원본 불변을 확인했다. outputs/html-media-all-tests.log 및 html-media-build.log. 실제 앱 UI 클릭/공식 Excel 검증/운영접수는 미검증.
+- 다음 시작점: hubCheckTab은 Supplier Hub 대량등록 화면. 공식 Excel 원본 및 업로드/검증/접수 계약 확보, 실제1688 수집/AI 운영 연결, 전체카테고리 법적·물류 대조가 남는다. 이번 검사는 adapter 구현을 대체하지 않는다. 전체 자동화 미완성. 파일 업로드·약관 동의·운영 등록·유료 호출·Cloudflare 배포 없음.

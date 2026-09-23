@@ -1,5 +1,6 @@
 import type { ImageCheck } from '@/app/quotation-image-review';
 import type { ResolvedQuotation } from '@/app/quotation-schema';
+import { unsupportedQuotationMedia } from '@/app/quotation-html-review';
 
 export type SubmissionIssue = {
   kind: 'error' | 'review'; code: string; message: string;
@@ -28,6 +29,10 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
   for (const message of new Set(resolved.issues)) general('QUOTATION_CONSTRAINT', message);
   const owned = new Set(ownedImageKeys);
   for (const row of rows) {
+    const unsupportedMedia = unsupportedQuotationMedia(row.fields.detailHtml?.value ?? '');
+    if (unsupportedMedia.length) add({kind:'error', code:'HTML_MEDIA_UNSUPPORTED',
+      message:`HTML 상세 내용에 Supplier Hub가 지원하지 않는 형식(${unsupportedMedia.join(', ')})이 있습니다. 이미지로 교체한 뒤 다시 검사해주세요.`,
+      optionId:row.optionId, optionLabel:row.optionLabel, fieldId:'detailHtml'});
     // Supplier Hub bulk registration UI observed on 2026-09-23 requires a separate label attachment.
     if (resolved.schema.fields.some(field => field.id === 'labelImages') && !row.fields.labelImages?.value.trim()) {
       add({kind:'error', code:'LABEL_ATTACHMENT_MISSING', message:'제품 필수 표시사항: 라벨 또는 도안 이미지를 저장하고 견적서에 연결해주세요.', optionId:row.optionId, optionLabel:row.optionLabel, fieldId:'labelImages'});
@@ -53,6 +58,7 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
     includedOptions:rows.length, errorCount, reviewCount, issues, omittedIssueCount:errorCount+reviewCount-issues.length,
     submissionReady:false as const, transport:'not-connected' as const,
     limits:['저장된 자료만 검사합니다. 편집 중인 내용은 저장 후 다시 검사해주세요.',
+      'HTML 검사는 명시된 미디어 태그·주소·형식만 확인합니다. CSS·스크립트·외부 주소의 실제 파일 내용과 최종 렌더링은 확인하지 않습니다.',
       imageChecks ? '이미지 소유권과 저장소 파일 존재·크기·형식검사 기록을 확인했습니다. 파일 내용 전체·번역 품질·Supplier Hub 업로드 성공은 미검증입니다.' : '이미지 연결 소유권을 검사하며 실제 파일 내용·Supplier Hub 업로드 성공은 검사하지 않습니다.',
       '공식 Excel·이미지·인증·물류 규격과 실제 접수는 미검증입니다. 오류가 없어도 등록 완료를 뜻하지 않습니다.',
       'Supplier Hub 전송 연결이 아직 구현되지 않았습니다. 이 검사는 자료를 전송하거나 등록하지 않습니다.']};
