@@ -7,6 +7,25 @@ const exports={};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/collection-import.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error});
 const {runCollectionImport}=exports;
 const reply=(body,status=200)=>({ok:status===200,json:async()=>body});
+
+test('selected subset keeps receipt indices and original ordering, skipping failed or unwanted images',async()=>{
+ const calls=[],progress=[],selection=[199,2,0];
+ const result=await runCollectionImport('job',200,{imageIndices:selection,fetcher:async(url,init)=>{
+  if(url.endsWith('/product'))return reply({productId:'p'});
+  const index=JSON.parse(init.body).index;calls.push(index);return reply({key:`owner/${index}`});
+ },onProgress:value=>progress.push(value)});
+ assert.equal(result.status,'completed');assert.deepEqual(calls,[0,2,199]);assert.deepEqual(selection,[199,2,0]);
+ assert.equal(result.completedImages,3);assert.equal(progress.at(-1).totalImages,3);
+});
+
+test('invalid or oversized selections fail before creating a product or downloading files',async()=>{
+ let calls=0;const fetcher=async()=>{calls++;return reply({productId:'p'});};
+ for(const indices of [[0,0],[-1],[200],[1.5],Array.from({length:51},(_,i)=>i)]){
+  await assert.rejects(()=>runCollectionImport('job',200,{imageIndices:indices,fetcher}),/50/);
+ }
+ await assert.rejects(()=>runCollectionImport('job',200,{fetcher}),/50/);
+ assert.equal(calls,0);
+});
 test('import executes product first and images in order, without translation or submission calls',async()=>{
  const calls=[],progress=[];
  const outcome=await runCollectionImport('job',3,{fetcher:async(url,init)=>{calls.push([url,init]);return reply(url.endsWith('/product')?{productId:'p'}:{key:'owner/image'});},onProgress:p=>progress.push(p)});
@@ -26,7 +45,7 @@ test('failed image stops later requests and retry reuses idempotent product/imag
   const {index}=JSON.parse(init.body);if(index===1&&fail)return reply({error:'storage failure'},503);
   writes.add(index);return reply({key:`owner/${index}`,reused:writes.has(index)});
  };
- const first=await runCollectionImport('job',3,{fetcher});assert.equal(first.status,'failed');assert.equal(first.completedImages,1);assert.deepEqual([...writes],[0]);
+ const first=await runCollectionImport('job',3,{fetcher});assert.equal(first.status,'failed');assert.equal(first.completedImages,1);assert.deepEqual([...writes],[0]);assert.match(first.error,/원본 2번 이미지/);
  fail=false;const second=await runCollectionImport('job',3,{fetcher});assert.equal(second.status,'completed');assert.equal(second.productId,first.productId);assert.equal(products,2);assert.equal(writes.size,3);
 });
 test('stop waits for active write to settle and never schedules the following image',async()=>{
