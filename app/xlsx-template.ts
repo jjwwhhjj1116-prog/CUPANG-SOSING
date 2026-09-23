@@ -180,3 +180,39 @@ export function xlsxHeaders(inspection: XlsxInspection, sheetName: string, heade
   if (!row?.values.some(Boolean)) fail('선택한 시트·행에 읽을 수 있는 머리글이 없습니다.');
   return row.values;
 }
+
+/** Read a bounded absolute, one-dimensional list; never evaluate Excel formulas.
+ * Relative references and named ranges need a separate resolution model.
+ */
+export function xlsxStaticListValues(files: Map<string, Uint8Array>, inspection: XlsxInspection, expression: string, currentSheet: string): string[] | null {
+  const match = /^=?(?:(?:'((?:[^']|'')+)'|([^'!\[\]]+))!)?(\$[A-Z]{1,3}\$[1-9]\d*)(?::(\$[A-Z]{1,3}\$[1-9]\d*))?$/.exec(expression);
+  if (!match) return null;
+  const name = match[1]?.replace(/''/g, "'") ?? match[2] ?? currentSheet;
+  if (/[\[\]]/.test(name)) return null;
+  const sheet = inspection.sheets.find(sheet => sheet.name === name);
+  if (!sheet) return null;
+  const position = (reference: string) => {
+    const parts = /^\$([A-Z]+)\$(\d+)$/.exec(reference)!;
+    let column = 0; for (const letter of parts[1]) column = column * 26 + letter.charCodeAt(0) - 64;
+    return { column: column - 1, row: Number(parts[2]) };
+  };
+  const start = position(match[3]), end = position(match[4] ?? match[3]);
+  if (start.row > end.row || start.column > end.column || end.row > 1000 || end.column >= 200
+    || (start.row !== end.row && start.column !== end.column)) return null;
+  const worksheet = xml(files.get(xlsxWorksheetPath(files, name)));
+  // Merged cells have implicit values, so don't infer a list from them.
+  if (children(worksheet, 'mergeCells').length) return null;
+  for (const row of children(worksheet, 'sheetData').flatMap(node => children(node, 'row'))) {
+    const rowNumber = Number(row.attributes.r); if (rowNumber < start.row || rowNumber > end.row) continue;
+    for (const cell of children(row, 'c')) {
+      const reference = cell.attributes.r ?? '';
+      if (!/^[A-Z]{1,3}[1-9]\d*$/.test(reference)) return null;
+      const column = position(reference.replace(/^([A-Z]+)(\d+)$/, (_match, letters: string, digits: string) => `$${letters}$${digits}`)).column;
+      if (column >= start.column && column <= end.column && (children(cell, 'f').length || cell.attributes.t === 'e')) return null;
+    }
+  }
+  const result: string[] = [];
+  for (let row = start.row; row <= end.row; row++) for (let column = start.column; column <= end.column; column++)
+    result.push(sheet.rows.find(value => value.rowNumber === row)?.values[column] ?? '');
+  return result;
+}

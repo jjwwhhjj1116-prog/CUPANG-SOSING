@@ -1,5 +1,5 @@
 import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfileInput } from '@/app/category-profiles';
-import { inspectXlsxArchive, readXlsxArchive, xlsxHeaders, xlsxWorksheetPath } from '@/app/xlsx-template';
+import { inspectXlsxArchive, readXlsxArchive, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
 
 export type QuotationData = Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>>;
 export type QuotationCellIssue = { row: number; column: number; header: string };
@@ -139,8 +139,8 @@ function safeCell(value: unknown): string | number {
 }
 function delimitedCell(value: string | number): string { const text = String(value); return `"${(/^[\s]*[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`; }
 
-/** Check literal lists only. Formula/range references are never evaluated. */
-function listValidationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number): string[] {
+/** Check literal lists and static absolute references without evaluating formulas. */
+function listValidationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection): string[] {
   const root = spans(source);
   const warnings: string[] = []; let mismatches = 0; let unchecked = 0;
   const rules = root.children.filter(node => node.local === 'dataValidations').flatMap(node => node.children.filter(child => child.local === 'dataValidation'));
@@ -153,9 +153,10 @@ function listValidationWarnings(source: string, profile: CategoryProfileInput, v
     const formula = rule.children.find(node => node.local === 'formula1');
     const raw = formula ? source.slice(formula.openEnd, formula.closeStart) : '';
     const expression = decodeXml(raw).trim();
-    // Nested XML, named ranges, functions and sheet references need Excel itself.
-    if (rule.attributes.type !== 'list' || !formula || formula.children.length || raw.includes('<') || !/^"[^"]*"$/.test(expression)) { unchecked++; continue; }
-    const allowed = expression.slice(1, -1).split(',');
+    if (rule.attributes.type !== 'list' || !formula || formula.children.length || raw.includes('<')) { unchecked++; continue; }
+    const allowed = /^"[^"]*"$/.test(expression) ? expression.slice(1, -1).split(',')
+      : xlsxStaticListValues(files, inspection, expression, profile.template!.sheetName);
+    if (!allowed) { unchecked++; continue; }
     for (const [index, row] of values.entries()) for (const mapping of profile.mappings) {
       if (!covered(mapping.column, startRow + index)) continue;
       const value = String(row[mapping.column]);
@@ -205,10 +206,10 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     if (JSON.stringify(headers.map(value => value.trim())) !== JSON.stringify(template.headers)) fail('견적서 원본 머리글과 열 연결이 일치하지 않습니다.');
     const path = xlsxWorksheetPath(files, template.sheetName); const original = files.get(path); if (!original) fail('원본 시트를 찾을 수 없습니다.');
     const source = decoder.decode(original);
-    report.warnings.push(...listValidationWarnings(source, profile, values, input.dataStartRow));
     const updated = encoder.encode(writeWorksheet(source, template.sheetName, profile, values, input.dataStartRow));
     if (updated.byteLength > 10_000_000) fail('생성한 워크시트가 10MB를 초과합니다.');
-    files.set(path, updated); inspectXlsxArchive(files);
+    files.set(path, updated); const updatedInspection = inspectXlsxArchive(files);
+    report.warnings.push(...listValidationWarnings(source, profile, values, input.dataStartRow, files, updatedInspection));
     report.warnings.push(...inspection.warnings, '기존 수식과 유효성 검사 규칙을 보존했습니다. 수식 계산값과 신규 행의 검사 범위는 Excel에서 확인해주세요.');
     bytes = await zip(files); mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   } else {

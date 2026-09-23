@@ -137,10 +137,28 @@ test('mapped XLSX distinguishes allowed blanks and unresolved list references wi
     {rows:[{title:'상품',supplyPrice:10,skuName:''}]}));
   assert.equal(blank.report.warnings.some(value=>value.includes('드롭다운')),false);
   assert.equal(blank.report.missingRequired.length,1);
-  const referenced = await createMappedQuotation(await inputFrom(entries(value=>value.replace('"검정,흰색"',"'참고'!$A$1:$A$10"))));
+  const referenced = await createMappedQuotation(await inputFrom(entries(value=>value.replace('"검정,흰색"',"AllowedNames"))));
   assert.ok(referenced.report.warnings.some(value=>value.includes('검사하지 못했습니다')));
   const many = await createMappedQuotation(await inputFrom(entries(value=>value.replace('D5:D10','D5:D204')),
     {rows:Array.from({length:200},()=>({title:'상품',supplyPrice:10,skuName:'목록 밖'}))}));
   assert.equal(many.report.warnings.filter(value=>value.includes('견적서!D')).length,20);
   assert.ok(many.report.warnings.some(value=>value.includes('총 200개')));
+});
+
+
+test('absolute workbook list references use final saved cells and reject formulas or unsupported ranges', async () => {
+  const make = expression => entries(value=>value.replace('"검정,흰색"',expression));
+  const files = make("'참고'!$A$1:$A$2");
+  files[files.findIndex(([name])=>name==='xl/worksheets/sheet2.xml')][1]='<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>검정</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>흰색</t></is></c></row></sheetData></worksheet>';
+  const valid=await createMappedQuotation(await inputFrom(files));
+  assert.equal(valid.report.warnings.some(value=>value.includes('검사하지 못했습니다')||value.includes('드롭다운')),false);
+  const invalid=await createMappedQuotation(await inputFrom(files,{rows:[{title:'상품',supplyPrice:10,skuName:'빨강'}]}));
+  assert.ok(invalid.report.warnings.some(value=>value.includes('견적서!D5')));
+  for(const expression of ["'참고'!$B$1", "'참고'!$A$1:$A$1001", "'참고'!A1:A2", "'[외부.xlsx]참고'!$A$1", 'INDIRECT("A1")']){
+    const output=await createMappedQuotation(await inputFrom(make(expression)));
+    assert.ok(output.report.warnings.some(value=>value.includes('검사하지 못했습니다')),expression);
+  }
+  // A same-sheet source overwritten by this export must use its final value.
+  const same=await createMappedQuotation(await inputFrom(make('$A$5'),{rows:[{title:'검정',supplyPrice:10,skuName:'검정'}]}));
+  assert.equal(same.report.warnings.some(value=>value.includes('드롭다운')),false);
 });
