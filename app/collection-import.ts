@@ -1,3 +1,4 @@
+import { validateCollectionCapacity, collectionSelectionFits } from '@/app/collection-capacity';
 export type CollectionImportProgress = {stage:'product'|'images';completedImages:number;totalImages:number};
 export type CollectionImportOutcome = {status:'completed'|'stopped'|'failed';productId:string|null;completedImages:number;error?:string};
 export function collectionImageSelection(totalImages:number,imageIndices?:readonly number[]):number[]{
@@ -15,6 +16,12 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
  let productId:string|null=null;let completedImages=0;let activeImageIndex:number|null=null;
  const stopped=()=>options.shouldStop?.()??false;
  try{
+  if(stopped())return {status:'stopped',productId,completedImages};
+  const capacityResponse=await fetcher(base+'/capacity',{cache:'no-store'});
+  const capacityBody=await capacityResponse.json() as {capacity?:unknown;error?:string};
+  if(!capacityResponse.ok)throw new Error(capacityBody.error||'이미지 저장 여유 조회 실패');
+  const capacity=validateCollectionCapacity(capacityBody.capacity,totalImages);
+  if(!collectionSelectionFits(capacity,indices))throw new Error('공통 이미지·기존 파일을 포함하면 50개를 초과합니다. 수신 결과를 다시 조회하고 이미지 선택을 줄여주세요.');
   if(stopped())return {status:'stopped',productId,completedImages};
   options.onProgress?.({stage:'product',completedImages,totalImages:selectedTotal});
   const response=await fetcher(`${base}/product`,{method:'POST'});

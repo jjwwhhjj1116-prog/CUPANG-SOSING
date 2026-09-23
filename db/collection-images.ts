@@ -35,3 +35,9 @@ export async function saveCollectionImage(owner:string,jobId:string,index:number
  ]);
  const saved=await readCollectionImage(owner,jobId,index);if(!saved)throw new Error('상품이 변경됐습니다. 다시 시도하면 기존 편집을 보존해 반영합니다.');return saved;
 }
+
+export async function listCollectionImageIndices(owner:string,jobId:string,productId:string):Promise<number[]> {
+ const db=await database();
+ const result=await db.prepare('SELECT image_index FROM collection_images WHERE owner_id=? AND job_id=? AND product_id=? ORDER BY image_index').bind(owner,jobId,productId).all<{image_index:number}>();
+ return result.results.map(row=>row.image_index);
+}
