@@ -1062,3 +1062,28 @@ test('archive review inspects final attachment bytes and preserves image guidanc
  for(const row of resolved.rows)row.included=false;
  assert.equal(inspector(resolved,invalid).size,0);
 });
+
+
+test('quotation label PNG plan follows category fields and final option overrides without changing saved content',()=>{
+ const input=fixture(); input.categoryId='103495';
+ input.options.rows.push({...clone(input.options.rows[0]),id:'blue',translatedName:'파랑',color:'파랑'});
+ input.overrides={common:{model:'공통 모델',manufacturer:'공통 제조사'},options:{red:{model:'옵션 모델',marathon_noticeColor:'직접 색상',marathon_noticeSize:''}}};
+ const before=JSON.stringify(input);const resolved=model.resolveQuotationFields(input);
+ const make=load('app/quotation-label-plan.ts').quotationLabelPlan;
+ const red=make(resolved,'red'),blue=make(resolved,'blue');
+ assert.ok(red.rows.some(row=>row[0]==='모델명'&&row[1]==='옵션 모델'));
+ assert.ok(blue.rows.some(row=>row[0]==='모델명'&&row[1]==='공통 모델'));
+ for(const field of resolved.schema.fields.filter(field=>field.section==='legal')){
+  const cell=resolved.rows.find(row=>row.optionId==='red').fields[field.id];
+  assert.ok(red.rows.some(row=>row[0]===field.label&&row[1]===(cell.value.trim()?field.choices?.find(choice=>choice.value===cell.value)?.label??cell.value:'[공란]')));
+ }
+ assert.ok(red.rows.some(row=>row[1]==='직접 색상'));
+ assert.ok(red.rows.some(row=>row[1]==='[공란]'));
+ assert.match(red.footer,/첨부·전송되지 않았습니다/);
+ assert.equal(JSON.stringify(input),before);
+ assert.throws(()=>make(resolved,'missing'),/포함된 옵션/);
+ resolved.rows.find(row=>row.optionId==='red').included=false;
+ assert.throws(()=>make(resolved,'red'),/포함된 옵션/);
+ resolved.schema.categoryId=null;
+ assert.throws(()=>make(resolved,'blue'),/카테고리/);
+});

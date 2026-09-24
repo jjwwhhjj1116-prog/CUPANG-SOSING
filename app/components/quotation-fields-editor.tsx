@@ -5,6 +5,7 @@ import { resolveQuotationNavigation, type QuotationNavigationTarget } from '@/ap
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { duplicateQuotationImageIssue, quotationImageRoleIssues, quotationBarcodeIssues, quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import './quotation-fields-editor.css';
+import { QuotationLabelPanel } from '@/app/components/quotation-label-panel';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -339,6 +340,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       {(view.resolved.issues.length > 0 || allIssues.length > 0) && <details className="quotation-fields-notice"><summary>입력·검토 안내 {view.resolved.issues.length + allIssues.length}건</summary><ul>{view.resolved.issues.map((issue, index) => <li key={`global-${index}`}>{issue}</li>)}{allIssues.map(({ field, issue }, index) => <li key={`${field.id}-${index}`}><button type="button" className="quotation-field-text-button" onClick={() => setActive(field.section)}>{field.label}</button>: {issue}</li>)}</ul></details>}
       <div className="quotation-fields-actions"><small>입력 v{view.revision} · 작성 중에도 저장할 수 있습니다.<br />수동 수정값은 기본값이 바뀌어도 유지됩니다.</small><div><button type="button" className="btn ghost" disabled={busy || loading || !dirty} onClick={() => void refresh(true)}>입력 버리고 저장본 불러오기</button><button type="button" className="btn primary" disabled={busy || loading || !dirty || conflicts.length > 0 || hasInvalidDraft} onClick={() => void save()}>{busy ? '저장 중…' : `견적 입력 저장${dirty ? ` (${changes.length})` : ''}`}</button></div></div>
       {hasInvalidDraft && <p className="quotation-field-issue" role="status">{invalidDraftMessage} 필수 항목의 공란은 작성 중 상태로 저장할 수 있습니다.</p>}
+      {(active === 'legal' || active === 'image') && <QuotationLabelPanel key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} resolved={view.resolved} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} />}
     </>}
   </section>;
 }

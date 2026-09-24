@@ -1365,3 +1365,12 @@ AI등록 화면 확인:
 - 전체454/454, TypeScript·ESLint·Cloudflare 운영build·산출물·diff 통과. API preview와 실제 생성ZIP의 submission-review 완전일치, 1×1 이미지 경고·라벨누락·제외옵션, UI SSR 이스케이프·비활성 버튼·생략건수, 옵션/필드 식별자 전달 검증. outputs/step103-*.log. 실제 브라우저에서 폼 포커스/스크롤과 refreshToken 변경 흐름은 미실증.
 - 기존 운영주소 배포 version09175fb4-57f0-431a-92ad-87a527cf7a99. DB/기존상품 변경 없음. 유료AI/상품운영등록 없음.
 - 다음 시작점: 실제상품·연결된Excel로 미리보기→항목수정→재검토→다운로드 브라우저 실증. 직전 운영계정 목록0건. 공식Excel·카테고리 기본값 전수대조 및 실제1688 공급원·AI번역 실호출·SupplierHub 전송 adapter/접수는 여전히 미완성. 기존1688 BrowserUse 거절 우회금지.
+
+## 104. 최종 견적 값 기반 옵션별 표시사항 PNG — 2026-09-24
+
+- 시작 mainbf11d5b, 미커밋 변경 없음. 기존 documentImagePlan(label)은 상품 공통 content.label만 읽어 견적 전용 옵션 override를 반영하지 않는 것을 확인. 기존 기능은 그대로 유지하고 별도 견적 기준 PNG 생성 추가.
+- 견적 편집 화면 이미지/법적 정보 구역에서 포함 옵션 선택→저장된 견적 값으로 PNG 미리보기→다운로드. 상품명/모델/브랜드/제조사/옵션 색상·수량·사이즈와 해당 스키마의 legal 필드를 사용한다. 최종 resolved 셀을 읽어 공통/옵션 override와 공란을 보존하고 공란은 [공란]으로 명시. 법적 고시 항목을 제품 라벨의 완결된 법정 양식이라고 주장하지 않는다.
+- 기존 Canvas 조판을 document-image-render.ts로 공유. 높이12000px/10MB 제한 유지, 내용 초과를 조용히 자르지 않음. dirty/로딩/저장/충돌 중 생성 제한. 입력 지문·revision·옵션 변경 시 기존 미리보기 폐기 및 object URL 해제. PNG는 다운로드만 지원하며 상품 첨부/선택옵션 labelImages 자동연결/Hub전송은 미구현이다.
+- 첫 검사에서 renderer 분리 이후 테스트의 브라우저 globals 전달 및 TSX module loader 누락을 발견해 보완. 전체455/455, TypeScript·ESLint·운영build·산출물·diff 통과. 옵션별 모델/색상·수동공란·제외옵션·카테고리 누락·원본불변 확인, 기존 사이즈표 미리보기/첨부 재시도 회귀검사. outputs/step104-*.log. 실제 브라우저 PNG 렌더링과 운영상품 테스트는 미실시.
+- Cloudflare 기존주소 배포 versioneb02dbb7-4e8c-4121-a7f9-186af55de0ae. DB 변경/유료AI 호출/상품운영등록 없음.
+- 다음 시작점: 생성PNG를 선택 옵션의 라벨 이미지에 안전하게 자동연결하는 저장 흐름(CAS·기존첨부 보존)과 브라우저 실증. 공식Excel·카테고리 기본값 전수대조, 실제1688 공급원·AI번역 실호출·SupplierHub 전송 adapter/접수는 여전히 미완성. 이전1688 BrowserUse 거절 우회금지.

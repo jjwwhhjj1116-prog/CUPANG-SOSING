@@ -16,7 +16,10 @@ function load(file, overrides = {}) {
   vm.runInNewContext(compiled, { exports, Error, structuredClone, require(name) {
     if (name in overrides) return overrides[name];
     if (name.endsWith('.css')) return {};
-    if (name.startsWith('@/app/')) return load(`${name.slice(2)}.ts`);
+    if (name.startsWith('@/app/')) {
+      const modulePath = name.slice(2);
+      return load(`${modulePath}.${fs.existsSync(new URL(`../${modulePath}.ts`, import.meta.url)) ? 'ts' : 'tsx'}`);
+    }
     if (name === 'react' || name === 'react/jsx-runtime') return requireNative(name);
     throw Error(`Unexpected dependency ${name}`);
   } });

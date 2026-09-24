@@ -12,7 +12,7 @@ function load(file, overrides = {}, mode = 'development', globals = {}) {
     if (name in overrides) return overrides[name];
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
-    if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode);
+    if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode, globals);
     throw Error(name);
   } });
   return exports;
