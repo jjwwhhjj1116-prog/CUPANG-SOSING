@@ -424,3 +424,44 @@ test('batch target selection rejects foreign, excluded, duplicate and empty opti
  const plan=quotationTranslationBatch('p1',view,job,mapping,['blue']);assert.equal(plan.changes.length,1);assert.equal(plan.changes[0].optionId,'blue');
  for(const ids of [[],['missing'],['excluded'],['blue','blue'],[null]])assert.throws(()=>quotationTranslationBatch('p1',view,job,mapping,ids),/적용 옵션/);
 });
+
+test('bulk restore previews inherited and automatic values including equal and empty overrides without changing unrelated edits',()=>{
+ const view=fixture({common:{brand:'공통 브랜드'},options:{red:{brand:'직접 브랜드',model:'',title:'상품 제목'},blue:{brand:'공통 브랜드'},excluded:{brand:'제외 유지'}}});
+ const before=JSON.stringify(view);const pending=[change('model','미선택 보존','blue')];
+ const preview=editor.previewQuotationEditorRestore(view,pending,['brand','title'],true);
+ assert.equal(preview.mode,'restore');assert.equal(preview.rows.length,3);
+ assert.equal(preview.rows.find(r=>r.optionId==='red'&&r.fieldKey==='brand').after,'공통 브랜드');
+ const next=editor.applyQuotationEditorBulk(view,pending,preview);
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'red','brand').source,'manual-common');
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'red','title').source,'content');
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'red','model').value,'');
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'blue','model').value,'미선택 보존');
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'excluded','brand').value,'제외 유지');
+ assert.equal(JSON.stringify(view),before);
+ const restored=model.applyQuotationChanges(view.overrides,next);
+ assert.equal(restored.common.brand,'공통 브랜드');assert.equal(Object.hasOwn(restored.options.red,'title'),false);
+ assert.equal(restored.options.red.model,'');
+});
+
+test('bulk restore handles staged values and blanks, stale previews, excluded options and invalid fields',()=>{
+ const view=fixture();const draft=[change('brand','','red')];
+ const preview=editor.previewQuotationEditorRestore(view,draft,['brand'],true);
+ assert.equal(preview.rows[0].before,'');assert.equal(preview.rows[0].after,'기본 브랜드');
+ assert.equal(editor.applyQuotationEditorBulk(view,draft,preview).length,0);
+ assert.throws(()=>editor.applyQuotationEditorBulk({...view,inputFingerprint:'new'},draft,preview),/미리보기 이후/);
+ assert.throws(()=>editor.applyQuotationEditorBulk(view,[],preview),/미리보기 이후/);
+ for(const fields of [[],['missing'],['category']])assert.throws(()=>editor.previewQuotationEditorRestore(view,[],fields,true),/수정 가능/);
+ const other=fixture({common:{},options:{excluded:{brand:'제외'}}});
+ assert.equal(editor.previewQuotationEditorRestore(other,[],['brand'],true).rows.length,0);
+ assert.equal(editor.previewQuotationEditorRestore(other,[],['brand'],false).rows.length,1);
+});
+
+test('restoring an option override resumes later source updates while common and unselected values stay fixed',()=>{
+ const view=fixture({common:{model:'고정 공통'},options:{red:{brand:'고정 브랜드',model:'고정 옵션'},blue:{brand:'다른 옵션'}}});
+ const preview=editor.previewQuotationEditorRestore(view,[],['brand'],true);
+ const saved=model.applyQuotationChanges(view.overrides,editor.applyQuotationEditorBulk(view,[],preview));
+ const updated=fixture(saved,'변경한 기본 브랜드');
+ assert.equal(updated.resolved.rows.find(r=>r.optionId==='red').fields.brand.value,'변경한 기본 브랜드');
+ assert.equal(updated.resolved.rows.find(r=>r.optionId==='red').fields.model.value,'고정 옵션');
+ assert.equal(updated.resolved.rows.find(r=>r.optionId==='blue').fields.model.value,'고정 공통');
+});
