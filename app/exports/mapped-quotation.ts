@@ -1,3 +1,4 @@
+import { getQuotationSchema } from '@/app/quotation-schema';
 import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfileInput } from '@/app/category-profiles';
 import { inspectXlsxArchive, readXlsxArchive, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
 
@@ -219,10 +220,11 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', input.originalBytes))).map(byte => byte.toString(16).padStart(2, '0')).join('');
   if (hash !== template.sha256) fail('선택한 견적서와 저장된 원본 파일 지문이 일치하지 않습니다.');
   const report: MappedQuotationReport = { verification: 'draft', rowCount: input.rows.length, dataStartRow: input.dataStartRow, missingRequired: [], blankCells: [], warnings: ['생성 결과는 검토용입니다. Supplier Hub 접수·카테고리별 필수 정보 검증은 완료되지 않았습니다.'] };
+  const schemaFields = getQuotationSchema(profile.categoryId, profile.categoryPath).fields;
   let payloadSize = 0;
   const values = input.rows.map((data, index) => {
     if (!data || typeof data !== 'object' || Array.isArray(data)) fail('상품 자료 형식을 확인해주세요.');
-    const mapped = mapQuotationRow(profile, data).values.map(value => {
+    const mapped = mapQuotationRow(profile, data, schemaFields).values.map(value => {
       const safe = safeCell(value);
       const escaped = String(safe).replace(/_x[\da-f]{4}_/gi, match => `_x005F_${match.slice(1)}`).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       payloadSize += encoder.encode(escaped).byteLength + 100;

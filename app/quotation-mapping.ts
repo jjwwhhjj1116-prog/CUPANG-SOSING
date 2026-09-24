@@ -55,7 +55,7 @@ export function relocateQuotationMappings(
     const original = mappings.find(value => value.column === mapping.column);
     const column = destinations.get(mapping.column);
     return column !== undefined && !protectedNext.has(column) && original?.field === mapping.field
-      && original.required === mapping.required && original.constant === mapping.constant ? [{ ...mapping, column }] : [];
+      && original.required === mapping.required && original.constant === mapping.constant && original.choiceFormat === mapping.choiceFormat ? [{ ...mapping, column }] : [];
   });
   return { mappings: [...retained, ...additions].sort((a, b) => a.column - b.column),
     automatic: [...carriedAutomatic, ...additions], protectedColumns: protectedNext,
@@ -75,7 +75,7 @@ export function refreshCategoryMappings(
   const retained = mappings.filter(mapping => {
     const before = previous.get(mapping.column);
     return protectedColumns.has(mapping.column) || !before || before.field !== mapping.field
-      || before.required !== mapping.required || before.constant !== mapping.constant;
+      || before.required !== mapping.required || before.constant !== mapping.constant || before.choiceFormat !== mapping.choiceFormat;
   });
   const occupied = new Set(retained.map(mapping => mapping.column));
   const suggestion = suggestQuotationMappings(headers, categoryId);

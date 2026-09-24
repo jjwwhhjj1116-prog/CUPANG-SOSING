@@ -315,3 +315,18 @@ test('saved row changes after preview or during generation reject automatic expo
  assert.equal((await changing.POST(request(automatic),context)).status,409);
  for(const dataStartRow of [null,'7',0,1,10001])assert.equal((await route.POST(request({...automatic,dataStartRow}),context)).status,400);
 });
+
+test('explicit choice labels match preview and exported cells while raw codes and manual blanks remain intact',async()=>{
+ const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');const field=schema.fields.find(f=>f.type==='select'&&f.choices.some(c=>c.value&&c.value!==c.label));
+ assert.ok(field);const choice=field.choices.find(c=>c.value&&c.value!==c.label);
+ const bytes=new TextEncoder().encode('선택코드,선택문구,공란\r\n');const digest=createHash('sha256').update(bytes).digest('hex');const key=`owner/category-templates/${digest}.csv`;
+ const selected={...profile,categoryId:'80719',template:{...profile.template,headers:['선택코드','선택문구','공란'],sha256:digest,storageKey:key},mappings:[{column:0,field:field.id,required:false},{column:1,field:field.id,required:false,choiceFormat:'label'},{column:2,field:'title',required:false}]};
+ const fields={schemaVersion:1,productId:'test',revision:1,overrides:{common:{[field.id]:choice.value,title:''},options:{second:{[field.id]:''}}},updatedAt:product.updated_at};
+ const route=routeWith({readProfile:async()=>selected,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
+ const reviewed=await route.POST(request(preview),context);assert.equal(reviewed.status,200);const review=await reviewed.json();
+ assert.deepEqual(review.rows[0],[choice.value,choice.label,'']);assert.deepEqual(review.rows[1],['','','']);
+ const response=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(response.status,200);
+ const files=unzipSync(new Uint8Array(await response.arrayBuffer()));const csv=new TextDecoder().decode(files['quotation-filled.csv']);assert.ok(csv.includes(`"${choice.value}","${choice.label}",""`));
+ const doc=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));assert.equal(doc.rows[0].fields[field.id].value,choice.value);assert.equal(fields.overrides.common[field.id],choice.value);
+ fields.overrides.common[field.id]='NOT-A-VALID-CHOICE';assert.equal((await route.POST(request(preview),context)).status,400);
+});

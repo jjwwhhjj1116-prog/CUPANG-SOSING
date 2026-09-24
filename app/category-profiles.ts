@@ -505,7 +505,7 @@ export type TemplateDefinition = {
 export function quotationStartRow(template?: TemplateDefinition | null): number {
   return template?.dataStartRow ?? (template?.headerRow ?? 1) + 1;
 }
-export type ColumnMapping = { column: number; field: CategoryField; required: boolean; constant?: string };
+export type ColumnMapping = { column: number; field: CategoryField; required: boolean; constant?: string; choiceFormat?: 'value' | 'label' };
 export type CategoryProfileInput = {
   name: string; categoryId: string; categoryPath: string[];
   template: TemplateDefinition | null; mappings: ColumnMapping[];
@@ -552,10 +552,12 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
     if (typeof value.column !== 'number' || !Number.isInteger(column) || column < 0 || !template || column >= template.headers.length || used.has(column)) throw new Error('견적서 열을 중복 없이 연결해주세요.');
     used.add(column);
     if (typeof value.field !== 'string' || !Object.hasOwn(categoryFields, value.field) || typeof value.required !== 'boolean') throw new Error('열 연결 항목을 확인해주세요.');
+    if (value.choiceFormat !== undefined && value.choiceFormat !== 'value' && value.choiceFormat !== 'label') throw new Error('선택값 출력 형식을 확인해주세요.');
     const field = value.field as CategoryField;
+    if (field === 'constant' && value.choiceFormat === 'label') throw new Error('고정값에는 선택 문구 변환을 적용할 수 없습니다.');
     const scopedCategory = categoryFieldScope(field);
     if (scopedCategory && scopedCategory !== categoryId) throw new Error('다른 카테고리의 고유 속성은 연결할 수 없습니다. 선택한 카테고리의 항목으로 다시 연결해주세요.');
-    return { column, field, required: value.required, ...(field === 'constant' ? { constant: string(value.constant ?? '', '고정값', 4000, true) } : {}) };
+    return { column, field, required: value.required, ...(value.choiceFormat !== undefined ? { choiceFormat: value.choiceFormat as 'value' | 'label' } : {}), ...(field === 'constant' ? { constant: string(value.constant ?? '', '고정값', 4000, true) } : {}) };
   });
   return { name, categoryId, categoryPath, template, mappings };
 }
@@ -578,14 +580,24 @@ export function categoryProfileIssues(profile: CategoryProfileInput): string[] {
   return issues;
 }
 
-export function mapQuotationRow(profile: CategoryProfileInput, data: Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>>): { values: (string | number)[]; missing: string[] } {
+export function mapQuotationRow(profile: CategoryProfileInput, data: Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>>, fields: readonly {id:string;type:string;choices?:readonly {value:string;label:string}[]}[] = []): { values: (string | number)[]; missing: string[] } {
   const valid = validateCategoryProfile(profile);
   if (!valid.template) throw new Error('견적서 양식을 먼저 연결해주세요.');
   const values: (string | number)[] = valid.template.headers.map(() => '');
   const missing: string[] = [];
   for (const mapping of valid.mappings) {
     const value = mapping.field === 'constant' ? mapping.constant ?? '' : mapping.field === 'categoryId' ? valid.categoryId : data[mapping.field];
-    const normalized = value === null || value === undefined ? '' : value;
+    let normalized = value === null || value === undefined ? '' : value;
+    if (mapping.choiceFormat === 'label') {
+      const field = fields.find(field => field.id === mapping.field);
+      if (field?.type !== 'select' || !field.choices) throw new Error(`${mapping.column + 1}열: 현재 카테고리의 선택형 항목에만 표시 문구 출력을 사용할 수 있습니다.`);
+      // Empty input remains empty, including an intentional manual clear.
+      if (normalized !== '') {
+        const choice = field.choices.find(choice => choice.value === String(normalized));
+        if (!choice) throw new Error(`${mapping.column + 1}열: 저장값이 현재 선택 목록에 없습니다. 견적 입력을 확인해주세요.`);
+        normalized = choice.label;
+      }
+    }
     if (typeof normalized === 'number' && !Number.isFinite(normalized)) throw new Error('견적서에 유효하지 않은 숫자가 포함되어 있습니다.');
     values[mapping.column] = normalized;
     if (mapping.required && (typeof normalized === 'string' && !normalized.trim())) missing.push(`${mapping.column + 1}열 ${valid.template.headers[mapping.column]}`);

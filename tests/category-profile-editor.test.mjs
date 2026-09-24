@@ -101,3 +101,11 @@ test('saved input start rows survive editing and reset when the source header ch
   h.find(node => node.type === 'input' && node.props.type === 'number' && !node.props['aria-label']).props.onChange({ target: { value: '2' } });
   assert.equal(h.find(node => node.props?.['aria-label'] === '저장할 상품 입력 시작 행').props.value, 3);
 });
+
+test('category editor saves explicit choice label output and clears it when the connected field changes',async()=>{
+ const configured={...profile,mappings:[...profile.mappings,{column:1,field:'lidIncluded',required:false}]};
+ const h=harness(configured);h.find(n=>n.type==='select'&&n.props['aria-label']==='2열 선택값 출력').props.onChange({target:{value:'label'}});
+ const saved=await h.save();assert.equal(saved.mappings.find(m=>m.column===1).choiceFormat,'label');
+ const next=harness({...configured,mappings:saved.mappings});next.find(n=>n.type==='select'&&n.props['aria-label']==='2열 연결').props.onChange({target:{value:'title'}});
+ const changed=await next.save();assert.equal(changed.mappings.find(m=>m.column===1).choiceFormat,undefined);
+});

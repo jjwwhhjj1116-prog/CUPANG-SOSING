@@ -1,4 +1,5 @@
 'use client';
+import { getQuotationSchema } from '@/app/quotation-schema';
 import { useEffect, useRef, useState } from 'react';
 import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, quotationStartRow, parseTemplateText, validateCategoryCodeForSave, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
 import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
@@ -109,7 +110,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
     setDraft(current => {
       const existing = current.mappings.find(mapping => mapping.column === column);
       const mappings = current.mappings.filter(mapping => mapping.column !== column);
-      if (change) mappings.push({ column, field: 'title', required: false, ...existing, ...change });
+      if (change) mappings.push({ column, field: 'title', required: false, ...existing, ...change, ...(change.field && change.field !== existing?.field ? { choiceFormat: undefined } : {}) });
       return { ...current, mappings: mappings.sort((a, b) => a.column - b.column) };
     });
     setError('');
@@ -172,11 +173,12 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
           setDraft(current => ({ ...current, mappings: [...current.mappings, ...additions].sort((a, b) => a.column - b.column) }));
           setMessage(`기존 연결을 유지하고 ${additions.length}개 열을 자동 연결했습니다. 저장 전에 결과를 확인해주세요.`);
         }}>미연결 열 자동 연결</button>
+        <p>선택형 열은 원본 양식에 맞춰 저장 코드 또는 표시 문구로 출력할 수 있습니다. 공란은 그대로 유지하며, 공식 양식과의 일치는 미리보기에서 확인해주세요.</p>
         <div style={{ overflowX: 'auto', maxHeight: 340, overflowY: 'auto' }}>
-          <table style={{ width: '100%', textAlign: 'left' }}><thead><tr><th>견적서 열</th><th>상품 자료</th><th>필수</th><th>고정값</th></tr></thead><tbody>
+          <table style={{ width: '100%', textAlign: 'left' }}><thead><tr><th>견적서 열</th><th>상품 자료</th><th>필수</th><th>출력 형식 / 고정값</th></tr></thead><tbody>
             {draft.template.headers.map((header, column) => {
               const mapping = draft.mappings.find(value => value.column === column);
-              return <tr key={column}><td>{column + 1}. {header || '(이름 없는 열)'}</td><td><select aria-label={`${column + 1}열 연결`} value={mapping?.field ?? ''} disabled={busy} onChange={event => setMapping(column, event.target.value ? { field: event.target.value as CategoryField } : null)}><option value="">연결 안 함</option>{Object.entries(categoryFields).filter(([field]) => categoryFieldScope(field) === null || categoryFieldScope(field) === draft.categoryId || mapping?.field === field).map(([field, label]) => <option key={field} value={field}>{label}</option>)}</select></td><td><input aria-label={`${column + 1}열 필수`} type="checkbox" checked={mapping?.required ?? false} disabled={busy || !mapping} onChange={event => setMapping(column, { required: event.target.checked })} /></td><td>{mapping?.field === 'constant' && <input aria-label={`${column + 1}열 고정값`} maxLength={4000} disabled={busy} value={mapping.constant ?? ''} onChange={event => setMapping(column, { constant: event.target.value })} />}</td></tr>;
+              return <tr key={column}><td>{column + 1}. {header || '(이름 없는 열)'}</td><td><select aria-label={`${column + 1}열 연결`} value={mapping?.field ?? ''} disabled={busy} onChange={event => setMapping(column, event.target.value ? { field: event.target.value as CategoryField } : null)}><option value="">연결 안 함</option>{Object.entries(categoryFields).filter(([field]) => categoryFieldScope(field) === null || categoryFieldScope(field) === draft.categoryId || mapping?.field === field).map(([field, label]) => <option key={field} value={field}>{label}</option>)}</select></td><td><input aria-label={`${column + 1}열 필수`} type="checkbox" checked={mapping?.required ?? false} disabled={busy || !mapping} onChange={event => setMapping(column, { required: event.target.checked })} /></td><td>{mapping && getQuotationSchema(draft.categoryId).fields.find(field=>field.id===mapping.field)?.type==='select' && <label>선택값 출력<select aria-label={`${column + 1}열 선택값 출력`} disabled={busy} value={mapping.choiceFormat??'value'} onChange={event=>setMapping(column,{choiceFormat:event.target.value as 'value'|'label'})}><option value="value">저장 코드 그대로</option><option value="label">표시 문구 · 공란 유지</option></select></label>}{mapping?.field === 'constant' && <input aria-label={`${column + 1}열 고정값`} maxLength={4000} disabled={busy} value={mapping.constant ?? ''} onChange={event => setMapping(column, { constant: event.target.value })} />}</td></tr>;
             })}
           </tbody></table>
         </div>

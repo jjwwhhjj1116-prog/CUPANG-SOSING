@@ -120,3 +120,15 @@ test('header relocation preserves manual values and disconnections by unique lab
   const duplicate = relocate(['공급가'],['공급가','공급가'],'80719',[{...mappings[1],column:0}],[],new Set());
   assert.equal(duplicate.mappings.length,0);
 });
+
+test('choice output format persists and explicit edits survive automatic mapping refresh',()=>{
+ const profiles=load('app/category-profiles.ts');const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');const field=schema.fields.find(f=>f.type==='select'&&f.visibility==='hidden');
+ const auto=suggest([field.label],'80719').mappings;const mappings=auto.map(m=>({...m,choiceFormat:'label'}));
+ const profile={name:'출력 형식',categoryId:'80719',categoryPath:['주방용품'],template:{name:'test.csv',format:'csv',sha256:'a'.repeat(64),sheetName:'',headerRow:1,headers:[field.label]},mappings};
+ assert.equal(profiles.validateCategoryProfile(profile).mappings[0].choiceFormat,'label');
+ const refreshed=load('app/quotation-mapping.ts').refreshCategoryMappings([field.label],'80719',mappings,auto,new Set());assert.equal(refreshed.mappings[0].choiceFormat,'label');
+ assert.throws(()=>profiles.validateCategoryProfile({...profile,mappings:[{...mappings[0],choiceFormat:'other'}]}),/출력 형식/);
+ assert.throws(()=>profiles.mapQuotationRow(profile,{[field.id]:'bad'},schema.fields),/선택 목록/);
+ assert.throws(()=>profiles.mapQuotationRow(profile,{}),/선택형/);
+ assert.equal(profiles.mapQuotationRow(profile,{[field.id]:''},schema.fields).values[0],'');
+});

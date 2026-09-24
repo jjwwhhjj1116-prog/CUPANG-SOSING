@@ -7,7 +7,7 @@ import ts from 'typescript';
 function load(file) {
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(output, { exports, Response, Blob, TextEncoder, TextDecoder, CompressionStream, DecompressionStream, crypto, require: name => {
+  vm.runInNewContext(output, { exports, structuredClone, Response, Blob, TextEncoder, TextDecoder, CompressionStream, DecompressionStream, crypto, require: name => {
     if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`);
     throw Error(name);
   } });
@@ -259,4 +259,12 @@ test('persisted template input row places output after instructions and can be o
   const override = await createMappedQuotation({ ...input, dataStartRow: 15 });
   assert.equal(override.report.dataStartRow, 15);
   assert.equal(input.profile.template.dataStartRow, 12);
+});
+
+test('XLSX choice label output uses category choices while preserving blank cells and original workbook parts',async()=>{
+ const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');const field=schema.fields.find(f=>f.type==='select'&&f.choices.some(c=>c.value&&c.value!==c.label));const choice=field.choices.find(c=>c.value&&c.value!==c.label);
+ const input=await inputFrom();input.profile.categoryId='80719';input.profile.mappings=[{column:0,field:field.id,required:false,choiceFormat:'label'}];input.rows=[{[field.id]:choice.value},{[field.id]:''}];
+ const before=JSON.stringify(input.profile);const result=await createMappedQuotation(input);const archive=await reader.readXlsxArchive(result.bytes.buffer);
+ const inspection=reader.inspectXlsxArchive(archive);assert.equal(reader.xlsxHeaders(inspection,'견적서',5)[0],choice.label);assert.ok(decode(archive.get('xl/worksheets/sheet1.xml')).includes('<c r="A6" t="inlineStr"><is><t xml:space="preserve"></t></is></c>'));
+ const original=await reader.readXlsxArchive(input.originalBytes);assert.equal(decode(archive.get('xl/styles.xml')),decode(original.get('xl/styles.xml')));assert.equal(JSON.stringify(input.profile),before);
 });
