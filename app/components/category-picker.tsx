@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { usableCategoryCode, type CategoryProfile } from '@/app/category-profiles';
 import { canConfirmCategory, categoryAdvancedSeed, categoryChoices, categoryChoicesAtPath, categoryLevel, categoryObservationScope, categoryProfileForChoice, searchCategoryChoices, type CategoryAdvancedSeed, type CategoryChoice } from '@/app/category-catalog';
 import { getQuotationSchema } from '@/app/quotation-schema';
@@ -19,6 +19,9 @@ export function CategoryPicker({ profiles, selectedId, onSelected, onAdvanced }:
   const [path, setPath] = useState<string[]>(profiles.find(profile => profile.id === selectedId)?.categoryPath ?? []);
   const [selectedKey, setSelectedKey] = useState(selectedId);
   const [query, setQuery] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const activeRequest = useRef<AbortController | null>(null);
+  const completed = useRef(false);
+  useEffect(() => () => { activeRequest.current?.abort(); }, []);
   const selected = choices.find(choice => choice.key === selectedKey);
   const schema = selected?.categoryId ? getQuotationSchema(selected.categoryId, selected.path) : null;
   const visible = searchCategoryChoices(choices, query);
@@ -26,23 +29,27 @@ export function CategoryPicker({ profiles, selectedId, onSelected, onAdvanced }:
   const hasChildren = categoryLevel(choices, path, path.length).length > 0;
   const depths = Math.max(1, path.length + (hasChildren ? 1 : 0));
   const unresolvedBranch = path.length > 0 && !hasChildren && connections.length === 0;
-  function choose(choice: CategoryChoice) { setPath(choice.path); setSelectedKey(choice.key); setError(''); }
+  function choose(choice: CategoryChoice) { if (activeRequest.current) return; completed.current = false; setPath(choice.path); setSelectedKey(choice.key); setError(''); }
   function navigate(next: string[]) {
+    if (activeRequest.current) return;
+    completed.current = false;
     setPath(next); const leaves = categoryChoicesAtPath(choices, next).filter(choice => choice.isLeaf);
     setSelectedKey(leaves.length === 1 ? leaves[0].key : leaves.some(choice => choice.key === selectedKey) ? selectedKey : ''); setError('');
   }
   async function confirm() {
-    if (!selected || !canConfirmCategory(selected) || busy) return;
+    if (!selected || !canConfirmCategory(selected) || busy || activeRequest.current || completed.current) return;
+    const controller = new AbortController(); activeRequest.current = controller;
     setBusy(true); setError('');
     try {
       const existing = profiles.find(profile => profile.id === selected.profileId);
-      if (existing) { onSelected(existing); return; }
-      const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(categoryProfileForChoice(selected)) });
+      if (existing) { completed.current = true; onSelected(existing); return; }
+      const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(categoryProfileForChoice(selected)), signal: controller.signal });
       const result = await response.json() as { profile: CategoryProfile; error?: string };
+      if (controller.signal.aborted) return;
       if (!response.ok) throw new Error(result.error ?? '카테고리를 저장하지 못했습니다.');
-      onSelected(result.profile);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '카테고리 선택 실패'); }
-    finally { setBusy(false); }
+      completed.current = true; onSelected(result.profile);
+    } catch (cause) { completed.current = false; if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '카테고리 선택 실패'); }
+    finally { if (activeRequest.current === controller) activeRequest.current = null; if (!controller.signal.aborted) setBusy(false); }
   }
   return <div className="category-picker" aria-busy={busy}>
     <div className="category-coverage"><strong>상품에 맞는 최종 카테고리를 선택하세요</strong><span>대분류 {categoryObservationScope.roots}개 · Hub 코드 확인 {categoryObservationScope.supplierHubCodes}개</span><p>선택한 분류에 맞춰 견적 항목을 준비하고, 저장한 설정은 다음 상품에도 적용합니다.</p></div>
