@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { assetRoles, detailImageKeys, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
 import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor-tools';
 import { fillLabelDraft } from '@/app/label-autofill';
+import { ImageSizeNotice } from '@/app/components/image-size-notice';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -52,6 +53,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const assetFilter:AssetEditorFilter=assetFilterOverride?.step===filterStep?assetFilterOverride.filter:'all';
   const setAssetFilter=(filter:AssetEditorFilter)=>setAssetFilterOverride({step:filterStep,filter});
   const [previewKey, setPreviewKey] = useState<string | null>(null);
+  const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number } | null>>({});
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/content`;
   const applyLoaded = useCallback((saved: ProductContent) => {
     setContent(saved); setDraft(draftFrom(saved)); setLoaded(true); setConflict(false); setError(''); setMessage('');
@@ -159,6 +161,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       </div>}
       {section === '표시사항' && <div className="form-grid">{(Object.keys(labelFields) as LabelField[]).map(key => <label className={`field ${key === 'precautions' || key === 'qualityAssurance' ? 'full' : ''}`} key={key}><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, label: { ...previous.label, [key]: event.target.value } }))} /></label>)}</div>}
       {section === '이미지' && <div className="panel-stack">
+        <small style={{ color: '#64748b' }}>Supplier Hub 안내: 대표 1,000×1,000px 이상 권장 · 상세 상단·본문·하단 각각 가로 780px, 세로 1,500px 이내. 표시 크기는 브라우저가 읽은 값이며 화질·번역·접수 완료를 뜻하지 않습니다. 원본 헤더 기준 견적 검사와 다를 수 있습니다.</small>
         {focusedAssetRole&&<div className="image-step-summary"><div><strong>{assetRoles[focusedAssetRole]} <b>{draft.assets[focusedAssetRole].length}장</b></strong><p>{focusedAssetRole==='main'?'상품을 대표할 이미지 한 장을 선택하세요.':focusedAssetRole==='additional'?'상품의 다른 모습과 옵션 이미지를 선택하고 순서를 조정하세요.':'이미지 역할에서 상단·본문·하단을 선택하세요. 상단과 하단은 각각 한 장이며 본문 순서는 ↑↓로 조정합니다.'} 저장한 선택은 견적 자료에 반영됩니다.</p></div><button type="button" className="btn ghost" disabled={!draft.assets[focusedAssetRole].length} onClick={()=>setAssetFilter(focusedAssetRole)}>선택한 이미지 보기</button></div>}
         {!imageKeys.length && <p>위 업로드 버튼으로 이미지 파일을 추가하면 역할을 지정할 수 있습니다.</p>}
         {imageKeys.length > 0 && <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}><button type="button" className={`btn ${assetFilter === 'all' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'all'} onClick={() => setAssetFilter('all')}>전체 {imageKeys.length}</button>{(Object.entries(assetRoles) as [AssetRole, string][]).map(([role, label]) => <button type="button" key={role} className={`btn ${assetFilter === role ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === role} onClick={() => setAssetFilter(role)}>{label} {draft.assets[role].filter(key => imageKeys.includes(key)).length}</button>)}<button type="button" className={`btn ${assetFilter === 'unassigned' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'unassigned'} onClick={() => setAssetFilter('unassigned')}>미지정 {orderedEditorImages(imageKeys, draft.assets, 'unassigned').length}</button></div><small style={{ color: '#64748b' }}>역할별 저장 순서로 표시합니다. ↑↓로 순서를 바꾸고 이미지를 누르면 크게 볼 수 있습니다.</small></>}
@@ -182,9 +185,12 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
           return <div key={key} className={`image-asset-card ${key===activePreview?'previewing':''} ${role===focusedAssetRole?'chosen':''}`}>
             <button type="button" className="image-asset-preview" aria-label={`이미지 ${index + 1} 크게 보기`} onClick={() => setPreviewKey(key)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} width={200} height={180} loading="lazy" />
+              <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} width={200} height={180} loading="lazy"
+                onLoad={event => { const { naturalWidth: width, naturalHeight: height } = event.currentTarget; setImageSizes(previous => ({ ...previous, [key]: { width, height } })); }}
+                onError={() => setImageSizes(previous => ({ ...previous, [key]: null }))} />
               <span>이미지 {index + 1} · 확대</span>
             </button>
+            <ImageSizeNotice size={imageSizes[key]} role={role} />
             {focusedAssetRole&&<button type="button" className={`btn ${role===focusedAssetRole?'primary':'ghost'}`} aria-pressed={role===focusedAssetRole} onClick={()=>assign(key,role===focusedAssetRole?'':focusedAssetRole)}>{role===focusedAssetRole?'선택 해제':`${assetRoles[focusedAssetRole]}로 선택`}</button>}
             <label className="field"><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} onChange={event => assign(key, event.target.value as AssetRole | '')}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
             {role && <div className="image-asset-order"><span>{assetRoles[role]} {position + 1}번째</span><div><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}

@@ -1,5 +1,6 @@
 import type { ResolvedQuotation } from '@/app/quotation-schema';
 import { MAX_IMAGE_BYTES } from '@/app/image-files';
+import { imageSizeGuidance } from '@/app/image-size-guidance';
 
 type ImageObject = { size: number; httpMetadata?: { contentType?: string }; customMetadata?: Record<string,string> };
 export type ImageCheck = { kind: 'error' | 'review'; message: string };
@@ -32,8 +33,7 @@ export async function inspectQuotationImages(resolved: ResolvedQuotation, ownedK
       checks.set(key, {kind:'review',message:'이미지 픽셀 크기를 확인할 기록이 없습니다. 원본 크기를 확인하거나 다시 업로드해주세요. AVIF 등 크기를 읽지 못하는 형식은 별도 확인이 필요합니다.'});
      } else {
       const messages: string[] = [];
-      if (roles.get(key)!.has('mainImage') && (width < 1000 || height < 1000)) messages.push('대표 이미지는 1,000×1,000px 이상 권장');
-      if (roles.get(key)!.has('detailImages') && (width !== 780 || height > 1500)) messages.push('상세 이미지는 개당 가로 780px·세로 1,500px 이내 안내');
+      for (const role of roles.get(key)!) messages.push(...imageSizeGuidance(role, width, height));
       if (messages.length) checks.set(key, {kind:'review',message:`저장 이미지 ${width}×${height}px: ${messages.join(' / ')}. Supplier Hub 안내와 비교해 편집해주세요. 픽셀 수는 헤더 기준이며 화질·실제 접수 검증은 아닙니다.`});
      }
     }
