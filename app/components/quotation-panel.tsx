@@ -37,6 +37,8 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
   const [connectionWarning,setConnectionWarning]=useState('');
   const [loadAttempt,setLoadAttempt]=useState(0);
   const [capturedCategoryId,setCapturedCategoryId]=useState<string|null>(null);
+  const activeRequest=useRef<AbortController|null>(null);
+  useEffect(()=>()=>{activeRequest.current?.abort();},[refreshToken]);
   useEffect(()=>{
     const controller=new AbortController();
 
@@ -58,17 +60,21 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     return()=>controller.abort();
   },[productId,preferredProfileId,loadAttempt]);
   async function request(action:'preview'|'export') {
+    if(activeRequest.current||dirty||!contextLoaded||!selected?.template||(action==='export'&&!preview))return;
+    const controller=new AbortController();activeRequest.current=controller;
     setBusy(true);setError('');setMessage('');
     try {
-      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,profileId,...(!useSavedRow?{dataStartRow:startRow}:{}),...(action==='export'?{fingerprint:preview?.fingerprint}:{})})});
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation`,{method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,profileId,...(!useSavedRow?{dataStartRow:startRow}:{}),...(action==='export'?{fingerprint:preview?.fingerprint}:{})})});
+      if(controller.signal.aborted)return;
       if(!response.ok){const body=await response.json() as {error?:string};if(response.status===409)setPreview(null);throw new Error(body.error||'견적서 생성 실패');}
-      if(action==='preview')setPreview(await response.json());
+      if(action==='preview'){const data=await response.json() as Preview;if(!controller.signal.aborted)setPreview(data);}
       else {
-        const url=URL.createObjectURL(await response.blob());const anchor=document.createElement('a');anchor.href=url;anchor.download='SourceFlow-quotation-review.zip';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        const blob=await response.blob();if(controller.signal.aborted)return;
+        const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download='SourceFlow-quotation-review.zip';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
         setMessage('견적서와 첨부 자료를 내려받았습니다. Supplier Hub에 전송되지는 않았습니다.');
       }
-    }catch(cause){setError(cause instanceof Error?cause.message:'견적서 생성 실패');}
-    finally{setBusy(false);}
+    }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'견적서 생성 실패');}
+    finally{if(activeRequest.current===controller){activeRequest.current=null;setBusy(false);}}
   }
   const selected=profiles.find(profile=>profile.id===profileId);
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
