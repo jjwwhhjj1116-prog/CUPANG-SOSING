@@ -5,11 +5,11 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const nativeRequire=createRequire(import.meta.url);
-function load(file,dependencies){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,setTimeout:(fn)=>setImmediate(fn),fetch:dependencies.fetch,require(name){if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime')return nativeRequire(name);return load(name.slice(2)+'.ts',dependencies);}});return exports;}
+function load(file,dependencies){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,setTimeout:(fn)=>setImmediate(fn),fetch:dependencies.fetch,require(name){if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime')return nativeRequire(name);return load(name.slice(2)+'.ts',dependencies);}});return exports;}
 function nodes(tree){if(Array.isArray(tree))return tree.flatMap(nodes);if(!tree||typeof tree!=='object')return[];return[tree,...nodes(tree.props?.children)];}
 const result={title:'수집 상품 원문',provider:'synthetic',collectedAt:'2026-01-01T00:00:00Z',sourceUrl:'https://detail.1688.com/offer/123.html',description:'판매자 설명',options:[{sku:'a',name:'옵션 A',unitPriceCny:2,minimumOrder:1,stock:1}],images:[{url:'https://cbu01.alicdn.com/a.png',role:'main'},{url:'https://cbu01.alicdn.com/b.png',role:'detail'}]};
 const capacity={usedSlots:0,totalImages:2,reusableIndices:[]};
-function harness(fetcher,importer){const states=[],refs=[];let index=0,ri=0,saved=0;const hooks={useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(initial){const slot=ri++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(){}};const panel=load('app/components/collection-result-panel.tsx',{react:hooks,fetch:fetcher,...(importer?{'@/app/collection-import':{runCollectionImport:importer}}:{})});const render=()=>{index=0;ri=0;const root=panel.CollectionResultPanel({jobId:'job',onSaved(){saved++;}});return root.type(root.props);};const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node);return node;};const button=name=>find(n=>n.type==='button'&&n.props.children===name);return{render,find,button,get saved(){return saved;},async click(name){button(name).props.onClick();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));}};}
+function harness(fetcher,importer,props={}){const states=[],refs=[],cleanups=[];let effectsStarted=false;let index=0,ri=0,saved=0;const hooks={useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(initial){const slot=ri++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(effect){if(!effectsStarted)cleanups.push(effect());}};const panel=load('app/components/collection-result-panel.tsx',{react:hooks,fetch:fetcher,...(importer?{'@/app/collection-import':{runCollectionImport:importer}}:{})});const render=()=>{index=0;ri=0;const root=panel.CollectionResultPanel({jobId:'job',onSaved(){saved++;},...props});const tree=root.type(root.props);effectsStarted=true;return tree;};const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node);return node;};const button=name=>find(n=>n.type==='button'&&n.props.children===name);return{render,find,button,unmount(){cleanups.forEach(fn=>fn?.());},get saved(){return saved;},async click(name){button(name).props.onClick();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));}};}
 
 test('capacity failure retains receipt and options; capacity-only retry and product promotion remain available',async()=>{
  const calls=[];let fail=true;
@@ -83,4 +83,24 @@ test('import displays image assignment warnings alongside confirmed file storage
  for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
  assert.match(JSON.stringify(h.render()),/저장된 원본의 연결 확인 필요/);assert.match(JSON.stringify(h.render()),/원본 2번: 상세 배치/);assert.equal(h.saved,1);
  await h.click('수신 결과 조회');assert.doesNotMatch(JSON.stringify(h.render()),/저장된 원본의 연결 확인 필요/);
+});
+
+test('saved collection opens matching editors before parent refresh, coalesces clicks and keeps warnings on failure',async()=>{
+ const opened=[];let finish,fail=false;const pending=new Promise(resolve=>{finish=resolve;});
+ const h=harness(async url=>url.endsWith('/result')?Response.json({receipt:{result},message:'수신됨'}):Response.json({capacity}),async()=>({status:'completed',productId:'new-product',completedImages:2,warnings:['원본 2번 확인']}),{onOpenProduct:async(id,tab,signal)=>{opened.push([id,tab,signal]);await pending;if(fail)throw Error('최신 상품 조회 실패');}});
+ assert.ok(!nodes(h.render()).some(n=>n.type==='button'&&n.props.children==='이미지 배치 편집'));
+ await h.click('수신 결과 조회');h.find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='상품·선택 이미지 ').props.onClick();
+ for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
+ const click=h.button('이미지 배치 편집').props.onClick;click();click();assert.equal(opened.length,1);assert.equal(opened[0][0],'new-product');assert.equal(opened[0][1],'대표 이미지');assert.equal(h.button('옵션 이미지 편집').props.disabled,true);
+ finish();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
+ fail=true;await h.click('옵션 이미지 편집');assert.equal(opened[1][1],'옵션');assert.match(JSON.stringify(h.render()),/최신 상품 조회 실패/);assert.match(JSON.stringify(h.render()),/원본 2번 확인/);
+ fail=false;await h.click('옵션 이미지 편집');assert.equal(opened.length,3);assert.doesNotMatch(JSON.stringify(h.render()),/최신 상품 조회 실패/);
+});
+
+test('existing product editor navigation cancels its request when receipt panel closes',async()=>{
+ let signal,finish;const pending=new Promise(resolve=>{finish=resolve;});
+ const h=harness(async()=>{throw Error('no request expected');},null,{productId:'existing',onOpenProduct:async(id,tab,current)=>{assert.equal(id,'existing');assert.equal(tab,'옵션');signal=current;await pending;}});
+ h.button('옵션 이미지 편집').props.onClick();assert.equal(signal.aborted,false);h.unmount();assert.equal(signal.aborted,true);finish();
+ for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.saved,0);
 });

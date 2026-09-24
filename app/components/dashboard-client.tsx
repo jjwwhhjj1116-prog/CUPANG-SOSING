@@ -93,6 +93,8 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [detailProfileId,setDetailProfileId]=useState<string|undefined>();
   const [lastRegistrationStep, setLastRegistrationStep] = useState('SEO');
   const detailBody = useRef<HTMLDivElement>(null);
+  const productNavigation=useRef(0);
+  useEffect(()=>()=>{productNavigation.current++;},[]);
   const [busy, setBusy] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -122,8 +124,16 @@ export default function DashboardClient({ userName }: { userName: string }) {
     detailBody.current?.scrollTo({ top: 0 });
   }
   function openProduct(product: Product, initialTab = 'SEO', preferredProfileId?:string, target?:QuotationNavigationTarget) {
+    productNavigation.current++;
     setQuotationTarget(target);setDetailProfileId(preferredProfileId);
     setDetail(product); setTab(initialTab); setLastRegistrationStep('SEO');
+  }
+  async function openCollectedProduct(productId:string,initialTab:'대표 이미지'|'옵션',signal:AbortSignal){
+    const request=++productNavigation.current;
+    const result=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(productId)}`,{cache:'no-store',signal});
+    if(signal.aborted||request!==productNavigation.current)return;
+    if(!result.product||result.product.id!==productId)throw new Error('연결된 상품을 확인하지 못했습니다. 수집 대기열을 새로고침해주세요.');
+    openProduct(result.product,initialTab);
   }
   const detailStepIndex = registrationSteps.indexOf(tab);
   const collectionPreview = useMemo(() => {
@@ -288,7 +298,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>
           <label className="collection-history"><input type="checkbox" checked={showCancelled} onChange={event=>setShowCancelled(event.target.checked)} />취소한 요청 보기 · 최근 200건</label>
           {!collectionJobs.some(job=>showCancelled || job.status !== 'cancelled') && <p className="collection-empty">{loading ? '대기열을 불러오는 중입니다.' : loadError ? '대기열 조회 상태를 확인해주세요.' : '아직 수집 요청이 없습니다. 상품 추가에서 URL을 붙여넣으세요.'}</p>}
-          <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><small>{job.source_url}</small><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small></div><span className={`collection-status ${job.status}`}>{job.product_id ? '상품 반영됨' : job.status === 'cancelled' ? '취소됨' : '수집 연결 대기'}</span><CollectionResultPanel jobId={job.id} productId={job.product_id} onSaved={()=>void loadWorkspace()}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
+          <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><small>{job.source_url}</small><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small></div><span className={`collection-status ${job.status}`}>{job.product_id ? '상품 반영됨' : job.status === 'cancelled' ? '취소됨' : '수집 연결 대기'}</span><CollectionResultPanel jobId={job.id} productId={job.product_id} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
         </details>
 
         <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} loading={loading} error={loadError} onArchive={()=>setView('archive')}/></>}
