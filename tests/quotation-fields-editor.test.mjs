@@ -13,7 +13,7 @@ function load(file, overrides = {}) {
   if (!Object.keys(overrides).length && cache.has(file)) return cache.get(file);
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  vm.runInNewContext(compiled, { exports, Error, TextEncoder, structuredClone, require(name) {
+  vm.runInNewContext(compiled, { exports, Error, TextEncoder, structuredClone, AbortController, fetch: overrides.fetch ?? fetch, require(name) {
     if (name in overrides) return overrides[name];
     if (name.endsWith('.css')) return {};
     if (name.startsWith('@/app/')) {
@@ -572,8 +572,8 @@ test('explicit server-rule reload replaces old mappings on empty, failed, or inc
  for(const response of [{rules:null,revision:0},{error:'조회 실패',status:500},{rules:{format:'bad'},revision:4}]){
   const view=fixture(),job=attributeJob(view);let index=0,calls=0,applied=0;
   const slots=[[job],'job',{0:'noticeMaterial'},false,'',['이전 보고'],3,null,[]];
-  const hooks={...React,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];}};
-  const suggestions={fetchAttributeSuggestions:(...args)=>fetchAttributeSuggestions(...args,async()=>{calls++;return Response.json(response,{status:response.status??200});})};
+  const hooks={...React,useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(){},useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];}};
+  const suggestions={fetchAttributeSuggestions:(...args)=>fetchAttributeSuggestions(...args.slice(0,4),async()=>{calls++;return Response.json(response,{status:response.status??200});})};
   const {QuotationTranslatedAttributes}=load('app/components/quotation-translated-attributes.tsx',{react:hooks,'@/app/quotation-attribute-suggestions':suggestions});
   const render=()=>{index=0;return QuotationTranslatedAttributes({productId:'p1',view,optionId:'red',disabled:false,onApply(){applied++;}});};
   const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
@@ -583,4 +583,42 @@ test('explicit server-rule reload replaces old mappings on empty, failed, or inc
   assert.equal(slots[6],response.rules===null?0:null);assert.equal(slots[3],false);assert.equal(applied,0);
   assert.ok(nodes(render()).find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='선택한 연결로 서버 규칙 저장').props.disabled);
  }
+});
+
+function attributeRequestHarness(request){
+ const view=fixture(),job=attributeJob(view),slots=[[job],'job',{0:'noticeMaterial'},false,'',[],3,null,[]];
+ let index=0,first=true,unmounted=false,lateUpdates=0;const cleanups=[],calls=[];
+ const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>{if(unmounted)lateUpdates++;slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)cleanups.push(fn());}};
+ const {QuotationTranslatedAttributes}=load('app/components/quotation-translated-attributes.tsx',{react:hooks,fetch:(url,init)=>{calls.push({url,init});return request(url,init);}});
+ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
+ const label=value=>Array.isArray(value)?value.map(label).join(''):typeof value==='string'||typeof value==='number'?String(value):'';
+ const render=()=>{index=0;const tree=QuotationTranslatedAttributes({productId:'p1',view,optionId:'red',disabled:false,onApply(){throw Error('must not apply');}});first=false;return nodes(tree);};
+ return{slots,calls,view,job,render,button(prefix){return render().find(n=>n.type==='button'&&label(n.props.children).startsWith(prefix)).props.onClick;},unmount(){unmounted=true;cleanups.forEach(fn=>fn?.());},get lateUpdates(){return lateUpdates;}};
+}
+const settleAttributes=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
+function pendingAttribute(){let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve};}
+
+test('attribute rule operations share an immediate lock and release it after failure for retry',async()=>{
+ const pending=pendingAttribute();let attempt=0;const h=attributeRequestHarness(async()=>++attempt===1?pending.promise:Response.json({revision:4}));
+ const save=h.button('선택한 연결로 서버 규칙 저장'),reload=h.button('이 카테고리 서버 규칙'),loadJobs=h.button('완료된 속성 번역');
+ save();save();reload();loadJobs();assert.equal(h.calls.length,1);assert.equal(h.calls[0].init.method,'PUT');
+ pending.resolve(Response.json({error:'실패'},{status:500}));await settleAttributes();assert.equal(h.slots[3],false);assert.match(h.slots[4],/실패/);
+ h.button('선택한 연결로 서버 규칙 저장')();await settleAttributes();assert.equal(h.calls.length,2);assert.equal(h.slots[6],4);assert.match(h.slots[4],/저장했습니다/);
+});
+
+test('closed attribute panels abort network requests and ignore late translation, suggestion, and save responses',async()=>{
+ for(const operation of ['완료된 속성 번역','이 카테고리 서버 규칙','선택한 연결로 서버 규칙 저장']){
+  const pending=pendingAttribute(),h=attributeRequestHarness(()=>pending.promise);h.button(operation)();assert.equal(h.calls.length,1);
+  h.unmount();assert.equal(h.calls[0].init.signal.aborted,true);
+  pending.resolve(Response.json(operation.startsWith('완료')?{jobs:[h.job]}:operation.startsWith('이 카테고리')?{rules:null,revision:0}:{revision:4}));
+  await settleAttributes();assert.equal(h.lateUpdates,0);assert.equal(h.calls.length,1);assert.equal(h.slots[6],3);
+ }
+});
+
+test('closed attribute panels ignore late local rule files and file reads block concurrent server saves',async()=>{
+ const pending=pendingAttribute(),h=attributeRequestHarness(()=>{throw Error('no network expected');});let reads=0;
+ const file={size:10,text(){reads++;return pending.promise;}};
+ const input=h.render().find(n=>n.type==='input'&&n.props.type==='file');const save=h.button('선택한 연결로 서버 규칙 저장');
+ input.props.onChange({target:{files:[file],value:'file'}});input.props.onChange({target:{files:[file],value:'file'}});save();assert.equal(reads,1);assert.equal(h.calls.length,0);
+ h.unmount();pending.resolve('{}');await settleAttributes();assert.equal(h.lateUpdates,0);
 });

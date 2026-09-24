@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import { canMapTranslatedAttribute, quotationAttributeDisplay, quotationTranslationDraft, quotationTranslationBatch } from '@/app/quotation-translation-adoption';
@@ -18,6 +18,19 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const [serverRevision, setServerRevision] = useState<number | null>(null);
   const [batch, setBatch] = useState<{ key: string; plan: ReturnType<typeof quotationTranslationBatch> } | null>(null);
   const [excludedTargets, setExcludedTargets] = useState<(string | null)[]>([]);
+  const activeRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => { activeRequest.current?.abort(); }, []);
+  async function runRequest(work: (signal: AbortSignal) => Promise<void>) {
+    if (disabled || loading || activeRequest.current) return;
+    const controller = new AbortController(); activeRequest.current = controller;
+    setLoading(true);
+    try { await work(controller.signal); }
+    catch (cause) { if (!controller.signal.aborted) setMessage(cause instanceof Error ? cause.message : '요청 처리 실패'); }
+    finally {
+      if (activeRequest.current === controller) activeRequest.current = null;
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  }
   const optionRows = view.resolved.rows.filter(item => item.optionId !== null);
   const batchTargets = (optionRows.length ? optionRows : view.resolved.rows).filter(item => item.included);
   const selectedTargets = batchTargets.filter(item => !excludedTargets.includes(item.optionId)).map(item => item.optionId);
@@ -27,34 +40,33 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const row = view.resolved.rows.find(item => item.optionId === optionId);
   const fields = view.resolved.schema.fields.filter(canMapTranslatedAttribute);
   const attributes = job?.result?.draft.attributes.filter(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: ')) ?? [];
-  async function suggest(selected: TranslationJob) {
-    const result = await fetchAttributeSuggestions(productId, view, selected, optionId);
+  async function suggest(selected: TranslationJob, signal: AbortSignal) {
+    const result = await fetchAttributeSuggestions(productId, view, selected, optionId, (url, init) => fetch(url, { ...init, signal }));
+    if (signal.aborted) return;
     setMapping(result.mapping); setServerRevision(result.revision); setRuleReport(result.skipped); setMessage(result.message);
   }
   async function selectJob(id: string) {
-    if (disabled || loading) return;
+    if (disabled || loading || activeRequest.current) return;
     const selected = jobs.find(item => item.id === id);
     setJobId(id); setMapping({}); setServerRevision(null); setRuleReport([]); setMessage('');
     if (!selected) return;
-    setLoading(true);
-    try { await suggest(selected); } finally { setLoading(false); }
+    await runRequest(signal => suggest(selected, signal));
   }
   async function load() {
-    if (disabled || loading) return;
-    setLoading(true); setMessage('');
-    try {
-      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/translation`, { cache: 'no-store' });
+    await runRequest(async signal => {
+      setMessage('');
+      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/translation`, { cache: 'no-store', signal });
       const body = await response.json() as TranslationView & { error?: string };
+      if (signal.aborted) return;
       if (!response.ok) throw new Error(body.error || '번역 결과 조회 실패');
       const available = body.jobs.filter(item => item.status === 'completed' && item.result && item.productId === productId && item.productVersion === view.productVersion && item.contentRevision === view.contentRevision);
       setJobs(available); setJobId(available[0]?.id ?? ''); setMapping({}); setServerRevision(null); setRuleReport([]);
-      if (available.length) await suggest(available[0]);
+      if (available.length) await suggest(available[0], signal);
       else setMessage('현재 상품·콘텐츠와 일치하는 완료된 번역 결과가 없습니다.');
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : '번역 결과 조회 실패'); }
-    finally { setLoading(false); }
+    });
   }
   function apply() {
-    if (!job || disabled || loading) return;
+    if (!job || disabled || loading || activeRequest.current) return;
     try {
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
       const changes = quotationTranslationDraft(productId, view, job, optionId, selected);
@@ -62,7 +74,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '연결 항목을 확인해주세요.'); }
   }
   function previewBatch() {
-    if (!job || disabled || loading) return;
+    if (!job || disabled || loading || activeRequest.current) return;
     setBatch(null);
     try {
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
@@ -70,7 +82,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '일괄 연결 항목을 확인해주세요.'); }
   }
   function downloadRules() {
-    if (!job || disabled || loading) return;
+    if (!job || disabled || loading || activeRequest.current) return;
     try {
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
       const rules = createAttributeRules(productId, view, job, optionId, selected);
@@ -82,36 +94,37 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   }
   async function importRules(file?: File) {
     if (!file || !job || disabled || loading) return;
-    setLoading(true); setRuleReport([]);
-    try {
+    await runRequest(async signal => {
+      setRuleReport([]);
       if (file.size > ATTRIBUTE_RULE_LIMIT) throw new Error('연결 규칙은 64KB 이하여야 합니다.');
-      const result = loadAttributeRules(await file.text(), productId, view, job, optionId);
+      const source = await file.text();
+      if (signal.aborted) return;
+      const result = loadAttributeRules(source, productId, view, job, optionId);
       setMapping(Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId])));
       setRuleReport(result.skipped); setMessage(`${result.mappings.length}개 연결을 선택했습니다. 변경 전·후 값을 검토한 뒤 초안에 반영해주세요.`);
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : '규칙 불러오기 실패'); }
-    finally { setLoading(false); }
+    });
   }
   async function serverRules(save: boolean) {
     if (!job || disabled || loading || !view.resolved.schema.categoryId) return;
-    setLoading(true); setRuleReport([]);
-    try {
+    await runRequest(async signal => {
+      setRuleReport([]);
       if (!save) {
         // Use the same validated read path as initial suggestions. Empty or failed
         // reads must clear the previous selection and its stale save revision.
-        await suggest(job);
+        await suggest(job, signal);
         return;
       }
       const endpoint = '/api/quotation-attribute-rules';
       if (serverRevision === null) throw new Error('먼저 서버 규칙을 불러와주세요.');
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
       const rules = createAttributeRules(productId, view, job, optionId, selected);
-      const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules, expectedRevision: serverRevision }) });
+      const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules, expectedRevision: serverRevision }), signal });
       const body = await response.json() as { error?: string; revision: number; rules: unknown };
+      if (signal.aborted) return;
       if (!response.ok) { if (response.status === 409) setServerRevision(null); throw new Error(body.error || '서버 규칙 처리 실패'); }
       setServerRevision(body.revision);
       setMessage(`카테고리 연결 규칙 v${body.revision}을 서버에 저장했습니다. 상품값은 변경하지 않았습니다.`);
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : '서버 규칙 처리 실패'); }
-    finally { setLoading(false); }
+    });
   }
   return <details className="panel-stack"><summary>번역한 상품 속성을 견적 항목에 연결</summary>
     <p>대상: {row?.optionLabel ?? '옵션 미선택'} · {view.resolved.schema.categoryPath.join(' > ')}. 연결할 항목과 변경 전·후 값을 확인해주세요. 기존 직접 수정값은 보존합니다.</p>
@@ -155,7 +168,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
         <p>변경 {batchPlan.changes.length}개 · 직접 수정값 보존 {batchPlan.skipped.length}개</p>
         {batchPlan.preview.length > 0 && <table><thead><tr><th>옵션</th><th>항목</th><th>현재값</th><th>적용값</th></tr></thead><tbody>{batchPlan.preview.map((item,index)=><tr key={index}><td>{item.option}</td><td>{item.field}</td><td style={{whiteSpace:'pre-wrap'}}>{item.beforeDisplay}</td><td style={{whiteSpace:'pre-wrap'}}>{item.afterDisplay}</td></tr>)}</tbody></table>}
         {batchPlan.skipped.length > 0 && <ul>{batchPlan.skipped.map((item,index)=><li key={index}>{item}</li>)}</ul>}
-        <button type="button" className="btn primary" disabled={!batchPlan.changes.length} onClick={()=>{if(disabled || loading)return;onApply(batchPlan.changes);setBatch(null);setMessage(`${batchPlan.changes.length}개 변경을 옵션별 견적 초안에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);}}>동일한 속성값 확인 · 선택 옵션 초안 반영</button>
+        <button type="button" className="btn primary" disabled={!batchPlan.changes.length} onClick={()=>{if(disabled || loading || activeRequest.current)return;onApply(batchPlan.changes);setBatch(null);setMessage(`${batchPlan.changes.length}개 변경을 옵션별 견적 초안에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);}}>동일한 속성값 확인 · 선택 옵션 초안 반영</button>
         <button type="button" className="btn ghost" onClick={()=>setBatch(null)}>일괄 적용 취소</button>
       </section>}
     </fieldset>
