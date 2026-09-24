@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { calculateOptionPrices, emptyOptionInput, optionInputs, optionFieldNames, OPTION_LIMIT, type OptionField, type OptionInput, type ProductOptionsResponse } from '@/app/product-options';
 import { productImageKeys } from '@/app/product-content';
 import { applyOptionBulk, duplicateOption, moveOption, previewOptionBulk, type BulkOptionAction, type BulkOptionPreview } from '@/app/option-editor-tools';
@@ -25,8 +25,10 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
   const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [conflict, setConflict] = useState(false);
   const [snapshotVersion, setSnapshotVersion] = useState(product.updated_at);
   const [refreshNotice, setRefreshNotice] = useState('');
+  const activeRequest=useRef<AbortController|null>(null);
+  useEffect(()=>()=>{activeRequest.current?.abort();},[]);
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/options`;
-  const applyLoaded = useCallback((body: ProductOptionsResponse) => { setSaved(body); setRows(optionInputs(body.options)); setSelected(new Set()); setError(''); setMessage(''); setConflict(false); }, []);
+  const applyLoaded = useCallback((body: ProductOptionsResponse) => { setSaved(body); setRows(optionInputs(body.options)); setSnapshotVersion(body.productVersion); setSelected(new Set()); setError(''); setMessage(''); setConflict(false); }, []);
   useEffect(() => {
     const controller = new AbortController();
     fetchOptions(endpoint, controller.signal).then(body => { if (!controller.signal.aborted) applyLoaded(body); })
@@ -38,7 +40,7 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
   const dirty = saved !== null && JSON.stringify(rows) !== JSON.stringify(optionInputs(saved.options));
   const changedElsewhere = Boolean(product.updated_at && (!snapshotVersion || Date.parse(product.updated_at) > Date.parse(snapshotVersion)));
   useEffect(() => {
-    if (!changedElsewhere) return;
+    if (!changedElsewhere || busy || loading || activeRequest.current) return;
     const controller = new AbortController();
     if (dirty) {
       Promise.resolve().then(() => { if (!controller.signal.aborted) setRefreshNotice('다른 탭에서 상품 또는 가격이 변경되었습니다. 옵션 입력은 유지했습니다. 입력 내용을 보관한 뒤 최신 가격·저장본을 확인해주세요.'); });
@@ -48,34 +50,40 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
       }).catch(cause => { if (!controller.signal.aborted) setRefreshNotice(cause instanceof Error ? cause.message : '최신 옵션을 불러오지 못했습니다.'); });
     }
     return () => controller.abort();
-  }, [changedElsewhere, dirty, endpoint, applyLoaded, product.updated_at]);
+  }, [changedElsewhere, dirty, endpoint, applyLoaded, product.updated_at, busy, loading]);
   let images: string[] = []; try { images = productImageKeys(product.image_keys); } catch { /* Server checks invalid references on save. */ }
   const included = rows.filter(row => row.included).length;
   async function reload() {
-    setLoading(true); try { const body = await fetchOptions(endpoint); applyLoaded(body); setSnapshotVersion(body.productVersion); setRefreshNotice(''); } catch (cause) { setError(cause instanceof Error ? cause.message : '저장본을 불러오지 못했습니다.'); } finally { setLoading(false); }
+    if(activeRequest.current || busy || loading)return;
+    const controller=new AbortController();activeRequest.current=controller;
+    setLoading(true); try { const body = await fetchOptions(endpoint,controller.signal); if(controller.signal.aborted)return; applyLoaded(body); setRefreshNotice(''); } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '저장본을 불러오지 못했습니다.'); } finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setLoading(false); }
   }
   async function refreshPricesKeepingDraft() {
-    if (!saved || busy || loading) return;
+    if (!saved || busy || loading || activeRequest.current) return;
+    const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     try {
-      const latest = await fetchOptions(endpoint);
+      const latest = await fetchOptions(endpoint,controller.signal);
+      if(controller.signal.aborted)return;
       const refreshed = refreshOptionPriceBase(saved, latest, rows);
       setSaved(refreshed.saved); setRows(refreshed.rows); setSnapshotVersion(latest.productVersion);
       setConflict(false); setRefreshNotice('');
       setMessage('옵션 입력을 유지하고 최신 가격 정책을 적용했습니다. 계산 결과를 확인한 뒤 옵션을 저장하세요.');
       onSaved?.();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '최신 가격 확인 실패'); }
-    finally { setBusy(false); }
+    } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '최신 가격 확인 실패'); }
+    finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }
   async function save() {
-    if (!saved) return;
+    if (!saved || busy || loading || conflict || changedElsewhere || activeRequest.current) return;
+    const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     try {
-      const response = await fetch(endpoint, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: saved.options.revision, expectedProductVersion: saved.productVersion, rows }) });
+      const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: saved.options.revision, expectedProductVersion: saved.productVersion, rows }) });
       const body = await response.json() as ProductOptionsResponse & { error?: string };
+      if(controller.signal.aborted)return;
       if (!response.ok || !body.options) { if (response.status === 409) setConflict(true); throw new Error(body.error || '옵션을 저장하지 못했습니다.'); }
       applyLoaded(body); setMessage(`옵션 ${body.options.rows.length}개 저장 완료 · 견적 포함 ${body.options.rows.filter(row => row.included).length}개`); onSaved?.();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '옵션을 저장하지 못했습니다.'); } finally { setBusy(false); }
+    } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '옵션을 저장하지 못했습니다.'); } finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }
   function update<K extends OptionField>(id: string, key: K, value: OptionInput[K]) { setRows(previous => previous.map(row => row.id === id ? { ...row, [key]: value } : row)); }
   function origin(row: OptionInput, key: OptionField) {
