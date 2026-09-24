@@ -12,6 +12,7 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
   const [preview, setPreview] = useState<{ url: string; width: number; height: number; blob: Blob; view: QuotationFieldsView } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const alive = useRef(true);
+  const running = useRef(false);
   const uploadedKey = useRef<string | null>(null);
   const batchKeys = useRef(new Map<string | null, string>());
   const [progress, setProgress] = useState<LabelBatchProgress | null>(null);
@@ -22,26 +23,29 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
   async function generate() {
-    if (disabled || busy) return;
+    if (disabled || busy || running.current) return;
+    running.current = true;
     setBusy(true); setError('');
     try {
       const result = await renderDocument(quotationLabelPlan(resolved, optionId));
       if (alive.current) { uploadedKey.current = null; setPreview({ url: URL.createObjectURL(result.blob), width: result.width, height: result.height, blob: result.blob, view }); }
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : '표시사항 PNG 생성 실패'); }
-    finally { if (alive.current) setBusy(false); }
+    finally { running.current = false; if (alive.current) setBusy(false); }
   }
   async function attach() {
-    if (!preview || disabled || busy) return;
+    if (!preview || disabled || busy || running.current) return;
+    running.current = true;
     setBusy(true); setError(''); onBusyChange(true);
     try {
       const saved = await attachQuotationLabel({ productId, endpoint, renderedView: preview.view, optionId, blob: preview.blob,
         uploadedKey: uploadedKey.current, onUploaded: key => { uploadedKey.current = key; } });
       if (alive.current) onAttached(saved);
     } catch (cause) { if (alive.current) setError(`${cause instanceof Error ? cause.message : 'PNG 연결 실패'}${uploadedKey.current ? ' 업로드한 파일은 보존됩니다. 다시 연결할 때 같은 파일을 사용합니다.' : ''}`); }
-    finally { onBusyChange(false); if (alive.current) setBusy(false); }
+    finally { running.current = false; onBusyChange(false); if (alive.current) setBusy(false); }
   }
   async function attachAll() {
-    if (disabled || busy) return;
+    if (disabled || busy || running.current) return;
+    running.current = true;
     stopRequested.current = false; setStopping(false); setStopped(false); setBatchRunning(true);
     setBusy(true); setError(''); onBusyChange(true);
     try {
@@ -54,7 +58,7 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
       }
     } catch (cause) {
       if (alive.current) setError(`${cause instanceof Error ? cause.message : '일괄 라벨 연결 실패'} 완료된 연결과 업로드 파일은 보존됩니다. 이 화면에서 다시 실행하면 같은 파일로 남은 연결을 이어갑니다.`);
-    } finally { onBusyChange(false); if (alive.current) { setBusy(false); setBatchRunning(false); setStopping(false); } }
+    } finally { running.current = false; onBusyChange(false); if (alive.current) { setBusy(false); setBatchRunning(false); setStopping(false); } }
   }
   const included = resolved.rows.some(row => row.optionId === optionId && row.included);
   return <section className="panel-stack" aria-label="견적 기준 표시사항 PNG" aria-busy={busy}>
