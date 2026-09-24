@@ -50,7 +50,12 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
         else { const check=imageChecks?.get(key); if(check?.kind==='error') errors.add(check.message); else if(check) add({kind:'review',code:'IMAGE_VERIFICATION',message:`${field.label}: ${check.message}`,optionId:row.optionId,optionLabel:row.optionLabel,fieldId:field.id}); }
       }
       for (const message of errors) add({kind:'error', code:'FIELD_INVALID', message:`${field.label}: ${message}`, optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
-      if (!errors.size && cell?.needsReview && cell.value.trim()) add({kind:'review', code:'EVIDENCE_REVIEW',
+      if (!errors.size && field.id === 'msrp' && cell?.value.trim()) add({kind:'review', code:'MSRP_EVIDENCE_REVIEW',
+        message: cell.source === 'pricing' || cell.source === 'product'
+          ? '권장소비자가격: 자동 계산 또는 저장 상품의 금액입니다. 제조사 권장가·공식 판매처 가격의 근거와 가격 설정 권한을 확인해주세요. Supplier Hub 약관 동의는 별도입니다.'
+          : '권장소비자가격: 직접 입력한 금액도 제조사 권장가·공식 판매처 가격의 근거와 가격 설정 권한을 확인해주세요. 저장은 Supplier Hub 약관 동의가 아닙니다.',
+        optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
+      else if (!errors.size && cell?.needsReview && cell.value.trim()) add({kind:'review', code:'EVIDENCE_REVIEW',
         message:`${field.label}: 실제 상품·증빙과 일치하는지 확인해주세요.`, optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
     }
   }

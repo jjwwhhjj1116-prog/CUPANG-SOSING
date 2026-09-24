@@ -35,6 +35,22 @@ test('review distinguishes errors from evidence checks and never promotes legacy
   input.rows[0].fields.title=cell('수정됨');input.rows[0].fields.mainImage=cell('owner/main.png');
   const clean=inspectSubmission(input,['owner/main.png']);assert.equal(clean.errorCount,0);assert.equal(clean.submissionReady,false);
 });
+test('MSRP evidence review follows the final included value and never treats edits as agreement',()=>{
+ const input=resolved(); input.rows[0].fields.material=cell(''); input.schema.fields.push(field('msrp','number'));
+ for(const source of ['pricing','product','manual-option','manual-common']) {
+  input.rows[0].fields.msrp={...cell('13000',[],true),source};
+  const before=JSON.stringify(input);const result=inspectSubmission(input,['owner/main.png']);
+  const issues=result.issues.filter(i=>i.fieldId==='msrp');assert.equal(issues.length,1);
+  assert.equal(issues[0].kind,'review');assert.equal(issues[0].code,'MSRP_EVIDENCE_REVIEW');
+  assert.match(issues[0].message,/가격 설정 권한/);assert.equal(issues[0].optionId,'red');
+  assert.equal(result.errorCount,0);assert.equal(result.submissionReady,false);assert.equal(JSON.stringify(input),before);
+ }
+ input.rows[0].fields.msrp=cell('');assert.equal(inspectSubmission(input,[]).issues.some(i=>i.fieldId==='msrp'),false);
+ input.rows[0].fields.msrp=cell('invalid',['숫자 오류'],true);
+ assert.equal(inspectSubmission(input,[]).issues.find(i=>i.fieldId==='msrp').code,'FIELD_INVALID');
+ input.rows[0].included=false;assert.equal(inspectSubmission(input,[]).issues.some(i=>i.fieldId==='msrp'),false);
+});
+
 test('excluded options and empty optional review fields do not inflate the report',()=>{
   const input=resolved();input.rows[0].fields.material=cell('',[],true);
   input.rows.push({...structuredClone(input.rows[0]),optionId:'excluded',included:false,fields:{title:cell('', ['missing'])}});

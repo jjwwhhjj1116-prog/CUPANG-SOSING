@@ -643,6 +643,19 @@ test('64497 official choices, required fields, prices and barcodes are enforced 
  assert.equal(JSON.stringify(input),before);
 });
 
+test('calculated and overridden MSRP reach submission evidence review without turning it into a numeric error',()=>{
+ const input=fixture(); input.categoryId='64497';
+ const review=load('app/submission-review.ts');
+ for(const overrides of [undefined,{common:{msrp:'25000'},options:{}},{common:{msrp:'25000'},options:{red:{msrp:'30000'}}}]){
+  input.overrides=overrides;const resolved=model.resolveQuotationFields(input);
+  const issues=review.inspectSubmission(resolved,JSON.parse(input.product.image_keys)).issues.filter(i=>i.fieldId==='msrp');
+  assert.equal(issues.length,1);assert.equal(issues[0].kind,'review');assert.equal(issues[0].code,'MSRP_EVIDENCE_REVIEW');
+  assert.equal(issues[0].optionId,'red');assert.equal(resolved.rows[1].fields.msrp.issues.length,0);
+ }
+ input.overrides={common:{msrp:''},options:{}};
+ assert.equal(review.inspectSubmission(model.resolveQuotationFields(input),[]).issues.some(i=>i.fieldId==='msrp'),false);
+});
+
 test('64497 links saved content and preserves blanks without copying another seller product',()=>{
  const input=fixture();input.categoryId='64497';
  let row=model.resolveQuotationFields(input).rows[1];

@@ -63,7 +63,8 @@ const commonFields: QuotationField[] = [
   field('searchTags', 'product', '검색태그', { type: 'textarea', required: true, maxLength: 150, help: '쉼표로 구분하며 전체 150자, 태그마다 20자 이내입니다. 초과값을 조용히 잘라내지 않습니다.' }),
   field('supplyPrice', 'product', '공급가', { type: 'number', unit: '원', integer: true, min: 1, max: Number.MAX_SAFE_INTEGER }),
   field('salePrice', 'product', '판매가', { type: 'number', unit: '원', integer: true, min: 1, max: Number.MAX_SAFE_INTEGER }),
-  field('msrp', 'product', '권장소비자가격', { type: 'number', unit: '원', integer: true, min: 1, max: Number.MAX_SAFE_INTEGER }),
+  field('msrp', 'product', '권장소비자가격', { type: 'number', unit: '원', integer: true, min: 1, max: Number.MAX_SAFE_INTEGER,
+    help: '배수로 자동 계산한 금액은 권장가 초안입니다. 제조사 권장가 또는 공식 판매처 가격의 근거와 가격 설정 권한을 확인해주세요. 직접 수정하거나 저장해도 Supplier Hub MSRP·OSRP 약관에 동의한 것으로 처리하지 않습니다.' }),
   field('barcodeMode', 'product', '바코드 입력 방식', { type: 'select', choices: [
     { value: 'existing', label: '실제 바코드 입력' }, { value: 'request-coupang', label: '바코드 없음(쿠팡 바코드 생성 요청)' },
   ], reviewRequired: true, help: '없음을 선택해도 실제 쿠팡 바코드 생성 요청은 전송하지 않습니다.' }),

@@ -1168,3 +1168,11 @@ AI등록 화면 확인:
 - 기존 Couplus 표시 경로와 필드 ID/수동값/수동 공란을 보존했다. DB 마이그레이션 없음. 이전 리터럴 해당사항없음은 재검토가 필요할 수 있다. 코드·상품정보 관찰 상태만 갱신하고 submissionReady=false 유지. 새 JSON/DOM 근거와 확인/추정/미확인 분석 문서 추가.
 - 검증: 전체414/414, 관련49/49, TypeScript/ESLint/production build/diff 통과. outputs/step80-tests.log, step80-focused.log, step80-lint.log, step80-build.log. 공식 선택값 전수 비교·가격·바코드·옵션한도·수동 공란 무변경을 검사했다. SourceFlow 새 UI의 브라우저 검증은 미실시.
 - 다음 시작점: hub80의64497 상품정보/미리보기에서 법적정보·이미지·물류 입력 규칙 대조를 이어간다. 실제1688 공급원, 공식 Excel/전체 분류, AI 실호출, 외부이미지전달 및 Supplier Hub 전송adapter는 여전히 미완성. 유료 호출·최종 운영등록·Cloudflare배포 없음.
+
+## 81. MSRP 근거 검토와 Hub 다음 단계 조건 확인 — 2026-09-24
+
+- 시작 main d6d4da1, 미커밋 변경 없음. supplierChrome에서 새 hub81 탭을 열어 이전 A/64497 관찰용 중간저장 견적을 불러왔다. 이전 자동 임시저장은 목록에서 확인됐다. 사용자 실상품은 수정하지 않았다.
+- 옵션/가격 미입력 시 다음 이동 차단 확인. 관찰용 옵션 W/1, 공급가1/판매가2, 쿠팡바코드 선택, 제조사A를 입력했다. 이는 관찰용 값이며 상품 기본값으로 복제하지 않았다. 다음 단계는 MSRP·OSRP 약관 동의에서 정지했다. 권장가 설정 권한/제조사 가격정보 수령 사실을 확인하는 약관이므로 사용자 직접 확인·동의를 비동기 질문으로 요청했다. 임의 동의/최종 등록은 하지 않았다.
+- 견적 MSRP 설명에 자동 계산 초안과 제조사/공식판매처 가격 근거의 차이를 표시했다. 등록 준비 검사에 MSRP_EVIDENCE_REVIEW를 추가해 포함 옵션의 최종값/출처를 기준으로 표시한다. 수동 입력도 동의로 취급하지 않고 가격값은 보존한다. 기존 fieldId/optionId 이동 기능 사용. 공란·제외 옵션은 생략하고 잘못된 숫자는 입력 오류를 우선한다.
+- 검증: 전체416/416, 타입검사·린트·빌드·diff 검사. outputs/step81-tests.log, step81-lint.log, step81-build.log. 실제 resolver→등록 준비 검사에서 자동/공통/옵션값 및 공란을 검증했다. SourceFlow 변경 UI의 실제 Chrome 조작은 미실시.
+- 다음: Chrome hub81 MSRP·OSRP 상세 약관에서 사용자가 직접 동의한 뒤 다음 이동 재시도. 이미지/법적정보/물류 대조는 아직 미완료. docs/supplier-hub-msrp-observation-2026-09-24.md 참고. 실제1688 수집, AI 실호출, 공식Excel/전체분류, 전송adapter도 미완성이다. 유료호출·최종운영등록·Cloudflare배포 없음.
