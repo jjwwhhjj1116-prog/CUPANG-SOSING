@@ -24,6 +24,15 @@ const product = { id: 'test', owner_id: 'owner', image_keys: '["owner/main.jpg",
 const request = (body, headers = { 'content-type': 'application/json' }) => new Request('http://localhost/api/products/test/content', { method: 'PATCH', headers, body: JSON.stringify(body) });
 const input = (patch, expectedRevision = 0) => ({ expectedRevision, patch });
 
+test('product type supports old records, explicit saves and clears without inventing a classification',()=>{
+ const legacy=model.emptyProductContent('test');delete legacy.label.productType;const before=JSON.stringify(legacy);
+ const normalized=model.withCurrentLabelFields(legacy);assert.equal(normalized.label.productType.value,'');assert.equal(normalized.label.productType.provenance,'unverified');assert.equal(JSON.stringify(legacy),before);
+ const {patch}=model.validateContentInput(input({label:{productType:'러닝용 허리 가방'}}),[],'owner');
+ const saved=model.applyContentPatch(normalized,patch,now);assert.equal(saved.label.productType.value,'러닝용 허리 가방');assert.equal(saved.label.productType.provenance,'manual');
+ const cleared=model.applyContentPatch(saved,{label:{productType:''}},now);assert.equal(cleared.label.productType.value,'');assert.equal(cleared.label.productType.provenance,'manual');
+ for(const value of [null,12,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{productType:value}}),[],'owner'));
+});
+
 test('content tracks edits without inventing generated content or changing untouched provenance', () => {
   const original = model.emptyProductContent('test');
   original.seo.title = { value: '번역 상품명', provenance: 'translated', updatedAt: '2026-09-01T00:00:00.000Z' };

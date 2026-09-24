@@ -40,6 +40,20 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('saved product type reaches category kind and label image, preserves quotation overrides and manual blank',()=>{
+ const input=fixture();input.categoryId='103495';
+ input.content=contentModel.applyContentPatch(input.content,{label:{productType:'러닝용 허리 가방'}},'2026-09-24T00:00:00Z');
+ const before=JSON.stringify(input);let row=model.resolveQuotationFields(input).rows[1];
+ assert.equal(row.fields.marathon_noticeKind.value,'러닝용 허리 가방');assert.equal(row.fields.marathon_noticeKind.source,'content');
+ const plan=load('app/document-image.ts').documentImagePlan('label',input.content,{productId:'p1'});assert.equal(plan.rows.find(row=>row[0]==='상품 유형')[1],'러닝용 허리 가방');assert.equal(JSON.stringify(input),before);
+ input.overrides={common:{marathon_noticeKind:'공통 유형'},options:{red:{marathon_noticeKind:'옵션 유형'}}};
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.marathon_noticeKind.value,'옵션 유형');
+ input.overrides.options.red.marathon_noticeKind='';assert.equal(model.resolveQuotationFields(input).rows[1].fields.marathon_noticeKind.value,'');
+ input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{productType:''}},'2026-09-24T01:00:00Z');
+ row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.marathon_noticeKind.value,'');assert.equal(row.fields.marathon_noticeKind.source,'content');
+ delete input.content.label.productType;assert.equal(model.resolveQuotationFields(input).rows[1].fields.marathon_noticeKind.value,'');
+});
+
 test('77442 official choices, required model, option rules and dimension bindings preserve manual edits', () => {
  const input=fixture();input.categoryId='77442';const schema=model.getQuotationSchema('77442');
  const evidence=JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-77442-product-2026-09-24.json',import.meta.url),'utf8'));

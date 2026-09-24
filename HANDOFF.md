@@ -1662,3 +1662,13 @@ AI등록 화면 확인:
 - 검증: 새3건 포함 전체532/532, TypeScript·ESLint·Cloudflare build·산출물·diff 검사 통과. 실제 컴포넌트와 모의 HTTP로 자동7행/수동9행 보존, 편집기 key 유지·새로고침 토큰 변경, 미리보기 무효화, 조회 중 편집 취소, 카테고리 변경/삭제 시 선택 해제 및 출력 차단,503오류 후 복구를 검증했다. 실제 브라우저 클릭은 미검증. outputs/step135-*.log.
 - 기존 Cloudflare 배포 version27368dc7-7e33-4a72-be7c-0fb4a935126a. DB migration/운영상품 변경/유료AI/Hub 등록 없음.
 - 다음 시작점: 실제 Couplus/Hub 로그인 복구 후 카테고리별 폼·초기값과 공식 Excel 원본을 대조해야 한다. 이번 턴 로그인 상태를 재확인하지 않았다. 실제1688 공급원·전수 카테고리 기본값·AI 실호출·Hub POST501 전송 어댑터/접수는 여전히 미완성. 기존 BrowserUse1688/다운로드 기록 정책 차단을 우회하지 않는다. 이번 변경을 전체 자동등록 완료로 설명하지 말 것.
+
+## 136. 상품 유형 표시사항과 카테고리 종류의 저장·출력 연동 — 2026-09-24
+
+- 시작 maind517ae5, 미커밋 변경 없음. fetch 후 origin/main0/0. 단계별 저장 자료→resolveQuotationFields→CSV/JSON 출력을 대조했다. 첨부 쿠플러스 한글 표시사항의 '상품 유형'은 기존 labelFields에 없었으며103495의 marathon_noticeKind도 저장 자료 연동이 없었다.
+- 한글 표시사항에 productType('상품 유형') 추가. 기존 labelFields 기반 편집·저장 검증·검토용 라벨 문서 생성에 연결된다. 기존 문서는 withCurrentLabelFields에서 미확인 공란으로 읽으며 DB migration이나 기존 데이터 덮어쓰기는 없다.
+- 103495의 '종류'를 저장된 content.label.productType에 연결한다. 이는 의미에 따라 구현한 SourceFlow 내부 매핑이며 쿠플러스의 실제 자동작성 내부 규칙을 새로 관찰한 것은 아니다. 상품명이나 카테고리명으로 유형을 추정하지 않는다. 다른 카테고리 필드를 임의로 연결하지 않았다.
+- 옵션 수동값→공통 수동값→저장 콘텐츠 우선순위 유지. 직접 비운 값은 그대로 공란이며 이전 레코드에 필드가 없어도 공란 처리한다. 콘텐츠 원문 변경 없이 출력한다.
+- 검증: 새3건 포함 전체535/535, TypeScript·ESLint·Cloudflare build·산출물·diff 통과. 이전 레코드 정규화/불변성·값 검증·직접 공란 보존, 라벨 문서 계획과103495 옵션 견적 값 일치, 실제 견적 API→CSV ZIP→quotation-fields.json 값/옵션 수동 우선순위를 모의 저장소로 검증했다. 실제 Chrome 화면과 PNG 픽셀, 공식 Excel/Hub 접수는 미검증. outputs/step136-*.log.
+- 기존 Cloudflare 배포 version2dfe7355-5e16-4323-bdd4-12c728fde25d. DB migration/운영상품 수정/유료AI/Hub 등록 없음.
+- 다음 시작점: 실제 Couplus/Hub 세션에서 카테고리별 초기 기본값과 공식 원본을 대조해야 한다. 이번 턴 로그인 상태 재확인 없음. 전수 카테고리 규격·실제1688 수집 공급원·AI 실호출·Hub POST501 전송 어댑터/접수는 여전히 미완성이다. 기존 BrowserUse1688 및 다운로드 기록 정책 차단을 우회하지 않는다. 이번 필드 연동은 전체 자동화 완성이 아니다.

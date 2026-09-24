@@ -378,6 +378,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { value, source: (content.label.manufacturer.value && content.label.importer.value) || content.label.manufacturer.provenance === 'manual' || content.label.importer.provenance === 'manual' ? 'content' : value ? 'settings' : 'empty' };
       }
       case 'noticeCountryOfOrigin': return contentValue(content.label.countryOfOrigin);
+      case 'marathon_noticeKind': return contentValue(content.label.productType ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'marathon_noticeCaution': return contentValue(content.label.precautions);
       case 'noticePermission': return contentValue(content.label.certification);
       case 'noticeComponents': return contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });

@@ -77,6 +77,18 @@ function routeWith({ find = async () => product, readOptions = async () => optio
 const request = body => new Request('http://localhost', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const context = { params: Promise.resolve({ id: 'test' }) }; const preview = { action: 'preview', profileId: profile.id, dataStartRow: 2 };
 
+test('saved label product type reaches category preview, CSV and review JSON with per-option override precedence',async()=>{
+ const bytes=new TextEncoder().encode('종류\r\n');const digest=createHash('sha256').update(bytes).digest('hex');const key=`owner/category-templates/${digest}.csv`;
+ const selected={...profile,categoryId:'103495',template:{...profile.template,headers:['종류'],sha256:digest,storageKey:key},mappings:[{column:0,field:'marathon_noticeKind',required:false}]};
+ const savedContent=contentModel.applyContentPatch(content,{label:{productType:'러닝용 허리 가방'}},product.updated_at);
+ const fields={schemaVersion:1,productId:'test',revision:1,overrides:{common:{},options:{second:{marathon_noticeKind:'옵션별 가방'}}},updatedAt:product.updated_at};
+ const route=routeWith({readProfile:async()=>selected,readContent:async()=>savedContent,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
+ const response=await route.POST(request(preview),context);assert.equal(response.status,200);const review=await response.json();assert.deepEqual(review.rows,[['러닝용 허리 가방'],['옵션별 가방']]);
+ const output=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200);
+ const files=unzipSync(new Uint8Array(await output.arrayBuffer()));const csv=new TextDecoder().decode(files['quotation-filled.csv']);assert.match(csv,/러닝용 허리 가방/);assert.match(csv,/옵션별 가방/);
+ const doc=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));assert.equal(doc.rows[0].fields.marathon_noticeKind.value,'러닝용 허리 가방');assert.equal(doc.rows[1].fields.marathon_noticeKind.value,'옵션별 가방');assert.equal(savedContent.label.productType.value,'러닝용 허리 가방');
+});
+
 test('deleted and excluded option sets stop quotation preview before reading attachments or templates', async () => {
   for (const rows of [[], options.rows.map(row => ({ ...row, included: false }))]) {
     let reads = 0;

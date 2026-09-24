@@ -3,7 +3,7 @@ export const labelFields = {
   productName: '품명', model: '모델명', material: '재질', dimensions: '크기·중량',
   manufacturer: '제조사', importer: '수입·판매원', countryOfOrigin: '제조국',
   contact: 'A/S 책임자·연락처', certification: '인증·허가 사항', precautions: '취급·사용 주의사항',
-  qualityAssurance: '품질보증기준', components: '제품 구성품', releaseDate: '출시년월',
+  qualityAssurance: '품질보증기준', components: '제품 구성품', releaseDate: '출시년월', productType: '상품 유형',
 } as const;
 export const assetRoles = { main: '대표 이미지', additional: '추가 이미지', detailTop: '상세 상단 이미지', detail: '상세 이미지', detailBottom: '상세 하단 이미지', size: '사이즈표', label: '한글 표시사항' } as const;
 export type LabelField = keyof typeof labelFields;
