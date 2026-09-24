@@ -19,6 +19,7 @@ test('deleted inspection profile keeps quotation editor and explicit replacement
   '@/app/quotation-profile-selection':selector,
   '@/app/components/quotation-fields-editor':{QuotationFieldsEditor:Editor},
   '@/app/components/quotation-preview-review':{QuotationPreviewReview:()=>null},
+  '@/app/components/quotation-mapping-review':{QuotationMappingReview:()=>null},
   fetch:async(url,init)=>{calls.push([url,init?.method??'GET']);return Response.json(url==='/api/category-profiles'?{profiles}:{categoryContext:{profileId:'saved',categoryId:'80719',categoryPath:['수집 당시']}});},
  });
  const render=()=>{index=0;const outer=panel.QuotationPanel({productId:'p',preferredProfileId:'deleted',onManageCategories(){}});const tree=outer.type(outer.props);first=false;return tree;};
