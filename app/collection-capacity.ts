@@ -1,3 +1,4 @@
+import type { CollectionResult } from '@/app/collection-result';
 export type CollectionCapacity = { usedSlots: number; totalImages: number; reusableIndices: number[]; blockedIndices?: number[] };
 export function validateCollectionCapacity(input: unknown, totalImages: number): CollectionCapacity {
   const value = input as CollectionCapacity | null;
@@ -15,4 +16,23 @@ export function validateCollectionCapacity(input: unknown, totalImages: number):
 export function collectionSelectionFits(capacity: CollectionCapacity, indices: readonly number[]): boolean {
   const fresh = new Set(indices.filter(index => !capacity.reusableIndices.includes(index)));
   return !indices.some(index => capacity.blockedIndices?.includes(index)) && capacity.usedSlots + fresh.size <= 50;
+}
+
+/** Suggest a bounded selection; never downloads, restores excluded images, or changes source order. */
+export function recommendCollectionImages(result: Pick<CollectionResult, 'images' | 'options'>, capacity: CollectionCapacity): number[] {
+  validateCollectionCapacity(capacity, result.images.length);
+  const all = result.images.map((_, index) => index);
+  const priority = new Set([
+    ...all.filter(index => result.images[index].role === 'main'),
+    ...result.options.flatMap(option => option.imageIndex === undefined ? [] : [option.imageIndex]),
+    ...all.filter(index => result.images[index].role === 'additional'),
+    ...all,
+  ]);
+  const selected: number[] = [];
+  for (const index of priority) {
+    if (!Number.isInteger(index) || index < 0 || index >= result.images.length) continue;
+    if (selected.length === 50) break;
+    if (collectionSelectionFits(capacity, [...selected, index])) selected.push(index);
+  }
+  return selected.sort((a, b) => a - b);
 }

@@ -62,3 +62,17 @@ test('product button stops retry after in-flight failure and never reports an un
  assert.equal(writes,1);assert.equal(h.saved,0);assert.match(JSON.stringify(h.render()),/상품 반영 미확인/);
  assert.equal(h.button('원문을 상품·옵션으로 반영').props.disabled,false);
 });
+
+test('large receipts recommend main and option images, preserve manual choice on refresh and apply only selected indices',async()=>{
+ const source={...result,images:Array.from({length:60},(_,i)=>({url:`https://cbu01.alicdn.com/${i}.png`,role:i===55?'main':i===30?'additional':'detail'})),options:[{...result.options[0],imageIndex:59}]};
+ const cap={usedSlots:47,totalImages:60,reusableIndices:[0],blockedIndices:[1]};let applied;const requests=[];
+ const h=harness(async(url,init)=>{requests.push([url,init?.method]);return url.endsWith('/result')?Response.json({receipt:{result:source},message:'수신됨'}):Response.json({capacity:cap});},async(_job,_total,options)=>{applied=Array.from(options.imageIndices);return{status:'completed',productId:'p',completedImages:applied.length};});
+ const selected=()=>nodes(h.render()).filter(n=>n.type==='input').flatMap((n,i)=>n.props.checked?[i]:[]);
+ await h.click('수신 결과 조회');assert.deepEqual(selected(),[0,30,55,59]);assert.equal(requests.filter(([,method])=>method==='POST').length,0);
+ const checks=nodes(h.render()).filter(n=>n.type==='input');checks[30].props.onChange({target:{checked:false}});
+ await h.click('이미지 저장 상태 다시 조회');assert.deepEqual(selected(),[0,55,59]);
+ await h.click('선택 해제');assert.deepEqual(selected(),[]);await h.click('저장 여유에 맞춰 추천 선택');assert.deepEqual(selected(),[0,30,55,59]);
+ h.find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='상품·선택 이미지 ').props.onClick();
+ for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(applied,[0,30,55,59]);assert.equal(h.saved,1);assert.equal(nodes(h.render()).filter(n=>n.type==='input').length,60);
+});

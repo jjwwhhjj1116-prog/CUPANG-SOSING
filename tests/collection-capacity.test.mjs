@@ -28,3 +28,18 @@ test('unauthenticated, missing and cancelled requests do not expose capacity',as
   const r=route(options);assert.equal((await r.GET(null,context)).status,status);if(options.mode)assert.equal(r.reads.length,0);
  }
 });
+
+test('image recommendations prioritize main and option images within actual remaining capacity',()=>{
+ const {recommendCollectionImages:recommend,collectionSelectionFits:fits}=load('app/collection-capacity.ts');
+ const source={images:Array.from({length:200},(_,i)=>({role:i===150?'main':i===100?'additional':'detail'})),options:[{imageIndex:180},{imageIndex:180},{imageIndex:199}]};
+ const cap={usedSlots:47,totalImages:200,reusableIndices:[0,120],blockedIndices:[199]};
+ const before=JSON.stringify({source,cap});const selected=Array.from(recommend(source,cap));
+ assert.deepEqual(selected,[0,100,120,150,180]);assert.equal(fits(cap,selected),true);assert.equal(JSON.stringify({source,cap}),before);
+ const empty=Array.from(recommend(source,{...cap,usedSlots:50,reusableIndices:[]}));assert.deepEqual(empty,[]);
+ assert.deepEqual(Array.from(recommend(source,{...cap,usedSlots:50})),[0,120]);
+ const many=Array.from(recommend(source,{...cap,usedSlots:0,reusableIndices:[],blockedIndices:[]}));
+ assert.equal(many.length,50);assert.ok(many.includes(150)&&many.includes(180)&&many.includes(199)&&many.includes(100));
+ assert.equal(new Set(many).size,50);assert.deepEqual(many,[...many].sort((a,b)=>a-b));
+ assert.throws(()=>recommend(source,{...cap,totalImages:199}),/확인/);
+ assert.deepEqual(Array.from(recommend({images:[],options:[]},{usedSlots:50,totalImages:0,reusableIndices:[]})),[]);
+});
