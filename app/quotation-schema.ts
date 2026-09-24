@@ -2,7 +2,7 @@ import { couplus64497Fields, couplus64497Path } from '@/app/couplus-toothbrush-s
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema';
 import { couplus103495Fields, couplus103495Path } from '@/app/couplus-marathon-schema';
-import { contentDetailImageKeys, savedTextOrFallback, type ContentField, type ProductContent } from '@/app/product-content';
+import { contentDetailImageKeys, savedTextOrFallback, type ContentField, type CustomLabel, type ProductContent } from '@/app/product-content';
 import type { ProductOption, ProductOptions } from '@/app/product-options';
 import { calculateOptionPrices, resolveOptionPricePolicy } from '@/app/product-options';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
@@ -42,7 +42,7 @@ export type QuotationChange = { fieldKey: string; optionId: string | null; value
 export type QuotationSource = 'manual-option' | 'manual-common' | 'schema' | 'content' | 'settings' | 'option' | 'pricing' | 'product' | 'empty' | 'couplus-default';
 export type ResolvedQuotationField = { value: string; source: QuotationSource; needsReview: boolean; issues: string[]; validationIssues?: string[]; reviewMessages?: string[] };
 export type ResolvedQuotationRow = { optionId: string | null; optionLabel: string; included: boolean; fields: Record<string, ResolvedQuotationField> };
-export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[] };
+export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[]; customLabels?: CustomLabel[] };
 export type QuotationFieldsView = {
   revision: number; inputFingerprint: string; overrides: QuotationOverrides; legacyOverrides?: QuotationOverrides; resolved: ResolvedQuotation; automatic: ResolvedQuotation;
   categoryContext: { source: 'profile' | 'collection' | 'unknown'; profileId: string | null; categoryId: string | null; categoryPath: string[] };
@@ -423,5 +423,5 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     if (imageIssues.length && fields.detailImages) { fields.detailImages.needsReview = true; fields.detailImages.issues.push(...imageIssues); }
     return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : includeCommonRow, fields };
   });
-  return { schema, rows, issues };
+  return { schema, rows, issues, customLabels: (content.customLabels ?? []).map(label => ({ ...label })) };
 }

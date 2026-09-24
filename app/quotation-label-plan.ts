@@ -13,11 +13,11 @@ export function quotationLabelPlan(resolved: ResolvedQuotation, optionId: string
     title: '견적 기준 표시사항 · 검토용',
     subtitle: `${resolved.schema.categoryPath.join(' > ')}\n${row.optionLabel} · ${row.optionId ?? '상품 공통'}`,
     width: 1200, columnWidths: [360, 760], headers: ['항목', '최종 저장값'],
-    rows: fields.map(field => {
+    rows: [...fields.map(field => {
       const value = row.fields[field.id]?.value ?? '';
       const label = value ? field.choices?.find(choice => choice.value === value)?.label : undefined;
       return [field.label, label ?? (value.trim() ? value : '[공란]')];
-    }),
+    }), ...(resolved.customLabels ?? []).filter(label => label.visible).map(label => [label.name, label.value.trim() ? label.value : '[공란]'])],
     footer: '선택한 옵션의 저장된 견적 값입니다. 공란은 추정하지 않았습니다. 실제 제품 라벨의 법정 항목·증빙·내용 일치 여부를 별도로 확인해주세요. 이 이미지는 Supplier Hub에 첨부·전송되지 않았습니다.',
   };
 }

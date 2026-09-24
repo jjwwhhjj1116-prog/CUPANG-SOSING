@@ -1116,3 +1116,18 @@ test('quotation label PNG plan follows category fields and final option override
  resolved.schema.categoryId=null;
  assert.throws(()=>make(resolved,'blue'),/카테고리/);
 });
+
+test('saved custom labels reach option quotation PNGs without altering official cells or content', () => {
+ const input=fixture();
+ input.content.customLabels=[{id:'custom-a',name:'추가 안내',value:'세탁 방법',visible:true},{id:'custom-b',name:'숨김',value:'비공개',visible:false},{id:'custom-c',name:'직접 비움',value:'',visible:true}];
+ input.overrides={common:{model:'공통'},options:{red:{model:'직접 모델'}}};
+ const before=JSON.stringify(input);const resolved=model.resolveQuotationFields(input);
+ const plan=load('app/quotation-label-plan.ts').quotationLabelPlan(resolved,'red');
+ assert.deepEqual(clone(plan.rows.slice(-2)),[['추가 안내','세탁 방법'],['직접 비움','[공란]']]);
+ assert.ok(!plan.rows.some(row=>row[0]==='숨김'));
+ assert.equal(resolved.rows[1].fields.model.value,'직접 모델');
+ assert.ok(!resolved.schema.fields.some(field=>field.id==='custom-a'));
+ assert.equal(JSON.stringify(input),before);
+ resolved.customLabels[0].value='변경';assert.equal(input.content.customLabels[0].value,'세탁 방법');
+ delete input.content.customLabels;assert.deepEqual(clone(model.resolveQuotationFields(input).customLabels),[]);
+});

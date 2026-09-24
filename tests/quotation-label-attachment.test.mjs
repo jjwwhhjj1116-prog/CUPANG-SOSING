@@ -175,3 +175,29 @@ test('stop before execution or during rendering never starts an upload', async (
   assert.equal(result.stopped, true); assert.equal(result.completed, 0); assert.equal(renders, 1);
   assert.equal(h.calls.filter(call => call.method !== 'GET').length, 0);
 });
+
+test('custom label edits invalidate rendered PNGs while hidden text edits do not', async () => {
+ const labels=[{id:'custom-a',name:'관리',value:'세탁',visible:true},{id:'custom-b',name:'주의',value:'보관',visible:true},{id:'custom-c',name:'숨김',value:'초안',visible:false}];
+ for(const change of [r=>{r.customLabels[0].value='변경';},r=>{r.customLabels[0].name='변경';},r=>{r.customLabels[0].visible=false;},r=>{r.customLabels.reverse();},r=>{r.customLabels=[];}]){
+  const h=harness();h.initial.resolved.customLabels=structuredClone(labels);h.view.resolved.customLabels=structuredClone(labels);change(h.view.resolved);
+  await assert.rejects(h.run(),/변경/);assert.equal(h.calls.filter(call=>call.method!=='GET').length,0);
+ }
+ const h=harness();h.initial.resolved.customLabels=structuredClone(labels);h.view.resolved.customLabels=structuredClone(labels);
+ h.view.resolved.customLabels[2].value='다른 숨김';await h.run();assert.equal(h.calls.filter(call=>call.method==='PUT').length,1);
+ const raced=harness();raced.initial.resolved.customLabels=structuredClone(labels);raced.view.resolved.customLabels=structuredClone(labels);
+ await assert.rejects(attach({productId:'p1',endpoint:'/fields',renderedView:raced.initial,optionId:'red',blob:new Blob(['png']),onUploaded(){}},async(url,init)=>{
+  const response=await raced.fetcher(url,init);if(url.endsWith('/attachments'))raced.view.resolved.customLabels[0].value='저장 중 변경';return response;
+ }),/변경/);
+ assert.equal(raced.calls.filter(call=>call.method==='PUT').length,0);
+});
+
+test('batch renders custom labels for every option and stops on a custom edit during rendering', async () => {
+ const labels=[{id:'custom-a',name:'추가 안내',value:'보관 방법',visible:true}];
+ const h=harness(true);h.initial.resolved.customLabels=structuredClone(labels);h.view.resolved.customLabels=structuredClone(labels);let renders=0;
+ await assert.rejects(batch({productId:'p1',endpoint:'/fields',view:h.initial,uploaded:new Map(),onProgress(){},render:async plan=>{
+  assert.deepEqual(Array.from(plan.rows.at(-1)),['추가 안내','보관 방법']);renders++;
+  if(renders===2)h.view.resolved.customLabels[0].value='새 안내';return {blob:new Blob(['png'])};
+ }},h.fetcher),/변경/);
+ assert.equal(renders,2);assert.equal(h.calls.filter(call=>call.url==='/api/files').length,1);
+ assert.equal(h.calls.filter(call=>call.method==='PUT').length,1);
+});
