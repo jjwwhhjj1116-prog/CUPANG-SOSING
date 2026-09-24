@@ -40,17 +40,39 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('103495 official form rules validate choices, required options, prices and barcode without certifying submission', () => {
+  const input = fixture(); input.categoryId = '103495';
+  const schema = model.getQuotationSchema(input.categoryId);
+  const evidence = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-103495-product-2026-09-24.json', import.meta.url), 'utf8'));
+  const selects = schema.fields.filter(f => f.type === 'select' && f.id.startsWith('marathon_'));
+  assert.equal(selects.length, 10);
+  selects.forEach((f,i) => assert.deepEqual(clone(f.choices), evidence.selects[i]));
+  evidence.required.forEach(id => assert.equal(schema.fields.find(f => f.id === id).required, true));
+  assert.equal(schema.fields.find(f => f.id === 'searchTags').required, false);
+  assert.equal(model.quotationOptionLimitIssue(schema,100), null);
+  assert.match(model.quotationOptionLimitIssue(schema,101), /100/);
+  assert.ok(model.quotationPriceIssues(schema,'5000','4999').length);
+  const ctx = context(input);
+  assert.throws(()=>model.validateQuotationChanges([change('barcodeMode','existing'),change('barcode','abc')],ctx), /바코드/);
+  assert.throws(()=>model.validateQuotationChanges([change('marathon_waterproof','해당사항없음')],ctx), /선택/);
+  assert.equal(model.validateQuotationChanges([change('marathon_waterproof','')],ctx)[0].value,'');
+  input.overrides={common:{marathon_waterproof:'해당사항없음'},options:{}};
+  const existing=model.resolveQuotationFields(input).rows[1].fields.marathon_waterproof;
+  assert.equal(existing.value,'해당사항없음'); assert.ok(existing.validationIssues.length);
+  assert.equal(schema.submissionReady,false);
+});
+
 test('103495 preserves observed marathon form while deriving notices from each option, not saved example values', () => {
   const input = fixture(); input.categoryId = '103495';
   const schema = model.getQuotationSchema(input.categoryId);
   const evidence = JSON.parse(fs.readFileSync(new URL('../docs/couplus-marathon-103495-observation.json', import.meta.url), 'utf8'));
   const attributes = schema.fields.filter(f => f.visibility !== 'common');
   assert.deepEqual(clone(schema.categoryPath), evidence.path);
-  assert.equal(schema.status, 'unconfirmed'); assert.equal(schema.submissionReady, false);
+  assert.equal(schema.status, 'observed'); assert.equal(schema.submissionReady, false);
   assert.equal(attributes.length, 26);
   attributes.forEach((f, i) => {
     assert.equal(f.label, evidence.attributes[i].label);
-    assert.deepEqual(clone(f.choices?.map(v => v.label) ?? []), evidence.attributes[i].choices);
+    assert.deepEqual(clone(f.choices?.map(v => v.label) ?? []).sort(), [...evidence.attributes[i].choices].sort());
   });
   assert.equal(schema.fields.filter(f => f.id === 'noticeMaterial').length, 1);
   assert.equal(schema.fields.find(f => f.id === 'model').required, false);

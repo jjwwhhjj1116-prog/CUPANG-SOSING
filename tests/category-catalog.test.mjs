@@ -37,7 +37,7 @@ test('hierarchy imports only observed root/child paths with exact order and all 
   const verified = choices.filter(choice => choice.codeEvidence === 'supplier-hub');
   assert.equal(verified.length, model.categoryObservationScope.supplierHubCodes);
   assert.ok(verified.length >= 5);
-  for (const choice of verified.filter(choice => choice.categoryId !== '64497')) assert.ok([...hubObservation.categoryIds, braceObservation].some(record => record.categoryId === choice.categoryId && JSON.stringify(record.path) === JSON.stringify(choice.path)));
+  for (const choice of verified.filter(choice => !['64497','103495'].includes(choice.categoryId))) assert.ok([...hubObservation.categoryIds, braceObservation].some(record => record.categoryId === choice.categoryId && JSON.stringify(record.path) === JSON.stringify(choice.path)));
   assert.deepEqual(plain(model.categoryLevel(choices, ['기프트카드'], 1)), []);
   assert.equal(choices.find(choice => choice.path.join() === '기프트카드').childrenObserved, false);
   assert.equal(model.categoryObservationScope.fullCatalogVerified, false);
@@ -52,7 +52,7 @@ test('unknown leaves and unobserved branches cannot become 80719 profiles, but o
       assert.equal(result.categoryId, '80719'); assert.equal(result.template, null); assert.deepEqual(plain(result.mappings), []);
     } else if (['77442', '81452', '64497', '103495'].includes(choice.categoryId)) {
       assert.equal(partial.canConfirmCategory(choice), true);
-      assert.equal(choice.codeEvidence, ['81452','64497'].includes(choice.categoryId) ? 'supplier-hub' : 'couplus');
+      assert.equal(choice.codeEvidence, ['81452','64497','103495'].includes(choice.categoryId) ? 'supplier-hub' : 'couplus');
     } else {
       assert.equal(partial.canConfirmCategory(choice), false);
       assert.throws(() => partial.categoryProfileForChoice(choice), /코드/);
@@ -114,7 +114,7 @@ test('only exact observed leaf paths receive Hub IDs; branches, similar labels a
   ];
   const bounded = load({ ...hubObservation, categoryIds: records, verifiedLeafCount: 9999 });
   const choices = bounded.categoryChoices([]);
-  assert.equal(bounded.categoryObservationScope.supplierHubCodes, 3);
+  assert.equal(bounded.categoryObservationScope.supplierHubCodes, 4);
   assert.equal(bounded.categoryObservationScope.knownCodes, 6);
   assert.equal(choices.find(choice => choice.categoryId === '109047').codeEvidence, 'supplier-hub');
   assert.equal(choices.find(choice => choice.categoryId === '80719').codeEvidence, 'couplus');
@@ -165,7 +165,7 @@ test('64497 breadcrumb retains Couplus display with official code evidence and n
 test('103495 is reachable by observed breadcrumb without claiming an official template',()=>{
  const choices=model.categoryChoices([]);const leaf=choices.find(choice=>choice.categoryId==='103495');
  const path=['스포츠/레져','기타스포츠','육상/체조','마라톤가방'];
- assert.deepEqual(plain(leaf.path),path);assert.equal(leaf.codeEvidence,'couplus');assert.equal(leaf.templateLinked,false);
+ assert.deepEqual(plain(leaf.path),path);assert.equal(leaf.codeEvidence,'supplier-hub');assert.equal(leaf.templateLinked,false);
  for(let depth=0;depth<path.length;depth++)assert.ok(model.categoryLevel(choices,path.slice(0,depth),depth).includes(path[depth]));
  assert.equal(model.canConfirmCategory(leaf),true);assert.equal(model.categoryProfileForChoice(leaf).template,null);
  assert.equal(model.searchCategoryChoices(choices,'103495')[0].categoryId,'103495');

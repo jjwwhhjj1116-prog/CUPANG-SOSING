@@ -1375,3 +1375,11 @@ couplus103495Fields.push(...([
 ] as const).map(([id,label]): QuotationField => ({id,label,section:'legal',visibility:'common',type:'text',
  required:false,reviewRequired:true,maxLength:2000,help:'쿠플러스 저장 견적에서 확인한 고시 항목입니다. 실제 상품 정보를 사용합니다.'})));
 
+
+// Supplier Hub Product Page cross-check, 2026-09-24: an empty wire value
+// is displayed as 해당사항없음. Preserve historical overrides for explicit review.
+for (const field of couplus103495Fields) {
+  if (field.type !== 'select' || !field.choices) continue;
+  field.choices = [...field.choices.filter(choice => choice.value !== '해당사항없음'), { value: '', label: '해당사항없음' }];
+  field.help = 'Supplier Hub 상품정보에서 확인한 선택값입니다. 해당사항없음의 실제 값은 빈 문자열입니다. 이전 문자열 값은 직접 재선택해주세요.';
+}
