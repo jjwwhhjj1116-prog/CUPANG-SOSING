@@ -185,6 +185,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
             <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 위로`} disabled={index===0} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,-1)}))}>↑</button>
             <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 아래로`} disabled={index===draft.labelLayout.order.length-1} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,1)}))}>↓</button></div>
           <label className="field"><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, label: { ...previous.label, [key]: event.target.value } }))} /></label>
+          {key === 'kcInformation' && <p className="muted">확인한 KC 인증정보를 입력하세요. 헬스보호대 견적의 KC 인증정보에 연결됩니다. 일반 인증·허가 사항과 별도로 저장하며, 인증번호·인증 마크 타입을 자동 판정하지 않습니다.</p>}
         </div>)}</div>
         <CustomLabelEditor rows={draft.customLabels} onChange={customLabels=>setDraft(previous=>({...previous,customLabels}))}/>
       </>}

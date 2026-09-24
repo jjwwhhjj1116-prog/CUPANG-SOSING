@@ -62,6 +62,16 @@ test('product type supports old records, explicit saves and clears without inven
  for(const value of [null,12,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{productType:value}}),[],'owner'));
 });
 
+test('KC information is an independent saved label with legacy compatibility and explicit clearing',()=>{
+ const old=model.emptyProductContent('test');delete old.label.kcInformation;old.label.certification.value='일반 허가';const before=JSON.stringify(old);
+ const normalized=model.withCurrentLabelFields(old);assert.equal(normalized.label.kcInformation.value,'');assert.equal(normalized.label.kcInformation.provenance,'unverified');assert.equal(JSON.stringify(old),before);
+ const {patch}=model.validateContentInput(input({label:{kcInformation:'확인한 KC 정보'}}),[],'owner');const saved=model.applyContentPatch(normalized,patch,now);
+ assert.equal(saved.label.kcInformation.value,'확인한 KC 정보');assert.equal(saved.label.certification.value,'일반 허가');assert.equal(saved.label.kcInformation.provenance,'manual');
+ assert.equal(model.labelDocumentRows(saved).find(row=>row[0]==='kcInformation')[2],'확인한 KC 정보');
+ const cleared=model.applyContentPatch(saved,{label:{kcInformation:''}},now);assert.equal(cleared.label.kcInformation.value,'');assert.equal(cleared.label.kcInformation.provenance,'manual');
+ for(const value of [null,12,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{kcInformation:value}}),[],'owner'));
+});
+
 test('content tracks edits without inventing generated content or changing untouched provenance', () => {
   const original = model.emptyProductContent('test');
   original.seo.title = { value: '번역 상품명', provenance: 'translated', updatedAt: '2026-09-01T00:00:00.000Z' };

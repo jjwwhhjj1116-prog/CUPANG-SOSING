@@ -381,6 +381,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'marathon_noticeKind': return contentValue(content.label.productType ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'marathon_noticeCaution': return contentValue(content.label.precautions);
       case 'noticePermission': return contentValue(content.label.certification);
+      case 'brace_noticeKc': return contentValue(content.label.kcInformation ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeComponents': return contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeReleaseDate': return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance);

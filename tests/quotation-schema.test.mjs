@@ -40,6 +40,21 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('explicit KC information reaches the brace notice and export without inferring certification IDs or other categories',()=>{
+ const input=fixture();input.categoryId='81452';
+ input.content=contentModel.applyContentPatch(input.content,{label:{certification:'일반 허가 문구',kcInformation:'확인한 KC 표시 내용'}},'now');
+ const before=JSON.stringify(input);let resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows[1].fields.brace_noticeKc.value,'확인한 KC 표시 내용');assert.equal(resolved.rows[1].fields.brace_noticeKc.source,'content');
+ assert.equal(resolved.rows[1].fields.kcCertificationNumber.value,'');assert.equal(resolved.rows[1].fields.kcMarkType.value,'');
+ const files=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,files)[0].brace_noticeKc,'확인한 KC 표시 내용');
+ assert.equal(load('app/quotation-label-plan.ts').quotationLabelPlan(resolved,'red').rows.find(row=>row[0]==='KC 인증정보')[1],'확인한 KC 표시 내용');assert.equal(JSON.stringify(input),before);
+ input.overrides={common:{brace_noticeKc:'공통값'},options:{red:{brace_noticeKc:''}}};resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[0].fields.brace_noticeKc.value,'공통값');assert.equal(resolved.rows[1].fields.brace_noticeKc.value,'');assert.equal(resolved.rows[1].fields.brace_noticeKc.source,'manual-option');
+ input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{kcInformation:''}},'later');resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.brace_noticeKc.value,'');assert.equal(resolved.rows[1].fields.brace_noticeKc.source,'content');
+ delete input.content.label.kcInformation;assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeKc.value,'');
+ input.categoryId='77442';assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticePermission.value,'일반 허가 문구');
+});
+
 test('saved product type reaches category kind and label image, preserves quotation overrides and manual blank',()=>{
  const input=fixture();input.categoryId='103495';
  input.content=contentModel.applyContentPatch(input.content,{label:{productType:'러닝용 허리 가방'}},'2026-09-24T00:00:00Z');
