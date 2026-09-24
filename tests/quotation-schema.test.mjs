@@ -572,6 +572,9 @@ test('quotation image review uses final per-option overrides and the same attach
  const rows=exporter.resolvedQuotationRows(input,resolved,assets);
  const result=exporter.quotationFieldFiles({...input,state:{revision:1,overrides:input.overrides},categoryContext:{categoryId:'80719'}},resolved,assets,'fingerprint');
  const html=result.files.find(file=>file.name==='quotation-images.html').data;
+ const detail=result.files.find(file=>file.name==='quotation-detail.html').data;
+ assert.ok(detail.includes('src="assets/'+rows[0].detailImages+'"'));
+ assert.match(detail,/&lt;script&gt;evil\(\)&lt;\/script&gt;/);assert.doesNotMatch(detail,/<script>|EXCLUDED UNIQUE/);
  assert.equal(rows[0].mainImage,'image-003.webp');assert.ok(html.includes('src="assets/'+rows[0].mainImage+'"'));
  assert.ok(html.indexOf('1. image-001.png')<html.indexOf('2. image-002.jpg'));
  assert.match(html,/연결된 이미지 없음/);assert.match(html,/&lt;img src=x onerror=evil\(\)&gt; &amp; 상품/);

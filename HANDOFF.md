@@ -1136,3 +1136,11 @@ AI등록 화면 확인:
 - 동일 바이트로 동일 키가 된 수집 파일이 다른 역할(상하단 포함)에 이미 있으면 원래 역할을 보존하며 새 역할에 중복 배치하지 않는다. 옵션별 이미지의 기존 수동 수정/빈 값 보존은 유지한다. 다른 파일 키 사이의 시각적 유사성 판정이나 기존 중복 자료 자동 정리는 하지 않는다.
 - 검증: 전체404/404, TypeScript/ESLint/production build/diff 검사 통과. 실제 SQLite로 소유자/상품 범위의 제외 번호 구분, API 모의 저장소로 제외·다른 상품·객체 누락 시409 및 무다운로드/무쓰기, 일곱 역할의 중복 배치 방지, 사전 검사 중단을 확인했다. outputs/collection-retry-tests.log 및 collection-retry-build.log. 브라우저 시각·운영 R2·실상품 수집 검증은 미실시.
 - 다음 시작점: 실제 허용1688 공급원 연결·공식 Excel/전체 카테고리 대조·AI 번역·Supplier Hub 전송 adapter가 남아 있다. 이번 변경은 기존 저장/재시도의 정합성 보완이며 실수집 또는 등록 자동화 완성이 아니다. 유료 호출·운영 등록·Cloudflare 배포 없음.
+
+## 77. 옵션별 최종 견적 상세페이지 검토 파일 — 2026-09-24
+
+- 시작 main cb51d7a, 미커밋 변경 없음. 견적 ZIP에 quotation-detail.html을 추가했다. 저장된 최종 견적 resolver의 포함 옵션·상품명·detailImages 순서를 사용해 세로 이미지 배치와 설명을 표시한다. 공통 배너 순서는 자동 detailImages에 반영된 순서이며 견적 전용 수동 수정/공란을 우선한다. 기존 detail-review.html은 상품 편집 원본 검토 용도로 유지한다.
+- 수동 detailHtml은 공통/옵션 수정값과 직접 비운 값을 보존하고 이스케이프한 원문으로 표시한다. 수동 HTML 렌더링 결과와 별도 상세 이미지 필드의 배치를 구분해 안내한다. 자동 설명은 일반 텍스트로 이스케이프한다. 로컬 assets 파일 경로/확장자를 검증하고 CSP 및 6MB 개별·전체 견적 문서 크기 검사를 적용한다. 원격 이미지 주소를 호출하거나 저장한 HTML을 실행하지 않는다.
+- 한계: 기존 견적서 detailHtml 자동값 자체는 설명 문단이며 이번 변경은 검토 출력 기능이다. 비공개 이미지 참조를 외부 접수용 공개 URL로 바꾸지 않았고, 생성 파일을 Hub 접수 가능 HTML로 주장하지 않는다. Supplier Hub 실제 형식 대조 후 외부 이미지 전달 방식과 최종 HTML 생성 경로를 구현해야 한다.
+- 검증: 전체407/407 및 추가 통합 단언 후 관련38/38, TypeScript/ESLint/production build/diff 통과. 옵션별 이미지 순서·제외 옵션·수동 HTML/공란 보존·스크립트 비실행·첨부 누락/경로 차단·대형 반복 내용 제한, Excel 첨부명과 상세 검토 파일의 일치를 확인했다. outputs/quotation-detail-tests.log, quotation-detail-focused.log, quotation-detail-build.log. 브라우저 시각 검증/운영 접수는 미실시.
+- 다음 시작점: 실제 허용1688 수집 공급원, 공식 Excel/전체 카테고리 대조, 외부 접수 이미지 전달/HTML 생성, AI 번역·Supplier Hub 전송 adapter 연결. 전체 자동화 미완성. 유료 호출·운영 등록·Cloudflare 배포 없음.

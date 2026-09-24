@@ -7,6 +7,7 @@ import type { BundleAsset } from '@/app/exports/review-bundle';
 import type { QuotationRowData } from '@/app/exports/quotation-data';
 import type { QuotationExportSource } from '@/app/exports/quotation-source';
 import { ExportSizeError, utf8ByteLength } from '@/app/exports/zip';
+import { quotationDetailPage } from '@/app/exports/quotation-detail';
 import { quotationImageIndex } from '@/app/exports/quotation-image-index';
 
 const MAX_QUOTATION_TEXT_BYTES = 6 * 1024 * 1024;
@@ -100,9 +101,11 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
     warnings: [...new Set(warnings), 'Excel 이미지 셀은 압축 해제한 이미지 파일명과 일치시켰습니다. 실제 Hub 양식과 접수 조건은 별도 확인이 필요합니다.'] };
   const scopeArchive = JSON.stringify({ format: 'sourceflow-quotation-scopes-v1', categoryId: saved.categoryContext.categoryId, saved: saved.savedScopes ?? saved.state });
   const imageIndex = quotationImageIndex(resolved, assets);
-  ensureFieldBudget(document, [rows, overrides], utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex));
+  const detailPage = quotationDetailPage(resolved, assets, saved.content.seo.description.value);
+  ensureFieldBudget(document, [rows, overrides], utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage));
   return { warnings: document.warnings, files: [
     { name: 'quotation-images.html', data: imageIndex },
+    { name: 'quotation-detail.html', data: detailPage },
     { name: 'quotation-saved-scopes.json', data: scopeArchive },
     { name: 'quotation-fields.json', data: JSON.stringify(document) },
     { name: 'quotation-fields.csv', data: quotationCsv(rows) },
