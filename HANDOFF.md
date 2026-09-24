@@ -1201,3 +1201,11 @@ AI등록 화면 확인:
 - 실제 resolver와 같은 검사 결과, 포함/제외 옵션, 수동 권장가, 바코드 오류, 원본 무변경 회귀 검사 추가. 로그 outputs/step84-*.log. 브라우저 다운로드 클릭 및 외부 실연동 검증은 미실시.
 - 다음 시작점: MSRP·OSRP 사용자 확인 후 Hub 이미지/법적정보/물류 대조, 공식Excel과 첨부 이미지 전달 연결. 실제1688 공급원·AI 실호출·전체분류·Supplier Hub 전송 adapter는 미완성. 유료호출·운영등록·Cloudflare배포 없음.
 - 최종 검증: 전체421/421, TypeScript·ESLint·production build·git diff --check 통과. 초기 기존 파일명 충돌을 발견하여 새 검사 파일명을 분리한 후 전체 재검증했다.
+
+## 85. Supplier Hub 업로드 영역별 첨부 준비 — 2026-09-24
+
+- 시작 main63f3da2, 미커밋 변경 없음. Chrome 스킬로 로그인된 Supplier Hub 대량등록 화면 재관찰. Excel/상품이미지/라벨/법적서류 영역, 파일명 일치 요구, 가격/연락처 동의 및 검증 전 상태 확인. 업로드·동의·운영등록 실행 없음.
+- 최종 견적값으로 supplier-hub-upload-plan.json 생성. 포함 옵션의 상품이미지/라벨 영역 분리, 파일별 참조 옵션/필드/순서 기록, 영역 내 중복 제거, 미사용/제외 옵션 이미지 제외, 누락·파일명 충돌·경로 오류 검사. 상품ID/fingerprint 포함. 새 파일도 견적 텍스트6MB 한도에 포함. 기존 입력값과 첨부 파일명은 유지한다.
+- 공식Excel/법적서류/가격·연락처 동의는 미확인으로 표시한다. uploaded=false/submissionReady=false. 실제 브라우저 업로드 실행기와 전송 API adapter는 구현되지 않았다. docs/supplier-hub-upload-plan-2026-09-24.md에 확인/미확인 기록.
+- 다음: 공식 Excel 확보·매핑 대조 및 업로드 실행기 연결. MSRP 동의 이후 개별등록 이미지/법적정보/물류 대조도 남아 있다. 실제1688 공급원·AI 실호출·전체분류·운영접수 미완성. 유료호출·Cloudflare배포 없음.
+- 검증: 관련44/44 및 전체422/422, TypeScript·ESLint·production build·diff 검사 통과. 실제 포함/제외 옵션·수동 공란·중복 참조·경로/파일명 오류·원본 무변경 회귀 검사. outputs/step85-*.log. SourceFlow 브라우저 다운로드 클릭은 미검증.

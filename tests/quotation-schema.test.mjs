@@ -729,3 +729,24 @@ test('downloaded quotation review matches final saved cells and preserves eviden
  const csv=result.files.find(f=>f.name==='submission-review.csv').data;assert.match(csv,/MSRP_EVIDENCE_REVIEW/);assert.match(csv,/오류/);assert.match(csv,/검토/);
  assert.equal(JSON.stringify(saved),before);
 });
+
+test('Hub upload plan splits labels from product images using final included references only',()=>{
+ const input=fixture();input.overrides={common:{labelImages:'owner/main.png'},options:{red:{mainImage:'owner/detail.png',additionalImages:'owner/detail.png\nowner/option.png'}}};
+ input.options.rows.push({...clone(input.options.rows[0]),id:'excluded',included:false});
+ const resolved=model.resolveQuotationFields(input);const before=JSON.stringify(resolved);
+ const assets=[{key:'owner/main.png',name:'assets/main.png'},{key:'owner/option.png',name:'assets/option.png'},{key:'owner/detail.png',name:'assets/detail.png'},{key:'owner/unused',name:'assets/unused.png'}];
+ const plan=load('app/exports/supplier-hub-upload-plan.ts').supplierHubUploadPlan(resolved,assets);
+ assert.deepEqual(clone(plan.labelImages.map(a=>a.filename)),['main.png']);
+ assert.deepEqual(clone(plan.productImages.map(a=>a.filename)),['detail.png','option.png']);
+ assert.equal(plan.productImages[0].references.length,3);
+ assert.equal(plan.productImages.some(a=>a.references.some(r=>r.optionId==='excluded')),false);
+ assert.equal(plan.missingLabels.length,0);assert.equal(plan.uploaded,false);assert.equal(plan.submissionReady,false);
+ assert.equal(plan.agreements.priceData,'unconfirmed');assert.equal(JSON.stringify(resolved),before);
+ input.overrides.options.red.labelImages='';
+ const missing=load('app/exports/supplier-hub-upload-plan.ts').supplierHubUploadPlan(model.resolveQuotationFields(input),assets);
+ assert.equal(missing.labelImages.length,0);assert.equal(missing.missingLabels[0].optionId,'red');
+ const create=load('app/exports/supplier-hub-upload-plan.ts').supplierHubUploadPlan;
+ assert.throws(()=>create(resolved,assets.slice(1)),/누락/);
+ assert.throws(()=>create(resolved,[...assets,{key:'other',name:'assets/MAIN.png'}]),/중복/);
+ assert.throws(()=>create(resolved,[...assets,{key:'other',name:'../escape.png'}]),/경로/);
+});
