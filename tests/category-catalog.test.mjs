@@ -13,6 +13,7 @@ function load(hub = hubObservation) {
   vm.runInNewContext(source, { exports: model, require(name) {
     if (name === '../docs/couplus-category-dom-2026-09-22.json') return observation;
     if (name === '../docs/supplier-hub-category-ids-2026-09-22.json') return hub;
+    if (name === '@/app/category-profiles') { const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/category-profiles.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports }); return exports; }
     throw Error(name);
   } });
   return model;
@@ -169,4 +170,14 @@ test('103495 is reachable by observed breadcrumb without claiming an official te
  for(let depth=0;depth<path.length;depth++)assert.ok(model.categoryLevel(choices,path.slice(0,depth),depth).includes(path[depth]));
  assert.equal(model.canConfirmCategory(leaf),true);assert.equal(model.categoryProfileForChoice(leaf).template,null);
  assert.equal(model.searchCategoryChoices(choices,'103495')[0].categoryId,'103495');
+});
+
+test('invalid legacy saved codes stay visible for repair but cannot confirm category selection', () => {
+  for (const categoryId of ['카테고리', 'a'.repeat(101), '80719/81452']) {
+    const choices = model.categoryChoices([profile('legacy', categoryId, knownPath)]);
+    const saved = choices.find(choice => choice.profileId === 'legacy');
+    assert.ok(saved); assert.equal(model.canConfirmCategory(saved), false);
+    assert.throws(() => model.categoryProfileForChoice(saved));
+    assert.equal(model.categoryAdvancedSeed(saved).profileId, 'legacy');
+  }
 });

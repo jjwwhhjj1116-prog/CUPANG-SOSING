@@ -1,3 +1,4 @@
+import { usableCategoryCode } from '@/app/category-profiles';
 import { NextResponse } from 'next/server';
 import { collectionBlock, parseCollectionRequest, preservedCollectionRequests } from '@/app/sourcing';
 import { enqueueCollection, listCollectionJobs } from '@/db/collection-jobs';
@@ -37,6 +38,7 @@ export async function POST(request: Request) {
     const category=await getCategoryProfile(owner,profileId);
     if(!category)return NextResponse.json({error:'선택한 카테고리 연결을 찾을 수 없습니다.'},{status:404});
     if(category.revision!==expectedProfileRevision)return NextResponse.json({error:'선택한 카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 최신 카테고리를 다시 선택해주세요.',code:'CATEGORY_PROFILE_CHANGED'},{status:409});
+    if(!usableCategoryCode(category.categoryId))return NextResponse.json({error:'선택한 카테고리 번호가 없거나 형식이 올바르지 않습니다. 설정에서 실제 번호를 수정한 뒤 다시 선택해주세요.',code:'CATEGORY_CODE_INVALID'},{status:400});
     const savedSettings=await getSettings(owner);
     const settings=validateSettings(savedSettings?JSON.parse(savedSettings.payload):{});
     const context={category,settings,features,keywords,capturedAt:new Date().toISOString()};

@@ -11,13 +11,14 @@ function load(file, dependencies = {}, mode = 'development') {
   const exports = {};
   vm.runInNewContext(output, { exports, crypto, URL, Response, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in dependencies) return dependencies[name];
+    if (name === '@/app/category-profiles') return load('app/category-profiles.ts');
     if (name === '@/app/workflow') return load('app/workflow.ts');
     if (name === '@/app/sourcing') return load('app/sourcing.ts');
     if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
     if (name === '@/app/pricing') return load('app/pricing.ts');
     if (name === '@/app/chatgpt-auth') return {getChatGPTUser:async()=>null,getWorkspaceOwnerId:async()=>'local-demo'};
     if (name === '@/db/queries') return {getSettings:async()=>null};
-    if (name === '@/db/category-profiles') return {getCategoryProfile:async()=>({id:'12345678-1234-1234-1234-123456789012',revision:1,verification:'draft'})};
+    if (name === '@/db/category-profiles') return {getCategoryProfile:async()=>({id:'12345678-1234-1234-1234-123456789012',revision:1,categoryId:'80719',verification:'draft'})};
     if (name === 'next/server') return { NextResponse: Response };
     throw new Error(`Unexpected dependency: ${name}`);
   } });
@@ -213,4 +214,18 @@ test('context comparison ignores capture time and object key order but reports s
  assert.equal(compare([job],parse(payload),{...context,settings:{...context.settings,exchangeRate:300}})[0].differences[0],'기본설정');
  assert.equal(compare([{...job,context:null}],parse(payload),context)[0].differences[0],'카테고리·기본설정 기록 없음');
  assert.equal(JSON.stringify(job),before);
+});
+
+test('legacy invalid category codes cannot enter collection and fail before reading settings or enqueuing', async () => {
+  let touched = 0;
+  for (const categoryId of ['', '카테고리', '80719/81452', 'a'.repeat(101)]) {
+    const route = load('app/api/collection-jobs/route.ts', {
+      '@/db/category-profiles': { getCategoryProfile: async () => ({ id: payload.profileId, revision: 1, categoryId }) },
+      '@/db/queries': { getSettings: async () => { touched++; } },
+      '@/db/collection-jobs': { enqueueCollection: async () => { touched++; } },
+    });
+    const response = await route.POST(new Request('http://localhost/api/collection-jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }));
+    assert.equal(response.status, 400); assert.equal((await response.json()).code, 'CATEGORY_CODE_INVALID');
+  }
+  assert.equal(touched, 0);
 });

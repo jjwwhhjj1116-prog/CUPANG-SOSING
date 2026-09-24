@@ -273,3 +273,20 @@ test('template start rows preserve legacy defaults and reject invalid persisted 
     assert.throws(() => model.validateCategoryProfile({ ...mapped, template: { ...mapped.template, dataStartRow } }), /입력 시작 행/);
   }
 });
+
+test('invalid legacy category codes remain readable but cannot be saved by POST or PUT', async () => {
+  let writes = 0;
+  const route = load('app/api/category-profiles/route.ts', { '@/db/category-profiles': {
+    createCategoryProfile: async () => { writes++; }, updateCategoryProfile: async () => { writes++; },
+    getCategoryProfile: async () => ({ ...draft, id: 'saved', revision: 1 }),
+  } });
+  for (const categoryId of ['80719/가방', '80719 81452', 'a'.repeat(101), '카테고리']) {
+    const legacy = { ...draft, categoryId };
+    assert.equal(model.validateCategoryProfile(legacy).categoryId, categoryId);
+    assert.ok(model.categoryProfileIssues(legacy).some(value => value.includes('형식 오류')));
+    const created = await route.POST(request(legacy)); assert.equal(created.status, 400);
+    const updated = await route.PUT(request({ id: 'saved', expectedRevision: 1, profile: legacy }, 'PUT')); assert.equal(updated.status, 400);
+  }
+  assert.equal(writes, 0);
+  for (const value of ['', '80719', 'synthetic-category_1', 'a'.repeat(100)]) assert.doesNotThrow(() => model.validateCategoryCodeForSave(value));
+});

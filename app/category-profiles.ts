@@ -561,9 +561,18 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
 }
 
 // This checks a locally configured mapping, not Supplier Hub acceptance.
+/** Same identifier contract as category-scoped quotations; not proof of a Hub code. */
+export function usableCategoryCode(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
+}
+/** Keep legacy records readable; enforce this only when writing a setting. */
+export function validateCategoryCodeForSave(value: string): void {
+  if (value && !usableCategoryCode(value)) throw new Error('카테고리 번호는 영문·숫자·하이픈·밑줄 100자 이하로 입력해주세요. 분류 이름은 카테고리 경로에 입력해주세요.');
+}
 export function categoryProfileIssues(profile: CategoryProfileInput): string[] {
   const issues: string[] = [];
   if (!profile.categoryId) issues.push('Supplier Hub의 실제 카테고리 번호 미확인');
+  else if (!usableCategoryCode(profile.categoryId)) issues.push('카테고리 번호 형식 오류 · 저장 설정에서 번호를 수정해주세요.');
   if (!profile.template) issues.push('카테고리에 맞는 견적서 양식 미연결');
   else if (!profile.mappings.length) issues.push('견적서 열과 상품 자료 연결 필요');
   return issues;
