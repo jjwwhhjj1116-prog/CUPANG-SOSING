@@ -1,6 +1,7 @@
 import { couplus64497Fields, couplus64497Path } from '@/app/couplus-toothbrush-schema';
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema';
+import { couplus103495Fields, couplus103495Path } from '@/app/couplus-marathon-schema';
 import { contentDetailImageKeys, savedTextOrFallback, type ContentField, type ProductContent } from '@/app/product-content';
 import type { ProductOption, ProductOptions } from '@/app/product-options';
 import { calculateOptionPrices, resolveOptionPricePolicy } from '@/app/product-options';
@@ -174,8 +175,8 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...hub.notices.map(item => field(item.id, 'legal', item.label,
       { reviewRequired: true, help: '공식 상품 미리보기의 상품고시 항목입니다. 실제 상품·증빙에 맞게 작성해주세요.' })));
   }
-  const couplusFields = categoryId === '64497' ? couplus64497Fields : categoryId === '77442' ? couplus77442Fields : categoryId === '81452' ? couplus81452Fields : null;
-  const couplusPath = categoryId === '64497' ? couplus64497Path : categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
+  const couplusFields = categoryId === '103495' ? couplus103495Fields : categoryId === '64497' ? couplus64497Fields : categoryId === '77442' ? couplus77442Fields : categoryId === '81452' ? couplus81452Fields : null;
+  const couplusPath = categoryId === '103495' ? couplus103495Path : categoryId === '64497' ? couplus64497Path : categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
   if (couplusFields && !hub) {
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product').map(item => (categoryId === '81452' || categoryId === '64497')
       ? { ...item, ...(item.label === '수납/정리용품 재질' ? { contentField: 'material' as const } : {}), required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : item.id === 'size'
@@ -183,7 +184,7 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
         : 'Supplier Hub 상품정보 화면에서 확인한 항목입니다. 실제 상품값을 입력해주세요.' } : item));
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...couplusFields.filter(item => item.section === 'legal'));
     if (categoryId !== '64497') fields.splice(fields.findIndex(item => item.id === 'kcsCertificationNumber'), 1);
-    if (categoryId === '64497') { const model = fields.findIndex(item => item.id === 'model'); fields[model] = { ...fields[model], required: false }; }
+    if (categoryId === '64497' || categoryId === '103495') { const model = fields.findIndex(item => item.id === 'model'); fields[model] = { ...fields[model], required: false }; }
   }
   const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' || categoryId === '81452' || categoryId === '64497' ? 100 : undefined);
   return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : couplusPath ? [...couplusPath] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
@@ -347,12 +348,12 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { ...literal(pricing?.calculation?.[id], 'pricing'), issues: pricing?.error ? [pricing.error] : !option.included ? ['견적 제외 옵션의 가격은 자동 계산하지 않았습니다.'] : !pricing?.calculation ? ['옵션 가격 계산을 확인해주세요.'] : [] };
       }
       case 'quantity': return literal(option?.unitsPerPack, 'option');
-      case 'color': case 'brace_noticeColor': return option?.provenance.color === 'manual'
+      case 'color': case 'brace_noticeColor': case 'marathon_noticeColor': return option?.provenance.color === 'manual'
         ? { value: option.color ?? '', source: 'option' } : literal(option?.color, 'option');
-      case 'size':
+      case 'size': case 'marathon_noticeSize':
         if (option?.size || option?.provenance.size === 'manual') return { value: option.size ?? '', source: 'option' };
         // 81452 expects a purchasing size (S/Medium/Free), not physical dimensions.
-        if (schema.categoryId === '81452') return literal('', 'empty');
+        if (schema.categoryId === '81452' || schema.categoryId === '103495') return literal('', 'empty');
         return dimensions(option);
       case 'storageMaterial': case 'noticeMaterial': return contentValue(content.label.material);
       case 'mainImage': {
@@ -377,6 +378,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { value, source: (content.label.manufacturer.value && content.label.importer.value) || content.label.manufacturer.provenance === 'manual' || content.label.importer.provenance === 'manual' ? 'content' : value ? 'settings' : 'empty' };
       }
       case 'noticeCountryOfOrigin': return contentValue(content.label.countryOfOrigin);
+      case 'marathon_noticeCaution': return contentValue(content.label.precautions);
       case 'noticePermission': return contentValue(content.label.certification);
       case 'noticeComponents': return contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeReleaseDate': return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null });

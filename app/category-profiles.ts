@@ -2,6 +2,31 @@
 export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
 export const CATEGORY_TEMPLATE_FILE_LIMIT = 5_000_000;
 export const categoryFields = {
+  marathon_sockLength: "마라톤가방: 양말 길이",
+  marathon_totalQuantity: "마라톤가방: 총 수량",
+  marathon_modelNumber: "마라톤가방: 모델명/품번",
+  marathon_colorFamily: "마라톤가방: 패션 의류/잡화 색상계열",
+  marathon_user: "마라톤가방: 사용대상 구분",
+  marathon_waterproof: "마라톤가방: 방수 가능여부",
+  marathon_length: "마라톤가방: 길이",
+  marathon_fastener: "마라톤가방: 잠금/고정방식",
+  marathon_washing: "마라톤가방: 세탁방법",
+  marathon_sockUse: "마라톤가방: 양말 용도",
+  marathon_waterproofGrade: "마라톤가방: 방수 등급",
+  marathon_depth: "마라톤가방: 아이템 깊이",
+  marathon_shortEdge: "마라톤가방: 항목 너비가 짧은 가장자리",
+  marathon_components: "마라톤가방: 포함 구성 요소",
+  marathon_material: "마라톤가방: 상품 재질",
+  marathon_style: "마라톤가방: 스타일",
+  marathon_accuracy: "마라톤가방: 측정 정확도",
+  marathon_strap: "마라톤가방: 스트랩 종류",
+  marathon_capacity: "마라톤가방: 보관 용량",
+  marathon_sections: "마라톤가방: 섹션 수",
+  marathon_gtin: "마라톤가방: Global Trade Item Number",
+  marathon_parentPart: "마라톤가방: Parent Manufacturer Part Number",
+  marathon_part: "마라톤가방: Manufacturer Part Number",
+  marathon_noticeKind: '마라톤가방 고시: 종류', marathon_noticeColor: '마라톤가방 고시: 색상',
+  marathon_noticeSize: '마라톤가방 고시: 크기', marathon_noticeCaution: '마라톤가방 고시: 취급시 주의사항',
   "tooth_paperHolderType": "양치용품정리: 휴지걸이 형태",
   "tooth_lidIncluded": "양치용품정리: 뚜껑 포함여부",
   "tooth_cupMaterial": "양치용품정리: 컵 재질",
@@ -469,7 +494,7 @@ export const categoryFields = {
 } as const;
 export type CategoryField = keyof typeof categoryFields;
 export function categoryFieldScope(field: string): string | null {
-  return field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
+  return field.startsWith('marathon_') ? '103495' : field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
 }
 export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;

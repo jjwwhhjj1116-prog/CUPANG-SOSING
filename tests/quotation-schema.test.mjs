@@ -40,6 +40,42 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('103495 preserves observed marathon form while deriving notices from each option, not saved example values', () => {
+  const input = fixture(); input.categoryId = '103495';
+  const schema = model.getQuotationSchema(input.categoryId);
+  const evidence = JSON.parse(fs.readFileSync(new URL('../docs/couplus-marathon-103495-observation.json', import.meta.url), 'utf8'));
+  const attributes = schema.fields.filter(f => f.visibility !== 'common');
+  assert.deepEqual(clone(schema.categoryPath), evidence.path);
+  assert.equal(schema.status, 'unconfirmed'); assert.equal(schema.submissionReady, false);
+  assert.equal(attributes.length, 26);
+  attributes.forEach((f, i) => {
+    assert.equal(f.label, evidence.attributes[i].label);
+    assert.deepEqual(clone(f.choices?.map(v => v.label) ?? []), evidence.attributes[i].choices);
+  });
+  assert.equal(schema.fields.filter(f => f.id === 'noticeMaterial').length, 1);
+  assert.equal(schema.fields.find(f => f.id === 'model').required, false);
+  input.options.rows[0].color = '그레이'; input.options.rows[0].size = 'Free';
+  input.content.label.precautions.value = '실제 취급 주의사항';
+  let row = model.resolveQuotationFields(input).rows[1].fields;
+  assert.equal(row.marathon_noticeColor.value, '그레이');
+  assert.equal(row.marathon_noticeSize.value, 'Free');
+  assert.equal(row.noticeMaterial.value, '면');
+  assert.equal(row.marathon_noticeCaution.value, '실제 취급 주의사항');
+  assert.equal(row.marathon_noticeKind.value, '');
+  assert.equal(row.marathon_waterproof.value, '');
+  input.options.rows[0].size = ''; input.options.rows[0].color = '';
+  input.options.rows[0].provenance.size = 'manual'; input.options.rows[0].provenance.color = 'manual';
+  row = model.resolveQuotationFields(input).rows[1].fields;
+  assert.equal(row.marathon_noticeColor.value, ''); assert.equal(row.marathon_noticeSize.value, '');
+  assert.equal(row.size.value, '');
+  input.overrides = {common: {marathon_noticeColor: '공통 수정'}, options: {red: {marathon_noticeColor: '개별 수정'}}};
+  assert.equal(model.resolveQuotationFields(input).rows[1].fields.marathon_noticeColor.value, '개별 수정');
+  const profiles = load('app/category-profiles.ts');
+  for (const f of schema.fields.filter(f => f.id.startsWith('marathon_'))) {
+    assert.ok(Object.hasOwn(profiles.categoryFields, f.id));
+  }
+});
+
 test('81452 follows official empty select values, required attributes, option cap, price and barcode rules', () => {
   const input = fixture(); input.categoryId = '81452';
   const schema = model.getQuotationSchema('81452');

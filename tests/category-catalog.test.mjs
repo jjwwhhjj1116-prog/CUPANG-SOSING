@@ -32,7 +32,7 @@ test('hierarchy imports only observed root/child paths with exact order and all 
     if (node.path.length === 1) count += node.children.length;
   }
   assert.equal(count, 173);
-  assert.equal(choices.filter(choice => choice.isLeaf).length, 25);
+  assert.equal(choices.filter(choice => choice.isLeaf).length, 26);
   assert.equal(choices.filter(model.canConfirmCategory).length, model.categoryObservationScope.knownCodes);
   const verified = choices.filter(choice => choice.codeEvidence === 'supplier-hub');
   assert.equal(verified.length, model.categoryObservationScope.supplierHubCodes);
@@ -50,7 +50,7 @@ test('unknown leaves and unobserved branches cannot become 80719 profiles, but o
       assert.deepEqual(plain(choice.path), knownPath);
       const result = partial.categoryProfileForChoice(choice);
       assert.equal(result.categoryId, '80719'); assert.equal(result.template, null); assert.deepEqual(plain(result.mappings), []);
-    } else if (['77442', '81452', '64497'].includes(choice.categoryId)) {
+    } else if (['77442', '81452', '64497', '103495'].includes(choice.categoryId)) {
       assert.equal(partial.canConfirmCategory(choice), true);
       assert.equal(choice.codeEvidence, ['81452','64497'].includes(choice.categoryId) ? 'supplier-hub' : 'couplus');
     } else {
@@ -115,7 +115,7 @@ test('only exact observed leaf paths receive Hub IDs; branches, similar labels a
   const bounded = load({ ...hubObservation, categoryIds: records, verifiedLeafCount: 9999 });
   const choices = bounded.categoryChoices([]);
   assert.equal(bounded.categoryObservationScope.supplierHubCodes, 3);
-  assert.equal(bounded.categoryObservationScope.knownCodes, 5);
+  assert.equal(bounded.categoryObservationScope.knownCodes, 6);
   assert.equal(choices.find(choice => choice.categoryId === '109047').codeEvidence, 'supplier-hub');
   assert.equal(choices.find(choice => choice.categoryId === '80719').codeEvidence, 'couplus');
   assert.equal(choices.find(choice => choice.path.at(-1) === '기타수납/정리용품').categoryId, '');
@@ -160,4 +160,13 @@ test('64497 breadcrumb retains Couplus display with official code evidence and n
  assert.deepEqual(plain(leaf.path),path);assert.equal(leaf.codeEvidence,'supplier-hub');assert.equal(leaf.templateLinked,false);
  for(let index=0;index<path.length;index++)assert.ok(model.categoryLevel(choices,path.slice(0,index),index).includes(path[index]));
  assert.equal(model.canConfirmCategory(leaf),true);assert.equal(model.categoryProfileForChoice(leaf).template,null);
+});
+
+test('103495 is reachable by observed breadcrumb without claiming an official template',()=>{
+ const choices=model.categoryChoices([]);const leaf=choices.find(choice=>choice.categoryId==='103495');
+ const path=['스포츠/레져','기타스포츠','육상/체조','마라톤가방'];
+ assert.deepEqual(plain(leaf.path),path);assert.equal(leaf.codeEvidence,'couplus');assert.equal(leaf.templateLinked,false);
+ for(let depth=0;depth<path.length;depth++)assert.ok(model.categoryLevel(choices,path.slice(0,depth),depth).includes(path[depth]));
+ assert.equal(model.canConfirmCategory(leaf),true);assert.equal(model.categoryProfileForChoice(leaf).template,null);
+ assert.equal(model.searchCategoryChoices(choices,'103495')[0].categoryId,'103495');
 });
