@@ -14,6 +14,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [ruleReport, setRuleReport] = useState<string[]>([]);
+  const [serverRevision, setServerRevision] = useState<number | null>(null);
   const job = jobs.find(item => item.id === jobId);
   const row = view.resolved.rows.find(item => item.optionId === optionId);
   const fields = view.resolved.schema.fields.filter(field => !field.readOnly && ['text', 'textarea'].includes(field.type));
@@ -61,6 +62,31 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '규칙 불러오기 실패'); }
     finally { setLoading(false); }
   }
+  async function serverRules(save: boolean) {
+    if (!job || disabled || loading || !view.resolved.schema.categoryId) return;
+    setLoading(true); setRuleReport([]);
+    try {
+      const endpoint = '/api/quotation-attribute-rules';
+      let response: Response;
+      if (save) {
+        if (serverRevision === null) throw new Error('먼저 서버 규칙을 불러와주세요.');
+        const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
+        const rules = createAttributeRules(productId, view, job, optionId, selected);
+        response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules, expectedRevision: serverRevision }) });
+      } else response = await fetch(`${endpoint}?categoryId=${encodeURIComponent(view.resolved.schema.categoryId)}`, { cache: 'no-store' });
+      const body = await response.json() as { error?: string; revision: number; rules: unknown };
+      if (!response.ok) { if (response.status === 409) setServerRevision(null); throw new Error(body.error || '서버 규칙 처리 실패'); }
+      setServerRevision(body.revision);
+      if (save) setMessage(`카테고리 연결 규칙 v${body.revision}을 서버에 저장했습니다. 상품값은 변경하지 않았습니다.`);
+      else if (!body.rules) setMessage('저장된 서버 규칙이 없습니다. 연결 항목을 선택한 뒤 서버에 저장할 수 있습니다.');
+      else {
+        const result = loadAttributeRules(JSON.stringify(body.rules), productId, view, job, optionId);
+        setMapping(Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId]))); setRuleReport(result.skipped);
+        setMessage(`서버 규칙 v${body.revision}에서 ${result.mappings.length}개 연결을 선택했습니다. 변경 전·후 값을 검토해주세요.`);
+      }
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : '서버 규칙 처리 실패'); }
+    finally { setLoading(false); }
+  }
   return <details className="panel-stack"><summary>번역한 상품 속성을 견적 항목에 연결</summary>
     <p>대상: {row?.optionLabel ?? '옵션 미선택'} · {view.resolved.schema.categoryPath.join(' > ')}. 연결할 항목과 변경 전·후 값을 확인해주세요. 기존 직접 수정값은 보존합니다.</p>
     <button type="button" className="btn ghost" disabled={disabled || loading} onClick={() => void load()}>완료된 속성 번역 불러오기 · 무료 조회</button>
@@ -71,7 +97,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
         {jobs.map(item => <option key={item.id} value={item.id}>{item.result?.generatedAt} · {item.id}</option>)}
       </select></label>}
       {job && attributes.length === 0 && <p>이 결과에는 수집 상품 속성 번역이 없습니다. 옵션 번역은 옵션 편집 기능에서 반영해주세요.</p>}
-      {attributes.length > 0 && <div><button type="button" className="btn ghost" disabled={!Object.values(mapping).some(Boolean)} onClick={downloadRules}>선택한 연결 규칙 파일 저장</button><label>같은 카테고리 연결 규칙 불러오기 · 현재 선택 교체<input type="file" accept=".json,application/json" onChange={event=>{const file=event.target.files?.[0];event.target.value='';void importRules(file);}} /></label><small>원문 속성명이 정확히 같은 경우에만 연결을 선택합니다. 서버에 규칙을 저장하거나 견적을 자동 확정하지 않습니다.</small></div>}
+      {attributes.length > 0 && <div><button type="button" className="btn ghost" onClick={()=>void serverRules(false)}>이 카테고리 서버 규칙 불러오기 · 현재 선택 교체</button><button type="button" className="btn ghost" disabled={serverRevision===null || !Object.values(mapping).some(Boolean)} onClick={()=>void serverRules(true)}>선택한 연결로 서버 규칙 저장{serverRevision===null?'':` · v${serverRevision}`}</button><button type="button" className="btn ghost" disabled={!Object.values(mapping).some(Boolean)} onClick={downloadRules}>선택한 연결 규칙 파일 저장</button><label>같은 카테고리 연결 규칙 불러오기 · 현재 선택 교체<input type="file" accept=".json,application/json" onChange={event=>{const file=event.target.files?.[0];event.target.value='';void importRules(file);}} /></label><small>원문 속성명이 정확히 같은 경우에만 연결을 선택합니다. 규칙 저장·불러오기는 상품값이나 견적을 자동 확정하지 않습니다.</small></div>}
       {attributes.map(attribute => <div key={attribute.sourceIndex}>
         <strong>{attribute.name}</strong><p style={{ whiteSpace: 'pre-wrap' }}>원문: {job!.review.source.attributes[attribute.sourceIndex].value}</p>
         <p style={{ whiteSpace: 'pre-wrap' }}>번역값: {attribute.value}</p>
