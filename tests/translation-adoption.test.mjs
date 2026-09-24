@@ -64,3 +64,25 @@ test('label mapping only accepts unique nonempty seller attribute translations a
  job.result.draft.attributes[0].value=' ';assert.throws(()=>translationLabelAdoption(content,job,'v',mapping));
  job.result.draft.attributes[0].value='x'.repeat(2001);assert.throws(()=>translationLabelAdoption(content,job,'v',mapping));assert.equal(content.label.material.value,'原料');
 });
+
+const {suggestTranslationLabels}=load('app/translation-label-adoption.ts');
+test('label suggestions select exact translated field names only without writing or inferring synonyms',()=>{
+ const {content,job}=labelFixture();const before=JSON.stringify({content,job});
+ let result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings.length,1);assert.equal(result.mappings[0].field,'material');assert.equal(result.mappings[0].sourceIndex,0);
+ assert.equal(JSON.stringify({content,job}),before);
+ job.result.draft.attributes[1].name=' 제품 구성품 ';result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings.length,2);
+ const input=translationLabelAdoption(content,job,'v',result.mappings).input;assert.equal(input.patch.label.components,'2개');
+ job.result.draft.attributes[0].name='겉감 재질';result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings.length,1);assert.equal(result.mappings[0].field,'components');
+});
+test('label suggestions leave duplicate names and manual fields unselected and report why',()=>{
+ const {content,job}=labelFixture();job.result.draft.attributes[1].name='재질';
+ let result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings.length,0);assert.match(result.skipped[0],/여러 개/);
+ job.result.draft.attributes[1].name='제품 구성품';content.label.material={value:'',provenance:'manual',updatedAt:'now'};
+ result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings.length,1);assert.equal(result.mappings[0].field,'components');assert.match(result.skipped[0],/직접 수정/);
+});
+test('label suggestions reject stale, incomplete, option-bound or invalid results without selecting unsafe values',()=>{
+ const {content,job}=labelFixture();
+ for(const change of [{productVersion:'other'},{productId:'other'},{status:'running'},{result:null}])assert.equal(suggestTranslationLabels(content,{...job,...change},'v').mappings.length,0);
+ job.review.source.attributes[0].name='option:size';assert.equal(suggestTranslationLabels(content,job,'v').mappings.length,0);
+ job.review.source.attributes[0].name='상품속성: 材质';job.result.draft.attributes[0].value=' ';assert.equal(suggestTranslationLabels(content,job,'v').mappings.length,0);
+});

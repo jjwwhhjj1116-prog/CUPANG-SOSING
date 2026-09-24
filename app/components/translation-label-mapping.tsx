@@ -2,13 +2,14 @@
 import { useState } from 'react';
 import type { TranslationJob } from '@/app/automation/translation';
 import { labelFields, type LabelField, type ProductContent } from '@/app/product-content';
-import { translationLabelAdoption, type TranslationLabelMapping } from '@/app/translation-label-adoption';
+import { suggestTranslationLabels, translationLabelAdoption, type TranslationLabelMapping } from '@/app/translation-label-adoption';
 
 export function TranslationLabelMappingEditor({ content, job, version, disabled, onApply }: {
   content: ProductContent; job: TranslationJob; version: string; disabled: boolean;
   onApply: (mappings: TranslationLabelMapping[]) => void;
 }) {
-  const [mapping, setMapping] = useState<Record<number, LabelField | ''>>({});
+  const [suggestions] = useState(() => suggestTranslationLabels(content, job, version));
+  const [mapping, setMapping] = useState<Record<number, LabelField | ''>>(() => Object.fromEntries(suggestions.mappings.map(item => [item.sourceIndex, item.field])));
   const attributes = job.result?.draft.attributes.filter(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: ')) ?? [];
   if (!attributes.length) return null;
   const selected = Object.entries(mapping).filter(([, field]) => field).map(([index, field]) => ({ sourceIndex: Number(index), field: field as LabelField }));
@@ -19,6 +20,8 @@ export function TranslationLabelMappingEditor({ content, job, version, disabled,
   }
   return <details className="panel-stack"><summary>번역한 상품 속성을 한글 표시사항에 연결</summary>
     <p>원문과 번역값을 확인하고 연결할 항목을 선택하세요. 직접 수정한 값과 공란은 보존합니다. 이 작업은 추가 AI 호출 없이 저장된 번역을 사용합니다.</p>
+    <p>표시사항 이름과 정확히 같은 번역 항목 {suggestions.mappings.length}개를 자동 연결했습니다. 이름이 다르거나 중복되면 직접 선택해주세요. 아래 값은 저장 버튼을 눌러야 반영됩니다.</p>
+    {suggestions.skipped.length > 0 && <details><summary>자동 연결에서 제외된 항목</summary><ul>{suggestions.skipped.map((message,index) => <li key={index}>{message}</li>)}</ul></details>}
     <fieldset disabled={disabled}>
       {attributes.map(attribute => <label key={attribute.sourceIndex}>
         {attribute.name} · {attribute.value}

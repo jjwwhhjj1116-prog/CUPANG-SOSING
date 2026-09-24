@@ -2,6 +2,23 @@ import { labelFields, validateContentInput, type LabelField, type ProductContent
 import type { TranslationJob } from '@/app/automation/translation';
 
 export type TranslationLabelMapping = { sourceIndex: number; field: LabelField };
+/** Suggest only exact translated display names. Ambiguous names never choose a winner. */
+export function suggestTranslationLabels(content: ProductContent, job: TranslationJob, productVersion: string) {
+  const mappings: TranslationLabelMapping[] = [];
+  const skipped: string[] = [];
+  const attributes = job.result?.draft.attributes ?? [];
+  for (const field of Object.keys(labelFields) as LabelField[]) {
+    const candidates = attributes.filter(attribute => attribute.name.trim() === labelFields[field]);
+    if (!candidates.length) continue;
+    if (candidates.length !== 1) { skipped.push(`${labelFields[field]}: 같은 번역 항목명이 여러 개여서 자동 연결하지 않았습니다.`); continue; }
+    const mapping = { sourceIndex: candidates[0].sourceIndex, field };
+    try {
+      translationLabelAdoption(content, job, productVersion, [mapping]);
+      mappings.push(mapping);
+    } catch (cause) { skipped.push(`${labelFields[field]}: ${cause instanceof Error ? cause.message : '자동 연결 불가'}`); }
+  }
+  return { mappings, skipped };
+}
 /** Explicit reviewed connections only. Manual values, including blanks, are protected. */
 export function translationLabelAdoption(content: ProductContent, job: TranslationJob, productVersion: string, mappings: readonly TranslationLabelMapping[]) {
   if (job.productId !== content.productId || job.productVersion !== productVersion || job.status !== 'completed' || !job.result) throw Error('현재 상품의 완료된 번역 결과를 선택해주세요.');
