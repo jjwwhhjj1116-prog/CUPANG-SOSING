@@ -18,7 +18,7 @@ function harness(handler,status='completed',failInitial=false){
  let initial=0;
  const fetcher=async(url,init)=>{if(initial<2){initial++;return failInitial?Response.json({error:'초기 조회 실패'},{status:503}):Response.json(url.endsWith('/translation')?view:{content});}calls.push({url,init});return handler(url,init,{content,job,view});};
  const exports={};const file='app/components/translation-panel.tsx';
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,crypto,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/option-translation')return{optionTranslationAttributes:()=>[],adoptOptionTranslations:()=>({rows:[],changed:1})};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,crypto,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationAttributes:()=>[],adoptOptionTranslations:()=>({rows:[],changed:1})};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
  const render=()=>{index=0;const wrapper=exports.default({productId:'p',version:'v',title:'원문',onContentSaved(){saved++;}});const tree=wrapper.type(wrapper.props);first=false;return tree;};
  const buttons=()=>nodes(render()).filter(n=>n.type==='button');
  render();effects.forEach(fn=>cleanup.push(fn()));
@@ -73,4 +73,13 @@ test('refresh recovers initial failure and partial failures preserve the prior j
 
 test('refresh shares request lock and closing ignores both late state reads',async()=>{
  const pending=deferred();const h=harness(()=>pending.promise);await settle();const click=h.button(refresh);click();click();h.button(prepare)();assert.equal(h.calls.length,2);h.close();assert.ok(h.calls.every(c=>c.init.signal.aborted));pending.resolve(Response.json({jobs:[],configuration:{},content:{revision:2}}));await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
+});
+
+
+test('reviewed label adoption shares the save lock and ignores responses after closing',async()=>{
+ const pending=deferred();const h=harness(()=>pending.promise);await settle();
+ const editor=nodes(h.render()).find(n=>typeof n.type==='function'&&n.props?.onApply&&n.props?.content);assert.ok(editor);
+ const selected=[{sourceIndex:0,field:'material'}];editor.props.onApply(selected);editor.props.onApply(selected);h.button(collect)();
+ assert.equal(h.calls.length,1);assert.equal(h.calls[0].init.method,'PATCH');assert.equal(JSON.parse(h.calls[0].init.body).patch,'labels');
+ h.close();pending.resolve(Response.json({content:{revision:2}}));await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
 });

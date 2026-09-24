@@ -34,3 +34,33 @@ test('all fields and single fields use the same content validation; invalid outp
  assert.throws(()=>translationAdoptionInput(content,job,'v',['title','description']));
  assert.equal(content.seo.title.value,'수동 제목');
 });
+
+const {translationLabelAdoption}=load('app/translation-label-adoption.ts');
+function labelFixture(){
+ const content=emptyProductContent('p');
+ content.label.material={value:'原料',provenance:'collected',updatedAt:'before'};
+ const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 材质',value:'棉'},{name:'상품속성: 内容',value:'2个'}]}},result:{draft:{attributes:[{sourceIndex:0,name:'재질',value:'면'},{sourceIndex:1,name:'구성',value:'2개'}]}}};
+ return {content,job};
+}
+test('reviewed collected attributes save label fields together with current CAS and preserve unrelated content',()=>{
+ const {content,job}=labelFixture();const before=JSON.stringify({content,job});
+ const plan=translationLabelAdoption(content,job,'v',[{sourceIndex:0,field:'material'},{sourceIndex:1,field:'components'}]);
+ assert.equal(plan.preview[0].before,'原料');assert.equal(plan.preview[0].after,'면');assert.equal(plan.input.expectedRevision,content.revision);
+ const next=applyContentPatch(content,plan.input.patch,'after');assert.equal(next.label.material.value,'면');assert.equal(next.label.components.value,'2개');assert.equal(next.label.material.provenance,'manual');
+ assert.equal(JSON.stringify(next.seo),JSON.stringify(content.seo));assert.equal(JSON.stringify(next.assets),JSON.stringify(content.assets));assert.equal(JSON.stringify({content,job}),before);
+ content.revision=8;assert.equal(translationLabelAdoption(content,job,'v',[{sourceIndex:0,field:'material'}]).input.expectedRevision,8);
+});
+test('label mapping protects manually edited values and blanks and rejects stale products or ambiguous destinations',()=>{
+ const {content,job}=labelFixture();const mapping=[{sourceIndex:0,field:'material'}];
+ for(const value of ['직접 재질','']){content.label.material={value,provenance:'manual',updatedAt:'now'};assert.throws(()=>translationLabelAdoption(content,job,'v',mapping),/직접 수정/);}
+ content.label.material.provenance='collected';
+ for(const changes of [{productId:'other'},{productVersion:'old'},{status:'running'},{result:null}])assert.throws(()=>translationLabelAdoption(content,{...job,...changes},'v',mapping));
+ for(const maps of [[],[...mapping,...mapping],[{sourceIndex:0,field:'material'},{sourceIndex:1,field:'material'}],[{sourceIndex:0,field:'material'},{sourceIndex:0,field:'components'}],[{sourceIndex:0,field:'__proto__'}],[{sourceIndex:-1,field:'material'}]])assert.throws(()=>translationLabelAdoption(content,job,'v',maps));
+});
+test('label mapping only accepts unique nonempty seller attribute translations and validates full patch atomically',()=>{
+ const {content,job}=labelFixture();const mapping=[{sourceIndex:0,field:'material'}];
+ job.review.source.attributes[0].name='옵션: option-name';assert.throws(()=>translationLabelAdoption(content,job,'v',mapping));job.review.source.attributes[0].name='상품속성: 材质';
+ job.result.draft.attributes.push({...job.result.draft.attributes[0]});assert.throws(()=>translationLabelAdoption(content,job,'v',mapping));job.result.draft.attributes.pop();
+ job.result.draft.attributes[0].value=' ';assert.throws(()=>translationLabelAdoption(content,job,'v',mapping));
+ job.result.draft.attributes[0].value='x'.repeat(2001);assert.throws(()=>translationLabelAdoption(content,job,'v',mapping));assert.equal(content.label.material.value,'原料');
+});

@@ -1202,3 +1202,14 @@ test('80719 product weight follows saved selling-unit weight without inventing p
  input.options.rows[0].provenance.weightKg='unverified';assert.equal(model.resolveQuotationFields(input).rows[1].fields.weight.source,'couplus-default');
  input.categoryId='81452';resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.packagedWeightG.value,'');assert.equal(resolved.rows[1].fields.brace_noticeSizeWeight.value,input.content.label.dimensions.value);
 });
+
+test('reviewed label translations flow to quotation, label document and export while quotation overrides win',()=>{
+ const input=fixture();input.content=contentModel.emptyProductContent('p1');
+ const job={productId:'p1',productVersion:input.product.updated_at,status:'completed',review:{source:{attributes:[{name:'상품속성: 材质',value:'棉'}]}},result:{draft:{attributes:[{sourceIndex:0,name:'재질',value:'면'}]}}};
+ const plan=load('app/translation-label-adoption.ts').translationLabelAdoption(input.content,job,input.product.updated_at,[{sourceIndex:0,field:'material'}]);
+ input.content=contentModel.applyContentPatch(input.content,plan.input.patch,'now');
+ const resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.noticeMaterial.value,'면');assert.equal(resolved.rows[1].fields.noticeMaterial.source,'content');
+ const doc=load('app/document-image.ts').documentImagePlan('label',input.content,{productId:'p1'});assert.equal(doc.rows.find(row=>row[0]==='재질')[1],'면');
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].noticeMaterial,'면');
+ input.overrides={common:{noticeMaterial:'견적 수동값'},options:{}};assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeMaterial.value,'견적 수동값');
+});

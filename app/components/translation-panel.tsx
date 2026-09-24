@@ -7,6 +7,8 @@ import type { ProductOptionsResponse } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
 import { translationAdoptionInput, translationSeoFields, type TranslationSeoField } from '@/app/translation-adoption';
 import { collectedTranslationAttributes } from '@/app/collected-translation-attributes';
+import { translationLabelAdoption, type TranslationLabelMapping } from '@/app/translation-label-adoption';
+import { TranslationLabelMappingEditor } from '@/app/components/translation-label-mapping';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
@@ -151,13 +153,13 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     void action({ action: 'prepare', expectedVersion: version, idempotencyKey: crypto.randomUUID(),
       source: { title: sourceTitle, description, attributes: pairs, provenance: 'manual', reference: sourceReference, ...(includeGuidance&&(guidance.features.trim()||guidance.keywords.trim())?{guidance}:{}) } });
   }
-  async function adopt(fields: readonly TranslationSeoField[]) {
+  async function adopt(fields: readonly TranslationSeoField[], labels?: readonly TranslationLabelMapping[]) {
     if (!content || !job?.result) return;
     const controller=beginRequest();if(!controller)return;
     setBusy(true); setError(''); setNotice('');
     try {
       const response = await fetch(`/api/products/${productId}/content`, { signal:controller.signal, method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(translationAdoptionInput(content, job, version, fields)) });
+        body: JSON.stringify(labels ? translationLabelAdoption(content, job, version, labels).input : translationAdoptionInput(content, job, version, fields)) });
       const value = await response.json() as { content?: ProductContent; error?: string };if(controller.signal.aborted)return;
       if (!response.ok || !value.content) throw Error(value.error ?? '초안을 적용하지 못했습니다.');
       setContent(value.content); setSelectedFields([]); setNotice('선택한 항목을 함께 저장했습니다. 선택하지 않은 편집 항목은 보존했습니다.'); onContentSaved?.();
@@ -197,6 +199,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
           {job.result.draft.warnings.length > 0 && <ul>{job.result.draft.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
           {translationSeoFields.map(field => <div key={field} className="translation-field"><label><input type="checkbox" checked={selectedFields.includes(field)} disabled={busy || !content || job.productVersion !== version} onChange={event => setSelectedFields(previous => event.target.checked ? [...previous, field] : previous.filter(item => item !== field))} />함께 저장할 항목 선택</label><strong>{field === 'title' ? '한국어 상품명' : field === 'keywords' ? 'SEO 검색어' : '한국어 설명'}</strong><pre>{Array.isArray(job.result!.draft[field]) ? (job.result!.draft[field] as string[]).join(', ') : job.result!.draft[field]}</pre><details><summary>현재 저장된 내용과 비교</summary><pre>{content ? JSON.stringify(content.seo[field].value, null, 2) : '불러오지 못함'}</pre></details><button className="btn" type="button" disabled={busy || !content || job.productVersion !== version} onClick={() => void adopt([field])}>검토한 초안을 이 항목에 적용 · 기존 내용 교체</button></div>)}
           <button className="btn blue" type="button" disabled={busy || !content || !selectedFields.length || job.productVersion !== version} onClick={() => void adopt(selectedFields)}>검토한 {selectedFields.length}개 항목 함께 저장 · 선택한 기존 내용 교체</button>
+          {content && <TranslationLabelMappingEditor key={`${job.id}:${content.revision}`} content={content} job={job} version={version} disabled={busy || job.productVersion !== version} onApply={mappings => void adopt([], mappings)} />}
           {job.result.draft.attributes.length > 0 && <details><summary>번역된 속성·옵션 확인</summary><ul>{job.result.draft.attributes.map(attribute => <li key={attribute.sourceIndex}>{attribute.name}: {attribute.value}</li>)}</ul><button className="btn" type="button" disabled={busy || job.productVersion !== version} onClick={()=>void adoptOptions()}>검토한 옵션 번역 적용 · 미번역 이름·수집 속성</button></details>}
         </>}
       </div>}
