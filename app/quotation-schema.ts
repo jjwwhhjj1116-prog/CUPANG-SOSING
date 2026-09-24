@@ -157,7 +157,7 @@ function dimensionBinding(item: QuotationField): QuotationField {
 
 export function getQuotationSchema(categoryId: string | null, categoryPath: readonly string[] = []): QuotationSchema {
   const hub = categoryId && Object.hasOwn(hubProductSchemas, categoryId) ? hubProductSchemas[categoryId] : undefined;
-  const observed = Boolean(hub) || categoryId === '80719' || categoryId === '81452' || categoryId === '64497' || categoryId === '103495';
+  const observed = Boolean(hub) || categoryId === '80719' || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || categoryId === '77442';
   const fields = commonFields.map(item => observed && ['supplyPrice', 'salePrice', 'searchTags'].includes(item.id)
     ? { ...item, required: item.id !== 'searchTags' }
     : observed && item.id === 'barcode' ? { ...item, help: '실제 바코드 입력 방식에서는 6~14자의 영문 대문자·숫자·하이픈·공백을 사용합니다. 앞뒤 공백과 연속 공백은 허용되지 않습니다.' } : item);
@@ -178,7 +178,7 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
   const couplusFields = categoryId === '103495' ? couplus103495Fields : categoryId === '64497' ? couplus64497Fields : categoryId === '77442' ? couplus77442Fields : categoryId === '81452' ? couplus81452Fields : null;
   const couplusPath = categoryId === '103495' ? couplus103495Path : categoryId === '64497' ? couplus64497Path : categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
   if (couplusFields && !hub) {
-    fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product').map(item => (categoryId === '81452' || categoryId === '64497' || categoryId === '103495')
+    fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product').map(item => (categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || categoryId === '77442')
       ? { ...item, ...(item.label === '수납/정리용품 재질' ? { contentField: 'material' as const } : {}), required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : item.id === 'size'
         ? '공식 입력 예시: S, Medium, Free, 대, one size 등. 구매 옵션의 사이즈를 입력해주세요. 크기·중량 표시사항과 별도로 관리합니다.'
         : 'Supplier Hub 상품정보 화면에서 확인한 항목입니다. 실제 상품값을 입력해주세요.' } : item));
@@ -186,16 +186,16 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     if (categoryId !== '64497') fields.splice(fields.findIndex(item => item.id === 'kcsCertificationNumber'), 1);
     if (categoryId === '64497' || categoryId === '103495') { const model = fields.findIndex(item => item.id === 'model'); fields[model] = { ...fields[model], required: false }; }
   }
-  const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' ? 100 : undefined);
+  const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || categoryId === '77442' ? 100 : undefined);
   return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : couplusPath ? [...couplusPath] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
-    status: observed ? 'observed' : 'unconfirmed', evidence: categoryId === '103495' ? '103495 코드·경로·노출 속성 3개·비노출 속성 23개·선택값·필수 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 9개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '64497' ? '64497 코드·경로·노출 속성 2개·비노출 속성 33개·선택값·필수 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 5개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '81452' ? '81452 코드·경로·상품정보 필수 항목·선택값·옵션 100개 한도는 Supplier Hub에서 대조했습니다. 상품고시는 쿠플러스 관찰 기준이며 이미지·인증·물류·최종 접수는 미검증입니다.' : observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : couplusFields ? '쿠플러스 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
+    status: observed ? 'observed' : 'unconfirmed', evidence: categoryId === '77442' ? '77442 코드·경로·노출 속성 2개·비노출 속성 16개·선택값·필수 모델명과 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 5개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '103495' ? '103495 코드·경로·노출 속성 3개·비노출 속성 23개·선택값·필수 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 9개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '64497' ? '64497 코드·경로·노출 속성 2개·비노출 속성 33개·선택값·필수 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 5개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '81452' ? '81452 코드·경로·상품정보 필수 항목·선택값·옵션 100개 한도는 Supplier Hub에서 대조했습니다. 상품고시는 쿠플러스 관찰 기준이며 이미지·인증·물류·최종 접수는 미검증입니다.' : observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : couplusFields ? '쿠플러스 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
     fields: structuredClone(observed ? fields.map(dimensionBinding) : fields), submissionReady: false, ...(maxIncludedOptions ? { maxIncludedOptions } : {}),
-    ...(hub?.salePriceMustCoverSupply || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' ? { salePriceMustCoverSupply: true } : {}) };
+    ...(hub?.salePriceMustCoverSupply || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || categoryId === '77442' ? { salePriceMustCoverSupply: true } : {}) };
 }
 export function emptyQuotationOverrides(): QuotationOverrides { return { common: {}, options: {} }; }
 
 export function quotationBarcodeIssues(categoryId: string | null, mode: string, value: string): string[] {
-  if (((!categoryId || !Object.hasOwn(hubProductSchemas, categoryId)) && categoryId !== '80719' && categoryId !== '81452' && categoryId !== '64497' && categoryId !== '103495') || mode !== 'existing' || !value.trim()) return [];
+  if (((!categoryId || !Object.hasOwn(hubProductSchemas, categoryId)) && categoryId !== '80719' && categoryId !== '81452' && categoryId !== '64497' && categoryId !== '103495' && categoryId !== '77442') || mode !== 'existing' || !value.trim()) return [];
   const issues: string[] = [];
   if (!/^[A-Z0-9 -]{6,14}$/.test(value)) issues.push('실제 바코드는 6~14자의 영문 대문자·숫자·하이픈·공백만 사용할 수 있습니다.');
   if (/^ | $| {2}/.test(value)) issues.push('실제 바코드의 앞뒤 공백과 연속 공백은 허용되지 않습니다.');
@@ -257,7 +257,7 @@ export function validateQuotationChanges(input: unknown, context: { schema: Quot
     return { fieldKey: item.fieldKey, optionId: item.optionId, value: item.value };
   });
   const barcodeChanges = changes.filter(change => change.fieldKey === 'barcode' || change.fieldKey === 'barcodeMode');
-  if (barcodeChanges.length && ['80719', '81452', '64497', '103495'].includes(context.schema.categoryId ?? '')) {
+  if (barcodeChanges.length && ['80719', '81452', '64497', '103495', '77442'].includes(context.schema.categoryId ?? '')) {
     const next = applyQuotationChanges(context.overrides ?? emptyQuotationOverrides(), changes);
     const targets = barcodeChanges.some(change => change.optionId === null) ? [null, ...context.optionIds] : [...new Set(barcodeChanges.map(change => change.optionId))];
     for (const optionId of targets) {

@@ -40,6 +40,25 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('77442 official choices, required model, option rules and dimension bindings preserve manual edits', () => {
+ const input=fixture();input.categoryId='77442';const schema=model.getQuotationSchema('77442');
+ const evidence=JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-77442-product-2026-09-24.json',import.meta.url),'utf8'));
+ const selects=schema.fields.filter(f=>f.id.startsWith('board_')&&f.type==='select');
+ assert.equal(selects.length,7);selects.forEach((f,i)=>assert.deepEqual(clone(f.choices),evidence.selects[i]));
+ evidence.required.forEach(id=>assert.equal(schema.fields.find(f=>f.id===id).required,true));
+ assert.equal(schema.fields.find(f=>f.id==='searchTags').required,false);
+ assert.equal(model.quotationOptionLimitIssue(schema,100),null);assert.match(model.quotationOptionLimitIssue(schema,101),/100/);
+ assert.ok(model.quotationPriceIssues(schema,'5000','4999').length);
+ assert.throws(()=>model.validateQuotationChanges([change('barcodeMode','existing'),change('barcode','bad')],context(input)),/바코드/);
+ let fields=model.resolveQuotationFields(input).rows[1].fields;
+ assert.equal(fields.board_width.value,'20 cm');assert.equal(fields.board_length.value,'30 cm');
+ input.options.rows[0].widthCm=null;input.options.rows[0].provenance.widthCm='manual';
+ fields=model.resolveQuotationFields(input).rows[1].fields;assert.equal(fields.board_width.value,'');
+ input.overrides={common:{board_width:'40cm',board_magnetic:'해당사항없음'},options:{red:{board_width:'25cm'}}};
+ fields=model.resolveQuotationFields(input).rows[1].fields;
+ assert.equal(fields.board_width.value,'25cm');assert.equal(fields.board_magnetic.value,'해당사항없음');assert.ok(fields.board_magnetic.validationIssues.length);
+});
+
 test('103495 official form rules validate choices, required options, prices and barcode without certifying submission', () => {
   const input = fixture(); input.categoryId = '103495';
   const schema = model.getQuotationSchema(input.categoryId);
@@ -529,16 +548,16 @@ test('80719 warns above 100 included options while preserving all 200 local rows
   assert.equal(resolved.schema.maxIncludedOptions, undefined); assert.ok(!resolved.issues.some(issue => issue.includes('한도를 초과')));
 });
 
-test('77442 uses observed Couplus board fields without claiming official verification or copying saved product values',()=>{
+test('77442 uses officially cross-checked board fields without copying saved product values',()=>{
  const input=fixture();input.categoryId='77442';const schema=model.getQuotationSchema('77442');
- assert.equal(schema.status,'unconfirmed');assert.equal(schema.submissionReady,false);
+ assert.equal(schema.status,'observed');assert.equal(schema.submissionReady,false);
  assert.deepEqual(clone(schema.categoryPath),['완구/취미','보드게임','바둑/체스/윷놀이','바둑','바둑알+바둑판']);
  assert.equal(schema.fields.filter(f=>f.visibility==='exposed').length,2);
  assert.equal(schema.fields.filter(f=>f.visibility==='hidden').length,16);
  assert.equal(schema.fields.filter(f=>f.id.startsWith('notice')).length,5);
  assert.equal(schema.fields.some(f=>f.id==='kcsCertificationNumber'),false);
  const row=model.resolveQuotationFields(input).rows[1];
- for(const id of ['board_magnetic','board_width','noticePermission','packagedWeightG','packagedDimensionsMm','taxType'])assert.equal(row.fields[id].value,'');
+ for(const id of ['board_magnetic','noticePermission','packagedWeightG','packagedDimensionsMm','taxType'])assert.equal(row.fields[id].value,'');
  assert.equal(row.fields.title.value,'번역된 가방');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
  input.overrides={common:{board_magnetic:'자석부착가능',noticePermission:'확인된 증빙'},options:{}};
  assert.equal(model.resolveQuotationFields(input).rows[1].fields.board_magnetic.value,'자석부착가능');
@@ -547,7 +566,7 @@ test('77442 uses observed Couplus board fields without claiming official verific
 });
 test('77442 schema clones choices so one form cannot alter future category forms',()=>{
  const first=model.getQuotationSchema('77442');first.fields.find(f=>f.id==='board_magnetic').choices[0].label='변경';
- assert.equal(model.getQuotationSchema('77442').fields.find(f=>f.id==='board_magnetic').choices[0].label,'해당사항없음');
+ assert.equal(model.getQuotationSchema('77442').fields.find(f=>f.id==='board_magnetic').choices[0].label,'자석부착가능');
 });
 
 test('board fields and saved certification reach template columns without cross-category mappings',()=>{

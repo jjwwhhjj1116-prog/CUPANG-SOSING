@@ -1,0 +1,495 @@
+{
+  "categoryId": "77442",
+  "observedAt": "2026-09-24",
+  "path": [
+    "완구/취미",
+    "보드게임",
+    "바둑/체스/윷놀이",
+    "바둑",
+    "바둑알+바둑판"
+  ],
+  "required": [
+    "model",
+    "color",
+    "quantity",
+    "supplyPrice",
+    "salePrice"
+  ],
+  "maxIncludedOptions": 100,
+  "selects": [
+    [
+      {
+        "label": "접이식가능",
+        "value": "접이식가능"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "자석부착가능",
+        "value": "자석부착가능"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "양면사용가능",
+        "value": "양면사용가능"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "소석",
+        "value": "소석"
+      },
+      {
+        "label": "정석",
+        "value": "정석"
+      },
+      {
+        "label": "봉황",
+        "value": "봉황"
+      },
+      {
+        "label": "기성",
+        "value": "기성"
+      },
+      {
+        "label": "명석",
+        "value": "명석"
+      },
+      {
+        "label": "장석 1호",
+        "value": "장석 1호"
+      },
+      {
+        "label": "장석 2호",
+        "value": "장석 2호"
+      },
+      {
+        "label": "장석 3호",
+        "value": "장석 3호"
+      },
+      {
+        "label": "장석 3호 특",
+        "value": "장석 3호 특"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "가족",
+        "value": "가족"
+      },
+      {
+        "label": "전략",
+        "value": "전략"
+      },
+      {
+        "label": "추리",
+        "value": "추리"
+      },
+      {
+        "label": "퍼즐",
+        "value": "퍼즐"
+      },
+      {
+        "label": "교육(학습)",
+        "value": "교육(학습)"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "K-pop",
+        "value": "K-pop"
+      },
+      {
+        "label": "꽃",
+        "value": "꽃"
+      },
+      {
+        "label": "동물",
+        "value": "동물"
+      },
+      {
+        "label": "레인보우",
+        "value": "레인보우"
+      },
+      {
+        "label": "만화",
+        "value": "만화"
+      },
+      {
+        "label": "사랑",
+        "value": "사랑"
+      },
+      {
+        "label": "슈퍼히어로",
+        "value": "슈퍼히어로"
+      },
+      {
+        "label": "스포츠",
+        "value": "스포츠"
+      },
+      {
+        "label": "음악",
+        "value": "음악"
+      },
+      {
+        "label": "영화",
+        "value": "영화"
+      },
+      {
+        "label": "할로윈",
+        "value": "할로윈"
+      },
+      {
+        "label": "파티",
+        "value": "파티"
+      },
+      {
+        "label": "알파벳",
+        "value": "알파벳"
+      },
+      {
+        "label": "식물",
+        "value": "식물"
+      },
+      {
+        "label": "크리스마스",
+        "value": "크리스마스"
+      },
+      {
+        "label": "겨울",
+        "value": "겨울"
+      },
+      {
+        "label": "음식",
+        "value": "음식"
+      },
+      {
+        "label": "휴가",
+        "value": "휴가"
+      },
+      {
+        "label": "국가",
+        "value": "국가"
+      },
+      {
+        "label": "트로피칼",
+        "value": "트로피칼"
+      },
+      {
+        "label": "전통",
+        "value": "전통"
+      },
+      {
+        "label": "앤티크",
+        "value": "앤티크"
+      },
+      {
+        "label": "웨딩",
+        "value": "웨딩"
+      },
+      {
+        "label": "해당없음",
+        "value": "해당없음"
+      },
+      {
+        "label": "가계도",
+        "value": "가계도"
+      },
+      {
+        "label": "견적",
+        "value": "견적"
+      },
+      {
+        "label": "공포",
+        "value": "공포"
+      },
+      {
+        "label": "과학",
+        "value": "과학"
+      },
+      {
+        "label": "괴물",
+        "value": "괴물"
+      },
+      {
+        "label": "국기",
+        "value": "국기"
+      },
+      {
+        "label": "군대",
+        "value": "군대"
+      },
+      {
+        "label": "기내의 아기",
+        "value": "기내의 아기"
+      },
+      {
+        "label": "기독교",
+        "value": "기독교"
+      },
+      {
+        "label": "낚시",
+        "value": "낚시"
+      },
+      {
+        "label": "농구",
+        "value": "농구"
+      },
+      {
+        "label": "눈송이",
+        "value": "눈송이"
+      },
+      {
+        "label": "도시",
+        "value": "도시"
+      },
+      {
+        "label": "동기 부여",
+        "value": "동기 부여"
+      },
+      {
+        "label": "두개골",
+        "value": "두개골"
+      },
+      {
+        "label": "미적",
+        "value": "미적"
+      },
+      {
+        "label": "미학",
+        "value": "미학"
+      },
+      {
+        "label": "밈",
+        "value": "밈"
+      },
+      {
+        "label": "비디오 게임",
+        "value": "비디오 게임"
+      },
+      {
+        "label": "산",
+        "value": "산"
+      },
+      {
+        "label": "소방관",
+        "value": "소방관"
+      },
+      {
+        "label": "스타",
+        "value": "스타"
+      },
+      {
+        "label": "아기",
+        "value": "아기"
+      },
+      {
+        "label": "애국",
+        "value": "애국"
+      },
+      {
+        "label": "영감",
+        "value": "영감"
+      },
+      {
+        "label": "웃는 얼굴",
+        "value": "웃는 얼굴"
+      },
+      {
+        "label": "의료 및 건강",
+        "value": "의료 및 건강"
+      },
+      {
+        "label": "의사",
+        "value": "의사"
+      },
+      {
+        "label": "전화",
+        "value": "전화"
+      },
+      {
+        "label": "정글",
+        "value": "정글"
+      },
+      {
+        "label": "정신 건강",
+        "value": "정신 건강"
+      },
+      {
+        "label": "종교",
+        "value": "종교"
+      },
+      {
+        "label": "지도",
+        "value": "지도"
+      },
+      {
+        "label": "책 같은",
+        "value": "책 같은"
+      },
+      {
+        "label": "초자연적",
+        "value": "초자연적"
+      },
+      {
+        "label": "축구",
+        "value": "축구"
+      },
+      {
+        "label": "텔레비전 쇼",
+        "value": "텔레비전 쇼"
+      },
+      {
+        "label": "항해",
+        "value": "항해"
+      },
+      {
+        "label": "헨타이 번호",
+        "value": "헨타이 번호"
+      },
+      {
+        "label": "리본",
+        "value": "리본"
+      },
+      {
+        "label": "미용",
+        "value": "미용"
+      },
+      {
+        "label": "나비",
+        "value": "나비"
+      },
+      {
+        "label": "과일",
+        "value": "과일"
+      },
+      {
+        "label": "곰",
+        "value": "곰"
+      },
+      {
+        "label": "하트",
+        "value": "하트"
+      },
+      {
+        "label": "티니핑",
+        "value": "티니핑"
+      },
+      {
+        "label": "라인",
+        "value": "라인"
+      },
+      {
+        "label": "네일 아트",
+        "value": "네일 아트"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ],
+    [
+      {
+        "label": "갓",
+        "value": "갓"
+      },
+      {
+        "label": "나사",
+        "value": "나사"
+      },
+      {
+        "label": "리모콘",
+        "value": "리모콘"
+      },
+      {
+        "label": "반사판",
+        "value": "반사판"
+      },
+      {
+        "label": "배터리",
+        "value": "배터리"
+      },
+      {
+        "label": "본품",
+        "value": "본품"
+      },
+      {
+        "label": "설명서",
+        "value": "설명서"
+      },
+      {
+        "label": "스탠드",
+        "value": "스탠드"
+      },
+      {
+        "label": "어댑터",
+        "value": "어댑터"
+      },
+      {
+        "label": "전구",
+        "value": "전구"
+      },
+      {
+        "label": "전원 케이블",
+        "value": "전원 케이블"
+      },
+      {
+        "label": "조광기",
+        "value": "조광기"
+      },
+      {
+        "label": "콘센트",
+        "value": "콘센트"
+      },
+      {
+        "label": "해당없음",
+        "value": "해당없음"
+      },
+      {
+        "label": "On-Off 스위치",
+        "value": "On-Off 스위치"
+      },
+      {
+        "label": "USB포트",
+        "value": "USB포트"
+      },
+      {
+        "label": "어플리케이터 브러시",
+        "value": "어플리케이터 브러시"
+      },
+      {
+        "label": "주걱",
+        "value": "주걱"
+      },
+      {
+        "label": "추출 도구",
+        "value": "추출 도구"
+      },
+      {
+        "label": "해당사항없음",
+        "value": ""
+      }
+    ]
+  ]
+}

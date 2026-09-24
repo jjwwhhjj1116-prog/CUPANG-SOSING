@@ -1,6 +1,6 @@
 import type { QuotationField } from '@/app/quotation-schema';
 
-// Couplus rendered saved quotation, 2026-09-23. These are UI choices, not verified Supplier Hub wire values.
+// Couplus saved quotation (2026-09-23), cross-checked against Supplier Hub Product Page (2026-09-24).
 const labels: [string,string,string[]?][] = [
  ['width','가로길이'],['length','세로길이'],['foldable','접이식 가능여부',['접이식가능']],
  ['magnetic','자석 부착가능 여부',['자석부착가능']],['doubleSided','양면사용 가능여부',['양면사용가능']],
@@ -15,6 +15,6 @@ export const couplus77442Path=['완구/취미','보드게임','바둑/체스/윷
 const make=(id:string,label:string,section:QuotationField['section'],visibility:QuotationField['visibility']):QuotationField=>({id,label,section,visibility,type:'text',required:false,reviewRequired:true,maxLength:2000,help:'쿠플러스 저장 견적 화면에서 확인한 항목입니다. Supplier Hub 공식 입력 규격과 자동 기본값은 추가 대조가 필요합니다.'});
 export const couplus77442Fields:QuotationField[]=[
  ...[['color','색상'],['quantity','수량']].map(([id,label])=>make(id,label,'product','exposed')),
- ...labels.map(([id,label,values])=>({...make(`board_${id}`,label,'product','hidden'),...(values?{type:'select' as const,choices:['해당사항없음',...values].map(value=>({value,label:value}))}:{})})),
+ ...labels.map(([id,label,values])=>({...make(`board_${id}`,label,'product','hidden'),...(values?{type:'select' as const,choices:[...values,''].map(value=>({value,label:value||'해당사항없음'})),help:'Supplier Hub에서 확인한 선택값입니다. 해당사항없음의 실제 값은 빈 문자열입니다. 이전 문자열값은 재선택해주세요.'}:{})})),
  ...[['noticeNameModel','품명 및 모델명'],['noticePermission','인증/허가 사항'],['noticeCountryOfOrigin','제조국(원산지)'],['noticeManufacturerImporter','제조자(수입자)'],['noticeServiceContact','소비자상담 관련 전화번호']].map(([id,label])=>make(id,label,'legal','common')),
 ];
