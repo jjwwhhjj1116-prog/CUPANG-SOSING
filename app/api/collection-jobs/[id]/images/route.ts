@@ -1,3 +1,4 @@
+import { imageDimensionMetadata } from '@/app/image-dimensions';
 import {NextResponse} from 'next/server';
 import {env} from 'cloudflare:workers';
 import {getChatGPTUser,getWorkspaceOwnerId} from '@/app/chatgpt-auth';
@@ -35,7 +36,7 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   if(JSON.parse(product.image_keys).length>=50)return reply({error:'상품 이미지 50개 제한입니다. 이미지를 정리해주세요.'},409);
   if(!env.FILES)return reply({error:'이미지 저장소 연결이 필요합니다.'},503);
   const downloaded=await downloadCollectionImage(image.url,owner);
-  const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected'}});
+  const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected',...imageDimensionMetadata(downloaded.bytes)}});
   if(!stored)throw new Error('이미지 저장 확인 실패');
   const skus=(receipt?.result.options??[]).filter(option=>option.imageIndex===body.index).map(option=>option.sku);
   const saved=await saveCollectionImage(owner,id,body.index,downloaded.key,image.role,product,current,skus);

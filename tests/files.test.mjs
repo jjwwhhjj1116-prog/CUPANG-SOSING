@@ -65,6 +65,9 @@ test('upload/read round trip preserves bytes and derives MIME/extension from act
   assert.equal(response.status, 201); const result = await response.json();
   assert.equal(result.contentType, 'image/png'); assert.ok(result.key.startsWith('owner/')); assert.ok(result.key.endsWith('.png')); assert.ok(!result.key.includes('..'));
   assert.equal(storage.saved.get(result.key).httpMetadata.contentType, 'image/png'); assert.equal(storage.saved.get(result.key).customMetadata.imageValidation, 'header-v1');
+  assert.equal(storage.saved.get(result.key).customMetadata.dimensionValidation, 'header-v1');
+  assert.equal(storage.saved.get(result.key).customMetadata.imageWidth, '1');
+  assert.equal(storage.saved.get(result.key).customMetadata.imageHeight, '1');
   const read = await download.GET(new Request('http://localhost'), context(result.key));
   assert.equal(read.status, 200); assert.equal(read.headers.get('content-type'), 'image/png'); assert.equal(read.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(read.headers.get('cache-control'), 'private, no-store'); assert.ok(read.headers.get('content-disposition').startsWith('inline;')); assert.ok(read.headers.get('content-security-policy').includes('sandbox'));

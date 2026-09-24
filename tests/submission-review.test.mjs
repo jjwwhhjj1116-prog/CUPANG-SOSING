@@ -67,7 +67,7 @@ function route({current=true,revision=2,verified=false,mode='development',missin
   const calls=[];class QuotationExportError extends Error{constructor(message,status){super(message);this.status=status;}}
   const saved={product:{id:'p',title:'상품',source_url:'https://detail.1688.com/offer/123.html',image_keys:'["owner/main.png"]'},source:{},state:{revision:2}};
   const handlers=load('app/api/products/[id]/submission-review/route.ts',{
-    'cloudflare:workers':{env:{FILES:{head:async()=>({size:100,httpMetadata:{contentType:'image/png'},customMetadata:{imageValidation:'header-v1'}})}}},
+    'cloudflare:workers':{env:{FILES:{head:async()=>({size:100,httpMetadata:{contentType:'image/png'},customMetadata:{imageValidation:'header-v1',dimensionValidation:'header-v1',imageWidth:'1000',imageHeight:'1000'}})}}},
     '@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:verified}),getWorkspaceOwnerId:async()=>'owner'},
     '@/app/exports/quotation-source':{QuotationExportError,readQuotationExportSource:async(...args)=>{calls.push(args);if(missing)throw new QuotationExportError('없음',404);return saved;},resolveQuotationExport:()=>resolved(),quotationExportFingerprint:async()=>'a'.repeat(64)},
     '@/db/quotation-fields':{quotationSourcesCurrent:async()=>current,readQuotationFields:async()=>({revision})},
@@ -113,7 +113,23 @@ test('empty selection and failed review do not display old ready badges',()=>{
 });
 
 const {inspectQuotationImages}=load('app/quotation-image-review.ts',{'@/app/image-files':{MAX_IMAGE_BYTES:10*1024*1024}});
-const validImage={size:100,httpMetadata:{contentType:'image/png'},customMetadata:{imageValidation:'header-v1'}};
+const validImage={size:100,httpMetadata:{contentType:'image/png'},customMetadata:{imageValidation:'header-v1',dimensionValidation:'header-v1',imageWidth:'1000',imageHeight:'1000'}};
+
+test('pixel guidance follows included final image roles and does not claim decoding or registration',async()=>{
+ const input=resolved();input.schema.fields.push(field('detailImages','images'));
+ input.rows[0].fields.detailImages=cell('owner/detail.png');
+ const object=(w,h)=>({...validImage,customMetadata:{...validImage.customMetadata,imageWidth:String(w),imageHeight:String(h)}});
+ let checks=await inspectQuotationImages(input,['owner/main.png','owner/detail.png'],async key=>key.includes('main')?object(999,1000):object(780,1500));
+ assert.equal(checks.size,1);assert.equal(checks.get('owner/main.png').kind,'review');assert.match(checks.get('owner/main.png').message,/999×1000/);
+ checks=await inspectQuotationImages(input,['owner/main.png','owner/detail.png'],async key=>key.includes('main')?object(1000,1000):object(780,1501));
+ assert.equal(checks.size,1);assert.match(checks.get('owner/detail.png').message,/1,500/);
+ input.rows[0].fields.detailImages=cell('owner/main.png');
+ checks=await inspectQuotationImages(input,['owner/main.png'],async()=>object(780,1500));
+ assert.match(checks.get('owner/main.png').message,/대표 이미지/);
+ assert.equal(inspectSubmission(input,['owner/main.png'],checks).submissionReady,false);
+ checks=await inspectQuotationImages(input,['owner/main.png'],async()=>({...validImage,customMetadata:{imageValidation:'header-v1'}}));
+ assert.match(checks.get('owner/main.png').message,/기록이 없습니다/);
+});
 
 test('bulk registration requires label attachment and flags identical main/detail references only on included rows',()=>{
  const input=resolved();input.schema.fields.push(field('labelImages','images'),field('detailImages','images'));

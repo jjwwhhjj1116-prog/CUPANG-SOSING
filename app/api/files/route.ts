@@ -1,3 +1,4 @@
+import { imageDimensionMetadata } from '@/app/image-dimensions';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
     const key = `${ownerId}/${crypto.randomUUID()}-${imageObjectName(file.name, actual.extension)}`;
     if (!isOwnedImageKey(ownerId, key)) return NextResponse.json({ error: '업로드 소유자 정보를 확인해주세요.' }, { status: 400 });
     if (!env.FILES) return NextResponse.json({ error: '이미지 저장소가 연결되지 않았습니다.' }, { status: 503 });
-    const object = await env.FILES.put(key, bytes, { httpMetadata: { contentType: actual.contentType }, customMetadata: { imageValidation: 'header-v1' } });
+    const object = await env.FILES.put(key, bytes, { httpMetadata: { contentType: actual.contentType }, customMetadata: { imageValidation: 'header-v1', ...imageDimensionMetadata(bytes) } });
     if (!object) throw new Error('R2 did not confirm the upload.');
     return NextResponse.json({ key, url: `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`, contentType: actual.contentType, size: bytes.byteLength }, { status: 201, headers: { 'cache-control': 'no-store' } });
   } catch (error) {
