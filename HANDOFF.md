@@ -1250,3 +1250,13 @@ AI등록 화면 확인:
 - 구현: integrations 진단이 SELECT1 성공만으로 DB 상태를 나타내던 부분 보완. 별도 databaseSchema에 tables_present/missing_tables/unavailable와 누락 목록 반환. 화면에 저장 테이블 상태 표시. 진단은 읽기 전용이고 운영 인증 관문 유지. 테이블 존재가 열 구조/인덱스/쓰기 검증을 의미하지 않도록 명시. 기존 데이터/상품 UI 흐름 보존.
 - 검증: 전체429/429, TypeScript·ESLint·일반 production build·diff 검사 통과. 실제 route에서 연결 성공+테이블 누락/조회 실패 분리 및 비공개 오류 차단, 체크인된 모든 SQL 테이블과 진단 목록의 일치 회귀 검사. outputs/step90-*.log. 변경 UI의 실제 브라우저 표시 검증은 미실시.
 - 다음 시작점: Access 이메일 정책 승인이 오면 기존 Free 팀에 SourceFlow 앱/이메일 정책 설정을 이어가고 실제 AUD로 운영 빌드·배포 검증. 승인 대기 동안 이를 우회해 정책 등록하지 않는다. 실제1688 공급원 문서·권한 답변도 대기. 전체카테고리/공식Excel·AI 실호출·Hub전송adapter 및 실제접수는 여전히 미완성. 이번 단계는 실제DB 업데이트이며 웹사이트 배포/유료AI호출/상품운영등록은 하지 않았다.
+
+## 91. 이메일 전용 Access 등록 및 Cloudflare 실제 배포 — 2026-09-24
+
+- 시작 main381967e, 미커밋 변경 없음. 사용자가 허용계정 등록을 명시 승인했고 이어 웹개발 행위 전반 승인·쿠플러스 동일기능 최우선을 재강조했다. 기존 이메일 정책 승인 대기는 해소됐다. 새 카드·요금제 가입을 요청하지 않았다.
+- 기존 Chrome/Zero Trust Free 팀에서 SourceFlow owner only 정책(Emails 한개, Allow)을 저장·재조회했다. SourceFlow 자체호스팅 앱과 sourceflow.jjwwhhjj1116.workers.dev 호스트를 연결했다. 앱ID1ef45a47-acfa-45f4-935b-efad0949aa9f, 정책ID390d7417-5e5d-4d33-91fb-9e46d048238e. 발급된 실제AUD는 Git제외.env.production.local에 반영. 기존 다른 앱/리소스는 변경하지 않았다.
+- 운영 빌드·산출물 검사·Wrangler dry-run 통과 후 실제배포. 최초dry-run은 파일 sandbox EPERM으로 실패했으며 승인된 실행권한으로 동일 검사 재시도해 통과. 기존 sourceflow-db/sourceflow-files 사용, preview_urls=false. 최종 Worker version66edfaf7-3631-4a51-b592-13ca707985ed. 운영URL https://sourceflow.jjwwhhjj1116.workers.dev.
+- 실제 로그인 이후 jwks_unavailable 발견. 안전한 오류 코드/키 조회 단계 표시를 추가해 fetch단계 실패로 좁히고 설치 Miniflare/workerd에서 공개서명키 요청만으로 Invalid redirect value(error 미지원)를 재현했다. redirect를manual로 변경하고 기존200응답 검사로301/302/303/307/308을 전부 거절한다. RSA/issuer/aud/만료·계정검증은 유지했다. 원시 예외/토큰/클레임은 화면에 노출하지 않는다.
+- 확인: Chrome 기존Cloudflare로그인→실제SourceFlow 작업화면 성공. 연동설정에서 Access검증됨·D1읽기성공·필수17테이블 있음 확인. 비로그인HTTP 요청 /, /api/products, /api/integrations, /api/files/example은 모두Access로그인으로302전환. R2는바인딩만확인, 파일읽기/쓰기는미검증. 로컬자료 자동이전/가상상품생성 없음.
+- 검증: 전체431/431, 인증관련18/18, TypeScript·ESLint·운영build 및 artifact검사·dry-run 통과. outputs/step91-*.log. 리다이렉트미추적/거절·오류정보비노출·로그인실패상태유지 회귀검사 추가. README와CLOUDFLARE문서에 실제주소/검증범위 갱신.
+- 다음 시작점: 승인대기였던Cloudflare연결은해결됨. 쿠플러스 카테고리별실제폼/기본값과1~7단계 자동연동을 최우선으로 이어간다. 실제1688공급원 연결·전체카테고리/공식Excel·AI서버모델/키와실호출·SupplierHub전송adapter및실접수는미완성. BrowserUse가명시거절한1688URL을다른경로로우회하지않는다. 허용된공급원API문서/권한은계속필요하다. 이배포를전체자동화완료로보고하지않는다. 유료AI호출/상품운영등록 없음.

@@ -30,7 +30,7 @@ async function expectCode(promise, code, status) { await assert.rejects(promise,
 
 test('Access accepts a genuine RSA signature and derives a stable owner from verified issuer/sub, not mutable email or spoofed headers', async () => {
   let calls = 0;
-  const verify = verifier(async (url, init) => { calls++; assert.equal(url, `${issuer}/cdn-cgi/access/certs`); assert.equal(init.redirect, 'error'); assert.equal(init.method, 'GET'); assert.ok(init.signal); return validJwks(); });
+  const verify = verifier(async (url, init) => { calls++; assert.equal(url, `${issuer}/cdn-cgi/access/certs`); assert.equal(init.redirect, 'manual'); assert.equal(init.method, 'GET'); assert.ok(init.signal); return validJwks(); });
   const requestHeaders = headers(await token()); requestHeaders.set('oai-authenticated-user-id', 'forged-owner'); requestHeaders.set('cf-access-authenticated-user-email', 'forged@example.invalid');
   const identity = await verify.authenticate(requestHeaders, config);
   assert.match(identity.userId, /^cf:[a-f0-9]{64}$/); assert.equal(identity.subject, base.sub); assert.equal(identity.email, base.email); assert.equal(identity.displayName, base.email); assert.equal(identity.fullName, null);
@@ -131,4 +131,24 @@ test('Access aborts a stalled key request at its configured deadline without exp
   const verify = authentication.createCloudflareAccessVerifier({ now: () => now, fetcher: async (_url, init) => new Promise((_resolve, reject) => { init.signal.addEventListener('abort', () => { aborted = true; reject(Error('private transport error')); }); }) });
   await expectCode(verify.authenticate(headers(await token()), config), 'jwks_unavailable', 503);
   assert.equal(deadline, 5000); assert.equal(aborted, true);
+});
+
+test('JWKS redirects are rejected without following and diagnostics never expose upstream errors', async () => {
+  const signed = await token();
+  for (const status of [301, 302, 303, 307, 308]) {
+    let requests = 0;
+    const verify = verifier(async (_url, init) => {
+      requests++;
+      assert.equal(init.redirect, 'manual');
+      return new Response(null, {status, headers:{location:'https://untrusted.invalid/keys'}});
+    });
+    await assert.rejects(verify.authenticate(headers(signed), config), error => error.code === 'jwks_unavailable' && error.stage === 'read');
+    assert.equal(requests, 1);
+  }
+  await assert.rejects(verifier(async () => {throw new Error('private-upstream-detail');}).authenticate(headers(signed),config), error => {
+    assert.equal(error.code, 'jwks_unavailable');
+    assert.equal(error.stage, 'fetch');
+    assert.ok(!JSON.stringify(error).includes('private-upstream-detail'));
+    return true;
+  });
 });

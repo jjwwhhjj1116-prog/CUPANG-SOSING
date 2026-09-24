@@ -12,7 +12,7 @@ const messages: Record<AccessAuthenticationCode, string> = {
 };
 export class AccessAuthenticationError extends Error {
   readonly status: 401 | 503;
-  constructor(readonly code: AccessAuthenticationCode) { super(messages[code]); this.name = 'AccessAuthenticationError'; this.status = code === 'not_configured' || code === 'jwks_unavailable' ? 503 : 401; }
+  constructor(readonly code: AccessAuthenticationCode, readonly stage?: 'fetch' | 'read' | 'import') { super(messages[code]); this.name = 'AccessAuthenticationError'; this.status = code === 'not_configured' || code === 'jwks_unavailable' ? 503 : 401; }
 }
 type AccessFetch = (input: string, init?: RequestInit) => Promise<Response>;
 export type AccessVerifierOptions = { fetcher?: AccessFetch; now?: () => number };
@@ -110,11 +110,17 @@ export function createCloudflareAccessVerifier(options: AccessVerifierOptions = 
       current.lastAttemptAt = now();
       current.pending = (async () => {
         const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 5000);
+        let stage: 'fetch' | 'read' | 'import' = 'fetch';
         try {
-          const response = await fetcher(config.jwksUrl, { method: 'GET', headers: { accept: 'application/json' }, redirect: 'error', signal: controller.signal });
-          const keys = await importKeys(await responseJson(response));
+          // Workers rejects redirect:'error'. Never follow redirects; responseJson
+          // requires status 200 and rejects every redirect response instead.
+          const response = await fetcher(config.jwksUrl, { method: 'GET', headers: { accept: 'application/json' }, redirect: 'manual', signal: controller.signal });
+          stage = 'read';
+          const keyData = await responseJson(response);
+          stage = 'import';
+          const keys = await importKeys(keyData);
           current.keys = keys; current.expiresAt = now() + CACHE_TTL; current.unavailableUntil = 0;
-        } catch { current.unavailableUntil = now() + REFRESH_COOLDOWN; rejected('jwks_unavailable'); }
+        } catch { current.unavailableUntil = now() + REFRESH_COOLDOWN; throw new AccessAuthenticationError('jwks_unavailable', stage); }
         finally { clearTimeout(timer); }
       })();
     }

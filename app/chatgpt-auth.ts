@@ -22,7 +22,7 @@ const SIGN_IN_PATH = '/signin-with-chatgpt';
 const SIGN_OUT_PATH = '/signout-with-chatgpt';
 const CALLBACK_PATH = '/callback';
 
-export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
+export async function getChatGPTUser(onAccessError?: (error: AccessAuthenticationError) => void): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
   if (process.env.NODE_ENV === 'production') {
     const accessEnv = env as { CLOUDFLARE_ACCESS_TEAM_DOMAIN?: string; CLOUDFLARE_ACCESS_AUD?: string };
@@ -30,7 +30,7 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
       const identity = await authenticateCloudflareAccess(requestHeaders, {teamDomain:accessEnv.CLOUDFLARE_ACCESS_TEAM_DOMAIN,audience:accessEnv.CLOUDFLARE_ACCESS_AUD});
       return {userId:identity.userId,email:identity.email,displayName:identity.displayName,fullName:null,verifiedAccess:true};
     } catch (error) {
-      if (error instanceof AccessAuthenticationError) return null;
+      if (error instanceof AccessAuthenticationError) { onAccessError?.(error); return null; }
       throw error;
     }
   }

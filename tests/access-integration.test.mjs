@@ -102,3 +102,11 @@ test('production image/file routes and generic product PATCH reject unauthentica
   assert.equal((await product.PATCH(new Request('http://localhost', { method: 'PATCH', body: '{"title":"test"}' }), params)).status, 503);
   assert.equal(touched, false);
 });
+
+test('production login reports a safe authentication reason while keeping access closed', async () => {
+  let diagnostic;
+  const auth = runtime([new Headers()]).auth;
+  assert.equal(await auth.getChatGPTUser(error => {diagnostic = error;}), null);
+  assert.equal(diagnostic.code, 'missing_token');
+  assert.ok(!diagnostic.message.includes('cf-access-jwt-assertion'));
+});

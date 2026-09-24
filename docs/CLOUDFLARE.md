@@ -152,3 +152,13 @@ node scripts/check-cloudflare-artifact.mjs
 `GET /api/integrations`는 연결 쿼리와 별도로 `databaseSchema`를 반환한다. `tables_present`는 필요한 테이블 이름이 존재한다는 뜻이며 열 구조·인덱스·저장 동작·외부 서비스 연동의 검증이 아니다. 누락 시 `missing_tables`와 목록을 반환하고 메타데이터 조회 실패는 `unavailable`로 표시한다. 진단 API는 스키마를 변경하지 않는다.
 
 Access 이메일 허용 정책의 별도 승인 및 실제 AUD 확인은 대기 중이다. 이 DB 적용을 Worker 배포 또는 실제 1688 수집·Supplier Hub 전송 완료로 간주하지 않는다.
+
+## 2026-09-24 Access 정책 연결 및 실제 배포
+
+사용자가 허용 이메일 정책 등록과 개발·연결·배포 진행을 승인했다. 기존 Zero Trust Free 팀에 SourceFlow 자체호스팅 앱과 본인 이메일 한 개만 포함하는 Allow 정책을 저장했다. 앱 설정에서 발급된 실제 AUD를 Git 제외 `.env.production.local`에 반영했다. 이 절은 위 승인 대기 기록의 후속 결과다.
+
+운영 URL: https://sourceflow.jjwwhhjj1116.workers.dev
+
+운영 빌드 및 산출물 검사, Wrangler dry-run 후 기존 D1/R2 바인딩으로 배포했다. 실제 Workers 런타임에서 `redirect: 'error'`가 지원되지 않아 JWKS fetch가 실패하는 문제를 재현하고 `manual`로 수정했다. 200 이외 응답은 계속 거절하며 리다이렉트를 따라가지 않는다. RSA 서명·issuer·audience·시간·계정 검증을 유지한다. 로그인 실패 화면은 비밀정보 없이 오류 코드와 키 조회 단계만 표시한다. 공개 문서는 현재 `error`를 나열하지만 이번 설치 런타임과 운영에서 확인한 동작을 우선했다.
+
+로그인 없는 홈페이지·상품·연동·파일 API 요청이 Access 로그인으로 302 전환되는 것을 확인했다. Chrome 기존 Cloudflare 로그인으로 실제 작업 화면 진입과 운영 D1 쿼리/필수 테이블 확인을 완료했다. R2는 바인딩 존재만 확인했으며 파일 읽기/쓰기, AI 실호출, 실제 상품 수집·등록은 검증하지 않았다. 로컬 자료를 운영 사용자에게 자동 이전하지 않았다.
