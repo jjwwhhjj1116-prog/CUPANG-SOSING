@@ -785,3 +785,49 @@ test('mapping coverage detects category-required and manual fields absent from E
  const complete={mappings:resolved.schema.fields.map((f,column)=>({column,field:f.id}))};
  assert.equal(coverage(resolved,complete).length,0);
 });
+
+test('observed storage-material attributes reuse saved label material across category schemas', () => {
+  const catalog = load('app/hub-product-schemas.ts').hubProductSchemas;
+  let covered = 0;
+  for (const categoryId of [...Object.keys(catalog), '64497']) {
+    if (categoryId === '80719') continue; // Existing named storageMaterial mapping has separate coverage.
+    const input = fixture(); input.categoryId = categoryId;
+    const schema = model.getQuotationSchema(categoryId);
+    const definition = schema.fields.find(field => field.contentField === 'material');
+    if (!definition) continue;
+    covered++;
+    const value = definition.choices?.find(choice => choice.value)?.value ?? '확인된 재질';
+    input.content.label.material = {value, provenance:'manual', updatedAt:'2026-09-24T00:00:00Z'};
+    const before = JSON.stringify(input);
+    const resolved = model.resolveQuotationFields(input);
+    for (const row of resolved.rows) {
+      assert.equal(row.fields[definition.id].value,value, categoryId);
+      assert.equal(row.fields[definition.id].source,'content');
+      assert.equal(row.fields[definition.id].validationIssues.length,0);
+    }
+    assert.equal(JSON.stringify(input),before);
+    // Component-specific material fields do not inherit the whole-product fact.
+    for (const field of schema.fields.filter(field => /재질/.test(field.label) && field.id !== definition.id && field.id !== 'noticeMaterial')) {
+      assert.equal(resolved.rows[0].fields[field.id].value,'',`${categoryId}/${field.label}`);
+    }
+    input.content.label.material.value = '';
+    assert.equal(model.resolveQuotationFields(input).rows[0].fields[definition.id].value,'');
+    input.content.label.material.value = value;
+    input.overrides = {common:{[definition.id]:'직접 입력'},options:{red:{[definition.id]:''}}};
+    const manual = model.resolveQuotationFields(input);
+    assert.equal(manual.rows[0].fields[definition.id].value,'직접 입력');
+    assert.equal(manual.rows[1].fields[definition.id].value,'');
+    assert.equal(manual.rows[1].fields[definition.id].source,'manual-option');
+  }
+  assert.ok(covered > 1);
+});
+
+test('category material choice mismatch remains visible and is never guessed or replaced with N/A', () => {
+  const input = fixture(); input.categoryId = '80699';
+  input.content.label.material.value = '선택지에 없는 복합재료';
+  const definition = model.getQuotationSchema(input.categoryId).fields.find(field => field.contentField === 'material');
+  const field = model.resolveQuotationFields(input).rows[1].fields[definition.id];
+  assert.equal(field.value,'선택지에 없는 복합재료');
+  assert.ok(field.validationIssues.length > 0);
+  assert.equal(field.source,'content');
+});
