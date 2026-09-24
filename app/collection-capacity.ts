@@ -19,7 +19,8 @@ export function collectionSelectionFits(capacity: CollectionCapacity, indices: r
 }
 
 /** Suggest a bounded selection; never downloads, restores excluded images, or changes source order. */
-export function recommendCollectionImages(result: Pick<CollectionResult, 'images' | 'options'>, capacity: CollectionCapacity): number[] {
+export type CollectionImageGroup = 'all' | 'main' | 'options' | 'additional' | 'detail';
+export function recommendCollectionImages(result: Pick<CollectionResult, 'images' | 'options'>, capacity: CollectionCapacity, group: CollectionImageGroup = 'all'): number[] {
   validateCollectionCapacity(capacity, result.images.length);
   const all = result.images.map((_, index) => index);
   const priority = new Set([
@@ -29,8 +30,10 @@ export function recommendCollectionImages(result: Pick<CollectionResult, 'images
     ...all,
   ]);
   const selected: number[] = [];
+  const optionImages = new Set(result.options.flatMap(option => option.imageIndex === undefined ? [] : [option.imageIndex]));
   for (const index of priority) {
     if (!Number.isInteger(index) || index < 0 || index >= result.images.length) continue;
+    if (group !== 'all' && (group === 'options' ? !optionImages.has(index) : result.images[index].role !== group)) continue;
     if (selected.length === 50) break;
     if (collectionSelectionFits(capacity, [...selected, index])) selected.push(index);
   }

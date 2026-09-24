@@ -11,6 +11,16 @@ const result={title:'수집 상품 원문',provider:'synthetic',collectedAt:'202
 const capacity={usedSlots:0,totalImages:2,reusableIndices:[]};
 function harness(fetcher,importer,props={}){const states=[],refs=[],cleanups=[];let effectsStarted=false;let index=0,ri=0,saved=0;const hooks={useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(initial){const slot=ri++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(effect){if(!effectsStarted)cleanups.push(effect());}};const panel=load('app/components/collection-result-panel.tsx',{react:hooks,fetch:fetcher,...(importer?{'@/app/collection-import':{runCollectionImport:importer}}:{})});const render=()=>{index=0;ri=0;const root=panel.CollectionResultPanel({jobId:'job',onSaved(){saved++;},...props});const tree=root.type(root.props);effectsStarted=true;return tree;};const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node);return node;};const button=name=>find(n=>n.type==='button'&&n.props.children===name);return{render,find,button,unmount(){cleanups.forEach(fn=>fn?.());},get saved(){return saved;},async click(name){button(name).props.onClick();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));}};}
 
+test('role selection replaces the draft and only selected SKU images reach the importer',async()=>{
+ const source={...result,options:[{...result.options[0],imageIndex:1}],images:[...result.images,{url:'https://cbu01.alicdn.com/c.png',role:'additional'}]};let received;
+ const h=harness(async url=>Response.json(url.endsWith('/result')?{receipt:{result:source},message:'수신됨'}:{capacity:{...capacity,totalImages:3}}),async(job,total,options)=>{received=options.imageIndices;return{status:'completed',productId:'p',completedImages:received.length};});
+ await h.click('수신 결과 조회');
+ const role=label=>h.find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children.join('')===`여유 내 ${label} 이미지만 선택`);
+ role('추가').props.onClick();assert.deepEqual(nodes(h.render()).filter(n=>n.type==='input').map(n=>n.props.checked),[false,false,true]);
+ role('옵션').props.onClick();assert.deepEqual(nodes(h.render()).filter(n=>n.type==='input').map(n=>n.props.checked),[false,true,false]);assert.equal(received,undefined);
+ h.find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='상품·선택 이미지 ').props.onClick();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(Array.from(received),[1]);
+});
+
 test('capacity failure retains receipt and options; capacity-only retry and product promotion remain available',async()=>{
  const calls=[];let fail=true;
  const h=harness(async(url,init)=>{calls.push([url,init?.method]);if(url.endsWith('/result'))return Response.json({receipt:{result},message:'수신됨'});if(url.endsWith('/product'))return Response.json({productId:'p'});return fail?Response.json({error:'저장소 일시 오류'},{status:503}):Response.json({capacity});});

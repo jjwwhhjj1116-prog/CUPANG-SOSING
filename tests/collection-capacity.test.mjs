@@ -29,6 +29,15 @@ test('unauthenticated, missing and cancelled requests do not expose capacity',as
  }
 });
 
+test('role and SKU image selections obey capacity, reuse and exclusions without mixing groups',()=>{
+ const {recommendCollectionImages:select}=load('app/collection-capacity.ts');
+ const source={images:[{role:'main'},{role:'detail'},{role:'additional'},{role:'detail'},{role:'main'}],options:[{imageIndex:3},{imageIndex:3},{imageIndex:4}]};
+ const cap={usedSlots:49,totalImages:5,reusableIndices:[3],blockedIndices:[4]};const before=JSON.stringify({source,cap});
+ for(const [group,expected] of [['main',[0]],['options',[3]],['additional',[2]],['detail',[1,3]]])assert.deepEqual(Array.from(select(source,cap,group)),expected);
+ assert.deepEqual(Array.from(select(source,{...cap,usedSlots:50},'detail')),[3]);assert.deepEqual(Array.from(select({...source,options:[]},cap,'options')),[]);
+ assert.equal(JSON.stringify({source,cap}),before);
+});
+
 test('image recommendations prioritize main and option images within actual remaining capacity',()=>{
  const {recommendCollectionImages:recommend,collectionSelectionFits:fits}=load('app/collection-capacity.ts');
  const source={images:Array.from({length:200},(_,i)=>({role:i===150?'main':i===100?'additional':'detail'})),options:[{imageIndex:180},{imageIndex:180},{imageIndex:199}]};
