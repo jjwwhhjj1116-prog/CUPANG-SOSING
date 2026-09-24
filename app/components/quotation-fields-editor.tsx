@@ -47,14 +47,33 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
   const value = optionValue ?? commonValue;
   const source = optionValue !== null ? 'manual-option' : commonValue !== null ? 'manual-common' : fallback.source;
   const resolvedValue = value ?? fallback.value;
-  const inheritedIssues = value === null ? fallback.issues : saved?.value === value && saved.source === source ? saved.issues : [];
-  // Price validation depends on BOTH draft cells, so a saved price issue must
-  // disappear when the other cell is corrected without changing this cell.
-  const issues = [...new Set([...inheritedIssues.filter(issue => (fieldKey !== 'salePrice' || issue !== '판매가는 공급가보다 작을 수 없습니다.') && (fieldKey !== 'detailImages' || issue !== duplicateQuotationImageIssue)),
-    ...(fieldKey === 'detailImages' ? quotationImageRoleIssues(resolveQuotationEditorCell(view, changes, optionId, 'mainImage').value, resolvedValue) : []),
+  const inherited = value === null ? fallback : saved?.value === value && saved.source === source ? saved : undefined;
+  const dynamicIssues = new Set([
+    '판매가는 공급가보다 작을 수 없습니다.', duplicateQuotationImageIssue,
+    '실제 바코드 번호를 입력해주세요.', '바코드 생성 요청 방식과 입력된 번호가 충돌합니다.',
+    ...quotationBarcodeIssues(view.resolved.schema.categoryId, 'existing', resolvedValue),
+  ]);
+  const validationIssues = [...new Set([
+    ...(inherited?.validationIssues ?? inherited?.issues ?? []).filter(issue => !dynamicIssues.has(issue)),
     ...(definition ? quotationValueIssues(definition, resolvedValue, view.imageKeys) : []),
-    ...(fieldKey === 'salePrice' ? quotationPriceIssues(view.resolved.schema, resolveQuotationEditorCell(view, changes, optionId, 'supplyPrice').value, resolvedValue) : [])])];
-  return { ...fallback, value: resolvedValue, source, issues, needsReview: Boolean(definition?.reviewRequired) || issues.length > 0 };
+    ...(fieldKey === 'salePrice' ? quotationPriceIssues(view.resolved.schema, resolveQuotationEditorCell(view, changes, optionId, 'supplyPrice').value, resolvedValue) : []),
+  ])];
+  if (fieldKey === 'barcode') {
+    const mode = resolveQuotationEditorCell(view, changes, optionId, 'barcodeMode').value;
+    validationIssues.push(...quotationBarcodeIssues(view.resolved.schema.categoryId, mode, resolvedValue));
+    if (mode === 'existing' && !resolvedValue.trim()) validationIssues.push('실제 바코드 번호를 입력해주세요.');
+    if (mode === 'request-coupang' && resolvedValue.trim()) validationIssues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.');
+  }
+  if (definition?.type === 'images' && resolvedValue) validationIssues.push('비공개 이미지 참조입니다. 외부 접수용 공개 주소는 아직 생성되지 않았습니다.');
+  const reviewMessages: string[] = [];
+  if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
+  if (definition?.reviewRequired && resolvedValue.trim()) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
+  const errors = [...new Set(validationIssues)];
+  const issues = [...new Set([...errors, ...reviewMessages,
+    ...(fieldKey === 'detailImages' ? quotationImageRoleIssues(resolveQuotationEditorCell(view, changes, optionId, 'mainImage').value, resolvedValue) : []),
+  ])];
+  return { ...fallback, value: resolvedValue, source, issues, validationIssues: errors, reviewMessages,
+    needsReview: Boolean(definition?.reviewRequired) || issues.length > 0 };
 }
 export function reconcileQuotationEditorDraft(previous: QuotationFieldsView, next: QuotationFieldsView, changes: readonly QuotationEditorChange[], pending: readonly Conflict[] = []) {
   const conflicts: Conflict[] = [];

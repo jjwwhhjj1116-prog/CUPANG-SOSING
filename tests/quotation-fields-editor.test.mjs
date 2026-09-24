@@ -270,3 +270,32 @@ test('image role overlap warnings update when only the unsaved main image change
  const overview=editor.quotationOptionOverview(view,[change('mainImage','owner/second.png','red')]);
  assert.equal(JSON.stringify(overview.find(row=>row.optionId==='red')).includes(model.duplicateQuotationImageIssue),false);
 });
+
+test('draft evidence metadata follows manual edits, blanks and resets instead of inheriting automatic default warnings',()=>{
+ const view=fixture();const before=JSON.stringify(view);
+ const auto=view.automatic.rows.find(r=>r.optionId==='red');
+ const key=Object.keys(auto.fields).find(key=>auto.fields[key].source==='couplus-default'&&auto.fields[key].value.trim());
+ assert.ok(key);
+ const original=editor.resolveQuotationEditorCell(view,[],'red',key);
+ assert.ok(original.reviewMessages.some(m=>m.includes('쿠플러스')));
+ const manual=editor.resolveQuotationEditorCell(view,[change(key,original.value,'red')],'red',key);
+ assert.equal(manual.source,'manual-option');assert.equal(manual.reviewMessages.some(m=>m.includes('쿠플러스')),false);
+ const blank=editor.resolveQuotationEditorCell(view,[change(key,'','red')],'red',key);
+ assert.equal(blank.reviewMessages.length,0);
+ const reset=editor.resolveQuotationEditorCell(view,[change(key,null,'red')],'red',key);
+ assert.deepEqual(clone(reset.reviewMessages),clone(original.reviewMessages));
+ const image=editor.resolveQuotationEditorCell(view,[change('mainImage','owner/second.png','red')],'red','mainImage');
+ assert.ok(image.validationIssues.some(m=>m.includes('공개 주소')));
+ assert.equal(JSON.stringify(view),before);
+});
+
+test('changing barcode mode and supply price recomputes dependent draft validation metadata',()=>{
+ const view=fixture({common:{barcodeMode:'existing',barcode:'',supplyPrice:'4000',salePrice:'3000'},options:{}});
+ const barcode=changes=>editor.resolveQuotationEditorCell(view,changes,'red','barcode');
+ assert.ok(barcode([]).validationIssues.some(m=>m.includes('실제 바코드')));
+ assert.equal(barcode([change('barcodeMode','request-coupang')]).validationIssues.some(m=>m.includes('실제 바코드')),false);
+ const price=editor.resolveQuotationEditorCell(view,[change('supplyPrice','2000')],'red','salePrice');
+ assert.equal(price.validationIssues.some(m=>m.includes('공급가보다')),false);
+ const manual=editor.resolveQuotationEditorCell(view,[change('brand','직접 브랜드','red')],'red','brand');
+ assert.equal(manual.validationIssues.length,0);assert.ok(manual.reviewMessages.length);
+});
