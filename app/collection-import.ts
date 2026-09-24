@@ -1,7 +1,7 @@
 import { collectionRequestWithRetry } from '@/app/collection-retry';
 import { validateCollectionCapacity, collectionSelectionFits } from '@/app/collection-capacity';
 export type CollectionImportProgress = {stage:'product'|'images';completedImages:number;totalImages:number};
-export type CollectionImportOutcome = {status:'completed'|'stopped'|'failed';productId:string|null;completedImages:number;error?:string};
+export type CollectionImportOutcome = {status:'completed'|'stopped'|'failed';productId:string|null;completedImages:number;error?:string;warnings?:string[]};
 export function collectionImageSelection(totalImages:number,imageIndices?:readonly number[]):number[]{
  if(!Number.isInteger(totalImages)||totalImages<0||totalImages>200)throw new Error('수집 이미지 수를 확인해주세요.');
  const indices=imageIndices?[...imageIndices]:Array.from({length:totalImages},(_,index)=>index);
@@ -18,6 +18,7 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
  const request=(url:string,init:RequestInit)=>collectionRequestWithRetry(url,init,{fetcher,attempts:options.retryAttempts,wait:options.retryWait,shouldStop:options.shouldStop,onRetry:options.onRetry});
  const base=`/api/collection-jobs/${encodeURIComponent(jobId)}`;
  let productId:string|null=null;let completedImages=0;let activeImageIndex:number|null=null;
+ const warnings:string[]=[];
  const stopped=()=>options.shouldStop?.()??false;
  try{
   if(stopped())return {status:'stopped',productId,completedImages};
@@ -37,16 +38,17 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
   if(!body.productId)throw new Error('상품 반영 결과를 확인하지 못했습니다. 다시 실행해주세요.');
   productId=body.productId;
   for(const index of indices){
-   if(stopped())return {status:'stopped',productId,completedImages};
+   if(stopped())return {status:'stopped',productId,completedImages,...(warnings.length?{warnings}: {})};
    activeImageIndex=index;
    options.onProgress?.({stage:'images',completedImages,totalImages:selectedTotal});
    const imageResponse=await request(`${base}/images`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({index})});
-   const image=await imageResponse.json() as {error?:string;key?:string};
+   const image=await imageResponse.json() as {error?:string;key?:string;warnings?:unknown};
    if(!imageResponse.ok)throw new Error(image.error||'이미지 저장에 실패했습니다.');
    if(!image.key)throw new Error('이미지 저장 결과를 확인하지 못했습니다. 다시 실행해주세요.');
    completedImages++;
+   if(Array.isArray(image.warnings))for(const warning of image.warnings){if(typeof warning==='string'&&warning.trim())warnings.push(`원본 ${index+1}번: ${warning}`);}
    options.onProgress?.({stage:'images',completedImages,totalImages:selectedTotal});
   }
-  return {status:'completed',productId,completedImages};
- }catch(error){return {status:stopped()?'stopped':'failed',productId,completedImages,error:(activeImageIndex===null?'':`원본 ${activeImageIndex+1}번 이미지: `)+(error instanceof Error?error.message:'저장 결과를 확인하지 못했습니다.')};}
+  return {status:'completed',productId,completedImages,...(warnings.length?{warnings}: {})};
+ }catch(error){return {status:stopped()?'stopped':'failed',productId,completedImages,...(warnings.length?{warnings}: {}),error:(activeImageIndex===null?'':`원본 ${activeImageIndex+1}번 이미지: `)+(error instanceof Error?error.message:'저장 결과를 확인하지 못했습니다.')};}
 }

@@ -3,6 +3,15 @@ import { readBoundedStream } from '@/app/request-body';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 
+/** Report current saved assignments, including retry results, without replacing manual work. */
+export function collectedImageWarnings(content: ProductContent, options: ProductOptions, skus: readonly string[], key: string, role: 'main'|'additional'|'detail'): string[] {
+ const warnings: string[] = [];
+ if (!content.assets[role].value.includes(key)) warnings.push(`${{main:'대표',additional:'추가',detail:'상세'}[role]} 이미지 배치에 연결되지 않았습니다. 기존 편집·다른 배치·개수 제한을 확인해주세요. 원본 파일은 저장되어 있습니다.`);
+ const missing = [...new Set(skus)].filter(sku => !options.rows.some(row => row.supplierSku === sku && row.provenance.supplierSku === 'collected' && row.imageKey === key));
+ if (missing.length) warnings.push(`원문 옵션 ${missing.length}개의 이미지 연결을 확인해주세요. 직접 수정·삭제한 옵션과 기존 이미지는 자동 변경하지 않았습니다.`);
+ return warnings;
+}
+
 /** Only the receipt's exact supplier SKU may receive an original image. */
 export function attachCollectedOptionImage(current:ProductOptions,skus:readonly string[],key:string,now:string):ProductOptions {
  const next=structuredClone(current);const selected=new Set(skus);let changed=false;

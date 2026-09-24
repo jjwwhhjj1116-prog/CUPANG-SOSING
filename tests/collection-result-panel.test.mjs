@@ -76,3 +76,11 @@ test('large receipts recommend main and option images, preserve manual choice on
  for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
  assert.deepEqual(applied,[0,30,55,59]);assert.equal(h.saved,1);assert.equal(nodes(h.render()).filter(n=>n.type==='input').length,60);
 });
+
+test('import displays image assignment warnings alongside confirmed file storage',async()=>{
+ const h=harness(async url=>url.endsWith('/result')?Response.json({receipt:{result},message:'수신됨'}):Response.json({capacity}),async()=>({status:'completed',productId:'p',completedImages:2,warnings:['원본 2번: 상세 배치에 연결되지 않았습니다.']}));
+ await h.click('수신 결과 조회');h.find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='상품·선택 이미지 ').props.onClick();
+ for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.match(JSON.stringify(h.render()),/저장된 원본의 연결 확인 필요/);assert.match(JSON.stringify(h.render()),/원본 2번: 상세 배치/);assert.equal(h.saved,1);
+ await h.click('수신 결과 조회');assert.doesNotMatch(JSON.stringify(h.render()),/저장된 원본의 연결 확인 필요/);
+});

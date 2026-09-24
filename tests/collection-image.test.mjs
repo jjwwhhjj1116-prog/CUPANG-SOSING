@@ -150,3 +150,33 @@ test('retry does not restore removed selections or report missing objects as sto
   }finally{h.sqlite.close();}
  }
 });
+
+test('assignment report preserves role limits and manually edited or removed option images',()=>{
+ const content=empty('p');const options=collectedOptions();const before=JSON.stringify({content,options});
+ assert.equal(model.collectedImageWarnings(content,options,['a','a','deleted'],'owner/a.png','detail').length,2);
+ assert.match(model.collectedImageWarnings(content,options,['a','a','deleted'],'owner/a.png','detail')[1],/2개/);
+ assert.equal(JSON.stringify({content,options}),before);
+ content.assets.detail.value=['owner/a.png'];options.rows[0].imageKey='owner/a.png';
+ assert.equal(model.collectedImageWarnings(content,options,['a'],'owner/a.png','detail').length,0);
+ options.rows[0].provenance.supplierSku='manual';
+ assert.equal(model.collectedImageWarnings(content,options,['a'],'owner/a.png','detail').length,1);
+});
+
+test('API reports preserved manual assignments on initial storage and retry without repeating writes',async()=>{
+ const h=storage();try{
+  h.current.assets.main={value:[],provenance:'manual',updatedAt:'before'};
+  h.sqlite.prepare('UPDATE product_content SET payload=?').run(JSON.stringify(h.current));
+  const options=collectedOptions();options.rows[0].provenance.imageKey='manual';
+  h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(options),'before');
+  h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',JSON.stringify({options:[{sku:'a',imageIndex:0}],images:[{url:'https://cbu01.alicdn.com/test.png',role:'main'}]}),'now');
+  let downloads=0,writes=0;
+  const api=load('app/api/collection-jobs/[id]/images/route.ts',{'cloudflare:workers':{env:{DB:h.db,FILES:{head:async()=>({size:png.length}),put:async()=>{writes++;return {};}}}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},fetch:async()=>{downloads++;return new Response(png);}});
+  for(let attempt=0;attempt<2;attempt++){
+   const response=await api.POST(new Request('http://localhost/api/collection-jobs/job/images',{method:'POST',headers:{'content-type':'application/json'},body:'{"index":0}'}),{params:Promise.resolve({id:'job'})});
+   assert.equal(response.status,200,await response.clone().text());const body=await response.json();assert.equal(body.warnings.length,2);assert.match(body.warnings[0],/대표/);assert.match(body.warnings[1],/1개/);
+  }
+  assert.equal(downloads,1);assert.equal(writes,1);
+  assert.deepEqual(JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload).assets.main.value,[]);
+  assert.equal(JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload).rows[0].imageKey,null);
+ }finally{h.sqlite.close();}
+});

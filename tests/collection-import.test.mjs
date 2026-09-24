@@ -120,3 +120,18 @@ test('network uncertainty has a bounded retry budget and never confirms a missin
  }});
  assert.equal(calls,1);assert.equal(malformed.status,'failed');assert.equal(malformed.productId,null);
 });
+
+test('import retains indexed assignment warnings through completion, failure and cooperative stop',async()=>{
+ for(const mode of ['completed','failed','stopped']){
+  let stop=false;
+  const outcome=await runCollectionImport('job',3,{shouldStop:()=>stop,fetcher:async(url,init)=>{
+   if(url.endsWith('/product'))return reply({productId:'p'});
+   const {index}=JSON.parse(init.body);
+   if(index===0){if(mode==='stopped')stop=true;return reply({key:'owner/a',warnings:['상세 배치 확인',null,4,'']});}
+   if(mode==='failed')return reply({error:'다음 이미지 실패'},409);
+   return reply({key:'owner/next'});
+  }});
+  assert.equal(outcome.status,mode);assert.deepEqual(Array.from(outcome.warnings),['원본 1번: 상세 배치 확인']);
+  assert.equal(outcome.completedImages,mode==='completed'?3:1);
+ }
+});
