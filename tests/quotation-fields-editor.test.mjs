@@ -622,3 +622,19 @@ test('closed attribute panels ignore late local rule files and file reads block 
  input.props.onChange({target:{files:[file],value:'file'}});input.props.onChange({target:{files:[file],value:'file'}});save();assert.equal(reads,1);assert.equal(h.calls.length,0);
  h.unmount();pending.resolve('{}');await settleAttributes();assert.equal(h.lateUpdates,0);
 });
+
+test('category selection preview uses actual quotation schema and defaults without leaking defaults between categories',()=>{
+ const {CategoryQuotationPreview}=load('app/components/category-quotation-preview.tsx');
+ const {couplusQuotationDefault}=load('app/couplus-quotation-defaults.ts');
+ const render=schema=>renderToStaticMarkup(React.createElement(CategoryQuotationPreview,{schema}));
+ const encode=value=>renderToStaticMarkup(React.createElement('span',null,value)).replace(/^<span>|<\/span>$/g,'');
+ for(const category of ['80719','81452','103495','unknown']){
+  const schema=model.getQuotationSchema(category),before=JSON.stringify(schema),html=render(schema);
+  for(const field of schema.fields)assert.ok(html.includes(encode(field.label+(field.required?' *':''))),field.id);
+  const count=schema.fields.filter(field=>couplusQuotationDefault(category,field)!==undefined).length;
+  assert.ok(html.includes(`쿠플러스 기본값 확인 ${count}개`));
+  assert.equal(JSON.stringify(schema),before);
+  if(category==='80719'){assert.match(html,/쿠플러스 화면 관찰값/);assert.match(html,/해당사항없음.*저장값: 공란/);assert.match(html,/허용 선택지/);}
+  else{assert.doesNotMatch(html,/쿠플러스 화면 관찰값/);assert.match(html,/미확인 · 임의 기본값 없음/);}
+ }
+});
