@@ -1,3 +1,4 @@
+import { couplus64497Fields, couplus64497Path } from '@/app/couplus-toothbrush-schema';
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema';
 import { contentDetailImageKeys, savedTextOrFallback, type ContentField, type ProductContent } from '@/app/product-content';
@@ -160,19 +161,20 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...hub.notices.map(item => field(item.id, 'legal', item.label,
       { reviewRequired: true, help: '공식 상품 미리보기의 상품고시 항목입니다. 실제 상품·증빙에 맞게 작성해주세요.' })));
   }
-  const couplusFields = categoryId === '77442' ? couplus77442Fields : categoryId === '81452' ? couplus81452Fields : null;
-  const couplusPath = categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
+  const couplusFields = categoryId === '64497' ? couplus64497Fields : categoryId === '77442' ? couplus77442Fields : categoryId === '81452' ? couplus81452Fields : null;
+  const couplusPath = categoryId === '64497' ? couplus64497Path : categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
   if (couplusFields && !hub) {
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product').map(item => categoryId === '81452'
       ? { ...item, required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : item.id === 'size'
         ? '공식 입력 예시: S, Medium, Free, 대, one size 등. 구매 옵션의 사이즈를 입력해주세요. 크기·중량 표시사항과 별도로 관리합니다.'
         : 'Supplier Hub 상품정보 화면에서 확인한 항목입니다. 실제 상품값을 입력해주세요.' } : item));
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...couplusFields.filter(item => item.section === 'legal'));
-    fields.splice(fields.findIndex(item => item.id === 'kcsCertificationNumber'), 1);
+    if (categoryId !== '64497') fields.splice(fields.findIndex(item => item.id === 'kcsCertificationNumber'), 1);
+    if (categoryId === '64497') { const model = fields.findIndex(item => item.id === 'model'); fields[model] = { ...fields[model], required: false }; }
   }
   const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' || categoryId === '81452' ? 100 : undefined);
   return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : couplusPath ? [...couplusPath] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
-    status: observed ? 'observed' : 'unconfirmed', evidence: categoryId === '81452' ? '81452 코드·경로·상품정보 필수 항목·선택값·옵션 100개 한도는 Supplier Hub에서 대조했습니다. 상품고시는 쿠플러스 관찰 기준이며 이미지·인증·물류·최종 접수는 미검증입니다.' : observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : couplusFields ? '쿠플러스 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
+    status: observed ? 'observed' : 'unconfirmed', evidence: categoryId === '64497' ? '쿠플러스 양치용품정리(64497) 저장 견적의 노출 속성 2개·비노출 속성 33개·상품고시 5개를 확인했습니다. 상품고시 미입력 등록 실패 사례가 있으나 Supplier Hub 동일 양식과 자동 기본값은 아직 미검증입니다.' : categoryId === '81452' ? '81452 코드·경로·상품정보 필수 항목·선택값·옵션 100개 한도는 Supplier Hub에서 대조했습니다. 상품고시는 쿠플러스 관찰 기준이며 이미지·인증·물류·최종 접수는 미검증입니다.' : observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : couplusFields ? '쿠플러스 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
     fields: structuredClone(fields), submissionReady: false, ...(maxIncludedOptions ? { maxIncludedOptions } : {}),
     ...(hub?.salePriceMustCoverSupply || categoryId === '81452' ? { salePriceMustCoverSupply: true } : {}) };
 }

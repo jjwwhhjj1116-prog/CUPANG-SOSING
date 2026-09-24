@@ -2,6 +2,39 @@
 export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
 export const CATEGORY_TEMPLATE_FILE_LIMIT = 5_000_000;
 export const categoryFields = {
+  "tooth_paperHolderType": "양치용품정리: 휴지걸이 형태",
+  "tooth_lidIncluded": "양치용품정리: 뚜껑 포함여부",
+  "tooth_cupMaterial": "양치용품정리: 컵 재질",
+  "tooth_bathroomMaterial": "양치용품정리: 욕실수납용품 재질",
+  "tooth_shelfShape": "양치용품정리: 욕실선반 형태",
+  "tooth_installation": "양치용품정리: 욕실용품 설치방법",
+  "tooth_storageMaterial": "양치용품정리: 수납/정리용품 재질",
+  "tooth_width": "양치용품정리: 가로길이",
+  "tooth_handleIncluded": "양치용품정리: 손잡이 포함여부",
+  "tooth_transparentWindow": "양치용품정리: 투명창여부",
+  "tooth_drainage": "양치용품정리: 물빠짐여부",
+  "tooth_mirror": "양치용품정리: 거울 유무",
+  "tooth_set": "양치용품정리: 세트여부",
+  "tooth_wheels": "양치용품정리: 바퀴 유무",
+  "tooth_colorFamily": "양치용품정리: 색상계열",
+  "tooth_height": "양치용품정리: 높이",
+  "tooth_magnetic": "양치용품정리: 자석 부착가능 여부",
+  "tooth_levels": "양치용품정리: 단 수",
+  "tooth_minAge": "양치용품정리: 최소 연령",
+  "tooth_maxAge": "양치용품정리: 최대 연령",
+  "tooth_drilling": "양치용품정리: 타공 여부",
+  "tooth_shelfUse": "양치용품정리: 선반 용도",
+  "tooth_sliding": "양치용품정리: 슬라이딩 여부",
+  "tooth_toothbrushCount": "양치용품정리: 칫솔 수납 개수",
+  "tooth_finishType": "양치용품정리: 마감 유형",
+  "tooth_shortEdge": "양치용품정리: 항목 너비가 짧은 가장자리",
+  "tooth_components": "양치용품정리: 포함 구성 요소",
+  "tooth_material": "양치용품정리: 상품 재질",
+  "tooth_longEdge": "양치용품정리: 항목 길이가 더 긴 가장자리",
+  "tooth_shape": "양치용품정리: 품목 모양",
+  "tooth_gtin": "양치용품정리: Global Trade Item Number",
+  "tooth_parentPart": "양치용품정리: Parent Manufacturer Part Number",
+  "tooth_part": "양치용품정리: Manufacturer Part Number",
   brace_bodyPart: '헬스보호대: 사용부위', brace_size: '헬스보호대: 패션잡화 사이즈',
   brace_fastener: '헬스보호대: 잠금/고정방식', brace_composition: '헬스보호대: 구성',
   brace_user: '헬스보호대: 보호대 사용대상', brace_purpose: '헬스보호대: 보호대/교정용품 용도',
@@ -436,7 +469,7 @@ export const categoryFields = {
 } as const;
 export type CategoryField = keyof typeof categoryFields;
 export function categoryFieldScope(field: string): string | null {
-  return field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
+  return field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
 }
 export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;

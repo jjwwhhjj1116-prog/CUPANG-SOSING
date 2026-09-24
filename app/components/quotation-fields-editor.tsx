@@ -282,7 +282,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     {loading && <p role="status">최신 견적 입력을 확인하는 중입니다.</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
     {message && <p role="status" className="quotation-fields-notice">{message}</p>}
-    {schema && <div className="quotation-fields-category"><strong>{schema.categoryPath.join(' › ') || '카테고리 미연결'}{schema.categoryId ? ` · ${schema.categoryId}` : ''}</strong><small>{schema.status === 'observed' ? schema.evidence : '이 카테고리의 세부 규격은 미확인입니다. 공통 입력을 작성하고 실제 견적서 양식과 대조해주세요.'}</small></div>}
+    {schema && <div className="quotation-fields-category"><strong>{schema.categoryPath.join(' › ') || '카테고리 미연결'}{schema.categoryId ? ` · ${schema.categoryId}` : ''}</strong><small>{schema.status !== 'observed' && '이 카테고리의 세부 규격은 미확인입니다. '}{schema.evidence}</small></div>}
     {view && <>
       <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section) => { setSelectedOption(optionId); setActive(section); setBulk(null); }}/>
       <LegacyQuotationImport key={JSON.stringify([view.revision, view.inputFingerprint, changes])} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={keys => {

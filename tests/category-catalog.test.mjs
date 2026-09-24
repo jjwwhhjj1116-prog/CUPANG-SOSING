@@ -32,7 +32,7 @@ test('hierarchy imports only observed root/child paths with exact order and all 
     if (node.path.length === 1) count += node.children.length;
   }
   assert.equal(count, 173);
-  assert.equal(choices.filter(choice => choice.isLeaf).length, 24);
+  assert.equal(choices.filter(choice => choice.isLeaf).length, 25);
   assert.equal(choices.filter(model.canConfirmCategory).length, model.categoryObservationScope.knownCodes);
   const verified = choices.filter(choice => choice.codeEvidence === 'supplier-hub');
   assert.equal(verified.length, model.categoryObservationScope.supplierHubCodes);
@@ -50,7 +50,7 @@ test('unknown leaves and unobserved branches cannot become 80719 profiles, but o
       assert.deepEqual(plain(choice.path), knownPath);
       const result = partial.categoryProfileForChoice(choice);
       assert.equal(result.categoryId, '80719'); assert.equal(result.template, null); assert.deepEqual(plain(result.mappings), []);
-    } else if (['77442', '81452'].includes(choice.categoryId)) {
+    } else if (['77442', '81452', '64497'].includes(choice.categoryId)) {
       assert.equal(partial.canConfirmCategory(choice), true);
       assert.equal(choice.codeEvidence, choice.categoryId === '81452' ? 'supplier-hub' : 'couplus');
     } else {
@@ -115,7 +115,7 @@ test('only exact observed leaf paths receive Hub IDs; branches, similar labels a
   const bounded = load({ ...hubObservation, categoryIds: records, verifiedLeafCount: 9999 });
   const choices = bounded.categoryChoices([]);
   assert.equal(bounded.categoryObservationScope.supplierHubCodes, 2);
-  assert.equal(bounded.categoryObservationScope.knownCodes, 4);
+  assert.equal(bounded.categoryObservationScope.knownCodes, 5);
   assert.equal(choices.find(choice => choice.categoryId === '109047').codeEvidence, 'supplier-hub');
   assert.equal(choices.find(choice => choice.categoryId === '80719').codeEvidence, 'couplus');
   assert.equal(choices.find(choice => choice.path.at(-1) === '기타수납/정리용품').categoryId, '');
@@ -152,4 +152,12 @@ test('board category can be reached at every level, searched, and converted to a
  assert.equal(saved.filter(c=>c.categoryId==='77442').length,1);assert.equal(saved.find(c=>c.profileId==='board').codeEvidence,'couplus');
  const wrong=model.categoryChoices([profile('wrong','77442',['다른 분류','바둑알+바둑판'])]);
  assert.equal(wrong.find(c=>c.profileId==='wrong').codeEvidence,'saved');
+});
+
+test('64497 exact breadcrumb reaches a selectable Couplus-only leaf without asserting Hub or Excel verification',()=>{
+ const choices=model.categoryChoices([]);const leaf=choices.find(choice=>choice.categoryId==='64497');
+ const path=['생활용품','욕실용품','욕실수납/정리','양치용품정리'];
+ assert.deepEqual(plain(leaf.path),path);assert.equal(leaf.codeEvidence,'couplus');assert.equal(leaf.templateLinked,false);
+ for(let index=0;index<path.length;index++)assert.ok(model.categoryLevel(choices,path.slice(0,index),index).includes(path[index]));
+ assert.equal(model.canConfirmCategory(leaf),true);assert.equal(model.categoryProfileForChoice(leaf).template,null);
 });

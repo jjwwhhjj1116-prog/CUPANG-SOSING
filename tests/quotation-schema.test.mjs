@@ -606,3 +606,46 @@ test('quotation detail images compose banners and preserve explicit manual overr
  input.overrides.common.detailImages='';
  assert.equal(model.resolveQuotationFields(input).rows[1].fields.detailImages.value,'');
 });
+
+
+test('64497 matches observed Couplus attributes and notices while retaining unverified status',()=>{
+ const schema=model.getQuotationSchema('64497');
+ const evidence=JSON.parse(fs.readFileSync(new URL('../docs/couplus-64497-quotation-2026-09-24.json',import.meta.url),'utf8'));
+ assert.equal(schema.status,'unconfirmed');assert.equal(schema.submissionReady,false);
+ assert.deepEqual(clone(schema.categoryPath),evidence.path);
+ assert.deepEqual(clone(schema.fields.filter(f=>f.visibility==='exposed').map(f=>f.label)),evidence.exposed);
+ const hidden=schema.fields.filter(f=>f.visibility==='hidden');assert.equal(hidden.length,33);
+ for(const expected of evidence.hidden){const actual=hidden.find(f=>f.id===expected.id);assert.equal(actual.label,expected.label);assert.deepEqual(clone(actual.choices?.map(c=>c.label)??[]),expected.choices);}
+ assert.equal(schema.fields.find(f=>f.id==='model').required,false);
+ assert.ok(schema.fields.some(f=>f.id==='kcsCertificationNumber'));
+ assert.equal(schema.fields.filter(f=>f.section==='legal'&&f.id.startsWith('notice')).length,5);
+ for(const f of schema.fields.filter(f=>f.id.startsWith('notice')))assert.equal(f.required,true);
+ const mutable=model.getQuotationSchema('64497');mutable.fields.find(f=>f.id==='tooth_cupMaterial').choices[0].label='변경';
+ assert.equal(model.getQuotationSchema('64497').fields.find(f=>f.id==='tooth_cupMaterial').choices[0].label,'해당사항없음');
+});
+test('64497 links saved content and preserves blanks without copying another seller product',()=>{
+ const input=fixture();input.categoryId='64497';
+ let row=model.resolveQuotationFields(input).rows[1];
+ assert.equal(row.fields.noticePermission.value,'');assert.ok(row.fields.noticePermission.issues.some(i=>i.includes('필수')));
+ for(const id of ['tooth_cupMaterial','kcMarkType','packagedWeightG','packagedDimensionsMm','shelfLifeDays'])assert.equal(row.fields[id].value,'');
+ assert.equal(row.fields.title.value,'번역된 가방');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
+ input.content=contentModel.applyContentPatch(input.content,{label:{certification:'확인된 허가 자료'}},'now');
+ row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.noticePermission.value,'확인된 허가 자료');assert.equal(row.fields.noticePermission.source,'content');
+ input.overrides={common:{noticePermission:'공통 확인값'},options:{red:{noticePermission:''}}};
+ row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.noticePermission.value,'');assert.equal(row.fields.noticePermission.source,'manual-option');assert.ok(row.fields.noticePermission.issues.some(i=>i.includes('필수')));
+ assert.equal(model.getQuotationSchema('80719').fields.some(f=>f.id.startsWith('tooth_')),false);
+});
+test('64497 fields map into quotation exports and reject cross-category profiles',()=>{
+ const input=fixture();input.categoryId='64497';const schema=model.getQuotationSchema('64497');
+ const fields=schema.fields.filter(f=>f.id.startsWith('tooth_')||f.id.startsWith('notice'));
+ const values=Object.fromEntries(fields.map(f=>[f.id,f.choices?.at(-1).value??'확인값']));
+ input.overrides={common:values,options:{red:{tooth_width:'30cm'}}};
+ const suggestion=load('app/quotation-mapping.ts').suggestQuotationMappings(fields.map(f=>f.label),'64497');assert.equal(suggestion.mappings.length,fields.length);
+ const profile={name:'양치용품 연결 검증',categoryId:'64497',categoryPath:schema.categoryPath,template:{name:'fixture.csv',format:'csv',sha256:'a'.repeat(64),sheetName:'',headerRow:1,headers:fields.map(f=>f.label)},mappings:suggestion.mappings};
+ const profileModel=load('app/category-profiles.ts');profileModel.validateCategoryProfile(profile);
+ const resolved=model.resolveQuotationFields(input);
+ const mapped=load('app/exports/quotation-fields.ts').resolvedQuotationRows({...input,profile},resolved,[{key:'owner/main.png',name:'assets/main.png'},{key:'owner/option.png',name:'assets/option.png'},{key:'owner/detail.png',name:'assets/detail.png'}]);
+ assert.deepEqual(clone(profileModel.mapQuotationRow(profile,mapped[0]).values),fields.map(f=>resolved.rows[1].fields[f.id].value));
+ assert.equal(profileModel.categoryFieldScope('tooth_width'),'64497');
+ assert.throws(()=>profileModel.validateCategoryProfile({...profile,categoryId:'80719'}),/다른 카테고리/);
+});
