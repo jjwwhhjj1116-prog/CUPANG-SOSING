@@ -32,6 +32,12 @@ const product = {
 const context = { params: Promise.resolve({ id: product.id }) };
 const decode = bytes => new TextDecoder().decode(bytes);
 
+test('ZIP label honors layout while content JSON retains hidden facts and saved order',()=>{
+ const content=model.applyContentPatch(model.emptyProductContent(product.id),{label:{productName:'라벨 품명',material:'숨긴 재질',netContents:'내용량 값'},labelLayout:{order:['netContents','productName','material'],hidden:['material']}},product.updated_at);
+ const files=readArchive(bundle.createReviewBundle(product,content,[]));const svg=decode(files['label-review.svg']);assert.ok(svg.indexOf('내용량:')<svg.indexOf('품명:'));assert.ok(!svg.includes('숨긴 재질'));
+ const snapshot=JSON.parse(decode(files['content.json']));assert.equal(snapshot.label.material.value,'숨긴 재질');assert.deepEqual(snapshot.labelLayout.hidden,['material']);
+});
+
 test('review ZIP labels new content fields in Korean and preserves exact saved text in JSON',()=>{
  const content=model.applyContentPatch(model.emptyProductContent(product.id),{label:{productType:'가방',netContents:'본품 <1개>',usageStandard:'확인한 기준 & 조건'}},product.updated_at);const before=JSON.stringify(content);
  const files=readArchive(bundle.createReviewBundle(product,content,[]));const svg=decode(files['label-review.svg']);

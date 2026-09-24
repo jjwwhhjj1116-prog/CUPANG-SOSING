@@ -22,6 +22,12 @@ const version = '2026-09-22T00:00:00.000Z'; const nextVersion = '2026-09-22T00:0
 const png = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=', 'base64'));
 const empty = () => contentModel.emptyProductContent('test');
 
+test('label image follows saved order and visibility, rejects completely hidden content and preserves source',()=>{
+ const content=contentModel.applyContentPatch(empty(),{label:{productName:'상품',material:'면',netContents:'1개'},labelLayout:{order:['netContents','material','productName'],hidden:['material']}},version);const before=JSON.stringify(content);
+ const plan=model.documentImagePlan('label',content,optionsModel.emptyProductOptions('test'));assert.equal(plan.rows[0][0],'내용량');assert.equal(plan.rows[1][0],'품명');assert.ok(!plan.rows.some(row=>row[0]==='재질'));assert.equal(JSON.stringify(content),before);
+ const hidden=contentModel.applyContentPatch(content,{labelLayout:{order:[],hidden:Object.keys(contentModel.labelFields)}},nextVersion);assert.throws(()=>model.documentImagePlan('label',hidden,optionsModel.emptyProductOptions('test')),/표시할 항목/);
+});
+
 test('document plans use saved label/size values only and never fabricate blank legal or dimension facts', () => {
   const content = contentModel.applyContentPatch(empty(), { label: { productName: '저장한 품명', material: '면' } }, version);
   const options = optionsModel.applyOptionRows(optionsModel.emptyProductOptions('test'), [{ ...optionsModel.emptyOptionInput('a'), originalName: '原文', translatedName: '대형', included: true, widthCm: 10.5, unitsPerPack: 2 }], version);

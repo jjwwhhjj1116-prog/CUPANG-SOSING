@@ -5,6 +5,7 @@ import { assetRoles, detailImageKeys, emptyProductContent, labelFields, productI
 import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor-tools';
 import { fillLabelDraft } from '@/app/label-autofill';
 import { ImageSizeNotice } from '@/app/components/image-size-notice';
+import { currentLabelLayout, moveLabelField, type LabelLayout } from '@/app/product-content';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -15,12 +16,14 @@ type Props = {
 type Draft = {
   seo: { title: string; keywords: string; description: string };
   label: Record<LabelField, string>;
+  labelLayout: LabelLayout;
   assets: Record<AssetRole, string[]>;
 };
 function draftFrom(content: ProductContent): Draft {
   return {
     seo: { title: content.seo.title.value, keywords: content.seo.keywords.value.join('\n'), description: content.seo.description.value },
     label: Object.fromEntries(Object.entries(content.label).map(([key, field]) => [key, field.value])) as Draft['label'],
+    labelLayout: currentLabelLayout(content.labelLayout),
     assets: Object.fromEntries(Object.entries(content.assets).map(([key, field]) => [key, [...field.value]])) as Draft['assets'],
   };
 }
@@ -75,7 +78,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   }, [endpoint, applyLoaded]);
   const initial = draftFrom(content);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
-  const dirty = JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey]);
+  const dirty = JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey]) || (section==='표시사항'&&JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout));
   const anyDirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion);
   useEffect(() => {
@@ -116,7 +119,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   async function save() {
     setBusy(true); setError(''); setMessage('');
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
-      : section === '표시사항' ? { label: draft.label } : { assets: draft.assets };
+      : section === '표시사항' ? { label: draft.label, labelLayout: draft.labelLayout } : { assets: draft.assets };
     try {
       const response = await fetch(endpoint, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent; error?: string };
@@ -124,7 +127,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       const saved = body.content;
       setContent(saved);
       // Preserve unsaved work in other tabs when this section is saved.
-      setDraft(previous => ({ ...previous, [draftKey]: draftFrom(saved)[draftKey] }));
+      setDraft(previous => ({ ...previous, [draftKey]: draftFrom(saved)[draftKey], ...(section==='표시사항'?{labelLayout:draftFrom(saved).labelLayout}:{}) }));
       setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();
     } catch (cause) { setError(cause instanceof Error ? cause.message : '저장하지 못했습니다.'); }
     finally { setBusy(false); }
@@ -159,7 +162,16 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         <label className="field"><span>검색어 · 줄바꿈 또는 쉼표로 구분, 최대 50개 <Origin field={content.seo.keywords} /></span><textarea maxLength={5050} value={draft.seo.keywords} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, keywords: event.target.value } }))} /></label>
         <label className="field"><span>상품 설명 · 텍스트 <Origin field={content.seo.description} /></span><textarea rows={8} maxLength={20000} value={draft.seo.description} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))} /></label>
       </div>}
-      {section === '표시사항' && <div className="form-grid">{(Object.keys(labelFields) as LabelField[]).map(key => <label className={`field ${key === 'precautions' || key === 'qualityAssurance' ? 'full' : ''}`} key={key}><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, label: { ...previous.label, [key]: event.target.value } }))} /></label>)}</div>}
+      {section === '표시사항' && <>
+        <p className="panel-note">↑↓로 라벨 순서를 바꾸고 표시 여부를 선택하세요. 숨긴 값은 보존되며 견적서 입력값은 바뀌지 않습니다. 변경 후 표시사항을 저장하고 라벨 이미지를 다시 생성해주세요.</p>
+        <button type="button" className="btn ghost" onClick={()=>setDraft(previous=>({...previous,labelLayout:currentLabelLayout()}))}>기본 순서·전체 표시로 복원</button>
+        <div className="form-grid">{draft.labelLayout.order.map((key,index) => <div className={`field ${key === 'precautions' || key === 'qualityAssurance' ? 'full' : ''}`} key={key}>
+          <div className="quote-actions"><label><input type="checkbox" checked={!draft.labelLayout.hidden.includes(key)} onChange={event=>{const visible=event.target.checked;setDraft(previous=>({...previous,labelLayout:{...previous.labelLayout,hidden:visible?previous.labelLayout.hidden.filter(item=>item!==key):[...previous.labelLayout.hidden.filter(item=>item!==key),key]}}));}}/>{labelFields[key]} 라벨에 표시</label>
+            <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 위로`} disabled={index===0} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,-1)}))}>↑</button>
+            <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 아래로`} disabled={index===draft.labelLayout.order.length-1} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,1)}))}>↓</button></div>
+          <label className="field"><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, label: { ...previous.label, [key]: event.target.value } }))} /></label>
+        </div>)}</div>
+      </>}
       {section === '이미지' && <div className="panel-stack">
         <small style={{ color: '#64748b' }}>Supplier Hub 안내: 대표 1,000×1,000px 이상 권장 · 상세 상단·본문·하단 각각 가로 780px, 세로 1,500px 이내. 표시 크기는 브라우저가 읽은 값이며 화질·번역·접수 완료를 뜻하지 않습니다. 원본 헤더 기준 견적 검사와 다를 수 있습니다.</small>
         {focusedAssetRole&&<div className="image-step-summary"><div><strong>{assetRoles[focusedAssetRole]} <b>{draft.assets[focusedAssetRole].length}장</b></strong><p>{focusedAssetRole==='main'?'상품을 대표할 이미지 한 장을 선택하세요.':focusedAssetRole==='additional'?'상품의 다른 모습과 옵션 이미지를 선택하고 순서를 조정하세요.':'이미지 역할에서 상단·본문·하단을 선택하세요. 상단과 하단은 각각 한 장이며 본문 순서는 ↑↓로 조정합니다.'} 저장한 선택은 견적 자료에 반영됩니다.</p></div><button type="button" className="btn ghost" disabled={!draft.assets[focusedAssetRole].length} onClick={()=>setAssetFilter(focusedAssetRole)}>선택한 이미지 보기</button></div>}

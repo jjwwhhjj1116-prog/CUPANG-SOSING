@@ -8,6 +8,20 @@ export const labelFields = {
 } as const;
 export const assetRoles = { main: '대표 이미지', additional: '추가 이미지', detailTop: '상세 상단 이미지', detail: '상세 이미지', detailBottom: '상세 하단 이미지', size: '사이즈표', label: '한글 표시사항' } as const;
 export type LabelField = keyof typeof labelFields;
+export type LabelLayout = { order: LabelField[]; hidden: LabelField[] };
+export function currentLabelLayout(layout?: LabelLayout): LabelLayout {
+  const keys=Object.keys(labelFields) as LabelField[];
+  return {order:[...new Set([...(layout?.order??[]).filter(key=>keys.includes(key)),...keys])],hidden:[...new Set((layout?.hidden??[]).filter(key=>keys.includes(key)))]};
+}
+export function moveLabelField(layout: LabelLayout, key: LabelField, offset: -1|1): LabelLayout {
+  const next=currentLabelLayout(layout);const index=next.order.indexOf(key);const target=index+offset;
+  if(index>=0&&target>=0&&target<next.order.length)[next.order[index],next.order[target]]=[next.order[target],next.order[index]];
+  return next;
+}
+export function labelDocumentRows(content: ProductContent): [LabelField,string,string][] {
+  const layout=currentLabelLayout(content.labelLayout);
+  return layout.order.filter(key=>!layout.hidden.includes(key)).map(key=>[key,labelFields[key],content.label[key]?.value??'']);
+}
 export type AssetRole = keyof typeof assetRoles;
 export type ContentField<T> = { value: T; provenance: 'unverified' | 'collected' | 'translated' | 'generated' | 'manual'; updatedAt: string | null };
 /** A deliberately cleared saved value must not resurrect a workspace default. */
@@ -18,11 +32,13 @@ export type ProductContent = {
   schemaVersion: 1; productId: string; revision: number; updatedAt: string | null;
   seo: { title: ContentField<string>; keywords: ContentField<string[]>; description: ContentField<string> };
   label: Record<LabelField, ContentField<string>>;
+  labelLayout?: LabelLayout;
   assets: Record<AssetRole, ContentField<string[]>>;
 };
 export type ContentPatch = {
   seo?: { title?: string; keywords?: string[]; description?: string };
   label?: Partial<Record<LabelField, string>>;
+  labelLayout?: LabelLayout;
   assets?: Partial<Record<AssetRole, string[]>>;
 };
 
@@ -65,8 +81,17 @@ function plainText(value: unknown, max: number, name: string) {
 export function validateContentInput(input: unknown, ownedKeys: readonly string[], ownerId: string): { expectedRevision: number; patch: ContentPatch } {
   const body = object(input, ['expectedRevision', 'patch'], '콘텐츠 요청');
   if (!Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0) throw new Error('저장 버전을 다시 불러와주세요.');
-  const raw = object(body.patch, ['seo', 'label', 'assets'], '편집 내용');
+  const raw = object(body.patch, ['seo', 'label', 'assets', 'labelLayout'], '편집 내용');
   const patch: ContentPatch = {};
+  if ('labelLayout' in raw) {
+    const layout=object(raw.labelLayout,['order','hidden'],'표시사항 배치');
+    const read=(name:'order'|'hidden'):LabelField[]=>{
+      const values=layout[name];
+      if(!Array.isArray(values)||values.length>Object.keys(labelFields).length||new Set(values).size!==values.length||values.some(key=>typeof key!=='string'||!Object.hasOwn(labelFields,key)))throw new Error('표시사항 배치 항목이 잘못되었거나 중복되었습니다.');
+      return [...values] as LabelField[];
+    };
+    patch.labelLayout=currentLabelLayout({order:read('order'),hidden:read('hidden')});
+  }
   if ('seo' in raw) {
     const seo = object(raw.seo, ['title', 'keywords', 'description'], 'SEO');
     patch.seo = {};
@@ -101,6 +126,7 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
 export function applyContentPatch(current: ProductContent, patch: ContentPatch, now: string): ProductContent {
   current = withCurrentLabelFields(current);
   const next = structuredClone(current);
+  if(patch.labelLayout)next.labelLayout=structuredClone(patch.labelLayout);
   function edited<T>(previous: ContentField<T>, value: T): ContentField<T> {
     return JSON.stringify(previous.value) === JSON.stringify(value) ? previous : { value, provenance: 'manual', updatedAt: now };
   }

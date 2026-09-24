@@ -24,6 +24,17 @@ const product = { id: 'test', owner_id: 'owner', image_keys: '["owner/main.jpg",
 const request = (body, headers = { 'content-type': 'application/json' }) => new Request('http://localhost/api/products/test/content', { method: 'PATCH', headers, body: JSON.stringify(body) });
 const input = (patch, expectedRevision = 0) => ({ expectedRevision, patch });
 
+test('label layout saves independently, rejects ambiguous IDs and never deletes hidden values',()=>{
+ const original=model.applyContentPatch(model.emptyProductContent('test'),{label:{productName:'상품',material:'면'}},now);const before=JSON.stringify(original);
+ const {patch}=model.validateContentInput(input({labelLayout:{order:['material','productName'],hidden:['material']}},1),[],'owner');
+ const saved=model.applyContentPatch(original,patch,now);assert.equal(saved.label.material.value,'면');assert.equal(saved.labelLayout.order[0],'material');assert.equal(new Set(saved.labelLayout.order).size,Object.keys(model.labelFields).length);assert.equal(JSON.stringify(original),before);
+ const updated=model.applyContentPatch(saved,{seo:{title:'새 상품명'}},now);assert.deepEqual(updated.labelLayout,saved.labelLayout);
+ const moved=model.moveLabelField(saved.labelLayout,'productName',-1);assert.equal(moved.order[0],'productName');assert.equal(saved.labelLayout.order[0],'material');
+ assert.deepEqual(model.moveLabelField(moved,'productName',-1),moved);
+ for(const labelLayout of [null,{order:['material','material'],hidden:[]},{order:['unknown'],hidden:[]},{order:[],hidden:['__proto__']},{order:[],hidden:['material','material']},{order:[]},{order:[],hidden:[],extra:1}])assert.throws(()=>model.validateContentInput(input({labelLayout}),[],'owner'));
+ const restored=model.applyContentPatch(saved,{labelLayout:model.currentLabelLayout()},now);assert.equal(restored.label.material.value,'면');assert.equal(restored.labelLayout.hidden.length,0);
+});
+
 test('net contents and usage standard preserve legacy records and intentional empty saves',()=>{
  const legacy=model.emptyProductContent('test');delete legacy.label.netContents;delete legacy.label.usageStandard;const before=JSON.stringify(legacy);
  const normalized=model.withCurrentLabelFields(legacy);assert.equal(JSON.stringify(legacy),before);
@@ -110,6 +121,18 @@ function routeWith({ find = async () => product, read = async () => model.emptyP
     'cloudflare:workers': { env: { FILES: { head } } },
   }, mode);
 }
+
+test('layout-only API saves round trip through SQLite and stale revisions cannot replace the layout',async()=>{
+ const {sqlite,queries}=sqliteDependencies();
+ try{
+  const route=routeWith({read:queries.readProductContent,save:queries.saveProductContent});
+  const patch={labelLayout:{order:['material','productName'],hidden:['model']}};
+  const response=await route.PATCH(request(input(patch)),context);assert.equal(response.status,200);
+  const saved=await queries.readProductContent('owner','test');assert.equal(saved.labelLayout.order[0],'material');assert.deepEqual(Array.from(saved.labelLayout.hidden),['model']);
+  assert.equal((await route.PATCH(request(input({labelLayout:{order:[],hidden:[]}})),context)).status,409);
+  assert.equal((await queries.readProductContent('owner','test')).labelLayout.order[0],'material');
+ }finally{sqlite.close();}
+});
 
 test('content endpoint enforces product ownership, cache privacy, production closure and bounded JSON', async () => {
   let accessed = 0;
