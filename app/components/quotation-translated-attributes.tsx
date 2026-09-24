@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
-import { quotationTranslationDraft } from '@/app/quotation-translation-adoption';
+import { quotationTranslationDraft, quotationTranslationBatch } from '@/app/quotation-translation-adoption';
 import { ATTRIBUTE_RULE_LIMIT, createAttributeRules, loadAttributeRules } from '@/app/quotation-attribute-rules';
 import { fetchAttributeSuggestions } from '@/app/quotation-attribute-suggestions';
 
@@ -16,6 +16,9 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const [message, setMessage] = useState('');
   const [ruleReport, setRuleReport] = useState<string[]>([]);
   const [serverRevision, setServerRevision] = useState<number | null>(null);
+  const [batch, setBatch] = useState<{ key: string; plan: ReturnType<typeof quotationTranslationBatch> } | null>(null);
+  const batchKey = JSON.stringify([jobId, mapping, view.inputFingerprint, view.revision, optionId]);
+  const batchPlan = batch?.key === batchKey ? batch.plan : null;
   const job = jobs.find(item => item.id === jobId);
   const row = view.resolved.rows.find(item => item.optionId === optionId);
   const fields = view.resolved.schema.fields.filter(field => !field.readOnly && ['text', 'textarea'].includes(field.type));
@@ -53,6 +56,14 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       const changes = quotationTranslationDraft(productId, view, job, optionId, selected);
       onApply(changes); setMapping({}); setMessage(`${changes.length}개 항목을 작성 중인 견적에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '연결 항목을 확인해주세요.'); }
+  }
+  function previewBatch() {
+    if (!job || disabled || loading) return;
+    setBatch(null);
+    try {
+      const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
+      setBatch({ key: batchKey, plan: quotationTranslationBatch(productId, view, job, selected) });
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : '일괄 연결 항목을 확인해주세요.'); }
   }
   function downloadRules() {
     if (!job || disabled || loading) return;
@@ -121,6 +132,15 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
         {mapping[attribute.sourceIndex] && <p style={{ whiteSpace: 'pre-wrap' }}>현재값: {row?.fields[mapping[attribute.sourceIndex]]?.value || '(공란)'} → {attribute.value}</p>}
       </div>)}
       {attributes.length > 0 && <button type="button" className="btn primary" disabled={!Object.values(mapping).some(Boolean)} onClick={apply}>선택한 번역값을 견적 초안에 반영</button>}
+      {attributes.length > 0 && <button type="button" className="btn ghost" disabled={!Object.values(mapping).some(Boolean)} onClick={previewBatch}>포함된 모든 옵션에 적용 미리보기</button>}
+      {batchPlan && <section aria-label="번역 속성 일괄 적용 미리보기">
+        <p>선택한 번역값이 모든 대상 옵션에 동일하게 적용됩니다. 옵션별 재질·크기가 다르면 개별 적용해주세요. 직접 수정값은 보존합니다.</p>
+        <p>변경 {batchPlan.changes.length}개 · 직접 수정값 보존 {batchPlan.skipped.length}개</p>
+        {batchPlan.preview.length > 0 && <table><thead><tr><th>옵션</th><th>항목</th><th>현재값</th><th>적용값</th></tr></thead><tbody>{batchPlan.preview.map((item,index)=><tr key={index}><td>{item.option}</td><td>{item.field}</td><td style={{whiteSpace:'pre-wrap'}}>{item.before || '(공란)'}</td><td style={{whiteSpace:'pre-wrap'}}>{item.after}</td></tr>)}</tbody></table>}
+        {batchPlan.skipped.length > 0 && <ul>{batchPlan.skipped.map((item,index)=><li key={index}>{item}</li>)}</ul>}
+        <button type="button" className="btn primary" disabled={!batchPlan.changes.length} onClick={()=>{if(disabled || loading)return;onApply(batchPlan.changes);setBatch(null);setMessage(`${batchPlan.changes.length}개 변경을 옵션별 견적 초안에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);}}>동일한 속성값 확인 · 전체 초안 반영</button>
+        <button type="button" className="btn ghost" onClick={()=>setBatch(null)}>일괄 적용 취소</button>
+      </section>}
     </fieldset>
     <small>항목명으로 인증·재질·규격을 추정하지 않습니다. 저장 후에도 실제 상품과의 일치 및 법적 정보 검토가 필요합니다.</small>
   </details>;

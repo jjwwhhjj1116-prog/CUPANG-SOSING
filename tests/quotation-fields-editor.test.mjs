@@ -389,3 +389,32 @@ test('automatic rule reuse preserves manual blanks and omits attributes absent f
  assert.deepEqual(clone(result.mapping),{});assert.equal(result.skipped.length,2);assert.equal(result.revision,2);
  let calls=0;next.result.draft.attributes=[];await fetchAttributeSuggestions('p1',view,next,'red',async()=>{calls++;throw Error('not expected');});assert.equal(calls,0);
 });
+
+const { quotationTranslationBatch } = load('app/quotation-translation-adoption.ts');
+test('batch translated attributes target included option IDs only and preserve per-option manual blanks',()=>{
+ const view=fixture({common:{},options:{blue:{noticeMaterial:''}}}),job=attributeJob(view);const before=JSON.stringify(view);
+ const plan=quotationTranslationBatch('p1',view,job,[{sourceIndex:0,fieldId:'noticeMaterial'},{sourceIndex:1,fieldId:'noticeDimensions'}]);
+ assert.equal(plan.changes.length,3);assert.equal(plan.preview.length,3);assert.equal(plan.skipped.length,1);
+ assert.ok(plan.changes.every(change=>change.optionId==='red'||change.optionId==='blue'));
+ assert.equal(plan.changes.some(change=>change.optionId==='blue'&&change.fieldKey==='noticeMaterial'),false);
+ let draft=[];for(const item of plan.changes)draft=editor.updateQuotationEditorDraft(view.overrides,draft,item);
+ assert.equal(editor.resolveQuotationEditorCell(view,draft,'red','noticeMaterial').value,'나일론');
+ assert.equal(editor.resolveQuotationEditorCell(view,draft,'blue','noticeMaterial').value,'');
+ assert.equal(editor.resolveQuotationEditorCell(view,draft,'blue','noticeDimensions').value,'38 cm');
+ assert.equal(JSON.stringify(view),before);
+});
+test('batch translation preserves common overrides and rejects stale results, duplicate mappings and oversized batches',()=>{
+ const view=fixture({common:{noticeMaterial:''},options:{}}),job=attributeJob(view),mapping=[{sourceIndex:0,fieldId:'noticeMaterial'}];
+ const plan=quotationTranslationBatch('p1',view,job,mapping);assert.equal(plan.changes.length,0);assert.equal(plan.skipped.length,2);
+ assert.throws(()=>quotationTranslationBatch('p1',view,{...job,productVersion:'old'},mapping));
+ assert.throws(()=>quotationTranslationBatch('p1',view,job,[...mapping,...mapping]));
+ const large=fixture();const row=large.resolved.rows.find(row=>row.optionId==='red');large.resolved.rows=Array.from({length:1001},(_,i)=>({...row,optionId:`option-${i}`}));
+ assert.throws(()=>quotationTranslationBatch('p1',large,attributeJob(large),mapping),/1,000/);
+});
+test('batch validation is atomic and never returns partial changes for an invalid attribute',()=>{
+ const view=fixture(),job=attributeJob(view),before=JSON.stringify(view);
+ assert.throws(()=>quotationTranslationBatch('p1',view,job,[{sourceIndex:0,fieldId:'noticeMaterial'},{sourceIndex:2,fieldId:'noticeDimensions'}]));
+ assert.equal(JSON.stringify(view),before);
+ const none=clone(view);none.resolved.rows.forEach(row=>row.included=false);
+ assert.throws(()=>quotationTranslationBatch('p1',none,job,[{sourceIndex:0,fieldId:'noticeMaterial'}]),/포함된 옵션/);
+});
