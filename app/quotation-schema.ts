@@ -27,7 +27,7 @@ export type QuotationField = {
   reviewRequired?: boolean; readOnly?: boolean; help?: string;
   integer?: boolean; min?: number; max?: number; maxItems?: number;
   /** Explicit shared meaning; never infer component materials from a label substring. */
-  contentField?: 'material' | 'components';
+  contentField?: 'material' | 'components' | 'model';
   optionDimension?: 'widthCm' | 'lengthCm' | 'heightCm';
 };
 export type QuotationSchema = {
@@ -151,6 +151,7 @@ const category80719: QuotationField[] = [
 function productContentBinding(item: QuotationField): QuotationField {
   if (item.section !== 'product' || item.visibility !== 'hidden') return item;
   if (item.label === '포함 구성 요소' && item.type === 'select') return { ...item, contentField: 'components' };
+  if (item.label === '모델명/품번' && item.type === 'text') return { ...item, contentField: 'model' };
   // Packaging and capacity are separate facts from physical dimensions.
   if (item.type !== 'text') return item;
   const keys = { '가로길이': 'widthCm', '세로길이': 'lengthCm', '아이템 높이': 'heightCm' } as const;
@@ -326,13 +327,13 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   }
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
     const id = definition.id;
-    if (definition.contentField === 'material') return contentValue(content.label.material);
-    if (definition.contentField === 'components') {
-      const saved = contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });
+    const linkedContent = definition.contentField ?? (id === 'storageMaterial' ? 'material' : undefined);
+    if (linkedContent) {
+      const saved = contentValue(content.label[linkedContent] ?? { value: '', provenance: 'unverified', updatedAt: null });
       if (saved.source === 'empty') return saved;
       // A single exact observed choice can be translated to its wire value.
       // Composite descriptions stay intact and receive normal select validation;
-      // do not truncate them to one component or silently replace with N/A.
+      // do not reduce them to one material/component or silently replace with N/A.
       const matches = definition.choices?.filter(choice => choice.value === saved.value || choice.label === saved.value) ?? [];
       return matches.length === 1 ? { ...saved, value: matches[0].value } : saved;
     }
@@ -373,7 +374,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         // 81452 expects a purchasing size (S/Medium/Free), not physical dimensions.
         if (schema.categoryId === '81452' || schema.categoryId === '103495') return literal('', 'empty');
         return dimensions(option);
-      case 'storageMaterial': case 'noticeMaterial': return contentValue(content.label.material);
+      case 'noticeMaterial': return contentValue(content.label.material);
       case 'mainImage': {
         const selected = option?.imageKey ? images([option.imageKey]) : images(content.assets.main.value);
         return { ...selected, source: selected.value && option?.imageKey ? 'option' : selected.source };

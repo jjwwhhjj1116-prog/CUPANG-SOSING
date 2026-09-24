@@ -1215,6 +1215,40 @@ test('reviewed label translations flow to quotation, label document and export w
 });
 
 const categoryEvidence=JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-product-schemas-2026-09-23.json',import.meta.url),'utf8'));
+test('material display choices become exact wire values without changing text notices or inventing unsupported materials',()=>{
+ let covered=0;
+ for(const categoryId of [...categoryEvidence.records.map(record=>record.categoryId),'64497','103495','77442','81452']){
+  const input=fixture();input.categoryId=categoryId;
+  const fields=model.getQuotationSchema(categoryId).fields.filter(field=>field.type==='select'&&(field.contentField==='material'||field.id==='storageMaterial'));
+  for(const field of fields){
+   covered++;input.content=contentModel.applyContentPatch(input.content,{label:{material:'해당사항없음'}},'now');
+   const before=JSON.stringify(input);let resolved=model.resolveQuotationFields(input);
+   assert.equal(resolved.rows[1].fields[field.id].value,'',`${categoryId}/${field.id}`);
+   assert.equal(resolved.rows[1].fields[field.id].source,'content');assert.equal(resolved.rows[1].fields[field.id].validationIssues.length,0);
+   if(resolved.rows[1].fields.noticeMaterial)assert.equal(resolved.rows[1].fields.noticeMaterial.value,'해당사항없음');
+   const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+   assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0][field.id],'');assert.equal(JSON.stringify(input),before);
+   input.content=contentModel.applyContentPatch(input.content,{label:{material:'확인 필요 복합재질'}},'later');
+   resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields[field.id].value,'확인 필요 복합재질');assert.ok(resolved.rows[1].fields[field.id].validationIssues.length>0);
+   input.overrides={common:{[field.id]:'직접 수정'},options:{red:{[field.id]:''}}};resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields[field.id].source,'manual-option');assert.equal(resolved.rows[1].fields[field.id].value,'');
+   input.overrides=model.emptyQuotationOverrides();
+  }
+ }
+ assert.ok(covered>1);
+});
+
+test('saved marathon model reaches model-number attribute and export but never compatibility or manufacturer part numbers',()=>{
+ const input=fixture();input.categoryId='103495';input.content=contentModel.applyContentPatch(input.content,{label:{model:'MODEL-172'}},'now');
+ const before=JSON.stringify(input);let resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows[1].fields.model.value,'MODEL-172');assert.equal(resolved.rows[1].fields.marathon_modelNumber.value,'MODEL-172');assert.equal(resolved.rows[1].fields.marathon_modelNumber.source,'content');
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].marathon_modelNumber,'MODEL-172');assert.equal(JSON.stringify(input),before);
+ for(const id of ['marathon_parentPart','marathon_part'])assert.equal(resolved.rows[1].fields[id].value,'');
+ input.overrides={common:{marathon_modelNumber:'공통'},options:{red:{marathon_modelNumber:''}}};resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.marathon_modelNumber.value,'');assert.equal(resolved.rows[0].fields.marathon_modelNumber.value,'공통');
+ input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{model:''}},'later');resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.marathon_modelNumber.value,'');assert.equal(resolved.rows[1].fields.marathon_modelNumber.source,'content');
+ input.categoryId='80706';input.content=contentModel.applyContentPatch(input.content,{label:{model:'MODEL-172'}},'later');resolved=model.resolveQuotationFields(input);const compatibility=resolved.schema.fields.find(field=>field.label==='호환모델');assert.ok(compatibility);assert.equal(resolved.rows[1].fields[compatibility.id].value,'');
+});
+
 test('saved components populate exact observed included-components fields, exports and manual clears',()=>{
  const ids=[...categoryEvidence.records.map(record=>record.categoryId),'81452','103495','64497','77442'];
  let checked=0;
