@@ -794,6 +794,11 @@ test('downloaded quotation review matches final saved cells and preserves eviden
  const saved={...input,state:{revision:7,overrides:input.overrides},categoryContext:{categoryId:'80719'}};
  const resolved=model.resolveQuotationFields(input);const before=JSON.stringify(saved);
  const assets=[{key:'owner/main.png',name:'assets/main.png'},{key:'owner/option.png',name:'assets/option.png'},{key:'owner/detail.png',name:'assets/detail.png'}];
+ for (const asset of assets) {
+  asset.data=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64');
+  asset.data.writeUInt32BE(asset.key==='owner/detail.png'?780:1000,16);
+  asset.data.writeUInt32BE(1000,20);
+ }
  const result=load('app/exports/quotation-fields.ts').quotationFieldFiles(saved,resolved,assets,'snapshot-fingerprint');
  const report=JSON.parse(result.files.find(f=>f.name==='submission-review.json').data);
  const expected=clone(load('app/submission-review.ts').inspectSubmission(resolved,JSON.parse(input.product.image_keys)));
@@ -1026,4 +1031,34 @@ test('missing tax settings preserve observed category defaults and never invent 
     assert.ok(model.resolveQuotationFields(input).rows[1].fields.taxType.validationIssues.length);
   }
   for (const value of ['invalid', null, 0, true, {}, ['과세']]) assert.throws(() => settingsModel.validateSettings({ taxType: value }), /과세여부/);
+});
+
+
+test('archive review inspects final attachment bytes and preserves image guidance in JSON and CSV', () => {
+ const input=fixture();
+ input.overrides={common:{},options:{red:{mainImage:'owner/main.png',detailImages:'owner/detail.png'}}};
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64');
+ const main=Buffer.from(png); main.writeUInt32BE(999,16);main.writeUInt32BE(1000,20);
+ const detail=Buffer.from(png);detail.writeUInt32BE(780,16);detail.writeUInt32BE(1501,20);
+ const assets=[{key:'owner/main.png',name:'assets/image-001.png',data:main},{key:'owner/detail.png',name:'assets/image-002.png',data:detail},{key:'owner/option.png',name:'assets/image-003.png',data:png}];
+ const resolved=model.resolveQuotationFields(input);
+ const source={...input,state:{revision:1,overrides:input.overrides},categoryContext:{categoryId:'80719'}};
+ const exporter=load('app/exports/quotation-fields.ts');
+ const files=exporter.quotationFieldFiles(source,resolved,assets,'same-revision').files;
+ const review=JSON.parse(files.find(file=>file.name==='submission-review.json').data);
+ const csv=files.find(file=>file.name==='submission-review.csv').data;
+ assert.ok(review.issues.some(issue=>issue.fieldId==='mainImage'&&issue.message.includes('999×1000')));
+ assert.ok(review.issues.some(issue=>issue.fieldId==='detailImages'&&issue.message.includes('780×1501')));
+ assert.match(csv,/999×1000/);assert.match(csv,/780×1501/);
+ assert.ok(review.limits.some(line=>line.includes('패키지에 포함한 이미지 바이트')));
+ assert.equal(review.submissionReady,false);
+ const inspector=load('app/exports/quotation-image-checks.ts').inspectQuotationAssets;
+ main.writeUInt32BE(1000,16);detail.writeUInt32BE(1500,20);
+ assert.equal(inspector(resolved,assets).size,0);
+ const invalid=[...assets];invalid[0]={...assets[0],data:Buffer.from('<svg/>')};
+ assert.equal(inspector(resolved,invalid).get('owner/main.png').kind,'error');
+ assert.equal(inspector(resolved,assets.slice(1)).get('owner/main.png').kind,'error');
+ assert.equal(inspector(resolved,[{...assets[0],data:png.subarray(0,8)},...assets.slice(1)]).get('owner/main.png').kind,'review');
+ for(const row of resolved.rows)row.included=false;
+ assert.equal(inspector(resolved,invalid).size,0);
 });

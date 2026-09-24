@@ -14,7 +14,7 @@ export type SubmissionReview = {
 };
 
 /** Readiness is derived from final saved cells, never legacy status badges. */
-export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[], imageChecks?: ReadonlyMap<string,ImageCheck>) {
+export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[], imageChecks?: ReadonlyMap<string,ImageCheck>, imageCheckSource: 'storage-metadata' | 'attachment-bytes' = 'storage-metadata') {
   const issues: SubmissionIssue[] = [];
   let errorCount = 0; let reviewCount = 0;
   const add = (issue: SubmissionIssue) => {
@@ -68,7 +68,9 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
     submissionReady:false as const, transport:'not-connected' as const,
     limits:['저장된 자료만 검사합니다. 편집 중인 내용은 저장 후 다시 검사해주세요.',
       'HTML 검사는 명시된 미디어 태그·주소·형식만 확인합니다. CSS·스크립트·외부 주소의 실제 파일 내용과 최종 렌더링은 확인하지 않습니다.',
-      imageChecks ? '이미지 소유권과 저장소 파일 존재·크기·형식검사 기록을 확인했습니다. 파일 내용 전체·번역 품질·Supplier Hub 업로드 성공은 미검증입니다.' : '이미지 연결 소유권을 검사하며 실제 파일 내용·Supplier Hub 업로드 성공은 검사하지 않습니다.',
+      imageChecks ? imageCheckSource === 'attachment-bytes'
+        ? '이 패키지에 포함한 이미지 바이트의 용량·형식·헤더 픽셀 크기를 검사했습니다. 전체 디코딩·번역 품질·Supplier Hub 업로드 성공은 미검증입니다.'
+        : '이미지 소유권과 저장소 파일 존재·크기·형식검사 기록을 확인했습니다. 파일 내용 전체·번역 품질·Supplier Hub 업로드 성공은 미검증입니다.' : '이미지 연결 소유권을 검사하며 실제 파일 내용·Supplier Hub 업로드 성공은 검사하지 않습니다.',
       '공식 Excel·이미지·인증·물류 규격과 실제 접수는 미검증입니다. 오류가 없어도 등록 완료를 뜻하지 않습니다.',
       'Supplier Hub 전송 연결이 아직 구현되지 않았습니다. 이 검사는 자료를 전송하거나 등록하지 않습니다.']};
 }
