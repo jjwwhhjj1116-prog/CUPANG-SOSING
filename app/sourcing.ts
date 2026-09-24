@@ -8,8 +8,15 @@ export type CollectionContext = { category: CategoryProfile; settings: Workspace
 export type CollectionJob = {
   id: string; offer_id: string; source_url: string; goal: string;
   status: 'awaiting_connector' | 'cancelled'; created_at: string; updated_at: string;
-  context?: CollectionContext | null; product_id?: string | null;
+  context?: CollectionContext | null; product_id?: string | null; received_at?: string | null;
 };
+
+export function collectionJobProgress(job: Pick<CollectionJob, 'status' | 'product_id' | 'received_at'>): {kind:string;label:string} {
+  if(job.product_id)return {kind:'imported',label:'상품 반영됨'};
+  if(job.status==='cancelled')return {kind:'cancelled',label:'취소됨'};
+  if(job.received_at)return {kind:'received',label:'원문 수신 · 상품 반영 대기'};
+  return {kind:'awaiting_connector',label:'수집 연결 대기'};
+}
 
 export type PreservedCollectionRequest = { offerId: string; sourceUrl: string; differences: string[] };
 /** Compare the persisted result, so concurrent inserts and retries are reported truthfully. */

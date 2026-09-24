@@ -11,6 +11,7 @@ function load(file, dependencies = {}, mode = 'development') {
   const exports = {};
   vm.runInNewContext(output, { exports, crypto, URL, Response, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in dependencies) return dependencies[name];
+    if (name === '@/db/collection-results') return load('db/collection-results.ts', dependencies);
     if (name === '@/app/category-profiles') return load('app/category-profiles.ts');
     if (name === '@/app/workflow') return load('app/workflow.ts');
     if (name === '@/app/sourcing') return load('app/sourcing.ts');
@@ -228,4 +229,22 @@ test('legacy invalid category codes cannot enter collection and fail before read
     assert.equal(response.status, 400); assert.equal((await response.json()).code, 'CATEGORY_CODE_INVALID');
   }
   assert.equal(touched, 0);
+});
+
+test('queue exposes owner-scoped receipt time without payload and preserves cancellation and product precedence',async()=>{
+ const {sqlite,queries}=storage();const progress=load('app/sourcing.ts').collectionJobProgress;
+ try{
+  const [a]=await queries.enqueueCollection('a',parse(payload));
+  const [b]=await queries.enqueueCollection('b',parse(payload));
+  assert.equal(a.received_at,null);assert.equal(progress(a).kind,'awaiting_connector');
+  sqlite.prepare('INSERT INTO collection_results(job_id,owner_id,payload,received_at) VALUES (?,?,?,?)').run(a.id,'a','{"title":"private source"}','2026-09-24T01:00:00Z');
+  const jobs=await queries.listCollectionJobs('a');assert.equal(jobs.length,1);assert.equal(jobs[0].received_at,'2026-09-24T01:00:00Z');assert.equal(progress(jobs[0]).kind,'received');assert.equal(jobs[0].payload,undefined);
+  assert.equal((await queries.findCollectionJob('b',b.id)).received_at,null);assert.equal(await queries.findCollectionJob('b',a.id),null);
+  // Even an inconsistent owner on a receipt must not disclose its timestamp.
+  sqlite.prepare('UPDATE collection_results SET owner_id=? WHERE job_id=?').run('b',a.id);
+  assert.equal((await queries.findCollectionJob('a',a.id)).received_at,null);
+  sqlite.prepare('UPDATE collection_results SET owner_id=? WHERE job_id=?').run('a',a.id);
+  const cancelled=await queries.cancelCollection('a',a.id);assert.equal(cancelled.received_at,jobs[0].received_at);assert.equal(progress(cancelled).kind,'cancelled');
+  assert.equal(progress({...jobs[0],product_id:'saved'}).kind,'imported');assert.equal(progress({status:'awaiting_connector'}).kind,'awaiting_connector');
+ }finally{sqlite.close();}
 });

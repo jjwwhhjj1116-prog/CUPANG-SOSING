@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { collectionResultSchema } from '@/db/collection-results';
 import type { CollectionJob, CollectionRequest, CollectionContext } from '@/app/sourcing';
 
 // Separate intake from products: without a provider response there is no product,
@@ -17,7 +18,7 @@ export const collectionProductSchema=`CREATE TABLE IF NOT EXISTS collection_prod
 )`;
 
 const columns = 'id, offer_id, source_url, goal, status, created_at, updated_at';
-const selectColumns = `${columns}, (SELECT payload FROM collection_context WHERE job_id=collection_jobs.id) AS context_json, (SELECT product_id FROM collection_products WHERE job_id=collection_jobs.id) AS product_id`;
+const selectColumns = `${columns}, (SELECT payload FROM collection_context WHERE job_id=collection_jobs.id) AS context_json, (SELECT product_id FROM collection_products WHERE job_id=collection_jobs.id) AS product_id, (SELECT received_at FROM collection_results WHERE job_id=collection_jobs.id AND owner_id=collection_jobs.owner_id) AS received_at`;
 type JobRow = CollectionJob & { context_json?: string | null };
 function withContext(row: JobRow): CollectionJob {
   const { context_json, ...job } = row;
@@ -27,7 +28,7 @@ function withContext(row: JobRow): CollectionJob {
 async function database() {
   if (!env.DB) throw new Error('D1 unavailable');
   await env.DB.batch([
-    env.DB.prepare(collectionSchema), env.DB.prepare(collectionUniqueIndex), env.DB.prepare(collectionProductSchema),
+    env.DB.prepare(collectionSchema), env.DB.prepare(collectionUniqueIndex), env.DB.prepare(collectionProductSchema), env.DB.prepare(collectionResultSchema),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_collection_owner_time ON collection_jobs(owner_id, created_at)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)'),
   ]);
