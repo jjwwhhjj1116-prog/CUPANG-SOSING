@@ -3,7 +3,7 @@
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
 import { useEffect, useRef, useState } from 'react';
-import type { CategoryProfile } from '@/app/category-profiles';
+import { quotationStartRow, type CategoryProfile } from '@/app/category-profiles';
 import { QuotationFieldsEditor } from '@/app/components/quotation-fields-editor';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { selectQuotationProfile } from '@/app/quotation-profile-selection';
@@ -49,7 +49,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
       setConnectionWarning(selection.warning);
       setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);
       setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
-      setStartRow((savedProfiles.find(profile=>profile.id===savedId)?.template?.headerRow??1)+1);
+      setStartRow(quotationStartRow(savedProfiles.find(profile=>profile.id===savedId)?.template));
     }).catch(cause=>{if(!controller.signal.aborted)setContextError(cause instanceof Error?cause.message:'카테고리 연결 확인 실패');})
       .finally(()=>{if(!controller.signal.aborted)setContextLoaded(true);});
     return()=>controller.abort();
@@ -84,7 +84,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     {(selected?.categoryId ?? capturedCategoryId)==='80719' && <p>바스켓 이름으로 확인한 공식 탐색 경로: 주방용품 → 주방수납/잡화 → 건조대/진열대/정리대 → 주방수납바구니/바스켓</p>}
     <small>2026-09-23 다운로드 화면 관찰 기준입니다. 이 화면의 ‘칸 카테고리 아이디’와 앱의 상품 카테고리 코드는 동일하다고 검증되지 않았습니다. 코드가 검색되지 않으면 분류명으로 탐색하세요. 경로 안내만으로 Excel 원본 연결이 완료되지는 않습니다.</small></div></div>
     <div className="panel-note"><div><strong>저장한 양식으로 견적서 만들기</strong><p>상품·옵션·이미지 자료를 연결된 Excel 열에 채웁니다. 원본은 보존하고 채운 사본과 첨부 이미지를 ZIP으로 내려받습니다.</p></div></div>
-    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setPreview(null);setStartRow((profiles.find(profile=>profile.id===event.target.value)?.template?.headerRow??1)+1);}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
+    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
     {selected&&<p>{selected.categoryPath.join(' > ')}<br/>{selected.template?.name??'원본 양식을 먼저 연결해주세요.'}</p>}
     <label className="field"><span>상품 데이터 입력 시작 행</span><input type="number" min={2} max={10000} value={startRow} disabled={busy} onChange={event=>{setStartRow(Number(event.target.value));setPreview(null);}}/></label>
     <small>머리글 다음의 실제 입력 행을 지정하세요. 기존 수식이나 병합 셀을 덮어쓰는 요청은 중단합니다.</small>

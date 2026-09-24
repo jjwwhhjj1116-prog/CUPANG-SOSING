@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
+import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, quotationStartRow, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
 import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
 import { refreshCategoryMappings, relocateQuotationMappings, suggestQuotationMappings, suggestQuotationHeader } from '@/app/quotation-mapping';
 import { supplierTemplateObservation } from '@/app/supplier-template-observation';
@@ -79,7 +79,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       if (!response.ok || !result.template?.storageKey || result.template.sha256 !== hash) throw new Error(result.error ?? '견적서 원본 저장 결과를 확인하지 못했습니다.');
       if (generation !== templateGeneration.current) return;
       templateGeneration.current++;
-      const template = { name: file.name, format: extension, sha256: hash, sheetName, headerRow: selectedRow, headers, storageKey: result.template.storageKey } as const;
+      const template = { name: file.name, format: extension, sha256: hash, sheetName, headerRow: selectedRow, dataStartRow: selectedRow + 1, headers, storageKey: result.template.storageKey } as const;
       // Discard old column positions, then suggest exact labels in this category.
       const suggested = suggestQuotationMappings(headers, draft.categoryId);
       automaticMappings.current = suggested.mappings; protectedColumns.current.clear();
@@ -98,9 +98,9 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
           : (() => { throw new Error('저장된 원본을 불러온 뒤 머리글 행을 변경해주세요.'); })();
       const relocated = relocateQuotationMappings(draft.template.headers, headers, draft.categoryId, draft.mappings, automaticMappings.current, protectedColumns.current);
       automaticMappings.current = relocated.automatic; protectedColumns.current = relocated.protectedColumns;
-      setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, headers } : null, mappings: relocated.mappings }));
+      setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, dataStartRow: rowNumber + 1, headers } : null, mappings: relocated.mappings }));
       setHeaderRow(rowNumber); setError('');
-      setMessage(`동일한 열 이름의 연결 ${relocated.retainedCount}개 보존 · 새 자동 연결 ${relocated.addedCount}개. 직접 해제한 동일 항목도 유지합니다. ${relocated.lostColumns.length ? `이전 설정 중 이름이 없거나 중복·누락되어 옮기지 못한 열: ${relocated.lostColumns.map(column => `${column + 1}. ${draft.template!.headers[column] || '(이름 없는 열)'}`).join(', ')}. ` : ''}바뀐 시트와 행의 연결을 확인해주세요.`);
+      setMessage(`동일한 열 이름의 연결 ${relocated.retainedCount}개 보존 · 새 자동 연결 ${relocated.addedCount}개. 직접 해제한 동일 항목도 유지합니다. ${relocated.lostColumns.length ? `이전 설정 중 이름이 없거나 중복·누락되어 옮기지 못한 열: ${relocated.lostColumns.map(column => `${column + 1}. ${draft.template!.headers[column] || '(이름 없는 열)'}`).join(', ')}. ` : ''}입력 시작 행을 새 머리글 다음 행으로 초기화했습니다. 바뀐 시트와 실제 입력 시작 행을 확인해주세요.`);
     } catch (error) { setError(error instanceof Error ? error.message : '머리글을 확인해주세요.'); }
   };
   const setMapping = (column: number, change: Partial<ColumnMapping> | null) => {
@@ -154,6 +154,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       <h3>견적서 열 연결</h3>
       <div className="form-grid">
         <label className="field"><span>파일의 머리글 행</span><input type="number" min={1} max={1000} value={headerRow} disabled={busy} onChange={event => selectHeaders(draft.template?.sheetName ?? '', Number(event.target.value))} /></label>
+        {draft.template && <label className="field"><span>상품 입력 시작 행 · 같은 카테고리에 재사용</span><input aria-label="저장할 상품 입력 시작 행" type="number" min={draft.template.headerRow + 1} max={10000} value={quotationStartRow(draft.template)} disabled={busy} onChange={event => { const row = Number(event.target.value); setDraft(current => ({ ...current, template: current.template ? { ...current.template, dataStartRow: row } : null })); }} /><small>안내·예시 행을 제외한 실제 입력 행을 지정하세요. 새 파일·시트·머리글을 선택하면 다시 확인해야 합니다.</small></label>}
         <label className="field"><span>Excel·CSV·TSV 견적서 원본</span><input type="file" accept=".xlsx,.csv,.tsv" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void importTemplate(file); event.target.value = ''; }} /></label>
         {workbook && draft.template && <label className="field"><span>Excel 시트</span><select value={draft.template.sheetName} disabled={busy} onChange={event => { const sheet = workbook.sheets.find(sheet => sheet.name === event.target.value); selectHeaders(event.target.value, sheet?.rows.find(row => row.rowNumber === headerRow)?.rowNumber ?? sheet?.rows[0]?.rowNumber ?? 1); }}>{workbook.sheets.map(sheet => <option value={sheet.name} key={sheet.name}>{sheet.name}</option>)}</select></label>}
       </div>

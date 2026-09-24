@@ -90,3 +90,14 @@ test('template guidance distinguishes observed download taxonomy from registrati
  assert.equal(observation.excelVerified,false);assert.equal(observation.downloadCategoryId,null);
  assert.equal(load('app/supplier-template-observation.ts').supplierTemplateObservation('unknown'),null);
 });
+
+test('saved input start rows survive editing and reset when the source header changes', async () => {
+  const h = harness({ ...profile, template: { ...profile.template, dataStartRow: 12 } });
+  assert.equal(h.find(node => node.props?.['aria-label'] === '저장할 상품 입력 시작 행').props.value, 12);
+  h.find(node => node.props?.['aria-label'] === '저장할 상품 입력 시작 행').props.onChange({ target: { value: '15' } });
+  assert.equal((await h.save()).template.dataStartRow, 15);
+  await h.upload('원본 안내,값\n상품명,공급가\n');
+  assert.equal(h.find(node => node.props?.['aria-label'] === '저장할 상품 입력 시작 행').props.value, 2);
+  h.find(node => node.type === 'input' && node.props.type === 'number' && !node.props['aria-label']).props.onChange({ target: { value: '2' } });
+  assert.equal(h.find(node => node.props?.['aria-label'] === '저장할 상품 입력 시작 행').props.value, 3);
+});

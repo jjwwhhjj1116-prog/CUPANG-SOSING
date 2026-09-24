@@ -245,3 +245,18 @@ test('text length does not pretend to validate formulas, invalid limits, numeric
   assert.equal(bounded.report.warnings.filter(value => value.includes('글자 수 입력 규칙')).length, 20);
   assert.ok(bounded.report.warnings.some(value => value.includes('총 200개')));
 });
+
+test('persisted template input row places output after instructions and can be overridden for one export', async () => {
+  const model = load('app/category-profiles.ts');
+  const input = await inputFrom();
+  input.profile = model.validateCategoryProfile({ ...input.profile, template: { ...input.profile.template, dataStartRow: 12 } });
+  const result = await createMappedQuotation({ ...input, dataStartRow: model.quotationStartRow(input.profile.template) });
+  const sheet = decode((await reader.readXlsxArchive(result.bytes.buffer)).get('xl/worksheets/sheet1.xml'));
+  assert.equal(result.report.dataStartRow, 12);
+  assert.ok(sheet.includes('<c r="A12"')); assert.ok(sheet.includes('<c r="A13"'));
+  assert.ok(sheet.includes('<c r="A5" s="2" t="inlineStr"><is><t>예시</t></is></c>'));
+  assert.ok(sheet.includes('아래 원본 행'));
+  const override = await createMappedQuotation({ ...input, dataStartRow: 15 });
+  assert.equal(override.report.dataStartRow, 15);
+  assert.equal(input.profile.template.dataStartRow, 12);
+});

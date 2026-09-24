@@ -253,11 +253,23 @@ test('real SQLite category revisions reject stale writers and cannot expose or m
     assert.equal(await storage.getCategoryProfile('other', created.id), null);
     assert.equal((await storage.listCategoryProfiles('other')).length, 0);
     assert.equal(await storage.updateCategoryProfile('other', created.id, 1, mapped), null);
-    const updated = await storage.updateCategoryProfile('owner', created.id, 1, mapped);
+    const updated = await storage.updateCategoryProfile('owner', created.id, 1, { ...mapped, template: { ...mapped.template, dataStartRow: 12 } });
     assert.equal(updated.revision, 2); assert.equal(updated.categoryId, 'synthetic-category');
     assert.equal(await storage.updateCategoryProfile('owner', created.id, 1, draft), null);
     const persisted = await storage.getCategoryProfile('owner', created.id);
-    assert.equal(persisted.revision, 2); assert.equal(persisted.template.sha256, mapped.template.sha256);
+    assert.equal(model.quotationStartRow(persisted.template), 12); assert.equal(persisted.revision, 2); assert.equal(persisted.template.sha256, mapped.template.sha256);
     assert.equal((await storage.listCategoryProfiles('owner')).length, 1);
   } finally { sqlite.close(); }
+});
+
+test('template start rows preserve legacy defaults and reject invalid persisted positions', () => {
+  assert.equal(model.quotationStartRow(null), 2);
+  const legacy = model.validateCategoryProfile(mapped);
+  assert.equal(model.quotationStartRow(legacy.template), 2);
+  assert.equal(Object.hasOwn(legacy.template, 'dataStartRow'), false);
+  const saved = model.validateCategoryProfile({ ...mapped, template: { ...mapped.template, dataStartRow: 12 } });
+  assert.equal(model.quotationStartRow(saved.template), 12);
+  for (const dataStartRow of [null, '12', 0, 1, 2.5, 10001]) {
+    assert.throws(() => model.validateCategoryProfile({ ...mapped, template: { ...mapped.template, dataStartRow } }), /입력 시작 행/);
+  }
 });

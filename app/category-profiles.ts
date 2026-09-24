@@ -499,8 +499,12 @@ export function categoryFieldScope(field: string): string | null {
 export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;
   sheetName: string; headerRow: number; headers: string[];
-  storageKey?: string;
+  storageKey?: string; dataStartRow?: number;
 };
+/** Older profiles retain their original header-following default without rewriting stored payloads. */
+export function quotationStartRow(template?: TemplateDefinition | null): number {
+  return template?.dataStartRow ?? (template?.headerRow ?? 1) + 1;
+}
 export type ColumnMapping = { column: number; field: CategoryField; required: boolean; constant?: string };
 export type CategoryProfileInput = {
   name: string; categoryId: string; categoryPath: string[];
@@ -531,10 +535,12 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
     if (!['csv', 'tsv', 'xlsx'].includes(String(value.format))) throw new Error('지원하는 견적서 형식인지 확인해주세요.');
     if (typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(value.sha256)) throw new Error('견적서 원본 파일의 SHA-256 값이 필요합니다.');
     if (!Number.isInteger(value.headerRow) || Number(value.headerRow) < 1 || Number(value.headerRow) > 1000) throw new Error('머리글 행 번호를 확인해주세요.');
+    if (value.dataStartRow !== undefined && (!Number.isInteger(value.dataStartRow) || Number(value.dataStartRow) <= Number(value.headerRow) || Number(value.dataStartRow) > 10000)) throw new Error('상품 입력 시작 행은 머리글 뒤부터 10000행까지 지정해주세요.');
     if (!Array.isArray(value.headers) || !value.headers.length || value.headers.length > 200) throw new Error('견적서 열은 1~200개까지 사용할 수 있습니다.');
     const headers = value.headers.map(value => string(value, '견적서 열 이름', 500, true));
     if (!headers.some(Boolean)) throw new Error('견적서 머리글에 열 이름이 없습니다.');
     template = { name: string(value.name, '견적서 파일 이름', 240), format: value.format as TemplateDefinition['format'], sha256: value.sha256.toLowerCase(), sheetName: string(value.sheetName ?? '', '시트 이름', 120, true), headerRow: Number(value.headerRow), headers,
+      ...(value.dataStartRow !== undefined ? { dataStartRow: Number(value.dataStartRow) } : {}),
       ...(value.storageKey !== undefined ? { storageKey: string(value.storageKey, '견적서 저장 경로', 600) } : {}), };
   }
   if (!Array.isArray(input.mappings) || input.mappings.length > 200) throw new Error('견적서 열 연결을 확인해주세요.');
