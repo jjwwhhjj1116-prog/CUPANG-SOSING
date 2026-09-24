@@ -67,6 +67,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     {connectionWarning && !overrideProfileId && <p role="status" className="panel-note">{connectionWarning}</p>}
     {contextLoaded?<QuotationFieldsEditor navigationTarget={navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={refreshToken} onDirtyChange={setDirty} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
+    <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
     <details><summary>Excel 원본 양식에 출력하기</summary>
     <div className="panel-note"><div><strong>공식 Excel 양식 준비</strong><ol>

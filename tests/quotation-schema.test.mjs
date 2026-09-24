@@ -750,3 +750,19 @@ test('Hub upload plan splits labels from product images using final included ref
  assert.throws(()=>create(resolved,[...assets,{key:'other',name:'assets/MAIN.png'}]),/중복/);
  assert.throws(()=>create(resolved,[...assets,{key:'other',name:'../escape.png'}]),/경로/);
 });
+
+test('offline upload guide renders final role groups safely and exposes missing labels without claiming submission',()=>{
+ const input=fixture();input.options.rows[0].translatedName='<script>alert(1)</script>';
+ const resolved=model.resolveQuotationFields(input);
+ const assets=[{key:'owner/main.png',name:'assets/main.png'},{key:'owner/option.png',name:'assets/option.png'},{key:'owner/detail.png',name:'assets/detail.png'}];
+ const plan=load('app/exports/supplier-hub-upload-plan.ts').supplierHubUploadPlan(resolved,assets);
+ const render=load('app/exports/supplier-hub-upload-page.ts').supplierHubUploadPage;
+ const before=JSON.stringify(plan);const html=render(plan);
+ assert.match(html,/2\. 상품 이미지/);assert.match(html,/3\. 제품 필수 표시사항/);assert.match(html,/라벨 연결이 없는 옵션/);
+ assert.match(html,/href="assets\/option.png" download="option.png"/);
+ assert.match(html,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/);assert.doesNotMatch(html,/<script>/);
+ assert.match(html,/default-src 'none'/);assert.match(html,/등록은 실행하지 않습니다/);assert.equal(JSON.stringify(plan),before);
+ for(const path of ['https://evil.test/a.png','../a.png','assets/a.png" onerror="evil()']){
+  const invalid=clone(plan);invalid.productImages[0].archivePath=path;assert.throws(()=>render(invalid),/첨부 경로/);
+ }
+});

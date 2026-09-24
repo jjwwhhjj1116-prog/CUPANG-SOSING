@@ -1,3 +1,4 @@
+import { supplierHubUploadPage } from '@/app/exports/supplier-hub-upload-page';
 import { supplierHubUploadPlan } from '@/app/exports/supplier-hub-upload-plan';
 import { categoryFields, type CategoryField } from '@/app/category-profiles';
 import { inspectSubmission } from '@/app/submission-review';
@@ -112,9 +113,12 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const reviewRows: (string | number)[][] = [['구분', '코드', '옵션 ID', '옵션명', '필드 ID', '확인 사항'],
     ...review.issues.map(issue => [issue.kind === 'error' ? '오류' : '검토', issue.code, issue.optionId ?? '', issue.optionLabel, issue.fieldId ?? '', issue.message])];
   const reviewJson = JSON.stringify(review);
-  const uploadPlan = JSON.stringify({ ...supplierHubUploadPlan(resolved, assets), productId: saved.product.id, inputFingerprint });
-  ensureFieldBudget(document, [rows, overrides, reviewRows], utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage) + utf8ByteLength(reviewJson) + utf8ByteLength(uploadPlan));
+  const plan = supplierHubUploadPlan(resolved, assets);
+  const uploadPage = supplierHubUploadPage(plan);
+  const uploadPlan = JSON.stringify({ ...plan, productId: saved.product.id, inputFingerprint });
+  ensureFieldBudget(document, [rows, overrides, reviewRows], utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage) + utf8ByteLength(reviewJson) + utf8ByteLength(uploadPlan) + utf8ByteLength(uploadPage));
   return { warnings: document.warnings, files: [
+    { name: 'supplier-hub-upload.html', data: uploadPage },
     { name: 'supplier-hub-upload-plan.json', data: uploadPlan },
     { name: 'submission-review.json', data: reviewJson },
     { name: 'submission-review.csv', data: quotationCsv(reviewRows) },
