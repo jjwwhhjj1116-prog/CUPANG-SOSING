@@ -31,6 +31,14 @@ const product = {
 };
 const context = { params: Promise.resolve({ id: product.id }) };
 const decode = bytes => new TextDecoder().decode(bytes);
+
+test('review ZIP labels new content fields in Korean and preserves exact saved text in JSON',()=>{
+ const content=model.applyContentPatch(model.emptyProductContent(product.id),{label:{productType:'가방',netContents:'본품 <1개>',usageStandard:'확인한 기준 & 조건'}},product.updated_at);const before=JSON.stringify(content);
+ const files=readArchive(bundle.createReviewBundle(product,content,[]));const svg=decode(files['label-review.svg']);
+ for(const name of ['상품 유형','내용량','사용 기준'])assert.ok(svg.includes(name+':'));
+ assert.ok(svg.includes('&lt;1개&gt;'));assert.ok(svg.includes('&amp;'));assert.ok(!svg.includes('netContents:'));assert.ok(!svg.includes('productType:'));
+ const saved=JSON.parse(decode(files['content.json']));assert.equal(saved.label.netContents.value,'본품 <1개>');assert.equal(saved.label.usageStandard.value,'확인한 기준 & 조건');assert.equal(JSON.stringify(content),before);
+});
 function contentWithAssets() {
   return model.applyContentPatch(model.emptyProductContent(product.id), {
     seo: { title: '노출 상품명', description: '제품 설명', keywords: ['키워드'] },

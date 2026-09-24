@@ -1,4 +1,4 @@
-import { labelFields, type ProductContent } from '@/app/product-content';
+import { labelFields, withCurrentLabelFields, type ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 
 export type DocumentImageSection = 'label' | 'size';
@@ -8,6 +8,7 @@ export const MAX_SIZE_ROWS = 60;
 export function documentImagePlan(section: DocumentImageSection, content: ProductContent, options: ProductOptions): DocumentImagePlan {
   if (content.productId !== options.productId) throw new Error('상품 자료가 일치하지 않습니다.');
   if (section === 'label') {
+    content = withCurrentLabelFields(content);
     if (!Object.values(content.label).some(field => field.value.trim())) throw new Error('표시사항을 한 항목 이상 저장한 후 이미지를 만들어주세요.');
     return { title: '한글 표시사항 · 검토용', subtitle: '저장한 입력값으로 만든 문서 이미지입니다. 빈 항목은 미입력으로 표시합니다.',
       width: 1200, columnWidths: [260, 860], headers: ['항목', '저장한 내용'],

@@ -1672,3 +1672,12 @@ AI등록 화면 확인:
 - 검증: 새3건 포함 전체535/535, TypeScript·ESLint·Cloudflare build·산출물·diff 통과. 이전 레코드 정규화/불변성·값 검증·직접 공란 보존, 라벨 문서 계획과103495 옵션 견적 값 일치, 실제 견적 API→CSV ZIP→quotation-fields.json 값/옵션 수동 우선순위를 모의 저장소로 검증했다. 실제 Chrome 화면과 PNG 픽셀, 공식 Excel/Hub 접수는 미검증. outputs/step136-*.log.
 - 기존 Cloudflare 배포 version2dfe7355-5e16-4323-bdd4-12c728fde25d. DB migration/운영상품 수정/유료AI/Hub 등록 없음.
 - 다음 시작점: 실제 Couplus/Hub 세션에서 카테고리별 초기 기본값과 공식 원본을 대조해야 한다. 이번 턴 로그인 상태 재확인 없음. 전수 카테고리 규격·실제1688 수집 공급원·AI 실호출·Hub POST501 전송 어댑터/접수는 여전히 미완성이다. 기존 BrowserUse1688 및 다운로드 기록 정책 차단을 우회하지 않는다. 이번 필드 연동은 전체 자동화 완성이 아니다.
+
+## 137. 내용량·사용 기준 표시사항과 이전 자료 라벨 호환 — 2026-09-24
+
+- 시작 main9d11482, 미커밋 변경 없음. fetch 후 origin/main0/0. 사용자 첨부14번 한글 표시사항 화면에 있는 내용량·사용 기준이 기존 labelFields에 없는 것을 확인했다.
+- netContents('내용량')·usageStandard('사용 기준') 추가. 기존 동적 표시사항 입력·저장 검증·검토용 라벨 생성에 연결한다. 참고 상품의14세이상 값을 모든 상품의 기본값으로 사용하지 않는다. 내용량과 옵션 수량은 별개의 입력이며 확인되지 않은 견적 필드에 임의 매핑하지 않았다.
+- documentImagePlan에서 이전 콘텐츠를 withCurrentLabelFields로 읽어 신규 필드가 없는 저장 자료의 라벨 생성 오류를 방지한다. 원문 객체/리비전을 변경하지 않는다. 검토 ZIP label-review.svg도 새 항목을 영문 코드가 아닌 labelFields의 한글 이름으로 표시한다(productType 포함). 기존 한글 명칭은 유지한다.
+- 확인: 새3건 포함 전체538/538, TypeScript·ESLint·Cloudflare build·산출물·diff 통과. 이전 레코드 불변/미확인 공란, 저장·수동 비움·타입/길이 검사, 문서 생성 계획의 실제 저장값, ZIP SVG 한글 제목·이스케이프 및 content.json 원문 보존 검증. outputs/step137-*.log. 실제 브라우저 입력/PNG 픽셀과 SupplierHub 첨부 접수는 미검증.
+- 기존 Cloudflare 배포 versionef04dd92-75f5-4373-bfa5-9202a72c93b0. DB migration/운영상품 변경/유료AI/Hub 등록 없음.
+- 다음 시작점: 로그인된 Couplus/Hub에서 카테고리별 자동 기본값 및 공식 원본을 대조해야 한다. 이번 턴 로그인 재확인 없음. 전수 카테고리 규격·실제1688 수집 공급원·AI 실호출·Hub POST501 어댑터/접수는 미완성이다. 기존 BrowserUse1688 및 다운로드 기록 정책 차단을 우회하지 않는다. 이번 표시사항 보완을 전체 자동등록 완료로 설명하지 말 것.

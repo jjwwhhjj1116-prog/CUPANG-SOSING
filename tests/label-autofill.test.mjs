@@ -14,6 +14,14 @@ const { emptyProductContent, applyContentPatch, labelFields } = load('app/produc
 const { documentImagePlan } = load('app/document-image.ts');
 const draftOf = content => Object.fromEntries(Object.entries(content.label).map(([key, field]) => [key, field.value]));
 
+test('label plan normalizes old fields and uses saved contents and usage standard without category guesses',()=>{
+ const old=emptyProductContent('p');old.label.productName.value='상품';delete old.label.productType;delete old.label.netContents;delete old.label.usageStandard;const before=JSON.stringify(old);
+ const legacyPlan=documentImagePlan('label',old,{productId:'p'});for(const name of ['상품 유형','내용량','사용 기준'])assert.equal(legacyPlan.rows.find(row=>row[0]===name)[1],'[미입력]');assert.equal(JSON.stringify(old),before);
+ const saved=applyContentPatch(emptyProductContent('p'),{label:{netContents:'500 mL',usageStandard:'실제 사용 조건'}},'now');
+ const filled=fillLabelDraft(draftOf(saved),saved,'14세 이상 상품',{netContents:'1L',usageStandard:'14세 이상'});assert.equal(filled.label.netContents,'500 mL');assert.equal(filled.label.usageStandard,'실제 사용 조건');
+ const plan=documentImagePlan('label',saved,{productId:'p'});assert.equal(plan.rows.find(row=>row[0]==='내용량')[1],'500 mL');assert.equal(plan.rows.find(row=>row[0]==='사용 기준')[1],'실제 사용 조건');
+});
+
 test('saved settings and SEO title fill label draft and reach document only after explicit save', () => {
   const content = emptyProductContent('p'); content.seo.title.value = '한국어 품명';
   const before = JSON.stringify(content);

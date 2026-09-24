@@ -24,6 +24,16 @@ const product = { id: 'test', owner_id: 'owner', image_keys: '["owner/main.jpg",
 const request = (body, headers = { 'content-type': 'application/json' }) => new Request('http://localhost/api/products/test/content', { method: 'PATCH', headers, body: JSON.stringify(body) });
 const input = (patch, expectedRevision = 0) => ({ expectedRevision, patch });
 
+test('net contents and usage standard preserve legacy records and intentional empty saves',()=>{
+ const legacy=model.emptyProductContent('test');delete legacy.label.netContents;delete legacy.label.usageStandard;const before=JSON.stringify(legacy);
+ const normalized=model.withCurrentLabelFields(legacy);assert.equal(JSON.stringify(legacy),before);
+ for(const key of ['netContents','usageStandard'])assert.equal(normalized.label[key].provenance,'unverified');
+ const {patch}=model.validateContentInput(input({label:{netContents:'500 mL',usageStandard:'확인한 사용 조건'}}),[],'owner');
+ const saved=model.applyContentPatch(normalized,patch,now);assert.equal(saved.label.netContents.value,'500 mL');assert.equal(saved.label.usageStandard.value,'확인한 사용 조건');
+ const cleared=model.applyContentPatch(saved,{label:{netContents:'',usageStandard:''}},now);
+ for(const key of ['netContents','usageStandard']){assert.equal(cleared.label[key].value,'');assert.equal(cleared.label[key].provenance,'manual');for(const value of [null,0,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{[key]:value}}),[],'owner'));}
+});
+
 test('product type supports old records, explicit saves and clears without inventing a classification',()=>{
  const legacy=model.emptyProductContent('test');delete legacy.label.productType;const before=JSON.stringify(legacy);
  const normalized=model.withCurrentLabelFields(legacy);assert.equal(normalized.label.productType.value,'');assert.equal(normalized.label.productType.provenance,'unverified');assert.equal(JSON.stringify(legacy),before);
