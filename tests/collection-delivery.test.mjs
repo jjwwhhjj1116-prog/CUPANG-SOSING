@@ -10,12 +10,12 @@ const input={schemaVersion:1,sourceUrl:'https://detail.1688.com/offer/123456789.
 const reply=(body,status=200)=>({ok:status===200,status,json:async()=>body});
 const receipt=body=>({...JSON.parse(body),offerId:'123456789'});
 
-test('large valid receipts are preserved before requesting an image selection and exact replay can resume',async()=>{
+test('large receipts automatically import a bounded selection while preserving the full original for replay',async()=>{
  const source={...input,images:Array.from({length:200},(_,index)=>({url:`https://cbu01.alicdn.com/${index}.png`,role:index===0?'main':'detail'}))};
  const before=JSON.stringify(source),calls=[],bodies=[];
  const fetcher=async(url,init)=>{calls.push(url);if(url.endsWith('/result')){bodies.push(init.body);return reply({receipt:{result:receipt(init.body)}});}if(url.endsWith('/capacity'))return reply({capacity:{usedSlots:0,totalImages:200,reusableIndices:[]}});return reply(url.endsWith('/product')?{productId:'same'}:{key:'owner/image'});};
  const first=await actualDeliver('job','123456789',source,{fetcher});
- assert.equal(first.status,'failed');assert.equal(first.receiptConfirmed,true);assert.equal(first.productId,null);assert.equal(first.completedImages,0);assert.match(first.error,/200/);assert.match(first.error,/50/);assert.deepEqual(calls,['/api/collection-jobs/job/result']);
+ assert.equal(first.status,'completed');assert.equal(first.receiptConfirmed,true);assert.equal(first.productId,'same');assert.equal(first.completedImages,50);assert.match(first.warnings[0],/150/);assert.equal(calls.filter(url=>url.endsWith('/images')).length,50);
  const resumed=await actualDeliver('job','123456789',source,{fetcher,imageIndices:[0,199]});assert.equal(resumed.status,'completed');assert.equal(resumed.completedImages,2);assert.equal(resumed.productId,'same');assert.equal(bodies[0],bodies[1]);assert.equal(JSON.stringify(source),before);
  calls.length=0;await assert.rejects(()=>actualDeliver('job','123456789',source,{fetcher,imageIndices:Array.from({length:51},(_,i)=>i)}));assert.equal(calls.length,0);
  calls.length=0;let stop=false;const stopped=await actualDeliver('job','123456789',source,{shouldStop:()=>stop,fetcher:async(url,init)=>{stop=true;return fetcher(url,init);}});assert.equal(stopped.status,'stopped');assert.equal(stopped.receiptConfirmed,true);assert.equal(calls.length,1);
@@ -59,7 +59,7 @@ test('stop after receipt and retry after image failure preserve confirmed progre
 });
 
 test('delivery retains receipt confirmation when capacity rejects the selected images',async()=>{
- const calls=[];const outcome=await actualDeliver('job','123456789',input,{fetcher:async(url,init)=>{calls.push(url);if(url.endsWith('/result'))return reply({receipt:{result:receipt(init.body)}});return reply({capacity:{usedSlots:50,totalImages:1,reusableIndices:[]}});}});
+ const calls=[];const outcome=await actualDeliver('job','123456789',input,{imageIndices:[0],fetcher:async(url,init)=>{calls.push(url);if(url.endsWith('/result'))return reply({receipt:{result:receipt(init.body)}});return reply({capacity:{usedSlots:50,totalImages:1,reusableIndices:[]}});}});
  assert.equal(outcome.status,'failed');assert.equal(outcome.receiptConfirmed,true);assert.equal(outcome.productId,null);assert.equal(outcome.completedImages,0);
  assert.deepEqual(calls,['/api/collection-jobs/job/result','/api/collection-jobs/job/capacity']);
 });
@@ -93,4 +93,30 @@ test('stop during receipt retry prevents another write and does not claim a conf
  let stop=false,calls=0;
  const outcome=await deliver('job','123456789',input,{retryAttempts:3,shouldStop:()=>stop,retryWait:async()=>{stop=true;},fetcher:async()=>{calls++;throw Error('connection lost');}});
  assert.equal(calls,1);assert.equal(outcome.status,'stopped');assert.equal(outcome.receiptConfirmed,false);assert.equal(outcome.productId,null);
+});
+
+test('automatic delivery prioritizes option images, reuses saved originals and preserves excluded images',async()=>{
+ const source={...input,options:[{...input.options[0],imageIndex:3}],images:Array.from({length:5},(_,i)=>({url:`https://cbu01.alicdn.com/${i}.png`,role:i===0?'main':'detail'}))};
+ const saved=[];let reads=0;
+ const outcome=await actualDeliver('job','123456789',source,{fetcher:async(url,init)=>{
+  if(url.endsWith('/result'))return reply({receipt:{result:receipt(init.body)}});
+  if(url.endsWith('/capacity')){reads++;return reply({capacity:{usedSlots:49,totalImages:5,reusableIndices:[4],blockedIndices:[0]}});}
+  if(url.endsWith('/product'))return reply({productId:'p'});
+  saved.push(JSON.parse(init.body).index);return reply({key:'saved'});
+ }});
+ assert.equal(outcome.status,'completed');assert.deepEqual(saved,[3,4]);assert.equal(reads,2);assert.match(outcome.warnings[0],/나머지 3개/);
+});
+
+test('automatic delivery reports no room without dropping the product and stops on invalid capacity or a capacity race',async()=>{
+ for(const mode of ['full','invalid','race','stop']){
+  let reads=0,stop=false;const writes=[];
+  const outcome=await actualDeliver('job','123456789',input,{retryAttempts:1,shouldStop:()=>stop,fetcher:async(url,init)=>{
+   if(url.endsWith('/result'))return reply({receipt:{result:receipt(init.body)}});
+   if(url.endsWith('/capacity')){reads++;if(mode==='stop')stop=true;return reply({capacity:{usedSlots:mode==='full'||(mode==='race'&&reads===2)?50:0,totalImages:mode==='invalid'?99:1,reusableIndices:[]}});}
+   writes.push(url);return reply({productId:'p',key:'image'});
+  }});
+  assert.equal(outcome.receiptConfirmed,true);
+  if(mode==='full'){assert.equal(outcome.status,'completed');assert.equal(outcome.completedImages,0);assert.match(outcome.warnings[0],/나머지 1개/);assert.deepEqual(writes,['/api/collection-jobs/job/product']);}
+  else{assert.equal(outcome.status,mode==='stop'?'stopped':'failed');assert.deepEqual(writes,[]);}
+ }
 });
