@@ -115,8 +115,23 @@ test('CSV and TSV exports follow mapped column order, explicit row positions and
     assert.ok(text.includes(`"상품명"${separator}"공급가"${separator}"옵션"`));
     assert.ok(text.includes(`"'=SUM(1,2)"${separator}"0"${separator}"옵션 ""검정"""`));
     assert.equal(text.split('\r\n')[2], '');
+    assert.equal(result.values[0][0],"'=SUM(1,2)");assert.equal(result.values[0][1],0);
+    assert.equal(result.values[0][2],'옵션 "검정"');
+    assert.ok(result.report.warnings.some(message=>message.includes('1개 셀에 작은따옴표')));
     assert.deepEqual(JSON.parse(JSON.stringify(result.report.missingRequired)), [{ row: 5, column: 1, header: '상품명' }]);
   }
+});
+
+test('XLSX preview retains literal formula-like text without CSV prefixes or source mutation',async()=>{
+ const rows=[{title:' =SUM(1,2)',supplyPrice:100,skuName:'+옵션',brand:'@브랜드'}];
+ const input=await inputFrom(entries(),{rows});const before=JSON.stringify(rows);
+ const result=await createMappedQuotation(input);
+ assert.equal(result.values[0][0],rows[0].title);assert.equal(result.values[0][3],rows[0].skuName);
+ assert.equal(result.values[0][4],rows[0].brand);
+ assert.equal(result.report.warnings.some(message=>message.includes('작은따옴표')),false);
+ const archive=await reader.readXlsxArchive(result.bytes.buffer);const sheet=decode(archive.get('xl/worksheets/sheet1.xml'));
+ assert.ok(sheet.includes('> =SUM(1,2)</'));assert.ok(sheet.includes('>+옵션</'));
+ assert.equal(JSON.stringify(rows),before);
 });
 
 test('mapped XLSX reports literal dropdown mismatches without changing values or original rules', async () => {

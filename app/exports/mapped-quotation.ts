@@ -9,7 +9,7 @@ export type MappedQuotationReport = {
   missingRequired: QuotationCellIssue[]; blankCells: QuotationCellIssue[]; warnings: string[];
 };
 export type MappedQuotationInput = { originalBytes: ArrayBuffer; profile: CategoryProfileInput; rows: QuotationData[]; dataStartRow: number };
-export type MappedQuotationResult = { bytes: Uint8Array; filename: string; mimeType: string; report: MappedQuotationReport };
+export type MappedQuotationResult = { bytes: Uint8Array; filename: string; mimeType: string; report: MappedQuotationReport; values: (string | number)[][] };
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const MAX_OUTPUT = 10_000_000;
@@ -138,7 +138,8 @@ function safeCell(value: unknown): string | number {
   if (typeof value !== 'string' || value.length > 32767 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(value)) fail('견적서 셀의 문자 또는 길이를 확인해주세요.');
   return value;
 }
-function delimitedCell(value: string | number): string { const text = String(value); return `"${(/^[\s]*[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`; }
+function delimitedValue(value: string | number): string | number { return /^[\s]*[=+\-@]/.test(String(value)) ? `'${value}` : value; }
+function delimitedCell(value: string | number): string { return `"${String(delimitedValue(value)).replace(/"/g, '""')}"`; }
 
 /** Check supported static constraints without evaluating workbook formulas. */
 function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection): string[] {
@@ -239,6 +240,7 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     return mapped;
   });
   let bytes: Uint8Array; let mimeType: string;
+  let previewValues = values;
   if (template.format === 'xlsx') {
     const files = await readXlsxArchive(input.originalBytes); const inspection = inspectXlsxArchive(files);
     if ([...files.keys()].some(path => /(?:^|\/)vbaProject\.bin$|^_xmlsignatures\//i.test(path))) fail('매크로 또는 전자서명된 Excel은 수정할 수 없습니다.');
@@ -260,10 +262,17 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     const rows: (string | number)[][] = Array.from({ length: input.dataStartRow - 1 }, () => []);
     rows[template.headerRow - 1] = template.headers;
     bytes = encoder.encode(`\uFEFF${[...rows, ...values].map(row => row.map(delimitedCell).join(delimiter)).join('\r\n')}\r\n`);
+    let protectedCells = 0;
+    previewValues = values.map(row => row.map(value => {
+      const printed = delimitedValue(value);
+      if (printed !== value) protectedCells++;
+      return printed;
+    }));
+    if (protectedCells) report.warnings.push(`수식처럼 시작하는 ${protectedCells}개 셀에 작은따옴표를 붙여 CSV·TSV 수식 실행을 방지했습니다. 미리보기는 파일에 기록한 값을 표시하며 저장된 상품 원문은 변경하지 않았습니다.`);
     report.warnings.push('CSV·TSV 출력은 선택한 머리글 위치와 매핑 행으로 새로 생성합니다. 원본의 다른 데이터 행은 복사하지 않습니다.');
     mimeType = template.format === 'csv' ? 'text/csv;charset=utf-8' : 'text/tab-separated-values;charset=utf-8';
   }
   if (bytes.byteLength > MAX_OUTPUT) fail('생성한 견적서가 10MB를 초과합니다.');
   const name = template.name.replace(/\.[^.]+$/, '').replace(/[\u0000-\u001f\\/:*?"<>|]/g, '_').slice(0, 180);
-  return { bytes, filename: `${name || 'quotation'}-검토용.${template.format}`, mimeType, report };
+  return { bytes, filename: `${name || 'quotation'}-검토용.${template.format}`, mimeType, report, values: previewValues };
 }

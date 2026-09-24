@@ -96,6 +96,8 @@ test('real preview/export pipeline fills mapped CSV, includes option assets and 
   assert.equal(response.status, 200); const review = await response.json();
   assert.match(review.fingerprint, /^[a-f0-9]{64}$/); assert.equal(review.report.optionRevision, 1); assert.equal(review.report.rowCount, 2);
   assert.equal(review.report.submissionReady, false); assert.equal(review.rows[0][2], 10); assert.equal(review.rows[1][2], 30);
+  assert.equal(review.rows[0][0],"'=SUM(1,1)");
+  assert.ok(review.report.warnings.some(message=>message.includes('2개 셀에 작은따옴표')));
   const unmappedAutomatic=review.report.mappingCoverage.find(field=>field.fieldId==='altText');
   assert.equal(unmappedAutomatic.required,false);assert.equal(unmappedAutomatic.manualOptions.length,0);
   assert.equal(unmappedAutomatic.automaticOptions.length,2);

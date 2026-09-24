@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { ownsTemplateKey } from '@/db/category-templates';
-import { categoryProfileIssues, mapQuotationRow, quotationStartRow } from '@/app/category-profiles';
+import { categoryProfileIssues, quotationStartRow } from '@/app/category-profiles';
 import { createMappedQuotation } from '@/app/exports/mapped-quotation';
 import { readQuotationExportSource, resolveQuotationExport, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
 import { quotationMappingCoverage, quotationAttachmentKeys, resolvedQuotationRows, quotationFieldFiles } from '@/app/exports/quotation-fields';
@@ -52,7 +52,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     const mappingWarnings = mappingCoverage.map(field => `${field.label}: ${field.required ? '카테고리 필수 항목' : field.manualOptions.length ? '수동 수정 항목' : '자동 작성 항목'}이 Excel 열에 연결되지 않았습니다. 최종값은 quotation-fields 파일에만 보존됩니다.`);
     const warnings = [...mappingWarnings,...categoryProfileIssues(profile),...generated.report.warnings,...fields.warnings,'Supplier Hub 공식 접수 검증 전인 검토용 파일입니다.','제조사·수입자·연락처 기본설정은 실제 상품과 일치하는지 확인해주세요.'];
     const report = {...generated.report,mappingCoverage,warnings,productId:id,productVersion:product.updated_at,contentRevision:content.revision,optionRevision:options.revision,quotationRevision:saved.state.revision,profileId:profile.id,profileRevision:profile.revision,templateSha256:template.sha256,submissionReady:false};
-    if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename:generated.filename,rows:rows.map(row=>mapQuotationRow(profile,row,resolved.schema.fields).values),headers:template.headers});
+    if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename:generated.filename,rows:generated.values,headers:template.headers});
     const bytes = createReviewBundle(product,content,assets,[
       {name:`quotation-filled.${template.format}`,data:generated.bytes},
       {name:'quotation-report.json',data:JSON.stringify(report,null,2)},
