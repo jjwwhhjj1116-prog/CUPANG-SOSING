@@ -1,6 +1,6 @@
 import { supplierHubUploadPage } from '@/app/exports/supplier-hub-upload-page';
 import { supplierHubUploadPlan } from '@/app/exports/supplier-hub-upload-plan';
-import { categoryFields, type CategoryField } from '@/app/category-profiles';
+import { categoryFields, type CategoryField, type CategoryProfileInput } from '@/app/category-profiles';
 import { inspectSubmission } from '@/app/submission-review';
 import { productImageKeys, savedTextOrFallback } from '@/app/product-content';
 import { quotationSections, type ResolvedQuotation } from '@/app/quotation-schema';
@@ -30,6 +30,16 @@ function ensureFieldBudget(document: { rows: unknown[] }, tables: (string | numb
 // Older saved Excel mappings must point to the same final cells as the editor.
 const aliases: Partial<Record<CategoryField, string>> = { boxQuantity: 'boxSkuQuantity', detailImage: 'detailImages', label: 'labelImages',
   material: 'noticeMaterial', countryOfOrigin: 'noticeCountryOfOrigin', serviceContact: 'noticeServiceContact' };
+/** Compare schema requirements with explicit field mappings, not header guesses or constants. */
+export function quotationMappingCoverage(resolved: ResolvedQuotation, profile: CategoryProfileInput) {
+  const mapped = new Set(profile.mappings.filter(mapping => mapping.field !== 'constant').map(mapping => aliases[mapping.field] ?? mapping.field));
+  const included = resolved.rows.filter(row => row.included);
+  return resolved.schema.fields.filter(field => !mapped.has(field.id)).flatMap(field => {
+    const manualOptions = included.filter(row => row.fields[field.id]?.source.startsWith('manual-')).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
+    if (!field.required && !manualOptions.length) return [];
+    return [{ fieldId: field.id, label: field.label, required: field.required, manualOptions }];
+  });
+}
 const imageKeys = (value: string) => value.split('\n').map(key => key.trim()).filter(Boolean);
 export function quotationAttachmentKeys(saved: QuotationExportSource, resolved: ResolvedQuotation) {
   const imageFields = resolved.schema.fields.filter(field => field.type === 'images');

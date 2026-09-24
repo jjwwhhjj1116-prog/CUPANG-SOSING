@@ -766,3 +766,22 @@ test('offline upload guide renders final role groups safely and exposes missing 
   const invalid=clone(plan);invalid.productImages[0].archivePath=path;assert.throws(()=>render(invalid),/첨부 경로/);
  }
 });
+
+test('mapping coverage detects category-required and manual fields absent from Excel without treating constants as links',()=>{
+ const input=fixture();input.overrides={common:{model:'직접 모델'},options:{red:{searchTags:''}}};
+ input.options.rows.push({...clone(input.options.rows[0]),id:'excluded',included:false});
+ input.overrides.options.excluded={brand:'제외 수정'};
+ const resolved=model.resolveQuotationFields(input);
+ const coverage=load('app/exports/quotation-fields.ts').quotationMappingCoverage;
+ const profile={mappings:[{column:0,field:'title'},{column:1,field:'constant',value:'모델'},{column:2,field:'material'},{column:3,field:'brand'}]};
+ const before=JSON.stringify({resolved,profile});const result=coverage(resolved,profile);
+ assert.equal(result.some(f=>f.fieldId==='title'),false);
+ assert.equal(result.some(f=>f.fieldId==='noticeMaterial'),false);
+ assert.ok(result.some(f=>f.fieldId==='model'&&f.manualOptions[0].optionId==='red'));
+ assert.ok(result.some(f=>f.fieldId==='searchTags'&&f.manualOptions.length===1));
+ assert.ok(result.some(f=>f.required));
+ assert.equal(result.some(f=>f.manualOptions.some(o=>o.optionId==='excluded')),false);
+ assert.equal(JSON.stringify({resolved,profile}),before);
+ const complete={mappings:resolved.schema.fields.map((f,column)=>({column,field:f.id}))};
+ assert.equal(coverage(resolved,complete).length,0);
+});

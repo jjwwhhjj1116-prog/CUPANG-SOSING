@@ -10,7 +10,7 @@ import { selectQuotationProfile } from '@/app/quotation-profile-selection';
 
 type Preview = {
   fingerprint:string;filename:string;headers:string[];rows:(string|number)[][];
-  report:{rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
+  report:{mappingCoverage?:{fieldId:string;label:string;required:boolean;manualOptions:{optionId:string|null;optionLabel:string}[]}[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
 type QuotationPanelProps = {navigationTarget?:QuotationNavigationTarget;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
@@ -88,6 +88,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
       <h3>출력 미리보기 · {preview.report.rowCount}행</h3>
       <div className="table-wrap quote-preview"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((value,column)=><td key={column}>{String(value)||'—'}</td>)}</tr>)}</tbody></table></div>
       {preview.report.missingRequired.length>0&&<div className="panel-note"><div><strong>필수 연결 값 {preview.report.missingRequired.length}개 미입력</strong><ul>{preview.report.missingRequired.map((field,index)=><li key={index}>{field.row}행 · {field.header||`${field.column}열`}</li>)}</ul></div></div>}
+      {!!preview.report.mappingCoverage?.length && <div className="panel-note"><strong>Excel 열 연결 확인 {preview.report.mappingCoverage.length}개</strong><ul>{preview.report.mappingCoverage.map(field=><li key={field.fieldId}>{field.label} · {field.required?'카테고리 필수':'수동 수정'}{field.manualOptions.length>0?` · 직접 수정한 옵션 ${field.manualOptions.length}개`:''}</li>)}</ul><button type="button" className="btn ghost" disabled={busy||dirty} onClick={onManageCategories}>카테고리·양식 연결 수정</button></div>}
       <ul className="quote-warnings">{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>
       <small>콘텐츠 v{preview.report.contentRevision} · 옵션 v{preview.report.optionRevision} · 카테고리 연결 v{preview.report.profileRevision}</small>
       <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('export')}>채운 견적서 + 첨부 자료 ZIP 다운로드</button>
