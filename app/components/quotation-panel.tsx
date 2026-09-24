@@ -38,6 +38,11 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
   const [loadAttempt,setLoadAttempt]=useState(0);
   const [capturedCategoryId,setCapturedCategoryId]=useState<string|null>(null);
   const activeRequest=useRef<AbortController|null>(null);
+  const profileRequest=useRef<AbortController|null>(null);
+  const [refreshingProfiles,setRefreshingProfiles]=useState(false);
+  const [profileRefreshError,setProfileRefreshError]=useState('');
+  const [profileVersion,setProfileVersion]=useState(0);
+  useEffect(()=>()=>{profileRequest.current?.abort();},[]);
   useEffect(()=>()=>{activeRequest.current?.abort();},[refreshToken]);
   useEffect(()=>{
     const controller=new AbortController();
@@ -60,7 +65,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     return()=>controller.abort();
   },[productId,preferredProfileId,loadAttempt]);
   async function request(action:'preview'|'export') {
-    if(activeRequest.current||dirty||!contextLoaded||!selected?.template||(action==='export'&&!preview))return;
+    if(activeRequest.current||profileRequest.current||dirty||!contextLoaded||!selected?.template||(action==='export'&&!preview))return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true);setError('');setMessage('');
     try {
@@ -77,10 +82,29 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     finally{if(activeRequest.current===controller){activeRequest.current=null;setBusy(false);}}
   }
   const selected=profiles.find(profile=>profile.id===profileId);
+  async function refreshProfiles() {
+    if(profileRequest.current||activeRequest.current||dirty||!contextLoaded)return;
+    const controller=new AbortController();profileRequest.current=controller;
+    setRefreshingProfiles(true);setProfileRefreshError('');setPreview(null);
+    try {
+      const response=await fetch('/api/category-profiles',{cache:'no-store',signal:controller.signal});
+      const body=await response.json() as {profiles:CategoryProfile[];error?:string};
+      if(controller.signal.aborted)return;
+      if(!response.ok)throw new Error(body.error||'저장한 양식을 다시 읽지 못했습니다.');
+      const current=body.profiles.find(profile=>profile.id===profileId);
+      setProfiles(body.profiles);
+      if(profileId&&(!current||current.categoryId!==selected?.categoryId)){
+        setProfileId('');setOverrideProfileId(undefined);setUseSavedRow(true);
+        setConnectionWarning('선택한 양식이 삭제되었거나 카테고리가 변경되었습니다. 수집 당시 분류로 돌아갑니다. Excel 양식을 다시 선택해주세요.');
+      }
+      setProfileVersion(version=>version+1);
+    }catch(cause){if(!controller.signal.aborted)setProfileRefreshError(cause instanceof Error?cause.message:'양식 새로고침 실패');}
+    finally{if(profileRequest.current===controller){profileRequest.current=null;setRefreshingProfiles(false);}}
+  }
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
     {connectionWarning && !overrideProfileId && <p role="status" className="panel-note">{connectionWarning}</p>}
-    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={reviewTarget?.sequence??0} navigationTarget={reviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={refreshToken} onDirtyChange={setDirty} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={reviewTarget?.sequence??0} navigationTarget={reviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onDirtyChange={value=>{if(value)profileRequest.current?.abort();setDirty(value);}} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
@@ -93,12 +117,14 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     {(selected?.categoryId ?? capturedCategoryId)==='80719' && <p>바스켓 이름으로 확인한 공식 탐색 경로: 주방용품 → 주방수납/잡화 → 건조대/진열대/정리대 → 주방수납바구니/바스켓</p>}
     <small>2026-09-23 다운로드 화면 관찰 기준입니다. 이 화면의 ‘칸 카테고리 아이디’와 앱의 상품 카테고리 코드는 동일하다고 검증되지 않았습니다. 코드가 검색되지 않으면 분류명으로 탐색하세요. 경로 안내만으로 Excel 원본 연결이 완료되지는 않습니다.</small></div></div>
     <div className="panel-note"><div><strong>저장한 양식으로 견적서 만들기</strong><p>상품·옵션·이미지 자료를 연결된 Excel 열에 채웁니다. 원본은 보존하고 채운 사본과 첨부 이미지를 ZIP으로 내려받습니다.</p></div></div>
-    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
+    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty||refreshingProfiles} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
+    <button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void refreshProfiles()}>{refreshingProfiles?'양식 확인 중…':'저장한 양식 새로고침'}</button>
+    {profileRefreshError&&<p role="alert">{profileRefreshError} 기존 선택을 유지했습니다. 다시 시도해주세요.</p>}
     {selected&&<p>{selected.categoryPath.join(' > ')}<br/>{selected.template?.name??'원본 양식을 먼저 연결해주세요.'}</p>}
     <label><input type="checkbox" checked={useSavedRow} disabled={busy} onChange={event=>{setUseSavedRow(event.target.checked);setPreview(null);}}/>카테고리에 저장한 입력 시작 행 자동 사용</label>
     <label className="field"><span>상품 데이터 입력 시작 행{useSavedRow?' · 저장 설정 사용':' · 이번 출력만 변경'}</span><input type="number" min={2} max={10000} value={useSavedRow?quotationStartRow(selected?.template):startRow} disabled={busy||useSavedRow} onChange={event=>{setStartRow(Number(event.target.value));setPreview(null);}}/></label>
     <small>머리글 다음의 실제 입력 행을 지정하세요. 기존 수식이나 병합 셀을 덮어쓰는 요청은 중단합니다.</small>
-    <div className="quote-actions"><button className="btn ghost" type="button" disabled={dirty} onClick={onManageCategories}>카테고리·양식 관리</button><button className="btn primary" type="button" disabled={busy||dirty||!selected?.template} onClick={()=>void request('preview')}>{busy?'자료 확인 중…':'견적 자료 검토'}</button></div>
+    <div className="quote-actions"><button className="btn ghost" type="button" disabled={dirty} onClick={onManageCategories}>카테고리·양식 관리</button><button className="btn primary" type="button" disabled={busy||dirty||refreshingProfiles||!selected?.template} onClick={()=>void request('preview')}>{busy?'자료 확인 중…':'견적 자료 검토'}</button></div>
     {error&&<p role="alert" className="collection-error">{error}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
       <h3>출력 미리보기 · {preview.report.rowCount}행</h3><p>실제 상품 입력 시작: {preview.report.dataStartRow}행 · {useSavedRow?'카테고리 저장 설정':'이번 출력 지정값'}</p>
