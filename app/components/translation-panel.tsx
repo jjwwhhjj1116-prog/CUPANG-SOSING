@@ -12,6 +12,20 @@ type Props = { productId: string; version: string; title: string; onContentSaved
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
 const statuses: Record<TranslationJob['status'], string> = { prepared: '검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 실행 차단', completed: '초안 생성 완료', failed: '실패 · 재호출 안 함', uncertain: '결과 확인 필요 · 재호출 안 함' };
 
+async function readTranslationState(productId:string,signal:AbortSignal){
+  const [view,content]=await Promise.all([
+    fetch(`/api/products/${encodeURIComponent(productId)}/translation`,{cache:'no-store',signal}).then(async response=>{
+      const value=await response.json() as TranslationView & {error?:string};
+      if(!response.ok||!Array.isArray(value.jobs)||!value.configuration)throw Error(value.error??'번역 작업을 불러오지 못했습니다.');return value;
+    }),
+    fetch(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store',signal}).then(async response=>{
+      const value=await response.json() as {content?:ProductContent;error?:string};
+      if(!response.ok||!value.content)throw Error(value.error??'현재 콘텐츠를 불러오지 못했습니다.');return value.content;
+    }),
+  ]);
+  return {view,content};
+}
+
 export default function TranslationPanel(props: Props) { return <TranslationContent key={`${props.productId}:${props.version}`} {...props} />; }
 function TranslationContent({ productId, version, title, onContentSaved }: Props) {
   const [view, setView] = useState<TranslationView | null>(null);
@@ -27,15 +41,15 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   const [includeCollectedAttributes, setIncludeCollectedAttributes] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [selectedFields, setSelectedFields] = useState<TranslationSeoField[]>([]);
   const activeRequest=useRef<AbortController|null>(null);
   const mounted=useRef(true);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;activeRequest.current?.abort();};},[]);
-  function beginRequest(){
-    if(!mounted.current||activeRequest.current||!view||!content)return null;
+  function beginRequest(allowMissing=false){
+    if(!mounted.current||activeRequest.current||(!allowMissing&&(!view||!content)))return null;
     const controller=new AbortController();activeRequest.current=controller;return controller;
   }
   function finishRequest(controller:AbortController){
@@ -44,13 +58,26 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || (content && job.contentRevision !== content.revision)));
   useEffect(() => {
-    let active = true;
-    Promise.all([
-      fetch(`/api/products/${productId}/translation`).then(async response => { const value = await response.json() as TranslationView & { error?: string }; if (!response.ok) throw Error(value.error ?? '번역 작업을 불러오지 못했습니다.'); return value; }),
-      fetch(`/api/products/${productId}/content`).then(async response => { const value = await response.json() as { content: ProductContent; error?: string }; if (!response.ok) throw Error(value.error ?? '현재 콘텐츠를 불러오지 못했습니다.'); return value.content; }),
-    ]).then(([next, current]) => { if (active) { setView(next); setContent(current); } }).catch(reason => { if (active) setError(reason.message); });
-    return () => { active = false; };
+    const controller=new AbortController();activeRequest.current=controller;
+    readTranslationState(productId,controller.signal)
+      .then(next=>{if(!controller.signal.aborted){setView(next.view);setContent(next.content);}})
+      .catch(reason=>{if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'조회 실패');})
+      .finally(()=>finishRequest(controller));
+    return () => controller.abort();
   }, [productId, version]);
+
+  async function refreshState(){
+    const controller=beginRequest(true);if(!controller)return;
+    setBusy(true);setError('');setNotice('');
+    try{
+      const next=await readTranslationState(productId,controller.signal);if(controller.signal.aborted)return;
+      setView(next.view);setContent(next.content);
+      setSelectedId(previous=>next.view.jobs.some(item=>item.id===previous)?previous:next.view.jobs[0]?.id??null);
+      setConfirmed(false);setSelectedFields([]);
+      setNotice('서버에 저장된 작업 상태와 콘텐츠를 다시 읽었습니다. 작성 중인 원문·참고 메모는 유지했으며 AI 호출이나 상품 저장은 하지 않았습니다.');
+    }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'작업 상태 조회 실패');}
+    finally{finishRequest(controller);}
+  }
 
   async function action(body: Record<string, unknown>) {
     const controller=beginRequest();if(!controller)return;
@@ -139,6 +166,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   }
   return <section className="translation-panel" aria-label="원문 번역과 SEO 초안">
     <h4>원문 번역 · SEO 초안</h4>
+    <button type="button" className="btn" disabled={busy} onClick={()=>void refreshState()}>작업 상태 다시 조회 · 무료</button>
     <p>저장된 원문으로 한국어 초안을 생성합니다. 아래 직접 입력 내용은 자동 수집 증빙으로 기록되지 않습니다.</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {requestContext&&<aside className="panel-note" aria-label="상품 추가 당시 요청"><strong>상품 추가 당시 요청</strong><p>{requestContext.categoryPath.join(' › ')} · {requestContext.categoryId}</p><dl><dt>상품 특징</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.features||'입력 없음'}</dd><dt>타겟 키워드</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.keywords||'입력 없음'}</dd></dl><small>요청 당시 입력한 참고 정보입니다. 아래 SEO 참고 메모에서 편집하거나 전송에서 제외할 수 있습니다.</small></aside>}
