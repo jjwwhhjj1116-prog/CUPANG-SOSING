@@ -84,7 +84,7 @@ test('limits are checked before uploading and latest existing labels are retaine
 test('batch renders included option-specific values and preserves all prior labels', async () => {
   const h = harness(true); const plans = []; const progress = [];
   h.initial.resolved.rows.push({ optionId: 'excluded', optionLabel: 'excluded', included: false, fields: {} });
-  const saved = await batch({ productId: 'p1', endpoint: '/fields', view: h.initial, uploaded: new Map(),
+  const { view: saved } = await batch({ productId: 'p1', endpoint: '/fields', view: h.initial, uploaded: new Map(),
     render: async plan => { plans.push(plan); return { blob: new Blob(['png']) }; }, onProgress: p => progress.push(p),
   }, h.fetcher);
   assert.equal(plans.length, 2);
@@ -125,4 +125,53 @@ test('batch validates all plans before mutation and stops if later option change
   const invalid = fixture(); invalid.resolved.rows[1].fields.title.value = ''; invalid.resolved.rows[1].fields.model.value = '';
   await assert.rejects(batch({ ...input, view: invalid }, h.fetcher), /견적 값/);
   assert.equal(renders, 2);
+});
+
+test('batch capacity preflight stops before rendering or uploading and counts retained retry keys', async () => {
+  const h = harness(true); h.view.imageKeys = Array.from({ length: 49 }, (_, i) => `owner/${i}.png`);
+  let renders = 0;
+  const input = { productId: 'p1', endpoint: '/fields', view: h.initial, uploaded: new Map(), render: async () => { renders++; return { blob: new Blob(['png']) }; }, onProgress() {} };
+  await assert.rejects(batch(input, h.fetcher), /49개.*2개/);
+  assert.equal(renders, 0); assert.equal(h.calls.filter(call => call.method !== 'GET').length, 0);
+  h.view.imageKeys = ['owner/old.png'];
+  h.view.resolved.rows[1].fields.labelImages.value = Array.from({ length: 30 }, (_, i) => `owner/${i}.png`).join('\n');
+  await assert.rejects(batch(input, h.fetcher), /blue.*30개/); assert.equal(renders, 0);
+  const full = harness(true); full.view.imageKeys = Array.from({ length: 50 }, (_, i) => `owner/${i}.png`);
+  const uploaded = new Map([['red', 'owner/0.png'], ['blue', 'owner/1.png']]);
+  full.view.resolved.rows[0].fields.labelImages.value = 'owner/0.png';
+  full.view.resolved.rows[1].fields.labelImages.value = 'owner/1.png';
+  const result = await batch({ ...input, view: full.initial, uploaded }, full.fetcher);
+  assert.equal(result.completed, 2); assert.equal(result.stopped, false); assert.equal(renders, 0);
+  assert.equal(full.calls.filter(call => call.method !== 'GET').length, 0);
+});
+
+test('stop during an option save completes that option, then resumes with no duplicate upload', async () => {
+  const h = harness(true); let stop = false; let renders = 0; const uploaded = new Map();
+  const request = async (url, init) => {
+    const response = await h.fetcher(url, init);
+    if (init?.method === 'PUT') stop = true;
+    return response;
+  };
+  const input = { productId: 'p1', endpoint: '/fields', view: h.initial, uploaded, shouldStop: () => stop,
+    render: async () => { renders++; return { blob: new Blob(['png']) }; }, onProgress() {} };
+  const first = await batch(input, request);
+  assert.equal(first.stopped, true); assert.equal(first.completed, 1);
+  assert.equal(first.view.resolved.rows[0].fields.labelImages.value, 'owner/old.png\nowner/new-1.png');
+  assert.equal(first.view.resolved.rows[1].fields.labelImages.value, 'owner/old.png');
+  stop = false;
+  const resumed = await batch(input, h.fetcher);
+  assert.equal(resumed.stopped, false); assert.equal(resumed.completed, 2); assert.equal(renders, 2);
+  assert.equal(h.calls.filter(call => call.url === '/api/files').length, 2);
+});
+
+test('stop before execution or during rendering never starts an upload', async () => {
+  const h = harness(); let stop = true; let renders = 0;
+  const input = { productId: 'p1', endpoint: '/fields', view: h.initial, uploaded: new Map(), shouldStop: () => stop,
+    render: async () => { renders++; stop = true; return { blob: new Blob(['png']) }; }, onProgress() {} };
+  assert.equal((await batch(input, h.fetcher)).stopped, true);
+  assert.equal(h.calls.length, 0); assert.equal(renders, 0);
+  stop = false;
+  const result = await batch(input, h.fetcher);
+  assert.equal(result.stopped, true); assert.equal(result.completed, 0); assert.equal(renders, 1);
+  assert.equal(h.calls.filter(call => call.method !== 'GET').length, 0);
 });

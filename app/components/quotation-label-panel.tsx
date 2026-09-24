@@ -15,6 +15,10 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
   const uploadedKey = useRef<string | null>(null);
   const batchKeys = useRef(new Map<string | null, string>());
   const [progress, setProgress] = useState<LabelBatchProgress | null>(null);
+  const stopRequested = useRef(false);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [stopped, setStopped] = useState(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
   async function generate() {
@@ -38,14 +42,19 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
   }
   async function attachAll() {
     if (disabled || busy) return;
+    stopRequested.current = false; setStopping(false); setStopped(false); setBatchRunning(true);
     setBusy(true); setError(''); onBusyChange(true);
     try {
-      const saved = await attachQuotationLabels({ productId, endpoint, view, uploaded: batchKeys.current,
+      const result = await attachQuotationLabels({ productId, endpoint, view, uploaded: batchKeys.current,
+        shouldStop: () => stopRequested.current || !alive.current,
         render: renderDocument, onProgress: value => { if (alive.current) setProgress(value); } });
-      if (alive.current) onAttached(saved);
+      if (alive.current) {
+        if (result.stopped) setStopped(true);
+        else onAttached(result.view);
+      }
     } catch (cause) {
       if (alive.current) setError(`${cause instanceof Error ? cause.message : '일괄 라벨 연결 실패'} 완료된 연결과 업로드 파일은 보존됩니다. 이 화면에서 다시 실행하면 같은 파일로 남은 연결을 이어갑니다.`);
-    } finally { onBusyChange(false); if (alive.current) setBusy(false); }
+    } finally { onBusyChange(false); if (alive.current) { setBusy(false); setBatchRunning(false); setStopping(false); } }
   }
   const included = resolved.rows.some(row => row.optionId === optionId && row.included);
   return <section className="panel-stack" aria-label="견적 기준 표시사항 PNG" aria-busy={busy}>
@@ -54,6 +63,8 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
     <button type="button" className="btn ghost" disabled={disabled || busy || !included} onClick={() => void generate()}>저장된 견적 값으로 PNG 미리보기</button>
     <button type="button" className="btn primary" disabled={disabled || busy || !resolved.rows.some(row => row.included)} onClick={() => void attachAll()}>전체 포함 옵션 라벨 생성·연결 ({resolved.rows.filter(row => row.included).length}건)</button>
     <small>옵션별 저장값으로 순서대로 생성하며 기존 라벨에 추가합니다. 완료 후 견적 미리보기와 출력 파일에서 확인할 수 있습니다.</small>
+    {batchRunning && <button type="button" className="btn ghost" disabled={stopping} onClick={() => { stopRequested.current = true; setStopping(true); }}>{stopping ? '현재 옵션 저장 후 중지 중…' : '일괄 작업 중지'}</button>}
+    {stopped && <p role="status">작업을 중지했습니다. 완료된 라벨은 보존됩니다. 같은 화면에서 전체 생성·연결을 다시 누르면 이어서 진행합니다.</p>}
     {progress && <p role="status">라벨 연결 {progress.completed}/{progress.total}건 · {progress.optionLabel}{busy ? ' 처리 중…' : ''}</p>}
     {busy && !progress && <p role="status">표시사항 PNG 처리 중…</p>}
     {disabled && <small>입력 내용을 저장하고 최신 견적을 불러온 뒤 생성해주세요.</small>}
