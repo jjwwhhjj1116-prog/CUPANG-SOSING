@@ -1213,3 +1213,48 @@ test('reviewed label translations flow to quotation, label document and export w
  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].noticeMaterial,'면');
  input.overrides={common:{noticeMaterial:'견적 수동값'},options:{}};assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeMaterial.value,'견적 수동값');
 });
+
+const categoryEvidence=JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-product-schemas-2026-09-23.json',import.meta.url),'utf8'));
+for(const record of categoryEvidence.records){
+ test(`recorded Hub ${record.categoryId}: every exposed/hidden/notice field and select wire value matches`,()=>{
+  const schema=model.getQuotationSchema(record.categoryId);const normalize=value=>JSON.parse(JSON.stringify(value));
+  assert.deepEqual(normalize(schema.categoryPath),record.path);
+  const boundary=record.columns.findIndex(column=>column.label==='공급가 *');assert.ok(boundary>0);
+  const exposed=record.columns.slice(0,boundary).map(column=>({label:column.label.replace(/\s*\*\s*$/,''),required:column.label.endsWith('*')}));
+  assert.deepEqual(normalize(schema.fields.filter(f=>f.visibility==='exposed').map(f=>({label:f.label,required:f.required}))),exposed);
+  const hidden=schema.fields.filter(f=>f.visibility==='hidden');assert.equal(hidden.length,record.hidden.length);
+  for(const observed of record.hidden){const fields=hidden.filter(f=>f.label===observed.label);assert.equal(fields.length,1,observed.label);const field=fields[0];assert.equal(field.type,observed.type==='input'?'text':observed.type);
+   if(observed.type==='select')assert.deepEqual(normalize(field.choices.map(c=>[c.value,c.label])),observed.choices.map(c=>[c.value,c.label]),observed.label);
+  }
+  const actualNotices=schema.fields.filter(f=>f.section==='legal'&&f.id.startsWith('notice')).map(f=>f.label);
+  assert.deepEqual(normalize(actualNotices),record.noticeLabels??[]);
+  assert.equal(schema.maxIncludedOptions,record.maxIncludedOptions);assert.equal(schema.submissionReady,false);
+ });
+ test(`recorded Hub ${record.categoryId}: stage values and manual overrides survive final quotation export`,()=>{
+  const input=fixture();input.categoryId=record.categoryId;input.product.image_keys=JSON.stringify([...JSON.parse(input.product.image_keys),'owner/additional.png']);
+  input.content=contentModel.applyContentPatch(input.content,{seo:{title:'검토 상품',keywords:['확인키워드'],description:'확인 설명'},label:{material:'확인 재질',countryOfOrigin:'중국',components:'본품 1개',releaseDate:'2026-09',qualityAssurance:'확인 보증',contact:'확인 연락처'},assets:{additional:['owner/additional.png'],label:['owner/option.png']}},'now');
+  input.options.rows[0].color='검정';input.options.rows[0].size='Free';const snapshot=JSON.stringify(input);
+  const resolved=model.resolveQuotationFields(input),row=resolved.rows.find(r=>r.optionId==='red');
+  for(const [key,value] of Object.entries({title:'검토 상품',searchTags:'확인키워드',color:'검정',quantity:'1',mainImage:'owner/option.png',additionalImages:'owner/additional.png',labelImages:'owner/option.png',noticeMaterial:'확인 재질',noticeCountryOfOrigin:'중국',noticeComponents:'본품 1개',noticeReleaseDate:'2026-09',noticeQualityAssurance:'확인 보증',noticeServiceContact:'확인 연락처'}))assert.equal(row.fields[key]?.value,value,key);
+  assert.ok(Number(row.fields.supplyPrice.value)>0);assert.ok(Number(row.fields.salePrice.value)>0);
+  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));const rows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets);
+  assert.equal(rows.length,1);assert.equal(rows[0].title,'검토 상품');assert.equal(rows[0].noticeMaterial,'확인 재질');assert.equal(rows[0].mainImage,'1.png');assert.equal(rows[0].labelImages,'1.png');assert.equal(JSON.stringify(input),snapshot);
+  input.overrides={common:{noticeMaterial:'공통 재질',title:'견적 이름'},options:{red:{noticeMaterial:''}}};let changed=model.resolveQuotationFields(input);assert.equal(changed.rows[1].fields.noticeMaterial.value,'');assert.equal(changed.rows[1].fields.title.value,'견적 이름');
+  input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{material:''}},'later');changed=model.resolveQuotationFields(input);assert.equal(changed.rows[1].fields.noticeMaterial.value,'');assert.equal(changed.rows[1].fields.noticeMaterial.source,'content');
+ });
+}
+
+
+for(const id of ['81452','103495','64497','77442'])test(`recorded Hub ${id}: observed product dropdown wire values match the category form`,()=>{
+ const evidence=JSON.parse(fs.readFileSync(new URL(`../docs/supplier-hub-${id}-product-2026-09-24.json`,import.meta.url),'utf8'));
+ const schema=model.getQuotationSchema(id);const actual=schema.fields.filter(f=>f.section==='product'&&f.visibility==='hidden'&&f.type==='select').map(f=>f.choices.map(c=>[c.value,c.label]));
+ const selects=evidence.selects??evidence.selectsInDisplayedOrder;
+ const sorted=list=>[...list].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));assert.deepEqual(clone(actual.map(sorted)),selects.map(list=>sorted(list.map(c=>[c.value,c.label]))));
+ // Couplus omits the space in this one observed display label. Keep both
+ // exact paths explicit: do not broadly normalize potentially distinct leaves.
+ if(id==='64497'){
+  assert.deepEqual(evidence.path,['생활용품','욕실용품','욕실수납/정리','양치용품 정리']);
+  assert.deepEqual(clone(schema.categoryPath),['생활용품','욕실용품','욕실수납/정리','양치용품정리']);
+ }else assert.deepEqual(clone(schema.categoryPath),evidence.path);
+ assert.equal(schema.categoryId,id);assert.equal(schema.submissionReady,false);
+});
