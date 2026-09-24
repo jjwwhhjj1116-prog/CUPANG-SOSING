@@ -682,3 +682,31 @@ test('64497 fields map into quotation exports and reject cross-category profiles
  assert.equal(profileModel.categoryFieldScope('tooth_width'),'64497');
  assert.throws(()=>profileModel.validateCategoryProfile({...profile,categoryId:'80719'}),/다른 카테고리/);
 });
+
+test('resolved evidence warnings remain reviews while real validation and transport failures remain errors',()=>{
+ const input=fixture();const review=load('app/submission-review.ts');
+ input.content.assets.detail.value=['owner/option.png'];
+ input.overrides={common:{barcodeMode:'existing',barcode:'',supplyPrice:'5000',salePrice:'4000'},options:{}};
+ input.categoryId='64497';const before=JSON.stringify(input);const resolved=model.resolveQuotationFields(input);
+ const report=review.inspectSubmission(resolved,JSON.parse(input.product.image_keys));
+ const manufacturer=report.issues.filter(i=>i.fieldId==='manufacturer');
+ assert.ok(manufacturer.some(i=>i.kind==='review'));assert.equal(manufacturer.some(i=>i.kind==='error'),false);
+ assert.ok(report.issues.some(i=>i.fieldId==='barcode'&&i.kind==='error'));
+ assert.ok(report.issues.some(i=>i.fieldId==='salePrice'&&i.kind==='error'));
+ assert.ok(report.issues.some(i=>i.fieldId==='mainImage'&&i.kind==='error'&&i.message.includes('공개 주소')));
+ assert.equal(report.issues.filter(i=>i.code==='MAIN_DETAIL_DUPLICATE').length,1);
+ assert.equal(report.issues.some(i=>i.kind==='error'&&i.message.includes('반려 가능성')),false);
+ assert.equal(JSON.stringify(input),before);assert.equal(report.submissionReady,false);
+});
+
+test('Couplus defaults retain explicit review provenance without being reported as malformed input',()=>{
+ const input=fixture();const review=load('app/submission-review.ts');
+ const resolved=model.resolveQuotationFields(input);const row=resolved.rows.find(r=>r.included);
+ const defaults=Object.entries(row.fields).filter(([,cell])=>cell.source==='couplus-default'&&cell.value.trim());
+ assert.ok(defaults.length>0);const report=review.inspectSubmission(resolved,JSON.parse(input.product.image_keys));
+ for(const [id,cell] of defaults){
+  assert.ok(cell.reviewMessages.some(m=>m.includes('쿠플러스')));
+  assert.ok(report.issues.some(i=>i.fieldId===id&&i.kind==='review'&&i.message.includes('쿠플러스')));
+  if(!cell.validationIssues.length)assert.equal(report.issues.some(i=>i.fieldId===id&&i.kind==='error'),false);
+ }
+});

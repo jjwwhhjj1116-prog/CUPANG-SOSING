@@ -36,7 +36,7 @@ export type QuotationSchema = {
 export type QuotationOverrides = { common: Record<string, string>; options: Record<string, Record<string, string>> };
 export type QuotationChange = { fieldKey: string; optionId: string | null; value: string | null };
 export type QuotationSource = 'manual-option' | 'manual-common' | 'schema' | 'content' | 'settings' | 'option' | 'pricing' | 'product' | 'empty' | 'couplus-default';
-export type ResolvedQuotationField = { value: string; source: QuotationSource; needsReview: boolean; issues: string[] };
+export type ResolvedQuotationField = { value: string; source: QuotationSource; needsReview: boolean; issues: string[]; validationIssues?: string[]; reviewMessages?: string[] };
 export type ResolvedQuotationRow = { optionId: string | null; optionLabel: string; included: boolean; fields: Record<string, ResolvedQuotationField> };
 export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[] };
 export type QuotationFieldsView = {
@@ -370,23 +370,26 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       const preset = couplusQuotationDefault(schema.categoryId, definition);
       if (automatic.source === 'empty' && preset !== undefined) automatic = {
         value: preset, source: 'couplus-default',
-        issues: ['쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.'],
+        issues: [],
       };
       const manualOption = !definition.readOnly && specific && Object.hasOwn(specific, definition.id);
       const manualCommon = !definition.readOnly && Object.hasOwn(overrides.common, definition.id);
       const value = manualOption ? specific![definition.id] : manualCommon ? overrides.common[definition.id] : automatic.value;
       const source: QuotationSource = manualOption ? 'manual-option' : manualCommon ? 'manual-common' : automatic.source;
-      const fieldIssues = [...quotationValueIssues(definition, value, ownedKeys), ...(!manualOption && !manualCommon ? automatic.issues ?? [] : [])];
-      if (definition.reviewRequired && value.trim()) fieldIssues.push('실제 상품·증빙과 일치하는지 확인해주세요.');
-      if (definition.type === 'images' && value) fieldIssues.push('비공개 이미지 참조입니다. 외부 접수용 공개 주소는 아직 생성되지 않았습니다.');
-      return [definition.id, { value, source, needsReview: Boolean(definition.reviewRequired) || fieldIssues.length > 0, issues: fieldIssues } satisfies ResolvedQuotationField];
+      const validationIssues = [...quotationValueIssues(definition, value, ownedKeys), ...(!manualOption && !manualCommon ? automatic.issues ?? [] : [])];
+      const reviewMessages: string[] = [];
+      if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
+      if (definition.reviewRequired && value.trim()) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
+      if (definition.type === 'images' && value) validationIssues.push('비공개 이미지 참조입니다. 외부 접수용 공개 주소는 아직 생성되지 않았습니다.');
+      const fieldIssues = [...validationIssues, ...reviewMessages];
+      return [definition.id, { value, source, needsReview: Boolean(definition.reviewRequired) || fieldIssues.length > 0, issues: fieldIssues, validationIssues, reviewMessages } satisfies ResolvedQuotationField];
     }));
-    if (fields.barcodeMode.value === 'existing' && !fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('실제 바코드 번호를 입력해주세요.'); }
+    if (fields.barcodeMode.value === 'existing' && !fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('실제 바코드 번호를 입력해주세요.'); fields.barcode.validationIssues!.push('실제 바코드 번호를 입력해주세요.'); }
     const barcodeIssues = quotationBarcodeIssues(schema.categoryId, fields.barcodeMode.value, fields.barcode.value);
-    if (barcodeIssues.length) { fields.barcode.needsReview = true; fields.barcode.issues.push(...barcodeIssues); }
-    if (fields.barcodeMode.value === 'request-coupang' && fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); }
+    if (barcodeIssues.length) { fields.barcode.needsReview = true; fields.barcode.issues.push(...barcodeIssues); fields.barcode.validationIssues!.push(...barcodeIssues); }
+    if (fields.barcodeMode.value === 'request-coupang' && fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); fields.barcode.validationIssues!.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); }
     const priceIssues = quotationPriceIssues(schema, fields.supplyPrice.value, fields.salePrice.value);
-    if (priceIssues.length) { fields.salePrice.needsReview = true; fields.salePrice.issues.push(...priceIssues); }
+    if (priceIssues.length) { fields.salePrice.needsReview = true; fields.salePrice.issues.push(...priceIssues); fields.salePrice.validationIssues!.push(...priceIssues); }
     const imageIssues = quotationImageRoleIssues(fields.mainImage?.value ?? '', fields.detailImages?.value ?? '');
     if (imageIssues.length && fields.detailImages) { fields.detailImages.needsReview = true; fields.detailImages.issues.push(...imageIssues); }
     return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : includeCommonRow, fields };

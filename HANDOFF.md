@@ -1176,3 +1176,11 @@ AI등록 화면 확인:
 - 견적 MSRP 설명에 자동 계산 초안과 제조사/공식판매처 가격 근거의 차이를 표시했다. 등록 준비 검사에 MSRP_EVIDENCE_REVIEW를 추가해 포함 옵션의 최종값/출처를 기준으로 표시한다. 수동 입력도 동의로 취급하지 않고 가격값은 보존한다. 기존 fieldId/optionId 이동 기능 사용. 공란·제외 옵션은 생략하고 잘못된 숫자는 입력 오류를 우선한다.
 - 검증: 전체416/416, 타입검사·린트·빌드·diff 검사. outputs/step81-tests.log, step81-lint.log, step81-build.log. 실제 resolver→등록 준비 검사에서 자동/공통/옵션값 및 공란을 검증했다. SourceFlow 변경 UI의 실제 Chrome 조작은 미실시.
 - 다음: Chrome hub81 MSRP·OSRP 상세 약관에서 사용자가 직접 동의한 뒤 다음 이동 재시도. 이미지/법적정보/물류 대조는 아직 미완료. docs/supplier-hub-msrp-observation-2026-09-24.md 참고. 실제1688 수집, AI 실호출, 공식Excel/전체분류, 전송adapter도 미완성이다. 유료호출·최종운영등록·Cloudflare배포 없음.
+
+## 82. 견적 오류와 증빙 검토의 분리 — 2026-09-24
+
+- 시작 main 39565ad, 미커밋 변경 없음. 실제 resolver의 증빙 확인 안내까지 등록 준비 검사에서 FIELD_INVALID 오류로 집계하는 문제를 확인했다.
+- ResolvedQuotationField에 validationIssues/reviewMessages를 추가했다. 기존 issues는 편집 화면·내보내기 호환을 위해 보존한다. 필수값/선택값/가격/바코드/누락 이미지 및 외부 공개주소 미구현은 오류로 유지하고, Couplus 기본값의 적용 여부·상품 증빙 확인은 검토로 표시한다. 대표/상세 동일 이미지 안내는 전용 검토 항목으로 한 번 표시한다. 구형 객체의 issues는 보수적으로 오류로 처리한다. 저장값/수동 공란/DB 변경 없음.
+- 검증: 전체418/418, 관련59/59, TypeScript/ESLint/production build/diff 통과. 실제 resolver→등록 준비 검사로 기본값 출처, 증빙 검토, 가격/바코드 오류, 이미지 전송 한계, 중복 안내, 원본 무변경을 확인했다. outputs/step82-*.log. 변경 화면의 실제 브라우저 검증은 미실시.
+- Chrome Supplier Hub 로그인 유지 확인. 기존 관찰용 A/64497 임시 견적(목록 저장시각09:31)을 읽어 기본정보 화면까지 복원했다. 신규 상품값 입력/약관 동의/최종 등록은 하지 않았다. 이번에는 약관 동의 완료 여부를 확정하지 못했다.
+- 다음 시작점: hub82에 복원된 관찰용 견적의 상품정보부터 계속 확인. MSRP·OSRP 동의는 사용자 사실 확인이 필요하므로 임의 처리하지 않는다. 이미지/법적정보/물류 공식 대조, 실제1688 공급원, AI 실호출, 공식Excel/전체분류, 외부이미지 전달, Supplier Hub 전송 adapter는 여전히 미완성. 유료호출·운영등록·Cloudflare배포 없음.

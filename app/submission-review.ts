@@ -43,7 +43,7 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
     }
     for (const field of resolved.schema.fields) {
       const cell = row.fields[field.id];
-      const errors = new Set(cell?.issues ?? []);
+      const errors = new Set(cell?.validationIssues ?? cell?.issues ?? []);
       if (field.required && !cell?.value.trim() && !errors.size) errors.add('필수값을 입력해주세요.');
       if (field.type === 'images') for (const key of (cell?.value ?? '').split('\n').map(item => item.trim()).filter(Boolean)) {
         if (!owned.has(key)) errors.add('이 상품에 저장된 이미지 연결이 아닙니다.');
@@ -55,6 +55,10 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
           ? '권장소비자가격: 자동 계산 또는 저장 상품의 금액입니다. 제조사 권장가·공식 판매처 가격의 근거와 가격 설정 권한을 확인해주세요. Supplier Hub 약관 동의는 별도입니다.'
           : '권장소비자가격: 직접 입력한 금액도 제조사 권장가·공식 판매처 가격의 근거와 가격 설정 권한을 확인해주세요. 저장은 Supplier Hub 약관 동의가 아닙니다.',
         optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
+      else if (cell?.reviewMessages !== undefined) {
+        for (const message of new Set(cell.reviewMessages)) if (cell.value.trim()) add({kind:'review', code:'EVIDENCE_REVIEW',
+          message: `${field.label}: ${message}`, optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
+      }
       else if (!errors.size && cell?.needsReview && cell.value.trim()) add({kind:'review', code:'EVIDENCE_REVIEW',
         message:`${field.label}: 실제 상품·증빙과 일치하는지 확인해주세요.`, optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
     }
