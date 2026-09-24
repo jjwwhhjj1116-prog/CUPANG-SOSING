@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
 import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
 import { refreshCategoryMappings, relocateQuotationMappings, suggestQuotationMappings, suggestQuotationHeader } from '@/app/quotation-mapping';
+import { supplierTemplateObservation } from '@/app/supplier-template-observation';
 
 type Props = { value?: CategoryProfile | null; initialDraft?: CategoryProfileInput; onSave: (profile: CategoryProfile) => void; onClose: () => void };
 const empty: CategoryProfileInput = { name: '', categoryId: '', categoryPath: [], template: null, mappings: [] };
@@ -128,16 +129,26 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
     finally { setBusy(false); }
   };
   const issues = categoryProfileIssues(draft);
+  const templateObservation = supplierTemplateObservation(draft.categoryId);
   return <form className="settings-form" onSubmit={save}>
     <section>
       <h3>카테고리별 견적서 설정</h3>
       <p>URL을 추가하기 전에 상품의 카테고리와 견적서 열 연결을 선택합니다. 저장한 설정은 다음 상품에도 재사용됩니다.</p>
       <div className="form-grid">
         <label className="field"><span>설정 이름</span><input required maxLength={120} value={draft.name} disabled={busy} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="카테고리와 양식을 구분할 이름" /></label>
-        <label className="field"><span>Supplier Hub 카테고리 번호</span><input maxLength={120} value={draft.categoryId} disabled={busy} onChange={event => changeCategory(event.target.value)} placeholder="실제 확인한 번호 · 미확인 시 비워두기" /></label>
+        <label className="field"><span>상품 등록 카테고리 번호</span><input maxLength={120} value={draft.categoryId} disabled={busy} onChange={event => changeCategory(event.target.value)} placeholder="실제 확인한 번호 · 미확인 시 비워두기" /></label>
         <label className="field full"><span>카테고리 경로</span><input required maxLength={1210} value={path} disabled={busy} onChange={event => setPath(event.target.value)} placeholder="상위 카테고리 > 하위 카테고리" /></label>
       </div>
       <p>선택한 카테고리의 원본 양식을 연결합니다. 분류 코드 확인과 실제 견적서 제출 검증은 별도로 기록합니다.</p>
+      <details><summary>공식 견적서 가져오는 순서 · 분류 확인</summary>
+        <p><a href="https://supplier.coupang.com/qvt/registration" target="_blank" rel="noopener noreferrer">Supplier Hub 견적서 다운로드 열기</a> → 최신 견적서 파일 다운로드 → 카테고리 탐색 → 선택한 카테고리의 견적서 다운로드 순서로 진행합니다.</p>
+        {templateObservation ? <>
+          <p>상품 등록 분류: {templateObservation.registrationPath.join(' → ')}</p>
+          <p>공식 다운로드 화면에서 확인한 경로: <strong>{templateObservation.downloadPath.join(' → ')}</strong></p>
+          <small>{templateObservation.observedAt} 화면 관찰. 말단 이름은 같지만 상위 경로가 다릅니다. 다운로드 화면의 칸 카테고리 ID와 상품 등록 번호의 동일성은 미확인입니다.</small>
+        </> : <p>이 카테고리의 공식 다운로드 경로는 아직 대조하지 않았습니다. 등록 화면의 번호나 이름만으로 양식을 확정하지 마세요.</p>}
+        <p>내려받은 파일을 아래 원본 입력에 연결하고 시트·머리글·열 연결을 확인하세요. {draft.template ? '현재 원본 양식은 연결되어 있습니다.' : '현재 원본 양식이 연결되지 않았습니다.'} 파일 연결이나 열 자동 추천은 공식 카테고리 일치·제출 성공 검증을 뜻하지 않습니다.</p>
+      </details>
     </section>
     <section>
       <h3>견적서 열 연결</h3>
