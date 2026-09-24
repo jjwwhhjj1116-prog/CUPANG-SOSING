@@ -168,7 +168,7 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     const attributes = [
       ...hub.exposed.map(item => field(item.id, 'product', item.label, { visibility: 'exposed', required: item.required, reviewRequired: true })),
       ...hub.hidden.map(item => field(item.id, 'product', item.label, { visibility: 'hidden', type: item.type, choices: item.choices,
-        ...(item.label === '수납/정리용품 재질' ? { contentField: 'material' as const } : {}),
+        ...(['수납/정리용품 재질', '상품 재질'].includes(item.label) ? { contentField: 'material' as const } : {}),
         reviewRequired: true, help: item.placeholder ? `공식 입력 예시: ${item.placeholder.replace(/^예\)\s*/, '')}` : '선택한 카테고리의 공식 상품정보 화면에서 확인한 항목입니다.' })),
     ];
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...attributes);
@@ -179,7 +179,7 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
   const couplusPath = categoryId === '103495' ? couplus103495Path : categoryId === '64497' ? couplus64497Path : categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
   if (couplusFields && !hub) {
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product').map(item => (categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || categoryId === '77442')
-      ? { ...item, ...(item.label === '수납/정리용품 재질' ? { contentField: 'material' as const } : {}), required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : item.id === 'size'
+      ? { ...item, ...(['수납/정리용품 재질', '상품 재질'].includes(item.label) ? { contentField: 'material' as const } : {}), required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : item.id === 'size'
         ? '공식 입력 예시: S, Medium, Free, 대, one size 등. 구매 옵션의 사이즈를 입력해주세요. 크기·중량 표시사항과 별도로 관리합니다.'
         : 'Supplier Hub 상품정보 화면에서 확인한 항목입니다. 실제 상품값을 입력해주세요.' } : item));
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...couplusFields.filter(item => item.section === 'legal'));

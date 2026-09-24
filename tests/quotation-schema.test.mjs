@@ -918,7 +918,7 @@ test('observed storage-material attributes reuse saved label material across cat
     }
     assert.equal(JSON.stringify(input),before);
     // Component-specific material fields do not inherit the whole-product fact.
-    for (const field of schema.fields.filter(field => /재질/.test(field.label) && field.id !== definition.id && field.id !== 'noticeMaterial')) {
+    for (const field of schema.fields.filter(field => /재질/.test(field.label) && field.contentField !== 'material' && field.id !== 'noticeMaterial')) {
       assert.equal(resolved.rows[0].fields[field.id].value,'',`${categoryId}/${field.label}`);
     }
     input.content.label.material.value = '';
@@ -931,6 +931,34 @@ test('observed storage-material attributes reuse saved label material across cat
     assert.equal(manual.rows[1].fields[definition.id].source,'manual-option');
   }
   assert.ok(covered > 1);
+});
+
+test('whole-product material flows from saved content into each observed category and export without replacing manual values', () => {
+  const catalog=load('app/hub-product-schemas.ts').hubProductSchemas;
+  let covered=0;
+  for(const categoryId of [...Object.keys(catalog),'64497','103495','77442','81452']) {
+    const input=fixture();input.categoryId=categoryId;
+    const definition=model.getQuotationSchema(categoryId).fields.find(field=>field.label==='상품 재질');
+    if(!definition)continue;
+    covered++;
+    const value=definition.choices?.find(choice=>choice.value)?.value ?? '확인한 재질';
+    input.content=contentModel.applyContentPatch(input.content,{label:{material:value}},'2026-09-24T12:00:00Z');
+    const before=JSON.stringify(input);
+    let resolved=model.resolveQuotationFields(input);
+    for(const row of resolved.rows){assert.equal(row.fields[definition.id].value,value,categoryId);assert.equal(row.fields[definition.id].source,'content');assert.equal(row.fields[definition.id].validationIssues.length,0);}
+    const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`})));
+    assert.equal(exported[0][definition.id],value,categoryId);
+    assert.equal(JSON.stringify(input),before);
+    input.overrides={common:{[definition.id]:'직접 지정한 재질'},options:{red:{[definition.id]:''}}};
+    resolved=model.resolveQuotationFields(input);
+    assert.equal(resolved.rows[0].fields[definition.id].value,'직접 지정한 재질');assert.equal(resolved.rows[1].fields[definition.id].source,'manual-option');assert.equal(resolved.rows[1].fields[definition.id].value,'');
+    input.overrides=model.emptyQuotationOverrides();
+    input.content=contentModel.applyContentPatch(input.content,{label:{material:''}},'2026-09-24T12:01:00Z');
+    resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields[definition.id].value,'');assert.equal(resolved.rows[1].fields[definition.id].source,'content');
+    input.content.label.material.value='선택지에 없는 확인된 복합 재질';
+    const mismatch=model.resolveQuotationFields(input).rows[1].fields[definition.id];assert.equal(mismatch.value,input.content.label.material.value);if(definition.choices)assert.ok(mismatch.validationIssues.length>0);
+  }
+  assert.ok(covered>=4,`Observed whole-product fields covered: ${covered}`);
 });
 
 test('category material choice mismatch remains visible and is never guessed or replaced with N/A', () => {
