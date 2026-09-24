@@ -141,6 +141,22 @@ export function quotationEditorIssues(field: QuotationField, cell: Cell, imageKe
   return [...new Set([...cell.issues, ...quotationValueIssues(field, cell.value, imageKeys)])];
 }
 function imageValues(value: string) { return [...new Set(value.split('\n').map(key => key.trim()).filter(Boolean))]; }
+export function quotationEditorValidation(field: QuotationField, cell: Cell, imageKeys: readonly string[]) {
+  return [...new Set(cell.validationIssues ?? quotationValueIssues(field, cell.value, imageKeys))];
+}
+export function quotationSectionProgress(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], optionId: string | null) {
+  return sections.map(section => {
+    const fields = view.resolved.schema.fields.filter(field => field.section === section.id);
+    let required = 0; let complete = 0; let invalid = 0;
+    for (const field of fields) {
+      const cell = resolveQuotationEditorCell(view, changes, optionId, field.id);
+      const issues = quotationEditorValidation(field, cell, view.imageKeys);
+      if (issues.length) invalid++;
+      if (field.required) { required++; if (!issues.length) complete++; }
+    }
+    return { ...section, required, complete, invalid };
+  });
+}
 export function quotationOptionOverview(view: QuotationFieldsView, changes: readonly QuotationEditorChange[]) {
   return view.resolved.rows.filter(row => row.included).map(row => {
     let linked = 0; let defaults = 0; let manual = 0; let missing = 0;
@@ -154,7 +170,7 @@ export function quotationOptionOverview(view: QuotationFieldsView, changes: read
       // Use the same draft-aware validation as the individual field, including
       // failed automatic calculations and unavailable image references.
       // Review reminders remain separate from validation problems.
-      const issues = [...new Set(cell.validationIssues ?? quotationValueIssues(field, cell.value, view.imageKeys))];
+      const issues = quotationEditorValidation(field, cell, view.imageKeys);
       if (issues.length) problems.push({ fieldKey: field.id, label: field.label, section: field.section, issues });
     }
     return { optionId: row.optionId, optionLabel: row.optionLabel, linked, defaults, manual, missing, problems };
@@ -299,11 +315,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const row = view?.resolved.rows.find(item => item.optionId === selectedOption);
   const activeSection = sections.find(section => section.id === active)!;
   const sectionFields = schema?.fields.filter(field => field.section === active) ?? [];
-  const counts = sections.map(section => {
-    const fields = schema?.fields.filter(field => field.section === section.id) ?? [];
-    const required = fields.filter(field => field.required);
-    return { ...section, required: required.length, complete: view ? required.filter(field => !quotationValueIssues(field, resolveQuotationEditorCell(view, changes, selectedOption, field.id).value, view.imageKeys).length).length : 0 };
-  });
+  const counts = view ? quotationSectionProgress(view, changes, selectedOption) : [];
   const allIssues = view && schema ? schema.fields.flatMap(field => quotationEditorIssues(field, resolveQuotationEditorCell(view, changes, selectedOption, field.id), view.imageKeys).map(issue => ({ field, issue }))) : [];
   const missingRequired = view && schema ? schema.fields.filter(field => field.required && !resolveQuotationEditorCell(view, changes, selectedOption, field.id).value.trim()).length : 0;
   const optionCount = view?.resolved.rows.filter(item => item.optionId !== null).length ?? 0;
@@ -327,7 +339,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       {!view.resolved.rows.some(item => item.included) && <p className="quotation-fields-notice" role="alert">견적에 포함된 옵션이 없습니다. 옵션 설정에서 상품 옵션을 추가하거나 포함을 선택해주세요. 공통 입력은 보존되지만 견적서 출력 대상은 아닙니다.</p>}
       <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { setSelectedOption(event.target.value || null); setBulk(null); }}>{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${item.optionLabel}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
       <div className="quotation-fields-summary"><span>현재 옵션 필수 미입력 <b>{missingRequired}개</b></span><span>입력 확인 <b>{allIssues.length}건</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
-      <nav className="quotation-fields-section-nav" aria-label="견적 입력 구역">{counts.map((section, index) => <button key={section.id} type="button" disabled={busy || loading} aria-pressed={active === section.id} onClick={() => setActive(section.id)}><b>{index + 1}</b><span>{section.title}</span><small>{section.complete}/{section.required} 필수 입력</small></button>)}</nav>
+      <nav className="quotation-fields-section-nav" aria-label="견적 입력 구역">{counts.map((section, index) => <button key={section.id} type="button" disabled={busy || loading} aria-pressed={active === section.id} onClick={() => setActive(section.id)}><b>{index + 1}</b><span>{section.title}</span><small>{section.complete}/{section.required} 필수 입력{section.invalid > 0 && ` · 확인 ${section.invalid}개`}</small></button>)}</nav>
       {conflicts.length > 0 && <div className="quotation-fields-notice" role="alert"><strong>다시 검토할 항목 {conflicts.length}개</strong><ul className="quotation-fields-conflicts">{conflicts.map(conflict => <li key={conflict.key}><strong>{schema?.fields.find(field => field.id === conflict.change.fieldKey)?.label ?? conflict.change.fieldKey} · {view.resolved.rows.find(item => item.optionId === conflict.change.optionId)?.optionLabel ?? '삭제된 옵션'}</strong>{conflict.schemaChanged && <p>카테고리 또는 항목 규격이 변경되었습니다. 같은 값이라도 새 양식에 맞는지 확인해주세요.</p>}<p>{conflict.unavailable ? '현재 카테고리 또는 옵션에 없는 입력입니다.' : `현재 저장값: ${conflict.saved === null ? '자동값 사용' : conflict.saved || '(공란)'}`}</p><p>내 입력: {conflict.change.value === null ? '수동 수정 해제' : conflict.change.value || '(공란)'}</p><div className="quote-actions">{!conflict.unavailable && <button type="button" className="btn ghost" disabled={busy || loading} onClick={() => setConflicts(previous => previous.filter(item => item.key !== conflict.key))}>내 입력 유지</button>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => { setChanges(previous => previous.filter(change => quotationEditorKey(change.optionId, change.fieldKey) !== conflict.key)); setConflicts(previous => previous.filter(item => item.key !== conflict.key)); setBulk(null); }}>{conflict.unavailable ? '이 입력 제외' : '저장된 값 사용'}</button></div></li>)}</ul></div>}
       {row && <fieldset className="quotation-fields-section" disabled={busy || loading} style={{ padding: 0, margin: 0, minWidth: 0 }}><header><h4>{activeSection.english} · {activeSection.title}</h4><small>* 필수 입력</small><p className="quotation-field-help" style={{ width: '100%' }}>{activeSection.description}</p></header><div className="quotation-fields-grid">{sectionFields.map(field => {
         const cell = resolveQuotationEditorCell(view, changes, selectedOption, field.id);
@@ -336,7 +348,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         const id = `${prefix}-${field.id}`; const ownManual = draftManual(view, changes, selectedOption, field.id) !== null;
         const inheritedManual = selectedOption !== null && !ownManual && cell.source === 'manual-common';
         const editable = !field.readOnly; const imageKeys = imageValues(cell.value);
-        const inputProps = { id, value: cell.value, readOnly: !editable, 'aria-invalid': quotationValueIssues(field, cell.value, view.imageKeys).length > 0, 'aria-describedby': `${id}-notes`, onChange: (event: { target: { value: string } }) => edit(field.id, event.target.value) };
+        const inputProps = { id, value: cell.value, readOnly: !editable, 'aria-invalid': quotationEditorValidation(field, cell, view.imageKeys).length > 0, 'aria-describedby': `${id}-notes`, onChange: (event: { target: { value: string } }) => edit(field.id, event.target.value) };
         return <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' ? 'wide' : ''}`} key={field.id}>
           <div className="quotation-field-heading"><label htmlFor={id}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label><div className="quotation-field-badges"><span className={`quotation-field-badge ${cell.source.startsWith('manual-') ? 'manual' : ''}`}>{sourceLabels[cell.source] ?? cell.source}</span>{field.visibility === 'exposed' && <span className="quotation-field-badge">노출 속성</span>}{field.visibility === 'hidden' && <span className="quotation-field-badge">비노출 속성</span>}{cell.needsReview && <span className="quotation-field-badge review">검토 필요</span>}</div></div>
           {field.type === 'select' && editable ? <select {...inputProps}>{!field.choices?.some(choice => choice.value === '') && <option value="">선택하지 않음</option>}{cell.value && !field.choices?.some(choice => choice.value === cell.value) && <option value={cell.value}>{cell.value} · 목록 외 저장값</option>}{field.choices?.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select>

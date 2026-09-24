@@ -308,6 +308,40 @@ test('overview preserves automatic validation failures, clears replaced values a
  assert.equal(JSON.stringify(view),before);
 });
 
+test('section progress uses current dependent price validation and distinguishes optional errors from required completion',()=>{
+ const view=fixture();view.resolved.schema.salePriceMustCoverSupply=true;
+ view.resolved.schema.fields=view.resolved.schema.fields.filter(f=>['supplyPrice','salePrice','brand','mainImage'].includes(f.id));
+ view.resolved.schema.fields.find(f=>f.id==='salePrice').required=true;
+ view.resolved.schema.fields.find(f=>f.id==='supplyPrice').required=false;
+ const before=JSON.stringify(view);
+ const draft=[change('supplyPrice','5000'),change('salePrice','4000')];
+ const progress=changes=>editor.quotationSectionProgress(view,changes,'red');
+ const bad=progress(draft).find(s=>s.id==='product');
+ const good=progress([change('supplyPrice','3000'),change('salePrice','4000')]).find(s=>s.id==='product');
+ assert.equal(good.complete,bad.complete+1);assert.equal(bad.invalid,good.invalid+1);
+ assert.equal(bad.required,good.required);
+ const image=progress(draft).find(s=>s.id==='image');
+ assert.equal(image.required,0);assert.equal(image.complete,0);assert.equal(image.invalid,1);
+ assert.equal(progress([...draft,change('mainImage','','red')]).find(s=>s.id==='image').invalid,0);
+ const cell=editor.resolveQuotationEditorCell(view,draft,'red','salePrice');
+ const field=view.resolved.schema.fields.find(f=>f.id==='salePrice');
+ assert.ok(editor.quotationEditorValidation(field,cell,view.imageKeys).some(text=>text.includes('공급가보다')));
+ assert.equal(JSON.stringify(view),before);
+});
+
+test('section progress does not treat review reminders as errors and preserves automatic failure on reset',()=>{
+ const view=fixture();view.resolved.schema.fields=view.resolved.schema.fields.filter(f=>f.id==='brand');
+ const field=view.resolved.schema.fields[0];const cell=editor.resolveQuotationEditorCell(view,[],'red','brand');
+ assert.ok(cell.reviewMessages.length);assert.equal(editor.quotationEditorValidation(field,cell,view.imageKeys).length,0);
+ const automatic=view.automatic.rows.find(row=>row.optionId==='red').fields.brand;
+ automatic.validationIssues=['연결 자료 오류'];
+ const progress=changes=>editor.quotationSectionProgress(view,changes,'red').find(s=>s.id==='product');
+ assert.equal(progress([]).complete,0);assert.equal(progress([]).invalid,1);
+ assert.equal(progress([change('brand','수정 브랜드','red')]).complete,1);
+ assert.equal(progress([change('brand',null,'red')]).invalid,1);
+ assert.equal(progress([change('brand','','red')]).complete,0);
+});
+
 test('changing barcode mode and supply price recomputes dependent draft validation metadata',()=>{
  const view=fixture({common:{barcodeMode:'existing',barcode:'',supplyPrice:'4000',salePrice:'3000'},options:{}});
  const barcode=changes=>editor.resolveQuotationEditorCell(view,changes,'red','barcode');
