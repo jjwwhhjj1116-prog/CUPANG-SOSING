@@ -6,6 +6,8 @@ import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor
 import { fillLabelDraft } from '@/app/label-autofill';
 import { ImageSizeNotice } from '@/app/components/image-size-notice';
 import { currentLabelLayout, moveLabelField, type LabelLayout } from '@/app/product-content';
+import { type CustomLabel } from '@/app/product-content';
+import { CustomLabelEditor } from '@/app/components/custom-label-editor';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -17,6 +19,7 @@ type Draft = {
   seo: { title: string; keywords: string; description: string };
   label: Record<LabelField, string>;
   labelLayout: LabelLayout;
+  customLabels: CustomLabel[];
   assets: Record<AssetRole, string[]>;
 };
 function draftFrom(content: ProductContent): Draft {
@@ -24,6 +27,7 @@ function draftFrom(content: ProductContent): Draft {
     seo: { title: content.seo.title.value, keywords: content.seo.keywords.value.join('\n'), description: content.seo.description.value },
     label: Object.fromEntries(Object.entries(content.label).map(([key, field]) => [key, field.value])) as Draft['label'],
     labelLayout: currentLabelLayout(content.labelLayout),
+    customLabels: (content.customLabels??[]).map(item=>({...item})),
     assets: Object.fromEntries(Object.entries(content.assets).map(([key, field]) => [key, [...field.value]])) as Draft['assets'],
   };
 }
@@ -78,7 +82,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   }, [endpoint, applyLoaded]);
   const initial = draftFrom(content);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
-  const dirty = JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey]) || (section==='표시사항'&&JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout));
+  const dirty = JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey]) || (section==='표시사항'&&(JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
   const anyDirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion);
   useEffect(() => {
@@ -119,7 +123,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   async function save() {
     setBusy(true); setError(''); setMessage('');
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
-      : section === '표시사항' ? { label: draft.label, labelLayout: draft.labelLayout } : { assets: draft.assets };
+      : section === '표시사항' ? { label: draft.label, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: draft.assets };
     try {
       const response = await fetch(endpoint, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent; error?: string };
@@ -127,7 +131,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       const saved = body.content;
       setContent(saved);
       // Preserve unsaved work in other tabs when this section is saved.
-      setDraft(previous => ({ ...previous, [draftKey]: draftFrom(saved)[draftKey], ...(section==='표시사항'?{labelLayout:draftFrom(saved).labelLayout}:{}) }));
+      setDraft(previous => ({ ...previous, [draftKey]: draftFrom(saved)[draftKey], ...(section==='표시사항'?{labelLayout:draftFrom(saved).labelLayout,customLabels:draftFrom(saved).customLabels}:{}) }));
       setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();
     } catch (cause) { setError(cause instanceof Error ? cause.message : '저장하지 못했습니다.'); }
     finally { setBusy(false); }
@@ -171,6 +175,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
             <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 아래로`} disabled={index===draft.labelLayout.order.length-1} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,1)}))}>↓</button></div>
           <label className="field"><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, label: { ...previous.label, [key]: event.target.value } }))} /></label>
         </div>)}</div>
+        <CustomLabelEditor rows={draft.customLabels} onChange={customLabels=>setDraft(previous=>({...previous,customLabels}))}/>
       </>}
       {section === '이미지' && <div className="panel-stack">
         <small style={{ color: '#64748b' }}>Supplier Hub 안내: 대표 1,000×1,000px 이상 권장 · 상세 상단·본문·하단 각각 가로 780px, 세로 1,500px 이내. 표시 크기는 브라우저가 읽은 값이며 화질·번역·접수 완료를 뜻하지 않습니다. 원본 헤더 기준 견적 검사와 다를 수 있습니다.</small>

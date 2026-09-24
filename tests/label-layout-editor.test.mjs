@@ -24,4 +24,9 @@ test('label editor saves order and hidden state, restores layout and preserves u
  assert.equal(nodes(render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.value,'저장 전 SEO');
  tree=render();nodes(tree).find(n=>n.type==='button'&&n.props.children==='기본 순서·전체 표시로 복원').props.onClick();
  nodes(render()).find(n=>n.type==='button'&&n.props.children==='표시사항 저장').props.onClick();await settle();assert.deepEqual(posted.patch.labelLayout.hidden,[]);assert.equal(saved.label.material.value,'면');
+ const custom=nodes(render()).find(n=>n.type?.name==='CustomLabelEditor');custom.props.onChange([{id:'custom-a',name:'추가 항목',value:'보관 내용',visible:false}]);
+ assert.equal(nodes(render()).find(n=>n.type==='button'&&n.props.children==='표시사항 저장').props.disabled,false);
+ nodes(render()).find(n=>n.type==='button'&&n.props.children==='표시사항 저장').props.onClick();await settle();assert.equal(saved.customLabels[0].value,'보관 내용');assert.equal(saved.customLabels[0].visible,false);
+ assert.equal(nodes(render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.value,'저장 전 SEO');
+ nodes(render()).find(n=>n.type?.name==='CustomLabelEditor').props.onChange([]);nodes(render()).find(n=>n.type==='button'&&n.props.children==='표시사항 저장').props.onClick();await settle();assert.deepEqual(posted.patch.customLabels,[]);
 });

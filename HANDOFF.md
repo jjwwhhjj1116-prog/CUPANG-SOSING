@@ -1691,3 +1691,13 @@ AI등록 화면 확인:
 - 검증: 새5건 포함 전체543/543, TypeScript·ESLint·Cloudflare build·산출물·diff 통과. UI 컴포넌트 이벤트→PATCH 모의 저장→복원/미저장 SEO 보존, 실제 SQLite 저장/재조회와 stale409, 미등록·중복 배치 거절, 숨긴 값 보존, 문서 계획/ZIP SVG 순서와 content.json 보존 검증. outputs/step138-*.log. 실제 Chrome 클릭·PNG 픽셀 및 SupplierHub 첨부 접수는 미검증.
 - 기존 Cloudflare 배포 version4bd74024-1e1b-495f-94b4-40551a905ff2. DB migration/운영상품 변경/유료AI/Hub 등록 없음.
 - 다음 시작점: 사용자 정의 표시사항 추가와 옵션별 견적 라벨의 편집 정책은 별도 미구현이다. 실제 Couplus/Hub 로그인 후 카테고리 기본값·공식 양식 대조가 필요하다. 이번 턴 로그인 재확인 없음. 전수 카테고리·1688 실제 공급원·AI 실호출·Hub POST501 전송 어댑터/접수 미완성. 기존 BrowserUse1688/다운로드 기록 정책 차단 우회 금지. 전체 자동등록 완료로 설명하지 말 것.
+
+## 139. 사용자 정의 표시사항 추가·편집·삭제와 라벨 출력 — 2026-09-24
+
+- 시작 main7d7a0f0, 미커밋 변경 없음. fetch 후 origin/main0/0. 참고 화면의 '새 항목 추가'에 대응하는 사용자 정의 표시사항을 구현했다.
+- 선택적 ProductContent.customLabels에 최대20개 id/name/value/visible 배열을 저장한다. 고유 custom- ID,80자 이름,2000자 내용,표시 여부·허용 키 검증을 추가했다. 빈 이름/중복 ID/기본 필드 ID/초과 개수는 거절한다. 빈 배열 저장으로 마지막 항목 삭제 가능. 기존 JSON 저장/CAS 사용, DB migration 없음.
+- 추가 표시사항 컴포넌트에서 추가·이름/내용 수정·↑↓·숨김·삭제 제공. 기본 항목 아래에 추가 항목 배열 순서대로 출력한다. 기본 항목과 섞어 이동하는 기능은 아니다. 편집 초안은 표시사항 저장 시 반영되며, 다른 탭 미저장 SEO와 기존 기본 표시사항은 보존한다.
+- labelDocumentRows의 공통 경로로 문서 이미지 계획 및 ZIP SVG에 표시 항목 반영. custom 항목만 있는 라벨도 지원한다. 숨긴 항목과 원문은 content.json에 보존하고 SVG 이름/내용을 escape한다. 공식 견적 필드에 자동 매핑하지 않으며 이미 생성된 PNG는 다시 생성해야 한다.
+- 검증: 새5건 포함 전체548/548, TypeScript·ESLint·Cloudflare build·산출물·diff 통과. 실제 컴포넌트 콜백으로 추가/고유 ID/수정/이동/숨김/삭제/20개 제한, 부모 저장 및 미저장 SEO 보존, API→SQLite→GET과 stale409·전체 삭제, 입력 검증, 문서 계획·ZIP SVG/JSON 원문 및 숨김 보존 검증. outputs/step139-*.log. 실제 Chrome 클릭/PNG 픽셀/Hub 접수는 미검증이다.
+- 기존 Cloudflare 배포 versione3d3cc05-dabf-43a8-a3f7-6a5863d3c183. 운영상품 변경/DB migration/유료AI/Hub 등록 없음.
+- 다음 시작점: 기본·추가 항목 혼합 배치와 옵션별 견적 라벨 정책은 별도 미구현이다. 실제 Couplus/Hub 로그인·전수 카테고리 기본값과 공식 Excel 대조, 실제1688 공급원·AI 실호출·Hub POST501 어댑터/접수는 계속 미완성. 이번 턴 로그인 재확인 없음. 기존 BrowserUse1688/다운로드 기록 정책 차단 우회 금지. 이번 기능을 전체 자동등록 완성으로 설명하지 않는다.

@@ -32,6 +32,12 @@ const product = {
 const context = { params: Promise.resolve({ id: product.id }) };
 const decode = bytes => new TextDecoder().decode(bytes);
 
+test('custom labels export escaped names and values while hidden data remains in JSON',()=>{
+ const customLabels=[{id:'custom-b',name:'<항목>',value:'A&B',visible:true},{id:'custom-a',name:'비표시',value:'비표시값',visible:false}];
+ const content=model.applyContentPatch(model.emptyProductContent(product.id),{customLabels},product.updated_at);
+ const files=readArchive(bundle.createReviewBundle(product,content,[]));const svg=decode(files['label-review.svg']);assert.ok(svg.includes('&lt;항목&gt;: A&amp;B'));assert.ok(!svg.includes('비표시값'));assert.deepEqual(JSON.parse(decode(files['content.json'])).customLabels,customLabels);
+});
+
 test('ZIP label honors layout while content JSON retains hidden facts and saved order',()=>{
  const content=model.applyContentPatch(model.emptyProductContent(product.id),{label:{productName:'라벨 품명',material:'숨긴 재질',netContents:'내용량 값'},labelLayout:{order:['netContents','productName','material'],hidden:['material']}},product.updated_at);
  const files=readArchive(bundle.createReviewBundle(product,content,[]));const svg=decode(files['label-review.svg']);assert.ok(svg.indexOf('내용량:')<svg.indexOf('품명:'));assert.ok(!svg.includes('숨긴 재질'));

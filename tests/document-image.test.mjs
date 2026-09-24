@@ -22,6 +22,12 @@ const version = '2026-09-22T00:00:00.000Z'; const nextVersion = '2026-09-22T00:0
 const png = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=', 'base64'));
 const empty = () => contentModel.emptyProductContent('test');
 
+test('custom label-only documents include visible rows in saved order and retain hidden values',()=>{
+ const customLabels=[{id:'custom-z',name:'마지막',value:'첫 순서',visible:true},{id:'custom-hidden',name:'숨김',value:'보존',visible:false},{id:'custom-a',name:'처음',value:'둘째 순서',visible:true}];
+ const content=contentModel.applyContentPatch(empty(),{customLabels,labelLayout:{order:[],hidden:Object.keys(contentModel.labelFields)}},version);const before=JSON.stringify(content);
+ const plan=model.documentImagePlan('label',content,optionsModel.emptyProductOptions('test'));assert.deepEqual(JSON.parse(JSON.stringify(plan.rows)),[['마지막','첫 순서'],['처음','둘째 순서']]);assert.equal(JSON.stringify(content),before);
+});
+
 test('label image follows saved order and visibility, rejects completely hidden content and preserves source',()=>{
  const content=contentModel.applyContentPatch(empty(),{label:{productName:'상품',material:'면',netContents:'1개'},labelLayout:{order:['netContents','material','productName'],hidden:['material']}},version);const before=JSON.stringify(content);
  const plan=model.documentImagePlan('label',content,optionsModel.emptyProductOptions('test'));assert.equal(plan.rows[0][0],'내용량');assert.equal(plan.rows[1][0],'품명');assert.ok(!plan.rows.some(row=>row[0]==='재질'));assert.equal(JSON.stringify(content),before);

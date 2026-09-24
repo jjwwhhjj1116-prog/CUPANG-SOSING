@@ -24,6 +24,14 @@ const product = { id: 'test', owner_id: 'owner', image_keys: '["owner/main.jpg",
 const request = (body, headers = { 'content-type': 'application/json' }) => new Request('http://localhost/api/products/test/content', { method: 'PATCH', headers, body: JSON.stringify(body) });
 const input = (patch, expectedRevision = 0) => ({ expectedRevision, patch });
 
+test('custom label validation isolates IDs, bounds text and permits removing the final item',()=>{
+ const row={id:'custom-one',name:'추가 정보',value:'입력값',visible:true};
+ const {patch}=model.validateContentInput(input({customLabels:[row]}),[],'owner');const saved=model.applyContentPatch(model.emptyProductContent('test'),patch,now);assert.equal(saved.customLabels[0].value,'입력값');
+ const untouched=model.applyContentPatch(saved,{seo:{title:'제목'}},now);assert.deepEqual(untouched.customLabels,saved.customLabels);
+ const empty=model.validateContentInput(input({customLabels:[]}),[],'owner');assert.equal(model.applyContentPatch(saved,empty.patch,now).customLabels.length,0);assert.equal(saved.customLabels.length,1);
+ for(const customLabels of [[row,row],[{...row,id:'productName'}],[{...row,name:' '}],[{...row,name:'x'.repeat(81)}],[{...row,value:'x'.repeat(2001)}],[{...row,visible:'true'}],[{...row,extra:1}],Array.from({length:21},(_,i)=>({...row,id:'custom-'+i})),null])assert.throws(()=>model.validateContentInput(input({customLabels}),[],'owner'));
+});
+
 test('label layout saves independently, rejects ambiguous IDs and never deletes hidden values',()=>{
  const original=model.applyContentPatch(model.emptyProductContent('test'),{label:{productName:'상품',material:'면'}},now);const before=JSON.stringify(original);
  const {patch}=model.validateContentInput(input({labelLayout:{order:['material','productName'],hidden:['material']}},1),[],'owner');
@@ -121,6 +129,17 @@ function routeWith({ find = async () => product, read = async () => model.emptyP
     'cloudflare:workers': { env: { FILES: { head } } },
   }, mode);
 }
+
+test('custom labels round trip through content API and SQLite with revision protection and delete-all',async()=>{
+ const {sqlite,queries}=sqliteDependencies();try{
+  const route=routeWith({read:queries.readProductContent,save:queries.saveProductContent});
+  const customLabels=[{id:'custom-a',name:'정보',value:'보존',visible:false}];
+  assert.equal((await route.PATCH(request(input({customLabels})),context)).status,200);
+  const result=await route.GET(new Request('http://localhost'),context);assert.deepEqual((await result.json()).content.customLabels,customLabels);
+  assert.equal((await route.PATCH(request(input({customLabels:[]})),context)).status,409);
+  assert.equal((await route.PATCH(request(input({customLabels:[]},1)),context)).status,200);assert.equal((await queries.readProductContent('owner','test')).customLabels.length,0);
+ }finally{sqlite.close();}
+});
 
 test('layout-only API saves round trip through SQLite and stale revisions cannot replace the layout',async()=>{
  const {sqlite,queries}=sqliteDependencies();

@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+import {createRequire} from 'node:module';
+import {webcrypto} from 'node:crypto';
+const require=createRequire(import.meta.url);
+const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
+test('custom label controls add unique IDs, edit, reorder, hide, delete and enforce the row limit',()=>{
+ const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/custom-label-editor.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,crypto:webcrypto,require:name=>name==='@/app/product-content'?{CUSTOM_LABEL_LIMIT:20}:require(name)});
+ let rows=[];const render=()=>exports.CustomLabelEditor({rows,onChange:next=>{rows=next;}});
+ const add=()=>nodes(render()).find(n=>n.type==='button'&&n.props.children==='＋ 새 항목 추가');
+ add().props.onClick();add().props.onClick();assert.equal(rows.length,2);assert.notEqual(rows[0].id,rows[1].id);const first=rows[0].id;
+ nodes(render()).find(n=>n.type==='input'&&n.props.maxLength===80).props.onChange({target:{value:'이름'}});
+ nodes(render()).find(n=>n.type==='textarea').props.onChange({target:{value:'내용'}});
+ nodes(render()).find(n=>n.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:false}});
+ nodes(render()).find(n=>n.props?.['aria-label']==='추가 항목 1 아래로').props.onClick();assert.equal(rows[1].id,first);assert.equal(rows[1].name,'이름');assert.equal(rows[1].value,'내용');assert.equal(rows[1].visible,false);
+ nodes(render()).find(n=>n.props?.['aria-label']==='추가 항목 2 삭제').props.onClick();assert.equal(rows.length,1);
+ while(rows.length<20)add().props.onClick();assert.equal(add().props.disabled,true);add().props.onClick();assert.equal(rows.length,20);
+});
