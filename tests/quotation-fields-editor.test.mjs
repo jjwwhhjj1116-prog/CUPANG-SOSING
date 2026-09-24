@@ -362,3 +362,30 @@ test('rule import cannot apply outdated translations and export rejects ambiguou
  const stale={...job,productVersion:'old'};const result=loadAttributeRules(JSON.stringify(rules),'p1',view,stale,'red');assert.equal(result.mappings.length,0);assert.match(result.skipped[0],/최신/);
  job.review.source.attributes[1].name=job.review.source.attributes[0].name;assert.throws(()=>createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'},{sourceIndex:1,fieldId:'noticeDimensions'}]),/동일한 원문/);
 });
+
+const { fetchAttributeSuggestions } = load('app/quotation-attribute-suggestions.ts');
+test('saved category suggestions select by source name after reordering without changing quotation values', async()=>{
+ const view=fixture(), job=attributeJob(view);const before=JSON.stringify(view);
+ const rules=createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ const reordered=clone(job);reordered.review.source.attributes.reverse();reordered.result.draft.attributes.forEach(item=>item.sourceIndex=2-item.sourceIndex);
+ const calls=[];const request=async(url,options)=>{calls.push({url,options});return Response.json({rules,revision:4});};
+ const result=await fetchAttributeSuggestions('p1',view,reordered,'red',request);
+ assert.deepEqual(clone(result.mapping),{'2':'noticeMaterial'});assert.equal(result.revision,4);assert.equal(JSON.stringify(view),before);
+ assert.equal(calls.length,1);assert.equal(calls[0].options.cache,'no-store');assert.equal(calls[0].options.method,undefined);assert.match(calls[0].url,/categoryId=80719/);
+});
+test('automatic suggestions keep translations usable on server failures and reject incompatible stored rules',async()=>{
+ const view=fixture(),job=attributeJob(view);
+ const rules=createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ for(const request of [async()=>{throw Error('offline');},async()=>Response.json({error:'unavailable'},{status:503}),async()=>Response.json({rules,revision:'4'}),async()=>Response.json({rules:{...rules,categoryId:'other'},revision:1}),async()=>Response.json({revision:1})]){
+  const result=await fetchAttributeSuggestions('p1',view,job,'red',request);
+  assert.deepEqual(clone(result.mapping),{});assert.equal(result.revision,null);assert.match(result.message,/적용하지 못했습니다/);
+ }
+ const absent=await fetchAttributeSuggestions('p1',view,job,'red',async()=>Response.json({rules:null,revision:0}));assert.equal(absent.revision,0);assert.deepEqual(clone(absent.mapping),{});
+});
+test('automatic rule reuse preserves manual blanks and omits attributes absent from the next translation',async()=>{
+ const base=fixture(),job=attributeJob(base);const rules=createAttributeRules('p1',base,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'},{sourceIndex:1,fieldId:'noticeDimensions'}]);
+ const view=fixture({common:{noticeMaterial:''},options:{}});const next=attributeJob(view);next.review.source.attributes[1].name='상품속성: other';
+ const result=await fetchAttributeSuggestions('p1',view,next,'red',async()=>Response.json({rules,revision:2}));
+ assert.deepEqual(clone(result.mapping),{});assert.equal(result.skipped.length,2);assert.equal(result.revision,2);
+ let calls=0;next.result.draft.attributes=[];await fetchAttributeSuggestions('p1',view,next,'red',async()=>{calls++;throw Error('not expected');});assert.equal(calls,0);
+});

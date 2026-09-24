@@ -4,6 +4,7 @@ import type { TranslationJob, TranslationView } from '@/app/automation/translati
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationTranslationDraft } from '@/app/quotation-translation-adoption';
 import { ATTRIBUTE_RULE_LIMIT, createAttributeRules, loadAttributeRules } from '@/app/quotation-attribute-rules';
+import { fetchAttributeSuggestions } from '@/app/quotation-attribute-suggestions';
 
 export function QuotationTranslatedAttributes({ productId, view, optionId, disabled, onApply }: {
   productId: string; view: QuotationFieldsView; optionId: string | null; disabled: boolean; onApply: (changes: QuotationChange[]) => void;
@@ -19,6 +20,18 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const row = view.resolved.rows.find(item => item.optionId === optionId);
   const fields = view.resolved.schema.fields.filter(field => !field.readOnly && ['text', 'textarea'].includes(field.type));
   const attributes = job?.result?.draft.attributes.filter(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: ')) ?? [];
+  async function suggest(selected: TranslationJob) {
+    const result = await fetchAttributeSuggestions(productId, view, selected, optionId);
+    setMapping(result.mapping); setServerRevision(result.revision); setRuleReport(result.skipped); setMessage(result.message);
+  }
+  async function selectJob(id: string) {
+    if (disabled || loading) return;
+    const selected = jobs.find(item => item.id === id);
+    setJobId(id); setMapping({}); setServerRevision(null); setRuleReport([]); setMessage('');
+    if (!selected) return;
+    setLoading(true);
+    try { await suggest(selected); } finally { setLoading(false); }
+  }
   async function load() {
     if (disabled || loading) return;
     setLoading(true); setMessage('');
@@ -27,8 +40,9 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       const body = await response.json() as TranslationView & { error?: string };
       if (!response.ok) throw new Error(body.error || '번역 결과 조회 실패');
       const available = body.jobs.filter(item => item.status === 'completed' && item.result && item.productId === productId && item.productVersion === view.productVersion && item.contentRevision === view.contentRevision);
-      setJobs(available); setJobId(available[0]?.id ?? ''); setMapping({});
-      if (!available.length) setMessage('현재 상품·콘텐츠와 일치하는 완료된 번역 결과가 없습니다.');
+      setJobs(available); setJobId(available[0]?.id ?? ''); setMapping({}); setServerRevision(null); setRuleReport([]);
+      if (available.length) await suggest(available[0]);
+      else setMessage('현재 상품·콘텐츠와 일치하는 완료된 번역 결과가 없습니다.');
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '번역 결과 조회 실패'); }
     finally { setLoading(false); }
   }
@@ -93,7 +107,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
     {message && <p role="status">{message}</p>}
     {ruleReport.length > 0 && <ul>{ruleReport.map((item,index)=><li key={index}>{item}</li>)}</ul>}
     <fieldset disabled={disabled || loading} style={{ border: 0, padding: 0 }}>
-      {jobs.length > 0 && <label>번역 결과<select value={jobId} onChange={event => { setJobId(event.target.value); setMapping({}); }}>
+      {jobs.length > 0 && <label>번역 결과<select value={jobId} onChange={event => void selectJob(event.target.value)}>
         {jobs.map(item => <option key={item.id} value={item.id}>{item.result?.generatedAt} · {item.id}</option>)}
       </select></label>}
       {job && attributes.length === 0 && <p>이 결과에는 수집 상품 속성 번역이 없습니다. 옵션 번역은 옵션 편집 기능에서 반영해주세요.</p>}
