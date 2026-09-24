@@ -638,3 +638,27 @@ test('category selection preview uses actual quotation schema and defaults witho
   else{assert.doesNotMatch(html,/쿠플러스 화면 관찰값/);assert.match(html,/미확인 · 임의 기본값 없음/);}
  }
 });
+
+const {suggestCategoryAttributes}=load('app/quotation-attribute-suggestions.ts');
+test('first-use category suggestions match exact product attributes and observed select values without saving',async()=>{
+ const view=fixture(),job=attributeJob(view);job.result.draft.attributes[0]={sourceIndex:0,name:'뚜껑 포함여부',value:'해당사항없음'};
+ const before=JSON.stringify({view,job});const calls=[];
+ const result=await fetchAttributeSuggestions('p1',view,job,'red',async(url,init)=>{calls.push({url,init});return Response.json({rules:null,revision:0});});
+ assert.deepEqual(clone(result.mapping),{'0':'lidIncluded'});assert.equal(result.revision,0);assert.equal(calls.length,1);assert.equal(calls[0].init.method,undefined);assert.equal(JSON.stringify({view,job}),before);
+ const changes=quotationTranslationDraft('p1',view,job,'red',[{sourceIndex:0,fieldId:result.mapping[0]}]);assert.equal(changes[0].value,'');
+ job.result.draft.attributes[0].value='알수없는선택';const invalid=suggestCategoryAttributes('p1',view,job,'red');assert.equal(invalid.mappings.length,0);assert.ok(invalid.skipped.length);
+});
+test('first-use category suggestions preserve manual blanks and skip duplicates, legal and near-match names',()=>{
+ const view=fixture({common:{color:''},options:{}}),job=attributeJob(view);job.result.draft.attributes[0].name='색상';job.result.draft.attributes[0].value='검정';
+ let result=suggestCategoryAttributes('p1',view,job,'red');assert.equal(result.mappings.length,0);assert.ok(result.skipped.length);
+ const clean=fixture();job.result.draft.attributes[0].name='사이즈';job.result.draft.attributes[1].name='사이즈';result=suggestCategoryAttributes('p1',clean,job,'red');assert.equal(result.mappings.length,0);
+ job.result.draft.attributes[0].name='재질';job.result.draft.attributes[1].name='대략 사이즈';assert.equal(suggestCategoryAttributes('p1',clean,job,'red').mappings.length,0);
+ job.result.draft.attributes[0].name='사이즈';clean.resolved.schema.fields.push({...clean.resolved.schema.fields.find(f=>f.id==='size'),id:'duplicateSize'});assert.equal(suggestCategoryAttributes('p1',clean,job,'red').mappings.length,0);
+});
+test('saved rules take precedence and failures never fall back to inferred category connections',async()=>{
+ const view=fixture(),job=attributeJob(view);job.result.draft.attributes[0].name='사이즈';
+ const rules=createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ const saved=await fetchAttributeSuggestions('p1',view,job,'red',async()=>Response.json({rules,revision:2}));assert.deepEqual(clone(saved.mapping),{'0':'noticeMaterial'});
+ for(const request of [async()=>Response.json({error:'fail'},{status:503}),async()=>Response.json({rules:null,revision:2})]){const result=await fetchAttributeSuggestions('p1',view,job,'red',request);assert.deepEqual(clone(result.mapping),{});assert.equal(result.revision,null);}
+ assert.equal(suggestCategoryAttributes('p1',view,{...job,contentRevision:99},'red').mappings.length,0);assert.equal(suggestCategoryAttributes('p1',view,job,'excluded').mappings.length,0);
+});
