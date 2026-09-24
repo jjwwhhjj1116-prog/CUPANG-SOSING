@@ -339,6 +339,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'brand': return literal(settings.brand, 'settings');
       case 'manufacturer': return contentValue(content.label.manufacturer, settings.manufacturer);
       case 'tradeType': return literal(settings.tradeType, 'settings');
+      case 'taxType': return literal(settings.taxType, 'settings');
       case 'importType': return literal(settings.importType, 'settings');
       case 'searchTags': return literal(content.seo.keywords.value.join(', '), 'content');
       case 'supplyPrice': case 'salePrice': case 'msrp': {

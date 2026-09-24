@@ -910,3 +910,43 @@ test('individual dimension bindings preserve clears, overrides and per-option va
   assert.equal(final.rows[2].fields.width.value, '80 mm');
   assert.equal(final.rows[2].fields.width.source, 'manual-common');
 });
+
+test('saved tax default reaches every category quotation and export while explicit overrides win', () => {
+  const categories = [...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas), '64497', '77442', '81452', null];
+  for (const categoryId of categories) {
+    for (const taxType of ['과세', '면세', '영세']) {
+      const input = fixture(); input.categoryId = categoryId;
+      input.settings = settingsModel.savedRegistrationSettings(JSON.parse(JSON.stringify({ ...input.settings, taxType })));
+      const before = clone(input);
+      const resolved = model.resolveQuotationFields(input);
+      for (const row of resolved.rows) {
+        assert.equal(row.fields.taxType.value, taxType);
+        assert.equal(row.fields.taxType.source, 'settings');
+      }
+      const files = JSON.parse(input.product.image_keys).map((key, i) => ({ key, name: `assets/${i}.png` }));
+      assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input, resolved, files)[0].taxType, taxType);
+      assert.deepEqual(clone(input), before);
+      input.overrides = { common: { taxType: '면세' }, options: { red: { taxType: '' } } };
+      const edited = model.resolveQuotationFields(input);
+      assert.equal(edited.rows[0].fields.taxType.value, '면세');
+      assert.equal(edited.rows[1].fields.taxType.value, '');
+      assert.equal(edited.rows[1].fields.taxType.source, 'manual-option');
+      assert.ok(edited.rows[1].fields.taxType.validationIssues.length);
+    }
+  }
+});
+
+test('missing tax settings preserve observed category defaults and never invent defaults for other categories', () => {
+  const oldSettings = { ...settingsModel.defaultSettings }; delete oldSettings.taxType;
+  for (const saved of [null, oldSettings, { ...oldSettings, taxType: '' }]) {
+    const settings = settingsModel.savedRegistrationSettings(saved);
+    assert.equal(settings.taxType, '');
+    const input = fixture(); input.settings = settings;
+    assert.equal(model.resolveQuotationFields(input).rows[1].fields.taxType.value, '과세');
+    assert.equal(model.resolveQuotationFields(input).rows[1].fields.taxType.source, 'couplus-default');
+    input.categoryId = '81452';
+    assert.equal(model.resolveQuotationFields(input).rows[1].fields.taxType.value, '');
+    assert.ok(model.resolveQuotationFields(input).rows[1].fields.taxType.validationIssues.length);
+  }
+  for (const value of ['invalid', null, 0, true, {}, ['과세']]) assert.throws(() => settingsModel.validateSettings({ taxType: value }), /과세여부/);
+});
