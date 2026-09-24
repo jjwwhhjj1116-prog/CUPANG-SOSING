@@ -302,3 +302,34 @@ test('changing barcode mode and supply price recomputes dependent draft validati
  const manual=editor.resolveQuotationEditorCell(view,[change('brand','직접 브랜드','red')],'red','brand');
  assert.equal(manual.validationIssues.length,0);assert.ok(manual.reviewMessages.length);
 });
+
+const { quotationTranslationDraft } = load('app/quotation-translation-adoption.ts');
+function attributeJob(view) { return { id:'job',productId:'p1',productVersion:view.productVersion,contentRevision:view.contentRevision,status:'completed',review:{source:{attributes:[{name:'상품속성: 材质',value:'尼龙'},{name:'상품속성: 尺寸',value:'38 cm'},{name:'option:red',value:'红色'}]}},result:{draft:{attributes:[{sourceIndex:0,name:'재질',value:'나일론'},{sourceIndex:1,name:'크기',value:'38 cm'},{sourceIndex:2,name:'색상',value:'빨강'}]}}}; }
+test('reviewed translated attributes enter only selected option draft fields and preserve source state',()=>{
+ const view=fixture();const job=attributeJob(view);const before=JSON.stringify({view,job});
+ const changes=quotationTranslationDraft('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'},{sourceIndex:1,fieldId:'noticeDimensions'}]);
+ assert.equal(changes.length,2);assert.equal(changes[0].optionId,'red');
+ assert.equal(editor.resolveQuotationEditorCell(view,changes,'red','noticeMaterial').value,'나일론');
+ assert.equal(editor.resolveQuotationEditorCell(view,changes,'red','noticeDimensions').value,'38 cm');
+ assert.notEqual(editor.resolveQuotationEditorCell(view,changes,'blue','noticeMaterial').value,'나일론');
+ assert.equal(JSON.stringify({view,job}),before);
+});
+test('translation mapping preserves explicit manual blanks and inherited common overrides',()=>{
+ for(const overrides of [{common:{noticeMaterial:''},options:{}},{common:{},options:{red:{noticeMaterial:'직접 재질'}}}]) {
+  const view=fixture(overrides);assert.throws(()=>quotationTranslationDraft('p1',view,attributeJob(view),'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]),/직접 수정값/);
+ }
+});
+test('translation mapping rejects stale jobs, excluded options, non-product attributes and unsafe destinations',()=>{
+ const view=fixture(),job=attributeJob(view),mapping=[{sourceIndex:0,fieldId:'noticeMaterial'}];
+ for(const patch of [{productId:'other'},{productVersion:'old'},{contentRevision:99},{status:'running'},{result:null}])assert.throws(()=>quotationTranslationDraft('p1',view,{...job,...patch},'red',mapping));
+ assert.throws(()=>quotationTranslationDraft('p1',view,job,'excluded',mapping));
+ for(const fieldId of ['category','mainImage','supplyPrice','taxType','missing'])assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',[{sourceIndex:0,fieldId}]));
+ for(const sourceIndex of [2,-1,1.5,50])assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',[{sourceIndex,fieldId:'noticeMaterial'}]));
+ assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',[...mapping,...mapping]));
+ const long=clone(job);long.result.draft.attributes[0].value='x'.repeat(3000);assert.throws(()=>quotationTranslationDraft('p1',view,long,'red',mapping));
+});
+test('translated attribute panel labels the destination, respects disabled editing and performs no render-time requests',()=>{
+ const {QuotationTranslatedAttributes}=load('app/components/quotation-translated-attributes.tsx');
+ const html=renderToStaticMarkup(React.createElement(QuotationTranslatedAttributes,{productId:'p1',view:fixture(),optionId:'red',disabled:true,onApply(){throw Error('must not apply');}}));
+ assert.match(html,/번역한 상품 속성을 견적 항목에 연결/);assert.match(html,/대상: red/);assert.match(html,/<fieldset disabled=""/);assert.match(html,/기존 직접 수정값은 보존/);
+});
