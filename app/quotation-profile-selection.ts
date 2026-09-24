@@ -4,7 +4,10 @@ import type { QuotationFieldsView } from '@/app/quotation-schema';
 /** A profile ID is mutable; auto-selection also requires its captured category code. */
 export function selectQuotationProfile(profiles: readonly CategoryProfile[], context: QuotationFieldsView['categoryContext'], preferredId?: string) {
   if (preferredId) {
-    if (!profiles.some(profile => profile.id === preferredId)) throw new Error('검사에 사용한 카테고리 설정이 삭제되었습니다. 사용할 설정을 다시 선택해주세요.');
+    if (!profiles.some(profile => profile.id === preferredId)) return {
+      profileId: '',
+      warning: '검사에 사용한 카테고리 설정이 삭제되었습니다. 수집 당시 분류와 입력값을 유지합니다. Excel 출력에 사용할 설정을 아래에서 다시 선택해주세요.',
+    };
     return { profileId: preferredId, warning: '' };
   }
   if (!context.profileId) return { profileId: '', warning: '' };

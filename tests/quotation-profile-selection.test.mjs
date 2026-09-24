@@ -22,7 +22,11 @@ test('missing profile and unknown codes preserve captured context instead of mat
  }
  assert.equal(choose(profiles,{...context,profileId:null}).profileId,'');
 });
-test('explicit inspection selection remains supported, but a deleted preferred profile raises a visible error',()=>{
+test('deleted inspection profile preserves captured context without automatically selecting a replacement',()=>{
  assert.equal(choose(profiles,context,'other').profileId,'other');
- assert.throws(()=>choose(profiles,context,'deleted'),/삭제/);
+ const before=JSON.stringify({profiles,context});
+ const result=choose(profiles,context,'deleted');
+ assert.equal(result.profileId,'');assert.match(result.warning,/삭제/);
+ assert.match(result.warning,/다시 선택/);
+ assert.equal(JSON.stringify({profiles,context}),before);
 });
