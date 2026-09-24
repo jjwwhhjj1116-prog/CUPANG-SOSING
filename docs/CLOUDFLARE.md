@@ -80,7 +80,7 @@ Access 인증은 사이트 계정을 확인하는 단계다. 유료 AI 작업 �
 
 ## D1 스키마 기준 파일과 로컬 검증
 
-`db/migrations/0001_sourceflow_bootstrap.sql`은 기존 13개 테이블·7개 명시적 인덱스의 기준 스키마다. `0002_quotation_fields.sql`이 견적 수정 저장을, `0003_archive_indexes.sql`이 날짜별 상품 조회 인덱스를 추가한다. 전체는 14개 테이블·10개 명시적 인덱스다. 기존 런타임의 `CREATE IF NOT EXISTS` 호출은 호환성을 위해 유지하며 상품·설정·작업 기록을 지우지 않는다. 2026-09-22 전용 원격 `sourceflow-db`에 세 migration을 적용하고 스키마와 상품0건을 확인했다. 실제 계정/배포 진행은 HANDOFF 16절을 참고한다.
+`db/migrations/0001_sourceflow_bootstrap.sql`은 기존 13개 테이블·7개 명시적 인덱스의 기준 스키마다. `0002_quotation_fields.sql`이 견적 수정 저장을, `0003_archive_indexes.sql`이 날짜별 상품 조회 인덱스를 추가한다. `0004`~`0006`이 수집 결과·상품 연결·이미지 연결을 추가하며 전체는 17개 테이블·10개 명시적 인덱스다. 기존 런타임의 `CREATE IF NOT EXISTS` 호출은 호환성을 위해 유지하며 상품·설정·작업 기록을 지우지 않는다. 2026-09-22 전용 원격 `sourceflow-db`에 세 migration을 적용하고 스키마와 상품0건을 확인했다. 실제 계정/배포 진행은 HANDOFF 16절을 참고한다.
 
 | 영역 | 테이블 |
 | --- | --- |
@@ -143,3 +143,12 @@ node scripts/check-cloudflare-artifact.mjs
 운영에서는 `preview_urls=false`를 유지한다. 사용자 지정 도메인이 있으면 `workers.dev`를 끄고 그 호스트만 등록한다. 도메인이 없으면 지정 Worker의 `workers.dev` 주소 전체를 Access 애플리케이션으로 보호해야 한다. 모든 페이지·API 경로를 포함하는 로그인 정책과 허용 계정을 확인하고, 서버의 JWT 재검증도 그대로 유지한다. Access의 팀 도메인·AUD 설정만으로 앞단 로그인 정책이 자동 생성되지는 않는다. [Cloudflare 미리보기 URL 문서](https://developers.cloudflare.com/workers/versions-and-deployments/preview-urls/)
 
 검사 통과는 식별자에 해당하는 리소스가 실제로 존재하거나 현재 로그인 계정이 소유한다는 증거가 아니다. 담당 작업에서 계정 이메일·계정 ID, 대상 Worker·D1·R2, Access 정책과 AUD를 대조한 뒤 D1 마이그레이션과 `dist/server/wrangler.json` 기반 배포를 실행해야 한다. OpenAI 등 유료 공급자 키는 빌드 변수와 분리된 Worker secret으로 연결하고, 개별 유료 호출 승인을 유지한다. 이 준비 과정에서 기존 다른 앱의 리소스를 변경하지 않는다.
+
+
+## 2026-09-24 운영 DB 확인
+
+기존 전용 D1에 누락된 `0004_collection_results.sql`, `0005_collection_products.sql`, `0006_collection_images.sql`을 적용했다. 원격 마이그레이션 조회에서 미적용 0건, 읽기 전용 테이블 목록 조회에서 애플리케이션 테이블 17개를 확인했다. 기존 행의 조회·수정·삭제는 수행하지 않았다.
+
+`GET /api/integrations`는 연결 쿼리와 별도로 `databaseSchema`를 반환한다. `tables_present`는 필요한 테이블 이름이 존재한다는 뜻이며 열 구조·인덱스·저장 동작·외부 서비스 연동의 검증이 아니다. 누락 시 `missing_tables`와 목록을 반환하고 메타데이터 조회 실패는 `unavailable`로 표시한다. 진단 API는 스키마를 변경하지 않는다.
+
+Access 이메일 허용 정책의 별도 승인 및 실제 AUD 확인은 대기 중이다. 이 DB 적용을 Worker 배포 또는 실제 1688 수집·Supplier Hub 전송 완료로 간주하지 않는다.

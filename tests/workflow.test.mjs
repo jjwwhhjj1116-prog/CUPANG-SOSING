@@ -24,6 +24,7 @@ function load(relative, overrides = {}) {
       if (name === '@/app/workflow') return load('app/workflow.ts');
       if (name === 'cloudflare:workers') return { env: {} };
       if (name === '@/app/request-body') return load('app/request-body.ts');
+      if (name === '@/app/database-readiness') return load('app/database-readiness.ts');
       if (name === '@/app/image-files') return load('app/image-files.ts');
       if (name === '@/app/exports/review-bundle') return load('app/exports/review-bundle.ts');
       if (name === '@/app/exports/zip') return load('app/exports/zip.ts');
@@ -151,11 +152,12 @@ test('Supplier Hub always fails closed with no outbound or database dependency',
 test('integration diagnostics distinguish D1 query from R2 binding and never claim browser connection', async () => {
   for (const available of [true, false]) {
     const route = load('app/api/integrations/route.ts', { 'cloudflare:workers': { env: available ? {
-      DB: { prepare: sql => { assert.equal(sql, 'SELECT 1 AS ok'); return { first: async () => ({ ok: 1 }) }; } }, FILES: {},
+      DB: { prepare: sql => sql === 'SELECT 1 AS ok' ? { first: async () => ({ ok: 1 }) } : { all: async () => ({success: true, results: load('app/database-readiness.ts').requiredDatabaseTables.map(name => ({name}))}) } }, FILES: {},
     } : {} } });
     const response = await route.GET();
     const body = await response.json();
     assert.equal(body.database, available ? 'query_ok' : 'unavailable');
+    assert.equal(body.databaseSchema.status, available ? 'tables_present' : 'unavailable');
     assert.equal(body.files, available ? 'binding_present' : 'unavailable');
     assert.equal(body.extension, 'unverified');
     assert.equal(body.supplierHub, 'unverified');
@@ -166,4 +168,32 @@ test('integration diagnostics distinguish D1 query from R2 binding and never cla
     assert.equal(body.collection.configured, false);
     assert.equal(response.headers.get('cache-control'), 'no-store');
   }
+});
+
+test('integration diagnostics expose missing storage tables without hiding a successful connection', async () => {
+  const readiness = load('app/database-readiness.ts');
+  const expected = ['collection_results', 'collection_products', 'collection_images'];
+  for (const fail of [false, true]) {
+    const route = load('app/api/integrations/route.ts', {'cloudflare:workers': {env: {DB: {prepare: sql => {
+      if (sql === 'SELECT 1 AS ok') return {first: async () => ({ok: 1})};
+      assert.equal(sql, "SELECT name FROM sqlite_master WHERE type = 'table'");
+      return {all: async () => {
+        if (fail) throw new Error('private database information');
+        return {success: true, results: readiness.requiredDatabaseTables.filter(name => !expected.includes(name)).map(name => ({name}))};
+      }};
+    }}}}});
+    const body = await (await route.GET()).json();
+    assert.equal(body.database, 'query_ok');
+    assert.equal(body.databaseSchema.status, fail ? 'unavailable' : 'missing_tables');
+    assert.deepEqual(body.databaseSchema.missingTables, fail ? [] : expected);
+    assert.ok(!JSON.stringify(body).includes('private database information'));
+    assert.equal(body.submissionEnabled, false);
+  }
+});
+
+test('database table inspection contract covers every checked-in migration table', () => {
+  const directory = new URL('../db/migrations/', import.meta.url);
+  const tables = fs.readdirSync(directory).filter(name => name.endsWith('.sql')).flatMap(name =>
+    [...fs.readFileSync(new URL(name, directory), 'utf8').matchAll(/CREATE TABLE IF NOT EXISTS\s+(\w+)/g)].map(match => match[1]));
+  assert.deepEqual([...load('app/database-readiness.ts').requiredDatabaseTables].sort(), [...new Set(tables)].sort());
 });

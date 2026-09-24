@@ -36,6 +36,7 @@ type Product = {
 
 type IntegrationStatus = {
   checkedAt: string; database: string; files: string; authentication: string;
+  databaseSchema?: {status: string; missingTables: string[]};
   translation: { configured: boolean; model: string|null; issues: string[] };
   imageProcessing: { configured: boolean; model: string|null; issues: string[] };
 };
@@ -330,6 +331,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
             <div><dt>Cloudflare Workers</dt><dd>현재 서버 응답 확인</dd></div>
             <div><dt>작업 공간 인증</dt><dd>{connections.authentication==='cloudflare_access'?'Cloudflare Access 검증됨':'이 PC의 로컬 개발 환경'}</dd></div>
             <div><dt>D1 · 상품 및 설정</dt><dd>{connections.database==='query_ok'?'읽기 쿼리 성공':'연결 확인 실패'}</dd></div>
+            <div><dt>저장 테이블</dt><dd>{connections.databaseSchema?.status==='tables_present'?'필요 테이블 있음 · 열 구조 및 저장 동작은 별도 검증':connections.databaseSchema?.status==='missing_tables'?`업데이트 필요 · 누락: ${connections.databaseSchema.missingTables.join(', ')}`:'테이블 확인 실패 · 연결을 다시 확인해주세요'}</dd></div>
             <div><dt>R2 · 이미지 파일</dt><dd>{connections.files==='binding_present'?'바인딩 있음 · 읽기/쓰기 미검증':'바인딩 없음'}</dd></div>
             <div><dt>상품 자동수집</dt><dd>상품 데이터 공급원 연결 필요</dd></div>
             <div><dt>AI 번역·SEO</dt><dd>{connections.translation.configured?'서버 설정됨 · '+connections.translation.model+' · 실제 호출 별도 검증':'서버 모델·키 설정 필요'}</dd></div>
