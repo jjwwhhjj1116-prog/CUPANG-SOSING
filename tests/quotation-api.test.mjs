@@ -287,3 +287,31 @@ test('option label PNG references reach mapped CSV, ZIP bytes and Hub preparatio
   });
   assert.ok(!requested.includes('owner/excluded.png'));
 });
+
+test('omitted start row uses saved category layout in preview and exported bytes, explicit override remains temporary',async()=>{
+ const selected={...profile,template:{...profile.template,dataStartRow:7}};
+ const route=routeWith({readProfile:async()=>selected});
+ const automatic={action:'preview',profileId:profile.id};
+ const response=await route.POST(request(automatic),context);assert.equal(response.status,200);
+ const review=await response.json();assert.equal(review.report.dataStartRow,7);
+ const output=await route.POST(request({...automatic,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200);
+ const files=unzipSync(new Uint8Array(await output.arrayBuffer()));
+ const csv=new TextDecoder().decode(files['quotation-filled.csv']).split('\r\n');
+ assert.match(csv[6],/첫 번째/);assert.match(csv[7],/第二/);
+ assert.equal(JSON.parse(new TextDecoder().decode(files['quotation-report.json'])).dataStartRow,7);
+ const explicit=await (await route.POST(request({...automatic,dataStartRow:9}),context)).json();assert.equal(explicit.report.dataStartRow,9);
+ assert.equal(selected.template.dataStartRow,7);
+ const legacy=await (await routeWith().POST(request(automatic),context)).json();assert.equal(legacy.report.dataStartRow,2);
+});
+
+test('saved row changes after preview or during generation reject automatic exports instead of shifting approved output',async()=>{
+ let selected={...profile,template:{...profile.template,dataStartRow:7}},reads=0;
+ const route=routeWith({readProfile:async()=>selected,get:async key=>{reads++;const bytes=key===templateKey?templateBytes:png;return{size:bytes.length,arrayBuffer:async()=>bytes.slice().buffer};}});
+ const automatic={action:'preview',profileId:profile.id};const review=await (await route.POST(request(automatic),context)).json();const before=reads;
+ selected={...selected,revision:2,template:{...selected.template,dataStartRow:8}};
+ assert.equal((await route.POST(request({...automatic,action:'export',fingerprint:review.fingerprint}),context)).status,409);assert.equal(reads,before);
+ let changed=false;
+ const changing=routeWith({readProfile:async()=>({...profile,template:{...profile.template,dataStartRow:changed?8:7}}),get:async key=>{changed=true;const bytes=key===templateKey?templateBytes:png;return{size:bytes.length,arrayBuffer:async()=>bytes.slice().buffer};}});
+ assert.equal((await changing.POST(request(automatic),context)).status,409);
+ for(const dataStartRow of [null,'7',0,1,10001])assert.equal((await route.POST(request({...automatic,dataStartRow}),context)).status,400);
+});
