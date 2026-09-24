@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
 import { optionTranslationAttributes, adoptOptionTranslations } from '@/app/option-translation';
 import type { ProductOptionsResponse } from '@/app/product-options';
@@ -31,6 +31,16 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [selectedFields, setSelectedFields] = useState<TranslationSeoField[]>([]);
+  const activeRequest=useRef<AbortController|null>(null);
+  const mounted=useRef(true);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;activeRequest.current?.abort();};},[]);
+  function beginRequest(){
+    if(!mounted.current||activeRequest.current||!view||!content)return null;
+    const controller=new AbortController();activeRequest.current=controller;return controller;
+  }
+  function finishRequest(controller:AbortController){
+    if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current)setBusy(false);}
+  }
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || (content && job.contentRevision !== content.revision)));
   useEffect(() => {
@@ -43,23 +53,25 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   }, [productId, version]);
 
   async function action(body: Record<string, unknown>) {
+    const controller=beginRequest();if(!controller)return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const response = await fetch(`/api/products/${productId}/translation`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      const value = await response.json() as { job?: TranslationJob; configuration?: TranslationView['configuration']; error?: string; message?: string };
+      const response = await fetch(`/api/products/${productId}/translation`, { signal:controller.signal, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const value = await response.json() as { job?: TranslationJob; configuration?: TranslationView['configuration']; error?: string; message?: string };if(controller.signal.aborted)return;
       if (!response.ok || !value.job) throw Error(value.error ?? '번역 요청을 처리하지 못했습니다.');
       const saved = value.job;
       setView(previous => ({ configuration: value.configuration ?? previous!.configuration, jobs: [saved, ...(previous?.jobs ?? []).filter(item => item.id !== saved.id)] }));
       setSelectedId(saved.id); setConfirmed(false); setSelectedFields([]);
       if (value.message) setNotice(value.message);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '요청 실패'); }
-    finally { setBusy(false); }
+    } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '요청 실패'); }
+    finally { finishRequest(controller); }
   }
   async function loadCollectedSource() {
+    const controller=beginRequest();if(!controller)return;
     setBusy(true);setError('');setNotice('');setRequestContext(null);
     try {
-      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store'});
-      const value=await response.json() as {error?:string;title:string;description:string;attributes?:{name:string;value:string}[];jobId:string;sourceUrl:string;productVersion:string;message:string;requestContext?:RequestContext|null};
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store',signal:controller.signal});
+      const value=await response.json() as {error?:string;title:string;description:string;attributes?:{name:string;value:string}[];jobId:string;sourceUrl:string;productVersion:string;message:string;requestContext?:RequestContext|null};if(controller.signal.aborted)return;
       if(!response.ok)throw Error(value.error??'원문 조회 실패');
       if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
       collectedTranslationAttributes(value.attributes ?? []);
@@ -67,37 +79,39 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
       setSourceTitle(value.title);setDescription(value.description);setCollectedAttributes(value.attributes ?? []);setIncludeCollectedAttributes(true);
       setSourceReference(`수집 요청 ${value.jobId} (${value.sourceUrl})에서 가져와 사용자가 검토·편집한 원문`);
       setNotice(value.message+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.');
-    }catch(reason){setError(reason instanceof Error?reason.message:'원문 조회 실패');}
-    finally{setBusy(false);}
+    }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'원문 조회 실패');}
+    finally{finishRequest(controller);}
   }
   async function loadOptionSource() {
+    const controller=beginRequest();if(!controller)return;
     setBusy(true);setError('');setNotice('');
     try {
-      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store'});
-      const value=await response.json() as ProductOptionsResponse & {error?:string};
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal:controller.signal});
+      const value=await response.json() as ProductOptionsResponse & {error?:string};if(controller.signal.aborted)return;
       if(!response.ok)throw Error(value.error??'옵션 조회 실패');
       if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
       const pairs=optionTranslationAttributes(value.options);
       if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
       setAttributes(pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n'));
       setNotice(`미번역 옵션명·수집 색상·사이즈 ${pairs.length}개 항목을 번역 검토에 넣었습니다. 아직 유료 호출하지 않았습니다.`);
-    }catch(reason){setError(reason instanceof Error?reason.message:'옵션 조회 실패');}
-    finally{setBusy(false);}
+    }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'옵션 조회 실패');}
+    finally{finishRequest(controller);}
   }
   async function adoptOptions() {
-    if(!job)return;setBusy(true);setError('');setNotice('');
+    if(!job)return;const controller=beginRequest();if(!controller)return;setBusy(true);setError('');setNotice('');
     try {
-      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store'});
-      const current=await response.json() as ProductOptionsResponse & {error?:string};
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal:controller.signal});
+      const current=await response.json() as ProductOptionsResponse & {error?:string};if(controller.signal.aborted)return;
       if(!response.ok)throw Error(current.error??'옵션 조회 실패');
       const next=adoptOptionTranslations(current.options,job,current.productVersion);
-      const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.options.revision,expectedProductVersion:current.productVersion,rows:next.rows})});
-      const value=await saved.json() as {error?:string};if(!saved.ok)throw Error(value.error??'옵션 저장 실패');
+      const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{signal:controller.signal,method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.options.revision,expectedProductVersion:current.productVersion,rows:next.rows})});
+      const value=await saved.json() as {error?:string};if(controller.signal.aborted)return;if(!saved.ok)throw Error(value.error??'옵션 저장 실패');
       setNotice(`옵션명·색상·사이즈 ${next.changed}개 항목에 검토한 초안을 적용했습니다. 직접 수정한 값·가격·수량은 보존했습니다.`);onContentSaved?.();
-    }catch(reason){setError(reason instanceof Error?reason.message:'옵션 적용 실패');}
-    finally{setBusy(false);}
+    }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'옵션 적용 실패');}
+    finally{finishRequest(controller);}
   }
   function prepare() {
+    if(activeRequest.current||!mounted.current)return;
     let pairs: { name: string; value: string }[];
     try { pairs = includeCollectedAttributes ? collectedTranslationAttributes(collectedAttributes) : []; }
     catch (cause) { setError(cause instanceof Error ? cause.message : '상품 속성을 확인해주세요.'); return; }
@@ -112,15 +126,16 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   }
   async function adopt(fields: readonly TranslationSeoField[]) {
     if (!content || !job?.result) return;
+    const controller=beginRequest();if(!controller)return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const response = await fetch(`/api/products/${productId}/content`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
+      const response = await fetch(`/api/products/${productId}/content`, { signal:controller.signal, method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify(translationAdoptionInput(content, job, version, fields)) });
-      const value = await response.json() as { content?: ProductContent; error?: string };
+      const value = await response.json() as { content?: ProductContent; error?: string };if(controller.signal.aborted)return;
       if (!response.ok || !value.content) throw Error(value.error ?? '초안을 적용하지 못했습니다.');
       setContent(value.content); setSelectedFields([]); setNotice('선택한 항목을 함께 저장했습니다. 선택하지 않은 편집 항목은 보존했습니다.'); onContentSaved?.();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '적용 실패'); }
-    finally { setBusy(false); }
+    } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '적용 실패'); }
+    finally { finishRequest(controller); }
   }
   return <section className="translation-panel" aria-label="원문 번역과 SEO 초안">
     <h4>원문 번역 · SEO 초안</h4>
