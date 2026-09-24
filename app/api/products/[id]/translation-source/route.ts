@@ -3,6 +3,7 @@ import { getChatGPTUser,getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { findProductCollection } from '@/db/collection-products';
 import { readCollectionResult } from '@/db/collection-results';
+import { findCollectionJob } from '@/db/collection-jobs';
 import { parseCollectionRequest } from '@/app/sourcing';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function GET(_:Request,context:{params:Promise<{id:string}>}){
@@ -16,7 +17,12 @@ export async function GET(_:Request,context:{params:Promise<{id:string}>}){
   if(!receipt)return reply({error:'연결된 수집 원문이 없습니다. 수집 기록을 확인해주세요.'},409);
   const offer=parseCollectionRequest({urls:[product.source_url]})[0];
   if(offer.offerId!==receipt.result.offerId)return reply({error:'상품과 수집 원문의 상품번호가 다릅니다.'},409);
+  const job=await findCollectionJob(owner,link.job_id);
+  if(!job||job.offer_id!==offer.offerId)return reply({error:'상품에 연결된 수집 요청을 확인하지 못했습니다.'},409);
+  const captured=job.context;
+  const requestContext=captured?{categoryId:captured.category.categoryId,categoryPath:captured.category.categoryPath,
+   features:captured.features,keywords:captured.keywords,capturedAt:captured.capturedAt}:null;
   return reply({title:receipt.result.title,description:receipt.result.description,jobId:link.job_id,sourceUrl:receipt.result.sourceUrl,provider:receipt.result.provider,collectedAt:receipt.result.collectedAt,
-   attributes:receipt.result.attributes ?? [],productVersion:product.updated_at,scope:'title-description-attributes',message:'상품명·설명·상품 속성의 수집 원문입니다. 판매자 기재값이며 인증·사실 검증 결과가 아닙니다. 옵션별 번역과 이미지 번역은 별도입니다.'});
+   requestContext,attributes:receipt.result.attributes ?? [],productVersion:product.updated_at,scope:'title-description-attributes',message:'상품명·설명·상품 속성의 수집 원문입니다. 판매자 기재값이며 인증·사실 검증 결과가 아닙니다. 옵션별 번역과 이미지 번역은 별도입니다.'});
  }catch{return reply({error:'수집 원문을 읽지 못했습니다. 다시 시도해주세요.'},503);}
 }

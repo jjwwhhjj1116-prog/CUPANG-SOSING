@@ -9,6 +9,7 @@ import { translationAdoptionInput, translationSeoFields, type TranslationSeoFiel
 import { collectedTranslationAttributes } from '@/app/collected-translation-attributes';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
+type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
 const statuses: Record<TranslationJob['status'], string> = { prepared: '검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 실행 차단', completed: '초안 생성 완료', failed: '실패 · 재호출 안 함', uncertain: '결과 확인 필요 · 재호출 안 함' };
 
 export default function TranslationPanel(props: Props) { return <TranslationContent key={`${props.productId}:${props.version}`} {...props} />; }
@@ -18,6 +19,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   const [sourceTitle, setSourceTitle] = useState(title);
   const [description, setDescription] = useState('');
   const [sourceReference,setSourceReference]=useState('저장 상품명과 사용자가 검토한 직접 입력 원문');
+  const [requestContext,setRequestContext]=useState<RequestContext|null>(null);
   const [attributes, setAttributes] = useState('');
   const [collectedAttributes, setCollectedAttributes] = useState<{name:string;value:string}[]>([]);
   const [includeCollectedAttributes, setIncludeCollectedAttributes] = useState(true);
@@ -52,13 +54,14 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     finally { setBusy(false); }
   }
   async function loadCollectedSource() {
-    setBusy(true);setError('');setNotice('');
+    setBusy(true);setError('');setNotice('');setRequestContext(null);
     try {
       const response=await fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store'});
-      const value=await response.json() as {error?:string;title:string;description:string;attributes?:{name:string;value:string}[];jobId:string;sourceUrl:string;productVersion:string;message:string};
+      const value=await response.json() as {error?:string;title:string;description:string;attributes?:{name:string;value:string}[];jobId:string;sourceUrl:string;productVersion:string;message:string;requestContext?:RequestContext|null};
       if(!response.ok)throw Error(value.error??'원문 조회 실패');
       if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
       collectedTranslationAttributes(value.attributes ?? []);
+      setRequestContext(value.requestContext??null);
       setSourceTitle(value.title);setDescription(value.description);setCollectedAttributes(value.attributes ?? []);setIncludeCollectedAttributes(true);
       setSourceReference(`수집 요청 ${value.jobId} (${value.sourceUrl})에서 가져와 사용자가 검토·편집한 원문`);
       setNotice(value.message+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.');
@@ -121,6 +124,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     <h4>원문 번역 · SEO 초안</h4>
     <p>저장된 원문으로 한국어 초안을 생성합니다. 아래 직접 입력 내용은 자동 수집 증빙으로 기록되지 않습니다.</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
+    {requestContext&&<aside className="panel-note" aria-label="상품 추가 당시 요청"><strong>상품 추가 당시 요청</strong><p>{requestContext.categoryPath.join(' › ')} · {requestContext.categoryId}</p><dl><dt>상품 특징</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.features||'입력 없음'}</dd><dt>타겟 키워드</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.keywords||'입력 없음'}</dd></dl><small>요청 당시 입력한 참고 정보입니다. 번역 원문·검색태그·견적 값을 자동으로 덮어쓰지 않습니다.</small></aside>}
     {!view && !error && <p>번역 설정을 확인하고 있습니다.</p>}
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
