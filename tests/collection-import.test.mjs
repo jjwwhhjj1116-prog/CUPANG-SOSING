@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 const exports={};
-vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/collection-import.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,require:()=>{const capacity={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/collection-capacity.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:capacity});return capacity;}});
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/collection-import.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,require:name=>{const capacity={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL(name.slice(2)==='app/collection-retry'?'../app/collection-retry.ts':'../app/collection-capacity.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:capacity});return capacity;}});
 const actualImport=exports.runCollectionImport;
 // Legacy flow fixtures have no existing files; capacity failures are covered separately below.
 const runCollectionImport=(job,total,options={})=>actualImport(job,total,{...options,fetcher:async(url,init)=>url.endsWith('/capacity')?reply({capacity:{usedSlots:0,totalImages:total,reusableIndices:[]}}):options.fetcher(url,init)});
@@ -85,4 +85,38 @@ test('capacity errors and cancellation after the read never create a product',as
 test('detached selections fail preflight without restoring user-removed originals',async()=>{
  let calls=0;const result=await actualImport('job',2,{fetcher:async()=>{calls++;return reply({capacity:{usedSlots:0,totalImages:2,reusableIndices:[],blockedIndices:[1]}});}});
  assert.equal(result.status,'failed');assert.equal(result.productId,null);assert.equal(calls,1);assert.match(result.error,/제외/);
+});
+
+test('opt-in transient retries reuse identical image request and count only confirmed writes',async()=>{
+ let imageCalls=0;const waits=[];const progress=[];
+ const outcome=await actualImport('job',1,{retryAttempts:3,retryWait:async ms=>waits.push(ms),onRetry:n=>progress.push(n),fetcher:async(url,init)=>{
+  if(url.endsWith('/capacity'))return reply({capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}});
+  if(url.endsWith('/product'))return reply({productId:'p'});
+  assert.equal(JSON.parse(init.body).index,0);imageCalls++;
+  if(imageCalls<3)return {ok:false,status:503,body:{cancel:async()=>{}},json:async()=>({error:'temporary'})};
+  return reply({key:'owner/a'});
+ }});
+ assert.equal(outcome.status,'completed');assert.equal(outcome.completedImages,1);assert.equal(imageCalls,3);
+ assert.deepEqual(waits,[500,1000]);assert.deepEqual(progress,[2,3]);
+});
+
+test('conflicts are not retried and stopping during backoff prevents another write',async()=>{
+ for(const scenario of ['conflict','stop']){
+  let calls=0,stop=false;
+  const outcome=await actualImport('job',0,{retryAttempts:3,shouldStop:()=>stop,retryWait:async()=>{stop=true;},fetcher:async()=>{
+   calls++;return {ok:false,status:scenario==='conflict'?409:503,body:{cancel:async()=>{}},json:async()=>({error:'conflict'})};
+  }});
+  assert.equal(calls,1);assert.equal(outcome.status,scenario==='stop'?'stopped':'failed');
+ }
+});
+
+test('network uncertainty has a bounded retry budget and never confirms a missing product acknowledgment',async()=>{
+ let calls=0;
+ const exhausted=await actualImport('job',0,{retryAttempts:3,retryWait:async()=>{},fetcher:async()=>{calls++;throw new Error('offline');}});
+ assert.equal(calls,3);assert.equal(exhausted.status,'failed');assert.equal(exhausted.productId,null);
+ calls=0;
+ const malformed=await actualImport('job',0,{retryAttempts:3,retryWait:async()=>{},fetcher:async(url)=>{
+  calls++;return url.endsWith('/capacity')?reply({capacity:{usedSlots:0,totalImages:0,reusableIndices:[]}}):reply({});
+ }});
+ assert.equal(calls,2);assert.equal(malformed.status,'failed');assert.equal(malformed.productId,null);
 });
