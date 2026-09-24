@@ -27,6 +27,7 @@ export type QuotationField = {
   integer?: boolean; min?: number; max?: number; maxItems?: number;
   /** Explicit shared meaning; never infer component materials from a label substring. */
   contentField?: 'material';
+  optionDimension?: 'widthCm' | 'lengthCm' | 'heightCm';
 };
 export type QuotationSchema = {
   version: 1; categoryId: string | null; categoryPath: string[];
@@ -145,6 +146,14 @@ const category80719: QuotationField[] = [
   ...notice80719.map(([id, label]) => field(id, 'legal', label, { reviewRequired: true })),
 ];
 
+// Exact observed physical dimension fields; packaging and capacity are separate facts.
+function dimensionBinding(item: QuotationField): QuotationField {
+  if (item.section !== 'product' || item.visibility !== 'hidden' || item.type !== 'text') return item;
+  const keys = { '가로길이': 'widthCm', '세로길이': 'lengthCm', '아이템 높이': 'heightCm' } as const;
+  const key = keys[item.label as keyof typeof keys];
+  return key ? { ...item, optionDimension: key } : item;
+}
+
 export function getQuotationSchema(categoryId: string | null, categoryPath: readonly string[] = []): QuotationSchema {
   const hub = categoryId && Object.hasOwn(hubProductSchemas, categoryId) ? hubProductSchemas[categoryId] : undefined;
   const observed = Boolean(hub) || categoryId === '80719' || categoryId === '81452' || categoryId === '64497';
@@ -179,7 +188,7 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
   const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' || categoryId === '81452' || categoryId === '64497' ? 100 : undefined);
   return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : couplusPath ? [...couplusPath] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
     status: observed ? 'observed' : 'unconfirmed', evidence: categoryId === '64497' ? '64497 코드·경로·노출 속성 2개·비노출 속성 33개·선택값·필수 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 5개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '81452' ? '81452 코드·경로·상품정보 필수 항목·선택값·옵션 100개 한도는 Supplier Hub에서 대조했습니다. 상품고시는 쿠플러스 관찰 기준이며 이미지·인증·물류·최종 접수는 미검증입니다.' : observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : couplusFields ? '쿠플러스 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
-    fields: structuredClone(fields), submissionReady: false, ...(maxIncludedOptions ? { maxIncludedOptions } : {}),
+    fields: structuredClone(observed ? fields.map(dimensionBinding) : fields), submissionReady: false, ...(maxIncludedOptions ? { maxIncludedOptions } : {}),
     ...(hub?.salePriceMustCoverSupply || categoryId === '81452' || categoryId === '64497' ? { salePriceMustCoverSupply: true } : {}) };
 }
 export function emptyQuotationOverrides(): QuotationOverrides { return { common: {}, options: {} }; }
@@ -314,6 +323,12 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
     const id = definition.id;
     if (definition.contentField === 'material') return contentValue(content.label.material);
+    if (definition.optionDimension) {
+      const key = definition.optionDimension;
+      const value = option?.[key];
+      if (option && value === null && option.provenance[key] === 'manual') return { value: '', source: 'option' };
+      return literal(value == null ? '' : `${value} cm`, value == null ? 'empty' : 'option');
+    }
     const title = savedTextOrFallback(content.seo.title, product.title);
     const titleSource = content.seo.title.provenance === 'manual' || content.seo.title.value ? 'content' as const : 'product' as const;
     const pricing = option ? prices.find(row => row.optionId === option.id) : null;

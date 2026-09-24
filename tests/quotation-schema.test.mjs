@@ -867,3 +867,46 @@ test('untouched empty measurements inherit label while complete measurements and
   assert.equal(model.resolveQuotationFields(input).rows[1].fields.size.value, 'L');
   assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeDimensions.value, '');
 });
+
+test('observed category dimension attributes follow option measurements through quotation export', () => {
+  const hub = load('app/hub-product-schemas.ts').hubProductSchemas;
+  const expected = { '가로길이': ['widthCm', '20 cm'], '세로길이': ['lengthCm', '30 cm'], '아이템 높이': ['heightCm', '40 cm'] };
+  let checked = 0;
+  for (const categoryId of [...Object.keys(hub), '64497', '77442', '81452']) {
+    const input = fixture(); input.categoryId = categoryId;
+    const original = clone(input);
+    const resolved = model.resolveQuotationFields(input);
+    const exported = load('app/exports/quotation-fields.ts').resolvedQuotationRows(input, resolved, JSON.parse(input.product.image_keys).map((key, i) => ({ key, name: `assets/${i}.png` })));
+    for (const field of resolved.schema.fields.filter(field => field.optionDimension)) {
+      assert.equal(field.optionDimension, expected[field.label][0]);
+      assert.equal(resolved.rows[1].fields[field.id].value, expected[field.label][1]);
+      assert.equal(resolved.rows[1].fields[field.id].source, 'option');
+      assert.equal(exported[0][field.id], expected[field.label][1]);
+      checked++;
+    }
+    for (const field of resolved.schema.fields.filter(field => /포장|중량|최대|최소|조절/.test(field.label))) assert.equal(field.optionDimension, undefined);
+    assert.deepEqual(clone(input), original);
+  }
+  assert.ok(checked >= 25);
+});
+
+test('individual dimension bindings preserve clears, overrides and per-option values without inferring label text', () => {
+  const input = fixture();
+  input.options = optionModel.applyOptionRows(input.options, [
+    { ...optionModel.optionInputs(input.options)[0], widthCm: null },
+    { ...optionModel.emptyOptionInput('blue'), originalName: 'blue', unitCostCny: 2, included: true, widthCm: 12.5 },
+    { ...optionModel.emptyOptionInput('empty'), originalName: 'empty', unitCostCny: 2, included: true },
+  ], '2026-09-24T12:00:00Z');
+  const resolved = model.resolveQuotationFields(input);
+  assert.equal(resolved.rows[1].fields.width.value, '');
+  assert.equal(resolved.rows[1].fields.width.source, 'option');
+  assert.equal(resolved.rows[1].fields.itemHeight.value, '40 cm');
+  assert.equal(resolved.rows[2].fields.width.value, '12.5 cm');
+  assert.notEqual(resolved.rows[3].fields.width.value, '20 cm');
+  input.overrides = { common: { width: '80 mm' }, options: { red: { width: '' } } };
+  const final = model.resolveQuotationFields(input);
+  assert.equal(final.rows[1].fields.width.value, '');
+  assert.equal(final.rows[1].fields.width.source, 'manual-option');
+  assert.equal(final.rows[2].fields.width.value, '80 mm');
+  assert.equal(final.rows[2].fields.width.source, 'manual-common');
+});
