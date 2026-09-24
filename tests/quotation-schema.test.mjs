@@ -1186,3 +1186,19 @@ test('saved custom labels reach option quotation PNGs without altering official 
  resolved.customLabels[0].value='변경';assert.equal(input.content.customLabels[0].value,'세탁 방법');
  delete input.content.customLabels;assert.deepEqual(clone(model.resolveQuotationFields(input).customLabels),[]);
 });
+
+test('80719 product weight follows saved selling-unit weight without inventing packaged weight or overwriting manual values',()=>{
+ const input=fixture();const before=JSON.stringify(input);let resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows[1].fields.weight.value,'0.3 kg');assert.equal(resolved.rows[1].fields.weight.source,'option');
+ assert.equal(resolved.rows[1].fields.packagedWeightG.value,'');assert.equal(resolved.rows[0].fields.weight.source,'couplus-default');
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].weight,'0.3 kg');assert.equal(JSON.stringify(input),before);
+ input.options.rows[0].unitsPerPack=3;assert.equal(model.resolveQuotationFields(input).rows[1].fields.weight.value,'0.3 kg');
+ input.overrides={common:{weight:'공통 중량'},options:{red:{weight:''}}};resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows[1].fields.weight.value,'');assert.equal(resolved.rows[1].fields.weight.source,'manual-option');
+ delete input.overrides.options.red;assert.equal(model.resolveQuotationFields(input).rows[1].fields.weight.value,'공통 중량');
+ input.overrides=model.emptyQuotationOverrides();input.options.rows[0].weightKg=null;input.options.rows[0].provenance.weightKg='manual';
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.weight.value,'');assert.equal(model.resolveQuotationFields(input).rows[1].fields.weight.source,'option');
+ input.options.rows[0].provenance.weightKg='unverified';assert.equal(model.resolveQuotationFields(input).rows[1].fields.weight.source,'couplus-default');
+ input.categoryId='81452';resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.packagedWeightG.value,'');assert.equal(resolved.rows[1].fields.brace_noticeSizeWeight.value,input.content.label.dimensions.value);
+});

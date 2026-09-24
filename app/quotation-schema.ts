@@ -348,6 +348,12 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { ...literal(pricing?.calculation?.[id], 'pricing'), issues: pricing?.error ? [pricing.error] : !option.included ? ['견적 제외 옵션의 가격은 자동 계산하지 않았습니다.'] : !pricing?.calculation ? ['옵션 가격 계산을 확인해주세요.'] : [] };
       }
       case 'quantity': return literal(option?.unitsPerPack, 'option');
+      case 'weight': {
+        // Only the observed 80719 product weight; never packaging or per-item weight.
+        if (schema.categoryId !== '80719') return literal('', 'empty');
+        if (option?.weightKg === null && option.provenance.weightKg === 'manual') return { value: '', source: 'option' };
+        return literal(option?.weightKg == null ? '' : `${option.weightKg} kg`, 'option');
+      }
       case 'color': case 'brace_noticeColor': case 'marathon_noticeColor': return option?.provenance.color === 'manual'
         ? { value: option.color ?? '', source: 'option' } : literal(option?.color, 'option');
       case 'size': case 'marathon_noticeSize':
