@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationTranslationDraft } from '@/app/quotation-translation-adoption';
+import { ATTRIBUTE_RULE_LIMIT, createAttributeRules, loadAttributeRules } from '@/app/quotation-attribute-rules';
 
 export function QuotationTranslatedAttributes({ productId, view, optionId, disabled, onApply }: {
   productId: string; view: QuotationFieldsView; optionId: string | null; disabled: boolean; onApply: (changes: QuotationChange[]) => void;
@@ -12,6 +13,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const [mapping, setMapping] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [ruleReport, setRuleReport] = useState<string[]>([]);
   const job = jobs.find(item => item.id === jobId);
   const row = view.resolved.rows.find(item => item.optionId === optionId);
   const fields = view.resolved.schema.fields.filter(field => !field.readOnly && ['text', 'textarea'].includes(field.type));
@@ -37,15 +39,39 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       onApply(changes); setMapping({}); setMessage(`${changes.length}개 항목을 작성 중인 견적에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '연결 항목을 확인해주세요.'); }
   }
+  function downloadRules() {
+    if (!job || disabled || loading) return;
+    try {
+      const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
+      const rules = createAttributeRules(productId, view, job, optionId, selected);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(rules, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a'); link.href = url; link.download = 'sourceflow-attribute-rules.json';
+      document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMessage('연결 규칙 파일을 만들었습니다. 상품 원문 값과 번역값은 포함하지 않습니다.');
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : '규칙 저장 실패'); }
+  }
+  async function importRules(file?: File) {
+    if (!file || !job || disabled || loading) return;
+    setLoading(true); setRuleReport([]);
+    try {
+      if (file.size > ATTRIBUTE_RULE_LIMIT) throw new Error('연결 규칙은 64KB 이하여야 합니다.');
+      const result = loadAttributeRules(await file.text(), productId, view, job, optionId);
+      setMapping(Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId])));
+      setRuleReport(result.skipped); setMessage(`${result.mappings.length}개 연결을 선택했습니다. 변경 전·후 값을 검토한 뒤 초안에 반영해주세요.`);
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : '규칙 불러오기 실패'); }
+    finally { setLoading(false); }
+  }
   return <details className="panel-stack"><summary>번역한 상품 속성을 견적 항목에 연결</summary>
     <p>대상: {row?.optionLabel ?? '옵션 미선택'} · {view.resolved.schema.categoryPath.join(' > ')}. 연결할 항목과 변경 전·후 값을 확인해주세요. 기존 직접 수정값은 보존합니다.</p>
     <button type="button" className="btn ghost" disabled={disabled || loading} onClick={() => void load()}>완료된 속성 번역 불러오기 · 무료 조회</button>
     {message && <p role="status">{message}</p>}
+    {ruleReport.length > 0 && <ul>{ruleReport.map((item,index)=><li key={index}>{item}</li>)}</ul>}
     <fieldset disabled={disabled || loading} style={{ border: 0, padding: 0 }}>
       {jobs.length > 0 && <label>번역 결과<select value={jobId} onChange={event => { setJobId(event.target.value); setMapping({}); }}>
         {jobs.map(item => <option key={item.id} value={item.id}>{item.result?.generatedAt} · {item.id}</option>)}
       </select></label>}
       {job && attributes.length === 0 && <p>이 결과에는 수집 상품 속성 번역이 없습니다. 옵션 번역은 옵션 편집 기능에서 반영해주세요.</p>}
+      {attributes.length > 0 && <div><button type="button" className="btn ghost" disabled={!Object.values(mapping).some(Boolean)} onClick={downloadRules}>선택한 연결 규칙 파일 저장</button><label>같은 카테고리 연결 규칙 불러오기 · 현재 선택 교체<input type="file" accept=".json,application/json" onChange={event=>{const file=event.target.files?.[0];event.target.value='';void importRules(file);}} /></label><small>원문 속성명이 정확히 같은 경우에만 연결을 선택합니다. 서버에 규칙을 저장하거나 견적을 자동 확정하지 않습니다.</small></div>}
       {attributes.map(attribute => <div key={attribute.sourceIndex}>
         <strong>{attribute.name}</strong><p style={{ whiteSpace: 'pre-wrap' }}>원문: {job!.review.source.attributes[attribute.sourceIndex].value}</p>
         <p style={{ whiteSpace: 'pre-wrap' }}>번역값: {attribute.value}</p>

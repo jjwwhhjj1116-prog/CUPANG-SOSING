@@ -13,7 +13,7 @@ function load(file, overrides = {}) {
   if (!Object.keys(overrides).length && cache.has(file)) return cache.get(file);
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  vm.runInNewContext(compiled, { exports, Error, structuredClone, require(name) {
+  vm.runInNewContext(compiled, { exports, Error, TextEncoder, structuredClone, require(name) {
     if (name in overrides) return overrides[name];
     if (name.endsWith('.css')) return {};
     if (name.startsWith('@/app/')) {
@@ -332,4 +332,33 @@ test('translated attribute panel labels the destination, respects disabled editi
  const {QuotationTranslatedAttributes}=load('app/components/quotation-translated-attributes.tsx');
  const html=renderToStaticMarkup(React.createElement(QuotationTranslatedAttributes,{productId:'p1',view:fixture(),optionId:'red',disabled:true,onApply(){throw Error('must not apply');}}));
  assert.match(html,/번역한 상품 속성을 견적 항목에 연결/);assert.match(html,/대상: red/);assert.match(html,/<fieldset disabled=""/);assert.match(html,/기존 직접 수정값은 보존/);
+});
+
+const {createAttributeRules,loadAttributeRules}=load('app/quotation-attribute-rules.ts');
+test('category rule export contains names and destinations, not source values, and matches reordered attributes',()=>{
+ const view=fixture(),job=attributeJob(view),before=JSON.stringify({view,job});
+ const rules=createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'},{sourceIndex:1,fieldId:'noticeDimensions'}]);
+ const json=JSON.stringify(rules);assert.ok(!json.includes('尼龙'));assert.ok(!json.includes('나일론'));assert.ok(!json.includes('38 cm'));
+ const reordered=clone(job);reordered.review.source.attributes.reverse();reordered.result.draft.attributes.forEach(item=>item.sourceIndex=2-item.sourceIndex);
+ const result=loadAttributeRules(json,'p1',view,reordered,'blue');
+ assert.equal(result.mappings[0].sourceIndex,2);assert.equal(result.mappings[1].sourceIndex,1);assert.equal(result.skipped.length,0);
+ const changes=quotationTranslationDraft('p1',view,reordered,'blue',result.mappings);assert.equal(changes[0].value,'나일론');
+ assert.equal(JSON.stringify({view,job}),before);
+});
+test('rule reuse skips missing or ambiguous source names and preserves manual blanks',()=>{
+ const view=fixture(),job=attributeJob(view);const json=JSON.stringify(createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]));
+ const missing=clone(job);missing.review.source.attributes[0].name='상품속성: 다른이름';assert.equal(loadAttributeRules(json,'p1',view,missing,'red').mappings.length,0);
+ const duplicate=clone(job);duplicate.review.source.attributes.push(duplicate.review.source.attributes[0]);assert.match(loadAttributeRules(json,'p1',view,duplicate,'red').skipped[0],/여러 개/);
+ const manual=fixture({common:{noticeMaterial:''},options:{}});const preserved=loadAttributeRules(json,'p1',manual,attributeJob(manual),'red');assert.equal(preserved.mappings.length,0);assert.match(preserved.skipped[0],/직접 수정값/);
+});
+test('rule files reject different categories, schema drift, duplicates and excess size before applying',()=>{
+ const view=fixture(),job=attributeJob(view);const rules=createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ for(const invalid of [{...rules,categoryId:'other'},{...rules,format:'other'},{...rules,rules:[...rules.rules,...rules.rules]},{...rules,rules:[{...rules.rules[0],fieldSignature:'{}'}]}])assert.throws(()=>loadAttributeRules(JSON.stringify(invalid),'p1',view,job,'red'));
+ assert.throws(()=>loadAttributeRules(' '.repeat(65537),'p1',view,job,'red'));
+ const changed=clone(view);changed.resolved.schema.fields.find(item=>item.id==='noticeMaterial').maxLength=999;assert.throws(()=>loadAttributeRules(JSON.stringify(rules),'p1',changed,job,'red'),/양식이 변경/);
+});
+test('rule import cannot apply outdated translations and export rejects ambiguous names',()=>{
+ const view=fixture(),job=attributeJob(view);const rules=createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ const stale={...job,productVersion:'old'};const result=loadAttributeRules(JSON.stringify(rules),'p1',view,stale,'red');assert.equal(result.mappings.length,0);assert.match(result.skipped[0],/최신/);
+ job.review.source.attributes[1].name=job.review.source.attributes[0].name;assert.throws(()=>createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'},{sourceIndex:1,fieldId:'noticeDimensions'}]),/동일한 원문/);
 });
