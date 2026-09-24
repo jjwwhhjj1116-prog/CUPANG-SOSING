@@ -1215,6 +1215,45 @@ test('reviewed label translations flow to quotation, label document and export w
 });
 
 const categoryEvidence=JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-product-schemas-2026-09-23.json',import.meta.url),'utf8'));
+test('saved components populate exact observed included-components fields, exports and manual clears',()=>{
+ const ids=[...categoryEvidence.records.map(record=>record.categoryId),'81452','103495','64497','77442'];
+ let checked=0;
+ for(const id of ids){
+  const input=fixture();input.categoryId=id;
+  const schema=model.getQuotationSchema(id);
+  const field=schema.fields.find(field=>field.section==='product'&&field.visibility==='hidden'&&field.label==='포함 구성 요소'&&field.type==='select');
+  if(!field)continue;
+  checked++;
+  input.content=contentModel.applyContentPatch(input.content,{label:{components:'본품'}},'now');
+  const before=JSON.stringify(input);let resolved=model.resolveQuotationFields(input);
+  assert.equal(resolved.rows[1].fields[field.id].value,'본품',id);
+  assert.equal(resolved.rows[1].fields[field.id].source,'content',id);
+  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+  assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0][field.id],'본품',id);
+  assert.equal(JSON.stringify(input),before);
+  input.overrides={common:{[field.id]:'설명서'},options:{red:{[field.id]:''}}};
+  resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields[field.id].value,'');assert.equal(resolved.rows[1].fields[field.id].source,'manual-option');
+  delete input.overrides.options.red;assert.equal(model.resolveQuotationFields(input).rows[1].fields[field.id].value,'설명서');
+  input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{components:''}},'later');
+  resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields[field.id].value,'');assert.equal(resolved.rows[1].fields[field.id].source,'content');
+  input.content=contentModel.applyContentPatch(input.content,{label:{components:'해당사항없음'}},'later');
+  resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields[field.id].value,'');assert.equal(resolved.rows[1].fields[field.id].source,'content');
+  input.content=contentModel.applyContentPatch(input.content,{label:{components:'본체 1개 / 파우치 1개'}},'later');
+  resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields[field.id].value,'본체 1개 / 파우치 1개');assert.ok(resolved.rows[1].fields[field.id].validationIssues.some(issue=>issue.includes('선택값')));
+ }
+ assert.ok(checked>0);
+ const unknown=fixture();unknown.categoryId='999999';assert.ok(!model.getQuotationSchema(unknown.categoryId).fields.some(field=>field.contentField==='components'));
+});
+
+test('all recorded Hub categories reject invalid inherited existing barcodes before saving',()=>{
+ for(const record of categoryEvidence.records){
+  const input=fixture();input.categoryId=record.categoryId;
+  input.overrides={common:{barcodeMode:'existing',barcode:'ABC123'},options:{red:{barcode:'ABC456'}}};
+  assert.throws(()=>model.validateQuotationChanges([change('barcode','abc456','red')],context(input)),/바코드/,record.categoryId);
+  assert.doesNotThrow(()=>model.validateQuotationChanges([change('barcode','ABC789','red')],context(input)));
+  assert.doesNotThrow(()=>model.validateQuotationChanges([change('barcode','', 'red')],context(input)));
+ }
+});
 for(const record of categoryEvidence.records){
  test(`recorded Hub ${record.categoryId}: every exposed/hidden/notice field and select wire value matches`,()=>{
   const schema=model.getQuotationSchema(record.categoryId);const normalize=value=>JSON.parse(JSON.stringify(value));
