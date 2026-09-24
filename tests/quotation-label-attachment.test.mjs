@@ -10,6 +10,7 @@ function load(file) {
   return exports;
 }
 const { attachQuotationLabel: attach } = load('app/quotation-label-attachment.ts');
+const { attachQuotationLabels: batch } = load('app/quotation-label-batch.ts');
 const cell = value => ({ value, source: 'manual-option' });
 function fixture() {
   return { revision: 2, inputFingerprint: 'before', productVersion: '2026-09-24T00:00:00.000Z', contentRevision: 3, imageKeys: ['owner/old.png'],
@@ -18,12 +19,12 @@ function fixture() {
       rows: ['red', 'blue'].map(id => ({ optionId: id, optionLabel: id, included: true, fields: { title: cell('제품'), model: cell(id), labelImages: cell('owner/old.png') } })),
     } };
 }
-function harness() {
+function harness(uniqueUploads = false) {
   const initial = fixture(); let view = structuredClone(initial); let uploadedKey = null;
   const calls = []; let failAttachment = false; let conflictPut = false; let changeAfterAttach = false;
   const fetcher = async (url, init = {}) => {
     calls.push({ url, method: init.method ?? 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body });
-    if (url === '/api/files') return Response.json({ key: 'owner/new.png' });
+    if (url === '/api/files') return Response.json({ key: uniqueUploads ? `owner/new-${calls.filter(call => call.url === '/api/files').length}.png` : 'owner/new.png' });
     if (url.endsWith('/attachments')) {
       if (failAttachment) { failAttachment = false; return Response.json({ error: '연결 충돌' }, { status: 409 }); }
       const body = JSON.parse(init.body); assert.equal(body.role, null); assert.equal(body.expectedContentRevision, view.contentRevision);
@@ -40,7 +41,7 @@ function harness() {
     }
     return Response.json(view);
   };
-  return { initial, calls, get view() { return view; }, set view(value) { view = value; },
+  return { initial, calls, fetcher, get view() { return view; }, set view(value) { view = value; },
     failAttachment() { failAttachment = true; }, conflictPut() { conflictPut = true; }, changeAfterAttach() { changeAfterAttach = true; },
     run() { return attach({ productId: 'p1', endpoint: '/api/products/p1/quotation-fields?profileId=profile', renderedView: initial, optionId: 'red', blob: new Blob(['test'], { type: 'image/png' }), uploadedKey, onUploaded: key => { uploadedKey = key; } }, fetcher); },
   };
@@ -78,4 +79,50 @@ test('limits are checked before uploading and latest existing labels are retaine
   const labels = harness(); labels.view.resolved.rows[0].fields.labelImages.value = Array.from({ length: 30 }, (_, i) => `owner/${i}.png`).join('\n'); await assert.rejects(labels.run(), /한도/);
   const h = harness(); h.view.resolved.rows[0].fields.labelImages.value += '\nowner/another.png'; h.view.imageKeys.push('owner/another.png');
   const saved = await h.run(); assert.equal(saved.resolved.rows[0].fields.labelImages.value, 'owner/old.png\nowner/another.png\nowner/new.png');
+});
+
+test('batch renders included option-specific values and preserves all prior labels', async () => {
+  const h = harness(true); const plans = []; const progress = [];
+  h.initial.resolved.rows.push({ optionId: 'excluded', optionLabel: 'excluded', included: false, fields: {} });
+  const saved = await batch({ productId: 'p1', endpoint: '/fields', view: h.initial, uploaded: new Map(),
+    render: async plan => { plans.push(plan); return { blob: new Blob(['png']) }; }, onProgress: p => progress.push(p),
+  }, h.fetcher);
+  assert.equal(plans.length, 2);
+  assert.equal(plans[0].rows.find(row => row[0] === '모델명')[1], 'red');
+  assert.equal(plans[1].rows.find(row => row[0] === '모델명')[1], 'blue');
+  assert.equal(saved.resolved.rows[0].fields.labelImages.value, 'owner/old.png\nowner/new-1.png');
+  assert.equal(saved.resolved.rows[1].fields.labelImages.value, 'owner/old.png\nowner/new-2.png');
+  assert.equal(progress.at(-1).completed, 2);
+  assert.equal(progress.at(-1).total, 2);
+});
+
+test('batch resumes after second-option conflict without regenerating or duplicating either PNG', async () => {
+  const h = harness(true); const uploaded = new Map(); let renders = 0; let fail = true;
+  const request = async (url, init) => {
+    if (init?.method === 'PUT' && JSON.parse(init.body).changes[0].optionId === 'blue' && fail) { fail = false; return Response.json({ error: '충돌' }, { status: 409 }); }
+    return h.fetcher(url, init);
+  };
+  const input = { productId: 'p1', endpoint: '/fields', view: h.initial, uploaded,
+    render: async () => { renders++; return { blob: new Blob(['png']) }; }, onProgress() {},
+  };
+  await assert.rejects(batch(input, request), /충돌/);
+  assert.match(h.view.resolved.rows[0].fields.labelImages.value, /new-1/);
+  assert.equal(h.view.resolved.rows[1].fields.labelImages.value, 'owner/old.png');
+  await batch(input, request);
+  assert.equal(renders, 2); assert.equal(uploaded.size, 2);
+  assert.equal(h.calls.filter(call => call.url === '/api/files').length, 2);
+  assert.equal(h.calls.filter(call => call.method === 'PUT').length, 2);
+});
+
+test('batch validates all plans before mutation and stops if later option changes during rendering', async () => {
+  const h = harness(true); let renders = 0;
+  const input = { productId: 'p1', endpoint: '/fields', view: h.initial, uploaded: new Map(),
+    render: async () => { renders++; if (renders === 2) h.view.resolved.rows[1].fields.model.value = 'changed'; return { blob: new Blob(['png']) }; }, onProgress() {},
+  };
+  await assert.rejects(batch(input, h.fetcher), /변경/);
+  assert.equal(h.calls.filter(call => call.url === '/api/files').length, 1);
+  assert.match(h.view.resolved.rows[0].fields.labelImages.value, /new-1/);
+  const invalid = fixture(); invalid.resolved.rows[1].fields.title.value = ''; invalid.resolved.rows[1].fields.model.value = '';
+  await assert.rejects(batch({ ...input, view: invalid }, h.fetcher), /견적 값/);
+  assert.equal(renders, 2);
 });

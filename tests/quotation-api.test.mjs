@@ -250,3 +250,40 @@ test('quotation preview and downloaded package expose identical attachment and f
  const downloaded=JSON.parse(new TextDecoder().decode(files['submission-review.json']));
  assert.deepEqual(downloaded,review);
 });
+
+test('option label PNG references reach mapped CSV, ZIP bytes and Hub preparation list unchanged', async () => {
+  const keys = ['owner/label-first.png', 'owner/label-second.png'];
+  const bytes = new TextEncoder().encode('상품명,라벨\r\n');
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const key = `owner/category-templates/${digest}.csv`;
+  const labelProfile = { ...profile, categoryId: '80719', template: { ...profile.template, sha256: digest, storageKey: key, headers: ['상품명', '라벨'] },
+    mappings: [{ column: 0, field: 'title', required: false }, { column: 1, field: 'labelImages', required: false }] };
+  const state = { schemaVersion: 1, productId: 'test', revision: 2, updatedAt: product.updated_at,
+    overrides: { common: {}, options: { first: { labelImages: keys[0] }, second: { labelImages: keys[1] }, excluded: { labelImages: 'owner/excluded.png' } } } };
+  const requested = [];
+  const route = routeWith({ find: async () => ({ ...product, image_keys: JSON.stringify(['owner/option.png', ...keys, 'owner/excluded.png']) }),
+    readFields: async () => state, readProfile: async () => labelProfile,
+    get: async path => { requested.push(path); const data = path === key ? bytes : png; return { size: data.length, arrayBuffer: async () => data.slice().buffer }; },
+  });
+  const response = await route.POST(request(preview), context);
+  assert.equal(response.status, 200); const result = await response.json();
+  const exported = await route.POST(request({ ...preview, action: 'export', fingerprint: result.fingerprint }), context);
+  assert.equal(exported.status, 200);
+  const files = unzipSync(new Uint8Array(await exported.arrayBuffer()));
+  const decode = name => new TextDecoder().decode(files[name]);
+  const document = JSON.parse(decode('quotation-fields.json'));
+  const plan = JSON.parse(decode('supplier-hub-upload-plan.json'));
+  assert.equal(plan.labelImages.length, 2); assert.equal(plan.missingLabels.length, 0); assert.equal(plan.uploaded, false);
+  keys.forEach((key, index) => {
+    const file = document.assets[key]; const filename = file.split('/').at(-1);
+    assert.equal(result.rows[index][1], filename);
+    assert.deepEqual(files[file], png);
+    assert.ok(decode('quotation-filled.csv').includes(filename));
+    assert.ok(decode('quotation-images.html').includes(file));
+    const attachment = plan.labelImages.find(item => item.key === key);
+    assert.equal(attachment.archivePath, file);
+    assert.equal(attachment.references.length, 1);
+    assert.equal(attachment.references[0].optionId, index === 0 ? 'first' : 'second');
+  });
+  assert.ok(!requested.includes('owner/excluded.png'));
+});

@@ -3,7 +3,7 @@ import { quotationLabelPlan } from '@/app/quotation-label-plan';
 
 type Input = {
   productId: string; endpoint: string; renderedView: QuotationFieldsView; optionId: string | null;
-  blob: Blob; uploadedKey: string | null; onUploaded: (key: string) => void;
+  blob: Blob | null; uploadedKey: string | null; onUploaded: (key: string) => void;
 };
 /** Resumable steps: uploaded files may survive a conflict; existing attachments are never removed. */
 export async function attachQuotationLabel(input: Input, request: typeof fetch = fetch): Promise<QuotationFieldsView> {
@@ -30,6 +30,7 @@ export async function attachQuotationLabel(input: Input, request: typeof fetch =
   if (key && view.imageKeys.includes(key) && current.includes(key)) return view;
   if (current.length >= 30 || (view.imageKeys.length >= 50 && (!key || !view.imageKeys.includes(key)))) throw new Error('라벨 최대 30개 또는 상품 이미지 최대 50개 한도입니다. 기존 첨부를 확인해주세요.');
   if (!key) {
+    if (!input.blob) throw new Error('연결할 PNG를 먼저 생성해주세요.');
     const form = new FormData(); form.set('file', new File([input.blob], 'sourceflow-quotation-label.png', { type: 'image/png' }));
     const uploaded = await read<{ key?: string }>('/api/files', { method: 'POST', body: form });
     if (!uploaded.key) throw new Error('PNG 업로드 결과를 확인하지 못했습니다.');
