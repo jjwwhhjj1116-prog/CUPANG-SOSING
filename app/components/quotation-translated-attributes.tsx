@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
-import { quotationTranslationDraft, quotationTranslationBatch } from '@/app/quotation-translation-adoption';
+import { canMapTranslatedAttribute, quotationTranslationDraft, quotationTranslationBatch } from '@/app/quotation-translation-adoption';
 import { ATTRIBUTE_RULE_LIMIT, createAttributeRules, loadAttributeRules } from '@/app/quotation-attribute-rules';
 import { fetchAttributeSuggestions } from '@/app/quotation-attribute-suggestions';
 
@@ -25,7 +25,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const batchPlan = batch?.key === batchKey ? batch.plan : null;
   const job = jobs.find(item => item.id === jobId);
   const row = view.resolved.rows.find(item => item.optionId === optionId);
-  const fields = view.resolved.schema.fields.filter(field => !field.readOnly && ['text', 'textarea'].includes(field.type));
+  const fields = view.resolved.schema.fields.filter(canMapTranslatedAttribute);
   const attributes = job?.result?.draft.attributes.filter(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: ')) ?? [];
   async function suggest(selected: TranslationJob) {
     const result = await fetchAttributeSuggestions(productId, view, selected, optionId);
@@ -151,6 +151,6 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
         <button type="button" className="btn ghost" onClick={()=>setBatch(null)}>일괄 적용 취소</button>
       </section>}
     </fieldset>
-    <small>항목명으로 인증·재질·규격을 추정하지 않습니다. 저장 후에도 실제 상품과의 일치 및 법적 정보 검토가 필요합니다.</small>
+    <small>선택형 상품 속성은 번역값과 선택지 이름 또는 저장값이 정확히 일치할 때만 연결합니다. 일치하지 않거나 중복되는 선택지는 직접 확인해주세요. 항목명으로 인증·재질·규격을 추정하지 않습니다.</small>
   </details>;
 }

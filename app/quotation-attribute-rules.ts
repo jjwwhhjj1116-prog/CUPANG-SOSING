@@ -1,6 +1,6 @@
 import type { TranslationJob } from '@/app/automation/translation';
 import type { QuotationFieldsView, QuotationSchema } from '@/app/quotation-schema';
-import { quotationTranslationDraft, type AttributeMapping } from '@/app/quotation-translation-adoption';
+import { canMapTranslatedAttribute, quotationTranslationDraft, type AttributeMapping } from '@/app/quotation-translation-adoption';
 
 type Rule = { sourceName: string; fieldId: string; fieldSignature: string };
 export type QuotationAttributeRules = { format: 'sourceflow-attribute-rules-v1'; categoryId: string; rules: Rule[] };
@@ -23,7 +23,7 @@ export function readAttributeRules(input: string, schema: QuotationSchema): Quot
   for (const rule of value.rules) {
     if (!rule || typeof rule.sourceName !== 'string' || !rule.sourceName.startsWith('상품속성: ') || rule.sourceName.length > 200 || typeof rule.fieldId !== 'string' || typeof rule.fieldSignature !== 'string' || sources.has(rule.sourceName) || fields.has(rule.fieldId)) throw new Error('연결 규칙의 속성명·항목·중복을 확인해주세요.');
     const field = schema.fields.find(item => item.id === rule.fieldId);
-    if (!field || field.readOnly || !['text', 'textarea'].includes(field.type) || JSON.stringify(field) !== rule.fieldSignature) throw new Error('견적 양식이 변경되었습니다. 연결 항목을 다시 검토하고 규칙을 저장해주세요.');
+    if (!field || !canMapTranslatedAttribute(field) || JSON.stringify(field) !== rule.fieldSignature) throw new Error('견적 양식이 변경되었습니다. 연결 항목을 다시 검토하고 규칙을 저장해주세요.');
     sources.add(rule.sourceName); fields.add(rule.fieldId);
   }
   return {format: value.format, categoryId: value.categoryId, rules: value.rules.map(rule => ({sourceName: rule.sourceName, fieldId: rule.fieldId, fieldSignature: rule.fieldSignature}))};

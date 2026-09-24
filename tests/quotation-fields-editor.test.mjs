@@ -515,3 +515,31 @@ test('restoring an option override resumes later source updates while common and
  assert.equal(updated.resolved.rows.find(r=>r.optionId==='red').fields.model.value,'고정 옵션');
  assert.equal(updated.resolved.rows.find(r=>r.optionId==='blue').fields.model.value,'고정 공통');
 });
+
+test('translated category choices match observed labels and values, including explicit empty choice, without guesses',()=>{
+ const view=fixture(),job=attributeJob(view),map=[{sourceIndex:0,fieldId:'basketShape'}];
+ const before=JSON.stringify(view);
+ job.result.draft.attributes[0].value='사각형';
+ let changes=quotationTranslationDraft('p1',view,job,'red',map);
+ assert.equal(changes[0].value,'사각형');assert.equal(editor.resolveQuotationEditorCell(view,changes,'red','basketShape').value,'사각형');
+ job.result.draft.attributes[0].value='해당사항없음';changes=quotationTranslationDraft('p1',view,job,'red',map);
+ assert.equal(changes[0].value,'');assert.equal(editor.resolveQuotationEditorCell(view,changes,'red','basketShape').source,'manual-option');
+ for(const value of ['사각','모름','','원형 또는 사각형']){job.result.draft.attributes[0].value=value;assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',map));}
+ job.result.draft.attributes[0].value='사각형';
+ const field=view.resolved.schema.fields.find(f=>f.id==='basketShape');field.choices.push({value:'other',label:'사각형'});
+ assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',map),/하나여야/);field.choices.pop();
+ for(const fieldId of ['taxType','tradeType','kcMarkType','handlingReason','barcodeMode'])assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',[{sourceIndex:0,fieldId}]));
+ assert.equal(JSON.stringify(view),before);
+});
+
+test('category choice rules reuse only compatible values and schema and preserve manual option edits in batches',()=>{
+ const view=fixture({common:{},options:{blue:{basketShape:''}}}),job=attributeJob(view),mapping=[{sourceIndex:0,fieldId:'basketShape'}];
+ job.result.draft.attributes[0].value='사각형';
+ const json=JSON.stringify(createAttributeRules('p1',view,job,'red',mapping));
+ assert.equal(loadAttributeRules(json,'p1',view,job,'red').mappings.length,1);
+ const batch=load('app/quotation-translation-adoption.ts').quotationTranslationBatch('p1',view,job,mapping);
+ assert.equal(batch.changes.length,1);assert.equal(batch.changes[0].optionId,'red');assert.equal(batch.skipped.length,1);
+ job.result.draft.attributes[0].value='알 수 없음';const missing=loadAttributeRules(json,'p1',view,job,'red');assert.equal(missing.mappings.length,0);assert.equal(missing.skipped.length,1);
+ view.resolved.schema.fields.find(f=>f.id==='basketShape').choices.push({value:'new',label:'추가'});
+ assert.throws(()=>loadAttributeRules(json,'p1',view,job,'red'),/양식이 변경/);
+});
