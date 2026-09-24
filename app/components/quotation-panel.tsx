@@ -1,5 +1,7 @@
 'use client';
 
+import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
+
 import { useEffect, useState } from 'react';
 import type { CategoryProfile } from '@/app/category-profiles';
 import { QuotationFieldsEditor } from '@/app/components/quotation-fields-editor';
@@ -10,11 +12,11 @@ type Preview = {
   fingerprint:string;filename:string;headers:string[];rows:(string|number)[][];
   report:{rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+type QuotationPanelProps = {navigationTarget?:QuotationNavigationTarget;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
   return <QuotationPanelContent key={`${props.productId}:${props.preferredProfileId ?? ''}`} {...props}/>;
 }
-function QuotationPanelContent({productId,onManageCategories,refreshToken,preferredProfileId}: QuotationPanelProps) {
+function QuotationPanelContent({productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [preview,setPreview]=useState<Preview|null>(null);const [busy,setBusy]=useState(false);
@@ -63,7 +65,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
     {connectionWarning && !overrideProfileId && <p role="status" className="panel-note">{connectionWarning}</p>}
-    {contextLoaded?<QuotationFieldsEditor productId={productId} profileId={overrideProfileId} refreshToken={refreshToken} onDirtyChange={setDirty} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}
+    {contextLoaded?<QuotationFieldsEditor navigationTarget={navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={refreshToken} onDirtyChange={setDirty} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
     <details><summary>Excel 원본 양식에 출력하기</summary>

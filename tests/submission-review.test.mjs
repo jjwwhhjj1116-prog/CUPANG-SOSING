@@ -154,3 +154,21 @@ test('HTML media detection distinguishes examples, comments and query text from 
  assert.equal(check('<img alt="a > b" src="a.gif">')[0],'GIF');
  assert.equal(check('<img src="a.gif"><img src="b.GIF">').length,1);
 });
+
+const {resolveQuotationNavigation}=load('app/quotation-navigation.ts');
+test('review navigation selects the exact option and field without changing saved data',()=>{
+ const source=resolved();source.rows.push({...structuredClone(source.rows[0]),optionId:null,optionLabel:'공통'});
+ const before=JSON.stringify(source);
+ const destination=resolveQuotationNavigation(source,{optionId:'red',fieldId:'material'});
+ assert.equal(destination.ok,true);assert.equal(destination.optionId,'red');assert.equal(destination.section,'product');assert.equal(destination.fieldId,'material');
+ assert.equal(resolveQuotationNavigation(source,{optionId:null,fieldId:'title'}).optionId,null);
+ assert.equal(JSON.stringify(source),before);
+});
+test('stale review navigation does not fall back to common or another field',()=>{
+ const source=resolved();
+ assert.equal(resolveQuotationNavigation(source,{optionId:'deleted',fieldId:'title'}).ok,false);
+ assert.equal(resolveQuotationNavigation(source,{optionId:'red',fieldId:'removed'}).ok,false);
+ source.rows[0].included=false;source.schema.fields[0].readOnly=true;
+ const destination=resolveQuotationNavigation(source,{optionId:'red',fieldId:'title'});
+ assert.equal(destination.ok,true);assert.match(destination.message,/제외된 옵션/);assert.match(destination.message,/원본 단계/);
+});

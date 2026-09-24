@@ -1,5 +1,7 @@
 'use client';
 
+import { resolveQuotationNavigation, type QuotationNavigationTarget } from '@/app/quotation-navigation';
+
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { duplicateQuotationImageIssue, quotationImageRoleIssues, quotationBarcodeIssues, quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import './quotation-fields-editor.css';
@@ -9,7 +11,7 @@ type Row = QuotationFieldsView['resolved']['rows'][number];
 type Cell = Row['fields'][string];
 type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean; schemaChanged?: boolean };
 type BulkPreview = { base: string; changes: QuotationEditorChange[]; rows: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string; manualBefore: boolean }[] };
-type Props = { productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void };
+type Props = { navigationTarget?: QuotationNavigationTarget; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void };
 const sections = [
   { id: 'start', title: '시작 정보', english: 'Start', description: '상품명과 선택한 카테고리를 확인합니다.' },
   { id: 'product', title: '상품 정보', english: 'Product', description: '기본 정보, 판매 가격과 카테고리 속성을 편집합니다.' },
@@ -179,7 +181,7 @@ async function fetchView(endpoint: string, signal?: AbortSignal): Promise<Quotat
 }
 
 export function QuotationFieldsEditor(props: Props) { return <QuotationFieldsForm key={`${props.productId}:${props.profileId ?? ''}`} {...props} />; }
-function QuotationFieldsForm({ productId, profileId, refreshToken, onSaved, onDirtyChange }: Props) {
+function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshToken, onSaved, onDirtyChange }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const [view, setView] = useState<QuotationFieldsView | null>(null);
   const [changes, setChanges] = useState<QuotationEditorChange[]>([]);
@@ -191,17 +193,30 @@ function QuotationFieldsForm({ productId, profileId, refreshToken, onSaved, onDi
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
   const [includedOnly, setIncludedOnly] = useState(true);
   const [bulk, setBulk] = useState<BulkPreview | null>(null);
+  const initialTarget = useRef(navigationTarget); const pendingFocus = useRef<string | null>(null);
   const requests = useRef(0); const observedRefresh = useRef(refreshToken); const prefix = useId();
   const invalidateRequests = useCallback(() => { requests.current++; }, []);
   const dirty = changes.length > 0;
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
     const controller = new AbortController(); const id = ++requests.current;
-    fetchView(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted && id === requests.current) setView(saved); })
+    fetchView(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted && id === requests.current) {
+        setView(saved);
+        if (initialTarget.current) {
+          const destination = resolveQuotationNavigation(saved.resolved, initialTarget.current);
+          if (destination.ok) { setSelectedOption(destination.optionId); setActive(destination.section); pendingFocus.current = destination.fieldId; setMessage(destination.message); }
+          else setMessage(destination.message);
+        }
+      } })
       .catch(cause => { if (!controller.signal.aborted && id === requests.current) setError(cause instanceof Error ? cause.message : '견적 입력 자료 확인 실패'); })
       .finally(() => { if (!controller.signal.aborted && id === requests.current) setLoading(false); });
     return () => { controller.abort(); invalidateRequests(); };
   }, [endpoint, invalidateRequests]);
+  useEffect(() => {
+    if (loading || !pendingFocus.current) return;
+    const element = document.getElementById(`${prefix}-${pendingFocus.current}`);
+    if (element) { element.scrollIntoView({ block: 'center' }); element.focus({ preventScroll: true }); pendingFocus.current = null; }
+  }, [loading, view, active, selectedOption, prefix]);
   const refresh = useCallback(async (discard = false) => {
     const id = ++requests.current; setLoading(true); setError(''); setBulk(null);
     try {
