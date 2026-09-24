@@ -3,15 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import path from 'node:path';
 
+const moduleCache = new Map();
 function load(file) {
+  if(moduleCache.has(file))return moduleCache.get(file);
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
   vm.runInNewContext(output, { exports, structuredClone, Response, Blob, TextEncoder, TextDecoder, CompressionStream, DecompressionStream, crypto, require: name => {
     if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`);
+    if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file),name)+'.ts');
     throw Error(name);
   } });
-  return exports;
+  moduleCache.set(file,exports);return exports;
 }
 const reader = load('app/xlsx-template.ts');
 const { createMappedQuotation } = load('app/exports/mapped-quotation.ts');
@@ -282,4 +286,48 @@ test('XLSX choice label output uses category choices while preserving blank cell
  const before=JSON.stringify(input.profile);const result=await createMappedQuotation(input);const archive=await reader.readXlsxArchive(result.bytes.buffer);
  const inspection=reader.inspectXlsxArchive(archive);assert.equal(reader.xlsxHeaders(inspection,'견적서',5)[0],choice.label);assert.ok(decode(archive.get('xl/worksheets/sheet1.xml')).includes('<c r="A6" t="inlineStr"><is><t xml:space="preserve"></t></is></c>'));
  const original=await reader.readXlsxArchive(input.originalBytes);assert.equal(decode(archive.get('xl/styles.xml')),decode(original.get('xl/styles.xml')));assert.equal(JSON.stringify(input.profile),before);
+});
+
+// Synthetic workbooks exercise our file writer, not the unacquired official template.
+const categoryRoundtripIds=[...JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-product-schemas-2026-09-23.json',import.meta.url),'utf8')).records.map(record=>record.categoryId),'81452','103495','64497','77442'];
+for(const categoryId of categoryRoundtripIds)test(`category ${categoryId}: saved stages round-trip through an actual XLSX with manual overrides and excluded options`,async()=>{
+ const schemaModel=load('app/quotation-schema.ts'),contentModel=load('app/product-content.ts'),optionModel=load('app/product-options.ts');
+ const settings=load('app/workspace-settings.ts').defaultSettings;
+ const policy={exchangeRate:200,supplyMargin:50,coupangMargin:40,minimumMargin:0,msrpMultiple:1.3,roundingUnit:10};
+ const keys=['owner/main.png','owner/detail.png','owner/label.png'];
+ const product={id:'roundtrip',owner_id:'owner',title:'원문 상품',source_url:'https://detail.1688.com/offer/813724060928.html',source_price_cny:10,supply_price:4000,sale_price:6670,msrp:8670,pricing_policy:JSON.stringify(policy),image_keys:JSON.stringify(keys)};
+ const content=contentModel.applyContentPatch(contentModel.emptyProductContent(product.id),{
+  seo:{title:'저장 상품 & <검토>',description:'설명\n둘째 줄',keywords:['검토','상품']},
+  label:{model:'MODEL-173',material:'플라스틱',components:'본품',countryOfOrigin:'중국',contact:'검토 연락처'},
+  assets:{main:[keys[0]],detail:[keys[1]],label:[keys[2]]}
+ },'now');
+ const options=optionModel.applyOptionRows(optionModel.emptyProductOptions(product.id),['red','blue','excluded'].map((id,index)=>({...optionModel.emptyOptionInput(id),translatedName:id,supplierSku:`sku-${id}`,unitCostCny:10+index,unitsPerPack:1,included:id!=='excluded',color:index?'파랑':'빨강',size:'Free',imageKey:keys[0]})),'now');
+ const input={categoryId,product,content,settings,options,overrides:{common:{brand:'수동 브랜드'},options:{blue:{title:'',model:'수동 모델'}}}};
+ const before=JSON.stringify(input);const resolved=schemaModel.resolveQuotationFields(input);
+ const assets=keys.map((key,index)=>({key,name:`assets/image-${index}.png`}));
+ const rows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets);
+ assert.equal(rows.length,2);assert.equal(rows[0].title,'저장 상품 & <검토>');assert.equal(rows[1].title,'');
+ assert.equal(rows[1].model,'수동 모델');assert.equal(rows[0].mainImage,'image-0.png');assert.equal(rows[0].labelImages,'image-2.png');
+ assert.equal(rows[0].detailImages,'image-1.png');assert.ok(rows[0].supplyPrice>0);assert.ok(rows[0].salePrice>=rows[0].supplyPrice);
+ const registry=load('app/category-profiles.ts').categoryFields;
+ for(const field of resolved.schema.fields)assert.ok(Object.hasOwn(registry,field.id),`unexportable field ${categoryId}/${field.id}`);
+ const mappings=resolved.schema.fields.map((field,column)=>({column,field:field.id,required:field.id==='title'}));
+ mappings.push({column:mappings.length,field:'categoryId',required:true},{column:mappings.length+1,field:'sourceUrl',required:true});
+ const headers=mappings.map(mapping=>registry[mapping.field]);
+ const columnName=index=>{let name='';for(let value=index+1;value>0;value=Math.floor((value-1)/26))name=String.fromCharCode(65+(value-1)%26)+name;return name;};
+ const escape=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+ const headerXml=headers.map((header,index)=>`<c r="${columnName(index)}3" t="inlineStr"><is><t>${escape(header)}</t></is></c>`).join('');
+ const files=entries(()=>`<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>시험 양식 · 공식 원본 아님</t></is></c></row><row r="3">${headerXml}</row></sheetData></worksheet>`);
+ const template=await inputFrom(files);template.profile={...template.profile,categoryId,categoryPath:Array.from(resolved.schema.categoryPath),template:{...template.profile.template,headers},mappings};template.rows=rows;
+ const output=await createMappedQuotation(template);const archive=await reader.readXlsxArchive(output.bytes.buffer);const inspection=reader.inspectXlsxArchive(archive);
+ for(const [index,row] of rows.entries()){
+  const cells=Array.from(reader.xlsxHeaders(inspection,'견적서',5+index));
+  // Every declared field, including category-specific attributes, must reach the file.
+  for(const mapping of mappings){const expected=mapping.field==='categoryId'?categoryId:row[mapping.field];assert.equal(cells[mapping.column]??'',expected==null?'':String(expected),`${categoryId}/${mapping.field}/row${index}`);}
+ }
+ assert.equal(output.report.rowCount,2);assert.equal(output.report.verification,'draft');assert.equal(output.report.missingRequired.length,1);assert.equal(output.report.missingRequired[0].row,6);
+ const original=await reader.readXlsxArchive(template.originalBytes);
+ for(const [name,bytes] of original)if(name!=='xl/worksheets/sheet1.xml')assert.deepEqual(Buffer.from(archive.get(name)),Buffer.from(bytes),name);
+ assert.ok(!decode(archive.get('xl/worksheets/sheet1.xml')).includes('<row r="7"'));
+ assert.equal(JSON.stringify(input),before);
 });
