@@ -5,11 +5,11 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const nativeRequire=createRequire(import.meta.url);
-function load(file,dependencies){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,fetch:dependencies.fetch,require(name){if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime')return nativeRequire(name);return load(name.slice(2)+'.ts',dependencies);}});return exports;}
+function load(file,dependencies){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,setTimeout:(fn)=>setImmediate(fn),fetch:dependencies.fetch,require(name){if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime')return nativeRequire(name);return load(name.slice(2)+'.ts',dependencies);}});return exports;}
 function nodes(tree){if(Array.isArray(tree))return tree.flatMap(nodes);if(!tree||typeof tree!=='object')return[];return[tree,...nodes(tree.props?.children)];}
 const result={title:'수집 상품 원문',provider:'synthetic',collectedAt:'2026-01-01T00:00:00Z',sourceUrl:'https://detail.1688.com/offer/123.html',description:'판매자 설명',options:[{sku:'a',name:'옵션 A',unitPriceCny:2,minimumOrder:1,stock:1}],images:[{url:'https://cbu01.alicdn.com/a.png',role:'main'},{url:'https://cbu01.alicdn.com/b.png',role:'detail'}]};
 const capacity={usedSlots:0,totalImages:2,reusableIndices:[]};
-function harness(fetcher,importer){const states=[],refs=[];let index=0,ri=0,saved=0;const hooks={useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(initial){const slot=ri++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(){}};const panel=load('app/components/collection-result-panel.tsx',{react:hooks,fetch:fetcher,'@/app/collection-import':{runCollectionImport:importer}});const render=()=>{index=0;ri=0;const root=panel.CollectionResultPanel({jobId:'job',onSaved(){saved++;}});return root.type(root.props);};const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node);return node;};const button=name=>find(n=>n.type==='button'&&n.props.children===name);return{render,find,button,get saved(){return saved;},async click(name){button(name).props.onClick();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));}};}
+function harness(fetcher,importer){const states=[],refs=[];let index=0,ri=0,saved=0;const hooks={useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(initial){const slot=ri++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(){}};const panel=load('app/components/collection-result-panel.tsx',{react:hooks,fetch:fetcher,...(importer?{'@/app/collection-import':{runCollectionImport:importer}}:{})});const render=()=>{index=0;ri=0;const root=panel.CollectionResultPanel({jobId:'job',onSaved(){saved++;}});return root.type(root.props);};const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node);return node;};const button=name=>find(n=>n.type==='button'&&n.props.children===name);return{render,find,button,get saved(){return saved;},async click(name){button(name).props.onClick();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));}};}
 
 test('capacity failure retains receipt and options; capacity-only retry and product promotion remain available',async()=>{
  const calls=[];let fail=true;
@@ -35,4 +35,30 @@ test('duplicate clicks are coalesced and refresh failures never erase a displaye
  const h=harness(async url=>{calls++;if(fail)throw Error('연결 끊김');if(url.endsWith('/result')){await pending;return Response.json({receipt:{result},message:'수신됨'});}return Response.json({capacity});});
  const click=h.button('수신 결과 조회').props.onClick;click();click();assert.equal(calls,1);finish();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
  fail=true;await h.click('수신 결과 조회');assert.match(JSON.stringify(h.render()),/수집 상품 원문/);assert.match(JSON.stringify(h.render()),/연결 끊김/);
+});
+
+test('product button retries transient failures through the real importer without image requests',async()=>{
+ const writes=[];let capacityReads=0;
+ const h=harness(async(url,init)=>{
+  if(url.endsWith('/result'))return Response.json({receipt:{result},message:'수신됨'});
+  if(url.endsWith('/capacity')){capacityReads++;return Response.json({error:'이미지 저장소 오류'},{status:503});}
+  writes.push([url,init.method]);return writes.length===1?Response.json({error:'일시 오류'},{status:503}):Response.json({productId:'p'});
+ });
+ await h.click('수신 결과 조회');await h.click('원문을 상품·옵션으로 반영');
+ assert.equal(writes.length,2);assert.ok(writes.every(([url,method])=>url.endsWith('/product')&&method==='POST'));
+ assert.equal(capacityReads,1);assert.equal(h.saved,1);assert.match(JSON.stringify(h.render()),/상품 관리에 반영했습니다/);
+});
+
+test('product button stops retry after in-flight failure and never reports an unconfirmed save',async()=>{
+ let finish,writes=0;const pending=new Promise(resolve=>{finish=resolve;});
+ const h=harness(async url=>{
+  if(url.endsWith('/result'))return Response.json({receipt:{result},message:'수신됨'});
+  if(url.endsWith('/capacity'))return Response.json({capacity});
+  writes++;await pending;return Response.json({error:'연결 오류'},{status:503});
+ });
+ await h.click('수신 결과 조회');const click=h.button('원문을 상품·옵션으로 반영').props.onClick;click();click();
+ assert.equal(writes,1);h.button('연속 작업 중단').props.onClick();finish();
+ for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(writes,1);assert.equal(h.saved,0);assert.match(JSON.stringify(h.render()),/상품 반영 미확인/);
+ assert.equal(h.button('원문을 상품·옵션으로 반영').props.disabled,false);
 });
