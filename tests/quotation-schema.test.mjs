@@ -710,3 +710,22 @@ test('Couplus defaults retain explicit review provenance without being reported 
   if(!cell.validationIssues.length)assert.equal(report.issues.some(i=>i.fieldId===id&&i.kind==='error'),false);
  }
 });
+
+test('downloaded quotation review matches final saved cells and preserves evidence/error distinction',()=>{
+ const input=fixture();input.overrides={common:{brand:'직접 입력',barcodeMode:'existing',barcode:''},options:{red:{msrp:'27000'}}};
+ input.options.rows.push({...clone(input.options.rows[0]),id:'excluded',included:false});
+ const saved={...input,state:{revision:7,overrides:input.overrides},categoryContext:{categoryId:'80719'}};
+ const resolved=model.resolveQuotationFields(input);const before=JSON.stringify(saved);
+ const assets=[{key:'owner/main.png',name:'assets/main.png'},{key:'owner/option.png',name:'assets/option.png'},{key:'owner/detail.png',name:'assets/detail.png'}];
+ const result=load('app/exports/quotation-fields.ts').quotationFieldFiles(saved,resolved,assets,'snapshot-fingerprint');
+ const report=JSON.parse(result.files.find(f=>f.name==='submission-review.json').data);
+ const expected=clone(load('app/submission-review.ts').inspectSubmission(resolved,JSON.parse(input.product.image_keys)));
+ assert.deepEqual(report.issues,expected.issues);assert.equal(report.errorCount,expected.errorCount);assert.equal(report.reviewCount,expected.reviewCount);
+ assert.equal(report.inputFingerprint,'snapshot-fingerprint');assert.equal(report.quotationRevision,7);
+ assert.equal(report.submissionReady,false);assert.equal(report.transport,'not-connected');
+ assert.ok(report.issues.some(i=>i.code==='MSRP_EVIDENCE_REVIEW'));
+ assert.ok(report.issues.some(i=>i.fieldId==='barcode'&&i.kind==='error'));
+ assert.equal(report.issues.some(i=>i.optionId==='excluded'),false);
+ const csv=result.files.find(f=>f.name==='submission-review.csv').data;assert.match(csv,/MSRP_EVIDENCE_REVIEW/);assert.match(csv,/오류/);assert.match(csv,/검토/);
+ assert.equal(JSON.stringify(saved),before);
+});

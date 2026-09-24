@@ -1192,3 +1192,12 @@ AI등록 화면 확인:
 - 검증: 관련21/21, 전체420/420 통과. 자동/수동/공란/복원, 바코드 방식, 가격 관계, 이미지 전송 한계, 원본 무변경 회귀 검사 추가. 로그 outputs/step83-*.log. 실제 브라우저 화면 검증 및 외부 서비스 연동 검증은 이번 단계에서 수행하지 않았다.
 - 남은 작업/다음 시작점: Supplier Hub MSRP·OSRP 동의 확인 이후 이미지/법적정보/물류 공식 양식 대조. 실제1688 공급원, AI 실호출, 공식Excel/전체분류, 외부 이미지 전달, Supplier Hub 전송 adapter는 미완성이다. 유료호출·운영등록·Cloudflare배포 없음.
 - 추가 검증: TypeScript·ESLint·production build·git diff --check 통과.
+
+## 84. 다운로드 견적 검사 결과 동봉 — 2026-09-24
+
+- 시작 main 545d668, 미커밋 변경 없음. 최종 견적 자료에 등록 준비 검사의 항목별 결과가 별도 보존되지 않는 부분을 보완했다.
+- quotationFieldFiles에서 최종 saved resolver에 inspectSubmission을 적용해 submission-review.json/CSV를 추가한다. 포함 옵션의 오류·검토 구분, 코드, 옵션/필드 ID, 사유와 JSON의 저장 revision/fingerprint/생략 건수/검증 한계를 보존한다. 기존 원가 요약 quotation-review.csv와 구분되는 새 파일명을 사용한다. 기존 최종값·수동 공란·이미지 파일명·원본 데이터는 변경하지 않는다.
+- 새 파일도 견적 텍스트 합계6MB 한도에 포함한다. 이미지 소유 참조만 검사하며 파일 실내용이나 Hub 접수 성공을 확인했다고 표시하지 않는다. submissionReady=false/transport=not-connected 유지. ZIP README 설명 추가.
+- 실제 resolver와 같은 검사 결과, 포함/제외 옵션, 수동 권장가, 바코드 오류, 원본 무변경 회귀 검사 추가. 로그 outputs/step84-*.log. 브라우저 다운로드 클릭 및 외부 실연동 검증은 미실시.
+- 다음 시작점: MSRP·OSRP 사용자 확인 후 Hub 이미지/법적정보/물류 대조, 공식Excel과 첨부 이미지 전달 연결. 실제1688 공급원·AI 실호출·전체분류·Supplier Hub 전송 adapter는 미완성. 유료호출·운영등록·Cloudflare배포 없음.
+- 최종 검증: 전체421/421, TypeScript·ESLint·production build·git diff --check 통과. 초기 기존 파일명 충돌을 발견하여 새 검사 파일명을 분리한 후 전체 재검증했다.

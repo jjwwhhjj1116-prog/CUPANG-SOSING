@@ -1,5 +1,6 @@
 import { categoryFields, type CategoryField } from '@/app/category-profiles';
-import { savedTextOrFallback } from '@/app/product-content';
+import { inspectSubmission } from '@/app/submission-review';
+import { productImageKeys, savedTextOrFallback } from '@/app/product-content';
 import { quotationSections, type ResolvedQuotation } from '@/app/quotation-schema';
 import { quotationCsv } from '@/app/pricing';
 import { optionSourceCostCny } from '@/app/product-options';
@@ -102,8 +103,18 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const scopeArchive = JSON.stringify({ format: 'sourceflow-quotation-scopes-v1', categoryId: saved.categoryContext.categoryId, saved: saved.savedScopes ?? saved.state });
   const imageIndex = quotationImageIndex(resolved, assets);
   const detailPage = quotationDetailPage(resolved, assets, saved.content.seo.description.value);
-  ensureFieldBudget(document, [rows, overrides], utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage));
+  const review = { format: 'sourceflow-quotation-review-v1', productId: saved.product.id,
+    sourceUrl: saved.product.source_url, inputFingerprint,
+    quotationRevision: saved.state.revision, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
+    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys)),
+  };
+  const reviewRows: (string | number)[][] = [['구분', '코드', '옵션 ID', '옵션명', '필드 ID', '확인 사항'],
+    ...review.issues.map(issue => [issue.kind === 'error' ? '오류' : '검토', issue.code, issue.optionId ?? '', issue.optionLabel, issue.fieldId ?? '', issue.message])];
+  const reviewJson = JSON.stringify(review);
+  ensureFieldBudget(document, [rows, overrides, reviewRows], utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage) + utf8ByteLength(reviewJson));
   return { warnings: document.warnings, files: [
+    { name: 'submission-review.json', data: reviewJson },
+    { name: 'submission-review.csv', data: quotationCsv(reviewRows) },
     { name: 'quotation-images.html', data: imageIndex },
     { name: 'quotation-detail.html', data: detailPage },
     { name: 'quotation-saved-scopes.json', data: scopeArchive },
