@@ -567,3 +567,20 @@ test('attribute mapping UI previews resolved storage values and exposes invalid 
  job.result.draft.attributes[0].value='알 수 없는 형태';const html=render();assert.match(html,/role="alert"/);assert.match(html,/정확히 일치하는 선택지가 하나/);
  assert.doesNotMatch(html,/→ 알 수 없는 형태/);
 });
+
+test('explicit server-rule reload replaces old mappings on empty, failed, or incompatible responses',async()=>{
+ for(const response of [{rules:null,revision:0},{error:'조회 실패',status:500},{rules:{format:'bad'},revision:4}]){
+  const view=fixture(),job=attributeJob(view);let index=0,calls=0,applied=0;
+  const slots=[[job],'job',{0:'noticeMaterial'},false,'',['이전 보고'],3,null,[]];
+  const hooks={...React,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];}};
+  const suggestions={fetchAttributeSuggestions:(...args)=>fetchAttributeSuggestions(...args,async()=>{calls++;return Response.json(response,{status:response.status??200});})};
+  const {QuotationTranslatedAttributes}=load('app/components/quotation-translated-attributes.tsx',{react:hooks,'@/app/quotation-attribute-suggestions':suggestions});
+  const render=()=>{index=0;return QuotationTranslatedAttributes({productId:'p1',view,optionId:'red',disabled:false,onApply(){applied++;}});};
+  const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
+  const button=nodes(render()).find(n=>n.type==='button'&&n.props.children==='이 카테고리 서버 규칙 불러오기 · 현재 선택 교체');
+  button.props.onClick();for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls,1);assert.deepEqual(clone(slots[2]),{});assert.deepEqual(clone(slots[5]),[]);
+  assert.equal(slots[6],response.rules===null?0:null);assert.equal(slots[3],false);assert.equal(applied,0);
+  assert.ok(nodes(render()).find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='선택한 연결로 서버 규칙 저장').props.disabled);
+ }
+});

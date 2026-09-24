@@ -95,24 +95,21 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
     if (!job || disabled || loading || !view.resolved.schema.categoryId) return;
     setLoading(true); setRuleReport([]);
     try {
+      if (!save) {
+        // Use the same validated read path as initial suggestions. Empty or failed
+        // reads must clear the previous selection and its stale save revision.
+        await suggest(job);
+        return;
+      }
       const endpoint = '/api/quotation-attribute-rules';
-      let response: Response;
-      if (save) {
-        if (serverRevision === null) throw new Error('먼저 서버 규칙을 불러와주세요.');
-        const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
-        const rules = createAttributeRules(productId, view, job, optionId, selected);
-        response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules, expectedRevision: serverRevision }) });
-      } else response = await fetch(`${endpoint}?categoryId=${encodeURIComponent(view.resolved.schema.categoryId)}`, { cache: 'no-store' });
+      if (serverRevision === null) throw new Error('먼저 서버 규칙을 불러와주세요.');
+      const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
+      const rules = createAttributeRules(productId, view, job, optionId, selected);
+      const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules, expectedRevision: serverRevision }) });
       const body = await response.json() as { error?: string; revision: number; rules: unknown };
       if (!response.ok) { if (response.status === 409) setServerRevision(null); throw new Error(body.error || '서버 규칙 처리 실패'); }
       setServerRevision(body.revision);
-      if (save) setMessage(`카테고리 연결 규칙 v${body.revision}을 서버에 저장했습니다. 상품값은 변경하지 않았습니다.`);
-      else if (!body.rules) setMessage('저장된 서버 규칙이 없습니다. 연결 항목을 선택한 뒤 서버에 저장할 수 있습니다.');
-      else {
-        const result = loadAttributeRules(JSON.stringify(body.rules), productId, view, job, optionId);
-        setMapping(Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId]))); setRuleReport(result.skipped);
-        setMessage(`서버 규칙 v${body.revision}에서 ${result.mappings.length}개 연결을 선택했습니다. 변경 전·후 값을 검토해주세요.`);
-      }
+      setMessage(`카테고리 연결 규칙 v${body.revision}을 서버에 저장했습니다. 상품값은 변경하지 않았습니다.`);
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '서버 규칙 처리 실패'); }
     finally { setLoading(false); }
   }

@@ -1839,3 +1839,12 @@ AI등록 화면 확인:
 - 검증: 새2건 포함 전체579/579, TypeScript·ESLint·Cloudflare build·산출물·diff 통과. 자동 빈값→명시적 빈 선택→수동 옵션 출처, 선택값 코드와 표시 이름 차이, 실제 컴포넌트 렌더링에서 저장값 표시 및 잘못된 선택 오류를 확인했다. outputs/step154-*.log. 모의 상태 렌더링/데이터 검증이며 실제 Chrome·1688·Hub 접수 검증은 아니다.
 - 기존 Cloudflare 배포 완료: version14a165ef-db1c-4598-bdbf-1372e1fc79c5. DB migration/운영상품 변경/유료AI/Hub 등록 없음.
 - 다음 시작점: Couplus/Hub 로그인 확인 후 카테고리 전수 기본값 및 공식Excel 대조, 실제1688 수집 공급원·이미지AI 실호출·Hub POST501 전송 어댑터 구현이 필요하다. 로그인 요청은150단계에 남아 있으며 이번 단계 재확인하지 않았다. 기존BrowserUse 정책 차단 우회 금지. 전체 자동등록 완성으로 설명하지 않는다.
+
+## 155. Chrome 접속 재확인·카테고리 규칙 재조회 잔존 선택 수정 — 2026-09-24
+
+- 시작 mainfaf4d0e, 미커밋 변경 없음. fetch 후 origin/main0/0. 기존 supplierChrome 연결을 재사용했다. 탭 목록이 비어 새 탭으로 Couplus AIRocketReg와 Supplier Hub qvt/registration을 열었다. Couplus 로그인 화면은 DOM 확인했다. Hub 최초 화면은 공통 레이아웃만 보였고 후속 DOM 읽기가 xauth.coupang.com 인증 출처에 대한 자동 승인 검토로 차단됐다.
+- 차단 사유: 인증/세션 접근 위험 및 해당 인증 출처에 대한 구체적 동의 또는 로그인 완료 증거 부족. 우회하지 않았다. 사용자에게 Chrome 두 서비스 직접 로그인 후 '두 곳 로그인 완료, 인증 화면 확인 허용'을 요청했다. 비밀정보는 요구하지 않았다. 카테고리 대조/Hub 전송은 실행하지 않았다.
+- 확인된 코드 오류: 수동 서버 규칙 재조회에서 rules=null 또는 실패일 때 기존 mapping/serverRevision이 남아 새 조회 결과처럼 보일 수 있었다. 초기 추천과 동일한 fetchAttributeSuggestions 검증 경로를 재사용해 빈 결과는 빈 선택+revision0, 실패/스키마 불일치는 빈 선택+revision null로 교체한다. 이전 보고도 제거한다. 서버 조회는 상품값/견적 초안을 수정하지 않는다.
+- 검증: 관련47/47, 새1건 포함 전체580/580, TypeScript·ESLint·Cloudflare build·산출물·diff 통과. 실제 컴포넌트 콜백과 규칙 검증 함수를 모의 HTTP로 연결해 규칙 없음/HTTP500/잘못된 스키마에서 이전 선택 제거·저장 제한·초안 변경0회를 확인했다. outputs/step155-*.log. 실제 사이트에서 규칙 조회 UI를 클릭한 검증은 아니다.
+- 기존 Cloudflare 배포 완료: versiondb9ffa92-e48c-40c4-821c-1b9887e1b63a. DB migration/유료AI/운영상품 변경/Hub 등록 없음.
+- 다음 시작점: 로그인 및 인증 화면 확인 허용 응답 후 기존 Chrome 연결에서 접근 상태를 다시 확인하고 카테고리별 실제 기본값·공식Excel 대조를 재개한다. 실제1688 수집 공급원·이미지AI 실호출·Hub POST501 전송 어댑터/접수는 계속 미완성. BrowserUse1688/다운로드 기록/xauth 차단을 우회하지 않는다. 전체 자동등록 완성으로 설명하지 않는다.
