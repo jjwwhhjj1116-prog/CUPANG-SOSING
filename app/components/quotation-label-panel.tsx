@@ -3,12 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
 import { renderDocument } from '@/app/document-image-render';
-import type { ResolvedQuotation } from '@/app/quotation-schema';
+import type { QuotationFieldsView } from '@/app/quotation-schema';
+import { attachQuotationLabel } from '@/app/quotation-label-attachment';
 
-export function QuotationLabelPanel({ resolved, optionId, disabled }: { resolved: ResolvedQuotation; optionId: string | null; disabled: boolean }) {
-  const [preview, setPreview] = useState<{ url: string; width: number; height: number } | null>(null);
+export function QuotationLabelPanel({ view, productId, endpoint, optionId, disabled, onBusyChange, onAttached }: { view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView) => void }) {
+  const resolved = view.resolved;
+  const [preview, setPreview] = useState<{ url: string; width: number; height: number; blob: Blob; view: QuotationFieldsView } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const alive = useRef(true);
+  const uploadedKey = useRef<string | null>(null);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
   async function generate() {
@@ -16,9 +19,19 @@ export function QuotationLabelPanel({ resolved, optionId, disabled }: { resolved
     setBusy(true); setError('');
     try {
       const result = await renderDocument(quotationLabelPlan(resolved, optionId));
-      if (alive.current) setPreview({ url: URL.createObjectURL(result.blob), width: result.width, height: result.height });
+      if (alive.current) { uploadedKey.current = null; setPreview({ url: URL.createObjectURL(result.blob), width: result.width, height: result.height, blob: result.blob, view }); }
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : '표시사항 PNG 생성 실패'); }
     finally { if (alive.current) setBusy(false); }
+  }
+  async function attach() {
+    if (!preview || disabled || busy) return;
+    setBusy(true); setError(''); onBusyChange(true);
+    try {
+      const saved = await attachQuotationLabel({ productId, endpoint, renderedView: preview.view, optionId, blob: preview.blob,
+        uploadedKey: uploadedKey.current, onUploaded: key => { uploadedKey.current = key; } });
+      if (alive.current) onAttached(saved);
+    } catch (cause) { if (alive.current) setError(`${cause instanceof Error ? cause.message : 'PNG 연결 실패'}${uploadedKey.current ? ' 업로드한 파일은 보존됩니다. 다시 연결할 때 같은 파일을 사용합니다.' : ''}`); }
+    finally { onBusyChange(false); if (alive.current) setBusy(false); }
   }
   const included = resolved.rows.some(row => row.optionId === optionId && row.included);
   return <section className="panel-stack" aria-label="견적 기준 표시사항 PNG" aria-busy={busy}>
@@ -34,7 +47,8 @@ export function QuotationLabelPanel({ resolved, optionId, disabled }: { resolved
         <img src={preview.url} alt="선택 옵션의 최종 견적 값으로 만든 표시사항 검토 PNG" width={preview.width} height={preview.height} style={{ width: '100%', height: 'auto' }} />
       </div>
       <a className="btn ghost" href={preview.url} download="sourceflow-quotation-label.png">표시사항 검토 PNG 다운로드</a>
-      <small>자동 첨부·전송하지 않습니다. 내용을 확인한 뒤 상품 이미지로 업로드하고 선택 옵션의 라벨 이미지에 연결해주세요.</small>
+      <button type="button" className="btn primary" disabled={busy || disabled} onClick={() => void attach()}>PNG 업로드·선택 옵션 견적에 연결</button>
+      <small>기존 라벨 이미지를 유지하고 선택 옵션에 추가합니다. Supplier Hub에는 전송하지 않습니다.</small>
     </>}
   </section>;
 }
