@@ -96,6 +96,10 @@ test('real preview/export pipeline fills mapped CSV, includes option assets and 
   assert.equal(response.status, 200); const review = await response.json();
   assert.match(review.fingerprint, /^[a-f0-9]{64}$/); assert.equal(review.report.optionRevision, 1); assert.equal(review.report.rowCount, 2);
   assert.equal(review.report.submissionReady, false); assert.equal(review.rows[0][2], 10); assert.equal(review.rows[1][2], 30);
+  const unmappedAutomatic=review.report.mappingCoverage.find(field=>field.fieldId==='altText');
+  assert.equal(unmappedAutomatic.required,false);assert.equal(unmappedAutomatic.manualOptions.length,0);
+  assert.equal(unmappedAutomatic.automaticOptions.length,2);
+  assert.ok(review.report.warnings.some(message=>message.includes('대체 텍스트: 자동 작성 항목')));
   const exported = await route.POST(request({ ...preview, action: 'export', fingerprint: review.fingerprint }), context);
   assert.equal(exported.status, 200); assert.equal(exported.headers.get('content-type'), 'application/zip'); assert.equal(exported.headers.get('cache-control'), 'no-store');
   const files = unzipSync(new Uint8Array(await exported.arrayBuffer()));
@@ -104,7 +108,10 @@ test('real preview/export pipeline fills mapped CSV, includes option assets and 
   assert.ok(!csv.includes('제외됨')); assert.deepEqual(files['assets/image-001.png'], png);
   const exportedOptions = JSON.parse(new TextDecoder().decode(files['options.json']));
   assert.equal(exportedOptions.rows.length, 3); assert.equal(exportedOptions.rows[0].provenance.originalName, 'manual');
-  assert.equal(JSON.parse(new TextDecoder().decode(files['quotation-report.json'])).submissionReady, false);
+  const savedReport=JSON.parse(new TextDecoder().decode(files['quotation-report.json']));
+  assert.equal(savedReport.submissionReady, false);
+  assert.deepEqual(savedReport.mappingCoverage,review.report.mappingCoverage);
+  assert.deepEqual(savedReport.warnings,review.report.warnings);
 });
 
 test('quotation export rejects stale approval fingerprints and detects edits during generation', async () => {

@@ -31,14 +31,18 @@ function ensureFieldBudget(document: { rows: unknown[] }, tables: (string | numb
 // Older saved Excel mappings must point to the same final cells as the editor.
 const aliases: Partial<Record<CategoryField, string>> = { boxQuantity: 'boxSkuQuantity', detailImage: 'detailImages', label: 'labelImages',
   material: 'noticeMaterial', countryOfOrigin: 'noticeCountryOfOrigin', serviceContact: 'noticeServiceContact' };
-/** Compare schema requirements with explicit field mappings, not header guesses or constants. */
+/** Check required and populated final fields against explicit mappings. */
 export function quotationMappingCoverage(resolved: ResolvedQuotation, profile: CategoryProfileInput) {
   const mapped = new Set(profile.mappings.filter(mapping => mapping.field !== 'constant').map(mapping => aliases[mapping.field] ?? mapping.field));
   const included = resolved.rows.filter(row => row.included);
   return resolved.schema.fields.filter(field => !mapped.has(field.id)).flatMap(field => {
     const manualOptions = included.filter(row => row.fields[field.id]?.source.startsWith('manual-')).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
-    if (!field.required && !manualOptions.length) return [];
-    return [{ fieldId: field.id, label: field.label, required: field.required, manualOptions }];
+    const automaticOptions = included.filter(row => {
+      const cell = row.fields[field.id];
+      return cell && !cell.source.startsWith('manual-') && cell.value.trim();
+    }).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
+    if (!field.required && !manualOptions.length && !automaticOptions.length) return [];
+    return [{ fieldId: field.id, label: field.label, required: field.required, manualOptions, automaticOptions }];
   });
 }
 const imageKeys = (value: string) => value.split('\n').map(key => key.trim()).filter(Boolean);

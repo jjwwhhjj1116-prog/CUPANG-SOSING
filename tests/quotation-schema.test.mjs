@@ -849,6 +849,21 @@ test('offline upload guide renders final role groups safely and exposes missing 
  }
 });
 
+test('mapping coverage includes populated automatic optional values but excludes blank automatic and excluded options',()=>{
+ const coverage=load('app/exports/quotation-fields.ts').quotationMappingCoverage;
+ const resolved={schema:{fields:[{id:'altText',label:'대체 텍스트',required:false},{id:'detailHtml',label:'상세',required:false}]},rows:[
+  {optionId:'a',optionLabel:'자동',included:true,fields:{altText:{value:'자동 상품명',source:'content'},detailHtml:{value:'',source:'empty'}}},
+  {optionId:'b',optionLabel:'직접',included:true,fields:{altText:{value:'',source:'manual-option'},detailHtml:{value:'',source:'empty'}}},
+  {optionId:'c',optionLabel:'제외',included:false,fields:{altText:{value:'제외',source:'settings'},detailHtml:{value:'제외 상세',source:'content'}}},
+ ]};
+ const before=JSON.stringify(resolved);const missing=coverage(resolved,{mappings:[]});
+ assert.equal(missing.length,1);assert.equal(missing[0].fieldId,'altText');
+ assert.deepEqual(Array.from(missing[0].automaticOptions,o=>o.optionId),['a']);
+ assert.deepEqual(Array.from(missing[0].manualOptions,o=>o.optionId),['b']);
+ assert.equal(coverage(resolved,{mappings:[{column:0,field:'altText'}]}).length,0);
+ assert.equal(JSON.stringify(resolved),before);
+});
+
 test('mapping coverage detects category-required and manual fields absent from Excel without treating constants as links',()=>{
  const input=fixture();input.overrides={common:{model:'직접 모델'},options:{red:{searchTags:''}}};
  input.options.rows.push({...clone(input.options.rows[0]),id:'excluded',included:false});

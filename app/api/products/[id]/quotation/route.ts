@@ -49,7 +49,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     catch(error) { if(error instanceof QuotationExportError && error.status === 404) return json({error:'자료 생성 중 상품 또는 카테고리가 변경됐습니다.'},409); throw error; }
     if(await quotationExportFingerprint(latest,input.dataStartRow ?? quotationStartRow(latest.profile?.template)) !== revision) return json({error:'자료 생성 중 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.'},409);
     const mappingCoverage = quotationMappingCoverage(resolved, profile);
-    const mappingWarnings = mappingCoverage.map(field => `${field.label}: ${field.required ? '카테고리 필수 항목' : '수동 수정 항목'}이 Excel 열에 연결되지 않았습니다. 최종값은 quotation-fields 파일에만 보존됩니다.`);
+    const mappingWarnings = mappingCoverage.map(field => `${field.label}: ${field.required ? '카테고리 필수 항목' : field.manualOptions.length ? '수동 수정 항목' : '자동 작성 항목'}이 Excel 열에 연결되지 않았습니다. 최종값은 quotation-fields 파일에만 보존됩니다.`);
     const warnings = [...mappingWarnings,...categoryProfileIssues(profile),...generated.report.warnings,...fields.warnings,'Supplier Hub 공식 접수 검증 전인 검토용 파일입니다.','제조사·수입자·연락처 기본설정은 실제 상품과 일치하는지 확인해주세요.'];
     const report = {...generated.report,mappingCoverage,warnings,productId:id,productVersion:product.updated_at,contentRevision:content.revision,optionRevision:options.revision,quotationRevision:saved.state.revision,profileId:profile.id,profileRevision:profile.revision,templateSha256:template.sha256,submissionReady:false};
     if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename:generated.filename,rows:rows.map(row=>mapQuotationRow(profile,row,resolved.schema.fields).values),headers:template.headers});
