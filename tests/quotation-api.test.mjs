@@ -234,3 +234,19 @@ test('large common HTML fails with explicit 413 before full quotation JSON/CSV e
   const bounded=routeWith({readOptions:async()=>({...options,rows:rows.map((row,index)=>({...row,included:index===0}))}),readFields:async()=>state});
   const response=await bounded.POST(request(preview),context);assert.equal(response.status,200);const review=await response.json();assert.equal(review.report.rowCount,1);
 });
+
+
+test('quotation preview and downloaded package expose identical attachment and field findings',async()=>{
+ const route=routeWith();
+ const response=await route.POST(request(preview),context);assert.equal(response.status,200);
+ const body=await response.json();const review=body.submissionReview;
+ assert.ok(review);assert.equal(review.submissionReady,false);
+ assert.ok(review.issues.some(issue=>issue.fieldId==='mainImage'&&issue.message.includes('1×1px')));
+ assert.ok(review.issues.some(issue=>issue.code==='LABEL_ATTACHMENT_MISSING'));
+ assert.equal(review.issues.some(issue=>issue.optionId==='excluded'),false);
+ const archive=await route.POST(request({...preview,action:'export',fingerprint:body.fingerprint}),context);
+ assert.equal(archive.status,200);
+ const files=unzipSync(new Uint8Array(await archive.arrayBuffer()));
+ const downloaded=JSON.parse(new TextDecoder().decode(files['submission-review.json']));
+ assert.deepEqual(downloaded,review);
+});

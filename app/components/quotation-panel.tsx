@@ -2,14 +2,16 @@
 
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CategoryProfile } from '@/app/category-profiles';
 import { QuotationFieldsEditor } from '@/app/components/quotation-fields-editor';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { selectQuotationProfile } from '@/app/quotation-profile-selection';
+import { QuotationPreviewReview, type QuotationPreviewReviewData } from '@/app/components/quotation-preview-review';
 
 type Preview = {
   fingerprint:string;filename:string;headers:string[];rows:(string|number)[][];
+  submissionReview?: QuotationPreviewReviewData;
   report:{mappingCoverage?:{fieldId:string;label:string;required:boolean;manualOptions:{optionId:string|null;optionLabel:string}[]}[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
 type QuotationPanelProps = {navigationTarget?:QuotationNavigationTarget;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
@@ -19,7 +21,11 @@ export function QuotationPanel(props: QuotationPanelProps) {
 function QuotationPanelContent({productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
-  const [preview,setPreview]=useState<Preview|null>(null);const [busy,setBusy]=useState(false);
+  const [previewState,setPreviewState]=useState<{data:Preview;version?:string}|null>(null);const [busy,setBusy]=useState(false);
+  const preview=previewState?.version===refreshToken?previewState?.data??null:null;
+  const setPreview=(data:Preview|null)=>setPreviewState(data?{data,version:refreshToken}:null);
+  const [reviewTarget,setReviewTarget]=useState<{target:QuotationNavigationTarget;sequence:number}|null>(null);
+  const editorRef=useRef<HTMLDivElement>(null);
   const [error,setError]=useState('');const [message,setMessage]=useState('');
   const [dirty,setDirty]=useState(false);
   const [overrideProfileId,setOverrideProfileId]=useState<string|undefined>();
@@ -65,7 +71,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
     {connectionWarning && !overrideProfileId && <p role="status" className="panel-note">{connectionWarning}</p>}
-    {contextLoaded?<QuotationFieldsEditor navigationTarget={navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={refreshToken} onDirtyChange={setDirty} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={reviewTarget?.sequence??0} navigationTarget={reviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={refreshToken} onDirtyChange={setDirty} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
@@ -86,6 +92,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     {error&&<p role="alert" className="collection-error">{error}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
       <h3>출력 미리보기 · {preview.report.rowCount}행</h3>
+      {preview.submissionReview && <QuotationPreviewReview review={preview.submissionReview} disabled={busy||dirty} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />}
       <div className="table-wrap quote-preview"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((value,column)=><td key={column}>{String(value)||'—'}</td>)}</tr>)}</tbody></table></div>
       {preview.report.missingRequired.length>0&&<div className="panel-note"><div><strong>필수 연결 값 {preview.report.missingRequired.length}개 미입력</strong><ul>{preview.report.missingRequired.map((field,index)=><li key={index}>{field.row}행 · {field.header||`${field.column}열`}</li>)}</ul></div></div>}
       {!!preview.report.mappingCoverage?.length && <div className="panel-note"><strong>Excel 열 연결 확인 {preview.report.mappingCoverage.length}개</strong><ul>{preview.report.mappingCoverage.map(field=><li key={field.fieldId}>{field.label} · {field.required?'카테고리 필수':'수동 수정'}{field.manualOptions.length>0?` · 직접 수정한 옵션 ${field.manualOptions.length}개`:''}</li>)}</ul><button type="button" className="btn ghost" disabled={busy||dirty} onClick={onManageCategories}>카테고리·양식 연결 수정</button></div>}

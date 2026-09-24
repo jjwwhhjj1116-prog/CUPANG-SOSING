@@ -1357,3 +1357,11 @@ AI등록 화면 확인:
 - 첫 전체검사에서 기존 테스트1건이 이미지 바이트 없는 fixture 때문에 실패. 유효한 헤더 fixture로 보완 후 전체451/451, TypeScript·ESLint·운영 build·산출물·diff 통과. 경계값·JSON/CSV 경고 보존·형식오류·누락·잘린헤더·제외옵션 회귀검사 포함. outputs/step102-*.log.
 - Cloudflare 기존주소 배포완료 versionfd5c129f-63c8-4a4b-b7db-d66bea1e0fae. 운영계정 ZIP 다운로드 실증은 미실시. 유료AI호출/상품운영등록 없음.
 - 다음 시작점: 실제상품으로 이미지 선택 및 ZIP 다운로드 검증. 공식Excel·인증·물류 및 카테고리 기본값 전수대조, 실제1688 공급원·AI 번역 실호출·SupplierHub 전송 adapter/접수는 계속 미완성. 이전1688 BrowserUse 거절 우회금지.
+
+## 103. 견적 출력 미리보기 검사 결과·항목 이동 — 2026-09-24
+
+- 시작 main93e09e0, 미커밋 변경 없음. ZIP 안에만 있던 제출준비 검사 결과를 견적 preview API에도 같은 객체로 반환. 미리보기에서 옵션별 필수값/라벨/이미지/증빙 확인 항목과 오류·확인 건수, 생략 건수, 검사 범위를 표시한다.
+- '이 항목 확인하기'로 정확한 optionId/fieldId의 견적 구역을 열고 입력 화면으로 이동. dirty 또는 처리 중에는 이동 비활성화하여 저장하지 않은 입력을 보존. 기존 resolveQuotationNavigation으로 현재 양식에서 사라진 옵션/필드를 처리한다. refreshToken 변경 시 이전 미리보기 숨김. 견적 다운로드·SupplierHub 전송 의미는 그대로 분리한다.
+- 전체454/454, TypeScript·ESLint·Cloudflare 운영build·산출물·diff 통과. API preview와 실제 생성ZIP의 submission-review 완전일치, 1×1 이미지 경고·라벨누락·제외옵션, UI SSR 이스케이프·비활성 버튼·생략건수, 옵션/필드 식별자 전달 검증. outputs/step103-*.log. 실제 브라우저에서 폼 포커스/스크롤과 refreshToken 변경 흐름은 미실증.
+- 기존 운영주소 배포 version09175fb4-57f0-431a-92ad-87a527cf7a99. DB/기존상품 변경 없음. 유료AI/상품운영등록 없음.
+- 다음 시작점: 실제상품·연결된Excel로 미리보기→항목수정→재검토→다운로드 브라우저 실증. 직전 운영계정 목록0건. 공식Excel·카테고리 기본값 전수대조 및 실제1688 공급원·AI번역 실호출·SupplierHub 전송 adapter/접수는 여전히 미완성. 기존1688 BrowserUse 거절 우회금지.
