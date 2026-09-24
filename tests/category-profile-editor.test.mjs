@@ -109,3 +109,12 @@ test('category editor saves explicit choice label output and clears it when the 
  const next=harness({...configured,mappings:saved.mappings});next.find(n=>n.type==='select'&&n.props['aria-label']==='2열 연결').props.onChange({target:{value:'title'}});
  const changed=await next.save();assert.equal(changed.mappings.find(m=>m.column===1).choiceFormat,undefined);
 });
+
+test('legacy invalid label formatting can be corrected without erasing mappings and cannot save before correction',async()=>{
+ const invalid={...profile,mappings:[{column:0,field:'title',required:true,choiceFormat:'label'}]};
+ const h=harness(invalid);assert.match(JSON.stringify(h.render()),/현재 분류의 선택형 항목이 아닙니다/);
+ await h.render().props.onSubmit({preventDefault(){}});assert.equal(h.saved.length,0);assert.match(JSON.stringify(h.render()),/1열/);
+ h.find(n=>n.type==='select'&&n.props['aria-label']==='1열 선택값 출력').props.onChange({target:{value:'value'}});
+ const saved=await h.save();assert.equal(saved.mappings[0].field,'title');assert.equal(saved.mappings[0].required,true);assert.equal(saved.mappings[0].choiceFormat,'value');
+ assert.equal(invalid.mappings[0].choiceFormat,'label');
+});

@@ -1,6 +1,7 @@
+import { getQuotationSchema } from '@/app/quotation-schema';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
-import { CATEGORY_PROFILE_BODY_LIMIT, validateCategoryCodeForSave, validateCategoryProfile } from '@/app/category-profiles';
+import { CATEGORY_PROFILE_BODY_LIMIT, validateCategoryCodeForSave, validateCategoryProfile, validateQuotationChoiceFormats } from '@/app/category-profiles';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { createCategoryProfile, getCategoryProfile, listCategoryProfiles, updateCategoryProfile } from '@/db/category-profiles';
 import { TemplateValidationError, validateStoredTemplate } from '@/db/category-templates';
@@ -19,7 +20,7 @@ export async function GET() {
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
   let input;
-  try { input = validateCategoryProfile(await body(request)); validateCategoryCodeForSave(input.categoryId); }
+  try { input = validateCategoryProfile(await body(request)); validateCategoryCodeForSave(input.categoryId); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId).fields); }
   catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
     const ownerId = await owner();
@@ -37,7 +38,7 @@ export async function PUT(request: Request) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('설정 번호와 저장 버전을 확인해주세요.');
     const value = raw as Record<string, unknown>;
     if (typeof value.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(value.id) || typeof value.expectedRevision !== 'number' || !Number.isSafeInteger(value.expectedRevision) || value.expectedRevision < 1) throw new Error('설정 번호와 저장 버전을 확인해주세요.');
-    id = value.id; expectedRevision = value.expectedRevision; input = validateCategoryProfile(value.profile); validateCategoryCodeForSave(input.categoryId);
+    id = value.id; expectedRevision = value.expectedRevision; input = validateCategoryProfile(value.profile); validateCategoryCodeForSave(input.categoryId); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId).fields);
   } catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
     const ownerId = await owner();

@@ -9,7 +9,7 @@ import { deflateRawSync } from 'node:zlib';
 function load(file, overrides = {}, mode = 'development') {
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(output, { exports, Response, Request, File, Blob, FormData, TextDecoder, DecompressionStream, crypto, URL, process: { env: { NODE_ENV: mode } }, require: name => {
+  vm.runInNewContext(output, { exports, Error, SyntaxError, structuredClone, Response, Request, File, Blob, FormData, TextDecoder, DecompressionStream, crypto, URL, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in overrides) return overrides[name];
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/category-profiles') return load('app/category-profiles.ts');
@@ -17,6 +17,8 @@ function load(file, overrides = {}, mode = 'development') {
     if (name === '@/app/xlsx-template') return load('app/xlsx-template.ts');
     if (name === '@/db/category-templates') return { TemplateValidationError: class extends Error {}, validateStoredTemplate: async () => {} };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
+    if (name.startsWith('@/app/')) return load(name.slice(2)+'.ts');
+    if (name.startsWith('./')) return load('app/'+name.slice(2)+'.ts');
     throw Error(name);
   } });
   return exports;
@@ -289,4 +291,17 @@ test('invalid legacy category codes remain readable but cannot be saved by POST 
   }
   assert.equal(writes, 0);
   for (const value of ['', '80719', 'synthetic-category_1', 'a'.repeat(100)]) assert.doesNotThrow(() => model.validateCategoryCodeForSave(value));
+});
+
+test('category writes reject label formatting on non-select fields before storage while legacy records remain readable',async()=>{
+ let writes=0,lookups=0;const invalid={...mapped,categoryId:'80719',mappings:[{column:0,field:'title',required:true,choiceFormat:'label'}]};
+ assert.equal(model.validateCategoryProfile(invalid).mappings[0].choiceFormat,'label');
+ const route=load('app/api/category-profiles/route.ts',{'@/db/category-profiles':{createCategoryProfile:async()=>{writes++;},updateCategoryProfile:async()=>{writes++;},getCategoryProfile:async()=>{lookups++;return invalid;},listCategoryProfiles:async()=>[invalid]}});
+ assert.equal((await route.GET()).status,200);
+ for(const response of [await route.POST(request(invalid)),await route.PUT(request({id:'saved',expectedRevision:1,profile:invalid},'PUT'))]){assert.equal(response.status,400);assert.match((await response.json()).error,/1열.*선택형/);}
+ assert.equal(writes,0);assert.equal(lookups,0);
+ const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');
+ assert.doesNotThrow(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],choiceFormat:'value'}]},schema.fields));
+ assert.doesNotThrow(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],field:'lidIncluded'}]},schema.fields));
+ assert.throws(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],field:'lidIncluded'}]},load('app/quotation-schema.ts').getQuotationSchema('77442').fields),/선택형/);
 });
