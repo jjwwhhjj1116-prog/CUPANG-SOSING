@@ -305,6 +305,12 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     return { value: keys.filter(key => ownedKeys.includes(key)).join('\n'), source: keys.some(key => ownedKeys.includes(key)) ? 'content' : 'empty',
       issues: missing.length ? ['상품에 저장되지 않은 이미지 참조를 제외했습니다. 연결을 다시 확인해주세요.'] : [] };
   };
+  function dimensions(option: ProductOption | null): Automatic {
+    // An explicit removal must not silently restore a shared label measurement.
+    if (option && (['widthCm', 'lengthCm', 'heightCm'] as const).some(key => option[key] === null && option.provenance[key] === 'manual')) return { value: '', source: 'option' };
+    return option && option.widthCm && option.lengthCm && option.heightCm
+      ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
+  }
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
     const id = definition.id;
     if (definition.contentField === 'material') return contentValue(content.label.material);
@@ -331,7 +337,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         if (option?.size || option?.provenance.size === 'manual') return { value: option.size ?? '', source: 'option' };
         // 81452 expects a purchasing size (S/Medium/Free), not physical dimensions.
         if (schema.categoryId === '81452') return literal('', 'empty');
-        return option && option.widthCm && option.lengthCm && option.heightCm ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
+        return dimensions(option);
       case 'storageMaterial': case 'noticeMaterial': return contentValue(content.label.material);
       case 'mainImage': {
         const selected = option?.imageKey ? images([option.imageKey]) : images(content.assets.main.value);
@@ -346,8 +352,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         const value = [...new Set([savedTextOrFallback(content.label.productName, title), content.label.model.value].filter(Boolean))].join(' / ');
         return content.label.productName.provenance === 'manual' || content.label.model.provenance === 'manual' ? { value, source: 'content' } : literal(value, 'content');
       }
-      case 'noticeDimensions': return option && option.widthCm && option.lengthCm && option.heightCm
-        ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
+      case 'noticeDimensions': return dimensions(option);
       // This notice contains product size/weight, not the option's packaging dimensions.
       case 'brace_noticeSizeWeight': return contentValue(content.label.dimensions);
       case 'noticeManufacturerImporter': {

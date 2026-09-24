@@ -89,6 +89,7 @@ export function applyOptionRows(current: ProductOptions, rows: OptionInput[], no
       const provenance = Object.fromEntries((Object.keys(optionFieldNames) as OptionField[]).map(key => {
         if (before && before[key] === row[key]) return [key, before.provenance[key] ?? 'unverified'];
         changed = true;
+        if (key === 'widthCm' || key === 'lengthCm' || key === 'heightCm') return [key, row[key] === null && before?.[key] == null ? 'unverified' : 'manual'];
         if (key === 'stock') return [key, row.stock === null && before?.stock == null ? 'unverified' : 'manual'];
         if (key === 'color' || key === 'size') return [key, row[key] === '' && !before?.[key] ? 'unverified' : 'manual'];
         return [key, row[key] === '' || row[key] === null ? 'unverified' : 'manual'];

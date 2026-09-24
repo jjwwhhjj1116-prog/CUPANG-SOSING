@@ -831,3 +831,39 @@ test('category material choice mismatch remains visible and is never guessed or 
   assert.ok(field.validationIssues.length > 0);
   assert.equal(field.source,'content');
 });
+
+test('cleared option measurements stay empty through save, quotation and export', () => {
+  for (const key of ['widthCm', 'lengthCm', 'heightCm']) {
+    const input = fixture();
+    const before = clone(input.options);
+    input.options = optionModel.applyOptionRows(input.options, optionModel.optionInputs(input.options).map(row => ({ ...row, [key]: null })), '2026-09-24T12:00:00.000Z');
+    assert.equal(input.options.rows[0].provenance[key], 'manual');
+    input.options = optionModel.applyOptionRows(input.options, optionModel.optionInputs(input.options), '2026-09-24T12:01:00.000Z');
+    assert.equal(input.options.rows[0].provenance[key], 'manual');
+    const resolved = model.resolveQuotationFields(input);
+    for (const id of ['size', 'noticeDimensions']) {
+      assert.equal(resolved.rows[1].fields[id].value, '');
+      assert.equal(resolved.rows[1].fields[id].source, 'option');
+    }
+    assert.equal(resolved.rows[0].fields.noticeDimensions.value, '20 × 30 × 40 cm');
+    const exported = load('app/exports/quotation-fields.ts').resolvedQuotationRows(input, resolved, JSON.parse(input.product.image_keys).map((key, index) => ({ key, name: `assets/${index}.png` })));
+    assert.equal(exported[0].noticeDimensions, '');
+    assert.equal(exported[0].size, '');
+    assert.equal(before.rows[0][key] > 0, true);
+    input.overrides = { common: { noticeDimensions: '직접 확인한 치수' }, options: {} };
+    assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeDimensions.value, '직접 확인한 치수');
+  }
+});
+
+test('untouched empty measurements inherit label while complete measurements and purchasing size take precedence', () => {
+  const input = fixture();
+  const row = { ...optionModel.emptyOptionInput('red'), originalName: '옵션', unitCostCny: 1, included: true };
+  input.options = optionModel.applyOptionRows(optionModel.emptyProductOptions('p1'), [row], 'now');
+  assert.equal(input.options.rows[0].provenance.widthCm, 'unverified');
+  assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeDimensions.value, '20 × 30 × 40 cm');
+  input.options = optionModel.applyOptionRows(input.options, [{ ...row, widthCm: 1, lengthCm: 2, heightCm: 3 }], 'later');
+  assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeDimensions.value, '1 × 2 × 3 cm');
+  input.options = optionModel.applyOptionRows(input.options, [{ ...row, size: 'L', widthCm: null, lengthCm: 2, heightCm: 3 }], 'last');
+  assert.equal(model.resolveQuotationFields(input).rows[1].fields.size.value, 'L');
+  assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeDimensions.value, '');
+});
