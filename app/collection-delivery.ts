@@ -15,7 +15,11 @@ export async function deliverCollectionResult(jobId:string,offerId:string,input:
  const attempts=options.retryAttempts??3;
  if(!Number.isInteger(attempts)||attempts<1||attempts>3)throw new Error('재시도 횟수는 1~3회여야 합니다.');
  const result=validateCollectionResult(input,offerId);
- const indices=collectionImageSelection(result.images.length,options.imageIndices);
+ // A valid receipt may contain 200 images, while one import accepts only 50.
+ // Validate explicit selections before any write, but retain a larger original
+ // receipt when the connector has not yet selected which images to import.
+ const needsSelection=options.imageIndices===undefined&&result.images.length>50;
+ const indices=needsSelection?[]:collectionImageSelection(result.images.length,options.imageIndices);
  const {offerId:derivedOfferId,...payload}=result;
  const body=JSON.stringify(payload);
  if(new TextEncoder().encode(body).byteLength>COLLECTION_RESULT_LIMIT)throw new Error('수집 결과는 512KB 이하여야 합니다.');
@@ -35,6 +39,9 @@ export async function deliverCollectionResult(jobId:string,offerId:string,input:
   if(confirmedOfferId!==derivedOfferId||JSON.stringify(validateCollectionResult(confirmed,offerId))!==JSON.stringify(result))
    throw new Error('서버가 확인한 원문이 전송 원문과 다릅니다. 상품 반영을 중단했습니다.');
  }catch(cause){return {status:options.shouldStop?.()?'stopped':'failed',receiptConfirmed:false,productId:null,completedImages:0,error:cause instanceof Error?cause.message:'원문 저장 여부를 확인하지 못했습니다. 동일 원문으로 재시도해주세요.'};}
+ if(options.shouldStop?.())return {status:'stopped',receiptConfirmed:true,productId:null,completedImages:0};
+ if(needsSelection)return {status:'failed',receiptConfirmed:true,productId:null,completedImages:0,
+  error:`수집 원문 ${result.images.length}개 이미지를 보존했습니다. 수집 결과 화면에서 저장할 이미지를 최대 50개 선택한 뒤 상품 반영을 이어가세요.`};
  const outcome=await runCollectionImport(jobId,result.images.length,{...options,retryAttempts:attempts,fetcher,imageIndices:indices});
  return {...outcome,receiptConfirmed:true};
 }

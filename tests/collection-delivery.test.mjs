@@ -10,6 +10,17 @@ const input={schemaVersion:1,sourceUrl:'https://detail.1688.com/offer/123456789.
 const reply=(body,status=200)=>({ok:status===200,status,json:async()=>body});
 const receipt=body=>({...JSON.parse(body),offerId:'123456789'});
 
+test('large valid receipts are preserved before requesting an image selection and exact replay can resume',async()=>{
+ const source={...input,images:Array.from({length:200},(_,index)=>({url:`https://cbu01.alicdn.com/${index}.png`,role:index===0?'main':'detail'}))};
+ const before=JSON.stringify(source),calls=[],bodies=[];
+ const fetcher=async(url,init)=>{calls.push(url);if(url.endsWith('/result')){bodies.push(init.body);return reply({receipt:{result:receipt(init.body)}});}if(url.endsWith('/capacity'))return reply({capacity:{usedSlots:0,totalImages:200,reusableIndices:[]}});return reply(url.endsWith('/product')?{productId:'same'}:{key:'owner/image'});};
+ const first=await actualDeliver('job','123456789',source,{fetcher});
+ assert.equal(first.status,'failed');assert.equal(first.receiptConfirmed,true);assert.equal(first.productId,null);assert.equal(first.completedImages,0);assert.match(first.error,/200/);assert.match(first.error,/50/);assert.deepEqual(calls,['/api/collection-jobs/job/result']);
+ const resumed=await actualDeliver('job','123456789',source,{fetcher,imageIndices:[0,199]});assert.equal(resumed.status,'completed');assert.equal(resumed.completedImages,2);assert.equal(resumed.productId,'same');assert.equal(bodies[0],bodies[1]);assert.equal(JSON.stringify(source),before);
+ calls.length=0;await assert.rejects(()=>actualDeliver('job','123456789',source,{fetcher,imageIndices:Array.from({length:51},(_,i)=>i)}));assert.equal(calls.length,0);
+ calls.length=0;let stop=false;const stopped=await actualDeliver('job','123456789',source,{shouldStop:()=>stop,fetcher:async(url,init)=>{stop=true;return fetcher(url,init);}});assert.equal(stopped.status,'stopped');assert.equal(stopped.receiptConfirmed,true);assert.equal(calls.length,1);
+});
+
 test('product-only delivery does not depend on image capacity and preserves receipt verification',async()=>{
  for(const source of [input,{...input,images:[]}]){
   const calls=[];
