@@ -9,6 +9,21 @@ const deliver=(job,offer,input,options={})=>actualDeliver(job,offer,input,{retry
 const input={schemaVersion:1,sourceUrl:'https://detail.1688.com/offer/123456789.html',provider:'synthetic-test',collectedAt:'2026-01-01T00:00:00Z',title:'합성 검증',description:'',options:[{sku:'a',name:'옵션',unitPriceCny:2,minimumOrder:1,stock:null}],images:[{url:'https://cbu01.alicdn.com/a.png',role:'main'}]};
 const reply=(body,status=200)=>({ok:status===200,status,json:async()=>body});
 const receipt=body=>({...JSON.parse(body),offerId:'123456789'});
+
+test('product-only delivery does not depend on image capacity and preserves receipt verification',async()=>{
+ for(const source of [input,{...input,images:[]}]){
+  const calls=[];
+  const outcome=await actualDeliver('job','123456789',source,{imageIndices:[],fetcher:async(url,init)=>{
+   calls.push(url);
+   if(url.endsWith('/result'))return reply({receipt:{result:receipt(init.body)}});
+   if(url.endsWith('/product'))return reply({productId:'product-only'});
+   return reply({error:'image storage unavailable'},503);
+  }});
+  assert.equal(outcome.status,'completed');assert.equal(outcome.receiptConfirmed,true);
+  assert.equal(outcome.productId,'product-only');assert.equal(outcome.completedImages,0);
+  assert.deepEqual(calls,['/api/collection-jobs/job/result','/api/collection-jobs/job/product']);
+ }
+});
 test('delivery confirms normalized receipt before product and selected images without paid or submission calls',async()=>{
  const calls=[];const result=await deliver('job','123456789',input,{fetcher:async(url,init)=>{calls.push(url);if(url.endsWith('/result'))return reply({receipt:{result:receipt(init.body)}});return reply(url.endsWith('/product')?{productId:'p'}:{key:'owner/a'});}});
  assert.equal(result.status,'completed');assert.equal(result.receiptConfirmed,true);assert.equal(result.completedImages,1);

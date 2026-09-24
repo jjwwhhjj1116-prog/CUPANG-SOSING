@@ -116,7 +116,7 @@ test('network uncertainty has a bounded retry budget and never confirms a missin
  assert.equal(calls,3);assert.equal(exhausted.status,'failed');assert.equal(exhausted.productId,null);
  calls=0;
  const malformed=await actualImport('job',0,{retryAttempts:3,retryWait:async()=>{},fetcher:async(url)=>{
-  calls++;return url.endsWith('/capacity')?reply({capacity:{usedSlots:0,totalImages:0,reusableIndices:[]}}):reply({});
+  calls++;assert.ok(url.endsWith('/product'));return reply({});
  }});
- assert.equal(calls,2);assert.equal(malformed.status,'failed');assert.equal(malformed.productId,null);
+ assert.equal(calls,1);assert.equal(malformed.status,'failed');assert.equal(malformed.productId,null);
 });

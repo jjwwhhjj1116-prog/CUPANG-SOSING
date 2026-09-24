@@ -21,12 +21,14 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
  const stopped=()=>options.shouldStop?.()??false;
  try{
   if(stopped())return {status:'stopped',productId,completedImages};
-  const capacityResponse=await request(base+'/capacity',{cache:'no-store'});
-  const capacityBody=await capacityResponse.json() as {capacity?:unknown;error?:string};
-  if(!capacityResponse.ok)throw new Error(capacityBody.error||'이미지 저장 여유 조회 실패');
-  const capacity=validateCollectionCapacity(capacityBody.capacity,totalImages);
-  if(indices.some(index=>capacity.blockedIndices?.includes(index)))throw new Error('상품에서 제외한 원본 이미지가 선택되어 있습니다. 수신 결과를 다시 조회하고 해당 이미지 선택을 해제해주세요.');
-  if(!collectionSelectionFits(capacity,indices))throw new Error('공통 이미지·기존 파일을 포함하면 50개를 초과합니다. 수신 결과를 다시 조회하고 이미지 선택을 줄여주세요.');
+  if(selectedTotal>0){
+   const capacityResponse=await request(base+'/capacity',{cache:'no-store'});
+   const capacityBody=await capacityResponse.json() as {capacity?:unknown;error?:string};
+   if(!capacityResponse.ok)throw new Error(capacityBody.error||'이미지 저장 여유 조회 실패');
+   const capacity=validateCollectionCapacity(capacityBody.capacity,totalImages);
+   if(indices.some(index=>capacity.blockedIndices?.includes(index)))throw new Error('상품에서 제외한 원본 이미지가 선택되어 있습니다. 수신 결과를 다시 조회하고 해당 이미지 선택을 해제해주세요.');
+   if(!collectionSelectionFits(capacity,indices))throw new Error('공통 이미지·기존 파일을 포함하면 50개를 초과합니다. 수신 결과를 다시 조회하고 이미지 선택을 줄여주세요.');
+  }
   if(stopped())return {status:'stopped',productId,completedImages};
   options.onProgress?.({stage:'product',completedImages,totalImages:selectedTotal});
   const response=await request(`${base}/product`,{method:'POST'});
