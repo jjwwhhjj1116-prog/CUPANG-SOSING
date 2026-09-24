@@ -292,6 +292,22 @@ test('draft evidence metadata follows manual edits, blanks and resets instead of
  assert.equal(JSON.stringify(view),before);
 });
 
+test('overview preserves automatic validation failures, clears replaced values and restores errors on reset',()=>{
+ const view=fixture();const issue='옵션 가격 계산을 확인해주세요.';
+ for(const data of [view.automatic,view.resolved]){
+  const cell=data.rows.find(row=>row.optionId==='red').fields.supplyPrice;
+  cell.validationIssues=[issue];cell.issues=[issue];
+ }
+ const before=JSON.stringify(view);
+ const problems=changes=>editor.quotationOptionOverview(view,changes).find(row=>row.optionId==='red').problems;
+ assert.ok(problems([]).some(p=>p.fieldKey==='supplyPrice'&&p.issues.includes(issue)));
+ assert.equal(problems([change('supplyPrice','3000','red')]).some(p=>p.fieldKey==='supplyPrice'),false);
+ assert.ok(problems([change('supplyPrice',null,'red')]).some(p=>p.issues.includes(issue)));
+ assert.ok(problems([]).some(p=>p.fieldKey==='mainImage'&&p.issues.some(text=>text.includes('공개 주소'))));
+ assert.equal(problems([]).some(p=>p.issues.some(text=>text.includes('쿠플러스 참조 화면'))),false);
+ assert.equal(JSON.stringify(view),before);
+});
+
 test('changing barcode mode and supply price recomputes dependent draft validation metadata',()=>{
  const view=fixture({common:{barcodeMode:'existing',barcode:'',supplyPrice:'4000',salePrice:'3000'},options:{}});
  const barcode=changes=>editor.resolveQuotationEditorCell(view,changes,'red','barcode');

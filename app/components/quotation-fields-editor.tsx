@@ -151,16 +151,10 @@ export function quotationOptionOverview(view: QuotationFieldsView, changes: read
       else if (cell.source === 'couplus-default') defaults++;
       else if (cell.source !== 'empty' && cell.value.trim()) linked++;
       if (field.required && !cell.value.trim()) missing++;
-      const issues = quotationValueIssues(field, cell.value, view.imageKeys);
-      if (field.id === 'salePrice') issues.push(...quotationPriceIssues(view.resolved.schema,
-        resolveQuotationEditorCell(view, changes, row.optionId, 'supplyPrice').value, cell.value));
-      if (field.id === 'detailImages') issues.push(...quotationImageRoleIssues(resolveQuotationEditorCell(view, changes, row.optionId, 'mainImage').value, cell.value));
-      if (field.id === 'barcode') {
-        const mode = resolveQuotationEditorCell(view, changes, row.optionId, 'barcodeMode').value;
-        issues.push(...quotationBarcodeIssues(view.resolved.schema.categoryId, mode, cell.value));
-        if (mode === 'existing' && !cell.value.trim()) issues.push('실제 바코드 번호를 입력해주세요.');
-        if (mode === 'request-coupang' && cell.value.trim()) issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.');
-      }
+      // Use the same draft-aware validation as the individual field, including
+      // failed automatic calculations and unavailable image references.
+      // Review reminders remain separate from validation problems.
+      const issues = [...new Set(cell.validationIssues ?? quotationValueIssues(field, cell.value, view.imageKeys))];
       if (issues.length) problems.push({ fieldKey: field.id, label: field.label, section: field.section, issues });
     }
     return { optionId: row.optionId, optionLabel: row.optionLabel, linked, defaults, manual, missing, problems };
