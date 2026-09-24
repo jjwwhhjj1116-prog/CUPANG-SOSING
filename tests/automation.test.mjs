@@ -322,7 +322,7 @@ test('only a stored completed translation matching current inputs produces SEO d
     result: { draft: { title: '번역 초안' }, responseId: 'resp_actual_receipt', model: 'configured-model', generatedAt: version, provenance: 'generated' } };
   const plan = await model.planAutomation(product, settings, null, content, translation);
   const seo = plan.stages.find(stage => stage.id === 'seo');
-  assert.equal(seo.status, 'complete'); assert.equal(seo.artifacts[0].data.appliedToContent, false);
+  assert.equal(seo.status, 'draft'); assert.equal(seo.reason.code, 'TRANSLATION_DRAFT_NOT_APPLIED'); assert.equal(seo.artifacts[0].data.appliedToContent, false);
   assert.equal(seo.artifacts[0].submissionReady, false); assert.equal(seo.evidence[0].kind, 'providerReceipt');
   assert.equal(plan.stages.find(stage => stage.id === 'quotation').status, 'blocked');
   for (const invalid of [{ ...translation, status: 'prepared' }, { ...translation, contentRevision: 1 }, { ...translation, productVersion: 'stale' }, { ...translation, productId: 'other' }]) {
@@ -397,7 +397,7 @@ test('current translation receipts coexist with saved SEO fields and disappear a
   const translation={id:'current-provider-job',productId:product.id,productVersion:version,contentRevision:1,status:'completed',createdAt:version,
     review:{fingerprint:'actual-source-fingerprint',source:{provenance:'manual'}},result:{draft:{title:'검토 중인 AI 초안'},responseId:'actual-response',model:'configured-model',generatedAt:version,provenance:'generated'}};
   const first=await model.planAutomation(product,settings,null,content,translation);
-  const seo=first.stages.find(stage=>stage.id==='seo');assert.equal(seo.status,'complete');assert.equal(seo.artifacts.length,2);assert.equal(seo.attempts,1);
+  const seo=first.stages.find(stage=>stage.id==='seo');assert.equal(seo.status,'draft');assert.equal(seo.reason.code,'TRANSLATION_DRAFT_NOT_APPLIED');assert.equal(seo.artifacts.length,2);assert.equal(seo.attempts,1);
   assert.equal(seo.artifacts[0].data.providerExecutionVerified,true);assert.equal(seo.artifacts[1].data.providerExecutionVerified,false);
   assert.equal(seo.artifacts[1].data.draft.title.value,'보존할 수동 제목');assert.equal(seo.artifacts[1].data.draft.title.provenance,'manual');
   assert.ok(seo.evidence.some(item=>item.kind==='providerReceipt'));assert.ok(seo.evidence.some(item=>item.kind==='savedContent'));
@@ -406,4 +406,23 @@ test('current translation receipts coexist with saved SEO fields and disappear a
   const replanned=await model.planAutomation(product,settings,first,changed,translation);const current=replanned.stages.find(stage=>stage.id==='seo');
   assert.equal(current.status,'draft');assert.equal(current.attempts,0);assert.equal(current.artifacts.length,1);assert.ok(current.evidence.every(item=>item.kind!=='providerReceipt'));
   assert.equal(replanned.stages.find(stage=>stage.id==='quotation').status,'blocked');
+});
+
+test('detail stage follows full quotation image order and blocks missing top or bottom references',async()=>{
+ const contentModel=load('app/product-content.ts');
+ const content=contentModel.applyContentPatch(contentModel.emptyProductContent(product.id),{assets:{detailTop:['owner/top.png'],detail:['owner/body.png'],detailBottom:['owner/bottom.png']}},version);
+ content.assets.detailTop.provenance='generated';const before=JSON.stringify(content);
+ const saved={...product,image_keys:JSON.stringify(['owner/top.png','owner/body.png','owner/bottom.png'])};
+ const first=await model.planAutomation(saved,settings,null,content);const detail=first.stages.find(stage=>stage.id==='detailImage');
+ assert.equal(detail.status,'draft');assert.deepEqual(Array.from(detail.artifacts,artifact=>artifact.storageKey),Array.from(contentModel.contentDetailImageKeys(content)));
+ assert.equal(detail.artifacts[0].data.provenance,'generated');assert.equal(detail.artifacts[1].data.provenance,'manual');assert.ok(detail.artifacts.every(artifact=>!artifact.submissionReady));
+ for(const missing of ['owner/top.png','owner/bottom.png']){
+  const updated=await model.planAutomation({...saved,image_keys:JSON.stringify(JSON.parse(saved.image_keys).filter(key=>key!==missing))},settings,first,content);
+  const stage=updated.stages.find(stage=>stage.id==='detailImage');assert.equal(stage.status,'blocked');assert.equal(stage.reason.code,'SAVED_ASSET_REFERENCE_MISSING');assert.equal(stage.artifacts.length,2);assert.ok(!stage.artifacts.some(artifact=>artifact.storageKey===missing));
+ }
+ const banners=contentModel.applyContentPatch(content,{assets:{detail:[]}},'2026-09-24T00:00:00Z');
+ const bannerPlan=await model.planAutomation(saved,settings,first,banners);assert.equal(bannerPlan.stages.find(stage=>stage.id==='detailImage').status,'draft');assert.equal(bannerPlan.stages.find(stage=>stage.id==='detailImage').artifacts.length,2);
+ const cleared=contentModel.applyContentPatch(banners,{assets:{detailTop:[],detailBottom:[]}},'2026-09-24T00:00:01Z');
+ const clearedPlan=await model.planAutomation(saved,settings,bannerPlan,cleared);assert.equal(clearedPlan.stages.find(stage=>stage.id==='detailImage').status,'blocked');assert.equal(clearedPlan.stages.find(stage=>stage.id==='detailImage').artifacts.length,0);
+ assert.equal(JSON.stringify(content),before);
 });

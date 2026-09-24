@@ -1,7 +1,7 @@
 import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { defaultSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
-import type { ProductContent } from '@/app/product-content';
+import { contentDetailImageKeys, type ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
 import { calculateOptionPrices, resolveOptionPricePolicy, type ProductOptions } from '@/app/product-options';
 
@@ -178,19 +178,22 @@ function savedDrafts(stages: AutomationStage[], product: ProductRecord, content:
   const roles = { mainImage: 'main', additionalImages: 'additional', detailImage: 'detail', sizeChart: 'size', koreanLabel: 'label' } as const;
   for (const [id, role] of Object.entries(roles) as [keyof typeof roles, typeof roles[keyof typeof roles]][]) {
     const field = content.assets[role];
-    if (!field.value.length) continue;
+    const imageKeys = id === 'detailImage' ? contentDetailImageKeys(content) : field.value;
+    if (!imageKeys.length) continue;
     const stage = stages.find(item => item.id === id)!;
-    const requested = [...new Set(field.value)];
+    const requested = [...new Set(imageKeys)];
     const valid = requested.filter(key => ownedKeys.has(key));
     const missing = requested.length - valid.length;
     stage.status = missing ? 'blocked' : 'draft'; stage.attempts = 0; stage.retryable = false;
     stage.reason = missing ? { code: 'SAVED_ASSET_REFERENCE_MISSING', message: `저장된 ${labels[id]} 참조 ${missing}개가 현재 상품의 이미지 목록에 없습니다. 파일을 다시 첨부하거나 역할을 수정해주세요.` }
       : { code: 'SAVED_DRAFT_REVIEW_REQUIRED', message: `저장된 ${labels[id]} 초안 ${valid.length}개가 있습니다. 첨부 참조를 확인했으며 파일 내용·원문 사실·표시사항의 적합성은 별도 검토가 필요합니다.` };
+    const sourceField = (key: string) => id === 'detailImage'
+      ? (['detailTop', 'detail', 'detailBottom'] as const).map(role => content.assets[role]).find(item => item?.value.includes(key)) ?? field : field;
     stage.artifacts = valid.map((storageKey, index) => ({ id: `saved-${role}-${content.revision}-${index}`, kind: 'image', label: `저장된 ${labels[id]} 초안 ${index + 1} · 검토 필요`, storageKey, submissionReady: false,
-      data: { role, ...revision, provenance: field.provenance, provenanceScope: 'savedRoleAssignment', assetOrigin: 'unverified',
+      data: { role, ...revision, provenance: sourceField(storageKey).provenance, provenanceScope: 'savedRoleAssignment', assetOrigin: 'unverified',
         providerExecutionVerified: false, sourceCollectionVerified: false, fileContentVerified: false, legalCorrectnessVerified: false, reviewRequired: true } }));
-    stage.evidence = [...structuredClone(evidence), ...valid.map(reference => ({ kind: 'storedAssetReference' as const, reference, observedAt: field.updatedAt ?? content.updatedAt ?? now }))];
-    stage.updatedAt = field.updatedAt ?? content.updatedAt ?? now;
+    stage.evidence = [...structuredClone(evidence), ...valid.map(reference => ({ kind: 'storedAssetReference' as const, reference, observedAt: sourceField(reference).updatedAt ?? content.updatedAt ?? now }))];
+    stage.updatedAt = id === 'detailImage' ? content.updatedAt ?? now : field.updatedAt ?? content.updatedAt ?? now;
   }
 }
 
@@ -209,7 +212,7 @@ export async function planAutomation(product: ProductRecord, settings: Workspace
   const translated = currentTranslation(product, content, translation);
   if (translated) {
     const result = translated.result!; const seo = stages.find(stage => stage.id === 'seo')!;
-    seo.status = 'complete'; seo.reason = null; seo.attempts = 1; seo.retryable = false;
+    seo.status = 'draft'; seo.reason = { code: 'TRANSLATION_DRAFT_NOT_APPLIED', message: 'AI 번역 초안이 생성됐습니다. SEO 메뉴에서 검토 후 상품에 적용해주세요. 기존 저장값은 유지됩니다.' }; seo.attempts = 1; seo.retryable = false;
     const savedArtifacts = seo.artifacts.filter(artifact => artifact.id.startsWith('saved-seo-'));
     const savedEvidence = seo.evidence.filter(item => item.kind === 'savedContent' || item.kind === 'storedProduct');
     seo.artifacts = [{ id: translated.id, kind: 'text', label: 'AI 한국어 번역·SEO 초안 · 검토 필요',
