@@ -17,6 +17,6 @@ export async function GET(_:Request,context:{params:Promise<{id:string}>}){
   const offer=parseCollectionRequest({urls:[product.source_url]})[0];
   if(offer.offerId!==receipt.result.offerId)return reply({error:'상품과 수집 원문의 상품번호가 다릅니다.'},409);
   return reply({title:receipt.result.title,description:receipt.result.description,jobId:link.job_id,sourceUrl:receipt.result.sourceUrl,provider:receipt.result.provider,collectedAt:receipt.result.collectedAt,
-   productVersion:product.updated_at,scope:'title-description',message:'상품명·설명 원문입니다. 옵션별 번역과 이미지 번역은 포함하지 않습니다.'});
+   attributes:receipt.result.attributes ?? [],productVersion:product.updated_at,scope:'title-description-attributes',message:'상품명·설명·상품 속성의 수집 원문입니다. 판매자 기재값이며 인증·사실 검증 결과가 아닙니다. 옵션별 번역과 이미지 번역은 별도입니다.'});
  }catch{return reply({error:'수집 원문을 읽지 못했습니다. 다시 시도해주세요.'},503);}
 }

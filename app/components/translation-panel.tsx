@@ -6,6 +6,7 @@ import { optionTranslationAttributes, adoptOptionTranslations } from '@/app/opti
 import type { ProductOptionsResponse } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
 import { translationAdoptionInput, translationSeoFields, type TranslationSeoField } from '@/app/translation-adoption';
+import { collectedTranslationAttributes } from '@/app/collected-translation-attributes';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
 const statuses: Record<TranslationJob['status'], string> = { prepared: '검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 실행 차단', completed: '초안 생성 완료', failed: '실패 · 재호출 안 함', uncertain: '결과 확인 필요 · 재호출 안 함' };
@@ -18,6 +19,8 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   const [description, setDescription] = useState('');
   const [sourceReference,setSourceReference]=useState('저장 상품명과 사용자가 검토한 직접 입력 원문');
   const [attributes, setAttributes] = useState('');
+  const [collectedAttributes, setCollectedAttributes] = useState<{name:string;value:string}[]>([]);
+  const [includeCollectedAttributes, setIncludeCollectedAttributes] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -52,10 +55,11 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     setBusy(true);setError('');setNotice('');
     try {
       const response=await fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store'});
-      const value=await response.json() as {error?:string;title:string;description:string;jobId:string;sourceUrl:string;productVersion:string;message:string};
+      const value=await response.json() as {error?:string;title:string;description:string;attributes?:{name:string;value:string}[];jobId:string;sourceUrl:string;productVersion:string;message:string};
       if(!response.ok)throw Error(value.error??'원문 조회 실패');
       if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
-      setSourceTitle(value.title);setDescription(value.description);
+      collectedTranslationAttributes(value.attributes ?? []);
+      setSourceTitle(value.title);setDescription(value.description);setCollectedAttributes(value.attributes ?? []);setIncludeCollectedAttributes(true);
       setSourceReference(`수집 요청 ${value.jobId} (${value.sourceUrl})에서 가져와 사용자가 검토·편집한 원문`);
       setNotice(value.message+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.');
     }catch(reason){setError(reason instanceof Error?reason.message:'원문 조회 실패');}
@@ -89,12 +93,15 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     finally{setBusy(false);}
   }
   function prepare() {
-    const pairs: { name: string; value: string }[] = [];
+    let pairs: { name: string; value: string }[];
+    try { pairs = includeCollectedAttributes ? collectedTranslationAttributes(collectedAttributes) : []; }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '상품 속성을 확인해주세요.'); return; }
     for (const line of attributes.split('\n').map(value => value.trim()).filter(Boolean)) {
       const index = line.indexOf('=');
       if (index <= 0 || index === line.length - 1) { setError('속성은 한 줄에 속성명=원문 값 형식으로 입력해주세요.'); return; }
       pairs.push({ name: line.slice(0, index).trim(), value: line.slice(index + 1).trim() });
     }
+    if (pairs.length > 50) { setError('상품 속성·옵션·직접 입력 속성은 합계 50개까지입니다. 상품 속성 포함을 해제하거나 입력을 나누어주세요.'); return; }
     void action({ action: 'prepare', expectedVersion: version, idempotencyKey: crypto.randomUUID(),
       source: { title: sourceTitle, description, attributes: pairs, provenance: 'manual', reference: sourceReference } });
   }
@@ -117,8 +124,9 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     {!view && !error && <p>번역 설정을 확인하고 있습니다.</p>}
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
-      <button className="btn" type="button" disabled={busy} onClick={()=>void loadCollectedSource()}>수집 원문 불러오기 · 상품명·설명 입력 교체</button><small>옵션·이미지 번역은 별도입니다. 불러온 원문도 전송 전에 수정하고 검토할 수 있습니다.</small><label>상품명 원문<input value={sourceTitle} maxLength={1000} onChange={event => setSourceTitle(event.target.value)} disabled={busy} /></label>
+      <button className="btn" type="button" disabled={busy} onClick={()=>void loadCollectedSource()}>수집 원문 불러오기 · 상품명·설명·상품 속성 입력 교체</button><small>옵션·이미지 번역은 별도입니다. 불러온 원문도 전송 전에 수정하고 검토할 수 있습니다.</small><label>상품명 원문<input value={sourceTitle} maxLength={1000} onChange={event => setSourceTitle(event.target.value)} disabled={busy} /></label>
       <label>상품 설명 원문<textarea rows={5} value={description} maxLength={20000} onChange={event => setDescription(event.target.value)} disabled={busy} /></label>
+      {collectedAttributes.length > 0 && <fieldset disabled={busy}><legend>수집 상품 속성 원문 · {collectedAttributes.length}개</legend><label><input type="checkbox" checked={includeCollectedAttributes} onChange={event=>setIncludeCollectedAttributes(event.target.checked)}/>번역에 포함</label><p>판매자가 기재한 원문입니다. 옵션·직접 입력 속성은 별도로 유지합니다.</p>{collectedAttributes.map((pair,index)=><div key={index}><label>속성명<input maxLength={190} value={pair.name} onChange={event=>setCollectedAttributes(previous=>previous.map((item,i)=>i===index?{...item,name:event.target.value}:item))}/></label><label>속성값<textarea maxLength={1000} value={pair.value} onChange={event=>setCollectedAttributes(previous=>previous.map((item,i)=>i===index?{...item,value:event.target.value}:item))}/></label></div>)}</fieldset>}
       <button className="btn" type="button" disabled={busy} onClick={()=>void loadOptionSource()}>미번역 옵션 불러오기 · 속성 입력 교체</button><label>속성 원문 · 한 줄에 속성명=값<textarea rows={3} value={attributes} onChange={event => setAttributes(event.target.value)} disabled={busy} placeholder={'材质=棉\n颜色=白色'} /></label>
       <button className="btn" type="button" onClick={prepare} disabled={busy || !view.configuration.configured || (!sourceTitle.trim() && !description.trim())}>번역 요청 검토하기 · 무료</button>
       {view.jobs.length > 1 && <label>이전 번역 요청<select value={job?.id ?? ''} onChange={event => { setSelectedId(event.target.value); setConfirmed(false); setSelectedFields([]); }} disabled={busy}>{view.jobs.map(item => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} · {statuses[item.status]}</option>)}</select></label>}

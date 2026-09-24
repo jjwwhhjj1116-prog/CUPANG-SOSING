@@ -4,6 +4,7 @@ export const COLLECTION_RESULT_LIMIT = 512 * 1024;
 export type CollectionResult = {
   schemaVersion: 1; sourceUrl: string; offerId: string; provider: string; collectedAt: string;
   title: string; description: string;
+  attributes?: { name: string; value: string }[];
   options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number; stock: number | null; imageIndex?: number; color?: string; size?: string }[];
   images: { url: string; role: 'main' | 'additional' | 'detail' }[];
 };
@@ -18,7 +19,7 @@ function text(value: unknown, max: number, required=true) {
   return value.trim();
 }
 export function validateCollectionResult(input: unknown, expectedOfferId: string, now=Date.now()): CollectionResult {
-  const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images']);
+  const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images','attributes']);
   if(body.schemaVersion!==1)throw new Error('지원하지 않는 수집 결과 버전입니다.');
   const source=parseCollectionRequest({urls:[body.sourceUrl]})[0];
   if(source.offerId!==expectedOfferId)throw new Error('요청한 상품번호와 수집 결과가 다릅니다.');
@@ -46,5 +47,10 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
     if(row.role==='main'&&++mainCount>1)throw new Error('대표 이미지는 한 장만 지정해주세요.');
     return {url:url.href,role:row.role as 'main'|'additional'|'detail'};
   });
-  return {schemaVersion:1,sourceUrl:source.sourceUrl,offerId:source.offerId,provider:text(body.provider,100),collectedAt:new Date(timestamp).toISOString(),title:text(body.title,500),description:text(body.description,20000,false),options,images};
+  let attributes: CollectionResult['attributes'];
+  if (body.attributes !== undefined) {
+    if (!Array.isArray(body.attributes) || body.attributes.length > 50) throw new Error('상품 속성 원문은 최대 50개입니다.');
+    attributes = body.attributes.map(value => { const pair = record(value, ['name', 'value']); return { name: text(pair.name, 190), value: text(pair.value, 1000) }; });
+  }
+  return {schemaVersion:1,sourceUrl:source.sourceUrl,offerId:source.offerId,provider:text(body.provider,100),collectedAt:new Date(timestamp).toISOString(),title:text(body.title,500),description:text(body.description,20000,false),options,images,...(attributes !== undefined ? { attributes } : {})};
 }

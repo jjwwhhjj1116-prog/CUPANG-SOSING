@@ -29,3 +29,11 @@ function route(mode='development',overrides={}){let writes=0;const api=load('app
 const ctx={params:Promise.resolve({id:'j'})};const request=body=>new Request('http://localhost/api/result',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 test('API requires verified production access and never creates product on receipt',async()=>{const closed=route('production');assert.equal((await closed.POST(request(sample()),ctx)).status,503);assert.equal(closed.writes(),0);const api=route();const response=await api.POST(request(sample()),ctx);assert.equal(response.status,200);const body=await response.json();assert.equal(body.productCreated,false);assert.equal(body.executionStarted,false);assert.equal(api.writes(),1);});
 test('API rejects oversized bodies and invalid offers before storage',async()=>{const api=route();assert.equal((await api.POST(request({...sample(),description:'x'.repeat(524289)}),ctx)).status,413);assert.equal((await api.POST(request({...sample(),sourceUrl:'https://detail.1688.com/offer/999.html'}),ctx)).status,400);assert.equal(api.writes(),0);});
+
+test('optional product attributes preserve multiline source values and old receipt shape',()=>{
+ const old=validate(sample(),'123');assert.equal(Object.hasOwn(old,'attributes'),false);
+ const attributes=[{name:'材质',value:'尼龙\n供应商说明'},{name:'规格',value:'38×31×14 cm'}];
+ const result=validate({...sample(),attributes},'123');
+ assert.deepEqual(JSON.parse(JSON.stringify(result.attributes)),attributes);
+ for(const invalid of [null,{},Array.from({length:51},()=>attributes[0]),[{name:'',value:'x'}],[{name:'a'.repeat(191),value:'x'}],[{name:'n',value:'x'.repeat(1001)}],[{name:'n',value:'x',verified:true}]])assert.throws(()=>validate({...sample(),attributes:invalid},'123'));
+});
