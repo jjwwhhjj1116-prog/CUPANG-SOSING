@@ -2,6 +2,10 @@ import type { TranslationJob } from '@/app/automation/translation';
 import { validateQuotationChanges, type QuotationFieldsView, type QuotationChange, type QuotationField } from '@/app/quotation-schema';
 
 export type AttributeMapping = { sourceIndex: number; fieldId: string };
+export function quotationAttributeDisplay(field: QuotationField, value: string) {
+  const choice = field.choices?.find(item => item.value === value);
+  return choice ? `${choice.label}${value === '' ? ' (저장값: 공란)' : choice.label !== value ? ` (저장값: ${value})` : ''}` : value || '(공란)';
+}
 export function canMapTranslatedAttribute(field: QuotationField) {
   return !field.readOnly && (['text', 'textarea'].includes(field.type) ||
     (field.type === 'select' && field.section === 'product' && field.visibility !== 'common' && Boolean(field.choices?.length)));
@@ -43,7 +47,7 @@ export function quotationTranslationBatch(productId: string, view: QuotationFiel
   const targets = selectedOptions ? included.filter(row => selectedOptions.includes(row.optionId)) : included;
   if (!targets.length) throw new Error('견적에 포함된 옵션이 없습니다.');
   const changes: QuotationChange[] = [];
-  const preview: { option: string; field: string; before: string; after: string }[] = [];
+  const preview: { option: string; field: string; before: string; after: string; beforeDisplay: string; afterDisplay: string }[] = [];
   const skipped: string[] = [];
   for (const row of targets) {
     const eligible = mappings.filter(mapping => {
@@ -55,9 +59,11 @@ export function quotationTranslationBatch(productId: string, view: QuotationFiel
     if (!eligible.length) continue;
     for (const change of quotationTranslationDraft(productId, view, job, row.optionId, eligible)) {
       const before = row.fields[change.fieldKey]?.value ?? '';
-      if (before === change.value) continue;
+      // An explicit empty choice must become a manual value, even if the default is empty.
+      if (before === change.value && change.value !== '') continue;
       changes.push(change);
-      preview.push({ option: row.optionLabel, field: view.resolved.schema.fields.find(field => field.id === change.fieldKey)!.label, before, after: change.value! });
+      const field = view.resolved.schema.fields.find(field => field.id === change.fieldKey)!;
+      preview.push({ option: row.optionLabel, field: field.label, before, after: change.value!, beforeDisplay: quotationAttributeDisplay(field, before), afterDisplay: quotationAttributeDisplay(field, change.value!) });
     }
   }
   if (changes.length) validateQuotationChanges(changes, { schema: view.resolved.schema, optionIds: options.map(row => row.optionId!), ownedImageKeys: view.imageKeys, overrides: view.overrides });

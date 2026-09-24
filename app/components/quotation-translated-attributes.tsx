@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
-import { canMapTranslatedAttribute, quotationTranslationDraft, quotationTranslationBatch } from '@/app/quotation-translation-adoption';
+import { canMapTranslatedAttribute, quotationAttributeDisplay, quotationTranslationDraft, quotationTranslationBatch } from '@/app/quotation-translation-adoption';
 import { ATTRIBUTE_RULE_LIMIT, createAttributeRules, loadAttributeRules } from '@/app/quotation-attribute-rules';
 import { fetchAttributeSuggestions } from '@/app/quotation-attribute-suggestions';
 
@@ -127,14 +127,25 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       </select></label>}
       {job && attributes.length === 0 && <p>이 결과에는 수집 상품 속성 번역이 없습니다. 옵션 번역은 옵션 편집 기능에서 반영해주세요.</p>}
       {attributes.length > 0 && <div><button type="button" className="btn ghost" onClick={()=>void serverRules(false)}>이 카테고리 서버 규칙 불러오기 · 현재 선택 교체</button><button type="button" className="btn ghost" disabled={serverRevision===null || !Object.values(mapping).some(Boolean)} onClick={()=>void serverRules(true)}>선택한 연결로 서버 규칙 저장{serverRevision===null?'':` · v${serverRevision}`}</button><button type="button" className="btn ghost" disabled={!Object.values(mapping).some(Boolean)} onClick={downloadRules}>선택한 연결 규칙 파일 저장</button><label>같은 카테고리 연결 규칙 불러오기 · 현재 선택 교체<input type="file" accept=".json,application/json" onChange={event=>{const file=event.target.files?.[0];event.target.value='';void importRules(file);}} /></label><small>원문 속성명이 정확히 같은 경우에만 연결을 선택합니다. 규칙 저장·불러오기는 상품값이나 견적을 자동 확정하지 않습니다.</small></div>}
-      {attributes.map(attribute => <div key={attribute.sourceIndex}>
+      {attributes.map(attribute => {
+        const fieldId = mapping[attribute.sourceIndex];
+        let preview = '', error = '';
+        if (fieldId && job) {
+          try {
+            const [change] = quotationTranslationDraft(productId, view, job, optionId, [{ sourceIndex: attribute.sourceIndex, fieldId }]);
+            const field = fields.find(item => item.id === fieldId)!;
+            preview = `현재값: ${quotationAttributeDisplay(field, row?.fields[fieldId]?.value ?? '')} → ${quotationAttributeDisplay(field, change.value!)}`;
+          } catch (cause) { error = cause instanceof Error ? cause.message : '연결 값을 확인해주세요.'; }
+        }
+        return <div key={attribute.sourceIndex}>
         <strong>{attribute.name}</strong><p style={{ whiteSpace: 'pre-wrap' }}>원문: {job!.review.source.attributes[attribute.sourceIndex].value}</p>
         <p style={{ whiteSpace: 'pre-wrap' }}>번역값: {attribute.value}</p>
         <label>견적 연결 항목<select value={mapping[attribute.sourceIndex] ?? ''} onChange={event => setMapping(previous => ({ ...previous, [attribute.sourceIndex]: event.target.value }))}>
           <option value="">반영하지 않음</option>{fields.map(field => <option key={field.id} value={field.id} disabled={row?.fields[field.id]?.source.startsWith('manual-')}>{field.label}{row?.fields[field.id]?.source.startsWith('manual-') ? ' · 직접 수정값 보존' : ''}</option>)}
         </select></label>
-        {mapping[attribute.sourceIndex] && <p style={{ whiteSpace: 'pre-wrap' }}>현재값: {row?.fields[mapping[attribute.sourceIndex]]?.value || '(공란)'} → {attribute.value}</p>}
-      </div>)}
+        {preview && <p style={{ whiteSpace: 'pre-wrap' }}>{preview}</p>}
+        {error && <p role="alert">{error}</p>}
+      </div>; })}
       {attributes.length > 0 && <button type="button" className="btn primary" disabled={!Object.values(mapping).some(Boolean)} onClick={apply}>선택한 번역값을 견적 초안에 반영</button>}
       {attributes.length > 0 && <fieldset><legend>번역 속성 일괄 적용 대상 · {selectedTargets.length}/{batchTargets.length}개</legend>
         <button type="button" className="btn ghost" onClick={()=>setExcludedTargets([])}>모두 선택</button>
@@ -145,7 +156,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       {batchPlan && <section aria-label="번역 속성 일괄 적용 미리보기">
         <p>선택한 번역값이 선택한 대상 옵션에 동일하게 적용됩니다. 재질·크기가 같은 옵션만 선택해주세요. 직접 수정값은 보존합니다.</p>
         <p>변경 {batchPlan.changes.length}개 · 직접 수정값 보존 {batchPlan.skipped.length}개</p>
-        {batchPlan.preview.length > 0 && <table><thead><tr><th>옵션</th><th>항목</th><th>현재값</th><th>적용값</th></tr></thead><tbody>{batchPlan.preview.map((item,index)=><tr key={index}><td>{item.option}</td><td>{item.field}</td><td style={{whiteSpace:'pre-wrap'}}>{item.before || '(공란)'}</td><td style={{whiteSpace:'pre-wrap'}}>{item.after}</td></tr>)}</tbody></table>}
+        {batchPlan.preview.length > 0 && <table><thead><tr><th>옵션</th><th>항목</th><th>현재값</th><th>적용값</th></tr></thead><tbody>{batchPlan.preview.map((item,index)=><tr key={index}><td>{item.option}</td><td>{item.field}</td><td style={{whiteSpace:'pre-wrap'}}>{item.beforeDisplay}</td><td style={{whiteSpace:'pre-wrap'}}>{item.afterDisplay}</td></tr>)}</tbody></table>}
         {batchPlan.skipped.length > 0 && <ul>{batchPlan.skipped.map((item,index)=><li key={index}>{item}</li>)}</ul>}
         <button type="button" className="btn primary" disabled={!batchPlan.changes.length} onClick={()=>{if(disabled || loading)return;onApply(batchPlan.changes);setBatch(null);setMessage(`${batchPlan.changes.length}개 변경을 옵션별 견적 초안에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);}}>동일한 속성값 확인 · 선택 옵션 초안 반영</button>
         <button type="button" className="btn ghost" onClick={()=>setBatch(null)}>일괄 적용 취소</button>

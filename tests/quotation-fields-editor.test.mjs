@@ -543,3 +543,27 @@ test('category choice rules reuse only compatible values and schema and preserve
  view.resolved.schema.fields.find(f=>f.id==='basketShape').choices.push({value:'new',label:'추가'});
  assert.throws(()=>loadAttributeRules(json,'p1',view,job,'red'),/양식이 변경/);
 });
+
+test('batch keeps explicit empty choice over empty automatic value and previews the actual choice storage',()=>{
+ const view=fixture(),job=attributeJob(view),adoption=load('app/quotation-translation-adoption.ts');
+ job.result.draft.attributes[0].value='해당사항없음';
+ for(const row of view.resolved.rows)row.fields.basketShape.value='';
+ const before=JSON.stringify(view);
+ const plan=adoption.quotationTranslationBatch('p1',view,job,[{sourceIndex:0,fieldId:'basketShape'}]);
+ assert.equal(plan.changes.length,2);
+ assert.ok(plan.changes.every(change=>change.value===''));
+ assert.ok(plan.preview.every(item=>item.afterDisplay==='해당사항없음 (저장값: 공란)'));
+ for(const id of ['red','blue'])assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,id,'basketShape').source,'manual-option');
+ assert.equal(JSON.stringify(view),before);
+ const field={...view.resolved.schema.fields.find(f=>f.id==='basketShape'),choices:[{value:'SQUARE',label:'사각형'}]};
+ assert.equal(adoption.quotationAttributeDisplay(field,adoption.translatedAttributeValue(field,'사각형')),'사각형 (저장값: SQUARE)');
+ assert.equal(adoption.quotationAttributeDisplay(field,'unknown'),'unknown');
+});
+
+test('attribute mapping UI previews resolved storage values and exposes invalid selections before apply',()=>{
+ const view=fixture(),job=attributeJob(view);job.result.draft.attributes[0].value='해당사항없음';
+ function render(){let index=0;const states=[[job],'job',{0:'basketShape'}];const {QuotationTranslatedAttributes}=load('app/components/quotation-translated-attributes.tsx',{react:{...React,useState(initial){const slot=index++;return [slot<states.length?states[slot]:initial,()=>{}];}}});return renderToStaticMarkup(React.createElement(QuotationTranslatedAttributes,{productId:'p1',view,optionId:'red',disabled:false,onApply(){throw Error('render must not write');}}));}
+ assert.match(render(),/해당사항없음 \(저장값: 공란\)/);
+ job.result.draft.attributes[0].value='알 수 없는 형태';const html=render();assert.match(html,/role="alert"/);assert.match(html,/정확히 일치하는 선택지가 하나/);
+ assert.doesNotMatch(html,/→ 알 수 없는 형태/);
+});
