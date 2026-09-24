@@ -17,7 +17,11 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const [ruleReport, setRuleReport] = useState<string[]>([]);
   const [serverRevision, setServerRevision] = useState<number | null>(null);
   const [batch, setBatch] = useState<{ key: string; plan: ReturnType<typeof quotationTranslationBatch> } | null>(null);
-  const batchKey = JSON.stringify([jobId, mapping, view.inputFingerprint, view.revision, optionId]);
+  const [excludedTargets, setExcludedTargets] = useState<(string | null)[]>([]);
+  const optionRows = view.resolved.rows.filter(item => item.optionId !== null);
+  const batchTargets = (optionRows.length ? optionRows : view.resolved.rows).filter(item => item.included);
+  const selectedTargets = batchTargets.filter(item => !excludedTargets.includes(item.optionId)).map(item => item.optionId);
+  const batchKey = JSON.stringify([jobId, mapping, view.inputFingerprint, view.revision, optionId, selectedTargets]);
   const batchPlan = batch?.key === batchKey ? batch.plan : null;
   const job = jobs.find(item => item.id === jobId);
   const row = view.resolved.rows.find(item => item.optionId === optionId);
@@ -62,7 +66,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
     setBatch(null);
     try {
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
-      setBatch({ key: batchKey, plan: quotationTranslationBatch(productId, view, job, selected) });
+      setBatch({ key: batchKey, plan: quotationTranslationBatch(productId, view, job, selected, selectedTargets) });
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '일괄 연결 항목을 확인해주세요.'); }
   }
   function downloadRules() {
@@ -132,13 +136,18 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
         {mapping[attribute.sourceIndex] && <p style={{ whiteSpace: 'pre-wrap' }}>현재값: {row?.fields[mapping[attribute.sourceIndex]]?.value || '(공란)'} → {attribute.value}</p>}
       </div>)}
       {attributes.length > 0 && <button type="button" className="btn primary" disabled={!Object.values(mapping).some(Boolean)} onClick={apply}>선택한 번역값을 견적 초안에 반영</button>}
-      {attributes.length > 0 && <button type="button" className="btn ghost" disabled={!Object.values(mapping).some(Boolean)} onClick={previewBatch}>포함된 모든 옵션에 적용 미리보기</button>}
+      {attributes.length > 0 && <fieldset><legend>번역 속성 일괄 적용 대상 · {selectedTargets.length}/{batchTargets.length}개</legend>
+        <button type="button" className="btn ghost" onClick={()=>setExcludedTargets([])}>모두 선택</button>
+        <button type="button" className="btn ghost" onClick={()=>setExcludedTargets(batchTargets.map(item=>item.optionId))}>모두 해제</button>
+        {batchTargets.map(item=><label key={item.optionId ?? 'common'}><input type="checkbox" checked={!excludedTargets.includes(item.optionId)} onChange={event=>{const checked=event.target.checked;setExcludedTargets(previous=>checked?previous.filter(id=>id!==item.optionId):[...previous,item.optionId]);}}/>{item.optionLabel}</label>)}
+        <button type="button" className="btn ghost" disabled={!selectedTargets.length || !Object.values(mapping).some(Boolean)} onClick={previewBatch}>선택한 옵션에 적용 미리보기</button>
+      </fieldset>}
       {batchPlan && <section aria-label="번역 속성 일괄 적용 미리보기">
-        <p>선택한 번역값이 모든 대상 옵션에 동일하게 적용됩니다. 옵션별 재질·크기가 다르면 개별 적용해주세요. 직접 수정값은 보존합니다.</p>
+        <p>선택한 번역값이 선택한 대상 옵션에 동일하게 적용됩니다. 재질·크기가 같은 옵션만 선택해주세요. 직접 수정값은 보존합니다.</p>
         <p>변경 {batchPlan.changes.length}개 · 직접 수정값 보존 {batchPlan.skipped.length}개</p>
         {batchPlan.preview.length > 0 && <table><thead><tr><th>옵션</th><th>항목</th><th>현재값</th><th>적용값</th></tr></thead><tbody>{batchPlan.preview.map((item,index)=><tr key={index}><td>{item.option}</td><td>{item.field}</td><td style={{whiteSpace:'pre-wrap'}}>{item.before || '(공란)'}</td><td style={{whiteSpace:'pre-wrap'}}>{item.after}</td></tr>)}</tbody></table>}
         {batchPlan.skipped.length > 0 && <ul>{batchPlan.skipped.map((item,index)=><li key={index}>{item}</li>)}</ul>}
-        <button type="button" className="btn primary" disabled={!batchPlan.changes.length} onClick={()=>{if(disabled || loading)return;onApply(batchPlan.changes);setBatch(null);setMessage(`${batchPlan.changes.length}개 변경을 옵션별 견적 초안에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);}}>동일한 속성값 확인 · 전체 초안 반영</button>
+        <button type="button" className="btn primary" disabled={!batchPlan.changes.length} onClick={()=>{if(disabled || loading)return;onApply(batchPlan.changes);setBatch(null);setMessage(`${batchPlan.changes.length}개 변경을 옵션별 견적 초안에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);}}>동일한 속성값 확인 · 선택 옵션 초안 반영</button>
         <button type="button" className="btn ghost" onClick={()=>setBatch(null)}>일괄 적용 취소</button>
       </section>}
     </fieldset>

@@ -22,11 +22,13 @@ export function quotationTranslationDraft(productId: string, view: QuotationFiel
   return validateQuotationChanges(changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides });
 }
 
-export function quotationTranslationBatch(productId: string, view: QuotationFieldsView, job: TranslationJob, mappings: readonly AttributeMapping[]) {
+export function quotationTranslationBatch(productId: string, view: QuotationFieldsView, job: TranslationJob, mappings: readonly AttributeMapping[], selectedOptions?: readonly (string | null)[]) {
   if (job.productId !== productId || job.productVersion !== view.productVersion || job.contentRevision !== view.contentRevision || job.status !== 'completed' || !job.result) throw new Error('최신 상품·콘텐츠에 해당하는 완료된 번역을 선택해주세요.');
   if (!mappings.length || mappings.length > 50 || new Set(mappings.map(item => item.fieldId)).size !== mappings.length || new Set(mappings.map(item => item.sourceIndex)).size !== mappings.length) throw new Error('속성과 견적 항목을 중복 없이 연결해주세요.');
   const options = view.resolved.rows.filter(row => row.optionId !== null);
-  const targets = (options.length ? options : view.resolved.rows).filter(row => row.included);
+  const included = (options.length ? options : view.resolved.rows).filter(row => row.included);
+  if (selectedOptions && (!selectedOptions.length || new Set(selectedOptions).size !== selectedOptions.length || selectedOptions.some(id => !included.some(row => row.optionId === id)))) throw new Error('견적에 포함된 적용 옵션을 중복 없이 선택해주세요.');
+  const targets = selectedOptions ? included.filter(row => selectedOptions.includes(row.optionId)) : included;
   if (!targets.length) throw new Error('견적에 포함된 옵션이 없습니다.');
   const changes: QuotationChange[] = [];
   const preview: { option: string; field: string; before: string; after: string }[] = [];

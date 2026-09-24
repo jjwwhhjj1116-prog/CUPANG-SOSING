@@ -418,3 +418,9 @@ test('batch validation is atomic and never returns partial changes for an invali
  const none=clone(view);none.resolved.rows.forEach(row=>row.included=false);
  assert.throws(()=>quotationTranslationBatch('p1',none,job,[{sourceIndex:0,fieldId:'noticeMaterial'}]),/포함된 옵션/);
 });
+
+test('batch target selection rejects foreign, excluded, duplicate and empty option lists',()=>{
+ const view=fixture(),job=attributeJob(view),mapping=[{sourceIndex:0,fieldId:'noticeMaterial'}];
+ const plan=quotationTranslationBatch('p1',view,job,mapping,['blue']);assert.equal(plan.changes.length,1);assert.equal(plan.changes[0].optionId,'blue');
+ for(const ids of [[],['missing'],['excluded'],['blue','blue'],[null]])assert.throws(()=>quotationTranslationBatch('p1',view,job,mapping,ids),/적용 옵션/);
+});

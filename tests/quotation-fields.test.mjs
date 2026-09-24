@@ -297,3 +297,30 @@ test('legacy selection can be saved to one category while legacy source and othe
   assert.equal((await h.store.readQuotationFields('owner','product')).overrides.common.brand,'검토할 이전값');
  }finally{h.sqlite.close();}
 });
+
+test('selected translated option attributes survive API save/reload and export without changing unselected or manual cells',async()=>{
+ const h=await harness();try{
+  const selected=await profile(h),optionModel=h.load('app/product-options.ts');
+  const options=optionModel.applyOptionRows(optionModel.emptyProductOptions('product'),['one','two','untouched','excluded'].map(id=>({...optionModel.emptyOptionInput(id),originalName:'LOCAL '+id,included:id!=='excluded',unitCostCny:2})),version);
+  h.sqlite.prepare('INSERT INTO product_options VALUES (?,?,?,?,?)').run('product','owner',1,JSON.stringify(options),version);
+  let view=await get(h,selected.id);
+  assert.equal((await put(h,view,[{fieldKey:'noticeMaterial',optionId:'two',value:''}],selected.id)).status,200);
+  view=await get(h,selected.id);
+  const before=view.resolved.rows.find(row=>row.optionId==='untouched').fields.noticeMaterial.value;
+  const job={productId:'product',productVersion:view.productVersion,contentRevision:view.contentRevision,status:'completed',review:{source:{attributes:[{name:'상품속성: 材质',value:'尼龙'}]}},result:{draft:{attributes:[{sourceIndex:0,name:'재질',value:'나일론'}]}}};
+  const plan=h.load('app/quotation-translation-adoption.ts').quotationTranslationBatch('product',view,job,[{sourceIndex:0,fieldId:'noticeMaterial'}],['one','two']);
+  assert.equal(plan.changes.length,1);assert.equal(plan.skipped.length,1);
+  assert.equal((await put(h,view,plan.changes,selected.id)).status,200);
+  const reread=await get(h,selected.id);
+  assert.equal(reread.overrides.options.one.noticeMaterial,'나일론');assert.equal(reread.overrides.options.two.noticeMaterial,'');
+  assert.equal(reread.overrides.options.untouched,undefined);assert.equal(reread.overrides.options.excluded,undefined);
+  const exporter=h.load('app/exports/quotation-source.ts'),saved=await exporter.readQuotationExportSource('owner','product',selected.id);
+  const resolved=exporter.resolveQuotationExport(saved);assert.deepEqual(JSON.parse(JSON.stringify(resolved)),reread.resolved);
+  const files=h.load('app/exports/quotation-fields.ts').quotationFieldFiles(saved,resolved,[],'test').files;
+  const document=JSON.parse(files.find(file=>file.name==='quotation-fields.json').data);
+  assert.equal(document.rows.find(row=>row.optionId==='one').fields.noticeMaterial.value,'나일론');
+  assert.equal(document.rows.find(row=>row.optionId==='two').fields.noticeMaterial.value,'');
+  assert.equal(document.rows.find(row=>row.optionId==='untouched').fields.noticeMaterial.value,before);
+  assert.equal(document.rows.some(row=>row.optionId==='excluded'),false);assert.equal(document.submissionReady,false);
+ }finally{h.sqlite.close();}
+});
