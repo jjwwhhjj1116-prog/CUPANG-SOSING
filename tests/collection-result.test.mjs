@@ -6,7 +6,7 @@ import ts from 'typescript';
 import {DatabaseSync} from 'node:sqlite';
 function load(file,deps={},mode='development'){
  const exports={};const code=ts.transpileModule(fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(code,{exports,URL,Response,TextDecoder,Uint8Array,Date,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,deps,mode);throw Error(name);}});return exports;
+ vm.runInNewContext(code,{exports,Error,URL,Response,TextEncoder,TextDecoder,Uint8Array,Date,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,deps,mode);throw Error(name);}});return exports;
 }
 const {validateCollectionResult:validate}=load('app/collection-result.ts');
 const sample=()=>({schemaVersion:1,sourceUrl:'https://detail.1688.com/offer/123.html?tracking=x',provider:'fixture-provider',collectedAt:'2026-01-01T00:00:00Z',title:'原文商品',description:'原文',options:[{sku:'sku-1',name:'黑色',unitPriceCny:3.25,minimumOrder:2,stock:null}],images:[{url:'https://cbu01.alicdn.com/img/test.jpg',role:'main'}]});
@@ -36,4 +36,22 @@ test('optional product attributes preserve multiline source values and old recei
  const result=validate({...sample(),attributes},'123');
  assert.deepEqual(JSON.parse(JSON.stringify(result.attributes)),attributes);
  for(const invalid of [null,{},Array.from({length:51},()=>attributes[0]),[{name:'',value:'x'}],[{name:'a'.repeat(191),value:'x'}],[{name:'n',value:'x'.repeat(1001)}],[{name:'n',value:'x',verified:true}]])assert.throws(()=>validate({...sample(),attributes:invalid},'123'));
+});
+
+test('delivery recovers a lost receipt response through the real API and SQLite without duplicate records', async () => {
+ const s=store(); let calls=0,stop=false;
+ const api=route('development',{'@/db/collection-results':s});
+ const {deliverCollectionResult}=load('app/collection-delivery.ts');
+ try {
+  const outcome=await deliverCollectionResult('j','123',sample(),{retryWait:async()=>{},shouldStop:()=>stop,fetcher:async(url,init)=>{
+   assert.equal(url,'/api/collection-jobs/j/result'); calls++;
+   const response=await api.POST(new Request('http://localhost'+url,init),ctx);
+   assert.equal(response.status,200);
+   if(calls===1){await response.body.cancel();throw Error('acknowledgement lost');}
+   stop=true;return response;
+  }});
+  assert.equal(calls,2);assert.equal(outcome.status,'stopped');assert.equal(outcome.receiptConfirmed,true);assert.equal(outcome.productId,null);
+  assert.equal(s.sqlite.prepare('SELECT count(*) AS n FROM collection_results').get().n,1);
+  assert.equal((await s.readCollectionResult('owner','j')).result.title,sample().title);
+ } finally {s.sqlite.close();}
 });
