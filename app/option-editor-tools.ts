@@ -2,16 +2,17 @@ import { calculateOptionPrices, OPTION_LIMIT, type OptionInput } from '@/app/pro
 import type { PricePolicy } from '@/app/pricing';
 import type { AssetRole } from '@/app/product-content';
 
-export type BulkOptionAction = { type: 'unitCostCny' | 'unitsPerPack'; value: number } | { type: 'include' | 'exclude' | 'remove' };
+export type BulkOptionAction = { type: 'unitCostCny' | 'unitsPerPack'; value: number } | { type: 'imageKey'; value: string | null } | { type: 'include' | 'exclude' | 'remove' };
 export type BulkOptionPreview = {
   base: string; action: BulkOptionAction; selectedIds: string[]; rows: OptionInput[];
   changes: { id: string; name: string; before: OptionInput; after: OptionInput | null; beforePrice: number | null; afterPrice: number | null; error: string | null }[];
 };
-export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: readonly string[], action: BulkOptionAction, policy: PricePolicy): BulkOptionPreview {
+export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: readonly string[], action: BulkOptionAction, policy: PricePolicy, imageKeys: readonly string[] = []): BulkOptionPreview {
   const selected = new Set(selectedIds);
   if (!selected.size || selected.size !== selectedIds.length || [...selected].some(id => !rows.some(row => row.id === id))) throw new Error('편집할 옵션을 다시 선택해주세요.');
   if (action.type === 'unitCostCny' && (!Number.isFinite(action.value) || action.value <= 0 || action.value > 1e9)) throw new Error('개당 원가는 0보다 크고 10억 CNY 이하이어야 합니다.');
   if (action.type === 'unitsPerPack' && (!Number.isInteger(action.value) || action.value < 1 || action.value > 1e6)) throw new Error('판매 단위당 구성 수량은 1~1,000,000 사이 정수입니다.');
+  if (action.type === 'imageKey' && action.value !== null && !imageKeys.includes(action.value)) throw new Error('이 상품에 저장된 이미지를 다시 선택해주세요.');
   const next = rows.flatMap(row => {
     if (!selected.has(row.id)) return [{ ...row }];
     if (action.type === 'remove') return [];
@@ -26,8 +27,9 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
       beforePrice: beforePrices.find(value => value.optionId === row.id)?.calculation?.supplyPrice ?? null, afterPrice: price?.calculation?.supplyPrice ?? null, error: price?.error ?? null };
   }) };
 }
-export function applyOptionBulk(rows: readonly OptionInput[], preview: BulkOptionPreview): OptionInput[] {
+export function applyOptionBulk(rows: readonly OptionInput[], preview: BulkOptionPreview, imageKeys: readonly string[] = []): OptionInput[] {
   if (JSON.stringify(rows) !== preview.base) throw new Error('미리보기 후 옵션이 바뀌었습니다. 변경 미리보기를 다시 실행해주세요.');
+  if (preview.action.type === 'imageKey' && preview.action.value !== null && !imageKeys.includes(preview.action.value)) throw new Error('선택한 이미지가 상품에서 제외되었습니다. 이미지를 다시 선택해주세요.');
   return preview.rows.map(row => ({ ...row }));
 }
 export function moveOption(rows: readonly OptionInput[], id: string, offset: -1 | 1): OptionInput[] {

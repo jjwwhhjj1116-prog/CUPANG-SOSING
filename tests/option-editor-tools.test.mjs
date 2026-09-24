@@ -14,6 +14,16 @@ const model = load('app/product-options.ts'); const tools = load('app/option-edi
 const policy = { exchangeRate: 100, supplyMargin: 0, coupangMargin: 0, minimumMargin: 0, msrpMultiple: 1, roundingUnit: 10 };
 const row = (id, extra = {}) => ({ ...model.emptyOptionInput(id), originalName: `原文-${id}`, translatedName: `옵션 ${id}`, supplierSku: `SKU-${id}`, unitCostCny: 0.1, unitsPerPack: 1, widthCm: 10, imageKey: 'owner/image.png', included: true, ...extra });
 
+test('bulk image preview preserves unselected options and facts, permits common-image reset and rejects removed files',()=>{
+ const rows=[row('a'),row('b',{stock:25})],before=JSON.stringify(rows),keys=['owner/image.png','owner/new.png'];
+ const preview=tools.previewOptionBulk(rows,['b'],{type:'imageKey',value:keys[1]},policy,keys);
+ assert.equal(JSON.stringify(rows),before);assert.equal(preview.rows[0].imageKey,keys[0]);assert.equal(preview.rows[1].imageKey,keys[1]);assert.equal(preview.rows[1].stock,25);assert.equal(preview.rows[1].supplierSku,'SKU-b');assert.equal(preview.changes[0].beforePrice,preview.changes[0].afterPrice);
+ assert.throws(()=>tools.applyOptionBulk(rows,preview,[keys[0]]),/이미지/);
+ const next=tools.applyOptionBulk(rows,preview,keys);assert.equal(next[1].imageKey,keys[1]);
+ const clear=tools.previewOptionBulk(next,['b'],{type:'imageKey',value:null},policy,keys);assert.equal(tools.applyOptionBulk(next,clear,keys)[1].imageKey,null);assert.equal(next[1].imageKey,keys[1]);
+ assert.throws(()=>tools.previewOptionBulk(rows,['b'],{type:'imageKey',value:'another/image.png'},policy,keys),/이미지/);
+});
+
 test('bulk quantity preview changes only chosen rows and recalculates actual supply price without mutating input', () => {
   const rows = [row('a'), row('b')]; const original = JSON.stringify(rows);
   const preview = tools.previewOptionBulk(rows, ['b'], { type: 'unitsPerPack', value: 3 }, policy);

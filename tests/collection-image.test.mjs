@@ -28,6 +28,19 @@ test('exact SKU images preserve manual blanks, translated work and edited suppli
  assert.equal(model.attachCollectedOptionImage(next,['a'],'owner/other.png','later').revision,2);
  assert.equal(model.attachCollectedOptionImage(current,['missing'],'owner/raw.png','now').revision,1);
 });
+test('saving an explicit option image removal survives later collection and repeat saves',()=>{
+ const initial=collectedOptions();
+ const assigned=model.attachCollectedOptionImage(initial,['a'],'owner/raw.png','now');
+ const rows=optionsModel.optionInputs(assigned);rows[0].imageKey=null;
+ const cleared=optionsModel.applyOptionRows(assigned,rows,'clear');
+ assert.equal(cleared.rows[0].provenance.imageKey,'manual');
+ assert.equal(cleared.rows[1].provenance.imageKey,'unverified');
+ const saved=optionsModel.applyOptionRows(cleared,optionsModel.optionInputs(cleared),'save-again');
+ const imported=model.attachCollectedOptionImage(saved,['a','b'],'owner/new.png','later');
+ assert.equal(imported.rows[0].imageKey,null);assert.equal(imported.rows[0].provenance.imageKey,'manual');
+ assert.equal(imported.rows[1].imageKey,'owner/new.png');assert.equal(imported.rows[1].provenance.imageKey,'collected');
+ assert.equal(assigned.rows[0].imageKey,'owner/raw.png');
+});
 const png=new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'));
 test('download bounds its trust to receipt CDN and rejects redirects and non-images',async()=>{
  let calls=0;const fetcher=async(url,init)=>{calls++;assert.equal(init.redirect,'manual');assert.equal(init.credentials,'omit');return new Response(png);};

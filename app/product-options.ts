@@ -91,6 +91,8 @@ export function applyOptionRows(current: ProductOptions, rows: OptionInput[], no
         changed = true;
         if (key === 'widthCm' || key === 'lengthCm' || key === 'heightCm') return [key, row[key] === null && before?.[key] == null ? 'unverified' : 'manual'];
         if (key === 'stock') return [key, row.stock === null && before?.stock == null ? 'unverified' : 'manual'];
+        // Clearing an assigned image is an explicit choice to use the common image.
+        if (key === 'imageKey') return [key, row.imageKey === null && before?.imageKey == null ? 'unverified' : 'manual'];
         if (key === 'color' || key === 'size') return [key, row[key] === '' && !before?.[key] ? 'unverified' : 'manual'];
         return [key, row[key] === '' || row[key] === null ? 'unverified' : 'manual'];
       })) as ProductOption['provenance'];

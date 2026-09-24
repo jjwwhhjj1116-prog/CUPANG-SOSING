@@ -40,6 +40,18 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('bulk option image edits reach quotation and preserve manual overrides and common-image fallback',()=>{
+ const input=fixture(),tools=load('app/option-editor-tools.ts'),keys=JSON.parse(input.product.image_keys);
+ const rows=optionModel.optionInputs(input.options);
+ const preview=tools.previewOptionBulk(rows,['red'],{type:'imageKey',value:'owner/detail.png'},policy,keys);
+ input.options=optionModel.applyOptionRows(input.options,tools.applyOptionBulk(rows,preview,keys),'now');
+ let resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.mainImage.value,'owner/detail.png');assert.equal(input.options.rows[0].provenance.imageKey,'manual');
+ const assets=keys.map((key,index)=>({key,name:`assets/${index}.png`}));assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].mainImage,'2.png');
+ input.overrides={common:{},options:{red:{mainImage:'owner/option.png'}}};assert.equal(model.resolveQuotationFields(input).rows[1].fields.mainImage.value,'owner/option.png');
+ const updated=optionModel.optionInputs(input.options);const clear=tools.previewOptionBulk(updated,['red'],{type:'imageKey',value:null},policy,keys);input.options=optionModel.applyOptionRows(input.options,tools.applyOptionBulk(updated,clear,keys),'later');
+ input.overrides=model.emptyQuotationOverrides();resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.mainImage.value,'owner/main.png');assert.equal(input.options.rows[0].imageKey,null);assert.equal(input.options.rows[0].provenance.imageKey,'manual');
+});
+
 test('explicit KC information reaches the brace notice and export without inferring certification IDs or other categories',()=>{
  const input=fixture();input.categoryId='81452';
  input.content=contentModel.applyContentPatch(input.content,{label:{certification:'일반 허가 문구',kcInformation:'확인한 KC 표시 내용'}},'now');
