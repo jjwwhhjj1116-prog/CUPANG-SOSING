@@ -203,3 +203,45 @@ test('numeric workbook constraints check final typed cells, integer requirements
     assert.ok(output.report.warnings.some(value=>value.includes('검사하지 못했습니다')));
   }
 });
+
+test('text length constraints check Korean text, whitespace and boundaries without truncating cells', async () => {
+  const rule = '<dataValidation type="textLength" operator="between" sqref="A5:A20"><formula1>2</formula1><formula2>4</formula2></dataValidation>';
+  const input = await inputFrom(entries(value => value.replace(/<dataValidation type="list"[\s\S]*?<\/dataValidation>/, rule)),
+    { rows: ['가방', '가나다라', '가나다라마', '가', ' 가 ', '가\n나', ''].map(title => ({ title, supplyPrice: 10, skuName: '검정' })) });
+  const result = await createMappedQuotation(input);
+  assert.equal(result.report.warnings.filter(value => value.includes('글자 수 입력 규칙')).length, 3);
+  for (const row of [7, 8, 11]) assert.ok(result.report.warnings.some(value => value.includes(`견적서!A${row} (상품명)`)));
+  const archive = await reader.readXlsxArchive(result.bytes.buffer);
+  const sheet = decode(archive.get('xl/worksheets/sheet1.xml'));
+  assert.ok(sheet.includes('가나다라마')); assert.ok(sheet.includes(rule));
+  assert.equal(result.report.verification, 'draft');
+});
+
+test('text length rules honor all comparison operators, allowed blanks and range coverage', async () => {
+  for (const [operator, expected] of [['between', 2], ['notBetween', 3], ['equal', 4], ['notEqual', 1], ['lessThan', 2], ['lessThanOrEqual', 1], ['greaterThan', 4], ['greaterThanOrEqual', 3]]) {
+    const rule = `<dataValidation type="textLength" operator="${operator}" allowBlank="true" sqref="A5:A9"><formula1>${['between','notBetween'].includes(operator) ? 2 : 4}</formula1><formula2>4</formula2></dataValidation>`;
+    const input = await inputFrom(entries(value => value.replace(/<dataValidation type="list"[\s\S]*?<\/dataValidation>/, rule)),
+      { rows: ['가', '가나', '가나다', '가나다라', '가나다라마', '', '범위밖문자열'].map(title => ({ title, supplyPrice: 0 })) });
+    const result = await createMappedQuotation(input);
+    assert.equal(result.report.warnings.filter(value => value.includes('글자 수 입력 규칙')).length, expected, operator);
+  }
+  const blank = await createMappedQuotation(await inputFrom(entries(value => value.replace(/<dataValidation type="list"[\s\S]*?<\/dataValidation>/,
+    '<dataValidation type="textLength" allowBlank="1" sqref="A5"><formula1>2</formula1><formula2>4</formula2></dataValidation>')), { rows: [{ title: '' }] }));
+  assert.equal(blank.report.warnings.some(value => value.includes('글자 수 입력 규칙')), false);
+  assert.ok(blank.report.missingRequired.some(value => value.header === '상품명'));
+});
+
+test('text length does not pretend to validate formulas, invalid limits, numeric formats or supplementary characters', async () => {
+  const run = (first, second, rows) => inputFrom(entries(value => value.replace(/<dataValidation type="list"[\s\S]*?<\/dataValidation>/,
+    `<dataValidation type="textLength" sqref="A5:A204"><formula1>${first}</formula1><formula2>${second}</formula2></dataValidation>`)), { rows }).then(createMappedQuotation);
+  for (const [first, second] of [['A1','10'], ['-1','4'], ['1.5','4'], ['5','4']]) {
+    const output = await run(first, second, [{ title: '가방' }]);
+    assert.ok(output.report.warnings.some(value => value.includes('검사하지 못했습니다')));
+  }
+  const uncertain = await run('1', '1', [{ title: '😀' }, { title: 123 }]);
+  assert.ok(uncertain.report.warnings.some(value => value.includes('글자 수 검사 2개') && value.includes('판정하지 않았습니다')));
+  assert.equal(uncertain.report.warnings.some(value => value.includes('글자 수 입력 규칙')), false);
+  const bounded = await run('1', '1', Array.from({ length: 200 }, () => ({ title: '가나다' })));
+  assert.equal(bounded.report.warnings.filter(value => value.includes('글자 수 입력 규칙')).length, 20);
+  assert.ok(bounded.report.warnings.some(value => value.includes('총 200개')));
+});

@@ -142,7 +142,7 @@ function delimitedCell(value: string | number): string { const text = String(val
 /** Check supported static constraints without evaluating workbook formulas. */
 function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection): string[] {
   const root = spans(source);
-  const warnings: string[] = []; let mismatches = 0; let unchecked = 0;
+  const warnings: string[] = []; let mismatches = 0; let unchecked = 0; let uncertainLengths = 0;
   const rules = root.children.filter(node => node.local === 'dataValidations').flatMap(node => node.children.filter(child => child.local === 'dataValidation'));
   for (const rule of rules) {
     let areas: ReturnType<typeof range>[];
@@ -156,21 +156,27 @@ function validationWarnings(source: string, profile: CategoryProfileInput, value
       return !formula || formula.children.length || raw.includes('<') ? null : decodeXml(raw).trim();
     };
     const first = expression('formula1');
-    let valid: (value: string | number) => boolean; let description: string;
+    let valid: (value: string | number) => boolean | null; let description: string;
     if (rule.attributes.type === 'list') {
       const allowed = first === null ? null : /^"[^"]*"$/.test(first) ? first.slice(1, -1).split(',')
         : xlsxStaticListValues(files, inspection, first, profile.template!.sheetName);
       if (!allowed) { unchecked++; continue; }
       valid = value => allowed.some(choice => choice.toLowerCase() === String(value).toLowerCase());
       description = '원본 드롭다운 선택지와 입력값이 일치하지 않습니다.';
-    } else if (rule.attributes.type === 'whole' || rule.attributes.type === 'decimal') {
+    } else if (rule.attributes.type === 'whole' || rule.attributes.type === 'decimal' || rule.attributes.type === 'textLength') {
+      const textLength = rule.attributes.type === 'textLength';
       const number = (text: string | null) => text !== null && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(text) && Number.isFinite(Number(text)) ? Number(text) : null;
       const minimum = number(first), maximum = number(expression('formula2'));
       const operator = rule.attributes.operator ?? 'between';
       const interval = operator === 'between' || operator === 'notBetween';
       if (minimum === null || (interval && (maximum === null || minimum > maximum))
         || !['between','notBetween','equal','notEqual','lessThan','lessThanOrEqual','greaterThan','greaterThanOrEqual'].includes(operator)) { unchecked++; continue; }
-      valid = value => {
+      if (textLength && (!Number.isSafeInteger(minimum) || minimum < 0 || (interval && (!Number.isSafeInteger(maximum) || maximum! < 0)))) { unchecked++; continue; }
+      valid = cell => {
+        // Supplementary characters depend on Excel compatibility settings. Numeric
+        // cell display also depends on formatting; neither is guessed here.
+        if (textLength && (typeof cell !== 'string' || /[\ud800-\udfff]/.test(cell))) return null;
+        const value = textLength ? (cell as string).length : cell;
         // Text cells that look numeric are still text in the generated workbook.
         if (typeof value !== 'number' || !Number.isFinite(value) || (rule.attributes.type === 'whole' && !Number.isInteger(value))) return false;
         switch (operator) {
@@ -184,18 +190,21 @@ function validationWarnings(source: string, profile: CategoryProfileInput, value
           default: return value >= minimum;
         }
       };
-      description = `원본 ${rule.attributes.type === 'whole' ? '정수' : '숫자'} 입력 규칙(${operator}: ${minimum}${interval ? ` ~ ${maximum}` : ''})에 맞지 않습니다.`;
+      description = `원본 ${textLength ? '글자 수' : rule.attributes.type === 'whole' ? '정수' : '숫자'} 입력 규칙(${operator}: ${minimum}${interval ? ` ~ ${maximum}` : ''})에 맞지 않습니다.`;
     } else { unchecked++; continue; }
     for (const [index, row] of values.entries()) for (const mapping of profile.mappings) {
       if (!covered(mapping.column, startRow + index)) continue;
       const value = row[mapping.column];
       if (value === '' && ['1', 'true'].includes(rule.attributes.allowBlank ?? '')) continue;
-      if (valid(value)) continue;
+      const verdict = valid(value);
+      if (verdict === null) { uncertainLengths++; continue; }
+      if (verdict) continue;
       mismatches++;
       if (warnings.length < 20) warnings.push(`${profile.template!.sheetName}!${columnName(mapping.column)}${startRow + index} (${profile.template!.headers[mapping.column] || '이름 없는 열'}): ${description}`);
     }
   }
   if (mismatches > 20) warnings.push(`입력 규칙 불일치 총 ${mismatches}개 중 첫 20개만 표시했습니다.`);
+  if (uncertainLengths) warnings.push(`글자 수 검사 ${uncertainLengths}개는 특수문자의 Excel 호환성 설정 또는 숫자 셀 서식에 따라 달라질 수 있어 판정하지 않았습니다. Excel에서 확인해주세요.`);
   if (unchecked) warnings.push(`원본 유효성 검사 ${unchecked}개는 수식·참조·지원하지 않는 규칙이므로 검사하지 못했습니다. Excel에서 확인해주세요.`);
   if (root.children.some(node => node.local === 'extLst')) warnings.push('Excel 확장 규칙은 검사하지 않았습니다. 원본 프로그램에서 유효성 검사를 확인해주세요.');
   return warnings;
