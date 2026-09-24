@@ -1,0 +1,505 @@
+- text: 브랜드
+  - generic: "*"
+  - generic: help
+  - textbox "예) 탐사"
+  - checkbox "브랜드 없음"
+  - generic: 브랜드 없음
+  - text: 옵션 및 가격
+  - generic: "*"
+  - generic: help
+  - generic: (* 녹색 별이 표시된 옵션은 택1 필수입력)
+  - table:
+    - rowgroup:
+      - row "예) 화이트(색상), 투명(색상), 블랙(색상), 실버(색상), 무지(색상), 캐릭터(패턴), 로고(패턴), 스테인리스(색상) 예) 1개, 2개, 1세트 예) 6500 예) 9900 예) 8805864565456":
+        - cell "예) 화이트(색상), 투명(색상), 블랙(색상), 실버(색상), 무지(색상), 캐릭터(패턴), 로고(패턴), 스테인리스(색상)"
+        - cell "예) 1개, 2개, 1세트"
+        - cell "예) 6500"
+        - cell "예) 9900"
+        - cell "예) 8805864565456"
+        - cell:
+          - checkbox
+        - cell
+  - table:
+    - rowgroup:
+      - row "색상 * help 수량 * help 공급가 * help 쿠팡 판매가 * help 상품 바코드 * help 쿠팡 바코드 help 전체삭제":
+        - columnheader "색상 * help":
+          - 'generic "* 노출 속성은 고객이 상품을 구매할 때 선택 옵션으로 사용되는 정보입니다. 노출 속성은 필수로 입력해야 하며, 정확한 값을 기재해야 합니다. * 속성에는 없지만 필수 정보가 있다면 상품명에 기입해주세요 (노출속성에 모델명, 수량으로 구성되어 있는데 색상으로 제품이 구분된다면 색상을 상품명에 기입해주세요) * 속성에 중량(g), 용량(ml)이 같이 있다면 상품에 표기된 정보 1개만 작성해주세요 * 법정계량단위만 등록이 가능합니다. - 길이 : 미터(m) / 센티미터(㎝) / 킬로미터(㎞) - 넓이 : 제곱미터(㎡) / 제곱킬로미터(㎢) / 헥타아르(㏊) - 부피 : 세제곱미터(㎥) / 세제곱센티미터(㎤) / 리터(ℓ) - 질량 : 그램(g) / 킬로그램(㎏)) / 톤(t) - 온도 : 섭씨도(℃) - 전류 : 암페어(A), 켈빈(K), 볼트(V), 헤르츠(Hz) - A4, B4, 16절, 8절 규격화된 종이 사이즈는 허용"':
+            - text: 색상 *
+            - generic: help
+        - columnheader "수량 * help":
+          - 'generic "* 노출 속성은 고객이 상품을 구매할 때 선택 옵션으로 사용되는 정보입니다. 노출 속성은 필수로 입력해야 하며, 정확한 값을 기재해야 합니다. * 속성에는 없지만 필수 정보가 있다면 상품명에 기입해주세요 (노출속성에 모델명, 수량으로 구성되어 있는데 색상으로 제품이 구분된다면 색상을 상품명에 기입해주세요) * 속성에 중량(g), 용량(ml)이 같이 있다면 상품에 표기된 정보 1개만 작성해주세요 * 법정계량단위만 등록이 가능합니다. - 길이 : 미터(m) / 센티미터(㎝) / 킬로미터(㎞) - 넓이 : 제곱미터(㎡) / 제곱킬로미터(㎢) / 헥타아르(㏊) - 부피 : 세제곱미터(㎥) / 세제곱센티미터(㎤) / 리터(ℓ) - 질량 : 그램(g) / 킬로그램(㎏)) / 톤(t) - 온도 : 섭씨도(℃) - 전류 : 암페어(A), 켈빈(K), 볼트(V), 헤르츠(Hz) - A4, B4, 16절, 8절 규격화된 종이 사이즈는 허용"':
+            - text: 수량 *
+            - generic: help
+        - columnheader "공급가 * help":
+          - generic "* 공급사가 쿠팡에 제공하는 가격입니다.":
+            - text: 공급가 *
+            - generic: help
+        - columnheader "쿠팡 판매가 * help":
+          - generic "* 공급사가 제안하는 소비자 판매가를 입력하여주세요. * 값이 비어있거나, 공급가보다 금액이 작을 수 없습니다.":
+            - text: 쿠팡 판매가 *
+            - generic: help
+        - columnheader "상품 바코드 * help":
+          - generic "상품의 바코드를 입력하여 주세요. 아래는 사용할 수 있는 바코드 형태입니다. * 알파벳 대문자, 숫자, 하이픈(-)만 사용 가능 * 6자 ~ 14자 범위 내 사용 가능 * 공백 허용 가능 단, 맨 앞과 뒤, 연속적인 공백은 사용불가 만약, 상품의 고유 바코드가 없거나, 바코드 운영 규정에 부합하지 않는 경우 '바코드 없음(쿠팡 바코드 생성 요청)'을 선택하세요. 바코드 생성 이후에는 수정이 어려울 수 있으니 잘못 입력된 부분은 없는지 반드시 확인 해주세요":
+            - text: 상품 바코드 *
+            - generic: help
+        - columnheader "쿠팡 바코드 help":
+          - generic "상품의 고유 바코드가 없거나, 바코드 운영 규정에 부합하지 않는 경우 '쿠팡 바코드'를 선택해주세요":
+            - text: 쿠팡 바코드
+            - generic: help
+        - columnheader "전체삭제":
+          - button "전체삭제" [disabled]
+    - rowgroup
+  - table:
+    - rowgroup:
+      - row
+    - rowgroup
+  - table:
+    - rowgroup
+  - button "add":
+    - generic: add
+  - button "옵션 추가 (최대 100개)"
+  - button "모든 옵션 한 번에 입력하기"
+  - generic: MSRP, OSRP 데이터 이용 약관 *
+  - button "자세히보기"
+  - checkbox "이용약관을 읽고 동의합니다."
+  - generic: 이용약관을 읽고 동의합니다.
+  - text: 제조사
+  - generic: "*"
+  - generic: help
+  - textbox "예) 쿠팡"
+  - text: 거래타입
+  - generic: "*"
+  - generic: help
+  - radio "제조사" [checked]
+  - generic: 제조사
+  - radio "공식총판사"
+  - generic: 공식총판사
+  - radio "공식대리점"
+  - generic: 공식대리점
+  - radio "기타 도소매업자"
+  - generic: 기타 도소매업자
+  - generic: info
+  - text: 거래타입은 쿠팡에서 상품 관리에 중요하게 사용되므로 정확히 선택해주세요. 여러 유형에 해당되는 경우 쿠팡 로켓배송 매입 비중이 가장 높은 타입으로 선택해주세요.
+  - text: "- 제조사 : 제조사 직거래, 글로벌 업체의 한국법인 또는 제조사가 브랜드 라이선스를 보유하며 수입, 생산, 판매"
+  - text: "- 공식총판사 : 제조사 지정 공식 총판사가 쿠팡과 거래하며, 제조사의 물류 운영을 담당"
+  - text: "- 공식대리점 : 제조사 지정 공식 대리점 또는 제조사 혹은 글로벌브랜드의 법인이 아니면서 글로벌 브랜드로부터 공식 라이선스를 받아 수입 판매하는 경우"
+  - text: "- 기타 도소매업자 : 위를 제외한 모든 거래업체, 병행수입사"
+  - text: 과세여부
+  - generic: "*"
+  - generic: help
+  - radio "과세" [checked]
+  - generic: 과세
+  - radio "면세"
+  - generic: 면세
+  - radio "영세"
+  - generic: 영세
+  - generic: info
+  - text: 만약 내 상품의 과세 여부를 모를 경우 아래 사이트에서 과세 법령을 검색해 주세요.
+  - text: https://txsi.hometax.go.kr/docs/main.jsp
+  - text: 수입여부
+  - generic: "*"
+  - generic: help
+  - radio "수입대상아님" [checked]
+  - generic: 수입대상아님
+  - radio "수입상품"
+  - generic: 수입상품
+  - radio "병행수입상품"
+  - generic: 병행수입상품
+  - text: 검색태그
+  - generic: help
+  - textbox "검색태그 입력 시, 콤마를 넣어 구분해주세요. (,)"
+  - text: 검색 부가 정보
+  - generic: help
+  - generic: 휴지걸이 형태
+  - combobox:
+    - option "휴지걸이"
+    - option "화장지/점보롤케이스"
+    - option "해당사항없음" [selected]
+  - generic: 뚜껑 포함여부
+  - combobox:
+    - option "뚜껑포함"
+    - option "해당사항없음" [selected]
+  - generic: 컵 재질
+  - combobox:
+    - option "도자기"
+    - option "유리"
+    - option "크리스탈"
+    - option "실리콘"
+    - option "플라스틱/아크릴"
+    - option "스테인리스"
+    - option "법랑"
+    - option "우드"
+    - option "주석"
+    - option "유기"
+    - option "양은"
+    - option "트라이탄"
+    - option "해당사항없음" [selected]
+  - generic: 욕실수납용품 재질
+  - combobox:
+    - option "플라스틱"
+    - option "스테인리스"
+    - option "원목"
+    - option "유리"
+    - option "철재"
+    - option "규조토"
+    - option "실리콘"
+    - option "스펀지"
+    - option "세라믹/도자기"
+    - option "합성고무"
+    - option "해당사항없음" [selected]
+  - generic: 욕실선반 형태
+  - combobox:
+    - option "코너/모서리선반"
+    - option "사각선반"
+    - option "일자선반"
+    - option "해당사항없음" [selected]
+  - generic: 욕실용품 설치방법
+  - combobox:
+    - option "부착형"
+    - option "벽면설치형"
+    - option "비치형"
+    - option "걸이형"
+    - option "자석형"
+    - option "고정형"
+    - option "흡착형"
+    - option "해당사항없음" [selected]
+  - generic: 수납/정리용품 재질
+  - combobox:
+    - option "플라스틱"
+    - option "패브릭"
+    - option "부직포"
+    - option "PVC"
+    - option "라탄"
+    - option "원목/우드"
+    - option "강철/철제"
+    - option "스테인리스"
+    - option "아크릴"
+    - option "ABS"
+    - option "고무"
+    - option "폴리프로필렌(PP)"
+    - option "폴리에스터(PE)"
+    - option "벨벳"
+    - option "종이"
+    - option "해당사항없음" [selected]
+  - generic: 가로길이
+  - textbox "예) 30cm, 5mm, 17.5cm 등"
+  - generic: 손잡이 포함여부
+  - combobox:
+    - option "손잡이 포함"
+    - option "미포함"
+    - option "해당사항없음" [selected]
+  - generic: 투명창여부
+  - combobox:
+    - option "투명창"
+    - option "해당사항없음" [selected]
+  - generic: 물빠짐여부
+  - combobox:
+    - option "가능"
+    - option "해당사항없음" [selected]
+  - generic: 거울 유무
+  - combobox:
+    - option "거울 있음"
+    - option "거울 없음"
+    - option "해당사항없음" [selected]
+  - generic: 세트여부
+  - combobox:
+    - option "세트"
+    - option "단품"
+    - option "해당사항없음" [selected]
+  - generic: 바퀴 유무
+  - combobox:
+    - option "바퀴있음"
+    - option "바퀴없음"
+    - option "해당사항없음" [selected]
+  - generic: 색상계열
+  - combobox:
+    - option "블랙계열"
+    - option "네이비계열"
+    - option "그레이계열"
+    - option "실버계열"
+    - option "레드계열"
+    - option "오렌지계열"
+    - option "옐로우계열"
+    - option "그린계열"
+    - option "블루계열"
+    - option "바이올렛/보라계열"
+    - option "핑크계열"
+    - option "화이트계열"
+    - option "브라운계열"
+    - option "골드계열"
+    - option "베이지계열"
+    - option "멀티(혼합)컬러"
+    - option "투명계열"
+    - option "아이보리 계열"
+    - option "해당사항없음" [selected]
+  - generic: 높이
+  - textbox "예) 1cm, 2m 등"
+  - generic: 자석 부착가능 여부
+  - combobox:
+    - option "자석부착가능"
+    - option "해당사항없음" [selected]
+  - generic: 단 수
+  - textbox "예) 1단, 2단, 3단, 4단, 5단"
+  - generic: 최소 연령
+  - textbox "예) 12개월, 3세 등"
+  - generic: 최대 연령
+  - textbox "예) 36개월, 7세 등"
+  - generic: 타공 여부
+  - combobox:
+    - option "무타공"
+    - option "타공"
+    - option "해당사항없음" [selected]
+  - generic: 선반 용도
+  - combobox:
+    - option "다용도"
+    - option "주방용"
+    - option "욕실용"
+    - option "해당사항없음" [selected]
+  - generic: 슬라이딩 여부
+  - combobox:
+    - option "슬라이딩"
+    - option "해당사항없음" [selected]
+  - generic: 칫솔 수납 개수
+  - textbox "예) 1개, 2개, 3개 등"
+  - generic: 마감 유형
+  - combobox:
+    - option "브러쉬 처리"
+    - option "래커 처리"
+    - option "오일 마감"
+    - option "도장"
+    - option "광택 처리"
+    - option "분체 도장"
+    - option "무광택"
+    - option "고광택"
+    - option "고민 처리"
+    - option "광택 처리되지 않음"
+    - option "글로시"
+    - option "매트"
+    - option "미완성"
+    - option "반광택"
+    - option "반무광"
+    - option "반짝임"
+    - option "새틴"
+    - option "쉬머리"
+    - option "쉬어"
+    - option "페인트 처리"
+    - option "해당사항없음" [selected]
+  - generic: 항목 너비가 짧은 가장자리
+  - textbox "예) 60cm, 80cm, 120cm"
+  - generic: 포함 구성 요소
+  - combobox:
+    - option "갓"
+    - option "나사"
+    - option "리모콘"
+    - option "반사판"
+    - option "배터리"
+    - option "본품"
+    - option "설명서"
+    - option "스탠드"
+    - option "어댑터"
+    - option "전구"
+    - option "전원 케이블"
+    - option "조광기"
+    - option "콘센트"
+    - option "해당없음"
+    - option "On-Off 스위치"
+    - option "USB포트"
+    - option "어플리케이터 브러시"
+    - option "주걱"
+    - option "추출 도구"
+    - option "해당사항없음" [selected]
+  - generic: 상품 재질
+  - combobox:
+    - option "가공 목재"
+    - option "가죽"
+    - option "고무"
+    - option "구리"
+    - option "금속"
+    - option "니켈"
+    - option "대나무"
+    - option "대리석"
+    - option "세라믹"
+    - option "등나무"
+    - option "로즈우드"
+    - option "린넨"
+    - option "망고 나무"
+    - option "면"
+    - option "목재"
+    - option "붕규산 유리"
+    - option "비닐"
+    - option "석재"
+    - option "수지"
+    - option "쉘"
+    - option "스테인레스 스틸"
+    - option "실리콘"
+    - option "실크"
+    - option "아연"
+    - option "아카시아"
+    - option "아크릴"
+    - option "아크릴로니트릴 부타디엔 스티렌 (ABS)"
+    - option "알루미늄"
+    - option "연철"
+    - option "유리"
+    - option "인조 가죽"
+    - option "인조 목재"
+    - option "종이"
+    - option "주철"
+    - option "참피나무"
+    - option "철"
+    - option "청동"
+    - option "콘크리트"
+    - option "크리스탈"
+    - option "탄소강"
+    - option "폴리스티렌"
+    - option "폴리에스테르"
+    - option "폴리에틸렌"
+    - option "폴리에틸렌 테레프탈레이트 (PET)"
+    - option "폴리염화비닐"
+    - option "폴리카보네이트"
+    - option "폴리프로필렌"
+    - option "플라스틱"
+    - option "합금강"
+    - option "황동"
+    - option "해당없음"
+    - option "고탄소강"
+    - option "공작석"
+    - option "극세사"
+    - option "금"
+    - option "껍질"
+    - option "나일론"
+    - option "남옥"
+    - option "너도밤나무"
+    - option "도자기"
+    - option "라인스톤"
+    - option "마노"
+    - option "말털"
+    - option "망간강"
+    - option "모가나이트"
+    - option "모슬린"
+    - option "밀짚"
+    - option "밍크 모피"
+    - option "백단"
+    - option "백랍"
+    - option "벽옥"
+    - option "보석"
+    - option "뿔"
+    - option "석영"
+    - option "소나무"
+    - option "소달라이트"
+    - option "스털링 실버"
+    - option "스테인레스강"
+    - option "스톤"
+    - option "실버"
+    - option "아마조나이트"
+    - option "아크릴로니트릴 부타디엔 스티렌"
+    - option "양모"
+    - option "에틸렌 비닐 아세테이트"
+    - option "에폭시 수지"
+    - option "열가소성 엘라스토머"
+    - option "열가소성 폴리우레탄"
+    - option "오닉스"
+    - option "올리브 우드"
+    - option "용암"
+    - option "유리 섬유"
+    - option "유리 충전 나일론"
+    - option "인모"
+    - option "인조 밍크"
+    - option "인조 실크"
+    - option "자수정"
+    - option "적철광"
+    - option "전기석"
+    - option "점토"
+    - option "진주"
+    - option "카드지"
+    - option "큐빅 지르코니아"
+    - option "크롬-바나듐강"
+    - option "타이거 아이"
+    - option "탄소 섬유"
+    - option "터키석"
+    - option "티타늄"
+    - option "포금"
+    - option "폴리부틸렌 테레프탈레이트 섬유"
+    - option "폴리비닐아세테이트(PVA)"
+    - option "폴리에스터"
+    - option "폴리에틸렌 테레프탈레이트"
+    - option "폴리에틸렌(PE)"
+    - option "폴리염화비닐(PVC)"
+    - option "폴리우레탄"
+    - option "폴리우레탄 폼"
+    - option "하울라이트"
+    - option "합성모"
+    - option "헬리오트로프"
+    - option "호두"
+    - option "호박색"
+    - option "흑단"
+    - option "UV 수지"
+    - option "해당사항없음" [selected]
+  - generic: 항목 길이가 더 긴 가장자리
+  - textbox "예) 120cm, 150cm, 180cm"
+  - generic: 품목 모양
+  - combobox:
+    - option "광장형"
+    - option "꽃잎형"
+    - option "나비형"
+    - option "다이아몬드형"
+    - option "물방울형"
+    - option "라운드"
+    - option "물결 모양"
+    - option "반원형"
+    - option "배럴형"
+    - option "빗형"
+    - option "사각형"
+    - option "삼각형"
+    - option "스타형"
+    - option "하트형"
+    - option "애플형"
+    - option "연필형"
+    - option "오각형"
+    - option "원형"
+    - option "육각형"
+    - option "지팡이형"
+    - option "직사각형"
+    - option "직선형"
+    - option "클라우드형"
+    - option "타원형"
+    - option "팔각형"
+    - option "플랫형"
+    - option "해당없음"
+    - option "햇살형"
+    - option "X형"
+    - option "고양이 모양"
+    - option "관 모양"
+    - option "눈송이형"
+    - option "돔형"
+    - option "드럼 모양"
+    - option "드롭형"
+    - option "립스틱 모양"
+    - option "발 모양"
+    - option "발레리나 모양"
+    - option "버섯 모양"
+    - option "불규칙형"
+    - option "산봉우리형"
+    - option "뾰족구두 모양"
+    - option "아몬드형"
+    - option "원뿔형"
+    - option "잎 모양"
+    - option "정사각형"
+    - option "타워형"
+    - option "불꽃 모양"
+    - option "해파리 모양"
+    - option "화살촉형"
+    - option "활 모양"
+    - option "꽃 모양"
+    - option "벨 모양"
+    - option "스틸레토"
+    - option "파우치"
+    - option "토끼 모양"
+    - option "해당사항없음" [selected]
+  - generic: Global Trade Item Number
+  - textbox "예)":
+    - /placeholder: "예) "
+  - generic: Parent Manufacturer Part Number
+  - textbox "예)":
+    - /placeholder: "예) "
+  - generic: Manufacturer Part Number
+  - textbox "예) 203.518.84,BT1049,S-ORG-01,M-ORG-02,D-ORG-03"

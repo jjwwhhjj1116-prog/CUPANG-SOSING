@@ -2,7 +2,7 @@ import type { QuotationField } from '@/app/quotation-schema';
 
 // Couplus saved quotation 260921009001, observed 2026-09-24.
 // Saved product values are not evidence of category-wide automatic defaults.
-// Supplier Hub field IDs/choice encodings remain unverified.
+// Product Page choices and required exposed fields verified in Supplier Hub 2026-09-24.
 export const couplus64497Path = ['생활용품', '욕실용품', '욕실수납/정리', '양치용품정리'];
 export const couplus64497Attributes = [
   {
@@ -520,12 +520,12 @@ export const couplus64497Attributes = [
 ] as const;
 const make = (id: string, label: string, section: QuotationField['section'], visibility: QuotationField['visibility']): QuotationField => ({
   id, label, section, visibility, type: 'text', required: false, reviewRequired: true, maxLength: 2000,
-  help: '쿠플러스 양치용품정리 견적에서 확인한 항목입니다. Supplier Hub 입력값과 카테고리 공통 기본값은 아직 대조하지 않았습니다.',
+  help: '쿠플러스와 Supplier Hub 상품정보에서 대조한 항목입니다. 해당사항없음 선택값은 빈 문자열입니다.',
 });
 export const couplus64497Fields: QuotationField[] = [
   ...[['color', '색상'], ['quantity', '수량']].map(([id,label]) => make(id,label,'product','exposed')),
   ...couplus64497Attributes.map(item => ({ ...make(item.id,item.label,'product','hidden'),
-    ...(item.choices.length ? { type: 'select' as const, choices: item.choices.map(value => ({value,label:value})) } : {}),
+    ...(item.choices.length ? { type: 'select' as const, choices: item.choices.map(value => ({value: value === '해당사항없음' ? '' : value,label:value})) } : {}),
   })),
   ...[['noticeNameModel','품명 및 모델명'],['noticePermission','인증/허가 사항'],
     ['noticeCountryOfOrigin','제조국(원산지)'],['noticeManufacturerImporter','제조자(수입자)'],

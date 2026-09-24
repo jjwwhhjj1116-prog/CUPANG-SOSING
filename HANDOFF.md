@@ -1160,3 +1160,11 @@ AI등록 화면 확인:
 - 검증: 전체413/413, TypeScript/ESLint/production build/diff 검사. 실제 Chrome localhost 상품추가 → 64497 검색 → 분류 선택에서 경로/코드/관찰 근거/URL 입력 버튼 활성화를 확인했다. 새 수집 요청이나 상품은 생성하지 않았다. outputs/step79-tests.log, step79-lint.log, step79-build.log.
 - 관찰 한계: Supplier Hub 80719 기본정보는 상품명 입력이 다음 이동 시 비어 뒤 단계에 접근하지 못했다. 이미지·인증·물류 신규 대조는 미완료. 실제1688 공급원, 공식 Excel/전체 분류, AI 실호출, Supplier Hub 전송 adapter는 여전히 미완성. 유료 호출·운영 등록·Cloudflare 배포 없음.
 - 다음 시작점: docs/couplus-64497-analysis-2026-09-24.md를 기준으로 64497 공식 양식과 고시 필수조건·선택값 인코딩 대조. Chrome supplierChrome 연결의 couplusNext는 기존 화이트 옵션 견적, hubNext는 미저장 기본정보, sourceflow79는 로컬64497 선택 모달이다. 브라우저 탭이 폐기되면 기존 browser binding에서 새 탭을 만든다.
+
+## 80. 64497 공식 상품정보 대조와 견적 검증 규칙 반영 — 2026-09-24
+
+- 시작 main 5fcd34b, 미커밋 변경 없음. supplierChrome 새 hub80 탭에서 카테고리 트리로 양치용품 정리(64497)를 선택했다. 상품명은 press('A')/Tab으로 유지되어 상품정보 진입에 성공했다. 다음 이동 뒤 마지막 저장 시각이 표시되어 임시저장 가능성이 있다. 저장하기/최종등록 버튼은 누르지 않았다.
+- 공식 노출2/비노출33/선택형22 및 미리보기 상품고시5개 대조 완료. 색상·수량·공급가·판매가 필수, 검색태그 선택, 판매가≥공급가, 최대100옵션, 바코드6~14자/허용문자/공백 규칙을64497에 적용했다. 해당사항없음의 실제 선택값은 빈 문자열이며 해당없음 실질 선택지는 별도 유지한다.
+- 기존 Couplus 표시 경로와 필드 ID/수동값/수동 공란을 보존했다. DB 마이그레이션 없음. 이전 리터럴 해당사항없음은 재검토가 필요할 수 있다. 코드·상품정보 관찰 상태만 갱신하고 submissionReady=false 유지. 새 JSON/DOM 근거와 확인/추정/미확인 분석 문서 추가.
+- 검증: 전체414/414, 관련49/49, TypeScript/ESLint/production build/diff 통과. outputs/step80-tests.log, step80-focused.log, step80-lint.log, step80-build.log. 공식 선택값 전수 비교·가격·바코드·옵션한도·수동 공란 무변경을 검사했다. SourceFlow 새 UI의 브라우저 검증은 미실시.
+- 다음 시작점: hub80의64497 상품정보/미리보기에서 법적정보·이미지·물류 입력 규칙 대조를 이어간다. 실제1688 공급원, 공식 Excel/전체 분류, AI 실호출, 외부이미지전달 및 Supplier Hub 전송adapter는 여전히 미완성. 유료 호출·최종 운영등록·Cloudflare배포 없음.

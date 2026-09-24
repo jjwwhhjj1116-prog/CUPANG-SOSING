@@ -608,10 +608,10 @@ test('quotation detail images compose banners and preserve explicit manual overr
 });
 
 
-test('64497 matches observed Couplus attributes and notices while retaining unverified status',()=>{
+test('64497 preserves Couplus attributes and notices after official product-page verification',()=>{
  const schema=model.getQuotationSchema('64497');
  const evidence=JSON.parse(fs.readFileSync(new URL('../docs/couplus-64497-quotation-2026-09-24.json',import.meta.url),'utf8'));
- assert.equal(schema.status,'unconfirmed');assert.equal(schema.submissionReady,false);
+ assert.equal(schema.status,'observed');assert.equal(schema.submissionReady,false);
  assert.deepEqual(clone(schema.categoryPath),evidence.path);
  assert.deepEqual(clone(schema.fields.filter(f=>f.visibility==='exposed').map(f=>f.label)),evidence.exposed);
  const hidden=schema.fields.filter(f=>f.visibility==='hidden');assert.equal(hidden.length,33);
@@ -623,6 +623,26 @@ test('64497 matches observed Couplus attributes and notices while retaining unve
  const mutable=model.getQuotationSchema('64497');mutable.fields.find(f=>f.id==='tooth_cupMaterial').choices[0].label='변경';
  assert.equal(model.getQuotationSchema('64497').fields.find(f=>f.id==='tooth_cupMaterial').choices[0].label,'해당사항없음');
 });
+test('64497 official choices, required fields, prices and barcodes are enforced without changing saved overrides',()=>{
+ const schema=model.getQuotationSchema('64497');
+ const evidence=JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-64497-product-2026-09-24.json',import.meta.url),'utf8'));
+ const selects=schema.fields.filter(f=>f.id.startsWith('tooth_')&&f.type==='select');
+ assert.equal(selects.length,evidence.selectsInDisplayedOrder.length);
+ selects.forEach((field,index)=>assert.deepEqual(clone(field.choices).sort((a,b)=>a.label.localeCompare(b.label)),evidence.selectsInDisplayedOrder[index].map(({label,value})=>({label,value})).sort((a,b)=>a.label.localeCompare(b.label))));
+ for(const id of evidence.required)assert.equal(schema.fields.find(f=>f.id===id).required,true);
+ assert.equal(schema.fields.find(f=>f.id==='searchTags').required,false);
+ assert.equal(model.quotationOptionLimitIssue(schema,100),null);
+ assert.match(model.quotationOptionLimitIssue(schema,101),/100/);
+ assert.ok(model.quotationPriceIssues(schema,'5000','4999').length);
+ assert.equal(model.quotationPriceIssues(schema,'5000','5000').length,0);
+ assert.ok(model.quotationBarcodeIssues('64497','existing','abc').length);
+ assert.equal(model.quotationBarcodeIssues('64497','existing','AB123456').length,0);
+ const input=fixture();input.categoryId='64497';input.overrides={common:{tooth_cupMaterial:''},options:{}};
+ const before=JSON.stringify(input);const row=model.resolveQuotationFields(input).rows[1];
+ assert.equal(row.fields.tooth_cupMaterial.value,'');assert.equal(row.fields.tooth_cupMaterial.source,'manual-common');
+ assert.equal(JSON.stringify(input),before);
+});
+
 test('64497 links saved content and preserves blanks without copying another seller product',()=>{
  const input=fixture();input.categoryId='64497';
  let row=model.resolveQuotationFields(input).rows[1];
