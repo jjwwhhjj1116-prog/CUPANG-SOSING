@@ -10,6 +10,7 @@ import { collectedTranslationAttributes } from '@/app/collected-translation-attr
 import { translationLabelAdoption, type TranslationLabelMapping } from '@/app/translation-label-adoption';
 import { TranslationLabelMappingEditor } from '@/app/components/translation-label-mapping';
 import { TranslationBatchPreview } from '@/app/components/translation-batch-preview';
+import { TranslationIntegratedPreview } from '@/app/components/translation-integrated-preview';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
@@ -213,6 +214,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
         {job.result && <>
           <p>AI 생성 초안 · 출처 검토 필요 · 기존 콘텐츠에 자동 적용하지 않았습니다.</p>
+          <TranslationIntegratedPreview key={`integrated:${job.id}:${content?.revision}`} productId={productId} version={version} jobId={job.id} disabled={busy || stale} onSaved={onContentSaved} />
           {content && <TranslationBatchPreview content={content} job={job} version={version} disabled={busy || job.productVersion !== version} onApply={input => void adopt([], undefined, input)} />}
           {job.result.usage && <p>입력 {job.result.usage.inputTokens.toLocaleString()}토큰 · 출력 {job.result.usage.outputTokens.toLocaleString()}토큰</p>}
           {job.result.draft.warnings.length > 0 && <ul>{job.result.draft.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}

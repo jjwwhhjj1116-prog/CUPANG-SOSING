@@ -32,7 +32,7 @@ export function optionTranslationAttributes(options:ProductOptions, allowEmpty =
  return attributes;
 }
 /** Match immutable reviewed source indexes to IDs and exact originals; preserve every other option field. */
-export function adoptOptionTranslations(options:ProductOptions,job:TranslationJob,productVersion:string){
+export function adoptOptionTranslations(options:ProductOptions,job:TranslationJob,productVersion:string, allowEmpty = false){
  if(job.productId!==options.productId||job.productVersion!==productVersion||job.status!=='completed'||!job.result)throw new Error('상품이 변경됐거나 완료된 번역 결과가 아닙니다. 새 요청을 검토해주세요.');
  const rows=optionInputs(options);let changed=0;const seen=new Set<string>();
  for(const translated of job.result.draft.attributes){
@@ -58,6 +58,6 @@ export function adoptOptionTranslations(options:ProductOptions,job:TranslationJo
   if(field)row[field]=value;else row.translatedName=value;
   changed++;
  }
- if(!changed)throw new Error('적용할 미번역 옵션 값이 없습니다. 기존 수정값은 유지했습니다.');
+ if(!changed&&!allowEmpty)throw new Error('적용할 미번역 옵션 값이 없습니다. 기존 수정값은 유지했습니다.');
  return {rows,changed};
 }
