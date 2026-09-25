@@ -55,3 +55,39 @@ test('linked recovery reuses the saved product, excludes removed originals and r
  assert.deepEqual(calls.filter(([url])=>url.endsWith('/images')).map(([,body])=>JSON.parse(body).index),[0,2]);
  assert.match(results[0].warnings[0],/1개/);
 });
+
+test('batch recovers transient receipt, capacity, product and image errors with identical requests',async()=>{
+ const calls=[],results=[],waits=[],counts=new Map();
+ const receipt={...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]};
+ await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),retryWait:async ms=>waits.push(ms),fetcher:async(url,init)=>{
+  calls.push([url,init?.body]);const count=(counts.get(url)??0)+1;counts.set(url,count);
+  if(count===1){if(url.endsWith('/product'))throw new Error('response lost');return Response.json({error:'temporary'},{status:503});}
+  if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:receipt}});
+  if(url.endsWith('/capacity'))return Response.json({capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}});
+  return Response.json(url.endsWith('/product')?{productId:'p',reused:true}:{key:'image'});
+ }});
+ assert.equal(results[0].status,'completed');assert.equal(results[0].completedImages,1);
+ assert.deepEqual(waits,[500,500,500,500]);
+ const imageCalls=calls.filter(([url])=>url.endsWith('/images'));assert.equal(imageCalls.length,2);assert.equal(imageCalls[0][1],imageCalls[1][1]);
+ assert.equal(counts.get('/api/collection-jobs/a/product'),2);
+});
+
+test('batch caps transient failures at three attempts and continues with the next job',async()=>{
+ const calls=[],results=[];
+ await importReceivedJobs([job('bad'),job('good')],{shouldStop:()=>false,onProgress:()=>{},onResult:(id,r)=>results.push([id,r.status]),retryWait:async()=>{},fetcher:async url=>{
+  calls.push(url);if(url.includes('/bad/'))return Response.json({error:'unavailable'},{status:502});
+  return Response.json(url.endsWith('/result')?{jobId:'good',offerId:'123',receipt:{result:source}}:{productId:'p'});
+ }});
+ assert.equal(calls.filter(url=>url.includes('/bad/')).length,3);assert.deepEqual(results,[['bad','failed'],['good','completed']]);
+});
+
+test('batch never retries permission failures and stopping during backoff prevents another request',async()=>{
+ for(const status of [401,403,409,429]){
+  let calls=0;const results=[];
+  await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),retryWait:async()=>assert.fail('must not retry'),fetcher:async()=>{calls++;return Response.json({error:'blocked'},{status});}});
+  assert.equal(calls,1);assert.equal(results[0].status,'failed');
+ }
+ let stop=false,calls=0;
+ await importReceivedJobs([job('a'),job('b')],{shouldStop:()=>stop,onProgress:()=>{},onResult:()=>assert.fail('stopped before writes'),retryWait:async()=>{stop=true;},fetcher:async()=>{calls++;throw new Error('network');}});
+ assert.equal(calls,1);
+});

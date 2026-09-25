@@ -2730,3 +2730,11 @@ AI등록 화면 확인:
 - 검증: quotation-schema + translation-integrated + translation-integrated-ui 161/161, git diff --check 통과. 모의 완료 번역과 실제 모델 함수 및 기존 SQLite API 통합 검사다. 실제 1688 수집·AI 번역 품질·Couplus 전 카테고리 대조·Supplier Hub 접수 검증은 아니다.
 - 테스트만 추가했으므로 앱 재배포 없음. 현재 배포는 0c23adc6-c764-467e-acc5-599eb436ac71 유지. 로그 outputs/step252-tests.log. DB 변경·유료 호출·운영 등록 없음.
 - 남은 핵심/다음 시작점: 기존 Chrome의 실제 탭 접근 후 상품813724060928 및 공식 카테고리 양식 관찰. 실제1688 수집 실행기, 전 카테고리 자동값 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 접수 확인은 여전히 미완성이다. 이번 회귀 검증을 전체 자동화 완성으로 해석하지 않는다.
+
+## 253. 수신 상품·이미지 일괄 반영의 일시적 통신 오류 복구 — 2026-09-25
+
+- 시작 main c669ba1 clean. 기존 Chrome supplierChrome.tabs.list()는 []로 실제 사이트 대조 불가. 새 Chrome/프로필을 만들지 않았다. Supplier Hub POST는 여전히501이며 실제 수집 실행기도 미구현이다.
+- 확인/구현: 개별 수신 반영은 재시도 도구가 있지만 일괄 반영은 원문·용량 조회와 상품·이미지 반영을 한 번만 요청했다. 일괄 경로에도 기존 중복 저장 방지 API에 한해 최대3회 재시도를 연결했다. 네트워크 오류/502/503/504에500ms·1000ms 대기하며 같은 요청을 반복한다. 401/403/409/429 등은 재시도하지 않는다. 중단 요청은 다음 재시도 및 다음 상품 실행을 막는다. 이미지 요청 본문은 동일하게 유지된다.
+- 검증: collection-batch/collection-import24/24, TypeScript, 변경 TS ESLint, Cloudflare build/check, diff check 통과. 모의 네트워크 검사이며 실제1688 자동 수집·Hub 전송 검증은 아니다.
+- 배포 a085756e-daf7-4f69-ba72-37911ab15bc0. outputs/step253-tests.log, step253-build.log, step253-deploy.log. DB변경·유료AI·운영상품등록 없음. 기존 수신 원문 반영 기능의 복구 개선이다.
+- 남은 핵심/다음 시작점: 기존 Chrome 탭 접근 후 지정상품813724060928과 카테고리 견적 원문 관찰, 실제1688수집 실행기, 전카테고리 기본값/공식양식 대조, 이미지 번역 품질, Supplier Hub 전송 어댑터·접수 확인. 전체 자동화 미완성.

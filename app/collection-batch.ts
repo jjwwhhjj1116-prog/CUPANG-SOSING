@@ -2,6 +2,7 @@ import type { CollectionJob } from '@/app/sourcing';
 import { validateCollectionReceiptResponse } from '@/app/collection-receipt-response';
 import { recommendCollectionImages, validateCollectionCapacity } from '@/app/collection-capacity';
 import { runCollectionImport, type CollectionImportOutcome } from '@/app/collection-import';
+import { collectionRequestWithRetry } from '@/app/collection-retry';
 
 export function pendingReceivedJobs(jobs: readonly CollectionJob[]) {
   return jobs.filter(job => job.status !== 'cancelled' && !!job.received_at && !job.product_id);
@@ -17,6 +18,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
   fetcher: typeof fetch; shouldStop: () => boolean;
   onResult: (jobId: string, result: CollectionImportOutcome) => void;
   onProgress: (jobId: string, message: string) => void;
+  retryWait?: (milliseconds: number) => Promise<void>;
 }) {
   for (const job of jobs) {
     if (options.shouldStop()) break;
@@ -24,7 +26,11 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
     options.onProgress(job.id, '수신 원문과 이미지 저장 여유 확인 중');
     try {
       const path = `/api/collection-jobs/${encodeURIComponent(job.id)}`;
-      const response = await options.fetcher(path + '/result', { cache: 'no-store' });
+      const onRetry = (attempt: number) => options.onProgress(job.id, `일시적 통신 오류 · ${attempt}/3회 재시도 중`);
+      const request = (url: string, init: RequestInit) => collectionRequestWithRetry(url, init, {
+        fetcher: options.fetcher, attempts: 3, wait: options.retryWait, shouldStop: options.shouldStop, onRetry,
+      });
+      const response = await request(path + '/result', { cache: 'no-store' });
       const body = await response.json() as { error?: string } | null;
       if (!response.ok) throw Error(body?.error || '수신 원문 조회 실패');
       const source = validateCollectionReceiptResponse(body, job.id, job.offer_id);
@@ -32,7 +38,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       if (options.shouldStop()) break;
       let indices: number[] = [];
       if (source.images.length) {
-        const capacityResponse = await options.fetcher(path + '/capacity', { cache: 'no-store' });
+        const capacityResponse = await request(path + '/capacity', { cache: 'no-store' });
         const capacityBody = await capacityResponse.json() as { error?: string; capacity?: unknown } | null;
         if (!capacityResponse.ok) throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
         indices = recommendCollectionImages(source, validateCollectionCapacity(capacityBody?.capacity, source.images.length));
@@ -40,6 +46,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       if (options.shouldStop()) break;
       const result = await runCollectionImport(job.id, source.images.length, {
         fetcher: options.fetcher, imageIndices: indices, shouldStop: options.shouldStop,
+        retryAttempts: 3, retryWait: options.retryWait, onRetry,
         onProgress: progress => options.onProgress(job.id, progress.stage === 'product' ? '상품·옵션 반영 중' : `원본 이미지 ${progress.completedImages}/${progress.totalImages}개 저장 중`),
       });
       const omitted = source.images.length - indices.length;
