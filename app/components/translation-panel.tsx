@@ -21,6 +21,13 @@ function validateCollectedSource(value: CollectedSource, version: string) {
   collectedTranslationAttributes(value.attributes??[]);
   if(value.requestContext && (typeof value.requestContext.features!=='string'||typeof value.requestContext.keywords!=='string'||!Array.isArray(value.requestContext.categoryPath)))throw Error('수집 당시 상품 특징·키워드를 확인하지 못했습니다.');
 }
+function collectedOptionText(source: CollectedSource, options: ProductOptionsResponse, productId: string, version: string) {
+  if(options.productVersion!==version||options.options?.productId!==productId)throw Error('옵션과 현재 상품이 일치하지 않습니다. 최신 상품을 다시 열어주세요.');
+  const pairs=optionTranslationAttributes(options.options,true);
+  if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
+  if((source.attributes?.length??0)+pairs.length>50)throw Error('상품 속성과 옵션 원문이 합계 50개를 초과합니다. 기존 입력은 유지했습니다. 각각 불러와 번역 범위를 나누어주세요.');
+  return pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n');
+}
 const statuses: Record<TranslationJob['status'], string> = { prepared: '검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 실행 차단', completed: '초안 생성 완료', failed: '실패 · 재호출 안 함', uncertain: '결과 확인 필요 · 재호출 안 함' };
 
 async function readTranslationState(productId:string,signal:AbortSignal){
@@ -86,8 +93,15 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
           const value=await response.json() as CollectedSource;
           if(controller.signal.aborted)return;
           if(!response.ok)throw Error(value.error??'수집 원문 조회 실패');
-          validateCollectedSource(value,version);applyCollectedSource(value);
-          setNotice('연결된 수집 원문·상품 속성·상품 특징·타깃 키워드를 자동으로 불러왔습니다. 검토 후 번역 요청을 준비하세요. AI 호출과 상품 저장은 실행하지 않았습니다.');
+          validateCollectedSource(value,version);
+          const optionResponse=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal:controller.signal});
+          if(controller.signal.aborted)return;
+          const options=await optionResponse.json() as ProductOptionsResponse & {error?:string};
+          if(controller.signal.aborted)return;
+          if(!optionResponse.ok)throw Error(options.error??'옵션 조회 실패');
+          const optionText=collectedOptionText(value,options,productId,version);
+          applyCollectedSource(value);setAttributes(optionText);
+          setNotice('수집 원문·상품 속성·특징·키워드와 미번역 옵션명·수집 색상·사이즈를 자동으로 불러왔습니다. 검토 후 번역 요청을 준비하세요. AI 호출과 상품 저장은 실행하지 않았습니다.');
         }catch(reason){if(!controller.signal.aborted)setNotice(`${reason instanceof Error?reason.message:'수집 원문 조회 실패'} 원문 불러오기로 다시 시도하거나 직접 입력할 수 있습니다.`);}
       })
       .catch(reason=>{if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'조회 실패');})
@@ -138,11 +152,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         const optionSource=await optionResponse.json() as ProductOptionsResponse & {error?:string};
         if(controller.signal.aborted)return;
         if(!optionResponse.ok)throw Error(optionSource.error??'옵션 조회 실패');
-        if(optionSource.productVersion!==version||optionSource.options?.productId!==productId)throw Error('옵션과 현재 상품이 일치하지 않습니다. 최신 상품을 다시 열어주세요.');
-        const pairs=optionTranslationAttributes(optionSource.options,true);
-        if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
-        if((value.attributes?.length??0)+pairs.length>50)throw Error('상품 속성과 옵션 원문이 합계 50개를 초과합니다. 기존 입력은 유지했습니다. 각각 불러와 번역 범위를 나누어주세요.');
-        optionText=pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n');
+        optionText=collectedOptionText(value,optionSource,productId,version);
       }
       if(optionText!==null)setAttributes(optionText);
       applyCollectedSource(value);

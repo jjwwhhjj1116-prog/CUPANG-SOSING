@@ -2663,3 +2663,12 @@ AI등록 화면 확인:
 - 검증: 전체 테스트 851/851, 관련 UI 요청 테스트 16/16, TypeScript, ESLint, Cloudflare build/check 통과. 테스트는 모의 요청 기반이며 실제 Chrome·실상품 검증은 미수행이다.
 - 배포: 156417dd-4bb4-4411-ae28-aadde578d6b9. DB 변경·유료 AI 호출·운영 등록 없음. outputs/step244-tests.log, step244-full-tests.log, step244-build.log.
 - 미확인/남은 작업: 실제 1688 수집 실행기, 모든 카테고리 Couplus 자동값/공식 견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실제 접수. 이번 변경은 이미 수신된 자료의 입력 연결이며 전체 자동화 완성이 아니다. 다음 시작점은 기존 Chrome의 실제 탭 접근 상태 확인 및 지정 상품813724060928의 수집→견적 경로 대조다.
+
+## 245. 새 번역 작업에 미번역 옵션명·색상·사이즈 자동 연결 — 2026-09-25
+
+- 확인: main30449a0 clean에서 시작. 기존 supplierChrome.tabs.list()는 []를 반환했다. 다른 Chrome/프로필을 열지 않았으며 실화면 대조는 미수행이다. Supplier Hub POST는 여전히501이고 collection-delivery는 이미 수집된 결과의 수신·반영 함수다.
+- 구현: 번역 이력이 없는 상품의 연결 원문을 읽은 후 같은 상품·버전의 옵션을 조회하고, 미번역 옵션명 및 수집 색상·사이즈를 번역 입력에 자동 연결한다. 기존 optionTranslationAttributes 규칙으로 수동 옵션명을 보존한다. 수동 원문+옵션 불러오기와 동일한 검증 함수를 사용한다.
+- 옵션 조회 실패/상품·버전 불일치/속성 총50개 초과/여러 줄 옵션이면 부분 입력을 방지하고 직접 입력 또는 명시 재조회가 가능하다. 창 종료 시 지연 응답을 무시한다. 자동 유료 실행·저장 없음.
+- 검증: 요청 UI18/18 및 실제 옵션 변환 함수9/9, TypeScript, ESLint, Cloudflare build/check, diff check 통과. 자동 입력된 옵션3종과 특징이 번역 준비 POST에 전달되는 모의 검증 포함. 실제 실상품 번역·브라우저 동작·견적 전송 검증은 아니다.
+- 배포 3e3fe721-3948-4d2a-8ccb-abe2c4de6eb4. 로그 outputs/step245-tests.log, step245-options-tests.log, step245-build.log. DB 변경/유료 호출/운영 상품 등록 없음.
+- 남은 핵심: 실제1688 수집 실행기, 전 카테고리 Couplus 기본값과 공식 양식 대조, 이미지 번역 품질, Supplier Hub 실전송 어댑터 및 접수 확인. 다음 시작점은 기존 Chrome 실제 탭 접근 복구 후 지정상품813724060928과 카테고리 양식 관찰이다. 전체 자동화는 미완성이다.

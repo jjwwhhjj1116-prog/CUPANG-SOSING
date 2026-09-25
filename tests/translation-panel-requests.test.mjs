@@ -95,9 +95,19 @@ test('reviewed label adoption shares the save lock and ignores responses after c
 
 const combined='수집 원문·미번역 옵션 함께 불러오기 · 입력 교체';
 test('new translation automatically reads linked source and guidance without saving or executing AI',async()=>{
- const h=harness(async()=>Response.json({productVersion:'v',title:'자동 제목',description:'자동 설명',jobId:'source',sourceUrl:'https://example.invalid',attributes:[],requestContext:{categoryId:'80719',categoryPath:['주방'],features:'수집 특징',keywords:'수집 키워드'}}),'completed',false,true);
- await settle();assert.equal(h.calls.length,1);assert.ok(h.calls[0].url.endsWith('/translation-source'));assert.equal(h.calls[0].init.cache,'no-store');assert.equal(h.calls[0].init.method,undefined);
- const output=JSON.stringify(h.render());for(const value of ['자동 제목','자동 설명','수집 특징','수집 키워드'])assert.ok(output.includes(value));assert.equal(h.saved,0);
+ const h=harness(async(url,init,{job})=>Response.json(init.method==='POST'?{job}:url.endsWith('/options')?{productVersion:'v',options:{productId:'p',attributes:[{name:'option:a',value:'白色'},{name:'option-color:a',value:'白'},{name:'option-size:a',value:'大'}]}}:{productVersion:'v',title:'자동 제목',description:'자동 설명',jobId:'source',sourceUrl:'https://example.invalid',attributes:[],requestContext:{categoryId:'80719',categoryPath:['주방'],features:'수집 특징',keywords:'수집 키워드'}}),'completed',false,true);
+ await settle();assert.equal(h.calls.length,2);assert.ok(h.calls[0].url.endsWith('/translation-source'));assert.ok(h.calls.every(c=>c.init.cache==='no-store'&&!c.init.method));
+ const output=JSON.stringify(h.render());for(const value of ['자동 제목','자동 설명','수집 특징','수집 키워드','option:a=白色','option-color:a=白','option-size:a=大'])assert.ok(output.includes(value));assert.equal(h.saved,0);
+ h.button(prepare)();await settle();const prepared=JSON.parse(h.calls[2].init.body);assert.equal(prepared.source.attributes.length,3);assert.equal(prepared.source.guidance.features,'수집 특징');assert.equal(prepared.source.title,'자동 제목');assert.equal(h.saved,0);
+});
+test('automatic option failure, mismatched identity and over-capacity never partially fill a source',async()=>{
+ for(const mode of ['failure','product','version','overflow','multiline']){
+  const h=harness(async url=>url.endsWith('/options')?(mode==='failure'?Response.json({error:'옵션 실패'},{status:503}):Response.json({productVersion:mode==='version'?'old':'v',options:{productId:mode==='product'?'other':'p',attributes:[{name:'option:a',value:mode==='multiline'?'白\n色':'白'}]}})):Response.json({productVersion:'v',title:'부분 입력 금지',description:'설명',jobId:'s',sourceUrl:'https://example.invalid',attributes:mode==='overflow'?Array.from({length:50},()=>({name:'재질',value:'면'})):[]}),'completed',false,true);
+  await settle();assert.equal(h.calls.length,2);assert.doesNotMatch(JSON.stringify(h.render()),/부분 입력 금지/);assert.equal(h.saved,0);assert.equal(nodes(h.render()).find(n=>n.type==='input'&&n.props.maxLength===1000).props.disabled,false);
+ }
+});
+test('closing during automatic options read prevents all source replacement',async()=>{
+ const pending=deferred();const h=harness(async url=>url.endsWith('/options')?pending.promise:Response.json({productVersion:'v',title:'late',description:'',jobId:'s',sourceUrl:'https://example.invalid'}),'completed',false,true);await settle();assert.equal(h.calls.length,2);h.close();assert.equal(h.calls[1].init.signal.aborted,true);pending.resolve(Response.json({productVersion:'v',options:{productId:'p',attributes:[]}}));await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
 });
 test('missing, failed and stale automatic source reads leave manual input available',async()=>{
  for(const status of [404,503,200]){
