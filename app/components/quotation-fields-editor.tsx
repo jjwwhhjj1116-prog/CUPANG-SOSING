@@ -336,7 +336,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   let hasInvalidDraft = false; let invalidDraftMessage = '';
   if (view && changes.length) try { validateQuotationChanges(changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides }); } catch (cause) { hasInvalidDraft = true; invalidDraftMessage = cause instanceof Error ? cause.message : '수정한 필드의 입력 오류를 확인해주세요.'; }
 
-  return <section className="quotation-fields" aria-busy={loading || busy}>
+  return <section className="quotation-fields" aria-busy={loading || busy} data-workspace-dirty={dirty} data-workspace-saving={busy}>
     <div className="quotation-fields-heading"><div><h3>카테고리별 견적 입력</h3><p>저장 자료를 자동으로 채우고, 필요한 항목만 직접 수정합니다.</p></div><button type="button" className="btn ghost" disabled={loading || busy} onClick={() => void refresh()}>기본값 다시 반영</button></div>
     {loading && <p role="status">최신 견적 입력을 확인하는 중입니다.</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
