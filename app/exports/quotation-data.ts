@@ -3,7 +3,7 @@ import { contentDetailImageKeys, savedTextOrFallback, type ProductContent } from
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
 import { calculatePrice } from '@/app/pricing';
-import { optionSourceCostCny, optionQuotationName, resolveOptionPricePolicy, type ProductOption } from '@/app/product-options';
+import { optionSourceCostCny, optionQuotationName, quotationMainImageKeys, resolveOptionPricePolicy, type ProductOption } from '@/app/product-options';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 
 export type QuotationOption = {
@@ -41,7 +41,7 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
     const price = calculatePrice(sourcePriceCny, policy);
     return { ...base, skuName: optionQuotationName(option), skuId: option.supplierSku,
       sourcePriceCny, supplyPrice: price.supplyPrice, salePrice: price.salePrice, msrp: price.msrp,
-      mainImage: filename(option.imageKey) || base.mainImage,
+      mainImage: filename(quotationMainImageKeys(option, content.assets.main.value)[0]),
     };
   });
 }

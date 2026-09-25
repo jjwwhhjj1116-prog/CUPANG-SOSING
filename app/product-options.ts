@@ -34,6 +34,12 @@ export function optionQuotationName(option: Pick<OptionValues, 'translatedName' 
   return option.provenance?.translatedName === 'manual' ? option.translatedName : option.translatedName || option.originalName;
 }
 
+/** The option editor's null choice explicitly means "use the common main image".
+ * An intentional quotation blank belongs to the quotation override layer. */
+export function quotationMainImageKeys(option: Pick<OptionValues, 'imageKey'> | null, common: readonly string[]): readonly string[] {
+  return option?.imageKey ? [option.imageKey] : common;
+}
+
 export function emptyProductOptions(productId: string): ProductOptions { return { schemaVersion: 1, productId, revision: 0, updatedAt: null, rows: [] }; }
 export function emptyOptionInput(id: string): OptionInput {
   return { id, originalName: '', translatedName: '', supplierSku: '', color: '', size: '', stock: null, unitCostCny: null, unitsPerPack: 1,

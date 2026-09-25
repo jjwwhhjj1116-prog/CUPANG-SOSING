@@ -1426,3 +1426,23 @@ test('exported label review follows final option values, empty choices and visib
  resolved.rows.find(r=>r.optionId==='red').included=false;assert.ok(!render(resolved).includes('bad()'));
  const missing={schema:{categoryId:null,fields:[]},rows:[{optionId:'a',optionLabel:'미입력',included:true,fields:{}}]};assert.match(render(missing),/값이 부족/);
 });
+
+for(const record of categoryEvidence.records){
+ test(`recorded category ${record.categoryId}: common image choice and explicit quotation blank remain distinct`,()=>{
+  const input=fixture();input.categoryId=record.categoryId;
+  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+  const output=load('app/exports/quotation-fields.ts');
+  input.options.rows[0].imageKey=null;input.options.rows[0].provenance.imageKey='manual';
+  let resolved=model.resolveQuotationFields(input);
+  assert.equal(resolved.rows[1].fields.mainImage.value,'owner/main.png');
+  assert.equal(output.resolvedQuotationRows(input,resolved,assets)[0].mainImage,'0.png');
+  input.overrides={common:{},options:{red:{mainImage:''}}};
+  resolved=model.resolveQuotationFields(input);
+  assert.equal(resolved.rows[1].fields.mainImage.value,'');
+  assert.equal(resolved.rows[1].fields.mainImage.source,'manual-option');
+  assert.equal(output.resolvedQuotationRows(input,resolved,assets)[0].mainImage,'');
+  assert.equal(input.content.assets.main.value[0],'owner/main.png');
+  input.overrides=model.emptyQuotationOverrides();input.options.rows[0].imageKey='owner/option.png';
+  resolved=model.resolveQuotationFields(input);assert.equal(output.resolvedQuotationRows(input,resolved,assets)[0].mainImage,'1.png');
+ });
+}

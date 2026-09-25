@@ -4,7 +4,7 @@ import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema
 import { couplus103495Fields, couplus103495Path } from '@/app/couplus-marathon-schema';
 import { contentDetailImageKeys, savedTextOrFallback, type ContentField, type CustomLabel, type ProductContent } from '@/app/product-content';
 import type { ProductOption, ProductOptions } from '@/app/product-options';
-import { calculateOptionPrices, resolveOptionPricePolicy } from '@/app/product-options';
+import { calculateOptionPrices, resolveOptionPricePolicy, quotationMainImageKeys } from '@/app/product-options';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
 import { hubProductSchemas } from '@/app/hub-product-schemas';
@@ -377,7 +377,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return dimensions(option);
       case 'noticeMaterial': return contentValue(content.label.material);
       case 'mainImage': {
-        const selected = option?.imageKey ? images([option.imageKey]) : images(content.assets.main.value);
+        const selected = images(quotationMainImageKeys(option, content.assets.main.value));
         return { ...selected, source: selected.value && option?.imageKey ? 'option' : selected.source };
       }
       case 'additionalImages': return images(content.assets.additional.value);

@@ -2406,3 +2406,11 @@ AI등록 화면 확인:
 - 검증: 번역 관련 53/53, TypeScript, 변경 TSX ESLint, diff check, Cloudflare build/check 통과. 모의 React 상태에서 세 식별자 변경 및 요청 진행 중 변경/늦은 응답 차단 검사. outputs/step215-translation-tests.log. 유료 API 호출·실상품/실화면 검증 없음.
 - Cloudflare version a17fbebf-5665-4024-aa9e-d6abe711a8f2 배포.
 - 핵심 미완성은 동일: 실제 1688 수집기, 모든 카테고리의 Couplus 기본값/공식 Excel 대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터와 실접수. 작은 편집 상태 수정이 핵심 자동화 완성은 아니다. 다음 시작점은 사용자가 지정한 기존 Chrome 탭 접근을 확보한 후 상품 813724060928 및 카테고리 실제 근거를 확인하는 것이다.
+
+## 216. 옵션 대표 이미지 선택 규칙 공유 및 카테고리 출력 회귀 검증 — 2026-09-25
+
+- 시작 main 647ed0b clean. 옵션 이미지 null을 직접 공란으로 간주하려던 초기 판단은 잘못이었다. product-options-editor의 선택지는 '공통 대표 이미지 사용'이며 기존 회귀 검사도 이 계약을 보장한다. 해당 동작 변경은 철회했다.
+- quotationMainImageKeys를 추가해 옵션 이미지 우선/미지정 시 공통 대표 이미지 사용 규칙을 resolver와 기존 데이터 출력 경로에서 공유한다. 직접 공란 지정은 기존 견적서 옵션별 override에서 수행하며 그대로 보존한다. 새 수집기/전송기를 구현한 작업은 아니다.
+- 검증: 저장된 categoryEvidence.records 22개 각각에 옵션 이미지/공통 대표 이미지/견적 직접 공란과 최종 출력 비교를 추가했다. 관련 167/167, TypeScript, 변경 TS ESLint, diff check, Cloudflare build/check 통과. 최초 잘못된 변경은 기존 테스트가 실패해 철회했고 최종 로그는 통과 결과다. outputs/step216-tests.log. 신규 실사이트 대조가 아니라 기존 기록/모의 데이터 기반 회귀 검사다.
+- Cloudflare version fa2c294c-7399-4f6c-8f71-649b24b2da36 배포. DB 변경·유료 AI·운영 등록 없음.
+- 핵심 미완성: 실제 1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터·실접수. 이번 턴 Chrome 조작 없음. 다음 시작점은 기존 Chrome 탭 접근 확보와 지정 상품 813724060928의 실상품 수집→견적→접수 검증이다.
