@@ -151,3 +151,19 @@ test('choice output format persists and explicit edits survive automatic mapping
  assert.throws(()=>profiles.mapQuotationRow(profile,{}),/선택형/);
  assert.equal(profiles.mapQuotationRow(profile,{[field.id]:''},schema.fields).values[0],'');
 });
+
+test('automatic Excel mappings retain required header markers without rewriting saved decisions',()=>{
+ for(const header of ['재질 *','재질＊','* 재질','＊재질']){
+  const result=suggest([header],'80719');assert.equal(result.mappings.length,1);assert.equal(result.mappings[0].field,'noticeMaterial');assert.equal(result.mappings[0].required,true);
+ }
+ assert.equal(suggest(['재질'],'80719').mappings[0].required,false);
+ assert.equal(suggest(['상품명'],'80719').mappings[0].required,true);
+ assert.equal(suggest(['알 수 없는 항목 *'],'80719').mappings.length,0);
+ assert.equal(suggest(['재질','재질 *'],'80719').mappings.length,0);
+ const {refreshCategoryMappings}=load('app/quotation-mapping.ts');
+ const manual=[{column:0,field:'noticeMaterial',required:false}];const before=JSON.stringify(manual);
+ assert.equal(refreshCategoryMappings(['재질 *'],'80719',manual,[],new Set()).mappings[0].required,false);
+ assert.equal(refreshCategoryMappings(['재질 *'],'80719',manual,manual,new Set([0])).mappings[0].required,false);
+ assert.equal(refreshCategoryMappings(['재질 *'],'80719',manual,manual,new Set()).mappings[0].required,true);
+ assert.equal(JSON.stringify(manual),before);
+});

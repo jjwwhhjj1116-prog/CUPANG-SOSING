@@ -101,7 +101,8 @@ export function suggestQuotationMappings(headers: readonly string[], categoryId:
     if (!fields?.size) { unmatchedColumns.push(column); return; }
     if (fields.size !== 1 || normalized.filter(value => value === key).length > 1) { ambiguousColumns.push(column); return; }
     const field = [...fields][0];
-    mappings.push({ column, field, required: required.get(field) ?? false });
+    const markedRequired = /^[*＊]\s*|[*＊]\s*$/u.test(headers[column].trim());
+    mappings.push({ column, field, required: Boolean(required.get(field)) || markedRequired });
   });
   return { mappings, unmatchedColumns, ambiguousColumns };
 }
