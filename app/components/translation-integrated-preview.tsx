@@ -2,9 +2,13 @@
 import { useEffect, useRef, useState } from 'react';
 
 type Preview = { productId: string; productVersion: string; contentRevision: number; optionRevision: number; fingerprint: string; preview: { name: string; before: string; after: string }[]; skipped: string[] };
-export function TranslationIntegratedPreview({ productId, version, jobId, disabled, onSaved }: {
+type Props = {
   productId: string; version: string; jobId: string; disabled: boolean; onSaved?: () => void;
-}) {
+};
+export function TranslationIntegratedPreview(props: Props) {
+  return <TranslationIntegratedPreviewContent key={JSON.stringify([props.productId, props.version, props.jobId])} {...props} />;
+}
+function TranslationIntegratedPreviewContent({ productId, version, jobId, disabled, onSaved }: Props) {
   const [plan, setPlan] = useState<Preview | null>(null), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [done, setDone] = useState(false);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => { active.current?.abort(); }, []);

@@ -2397,3 +2397,12 @@ AI등록 화면 확인:
 - 검증: 수집 관련 95/95, TypeScript, 변경 TS/TSX ESLint, diff check, Cloudflare build/check 통과. GET 작업 식별자 응답, 모의 UI에서 다른 상품/손상 원문 차단/대기 상태/기존 원문 보존 검사. outputs/step214-collection-tests.log 및 step214-build.log. 실제 수집기나 실상품 종단 검증은 아니다.
 - Cloudflare version 486b46cd-cc24-4682-8a91-691d13d293bb 배포. DB 변경·유료 AI·운영 상품 등록 없음.
 - 미확인/미완성: 실제 1688 수집 실행기, 모든 Couplus 카테고리별 공식 양식/기본값 대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터·실접수. 다음 시작점은 기존 Chrome 연결 복구 및 공식 양식 근거 확보 후 상품 813724060928의 실제 수집→견적→접수 경로 검증이다. 원문 수신/저장 경로 보완을 URL 자동수집 완료로 오인하면 안 된다.
+
+## 215. 번역 통합 적용의 이전 상품 상태 분리 — 2026-09-25
+
+- 시작 main da10976 clean. Chrome 진단 문서를 확인하고 기존 agent.browsers.list()를 조회했다. Chrome 확장 연결 2개와 in-app 1개가 보이나 supplierChrome.tabs.list()는 []다. 비오류 응답이므로 확장 통신 실패나 로그인 실패라고 단정하지 않았다. 기존 브라우저 바인딩을 유지했으며 새 창·탭·프로필 또는 다른 연결로 임의 전환하지 않았다.
+- 확인: 번역 통합 적용 컴포넌트는 최초 마운트에만 요청 취소를 연결했다. 상위 key는 번역 ID/콘텐츠 revision만 포함해서 상품 버전만 바뀌면 기존 미리보기와 완료 상태가 남을 수 있었다.
+- 상품 ID·상품 버전·번역 요청 ID로 내부 컴포넌트를 구분한다. 대상 변경 시 이전 요청을 취소하고 계획/완료 상태를 초기화한다. 늦게 돌아오는 이전 미리보기/저장 응답은 완료 알림이나 새 상품 상태에 반영하지 않는다. 취소가 이미 서버에서 실행된 저장을 되돌린다는 의미는 아니다. 서버의 기존 지문·버전 검증을 유지한다.
+- 검증: 번역 관련 53/53, TypeScript, 변경 TSX ESLint, diff check, Cloudflare build/check 통과. 모의 React 상태에서 세 식별자 변경 및 요청 진행 중 변경/늦은 응답 차단 검사. outputs/step215-translation-tests.log. 유료 API 호출·실상품/실화면 검증 없음.
+- Cloudflare version a17fbebf-5665-4024-aa9e-d6abe711a8f2 배포.
+- 핵심 미완성은 동일: 실제 1688 수집기, 모든 카테고리의 Couplus 기본값/공식 Excel 대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터와 실접수. 작은 편집 상태 수정이 핵심 자동화 완성은 아니다. 다음 시작점은 사용자가 지정한 기존 Chrome 탭 접근을 확보한 후 상품 813724060928 및 카테고리 실제 근거를 확인하는 것이다.
