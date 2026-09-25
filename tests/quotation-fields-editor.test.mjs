@@ -34,6 +34,39 @@ const settingsModel = load('app/workspace-settings.ts');
 const clone = value => JSON.parse(JSON.stringify(value));
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('category choices distinguish unfilled cells from explicit empty N/A and never save UI tokens',()=>{
+ const {QuotationChoiceInput}=load('app/components/quotation-choice-input.tsx');
+ const {quotationFieldDisplay}=load('app/quotation-field-display.ts');
+ const ids=[...new Set([...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas),'80719','81452','64497','103495','77442'])];
+ let covered=0;
+ for(const id of ids){
+  for(const field of model.getQuotationSchema(id).fields.filter(f=>f.choices?.some(c=>c.value===''))){
+   covered++;const cell={value:'',source:'empty',needsReview:false,issues:[]};const written=[];
+   const props={field,cell,id:'test',disabled:false,onChange:v=>written.push(v)};
+   let element=QuotationChoiceInput(props);assert.equal(element.props.value,'unset');
+   assert.equal(quotationFieldDisplay(field,cell),'[공란]');
+   const index=field.choices.findIndex(c=>c.value==='');
+   element.props.onChange({target:{value:`choice-${index}`}});assert.deepEqual(written,['']);
+   for(const source of ['manual-option','manual-common','couplus-default','content']){
+    const saved={...cell,source};element=QuotationChoiceInput({...props,cell:saved});
+    assert.equal(element.props.value,`choice-${index}`);assert.equal(quotationFieldDisplay(field,saved),field.choices[index].label);
+    const legalField={...field,section:'legal'};
+    const plan=load('app/quotation-label-plan.ts').quotationLabelPlan({schema:{categoryId:id,categoryPath:[],fields:[legalField,{id:'title',label:'상품명',section:'start'}]},rows:[{optionId:null,optionLabel:'공통',included:true,fields:{[field.id]:saved,title:{value:'상품명',source:'content'}}}]},null);
+    assert.equal(plan.rows[0][1],field.choices[index].label);
+   }
+   element.props.onChange({target:{value:'unset'}});element.props.onChange({target:{value:'choice-99999'}});assert.deepEqual(written,['']);
+  }
+ }
+ assert.equal(ids.length,26);assert.ok(covered>100);
+});
+
+test('choice input keeps out-of-list saved values and ordinary clear choices intact',()=>{
+ const {QuotationChoiceInput}=load('app/components/quotation-choice-input.tsx');const field={choices:[{value:'yes',label:'예'}]};const written=[];
+ const element=QuotationChoiceInput({field,cell:{value:'old',source:'manual-option'},id:'test',disabled:false,onChange:v=>written.push(v)});
+ assert.equal(element.props.value,'legacy');assert.match(renderToStaticMarkup(element),/old · 목록 외 저장값/);
+ element.props.onChange({target:{value:'unset'}});assert.deepEqual(written,['']);
+});
+
 function fixture(overrides = model.emptyQuotationOverrides(), brand = '기본 브랜드') {
   const content = contentModel.emptyProductContent('p1');
   content.seo.title.value = '상품 제목'; content.seo.keywords.value = ['확인한 태그'];
@@ -144,7 +177,7 @@ test('rendered editor has five groups, marks schema uncertainty, marks observed 
   for (const section of ['시작 정보', '상품 정보', '이미지', '법적 정보', '물류 정보']) assert.ok(start.includes(section));
   assert.ok(start.includes('Supplier Hub 공식 화면')); assert.ok(start.includes('최종 접수는 추가 검증'));
   const legal = renderEditor(view, 'legal');
-  assert.ok(legal.includes('인증')); assert.ok(legal.includes('value="해당사항없음" selected'));
+  assert.ok(legal.includes('인증')); assert.ok(/selected=""[^>]*>해당사항없음<\/option>/.test(legal));
   assert.ok(legal.includes('쿠플러스 양식 기본값')); assert.ok(legal.includes('검토 필요'));
   const malicious = '<script>alert("x")</script><img src="https://external.invalid/secret">';
   const image = renderEditor(view, 'image', [change('detailHtml', malicious)]);
@@ -159,9 +192,9 @@ test('rendered official dropdowns have a single blank choice and preserve an out
   for(const set of [view.resolved,view.automatic]){const material=set.rows.find(row=>row.optionId===null).fields.storageMaterial;material.value='면';material.source='content';material.issues=['지원하는 선택값을 확인해주세요.'];material.needsReview=true;}
   const html=renderEditor(view,'product');
   const select=id=>{const match=html.match(new RegExp(`<select[^>]*id="editor-test-${id}"[^>]*>([\\s\\S]*?)</select>`));assert.ok(match,id);return match[1];};
-  for(const id of ['lidIncluded','storageMaterial','transparent']){const body=select(id);assert.equal((body.match(/<option value=""/g)||[]).length,1);assert.ok(body.includes('해당사항없음</option>'));}
-  const material=select('storageMaterial');assert.ok(material.includes('면 · 목록 외 저장값'));assert.ok(material.includes('value="면" selected'));assert.ok(html.includes('지원하는 선택값을 확인해주세요.'));
-  assert.ok(select('transparent').includes('value="해당없음"'));assert.ok(select('tradeType').includes('선택하지 않음'));
+  for(const id of ['lidIncluded','storageMaterial','transparent']){const body=select(id);assert.equal((body.match(/>해당사항없음<\/option>/g)||[]).length,1);assert.ok(body.includes('해당사항없음</option>'));}
+  const material=select('storageMaterial');assert.ok(material.includes('면 · 목록 외 저장값'));assert.ok(material.includes('value="legacy" selected'));assert.ok(html.includes('지원하는 선택값을 확인해주세요.'));
+  assert.ok(select('transparent').includes('>해당없음</option>'));assert.ok(select('tradeType').includes('선택하지 않음'));
   for(const label of ['색상','수량','사이즈'])assert.ok(html.includes(`${label}<b>*</b>`));
   assert.ok(html.includes('Supplier Hub 공식 화면'));assert.ok(html.includes('이미지·인증·물류'));assert.ok(!html.includes('value="해당사항없음" selected'));
 });
