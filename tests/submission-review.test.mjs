@@ -21,6 +21,23 @@ function load(file, overrides={}, mode='development', cache=new Map()) {
   }});return exports;
 }
 const {inspectSubmission}=load('app/submission-review.ts');
+
+test('confirmed blank choice codes remain evidence reviews while unentered blanks do not',()=>{
+ for(const source of ['manual-option','manual-common','couplus-default','content','empty']){
+  for(const modern of [true,false]){
+   const input=resolved();input.rows[0].fields.material=cell('');
+   input.schema.fields.push({...field('choice','select'),choices:[{value:'',label:'해당사항없음'}]});
+   input.rows[0].fields.choice={...cell('',[],true),source,...(modern?{validationIssues:[],reviewMessages:['실제 상품 확인']}:{})};
+   const before=JSON.stringify(input),report=inspectSubmission(input,['owner/main.png']);
+   const checks=report.issues.filter(issue=>issue.fieldId==='choice');
+   assert.equal(checks.length,source==='empty'?0:1);
+   if(checks.length){assert.equal(checks[0].kind,'review');assert.match(checks[0].message,/해당사항없음/);}
+   assert.equal(report.submissionReady,false);assert.equal(JSON.stringify(input),before);
+   input.schema.fields.at(-1).choices=[{value:'N/A',label:'해당사항없음'}];
+   assert.equal(inspectSubmission(input,[]).issues.filter(issue=>issue.fieldId==='choice').length,0);
+  }
+ }
+});
 const field=(id,type='text',required=false)=>({id,type,required,label:id,section:'product'});
 const cell=(value,issues=[],needsReview=false)=>({value,issues,needsReview,source:'manual-option'});
 function resolved() {return {schema:{categoryId:'80714',categoryPath:['주방','홀더'],status:'observed',fields:[field('title','text',true),field('mainImage','images'),field('material')]},rows:[{optionId:'red',optionLabel:'빨강',included:true,fields:{title:cell('상품'),mainImage:cell('owner/main.png'),material:cell('면',[],true)}}],issues:[]};}

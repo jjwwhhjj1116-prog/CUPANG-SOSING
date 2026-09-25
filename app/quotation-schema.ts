@@ -9,6 +9,7 @@ import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
 import { hubProductSchemas } from '@/app/hub-product-schemas';
 import { couplusQuotationDefault } from '@/app/couplus-quotation-defaults';
+import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -428,7 +429,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       const validationIssues = [...quotationValueIssues(definition, value, ownedKeys), ...(!manualOption && !manualCommon ? automatic.issues ?? [] : [])];
       const reviewMessages: string[] = [];
       if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
-      if (definition.reviewRequired && value.trim()) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
+      if (definition.reviewRequired && (value.trim() || hasSelectedEmptyQuotationChoice(definition, { value, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
       if (definition.type === 'images' && value) validationIssues.push('비공개 이미지 참조입니다. 외부 접수용 공개 주소는 아직 생성되지 않았습니다.');
       const fieldIssues = [...validationIssues, ...reviewMessages];
       return [definition.id, { value, source, needsReview: Boolean(definition.reviewRequired) || fieldIssues.length > 0, issues: fieldIssues, validationIssues, reviewMessages } satisfies ResolvedQuotationField];

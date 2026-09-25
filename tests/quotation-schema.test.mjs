@@ -40,6 +40,19 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('80719 blank wire defaults and manual N/A choices reach submission evidence review',()=>{
+ const input=fixture(),review=load('app/submission-review.ts');
+ for(const manual of [false,true]){
+  if(manual)input.overrides={common:{lidIncluded:''},options:{}};
+  const resolved=model.resolveQuotationFields(input),cell=resolved.rows[1].fields.lidIncluded;
+  assert.equal(cell.value,'');assert.equal(cell.source,manual?'manual-common':'couplus-default');
+  assert.ok(cell.reviewMessages.length>0);
+  const result=review.inspectSubmission(resolved,JSON.parse(input.product.image_keys));
+  assert.ok(result.issues.some(issue=>issue.optionId==='red'&&issue.fieldId==='lidIncluded'&&issue.kind==='review'&&issue.message.includes('해당사항없음')));
+  assert.equal(result.submissionReady,false);
+ }
+});
+
 test('quotation exports preserve manually cleared option names without restoring Chinese originals',()=>{
  const input=fixture(),assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
  const source=load('app/exports/quotation-data.ts'),final=load('app/exports/quotation-fields.ts');

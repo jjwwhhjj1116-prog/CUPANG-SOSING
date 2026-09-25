@@ -2335,3 +2335,12 @@ AI등록 화면 확인:
 - 검증: 관련199/199, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과. 양쪽 출력 경로에서 manual/unverified/collected/translated/기존 출처 누락과 입력 불변 검사. 생성 XLSX XML에 중국어 원문이 다시 들어가지 않으며 필수 옵션 열의 공란이 missingRequired로 보고됨을 검사했다. 테스트 양식이며 실제 Hub 공식 Excel 실접수는 아니다. outputs/step207-*.log.
 - Cloudflare version5aec5c18-45d6-4f12-b174-98d802663801 배포. DB 변경·유료AI·운영 등록 없음.
 - 남은 핵심: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터 및 실접수. 전체 자동화 미완성. 다음 시작점은 기존 Chrome에서 실제 근거 확보 및 지정 상품813724060928의 수집→견적→접수 검증. 이번 턴 브라우저 조작 없음.
+
+## 208. 빈 저장코드 선택값의 사전검토 누락 수정 — 2026-09-25
+
+- 시작 main ebc4521 clean. 확인: 80719의 일부 해당사항없음 선택지는 빈 문자열로 저장된다. resolver의 검토 메시지와 inspectSubmission이 value.trim()만 확인해 실제 선택값의 검토 안내를 누락했다.
+- 선택형 스키마에 빈 저장코드가 있고 출처가 empty가 아닌 경우에만 선택된 값으로 판단한다. resolver가 수동 선택에도 검토 메시지를 생성하고 사전검토는 표시 이름(해당사항없음)을 포함해 안내한다. 이전 형식의 needsReview도 같은 방식으로 처리한다. 실제 미입력/선택지에 없는 공란은 검토 항목을 만들지 않는다.
+- 필수값 검증·저장 데이터·submissionReady false·미연결 전송 상태를 유지한다. 이 변경은 기본값의 사실 여부를 검증한 것이 아니다.
+- 검증: 관련207/207, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과. 80719 실제 resolver 기본값/수동값→사전검토와 manual-option/manual-common/couplus-default/content/empty 출처 및 이전/신규 메시지 형식 검사. 실상품 Hub 접수 아님. outputs/step208-*.log.
+- Cloudflare version d8e674c0-cd50-4d6e-be77-5c07820a262e 배포. DB 변경·유료AI·운영등록 없음.
+- 남은 핵심: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터 및 실접수. 전체 자동화 미완성. 다음 시작점은 기존 Chrome 연결에서 지정 상품813724060928의 실제 수집→견적→접수 근거 확보. 이번 턴 Chrome 조작 없음.
