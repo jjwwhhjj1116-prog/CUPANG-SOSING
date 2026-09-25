@@ -728,3 +728,31 @@ test('saved rules take precedence and failures never fall back to inferred categ
  for(const request of [async()=>Response.json({error:'fail'},{status:503}),async()=>Response.json({rules:null,revision:2})]){const result=await fetchAttributeSuggestions('p1',view,job,'red',request);assert.deepEqual(clone(result.mapping),{});assert.equal(result.revision,null);}
  assert.equal(suggestCategoryAttributes('p1',view,{...job,contentRevision:99},'red').mappings.length,0);assert.equal(suggestCategoryAttributes('p1',view,job,'excluded').mappings.length,0);
 });
+
+test('older attribute translations require current explicit review and retain product isolation',()=>{
+ const view=fixture();view.contentRevision=5;const job={...attributeJob(view),contentRevision:3};
+ const mapping=[{sourceIndex:0,fieldId:'noticeMaterial'}],review={contentRevision:5};
+ const before=JSON.stringify({view,job});
+ assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',mapping));
+ assert.equal(quotationTranslationDraft('p1',view,job,'red',mapping,review)[0].value,'나일론');
+ assert.equal(quotationTranslationBatch('p1',view,job,mapping,undefined,review).changes.length,2);
+ for(const patch of [{productId:'other'},{productVersion:'old'},{contentRevision:6},{contentRevision:-1},{contentRevision:1.5},{status:'running'}])assert.throws(()=>quotationTranslationDraft('p1',view,{...job,...patch},'red',mapping,review));
+ assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',mapping,{contentRevision:4}));
+ assert.equal(JSON.stringify({view,job}),before);
+});
+
+test('reviewed older translations reuse category rules while preserving explicit manual blanks',async()=>{
+ const view=fixture();view.contentRevision=5;const job={...attributeJob(view),contentRevision:3},review={contentRevision:5};
+ const mapping=[{sourceIndex:0,fieldId:'noticeMaterial'}];
+ const rules=createAttributeRules('p1',view,job,'red',mapping,review);
+ assert.equal(loadAttributeRules(JSON.stringify(rules),'p1',view,job,'red').mappings.length,0);
+ assert.equal(loadAttributeRules(JSON.stringify(rules),'p1',view,job,'red',review).mappings.length,1);
+ const suggested=await fetchAttributeSuggestions('p1',view,job,'red',async()=>Response.json({rules,revision:2}),review);
+ assert.equal(suggested.mapping[0],'noticeMaterial');
+ for(const overrides of [{common:{noticeMaterial:''},options:{}},{common:{},options:{red:{noticeMaterial:''}}}]){
+  const manual=fixture(overrides);manual.contentRevision=5;
+  assert.throws(()=>quotationTranslationDraft('p1',manual,job,'red',mapping,review),/직접 수정값/);
+  const plan=quotationTranslationBatch('p1',manual,job,mapping,undefined,review);
+  assert.equal(plan.changes.some(c=>c.optionId==='red'),false);
+ }
+});

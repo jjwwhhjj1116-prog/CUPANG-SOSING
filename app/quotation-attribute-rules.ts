@@ -1,12 +1,12 @@
 import type { TranslationJob } from '@/app/automation/translation';
 import type { QuotationFieldsView, QuotationSchema } from '@/app/quotation-schema';
-import { canMapTranslatedAttribute, quotationTranslationDraft, type AttributeMapping } from '@/app/quotation-translation-adoption';
+import { canMapTranslatedAttribute, quotationTranslationDraft, type AttributeMapping, type QuotationTranslationReview } from '@/app/quotation-translation-adoption';
 
 type Rule = { sourceName: string; fieldId: string; fieldSignature: string };
 export type QuotationAttributeRules = { format: 'sourceflow-attribute-rules-v1'; categoryId: string; rules: Rule[] };
 export const ATTRIBUTE_RULE_LIMIT = 64 * 1024;
-export function createAttributeRules(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, mappings: readonly AttributeMapping[]): QuotationAttributeRules {
-  quotationTranslationDraft(productId, view, job, optionId, mappings);
+export function createAttributeRules(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, mappings: readonly AttributeMapping[], review?: QuotationTranslationReview): QuotationAttributeRules {
+  quotationTranslationDraft(productId, view, job, optionId, mappings, review);
   const rules = mappings.map(mapping => ({ sourceName: job.review.source.attributes[mapping.sourceIndex].name,
     fieldId: mapping.fieldId, fieldSignature: JSON.stringify(view.resolved.schema.fields.find(field => field.id === mapping.fieldId)) }));
   if (new Set(rules.map(rule => rule.sourceName)).size !== rules.length) throw new Error('동일한 원문 속성명이 있어 재사용 규칙으로 저장할 수 없습니다.');
@@ -28,14 +28,14 @@ export function readAttributeRules(input: string, schema: QuotationSchema): Quot
   }
   return {format: value.format, categoryId: value.categoryId, rules: value.rules.map(rule => ({sourceName: rule.sourceName, fieldId: rule.fieldId, fieldSignature: rule.fieldSignature}))};
 }
-export function loadAttributeRules(input: string, productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null) {
+export function loadAttributeRules(input: string, productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, review?: QuotationTranslationReview) {
   const value = readAttributeRules(input, view.resolved.schema);
   const mappings: AttributeMapping[] = []; const skipped: string[] = [];
   for (const rule of value.rules) {
     const matches = job.review.source.attributes.flatMap((attribute, index) => attribute.name === rule.sourceName ? [index] : []);
     if (matches.length !== 1) { skipped.push(`${rule.sourceName}: ${matches.length ? '동일 이름이 여러 개여서' : '현재 원문에 없어서'} 제외했습니다.`); continue; }
     const mapping = { sourceIndex: matches[0], fieldId: rule.fieldId };
-    try { quotationTranslationDraft(productId, view, job, optionId, [mapping]); mappings.push(mapping); }
+    try { quotationTranslationDraft(productId, view, job, optionId, [mapping], review); mappings.push(mapping); }
     catch (cause) { skipped.push(`${rule.sourceName}: ${cause instanceof Error ? cause.message : '연결 불가'}`); }
   }
   return { mappings, skipped };

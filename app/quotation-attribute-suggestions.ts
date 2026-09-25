@@ -1,10 +1,10 @@
 import type { TranslationJob } from '@/app/automation/translation';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { loadAttributeRules } from '@/app/quotation-attribute-rules';
-import { canMapTranslatedAttribute, quotationTranslationDraft, type AttributeMapping } from '@/app/quotation-translation-adoption';
+import { canMapTranslatedAttribute, quotationTranslationDraft, type AttributeMapping, type QuotationTranslationReview } from '@/app/quotation-translation-adoption';
 
 /** First-use suggestions are limited to exact category product attributes, not legal or commercial defaults. */
-export function suggestCategoryAttributes(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null) {
+export function suggestCategoryAttributes(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, review?: QuotationTranslationReview) {
   const mappings: AttributeMapping[] = [], skipped: string[] = [];
   const attributes = job.result?.draft.attributes ?? [];
   const fields = view.resolved.schema.fields.filter(field => field.section === 'product' && field.visibility !== 'common' && canMapTranslatedAttribute(field));
@@ -18,7 +18,7 @@ export function suggestCategoryAttributes(productId: string, view: QuotationFiel
     }
     const mapping = { sourceIndex: attribute.sourceIndex, fieldId: candidates[0].id };
     try {
-      quotationTranslationDraft(productId, view, job, optionId, [mapping]);
+      quotationTranslationDraft(productId, view, job, optionId, [mapping], review);
       mappings.push(mapping);
     } catch (cause) { skipped.push(`${name}: ${cause instanceof Error ? cause.message : '자동 연결 불가'}`); }
   }
@@ -26,7 +26,7 @@ export function suggestCategoryAttributes(productId: string, view: QuotationFiel
 }
 
 /** Read-only suggestions from the user's saved rules; never writes quotation values. */
-export async function fetchAttributeSuggestions(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, request: typeof fetch = fetch) {
+export async function fetchAttributeSuggestions(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, request: typeof fetch = fetch, review?: QuotationTranslationReview) {
   const empty = { mapping: {} as Record<number, string>, revision: null as number | null, skipped: [] as string[] };
   if (!view.resolved.schema.categoryId || !job.result?.draft.attributes.some(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: '))) {
     return { ...empty, message: '현재 번역 결과에 연결할 상품 속성이 없습니다.' };
@@ -37,11 +37,11 @@ export async function fetchAttributeSuggestions(productId: string, view: Quotati
     if (!response.ok) throw new Error(body.error || '서버 규칙 조회 실패');
     if (!Number.isSafeInteger(body.revision) || body.revision! < 0 || (body.rules === null ? body.revision !== 0 : !body.rules || body.revision === 0)) throw new Error('서버 규칙 응답을 확인하지 못했습니다.');
     if (body.rules === null) {
-      const result = suggestCategoryAttributes(productId, view, job, optionId);
+      const result = suggestCategoryAttributes(productId, view, job, optionId, review);
       return { mapping: Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId])), revision: 0, skipped: result.skipped,
         message: `저장된 카테고리 규칙이 없어 이름이 정확히 같은 상품 속성 ${result.mappings.length}개를 자동 선택했습니다. 변경 전·후 값을 확인한 뒤 초안에 반영하거나 연결 규칙을 저장해주세요.` };
     }
-    const result = loadAttributeRules(JSON.stringify(body.rules), productId, view, job, optionId);
+    const result = loadAttributeRules(JSON.stringify(body.rules), productId, view, job, optionId, review);
     return { mapping: Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId])), revision: body.revision!, skipped: result.skipped,
       message: `저장된 카테고리 규칙 v${body.revision}으로 ${result.mappings.length}개 연결을 자동 선택했습니다. 변경 전·후 값을 확인한 뒤 견적 초안에 반영해주세요.` };
   } catch (cause) {

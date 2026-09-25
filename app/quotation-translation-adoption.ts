@@ -2,6 +2,13 @@ import type { TranslationJob } from '@/app/automation/translation';
 import { validateQuotationChanges, type QuotationFieldsView, type QuotationChange, type QuotationField } from '@/app/quotation-schema';
 
 export type AttributeMapping = { sourceIndex: number; fieldId: string };
+export type QuotationTranslationReview = { contentRevision: number };
+/** Older content is reusable only after explicit review against the current view. */
+export function quotationTranslationMatches(productId: string, view: QuotationFieldsView, job: TranslationJob, review?: QuotationTranslationReview) {
+  return job.productId === productId && job.productVersion === view.productVersion && job.status === 'completed' && Boolean(job.result)
+    && (job.contentRevision === view.contentRevision || (review?.contentRevision === view.contentRevision
+      && Number.isSafeInteger(job.contentRevision) && job.contentRevision >= 0 && job.contentRevision < view.contentRevision));
+}
 export function quotationAttributeDisplay(field: QuotationField, value: string) {
   const choice = field.choices?.find(item => item.value === value);
   return choice ? `${choice.label}${value === '' ? ' (저장값: 공란)' : choice.label !== value ? ` (저장값: ${value})` : ''}` : value || '(공란)';
@@ -20,8 +27,8 @@ export function translatedAttributeValue(field: QuotationField, value: string) {
   return [...matches][0];
 }
 /** User-selected destinations only; no guesses about category, certification or units. */
-export function quotationTranslationDraft(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, mappings: readonly AttributeMapping[]) {
-  if (job.productId !== productId || job.productVersion !== view.productVersion || job.contentRevision !== view.contentRevision || job.status !== 'completed' || !job.result) throw new Error('최신 상품·콘텐츠에 해당하는 완료된 번역을 선택해주세요.');
+export function quotationTranslationDraft(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, mappings: readonly AttributeMapping[], review?: QuotationTranslationReview) {
+  if (!quotationTranslationMatches(productId, view, job, review)) throw new Error('최신 상품·콘텐츠에 해당하는 완료된 번역을 선택해주세요.');
   if (!view.resolved.schema.categoryId) throw new Error('견적 카테고리를 먼저 선택해주세요.');
   const row = view.resolved.rows.find(item => item.optionId === optionId && item.included);
   if (!row) throw new Error('견적에 포함된 옵션을 선택해주세요.');
@@ -38,8 +45,8 @@ export function quotationTranslationDraft(productId: string, view: QuotationFiel
   return validateQuotationChanges(changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides });
 }
 
-export function quotationTranslationBatch(productId: string, view: QuotationFieldsView, job: TranslationJob, mappings: readonly AttributeMapping[], selectedOptions?: readonly (string | null)[]) {
-  if (job.productId !== productId || job.productVersion !== view.productVersion || job.contentRevision !== view.contentRevision || job.status !== 'completed' || !job.result) throw new Error('최신 상품·콘텐츠에 해당하는 완료된 번역을 선택해주세요.');
+export function quotationTranslationBatch(productId: string, view: QuotationFieldsView, job: TranslationJob, mappings: readonly AttributeMapping[], selectedOptions?: readonly (string | null)[], review?: QuotationTranslationReview) {
+  if (!quotationTranslationMatches(productId, view, job, review)) throw new Error('최신 상품·콘텐츠에 해당하는 완료된 번역을 선택해주세요.');
   if (!mappings.length || mappings.length > 50 || new Set(mappings.map(item => item.fieldId)).size !== mappings.length || new Set(mappings.map(item => item.sourceIndex)).size !== mappings.length) throw new Error('속성과 견적 항목을 중복 없이 연결해주세요.');
   const options = view.resolved.rows.filter(row => row.optionId !== null);
   const included = (options.length ? options : view.resolved.rows).filter(row => row.included);
@@ -57,7 +64,7 @@ export function quotationTranslationBatch(productId: string, view: QuotationFiel
       return true;
     });
     if (!eligible.length) continue;
-    for (const change of quotationTranslationDraft(productId, view, job, row.optionId, eligible)) {
+    for (const change of quotationTranslationDraft(productId, view, job, row.optionId, eligible, review)) {
       const before = row.fields[change.fieldKey]?.value ?? '';
       // An explicit empty choice must become a manual value, even if the default is empty.
       if (before === change.value && change.value !== '') continue;

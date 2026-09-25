@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
-import { canMapTranslatedAttribute, quotationAttributeDisplay, quotationTranslationDraft, quotationTranslationBatch } from '@/app/quotation-translation-adoption';
+import { canMapTranslatedAttribute, quotationAttributeDisplay, quotationTranslationDraft, quotationTranslationBatch, quotationTranslationMatches } from '@/app/quotation-translation-adoption';
 import { ATTRIBUTE_RULE_LIMIT, createAttributeRules, loadAttributeRules } from '@/app/quotation-attribute-rules';
 import { fetchAttributeSuggestions } from '@/app/quotation-attribute-suggestions';
 
@@ -18,6 +18,8 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const [serverRevision, setServerRevision] = useState<number | null>(null);
   const [batch, setBatch] = useState<{ key: string; plan: ReturnType<typeof quotationTranslationBatch> } | null>(null);
   const [excludedTargets, setExcludedTargets] = useState<(string | null)[]>([]);
+  const [reviewedRevision,setReviewedRevision]=useState<number|null>(null);
+  const review=reviewedRevision===view.contentRevision?{contentRevision:view.contentRevision}:undefined;
   const activeRequest = useRef<AbortController | null>(null);
   useEffect(() => () => { activeRequest.current?.abort(); }, []);
   async function runRequest(work: (signal: AbortSignal) => Promise<void>) {
@@ -34,14 +36,14 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   const optionRows = view.resolved.rows.filter(item => item.optionId !== null);
   const batchTargets = (optionRows.length ? optionRows : view.resolved.rows).filter(item => item.included);
   const selectedTargets = batchTargets.filter(item => !excludedTargets.includes(item.optionId)).map(item => item.optionId);
-  const batchKey = JSON.stringify([jobId, mapping, view.inputFingerprint, view.revision, optionId, selectedTargets]);
+  const batchKey = JSON.stringify([jobId, mapping, view.inputFingerprint, view.revision, optionId, selectedTargets, reviewedRevision]);
   const batchPlan = batch?.key === batchKey ? batch.plan : null;
   const job = jobs.find(item => item.id === jobId);
   const row = view.resolved.rows.find(item => item.optionId === optionId);
   const fields = view.resolved.schema.fields.filter(canMapTranslatedAttribute);
   const attributes = job?.result?.draft.attributes.filter(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: ')) ?? [];
   async function suggest(selected: TranslationJob, signal: AbortSignal) {
-    const result = await fetchAttributeSuggestions(productId, view, selected, optionId, (url, init) => fetch(url, { ...init, signal }));
+    const result = await fetchAttributeSuggestions(productId, view, selected, optionId, (url, init) => fetch(url, { ...init, signal }), review);
     if (signal.aborted) return;
     setMapping(result.mapping); setServerRevision(result.revision); setRuleReport(result.skipped); setMessage(result.message);
   }
@@ -59,7 +61,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       const body = await response.json() as TranslationView & { error?: string };
       if (signal.aborted) return;
       if (!response.ok) throw new Error(body.error || '번역 결과 조회 실패');
-      const available = body.jobs.filter(item => item.status === 'completed' && item.result && item.productId === productId && item.productVersion === view.productVersion && item.contentRevision === view.contentRevision);
+      const available = body.jobs.filter(item => quotationTranslationMatches(productId, view, item, review));
       setJobs(available); setJobId(available[0]?.id ?? ''); setMapping({}); setServerRevision(null); setRuleReport([]);
       if (available.length) await suggest(available[0], signal);
       else setMessage('현재 상품·콘텐츠와 일치하는 완료된 번역 결과가 없습니다.');
@@ -69,7 +71,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
     if (!job || disabled || loading || activeRequest.current) return;
     try {
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
-      const changes = quotationTranslationDraft(productId, view, job, optionId, selected);
+      const changes = quotationTranslationDraft(productId, view, job, optionId, selected, review);
       onApply(changes); setMapping({}); setMessage(`${changes.length}개 항목을 작성 중인 견적에 반영했습니다. 견적 입력 저장으로 확정해주세요.`);
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '연결 항목을 확인해주세요.'); }
   }
@@ -78,14 +80,14 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
     setBatch(null);
     try {
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
-      setBatch({ key: batchKey, plan: quotationTranslationBatch(productId, view, job, selected, selectedTargets) });
+      setBatch({ key: batchKey, plan: quotationTranslationBatch(productId, view, job, selected, selectedTargets, review) });
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '일괄 연결 항목을 확인해주세요.'); }
   }
   function downloadRules() {
     if (!job || disabled || loading || activeRequest.current) return;
     try {
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
-      const rules = createAttributeRules(productId, view, job, optionId, selected);
+      const rules = createAttributeRules(productId, view, job, optionId, selected, review);
       const url = URL.createObjectURL(new Blob([JSON.stringify(rules, null, 2)], { type: 'application/json' }));
       const link = document.createElement('a'); link.href = url; link.download = 'sourceflow-attribute-rules.json';
       document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -99,7 +101,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       if (file.size > ATTRIBUTE_RULE_LIMIT) throw new Error('연결 규칙은 64KB 이하여야 합니다.');
       const source = await file.text();
       if (signal.aborted) return;
-      const result = loadAttributeRules(source, productId, view, job, optionId);
+      const result = loadAttributeRules(source, productId, view, job, optionId, review);
       setMapping(Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId])));
       setRuleReport(result.skipped); setMessage(`${result.mappings.length}개 연결을 선택했습니다. 변경 전·후 값을 검토한 뒤 초안에 반영해주세요.`);
     });
@@ -117,7 +119,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       const endpoint = '/api/quotation-attribute-rules';
       if (serverRevision === null) throw new Error('먼저 서버 규칙을 불러와주세요.');
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
-      const rules = createAttributeRules(productId, view, job, optionId, selected);
+      const rules = createAttributeRules(productId, view, job, optionId, selected, review);
       const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules, expectedRevision: serverRevision }), signal });
       const body = await response.json() as { error?: string; revision: number; rules: unknown };
       if (signal.aborted) return;
@@ -129,7 +131,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
   return <details className="panel-stack"><summary>번역한 상품 속성을 견적 항목에 연결</summary>
     <p>대상: {row?.optionLabel ?? '옵션 미선택'} · {view.resolved.schema.categoryPath.join(' > ')}. 연결할 항목과 변경 전·후 값을 확인해주세요. 기존 직접 수정값은 보존합니다.</p>
     <button type="button" className="btn ghost" disabled={disabled || loading} onClick={() => void load()}>완료된 속성 번역 불러오기 · 무료 조회</button>
-    {message && <p role="status">{message}</p>}
+    <label><input type="checkbox" checked={!!review} disabled={disabled||loading} onChange={event=>{setReviewedRevision(event.target.checked?view.contentRevision:null);setJobs([]);setJobId('');setMapping({});setBatch(null);setServerRevision(null);setRuleReport([]);setMessage('조회 범위를 변경했습니다. 완료된 속성 번역을 다시 불러와주세요.');}}/>SEO·표시사항 저장 전의 번역도 검토하여 사용</label><p>이전 콘텐츠 버전의 번역은 현재 값과 비교 후 반영합니다. 다른 상품·상품 버전은 사용할 수 없으며 직접 수정한 견적값은 유지됩니다.</p>{job&&job.contentRevision!==view.contentRevision&&<p role="status">이전 콘텐츠 v{job.contentRevision} 번역 · 현재 v{view.contentRevision}. 원문 속성이 현재 상품에도 맞는지 확인해주세요.</p>}    {message && <p role="status">{message}</p>}
     {ruleReport.length > 0 && <ul>{ruleReport.map((item,index)=><li key={index}>{item}</li>)}</ul>}
     <fieldset disabled={disabled || loading} style={{ border: 0, padding: 0 }}>
       {jobs.length > 0 && <label>번역 결과<select value={jobId} onChange={event => void selectJob(event.target.value)}>
@@ -142,7 +144,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
         let preview = '', error = '';
         if (fieldId && job) {
           try {
-            const [change] = quotationTranslationDraft(productId, view, job, optionId, [{ sourceIndex: attribute.sourceIndex, fieldId }]);
+            const [change] = quotationTranslationDraft(productId, view, job, optionId, [{ sourceIndex: attribute.sourceIndex, fieldId }], review);
             const field = fields.find(item => item.id === fieldId)!;
             preview = `현재값: ${quotationAttributeDisplay(field, row?.fields[fieldId]?.value ?? '')} → ${quotationAttributeDisplay(field, change.value!)}`;
           } catch (cause) { error = cause instanceof Error ? cause.message : '연결 값을 확인해주세요.'; }
