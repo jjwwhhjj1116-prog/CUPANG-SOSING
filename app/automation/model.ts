@@ -1,7 +1,7 @@
 import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { defaultSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
-import { contentDetailImageKeys, type ProductContent } from '@/app/product-content';
+import { contentDetailImageKeys, labelDocumentRows, type ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
 import { calculateOptionPrices, resolveOptionPricePolicy, type ProductOptions } from '@/app/product-options';
 
@@ -194,6 +194,23 @@ function savedDrafts(stages: AutomationStage[], product: ProductRecord, content:
         providerExecutionVerified: false, sourceCollectionVerified: false, fileContentVerified: false, legalCorrectnessVerified: false, reviewRequired: true } }));
     stage.evidence = [...structuredClone(evidence), ...valid.map(reference => ({ kind: 'storedAssetReference' as const, reference, observedAt: sourceField(reference).updatedAt ?? content.updatedAt ?? now }))];
     stage.updatedAt = id === 'detailImage' ? content.updatedAt ?? now : field.updatedAt ?? content.updatedAt ?? now;
+  }
+  const labelRows = labelDocumentRows(content);
+  if (labelRows.some(([, , value]) => value.trim())) {
+    const stage = stages.find(item => item.id === 'koreanLabel')!;
+    // Text remains useful even when its saved image reference is broken. Never
+    // hide that blocking error or imply that the image matches the current text.
+    if (stage.reason?.code !== 'SAVED_ASSET_REFERENCE_MISSING') {
+      stage.status = 'draft';
+      stage.reason = { code: 'SAVED_DRAFT_REVIEW_REQUIRED', message: '저장된 한글 표시사항이 있습니다. 라벨 이미지와 최신 내용이 일치하는지, 품목별 필수 정보가 충분한지 검토해주세요.' };
+    }
+    stage.attempts = 0; stage.retryable = false;
+    stage.artifacts = stage.artifacts.filter(artifact => !artifact.id.startsWith('saved-label-text-'));
+    stage.artifacts.unshift({ id: `saved-label-text-${content.revision}`, kind: 'text', label: '저장된 한글 표시사항 · 이미지와 별도 검토', submissionReady: false,
+      data: { labelRows: structuredClone(labelRows), ...revision, appliedToContent: true, provenanceScope: 'savedContentFields',
+        providerExecutionVerified: false, sourceCollectionVerified: false, imageMatchesTextVerified: false, legalCorrectnessVerified: false, reviewRequired: true } });
+    for (const item of evidence) if (!stage.evidence.some(existing => existing.kind === item.kind && existing.reference === item.reference)) stage.evidence.push(structuredClone(item));
+    stage.updatedAt = content.updatedAt ?? now;
   }
 }
 

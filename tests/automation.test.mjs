@@ -426,3 +426,36 @@ test('detail stage follows full quotation image order and blocks missing top or 
  const clearedPlan=await model.planAutomation(saved,settings,bannerPlan,cleared);assert.equal(clearedPlan.stages.find(stage=>stage.id==='detailImage').status,'blocked');assert.equal(clearedPlan.stages.find(stage=>stage.id==='detailImage').artifacts.length,0);
  assert.equal(JSON.stringify(content),before);
 });
+
+ test('saved label text follows layout and coexists with images without claiming image or legal verification', async () => {
+  const cm=load('app/product-content.ts');
+  const content=cm.applyContentPatch(cm.emptyProductContent(product.id), {
+    label:{productName:'저장 품명',material:'나일론',certification:'숨긴 내용'},
+    labelLayout:{order:['material','productName'],hidden:['certification']},
+    customLabels:[{id:'custom-one',name:'추가 항목',value:'내용',visible:true},{id:'custom-hidden',name:'비공개',value:'숨김',visible:false}],
+  },version);
+  const before=JSON.stringify(content);
+  const first=await model.planAutomation(product,settings,null,content);
+  const stage=first.stages.find(item=>item.id==='koreanLabel');
+  assert.equal(stage.status,'draft');assert.equal(stage.attempts,0);
+  const artifact=stage.artifacts[0];
+  assert.equal(artifact.submissionReady,false);assert.equal(artifact.data.imageMatchesTextVerified,false);assert.equal(artifact.data.legalCorrectnessVerified,false);
+  assert.deepEqual(Array.from(artifact.data.labelRows[0]),['material','재질','나일론']);
+  assert.ok(artifact.data.labelRows.some(row=>row[0]==='custom-one'));
+  assert.ok(!artifact.data.labelRows.some(row=>['certification','custom-hidden'].includes(row[0])));
+  assert.ok(stage.evidence.some(item=>item.kind==='savedContent'));
+  const repeat=await model.planAutomation(product,settings,first,content);
+  assert.equal(repeat.stages.find(item=>item.id==='koreanLabel').artifacts.length,1);
+  const imaged=cm.applyContentPatch(content,{assets:{label:['owner/label.png']}},version);
+  const valid=await model.planAutomation({...product,image_keys:'["owner/label.png"]'},settings,first,imaged);
+  assert.equal(valid.stages.find(item=>item.id==='koreanLabel').artifacts.length,2);
+  const broken=await model.planAutomation({...product,image_keys:'[]'},settings,valid,imaged);
+  const blocked=broken.stages.find(item=>item.id==='koreanLabel');
+  assert.equal(blocked.status,'blocked');assert.equal(blocked.reason.code,'SAVED_ASSET_REFERENCE_MISSING');
+  assert.equal(blocked.artifacts.length,1);assert.equal(blocked.artifacts[0].kind,'text');
+  const cleared=cm.applyContentPatch(content,{label:{productName:'',material:''},customLabels:[]},version);
+  const empty=await model.planAutomation(product,settings,first,cleared);
+  assert.equal(empty.stages.find(item=>item.id==='koreanLabel').status,'blocked');
+  assert.equal(empty.stages.find(item=>item.id==='koreanLabel').artifacts.length,0);
+  assert.equal(JSON.stringify(content),before);
+ });
