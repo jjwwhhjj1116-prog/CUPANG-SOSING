@@ -128,6 +128,7 @@ test('production review requires verified authentication before reading product 
 function renderPanel(products,results=[]) {
   let index=0;const states=['',0,{key:JSON.stringify([JSON.stringify(products.map(product=>product.id)),'',0]),results,finished:true}];
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
+    '@/app/components/quotation-review-issues':load('app/components/quotation-review-issues.tsx',{react:nativeRequire('react')}),
     react:{useState:()=>[states[index++],()=>{}],useEffect:()=>{}},
   });
   return renderToStaticMarkup(createElement(SubmissionReviewPanel,{products,profiles:[],onEdit:()=>{}}));

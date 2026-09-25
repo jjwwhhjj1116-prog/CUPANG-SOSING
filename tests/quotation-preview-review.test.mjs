@@ -8,7 +8,9 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 const exports = {};
 const source = fs.readFileSync(new URL('../app/components/quotation-preview-review.tsx', import.meta.url), 'utf8');
-vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, { exports, require: createRequire(import.meta.url) });
+const native=createRequire(import.meta.url),shared={};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/quotation-review-issues.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports:shared,require:native});
+vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, { exports, require:name=>name==='@/app/components/quotation-review-issues'?shared:native(name) });
 const { QuotationPreviewReview: Panel } = exports;
 const review = { errorCount: 1, reviewCount: 1, omittedIssueCount: 2, limits: ['파일 헤더 검사'], issues: [
   { kind: 'error', fieldId: 'labelImages', optionId: 'red', optionLabel: '<script>빨강</script>', message: '라벨 첨부 필요' },
@@ -28,11 +30,11 @@ test('issue navigation retains the exact option and field instead of display lab
   function visit(node) {
     if (Array.isArray(node)) { node.forEach(visit); return; }
     if (!node || typeof node !== 'object') return;
-    if (node.type === 'button') buttons.push(node);
+    if (node.type === shared.QuotationReviewIssues) buttons.push(node);
     visit(node.props?.children);
   }
   visit(tree); assert.equal(buttons.length, 1);
-  buttons[0].props.onClick();
+  buttons[0].props.onInspect({optionId:'red',fieldId:'labelImages'});
   assert.equal(target.optionId, 'red'); assert.equal(target.fieldId, 'labelImages');
   const html = renderToStaticMarkup(createElement(Panel, { review: { ...review, errorCount: 0, reviewCount: 0, omittedIssueCount: 0, issues: [] }, disabled: false, onInspect() {} }));
   assert.match(html, /실제 접수 검증은 별도/);

@@ -5,6 +5,7 @@ import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 import { useEffect, useState } from 'react';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { SubmissionReview } from '@/app/submission-review';
+import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 
 type Target = {id:string;title:string;source_url:string};
 type Result = {id:string;report?:SubmissionReview;error?:string};
@@ -52,7 +53,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit}:{products:Targe
           <p>{report.categoryPath.join(' › ')||'카테고리 미선택'} · 포함 옵션 {report.includedOptions}개</p>
           <strong>입력 오류 {report.errorCount}개 · 증빙 확인 {report.reviewCount}개 · 전송 연결 대기</strong>
           <small>검사 시각: {new Date(report.checkedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} (한국시간)</small>
-          <details><summary>수정·확인할 항목 보기</summary><ul>{report.issues.map((issue,index)=><li key={index}><strong>{issue.kind==='error'?'수정':'확인'} · {issue.optionLabel}</strong> — {issue.message} {issue.fieldId && <button type="button" className="btn ghost" onClick={()=>onEdit(product.id,profileId||undefined,{optionId:issue.optionId,fieldId:issue.fieldId!})}>이 항목 확인하기</button>}</li>)}</ul>{report.omittedIssueCount>0&&<p>추가 {report.omittedIssueCount}개 항목이 있습니다. 표시된 항목부터 수정 후 다시 검사해주세요.</p>}</details>
+          <details><summary>수정·확인할 항목 보기</summary><QuotationReviewIssues key={requestKey} issues={report.issues} omittedIssueCount={report.omittedIssueCount} disabled={false} onInspect={target=>onEdit(product.id,profileId||undefined,target)}/></details>
           <details><summary>검사 범위</summary><ul>{report.limits.map(limit=><li key={limit}>{limit}</li>)}</ul></details>
         </>}
         <button type="button" className="btn primary" onClick={()=>onEdit(product.id,profileId||undefined)}>견적서 수정하기</button>
