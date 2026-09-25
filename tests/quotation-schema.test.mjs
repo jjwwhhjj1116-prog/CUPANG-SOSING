@@ -1478,3 +1478,34 @@ test('bundle preview through option save and quotation export preserves original
  assert.equal(exported.length,2);assert.equal(exported[0].skuName,'빨강');assert.equal(exported[1].skuName,'빨강 (3개입)');
  assert.equal(exported[1].sourcePriceCny,13.5);assert.equal(exported[1].quantity,'3');assert.equal(exported[1].supplyPrice,expected.supplyPrice);
 });
+
+test('all 26 observed categories carry saved stages into quotation without leaking category defaults',()=>{
+ const ids=[...new Set([...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas),'80719','81452','64497','103495','77442'])];
+ assert.equal(ids.length,26);
+ for(const categoryId of ids){
+  const input=fixture();input.categoryId=categoryId;
+  input.product.image_keys=JSON.stringify(['owner/main.png','owner/option.png','owner/detail.png','owner/add.png','owner/label.png']);
+  input.content.assets.additional.value=['owner/add.png'];input.content.assets.label.value=['owner/label.png'];
+  input.content.label.contact.value='고객지원 02-123-4567';
+  const before=JSON.stringify(input),resolved=model.resolveQuotationFields(input),row=resolved.rows.find(r=>r.optionId==='red');
+  const expected={title:'번역된 가방',searchTags:'가방, 대용량',model:'A-100',manufacturer:'실제 제조사',brand:'입력 브랜드',mainImage:'owner/option.png',additionalImages:'owner/add.png',labelImages:'owner/label.png',detailImages:'owner/detail.png',boxSkuQuantity:'50'};
+  for(const [key,value] of Object.entries(expected))assert.equal(row.fields[key].value,value,`${categoryId}:${key}`);
+  for(const key of ['supplyPrice','salePrice','msrp'])assert.equal(row.fields[key].value,'2000',categoryId+':'+key);
+  assert.match(row.fields.detailHtml.value,/&lt;script&gt;/,categoryId);assert.ok(!row.fields.detailHtml.value.includes('<script>'),categoryId);
+  if(row.fields.noticeServiceContact)assert.equal(row.fields.noticeServiceContact.value,'고객지원 02-123-4567',categoryId);
+  assert.equal(resolved.schema.categoryId,categoryId);assert.equal(resolved.schema.submissionReady,false);
+  assert.equal(new Set(resolved.schema.fields.map(f=>f.id)).size,resolved.schema.fields.length,`${categoryId}:duplicate fields`);
+  if(categoryId!=='80719')assert.ok(Object.values(row.fields).every(f=>f.source!=='couplus-default'),categoryId);
+  assert.equal(JSON.stringify(input),before);
+  input.overrides={common:{title:'공통 수정',labelImages:'owner/label.png'},options:{red:{title:'',labelImages:'',detailHtml:''}}};
+  const changedResolved=model.resolveQuotationFields(input),changed=changedResolved.rows.find(r=>r.optionId==='red');
+  for(const key of ['title','labelImages','detailHtml']){assert.equal(changed.fields[key].value,'',`${categoryId}:${key}`);assert.equal(changed.fields[key].source,'manual-option');}
+  const assets=JSON.parse(input.product.image_keys).map(key=>({key,name:'assets/'+key.split('/').at(-1)}));
+  const exportRows=load('app/exports/quotation-fields.ts').resolvedQuotationRows;
+  const output=exportRows(input,resolved,assets)[0],cleared=exportRows(input,changedResolved,assets)[0];
+  for(const key of ['supplyPrice','salePrice','msrp'])assert.equal(output[key],2000,categoryId+':export:'+key);
+  for(const [key,file] of Object.entries({mainImage:'option.png',additionalImages:'add.png',labelImages:'label.png',detailImages:'detail.png'}))assert.equal(output[key],file,categoryId+':export:'+key);
+  for(const key of ['title','labelImages','detailHtml'])assert.equal(cleared[key],'',categoryId+':cleared export:'+key);
+  assert.equal(output.label,'label.png');assert.equal(cleared.label,'');assert.equal(output.detailImage,'detail.png');
+ }
+});
