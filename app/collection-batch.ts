@@ -7,6 +7,11 @@ export function pendingReceivedJobs(jobs: readonly CollectionJob[]) {
   return jobs.filter(job => job.status !== 'cancelled' && !!job.received_at && !job.product_id);
 }
 
+/** Linked products may still have missing images after interruption or reload. */
+export function linkedReceivedJobs(jobs: readonly CollectionJob[]) {
+  return jobs.filter(job => job.status !== 'cancelled' && !!job.received_at && !!job.product_id);
+}
+
 /** Consume already received originals only. No collection, paid generation or Hub submission. */
 export async function importReceivedJobs(jobs: readonly CollectionJob[], options: {
   fetcher: typeof fetch; shouldStop: () => boolean;

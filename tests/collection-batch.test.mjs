@@ -34,3 +34,24 @@ test('full storage still imports the product and reports preserved but omitted o
   assert.equal(results[0].status, 'completed'); assert.equal(results[0].completedImages, 0); assert.match(results[0].warnings[0], /1개/);
   assert.equal(calls.some(url => url.endsWith('/images')), false);
 });
+
+test('linked recovery survives reload and excludes cancelled or unreceived jobs',()=>{
+ const {linkedReceivedJobs}=load('app/collection-batch.ts');
+ const jobs=[job('new'),{...job('linked'),product_id:'p'},{...job('cancelled'),product_id:'p2',status:'cancelled'},{...job('empty'),product_id:'p3',received_at:null}];
+ assert.deepEqual(Array.from(linkedReceivedJobs(jobs),j=>j.id),['linked']);
+});
+
+test('linked recovery reuses the saved product, excludes removed originals and retries missing images',async()=>{
+ const calls=[],results=[];const linked={...job('a'),product_id:'existing'};
+ const receipt={...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'},{url:'https://cbu01.alicdn.com/b.jpg',role:'detail'},{url:'https://cbu01.alicdn.com/c.jpg',role:'detail'}]};
+ await importReceivedJobs([linked],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),fetcher:async(url,init)=>{
+  calls.push([url,init?.body]);
+  if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:receipt}});
+  if(url.endsWith('/capacity'))return Response.json({capacity:{usedSlots:1,totalImages:3,reusableIndices:[0],blockedIndices:[1]}});
+  if(url.endsWith('/product'))return Response.json({productId:'existing',reused:true});
+  return Response.json({key:'image-'+JSON.parse(init.body).index});
+ }});
+ assert.equal(results[0].productId,'existing');assert.equal(results[0].status,'completed');assert.equal(results[0].completedImages,2);
+ assert.deepEqual(calls.filter(([url])=>url.endsWith('/images')).map(([,body])=>JSON.parse(body).index),[0,2]);
+ assert.match(results[0].warnings[0],/1개/);
+});
