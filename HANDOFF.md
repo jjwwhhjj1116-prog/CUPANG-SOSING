@@ -2631,3 +2631,11 @@ AI등록 화면 확인:
 - 검증: collection-batch/collection-import 21/21, TypeScript, 변경 TS ESLint, Cloudflare build/check, diff check 통과. 기존 상품 ID 재사용·기존 이미지 참조 재사용·제외 원본 건너뛰기·누락 이미지 선택을 모의 API로 확인했다. 실제 다운로드/브라우저 동작은 미검증.
 - 배포 edccd961-077d-4a2e-b0c7-a735569b1c97. DB 변경·유료 AI 호출·운영 등록 없음. outputs/step240-tests.log, step240-build.log.
 - 남은 핵심: 실제1688수집 실행기·전 카테고리 Couplus 자동값/공식양식 대조·이미지 번역 품질·Supplier Hub POST501 어댑터 및 접수 확인. 다음 시작점은 기존 Chrome 탭 연결을 확보하여 지정 상품813724060928의 실제 경로를 관찰하는 일이다. 이번 복구 기능은 수집 실행기 구현 완료가 아니다.
+
+## 241. 전체 테스트 실패 13건의 테스트 연결 복구 — 2026-09-25
+
+- 시작 main a7c22dd clean. 전체 npm test 첫 실행 840개 중 827통과/13실패. 최근 부분 검사 결과만으로 전체 정상이라고 판단할 수 없음을 확인했다.
+- 원인: 자동화 API 테스트 7개와 연결 진단 테스트 2개에서 실제 모듈의 quotation-keywords 의존성을 테스트 로더가 처리하지 못했다. 실제 앱 모듈을 로드하는 alias 처리를 추가했다. 수집 일괄 UI 테스트 4개는 새 linkedReceivedJobs export가 mock에 없어 컴포넌트 렌더 자체가 실패했다. mock 계약을 갱신했다. 실패 assertion을 제거하거나 기대값을 낮추지 않았다.
+- 수정 후 자동화/수집 화면 29개와 workflow 13개 통과, 이후 전체 npm test 840/840 통과. outputs/step241-tests.log(수정 전), step241-tests-fixed.log(수정 후). diff check 통과.
+- 앱 기능 코드 변경 없이 테스트 하네스만 수정했다. 빌드/배포는 반복하지 않았으며 현 배포 edccd961-077d-4a2e-b0c7-a735569b1c97 유지. 실제 외부 브라우저·수집·상품 등록/유료 호출 없음.
+- 남은 핵심/다음 시작점: 기존 Chrome 실제 탭 연결 확보, 지정 상품813724060928 수집 실행기, 전 카테고리 자동값/공식 양식 대조, 이미지 번역 품질, Supplier Hub POST501 전송 어댑터와 접수 확인. 840개 테스트는 내부 모의/저장소 검사이며 외부 실상품 E2E 통과가 아니다.

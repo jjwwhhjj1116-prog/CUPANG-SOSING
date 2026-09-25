@@ -29,6 +29,7 @@ function load(relative, overrides = {}) {
       if (name === '@/app/exports/review-bundle') return load('app/exports/review-bundle.ts');
       if (name === '@/app/exports/zip') return load('app/exports/zip.ts');
       if (name.startsWith('@/app/automation/')) return load(name.replace('@/', '') + '.ts');
+      if (name.startsWith('@/app/')) return load(name.slice(2) + '.ts');
       throw new Error(`Unexpected dependency: ${name}`);
     },
   }, { filename: relative });

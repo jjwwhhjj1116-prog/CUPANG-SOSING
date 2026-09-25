@@ -15,7 +15,7 @@ function harness(onOpenProduct, outcome = { status: 'completed', productId: 'sav
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/collection-batch-panel.tsx', import.meta.url), 'utf8'), { fileName: 'panel.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, { exports, AbortController, Error, fetch: () => { throw Error('unexpected request'); }, require(name) {
     if (name === 'react') return hooks;
     if (name === '@/app/registration-navigation') return { registrationSteps: steps };
-    if (name === '@/app/collection-batch') return { pendingReceivedJobs: jobs => jobs, importReceivedJobs: async (jobs, options) => { imports++; options.onResult(jobs[0].id, outcome); } };
+    if (name === '@/app/collection-batch') return { linkedReceivedJobs: () => [], pendingReceivedJobs: jobs => jobs, importReceivedJobs: async (jobs, options) => { imports++; options.onResult(jobs[0].id, outcome); } };
     return require(name);
   } });
   const render = () => { index = 0; ri = 0; const tree = exports.CollectionBatchPanel({ jobs: [{ id: 'job', offer_id: '123', source_url: 'https://detail.1688.com/offer/123.html' }], onSaved() {}, onOpenProduct }); first = false; return tree; };

@@ -26,6 +26,7 @@ function load(file, overrides = {}, mode = 'development') {
       if (name === '@/db/product-content') return { readProductContent: async (_owner, id) => load('app/product-content.ts').emptyProductContent(id) };
       if (name === '@/db/translation-jobs') return { listTranslationJobs: async () => [] };
       if (name === 'cloudflare:workers') return { env: {} };
+      if (name.startsWith('@/app/')) return load(name.slice(2) + '.ts', overrides, mode);
       throw Error(name);
     } }, { filename: file });
   return exports;
