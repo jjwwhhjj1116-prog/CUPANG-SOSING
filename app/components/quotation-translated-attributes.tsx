@@ -4,7 +4,7 @@ import type { TranslationJob, TranslationView } from '@/app/automation/translati
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import { canMapTranslatedAttribute, quotationAttributeDisplay, quotationTranslationDraft, quotationTranslationBatch, quotationTranslationMatches } from '@/app/quotation-translation-adoption';
 import { ATTRIBUTE_RULE_LIMIT, createAttributeRules, loadAttributeRules } from '@/app/quotation-attribute-rules';
-import { fetchAttributeSuggestions } from '@/app/quotation-attribute-suggestions';
+import { fetchAttributeSuggestions, fetchBatchAttributeSuggestions } from '@/app/quotation-attribute-suggestions';
 
 export function QuotationTranslatedAttributes({ productId, view, optionId, disabled, onApply }: {
   productId: string; view: QuotationFieldsView; optionId: string | null; disabled: boolean; onApply: (changes: QuotationChange[]) => void;
@@ -83,6 +83,20 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       setBatch({ key: batchKey, plan: quotationTranslationBatch(productId, view, job, selected, selectedTargets, review) });
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : '일괄 연결 항목을 확인해주세요.'); }
   }
+  async function suggestBatch() {
+    if (!job || disabled || loading || activeRequest.current) return;
+    await runRequest(async signal => {
+      setBatch(null);
+      const result = await fetchBatchAttributeSuggestions(productId, view, job, selectedTargets, (url, init) => fetch(url, { ...init, signal }), review);
+      if (signal.aborted) return;
+      const selected = Object.entries(result.mapping).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
+      setMapping(result.mapping); setServerRevision(result.revision); setRuleReport(result.skipped);
+      if (!selected.length) { setMessage('선택한 옵션에 자동 연결할 속성이 없습니다. 직접 수정값과 카테고리 규칙을 확인해주세요.'); return; }
+      const plan = quotationTranslationBatch(productId, view, job, selected, selectedTargets, review);
+      setBatch({ key: JSON.stringify([jobId, result.mapping, view.inputFingerprint, view.revision, optionId, selectedTargets, reviewedRevision]), plan });
+      setMessage(`카테고리 규칙으로 ${selectedTargets.length}개 옵션을 확인했습니다. 변경 전·후 값을 검토한 뒤 초안에 반영해주세요.`);
+    });
+  }
   function downloadRules() {
     if (!job || disabled || loading || activeRequest.current) return;
     try {
@@ -160,6 +174,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       </div>; })}
       {attributes.length > 0 && <button type="button" className="btn primary" disabled={!Object.values(mapping).some(Boolean)} onClick={apply}>선택한 번역값을 견적 초안에 반영</button>}
       {attributes.length > 0 && <fieldset><legend>번역 속성 일괄 적용 대상 · {selectedTargets.length}/{batchTargets.length}개</legend>
+        <button type="button" className="btn primary" disabled={!selectedTargets.length} onClick={()=>void suggestBatch()}>카테고리 규칙으로 선택 옵션 자동작성 미리보기</button>
         <button type="button" className="btn ghost" onClick={()=>setExcludedTargets([])}>모두 선택</button>
         <button type="button" className="btn ghost" onClick={()=>setExcludedTargets(batchTargets.map(item=>item.optionId))}>모두 해제</button>
         {batchTargets.map(item=><label key={item.optionId ?? 'common'}><input type="checkbox" checked={!excludedTargets.includes(item.optionId)} onChange={event=>{const checked=event.target.checked;setExcludedTargets(previous=>checked?previous.filter(id=>id!==item.optionId):[...previous,item.optionId]);}}/>{item.optionLabel}</label>)}

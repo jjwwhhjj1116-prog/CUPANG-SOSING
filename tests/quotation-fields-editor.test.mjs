@@ -756,3 +756,27 @@ test('reviewed older translations reuse category rules while preserving explicit
   assert.equal(plan.changes.some(c=>c.optionId==='red'),false);
  }
 });
+
+test('batch category suggestions read once and independently preserve each option manual values',async()=>{
+ const {fetchBatchAttributeSuggestions}=load('app/quotation-attribute-suggestions.ts');
+ const base=fixture(),job=attributeJob(base),rules=createAttributeRules('p1',base,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ const view=fixture({common:{},options:{red:{noticeMaterial:''}}});const before=JSON.stringify(view);let calls=0;
+ const result=await fetchBatchAttributeSuggestions('p1',view,job,['red','blue'],async()=>{calls++;return Response.json({rules,revision:2});});
+ assert.equal(calls,1);assert.equal(result.mapping[0],'noticeMaterial');assert.equal(result.skipped.length,1);
+ const plan=quotationTranslationBatch('p1',view,job,[{sourceIndex:0,fieldId:result.mapping[0]}],['red','blue']);
+ assert.equal(plan.changes.length,1);assert.equal(plan.changes[0].optionId,'blue');assert.equal(JSON.stringify(view),before);
+ const manualOnly=await fetchBatchAttributeSuggestions('p1',view,job,['red'],async()=>Response.json({rules,revision:2}));assert.deepEqual(clone(manualOnly.mapping),{});
+ for(const ids of [[],['red','red'],['excluded'],['foreign'],[null]])await assert.rejects(()=>fetchBatchAttributeSuggestions('p1',view,job,ids,async()=>{throw Error('must not fetch');}),/적용 옵션/);
+ await assert.rejects(()=>fetchBatchAttributeSuggestions('p1',view,job,['red','blue'],async()=>Response.json({error:'offline'},{status:503})),/offline/);
+});
+
+test('batch category UI builds a preview without saving and invalidates it when targets change',async()=>{
+ const base=fixture(),rules=createAttributeRules('p1',base,attributeJob(base),'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ const h=attributeRequestHarness(async()=>Response.json({rules,revision:2}));
+ h.button('카테고리 규칙으로 선택 옵션 자동작성 미리보기')();await settleAttributes();
+ assert.equal(h.calls.length,1);assert.equal(h.calls[0].init.method,undefined);
+ assert.equal(h.slots[7].plan.changes.length,2);
+ assert.ok(h.render().some(n=>n.props?.['aria-label']==='번역 속성 일괄 적용 미리보기'));
+ h.slots[8]=['blue'];
+ assert.equal(h.render().some(n=>n.props?.['aria-label']==='번역 속성 일괄 적용 미리보기'),false);
+});

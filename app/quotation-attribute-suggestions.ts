@@ -48,3 +48,26 @@ export async function fetchAttributeSuggestions(productId: string, view: Quotati
     return { ...empty, message: `번역 결과는 불러왔지만 연결 규칙은 적용하지 못했습니다. ${cause instanceof Error ? cause.message : '서버 규칙을 다시 조회해주세요.'}` };
   }
 }
+
+/** Resolve each selected option independently; one manually edited option must not suppress the others. */
+export async function fetchBatchAttributeSuggestions(productId: string, view: QuotationFieldsView, job: TranslationJob, optionIds: readonly (string | null)[], request: typeof fetch = fetch, review?: QuotationTranslationReview) {
+  const options = view.resolved.rows.filter(row => row.optionId !== null);
+  const available = (options.length ? options : view.resolved.rows).filter(row => row.included);
+  if (!optionIds.length || optionIds.length > 200 || new Set(optionIds).size !== optionIds.length || optionIds.some(id => !available.some(row => row.optionId === id))) throw Error('견적에 포함된 적용 옵션을 선택해주세요.');
+  let response: Promise<Response> | undefined;
+  const once: typeof fetch = async (url, init) => (await (response ??= request(url, init))).clone();
+  const mapping: Record<number, string> = {}, skipped: string[] = [];
+  let revision: number | null = null;
+  for (const optionId of optionIds) {
+    const result = await fetchAttributeSuggestions(productId, view, job, optionId, once, review);
+    if (result.revision === null) throw Error(result.message);
+    revision = result.revision;
+    for (const [index, field] of Object.entries(result.mapping)) {
+      if ((mapping[Number(index)] && mapping[Number(index)] !== field) || Object.entries(mapping).some(([other, value]) => other !== index && value === field)) throw Error('옵션별 연결 결과가 충돌합니다. 연결 항목을 직접 검토해주세요.');
+      mapping[Number(index)] = field;
+    }
+    const label = available.find(row => row.optionId === optionId)!.optionLabel;
+    skipped.push(...result.skipped.map(message => `${label} · ${message}`));
+  }
+  return { mapping, revision, skipped };
+}
