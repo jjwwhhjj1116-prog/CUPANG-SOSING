@@ -2353,3 +2353,12 @@ AI등록 화면 확인:
 - 검증: 관련208/208, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과. 편집 중 수동선택/초기화/확인된 빈 연결값 집계/입력 불변 회귀 검사. 모의 UI 상태 검사이며 실사이트 화면 또는 실제 상품 접수 검증 아님. outputs/step209-*.log.
 - Cloudflare versionfec674e5-d393-4099-9fde-3c30c0fd58de 배포. DB 변경·유료AI·운영등록 없음.
 - 핵심 미완성은 동일: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터·실접수. 다음 시작점은 기존 Chrome 연결과 지정 상품813724060928의 실상품 수집→견적→접수 검증. 이번 턴 Chrome 조작 없음.
+
+## 210. 대량 견적 사전검토에서 실제 오류 우선 표시 — 2026-09-25
+
+- 시작 main88fae42 clean. 기존 supplierChrome.tabs.list()는 빈 배열을 반환했다. 새 창·프로필·탭을 열지 않았으며 실사이트 대조는 수행하지 못했다.
+- 확인: inspectSubmission은 발견 순서대로1000개만 보관해서 앞쪽 옵션의 검토 안내가 많으면 뒤쪽 옵션의 실제 오류가 표시되지 않았다.
+- 오류와 검토 안내를 각각 최대1000개까지만 보관한 후 오류 우선으로 합쳐1000개를 반환한다. 각 종류 안에서는 기존 순서를 유지한다. 전체 errorCount/reviewCount/omittedIssueCount는 전부 계산하며 입력 자료와 submissionReady false를 유지한다. 등록 전 화면 및 견적 출력 패키지의 공유 검사 결과에 적용된다.
+- 검증: 관련148/148, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과.1005개 모의 옵션에서 마지막 오류 우선/전체 오류1005개 상황/표시1000개 상한/생략 건수/입력 불변 검사. 실제 Hub 접수 검증 아님. outputs/step210-*.log.
+- Cloudflare versionfb07f95e-b3c0-4e26-9dba-3a05c0c65236 배포. DB 변경·유료AI·운영 등록 없음.
+- 핵심 미완성: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터 및 실접수. 다음 시작점은 기존 Chrome 탭 연결/공식 양식 근거 확보 후 상품813724060928의 실제 수집→견적→접수 검증이다.

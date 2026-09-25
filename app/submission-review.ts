@@ -16,11 +16,13 @@ export type SubmissionReview = {
 
 /** Readiness is derived from final saved cells, never legacy status badges. */
 export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[], imageChecks?: ReadonlyMap<string,ImageCheck>, imageCheckSource: 'storage-metadata' | 'attachment-bytes' = 'storage-metadata') {
-  const issues: SubmissionIssue[] = [];
+  // Bound memory while ensuring early review reminders cannot hide later errors.
+  const errors: SubmissionIssue[] = [], reviews: SubmissionIssue[] = [];
   let errorCount = 0; let reviewCount = 0;
   const add = (issue: SubmissionIssue) => {
     if (issue.kind === 'error') errorCount++; else reviewCount++;
-    if (issues.length < 1000) issues.push(issue);
+    const target = issue.kind === 'error' ? errors : reviews;
+    if (target.length < 1000) target.push(issue);
   };
   const general = (code: string, message: string) => add({kind:'error', code, message, optionId:null, optionLabel:'상품 공통', fieldId:null});
   if (!resolved.schema.categoryId) general('CATEGORY_MISSING', '상품의 카테고리를 선택해주세요.');
@@ -67,6 +69,7 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
         message:`${fieldLabel}: 실제 상품·증빙과 일치하는지 확인해주세요.`, optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
     }
   }
+  const issues = [...errors, ...reviews].slice(0, 1000);
   return {categoryId:resolved.schema.categoryId, categoryPath:resolved.schema.categoryPath,
     includedOptions:rows.length, errorCount, reviewCount, issues, omittedIssueCount:errorCount+reviewCount-issues.length,
     submissionReady:false as const, transport:'not-connected' as const,

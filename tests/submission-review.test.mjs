@@ -22,6 +22,22 @@ function load(file, overrides={}, mode='development', cache=new Map()) {
 }
 const {inspectSubmission}=load('app/submission-review.ts');
 
+test('late option errors take priority over earlier review reminders under the display cap',()=>{
+ const input=resolved();
+ input.rows=Array.from({length:1005},(_,i)=>({...structuredClone(input.rows[0]),optionId:`option-${i}`}));
+ input.rows[1004].fields.title=cell('',['마지막 옵션 필수 누락']);
+ const before=JSON.stringify(input),report=inspectSubmission(input,['owner/main.png']);
+ assert.equal(report.errorCount,1);assert.equal(report.reviewCount,1005);
+ assert.equal(report.issues.length,1000);assert.equal(report.omittedIssueCount,6);
+ assert.equal(report.issues[0].optionId,'option-1004');assert.equal(report.issues[0].kind,'error');
+ assert.equal(report.issues[1].optionId,'option-0');assert.equal(report.submissionReady,false);
+ assert.equal(JSON.stringify(input),before);
+ for(const row of input.rows)row.fields.title=cell('',['필수 누락']);
+ const all=inspectSubmission(input,['owner/main.png']);
+ assert.equal(all.errorCount,1005);assert.equal(all.reviewCount,1005);assert.equal(all.omittedIssueCount,1010);
+ assert.ok(all.issues.every(issue=>issue.kind==='error'));assert.equal(all.issues[999].optionId,'option-999');
+});
+
 test('confirmed blank choice codes remain evidence reviews while unentered blanks do not',()=>{
  for(const source of ['manual-option','manual-common','couplus-default','content','empty']){
   for(const modern of [true,false]){
