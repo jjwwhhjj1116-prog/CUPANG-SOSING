@@ -22,6 +22,11 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   const options={...emptyProductOptions(id),revision:1,updatedAt:now,rows:rows.map(row=>({...row,updatedAt:now,provenance:Object.fromEntries(Object.keys(optionFieldNames).map(key=>[key,['originalName','supplierSku','unitCostCny','minimumOrderQuantity'].includes(key)||key==='stock'&&row.stock!==null||key==='color'&&row.color||key==='size'&&row.size?'collected':['unitsPerPack','included'].includes(key)?'manual':'unverified']))} as ProductOption))};
   const content=emptyProductContent(id);content.revision=1;content.updatedAt=now;
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
+  // These are the owner's captured registration inputs, not supplier facts or
+  // translated claims. Explicit blanks must survive later workspace changes.
+  for (const [field, setting] of [['manufacturer','manufacturer'],['importer','importer'],['contact','serviceContact']] as const) {
+    if (Object.hasOwn(job.context.settings, setting)) content.label[field] = { value: settings[setting], provenance: 'manual', updatedAt: now };
+  }
   const product:ProductRecord={id,owner_id:owner,source_url:result.sourceUrl,title:result.title,source_price_cny:cost,exchange_rate:policy.exchangeRate,supply_margin:policy.supplyMargin,coupang_margin:policy.coupangMargin,supply_price:price.supplyPrice,sale_price:price.salePrice,msrp:price.msrp,options_count:rows.length,...initialStatuses,registration_status:'수집 원문 반영',image_keys:'[]',goal_stage:job.goal,created_at:now,updated_at:now};
   const banners=workspaceBannerAssignments(settings,owner);
   for(const [role,key] of banners)content.assets[role]={value:[key],provenance:'manual',updatedAt:now};

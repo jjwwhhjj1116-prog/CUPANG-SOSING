@@ -6,7 +6,7 @@ import ts from 'typescript';
 import {memoryDatabase,runtimeDDL} from '../scripts/check-db-schema.mjs';
 function load(file,deps={},mode='development'){
  const exports={};const code=ts.transpileModule(fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(code,{exports,crypto,URL,Date,Response,TextEncoder,TextDecoder,Uint8Array,DataView,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,deps,mode);throw Error(name);}});return exports;
+ vm.runInNewContext(code,{exports,structuredClone,crypto,URL,Date,Response,TextEncoder,TextDecoder,Uint8Array,DataView,process:{env:{NODE_ENV:mode}},require(name){if(name in deps)return deps[name];if(name==='next/server')return {NextResponse:Response};if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,deps,mode);throw Error(name);}});return exports;
 }
 const settings=load('app/workspace-settings.ts').defaultSettings;
 const prepare=load('app/collection-product.ts').prepareCollectionProduct;
@@ -72,4 +72,45 @@ test('banner verification precedes atomic promotion and completed retries preser
  assert.equal(JSON.parse(s.sqlite.prepare('SELECT payload FROM product_content').get().payload).assets.detailTop.value[0],'owner/top.png');
  const checked=reads;available=false;
  assert.equal((await s.promoteCollection('owner',captured,result)).product_id,saved.product_id);assert.equal(reads,checked);s.sqlite.close();
+});
+
+test('promotion initializes label business fields from captured settings including explicit blanks',()=>{
+ const captured={...job,context:{...job.context,settings:{...settings,manufacturer:'등록 제조사',importer:'등록 수입원',serviceContact:''}}};
+ const before=JSON.stringify(captured),prepared=prepare('owner',captured,result,'p',now);
+ for(const [key,value] of [['manufacturer','등록 제조사'],['importer','등록 수입원'],['contact','']]){
+  assert.equal(prepared.content.label[key].value,value);assert.equal(prepared.content.label[key].provenance,'manual');
+  assert.equal(prepared.content.label[key].updatedAt,now);
+ }
+ for(const key of ['material','countryOfOrigin','certification','kcInformation'])assert.equal(prepared.content.label[key].provenance,'unverified');
+ assert.equal(JSON.stringify(captured),before);
+ const sparse={...captured,context:{...captured.context,settings:{...captured.context.settings}}};
+ for(const key of ['manufacturer','importer','serviceContact'])delete sparse.context.settings[key];
+ const legacy=prepare('owner',sparse,result,'p',now);
+ for(const key of ['manufacturer','importer','contact']){assert.equal(legacy.content.label[key].value,'');assert.equal(legacy.content.label[key].provenance,'unverified');}
+});
+
+test('promotion retry preserves edited label business fields instead of restoring captured settings',async()=>{
+ const s=storage();
+ try{
+  const saved=await s.promoteCollection('owner',job,result);
+  const read=()=>JSON.parse(s.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(saved.product_id).payload);
+  const content=read();assert.equal(content.label.manufacturer.value,settings.manufacturer);
+  content.label.manufacturer={value:'',provenance:'manual',updatedAt:now};content.label.importer.value='수정 수입원';
+  s.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(content),saved.product_id);
+  await s.promoteCollection('owner',job,result);
+  assert.equal(read().label.manufacturer.value,'');assert.equal(read().label.importer.value,'수정 수입원');
+ }finally{s.sqlite.close();}
+});
+
+test('captured company labels feed quotation fields even after workspace defaults change',()=>{
+ const captured={...job,context:{...job.context,settings:{...settings,manufacturer:'당시 제조사',importer:'당시 수입원',serviceContact:''}}};
+ const p=prepare('owner',captured,result,'p',now);
+ const {resolveQuotationFields}=load('app/quotation-schema.ts');
+ const resolved=resolveQuotationFields({categoryId:'80719',product:p.product,content:p.content,options:p.options,settings:{...settings,manufacturer:'새 제조사',importer:'새 수입원',serviceContact:'새 연락처'}});
+ for(const row of resolved.rows.filter(row=>row.included)){
+  assert.equal(row.fields.manufacturer.value,'당시 제조사');
+  assert.equal(row.fields.noticeManufacturerImporter.value,'제조자: 당시 제조사 / 수입자: 당시 수입원');
+  assert.equal(row.fields.noticeServiceContact.value,'');
+  assert.equal(row.fields.noticeServiceContact.source,'content');
+ }
 });

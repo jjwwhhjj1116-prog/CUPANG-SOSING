@@ -2414,3 +2414,12 @@ AI등록 화면 확인:
 - 검증: 저장된 categoryEvidence.records 22개 각각에 옵션 이미지/공통 대표 이미지/견적 직접 공란과 최종 출력 비교를 추가했다. 관련 167/167, TypeScript, 변경 TS ESLint, diff check, Cloudflare build/check 통과. 최초 잘못된 변경은 기존 테스트가 실패해 철회했고 최종 로그는 통과 결과다. outputs/step216-tests.log. 신규 실사이트 대조가 아니라 기존 기록/모의 데이터 기반 회귀 검사다.
 - Cloudflare version fa2c294c-7399-4f6c-8f71-649b24b2da36 배포. DB 변경·유료 AI·운영 등록 없음.
 - 핵심 미완성: 실제 1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터·실접수. 이번 턴 Chrome 조작 없음. 다음 시작점은 기존 Chrome 탭 접근 확보와 지정 상품 813724060928의 실상품 수집→견적→접수 검증이다.
+
+## 217. 수집 당시 기본설정의 표시사항 초기 작성 연결 — 2026-09-25
+
+- 시작 main 97d1503 clean. 수집 요청 context에 기본설정이 있으나 prepareCollectionProduct는 가격·배너만 반영하고 표시사항의 업체 필드는 비워 두었다.
+- 새 상품 최초 반영 시 명시적으로 저장된 manufacturer/importer/serviceContact를 표시사항 제조사/수입판매원/A/S 연락처에 작성한다. 사용자가 입력한 기본설정의 스냅샷이므로 manual 출처로 보존하며 빈 문자열도 유지한다. 과거 context에서 항목 자체가 빠진 경우 기본 예시값을 채우지 않는다. 제조국·재질·인증 등 상품 사실은 추정하지 않는다.
+- 이후 기본설정이 바뀌어도 이 상품의 업체 표시사항과 견적서 제조사/제조자·수입자/A/S 필드는 초기 스냅샷 또는 직접 수정한 값을 사용한다. 이미 반영된 기존 상품은 이 작업으로 변경하지 않으며 재시도 시 직접 수정한 값·공란을 유지한다. 브랜드·거래타입 등 모든 기본설정을 고정한 것은 아니다.
+- 검증: 수집 관련 98/98, TypeScript, 변경 TS ESLint, diff check, Cloudflare build/check 통과. 누락 항목과 명시 공란 구분, 원본 context 불변, SQLite 재시도 후 수동값 보존, 실제 resolver를 통한 기본설정 변경 이후 견적 연결 테스트. 테스트 환경 structuredClone 누락을 수정 후 재실행했다. outputs/step217-collection-tests.log. 실사이트 접수 또는 실제 수집기 실행 검증 아님.
+- Cloudflare version 9b5ae7d1-faf1-4616-85a6-ff7d43125439 배포. DB 마이그레이션·유료 AI·운영 등록 없음.
+- 남은 핵심: 실제 1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터·실접수. 이번 턴 Chrome 조작 없음. 다음 시작점은 기존 Chrome 접근 확보와 상품 813724060928 실제 수집→견적→접수 검증이다.
