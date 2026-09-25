@@ -28,6 +28,6 @@ export async function POST(request:Request,context:Context){
  let result;try{result=validateCollectionResult(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)),job.offer_id);}catch(cause){return reply({error:cause instanceof Error?cause.message:'수집 결과를 확인해주세요.'},400);}
  const saved=await storeCollectionResult(auth.owner,auth.id,result);
  if(saved.status!=='stored')return reply({error:saved.status==='conflict'?'이미 다른 결과가 수신됐습니다. 기존 원문은 보존됩니다.':'수집 요청이 취소됐습니다.'},409);
- return reply({receipt:{result:saved.result,receivedAt:saved.receivedAt},productCreated:false,executionStarted:false});
+ return reply({jobId:auth.id,offerId:job.offer_id,receipt:{result:saved.result,receivedAt:saved.receivedAt},productCreated:false,executionStarted:false});
  }catch{return reply({error:'수집 결과 저장 여부를 확인하지 못했습니다. 동일 결과로 재시도할 수 있습니다.'},503);}
 }
