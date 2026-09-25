@@ -2327,3 +2327,11 @@ AI등록 화면 확인:
 - 검증: 관련189/189, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과. 저장된 모든 관찰 카테고리에서 자동 출처에 연결 설명이 있으며 SEO 제목/검색어, 브랜드, 이미지, 박스 수량 및 수동 공란이 보존되는지 회귀 검사했다. 가격 연결은 기존 관련 테스트에서 검사했다. 실제 Couplus/Hub 최신 대조나 접수 검증은 아니다. outputs/step206-*.log.
 - Cloudflare version501b9d86-e42e-4d84-8118-57de0820b7f4 배포. DB 변경·유료AI 호출·운영 등록 없음.
 - 남은 핵심: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터와 실접수. 전체 자동화 미완성. 다음 시작점은 기존 Chrome 탭 연결에서 실제 화면 근거를 확보하고 지정 상품813724060928의 카테고리 선택→수집→견적→접수를 검증하는 것이다.
+
+## 207. 견적 Excel 옵션명의 수동 공란 보존 — 2026-09-25
+
+- 시작 main5a0b9ec clean. 확인: resolvedQuotationRows 및 이전 quotationData는 translatedName || originalName으로 SKU 이름을 출력했다. 직접 비운 번역명도 중국어 원문으로 복원되었다.
+- optionQuotationName 공통 함수를 두 출력 경로에 연결했다. manual 출처이면 공란 포함 저장 번역명 그대로 사용하고, 미작성/기존 출처 정보 없는 이름만 종전 원문 대체를 유지한다. 옵션 식별용 화면 표시와 원본 데이터는 변경하지 않는다.
+- 검증: 관련199/199, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과. 양쪽 출력 경로에서 manual/unverified/collected/translated/기존 출처 누락과 입력 불변 검사. 생성 XLSX XML에 중국어 원문이 다시 들어가지 않으며 필수 옵션 열의 공란이 missingRequired로 보고됨을 검사했다. 테스트 양식이며 실제 Hub 공식 Excel 실접수는 아니다. outputs/step207-*.log.
+- Cloudflare version5aec5c18-45d6-4f12-b174-98d802663801 배포. DB 변경·유료AI·운영 등록 없음.
+- 남은 핵심: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터 및 실접수. 전체 자동화 미완성. 다음 시작점은 기존 Chrome에서 실제 근거 확보 및 지정 상품813724060928의 수집→견적→접수 검증. 이번 턴 브라우저 조작 없음.

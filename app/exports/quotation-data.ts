@@ -3,10 +3,11 @@ import { contentDetailImageKeys, savedTextOrFallback, type ProductContent } from
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
 import { calculatePrice } from '@/app/pricing';
-import { optionSourceCostCny, resolveOptionPricePolicy } from '@/app/product-options';
+import { optionSourceCostCny, optionQuotationName, resolveOptionPricePolicy, type ProductOption } from '@/app/product-options';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 
 export type QuotationOption = {
+  provenance?: Partial<Pick<ProductOption['provenance'], 'translatedName'>>;
   id: string; originalName: string; translatedName: string; supplierSku: string;
   unitCostCny: number | null; unitsPerPack: number; included: boolean; imageKey: string | null;
 };
@@ -38,7 +39,7 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
     if (option.unitCostCny === null) throw new Error('포함 옵션의 원가와 구성 수량을 확인해주세요.');
     const sourcePriceCny = optionSourceCostCny(option.unitCostCny, option.unitsPerPack);
     const price = calculatePrice(sourcePriceCny, policy);
-    return { ...base, skuName: option.translatedName || option.originalName, skuId: option.supplierSku,
+    return { ...base, skuName: optionQuotationName(option), skuId: option.supplierSku,
       sourcePriceCny, supplyPrice: price.supplyPrice, salePrice: price.salePrice, msrp: price.msrp,
       mainImage: filename(option.imageKey) || base.mainImage,
     };

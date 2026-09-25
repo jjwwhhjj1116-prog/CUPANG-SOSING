@@ -19,6 +19,17 @@ function load(file) {
 }
 const reader = load('app/xlsx-template.ts');
 const { createMappedQuotation } = load('app/exports/mapped-quotation.ts');
+
+test('a deliberately cleared option remains blank in XLSX and is reported when required',async()=>{
+ const {optionQuotationName}=load('app/product-options.ts');
+ const option={originalName:'原始红色',translatedName:'',provenance:{translatedName:'manual'}};
+ const input=await inputFrom(entries(),{dataStartRow:10,rows:[{title:'상품',supplyPrice:15000,skuName:optionQuotationName(option)}]});
+ const result=await createMappedQuotation(input),archive=await reader.readXlsxArchive(result.bytes.buffer);
+ const sheet=decode(archive.get('xl/worksheets/sheet1.xml'));
+ assert.doesNotMatch(sheet,/原始红色/);
+ assert.equal(result.values[0][3],'');
+ assert.ok(result.report.missingRequired.some(item=>item.row===10&&item.column===4));
+});
 const encode = value => new TextEncoder().encode(value);
 const decode = value => new TextDecoder().decode(value);
 async function hash(bytes) { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))).map(value => value.toString(16).padStart(2, '0')).join(''); }

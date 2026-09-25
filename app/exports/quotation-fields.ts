@@ -5,7 +5,7 @@ import { inspectSubmission } from '@/app/submission-review';
 import { productImageKeys, savedTextOrFallback } from '@/app/product-content';
 import { quotationSections, type ResolvedQuotation } from '@/app/quotation-schema';
 import { quotationCsv } from '@/app/pricing';
-import { optionSourceCostCny } from '@/app/product-options';
+import { optionSourceCostCny, optionQuotationName } from '@/app/product-options';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 import type { QuotationRowData } from '@/app/exports/quotation-data';
 import type { QuotationExportSource } from '@/app/exports/quotation-source';
@@ -72,7 +72,7 @@ export function resolvedQuotationRows(saved: QuotationExportSource, resolved: Re
         && field.choices?.some(choice => choice.value === '')
         && row.fields[field.id]?.value === '' && row.fields[field.id]?.source !== 'empty').map(field => field.id),
       sourceUrl: saved.product.source_url, sourcePriceCny: option ? optionSourceCostCny(option.unitCostCny!, option.unitsPerPack) : saved.product.source_price_cny,
-      ...(option ? { skuName: option.translatedName || option.originalName, skuId: option.supplierSku } : {}),
+      ...(option ? { skuName: optionQuotationName(option), skuId: option.supplierSku } : {}),
       importer: savedTextOrFallback(saved.content.label.importer, saved.settings.importer),
       serviceContact: savedTextOrFallback(saved.content.label.contact, saved.settings.serviceContact),
       material: saved.content.label.material.value, countryOfOrigin: saved.content.label.countryOfOrigin.value,

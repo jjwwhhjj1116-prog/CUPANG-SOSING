@@ -40,6 +40,20 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('quotation exports preserve manually cleared option names without restoring Chinese originals',()=>{
+ const input=fixture(),assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ const source=load('app/exports/quotation-data.ts'),final=load('app/exports/quotation-fields.ts');
+ for(const provenance of ['manual','unverified','collected','translated',undefined]){
+  input.options.rows[0].translatedName='';input.options.rows[0].provenance.translatedName=provenance;
+  const before=JSON.stringify(input),expected=provenance==='manual'?'':'红';
+  assert.equal(source.quotationData(input.product,input.content,input.settings,input.options.rows,assets)[0].skuName,expected);
+  assert.equal(final.resolvedQuotationRows(input,model.resolveQuotationFields(input),assets)[0].skuName,expected);
+  assert.equal(JSON.stringify(input),before);
+ }
+ input.options.rows[0].translatedName='수동 한국어';input.options.rows[0].provenance.translatedName='manual';
+ assert.equal(final.resolvedQuotationRows(input,model.resolveQuotationFields(input),assets)[0].skuName,'수동 한국어');
+});
+
 test('all recorded categories expose input links for automatic values and retain stage values and manual blanks',()=>{
  const {quotationInputLink}=load('app/quotation-input-links.ts');
  const categories=new Set(['80719','81452','64497','103495','77442',...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas)]);

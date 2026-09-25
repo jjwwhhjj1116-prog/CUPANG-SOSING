@@ -27,6 +27,13 @@ export type OptionCalculation = { optionId: string; included: boolean; sourceCos
 export type OptionPricing = { policy: PricePolicy; policySource: 'saved-product' | 'product-and-workspace'; rows: OptionCalculation[] };
 export type ProductOptionsResponse = { options: ProductOptions; pricing: OptionPricing; productVersion: string };
 
+/** Export values preserve deliberately cleared names; display labels may use IDs. */
+export function optionQuotationName(option: Pick<OptionValues, 'translatedName' | 'originalName'> & {
+  provenance?: Partial<Pick<ProductOption['provenance'], 'translatedName'>>;
+}): string {
+  return option.provenance?.translatedName === 'manual' ? option.translatedName : option.translatedName || option.originalName;
+}
+
 export function emptyProductOptions(productId: string): ProductOptions { return { schemaVersion: 1, productId, revision: 0, updatedAt: null, rows: [] }; }
 export function emptyOptionInput(id: string): OptionInput {
   return { id, originalName: '', translatedName: '', supplierSku: '', color: '', size: '', stock: null, unitCostCny: null, unitsPerPack: 1,
