@@ -40,6 +40,47 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('completed translation flows through saved SEO, labels and options into the category quotation',()=>{
+ const input=fixture(),time='2026-09-25T00:00:00.000Z';
+ input.content=contentModel.emptyProductContent('p1');
+ input.options.rows[0].translatedName='';input.options.rows[0].color='红';
+ input.options.rows[0].provenance.translatedName='unverified';input.options.rows[0].provenance.color='collected';
+ const job={productId:'p1',productVersion:time,contentRevision:input.content.revision,status:'completed',review:{source:{attributes:[{name:'상품속성: 材质',value:'棉'},{name:'option:red',value:input.options.rows[0].originalName},{name:'option-color:red',value:'红'}]}},result:{draft:{title:'번역 수납바구니',description:'한국어 상세 설명',keywords:['수납','바구니'],attributes:[{sourceIndex:0,name:'재질',value:'면'},{sourceIndex:1,name:'옵션명',value:'빨강 세트'},{sourceIndex:2,name:'색상',value:'빨강'}]}}};
+ const plan=load('app/translation-integrated-adoption.ts').integratedTranslationPlan(input.content,input.options,job,time);
+ input.content=contentModel.applyContentPatch(input.content,plan.patch,time);
+ input.options=optionModel.applyOptionRows(input.options,plan.rows,time);
+ const resolved=model.resolveQuotationFields(input),fields=resolved.rows.find(row=>row.optionId==='red').fields;
+ assert.equal(fields.title.value,'번역 수납바구니');assert.equal(fields.noticeNameModel.value,'번역 수납바구니');
+ assert.equal(fields.noticeMaterial.value,'면');assert.equal(fields.color.value,'빨강');
+ assert.equal(input.options.rows[0].translatedName,'빨강 세트');assert.equal(fields.supplyPrice.value,'2000');
+ assert.match(fields.searchTags.value,/수납/);assert.match(fields.detailHtml.value,/한국어 상세 설명/);
+ assert.equal(fields.kcCertificationNumber.value,'해당사항없음');
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0];
+ assert.equal(exported.title,'번역 수납바구니');assert.equal(exported.skuName,'빨강 세트');
+ assert.equal(exported.noticeMaterial,'면');assert.equal(exported.color,'빨강');assert.equal(exported.supplyPrice,2000);
+ assert.match(exported.detailHtml,/한국어 상세 설명/);
+ const label=load('app/quotation-label-plan.ts').quotationLabelPlan(resolved,'red');
+ assert.equal(label.rows.find(row=>row[0]==='재질')[1],'면');
+ assert.equal(label.rows.find(row=>row[0]==='색상')[1],'빨강');
+});
+
+test('translation to quotation preserves deliberate blank labels and manual category overrides',()=>{
+ const input=fixture(),time='2026-09-25T00:00:00.000Z';
+ for(const key of ['productName','material'])input.content.label[key]={value:'',provenance:'manual',updatedAt:time};
+ input.content.seo.title={value:'',provenance:'manual',updatedAt:time};
+ const job={productId:'p1',productVersion:time,contentRevision:input.content.revision,status:'completed',review:{source:{attributes:[{name:'상품속성: 材质',value:'棉'}]}},result:{draft:{title:'덮어쓰면 안됨',description:'설명',keywords:['수납'],attributes:[{sourceIndex:0,name:'재질',value:'면'}]}}};
+ const plan=load('app/translation-integrated-adoption.ts').integratedTranslationPlan(input.content,input.options,job,time);
+ input.content=contentModel.applyContentPatch(input.content,plan.patch??{},time);input.options=optionModel.applyOptionRows(input.options,plan.rows,time);
+ const resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[0].fields.title.value,'');assert.equal(resolved.rows[0].fields.noticeMaterial.value,'');
+ assert.equal(input.content.label.productName.value,'');assert.equal(input.content.label.productName.provenance,'manual');
+ input.overrides={common:{noticeMaterial:'직접 확인한 소재'},options:{red:{title:'수동 옵션 상품명',color:''}}};
+ const manual=model.resolveQuotationFields(input).rows.find(row=>row.optionId==='red').fields;
+ assert.equal(manual.noticeMaterial.value,'직접 확인한 소재');assert.equal(manual.noticeMaterial.source,'manual-common');
+ assert.equal(manual.title.value,'수동 옵션 상품명');assert.equal(manual.title.source,'manual-option');
+ assert.equal(manual.color.value,'');assert.equal(manual.color.source,'manual-option');
+});
+
 test('80719 blank wire defaults and manual N/A choices reach submission evidence review',()=>{
  const input=fixture(),review=load('app/submission-review.ts');
  for(const manual of [false,true]){
