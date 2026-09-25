@@ -24,6 +24,24 @@ test('queue quotation preview shows actual mappings, missing columns and observe
  const noTemplate=renderToStaticMarkup(React.createElement(IntakeQuotationPreview,{profile:{...profile,categoryId:'unknown'}}));assert.match(noTemplate,/원본 Excel 양식은 연결되지/);assert.match(noTemplate,/미확인 · 임의 기본값 없음/);
 });
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
+test('quotation preview filters required and observed defaults, searches choice labels and preserves the schema',()=>{
+ const slots=[];let cursor=0;
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>{slots[i]=value;}];}};
+ const {CategoryQuotationPreview}=load('app/components/category-quotation-preview.tsx',{react:hooks});
+ const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');const before=JSON.stringify(schema);
+ const render=()=>{cursor=0;return CategoryQuotationPreview({schema});};
+ const rows=tree=>nodes(tree).filter(n=>n.type==='tr'&&n.key!==null);
+ let tree=render();assert.equal(rows(tree).length,schema.fields.length);
+ const filter=value=>{nodes(tree).find(n=>n.type==='select').props.onChange({target:{value}});tree=render();};
+ filter('required');assert.equal(rows(tree).length,schema.fields.filter(f=>f.required).length);
+ filter('known');const known=rows(tree).length;assert.ok(known>0);
+ filter('unknown');assert.equal(rows(tree).length,schema.fields.length-known);
+ filter('all');nodes(tree).find(n=>n.type==='input').props.onChange({target:{value:'뚜껑'}});tree=render();assert.ok(rows(tree).length>0);assert.ok(rows(tree).length<schema.fields.length);
+ nodes(tree).find(n=>n.type==='input').props.onChange({target:{value:'__no_match__'}});tree=render();assert.equal(rows(tree).length,0);
+ assert.match(JSON.stringify(tree),/일치하는 항목이 없습니다/);
+ nodes(tree).find(n=>n.type==='button').props.onClick();tree=render();assert.equal(rows(tree).length,schema.fields.length);
+ assert.equal(JSON.stringify(schema),before);
+});
 test('opening preview and changing category preserves row URL and notes and displays the newly selected profile',()=>{
  let rows=[{id:'row',profile,url:'https://detail.1688.com/offer/1.html',features:'특징',keywords:'검색어',status:'error',message:'이전 오류'}];
  const slots=[];let cursor=0;const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(){}};
