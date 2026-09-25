@@ -33,5 +33,18 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
       preview.push(...adopted.preview.map(({ name, before, after }) => ({ name, before, after })));
     }
   }
+  // When the source has no separate product-name attribute, use the reviewed
+  // effective SEO title for an untouched empty label. Never replace a distinct
+  // saved label name or resolve conflicting source names by choosing a title.
+  const labelName = content.label.productName;
+  const hasSourceName = job.result.draft.attributes.some(attribute =>
+    ['품명', '제품명', '상품명'].includes(attribute.name.trim())
+    && job.review.source.attributes[attribute.sourceIndex]?.name.startsWith('상품속성: '));
+  const effectiveTitle = patch.seo?.title ?? content.seo.title.value;
+  if (!hasSourceName && !labelName.value.trim() && labelName.provenance !== 'manual'
+    && !patch.label?.productName && effectiveTitle.trim()) {
+    patch.label = { ...patch.label, productName: effectiveTitle };
+    preview.push({ name: '품명 · 저장할 상품명 연결', before: labelName.value, after: effectiveTitle });
+  }
   return { input: preview.length ? validateContentInput({ expectedRevision: content.revision, patch }, [], '') : null, preview, skipped };
 }

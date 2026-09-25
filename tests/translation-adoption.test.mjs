@@ -15,7 +15,7 @@ test('batch adoption saves SEO and exact label matches once while protecting man
  content.label.countryOfOrigin={value:'',provenance:'manual',updatedAt:'before'};
  const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 材质'},{name:'상품속성: 国'}]}},result:{draft:{title:'번역 제목',keywords:['검색어'],description:'자동 설명',attributes:[{sourceIndex:0,name:'재질',value:'면'},{sourceIndex:1,name:'제조국',value:'중국'}]}}};
  const before=JSON.stringify({content,job});const plan=translationBatchAdoption(content,job,'v');
- assert.equal(plan.preview.length,3);assert.equal(plan.input.expectedRevision,0);
+ assert.equal(plan.preview.length,4);assert.equal(plan.input.expectedRevision,0);
  const next=applyContentPatch(content,plan.input.patch,'now');
  assert.equal(next.revision,1);assert.equal(next.seo.title.value,'번역 제목');assert.equal(next.label.material.value,'면');
  assert.equal(next.seo.description.value,'');assert.equal(next.label.countryOfOrigin.value,'');assert.equal(JSON.stringify(next.assets),JSON.stringify(content.assets));
@@ -116,4 +116,18 @@ test('explicit equivalent label headings are adopted but conflicting aliases and
  const {content,job}=labelFixture();job.result.draft.attributes=[{sourceIndex:0,name:'재질',value:'면'},{sourceIndex:1,name:'소재',value:'나일론'}];
  assert.equal(suggestTranslationLabels(content,job,'v').mappings.length,0);
  for(const name of ['겉감 소재','안감 소재','포장 크기','크기','중량','대략 소재']){job.result.draft.attributes=[{sourceIndex:0,name,value:'추정 금지'}];assert.equal(suggestTranslationLabels(content,job,'v').mappings.length,0);}
+});
+
+test('batch adoption fills an untouched label name with the effective SEO title in the same revision',()=>{
+ const content=emptyProductContent('p');const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[]}},result:{draft:{title:'번역 상품명',keywords:[],description:'',attributes:[]}}};
+ let plan=translationBatchAdoption(content,job,'v');assert.equal(plan.input.patch.label.productName,'번역 상품명');assert.equal(plan.input.expectedRevision,0);
+ const saved=applyContentPatch(content,plan.input.patch,'now');assert.equal(saved.revision,1);assert.equal(saved.label.productName.value,saved.seo.title.value);
+ assert.equal(translationBatchAdoption(saved,job,'v').input,null);
+ content.seo.title={value:'직접 SEO 제목',provenance:'manual',updatedAt:'before'};
+ plan=translationBatchAdoption(content,job,'v');assert.equal(plan.input.patch.label.productName,'직접 SEO 제목');assert.equal(plan.input.patch.seo,undefined);
+ for(const field of [{value:'',provenance:'manual'},{value:'별도 라벨명',provenance:'collected'}]){content.label.productName={...field,updatedAt:'before'};plan=translationBatchAdoption(content,job,'v');assert.equal(plan.input,null);}
+ content.label.productName={value:'',provenance:'unverified',updatedAt:null};
+ job.review.source.attributes=[{name:'상품속성: 名称'},{name:'상품속성: 产品名'}];job.result.draft.attributes=[{sourceIndex:0,name:'품명',value:'다른 품명'},{sourceIndex:1,name:'제품명',value:'충돌 품명'}];
+ assert.equal(translationBatchAdoption(content,job,'v').input,null);
+ job.result.draft.attributes.pop();plan=translationBatchAdoption(content,job,'v');assert.equal(plan.input.patch.label.productName,'다른 품명');
 });
