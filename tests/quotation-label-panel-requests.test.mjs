@@ -16,16 +16,16 @@ function harness(handlers={}){
  const exports={};const file='app/components/quotation-label-panel.tsx';
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL:{createObjectURL:()=> 'blob:preview',revokeObjectURL(){}},require(name){
   if(name==='react')return hooks;
-  if(name==='@/app/quotation-label-plan')return{quotationLabelPlan:()=>({})};
+  if(name==='@/app/quotation-label-plan')return{quotationLabelPlan:resolved=>({value:resolved.savedValue})};
   if(name==='@/app/document-image-render')return{renderDocument:async()=>{calls.render++;return handlers.render?handlers.render():{blob:new Blob(['png']),width:100,height:100};}};
   if(name==='@/app/quotation-label-attachment')return{attachQuotationLabel:async()=>{calls.attach++;return handlers.attach?handlers.attach():view;}};
-  if(name==='@/app/quotation-label-batch')return{attachQuotationLabels:async()=>{calls.batch++;return handlers.batch?handlers.batch():{view};}};
+  if(name==='@/app/quotation-label-batch')return{attachQuotationLabels:async input=>{calls.batch++;return handlers.batch?handlers.batch(input):{view};}};
   return native(name);
  }});
  const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,productId:'p',endpoint:'/quotation',optionId:'one',disabled:false,onBusyChange:value=>calls.busy.push(value),onAttached:()=>calls.attached++});first=false;return tree;};
  const buttons=()=>Object.fromEntries(nodes(render()).filter(n=>n.type==='button').map(n=>[text(n.props.children),n.props.onClick]));
  render();effects.forEach(fn=>cleanups.push(fn()));
- return{calls,render,buttons,unmount(){cleanups.forEach(fn=>fn?.());}};
+ return{calls,view,render,buttons,unmount(){cleanups.forEach(fn=>fn?.());}};
 }
 const preview='저장된 견적 값으로 PNG 미리보기';
 const attach='PNG 업로드·선택 옵션 견적에 연결';
@@ -52,4 +52,16 @@ test('single and batch attachment share a synchronous lock and release it after 
 
 test('late rendering after panel closure cannot publish a preview',async()=>{
  const pending=deferred();const h=harness({render:()=>pending.promise});h.buttons()[preview]();h.unmount();pending.resolve({blob:new Blob(['png']),width:100,height:100});await settle();assert.equal(h.buttons()[attach],undefined);assert.equal(h.calls.attached,0);
+});
+
+
+test('option label retry invalidates uploaded images when saved quotation or category changes',async()=>{
+ const seen=[];const h=harness({batch:input=>{seen.push(input.uploaded.get('one'));input.uploaded.set('one','uploaded.png');throw Error('retry');}});
+ h.buttons()[batch]();await settle();h.buttons()[batch]();await settle();
+ assert.deepEqual(seen,[undefined,'uploaded.png']);
+ h.view.resolved.savedValue='수정한 표시사항';h.buttons()[batch]();await settle();
+ assert.equal(seen[2],undefined);
+ h.view.categoryContext={categoryId:'new'};h.buttons()[batch]();await settle();
+ assert.equal(seen[3],undefined);
+ h.buttons()[batch]();await settle();assert.equal(seen[4],'uploaded.png');
 });

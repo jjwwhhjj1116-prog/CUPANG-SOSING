@@ -15,6 +15,7 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
   const running = useRef(false);
   const uploadedKey = useRef<string | null>(null);
   const batchKeys = useRef(new Map<string | null, string>());
+  const batchSignature = useRef<string | null>(null);
   const [progress, setProgress] = useState<LabelBatchProgress | null>(null);
   const stopRequested = useRef(false);
   const [batchRunning, setBatchRunning] = useState(false);
@@ -49,6 +50,12 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
     stopRequested.current = false; setStopping(false); setStopped(false); setBatchRunning(true);
     setBusy(true); setError(''); onBusyChange(true);
     try {
+      const signature = JSON.stringify({ productId, endpoint, category: view.categoryContext,
+        plans: resolved.rows.filter(row => row.included).map(row => [row.optionId, quotationLabelPlan(resolved, row.optionId)]) });
+      if (batchSignature.current !== signature) {
+        batchKeys.current = new Map();
+        batchSignature.current = signature;
+      }
       const result = await attachQuotationLabels({ productId, endpoint, view, uploaded: batchKeys.current,
         shouldStop: () => stopRequested.current || !alive.current,
         render: renderDocument, onProgress: value => { if (alive.current) setProgress(value); } });
@@ -57,7 +64,7 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
         else onAttached(result.view);
       }
     } catch (cause) {
-      if (alive.current) setError(`${cause instanceof Error ? cause.message : '일괄 라벨 연결 실패'} 완료된 연결과 업로드 파일은 보존됩니다. 이 화면에서 다시 실행하면 같은 파일로 남은 연결을 이어갑니다.`);
+      if (alive.current) setError(`${cause instanceof Error ? cause.message : '일괄 라벨 연결 실패'} 완료된 연결과 업로드 파일은 보존됩니다. 다시 실행할 때 내용이 같으면 기존 파일을 재사용하고, 바뀌었으면 새로 생성합니다.`);
     } finally { running.current = false; onBusyChange(false); if (alive.current) { setBusy(false); setBatchRunning(false); setStopping(false); } }
   }
   const included = resolved.rows.some(row => row.optionId === optionId && row.included);
