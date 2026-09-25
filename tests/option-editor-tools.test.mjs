@@ -81,3 +81,27 @@ test('duplicating an option clears SKU-specific stock while bulk edits retain it
  const preview=tools.previewOptionBulk(rows,['a'],{type:'unitsPerPack',value:3},policy);
  assert.equal(tools.applyOptionBulk(rows,preview)[0].stock,23);assert.equal(rows[0].stock,23);
 });
+
+test('bundle addition preserves original options and calculates separate bundle prices without inventing stock or packaging',()=>{
+ const rows=[row('a',{stock:23,weightKg:0.4}),row('b')],before=JSON.stringify(rows);
+ const preview=tools.previewOptionBulk(rows,['a'],{type:'addBundle',value:3,newIds:{a:'bundle-a'}},policy);
+ assert.equal(JSON.stringify(rows),before);
+ assert.equal(JSON.stringify(preview.rows[0]),JSON.stringify(rows[0]));
+ assert.equal(JSON.stringify(preview.rows[2]),JSON.stringify(rows[1]));
+ const added=preview.rows[1];
+ assert.equal(added.id,'bundle-a');assert.equal(added.unitsPerPack,3);assert.equal(added.translatedName,'옵션 a (3개입)');
+ assert.equal(added.unitCostCny,0.1);assert.equal(added.imageKey,rows[0].imageKey);assert.equal(added.supplierSku,'');
+ for(const key of ['stock','minimumOrderQuantity','widthCm','lengthCm','heightCm','weightKg']) assert.equal(added[key],null);
+ assert.equal(preview.changes[0].after.id,'bundle-a');assert.equal(preview.changes[0].beforePrice,10);assert.equal(preview.changes[0].afterPrice,30);
+ assert.equal(tools.applyOptionBulk(rows,preview).length,3);
+ assert.throws(()=>tools.applyOptionBulk([{...rows[0],unitCostCny:1},rows[1]],preview),/미리보기/);
+});
+
+test('bundle addition rejects invalid quantities, duplicate IDs and option capacity overflow',()=>{
+ const rows=[row('a'),row('b')];
+ for(const value of [1,101,2.5,NaN]) assert.throws(()=>tools.previewOptionBulk(rows,['a'],{type:'addBundle',value,newIds:{a:'new'}},policy));
+ for(const newIds of [{},{a:'a'},{a:'same',b:'same'}]) assert.throws(()=>tools.previewOptionBulk(rows,['a','b'],{type:'addBundle',value:2,newIds},policy));
+ assert.throws(()=>tools.previewOptionBulk(Array.from({length:model.OPTION_LIMIT},(_,i)=>row(String(i))),['0'],{type:'addBundle',value:2,newIds:{0:'new'}},policy));
+ const blank=tools.previewOptionBulk([row('a',{translatedName:''})],['a'],{type:'addBundle',value:2,newIds:{a:'new'}},policy);
+ assert.equal(blank.rows[1].translatedName,'');
+});

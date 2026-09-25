@@ -2,7 +2,7 @@ import { calculateOptionPrices, OPTION_LIMIT, type OptionInput } from '@/app/pro
 import type { PricePolicy } from '@/app/pricing';
 import type { AssetRole } from '@/app/product-content';
 
-export type BulkOptionAction = { type: 'unitCostCny' | 'unitsPerPack'; value: number } | { type: 'imageKey'; value: string | null } | { type: 'include' | 'exclude' | 'remove' };
+export type BulkOptionAction = { type: 'unitCostCny' | 'unitsPerPack'; value: number } | { type: 'addBundle'; value: number; newIds: Record<string, string> } | { type: 'imageKey'; value: string | null } | { type: 'include' | 'exclude' | 'remove' };
 export type BulkOptionPreview = {
   base: string; action: BulkOptionAction; selectedIds: string[]; rows: OptionInput[];
   changes: { id: string; name: string; before: OptionInput; after: OptionInput | null; beforePrice: number | null; afterPrice: number | null; error: string | null }[];
@@ -13,8 +13,17 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
   if (action.type === 'unitCostCny' && (!Number.isFinite(action.value) || action.value <= 0 || action.value > 1e9)) throw new Error('개당 원가는 0보다 크고 10억 CNY 이하이어야 합니다.');
   if (action.type === 'unitsPerPack' && (!Number.isInteger(action.value) || action.value < 1 || action.value > 1e6)) throw new Error('판매 단위당 구성 수량은 1~1,000,000 사이 정수입니다.');
   if (action.type === 'imageKey' && action.value !== null && !imageKeys.includes(action.value)) throw new Error('이 상품에 저장된 이미지를 다시 선택해주세요.');
+  if (action.type === 'addBundle') {
+    if (!Number.isInteger(action.value) || action.value < 2 || action.value > 100) throw new Error('추가할 번들 수량은 2~100개입니다.');
+    const ids = selectedIds.map(id => action.newIds[id]);
+    if (rows.length + selected.size > OPTION_LIMIT || ids.some(id => !id || rows.some(row => row.id === id)) || new Set(ids).size !== ids.length) throw new Error('옵션 개수 또는 새 식별자를 확인해주세요.');
+  }
   const next = rows.flatMap(row => {
     if (!selected.has(row.id)) return [{ ...row }];
+    if (action.type === 'addBundle') return [{ ...row }, { ...row, id: action.newIds[row.id],
+      translatedName: row.translatedName ? `${row.translatedName} (${action.value}개입)`.slice(0, 500) : '',
+      originalName: row.originalName || row.supplierSku, unitsPerPack: action.value,
+      supplierSku: '', stock: null, minimumOrderQuantity: null, widthCm: null, lengthCm: null, heightCm: null, weightKg: null }];
     if (action.type === 'remove') return [];
     if (action.type === 'include' || action.type === 'exclude') return [{ ...row, included: action.type === 'include' }];
     if ('value' in action) return [{ ...row, [action.type]: action.value }];
@@ -22,7 +31,8 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
   });
   const beforePrices = calculateOptionPrices(rows, policy); const afterPrices = calculateOptionPrices(next, policy);
   return { base: JSON.stringify(rows), action, selectedIds: [...selected], rows: next, changes: rows.filter(row => selected.has(row.id)).map(row => {
-    const after = next.find(value => value.id === row.id) ?? null; const price = afterPrices.find(value => value.optionId === row.id);
+    const targetId = action.type === 'addBundle' ? action.newIds[row.id] : row.id;
+    const after = next.find(value => value.id === targetId) ?? null; const price = afterPrices.find(value => value.optionId === targetId);
     return { id: row.id, name: row.translatedName || row.originalName || row.supplierSku || '이름 미입력', before: { ...row }, after,
       beforePrice: beforePrices.find(value => value.optionId === row.id)?.calculation?.supplyPrice ?? null, afterPrice: price?.calculation?.supplyPrice ?? null, error: price?.error ?? null };
   }) };
