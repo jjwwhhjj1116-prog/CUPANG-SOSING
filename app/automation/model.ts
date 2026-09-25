@@ -3,6 +3,7 @@ import { defaultSettings, type WorkspaceSettings } from '@/app/workspace-setting
 import type { ProductRecord } from '@/db/queries';
 import { contentDetailImageKeys, labelDocumentRows, type ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
+import type { QuotationFieldsState } from '@/db/quotation-fields';
 import { calculateOptionPrices, resolveOptionPricePolicy, type ProductOptions } from '@/app/product-options';
 
 export const automationStages = ['seo', 'pricing', 'mainImage', 'additionalImages', 'detailImage', 'sizeChart', 'koreanLabel', 'quotation'] as const;
@@ -18,7 +19,7 @@ export type AutomationArtifact = {
   submissionReady: boolean;
 };
 export type AutomationEvidence = {
-  kind: 'storedProduct' | 'savedSettings' | 'savedContent' | 'storedAssetReference' | 'localCalculation' | 'providerReceipt' | 'supplierTemplate' | 'suppliedSource';
+  kind: 'storedProduct' | 'savedSettings' | 'savedContent' | 'savedQuotation' | 'storedAssetReference' | 'localCalculation' | 'providerReceipt' | 'supplierTemplate' | 'suppliedSource';
   reference: string;
   observedAt: string;
 };
@@ -122,10 +123,11 @@ function currentTranslation(product: ProductRecord, content: ProductContent | nu
   return job?.status === 'completed' && job.result && job.productId === product.id && job.productVersion === product.updated_at && job.contentRevision === (content?.revision ?? 0) ? job : null;
 }
 
-export function automationInputFingerprint(product: ProductRecord, settings: WorkspaceSettings, content: ProductContent | null, translation: TranslationJob | null = null, options: ProductOptions | null = null) {
+export function automationInputFingerprint(product: ProductRecord, settings: WorkspaceSettings, content: ProductContent | null, translation: TranslationJob | null = null, options: ProductOptions | null = null, quotation: QuotationFieldsState | null = null) {
   if(options && options.productId!==product.id)throw new Error('옵션과 상품이 일치하지 않습니다.');
+  if(quotation && quotation.productId!==product.id)throw new Error('견적과 상품이 일치하지 않습니다.');
   const current = currentTranslation(product, content, translation);
-  return fingerprint({ product, settings, content, options, translation: current ? { id: current.id, responseId: current.result!.responseId, fingerprint: current.review.fingerprint } : null });
+  return fingerprint({ product, settings, content, options, quotation, translation: current ? { id: current.id, responseId: current.result!.responseId, fingerprint: current.review.fingerprint } : null });
 }
 
 export function policyForProduct(product: ProductRecord, settings: WorkspaceSettings): PricePolicy {
@@ -214,9 +216,9 @@ function savedDrafts(stages: AutomationStage[], product: ProductRecord, content:
   }
 }
 
-export async function planAutomation(product: ProductRecord, settings: WorkspaceSettings = defaultSettings, previous: AutomationWorkflow | null = null, content: ProductContent | null = null, translation: TranslationJob | null = null, now = new Date().toISOString(), options: ProductOptions | null = null): Promise<AutomationWorkflow> {
+export async function planAutomation(product: ProductRecord, settings: WorkspaceSettings = defaultSettings, previous: AutomationWorkflow | null = null, content: ProductContent | null = null, translation: TranslationJob | null = null, now = new Date().toISOString(), options: ProductOptions | null = null, quotation: QuotationFieldsState | null = null): Promise<AutomationWorkflow> {
   if (content && content.productId !== product.id) throw new Error('콘텐츠와 상품이 일치하지 않습니다.');
-  const inputFingerprint = await automationInputFingerprint(product, settings, content, translation, options);
+  const inputFingerprint = await automationInputFingerprint(product, settings, content, translation, options, quotation);
   const sameInput = previous?.inputFingerprint === inputFingerprint && previous.productVersion === product.updated_at;
   const stages: AutomationStage[] = automationStages.map(id => {
     const prior = previous?.stages.find(stage => stage.id === id);
@@ -226,6 +228,23 @@ export async function planAutomation(product: ProductRecord, settings: Workspace
       artifacts: [], evidence: [], updatedAt: now };
   });
   savedDrafts(stages, product, content, now);
+  if (quotation && quotation.revision > 0) {
+    const scopes = [['legacy', quotation.overrides], ...Object.entries(quotation.categoryOverrides ?? {})] as const;
+    const quotationScopes = scopes.map(([scope, values]) => {
+      const common = Object.values(values.common);
+      const optionValues = Object.values(values.options).flatMap(values => Object.values(values));
+      return { scope, commonCount: common.length, optionCount: Object.values(values.options).filter(values => Object.keys(values).length).length,
+        optionFieldCount: optionValues.length, explicitBlankCount: [...common, ...optionValues].filter(value => !value.trim()).length };
+    }).filter(scope => scope.commonCount + scope.optionFieldCount > 0);
+    if (quotationScopes.length) {
+      const stage = stages.find(stage => stage.id === 'quotation')!;
+      stage.artifacts = [{ id: `saved-quotation-${quotation.revision}`, kind: 'text', label: '저장된 견적 수정값 · 카테고리별 보관', submissionReady: false,
+        data: { quotationScopes, quotationRevision: quotation.revision, updatedAt: quotation.updatedAt, currentCategoryVerified: false, supplierTemplateVerified: false, submitted: false } }];
+      stage.evidence = [{ kind: 'savedQuotation', reference: `${product.id}:quotation@${quotation.revision}`, observedAt: quotation.updatedAt ?? now }];
+      // Saved overrides are not an exported workbook or proof of current category.
+      stage.status = 'blocked'; stage.reason = { code: 'SUPPLIER_TEMPLATE_UNVERIFIED', message: '견적 수정값이 저장되어 있습니다. 아래 분류별 보관 현황을 확인하세요. 현재 카테고리의 최종 견적 파일과 Supplier Hub 접수는 별도 확인이 필요합니다.' };
+    }
+  }
   const translated = currentTranslation(product, content, translation);
   if (translated) {
     const result = translated.result!; const seo = stages.find(stage => stage.id === 'seo')!;

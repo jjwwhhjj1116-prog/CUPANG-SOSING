@@ -22,6 +22,7 @@ function load(file, overrides = {}, mode = 'development') {
       if (name === '@/app/product-content') return load('app/product-content.ts');
       if (name === '@/app/product-options') return load('app/product-options.ts');
       if (name === '@/db/product-options') return {readProductOptions:async(_owner,id)=>load('app/product-options.ts').emptyProductOptions(id)};
+      if (name === '@/db/quotation-fields') return {readQuotationFields:async(_owner,id)=>({schemaVersion:1,productId:id,revision:0,overrides:{common:{},options:{}},updatedAt:null})};
       if (name === '@/db/product-content') return { readProductContent: async (_owner, id) => load('app/product-content.ts').emptyProductContent(id) };
       if (name === '@/db/translation-jobs') return { listTranslationJobs: async () => [] };
       if (name === 'cloudflare:workers') return { env: {} };
@@ -162,6 +163,7 @@ function sqliteHarness(initialize = true) {
   sqlite.exec('CREATE TABLE product_content (product_id TEXT PRIMARY KEY, owner_id TEXT, revision INTEGER, payload TEXT, updated_at TEXT)');
   sqlite.exec('CREATE TABLE product_options (product_id TEXT PRIMARY KEY, owner_id TEXT, revision INTEGER)');
   sqlite.exec('CREATE TABLE workspace_settings (owner_id TEXT PRIMARY KEY, payload TEXT)');
+  sqlite.exec('CREATE TABLE product_quotation_fields (product_id TEXT PRIMARY KEY, owner_id TEXT, revision INTEGER)');
   return { sqlite, db, store: load('db/automation.ts', { 'cloudflare:workers': { env: { DB: db } } }) };
 }
 
@@ -487,4 +489,43 @@ test('automation commit rejects option and settings races atomically and accepts
   assert.equal((await h.store.getAutomationHistory('owner',product.id)).length,1);
   assert.ok(await h.store.saveAutomation('owner',second,1,command('run','current_null'),'null',{optionRevision:1,settingsPayload:null}));
  } finally { h.sqlite.close(); }
+});
+
+test('category quotation saves invalidate workflows without implying a mapped file or submission',async()=>{
+ const quote={schemaVersion:1,productId:product.id,revision:1,updatedAt:version,overrides:{common:{model:''},options:{}},categoryOverrides:{'category:80719':{common:{brand:'브랜드'},options:{red:{color:'빨강',size:''}}},'category:123':{common:{model:'다른 분류'},options:{}}}};
+ const before=JSON.stringify(quote);
+ const first=await model.planAutomation(product,settings,null,null,null,version,null,quote);
+ const stage=first.stages.find(stage=>stage.id==='quotation');
+ assert.equal(stage.status,'blocked');assert.equal(stage.artifacts.length,1);assert.equal(stage.artifacts[0].submissionReady,false);
+ const scopes=stage.artifacts[0].data.quotationScopes;
+ assert.equal(scopes.length,3);assert.equal(scopes[0].explicitBlankCount,1);
+ assert.equal(scopes[1].scope,'category:80719');assert.equal(scopes[1].optionFieldCount,2);assert.equal(scopes[1].explicitBlankCount,1);
+ assert.equal(stage.artifacts[0].data.currentCategoryVerified,false);assert.equal(stage.artifacts[0].data.submitted,false);
+ const same=await model.planAutomation(product,settings,first,null,null,version,null,quote);
+ assert.equal(same.inputFingerprint,first.inputFingerprint);assert.equal(same.stages.find(stage=>stage.id==='quotation').artifacts.length,1);
+ const cleared={...quote,revision:2,overrides:{common:{},options:{}},categoryOverrides:{}};
+ const second=await model.planAutomation(product,settings,first,null,null,version,null,cleared);
+ assert.notEqual(first.inputFingerprint,second.inputFingerprint);assert.equal(second.stages.find(stage=>stage.id==='quotation').artifacts.length,0);
+ await assert.rejects(()=>model.planAutomation(product,settings,null,null,null,version,null,{...quote,productId:'other'}));
+ assert.equal(JSON.stringify(quote),before);
+});
+
+test('automation API reports stale quotation edits and rejects concurrent quotation saves',async()=>{
+ const h=sqliteHarness();let quotation={schemaVersion:1,productId:product.id,revision:0,updatedAt:null,overrides:{common:{},options:{}}};let race=false;
+ try {
+  const route=load('app/api/products/[id]/automation/route.ts',{
+   '@/db/queries':{findProduct:async()=>product,getSettings:async()=>null},
+   '@/db/quotation-fields':{readQuotationFields:async()=>quotation},
+   '@/db/automation':{...h.store,saveAutomation:async(...args)=>{if(race)h.sqlite.prepare('UPDATE product_quotation_fields SET revision=2 WHERE product_id=?').run(product.id);return h.store.saveAutomation(...args);}},
+  });
+  assert.equal((await route.POST(request(command()),context)).status,200);
+  assert.equal((await (await route.GET(new Request('http://localhost'),context)).json()).stale,false);
+  quotation={...quotation,revision:1,overrides:{common:{model:'저장됨'},options:{}}};
+  h.sqlite.prepare('INSERT INTO product_quotation_fields VALUES (?,?,?)').run(product.id,'owner',1);
+  assert.equal((await (await route.GET(new Request('http://localhost'),context)).json()).stale,true);
+  race=true;
+  const rejected=await route.POST(request(command('run','quote_race')),context);
+  assert.equal(rejected.status,409);assert.equal(await h.store.getAutomationReceipt('owner',product.id,'quote_race'),null);
+  assert.equal((await h.store.getAutomationHistory('owner',product.id)).length,1);
+ } finally {h.sqlite.close();}
 });

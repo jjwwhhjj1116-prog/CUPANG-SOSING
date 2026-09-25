@@ -52,12 +52,14 @@ export async function getAutomationHistory(ownerId: string, productId: string): 
 }
 
 /** Workflow, idempotency receipt and audit history commit together, guarded by both input and workflow versions. */
-export async function saveAutomation(ownerId: string, workflow: AutomationWorkflow, previousRevision: number | null, command: AutomationCommand, requestFingerprint: string, source?: { optionRevision: number; settingsPayload: string | null }): Promise<AutomationWorkflow | null> {
+export async function saveAutomation(ownerId: string, workflow: AutomationWorkflow, previousRevision: number | null, command: AutomationCommand, requestFingerprint: string, source?: { optionRevision: number; settingsPayload: string | null; quotationRevision?: number }): Promise<AutomationWorkflow | null> {
   await ensureAutomationDatabase();
   const payload = JSON.stringify(workflow);
   const sourceSql = source ? `AND COALESCE((SELECT revision FROM product_options WHERE product_id=? AND owner_id=?),0)=?
-      AND (SELECT payload FROM workspace_settings WHERE owner_id=?) IS ?` : '';
-  const sourceArgs = source ? [workflow.productId, ownerId, source.optionRevision, ownerId, source.settingsPayload] : [];
+      AND (SELECT payload FROM workspace_settings WHERE owner_id=?) IS ?
+      ${source.quotationRevision === undefined ? '' : 'AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=? AND owner_id=?),0)=?'}` : '';
+  const sourceArgs = source ? [workflow.productId, ownerId, source.optionRevision, ownerId, source.settingsPayload,
+    ...(source.quotationRevision === undefined ? [] : [workflow.productId, ownerId, source.quotationRevision])] : [];
   const result = await database().batch<WorkflowRow>([
     database().prepare(`INSERT INTO product_automation(product_id,owner_id,revision,product_version,payload,updated_at)
       SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM products WHERE id=? AND owner_id=? AND updated_at=?)

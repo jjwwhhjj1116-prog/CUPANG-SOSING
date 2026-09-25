@@ -4,6 +4,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct, getSettings } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
+import { readQuotationFields } from '@/db/quotation-fields';
 import { listTranslationJobs } from '@/db/translation-jobs';
 import { translationConfiguration, type TranslationSecrets } from '@/app/automation/translation';
 import { imageConfiguration, type ImageSecrets } from '@/app/automation/image-edit';
@@ -24,10 +25,10 @@ export async function GET(_request: Request, context: Context) {
     const { id } = await context.params;
     const product = await findProduct(owner, id);
     if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
-    const [workflow, history, savedSettings, content, translations, options] = await Promise.all([getAutomation(owner, id), getAutomationHistory(owner, id), getSettings(owner), readProductContent(owner, id), listTranslationJobs(owner, id), readProductOptions(owner, id)]);
+    const [workflow, history, savedSettings, content, translations, options, quotation] = await Promise.all([getAutomation(owner, id), getAutomationHistory(owner, id), getSettings(owner), readProductContent(owner, id), listTranslationJobs(owner, id), readProductOptions(owner, id), readQuotationFields(owner, id)]);
     const settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
     const translation = translations.find(job => job.status === 'completed' && job.productVersion === product.updated_at && job.contentRevision === content.revision) ?? null;
-    const inputFingerprint = workflow ? await automationInputFingerprint(product, settings, content, translation, options) : null;
+    const inputFingerprint = workflow ? await automationInputFingerprint(product, settings, content, translation, options, quotation) : null;
     return json({ workflow: workflow ? explainProviderAvailability(workflow, capabilities()) : null, history, stale: Boolean(workflow && workflow.inputFingerprint !== inputFingerprint), capabilities: capabilities() });
   } catch { return unavailable(); }
 }
@@ -48,17 +49,17 @@ export async function POST(request: Request, context: Context) {
       ? json({ workflow: receipt.workflow, replayed: true, capabilities: capabilities() })
       : json({ error: '같은 중복 방지 키를 다른 요청에 사용할 수 없습니다.', code: 'IDEMPOTENCY_CONFLICT' }, 409);
     if (product.updated_at !== command.expectedVersion) return conflict();
-    const [previous, savedSettings, content, translations, options] = await Promise.all([getAutomation(owner, id), getSettings(owner), readProductContent(owner, id), listTranslationJobs(owner, id), readProductOptions(owner, id)]);
+    const [previous, savedSettings, content, translations, options, quotation] = await Promise.all([getAutomation(owner, id), getSettings(owner), readProductContent(owner, id), listTranslationJobs(owner, id), readProductOptions(owner, id), readQuotationFields(owner, id)]);
     const settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
     const translation = translations.find(job => job.status === 'completed' && job.productVersion === product.updated_at && job.contentRevision === content.revision) ?? null;
-    const plan = explainProviderAvailability(await planAutomation(product, settings, previous, content, translation, undefined, options), capabilities());
+    const plan = explainProviderAvailability(await planAutomation(product, settings, previous, content, translation, undefined, options, quotation), capabilities());
     if (command.action === 'retry' && !plan.stages.some(stage => command.stages.includes(stage.id) && stage.status === 'failed' && stage.retryable)) {
       return json({ error: '재시도 가능한 실패 단계가 없습니다. 입력을 수정했다면 실행 버튼으로 새 계산을 시작해주세요.', code: 'NO_RETRYABLE_STAGES' }, 409);
     }
     const workflow = executeLocalAutomation(plan, product, settings, command, undefined, options);
     try {
       const saved = await saveAutomation(owner, workflow, previous?.revision ?? null, command, requestFingerprint, {
-        optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,
+        optionRevision: options.revision, quotationRevision: quotation.revision, settingsPayload: savedSettings?.payload ?? null,
       });
       if (saved) return json({ workflow: saved, replayed: false, capabilities: capabilities() });
       const committed = await getAutomationReceipt(owner, id, command.idempotencyKey);

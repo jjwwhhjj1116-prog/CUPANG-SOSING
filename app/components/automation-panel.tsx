@@ -14,6 +14,10 @@ function PriceArtifact({artifact}:{artifact:AutomationArtifact}) {
 }
 
 function StoredArtifact({artifact}:{artifact:AutomationArtifact}) {
+  const scopes=artifact.data?.quotationScopes;
+  if(artifact.kind==='text' && Array.isArray(scopes) && scopes.every(scope=>scope && typeof scope==='object' && typeof scope.scope==='string' && ['commonCount','optionCount','optionFieldCount','explicitBlankCount'].every(key=>Number.isSafeInteger(scope[key])&&scope[key]>=0))) {
+    return <details><summary>{artifact.label}</summary><ul>{scopes.map(scope=><li key={scope.scope}>{scope.scope==='legacy'?'분류 미지정 이전 수정값':`카테고리 ${scope.scope.replace(/^category:/,'')}`} · 공통 {scope.commonCount}항목 · 옵션 {scope.optionCount}개 / {scope.optionFieldCount}항목 · 직접 비운 값 {scope.explicitBlankCount}개</li>)}</ul><p>저장한 수정값의 보관 현황입니다. 자동작성 항목 수나 현재 카테고리 적용·전송 완료를 뜻하지 않습니다.</p></details>;
+  }
   const rows=artifact.data?.labelRows;
   if(artifact.kind==='text' && Array.isArray(rows) && rows.every(row=>Array.isArray(row)&&row.length===3&&row.every(value=>typeof value==='string'))) {
     return <details><summary>{artifact.label}</summary><dl>{(rows as string[][]).map(([id,name,value])=><div key={id}><dt>{name}</dt><dd>{value||'미입력'}</dd></div>)}</dl><p>저장된 표시사항입니다. 이미지 생성·법정 적합성·전송 완료를 의미하지 않습니다.</p></details>;
