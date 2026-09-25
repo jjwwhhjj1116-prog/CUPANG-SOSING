@@ -1,10 +1,10 @@
-# SourceFlow
+# YOOFAM PLUS
 
 1688 상품을 쿠팡 로켓배송 제안 자료로 준비하는 웹 작업 공간입니다. 기존 사이트·UI·데이터를 보존하며 개발 중입니다. **지정한 실상품의 자동수집부터 Supplier Hub 접수까지 검증한 완성 서비스는 아닙니다.** 이어서 작업할 때 [HANDOFF.md](HANDOFF.md)를 끝까지 읽으세요.
 
 ## 운영 접속
 
-[SourceFlow 열기](https://sourceflow.jjwwhhjj1116.workers.dev) — 허용 계정으로 Cloudflare Access 로그인이 필요합니다. 2026-09-24 실제 배포, 로그인 후 작업 화면 및 D1 읽기를 확인했습니다. 배포 성공은 아래 미완성 수집·전송 기능의 완료를 뜻하지 않습니다.
+[YOOFAM PLUS 열기](https://sourceflow.jjwwhhjj1116.workers.dev) — 허용 계정으로 Cloudflare Access 로그인이 필요합니다. 2026-09-24 실제 배포, 로그인 후 작업 화면 및 D1 읽기를 확인했습니다. 배포 성공은 아래 미완성 수집·전송 기능의 완료를 뜻하지 않습니다.
 
 ## 구현된 흐름
 

@@ -259,3 +259,20 @@ html,body{background:#fff}
 @media(max-width:720px){.registration-workspace .quotation-fields-actions{position:static}}
 .collection-status.received { background: #e6f4ff; color: #125b85; }
 .collection-status.imported { background: #e6f5ec; color: #246b42; }
+
+/* Couplus reference: registration defaults and pricing are side by side. */
+.brand-mark{flex-shrink:0}.brand>span:last-child{white-space:nowrap}
+.couplus-settings{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;align-items:start}
+.couplus-settings section{margin:0;border:1px solid #dfe2e8;border-radius:10px;overflow:hidden;padding:0 20px 20px}
+.couplus-settings section h3{margin:0 -20px 20px;padding:19px 20px;background:#c9cdd5;color:#151655;font-size:16px}
+.couplus-settings .settings-registration .form-grid{grid-template-columns:1fr}
+.couplus-settings .settings-images,.couplus-settings>.modal-actions,.couplus-settings>.collection-error{grid-column:1/-1}
+.couplus-settings .field>span{font-size:14px;color:#27334c}
+.couplus-settings .field input,.couplus-settings .field select{min-height:44px}
+.couplus-settings>.modal-actions{position:sticky;bottom:-24px;background:#fff;padding:18px 0;margin:0;border-top:1px solid #e4e7ed;z-index:2}
+.goal-list{background:#f7f8fa;border:1px solid #dfe2e8;border-radius:10px;padding:20px}
+.goal-list legend{font-weight:700;font-size:14px;color:#515151}
+.goal-card{background:transparent!important;border:0!important;box-shadow:none!important;padding:10px!important}
+.goal-card>span{display:flex;gap:20px;align-items:baseline}.goal-card strong{min-width:90px}.goal-card small{color:#737985}
+.goal-card:has(input:checked) strong{color:#087cff}.goal-card input{accent-color:#2bbbe1}
+@media(max-width:850px){.couplus-settings{grid-template-columns:1fr}.goal-card>span{display:block}}

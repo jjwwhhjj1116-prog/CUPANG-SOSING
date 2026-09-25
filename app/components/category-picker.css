@@ -8,3 +8,12 @@
 .category-quotation-table th, .category-quotation-table td { padding: 10px; border-bottom: 1px solid #e5e9ef; vertical-align: top; }
 .category-quotation-table thead { background: #f2f6fb; }
 .category-quotation-table small { display: block; margin-top: 5px; color: #64748b; font-weight: 400; }
+
+/* Category columns and selected path follow the supplied Couplus screens. */
+.category-breadcrumb{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.category-breadcrumb button{border:0;border-radius:9px;padding:10px 13px;background:#80def5;color:#113f54;font-weight:700;cursor:pointer}
+.category-tree{gap:26px}.category-tree section{border-radius:10px;min-width:235px}
+.category-tree h3{background:#c9cdd5;color:#101254;padding:24px;font-size:17px}
+.category-tree-options{max-height:440px}.category-tree button{min-height:60px;padding:16px 22px;font-size:15px}
+.category-tree button.selected{background:#087cff;color:#fff}.category-tree button.selected small.ready{background:#75bf99;color:#fff}
+@media(max-width:760px){.category-tree{gap:12px}.category-tree section{min-width:185px}.category-tree button{font-size:13px;padding:12px}.category-tree h3{font-size:14px;padding:18px}}
