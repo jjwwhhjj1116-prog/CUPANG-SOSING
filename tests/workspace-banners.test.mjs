@@ -20,6 +20,22 @@ function fixture(file={size:8,bytes:png}) {
  return {writes,reads,route:load('app/api/settings/route.ts',deps)};
 }
 function request(input){return new Request('http://localhost/api/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(input)});}
+test('saving only price settings never persists example registration facts',async()=>{
+ const f=fixture();const response=await f.route.PUT(request({exchangeRate:350,brand:'내 브랜드',manufacturer:''}));
+ assert.equal(response.status,200);const saved=JSON.parse(f.writes[0].payload);
+ assert.equal(saved.exchangeRate,350);assert.equal(saved.brand,'내 브랜드');
+ for(const key of ['manufacturer','importer','serviceContact','tradeType','importType','taxType'])assert.equal(saved[key],'',key);
+ assert.deepEqual((await response.json()).settings,saved);
+});
+test('empty or malformed settings bodies are still rejected without writes',async()=>{
+ for(const value of [null,[],false,'settings',{tradeType:'invalid'}]){
+  const f=fixture();assert.equal((await f.route.PUT(request(value))).status,400);assert.equal(f.writes.length,0);
+ }
+});
+test('reading sparse saved settings keeps missing registration fields blank and disables caching',async()=>{
+ const route=load('app/api/settings/route.ts',{'cloudflare:workers':{env:{}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},'@/db/queries':{getSettings:async()=>({payload:JSON.stringify({exchangeRate:350,brand:'실제 브랜드'})})}});
+ const response=await route.GET();assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');const {settings}=await response.json();assert.equal(settings.brand,'실제 브랜드');assert.equal(settings.manufacturer,'');assert.equal(settings.importType,'');assert.equal(settings.exchangeRate,350);
+});
 const settings={topImageEnabled:true,topImageKey:'owner/banner.png'};
 test('settings stores verified banners and preserves disabled selection for later use',async()=>{
  const f=fixture();const response=await f.route.PUT(request({...settings,bottomImageEnabled:false,bottomImageKey:'owner/footer.png'}));

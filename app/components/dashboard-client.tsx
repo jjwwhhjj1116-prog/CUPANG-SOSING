@@ -24,7 +24,7 @@ import type { ProductContent } from '@/app/product-content';
 import { BatchWorkPanel } from '@/app/components/batch-work-panel';
 import type { CategoryProfile, CategoryProfileInput } from '@/app/category-profiles';
 import { WorkspaceSettingsEditor } from '@/app/components/workspace-settings-editor';
-import { defaultSettings as defaults, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
+import { savedRegistrationSettings, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
 import { PriceEditor } from '@/app/components/price-editor';
 import { quotationCsv, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { collectionBlock, collectionJobProgress, type CollectionJob } from '@/app/sourcing';
@@ -84,7 +84,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [view, setView] = useState<'work'|'archive'>('work');
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [settings, setSettings] = useState(defaults);
+  const [settings, setSettings] = useState(() => savedRegistrationSettings(null));
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
 
@@ -165,7 +165,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
     const [productData, settingData, collectionData, categoriesData] = results;
     if (productData.status === 'fulfilled') setProducts(productData.value.products);
     if (productData.status === 'fulfilled') setDetail(current=>current?productData.value.products.find(product=>product.id===current.id)??current:null);
-    if (settingData.status === 'fulfilled' && settingData.value.settings) setSettings({ ...defaults, ...settingData.value.settings });
+    if (settingData.status === 'fulfilled') setSettings(savedRegistrationSettings(settingData.value.settings));
     if (collectionData.status === 'fulfilled') setCollectionJobs(collectionData.value.jobs);
     if (categoriesData.status === 'fulfilled') setCategoryProfiles(categoriesData.value.profiles);
     setLoadError(results.filter(r => r.status === 'rejected').map(r => String(r.reason instanceof Error ? r.reason.message : r.reason)).join(' '));
