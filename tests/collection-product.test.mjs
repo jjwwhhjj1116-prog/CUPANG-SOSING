@@ -10,6 +10,18 @@ function load(file,deps={},mode='development'){
 }
 const settings=load('app/workspace-settings.ts').defaultSettings;
 const prepare=load('app/collection-product.ts').prepareCollectionProduct;
+test('unsaved registration examples never become promoted product label facts',()=>{
+ const {savedRegistrationSettings,validateSettings}=load('app/workspace-settings.ts');
+ const blank=savedRegistrationSettings(null);
+ const promoted=prepare('owner',{...job,context:{...job.context,settings:blank}},result,'p',now);
+ for(const key of ['manufacturer','importer','contact'])assert.equal(promoted.content.label[key].value,'');
+ assert.equal(promoted.policy.exchangeRate,settings.exchangeRate);
+ assert.equal(validateSettings(blank).tradeType,'');assert.equal(validateSettings(blank).importType,'');
+ assert.throws(()=>validateSettings({...blank,tradeType:'invalid'}));assert.throws(()=>validateSettings({...blank,importType:'invalid'}));
+ const current={...settings,brand:'later',manufacturer:'later'};
+ const resolved=load('app/collection-registration-settings.ts').collectionRegistrationSettings(current,blank);
+ assert.equal(resolved.brand,'');assert.equal(resolved.manufacturer,'');
+});
 const now='2026-01-01T00:00:00.000Z';
 const job={id:'job',offer_id:'123',source_url:'https://detail.1688.com/offer/123.html',goal:'transmit',status:'awaiting_connector',created_at:now,updated_at:now,context:{category:{id:'cat'},settings,features:'feature',keywords:'',capturedAt:now}};
 const result={schemaVersion:1,offerId:'123',sourceUrl:job.source_url,provider:'fixture',collectedAt:now,title:'原文商品',description:'原文説明',images:[],options:[{sku:'a',name:'黑',unitPriceCny:3.25,minimumOrder:2,stock:null},{sku:'b',name:'白',unitPriceCny:5,minimumOrder:1,stock:0}]};

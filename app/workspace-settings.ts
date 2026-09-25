@@ -26,7 +26,7 @@ export function validateSettings(input: unknown): WorkspaceSettings {
   for (const key of ['brand','manufacturer','importer','tradeType','importType','serviceContact','translationPrompt','topImageKey','bottomImageKey'] as const) {
     if (typeof p[key] !== 'string' || p[key].length > (key === 'translationPrompt' ? 10000 : 500)) throw new Error('등록 정보 또는 번역 지침의 길이를 확인해주세요.');
   }
-  if (!['제조사','공식총판사','공식대리점','기타 도소매업자'].includes(p.tradeType) || !['수입대상아님','수입상품','병행수입상품'].includes(p.importType)) throw new Error('거래타입과 수입여부를 확인해주세요.');
+  if (!['','제조사','공식총판사','공식대리점','기타 도소매업자'].includes(p.tradeType) || !['','수입대상아님','수입상품','병행수입상품'].includes(p.importType)) throw new Error('거래타입과 수입여부를 확인해주세요.');
   if (!['', '과세', '면세', '영세'].includes(p.taxType)) throw new Error('과세여부를 확인해주세요.');
   for (const key of ['minimumMarginEnabled','bundleEnabled','translateImages','removeBackground','addCopyright','topImageEnabled','bottomImageEnabled','hiddenAttributes'] as const) {
     if (typeof p[key] !== 'boolean') throw new Error('작업 설정은 켜짐/꺼짐 값이어야 합니다.');

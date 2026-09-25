@@ -11,7 +11,7 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose }: { value: Wor
   const update=(key:keyof WorkspaceSettings,value:string|number|boolean)=>{setDraft(current=>({...current,[key]:value}));setError('');};
   const field=(key:keyof WorkspaceSettings,label:string,type='text')=><label className="field" key={key}><span>{label}</span><input type={type} step={type==='number'?'any':undefined} value={String(draft[key])} disabled={busy} onChange={event=>update(key,type==='number'?(event.target.value===''?NaN:Number(event.target.value)):event.target.value)}/></label>;
   const toggle=(key:keyof WorkspaceSettings,label:string)=><label className="switch-row" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(draft[key])} disabled={busy} onChange={event=>update(key,event.target.checked)}/><i/></label>;
-  const select=(key:keyof WorkspaceSettings,label:string,options:string[])=><label className="field"><span>{label}</span><select value={String(draft[key])} disabled={busy} onChange={event=>update(key,event.target.value)}>{options.map(option=><option key={option}>{option}</option>)}</select></label>;
+  const select=(key:keyof WorkspaceSettings,label:string,options:string[])=><label className="field"><span>{label}</span><select value={String(draft[key])} disabled={busy} onChange={event=>update(key,event.target.value)}><option value="">미입력</option>{options.map(option=><option key={option}>{option}</option>)}</select></label>;
   async function uploadBanner(key: 'topImageKey' | 'bottomImageKey', file: File) {
     setBusy(true); setError('');
     try {

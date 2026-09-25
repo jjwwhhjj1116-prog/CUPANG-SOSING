@@ -180,6 +180,7 @@ test('changed category settings return 409 before settings reads or enqueue; mat
  assert.equal(reads,0);assert.equal(writes,0);
  const current=await route.POST(request({...payload,expectedProfileRevision:2,features:'보존 특징',keywords:'보존 키워드'}));
  assert.equal(current.status,200);assert.equal(writes,1);assert.equal(captured.category.revision,2);assert.equal(captured.category.categoryId,'81452');assert.equal(captured.features,'보존 특징');
+ for(const key of ['brand','manufacturer','importer','serviceContact','tradeType','importType','taxType'])assert.equal(captured.settings[key],'',key);
  for(const revision of [undefined,null,0,-1,1.5,'2',Number.MAX_SAFE_INTEGER+1])assert.equal((await route.POST(request({...payload,expectedProfileRevision:revision}))).status,400);
  assert.equal(writes,1);
 });
@@ -204,6 +205,15 @@ test('mixed intake reports only requests whose persisted context differs and nev
   const retry=await (await route.POST(request({...payload,expectedProfileRevision:2,urls:[url,'https://detail.1688.com/offer/987654321.html'],goal:'work',features:'새 특징',keywords:'새 키워드'}))).json();
   assert.equal(retry.preservedRequests.length,1);assert.equal((await queries.listCollectionJobs('local-demo')).length,2);
  }finally{sqlite.close();}
+});
+test('intake preserves explicit registration facts without inventing missing fields',async()=>{
+ let captured;
+ const route=load('app/api/collection-jobs/route.ts',{
+  '@/db/queries':{getSettings:async()=>({payload:JSON.stringify({brand:'내 브랜드',manufacturer:'',tradeType:'기타 도소매업자',exchangeRate:350})})},
+  '@/db/collection-jobs':{enqueueCollection:async(_owner,_entries,context)=>{captured=context;return [];}}
+ });
+ assert.equal((await route.POST(request(payload))).status,200);
+ assert.equal(captured.settings.brand,'내 브랜드');assert.equal(captured.settings.manufacturer,'');assert.equal(captured.settings.importer,'');assert.equal(captured.settings.importType,'');assert.equal(captured.settings.tradeType,'기타 도소매업자');assert.equal(captured.settings.exchangeRate,350);
 });
 
 test('context comparison ignores capture time and object key order but reports settings and missing legacy evidence',()=>{
