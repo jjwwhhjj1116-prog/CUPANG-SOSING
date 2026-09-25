@@ -350,3 +350,32 @@ for(const categoryId of categoryRoundtripIds)test(`category ${categoryId}: saved
  assert.ok(!decode(archive.get('xl/worksheets/sheet1.xml')).includes('<row r="7"'));
  assert.equal(JSON.stringify(input),before);
 });
+
+test('dropdown mismatches suggest only a proven code or label alternative without changing output', async () => {
+  async function run(allowed, raw, choiceFormat, field = 'barcodeMode', selectedEmptyChoices) {
+    const files = entries(xml => xml.replace('"검정,흰색"', `"${allowed}"`));
+    const input = await inputFrom(files);
+    input.profile.categoryId = '80719';
+    input.profile.mappings = [{column:3, field, required:false, ...(choiceFormat ? {choiceFormat} : {})}];
+    input.rows = [{[field]:raw, ...(selectedEmptyChoices ? {selectedEmptyChoices} : {})}];
+    const before = JSON.stringify(input);
+    const result = await createMappedQuotation(input);
+    assert.equal(JSON.stringify(input), before);
+    return result;
+  }
+  const label = await run('실제 바코드 입력', 'existing');
+  assert.equal(label.values[0][3], 'existing');
+  assert.ok(label.report.warnings.some(value => value.includes('‘표시 문구’')));
+  const code = await run('existing', 'existing', 'label');
+  assert.equal(code.values[0][3], '실제 바코드 입력');
+  assert.ok(code.report.warnings.some(value => value.includes('‘저장 코드’')));
+  for (const result of [await run('다른 목록','existing'), await run('실제 바코드 입력','unknown'), await run('실제 바코드 입력',''), await run('existing','existing')]) {
+    assert.ok(!result.report.warnings.some(value => value.includes('출력 형식을')));
+  }
+  const fields = load('app/quotation-schema.ts').getQuotationSchema('80719', []).fields;
+  const empty = fields.find(field => field.type === 'select' && field.choices?.some(choice => choice.value === '' && choice.label));
+  assert.ok(empty);
+  const labelValue = empty.choices.find(choice => choice.value === '').label;
+  assert.ok((await run(labelValue, '', undefined, empty.id, [empty.id])).report.warnings.some(value => value.includes('‘표시 문구’')));
+  assert.ok(!(await run(labelValue, '', undefined, empty.id)).report.warnings.some(value => value.includes('출력 형식을')));
+});

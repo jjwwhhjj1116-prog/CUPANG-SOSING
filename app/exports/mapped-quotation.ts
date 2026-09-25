@@ -142,8 +142,9 @@ function delimitedValue(value: string | number): string | number { return /^[\s]
 function delimitedCell(value: string | number): string { return `"${String(delimitedValue(value)).replace(/"/g, '""')}"`; }
 
 /** Check supported static constraints without evaluating workbook formulas. */
-function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection): string[] {
+function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection, rows: QuotationData[]): string[] {
   const root = spans(source);
+  const fields = getQuotationSchema(profile.categoryId, profile.categoryPath).fields;
   const warnings: string[] = []; let mismatches = 0; let unchecked = 0; let uncertainLengths = 0;
   const rules = root.children.filter(node => node.local === 'dataValidations').flatMap(node => node.children.filter(child => child.local === 'dataValidation'));
   for (const rule of rules) {
@@ -202,7 +203,22 @@ function validationWarnings(source: string, profile: CategoryProfileInput, value
       if (verdict === null) { uncertainLengths++; continue; }
       if (verdict) continue;
       mismatches++;
-      if (warnings.length < 20) warnings.push(`${profile.template!.sheetName}!${columnName(mapping.column)}${startRow + index} (${profile.template!.headers[mapping.column] || '이름 없는 열'}): ${description}`);
+      if (warnings.length < 20) {
+        let suggestion = '';
+        if (rule.attributes.type === 'list') {
+          const field = fields.find(field => field.id === mapping.field);
+          const raw = mapping.field === 'constant' ? undefined : rows[index][mapping.field];
+          // A blank is a selection only when the resolver supplied provenance.
+          const selected = raw !== undefined && raw !== null && (raw !== '' || rows[index].selectedEmptyChoices?.includes(mapping.field));
+          const matches = selected && field?.type === 'select' ? field.choices?.filter(choice => choice.value === String(raw)) ?? [] : [];
+          if (matches.length === 1) {
+            const labelOutput = mapping.choiceFormat !== 'label';
+            const alternate = labelOutput ? matches[0].label : matches[0].value;
+            if (alternate !== '' && valid(alternate) === true) suggestion = ` 열 연결의 출력 형식을 ‘${labelOutput ? '표시 문구' : '저장 코드'}’로 변경하면 이 셀의 원본 목록과 일치합니다. 다른 행도 검토해주세요.`;
+          }
+        }
+        warnings.push(`${profile.template!.sheetName}!${columnName(mapping.column)}${startRow + index} (${profile.template!.headers[mapping.column] || '이름 없는 열'}): ${description}${suggestion}`);
+      }
     }
   }
   if (mismatches > 20) warnings.push(`입력 규칙 불일치 총 ${mismatches}개 중 첫 20개만 표시했습니다.`);
@@ -251,7 +267,7 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     const updated = encoder.encode(writeWorksheet(source, template.sheetName, profile, values, input.dataStartRow));
     if (updated.byteLength > 10_000_000) fail('생성한 워크시트가 10MB를 초과합니다.');
     files.set(path, updated); const updatedInspection = inspectXlsxArchive(files);
-    report.warnings.push(...validationWarnings(source, profile, values, input.dataStartRow, files, updatedInspection));
+    report.warnings.push(...validationWarnings(source, profile, values, input.dataStartRow, files, updatedInspection, input.rows));
     report.warnings.push(...inspection.warnings, '기존 수식과 유효성 검사 규칙을 보존했습니다. 수식 계산값과 신규 행의 검사 범위는 Excel에서 확인해주세요.');
     bytes = await zip(files); mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   } else {
