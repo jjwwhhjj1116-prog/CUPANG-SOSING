@@ -303,5 +303,5 @@ test('category writes reject label formatting on non-select fields before storag
  const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');
  assert.doesNotThrow(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],choiceFormat:'value'}]},schema.fields));
  assert.doesNotThrow(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],field:'lidIncluded'}]},schema.fields));
- assert.throws(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],field:'lidIncluded'}]},load('app/quotation-schema.ts').getQuotationSchema('77442').fields),/선택형/);
+ assert.throws(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],field:'lidIncluded'}]},load('app/quotation-schema.ts').getQuotationSchema('77442').fields),/현재 카테고리/);
 });

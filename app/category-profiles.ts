@@ -583,6 +583,11 @@ export function categoryProfileIssues(profile: CategoryProfileInput): string[] {
 /** Validate writes against current category metadata; legacy settings remain readable. */
 export function validateQuotationChoiceFormats(profile: CategoryProfileInput, fields: readonly { id: string; type: string; choices?: readonly {value:string;label:string}[] }[]): void {
   for (const mapping of profile.mappings) {
+    const label = categoryFields[mapping.field];
+    const categorySpecific = categoryFieldScope(mapping.field) !== null || /^(관찰 카테고리:|상품고시:)/.test(label);
+    if (categorySpecific && !fields.some(field => field.id === mapping.field)) {
+      throw new Error(`${mapping.column + 1}열 (${label}): 현재 카테고리의 견적 항목에 없습니다. 연결 항목을 다시 선택해주세요.`);
+    }
     if (mapping.choiceFormat !== 'label') continue;
     const field = fields.find(field => field.id === mapping.field);
     if (field?.type !== 'select' || !field.choices?.length) throw new Error(`${mapping.column + 1}열: 현재 카테고리의 선택형 항목에만 표시 문구 출력을 사용할 수 있습니다. 저장 코드로 바꾸거나 연결 항목을 수정해주세요.`);
@@ -592,6 +597,7 @@ export function validateQuotationChoiceFormats(profile: CategoryProfileInput, fi
 export function mapQuotationRow(profile: CategoryProfileInput, data: Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>>, fields: readonly {id:string;type:string;choices?:readonly {value:string;label:string}[]}[] = []): { values: (string | number)[]; missing: string[] } {
   const valid = validateCategoryProfile(profile);
   if (!valid.template) throw new Error('견적서 양식을 먼저 연결해주세요.');
+  if (fields.length) validateQuotationChoiceFormats(valid, fields);
   const values: (string | number)[] = valid.template.headers.map(() => '');
   const missing: string[] = [];
   for (const mapping of valid.mappings) {

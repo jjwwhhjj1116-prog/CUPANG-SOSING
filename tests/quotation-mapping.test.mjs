@@ -20,6 +20,25 @@ function load(file) {
 const { suggestQuotationMappings: suggest } = load('app/quotation-mapping.ts');
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('saved category mappings cannot silently export attributes absent from the selected schema', () => {
+  const profiles = load('app/category-profiles.ts');
+  const getSchema = load('app/quotation-schema.ts').getQuotationSchema;
+  const profile = { name: '분류 변경', categoryId: '80719', categoryPath: ['주방용품'],
+    template: { name: 'test.csv', format: 'csv', sha256: 'a'.repeat(64), sheetName: '', headerRow: 1, headers: ['뚜껑', '원본 URL', '고정값'] },
+    mappings: [{column:0,field:'lidIncluded',required:false}, {column:1,field:'sourceUrl',required:false}, {column:2,field:'constant',constant:'보존',required:false}] };
+  const snapshot = JSON.stringify(profile);
+  assert.doesNotThrow(() => profiles.validateQuotationChoiceFormats(profile, getSchema('80719').fields));
+  const changed = {...profile, categoryId:'77442'};
+  for (const choiceFormat of [undefined, 'value', 'label']) {
+    const next = {...changed, mappings: changed.mappings.map((m,i) => i ? m : {...m,choiceFormat})};
+    assert.throws(() => profiles.validateQuotationChoiceFormats(next,getSchema('77442').fields), /1열.*현재 카테고리/);
+    assert.throws(() => profiles.mapQuotationRow(next,{lidIncluded:'기존값'},getSchema('77442').fields), /1열.*현재 카테고리/);
+  }
+  const corrected = {...changed, mappings:changed.mappings.slice(1)};
+  assert.deepEqual(plain(profiles.mapQuotationRow(corrected,{sourceUrl:'https://detail.1688.com/offer/813724060928.html'},getSchema('77442').fields).values), ['', 'https://detail.1688.com/offer/813724060928.html','보존']);
+  assert.equal(JSON.stringify(profile),snapshot);
+});
+
 test('brace-only columns map and export while duplicate color labels require manual selection', () => {
   const headers = ['사용부위', '착용방향', 'KC 인증정보', '색상'];
   const result = suggest(headers, '81452');

@@ -1,14 +1,18 @@
-import { categoryFields, quotationStartRow, type CategoryProfile } from '@/app/category-profiles';
+import { categoryFields, quotationStartRow, validateQuotationChoiceFormats, type CategoryProfile } from '@/app/category-profiles';
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { CategoryQuotationPreview } from '@/app/components/category-quotation-preview';
 
 export function IntakeQuotationPreview({ profile }: { profile: CategoryProfile }) {
   const schema = getQuotationSchema(profile.categoryId, profile.categoryPath);
   const template = profile.template;
+  let mappingError = '';
+  try { validateQuotationChoiceFormats(profile, schema.fields); }
+  catch (error) { mappingError = error instanceof Error ? error.message : '견적 열 연결을 확인해주세요.'; }
   return <section className="intake-quotation-preview" aria-label="선택 상품 견적서 연결">
     <h3>{profile.name} · 견적서 연결</h3>
     <p>{profile.categoryPath.join(' > ')} · 코드 {profile.categoryId || '미입력'} · 선택 버전 {profile.revision}</p>
     <p>이 행에 연결된 설정입니다. 설정을 바꿨다면 카테고리를 다시 선택해 최신 버전을 반영하세요. URL·특징·키워드는 유지됩니다.</p>
+    {mappingError && <p role="alert">{mappingError}</p>}
     {template ? <>
       <p><strong>{template.name}</strong> · {template.format.toUpperCase()} · 시트 {template.sheetName || '(없음)'} · 머리글 {template.headerRow}행 · 입력 시작 {quotationStartRow(template)}행</p>
       <p>열 연결 {profile.mappings.length}개 / 양식 열 {template.headers.length}개. 연결 개수는 공식 양식 호환성이나 제출 완료를 뜻하지 않습니다.</p>
