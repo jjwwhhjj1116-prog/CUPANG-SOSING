@@ -28,11 +28,11 @@ function harness(request,existing=false){
 }
 test('category confirmation creates one profile and reports one selection despite repeated clicks',async()=>{
  const wait=pending(),h=harness(()=>wait.promise),click=h.confirm();click();click();assert.equal(h.calls.length,1);
- wait.resolve(Response.json({profile:{id:'new',categoryId:'80719'}}));await settle();click();assert.equal(h.calls.length,1);assert.equal(h.selected.length,1);
+ wait.resolve(Response.json({profile:{id:'new',categoryId:'80719',categoryPath:['test'],revision:1}}));await settle();click();assert.equal(h.calls.length,1);assert.equal(h.selected.length,1);
  const saved=harness(async()=>Response.json({profiles:[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:2,template:{id:'latest-template'}}]}),true),choose=saved.confirm();choose();choose();await settle();assert.equal(saved.selected.length,1);assert.equal(saved.calls.length,1);assert.equal(saved.calls[0].method,undefined);assert.equal(saved.selected[0].revision,2);assert.equal(saved.selected[0].template.id,'latest-template');
 });
 test('failed category save unlocks retry while closing the picker ignores a late successful response',async()=>{
- let attempt=0;const h=harness(async()=>++attempt===1?Response.json({error:'저장 실패'},{status:500}):Response.json({profile:{id:'new'}}));
+ let attempt=0;const h=harness(async()=>++attempt===1?Response.json({error:'저장 실패'},{status:500}):Response.json({profile:{id:'new',categoryId:'80719',categoryPath:['test'],revision:1}}));
  h.confirm()();await settle();assert.match(JSON.stringify(h.render()),/저장 실패/);h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.calls.length,2);
  const wait=pending(),closed=harness(()=>wait.promise);closed.confirm()();closed.close();assert.equal(closed.calls[0].signal.aborted,true);
  wait.resolve(Response.json({profile:{id:'late'}}));await settle();assert.equal(closed.selected.length,0);assert.equal(closed.late,0);
@@ -51,4 +51,14 @@ test('deleted or unreadable saved profiles never fall back to stale settings or 
  }
  const wait=pending(),h=harness(()=>wait.promise,true);h.confirm()();h.close();assert.equal(h.calls[0].signal.aborted,true);
  wait.resolve(Response.json({profiles:[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:2}]}));await settle();assert.equal(h.selected.length,0);assert.equal(h.late,0);
+});
+
+test('new category confirmation rejects missing or mismatched saved identities before URL entry',async()=>{
+ const valid={id:'new',categoryId:'80719',categoryPath:['test'],revision:1};
+ for(const profile of [undefined,null,{}, {...valid,id:''},{...valid,revision:0},{...valid,revision:1.5},{...valid,categoryId:'77442'},{...valid,categoryPath:['another']},{...valid,categoryPath:null}]){
+  let attempt=0;
+  const h=harness(async()=>Response.json({profile:++attempt===1?profile:valid}));
+  h.confirm()();await settle();assert.equal(h.selected.length,0);assert.match(JSON.stringify(h.render()),/URL 입력을 중단/);
+  h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].categoryId,'80719');
+ }
 });

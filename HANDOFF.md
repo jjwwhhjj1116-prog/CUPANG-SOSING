@@ -2738,3 +2738,11 @@ AI등록 화면 확인:
 - 검증: collection-batch/collection-import24/24, TypeScript, 변경 TS ESLint, Cloudflare build/check, diff check 통과. 모의 네트워크 검사이며 실제1688 자동 수집·Hub 전송 검증은 아니다.
 - 배포 a085756e-daf7-4f69-ba72-37911ab15bc0. outputs/step253-tests.log, step253-build.log, step253-deploy.log. DB변경·유료AI·운영상품등록 없음. 기존 수신 원문 반영 기능의 복구 개선이다.
 - 남은 핵심/다음 시작점: 기존 Chrome 탭 접근 후 지정상품813724060928과 카테고리 견적 원문 관찰, 실제1688수집 실행기, 전카테고리 기본값/공식양식 대조, 이미지 번역 품질, Supplier Hub 전송 어댑터·접수 확인. 전체 자동화 미완성.
+
+## 254. 상품추가의 신규 카테고리 저장 응답 일치 검사 — 2026-09-25
+
+- 시작 main b7abae2 clean. 수집 요청의 카테고리 revision 검사와 상품별 collection_products 연결, 견적의 카테고리별 수동값 범위 분리를 확인했다.
+- 확인/수정: CategoryPicker 신규 설정 POST 성공 응답은 profile 검증 없이 URL 입력으로 넘겼다. 반환된 ID/양의 정수 revision/선택 코드/전체 경로 일치를 검사한 뒤에만 onSelected를 호출한다. 불완전하거나 다른 분류 응답이면 입력 단계 전환을 막고 오류를 표시한다. 서버 저장 자체의 롤백이나 중복 방지 개선은 이번 범위가 아니다.
+- 검증: category-picker-requests, collection, quotation-fields45/45 통과. 누락/공란ID/잘못된revision/다른코드/다른경로/경로누락 및 올바른 재시도, 기존 SQLite 견적 연동 포함. TypeScript/변경 TS ESLint/Cloudflare build/check/diff check 통과. 모의 UI와 SQLite 검사이며 실제 Couplus·Hub 양식 대조는 미수행이다.
+- 배포9023040a-0372-4601-9dd5-7b9ae7cc38b4. outputs/step254-tests.log, step254-build.log, step254-deploy.log. DB변경·유료AI·운영상품등록 없음.
+- 남은 핵심/다음 시작점: 기존 Chrome 실제 탭 접근과 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터·실접수 확인. 전체 자동화 미완성.

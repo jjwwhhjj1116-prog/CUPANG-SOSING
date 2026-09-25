@@ -66,6 +66,13 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       const result = await response.json() as { profile: CategoryProfile; error?: string };
       if (controller.signal.aborted) return;
       if (!response.ok) throw new Error(result.error ?? '카테고리를 저장하지 못했습니다.');
+      const saved = result.profile;
+      if (!saved || typeof saved.id !== 'string' || !saved.id.trim()
+        || !Number.isSafeInteger(saved.revision) || saved.revision < 1
+        || saved.categoryId !== selected.categoryId
+        || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(selected.path)) {
+        throw new Error('저장된 카테고리 코드·경로·버전이 선택한 분류와 일치하지 않습니다. URL 입력을 중단했습니다. 카테고리 설정을 다시 확인해주세요.');
+      }
       completed.current = true; onSelected(result.profile);
     } catch (cause) { completed.current = false; if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '카테고리 선택 실패'); }
     finally { if (activeRequest.current === controller) activeRequest.current = null; if (!controller.signal.aborted) setBusy(false); }
