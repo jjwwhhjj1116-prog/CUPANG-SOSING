@@ -1446,3 +1446,35 @@ for(const record of categoryEvidence.records){
   resolved=model.resolveQuotationFields(input);assert.equal(output.resolvedQuotationRows(input,resolved,assets)[0].mainImage,'1.png');
  });
 }
+
+test('saved manual option clears survive quotation resolution and export without restoring source facts',()=>{
+ const input=fixture(),old=input.options;
+ const cleared=optionModel.optionInputs(old).map(row=>({...row,translatedName:'',weightKg:null}));
+ input.options=optionModel.applyOptionRows(old,cleared,'2026-09-25T01:00:00.000Z');
+ assert.equal(input.options.rows[0].provenance.translatedName,'manual');assert.equal(input.options.rows[0].provenance.weightKg,'manual');
+ const resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows[1].fields.weight.value,'');assert.equal(resolved.rows[1].fields.weight.source,'option');
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].skuName,'');
+ const resaved=optionModel.applyOptionRows(input.options,optionModel.optionInputs(input.options),'2026-09-25T02:00:00.000Z');
+ assert.equal(resaved.rows[0].provenance.translatedName,'manual');assert.equal(resaved.rows[0].updatedAt,input.options.rows[0].updatedAt);
+ assert.equal(old.rows[0].translatedName,'빨강');assert.equal(old.rows[0].weightKg,0.3);
+});
+
+test('bundle preview through option save and quotation export preserves originals and uses bundle price and quantity',()=>{
+ const input=fixture(),editor=load('app/option-editor-tools.ts');
+ const original=JSON.stringify(input.options.rows[0]),rows=optionModel.optionInputs(input.options);
+ const preview=editor.previewOptionBulk(rows,['red'],{type:'addBundle',value:3,newIds:{red:'bundle-red'}},policy);
+ const draft=editor.applyOptionBulk(rows,preview);
+ input.options=optionModel.applyOptionRows(input.options,draft,'2026-09-25T01:00:00.000Z');
+ assert.equal(JSON.stringify(input.options.rows[0]),original);
+ const resolved=model.resolveQuotationFields(input),bundle=resolved.rows.find(row=>row.optionId==='bundle-red');
+ assert.equal(bundle.fields.quantity.value,'3');
+ const expected=optionModel.calculateOptionPrices(input.options.rows,policy).find(row=>row.optionId==='bundle-red').calculation;
+ assert.equal(bundle.fields.supplyPrice.value,String(expected.supplyPrice));assert.equal(bundle.fields.salePrice.value,String(expected.salePrice));
+ assert.equal(bundle.fields.packagedWeightG.value,'');assert.equal(bundle.fields.packagedDimensionsMm.value,'');
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets);
+ assert.equal(exported.length,2);assert.equal(exported[0].skuName,'빨강');assert.equal(exported[1].skuName,'빨강 (3개입)');
+ assert.equal(exported[1].sourcePriceCny,13.5);assert.equal(exported[1].quantity,'3');assert.equal(exported[1].supplyPrice,expected.supplyPrice);
+});

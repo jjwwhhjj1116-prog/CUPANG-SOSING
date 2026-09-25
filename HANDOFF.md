@@ -2563,3 +2563,12 @@ AI등록 화면 확인:
 - 검증: option-editor-tools/pricing 25/25, TypeScript, 변경 TS ESLint, Cloudflare build/check 통과. 원래 옵션 불변·새 가격·중복 ID·수량 범위·200옵션 한도·오래된 미리보기 거부를 확인했다. 실제 Chrome UI 테스트는 못 했다.
 - Cloudflare 배포 버전 14257815-4c69-4899-99d0-54a3c34240aa. DB 변경/유료 AI 호출/운영 상품 등록 없음.
 - 남은 핵심: 실제1688수집기, 모든 카테고리 견적 기본값과 공식 양식 대조, 이미지 번역 품질, Supplier Hub POST501 전송 어댑터·접수 확인. 다음 시작점: 기존 Chrome의 실제 페이지 연결 확인 후 지정 상품813724060928에 대한 큐→웹페이지 실행→결과 저장 경로를 관찰한다. 이번 번들 구현이 전체 자동화 완성은 아니다.
+
+## 233. 옵션 수동 공란 저장 오류 수정 및 번들→견적 연결 검증 — 2026-09-25
+
+- 시작 main 98dfa50 clean. 이번 작업은 기존 코드의 옵션 저장 및 견적 생성 경로 검사다. 실제 Chrome/1688/Hub 실행은 하지 않았다.
+- 확인된 오류: applyOptionRows가 기존 한국어 옵션명 또는 무게를 지운 값을 unverified로 저장했다. 그 결과 원문 이름이나 관찰 기본값으로 돌아갈 수 있었다. 기존 필드 값을 변경한 경우 공란/null도 manual로 저장하도록 수정했다. 변경하지 않은 필드의 출처·수정 시각은 유지하고 새 옵션의 미입력 필드는 여전히 unverified다.
+- 검증: 번들 미리보기→적용→옵션 저장 모델→견적 resolver→내보내기 연결 검사 추가. 원래 옵션 보존, 3개입 옵션명, 4.5CNY×3=13.5CNY, 수량/공급가/판매가 반영, 미확인 포장 무게·사이즈 공란을 확인했다. 직접 지운 번역 옵션명/무게의 재저장 및 내보내기 보존도 확인했다.
+- options/option-editor-tools/quotation-schema 169/169, TypeScript, 변경 TS ESLint, Cloudflare build/check, git diff --check 통과. outputs/step233-tests.log, step233-build.log. 합성 fixture를 사용한 앱 내부 검사이며 실제 공식 접수 검증이 아니다.
+- Cloudflare 배포 fb013c74-8604-49ec-85de-ecda4871587a. DB 구조 변경·유료 AI 호출·상품 운영 등록 없음.
+- 남은 핵심/다음 시작점: 기존 Chrome 실제 탭 연결 확보 및 상품813724060928 수집 경로 관찰, 실제 수집기 연결, 전 카테고리 기본값/공식 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 접수 확인. 이번 변경으로 전체 자동화가 완성된 것은 아니다.
