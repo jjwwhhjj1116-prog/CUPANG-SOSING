@@ -2440,3 +2440,13 @@ AI등록 화면 확인:
 - 검증: 관련 테스트 12/12, TypeScript, 변경 TS/TSX ESLint, Cloudflare build/check, diff check 통과. 모의 UI/API 기반이며 실브라우저 화면과 유료 번역 품질 검증은 아니다. outputs/step219-tests.log 및 step219-build.log.
 - Cloudflare version c95cd656-43fa-4791-b078-0350c5df4f23 배포. DB 변경·유료 번역 호출·Supplier Hub 운영 등록 없음.
 - 핵심 미완성: 실제 1688 수집 실행기, 전 카테고리 Couplus 기본값/공식 Excel 대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터·실접수. 다음 시작점은 기존 Chrome 탭 접근과 지정 상품 813724060928의 실제 수집→견적→접수 근거 확보다. 이번 기능으로 전체 자동화가 완성된 것은 아니다.
+
+## 220. 상품 추가 당시 등록 기본설정과 견적 편집·출력 연결 — 2026-09-25
+
+- 시작 main d3c8f55 clean. Chrome 스킬의 기존 연결을 재사용했으나 supplierChrome.tabs.list() 결과는 []다. 새 창·탭·프로필 생성이나 로그인 우회 없음. 실사이트 수집/접수를 진행하지 못했다.
+- 확인: 수집 context에는 기본설정이 보관되지만 견적 편집과 출력은 현재 workspace_settings를 읽었다. 이전 단계에서 표시사항 업체 필드만 최초 반영했으므로 브랜드·거래타입·과세·수입여부·박스 입수 등은 후속 기본설정 변경에 따라 바뀔 수 있었다.
+- 상품에 직접 연결된 collection_products의 context에서 명시적으로 저장된 brand/manufacturer/importer/serviceContact/tradeType/importType/taxType/boxSkuQuantity를 사용하도록 편집 API와 출력 경로를 동일하게 연결했다. 프로필을 명시적으로 선택해도 해당 상품의 캡처 값을 유지한다. 직접 견적 수정값/공란은 기존 우선순위를 유지하며 가격·작업 스위치는 이 함수에서 변경하지 않는다. 과거 context에서 누락된 필드는 현재 설정을 사용한다. 같은 URL만 일치하는 다른 작업의 설정은 적용하지 않는다.
+- 추정/설계: 상품 추가 당시 설정을 유지하는 것은 이 앱의 일관성을 위한 구현 결정이며 쿠플러스 서버 내부 우선순위를 실측한 결과가 아니다. 설정의 빈 과세 값은 그대로 전달하지만 기존 80719 스키마의 관찰 기본값 '과세' 적용 동작은 유지한다. 견적서 직접 공란 수정은 그대로 보존한다.
+- 검증: 관련 183/183 테스트, TypeScript, 변경 TS ESLint, diff check, Cloudflare build/check 통과. SQLite와 실제 resolver를 통한 편집/출력 일치, 프로필 지정/미지정, 현재 기본설정 변경, 직접 공란, 같은 URL 비연결 작업 배제, 저장 중 context 변경 충돌 검사. 최초 테스트에서 빈 과세값에 기존 80719 기본값이 적용되는 것을 확인하고 잘못된 기대값을 수정했다. outputs/step220-tests.log, step220-build.log. 실상품 종단 검증 아님.
+- Cloudflare version 49f9e873-531a-434a-8a49-cb94932396bd 배포. DB 마이그레이션·유료 AI·운영 상품 등록 없음.
+- 다음 시작점/미완성: 기존 Chrome 탭 접근 확보 후 실제 상품 813724060928 수집 및 카테고리 공식 근거 대조. 실제 수집 실행기, 모든 카테고리 Couplus 기본값/공식 Excel 확인, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터/접수번호 회수는 여전히 미완성이다.

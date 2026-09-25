@@ -1,3 +1,4 @@
+import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
 import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
 import { findProduct, getSettings } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
@@ -23,17 +24,18 @@ export async function readQuotationExportSource(owner: string, productId: string
     profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null),
   ]);
   if (profileId && !profile) throw new QuotationExportError('카테고리 연결을 찾을 수 없습니다.', 404);
-  const settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
+  let settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
-  else {
+  {
     let offerId: string | null = null;
     try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* No inferred category for legacy/non-product URLs. */ }
     if (offerId) {
-      const captured = await readQuotationCollectionSource(owner, offerId, productId); collection = { offerId, snapshot: captured };
+      const captured = await readQuotationCollectionSource(owner, offerId, productId); if (!profile || captured?.linked) collection = { offerId, snapshot: captured };
       const payload = captured ? JSON.parse(captured.payload) : null;
-      if (payload?.category) {
+      if (captured?.linked) settings = collectionRegistrationSettings(settings, payload?.settings);
+      if (!profile && payload?.category) {
         const category = validateCategoryProfile(payload.category);
         categoryContext = { source: 'collection', profileId: typeof payload.category.id === 'string' ? payload.category.id : null,
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };

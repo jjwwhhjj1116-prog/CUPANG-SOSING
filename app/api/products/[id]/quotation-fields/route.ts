@@ -1,3 +1,4 @@
+import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
 import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quotation-scopes';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
@@ -32,18 +33,19 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     profileId ? getCategoryProfile(owner, profileId) : Promise.resolve(null),
   ]);
   if (profileId && !profile) throw new FieldsError('카테고리 프로필을 찾을 수 없습니다.', 404);
-  const settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
+  let settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
   const imageKeys = productImageKeys(product.image_keys).filter(key => isOwnedImageKey(owner, key));
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
-  else {
+  {
     let offerId: string | null = null;
     try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* Legacy non-product URLs have no inferred category. */ }
     if (offerId) {
-      const source = await readQuotationCollectionSource(owner, offerId, id); collection = { offerId, snapshot: source };
+      const source = await readQuotationCollectionSource(owner, offerId, id); if (!profile || source?.linked) collection = { offerId, snapshot: source };
       const captured = source ? JSON.parse(source.payload) : null;
-      if (captured?.category) {
+      if (source?.linked) settings = collectionRegistrationSettings(settings, captured?.settings);
+      if (!profile && captured?.category) {
         const category = validateCategoryProfile(captured.category);
         categoryContext = { source: 'collection', profileId: typeof captured.category.id === 'string' ? captured.category.id : null,
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };

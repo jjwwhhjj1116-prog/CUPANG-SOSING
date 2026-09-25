@@ -324,3 +324,54 @@ test('selected translated option attributes survive API save/reload and export w
   assert.equal(document.rows.some(row=>row.optionId==='excluded'),false);assert.equal(document.submissionReady,false);
  }finally{h.sqlite.close();}
 });
+
+test('product-linked registration defaults survive workspace changes in editor and export, including explicit profile and blanks',async()=>{
+ const h=await harness();try{
+  const job=await linkedFixture(h);
+  const row=h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get(job.id);
+  const captured=JSON.parse(row.payload);
+  Object.assign(captured.settings,{brand:'상품 추가 당시 브랜드',taxType:'면세',boxSkuQuantity:50});
+  h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(captured),job.id);
+  const changed={...captured.settings,brand:'다음 상품 브랜드',taxType:'과세',boxSkuQuantity:7,exchangeRate:220};
+  await h.queries.saveSettings('owner',JSON.stringify(changed));
+  const exporter=h.load('app/exports/quotation-source.ts');
+  for(const profileId of [null,captured.category.id]){
+   let view=await get(h,profileId);
+   assert.equal(view.resolved.rows[0].fields.brand.value,'상품 추가 당시 브랜드');
+   assert.equal(view.resolved.rows[0].fields.taxType.value,'면세');
+   assert.equal(view.resolved.rows[0].fields.boxSkuQuantity.value,'50');
+   const saved=await exporter.readQuotationExportSource('owner','product',profileId);
+   assert.equal(saved.settings.exchangeRate,220);
+   assert.deepEqual(JSON.parse(JSON.stringify(exporter.resolveQuotationExport(saved))),view.resolved);
+   assert.equal((await put(h,view,[{fieldKey:'brand',optionId:null,value:''}],profileId)).status,200);
+   view=await get(h,profileId);assert.equal(view.resolved.rows[0].fields.brand.value,'');
+   assert.equal((await put(h,view,[{fieldKey:'brand',optionId:null,value:null}],profileId)).status,200);
+  }
+ }finally{h.sqlite.close();}
+});
+
+test('captured registration blanks and missing legacy keys stay distinct, and unrelated URL requests do not change defaults',async()=>{
+ const h=await harness();try{
+  const helper=h.load('app/collection-registration-settings.ts').collectionRegistrationSettings;
+  const current={...h.load('app/workspace-settings.ts').defaultSettings,brand:'현재',serviceContact:'연락처',exchangeRate:220};
+  const captured={brand:'',taxType:'',exchangeRate:190};const before=JSON.stringify(captured);
+  const result=helper(current,captured);
+  assert.equal(result.brand,'');assert.equal(result.taxType,'');assert.equal(result.serviceContact,'연락처');assert.equal(result.exchangeRate,220);
+  assert.equal(current.brand,'현재');assert.equal(JSON.stringify(captured),before);
+  const job=await linkedFixture(h);h.sqlite.prepare('DELETE FROM collection_products WHERE job_id=?').run(job.id);
+  await h.queries.saveSettings('owner',JSON.stringify(current));
+  const selected=await profile(h);
+  const saved=await h.load('app/exports/quotation-source.ts').readQuotationExportSource('owner','product',selected.id);
+  assert.equal(saved.settings.brand,'현재');assert.equal(saved.source.collection,null);
+ }finally{h.sqlite.close();}
+});
+
+test('captured input changed during explicit-profile save rejects stale quotation edits',async()=>{
+ const h=await harness();try{
+  const job=await linkedFixture(h);const selected=await profile(h);const view=await get(h,selected.id);
+  h.setBeforeSave(()=>h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run('{}',job.id));
+  const response=await put(h,view,[{fieldKey:'brand',optionId:null,value:'저장되면 안됨'}],selected.id);
+  assert.equal(response.status,409);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM product_quotation_fields').get().n,0);
+ }finally{h.sqlite.close();}
+});
