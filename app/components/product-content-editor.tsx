@@ -116,7 +116,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     try {
-      const response = await fetch('/api/settings', { cache: 'no-store', signal:controller.signal });
+      const response = await fetch(`/api/products/${encodeURIComponent(product.id)}/registration-settings`, { cache: 'no-store', signal:controller.signal });
       const body = await response.json() as { settings?: unknown; error?: string };
       if(controller.signal.aborted)return;
       if (!response.ok) throw new Error(body.error || '저장된 기본설정을 읽지 못했습니다.');

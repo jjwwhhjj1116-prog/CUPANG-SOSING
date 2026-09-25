@@ -32,7 +32,7 @@ test('image save sends once, retains another tab draft and reaches resolved quot
 test('label fill and save cannot overlap; unmount ignores late fill and write responses',async()=>{
  for(const operation of ['fill','save']){
   let finish,signal;const pending=new Promise(resolve=>{finish=resolve;});let count=0;
-  const h=harness((url,init,content)=>{if(url==='/api/settings'||init?.method==='PATCH'){count++;signal=init.signal;return pending.then(()=>Response.json(url==='/api/settings'?{settings:{manufacturer:'제조사'}}:{content}));}});
+  const h=harness((url,init,content)=>{if(url.endsWith('/registration-settings')||init?.method==='PATCH'){count++;signal=init.signal;return pending.then(()=>Response.json(url.endsWith('/registration-settings')?{settings:{manufacturer:'제조사'}}:{content}));}});
   await h.start();const fill=h.button('상품명·저장 기본설정으로 빈 표시사항 채우기','표시사항').props.onClick;
   const save=h.button('표시사항 저장','표시사항').props.onClick;
   if(operation==='fill'){fill();fill();save();}else{save();save();fill();}
