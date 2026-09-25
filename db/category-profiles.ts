@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { validateCategoryProfile, type CategoryProfile, type CategoryProfileInput } from '@/app/category-profiles';
+import { CategoryProfileConflictError, validateCategoryProfile, type CategoryProfile, type CategoryProfileInput } from '@/app/category-profiles';
 
 export const categoryProfileSchema = `CREATE TABLE IF NOT EXISTS category_profiles (
   id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, payload TEXT NOT NULL,
@@ -25,14 +25,21 @@ export async function getCategoryProfile(ownerId: string, id: string): Promise<C
   return result ? profile(result) : null;
 }
 export const findCategoryProfile = getCategoryProfile;
-export async function createCategoryProfile(ownerId: string, input: CategoryProfileInput): Promise<CategoryProfile | null> {
+export async function createCategoryProfile(ownerId: string, input: CategoryProfileInput, requestId?: string): Promise<CategoryProfile | null> {
   const payload = JSON.stringify(validateCategoryProfile(input));
   const db = await database(); const now = new Date().toISOString();
   // Atomic limit check: simultaneous tabs cannot create unlimited profiles.
   const result = await db.prepare(`INSERT INTO category_profiles(id,owner_id,payload,revision,created_at,updated_at)
-    SELECT ?,?,?,1,?,? WHERE (SELECT COUNT(*) FROM category_profiles WHERE owner_id=?) < 100 RETURNING *`)
-    .bind(crypto.randomUUID(), ownerId, payload, now, now, ownerId).first<Row>();
-  return result ? profile(result) : null;
+    SELECT ?,?,?,1,?,? WHERE (SELECT COUNT(*) FROM category_profiles WHERE owner_id=?) < 100
+    ON CONFLICT(id) DO NOTHING RETURNING *`)
+    .bind(requestId ?? crypto.randomUUID(), ownerId, payload, now, now, ownerId).first<Row>();
+  if (result) return profile(result);
+  if (requestId) {
+    const saved = await db.prepare('SELECT * FROM category_profiles WHERE owner_id=? AND id=?').bind(ownerId, requestId).first<Row>();
+    if (saved && saved.revision === 1 && saved.payload === payload) return profile(saved);
+    if (saved) throw new CategoryProfileConflictError('이미 저장된 카테고리 요청의 내용이 변경되었습니다. 저장 설정을 다시 불러와주세요.');
+  }
+  return null;
 }
 export async function updateCategoryProfile(ownerId: string, id: string, expectedRevision: number, input: CategoryProfileInput): Promise<CategoryProfile | null> {
   const payload = JSON.stringify(validateCategoryProfile(input));

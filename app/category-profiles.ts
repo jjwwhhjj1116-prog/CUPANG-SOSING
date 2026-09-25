@@ -1,5 +1,6 @@
 // Aggregate UTF-8 JSON request limit; per-field character limits still apply.
 export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
+export class CategoryProfileConflictError extends Error {}
 export const CATEGORY_TEMPLATE_FILE_LIMIT = 5_000_000;
 export const categoryFields = {
   marathon_sockLength: "마라톤가방: 양말 길이",

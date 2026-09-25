@@ -1,7 +1,7 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
-import { CATEGORY_PROFILE_BODY_LIMIT, validateCategoryCodeForSave, validateCategoryProfile, validateQuotationChoiceFormats } from '@/app/category-profiles';
+import { CategoryProfileConflictError, CATEGORY_PROFILE_BODY_LIMIT, validateCategoryCodeForSave, validateCategoryProfile, validateQuotationChoiceFormats } from '@/app/category-profiles';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { createCategoryProfile, getCategoryProfile, listCategoryProfiles, updateCategoryProfile } from '@/db/category-profiles';
 import { TemplateValidationError, validateStoredTemplate } from '@/db/category-templates';
@@ -19,16 +19,24 @@ export async function GET() {
 }
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
-  let input;
-  try { input = validateCategoryProfile(await body(request)); validateCategoryCodeForSave(input.categoryId); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId).fields); }
+  let input; let requestId: string | undefined;
+  try {
+    requestId = request.headers.get('Idempotency-Key') ?? undefined;
+    if (requestId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new Error('카테고리 저장 요청 번호가 올바르지 않습니다.');
+    requestId = requestId?.toLowerCase();
+    input = validateCategoryProfile(await body(request)); validateCategoryCodeForSave(input.categoryId); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId).fields);
+  }
   catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
     const ownerId = await owner();
     try { await validateStoredTemplate(ownerId, input.template); } catch (error) { if (error instanceof TemplateValidationError) return NextResponse.json({ error: errorText(error) }, { status: 400, ...options }); throw error; }
-    const profile = await createCategoryProfile(ownerId, input);
+    const profile = await createCategoryProfile(ownerId, input, requestId);
     if (!profile) return NextResponse.json({ error: '카테고리 설정은 최대 100개입니다. 기존 설정을 수정해주세요.' }, { status: 409, ...options });
     return NextResponse.json({ profile }, { status: 201, ...options });
-  } catch { return NextResponse.json({ error: '카테고리 설정 저장을 확인하지 못했습니다. 다시 불러온 뒤 확인해주세요.' }, { status: 503, ...options }); }
+  } catch (error) {
+    if (error instanceof CategoryProfileConflictError) return NextResponse.json({ error: error.message }, { status: 409, ...options });
+    return NextResponse.json({ error: '카테고리 설정 저장을 확인하지 못했습니다. 다시 불러온 뒤 확인해주세요.' }, { status: 503, ...options });
+  }
 }
 export async function PUT(request: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();

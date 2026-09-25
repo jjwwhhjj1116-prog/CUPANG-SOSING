@@ -13,7 +13,7 @@ function harness(request,existing=false){
  const choice={key:'saved',profileId:existing?'saved':null,path:['test'],categoryId:'80719',isLeaf:true};
  const hooks={useMemo:fn=>fn(),useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)cleanup.push(fn());}};
  const exports={};const file='app/components/category-picker.tsx';
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,fetch:(url,init)=>{calls.push(init);return request(url,init);},require(name){
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,crypto,AbortController,fetch:(url,init)=>{calls.push(init);return request(url,init);},require(name){
   if(name==='react')return hooks;
   if(name.endsWith('.css'))return{};
   if(name==='@/app/category-profiles')return{usableCategoryCode:()=>true};
@@ -61,4 +61,14 @@ test('new category confirmation rejects missing or mismatched saved identities b
   h.confirm()();await settle();assert.equal(h.selected.length,0);assert.match(JSON.stringify(h.render()),/URL 입력을 중단/);
   h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].categoryId,'80719');
  }
+});
+
+test('category create retry keeps the same request key and serialized selection',async()=>{
+ let attempt=0;
+ const h=harness(async()=>{if(++attempt===1)throw new Error('response lost');return Response.json({profile:{id:'new',categoryId:'80719',categoryPath:['test'],revision:1}});});
+ h.confirm()();await settle();h.confirm()();await settle();
+ assert.equal(h.selected.length,1);assert.equal(h.calls.length,2);
+ assert.match(h.calls[0].headers['Idempotency-Key'],/^[0-9a-f-]{36}$/);
+ assert.equal(h.calls[0].headers['Idempotency-Key'],h.calls[1].headers['Idempotency-Key']);
+ assert.equal(h.calls[0].body,h.calls[1].body);
 });

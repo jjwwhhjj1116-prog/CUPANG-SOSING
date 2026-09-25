@@ -305,3 +305,34 @@ test('category writes reject label formatting on non-select fields before storag
  assert.doesNotThrow(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],field:'lidIncluded'}]},schema.fields));
  assert.throws(()=>model.validateQuotationChoiceFormats({...invalid,mappings:[{...invalid.mappings[0],field:'lidIncluded'}]},load('app/quotation-schema.ts').getQuotationSchema('77442').fields),/현재 카테고리/);
 });
+
+test('SQLite category creation replays identical requests without duplicate rows or overwrites',async()=>{
+ const sqlite=new DatabaseSync(':memory:');
+ const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},execute(){return sqlite.prepare(sql).all(...args);},async first(){return q.execute()[0]??null;}};return q;},async batch(queries){return queries.map(q=>({results:q.execute()}));}};
+ const storage=load('db/category-profiles.ts',{'cloudflare:workers':{env:{DB:db}}});
+ const id='11111111-1111-4111-8111-111111111111';
+ try{
+  const a=await storage.createCategoryProfile('owner',draft,id);
+  const b=await storage.createCategoryProfile('owner',draft,id);
+  assert.equal(a.id,b.id);assert.equal(a.createdAt,b.createdAt);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM category_profiles').get().n,1);
+  assert.equal(await storage.createCategoryProfile('other',draft,id),null);
+  await assert.rejects(storage.createCategoryProfile('owner',{...draft,name:'different'},id),/이미 저장된/);
+  for(let i=1;i<100;i++)await storage.createCategoryProfile('owner',draft);
+  assert.equal((await storage.createCategoryProfile('owner',draft,id)).id,id);
+  assert.equal(await storage.createCategoryProfile('owner',draft),null);
+  await storage.updateCategoryProfile('owner',id,1,{...draft,name:'edited'});
+  await assert.rejects(storage.createCategoryProfile('owner',draft,id),/이미 저장된/);
+  assert.equal((await storage.getCategoryProfile('owner',id)).name,'edited');
+ }finally{sqlite.close();}
+});
+
+test('category POST validates and forwards optional retry keys and reports conflicts',async()=>{
+ const model=load('app/category-profiles.ts');let calls=0,key;
+ const route=load('app/api/category-profiles/route.ts',{'@/app/category-profiles':model,'@/db/category-profiles':{createCategoryProfile:async(_owner,input,id)=>{calls++;key=id;if(calls===2)throw new model.CategoryProfileConflictError('changed request');return {...input,id,revision:1};}}});
+ const request=key=>new Request('http://localhost/api/category-profiles',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':key},body:JSON.stringify(draft)});
+ assert.equal((await route.POST(request('bad-key'))).status,400);assert.equal(calls,0);
+ const id='AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+ assert.equal((await route.POST(request(id))).status,201);assert.equal(key,id.toLowerCase());
+ assert.equal((await route.POST(request(id))).status,409);
+});

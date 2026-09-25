@@ -2746,3 +2746,12 @@ AI등록 화면 확인:
 - 검증: category-picker-requests, collection, quotation-fields45/45 통과. 누락/공란ID/잘못된revision/다른코드/다른경로/경로누락 및 올바른 재시도, 기존 SQLite 견적 연동 포함. TypeScript/변경 TS ESLint/Cloudflare build/check/diff check 통과. 모의 UI와 SQLite 검사이며 실제 Couplus·Hub 양식 대조는 미수행이다.
 - 배포9023040a-0372-4601-9dd5-7b9ae7cc38b4. outputs/step254-tests.log, step254-build.log, step254-deploy.log. DB변경·유료AI·운영상품등록 없음.
 - 남은 핵심/다음 시작점: 기존 Chrome 실제 탭 접근과 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터·실접수 확인. 전체 자동화 미완성.
+
+## 255. 상품추가 카테고리 저장 재시도 중복 방지 — 2026-09-25
+
+- 시작 main24ee2f2 clean. 신규 카테고리 POST는 매 요청 새UUID를 생성해 응답 유실 후 재시도하면 중복 설정이 생성될 수 있었다.
+- 구현: CategoryPicker는 같은 창의 동일 저장 본문에 같은 UUID 요청 키를 유지한다. POST는 선택적 Idempotency-Key의 UUIDv4 형식을 검증하고 저장에 전달한다. DB는 기본키 충돌 시 쓰지 않으며 같은 소유자·동일 정규화 내용·revision1인 경우만 기존 결과를 재사용한다. 다른 내용/수정된 설정 재시도는409이며 기존값을 보존한다. 키 없는 기존 요청은 이전 방식 유지. 설정100개 한도에서도 동일 요청 재조회는 가능하다.
+- 검증: 카테고리/UI24/24, 전체878/878, TypeScript/변경 TS ESLint/Cloudflare build/check/diff check 통과. 실제 SQLite에서 중복행 없음, 다른 소유자 비공개, 내용 충돌/수정 후 충돌,100개 한도 재사용을 검사했다. UI 네트워크 응답 유실 후 키·본문 동일성 및 API400/409 검사 포함.
+- 배포ea282ce1-73c3-4116-9a7a-6c2196bb3da9. outputs/step255-tests.log, step255-full-tests.log, step255-build.log, step255-deploy.log. DB스키마 변경·유료AI·운영상품등록 없음.
+- 한계: 요청 키는 해당 선택창 수명 동안 유지하며 창을 닫거나 새로고침한 뒤까지 보존하지 않는다. 다른 화면의 카테고리 편집기는 이번 키 적용 대상이 아니다. 실제 Couplus·Hub 화면 검증은 미수행.
+- 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근과 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.

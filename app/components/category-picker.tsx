@@ -23,6 +23,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
   const [query, setQuery] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const activeRequest = useRef<AbortController | null>(null);
   const completed = useRef(false);
+  const createRequest = useRef<{ body: string; id: string } | null>(null);
   useEffect(() => () => { activeRequest.current?.abort(); }, []);
   const selected = choices.find(choice => choice.key === selectedKey);
   const schema = selected?.categoryId ? getQuotationSchema(selected.categoryId, selected.path) : null;
@@ -62,7 +63,9 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
         }
         completed.current = true; onSelected(latest); return;
       }
-      const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(categoryProfileForChoice(selected)), signal: controller.signal });
+      const body = JSON.stringify(categoryProfileForChoice(selected));
+      if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
+      const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': createRequest.current.id }, body, signal: controller.signal });
       const result = await response.json() as { profile: CategoryProfile; error?: string };
       if (controller.signal.aborted) return;
       if (!response.ok) throw new Error(result.error ?? '카테고리를 저장하지 못했습니다.');
