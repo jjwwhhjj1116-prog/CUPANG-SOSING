@@ -286,3 +286,4 @@ html,body{background:#fff}
 .intake-queue-table input,.intake-queue-table textarea{width:100%;box-sizing:border-box;min-width:110px;padding:9px;border:1px solid #d7dfed;border-radius:7px;color:#526079;font:inherit}
 .intake-queue-table textarea{min-height:65px;resize:vertical}.intake-category-button{border:0;background:none;color:#3d5378;text-align:left;line-height:1.7;cursor:pointer}
 .intake-queue-table td:last-child{white-space:nowrap}.intake-queue .modal-actions{justify-content:space-between}
+.intake-draft-actions{padding:14px 24px;border-bottom:1px solid #e3e5e9;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f8fafc}.intake-draft-actions p{flex:1;font-size:13px;min-width:240px;color:#526079}
