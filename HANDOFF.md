@@ -2572,3 +2572,11 @@ AI등록 화면 확인:
 - options/option-editor-tools/quotation-schema 169/169, TypeScript, 변경 TS ESLint, Cloudflare build/check, git diff --check 통과. outputs/step233-tests.log, step233-build.log. 합성 fixture를 사용한 앱 내부 검사이며 실제 공식 접수 검증이 아니다.
 - Cloudflare 배포 fb013c74-8604-49ec-85de-ecda4871587a. DB 구조 변경·유료 AI 호출·상품 운영 등록 없음.
 - 남은 핵심/다음 시작점: 기존 Chrome 실제 탭 연결 확보 및 상품813724060928 수집 경로 관찰, 실제 수집기 연결, 전 카테고리 기본값/공식 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 접수 확인. 이번 변경으로 전체 자동화가 완성된 것은 아니다.
+
+## 234. 실제 수집·전송 실행 경로 재점검 — 2026-09-25
+
+- 시작 main 95129cf clean. 기존 supplierChrome.tabs.list() 재확인 결과 [] (오류는 아님). 기존 브라우저 바인딩 유지, 새 탭/Chrome/프로필 생성 및 인증 정보 접근 없음.
+- 확인: app/collection-delivery.ts는 이미 수집된 payload의 검증·수신·상품/이미지 반영을 연결하는 진입점이며 1688 페이지 수집 실행기가 아니다. 저장소 검색에서도 별도 확장/브리지 실행 구현을 찾지 못했다.
+- 확인: app/api/supplier-hub/route.ts POST는 여전히 integrationBlock/501만 반환한다. 이전 supplier-hub-upload-plan 관찰 기록도 첨부 준비 목록까지만 확인했고 실제 업로드 요청·접수번호·공식 Excel 바이트는 미확인이다.
+- 이번 단계는 기능 구현·테스트·운영 배포 없이 핵심 미완성 상태를 재확인했다. 배포 fb013c74-8604-49ec-85de-ecda4871587a 유지. 기존 단위/통합 검사를 실제 수집/접수 완료로 보고하지 않는다.
+- 다음 필수 작업: 기존 Chrome 확장이 이 작업에 실제 탭을 전달하도록 연결 확인. 앞서 요청한 확장 연결 상태 답변은 아직 없다. 새 승인 문제가 아니며 사용자의 기존 승인 범위는 유지된다. 연결 후 지정 상품813724060928과 실제 카테고리 선택→원문 수집→견적 작성→전송 경로를 관찰한다. 현재 외부 실행 규격을 추측한 구현 또는 정책상 차단된 경로의 우회는 하지 않는다.
