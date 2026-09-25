@@ -32,7 +32,7 @@ export async function readQuotationExportSource(owner: string, productId: string
     let offerId: string | null = null;
     try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* No inferred category for legacy/non-product URLs. */ }
     if (offerId) {
-      const captured = await readQuotationCollectionSource(owner, offerId, productId); if (!profile || captured?.linked) collection = { offerId, snapshot: captured };
+      const captured = await readQuotationCollectionSource(owner, offerId, productId); collection = { offerId, snapshot: captured };
       const payload = captured ? JSON.parse(captured.payload) : null;
       if (captured?.linked) settings = collectionRegistrationSettings(settings, payload?.settings);
       if (!profile && payload?.category) {

@@ -123,12 +123,12 @@ test('price policy remains valid without registration facts and still rejects ma
  }finally{h.sqlite.close();}
 });
 
-test('GET resolves latest saved sources and collection category without creating overrides or claiming submission readiness',async()=>{
+test('unlinked requests with the same URL never supply a product category',async()=>{
   const h=await harness();try{
     const selected=await profile(h);const settings=h.load('app/workspace-settings.ts').defaultSettings;
     await h.queries.saveSettings('owner',JSON.stringify({...settings,brand:'저장 브랜드'}));
     await h.load('db/collection-jobs.ts').enqueueCollection('owner',[{offerId:'123456789',sourceUrl:product.source_url,goal:'work'}],{category:selected,settings,features:'',keywords:'',capturedAt:version});
-    const view=await get(h);assert.equal(view.categoryContext.source,'collection');assert.equal(view.resolved.schema.categoryId,'80719');
+    const view=await get(h);assert.equal(view.categoryContext.source,'unknown');assert.equal(view.resolved.schema.categoryId,null);
     assert.equal(view.resolved.rows[0].fields.brand.value,'저장 브랜드');assert.equal(view.resolved.rows[0].fields.brand.source,'settings');
     assert.equal(view.revision,0);assert.equal(view.submissionReady,false);assert.equal(view.resolved.schema.submissionReady,false);
     assert.deepEqual(view.imageKeys,['owner/image.png']);assert.equal(view.inputFingerprint.length,64);
@@ -186,11 +186,12 @@ test('profile and collection snapshot races reject saves, including a newly atta
     assert.equal(await h.store.saveQuotationFields('owner','product',{common:{},options:{}},0,guard),null);
     const collectionGuard={...baseGuard(),collection:{offerId:'123456789',snapshot:null}};
     const jobs=await h.load('db/collection-jobs.ts').enqueueCollection('owner',[{offerId:'123456789',sourceUrl:product.source_url,goal:'work'}],{category:selected,settings:h.load('app/workspace-settings.ts').defaultSettings,features:'',keywords:'',capturedAt:version});
+    h.sqlite.prepare('INSERT INTO collection_products VALUES(?,?,?,?)').run(jobs[0].id,'owner','product',version);
     assert.equal(await h.store.saveQuotationFields('owner','product',{common:{},options:{}},0,collectionGuard),null);
-    const snapshot=await h.store.readQuotationCollectionSource('owner','123456789');assert.ok(snapshot);
-    await h.load('db/collection-jobs.ts').cancelCollection('owner',jobs[0].id);
+    const snapshot=await h.store.readQuotationCollectionSource('owner','123456789','product');assert.ok(snapshot);
+    h.sqlite.prepare('UPDATE collection_jobs SET status=? WHERE id=?').run('cancelled',jobs[0].id);
     assert.equal(await h.store.saveQuotationFields('owner','product',{common:{},options:{}},0,{...baseGuard(),collection:{offerId:'123456789',snapshot}}),null);
-    assert.equal(await h.store.readQuotationCollectionSource('other','123456789'),null);
+    assert.equal(await h.store.readQuotationCollectionSource('other','123456789','product'),null);
   }finally{h.sqlite.close();}
 });
 
@@ -362,7 +363,7 @@ test('captured registration blanks and missing legacy keys stay distinct, and un
   await h.queries.saveSettings('owner',JSON.stringify(current));
   const selected=await profile(h);
   const saved=await h.load('app/exports/quotation-source.ts').readQuotationExportSource('owner','product',selected.id);
-  assert.equal(saved.settings.brand,'현재');assert.equal(saved.source.collection,null);
+  assert.equal(saved.settings.brand,'현재');assert.equal(saved.source.collection.snapshot,null);
  }finally{h.sqlite.close();}
 });
 
@@ -372,6 +373,28 @@ test('captured input changed during explicit-profile save rejects stale quotatio
   h.setBeforeSave(()=>h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run('{}',job.id));
   const response=await put(h,view,[{fieldKey:'brand',optionId:null,value:'저장되면 안됨'}],selected.id);
   assert.equal(response.status,409);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM product_quotation_fields').get().n,0);
+ }finally{h.sqlite.close();}
+});
+
+test('unrelated requests cannot change the category or invalidate an unlinked product quotation',async()=>{
+ const h=await harness();try{
+  const selected=await profile(h);const before=await get(h,selected.id);
+  await h.load('db/collection-jobs.ts').enqueueCollection('owner',[{offerId:'123456789',sourceUrl:product.source_url,goal:'work'}],{category:await profile(h,'77442'),settings:h.load('app/workspace-settings.ts').defaultSettings,features:'',keywords:'',capturedAt:version});
+  assert.equal((await get(h)).categoryContext.categoryId,null);
+  const after=await get(h,selected.id);assert.equal(after.categoryContext.categoryId,'80719');assert.equal(after.inputFingerprint,before.inputFingerprint);
+  assert.equal((await put(h,before,[{fieldKey:'brand',optionId:null,value:'직접 선택한 견적'}],selected.id)).status,200);
+  const exporter=h.load('app/exports/quotation-source.ts');const saved=await exporter.readQuotationExportSource('owner','product',selected.id);
+  assert.equal(saved.categoryContext.categoryId,'80719');assert.equal(exporter.resolveQuotationExport(saved).rows[0].fields.brand.value,'직접 선택한 견적');
+ }finally{h.sqlite.close();}
+});
+
+test('new exact product link during explicit-profile save is detected atomically',async()=>{
+ const h=await harness();try{
+  const selected=await profile(h);const view=await get(h,selected.id);
+  const jobs=await h.load('db/collection-jobs.ts').enqueueCollection('owner',[{offerId:'123456789',sourceUrl:product.source_url,goal:'work'}],{category:selected,settings:h.load('app/workspace-settings.ts').defaultSettings,features:'',keywords:'',capturedAt:version});
+  h.setBeforeSave(()=>h.sqlite.prepare('INSERT INTO collection_products VALUES(?,?,?,?)').run(jobs[0].id,'owner','product',version));
+  assert.equal((await put(h,view,[{fieldKey:'brand',optionId:null,value:'오래된 값'}],selected.id)).status,409);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM product_quotation_fields').get().n,0);
  }finally{h.sqlite.close();}
 });

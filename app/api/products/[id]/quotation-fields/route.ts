@@ -42,7 +42,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     let offerId: string | null = null;
     try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* Legacy non-product URLs have no inferred category. */ }
     if (offerId) {
-      const source = await readQuotationCollectionSource(owner, offerId, id); if (!profile || source?.linked) collection = { offerId, snapshot: source };
+      const source = await readQuotationCollectionSource(owner, offerId, id); collection = { offerId, snapshot: source };
       const captured = source ? JSON.parse(source.payload) : null;
       if (source?.linked) settings = collectionRegistrationSettings(settings, captured?.settings);
       if (!profile && captured?.category) {

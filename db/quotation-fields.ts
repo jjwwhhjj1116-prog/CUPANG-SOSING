@@ -30,7 +30,7 @@ export async function readQuotationFields(owner: string, productId: string): Pro
   if (state.schemaVersion !== 1 || state.productId !== productId || state.revision !== row.revision || !state.overrides || !state.overrides.common || !state.overrides.options) throw new Error('Invalid quotation fields');
   return state;
 }
-export async function readQuotationCollectionSource(owner: string, offerId: string, productId?: string): Promise<QuotationCollectionSource | null> {
+export async function readQuotationCollectionSource(owner: string, offerId: string, productId: string): Promise<QuotationCollectionSource | null> {
   const db = await database();
   if (productId) {
     const link = await db.prepare('SELECT job_id FROM collection_products WHERE owner_id=? AND product_id=?').bind(owner,productId).first<{job_id:string}>();
@@ -41,10 +41,7 @@ export async function readQuotationCollectionSource(owner: string, offerId: stri
       return {id:captured.id,payload:captured.payload,updatedAt:captured.updated_at,linked:true};
     }
   }
-  const row = await db.prepare(`SELECT j.id,c.payload,j.updated_at FROM collection_jobs j JOIN collection_context c ON c.job_id=j.id
-    WHERE j.owner_id=? AND j.offer_id=? AND j.status='awaiting_connector' ORDER BY j.created_at DESC,j.id DESC LIMIT 1`)
-    .bind(owner, offerId).first<{ id: string; payload: string; updated_at: string }>();
-  return row ? { id: row.id, payload: row.payload, updatedAt: row.updated_at } : null;
+  return null;
 }
 function sourceGuard(owner: string, productId: string, source: QuotationSourceGuard) {
   const conditions = [
@@ -70,10 +67,7 @@ function sourceGuard(owner: string, productId: string, source: QuotationSourceGu
       conditions.push(`EXISTS(SELECT 1 FROM collection_jobs j JOIN collection_context c ON c.job_id=j.id
         WHERE j.owner_id=p.owner_id AND j.offer_id=? AND j.status='awaiting_connector' AND j.id=? AND j.updated_at=? AND c.payload=?)`);
       args.push(source.collection.offerId, source.collection.snapshot.id, source.collection.snapshot.updatedAt, source.collection.snapshot.payload);
-    } else {
-      conditions.push(`NOT EXISTS(SELECT 1 FROM collection_jobs j JOIN collection_context c ON c.job_id=j.id
-        WHERE j.owner_id=p.owner_id AND j.offer_id=? AND j.status='awaiting_connector')`);
-      args.push(source.collection.offerId);
+
     }
   }
   return { sql: conditions.join(' AND '), args };
