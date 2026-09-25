@@ -96,19 +96,34 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '요청 실패'); }
     finally { finishRequest(controller); }
   }
-  async function loadCollectedSource() {
+  async function loadCollectedSource(includeOptions = false) {
     const controller=beginRequest();if(!controller)return;
-    setBusy(true);setError('');setNotice('');setRequestContext(null);
+    setBusy(true);setError('');setNotice('');
     try {
-      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store',signal:controller.signal});
+      const [response, optionResponse]=await Promise.all([
+        fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store',signal:controller.signal}),
+        includeOptions ? fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal:controller.signal}) : Promise.resolve(null),
+      ]);
       const value=await response.json() as {error?:string;title:string;description:string;attributes?:{name:string;value:string}[];jobId:string;sourceUrl:string;productVersion:string;message:string;requestContext?:RequestContext|null};if(controller.signal.aborted)return;
       if(!response.ok)throw Error(value.error??'원문 조회 실패');
       if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
       collectedTranslationAttributes(value.attributes ?? []);
+      let optionText: string | null = null;
+      if(optionResponse) {
+        const optionSource=await optionResponse.json() as ProductOptionsResponse & {error?:string};
+        if(controller.signal.aborted)return;
+        if(!optionResponse.ok)throw Error(optionSource.error??'옵션 조회 실패');
+        if(optionSource.productVersion!==version||optionSource.options?.productId!==productId)throw Error('옵션과 현재 상품이 일치하지 않습니다. 최신 상품을 다시 열어주세요.');
+        const pairs=optionTranslationAttributes(optionSource.options,true);
+        if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
+        if((value.attributes?.length??0)+pairs.length>50)throw Error('상품 속성과 옵션 원문이 합계 50개를 초과합니다. 기존 입력은 유지했습니다. 각각 불러와 번역 범위를 나누어주세요.');
+        optionText=pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n');
+      }
+      if(optionText!==null)setAttributes(optionText);
       setRequestContext(value.requestContext??null);setGuidance({features:value.requestContext?.features??'',keywords:value.requestContext?.keywords??''});setIncludeGuidance(true);
       setSourceTitle(value.title);setDescription(value.description);setCollectedAttributes(value.attributes ?? []);setIncludeCollectedAttributes(true);
       setSourceReference(`수집 요청 ${value.jobId} (${value.sourceUrl})에서 가져와 사용자가 검토·편집한 원문`);
-      setNotice(value.message+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.');
+      setNotice(value.message+(includeOptions?' 미번역 옵션명·수집 색상·사이즈도 함께 불러왔습니다.':'')+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.');
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'원문 조회 실패');}
     finally{finishRequest(controller);}
   }
@@ -176,7 +191,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     {!view && !error && <p>번역 설정을 확인하고 있습니다.</p>}
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
-      <button className="btn" type="button" disabled={busy} onClick={()=>void loadCollectedSource()}>수집 원문 불러오기 · 상품명·설명·상품 속성 입력 교체</button><small>옵션·이미지 번역은 별도입니다. 불러온 원문도 전송 전에 수정하고 검토할 수 있습니다.</small><label>상품명 원문<input value={sourceTitle} maxLength={1000} onChange={event => setSourceTitle(event.target.value)} disabled={busy} /></label>
+      <button className="btn blue" type="button" disabled={busy} onClick={()=>void loadCollectedSource(true)}>수집 원문·미번역 옵션 함께 불러오기 · 입력 교체</button><button className="btn" type="button" disabled={busy} onClick={()=>void loadCollectedSource()}>수집 원문 불러오기 · 상품명·설명·상품 속성 입력 교체</button><small>옵션·이미지 번역은 별도입니다. 불러온 원문도 전송 전에 수정하고 검토할 수 있습니다.</small><label>상품명 원문<input value={sourceTitle} maxLength={1000} onChange={event => setSourceTitle(event.target.value)} disabled={busy} /></label>
       <fieldset disabled={busy}><legend>SEO 참고 메모</legend><label><input type="checkbox" checked={includeGuidance} onChange={event=>setIncludeGuidance(event.target.checked)}/>초안 생성에 참고 메모 포함</label><label>강조할 상품 특징<textarea maxLength={2000} value={guidance.features} onChange={event=>setGuidance(previous=>({...previous,features:event.target.value}))}/></label><label>타겟 키워드<textarea maxLength={2000} value={guidance.keywords} onChange={event=>setGuidance(previous=>({...previous,keywords:event.target.value}))}/></label><small>원문에서 확인되는 특징과 관련 키워드만 반영하도록 요청합니다. 상품 사실을 추가하는 근거로 사용하지 않으며, 생성 결과는 검토 후 적용합니다.</small></fieldset>
       <label>상품 설명 원문<textarea rows={5} value={description} maxLength={20000} onChange={event => setDescription(event.target.value)} disabled={busy} /></label>
       {collectedAttributes.length > 0 && <fieldset disabled={busy}><legend>수집 상품 속성 원문 · {collectedAttributes.length}개</legend><label><input type="checkbox" checked={includeCollectedAttributes} onChange={event=>setIncludeCollectedAttributes(event.target.checked)}/>번역에 포함</label><p>판매자가 기재한 원문입니다. 옵션·직접 입력 속성은 별도로 유지합니다.</p>{collectedAttributes.map((pair,index)=><div key={index}><label>속성명<input maxLength={190} value={pair.name} onChange={event=>setCollectedAttributes(previous=>previous.map((item,i)=>i===index?{...item,name:event.target.value}:item))}/></label><label>속성값<textarea maxLength={1000} value={pair.value} onChange={event=>setCollectedAttributes(previous=>previous.map((item,i)=>i===index?{...item,value:event.target.value}:item))}/></label></div>)}</fieldset>}

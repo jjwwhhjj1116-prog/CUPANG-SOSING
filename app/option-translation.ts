@@ -1,14 +1,14 @@
 import { optionInputs, type ProductOptions } from '@/app/product-options';
 import type { TranslationJob } from '@/app/automation/translation';
-export function optionTranslationAttributes(options:ProductOptions){
+export function optionTranslationAttributes(options:ProductOptions, allowEmpty = false){
  const attributes=options.rows.flatMap(row=>{
-  const values=row.originalName.trim()&&!row.translatedName.trim()?[{name:`option:${row.id}`,value:row.originalName}]:[];
+  const values=row.originalName.trim()&&!row.translatedName.trim()&&row.provenance.translatedName!=='manual'?[{name:`option:${row.id}`,value:row.originalName}]:[];
   for(const field of ['color','size'] as const){
    if(row[field]?.trim()&&row.provenance[field]==='collected')values.push({name:`option-${field}:${row.id}`,value:row[field]!});
   }
   return values;
  });
- if(!attributes.length)throw new Error('번역할 빈 한국어 옵션명 또는 수집한 색상·사이즈가 없습니다.');
+ if(!attributes.length&&!allowEmpty)throw new Error('번역할 빈 한국어 옵션명 또는 수집한 색상·사이즈가 없습니다.');
  if(attributes.length>50)throw new Error('한 번에 번역할 옵션명·색상·사이즈는 합계 50개까지입니다. 옵션을 나누어 작업해주세요.');
  return attributes;
 }
@@ -31,7 +31,7 @@ export function adoptOptionTranslations(options:ProductOptions,job:TranslationJo
    if(row[field]!==source.value)throw new Error('옵션 원문이나 연결이 변경되었습니다. 새 번역 요청을 만들어주세요.');
   }else{
    if(row.originalName!==source.value)throw new Error('옵션 원문이나 연결이 변경되었습니다. 새 번역 요청을 만들어주세요.');
-   if(row.translatedName.trim())continue;
+   if(row.translatedName.trim()||options.rows.find(value=>value.id===id)?.provenance.translatedName==='manual')continue;
   }
   const value=translated.value.trim();
   const limit=field?200:500;

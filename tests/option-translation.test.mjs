@@ -61,3 +61,16 @@ test('translation limit counts attributes rather than just option rows',()=>{
  assert.throws(()=>model.optionTranslationAttributes(options),/50/);
  options.rows[16].size='';assert.equal(model.optionTranslationAttributes(options).length,50);
 });
+
+test('manually cleared translated names stay blank both when requesting and adopting translations',()=>{
+ const {options,job}=fixture();options.rows[0].provenance.translatedName='manual';
+ assert.throws(()=>model.optionTranslationAttributes(options),/없습니다/);
+ assert.equal(model.optionTranslationAttributes(options,true).length,0);
+ assert.throws(()=>model.adoptOptionTranslations(options,job,'v'),/없습니다/);
+ assert.equal(options.rows[0].translatedName,'');
+ options.rows[0].color='白';options.rows[0].provenance.color='collected';
+ job.review.source.attributes.push({name:'option-color:a',value:'白'});
+ job.result.draft.attributes.push({sourceIndex:2,value:'흰색'});
+ const result=model.adoptOptionTranslations(options,job,'v');
+ assert.equal(result.changed,1);assert.equal(result.rows[0].translatedName,'');assert.equal(result.rows[0].color,'흰색');
+});
