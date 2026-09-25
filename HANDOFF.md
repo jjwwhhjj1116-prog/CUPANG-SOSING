@@ -2470,3 +2470,12 @@ AI등록 화면 확인:
 - 검증: 관련 151/151, TypeScript, 변경 TS/TSX ESLint, diff check, Cloudflare build/check 통과. 150자 경계/쉼표 포함/21자 단어 보존/중복·공란/사용자 적용 전 무변경/전체 제외 적용 차단을 검사했다. outputs/step222-tests.log 및 step222-build.log. 실브라우저 화면 테스트/실상품 종단 검증 아님.
 - Cloudflare version fec0a3ae-47e4-4dc0-a680-e7447ae9fb2a 배포. DB 변경·유료 AI·운영 등록 없음.
 - 핵심 미완성/다음 시작점: 기존 Chrome 탭 접근 확보 및 상품 813724060928 실제 수집, 전 카테고리 Couplus 기본값과 공식 Excel 대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터와 실접수. SEO 입력 보완을 전체 자동화 완성으로 판단하면 안 된다.
+
+## 223. SEO에서 직접 비운 상품명의 라벨 재삽입 방지 — 2026-09-25
+
+- 시작 main 89ab38e clean. 단계별 값 연결을 점검했다. 이번 턴 실사이트/Chrome 조작 없음.
+- 확인: fillLabelDraft는 SEO 상품명이 비어 있으면 출처를 무시하고 product.title을 사용했다. 견적 resolver는 savedTextOrFallback으로 manual 공란을 보존하므로 라벨과 견적의 동작이 달랐다.
+- 라벨 자동 채우기에도 같은 savedTextOrFallback을 사용한다. SEO에서 직접 비운 이름은 이전 이름으로 채우지 않으며, 입력 중인 라벨 이름/기존 수동 공란 보호/다른 업체 필드 채우기는 유지한다. 자동 채우기는 초안 변경이며 기존 저장 동작이 필요하다.
+- 검증: 라벨·견적 스키마·번역 적용 관련 165/165, TypeScript, 변경 TS ESLint, diff check, Cloudflare build/check 통과. 원본 불변, 삭제된 이름 복구 방지, 라벨 입력 중 값 보존, 새 SEO 이름 반영 확인. outputs/step223-tests.log 및 step223-build.log. 실상품 종단 검증 아님.
+- Cloudflare version 05f95ff7-f97e-477e-aa3a-68e9d420317d 배포. DB 변경·유료 호출·운영 등록 없음.
+- 핵심 진척의 한계: 작은 값 보존 수정이며 실제 1688 수집기, 전체 카테고리 Couplus 기본값/공식 Excel, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터/실접수는 해결하지 못했다. 다음 시작점은 기존 Chrome 탭 접근 확보와 지정 상품 813724060928의 실제 경로 검증이다.

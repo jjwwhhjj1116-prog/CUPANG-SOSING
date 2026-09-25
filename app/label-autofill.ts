@@ -1,10 +1,10 @@
-import type { LabelField, ProductContent } from '@/app/product-content';
+import { savedTextOrFallback, type LabelField, type ProductContent } from '@/app/product-content';
 
 /** Only explicit saved settings may fill untouched fields; never use demo defaults. */
 export function fillLabelDraft(draft: Record<LabelField, string>, content: ProductContent, productTitle: string, settings: unknown) {
   const stored = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings as Record<string, unknown> : {};
   const candidates: Partial<Record<LabelField, unknown>> = {
-    productName: content.seo.title.value.trim() || productTitle,
+    productName: savedTextOrFallback(content.seo.title, productTitle).trim(),
     manufacturer: stored.manufacturer, importer: stored.importer, contact: stored.serviceContact,
   };
   const label = { ...draft };

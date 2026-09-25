@@ -55,3 +55,16 @@ test('missing and malformed settings never introduce demo or invented label defa
     assert.equal(next.label.manufacturer, ''); assert.equal(next.label.importer, ''); assert.equal(next.label.contact, '');
   }
 });
+
+test('cleared SEO title cannot resurrect the old product name in label autofill',()=>{
+ const content=emptyProductContent('p');
+ content.seo.title={value:'',provenance:'manual',updatedAt:'now'};
+ const before=JSON.stringify(content);
+ const next=fillLabelDraft(draftOf(content),content,'이전 상품명',{manufacturer:'저장 제조사'});
+ assert.equal(next.label.productName,'');assert.equal(next.filled.includes('productName'),false);
+ assert.equal(next.label.manufacturer,'저장 제조사');assert.equal(JSON.stringify(content),before);
+ const edited=draftOf(content);edited.productName='입력 중인 품명';
+ assert.equal(fillLabelDraft(edited,content,'이전 상품명',{}).label.productName,'입력 중인 품명');
+ content.seo.title={value:'새 품명',provenance:'manual',updatedAt:'next'};
+ assert.equal(fillLabelDraft(draftOf(content),content,'이전 상품명',{}).label.productName,'새 품명');
+});
