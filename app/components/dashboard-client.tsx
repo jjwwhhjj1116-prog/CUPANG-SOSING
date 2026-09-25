@@ -2,9 +2,10 @@
 
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { CategoryProfileEditor } from '@/app/components/category-profile-editor';
-import { CategoryPicker } from '@/app/components/category-picker';
+import { IntakeQueuePanel } from '@/app/components/intake-queue-panel';
+import type { IntakeRow } from '@/app/intake-queue';
 import { ProductArchive } from '@/app/components/product-archive';
 import { ProductContentEditor } from '@/app/components/product-content-editor';
 import { AutomationPanel } from '@/app/components/automation-panel';
@@ -23,7 +24,7 @@ import { WorkspaceSettingsEditor } from '@/app/components/workspace-settings-edi
 import { defaultSettings as defaults, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
 import { PriceEditor } from '@/app/components/price-editor';
 import { quotationCsv, pricePolicy, type PricePolicy } from '@/app/pricing';
-import { collectionBlock, collectionJobProgress, parseCollectionRequest, type CollectionJob, type PreservedCollectionRequest } from '@/app/sourcing';
+import { collectionBlock, collectionJobProgress, type CollectionJob } from '@/app/sourcing';
 
 type Product = {
   id: string; source_url: string; title: string; source_price_cny: number; exchange_rate: number;
@@ -107,17 +108,13 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [connectionError, setConnectionError] = useState('');
   const [checkingConnections, setCheckingConnections] = useState(false);
   const [collectionJobs, setCollectionJobs] = useState<CollectionJob[]>([]);
-  const [collectionError, setCollectionError] = useState('');
-  const [urlInput, setUrlInput] = useState('');
   const [showCancelled, setShowCancelled] = useState(false);
   const [categoryProfiles, setCategoryProfiles] = useState<CategoryProfile[]>([]);
-  const [profileId, setProfileId] = useState('');
-  const [selectedProfileRevision, setSelectedProfileRevision] = useState<number | null>(null);
-  const [intakeDraft, setIntakeDraft] = useState({features:'',keywords:'',goal:'collect'});
+  const [intakeGoal, setIntakeGoal] = useState('price');
+  const [intakeRows, setIntakeRows] = useState<IntakeRow[]>([]);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CategoryProfile|null>(null);
   const [categorySeed,setCategorySeed]=useState<CategoryProfileInput|undefined>();
-  const [intakeStep, setIntakeStep] = useState<'category'|'urls'>('category');
   function selectDetailTab(value: string) {
     setTab(value);
     if (registrationSteps.includes(value)) setLastRegistrationStep(value);
@@ -136,13 +133,6 @@ export default function DashboardClient({ userName }: { userName: string }) {
     openProduct(result.product,initialTab);
   }
   const detailStepIndex = registrationSteps.indexOf(tab);
-  const collectionPreview = useMemo(() => {
-    if (!urlInput.trim()) return { count: 0, duplicates: 0, error: '' };
-    const urls = urlInput.trim().split(/\s+/);
-    try { const entries = parseCollectionRequest({ urls }); return { count: entries.length, duplicates: urls.length - entries.length, error: '' }; }
-    catch (error) { return { count: 0, duplicates: 0, error: error instanceof Error ? error.message : 'URL을 확인해주세요.' }; }
-  }, [urlInput]);
-
   async function checkConnections() {
     setConnectionsOpen(true); setCheckingConnections(true); setConnectionError(''); setConnections(null);
     try { setConnections(await readJson<IntegrationStatus>('/api/integrations')); }
@@ -180,38 +170,6 @@ export default function DashboardClient({ userName }: { userName: string }) {
   }, [applyWorkspace]);
 
   const showToast = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2600); };
-
-  async function refreshIntakeCategories() {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const result = await readJson<{profiles: CategoryProfile[]}>('/api/category-profiles');
-      setCategoryProfiles(result.profiles); setProfileId(''); setSelectedProfileRevision(null);
-      setIntakeStep('category'); setCollectionError('');
-    } catch (error) { setCollectionError(error instanceof Error ? error.message : '카테고리를 불러오지 못했습니다.'); }
-    finally { setBusy(false); }
-  }
-
-  async function createProducts(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy) return;
-    setBusy(true); setCollectionError('');
-    const data = new FormData(event.currentTarget);
-    try {
-      const result = await readJson<{ jobs: CollectionJob[]; preservedRequests: PreservedCollectionRequest[] }>('/api/collection-jobs', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ urls: urlInput.trim().split(/\s+/), goal: String(data.get('goal')), profileId, expectedProfileRevision: selectedProfileRevision, features: String(data.get('features')??''), keywords: String(data.get('keywords')??'') }),
-      });
-      setCollectionJobs(current => [...result.jobs, ...current.filter(job => !result.jobs.some(saved => saved.id === job.id))]);
-      if (result.preservedRequests?.length) {
-        setUrlInput(result.preservedRequests.map(item => item.sourceUrl).join('\n'));
-        setCollectionError(`요청 ${result.jobs.length}건을 확인했습니다. 아래 ${result.preservedRequests.length}건은 기존 요청을 유지했고 새 입력을 적용하지 않았습니다: ${result.preservedRequests.map(item => `${item.offerId} (${item.differences.join(', ')})`).join(' / ')}. URL과 입력값을 보존했습니다. 대기열에서 기존 요청을 확인해주세요. 아직 상품으로 반영하지 않은 요청은 취소 후 다시 추가할 수 있습니다.`);
-        return;
-      }
-      setUrlInput(''); setIntakeDraft({features:'',keywords:'',goal:'collect'}); setAddOpen(false);
-      showToast(`${result.jobs.length}건의 수집 요청을 확인했습니다. 공급원 연결 대기 중입니다.`);
-    } catch (error) { setCollectionError(error instanceof Error ? error.message : '수집 요청을 저장하지 못했습니다.'); }
-    finally { setBusy(false); }
-  }
 
   async function cancelCollectionJob(id: string) {
     if (busy) return;
@@ -286,7 +244,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
 
       <section className="content">
         <header className="topbar"><div><h1>로켓배송 AI상품등록</h1><p>상품별 등록 현황 및 관리</p></div>
-          <div className="top-actions"><span className="workspace-user">{userName}</span><button className="btn settings" onClick={()=>setSettingsOpen(true)}>⚙ 기본설정</button><button className="btn primary" onClick={()=>{setIntakeStep('category');setAddOpen(true);}}>＋ 상품 추가</button><details className="bulk-action-menu"><summary className="btn ghost">전체 작업 ▾</summary><div><button type="button" onClick={()=>setSelected(new Set(products.map(product=>product.id)))}>최근 상품 전체 선택</button><button type="button" onClick={()=>setSelected(new Set())}>선택 해제</button><button type="button" onClick={()=>setBatchOpen(true)}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy} onClick={runAutomation}>작업 개시</button><button className="btn rose" onClick={()=>setTransmitOpen(true)}>등록 전송</button></div></header>
+          <div className="top-actions"><span className="workspace-user">{userName}</span><button className="btn settings" onClick={()=>setSettingsOpen(true)}>⚙ 기본설정</button><button className="btn primary" onClick={()=>{setAddOpen(true);}}>＋ 상품 추가</button><details className="bulk-action-menu"><summary className="btn ghost">전체 작업 ▾</summary><div><button type="button" onClick={()=>setSelected(new Set(products.map(product=>product.id)))}>최근 상품 전체 선택</button><button type="button" onClick={()=>setSelected(new Set())}>선택 해제</button><button type="button" onClick={()=>setBatchOpen(true)}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy} onClick={runAutomation}>작업 개시</button><button className="btn rose" onClick={()=>setTransmitOpen(true)}>등록 전송</button></div></header>
 
         <div className="panel-note" role="note"><div><strong>수집 공급원 연결 대기 · 실제 자동화 미완성</strong><p>카테고리와 양식을 선택해 수집을 요청하세요. 자동수집 공급원은 연결 대기 중이며, 저장된 상품의 자료 편집·가격 계산·견적서 출력은 사용할 수 있습니다. AI 번역·이미지 가공은 서버 설정과 유료 승인 후 실행합니다.</p></div></div>
         {loadError&&<div className="panel-note" role="alert"><p>{loadError}</p><button className="btn ghost" onClick={()=>{setLoading(true);setLoadError('');void loadWorkspace();}} disabled={loading}>다시 불러오기</button></div>}
@@ -304,20 +262,13 @@ export default function DashboardClient({ userName }: { userName: string }) {
         <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} loading={loading} error={loadError} onArchive={()=>setView('archive')}/></>}
       </section>
 
-      {addOpen&&<Modal wide title={intakeStep==='category'?'카테고리 선택':'상품 대기열'} subtitle="카테고리·견적서 연결을 선택한 다음 URL을 입력합니다." onClose={()=>{if(!busy)setAddOpen(false);}}>
-        <div className="intake-steps"><button disabled={busy} className={intakeStep==='category'?'active':''} onClick={()=>setIntakeStep('category')}>1. 카테고리·견적서</button><button disabled={busy||!profileId||selectedProfileRevision===null} className={intakeStep==='urls'?'active':''} onClick={()=>setIntakeStep('urls')}>2. URL·작업 목표</button></div>
-        {intakeStep==='category'?<CategoryPicker profiles={categoryProfiles} selectedId={profileId} onSelected={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setProfileId(profile.id);setSelectedProfileRevision(profile.revision);setIntakeStep('urls');}} onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:seed?null:categoryProfiles.find(profile=>profile.id===profileId)??null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>:<form onSubmit={createProducts} className="modal-form">
-          <p><strong>{categoryProfiles.find(profile=>profile.id===profileId)?.categoryPath.join(' > ')}</strong></p>
-          <label className="field full"><span>1688 상품 URL <b>필수 · 최대 50개</b></span><textarea name="urls" value={urlInput} onChange={event=>{setUrlInput(event.target.value);setCollectionError('');}} disabled={busy} required placeholder={'https://detail.1688.com/offer/…\n여러 URL은 줄바꿈으로 구분'} aria-describedby="collection-validation" /></label>
-          <p id="collection-validation" aria-live="polite">{collectionPreview.error || (collectionPreview.count + '개 상품 · 중복 ' + collectionPreview.duplicates + '개 제외')}</p>
-          <div className="form-grid"><label className="field"><span>상품 특징 (선택)</span><textarea name="features" value={intakeDraft.features} onChange={event=>setIntakeDraft(previous=>({...previous,features:event.target.value}))} maxLength={2000} disabled={busy}/></label><label className="field"><span>타겟 키워드 (선택)</span><textarea name="keywords" value={intakeDraft.keywords} onChange={event=>setIntakeDraft(previous=>({...previous,keywords:event.target.value}))} maxLength={2000} disabled={busy}/></label></div>
-          <fieldset className="goal-list" disabled={busy}><legend>어디까지 진행할까요?</legend>{goalOptions.map(goal=><label key={goal.id} className="goal-card"><input type="radio" name="goal" value={goal.id} checked={intakeDraft.goal===goal.id} onChange={()=>setIntakeDraft(previous=>({...previous,goal:goal.id}))}/><span><strong>{goal.title}</strong><small>{goal.desc}</small></span></label>)}</fieldset>
-          <p className="collection-notice">{collectionBlock} 선택한 카테고리 연결과 저장된 기본설정을 요청에 함께 보관합니다.</p>
-          {collectionError&&<div role="alert" className="collection-error"><p>{collectionError}</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void refreshIntakeCategories()}>입력 유지 · 최신 카테고리 다시 선택</button></div>}
-          <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={()=>setIntakeStep('category')}>이전</button><button className="btn primary" disabled={busy||!profileId||selectedProfileRevision===null||!collectionPreview.count||!!collectionPreview.error}>{busy?'저장 중…':'수집 요청 보관'}</button></div>
-        </form>}
+      {addOpen&&<Modal wide title="상품 대기열" subtitle="상품마다 카테고리·URL·특징·키워드를 지정합니다." onClose={()=>{if(!busy)setAddOpen(false);}}>
+        <IntakeQueuePanel goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
+          onProfile={profile=>setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)])}
+          onJobs={jobs=>setCollectionJobs(current=>[...jobs,...current.filter(job=>!jobs.some(saved=>saved.id===job.id))])}
+          onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>
       </Modal>}
-      {categoryOpen&&<Modal wide title="카테고리·견적서 연결" subtitle="상품 자료를 견적서 열에 연결하고 카테고리별 설정을 보관합니다." onClose={()=>setCategoryOpen(false)}><CategoryProfileEditor value={editingCategory} initialDraft={categorySeed} onClose={()=>setCategoryOpen(false)} onSave={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setProfileId(profile.id);setCategoryOpen(false);setIntakeStep('category');setAddOpen(true);}}/></Modal>}
+      {categoryOpen&&<Modal wide title="카테고리·견적서 연결" subtitle="상품 자료를 견적서 열에 연결하고 카테고리별 설정을 보관합니다." onClose={()=>setCategoryOpen(false)}><CategoryProfileEditor value={editingCategory} initialDraft={categorySeed} onClose={()=>setCategoryOpen(false)} onSave={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setCategoryOpen(false);setAddOpen(true);}}/></Modal>}
 
       {settingsOpen&&<Modal wide title="기본설정" subtitle="가격·물류·이미지 작업의 기본값을 관리합니다. 취소하면 변경은 반영되지 않습니다." onClose={()=>setSettingsOpen(false)}><WorkspaceSettingsEditor value={settings} onSave={saveWorkspaceSettings} onClose={()=>setSettingsOpen(false)}/></Modal>}
       {batchOpen&&<Modal wide title="선택 상품 일괄 작업" subtitle="저장한 상품을 순서대로 처리하고 각 결과를 기록합니다." onClose={()=>setBatchOpen(false)}><BatchWorkPanel products={products.filter(product=>selected.has(product.id))} onOpen={id=>{setBatchOpen(false);const product=products.find(product=>product.id===id);if(product)openProduct(product,'작업');}}/></Modal>}
@@ -327,7 +278,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
         <header><div className="detail-heading"><span className="drawer-eyebrow">PRODUCT WORKSPACE · 등록 자료 준비</span><h2>{detail.title}</h2><div className="detail-product-meta"><span>YP-{detail.id.slice(0,8).toUpperCase()}</span><time dateTime={detail.created_at}>등록 {registrationDate(detail.created_at)}</time><span>{detail.options_count}개 옵션</span></div><div className="detail-source"><span>1688 원본 URL</span>{sourceLink(detail.source_url)?<a href={sourceLink(detail.source_url)} target="_blank" rel="noopener noreferrer">{detail.source_url}</a>:<span className="detail-source-value">{detail.source_url||'원본 URL 미입력'}</span>}</div></div><button className="icon-close" aria-label="상품 작업 공간 닫기" onClick={()=>setDetail(null)}>×</button></header>
         <nav className="registration-steps" aria-label="상품 등록 7단계">{registrationSteps.map((value,index)=><button type="button" key={value} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={tab===value?'active':''}><span>{index+1}</span><strong>{value}</strong></button>)}</nav>
         <nav className="registration-tools" aria-label="상품 보조 작업"><span>보조 작업</span>{supportingTabs.map(item=><button key={item.value} type="button" onClick={()=>selectDetailTab(item.value)} aria-pressed={tab===item.value} className={tab===item.value?'active':''}>{item.label}</button>)}<small>단계 이동 시 입력 유지 · 각 단계에서 저장</small></nav>
-        <div className="detail-body" ref={detailBody}><DetailPanel key={detail.id} preferredProfileId={detailProfileId} quotationTarget={quotationTarget} onSaved={()=>void loadWorkspace()} onManageCategories={()=>{setDetail(null);setIntakeStep('category');setAddOpen(true);}} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div>
+        <div className="detail-body" ref={detailBody}><DetailPanel key={detail.id} preferredProfileId={detailProfileId} quotationTarget={quotationTarget} onSaved={()=>void loadWorkspace()} onManageCategories={()=>{setDetail(null);setAddOpen(true);}} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div>
         <footer className="registration-navigation">{detailStepIndex>=0?<><button type="button" className="btn ghost" disabled={detailStepIndex===0} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex-1])}>← 이전{detailStepIndex>0?` · ${registrationSteps[detailStepIndex-1]}`:''}</button><div><strong>{detailStepIndex+1} / {registrationSteps.length} · {tab}</strong><small>입력 단계이며 자동화 완료 상태를 뜻하지 않습니다.</small></div><button type="button" className="btn primary" disabled={detailStepIndex===registrationSteps.length-1} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex+1])}>{detailStepIndex===registrationSteps.length-1?'마지막 단계':`다음 · ${registrationSteps[detailStepIndex+1]} →`}</button></>:<><span>보조 작업 · {supportingTabs.find(item=>item.value===tab)?.label}</span><button type="button" className="btn primary" onClick={()=>selectDetailTab(lastRegistrationStep)}>{registrationSteps.indexOf(lastRegistrationStep)+1}. {lastRegistrationStep} 단계로 돌아가기 →</button></>}</footer>
       </aside></div>}
 

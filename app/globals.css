@@ -276,3 +276,13 @@ html,body{background:#fff}
 .goal-card>span{display:flex;gap:20px;align-items:baseline}.goal-card strong{min-width:90px}.goal-card small{color:#737985}
 .goal-card:has(input:checked) strong{color:#087cff}.goal-card input{accent-color:#2bbbe1}
 @media(max-width:850px){.couplus-settings{grid-template-columns:1fr}.goal-card>span{display:block}}
+
+.intake-queue-table{overflow:auto;min-height:220px;margin-bottom:22px;border:1px solid #dfe2e8;border-radius:10px}
+.intake-queue-table table{width:100%;min-width:950px;border-collapse:collapse;font-size:13px;text-align:left}
+.intake-queue-table th{background:#f7f7f8;color:#525e73;font-size:12px;padding:18px 12px}
+.intake-queue-table td{padding:14px 10px;vertical-align:top;border-top:1px solid #e3e5e9}
+.intake-queue-table th:nth-child(1){width:22%}.intake-queue-table th:nth-child(2){width:30%}
+.intake-queue-table th:nth-child(3),.intake-queue-table th:nth-child(4){width:14%}
+.intake-queue-table input,.intake-queue-table textarea{width:100%;box-sizing:border-box;min-width:110px;padding:9px;border:1px solid #d7dfed;border-radius:7px;color:#526079;font:inherit}
+.intake-queue-table textarea{min-height:65px;resize:vertical}.intake-category-button{border:0;background:none;color:#3d5378;text-align:left;line-height:1.7;cursor:pointer}
+.intake-queue-table td:last-child{white-space:nowrap}.intake-queue .modal-actions{justify-content:space-between}
