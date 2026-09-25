@@ -2527,3 +2527,12 @@ AI등록 화면 확인:
 - 검증: collection-batch/import/delivery 31/31, TypeScript, 변경 TS ESLint, Cloudflare build/check, diff check 통과. 테스트는 잘못 연결된 원문 차단과 다음 상품 처리, 조회 후 중단 시 무쓰기, 저장 한도 시 상품만 반영과 원본 보존 안내를 포함한다. 최초 타입 검사에서 fetch JSON 타입 오류를 수정 후 통과했다. outputs/step228-tests.log, step228-types.log, step228-build.log. 브라우저 시각 검증 및 실제 수신 상품을 사용한 통합 검증은 하지 못했다.
 - Cloudflare version b4096eb8-405d-40c7-afe0-9ac5beaada7f 배포. DB 변경·유료 AI·운영 등록 없음.
 - 중요 한계: 이 기능은 이미 도착한 수집 결과를 일괄 반영한다. 실제 1688 수집 실행기가 없어 URL 입력만으로 결과가 도착하지 않는다. 전 카테고리 Couplus 기본값/공식 Excel, 이미지 번역 품질, Supplier Hub POST501 전송 실행기는 미완성이다. 다음 시작점은 기존 Chrome 탭 접근 확보 후 실제 수집 경로를 관찰·연결하고 이 일괄 반영까지 실상품으로 검증하는 것이다.
+
+## 229. 일괄 반영 결과에서 같은 상품의 7단계 편집 연결 — 2026-09-25
+
+- 시작 main d8c462c clean. 실브라우저/1688/Hub 조작 없음.
+- 일괄 반영 결과의 저장 확인된 productId를 이용해 SEO·가격·대표·추가·상세 이미지·표시사항·견적서 버튼을 추가했다. 기존 openCollectedProduct 경로로 최신 상품을 조회하고 ID 일치를 확인한 뒤 해당 탭을 연다. 버튼은 해당 단계를 자동 실행하지 않는다.
+- 이미지 일부 실패 후에도 상품 생성이 확인됐으면 편집 가능하다. 상품 생성 미확인 시 버튼을 노출하지 않는다. 일괄 저장/상품 열기 중 중복 실행을 막고, 화면 종료 시 상품 조회를 취소하며 조회 오류는 재시도할 수 있다. 기존 상품·수동값을 변경하지 않는다.
+- 검증: batch panel/batch/result panel 21/21, TypeScript, 변경 TS ESLint, Cloudflare build/check 통과. 같은 상품으로 7개 탭 연결, 부분 실패, 조회 재시도, 중복 클릭, 종료 취소, 미생성 상품 미노출 검사. outputs/step229-tests.log, step229-types.log, step229-build.log. React hook 모의 검증이며 실제 브라우저 시각 검증은 못 했다.
+- Cloudflare version c7089564-1147-4a21-b163-cf480fa31a7e 배포. DB 변경·유료 호출·운영 등록 없음.
+- 남은 작업: 실제 1688 수집 실행기, 전 카테고리 Couplus 자동 기본값/공식 양식, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터 및 접수 확인은 미완성이다. 이번 변경은 단계별 편집 이동이며 자동 7단계 실행 구현이 아니다. 다음 필수 시작점은 기존 Chrome 탭 연결을 확보해 실제 상품 813724060928의 수집과 견적 흐름을 관찰·연결하는 것이다.
