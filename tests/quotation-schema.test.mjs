@@ -1345,3 +1345,16 @@ for(const id of ['81452','103495','64497','77442'])test(`recorded Hub ${id}: obs
  }else assert.deepEqual(clone(schema.categoryPath),evidence.path);
  assert.equal(schema.categoryId,id);assert.equal(schema.submissionReady,false);
 });
+
+test('equivalent translated headings reach category quotation notices without replacing manual overrides',()=>{
+ const categories=[...new Set([...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas),'80719','81452','64497','103495','77442'])];let checked=0;
+ for(const categoryId of categories){
+  const input=fixture();input.categoryId=categoryId;input.content=contentModel.emptyProductContent('p1');
+  const job={productId:'p1',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 材质'},{name:'상품속성: 配件'}]}},result:{draft:{title:'상품명',keywords:[],description:'',attributes:[{sourceIndex:0,name:'소재',value:'면'},{sourceIndex:1,name:'구성품',value:'본체 1개'}]}}};
+  const plan=load('app/translation-batch-adoption.ts').translationBatchAdoption(input.content,job,'v');input.content=contentModel.applyContentPatch(input.content,plan.input.patch,'now');
+  let resolved=model.resolveQuotationFields(input);const row=resolved.rows.find(r=>r.optionId==='red');
+  if(row.fields.noticeMaterial){checked++;assert.equal(row.fields.noticeMaterial.value,'면');input.overrides={common:{noticeMaterial:''},options:{}};resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows.find(r=>r.optionId==='red').fields.noticeMaterial.value,'');}
+  if(row.fields.noticeComponents)assert.equal(row.fields.noticeComponents.value,'본체 1개');
+ }
+ assert.equal(categories.length,26);assert.ok(checked>=22);
+});

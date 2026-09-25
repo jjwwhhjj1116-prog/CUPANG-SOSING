@@ -2,13 +2,24 @@ import { labelFields, validateContentInput, type LabelField, type ProductContent
 import type { TranslationJob } from '@/app/automation/translation';
 
 export type TranslationLabelMapping = { sourceIndex: number; field: LabelField };
-/** Suggest only exact translated display names. Ambiguous names never choose a winner. */
+// Explicit equivalent headings only. Do not collapse component materials, product
+// and packaging dimensions, or certification applicability into general fields.
+const equivalentHeadings: Partial<Record<LabelField, readonly string[]>> = {
+  productName: ['제품명', '상품명'],
+  material: ['소재'],
+  components: ['구성품'],
+  dimensions: ['크기 및 중량'],
+  precautions: ['취급 및 사용 주의사항'],
+};
+/** Exact display names and explicit equivalents only; ambiguous sources require review. */
 export function suggestTranslationLabels(content: ProductContent, job: TranslationJob, productVersion: string) {
   const mappings: TranslationLabelMapping[] = [];
   const skipped: string[] = [];
   const attributes = job.result?.draft.attributes ?? [];
   for (const field of Object.keys(labelFields) as LabelField[]) {
-    const candidates = attributes.filter(attribute => attribute.name.trim() === labelFields[field]);
+    const headings = [labelFields[field], ...(equivalentHeadings[field] ?? [])];
+    const candidates = attributes.filter(attribute => headings.includes(attribute.name.trim())
+      && job.review.source.attributes[attribute.sourceIndex]?.name.startsWith('상품속성: '));
     if (!candidates.length) continue;
     if (candidates.length !== 1) { skipped.push(`${labelFields[field]}: 같은 번역 항목명이 여러 개여서 자동 연결하지 않았습니다.`); continue; }
     const mapping = { sourceIndex: candidates[0].sourceIndex, field };

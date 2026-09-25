@@ -104,3 +104,16 @@ test('label suggestions reject stale, incomplete, option-bound or invalid result
  job.review.source.attributes[0].name='option:size';assert.equal(suggestTranslationLabels(content,job,'v').mappings.length,0);
  job.review.source.attributes[0].name='상품속성: 材质';job.result.draft.attributes[0].value=' ';assert.equal(suggestTranslationLabels(content,job,'v').mappings.length,0);
 });
+
+test('explicit equivalent label headings are adopted but conflicting aliases and component materials are not',()=>{
+ const pairs=[['제품명','productName'],['상품명','productName'],['소재','material'],['구성품','components'],['크기 및 중량','dimensions'],['취급 및 사용 주의사항','precautions']];
+ for(const [name,field] of pairs){
+  const {content,job}=labelFixture();job.result.draft.attributes=[{sourceIndex:0,name,value:'확인한 상품값'}];
+  const before=JSON.stringify({content,job});let result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings[0].field,field);
+  assert.equal(translationLabelAdoption(content,job,'v',result.mappings).input.patch.label[field],'확인한 상품값');assert.equal(JSON.stringify({content,job}),before);
+  content.label[field]={value:'',provenance:'manual',updatedAt:'now'};result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings.length,0);
+ }
+ const {content,job}=labelFixture();job.result.draft.attributes=[{sourceIndex:0,name:'재질',value:'면'},{sourceIndex:1,name:'소재',value:'나일론'}];
+ assert.equal(suggestTranslationLabels(content,job,'v').mappings.length,0);
+ for(const name of ['겉감 소재','안감 소재','포장 크기','크기','중량','대략 소재']){job.result.draft.attributes=[{sourceIndex:0,name,value:'추정 금지'}];assert.equal(suggestTranslationLabels(content,job,'v').mappings.length,0);}
+});
