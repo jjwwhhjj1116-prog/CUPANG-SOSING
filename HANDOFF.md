@@ -2157,3 +2157,12 @@ AI등록 화면 확인:
 - 검증: 신규3/3, 전체720/720, TypeScript·변경 파일 ESLint·Cloudflare build/check·diff check 통과. 동일 상품 버전의 연속 성공 시 새 키, 유실/잘못된 응답 후 동일 키 재시도, 조회 중 취소와 다른 상품 응답의 POST 차단을 모의 API로 검사했다. outputs/step188-*.log.
 - Cloudflare 배포 version303643f1-f052-43dd-b207-f839f634b58d. DB 변경·유료AI·운영상품 등록 없음.
 - 남은 핵심: 이 전체 작업 버튼은 여전히 무료 가격 계산만 실행한다. 실제1688 수집 공급원, 전체 카테고리 Couplus 기본값/공식 Excel 대조, 이미지 번역 실검증, Supplier Hub POST501 실행 어댑터·접수는 미완성. 이전 Chrome 탭 [] 원인 미확인. 이번에는 Chrome 제어를 시도하지 않았다. 다음 시작점은 허용된 기존 Chrome 연결 및 공식 양식 증거 확보 후 실제 수집→접수 경로를 대조하는 것이다. 사이트 정책 차단 우회 금지.
+
+## 189. 상품별 작업 화면의 버전 분리와 늦은 응답 차단 — 2026-09-25
+
+- 시작 main6f10dfc clean, fetch 후 origin/main 0/0. 기존 데이터 보존.
+- 확인: AutomationPanel의 실행 요청은 상품/버전 변경과 unmount 후에도 setView할 수 있었고, busy state만으로는 같은 렌더의 연속 클릭을 막지 못했다. 버전 변경 GET 동안 이전 view/loading 상태가 남았다.
+- 상품ID+버전 key의 AutomationSession으로 화면 상태를 분리한다. 초기 조회와 실행에 AbortController를 적용하고 취소 후 상태 반영을 차단한다. GET은 no-store. ref 잠금으로 같은 렌더 중복 실행을 막고, 응답의 상품ID·버전·단계 배열을 확인한 성공에만 pending 키를 해제한다. 응답 확인 실패 시 기존 키로 재시도한다. 이미 서버가 접수한 요청의 취소/롤백을 보장하지 않는다.
+- 검증: 신규 UI 요청3/3, 전체723/723, TypeScript·변경 파일 ESLint·Cloudflare build/check·diff check 통과. 모의 React/응답으로 상품·버전 key 분리, 닫힌 화면의 늦은 GET/POST 응답 무반영, 중복 클릭 POST1회, 잘못된 상품 응답 후 키 유지 및 성공 후 새 키를 검증했다. 실제 Chrome 육안 검증 아님. outputs/step189-*.log.
+- Cloudflare version5ece7dc2-be4f-4d79-a748-bc07b6a9aeb6 배포. DB 변경·유료AI·운영상품 등록 없음.
+- 남은 핵심: 실제1688 수집 공급원, 전 카테고리 Couplus 기본값/공식 Excel 대조, 이미지 번역 실검증, Supplier Hub POST501 실행 어댑터·접수는 미완성이다. 이번에는 견적 계산식이나 수집 실행기를 구현한 것이 아니라 오래된 작업 화면 응답 문제를 수정했다. 기존 Chrome 탭 [] 원인 미확인, 새 창/프로필/정책 우회 없음. 다음 시작점은 기존 Chrome 연결과 공식 양식 증거 확보 후 실제 수집→접수 흐름 검증이다.
