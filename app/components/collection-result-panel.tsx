@@ -4,9 +4,10 @@ import { validateCollectionCapacity, collectionSelectionFits, recommendCollectio
 import { runCollectionImport } from '@/app/collection-import';
 import { registrationSteps, type CollectionEditorTab } from '@/app/registration-navigation';
 import type { CollectionResult } from '@/app/collection-result';
-type Props={jobId:string;productId?:string|null;onSaved:()=>void;onOpenProduct?:(productId:string,tab:CollectionEditorTab,signal:AbortSignal)=>Promise<void>};
+import { validateCollectionReceiptResponse } from '@/app/collection-receipt-response';
+type Props={jobId:string;offerId:string;productId?:string|null;onSaved:()=>void;onOpenProduct?:(productId:string,tab:CollectionEditorTab,signal:AbortSignal)=>Promise<void>};
 export function CollectionResultPanel(props:Props){return <CollectionResultContent key={props.jobId} {...props}/>;}
-function CollectionResultContent({jobId,productId,onSaved,onOpenProduct}:Props){
+function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}:Props){
  const [result,setResult]=useState<CollectionResult|null>(null);const [message,setMessage]=useState('');const [busy,setBusy]=useState(false);
  const [capacity,setCapacity]=useState<CollectionCapacity|null>(null);
  const [capacityMessage,setCapacityMessage]=useState('');
@@ -72,7 +73,7 @@ function CollectionResultContent({jobId,productId,onSaved,onOpenProduct}:Props){
  }
  async function load(){if(running.current)return;running.current=true;setBusy(true);setMessage('');setWarnings([]);setCapacity(null);setCapacityMessage('');try{
  const response=await fetch(`/api/collection-jobs/${encodeURIComponent(jobId)}/result`,{cache:'no-store'});const body=await response.json() as {error?:string;message:string;receipt?:{result:CollectionResult}|null};
- if(!response.ok)throw new Error(body.error||'결과 조회 실패');const received=body.receipt?.result??null;
+ if(!response.ok)throw new Error(body.error||'결과 조회 실패');const received=validateCollectionReceiptResponse(body,jobId,offerId);
  if(!mounted.current)return;
  setSelectedImages([]);
  setResult(received);setMessage(productId?'상품에 반영한 원문입니다. 번역·이미지 다운로드·등록은 별도 단계입니다.':body.message);

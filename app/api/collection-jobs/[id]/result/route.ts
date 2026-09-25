@@ -11,9 +11,9 @@ async function access(context:Context){
 }
 export async function GET(_:Request,context:Context){
  try{const auth=await access(context);if(!auth)return reply({error:'운영 인증 연결이 필요합니다.'},503);
- if(!await findCollectionJob(auth.owner,auth.id))return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
+ const job=await findCollectionJob(auth.owner,auth.id);if(!job)return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
  const result=await readCollectionResult(auth.owner,auth.id);
- return reply({receipt:result,productCreated:false,message:result?'수집 원문 수신 · 상품 반영과 이미지 다운로드는 별도입니다.':'수집 결과가 아직 도착하지 않았습니다.'});
+ return reply({jobId:auth.id,offerId:job.offer_id,receipt:result,productCreated:false,message:result?'수집 원문 수신 · 상품 반영과 이미지 다운로드는 별도입니다.':'수집 결과가 아직 도착하지 않았습니다.'});
  }catch{return reply({error:'수집 결과를 읽지 못했습니다.'},503);}
 }
 export async function POST(request:Request,context:Context){

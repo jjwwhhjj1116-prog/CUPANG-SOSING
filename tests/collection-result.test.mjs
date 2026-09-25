@@ -55,3 +55,9 @@ test('delivery recovers a lost receipt response through the real API and SQLite 
   assert.equal((await s.readCollectionResult('owner','j')).result.title,sample().title);
  } finally {s.sqlite.close();}
 });
+
+test('receipt GET binds response to the requested job and stored offer',async()=>{
+ const response=await route().GET(new Request('http://localhost/api/result'),ctx);
+ const body=await response.json();assert.equal(body.jobId,'j');assert.equal(body.offerId,'123');assert.equal(body.receipt,null);
+ assert.equal(response.headers.get('cache-control'),'no-store');
+});

@@ -2388,3 +2388,12 @@ AI등록 화면 확인:
 - 검증: 변경 후 관련 35/35, TypeScript, 변경 TS/TSX ESLint, diff check, Cloudflare build/check 통과. 동일 코드/표시 경로 변경 허용, 다른 코드/미확인 코드 차단, 동일 옵션·필드 ID라도 다른 분류 이동 차단, UI 자동 양식 선택/출력 차단 검사. 모의 상태 및 단위 검사이며 실제 Chrome/실상품 접수 검증은 아니다. outputs/step213-full-tests.log, step213-targeted.log, step213-build.log.
 - Cloudflare version 2339cabc-5ee3-4272-96c2-f4d0ab4c59b9 배포. DB 변경·유료 AI·운영 상품 등록 없음.
 - 핵심 미완성: 실제 1688 수집기, 모든 카테고리의 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터와 실접수. 다음 시작점은 기존 Chrome 연결 및 공식 양식 근거 확보 후 지정 상품 813724060928의 실제 수집→견적→접수 검증. 이번 턴 Chrome 조작 없음. 전체 자동화 완료로 판단하면 안 된다.
+
+## 214. 수집 원문 조회와 요청 상품 일치 검증 — 2026-09-25
+
+- 시작 main 5f95ecf clean. 기존 supplierChrome.tabs.list() 결과는 []였다. 기존 창만 사용한다는 지시를 유지했고 새 창·탭·프로필을 만들지 않았다. 실사이트 수집/카테고리 대조를 했다고 판단할 근거가 없다.
+- 확인: CollectionResultPanel은 성공 응답의 receipt.result를 검증 없이 표시했다. GET 응답에 요청 jobId/offerId를 추가하고 대시보드에서 실제 작업 offer_id를 전달한다. 공유 검증 함수가 작업 ID, 상품번호, 원문 URL과 기존 수집 스키마의 옵션·가격·이미지·속성을 검증한 후 표시/이미지 용량 조회를 허용한다.
+- receipt:null만 명시적인 수집 대기 상태로 인정한다. 누락·잘못된 상품·손상된 옵션·외부 이미지 응답은 오류이며 초기 조회에서 상품 반영 동작이 노출되지 않는다. 재조회 실패 때 이전에 검증한 원문은 유지하는 기존 동작을 보존했다.
+- 검증: 수집 관련 95/95, TypeScript, 변경 TS/TSX ESLint, diff check, Cloudflare build/check 통과. GET 작업 식별자 응답, 모의 UI에서 다른 상품/손상 원문 차단/대기 상태/기존 원문 보존 검사. outputs/step214-collection-tests.log 및 step214-build.log. 실제 수집기나 실상품 종단 검증은 아니다.
+- Cloudflare version 486b46cd-cc24-4682-8a91-691d13d293bb 배포. DB 변경·유료 AI·운영 상품 등록 없음.
+- 미확인/미완성: 실제 1688 수집 실행기, 모든 Couplus 카테고리별 공식 양식/기본값 대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터·실접수. 다음 시작점은 기존 Chrome 연결 복구 및 공식 양식 근거 확보 후 상품 813724060928의 실제 수집→견적→접수 경로 검증이다. 원문 수신/저장 경로 보완을 URL 자동수집 완료로 오인하면 안 된다.
