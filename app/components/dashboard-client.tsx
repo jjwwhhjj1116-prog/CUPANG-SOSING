@@ -1,5 +1,6 @@
 'use client';
 
+import { registrationSteps, initialRegistrationStep, type CollectionEditorTab } from '@/app/registration-navigation';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
@@ -49,7 +50,7 @@ async function readJson<T = unknown>(url: string, init?: RequestInit): Promise<T
   return result as T;
 }
 
-const registrationSteps = ['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서'];
+
 const imageSteps = ['대표 이미지','추가 이미지','상세 이미지'];
 const supportingTabs = [{value:'작업',label:'작업 이력'},{value:'번역',label:'번역·SEO 생성'},{value:'옵션',label:'옵션·사이즈표'}];
 function sourceLink(value: string) {
@@ -123,9 +124,9 @@ export default function DashboardClient({ userName }: { userName: string }) {
   function openProduct(product: Product, initialTab = 'SEO', preferredProfileId?:string, target?:QuotationNavigationTarget) {
     productNavigation.current++;
     setQuotationTarget(target);setDetailProfileId(preferredProfileId);
-    setDetail(product); setTab(initialTab); setLastRegistrationStep('SEO');
+    setDetail(product); setTab(initialTab); setLastRegistrationStep(initialRegistrationStep(initialTab));
   }
-  async function openCollectedProduct(productId:string,initialTab:'대표 이미지'|'옵션',signal:AbortSignal){
+  async function openCollectedProduct(productId:string,initialTab:CollectionEditorTab,signal:AbortSignal){
     const request=++productNavigation.current;
     const result=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(productId)}`,{cache:'no-store',signal});
     if(signal.aborted||request!==productNavigation.current)return;
