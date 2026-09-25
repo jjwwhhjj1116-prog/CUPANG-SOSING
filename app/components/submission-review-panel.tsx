@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { SubmissionReview } from '@/app/submission-review';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
+import { validateSubmissionReviewResponse } from '@/app/submission-review-response';
 
 type Target = {id:string;title:string;source_url:string};
 type Result = {id:string;report?:SubmissionReview;error?:string};
@@ -25,9 +26,9 @@ export function SubmissionReviewPanel({products,profiles,onEdit}:{products:Targe
         const id=ids[next++]; let result:Result;
         try {
           const response=await fetch(`/api/products/${encodeURIComponent(id)}/submission-review${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`,{cache:'no-store',signal:controller.signal});
-          const body=await response.json() as SubmissionReview & {error?:string};
-          if(!response.ok)throw new Error(body.error||'검사 실패');
-          result={id,report:body as SubmissionReview};
+          const body: unknown = await response.json();
+          if(!response.ok)throw new Error(body && typeof body === 'object' && 'error' in body && typeof body.error === 'string' ? body.error : '검사 실패');
+          result={id,report:validateSubmissionReviewResponse(body,id,profileId||null)};
         }catch(error){result={id,error:error instanceof Error?error.message:'검사 실패'};}
         if(!controller.signal.aborted)setSnapshot(current=>({key:requestKey,results:[...(current.key===requestKey?current.results:[]),result],finished:false}));
       }

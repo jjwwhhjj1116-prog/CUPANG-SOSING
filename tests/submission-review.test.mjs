@@ -12,7 +12,7 @@ function load(file, overrides={}, mode='development', cache=new Map()) {
   if(cache.has(file))return cache.get(file);
   const exports={};cache.set(file,exports);
   const output=ts.transpileModule(fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
-  vm.runInNewContext(output,{exports,Error,URL,Response,Date,structuredClone,process:{env:{NODE_ENV:mode}},require(name){
+  vm.runInNewContext(output,{exports,Error,URL,Response,Date,structuredClone,AbortController,fetch:overrides.fetch,process:{env:{NODE_ENV:mode}},require(name){
     if(name in overrides)return overrides[name];
     if(name==='next/server')return {NextResponse:Response};
     if(name==='react/jsx-runtime')return nativeRequire(name);
@@ -21,6 +21,17 @@ function load(file, overrides={}, mode='development', cache=new Map()) {
   }});return exports;
 }
 const {inspectSubmission}=load('app/submission-review.ts');
+
+test('review responses bind product and requested profile and reject inconsistent or malformed reports',()=>{
+ const {validateSubmissionReviewResponse:validate}=load('app/submission-review-response.ts');
+ const report={...inspectSubmission(resolved(),[]),productId:'p',requestedProfileId:'profile-1',title:'상품',sourceUrl:'https://example.com/item',checkedAt:'2026-09-25T00:00:00.000Z',fingerprint:'a'.repeat(64)};
+ const before=JSON.stringify(report);assert.equal(validate(report,'p','profile-1'),report);
+ const mutations=[r=>r.productId='other',r=>r.requestedProfileId=null,r=>delete r.requestedProfileId,r=>r.fingerprint='invalid',r=>r.checkedAt='invalid',r=>r.submissionReady=true,r=>r.transport='connected',r=>r.categoryPath=null,r=>r.limits=[null],r=>r.errorCount=-1,r=>r.reviewCount=0,r=>r.omittedIssueCount=2,r=>r.issues[0].kind='success',r=>delete r.issues[0].optionId,r=>r.issues[0].fieldId={},r=>r.issues[0].message=null,r=>r.issues=Array(1001).fill(r.issues[0])];
+ for(const mutate of mutations){const bad=structuredClone(report);mutate(bad);assert.throws(()=>validate(bad,'p','profile-1'));}
+ for(const invalid of [null,[],true,''])assert.throws(()=>validate(invalid,'p','profile-1'));
+ const partial={...report,issues:report.issues.slice(0,1),omittedIssueCount:report.issues.length-1};assert.equal(validate(partial,'p','profile-1'),partial);
+ const auto={...report,requestedProfileId:null};assert.equal(validate(auto,'p',null),auto);assert.equal(JSON.stringify(report),before);
+});
 
 test('late option errors take priority over earlier review reminders under the display cap',()=>{
  const input=resolved();
@@ -113,7 +124,8 @@ const context={params:Promise.resolve({id:'p'})};
 test('GET scopes saved source to authenticated owner and selected profile, without mutations',async()=>{
   const {handlers,calls}=route();const response=await handlers.GET(request('?profileId=profile-1'),context);
   assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');
-  assert.deepEqual(calls,[['owner','p','profile-1']]);const body=await response.json();assert.equal(body.productId,'p');assert.equal(body.fingerprint,'a'.repeat(64));assert.equal(body.submissionReady,false);
+  assert.deepEqual(calls,[['owner','p','profile-1']]);const body=await response.json();assert.equal(body.productId,'p');assert.equal(body.requestedProfileId,'profile-1');assert.equal(body.fingerprint,'a'.repeat(64));assert.equal(body.submissionReady,false);
+  load('app/submission-review-response.ts').validateSubmissionReviewResponse(body,'p','profile-1');
 });
 test('GET rejects stale source, concurrent quotation edits, missing products and invalid profile',async()=>{
   for(const config of [{current:false},{revision:3}])assert.equal((await route(config).handlers.GET(request(),context)).status,409);
@@ -133,6 +145,23 @@ function renderPanel(products,results=[]) {
   });
   return renderToStaticMarkup(createElement(SubmissionReviewPanel,{products,profiles:[],onEdit:()=>{}}));
 }
+
+test('review panel keeps successful but wrong-product responses out of its report state',async()=>{
+ for(const valid of [true,false]){
+  const slots=[],effects=[];let cursor=0;
+  const hooks={useState(initial){const i=cursor++;slots[i]??=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useEffect(fn){effects.push(fn);}};
+  const report={...inspectSubmission(resolved(),[]),productId:valid?'p':'other',requestedProfileId:null,title:'상품',sourceUrl:'https://example.com/item',checkedAt:'2026-09-25T00:00:00.000Z',fingerprint:'a'.repeat(64)};
+  const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
+   react:hooks,fetch:async()=>Response.json(report),
+   '@/app/components/quotation-review-issues':{QuotationReviewIssues:()=>null},
+  });
+  SubmissionReviewPanel({products:[{id:'p',title:'상품',source_url:'https://example.com/item'}],profiles:[],onEdit(){}});
+  const cleanups=effects.map(fn=>fn());for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));
+  assert.equal(slots[2].finished,true);assert.equal(slots[2].results.length,1);
+  assert.equal(Boolean(slots[2].results[0].report),valid);assert.equal(Boolean(slots[2].results[0].error),!valid);
+  cleanups.forEach(fn=>fn?.());
+ }
+});
 test('review UI shows actual issues and URL, escapes source text and keeps transmission disabled',()=>{
   const report={...inspectSubmission(resolved(),[]),checkedAt:'2026-09-23T00:00:00Z'};
   const html=renderPanel([{id:'p',title:'<script>unsafe</script>',source_url:'javascript:alert(1)'}],[{id:'p',report}]);

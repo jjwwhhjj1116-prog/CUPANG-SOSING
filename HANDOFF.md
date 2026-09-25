@@ -2371,3 +2371,12 @@ AI등록 화면 확인:
 - 검증: 관련29/29, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과. 동명 옵션 구분, 필터 교집합/검색/공통 범위/초기화, 정확한 이동대상, 비활성 이동 차단, HTML 이스케이프, 생략 안내 검사. 모의 UI/정적 렌더 검사이며 실제 Chrome 화면 검증은 아니다. outputs/step211-*.log.
 - Cloudflare version0ab1dbd1-8553-4e73-ab7a-d605db77ae03 배포. DB 변경·유료AI·운영 등록 없음.
 - 남은 핵심: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터 및 실접수. 전체 자동화 미완성. 다음 시작점은 기존 Chrome 탭 연결/공식 양식 근거 확보 및 상품813724060928의 실제 수집→견적→접수 검증이다. 이번 턴 Chrome 조작 없음.
+
+## 212. 등록 전 검사 응답의 상품·선택 카테고리 일치 검증 — 2026-09-25
+
+- 시작 main624a5a2 clean. SubmissionReviewPanel은 HTTP 성공이면 응답 구조와 상품ID를 검사하지 않고 보고서로 표시했다.
+- API가 요청받은 requestedProfileId(null은 상품 연결 설정 사용)를 응답한다. UI는 productId/요청 설정 ID, categoryPath, 검사 시각/지문, 항목 종류와 필드 구조, 비음수 정수 집계, 표시1000개 한도 및 전체-표시=생략 관계를 검증한다. submissionReady false/미연결 transport도 요구한다.
+- 잘못된 HTTP200 응답은 보고서로 저장하지 않고 해당 상품 오류로 표시한다. 불완전 응답을0건 정상 검사로 바꾸지 않는다. 응답 필드 추가이며 DB 변경 없음.
+- 검증: 관련25/25, TypeScript, 변경 파일 ESLint, Cloudflare build/check 통과. 잘못된 상품/설정, 누락·손상 필드, 집계/시각/지문, 정상 생략 보고서 검사 및 실제 UI 요청 상태 테스트에서 다른 상품 응답 차단 확인. outputs/step212-*.log. 실상품 종단/Chrome 화면 검증은 아니다.
+- Cloudflare version2b849579-7f7a-4014-b114-4e510ed5d196 배포. 유료AI·운영 등록 없음.
+- 핵심 미완성: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터 및 실접수. 다음 시작점은 기존 Chrome 연결/공식 양식 근거 확보와 상품813724060928 실제 수집→견적→접수 검증. 이번 턴 Chrome 조작 없음.
