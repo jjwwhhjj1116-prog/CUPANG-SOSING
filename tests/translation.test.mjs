@@ -227,3 +227,39 @@ test('over-budget provider output is rejected after one call without automatic r
  await assert.rejects(()=>model.executeTranslation(review,config,async()=>{calls++;return Response.json(result);}),e=>e.code==='INVALID_QUOTATION_KEYWORDS'&&e.mayHaveBeenCharged);
  assert.equal(calls,1);
 });
+
+test('persisted v1 and v2 requests replay, approve and execute with their original keyword contract after v3 deployment',async()=>{
+ for(const version of ['sourceflow-translation-v1','sourceflow-translation-v2']){
+  const {sqlite,dependencies}=harness();let calls=0,requestBody;
+  const response=completed();response.output[0].content[0].text=JSON.stringify({...draft,keywords:['가'.repeat(21)]});
+  const route=load('app/api/products/[id]/translation/route.ts',dependencies,'development',async(_url,init)=>{calls++;requestBody=JSON.parse(init.body);return Response.json(response);});
+  try{
+   const prepared=await (await route.POST(request(prepare),context)).json();
+   const original={...prepared.job.review,instructionsVersion:version};delete original.fingerprint;
+   const review={...original,fingerprint:await load('app/automation/model.ts').fingerprint(original)};
+   sqlite.prepare('UPDATE translation_jobs SET review=?,review_fingerprint=? WHERE id=?').run(JSON.stringify(review),review.fingerprint,prepared.job.id);
+   const replay=await (await route.POST(request(prepare),context)).json();
+   assert.equal(replay.replayed,true);assert.deepEqual(replay.job.review,review);assert.equal(calls,0);
+   assert.equal((await route.POST(request({action:'approve',jobId:prepared.job.id,reviewFingerprint:review.fingerprint,confirmPaid:true}),context)).status,200);
+   const executed=await (await route.POST(request({action:'execute',jobId:prepared.job.id}),context)).json();
+   assert.equal(executed.job.status,'completed');assert.equal(executed.job.result.draft.keywords[0].length,21);
+   assert.doesNotMatch(requestBody.instructions,/150 UTF-16/);assert.equal(calls,1);
+   await route.POST(request({action:'execute',jobId:prepared.job.id}),context);assert.equal(calls,1);
+  }finally{sqlite.close();}
+ }
+});
+
+test('v3 invalid quotation keywords persist as failed and cannot trigger a second provider call',async()=>{
+ const {sqlite,dependencies}=harness();let calls=0;
+ const response=completed();response.output[0].content[0].text=JSON.stringify({...draft,keywords:['가'.repeat(21)]});
+ const route=load('app/api/products/[id]/translation/route.ts',dependencies,'development',async()=>{calls++;return Response.json(response);});
+ try{
+  const {job}=await (await route.POST(request(prepare),context)).json();
+  await route.POST(request({action:'approve',jobId:job.id,reviewFingerprint:job.review.fingerprint,confirmPaid:true}),context);
+  const executed=await (await route.POST(request({action:'execute',jobId:job.id}),context)).json();
+  assert.equal(executed.job.status,'failed');assert.equal(executed.job.result,null);assert.equal(executed.job.error.code,'INVALID_QUOTATION_KEYWORDS');assert.equal(executed.job.error.mayHaveBeenCharged,true);
+  const replay=await (await route.POST(request({action:'execute',jobId:job.id}),context)).json();
+  assert.equal(replay.replayed,true);assert.equal(replay.job.status,'failed');assert.equal(calls,1);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
+ }finally{sqlite.close();}
+});
