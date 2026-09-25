@@ -139,6 +139,39 @@ test('bulk application rejects stale inputs or saved revisions and bounds oversi
   assert.throws(() => editor.previewQuotationEditorBulk(large, [], null, fields, true), /1,000/);
 });
 
+test('bulk skips missing source values without freezing automatic targets or clearing manual targets',()=>{
+ const view=fixture({common:{},options:{blue:{model:'기존 모델',lidIncluded:'뚜껑포함'}}});
+ for(const result of [view.automatic,view.resolved]){
+  for(const id of ['model','lidIncluded'])result.rows.find(row=>row.optionId==='red').fields[id]={value:'',source:'empty',issues:[],validationIssues:[],needsReview:false};
+ }
+ const original=JSON.stringify(view);
+ const plan=editor.previewQuotationEditorBulk(view,[],'red',['model','lidIncluded','brand'],false);
+ assert.equal(plan.skipped.length,2);assert.ok(plan.rows.every(row=>row.fieldKey==='brand'));
+ const changes=editor.applyQuotationEditorBulk(view,[],plan);
+ assert.equal(editor.resolveQuotationEditorCell(view,changes,'blue','model').value,'기존 모델');
+ assert.equal(editor.resolveQuotationEditorCell(view,changes,'blue','lidIncluded').value,'뚜껑포함');
+ assert.ok(!changes.some(change=>change.fieldKey==='model'||change.fieldKey==='lidIncluded'));
+ const refreshed=clone(view);refreshed.automatic.rows.find(row=>row.optionId==='excluded').fields.model={value:'다음 단계에서 저장한 모델',source:'content',issues:[],needsReview:false};
+ assert.equal(editor.resolveQuotationEditorCell(refreshed,changes,'excluded','model').value,'다음 단계에서 저장한 모델');
+ assert.equal(JSON.stringify(view),original);
+});
+
+test('bulk copies explicit empty choices and manual text clearing, then restores live automatic inheritance',()=>{
+ const view=fixture();const draft=[change('lidIncluded','','red'),change('model','','red')];
+ const plan=editor.previewQuotationEditorBulk(view,draft,'red',['lidIncluded','model'],true);
+ assert.equal(plan.skipped.length,0);assert.equal(plan.rows.length,2);
+ assert.equal(plan.rows.find(row=>row.fieldKey==='lidIncluded').afterDisplay,'해당사항없음');
+ assert.equal(plan.rows.find(row=>row.fieldKey==='model').afterDisplay,'[공란]');
+ const next=editor.applyQuotationEditorBulk(view,draft,plan);
+ const cell=editor.resolveQuotationEditorCell(view,next,'blue','lidIncluded');assert.equal(cell.value,'');assert.equal(cell.source,'manual-option');
+ const reset=editor.previewQuotationEditorRestore(view,next,['lidIncluded','model'],true);
+ assert.equal(reset.rows.find(row=>row.fieldKey==='lidIncluded').afterDisplay,'해당사항없음');
+ const restored=editor.applyQuotationEditorBulk(view,next,reset);
+ assert.equal(editor.resolveQuotationEditorCell(view,restored,'blue','lidIncluded').source,'couplus-default');
+ const refreshed=clone(view);refreshed.automatic.rows.find(row=>row.optionId==='blue').fields.lidIncluded={value:'뚜껑포함',source:'content',issues:[],needsReview:false};
+ assert.equal(editor.resolveQuotationEditorCell(refreshed,restored,'blue','lidIncluded').value,'뚜껑포함');
+});
+
 test('refresh preserves local drafts, detects concurrent same-cell edits, retains unresolved conflicts and removes edits already saved', () => {
   const previous = fixture({ common: { brand: '저장 A' }, options: {} });
   const next = fixture({ common: { brand: '다른 작업 B' }, options: {} }, '바뀐 기본값'); next.revision = 2;
