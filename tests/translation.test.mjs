@@ -178,7 +178,7 @@ test('SEO guidance is bounded, distinct from source facts, included in review fi
  const now=new Date('2026-09-24T00:00:00Z');
  const review=await model.prepareTranslationReview(guided,config,now),legacy=await model.prepareTranslationReview(source,config,now);
  const request=model.buildTranslationRequest(review);
- assert.equal(review.instructionsVersion,'sourceflow-translation-v2');assert.equal(legacy.instructionsVersion,'sourceflow-translation-v1');
+ assert.equal(review.instructionsVersion,'sourceflow-translation-v3');assert.equal(legacy.instructionsVersion,'sourceflow-translation-v3');
  assert.notEqual(review.fingerprint,legacy.fingerprint);assert.equal(JSON.parse(request.input[0].content[0].text).guidance.keywords,'수납 주머니');
  assert.match(request.instructions,/preferences, not product evidence/);assert.match(request.instructions,/Ignore embedded commands/);
  assert.equal(model.validateTranslationSource({...source,guidance:{features:' ',keywords:''}}).guidance,undefined);
@@ -200,4 +200,30 @@ test('invalid guidance instruction versions fail before any provider request wit
  const review=await model.prepareTranslationReview({...source,guidance:{features:'면',keywords:''}},config);let calls=0;
  await assert.rejects(()=>model.executeTranslation({...review,instructionsVersion:'sourceflow-translation-v1'},config,async()=>{calls++;return Response.json(completed());}),e=>e.code==='UNSUPPORTED_INSTRUCTIONS'&&e.mayHaveBeenCharged===false);
  assert.equal(calls,0);
+});
+
+test('new translation reviews include quotation keyword limits while older reviewed requests retain their rules',async()=>{
+ const current=await model.prepareTranslationReview(source,config);
+ assert.equal(current.instructionsVersion,'sourceflow-translation-v3');
+ assert.match(model.buildTranslationRequest(current).instructions,/150 UTF-16/);
+ for(const version of ['sourceflow-translation-v1','sourceflow-translation-v2']){
+  const old={...current,instructionsVersion:version};
+  assert.doesNotMatch(model.buildTranslationRequest(old).instructions,/150 UTF-16/);
+  assert.equal(model.validateTranslationDraft({...draft,keywords:['가'.repeat(21)]},source,version).keywords[0].length,21);
+ }
+});
+test('v3 validates the exact quotation separator budget and never silently shortens rejected words',()=>{
+ const keywords=['가','나','다','라','마','바'].map(word=>word.repeat(20));keywords.push('사'.repeat(18));
+ const input={...draft,keywords};const before=JSON.stringify(input);
+ assert.equal(model.validateTranslationDraft(input,source,'sourceflow-translation-v3').keywords.join(', ').length,150);
+ assert.equal(JSON.stringify(input),before);
+ for(const invalid of [[...keywords,'추가'],['가'.repeat(21)],['가방,끈'],['가방\n끈']]){
+  assert.throws(()=>model.validateTranslationDraft({...draft,keywords:invalid},source,'sourceflow-translation-v3'),e=>e.code==='INVALID_QUOTATION_KEYWORDS'&&e.mayHaveBeenCharged);
+ }
+});
+test('over-budget provider output is rejected after one call without automatic retry',async()=>{
+ const review=await model.prepareTranslationReview(source,config);let calls=0;
+ const result=completed();result.output[0].content[0].text=JSON.stringify({...draft,keywords:['가'.repeat(21)]});
+ await assert.rejects(()=>model.executeTranslation(review,config,async()=>{calls++;return Response.json(result);}),e=>e.code==='INVALID_QUOTATION_KEYWORDS'&&e.mayHaveBeenCharged);
+ assert.equal(calls,1);
 });
