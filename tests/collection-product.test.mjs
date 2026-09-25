@@ -13,6 +13,36 @@ const prepare=load('app/collection-product.ts').prepareCollectionProduct;
 const now='2026-01-01T00:00:00.000Z';
 const job={id:'job',offer_id:'123',source_url:'https://detail.1688.com/offer/123.html',goal:'transmit',status:'awaiting_connector',created_at:now,updated_at:now,context:{category:{id:'cat'},settings,features:'feature',keywords:'',capturedAt:now}};
 const result={schemaVersion:1,offerId:'123',sourceUrl:job.source_url,provider:'fixture',collectedAt:now,title:'原文商品',description:'原文説明',images:[],options:[{sku:'a',name:'黑',unitPriceCny:3.25,minimumOrder:2,stock:null},{sku:'b',name:'白',unitPriceCny:5,minimumOrder:1,stock:0}]};
+
+test('observed pricing survives SQLite promotion, workspace changes and category quotation resolution',async()=>{
+ const capturedSettings=load('app/observed-price-preset.ts').applyObservedPricePreset({...settings,brand:'저장 브랜드'});
+ const capturedJob={...job,context:{...job.context,settings:capturedSettings}};
+ const receipt={...result,options:[{...result.options[0],unitPriceCny:25.6},{...result.options[1],unitPriceCny:0.1}]};
+ const s=storage();
+ try{
+  s.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(capturedJob.context),job.id);
+  s.sqlite.prepare('UPDATE collection_results SET payload=? WHERE job_id=?').run(JSON.stringify(receipt),job.id);
+  const saved=await s.promoteCollection('owner',capturedJob,receipt);
+  const product=s.sqlite.prepare('SELECT * FROM products WHERE id=?').get(saved.product_id);
+  product.pricing_policy=s.sqlite.prepare('SELECT payload FROM product_price_policy WHERE product_id=?').get(saved.product_id).payload;
+  const content=JSON.parse(s.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(saved.product_id).payload);
+  const options=JSON.parse(s.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(saved.product_id).payload);
+  const resolver=load('app/quotation-schema.ts').resolveQuotationFields;
+  const changedSettings={...settings,exchangeRate:999,supplyMargin:5,coupangMargin:5,roundingUnit:1000,msrpMultiple:2,minimumMargin:0,minimumMarginEnabled:false};
+  for(const categoryId of ['80719','81452','64497','103495']){
+   const quote=resolver({categoryId,product,content,options,settings:changedSettings});
+   const prices=quote.rows.filter(row=>row.optionId).map(row=>['supplyPrice','salePrice','msrp'].map(key=>row.fields[key].value));
+   assert.deepEqual(JSON.parse(JSON.stringify(prices)),[['17920','29870','38830'],['3040','5070','6590']],categoryId);
+  }
+  const bundled={...options,rows:options.rows.map((row,index)=>({...row,unitsPerPack:index===0?2:1}))};
+  const quote=resolver({categoryId:'80719',product,content,options:bundled,settings:changedSettings});
+  const row=quote.rows.find(row=>row.optionId===options.rows[0].id);
+  assert.deepEqual(['supplyPrice','salePrice','msrp'].map(key=>row.fields[key].value),['35840','59730','77650']);
+  const manual=resolver({categoryId:'80719',product,content,options:bundled,settings:changedSettings,overrides:{common:{},options:{[row.optionId]:{supplyPrice:'',salePrice:'60000'}}}}).rows.find(item=>item.optionId===row.optionId);
+  assert.equal(manual.fields.supplyPrice.value,'');assert.equal(manual.fields.salePrice.value,'60000');assert.equal(manual.fields.msrp.value,'77650');
+  assert.equal(product.supplier_hub_status,'미전송');
+ }finally{s.sqlite.close();}
+});
 test('structured collection attributes preserve facts without guessing or claiming translation',()=>{
  const receipt={...result,options:[{...result.options[0],color:'黑色',size:'S'},result.options[1]]};
  const r=prepare('owner',job,receipt,'p',now);
