@@ -104,7 +104,10 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
     {connectionWarning && !overrideProfileId && <p role="status" className="panel-note">{connectionWarning}</p>}
-    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={reviewTarget?.sequence??0} navigationTarget={reviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onDirtyChange={value=>{if(value)profileRequest.current?.abort();setDirty(value);}} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={reviewTarget?.sequence??0} navigationTarget={reviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onDirtyChange={value=>{
+      if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
+      setDirty(value);
+    }} onSaved={()=>setPreview(null)}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
     <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}

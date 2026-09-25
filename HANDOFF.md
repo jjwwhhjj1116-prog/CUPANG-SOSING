@@ -2764,3 +2764,11 @@ AI등록 화면 확인:
 - 배포b6a03846-e605-49b2-98cd-e01fbc3928a6. outputs/step256-tests.log, step256-build.log, step256-deploy.log. DB스키마 변경·유료AI·운영상품등록 없음.
 - 한계: 키는 편집기 수명 동안만 보존된다. 수정 PUT의 응답 유실 복구는 신규 POST와 다르며 버전 충돌 시 재조회가 필요하다.
 - 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근과 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.
+
+## 257. 견적 수정 시작 시 이전 미리보기·내보내기 요청 취소 — 2026-09-25
+
+- 시작 main72aa719 clean. 견적 편집 dirty 콜백은 양식 조회만 취소하고 진행 중인 출력 요청은 남겨두어, 수정 전 미리보기 또는 ZIP 응답이 늦게 표시/다운로드될 수 있었다.
+- 구현: 편집 시작 시 양식 조회와 견적 출력 AbortController를 모두 취소하고 미리보기·이전 다운로드 메시지를 비운다. 기존 응답 처리의 aborted 검사와 연결하여 편집을 마친 뒤 도착한 이전 blob도 다운로드하지 않는다. 저장 후 다시 검토해 새 출력 요청을 진행한다.
+- 검증: quotation-panel9/9, TypeScript, 변경 TS ESLint, Cloudflare build/check/diff check 통과. 응답 헤더 후 JSON/Blob 지연 도착, 편집 종료 후 이전 응답, 새 검토 재개를 모의 검사했다. 실제 Chrome·Supplier Hub 접수 검증은 아니다.
+- 배포43e5bc02-5d8b-4187-b0f3-f64a1d2ad62c. outputs/step257-tests.log, step257-build.log, step257-deploy.log. DB변경·유료AI·운영상품등록 없음. 이미 다운로드가 끝난 파일까지 취소하는 기능은 아니다.
+- 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근과 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.

@@ -116,3 +116,26 @@ test('failed profile refresh keeps selection and supports retry',async()=>{
  h.setRefresh(async()=>Response.json({profiles:[]}));button(h.render(),'저장한 양식 새로고침').props.onClick();await h.settle();assert.equal(nodes(h.render()).find(n=>n.type==='select').props.value,'');assert.doesNotMatch(JSON.stringify(h.render()),/일시 오류/);
 });
 
+
+test('editing quotation cancels a pending preview and prevents stale preview restoration',async()=>{
+ const h=await requestHarness();button(h.render(),'견적 자료 검토').props.onClick();
+ let finish;h.pending.shift()({ok:true,json:()=>new Promise(resolve=>{finish=resolve;})});await h.settle();
+ nodes(h.render()).find(n=>n.type===h.Editor).props.onDirtyChange(true);
+ assert.equal(h.calls[0].signal.aborted,true);
+ finish(previewBody);await h.settle();assert.doesNotMatch(JSON.stringify(h.render()),/출력 미리보기/);
+ nodes(h.render()).find(n=>n.type===h.Editor).props.onDirtyChange(false);
+ assert.doesNotMatch(JSON.stringify(h.render()),/출력 미리보기/);
+ assert.equal(button(h.render(),'견적 자료 검토').props.disabled,false);
+});
+
+test('editing during export cancels the old file even when its blob arrives after edits finish',async()=>{
+ const h=await requestHarness();button(h.render(),'견적 자료 검토').props.onClick();h.pending.shift()(Response.json(previewBody));await h.settle();
+ button(h.render(),'채운 견적서 + 첨부 자료 ZIP 다운로드').props.onClick();
+ let finish;h.pending.shift()({ok:true,blob:()=>new Promise(resolve=>{finish=resolve;})});await h.settle();
+ nodes(h.render()).find(n=>n.type===h.Editor).props.onDirtyChange(true);
+ assert.equal(h.calls[1].signal.aborted,true);assert.doesNotMatch(JSON.stringify(h.render()),/출력 미리보기/);
+ nodes(h.render()).find(n=>n.type===h.Editor).props.onDirtyChange(false);
+ finish(new Blob(['old file']));await h.settle();assert.equal(h.downloads(),0);
+ button(h.render(),'견적 자료 검토').props.onClick();assert.equal(h.calls.length,3);
+ h.pending.shift()(Response.json(previewBody));await h.settle();assert.match(JSON.stringify(h.render()),/출력 미리보기/);
+});
