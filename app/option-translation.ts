@@ -1,5 +1,24 @@
-import { optionInputs, type ProductOptions } from '@/app/product-options';
+import { optionInputs, type ProductOptions, type OptionInput } from '@/app/product-options';
 import type { TranslationJob } from '@/app/automation/translation';
+
+/** Confirm the committed snapshot, not just an HTTP success status. */
+export function confirmOptionTranslationSave(input: unknown, current: ProductOptions, productVersion: string, requested: readonly OptionInput[]): void {
+ const fail=()=>{throw new Error('옵션 저장 결과가 요청한 상품·버전·내용과 일치하지 않습니다. 저장 여부를 다시 조회해주세요. 자동으로 재저장하지 않았습니다.');};
+ if(!input||typeof input!=='object'||Array.isArray(input))return fail();
+ const body=input as {productVersion?:unknown;options?:ProductOptions};const saved=body.options;
+ if(typeof body.productVersion!=='string'||!Number.isFinite(Date.parse(body.productVersion))||!Number.isFinite(Date.parse(productVersion))
+  ||Date.parse(body.productVersion)<=Date.parse(productVersion)||!saved||saved.schemaVersion!==1||saved.productId!==current.productId
+  ||saved.revision!==current.revision+1||saved.updatedAt!==body.productVersion||!Array.isArray(saved.rows)||saved.rows.length!==requested.length)return fail();
+ const ids=new Set<string>();
+ for(const [index,row] of requested.entries()){
+  const actual=saved.rows[index];
+  if(!actual||actual.id!==row.id||ids.has(actual.id))return fail();
+  ids.add(actual.id);
+  for(const [key,value] of Object.entries(row)){
+   if(value!==undefined&&(actual as unknown as Record<string,unknown>)[key]!==value)return fail();
+  }
+ }
+}
 export function optionTranslationAttributes(options:ProductOptions, allowEmpty = false){
  const attributes=options.rows.flatMap(row=>{
   const values=row.originalName.trim()&&!row.translatedName.trim()&&row.provenance.translatedName!=='manual'?[{name:`option:${row.id}`,value:row.originalName}]:[];

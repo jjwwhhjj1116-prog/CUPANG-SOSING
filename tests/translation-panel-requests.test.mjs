@@ -18,7 +18,7 @@ function harness(handler,status='completed',failInitial=false){
  let initial=0;
  const fetcher=async(url,init)=>{if(initial<2){initial++;return failInitial?Response.json({error:'초기 조회 실패'},{status:503}):Response.json(url.endsWith('/translation')?view:{content});}calls.push({url,init});return handler(url,init,{content,job,view});};
  const exports={};const file='app/components/translation-panel.tsx';
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,crypto,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationAttributes:options=>options.attributes??[],adoptOptionTranslations:()=>({rows:[],changed:1})};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationAttributes:options=>options.attributes??[],adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
  const render=()=>{index=0;const wrapper=exports.default({productId:'p',version:'v',title:'원문',onContentSaved(){saved++;}});const tree=wrapper.type(wrapper.props);first=false;return tree;};
  const buttons=()=>nodes(render()).filter(n=>n.type==='button');
  render();effects.forEach(fn=>cleanup.push(fn()));
@@ -114,4 +114,16 @@ test('closing a combined source load aborts both requests and prevents partial i
  const pending=deferred();const h=harness(()=>pending.promise);await settle();h.button(combined)();h.close();
  assert.equal(h.calls.length,2);assert.ok(h.calls.every(call=>call.init.signal.aborted));
  pending.resolve(Response.json({productVersion:'v',title:'지연',description:'',attributes:[],options:{productId:'p'}}));await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
+});
+
+test('option adoption verifies product before PATCH and confirms receipt before announcing success',async()=>{
+ for(const mode of ['wrong-product','wrong-version','bad-receipt','success']){
+  const h=harness(async(_url,init)=>init.method==='PATCH'?Response.json({confirmed:mode==='success'}):Response.json({productVersion:mode==='wrong-version'?'other':'v',options:{productId:mode==='wrong-product'?'other':'p',revision:1}}));
+  await settle();h.button(adoptOptions)();await settle();
+  assert.equal(h.calls.filter(c=>c.init.method==='PATCH').length,mode.startsWith('wrong-')?0:1);
+  assert.equal(h.saved,mode==='success'?1:0);
+  const output=JSON.stringify(h.render());
+  if(mode==='bad-receipt'){assert.match(output,/저장 응답 불일치/);assert.doesNotMatch(output,/개 항목에 검토한 초안을 적용했습니다/);}
+  if(mode==='success')assert.match(output,/개 항목에 검토한 초안을 적용했습니다/);
+ }
 });

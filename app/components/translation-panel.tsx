@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
-import { optionTranslationAttributes, adoptOptionTranslations } from '@/app/option-translation';
+import { optionTranslationAttributes, adoptOptionTranslations, confirmOptionTranslationSave } from '@/app/option-translation';
 import type { ProductOptionsResponse } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
 import { translationAdoptionInput, translationSeoFields, type TranslationSeoField } from '@/app/translation-adoption';
@@ -148,9 +148,11 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
       const response=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal:controller.signal});
       const current=await response.json() as ProductOptionsResponse & {error?:string};if(controller.signal.aborted)return;
       if(!response.ok)throw Error(current.error??'옵션 조회 실패');
+      if(current.productVersion!==version||current.options?.productId!==productId)throw Error('현재 상품과 옵션 조회 결과가 다릅니다. 최신 상품을 다시 열어주세요.');
       const next=adoptOptionTranslations(current.options,job,current.productVersion);
       const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{signal:controller.signal,method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.options.revision,expectedProductVersion:current.productVersion,rows:next.rows})});
       const value=await saved.json() as {error?:string};if(controller.signal.aborted)return;if(!saved.ok)throw Error(value.error??'옵션 저장 실패');
+      confirmOptionTranslationSave(value,current.options,current.productVersion,next.rows);
       setNotice(`옵션명·색상·사이즈 ${next.changed}개 항목에 검토한 초안을 적용했습니다. 직접 수정한 값·가격·수량은 보존했습니다.`);onContentSaved?.();
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'옵션 적용 실패');}
     finally{finishRequest(controller);}

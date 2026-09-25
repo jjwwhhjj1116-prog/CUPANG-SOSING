@@ -74,3 +74,19 @@ test('manually cleared translated names stay blank both when requesting and adop
  const result=model.adoptOptionTranslations(options,job,'v');
  assert.equal(result.changed,1);assert.equal(result.rows[0].translatedName,'');assert.equal(result.rows[0].color,'흰색');
 });
+
+test('option save confirmation checks the committed version and every submitted field without mutating inputs',()=>{
+ const {options,job}=fixture();const next=model.adoptOptionTranslations(options,job,'v');
+ const before='2026-09-25T00:00:00.000Z',after='2026-09-25T00:00:01.000Z';
+ const response={productVersion:after,options:optionsModel.applyOptionRows(options,next.rows,after)};
+ const original=JSON.stringify({options,response,next});
+ model.confirmOptionTranslationSave(response,options,before,next.rows);
+ assert.equal(JSON.stringify({options,response,next}),original);
+ for(const change of [
+  r=>{delete r.options;},r=>{r.options.productId='other';},r=>{r.options.revision=options.revision;},
+  r=>{r.productVersion=before;},r=>{r.productVersion='invalid';},r=>{r.options.updatedAt=before;},
+  r=>{r.options.rows.reverse();},r=>{r.options.rows.pop();},r=>{r.options.rows[0].translatedName='다른 번역';},
+  r=>{r.options.rows[0].unitCostCny=999;},r=>{r.options.rows[0].included=false;},
+ ]){const changed=JSON.parse(JSON.stringify(response));change(changed);assert.throws(()=>model.confirmOptionTranslationSave(changed,options,before,next.rows),/저장 여부/);}
+ assert.throws(()=>model.confirmOptionTranslationSave(null,options,before,next.rows));
+});
