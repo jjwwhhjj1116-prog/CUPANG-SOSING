@@ -9,12 +9,12 @@ const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...no
 const label=t=>Array.isArray(t)?t.map(label).join(''):typeof t==='string'||typeof t==='number'?String(t):'';
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(r=>setImmediate(r));};
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
-function harness(handler,status='completed',failInitial=false){
+function harness(handler,status='completed',failInitial=false,emptyJobs=false){
  const slots=[],effects=[],cleanup=[],calls=[];let index=0,first=true,closed=false,late=0,saved=0;
  const content={revision:1,seo:Object.fromEntries(['title','description','keywords'].map(k=>[k,{value:k==='keywords'?[]:'manual'}]))};
  const job={id:'j',status,productVersion:'v',contentRevision:1,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt:'2026-09-24',source:{}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
- const view={jobs:[job],configuration:{configured:true,issues:[]}};
- const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
+ const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,issues:[]}};
+ const hooks={useCallback:fn=>fn,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  let initial=0;
  const fetcher=async(url,init)=>{if(initial<2){initial++;return failInitial?Response.json({error:'초기 조회 실패'},{status:503}):Response.json(url.endsWith('/translation')?view:{content});}calls.push({url,init});return handler(url,init,{content,job,view});};
  const exports={};const file='app/components/translation-panel.tsx';
@@ -94,6 +94,24 @@ test('reviewed label adoption shares the save lock and ignores responses after c
 });
 
 const combined='수집 원문·미번역 옵션 함께 불러오기 · 입력 교체';
+test('new translation automatically reads linked source and guidance without saving or executing AI',async()=>{
+ const h=harness(async()=>Response.json({productVersion:'v',title:'자동 제목',description:'자동 설명',jobId:'source',sourceUrl:'https://example.invalid',attributes:[],requestContext:{categoryId:'80719',categoryPath:['주방'],features:'수집 특징',keywords:'수집 키워드'}}),'completed',false,true);
+ await settle();assert.equal(h.calls.length,1);assert.ok(h.calls[0].url.endsWith('/translation-source'));assert.equal(h.calls[0].init.cache,'no-store');assert.equal(h.calls[0].init.method,undefined);
+ const output=JSON.stringify(h.render());for(const value of ['자동 제목','자동 설명','수집 특징','수집 키워드'])assert.ok(output.includes(value));assert.equal(h.saved,0);
+});
+test('missing, failed and stale automatic source reads leave manual input available',async()=>{
+ for(const status of [404,503,200]){
+  const h=harness(async()=>Response.json({productVersion:'old',title:'잘못된 제목',error:'조회 실패'},{status}),'completed',false,true);
+  await settle();assert.doesNotMatch(JSON.stringify(h.render()),/잘못된 제목/);
+  const field=nodes(h.render()).find(n=>n.type==='input'&&n.props.maxLength===1000);assert.equal(field.props.disabled,false);field.props.onChange({target:{value:'직접 입력'}});assert.match(JSON.stringify(h.render()),/직접 입력/);assert.equal(h.saved,0);
+ }
+});
+test('closing automatic prefill aborts the read and ignores late source data',async()=>{
+ const pending=deferred();const h=harness(()=>pending.promise,'completed',false,true);await settle();h.close();assert.equal(h.calls[0].init.signal.aborted,true);pending.resolve(Response.json({title:'late'}));await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
+});
+test('existing translation jobs do not automatically replace source inputs',async()=>{
+ const h=harness(()=>{throw Error('unexpected source read');});await settle();assert.equal(h.calls.length,0);
+});
 test('combined source load fills product and option inputs in one read operation without a paid call or save',async()=>{
  const h=harness(async url=>Response.json(url.endsWith('/options')?{productVersion:'v',options:{productId:'p',attributes:[{name:'option:a',value:'白色'}]}}:{productVersion:'v',title:'수집 제목',description:'수집 설명',attributes:[{name:'材质',value:'棉'}],jobId:'source',sourceUrl:'https://example.invalid',message:'원문 확인',requestContext:{categoryId:'80719',categoryPath:['주방용품'],capturedAt:'2026-09-25',features:'저장 특징',keywords:'키워드'}}));
  await settle();const click=h.button(combined);click();click();await settle();
@@ -102,7 +120,7 @@ test('combined source load fills product and option inputs in one read operation
 });
 test('combined source failure, wrong product and capacity overflow preserve all edited inputs',async()=>{
  for(const mode of ['failure','wrong','overflow']){
-  const h=harness(async url=>url.endsWith('/options')?(mode==='failure'?Response.json({error:'옵션 실패'},{status:503}):Response.json({productVersion:'v',options:{productId:mode==='wrong'?'other':'p',attributes:[{name:'option:a',value:'白色'}]}})):Response.json({productVersion:'v',title:'교체되면 안됨',description:'설명',attributes:mode==='overflow'?Array.from({length:50},()=>({name:'재질',value:'면'})):[],jobId:'s',message:'원문'}));
+  const h=harness(async url=>url.endsWith('/options')?(mode==='failure'?Response.json({error:'옵션 실패'},{status:503}):Response.json({productVersion:'v',options:{productId:mode==='wrong'?'other':'p',attributes:[{name:'option:a',value:'白色'}]}})):Response.json({productVersion:'v',title:'교체되면 안됨',description:'설명',attributes:mode==='overflow'?Array.from({length:50},()=>({name:'재질',value:'면'})):[],jobId:'s',sourceUrl:'https://example.invalid',message:'원문'}));
   await settle();const fields=nodes(h.render()).filter(n=>n.type==='input'||n.type==='textarea');
   fields.find(n=>n.props.maxLength===1000).props.onChange({target:{value:'유지 제목'}});
   fields.find(n=>n.props.maxLength===2000).props.onChange({target:{value:'유지 특징'}});

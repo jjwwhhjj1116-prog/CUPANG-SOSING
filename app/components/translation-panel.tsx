@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
 import { optionTranslationAttributes, adoptOptionTranslations, confirmOptionTranslationSave } from '@/app/option-translation';
 import type { ProductOptionsResponse } from '@/app/product-options';
@@ -14,6 +14,13 @@ import { TranslationIntegratedPreview } from '@/app/components/translation-integ
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
+type CollectedSource = { error?:string; title:string; description:string; attributes?:{name:string;value:string}[]; jobId:string; sourceUrl:string; productVersion:string; message:string; requestContext?:RequestContext|null };
+function validateCollectedSource(value: CollectedSource, version: string) {
+  if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
+  if(typeof value.title!=='string'||typeof value.description!=='string'||!value.jobId||typeof value.sourceUrl!=='string')throw Error('수집 원문의 형식을 확인하지 못했습니다.');
+  collectedTranslationAttributes(value.attributes??[]);
+  if(value.requestContext && (typeof value.requestContext.features!=='string'||typeof value.requestContext.keywords!=='string'||!Array.isArray(value.requestContext.categoryPath)))throw Error('수집 당시 상품 특징·키워드를 확인하지 못했습니다.');
+}
 const statuses: Record<TranslationJob['status'], string> = { prepared: '검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 실행 차단', completed: '초안 생성 완료', failed: '실패 · 재호출 안 함', uncertain: '결과 확인 필요 · 재호출 안 함' };
 
 async function readTranslationState(productId:string,signal:AbortSignal){
@@ -61,14 +68,32 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   }
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || (content && job.contentRevision !== content.revision)));
+  const applyCollectedSource = useCallback((value: CollectedSource) => {
+    setRequestContext(value.requestContext??null);setGuidance({features:value.requestContext?.features??'',keywords:value.requestContext?.keywords??''});setIncludeGuidance(true);
+    setSourceTitle(value.title);setDescription(value.description);setCollectedAttributes(value.attributes??[]);setIncludeCollectedAttributes(true);
+    setSourceReference(`수집 요청 ${value.jobId} (${value.sourceUrl})에서 가져와 사용자가 검토·편집한 원문`);
+  }, []);
   useEffect(() => {
     const controller=new AbortController();activeRequest.current=controller;
     readTranslationState(productId,controller.signal)
-      .then(next=>{if(!controller.signal.aborted){setView(next.view);setContent(next.content);}})
+      .then(async next=>{
+        if(controller.signal.aborted)return;
+        setView(next.view);setContent(next.content);
+        if(next.view.jobs.length)return;
+        try {
+          const response=await fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store',signal:controller.signal});
+          if(controller.signal.aborted||response.status===404)return;
+          const value=await response.json() as CollectedSource;
+          if(controller.signal.aborted)return;
+          if(!response.ok)throw Error(value.error??'수집 원문 조회 실패');
+          validateCollectedSource(value,version);applyCollectedSource(value);
+          setNotice('연결된 수집 원문·상품 속성·상품 특징·타깃 키워드를 자동으로 불러왔습니다. 검토 후 번역 요청을 준비하세요. AI 호출과 상품 저장은 실행하지 않았습니다.');
+        }catch(reason){if(!controller.signal.aborted)setNotice(`${reason instanceof Error?reason.message:'수집 원문 조회 실패'} 원문 불러오기로 다시 시도하거나 직접 입력할 수 있습니다.`);}
+      })
       .catch(reason=>{if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'조회 실패');})
       .finally(()=>finishRequest(controller));
     return () => controller.abort();
-  }, [productId, version]);
+  }, [productId, version, applyCollectedSource]);
 
   async function refreshState(){
     const controller=beginRequest(true);if(!controller)return;
@@ -105,10 +130,9 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store',signal:controller.signal}),
         includeOptions ? fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal:controller.signal}) : Promise.resolve(null),
       ]);
-      const value=await response.json() as {error?:string;title:string;description:string;attributes?:{name:string;value:string}[];jobId:string;sourceUrl:string;productVersion:string;message:string;requestContext?:RequestContext|null};if(controller.signal.aborted)return;
+      const value=await response.json() as CollectedSource;if(controller.signal.aborted)return;
       if(!response.ok)throw Error(value.error??'원문 조회 실패');
-      if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
-      collectedTranslationAttributes(value.attributes ?? []);
+      validateCollectedSource(value,version);
       let optionText: string | null = null;
       if(optionResponse) {
         const optionSource=await optionResponse.json() as ProductOptionsResponse & {error?:string};
@@ -121,9 +145,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         optionText=pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n');
       }
       if(optionText!==null)setAttributes(optionText);
-      setRequestContext(value.requestContext??null);setGuidance({features:value.requestContext?.features??'',keywords:value.requestContext?.keywords??''});setIncludeGuidance(true);
-      setSourceTitle(value.title);setDescription(value.description);setCollectedAttributes(value.attributes ?? []);setIncludeCollectedAttributes(true);
-      setSourceReference(`수집 요청 ${value.jobId} (${value.sourceUrl})에서 가져와 사용자가 검토·편집한 원문`);
+      applyCollectedSource(value);
       setNotice(value.message+(includeOptions?' 미번역 옵션명·수집 색상·사이즈도 함께 불러왔습니다.':'')+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.');
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'원문 조회 실패');}
     finally{finishRequest(controller);}
