@@ -57,6 +57,15 @@ async function requestHarness(){
 }
 const previewBody={fingerprint:'f',filename:'quote.csv',headers:['상품명'],rows:[['이전 상품']],report:{dataStartRow:2,rowCount:1,missingRequired:[],warnings:[],contentRevision:1,optionRevision:1,profileRevision:1}};
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&n.props.children===label);
+test('opening a reviewed profile with a changed category blocks automatic template selection',async()=>{
+ const h=await requestHarness();
+ h.render({preferredProfileId:'saved',navigationTarget:{optionId:'red',fieldId:'material',categoryId:'77442'}});
+ await h.settle();const tree=h.render();
+ assert.match(JSON.stringify(tree),/검사 당시 카테고리/);
+ assert.equal(nodes(tree).find(n=>n.type==='select').props.value,'');
+ assert.equal(button(tree,'견적 자료 검토').props.disabled,true);
+ assert.equal(h.calls.length,0);
+});
 
 test('quotation requests lock immediate duplicate clicks and discard preview body after refresh',async()=>{
  const h=await requestHarness();const click=button(h.render(),'견적 자료 검토').props.onClick;

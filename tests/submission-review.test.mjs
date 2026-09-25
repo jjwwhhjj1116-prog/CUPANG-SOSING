@@ -251,6 +251,13 @@ test('HTML media detection distinguishes examples, comments and query text from 
 });
 
 const {resolveQuotationNavigation}=load('app/quotation-navigation.ts');
+test('review field navigation refuses another category even when option and field IDs match',()=>{
+ const source=resolved(),before=JSON.stringify(source);
+ assert.equal(resolveQuotationNavigation(source,{optionId:'red',fieldId:'material',categoryId:source.schema.categoryId}).ok,true);
+ const mismatch=resolveQuotationNavigation(source,{optionId:'red',fieldId:'material',categoryId:'another-category'});
+ assert.equal(mismatch.ok,false);assert.match(mismatch.message,/검사 당시 카테고리/);
+ assert.equal(JSON.stringify(source),before);
+});
 test('review navigation selects the exact option and field without changing saved data',()=>{
  const source=resolved();source.rows.push({...structuredClone(source.rows[0]),optionId:null,optionLabel:'공통'});
  const before=JSON.stringify(source);

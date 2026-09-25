@@ -18,7 +18,7 @@ type Preview = {
 };
 type QuotationPanelProps = {navigationTarget?:QuotationNavigationTarget;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
-  return <QuotationPanelContent key={`${props.productId}:${props.preferredProfileId ?? ''}`} {...props}/>;
+  return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId])} {...props}/>;
 }
 function QuotationPanelContent({productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
@@ -54,7 +54,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
       fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal:controller.signal}).then(async response=>{const body=await response.json() as QuotationFieldsView & {error?:string};if(!response.ok)throw new Error(body.error||'수집 당시 카테고리를 읽지 못했습니다.');return body;}),
     ]).then(([savedProfiles,data])=>{
       if(controller.signal.aborted)return;
-      const selection=selectQuotationProfile(savedProfiles,data.categoryContext,preferredProfileId);
+      const selection=selectQuotationProfile(savedProfiles,data.categoryContext,preferredProfileId,navigationTarget?.categoryId);
       const savedId=selection.profileId;
       setConnectionWarning(selection.warning);
       setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);
@@ -63,7 +63,7 @@ function QuotationPanelContent({productId,onManageCategories,refreshToken,prefer
     }).catch(cause=>{if(!controller.signal.aborted)setContextError(cause instanceof Error?cause.message:'카테고리 연결 확인 실패');})
       .finally(()=>{if(!controller.signal.aborted)setContextLoaded(true);});
     return()=>controller.abort();
-  },[productId,preferredProfileId,loadAttempt]);
+  },[productId,preferredProfileId,loadAttempt,navigationTarget?.categoryId]);
   async function request(action:'preview'|'export') {
     if(activeRequest.current||profileRequest.current||dirty||!contextLoaded||!selected?.template||(action==='export'&&!preview))return;
     const controller=new AbortController();activeRequest.current=controller;

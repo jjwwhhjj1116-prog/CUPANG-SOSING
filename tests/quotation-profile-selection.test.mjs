@@ -8,6 +8,14 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/quotation-
 const choose=exports.selectQuotationProfile;
 const profiles=[{id:'saved',categoryId:'80719',categoryPath:['새 표시 경로']},{id:'other',categoryId:'77442'}];
 const context={source:'collection',profileId:'saved',categoryId:'80719',categoryPath:['수집 당시 경로']};
+test('reviewed category binds preferred profile even when its ID survives a category change',()=>{
+ assert.equal(choose(profiles,context,'saved','80719').profileId,'saved');
+ for(const category of ['77442',null]){
+  const result=choose(profiles,context,'saved',category);
+  assert.equal(result.profileId,'');assert.match(result.warning,/검사 당시 카테고리/);
+ }
+ assert.equal(choose(profiles,context,'other','77442').profileId,'other');
+});
 test('same profile and category code reconnect despite display path changes without mutating snapshots',()=>{
  const before=JSON.stringify({profiles,context});const result=choose(profiles,context);
  assert.equal(result.profileId,'saved');assert.equal(result.warning,'');assert.equal(JSON.stringify({profiles,context}),before);

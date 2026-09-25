@@ -54,10 +54,10 @@ export function SubmissionReviewPanel({products,profiles,onEdit}:{products:Targe
           <p>{report.categoryPath.join(' › ')||'카테고리 미선택'} · 포함 옵션 {report.includedOptions}개</p>
           <strong>입력 오류 {report.errorCount}개 · 증빙 확인 {report.reviewCount}개 · 전송 연결 대기</strong>
           <small>검사 시각: {new Date(report.checkedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} (한국시간)</small>
-          <details><summary>수정·확인할 항목 보기</summary><QuotationReviewIssues key={requestKey} issues={report.issues} omittedIssueCount={report.omittedIssueCount} disabled={false} onInspect={target=>onEdit(product.id,profileId||undefined,target)}/></details>
+          <details><summary>수정·확인할 항목 보기</summary><QuotationReviewIssues key={requestKey} issues={report.issues} omittedIssueCount={report.omittedIssueCount} disabled={false} onInspect={target=>onEdit(product.id,profileId||undefined,{...target,categoryId:report.categoryId})}/></details>
           <details><summary>검사 범위</summary><ul>{report.limits.map(limit=><li key={limit}>{limit}</li>)}</ul></details>
         </>}
-        <button type="button" className="btn primary" onClick={()=>onEdit(product.id,profileId||undefined)}>견적서 수정하기</button>
+        <button type="button" className="btn primary" onClick={()=>onEdit(product.id,profileId||undefined,report?{optionId:null,fieldId:'category',categoryId:report.categoryId}:undefined)}>견적서 수정하기</button>
       </article>;
     })}
     <button type="button" className="btn rose" disabled>Supplier Hub 전송 · 연결 구현 대기</button>

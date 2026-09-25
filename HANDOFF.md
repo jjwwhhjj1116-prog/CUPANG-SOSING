@@ -2380,3 +2380,11 @@ AI등록 화면 확인:
 - 검증: 관련25/25, TypeScript, 변경 파일 ESLint, Cloudflare build/check 통과. 잘못된 상품/설정, 누락·손상 필드, 집계/시각/지문, 정상 생략 보고서 검사 및 실제 UI 요청 상태 테스트에서 다른 상품 응답 차단 확인. outputs/step212-*.log. 실상품 종단/Chrome 화면 검증은 아니다.
 - Cloudflare version2b849579-7f7a-4014-b114-4e510ed5d196 배포. 유료AI·운영 등록 없음.
 - 핵심 미완성: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터 및 실접수. 다음 시작점은 기존 Chrome 연결/공식 양식 근거 확보와 상품813724060928 실제 수집→견적→접수 검증. 이번 턴 Chrome 조작 없음.
+
+## 213. 검사한 카테고리와 견적 편집 대상 일치 보장 — 2026-09-25
+
+- 시작 main bdb6b4f. 전체 기존 테스트 762/762 통과 후, 검사에서 사용한 설정 ID가 같은 채 카테고리 코드만 변경되면 다른 분류가 자동 선택될 수 있는 경로를 확인했다.
+- 등록 전 검사에서 견적 수정/항목 이동 시 검사 당시 categoryId를 함께 전달한다. preferredProfileId가 현재 다른 categoryId를 가리키면 자동 선택하지 않고 차이를 표시한다. 항목 이동도 현재 스키마의 카테고리와 일치해야 한다. 검사 카테고리가 변경되면 견적 패널 상태를 다시 구성한다.
+- 검증: 변경 후 관련 35/35, TypeScript, 변경 TS/TSX ESLint, diff check, Cloudflare build/check 통과. 동일 코드/표시 경로 변경 허용, 다른 코드/미확인 코드 차단, 동일 옵션·필드 ID라도 다른 분류 이동 차단, UI 자동 양식 선택/출력 차단 검사. 모의 상태 및 단위 검사이며 실제 Chrome/실상품 접수 검증은 아니다. outputs/step213-full-tests.log, step213-targeted.log, step213-build.log.
+- Cloudflare version 2339cabc-5ee3-4272-96c2-f4d0ab4c59b9 배포. DB 변경·유료 AI·운영 상품 등록 없음.
+- 핵심 미완성: 실제 1688 수집기, 모든 카테고리의 Couplus 기본값/공식 Excel 실대조, 이미지 번역 품질, Supplier Hub POST501 실행 어댑터와 실접수. 다음 시작점은 기존 Chrome 연결 및 공식 양식 근거 확보 후 지정 상품 813724060928의 실제 수집→견적→접수 검증. 이번 턴 Chrome 조작 없음. 전체 자동화 완료로 판단하면 안 된다.
