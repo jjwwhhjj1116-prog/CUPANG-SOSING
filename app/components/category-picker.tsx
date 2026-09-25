@@ -14,7 +14,9 @@ function codeEvidenceLabel(choice: CategoryChoice) {
   return '분류 코드 미확인';
 }
 
-export function CategoryPicker({ profiles, selectedId, onSelected, onAdvanced }: { profiles: CategoryProfile[]; selectedId: string; onSelected: (profile: CategoryProfile) => void; onAdvanced: (seed?: CategoryAdvancedSeed) => void }) {
+export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelected, onAdvanced }: { profiles: CategoryProfile[]; selectedId: string; onSelected: (profile: CategoryProfile) => void; onAdvanced: (seed?: CategoryAdvancedSeed) => void }) {
+  const [refreshedProfiles, setRefreshedProfiles] = useState<CategoryProfile[] | null>(null);
+  const profiles = refreshedProfiles ?? suppliedProfiles;
   const choices = useMemo(() => categoryChoices(profiles), [profiles]);
   const [path, setPath] = useState<string[]>(profiles.find(profile => profile.id === selectedId)?.categoryPath ?? []);
   const [selectedKey, setSelectedKey] = useState(selectedId);
@@ -42,7 +44,24 @@ export function CategoryPicker({ profiles, selectedId, onSelected, onAdvanced }:
     setBusy(true); setError('');
     try {
       const existing = profiles.find(profile => profile.id === selected.profileId);
-      if (existing) { completed.current = true; onSelected(existing); return; }
+      if (existing) {
+        const response = await fetch('/api/category-profiles', { cache: 'no-store', signal: controller.signal });
+        const result = await response.json() as { profiles?: CategoryProfile[]; error?: string };
+        if (controller.signal.aborted) return;
+        if (!response.ok || !Array.isArray(result.profiles)) throw new Error(result.error || '최신 카테고리 설정을 확인하지 못했습니다. 다시 시도해주세요.');
+        const latest = result.profiles.find(profile => profile.id === existing.id);
+        if (latest && (!Number.isSafeInteger(latest.revision) || latest.revision < 1 || !Array.isArray(latest.categoryPath))) throw new Error('카테고리 설정 응답이 올바르지 않습니다. 다시 시도해주세요.');
+        setRefreshedProfiles(result.profiles);
+        if (!latest) {
+          setSelectedKey('');
+          throw new Error('선택한 카테고리 설정이 삭제되었습니다. 갱신된 목록에서 사용할 분류를 선택해주세요.');
+        }
+        if (latest.categoryId !== existing.categoryId || JSON.stringify(latest.categoryPath) !== JSON.stringify(existing.categoryPath)) {
+          setPath(latest.categoryPath);
+          throw new Error('다른 화면에서 이 설정의 카테고리가 변경되었습니다. 갱신된 분류와 견적 항목을 확인한 뒤 선택 완료를 눌러주세요.');
+        }
+        completed.current = true; onSelected(latest); return;
+      }
       const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(categoryProfileForChoice(selected)), signal: controller.signal });
       const result = await response.json() as { profile: CategoryProfile; error?: string };
       if (controller.signal.aborted) return;
