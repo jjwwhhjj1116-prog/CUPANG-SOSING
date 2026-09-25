@@ -14,6 +14,7 @@ import { ProductOptionsEditor } from '@/app/components/product-options-editor';
 import { QuotationPanel } from '@/app/components/quotation-panel';
 import { SubmissionReviewPanel } from '@/app/components/submission-review-panel';
 import { CollectionResultPanel } from '@/app/components/collection-result-panel';
+import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
 import { RegistrationBoard } from '@/app/components/registration-board';
 import TranslationPanel from '@/app/components/translation-panel';
 import ImageGenerationPanel from '@/app/components/image-generation-panel';
@@ -254,6 +255,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
 
         {view==='archive'?<ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/>:<>
         <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
+          <CollectionBatchPanel jobs={collectionJobs} onSaved={()=>void loadWorkspace()}/>
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>
           <label className="collection-history"><input type="checkbox" checked={showCancelled} onChange={event=>setShowCancelled(event.target.checked)} />취소한 요청 보기 · 최근 200건</label>
           {!collectionJobs.some(job=>showCancelled || job.status !== 'cancelled') && <p className="collection-empty">{loading ? '대기열을 불러오는 중입니다.' : loadError ? '대기열 조회 상태를 확인해주세요.' : '아직 수집 요청이 없습니다. 상품 추가에서 URL을 붙여넣으세요.'}</p>}
