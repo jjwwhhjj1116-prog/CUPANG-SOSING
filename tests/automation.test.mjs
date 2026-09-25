@@ -80,6 +80,7 @@ test('partial invalid SKU input and an empty saved selection cannot complete rep
 test('automation API persists SKU calculations and GET marks changed option input stale',async()=>{
  const h=sqliteHarness();let options=optionFixture();
  try{
+ h.sqlite.prepare('INSERT INTO product_options VALUES (?,?,?)').run(product.id,'owner',options.revision);
  const route=load('app/api/products/[id]/automation/route.ts',{
   '@/db/queries':{findProduct:async()=>product,getSettings:async()=>null},'@/db/automation':h.store,
   '@/db/product-options':{readProductOptions:async()=>options}});
@@ -159,6 +160,8 @@ function sqliteHarness(initialize = true) {
     sqlite.prepare('INSERT INTO products VALUES (?,?,?)').run('test', 'owner', version);
   }
   sqlite.exec('CREATE TABLE product_content (product_id TEXT PRIMARY KEY, owner_id TEXT, revision INTEGER, payload TEXT, updated_at TEXT)');
+  sqlite.exec('CREATE TABLE product_options (product_id TEXT PRIMARY KEY, owner_id TEXT, revision INTEGER)');
+  sqlite.exec('CREATE TABLE workspace_settings (owner_id TEXT PRIMARY KEY, payload TEXT)');
   return { sqlite, db, store: load('db/automation.ts', { 'cloudflare:workers': { env: { DB: db } } }) };
 }
 
@@ -459,3 +462,29 @@ test('detail stage follows full quotation image order and blocks missing top or 
   assert.equal(empty.stages.find(item=>item.id==='koreanLabel').artifacts.length,0);
   assert.equal(JSON.stringify(content),before);
  });
+
+test('automation commit rejects option and settings races atomically and accepts unchanged owned snapshots', async () => {
+ const h=sqliteHarness();
+ try {
+  h.sqlite.prepare('INSERT INTO product_options VALUES (?,?,?)').run(product.id,'owner',1);
+  h.sqlite.prepare('INSERT INTO workspace_settings VALUES (?,?)').run('owner','{"brand":"new"}');
+  const plan=await model.planAutomation(product,settings);
+  for(const [key,source] of [
+   ['options_changed',{optionRevision:0,settingsPayload:'{"brand":"new"}'}],
+   ['settings_changed',{optionRevision:1,settingsPayload:'{"brand":"old"}'}],
+   ['settings_inserted',{optionRevision:1,settingsPayload:null}],
+  ]) {
+   assert.equal(await h.store.saveAutomation('owner',plan,null,command('run',key),key,source),null);
+   assert.equal(await h.store.getAutomationReceipt('owner',product.id,key),null);
+   assert.equal((await h.store.getAutomationHistory('owner',product.id)).length,0);
+   assert.equal(await h.store.getAutomation('owner',product.id),null);
+  }
+  h.sqlite.prepare('INSERT INTO workspace_settings VALUES (?,?)').run('other','unrelated');
+  assert.ok(await h.store.saveAutomation('owner',plan,null,command('run','current_inputs'),'current',{optionRevision:1,settingsPayload:'{"brand":"new"}'}));
+  const second=await model.planAutomation(product,settings,plan);
+  h.sqlite.prepare('DELETE FROM workspace_settings WHERE owner_id=?').run('owner');
+  assert.equal(await h.store.saveAutomation('owner',second,1,command('run','settings_deleted'),'deleted',{optionRevision:1,settingsPayload:'{"brand":"new"}'}),null);
+  assert.equal((await h.store.getAutomationHistory('owner',product.id)).length,1);
+  assert.ok(await h.store.saveAutomation('owner',second,1,command('run','current_null'),'null',{optionRevision:1,settingsPayload:null}));
+ } finally { h.sqlite.close(); }
+});

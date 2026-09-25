@@ -52,19 +52,24 @@ export async function getAutomationHistory(ownerId: string, productId: string): 
 }
 
 /** Workflow, idempotency receipt and audit history commit together, guarded by both input and workflow versions. */
-export async function saveAutomation(ownerId: string, workflow: AutomationWorkflow, previousRevision: number | null, command: AutomationCommand, requestFingerprint: string): Promise<AutomationWorkflow | null> {
+export async function saveAutomation(ownerId: string, workflow: AutomationWorkflow, previousRevision: number | null, command: AutomationCommand, requestFingerprint: string, source?: { optionRevision: number; settingsPayload: string | null }): Promise<AutomationWorkflow | null> {
   await ensureAutomationDatabase();
   const payload = JSON.stringify(workflow);
+  const sourceSql = source ? `AND COALESCE((SELECT revision FROM product_options WHERE product_id=? AND owner_id=?),0)=?
+      AND (SELECT payload FROM workspace_settings WHERE owner_id=?) IS ?` : '';
+  const sourceArgs = source ? [workflow.productId, ownerId, source.optionRevision, ownerId, source.settingsPayload] : [];
   const result = await database().batch<WorkflowRow>([
     database().prepare(`INSERT INTO product_automation(product_id,owner_id,revision,product_version,payload,updated_at)
       SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM products WHERE id=? AND owner_id=? AND updated_at=?)
       AND COALESCE((SELECT revision FROM product_content WHERE product_id=? AND owner_id=?),0)=?
+      ${sourceSql}
       AND (? IS NULL OR EXISTS (SELECT 1 FROM product_automation WHERE product_id=? AND owner_id=? AND revision=?))
       ON CONFLICT(product_id,owner_id) DO UPDATE SET revision=excluded.revision,product_version=excluded.product_version,
       payload=excluded.payload,updated_at=excluded.updated_at WHERE product_automation.revision=?
       RETURNING revision,payload`)
       .bind(workflow.productId, ownerId, workflow.revision, workflow.productVersion, payload, workflow.updatedAt,
         workflow.productId, ownerId, command.expectedVersion, workflow.productId, ownerId, workflow.contentRevision,
+        ...sourceArgs,
         previousRevision, workflow.productId, ownerId, previousRevision, previousRevision),
     database().prepare(`INSERT INTO product_automation_receipts(product_id,owner_id,idempotency_key,request_fingerprint,response,revision,created_at)
       SELECT product_id,owner_id,?,?,?,?,? FROM product_automation WHERE product_id=? AND owner_id=? AND revision=? AND changes()=1`)

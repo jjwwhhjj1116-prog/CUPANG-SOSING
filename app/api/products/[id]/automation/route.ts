@@ -57,7 +57,9 @@ export async function POST(request: Request, context: Context) {
     }
     const workflow = executeLocalAutomation(plan, product, settings, command, undefined, options);
     try {
-      const saved = await saveAutomation(owner, workflow, previous?.revision ?? null, command, requestFingerprint);
+      const saved = await saveAutomation(owner, workflow, previous?.revision ?? null, command, requestFingerprint, {
+        optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,
+      });
       if (saved) return json({ workflow: saved, replayed: false, capabilities: capabilities() });
       const committed = await getAutomationReceipt(owner, id, command.idempotencyKey);
       if (committed?.requestFingerprint === requestFingerprint) return json({ workflow: committed.workflow, replayed: true, capabilities: capabilities() });

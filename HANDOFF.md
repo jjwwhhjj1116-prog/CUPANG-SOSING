@@ -2269,3 +2269,13 @@ AI등록 화면 확인:
 - 검증: 자동화22/22, 기존 UI 요청3/3, TypeScript·변경 파일 ESLint·Cloudflare build/check 통과. 모의 콘텐츠로 순서/숨김/추가 항목, 이미지 공존/누락 오류 유지, 내용 삭제 후 초기 상태 복귀, 입력 불변을 확인했다. 실제 브라우저 화면/쿠플러스 대조 검증은 아니다. outputs/step200-*.log.
 - Cloudflare versionbd65f392-87ac-49a1-ac01-21799fc9c11f 배포. DB 변경·유료AI·운영등록 없음.
 - 남은 핵심: 실제1688 수집기, 모든 카테고리 Couplus 기본값 및 공식 Excel 대조, 이미지 번역 실품질, Supplier Hub POST501 실행 어댑터와 실제 접수는 미완성. 이번 수정은 저장 콘텐츠 작업 현황 연결이며 실제 1~7단계 자동실행 구현이 아니다. 다음 시작점은 기존 Chrome의 실제 탭과 공식 양식 근거를 확보한 실상품 흐름 검증이다.
+
+## 201. 자동화 결과 저장 시 옵션·기본설정 동시 변경 검사 — 2026-09-25
+
+- 시작 mainc75a497 clean. 견적/작업 현황 연결 점검 중 자동화 저장 경계의 누락을 먼저 확인했다. 이번에는 견적 저장값의 작업 현황 표시는 구현하지 않았다.
+- 확인: saveAutomation은 상품/콘텐츠/작업 버전을 검사했지만 계산에 사용한 옵션 버전과 workspace_settings payload는 검사하지 않았다. 읽기 이후 변경된 옵션/기본설정에 대한 이전 계산 결과가 저장될 수 있었다.
+- 자동화 POST가 읽은 optionRevision 및 원본 settingsPayload를 저장 함수에 전달한다. 같은 INSERT 조건에서 소유자별 현재 옵션 revision과 설정 payload를 비교한다. 불일치하면 workflow/receipt/history 모두 쓰지 않고 기존 충돌 응답으로 처리한다. 기존 중복 키 재시도는 확정 영수증 반환을 유지한다.
+- 저장 함수는 기존 내부 호출 호환성을 위해 source를 선택 인자로 받지만 실제 운영 POST 경로는 항상 전달한다. DB 스키마 변경 없음. 향후 새 호출 경로도 source를 반드시 전달해야 한다.
+- 검증: 관련23/23, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과. SQLite 트랜잭션으로 옵션 변경·설정 변경/생성/삭제 시 부분 저장 없음, 동일 소유자 최신 입력 허용, 다른 소유자 설정 무관을 검사했다. 기존 API SKU 모의 데이터를 DB revision과 일치시켰다. outputs/step201-*.log.
+- Cloudflare version462bacdf-06b8-4484-8659-c0e44f265708 배포. 유료AI·운영상품 등록 없음.
+- 남은 핵심: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 대조, 이미지 번역 실품질, Supplier Hub POST501 실행 어댑터와 실접수 미완성. 이번 작업은 동시 수정 시 저장 정확성 개선이며 전체 자동화 완성이 아니다. 다음 시작점은 기존 Chrome/공식 양식 근거 확보 및 견적 저장값의 작업 현황 연결이다. 이번 턴 Chrome 접근 없음.
