@@ -13,6 +13,8 @@ function load(file, overrides = {}, mode = 'development') {
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/pricing') return load('app/pricing.ts');
     if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
+    if (name === '@/app/product-options') return load('app/product-options.ts');
+    if (name === '@/db/product-options') return { readProductOptions:async(_owner,id)=>({productId:id,rows:[],revision:0}) };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
     throw Error(name);
   } });
@@ -142,6 +144,26 @@ test('missing products, stale versions, concurrent writes, storage failures have
     const route=load('app/api/products/[id]/pricing/route.ts',{'@/db/queries':queries});
     const response=await route.POST(request(input),context);assert.equal(response.status,expected);assert.ok(!(await response.text()).includes('private storage'));
   }
+});
+test('price save validates every included option before writing and returns exact failed IDs',async()=>{
+ for(const mode of ['missing','overflow','excluded','valid']){
+  let writes=0;const route=load('app/api/products/[id]/pricing/route.ts',{
+   '@/db/queries':{findProduct:async()=>product,applyProductPrice:async()=>{writes++;return product;}},
+   '@/db/product-options':{readProductOptions:async(owner,id)=>{assert.equal(owner,'owner');return {productId:id,rows:[{id:'bundle',included:mode!=='excluded',unitCostCny:mode==='missing'?null:mode==='valid'?0.1:1e10,unitsPerPack:mode==='valid'?3:1e6}]};}},
+  });
+  const response=await route.POST(request(input),context),body=await response.json();
+  const valid=mode==='excluded'||mode==='valid';assert.equal(response.status,valid?200:400);assert.equal(writes,valid?1:0);
+  if(!valid){assert.equal(body.code,'INVALID_OPTION_PRICE');assert.equal(body.options[0].optionId,'bundle');assert.ok(body.options[0].error);}
+ }
+});
+test('unavailable or foreign option data prevents pricing writes',async()=>{
+ for(const fail of [true,false]){
+  let writes=0;const route=load('app/api/products/[id]/pricing/route.ts',{
+   '@/db/queries':{findProduct:async()=>product,applyProductPrice:async()=>{writes++;return product;}},
+   '@/db/product-options':{readProductOptions:async()=>{if(fail)throw Error('private');return {productId:'other',rows:[]};}},
+  });
+  const response=await route.POST(request(input),context);assert.equal(response.status,503);assert.equal(writes,0);assert.doesNotMatch(await response.text(),/private/);
+ }
 });
 test('invalid pricing never reaches storage and production is closed until authenticated',async()=>{
   const dependencies={'@/db/queries':{}};
