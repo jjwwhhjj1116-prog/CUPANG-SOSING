@@ -25,6 +25,7 @@ import { BatchWorkPanel } from '@/app/components/batch-work-panel';
 import type { CategoryProfile, CategoryProfileInput } from '@/app/category-profiles';
 import { WorkspaceSettingsDialog } from '@/app/components/workspace-settings-dialog';
 import { savedRegistrationSettings, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
+import { requestErrorMessage } from '@/app/request-error';
 import { PriceEditor } from '@/app/components/price-editor';
 import { quotationCsv, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { collectionBlock, collectionJobProgress, type CollectionJob } from '@/app/sourcing';
@@ -48,7 +49,7 @@ type IntegrationStatus = {
 async function readJson<T = unknown>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   const result = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(result.error ?? '요청에 실패했습니다.');
+  if (!response.ok) throw new Error(requestErrorMessage(result));
   return result as T;
 }
 

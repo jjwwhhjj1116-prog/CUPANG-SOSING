@@ -2713,3 +2713,11 @@ AI등록 화면 확인:
 - 검증: pricing17/17, TypeScript, 변경 TS ESLint, Cloudflare build/check/diff check 통과. 원가누락/범위초과/제외/정상번들/조회실패/상품불일치에서 저장 호출 여부 검사. 기존 SQLite 동시쓰기 검사 포함. 실제 Chrome·실상품 견적 전송 검증은 아니다.
 - 배포45d8bb09-fe10-4d53-91d5-7c9a0807f5e1. outputs/step250-tests.log, step250-build.log. DB변경·유료호출·운영상품등록 없음.
 - 핵심 미완성: 실제1688수집 실행기, 전 카테고리 Couplus 자동값/공식양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 접수 확인. 다음 시작점은 기존 Chrome 실제 탭 접근 후 상품813724060928 및 카테고리 견적 관찰이다. 전체 자동화 미완성.
+
+## 251. 전체 회귀 검사 및 가격 실패 옵션 진단 화면 연결 — 2026-09-25
+
+- 시작 main8236361 clean. 변경 전 전체 npm test866/866 통과. 기존 supplierChrome.tabs.list()는 []로 실제 Chrome 탭 접근 불가. 다른 브라우저/프로필 생성 없이 유지했으며 Couplus 실화면·1688·Hub 대조 미수행.
+- 확인/수정: 가격 API가 실패 옵션ID/원인을 반환해도 대시보드 readJson이 error 문자열만 남겨 상세 진단을 버렸다. INVALID_OPTION_PRICE 응답의 옵션ID/원인을 화면 오류에 포함한다. 최대10개와 남은 개수를 표시하고 무관한 응답 또는 잘못된 진단 데이터는 기존 공통 오류로 처리한다. 가격 오류는 기존 PriceEditor의 일반 텍스트 렌더로 표시된다.
+- 검증: 변경 후 오류처리+가격20/20, TypeScript, 변경 TS ESLint, Cloudflare build/check/diff check 통과. 전체866개는 변경 전 회귀 검사이며 변경 후 전체 재실행을 주장하지 않는다. 실제 Chrome 화면 미검증.
+- 배포0c23adc6-c764-467e-acc5-599eb436ac71. outputs/step251-full-tests.log, step251-tests.log, step251-build.log. DB변경·유료호출·운영상품등록 없음.
+- 핵심 미완성/다음 시작점: 기존 Chrome 실제 탭 접근과 지정상품813724060928 관찰, 실제1688수집 실행기, 전카테고리 Couplus 자동값/공식양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터 및 접수 확인. 이번 검증과 진단표시는 전체 자동화 완성이 아니다.
