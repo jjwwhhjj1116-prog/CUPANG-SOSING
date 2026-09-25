@@ -40,6 +40,25 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('all recorded categories expose input links for automatic values and retain stage values and manual blanks',()=>{
+ const {quotationInputLink}=load('app/quotation-input-links.ts');
+ const categories=new Set(['80719','81452','64497','103495','77442',...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas)]);
+ for(const categoryId of categories){
+  const input=fixture();input.categoryId=categoryId;const before=JSON.stringify(input);
+  const result=model.resolveQuotationFields(input),row=result.rows[1];
+  assert.equal(row.fields.title.value,'번역된 가방',categoryId);assert.equal(row.fields.brand.value,'입력 브랜드',categoryId);
+  assert.equal(row.fields.mainImage.value,'owner/option.png',categoryId);assert.equal(row.fields.detailImages.value,'owner/detail.png',categoryId);
+  assert.equal(row.fields.boxSkuQuantity.value,'50',categoryId);assert.equal(row.fields.searchTags.value,'가방, 대용량',categoryId);
+  for(const field of result.schema.fields){
+   if(['schema','content','settings','option','pricing','product'].includes(row.fields[field.id].source))assert.ok(quotationInputLink(field),`${categoryId}:${field.id}`);
+  }
+  assert.equal(JSON.stringify(input),before);
+  input.overrides={common:{title:'견적용 제목'},options:{red:{title:'',mainImage:''}}};
+  const manual=model.resolveQuotationFields(input).rows[1];assert.equal(manual.fields.title.value,'');assert.equal(manual.fields.mainImage.value,'');
+ }
+ assert.equal(quotationInputLink({id:'unseen',label:'상품 재질',section:'product',type:'text'}),null);
+});
+
 test('single translation content save reaches quotation and export while retaining quotation overrides',()=>{
  const input=fixture();input.content=contentModel.emptyProductContent('p1');
  const job={productId:'p1',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 材质'}]}},result:{draft:{title:'한번에 작성한 상품명',keywords:['수납'],description:'번역 설명',attributes:[{sourceIndex:0,name:'재질',value:'면'}]}}};

@@ -34,6 +34,7 @@ test('quotation preview filters required and observed defaults, searches choice 
  let tree=render();assert.equal(rows(tree).length,schema.fields.length);
  const filter=value=>{nodes(tree).find(n=>n.type==='select').props.onChange({target:{value}});tree=render();};
  filter('required');assert.equal(rows(tree).length,schema.fields.filter(f=>f.required).length);
+ filter('linked');const {quotationInputLink}=load('app/quotation-input-links.ts');assert.equal(rows(tree).length,schema.fields.filter(f=>quotationInputLink(f)!==null).length);assert.match(JSON.stringify(tree),/1단계 SEO 상품명/);assert.match(JSON.stringify(tree),/6단계 재질/);
  filter('known');const known=rows(tree).length;assert.ok(known>0);
  filter('unknown');assert.equal(rows(tree).length,schema.fields.length-known);
  filter('all');nodes(tree).find(n=>n.type==='input').props.onChange({target:{value:'뚜껑'}});tree=render();assert.ok(rows(tree).length>0);assert.ok(rows(tree).length<schema.fields.length);
