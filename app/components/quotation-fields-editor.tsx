@@ -9,6 +9,7 @@ import './quotation-fields-editor.css';
 import { QuotationLabelPanel } from '@/app/components/quotation-label-panel';
 import { QuotationChoiceInput } from '@/app/components/quotation-choice-input';
 import { quotationFieldDisplay } from '@/app/quotation-field-display';
+import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -71,7 +72,7 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
   if (definition?.type === 'images' && resolvedValue) validationIssues.push('비공개 이미지 참조입니다. 외부 접수용 공개 주소는 아직 생성되지 않았습니다.');
   const reviewMessages: string[] = [];
   if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
-  if (definition?.reviewRequired && resolvedValue.trim()) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
+  if (definition?.reviewRequired && (resolvedValue.trim() || hasSelectedEmptyQuotationChoice(definition, { value: resolvedValue, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
   const errors = [...new Set(validationIssues)];
   const issues = [...new Set([...errors, ...reviewMessages,
     ...(fieldKey === 'detailImages' ? quotationImageRoleIssues(resolveQuotationEditorCell(view, changes, optionId, 'mainImage').value, resolvedValue) : []),
@@ -177,7 +178,7 @@ export function quotationOptionOverview(view: QuotationFieldsView, changes: read
       const cell = resolveQuotationEditorCell(view, changes, row.optionId, field.id);
       if (cell.source.startsWith('manual-')) manual++;
       else if (cell.source === 'couplus-default') defaults++;
-      else if (cell.source !== 'empty' && cell.value.trim()) linked++;
+      else if (cell.source !== 'empty' && (cell.value.trim() || hasSelectedEmptyQuotationChoice(field, cell))) linked++;
       if (field.required && !cell.value.trim()) missing++;
       // Use the same draft-aware validation as the individual field, including
       // failed automatic calculations and unavailable image references.

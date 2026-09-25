@@ -340,6 +340,21 @@ test('image role overlap warnings update when only the unsaved main image change
  assert.equal(JSON.stringify(overview.find(row=>row.optionId==='red')).includes(model.duplicateQuotationImageIssue),false);
 });
 
+test('draft empty-code choices retain review evidence and confirmed linked choices count in overview',()=>{
+ const view=fixture(),before=JSON.stringify(view),key='lidIncluded';
+ const draft=editor.resolveQuotationEditorCell(view,[change(key,'','red')],'red',key);
+ assert.equal(draft.source,'manual-option');assert.ok(draft.reviewMessages.some(m=>m.includes('실제 상품')));
+ assert.equal(draft.reviewMessages.some(m=>m.includes('쿠플러스')),false);
+ const reset=editor.resolveQuotationEditorCell(view,[change(key,null,'red')],'red',key);
+ assert.equal(reset.source,'couplus-default');assert.ok(reset.reviewMessages.some(m=>m.includes('쿠플러스')));
+ const copy=clone(view);
+ for(const rows of [copy.resolved.rows,copy.automatic.rows])rows.find(r=>r.optionId==='red').fields[key]={value:'',source:'content',needsReview:true,issues:[],validationIssues:[],reviewMessages:[]};
+ const linked=editor.quotationOptionOverview(copy,[]).find(r=>r.optionId==='red').linked;
+ for(const rows of [copy.resolved.rows,copy.automatic.rows])rows.find(r=>r.optionId==='red').fields[key].source='empty';
+ assert.equal(editor.quotationOptionOverview(copy,[]).find(r=>r.optionId==='red').linked,linked-1);
+ assert.equal(JSON.stringify(view),before);
+});
+
 test('draft evidence metadata follows manual edits, blanks and resets instead of inheriting automatic default warnings',()=>{
  const view=fixture();const before=JSON.stringify(view);
  const auto=view.automatic.rows.find(r=>r.optionId==='red');
