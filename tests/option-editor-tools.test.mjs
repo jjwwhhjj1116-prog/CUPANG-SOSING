@@ -18,9 +18,9 @@ test('bulk image preview preserves unselected options and facts, permits common-
  const rows=[row('a'),row('b',{stock:25})],before=JSON.stringify(rows),keys=['owner/image.png','owner/new.png'];
  const preview=tools.previewOptionBulk(rows,['b'],{type:'imageKey',value:keys[1]},policy,keys);
  assert.equal(JSON.stringify(rows),before);assert.equal(preview.rows[0].imageKey,keys[0]);assert.equal(preview.rows[1].imageKey,keys[1]);assert.equal(preview.rows[1].stock,25);assert.equal(preview.rows[1].supplierSku,'SKU-b');assert.equal(preview.changes[0].beforePrice,preview.changes[0].afterPrice);
- assert.throws(()=>tools.applyOptionBulk(rows,preview,[keys[0]]),/이미지/);
- const next=tools.applyOptionBulk(rows,preview,keys);assert.equal(next[1].imageKey,keys[1]);
- const clear=tools.previewOptionBulk(next,['b'],{type:'imageKey',value:null},policy,keys);assert.equal(tools.applyOptionBulk(next,clear,keys)[1].imageKey,null);assert.equal(next[1].imageKey,keys[1]);
+ assert.throws(()=>tools.applyOptionBulk(rows,preview,policy,[keys[0]]),/이미지/);
+ const next=tools.applyOptionBulk(rows,preview,policy,keys);assert.equal(next[1].imageKey,keys[1]);
+ const clear=tools.previewOptionBulk(next,['b'],{type:'imageKey',value:null},policy,keys);assert.equal(tools.applyOptionBulk(next,clear,policy,keys)[1].imageKey,null);assert.equal(next[1].imageKey,keys[1]);
  assert.throws(()=>tools.previewOptionBulk(rows,['b'],{type:'imageKey',value:'another/image.png'},policy,keys),/이미지/);
 });
 
@@ -30,13 +30,13 @@ test('bulk quantity preview changes only chosen rows and recalculates actual sup
   assert.equal(JSON.stringify(rows), original); assert.equal(preview.rows[0].unitsPerPack, 1); assert.equal(preview.rows[1].unitsPerPack, 3);
   assert.equal(preview.changes[0].beforePrice, 10); assert.equal(preview.changes[0].afterPrice, 30);
   assert.equal(preview.rows[1].supplierSku, 'SKU-b'); assert.equal(preview.rows[1].widthCm, 10); assert.equal(preview.rows[1].imageKey, 'owner/image.png');
-  const applied = tools.applyOptionBulk(rows, preview); assert.equal(applied[1].unitsPerPack, 3); assert.notEqual(applied, preview.rows);
+  const applied = tools.applyOptionBulk(rows, preview, policy); assert.equal(applied[1].unitsPerPack, 3); assert.notEqual(applied, preview.rows);
 });
 
 test('stale previews cannot overwrite subsequent edits or reordered options', () => {
   const rows = [row('a'), row('b')]; const preview = tools.previewOptionBulk(rows, ['a'], { type: 'unitCostCny', value: 12.5 }, policy);
-  assert.throws(() => tools.applyOptionBulk([{ ...rows[0], translatedName: '이후 수정' }, rows[1]], preview), /미리보기/);
-  assert.throws(() => tools.applyOptionBulk([...rows].reverse(), preview), /미리보기/);
+  assert.throws(() => tools.applyOptionBulk([{ ...rows[0], translatedName: '이후 수정' }, rows[1]], preview, policy), /미리보기/);
+  assert.throws(() => tools.applyOptionBulk([...rows].reverse(), preview, policy), /미리보기/);
   assert.equal(rows[0].unitCostCny, 0.1);
 });
 
@@ -79,7 +79,7 @@ test('duplicating an option clears SKU-specific stock while bulk edits retain it
  const rows=[row('a',{stock:23})];const copy=tools.duplicateOption(rows,'a','copy');
  assert.equal(copy[0].stock,23);assert.equal(copy[1].stock,null);assert.equal(copy[1].supplierSku,'');assert.equal(copy[1].included,false);
  const preview=tools.previewOptionBulk(rows,['a'],{type:'unitsPerPack',value:3},policy);
- assert.equal(tools.applyOptionBulk(rows,preview)[0].stock,23);assert.equal(rows[0].stock,23);
+ assert.equal(tools.applyOptionBulk(rows,preview,policy)[0].stock,23);assert.equal(rows[0].stock,23);
 });
 
 test('bundle addition preserves original options and calculates separate bundle prices without inventing stock or packaging',()=>{
@@ -93,8 +93,8 @@ test('bundle addition preserves original options and calculates separate bundle 
  assert.equal(added.unitCostCny,0.1);assert.equal(added.imageKey,rows[0].imageKey);assert.equal(added.supplierSku,'');
  for(const key of ['stock','minimumOrderQuantity','widthCm','lengthCm','heightCm','weightKg']) assert.equal(added[key],null);
  assert.equal(preview.changes[0].after.id,'bundle-a');assert.equal(preview.changes[0].beforePrice,10);assert.equal(preview.changes[0].afterPrice,30);
- assert.equal(tools.applyOptionBulk(rows,preview).length,3);
- assert.throws(()=>tools.applyOptionBulk([{...rows[0],unitCostCny:1},rows[1]],preview),/미리보기/);
+ assert.equal(tools.applyOptionBulk(rows,preview,policy).length,3);
+ assert.throws(()=>tools.applyOptionBulk([{...rows[0],unitCostCny:1},rows[1]],preview,policy),/미리보기/);
 });
 
 test('bundle addition rejects invalid quantities, duplicate IDs and option capacity overflow',()=>{
@@ -104,4 +104,22 @@ test('bundle addition rejects invalid quantities, duplicate IDs and option capac
  assert.throws(()=>tools.previewOptionBulk(Array.from({length:model.OPTION_LIMIT},(_,i)=>row(String(i))),['0'],{type:'addBundle',value:2,newIds:{0:'new'}},policy));
  const blank=tools.previewOptionBulk([row('a',{translatedName:''})],['a'],{type:'addBundle',value:2,newIds:{a:'new'}},policy);
  assert.equal(blank.rows[1].translatedName,'');
+});
+
+test('bulk previews must be recalculated after any price policy change without changing the draft',()=>{
+ const rows=[row('a'),row('b',{included:false})];
+ const action={type:'unitsPerPack',value:3};
+ const preview=tools.previewOptionBulk(rows,['a'],action,policy);
+ const before=JSON.stringify(rows);
+ for(const [field,value] of Object.entries({exchangeRate:200,supplyMargin:20,coupangMargin:20,minimumMargin:3000,msrpMultiple:1.3,roundingUnit:100,roundingMode:'nearest'})){
+  assert.throws(()=>tools.applyOptionBulk(rows,preview,{...policy,[field]:value}),/가격 정책/);
+  assert.equal(JSON.stringify(rows),before);
+ }
+ const reordered=Object.fromEntries(Object.entries({...policy,roundingMode:'up'}).reverse());
+ assert.equal(tools.applyOptionBulk(rows,preview,reordered)[0].unitsPerPack,3);
+ const changed={...policy,exchangeRate:200};
+ const fresh=tools.previewOptionBulk(rows,['a'],action,changed);
+ const applied=tools.applyOptionBulk(rows,fresh,changed);
+ assert.equal(fresh.changes[0].afterPrice,preview.changes[0].afterPrice*2);
+ assert.equal(applied[1].included,false);assert.equal(applied[1].unitsPerPack,rows[1].unitsPerPack);
 });

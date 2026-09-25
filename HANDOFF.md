@@ -2772,3 +2772,11 @@ AI등록 화면 확인:
 - 검증: quotation-panel9/9, TypeScript, 변경 TS ESLint, Cloudflare build/check/diff check 통과. 응답 헤더 후 JSON/Blob 지연 도착, 편집 종료 후 이전 응답, 새 검토 재개를 모의 검사했다. 실제 Chrome·Supplier Hub 접수 검증은 아니다.
 - 배포43e5bc02-5d8b-4187-b0f3-f64a1d2ad62c. outputs/step257-tests.log, step257-build.log, step257-deploy.log. DB변경·유료AI·운영상품등록 없음. 이미 다운로드가 끝난 파일까지 취소하는 기능은 아니다.
 - 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근과 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.
+
+## 258. 옵션·번들 일괄 미리보기의 가격 정책 변경 감지 — 2026-09-25
+
+- 시작 main2799178 clean. 일괄 편집 미리보기는 옵션 행/선택만 비교하고 가격 정책을 비교하지 않았다. 입력 유지·최신 가격 적용으로 행이 같고 정책만 바뀌면 이전 공급가 미리보기가 적용 가능하게 남았다.
+- 구현: 미리보기에 환율·공급마진·쿠팡마진·최소마진·MSRP배수·반올림단위·방식을 고정 순서로 기록한다. UI 적용 버튼과 applyOptionBulk가 현재 정책 일치를 모두 검사한다. 달라졌으면 재계산이 필요하며 초안은 보존한다. 생략된 roundingMode와 명시 up은 같은 정책으로 처리한다.
+- 검증: option-editor-tools/option-editor-requests/quotation-schema166/166, TypeScript, 변경 TS ESLint, Cloudflare build/check/diff check 통과. 모든 정책 항목 변경 시 이전 적용 거절, 원본 불변, 환율 재계산, 제외 옵션 보존, 번들→견적 내보내기 기존 통합 검사 포함. 실제 Chrome/Hub 접수 검증은 아니다.
+- 배포08b70d1e-6cd6-41a3-af23-6dfbf961b1aa. outputs/step258-tests.log, step258-build.log, step258-deploy.log. DB변경·유료AI·운영상품등록 없음.
+- 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근 및 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.

@@ -145,11 +145,11 @@ test('bulk option image edits reach quotation and preserve manual overrides and 
  const input=fixture(),tools=load('app/option-editor-tools.ts'),keys=JSON.parse(input.product.image_keys);
  const rows=optionModel.optionInputs(input.options);
  const preview=tools.previewOptionBulk(rows,['red'],{type:'imageKey',value:'owner/detail.png'},policy,keys);
- input.options=optionModel.applyOptionRows(input.options,tools.applyOptionBulk(rows,preview,keys),'now');
+ input.options=optionModel.applyOptionRows(input.options,tools.applyOptionBulk(rows,preview,policy,keys),'now');
  let resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.mainImage.value,'owner/detail.png');assert.equal(input.options.rows[0].provenance.imageKey,'manual');
  const assets=keys.map((key,index)=>({key,name:`assets/${index}.png`}));assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].mainImage,'2.png');
  input.overrides={common:{},options:{red:{mainImage:'owner/option.png'}}};assert.equal(model.resolveQuotationFields(input).rows[1].fields.mainImage.value,'owner/option.png');
- const updated=optionModel.optionInputs(input.options);const clear=tools.previewOptionBulk(updated,['red'],{type:'imageKey',value:null},policy,keys);input.options=optionModel.applyOptionRows(input.options,tools.applyOptionBulk(updated,clear,keys),'later');
+ const updated=optionModel.optionInputs(input.options);const clear=tools.previewOptionBulk(updated,['red'],{type:'imageKey',value:null},policy,keys);input.options=optionModel.applyOptionRows(input.options,tools.applyOptionBulk(updated,clear,policy,keys),'later');
  input.overrides=model.emptyQuotationOverrides();resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.mainImage.value,'owner/main.png');assert.equal(input.options.rows[0].imageKey,null);assert.equal(input.options.rows[0].provenance.imageKey,'manual');
 });
 
@@ -1506,7 +1506,7 @@ test('bundle preview through option save and quotation export preserves original
  const input=fixture(),editor=load('app/option-editor-tools.ts');
  const original=JSON.stringify(input.options.rows[0]),rows=optionModel.optionInputs(input.options);
  const preview=editor.previewOptionBulk(rows,['red'],{type:'addBundle',value:3,newIds:{red:'bundle-red'}},policy);
- const draft=editor.applyOptionBulk(rows,preview);
+ const draft=editor.applyOptionBulk(rows,preview,policy);
  input.options=optionModel.applyOptionRows(input.options,draft,'2026-09-25T01:00:00.000Z');
  assert.equal(JSON.stringify(input.options.rows[0]),original);
  const resolved=model.resolveQuotationFields(input),bundle=resolved.rows.find(row=>row.optionId==='bundle-red');

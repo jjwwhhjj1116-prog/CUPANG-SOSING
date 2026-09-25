@@ -4,9 +4,14 @@ import type { AssetRole } from '@/app/product-content';
 
 export type BulkOptionAction = { type: 'unitCostCny' | 'unitsPerPack'; value: number } | { type: 'addBundle'; value: number; newIds: Record<string, string> } | { type: 'imageKey'; value: string | null } | { type: 'include' | 'exclude' | 'remove' };
 export type BulkOptionPreview = {
+  priceBase: string;
   base: string; action: BulkOptionAction; selectedIds: string[]; rows: OptionInput[];
   changes: { id: string; name: string; before: OptionInput; after: OptionInput | null; beforePrice: number | null; afterPrice: number | null; error: string | null }[];
 };
+export function optionBulkPriceBase(policy: PricePolicy): string {
+  return JSON.stringify([policy.exchangeRate, policy.supplyMargin, policy.coupangMargin, policy.minimumMargin,
+    policy.msrpMultiple, policy.roundingUnit, policy.roundingMode ?? 'up']);
+}
 export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: readonly string[], action: BulkOptionAction, policy: PricePolicy, imageKeys: readonly string[] = []): BulkOptionPreview {
   const selected = new Set(selectedIds);
   if (!selected.size || selected.size !== selectedIds.length || [...selected].some(id => !rows.some(row => row.id === id))) throw new Error('편집할 옵션을 다시 선택해주세요.');
@@ -30,14 +35,15 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
     throw new Error('지원하지 않는 일괄 편집 작업입니다.');
   });
   const beforePrices = calculateOptionPrices(rows, policy); const afterPrices = calculateOptionPrices(next, policy);
-  return { base: JSON.stringify(rows), action, selectedIds: [...selected], rows: next, changes: rows.filter(row => selected.has(row.id)).map(row => {
+  return { priceBase: optionBulkPriceBase(policy), base: JSON.stringify(rows), action, selectedIds: [...selected], rows: next, changes: rows.filter(row => selected.has(row.id)).map(row => {
     const targetId = action.type === 'addBundle' ? action.newIds[row.id] : row.id;
     const after = next.find(value => value.id === targetId) ?? null; const price = afterPrices.find(value => value.optionId === targetId);
     return { id: row.id, name: row.translatedName || row.originalName || row.supplierSku || '이름 미입력', before: { ...row }, after,
       beforePrice: beforePrices.find(value => value.optionId === row.id)?.calculation?.supplyPrice ?? null, afterPrice: price?.calculation?.supplyPrice ?? null, error: price?.error ?? null };
   }) };
 }
-export function applyOptionBulk(rows: readonly OptionInput[], preview: BulkOptionPreview, imageKeys: readonly string[] = []): OptionInput[] {
+export function applyOptionBulk(rows: readonly OptionInput[], preview: BulkOptionPreview, policy: PricePolicy, imageKeys: readonly string[] = []): OptionInput[] {
+  if (preview.priceBase !== optionBulkPriceBase(policy)) throw new Error('가격 정책이 바뀌었습니다. 변경 미리보기를 다시 실행해주세요.');
   if (JSON.stringify(rows) !== preview.base) throw new Error('미리보기 후 옵션이 바뀌었습니다. 변경 미리보기를 다시 실행해주세요.');
   if (preview.action.type === 'imageKey' && preview.action.value !== null && !imageKeys.includes(preview.action.value)) throw new Error('선택한 이미지가 상품에서 제외되었습니다. 이미지를 다시 선택해주세요.');
   return preview.rows.map(row => ({ ...row }));
