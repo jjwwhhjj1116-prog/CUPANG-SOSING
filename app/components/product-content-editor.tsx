@@ -1,5 +1,6 @@
 'use client';
 
+import { QuotationKeywordReview } from '@/app/components/quotation-keyword-review';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { assetRoles, detailImageKeys, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
 import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor-tools';
@@ -175,6 +176,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         <label className="field"><span>노출 상품명 <Origin field={content.seo.title} /></span><input maxLength={500} value={draft.seo.title} placeholder={product.title} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))} /></label>
         {!draft.seo.title && <button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, seo: { ...previous.seo, title: product.title } }))}>현재 상품명 사용</button>}
         <label className="field"><span>검색어 · 줄바꿈 또는 쉼표로 구분, 최대 50개 <Origin field={content.seo.keywords} /></span><textarea maxLength={5050} value={draft.seo.keywords} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, keywords: event.target.value } }))} /></label>
+        <QuotationKeywordReview value={draft.seo.keywords} onApply={keywords => setDraft(previous => ({ ...previous, seo: { ...previous.seo, keywords } }))}/>
         <label className="field"><span>상품 설명 · 텍스트 <Origin field={content.seo.description} /></span><textarea rows={8} maxLength={20000} value={draft.seo.description} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))} /></label>
       </div>}
       {section === '표시사항' && <>

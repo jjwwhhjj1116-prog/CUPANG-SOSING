@@ -1,3 +1,4 @@
+import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
 import { couplus64497Fields, couplus64497Path } from '@/app/couplus-toothbrush-schema';
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema';
@@ -65,7 +66,7 @@ const commonFields: QuotationField[] = [
   field('tradeType', 'product', '거래타입', { type: 'select', required: true, choices: choices('제조사', '공식총판사', '공식대리점', '기타 도소매업자'), reviewRequired: true }),
   field('taxType', 'product', '과세여부', { type: 'select', required: true, choices: choices('과세', '면세', '영세'), reviewRequired: true }),
   field('importType', 'product', '수입여부', { type: 'select', required: true, choices: choices('수입대상아님', '수입상품', '병행수입상품'), reviewRequired: true }),
-  field('searchTags', 'product', '검색태그', { type: 'textarea', required: true, maxLength: 150, help: '쉼표로 구분하며 전체 150자, 태그마다 20자 이내입니다. 초과값을 조용히 잘라내지 않습니다.' }),
+  field('searchTags', 'product', '검색태그', { type: 'textarea', required: true, maxLength: QUOTATION_TAG_TOTAL_LIMIT, help: '쉼표로 구분하며 전체 150자, 태그마다 20자 이내입니다. 초과값을 조용히 잘라내지 않습니다.' }),
   field('supplyPrice', 'product', '공급가', { type: 'number', unit: '원', integer: true, min: 1, max: Number.MAX_SAFE_INTEGER }),
   field('salePrice', 'product', '판매가', { type: 'number', unit: '원', integer: true, min: 1, max: Number.MAX_SAFE_INTEGER }),
   field('msrp', 'product', '권장소비자가격', { type: 'number', unit: '원', integer: true, min: 1, max: Number.MAX_SAFE_INTEGER,
@@ -231,7 +232,7 @@ export function quotationValueIssues(field: QuotationField, value: string, owned
     const numeric = /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
     if (!Number.isFinite(numeric) || (field.integer && !Number.isSafeInteger(numeric)) || (field.min !== undefined && numeric < field.min) || (field.max !== undefined && numeric > field.max)) issues.push(`${field.unit ?? '숫자'} 값의 형식과 범위를 확인해주세요.`);
   }
-  if (field.id === 'searchTags' && value.split(',').some(tag => tag.trim().length > 20)) issues.push('검색태그는 태그마다 20자 이하여야 합니다.');
+  if (field.id === 'searchTags' && value.split(',').some(tag => tag.trim().length > QUOTATION_TAG_ITEM_LIMIT)) issues.push('검색태그는 태그마다 20자 이하여야 합니다.');
   if (field.id === 'packagedDimensionsMm') {
     const parts = value.split(/[xX×*]/).map(part => part.trim());
     if (parts.length !== 3 || parts.some(part => !/^\d+$/.test(part) || Number(part) <= 0 || Number(part) > 1e6)) issues.push('포장 가로*세로*높이를 양의 정수 3개로 입력해주세요(mm).');
