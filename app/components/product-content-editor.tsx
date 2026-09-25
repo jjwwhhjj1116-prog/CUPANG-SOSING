@@ -88,7 +88,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   }, [endpoint, applyLoaded]);
   const initial = draftFrom(content);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
-  const dirty = JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey]) || (section==='표시사항'&&(JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
+  const editingDetail = section === '이미지' && focusedAssetRole === 'detail';
+  const dirty = (editingDetail && draft.seo.description !== initial.seo.description) || JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey]) || (section==='표시사항'&&(JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
   const anyDirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion);
   useEffect(() => {
@@ -134,7 +135,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
-      : section === '표시사항' ? { label: draft.label, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: draft.assets };
+      : section === '표시사항' ? { label: draft.label, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: draft.assets, ...(editingDetail ? { seo: { description: draft.seo.description } } : {}) };
     try {
       const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent; error?: string };
@@ -143,7 +144,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       const saved = body.content;
       setContent(saved);
       // Preserve unsaved work in other tabs when this section is saved.
-      setDraft(previous => ({ ...previous, [draftKey]: draftFrom(saved)[draftKey], ...(section==='표시사항'?{labelLayout:draftFrom(saved).labelLayout,customLabels:draftFrom(saved).customLabels}:{}) }));
+      setDraft(previous => ({ ...previous, [draftKey]: draftFrom(saved)[draftKey], ...(editingDetail ? { seo: { ...previous.seo, description: saved.seo.description.value } } : {}), ...(section==='표시사항'?{labelLayout:draftFrom(saved).labelLayout,customLabels:draftFrom(saved).customLabels}:{}) }));
       setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '저장하지 못했습니다.'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
@@ -197,8 +198,10 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         {!imageKeys.length && <p>위 업로드 버튼으로 이미지 파일을 추가하면 역할을 지정할 수 있습니다.</p>}
         {imageKeys.length > 0 && <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}><button type="button" className={`btn ${assetFilter === 'all' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'all'} onClick={() => setAssetFilter('all')}>전체 {imageKeys.length}</button>{(Object.entries(assetRoles) as [AssetRole, string][]).map(([role, label]) => <button type="button" key={role} className={`btn ${assetFilter === role ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === role} onClick={() => setAssetFilter(role)}>{label} {draft.assets[role].filter(key => imageKeys.includes(key)).length}</button>)}<button type="button" className={`btn ${assetFilter === 'unassigned' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'unassigned'} onClick={() => setAssetFilter('unassigned')}>미지정 {orderedEditorImages(imageKeys, draft.assets, 'unassigned').length}</button></div><small style={{ color: '#64748b' }}>역할별 저장 순서로 표시합니다. ↑↓로 순서를 바꾸고 이미지를 누르면 크게 볼 수 있습니다.</small></>}
         {unavailableImages.length > 0 && <div className="panel-note"><div><p>현재 상품 이미지 목록에 없는 역할 참조가 {unavailableImages.length}개 있습니다.</p><button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, assets: Object.fromEntries(Object.entries(previous.assets).map(([role, keys]) => [role, keys.filter(key => imageKeys.includes(key))])) as Draft['assets'] }))}>연결이 없는 역할 참조 제외</button></div></div>}
+        {editingDetail && <label className="field"><span>상세 설명</span><textarea aria-label="상세페이지 설명" value={draft.seo.description} maxLength={20000} rows={6} onChange={event=>setDraft(previous=>({...previous,seo:{...previous.seo,description:event.target.value}}))}/><small>1단계 설명과 같은 내용입니다. 이미지와 함께 저장하면 7단계 자동 HTML과 상세페이지 검토 파일에 반영됩니다. 7단계에서 직접 수정한 HTML은 유지됩니다.</small></label>}
         <div className="image-edit-workspace">
         <section className="image-edit-canvas" aria-label={focusedAssetRole==='detail'?'상세페이지 배치 미리보기':'선택 이미지 미리보기'}>
+          {editingDetail && draft.seo.description && <div aria-label="상세 설명 미리보기" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',padding:16}}>{draft.seo.description}</div>}
           {detailPreview.length>0 ? <div className="detail-image-strip">{detailPreview.map((key,index)=><figure key={key}><figcaption>{draft.assets.detailTop.includes(key)?'상단 이미지':draft.assets.detailBottom.includes(key)?'하단 이미지':`본문 이미지 ${draft.assets.detail.indexOf(key)+1}`}</figcaption>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`상세페이지 순서 ${index+1}`} loading="lazy"/>
@@ -232,7 +235,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
           <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt="" width={64} height={64}/><span>{index+1}</span>
         </button>)}</div>}
       </div>}
-      <div className="content-editor-save"><span>{dirty ? '저장하지 않은 변경' : content.revision ? `저장 버전 ${content.revision}` : '아직 저장한 내용 없음'}{section==='이미지'&&<small>대표·추가·상세 이미지의 역할과 순서는 함께 저장됩니다.</small>}</span><button type="button" className="btn primary" disabled={busy || !dirty || conflict} onClick={() => void save()}>{busy ? '저장 중…' : section==='이미지'?'이미지 역할·순서 저장':`${section} 저장`}</button></div>
+      <div className="content-editor-save"><span>{dirty ? '저장하지 않은 변경' : content.revision ? `저장 버전 ${content.revision}` : '아직 저장한 내용 없음'}{section==='이미지'&&<small>대표·추가·상세 이미지의 역할과 순서는 함께 저장됩니다.</small>}</span><button type="button" className="btn primary" disabled={busy || !dirty || conflict} onClick={() => void save()}>{busy ? '저장 중…' : editingDetail?'상세 설명·이미지 저장':section==='이미지'?'이미지 역할·순서 저장':`${section} 저장`}</button></div>
     </fieldset>}
   </div>;
 }

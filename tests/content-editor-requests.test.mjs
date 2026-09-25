@@ -7,13 +7,13 @@ import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
-function harness(handle){
+function harness(handle, focusedAssetRole){
  const slots=[],effects=[],cleanups=[],cache=new Map();let index=0,first=true,notices=0,content;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useCallback:fn=>fn,useEffect(fn){if(first)effects.push(fn);}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>handle(url,init,content)??Response.json({content}),require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-content.ts');content=model.emptyProductContent('p');
  const component=load('app/components/product-content-editor.tsx').ProductContentEditor;
- const render=(section='이미지')=>{index=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png"]'},section,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
+ const render=(section='이미지')=>{index=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png"]'},section,focusedAssetRole,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
  const button=(name,section)=>nodes(render(section)).find(n=>n.type==='button'&&n.props.children===name);
  return{render,button,model,load,get notices(){return notices;},async start(){render();effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
 }
@@ -38,4 +38,22 @@ test('label fill and save cannot overlap; unmount ignores late fill and write re
   if(operation==='fill'){fill();fill();save();}else{save();save();fill();}
   assert.equal(count,1);h.unmount();assert.equal(signal.aborted,true);finish();await settle();assert.equal(h.notices,0);assert.doesNotMatch(JSON.stringify(h.render('표시사항')),/저장 완료|입력을 채웠습니다/);
  }
+});
+
+test('detail step saves explanation and image roles together while preserving an unsaved title',async()=>{
+ let saved,patch;
+ const h=harness((url,init,content)=>{if(init?.method==='PATCH'){patch=JSON.parse(init.body).patch;saved=h.model.applyContentPatch(saved??content,patch,'2026-09-25T03:00:00Z');return Response.json({content:saved});}},'detail');
+ await h.start();
+ nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.onChange({target:{value:'미저장 상품명'}});
+ const edit=nodes(h.render()).find(n=>n.props?.['aria-label']==='상세페이지 설명');
+ edit.props.onChange({target:{value:'번역 설명\n<script>실행 금지</script>'}});
+ nodes(h.render()).find(n=>n.props?.['aria-label']==='이미지 1 역할').props.onChange({target:{value:'detail'}});
+ const save=h.button('상세 설명·이미지 저장');assert.equal(save.props.disabled,false);save.props.onClick();await settle();
+ assert.deepEqual(patch.seo,{description:'번역 설명\n<script>실행 금지</script>'});assert.deepEqual(patch.assets.detail,['owner/a.png']);
+ assert.equal(nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.value,'미저장 상품명');
+ assert.equal(h.button('상세 설명·이미지 저장').props.disabled,true);
+ const resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:{id:'p',title:'상품',image_keys:'["owner/a.png"]',source_price_cny:1,supply_price:1,sale_price:2,msrp:3},content:saved,options:h.load('app/product-options.ts').emptyProductOptions('p'),settings:h.load('app/workspace-settings.ts').defaultSettings});
+ assert.equal(resolved.rows[0].fields.detailImages.value,'owner/a.png');assert.equal(resolved.rows[0].fields.detailHtml.value,'<p>번역 설명<br>&lt;script&gt;실행 금지&lt;/script&gt;</p>');
+ nodes(h.render()).find(n=>n.props?.['aria-label']==='상세페이지 설명').props.onChange({target:{value:''}});
+ assert.equal(h.button('상세 설명·이미지 저장').props.disabled,false);h.button('상세 설명·이미지 저장').props.onClick();await settle();assert.equal(patch.seo.description,'');assert.equal(saved.seo.description.provenance,'manual');
 });
