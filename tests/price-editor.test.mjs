@@ -11,6 +11,7 @@ function harness(){
  const slots=[];let cursor=0,changed=false,initial={...base},fail=false;
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/price-editor.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,require(name){
   if(name==='react')return{useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return[slots[i],v=>{if(!Object.is(slots[i],v))changed=true;slots[i]=v;}];}};
+  if(name==='@/app/components/option-price-preview')return{OptionPricePreview:()=>null};
   if(name==='@/app/pricing')return{calculatePrice:(_cost,p)=>({supplyPrice:p.exchangeRate,salePrice:1,msrp:1,marginKrw:1,actualMargin:1})};
   return native(name);
  }});

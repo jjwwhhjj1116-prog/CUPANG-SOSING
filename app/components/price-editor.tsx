@@ -1,13 +1,14 @@
 'use client';
 import { useState } from 'react';
 import { calculatePrice, type PricePolicy } from '@/app/pricing';
+import { OptionPricePreview } from '@/app/components/option-price-preview';
 
 function samePolicy(a: PricePolicy, b: PricePolicy) {
   return (['exchangeRate','supplyMargin','coupangMargin','minimumMargin','msrpMultiple','roundingUnit'] as const).every(key => Object.is(a[key], b[key]))
     && (a.roundingMode ?? 'up') === (b.roundingMode ?? 'up');
 }
 
-export function PriceEditor({ sourcePrice, initial, onSave }: { sourcePrice: number; initial: PricePolicy; onSave: (policy: PricePolicy) => Promise<void> }) {
+export function PriceEditor({ sourcePrice, initial, onSave, productId, version }: { sourcePrice: number; initial: PricePolicy; onSave: (policy: PricePolicy) => Promise<void>; productId?:string; version?:string }) {
   const [policy, setPolicy] = useState(initial);
   const [savedPolicy, setSavedPolicy] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -27,6 +28,7 @@ export function PriceEditor({ sourcePrice, initial, onSave }: { sourcePrice: num
       <label className="field"><span>가격 처리 단위</span><select value={policy.roundingUnit} disabled={busy} onChange={e=>{setPolicy({...policy,roundingUnit:Number(e.target.value)});setMessage('');}}>{[1,10,100,1000].map(unit=><option key={unit} value={unit}>{unit}원</option>)}</select></label><label className="field"><span>가격 처리 방식</span><select value={policy.roundingMode??'up'} disabled={busy} onChange={e=>setPolicy({...policy,roundingMode:e.target.value as 'up'|'nearest'})}><option value="up">올림 (기존 방식)</option><option value="nearest">반올림</option></select></label></div>
     {preview&&<><div className="price-formula"><div><small>공급가</small><strong>{won(preview.supplyPrice)}</strong></div><b>→</b><div><small>판매가</small><strong>{won(preview.salePrice)}</strong></div><b>→</b><div><small>MSRP</small><strong>{won(preview.msrp)}</strong></div></div><div className="margin-card"><span>부대비용 제외 공급 마진</span><strong>{won(preview.marginKrw)}</strong><em>{preview.actualMargin.toFixed(1)}%</em></div></>}
     <p>선택한 단위로 가격을 처리합니다. 반올림 결과가 원가와 최소 공급 마진 합계보다 낮으면 해당 금액 이상으로 올림합니다. 기본 설정 변경은 이미 저장된 상품에 자동 적용되지 않습니다.</p>
+    {productId&&version&&<OptionPricePreview productId={productId} version={version} policy={policy}/>}
     {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     <button className="btn primary" disabled={busy||!!error}>{busy?'저장 중…':'이 가격 저장'}</button>
   </form>;
