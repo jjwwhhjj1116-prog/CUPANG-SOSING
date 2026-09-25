@@ -40,6 +40,20 @@ function fixture() {
 const context = (input = fixture()) => ({ schema: model.getQuotationSchema(input.categoryId), optionIds: input.options.rows.map(row => row.id), ownedImageKeys: JSON.parse(input.product.image_keys), overrides: input.overrides });
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
 
+test('single translation content save reaches quotation and export while retaining quotation overrides',()=>{
+ const input=fixture();input.content=contentModel.emptyProductContent('p1');
+ const job={productId:'p1',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 材质'}]}},result:{draft:{title:'한번에 작성한 상품명',keywords:['수납'],description:'번역 설명',attributes:[{sourceIndex:0,name:'재질',value:'면'}]}}};
+ const plan=load('app/translation-batch-adoption.ts').translationBatchAdoption(input.content,job,'v');
+ input.content=contentModel.applyContentPatch(input.content,plan.input.patch,'now');
+ let result=model.resolveQuotationFields(input);
+ assert.equal(result.rows[1].fields.title.value,'한번에 작성한 상품명');
+ assert.equal(result.rows[1].fields.noticeMaterial.value,'면');
+ const rows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,result,JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`})));
+ assert.equal(rows[0].noticeMaterial,'면');
+ input.overrides={common:{title:'견적 전용 상품명'},options:{red:{noticeMaterial:''}}};result=model.resolveQuotationFields(input);
+ assert.equal(result.rows[1].fields.title.value,'견적 전용 상품명');assert.equal(result.rows[1].fields.noticeMaterial.value,'');
+});
+
 test('bulk option image edits reach quotation and preserve manual overrides and common-image fallback',()=>{
  const input=fixture(),tools=load('app/option-editor-tools.ts'),keys=JSON.parse(input.product.image_keys);
  const rows=optionModel.optionInputs(input.options);

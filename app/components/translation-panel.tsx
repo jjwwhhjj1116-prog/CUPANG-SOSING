@@ -9,6 +9,7 @@ import { translationAdoptionInput, translationSeoFields, type TranslationSeoFiel
 import { collectedTranslationAttributes } from '@/app/collected-translation-attributes';
 import { translationLabelAdoption, type TranslationLabelMapping } from '@/app/translation-label-adoption';
 import { TranslationLabelMappingEditor } from '@/app/components/translation-label-mapping';
+import { TranslationBatchPreview } from '@/app/components/translation-batch-preview';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
@@ -153,13 +154,13 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     void action({ action: 'prepare', expectedVersion: version, idempotencyKey: crypto.randomUUID(),
       source: { title: sourceTitle, description, attributes: pairs, provenance: 'manual', reference: sourceReference, ...(includeGuidance&&(guidance.features.trim()||guidance.keywords.trim())?{guidance}:{}) } });
   }
-  async function adopt(fields: readonly TranslationSeoField[], labels?: readonly TranslationLabelMapping[]) {
+  async function adopt(fields: readonly TranslationSeoField[], labels?: readonly TranslationLabelMapping[], batch?: ReturnType<typeof translationAdoptionInput>) {
     if (!content || !job?.result) return;
     const controller=beginRequest();if(!controller)return;
     setBusy(true); setError(''); setNotice('');
     try {
       const response = await fetch(`/api/products/${productId}/content`, { signal:controller.signal, method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(labels ? translationLabelAdoption(content, job, version, labels).input : translationAdoptionInput(content, job, version, fields)) });
+        body: JSON.stringify(batch ?? (labels ? translationLabelAdoption(content, job, version, labels).input : translationAdoptionInput(content, job, version, fields))) });
       const value = await response.json() as { content?: ProductContent; error?: string };if(controller.signal.aborted)return;
       if (!response.ok || !value.content) throw Error(value.error ?? '초안을 적용하지 못했습니다.');
       setContent(value.content); setSelectedFields([]); setNotice('선택한 항목을 함께 저장했습니다. 선택하지 않은 편집 항목은 보존했습니다.'); onContentSaved?.();
@@ -195,6 +196,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
         {job.result && <>
           <p>AI 생성 초안 · 출처 검토 필요 · 기존 콘텐츠에 자동 적용하지 않았습니다.</p>
+          {content && <TranslationBatchPreview content={content} job={job} version={version} disabled={busy || job.productVersion !== version} onApply={input => void adopt([], undefined, input)} />}
           {job.result.usage && <p>입력 {job.result.usage.inputTokens.toLocaleString()}토큰 · 출력 {job.result.usage.outputTokens.toLocaleString()}토큰</p>}
           {job.result.draft.warnings.length > 0 && <ul>{job.result.draft.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
           {translationSeoFields.map(field => <div key={field} className="translation-field"><label><input type="checkbox" checked={selectedFields.includes(field)} disabled={busy || !content || job.productVersion !== version} onChange={event => setSelectedFields(previous => event.target.checked ? [...previous, field] : previous.filter(item => item !== field))} />함께 저장할 항목 선택</label><strong>{field === 'title' ? '한국어 상품명' : field === 'keywords' ? 'SEO 검색어' : '한국어 설명'}</strong><pre>{Array.isArray(job.result!.draft[field]) ? (job.result!.draft[field] as string[]).join(', ') : job.result!.draft[field]}</pre><details><summary>현재 저장된 내용과 비교</summary><pre>{content ? JSON.stringify(content.seo[field].value, null, 2) : '불러오지 못함'}</pre></details><button className="btn" type="button" disabled={busy || !content || job.productVersion !== version} onClick={() => void adopt([field])}>검토한 초안을 이 항목에 적용 · 기존 내용 교체</button></div>)}

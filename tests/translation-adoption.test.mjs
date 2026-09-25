@@ -6,6 +6,24 @@ import ts from 'typescript';
 function load(file) { const exports={}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,Error,require:name=>load(name.slice(2)+'.ts')}); return exports; }
 const {translationAdoptionInput}=load('app/translation-adoption.ts');
 const {emptyProductContent,applyContentPatch}=load('app/product-content.ts');
+const {translationBatchAdoption}=load('app/translation-batch-adoption.ts');
+
+test('batch adoption saves SEO and exact label matches once while protecting manual blanks and unrelated assets',()=>{
+ const content=emptyProductContent('p');
+ content.seo.title={value:'原文',provenance:'collected',updatedAt:'before'};
+ content.seo.description={value:'',provenance:'manual',updatedAt:'before'};
+ content.label.countryOfOrigin={value:'',provenance:'manual',updatedAt:'before'};
+ const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 材质'},{name:'상품속성: 国'}]}},result:{draft:{title:'번역 제목',keywords:['검색어'],description:'자동 설명',attributes:[{sourceIndex:0,name:'재질',value:'면'},{sourceIndex:1,name:'제조국',value:'중국'}]}}};
+ const before=JSON.stringify({content,job});const plan=translationBatchAdoption(content,job,'v');
+ assert.equal(plan.preview.length,3);assert.equal(plan.input.expectedRevision,0);
+ const next=applyContentPatch(content,plan.input.patch,'now');
+ assert.equal(next.revision,1);assert.equal(next.seo.title.value,'번역 제목');assert.equal(next.label.material.value,'면');
+ assert.equal(next.seo.description.value,'');assert.equal(next.label.countryOfOrigin.value,'');assert.equal(JSON.stringify(next.assets),JSON.stringify(content.assets));
+ assert.equal(JSON.stringify({content,job}),before);assert.equal(translationBatchAdoption(next,job,'v').input,null);
+ assert.equal(translationBatchAdoption(next,job,'v').preview.length,0);
+ for(const change of [{productId:'other'},{productVersion:'old'},{status:'running'},{result:null}])assert.throws(()=>translationBatchAdoption(content,{...job,...change},'v'));
+ job.result.draft.title='x'.repeat(501);assert.throws(()=>translationBatchAdoption(content,job,'v'));assert.equal(content.revision,0);
+});
 function fixture(){
  const content=applyContentPatch(emptyProductContent('p'),{seo:{title:'수동 제목',keywords:['유지'],description:'수동 설명'},label:{material:'면'}},'before');
  const job={productId:'p',productVersion:'v',status:'completed',result:{draft:{title:'번역 제목',keywords:['번역 검색어'],description:'번역 설명'}}};
