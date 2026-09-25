@@ -43,3 +43,19 @@ test('abort while first request is pending prevents later requests and late call
  controller.abort();resolve(response(saved(intakeQueueRequests([row(1)],'price')[0].body)));await run;
  assert.equal(calls,1);assert.equal(updates,0);
 });
+
+test('preflight reports every invalid row and both duplicates without sending requests or changing input',async()=>{
+ const rows=[row(1),{...row(2),url:row(1).url},{...row(3),url:'invalid',profile:{...profile(3),revision:0},keywords:'x'.repeat(2001)},row(4)];
+ const before=JSON.stringify(rows),states=[];let calls=0;
+ await assert.rejects(submitIntakeQueue(rows,'price',{signal:new AbortController().signal,fetcher:async()=>{calls++;},onJobs(){},onRow:(id,state)=>states.push({id,...state})}),/3개 행/);
+ assert.equal(calls,0);assert.equal(states.length,3);assert.match(states.find(s=>s.id==='1').message,/1, 2행/);assert.match(states.find(s=>s.id==='2').message,/중복/);
+ assert.match(states.find(s=>s.id==='3').message,/카테고리/);assert.match(states.find(s=>s.id==='3').message,/2,000/);assert.ok(!states.some(s=>s.id==='4'));assert.equal(JSON.stringify(rows),before);
+ const corrected=rows.filter(r=>r.id!=='2').map(r=>r.id==='3'?row(3):r);
+ await submitIntakeQueue(corrected,'price',{signal:new AbortController().signal,fetcher:async(_url,init)=>{calls++;return response(saved(JSON.parse(init.body)));},onJobs(){},onRow(){}});assert.equal(calls,3);
+});
+
+test('saved rows are excluded from duplicate checks and cancelled preflight emits no updates',async()=>{
+ const rows=[{...row(1),status:'saved'},{...row(2),url:row(1).url}];assert.equal(intakeQueueRequests(rows,'price').length,1);
+ const controller=new AbortController();controller.abort();let updates=0;
+ await submitIntakeQueue([{...row(1),url:'invalid'}],'price',{signal:controller.signal,fetcher:async()=>{updates++;},onJobs(){updates++;},onRow(){updates++;}});assert.equal(updates,0);
+});

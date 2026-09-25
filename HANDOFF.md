@@ -2109,3 +2109,12 @@ AI등록 화면 확인:
 - 검증: 카테고리 UI 요청4/4, 전체711/711, TypeScript·변경 파일 ESLint·Cloudflare build/check·diff check 통과. 신규 검사는 변경된 코드 재확인, 삭제/조회 실패/무효 revision, 기존 설정 최신 revision·template 반환, abort 후 늦은 응답 차단을 포함한다. 모의 응답 기준이며 실제 Chrome/공식 Excel/Hub 접수 검증은 아님. outputs/step183-*.log.
 - Cloudflare 배포 version8110a017-c9ba-4ef5-bcd9-65808034520f. DB 변경·유료AI·운영상품 등록 없음.
 - 남은 작업/다음 시작점: 실제1688 공급원 연결, 이미지 번역 실검증, 전 카테고리 Couplus 신규 기본값/공식 Excel 대조, Hub POST501 실행 어댑터·접수는 미완성. 기존 Chrome 탭 [] 원인은 미확인. 새 Chrome/프로필이나 사이트 안전 정책 차단 우회를 사용하지 않았다. 이번 작업은 오래된 설정 연결 문제의 해결이며 전체 자동등록 완료가 아니다.
+
+## 184. 상품 대기열 전체 오류·중복 행 일괄 표시 — 2026-09-25
+
+- 시작 mainfe78adb, clean. fetch 후 origin/main 0/0. 기존 supplierChrome.tabs.list()는 오류 없이 [] 반환. 새 Chrome/프로필/탭을 열지 않았으며 로그아웃이나 확장 미설치로 단정하지 않았다. 실제 UI/쿠플러스 대조는 수행하지 못했다.
+- 기존 대기열 검증은 첫 오류에서 중단하여 여러 오류를 한 번에 찾기 어려웠다. validateIntakeQueue가 URL·카테고리 revision·특징/키워드 길이를 모든 미접수 행에서 수집하고, 동일 offer ID의 모든 중복 행에 행 번호/상품 번호를 표시하도록 변경했다.
+- submitIntakeQueue는 검사 오류를 각 행 상태에 표시한 뒤 서버 전송 전에 중단한다. 정상 행의 원문/설정은 보존하고, 수정 후 다시 요청할 수 있다. 접수 완료 행은 검사/재전송에서 제외한다. 이미 취소된 실행은 검증 콜백도 발생시키지 않는다. 실제 수집기로 동작하는 변경이 아니다.
+- 검증: 관련6/6, 전체713/713, TypeScript·변경 파일 ESLint·Cloudflare build/check 통과. 새 검사는 복수 오류+중복 양쪽 표시, 네트워크0회, 입력 불변성, 수정 후 재시도, 접수 행 제외, 사전 취소 무콜백이다. 모의 API 기준. outputs/step184-*.log.
+- Cloudflare 배포 versiona81afd63-b8d2-4732-ac76-2638f8ad3b57. DB 변경·유료AI·운영상품 등록 없음.
+- 남은 핵심/다음 시작점: 기존 사용자 Chrome 연결 문제 원인 미확인, 전 카테고리 Couplus 기본값/공식 Excel 대조·실제1688 수집 공급원·이미지 번역 실검증·Hub POST501 전송 어댑터와 접수는 미완성이다. 사이트 안전 정책 차단을 우회하지 않는다. 전체 자동등록 완료로 보고하지 않는다.

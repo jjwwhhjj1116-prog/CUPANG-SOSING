@@ -8,19 +8,31 @@ export type IntakeRow = {
 export function intakeRow(profile: CategoryProfile, id: string): IntakeRow {
   return { id, profile, url: '', features: '', keywords: '', status: 'draft', message: '' };
 }
-export function intakeQueueRequests(rows: readonly IntakeRow[], goal: string) {
+export function validateIntakeQueue(rows: readonly IntakeRow[], goal: string) {
   if (!rows.length || rows.length > 50) throw Error('상품을 1~50개 추가해주세요.');
-  const seen = new Set<string>();
-  return rows.filter(row => row.status !== 'saved').map(row => {
-    let entry;
+  const errors = new Map<string, string[]>();
+  const seen = new Map<string, string[]>();
+  const add = (id: string, message: string) => errors.set(id, [...(errors.get(id) ?? []), message]);
+  const requests = rows.filter(row => row.status !== 'saved').flatMap(row => {
+    let entry: ReturnType<typeof parseCollectionRequest>[number] | undefined;
     try { [entry] = parseCollectionRequest({ urls: [row.url], goal }); }
-    catch (cause) { throw Error(`${rows.indexOf(row) + 1}행: ${cause instanceof Error ? cause.message : 'URL을 확인해주세요.'}`); }
-    if (seen.has(entry.offerId)) throw Error(`같은 상품 URL이 여러 행에 있습니다: ${entry.offerId}. 서로 다른 카테고리로 중복 접수하지 않도록 URL을 확인해주세요.`);
-    seen.add(entry.offerId);
-    if (!/^[a-f0-9-]{36}$/.test(row.profile.id) || !Number.isSafeInteger(row.profile.revision) || row.profile.revision < 1) throw Error('카테고리를 다시 선택해주세요.');
-    if (row.features.length > 2000 || row.keywords.length > 2000) throw Error('특징·키워드는 각각 2,000자까지 입력해주세요.');
-    return { id: row.id, body: { urls: [entry.sourceUrl], goal, profileId: row.profile.id, expectedProfileRevision: row.profile.revision, features: row.features, keywords: row.keywords } };
+    catch (cause) { add(row.id, cause instanceof Error ? cause.message : 'URL을 확인해주세요.'); }
+    if (!/^[a-f0-9-]{36}$/.test(row.profile.id) || !Number.isSafeInteger(row.profile.revision) || row.profile.revision < 1) add(row.id, '카테고리를 다시 선택해주세요.');
+    if (row.features.length > 2000 || row.keywords.length > 2000) add(row.id, '특징·키워드는 각각 2,000자까지 입력해주세요.');
+    if (!entry) return [];
+    seen.set(entry.offerId, [...(seen.get(entry.offerId) ?? []), row.id]);
+    return [{ id: row.id, body: { urls: [entry.sourceUrl], goal, profileId: row.profile.id, expectedProfileRevision: row.profile.revision, features: row.features, keywords: row.keywords } }];
   });
+  for (const [offerId, ids] of seen) if (ids.length > 1) {
+    const numbers = ids.map(id => rows.findIndex(row => row.id === id) + 1).join(', ');
+    for (const id of ids) add(id, `같은 상품 URL 중복 · ${numbers}행 · 상품 ${offerId}. 사용할 행 하나만 남겨주세요.`);
+  }
+  return { requests, errors: [...errors].map(([id, messages]) => ({ id, row: rows.findIndex(item => item.id === id) + 1, messages })) };
+}
+export function intakeQueueRequests(rows: readonly IntakeRow[], goal: string) {
+  const result = validateIntakeQueue(rows, goal);
+  if (result.errors.length) throw Error(result.errors.map(item => `${item.row}행: ${item.messages.join(' ')}`).join('\n'));
+  return result.requests;
 }
 
 /** Existing endpoint keeps owner checks, profile revision checks and offer deduplication. */
@@ -29,7 +41,13 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
   onRow: (id: string, state: Pick<IntakeRow, 'status' | 'message'>) => void;
   onJobs: (jobs: CollectionJob[]) => void;
 }) {
-  const requests = intakeQueueRequests(rows, goal);
+  if (options.signal.aborted) return;
+  const validation = validateIntakeQueue(rows, goal);
+  if (validation.errors.length) {
+    for (const error of validation.errors) options.onRow(error.id, { status: 'error', message: error.messages.join(' ') });
+    throw Error(`${validation.errors.length}개 행의 입력을 확인해주세요. 각 행에 오류를 표시했습니다. 아직 요청을 전송하지 않았습니다.`);
+  }
+  const requests = validation.requests;
   for (const request of requests) {
     if (options.signal.aborted) break;
     try {
