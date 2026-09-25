@@ -1369,3 +1369,14 @@ test('Excel mapping coverage includes explicit automatic empty choices but not g
  assert.equal(coverage(resolved,{mappings:[{field:'storageMaterial'}]}).length,0);assert.equal(JSON.stringify(resolved),before);
  for(const change of [{type:'text'},{choices:[{value:'yes',label:'예'}]}])assert.equal(coverage({schema:{fields:[{...field,...change}]},rows:[row('a','content')]},{mappings:[]}).length,0);
 });
+
+test('exported label review follows final option values, empty choices and visible custom labels',()=>{
+ const render=load('app/exports/quotation-labels.ts').quotationLabelsPage;
+ const input=fixture();input.overrides={common:{noticeMaterial:'견적 공통 재질'},options:{red:{noticeMaterial:'',title:'옵션 <script>bad()</script>'}}};
+ input.content.customLabels=[{id:'custom-1',name:'보관 안내',value:'건조한 곳',visible:true},{id:'custom-2',name:'숨김 항목',value:'노출 금지',visible:false}];
+ const resolved=model.resolveQuotationFields(input),before=JSON.stringify(resolved);const html=render(resolved);
+ assert.ok(html.includes('옵션 &lt;script&gt;bad()&lt;/script&gt;'));assert.ok(!html.includes('<script>'));assert.ok(html.includes('[공란]'));assert.ok(html.includes('건조한 곳'));assert.ok(!html.includes('노출 금지'));
+ assert.ok(!html.includes('견적 공통 재질'));assert.equal(JSON.stringify(resolved),before);
+ resolved.rows.find(r=>r.optionId==='red').included=false;assert.ok(!render(resolved).includes('bad()'));
+ const missing={schema:{categoryId:null,fields:[]},rows:[{optionId:'a',optionLabel:'미입력',included:true,fields:{}}]};assert.match(render(missing),/값이 부족/);
+});
