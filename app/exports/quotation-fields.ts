@@ -63,6 +63,9 @@ export function resolvedQuotationRows(saved: QuotationExportSource, resolved: Re
     const option = row.optionId === null ? null : saved.options.rows.find(option => option.id === row.optionId);
     if (row.optionId !== null && (!option || option.unitCostCny === null)) throw new Error('포함 옵션의 원가와 구성 수량을 확인해주세요.');
     const data: QuotationRowData = {
+      selectedEmptyChoices: resolved.schema.fields.filter(field => field.type === 'select'
+        && field.choices?.some(choice => choice.value === '')
+        && row.fields[field.id]?.value === '' && row.fields[field.id]?.source !== 'empty').map(field => field.id),
       sourceUrl: saved.product.source_url, sourcePriceCny: option ? optionSourceCostCny(option.unitCostCny!, option.unitsPerPack) : saved.product.source_price_cny,
       ...(option ? { skuName: option.translatedName || option.originalName, skuId: option.supplierSku } : {}),
       importer: savedTextOrFallback(saved.content.label.importer, saved.settings.importer),

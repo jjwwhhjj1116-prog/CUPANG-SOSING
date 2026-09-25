@@ -1,8 +1,8 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
-import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type CategoryField, type CategoryProfileInput } from '@/app/category-profiles';
+import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type QuotationRowValues, type CategoryProfileInput } from '@/app/category-profiles';
 import { inspectXlsxArchive, readXlsxArchive, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
 
-export type QuotationData = Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>>;
+export type QuotationData = QuotationRowValues;
 export type QuotationCellIssue = { row: number; column: number; header: string };
 export type MappedQuotationReport = {
   verification: 'draft'; rowCount: number; dataStartRow: number;

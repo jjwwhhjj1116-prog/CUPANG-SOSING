@@ -345,7 +345,8 @@ test('explicit choice labels match preview and exported cells while raw codes an
  const fields={schemaVersion:1,productId:'test',revision:1,overrides:{common:{[field.id]:choice.value,title:''},options:{second:{[field.id]:''}}},updatedAt:product.updated_at};
  const route=routeWith({readProfile:async()=>selected,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
  const reviewed=await route.POST(request(preview),context);assert.equal(reviewed.status,200);const review=await reviewed.json();
- assert.deepEqual(review.rows[0],[choice.value,choice.label,'']);assert.deepEqual(review.rows[1],['','','']);
+ const emptyLabel=field.choices.find(choice=>choice.value==='')?.label??'';
+ assert.deepEqual(review.rows[0],[choice.value,choice.label,'']);assert.deepEqual(review.rows[1],['',emptyLabel,'']);
  const response=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(response.status,200);
  const files=unzipSync(new Uint8Array(await response.arrayBuffer()));const csv=new TextDecoder().decode(files['quotation-filled.csv']);assert.ok(csv.includes(`"${choice.value}","${choice.label}",""`));
  const doc=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));assert.equal(doc.rows[0].fields[field.id].value,choice.value);assert.equal(fields.overrides.common[field.id],choice.value);

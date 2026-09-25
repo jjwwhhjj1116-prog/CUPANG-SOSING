@@ -493,6 +493,10 @@ export const categoryFields = {
   label: '표시사항 파일', constant: '고정값',
 } as const;
 export type CategoryField = keyof typeof categoryFields;
+/** Resolver provenance distinguishes an explicit empty-code choice from no input. */
+export type QuotationRowValues = Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>> & {
+  selectedEmptyChoices?: readonly string[];
+};
 export function categoryFieldScope(field: string): string | null {
   return field.startsWith('marathon_') ? '103495' : field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
 }
@@ -594,7 +598,7 @@ export function validateQuotationChoiceFormats(profile: CategoryProfileInput, fi
   }
 }
 
-export function mapQuotationRow(profile: CategoryProfileInput, data: Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>>, fields: readonly {id:string;type:string;choices?:readonly {value:string;label:string}[]}[] = []): { values: (string | number)[]; missing: string[] } {
+export function mapQuotationRow(profile: CategoryProfileInput, data: QuotationRowValues, fields: readonly {id:string;type:string;choices?:readonly {value:string;label:string}[]}[] = []): { values: (string | number)[]; missing: string[] } {
   const valid = validateCategoryProfile(profile);
   if (!valid.template) throw new Error('견적서 양식을 먼저 연결해주세요.');
   if (fields.length) validateQuotationChoiceFormats(valid, fields);
@@ -606,8 +610,9 @@ export function mapQuotationRow(profile: CategoryProfileInput, data: Partial<Rec
     if (mapping.choiceFormat === 'label') {
       const field = fields.find(field => field.id === mapping.field);
       if (field?.type !== 'select' || !field.choices) throw new Error(`${mapping.column + 1}열: 현재 카테고리의 선택형 항목에만 표시 문구 출력을 사용할 수 있습니다.`);
-      // Empty input remains empty, including an intentional manual clear.
-      if (normalized !== '') {
+      // Legacy rows without provenance keep blanks. Only a resolver-confirmed
+      // empty-code selection can become its display label.
+      if (normalized !== '' || (value === '' && data.selectedEmptyChoices?.includes(mapping.field))) {
         const choice = field.choices.find(choice => choice.value === String(normalized));
         if (!choice) throw new Error(`${mapping.column + 1}열: 저장값이 현재 선택 목록에 없습니다. 견적 입력을 확인해주세요.`);
         normalized = choice.label;

@@ -289,6 +289,25 @@ test('XLSX choice label output uses category choices while preserving blank cell
 });
 
 // Synthetic workbooks exercise our file writer, not the unacquired official template.
+test('explicit empty-code choices survive resolver and XLSX label output without filling missing input', async () => {
+ const field={id:'lidIncluded',type:'select',choices:[{value:'',label:'해당사항없음'}]};
+ const saved={product:{source_url:'synthetic://test',source_price_cny:1},content:{label:{importer:{value:''},contact:{value:''},material:{value:''},countryOfOrigin:{value:''}}},settings:{importer:'',serviceContact:''},options:{rows:[]}};
+ for(const source of ['empty','manual-common','manual-option','couplus-default']) {
+  const resolved={schema:{fields:[field]},rows:[{included:true,optionId:null,fields:{lidIncluded:{value:'',source}}}]};
+  const before=JSON.stringify(resolved);
+  const rows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(saved,resolved,[]);
+  assert.deepEqual(Array.from(rows[0].selectedEmptyChoices),source==='empty'?[]:['lidIncluded']);
+  const input=await inputFrom();input.dataStartRow=10;input.profile.categoryId='80719';input.profile.mappings=[{column:0,field:'lidIncluded',required:true,choiceFormat:'label'},{column:1,field:'lidIncluded',required:false,choiceFormat:'value'}];input.rows=rows;
+  const output=await createMappedQuotation(input);
+  const expected=source==='empty'?'':'해당사항없음';
+  assert.equal(output.values[0][0],expected);assert.equal(output.values[0][1],'');
+  assert.equal(output.report.missingRequired.length,source==='empty'?1:0);
+  const archive=await reader.readXlsxArchive(output.bytes.buffer);
+  assert.ok(decode(archive.get('xl/worksheets/sheet1.xml')).includes(`<t xml:space="preserve">${expected}</t>`));
+  assert.equal(JSON.stringify(resolved),before);
+ }
+});
+
 const categoryRoundtripIds=[...JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-product-schemas-2026-09-23.json',import.meta.url),'utf8')).records.map(record=>record.categoryId),'81452','103495','64497','77442'];
 for(const categoryId of categoryRoundtripIds)test(`category ${categoryId}: saved stages round-trip through an actual XLSX with manual overrides and excluded options`,async()=>{
  const schemaModel=load('app/quotation-schema.ts'),contentModel=load('app/product-content.ts'),optionModel=load('app/product-options.ts');

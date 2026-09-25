@@ -1,4 +1,4 @@
-import type { CategoryField } from '@/app/category-profiles';
+import type { QuotationRowValues } from '@/app/category-profiles';
 import { contentDetailImageKeys, savedTextOrFallback, type ProductContent } from '@/app/product-content';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { ProductRecord } from '@/db/queries';
@@ -10,7 +10,7 @@ export type QuotationOption = {
   id: string; originalName: string; translatedName: string; supplierSku: string;
   unitCostCny: number | null; unitsPerPack: number; included: boolean; imageKey: string | null;
 };
-export type QuotationRowData = Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>>;
+export type QuotationRowData = QuotationRowValues;
 
 /** Values are read from saved records; absent legal/product facts remain blank. */
 export function quotationData(product: ProductRecord, content: ProductContent, settings: WorkspaceSettings, options: QuotationOption[], assets: BundleAsset[]) {
