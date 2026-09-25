@@ -21,6 +21,8 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
   const templateGeneration = useRef(0);
   const automaticMappings = useRef<ColumnMapping[]>([]);
   const protectedColumns = useRef(new Set<number>());
+  const saving = useRef(false);
+  const createRequest = useRef<{ body: string; id: string } | null>(null);
   const changeCategory = (categoryId: string) => {
     const next = refreshCategoryMappings(draft.template?.headers ?? [], categoryId, draft.mappings, automaticMappings.current, protectedColumns.current);
     automaticMappings.current = next.automatic;
@@ -116,7 +118,8 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
     setError('');
   };
   const save = async (event: React.FormEvent) => {
-    event.preventDefault(); if (busy) return;
+    event.preventDefault(); if (busy || saving.current) return;
+    saving.current = true;
     setBusy(true); setError('');
     try {
       const profile = validateCategoryProfile({ ...draft, categoryPath: path.split(/\s*>\s*/).filter(Boolean) });
@@ -124,12 +127,17 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       validateQuotationChoiceFormats(profile, getQuotationSchema(profile.categoryId).fields);
       const body = JSON.stringify(value ? { id: value.id, expectedRevision: value.revision, profile } : profile);
       if (new TextEncoder().encode(body).byteLength > CATEGORY_PROFILE_BODY_LIMIT) throw new Error('카테고리 설정 전체는 UTF-8 JSON 기준 300,000바이트 이하로 저장할 수 있습니다. 열 이름이나 고정값을 줄여주세요.');
-      const response = await fetch('/api/category-profiles', { method: value ? 'PUT' : 'POST', headers: { 'content-type': 'application/json' }, body });
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (!value) {
+        if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
+        headers['Idempotency-Key'] = createRequest.current.id;
+      }
+      const response = await fetch('/api/category-profiles', { method: value ? 'PUT' : 'POST', headers, body });
       const result = await response.json() as { profile?: CategoryProfile; error?: string };
       if (!response.ok || !result.profile) throw new Error(result.error ?? '저장 결과를 확인하지 못했습니다.');
       onSave(result.profile);
     } catch (error) { setError(error instanceof Error ? error.message : '카테고리 설정을 저장하지 못했습니다.'); }
-    finally { setBusy(false); }
+    finally { saving.current = false; setBusy(false); }
   };
   const issues = categoryProfileIssues(draft);
   const templateObservation = supplierTemplateObservation(draft.categoryId);

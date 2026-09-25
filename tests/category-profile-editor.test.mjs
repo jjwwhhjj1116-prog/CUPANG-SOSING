@@ -20,7 +20,7 @@ const profile={id:'profile',revision:1,name:'시험 분류',categoryId:'80719',c
   template:{name:'saved.csv',format:'csv',sha256:'a'.repeat(64),sheetName:'',headerRow:1,headers:['상품명','뚜껑 포함여부','공급가'],storageKey:'owner/category-templates/saved.csv'},
   mappings:[{column:0,field:'constant',required:true,constant:'수동 연결'},{column:2,field:'supplyPrice',required:false}]};
 function nodes(tree){if(Array.isArray(tree))return tree.flatMap(nodes);if(!tree||typeof tree!=='object')return[];return[tree,...nodes(tree.props?.children)];}
-function harness(value=profile,getSaved=async()=>new Response('상품명,뚜껑 포함여부,공급가\n')){
+function harness(value=profile,getSaved=async()=>new Response('상품명,뚜껑 포함여부,공급가\n'),saveRequest){
   const states=[],refs=[],effects=[],saved=[];let index=0,refIndex=0,first=true;const hooks={
     useState(initial){const slot=index++;if(slot>=states.length)states.push(typeof initial==='function'?initial():initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},
     useRef(initial){const slot=refIndex++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(effect){if(first)effects.push(effect);},
@@ -33,10 +33,10 @@ function harness(value=profile,getSaved=async()=>new Response('상품명,뚜껑 
         const file=options.body.get('file');const bytes=new Uint8Array(await file.arrayBuffer());const hash=createHash('sha256').update(bytes).digest('hex');
         return Response.json({template:{sha256:hash,storageKey:`owner/category-templates/${hash}.csv`}});
       }
-      if(url==='/api/category-profiles'){const body=JSON.parse(options.body);saved.push(body.profile);return Response.json({profile:{...value,...body.profile}});}
+      if(url==='/api/category-profiles'){if(saveRequest)return saveRequest(options);const body=JSON.parse(options.body);saved.push(body.profile);return Response.json({profile:{...value,...body.profile}});}
       throw Error(url);
     }});
-  const render=()=>{index=0;refIndex=0;const tree=editor.CategoryProfileEditor({value,onSave(){},onClose(){}});first=false;return tree;};render();
+  const render=()=>{index=0;refIndex=0;const tree=editor.CategoryProfileEditor({value,initialDraft:profile,onSave(){},onClose(){}});first=false;return tree;};render();
   const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node,'Expected editor element');return node;};
   return{render,find,saved,startEffects:()=>effects.forEach(effect=>effect()),async upload(text){find(node=>node.type==='input'&&node.props.type==='file').props.onChange({target:{files:[new File([text],'replacement.csv',{type:'text/csv'})],value:'chosen'}});for(let i=0;i<200;i++){await new Promise(resolve=>setTimeout(resolve,1));if(!find(node=>node.type==='input'&&node.props.type==='file').props.disabled)return;}throw Error('upload did not complete');},async save(){await render().props.onSubmit({preventDefault(){}});assert.equal(saved.length,1);return saved[0];}};
 }
@@ -117,4 +117,30 @@ test('legacy invalid label formatting can be corrected without erasing mappings 
  h.find(n=>n.type==='select'&&n.props['aria-label']==='1열 선택값 출력').props.onChange({target:{value:'value'}});
  const saved=await h.save();assert.equal(saved.mappings[0].field,'title');assert.equal(saved.mappings[0].required,true);assert.equal(saved.mappings[0].choiceFormat,'value');
  assert.equal(invalid.mappings[0].choiceFormat,'label');
+});
+
+test('new category editor retries the same content with the same key and changes key for edited drafts',async()=>{
+ const calls=[];
+ const h=harness(null,undefined,async options=>{calls.push(options);throw new Error('response lost');});
+ const submit=()=>h.render().props.onSubmit({preventDefault(){}});
+ await submit();await submit();
+ assert.equal(calls.length,2);assert.equal(calls[0].method,'POST');
+ assert.match(calls[0].headers['Idempotency-Key'],/^[0-9a-f-]{36}$/);
+ assert.equal(calls[0].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key']);assert.equal(calls[0].body,calls[1].body);
+ h.find(n=>n.type==='input'&&n.props.value==='시험 분류').props.onChange({target:{value:'수정한 분류'}});
+ await submit();assert.notEqual(calls[2].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key']);
+ assert.equal(JSON.parse(calls[2].body).name,'수정한 분류');
+ assert.equal(JSON.parse(calls[2].body).mappings[0].constant,'수동 연결');
+});
+
+test('category editor blocks simultaneous saves before React rerenders and retains revision guard for updates',async()=>{
+ let finish;const waiting=new Promise(resolve=>{finish=resolve;});const calls=[];
+ const h=harness(profile,undefined,options=>{calls.push(options);return waiting;});
+ const submit=h.render().props.onSubmit;
+ const first=submit({preventDefault(){}});await submit({preventDefault(){}});
+ assert.equal(calls.length,1);assert.equal(calls[0].method,'PUT');assert.equal(calls[0].headers['Idempotency-Key'],undefined);
+ assert.equal(JSON.parse(calls[0].body).expectedRevision,1);
+ finish(Response.json({error:'conflict'},{status:409}));await first;
+ assert.match(JSON.stringify(h.render()),/conflict/);
+ assert.equal(h.find(n=>n.props['aria-label']==='1열 고정값').props.value,'수동 연결');
 });

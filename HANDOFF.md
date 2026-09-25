@@ -2755,3 +2755,12 @@ AI등록 화면 확인:
 - 배포ea282ce1-73c3-4116-9a7a-6c2196bb3da9. outputs/step255-tests.log, step255-full-tests.log, step255-build.log, step255-deploy.log. DB스키마 변경·유료AI·운영상품등록 없음.
 - 한계: 요청 키는 해당 선택창 수명 동안 유지하며 창을 닫거나 새로고침한 뒤까지 보존하지 않는다. 다른 화면의 카테고리 편집기는 이번 키 적용 대상이 아니다. 실제 Couplus·Hub 화면 검증은 미수행.
 - 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근과 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.
+
+## 256. 카테고리·견적 설정 편집기 신규 저장 재시도 및 연속 클릭 보호 — 2026-09-25
+
+- 시작 main71d7e14 clean. 상품추가 선택창과 달리 CategoryProfileEditor 신규 POST는 요청 키가 없었고, busy 상태가 렌더되기 전 동일 저장 핸들러가 중복 실행될 수 있었다.
+- 구현: 신규 저장 본문이 같으면 같은 Idempotency-Key를 재사용하고 편집 내용이 바뀌면 새 키를 발급한다. 즉시 동작하는 저장 ref 잠금으로 동시 제출을 막는다. 기존 설정 PUT는 expectedRevision 보호를 유지한다. 실패 후 초안/수동 열 연결/고정값은 보존한다.
+- 검증: category-profile-editor/categories/category-picker-requests34/34, TypeScript, 변경 TS ESLint, Cloudflare build/check/diff check 통과. UI 모의 요청 검사이며 실제 Chrome 화면·공식 견적 접수 검증은 아니다. 전체878개 검사는 이전255단계 결과이며 이번 전체 재실행은 하지 않았다.
+- 배포b6a03846-e605-49b2-98cd-e01fbc3928a6. outputs/step256-tests.log, step256-build.log, step256-deploy.log. DB스키마 변경·유료AI·운영상품등록 없음.
+- 한계: 키는 편집기 수명 동안만 보존된다. 수정 PUT의 응답 유실 복구는 신규 POST와 다르며 버전 충돌 시 재조회가 필요하다.
+- 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근과 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.
