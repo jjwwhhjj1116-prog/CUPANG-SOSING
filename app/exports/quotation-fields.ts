@@ -39,7 +39,11 @@ export function quotationMappingCoverage(resolved: ResolvedQuotation, profile: C
     const manualOptions = included.filter(row => row.fields[field.id]?.source.startsWith('manual-')).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
     const automaticOptions = included.filter(row => {
       const cell = row.fields[field.id];
-      return cell && !cell.source.startsWith('manual-') && cell.value.trim();
+      // An observed empty wire value can still be a populated choice such as
+      // "해당사항없음". It needs a template mapping just like non-empty values.
+      const selectedEmptyChoice = cell?.value === '' && cell.source !== 'empty'
+        && field.type === 'select' && field.choices?.some(choice => choice.value === '');
+      return cell && !cell.source.startsWith('manual-') && (cell.value.trim() || selectedEmptyChoice);
     }).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
     if (!field.required && !manualOptions.length && !automaticOptions.length) return [];
     return [{ fieldId: field.id, label: field.label, required: field.required, manualOptions, automaticOptions }];

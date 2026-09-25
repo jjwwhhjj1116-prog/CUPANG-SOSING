@@ -2223,3 +2223,11 @@ AI등록 화면 확인:
 - 검증: 번역/견적 관련133/133, TypeScript, 변경 파일 ESLint, Cloudflare build/check, 최종 diff check 통과. 테스트 파일 EOF 공백을 수정했다. 동일 revision 반영, 재실행 무변경, 수동 SEO/품명/공란 보존, 원문 충돌 및 별도 품명 우선순위를 모의 데이터로 확인했다. 실제 AI 실행/Chrome 화면 검증은 아니다.
 - Cloudflare version5eea3965-51c9-4def-ad05-e4cdfcf9fa69 배포. outputs/step195-*.log. DB 변경·유료AI·운영등록 없음.
 - 남은 핵심: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 실대조, 이미지 번역 실품질, Supplier Hub POST501 실행 어댑터/실접수는 미완성. 다음 시작점은 기존 Chrome 연결과 공식 양식 근거 확보 후 실상품 수집→접수 검증이다. 이번 변경은 이미 있는 번역 결과의 저장 연결이다.
+
+## 196. 빈 코드로 저장되는 해당사항없음의 Excel 연결 누락 검사 — 2026-09-25
+
+- 시작 main4d1b9b1 clean. 확인: quotationMappingCoverage는 자동값이 공백이면 미연결 검토에서 제외했다. 선택형 필드의 실제 저장 코드가 빈 문자열이고 출처가 content/couplus-default인 경우, 의미 있는 선택값까지 미입력으로 판단했다.
+- 관찰된 선택지에 빈 코드가 있고 실제 셀 출처가 empty가 아닌 경우 자동작성된 값으로 집계한다. 직접 수정값은 기존 manualOptions에 보존하고 제외 옵션/실제 미입력/선택지 없는 일반 텍스트는 새로 집계하지 않는다. Excel 열 연결 검사만 변경하며 기본값 또는 상품 데이터를 쓰지 않는다.
+- 검증: 견적/다운로드 API 관련141/141, TypeScript, 변경 파일 ESLint, diff check, Cloudflare build/check 통과. 자동 기본값·콘텐츠·수동값·제외 옵션·실제 미입력·열 연결 완료를 구분하는 회귀 검사 추가. 실제 공식 Excel 바이너리/Hub 접수 검증은 아니다. outputs/step196-*.log.
+- Cloudflare versionf9787679-b4cc-4aa9-b6b9-a65fa53ea75e 배포. DB 변경·유료AI·운영상품 등록 없음.
+- 남은 핵심/다음 시작점: 실제1688 수집기, 전 카테고리 Couplus 기본값/공식 Excel 대조, 이미지 번역 실품질, Supplier Hub POST501 실행 어댑터와 실제 접수는 미완성이다. 기존 Chrome 연결과 공식 양식 근거를 확보해 실상품 수집→접수를 검증해야 한다. 이번 변경은 누락 검사 수정이며 자동 전송 구현이 아니다.

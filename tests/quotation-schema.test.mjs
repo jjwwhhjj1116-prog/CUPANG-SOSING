@@ -1358,3 +1358,14 @@ test('equivalent translated headings reach category quotation notices without re
  }
  assert.equal(categories.length,26);assert.ok(checked>=22);
 });
+
+test('Excel mapping coverage includes explicit automatic empty choices but not genuinely unset cells',()=>{
+ const coverage=load('app/exports/quotation-fields.ts').quotationMappingCoverage;
+ const field={id:'storageMaterial',label:'재질',type:'select',required:false,choices:[{value:'',label:'해당사항없음'}]};
+ const row=(id,source,included=true)=>({optionId:id,optionLabel:id,included,fields:{storageMaterial:{value:'',source}}});
+ const resolved={schema:{fields:[field]},rows:[row('default','couplus-default'),row('content','content'),row('unset','empty'),row('manual','manual-option'),row('excluded','content',false)]};
+ const before=JSON.stringify(resolved), result=coverage(resolved,{mappings:[]});
+ assert.equal(result.length,1);assert.deepEqual(clone(result[0].automaticOptions.map(o=>o.optionId)),['default','content']);assert.deepEqual(clone(result[0].manualOptions.map(o=>o.optionId)),['manual']);
+ assert.equal(coverage(resolved,{mappings:[{field:'storageMaterial'}]}).length,0);assert.equal(JSON.stringify(resolved),before);
+ for(const change of [{type:'text'},{choices:[{value:'yes',label:'예'}]}])assert.equal(coverage({schema:{fields:[{...field,...change}]},rows:[row('a','content')]},{mappings:[]}).length,0);
+});
