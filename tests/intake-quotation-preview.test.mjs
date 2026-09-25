@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+import {createRequire} from 'node:module';
+import React from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+const native=createRequire(import.meta.url),cache=new Map();
+function load(file,overrides={}){
+ if(!Object.keys(overrides).length&&cache.has(file))return cache.get(file);
+ const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,structuredClone,require(name){
+  if(name in overrides)return overrides[name];
+  if(name.startsWith('@/')){const path=name.slice(2);return load(path+(fs.existsSync(new URL('../'+path+'.ts',import.meta.url))?'.ts':'.tsx'));}
+  if(name.endsWith('.css'))return{};return native(name);
+ }});if(!Object.keys(overrides).length)cache.set(file,exports);return exports;
+}
+const profile={id:'saved',name:'주방 설정',categoryId:'80719',categoryPath:['주방용품','바스켓'],revision:2,template:null,mappings:[]};
+test('queue quotation preview shows actual mappings, missing columns and observed defaults without mutating settings',()=>{
+ const {IntakeQuotationPreview}=load('app/components/intake-quotation-preview.tsx');
+ const data={...profile,template:{name:'검토.xlsx',format:'xlsx',sheetName:'입력',headerRow:4,headers:['상품명','고정','미연결']},mappings:[{column:0,field:'title',required:true},{column:1,field:'constant',constant:'<script>내용</script>',required:false}]};
+ const before=JSON.stringify(data);const html=renderToStaticMarkup(React.createElement(IntakeQuotationPreview,{profile:data}));
+ assert.match(html,/검토.xlsx/);assert.match(html,/입력 시작 5행/);assert.match(html,/연결 없음/);assert.match(html,/해당사항없음/);assert.match(html,/&lt;script&gt;/);assert.ok(!html.includes('<script>'));assert.equal(JSON.stringify(data),before);
+ const noTemplate=renderToStaticMarkup(React.createElement(IntakeQuotationPreview,{profile:{...profile,categoryId:'unknown'}}));assert.match(noTemplate,/원본 Excel 양식은 연결되지/);assert.match(noTemplate,/미확인 · 임의 기본값 없음/);
+});
+const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
+test('opening preview and changing category preserves row URL and notes and displays the newly selected profile',()=>{
+ let rows=[{id:'row',profile,url:'https://detail.1688.com/offer/1.html',features:'특징',keywords:'검색어',status:'error',message:'이전 오류'}];
+ const slots=[];let cursor=0;const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(){}};
+ function Picker(){}function Preview(){}
+ const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{'react':hooks,'@/app/components/category-picker':{CategoryPicker:Picker},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:Preview}});
+ const render=()=>{cursor=0;return IntakeQueuePanel({rows,onRows:update=>{rows=update(rows);},profiles:[profile],onProfile(){},onJobs(){},onBusy(){},goal:'price',onGoal(){}});};
+ let tree=render();nodes(tree).find(n=>n.type==='button'&&n.props.children==='견적 항목·양식 확인').props.onClick();tree=render();assert.equal(nodes(tree).find(n=>n.type===Preview).props.profile,profile);
+ nodes(tree).find(n=>n.props?.className==='intake-category-button').props.onClick();tree=render();const next={...profile,categoryId:'77442',revision:3};nodes(tree).find(n=>n.type===Picker).props.onSelected(next);
+ tree=render();assert.equal(nodes(tree).find(n=>n.type===Preview).props.profile,next);assert.equal(rows[0].url,'https://detail.1688.com/offer/1.html');assert.equal(rows[0].features,'특징');assert.equal(rows[0].keywords,'검색어');assert.equal(rows[0].status,'draft');
+});
