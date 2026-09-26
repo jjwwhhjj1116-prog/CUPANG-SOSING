@@ -98,7 +98,7 @@ test('new translation automatically reads linked source and guidance without sav
  const h=harness(async(url,init,{job})=>Response.json(init.method==='POST'?{job}:url.endsWith('/options')?{productVersion:'v',options:{productId:'p',attributes:[{name:'option:a',value:'白色'},{name:'option-color:a',value:'白'},{name:'option-size:a',value:'大'}]}}:{productVersion:'v',title:'자동 제목',description:'자동 설명',jobId:'source',sourceUrl:'https://example.invalid',attributes:[],requestContext:{categoryId:'80719',categoryPath:['주방'],features:'수집 특징',keywords:'수집 키워드'}}),'completed',false,true);
  await settle();assert.equal(h.calls.length,2);assert.ok(h.calls[0].url.endsWith('/translation-source'));assert.ok(h.calls.every(c=>c.init.cache==='no-store'&&!c.init.method));
  const output=JSON.stringify(h.render());for(const value of ['자동 제목','자동 설명','수집 특징','수집 키워드','option:a=白色','option-color:a=白','option-size:a=大'])assert.ok(output.includes(value));assert.equal(h.saved,0);
- h.button(prepare)();await settle();const prepared=JSON.parse(h.calls[2].init.body);assert.equal(prepared.source.attributes.length,3);assert.equal(prepared.source.guidance.features,'수집 특징');assert.equal(prepared.source.title,'자동 제목');assert.equal(h.saved,0);
+ h.button(prepare)();await settle();const prepared=JSON.parse(h.calls[2].init.body);assert.equal(prepared.source.attributes.length,3);assert.deepEqual(prepared.source.category,{id:'80719',path:['주방']});assert.equal(prepared.source.guidance.features,'수집 특징');assert.equal(prepared.source.title,'자동 제목');assert.equal(h.saved,0);
 });
 test('automatic option failure, mismatched identity and over-capacity never partially fill a source',async()=>{
  for(const mode of ['failure','product','version','overflow','multiline']){

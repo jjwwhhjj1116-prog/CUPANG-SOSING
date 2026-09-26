@@ -178,7 +178,7 @@ test('SEO guidance is bounded, distinct from source facts, included in review fi
  const now=new Date('2026-09-24T00:00:00Z');
  const review=await model.prepareTranslationReview(guided,config,now),legacy=await model.prepareTranslationReview(source,config,now);
  const request=model.buildTranslationRequest(review);
- assert.equal(review.instructionsVersion,'sourceflow-translation-v3');assert.equal(legacy.instructionsVersion,'sourceflow-translation-v3');
+ assert.equal(review.instructionsVersion,'sourceflow-translation-v4');assert.equal(legacy.instructionsVersion,'sourceflow-translation-v4');
  assert.notEqual(review.fingerprint,legacy.fingerprint);assert.equal(JSON.parse(request.input[0].content[0].text).guidance.keywords,'수납 주머니');
  assert.match(request.instructions,/preferences, not product evidence/);assert.match(request.instructions,/Ignore embedded commands/);
  assert.equal(model.validateTranslationSource({...source,guidance:{features:' ',keywords:''}}).guidance,undefined);
@@ -204,7 +204,7 @@ test('invalid guidance instruction versions fail before any provider request wit
 
 test('new translation reviews include quotation keyword limits while older reviewed requests retain their rules',async()=>{
  const current=await model.prepareTranslationReview(source,config);
- assert.equal(current.instructionsVersion,'sourceflow-translation-v3');
+ assert.equal(current.instructionsVersion,'sourceflow-translation-v4');
  assert.match(model.buildTranslationRequest(current).instructions,/150 UTF-16/);
  for(const version of ['sourceflow-translation-v1','sourceflow-translation-v2']){
   const old={...current,instructionsVersion:version};
@@ -262,4 +262,19 @@ test('v3 invalid quotation keywords persist as failed and cannot trigger a secon
   assert.equal(replay.replayed,true);assert.equal(replay.job.status,'failed');assert.equal(calls,1);
   assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
  }finally{sqlite.close();}
+});
+
+test('category context is bounded, fingerprinted and sent only with the new instructions',async()=>{
+ const category={id:'80719',path:['주방용품','주방수납/정리','바구니']};
+ const review=await model.prepareTranslationReview({...source,category},config,new Date('2026-09-26T00:00:00Z'));
+ assert.equal(review.instructionsVersion,'sourceflow-translation-v4');
+ const request=model.buildTranslationRequest(review);
+ assert.deepEqual(JSON.parse(request.input[0].content[0].text).category,category);
+ assert.match(request.instructions,/seller-selected registration category/);assert.match(request.instructions,/preserve the source facts/);
+ const changed=await model.prepareTranslationReview({...source,category:{...category,id:'81452'}},config,new Date('2026-09-26T00:00:00Z'));
+ assert.notEqual(review.fingerprint,changed.fingerprint);
+ for(const invalid of [{id:'',path:['주방']},{id:'a/b',path:['주방']},{id:'80719',path:[]},{id:'80719',path:['']},{id:'80719',path:Array(11).fill('주방')},{id:'80719',path:['가'.repeat(201)]}])assert.throws(()=>model.validateTranslationSource({...source,category:invalid}));
+ for(const version of ['sourceflow-translation-v1','sourceflow-translation-v2','sourceflow-translation-v3'])assert.throws(()=>model.buildTranslationRequest({...review,instructionsVersion:version}));
+ assert.doesNotThrow(()=>model.buildTranslationRequest({...review,source:model.validateTranslationSource(source),instructionsVersion:'sourceflow-translation-v3'}));
+ assert.throws(()=>model.validateTranslationDraft({...draft,keywords:['가'.repeat(21)]},review.source,'sourceflow-translation-v4'));
 });

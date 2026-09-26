@@ -202,7 +202,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     }
     if (pairs.length > 50) { setError('상품 속성·옵션·직접 입력 속성은 합계 50개까지입니다. 상품 속성 포함을 해제하거나 입력을 나누어주세요.'); return; }
     void action({ action: 'prepare', expectedVersion: version, idempotencyKey: crypto.randomUUID(),
-      source: { title: sourceTitle, description, attributes: pairs, provenance: 'manual', reference: sourceReference, ...(includeGuidance&&(guidance.features.trim()||guidance.keywords.trim())?{guidance}:{}) } });
+      source: { title: sourceTitle, description, attributes: pairs, provenance: 'manual', reference: sourceReference, ...(requestContext?.categoryId && requestContext.categoryPath.length ? {category:{id:requestContext.categoryId,path:requestContext.categoryPath}} : {}), ...(includeGuidance&&(guidance.features.trim()||guidance.keywords.trim())?{guidance}:{}) } });
   }
   async function adopt(fields: readonly TranslationSeoField[], labels?: readonly TranslationLabelMapping[], batch?: ReturnType<typeof translationAdoptionInput>) {
     if (!content || !job?.result) return;
@@ -222,7 +222,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     <button type="button" className="btn" disabled={busy} onClick={()=>void refreshState()}>작업 상태 다시 조회 · 무료</button>
     <p>저장된 원문으로 한국어 초안을 생성합니다. 아래 직접 입력 내용은 자동 수집 증빙으로 기록되지 않습니다.</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    {requestContext&&<aside className="panel-note" aria-label="상품 추가 당시 요청"><strong>상품 추가 당시 요청</strong><p>{requestContext.categoryPath.join(' › ')} · {requestContext.categoryId}</p><dl><dt>상품 특징</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.features||'입력 없음'}</dd><dt>타겟 키워드</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.keywords||'입력 없음'}</dd></dl><small>요청 당시 입력한 참고 정보입니다. 아래 SEO 참고 메모에서 편집하거나 전송에서 제외할 수 있습니다.</small></aside>}
+    {requestContext&&<aside className="panel-note" aria-label="상품 추가 당시 요청"><strong>상품 추가 당시 요청</strong><p>{requestContext.categoryPath.join(' › ')} · {requestContext.categoryId}</p><dl><dt>상품 특징</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.features||'입력 없음'}</dd><dt>타겟 키워드</dt><dd style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{requestContext.keywords||'입력 없음'}</dd></dl><small>선택한 카테고리 코드·경로를 번역 요청에 참고 정보로 포함합니다. 상품 특징·키워드는 아래 SEO 참고 메모에서 편집하거나 제외할 수 있습니다.</small></aside>}
     {!view && !error && <p>번역 설정을 확인하고 있습니다.</p>}
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
