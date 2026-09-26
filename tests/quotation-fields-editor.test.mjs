@@ -795,3 +795,39 @@ test('batch category UI builds a preview without saving and invalidates it when 
  h.slots[8]=['blue'];
  assert.equal(h.render().some(n=>n.props?.['aria-label']==='번역 속성 일괄 적용 미리보기'),false);
 });
+
+
+test('category-aware attribute translations cannot cross categories through draft, batch or saved rules',async()=>{
+ const view=fixture(),job=attributeJob(view),mapping=[{sourceIndex:0,fieldId:'noticeMaterial'}];
+ const adoption=load('app/quotation-translation-adoption.ts');
+ job.review.source.category={id:view.resolved.schema.categoryId,path:['원래 경로']};
+ const rules=createAttributeRules('p1',view,job,'red',mapping);
+ assert.equal(adoption.quotationTranslationMatches('p1',view,job),true);
+ assert.equal(quotationTranslationDraft('p1',view,job,'red',mapping).length,1);
+ job.review.source.category={id:'different-category',path:view.resolved.schema.categoryPath};
+ const before=JSON.stringify({view,job});
+ assert.equal(adoption.quotationTranslationMatches('p1',view,job),false);
+ assert.throws(()=>quotationTranslationDraft('p1',view,job,'red',mapping),/카테고리/);
+ assert.throws(()=>quotationTranslationBatch('p1',view,job,mapping),/카테고리/);
+ assert.throws(()=>createAttributeRules('p1',view,job,'red',mapping),/카테고리/);
+ const loaded=loadAttributeRules(JSON.stringify(rules),'p1',view,job,'red');
+ assert.equal(loaded.mappings.length,0);assert.ok(loaded.skipped.some(message=>message.includes('카테고리')));
+ let requests=0;const request=async()=>{requests++;return Response.json({rules,revision:1});};
+ const single=await fetchAttributeSuggestions('p1',view,job,'red',request);
+ assert.equal(single.revision,null);assert.deepEqual(clone(single.mapping),{});
+ await assert.rejects(()=>load('app/quotation-attribute-suggestions.ts').fetchBatchAttributeSuggestions('p1',view,job,['red'],request),/카테고리/);
+ assert.equal(requests,0);assert.equal(JSON.stringify({view,job}),before);
+});
+
+test('older-content review cannot override category identity; same-ID path changes and legacy jobs remain compatible',()=>{
+ const view=fixture(),job=attributeJob(view),adoption=load('app/quotation-translation-adoption.ts');
+ view.contentRevision=3;job.contentRevision=2;
+ job.review.source.category={id:view.resolved.schema.categoryId,path:['이름 변경 전']};
+ assert.equal(adoption.quotationTranslationMatches('p1',view,job),false);
+ assert.equal(adoption.quotationTranslationMatches('p1',view,job,{contentRevision:3}),true);
+ job.review.source.category.id='different';
+ assert.equal(adoption.quotationTranslationMatches('p1',view,job,{contentRevision:3}),false);
+ delete job.review.source.category;
+ assert.equal(adoption.quotationTranslationMatches('p1',view,job,{contentRevision:3}),true);
+ assert.equal(adoption.quotationTranslationMatches('other',view,job,{contentRevision:3}),false);
+});

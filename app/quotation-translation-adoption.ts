@@ -6,6 +6,9 @@ export type QuotationTranslationReview = { contentRevision: number };
 /** Older content is reusable only after explicit review against the current view. */
 export function quotationTranslationMatches(productId: string, view: QuotationFieldsView, job: TranslationJob, review?: QuotationTranslationReview) {
   return job.productId === productId && job.productVersion === view.productVersion && job.status === 'completed' && Boolean(job.result)
+    // Category-aware translations must stay with the category used to produce
+    // them. Reviewing an older content revision does not approve a new category.
+    && (!job.review.source.category || job.review.source.category.id === view.resolved.schema.categoryId)
     && (job.contentRevision === view.contentRevision || (review?.contentRevision === view.contentRevision
       && Number.isSafeInteger(job.contentRevision) && job.contentRevision >= 0 && job.contentRevision < view.contentRevision));
 }
@@ -28,7 +31,7 @@ export function translatedAttributeValue(field: QuotationField, value: string) {
 }
 /** User-selected destinations only; no guesses about category, certification or units. */
 export function quotationTranslationDraft(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, mappings: readonly AttributeMapping[], review?: QuotationTranslationReview) {
-  if (!quotationTranslationMatches(productId, view, job, review)) throw new Error('최신 상품·콘텐츠에 해당하는 완료된 번역을 선택해주세요.');
+  if (!quotationTranslationMatches(productId, view, job, review)) throw new Error('최신 상품·콘텐츠와 현재 견적 카테고리에 해당하는 완료된 번역을 선택해주세요.');
   if (!view.resolved.schema.categoryId) throw new Error('견적 카테고리를 먼저 선택해주세요.');
   const row = view.resolved.rows.find(item => item.optionId === optionId && item.included);
   if (!row) throw new Error('견적에 포함된 옵션을 선택해주세요.');
@@ -46,7 +49,7 @@ export function quotationTranslationDraft(productId: string, view: QuotationFiel
 }
 
 export function quotationTranslationBatch(productId: string, view: QuotationFieldsView, job: TranslationJob, mappings: readonly AttributeMapping[], selectedOptions?: readonly (string | null)[], review?: QuotationTranslationReview) {
-  if (!quotationTranslationMatches(productId, view, job, review)) throw new Error('최신 상품·콘텐츠에 해당하는 완료된 번역을 선택해주세요.');
+  if (!quotationTranslationMatches(productId, view, job, review)) throw new Error('최신 상품·콘텐츠와 현재 견적 카테고리에 해당하는 완료된 번역을 선택해주세요.');
   if (!mappings.length || mappings.length > 50 || new Set(mappings.map(item => item.fieldId)).size !== mappings.length || new Set(mappings.map(item => item.sourceIndex)).size !== mappings.length) throw new Error('속성과 견적 항목을 중복 없이 연결해주세요.');
   const options = view.resolved.rows.filter(row => row.optionId !== null);
   const included = (options.length ? options : view.resolved.rows).filter(row => row.included);

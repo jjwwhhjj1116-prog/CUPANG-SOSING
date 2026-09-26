@@ -1,7 +1,7 @@
 import type { TranslationJob } from '@/app/automation/translation';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { loadAttributeRules } from '@/app/quotation-attribute-rules';
-import { canMapTranslatedAttribute, quotationTranslationDraft, type AttributeMapping, type QuotationTranslationReview } from '@/app/quotation-translation-adoption';
+import { canMapTranslatedAttribute, quotationTranslationDraft, quotationTranslationMatches, type AttributeMapping, type QuotationTranslationReview } from '@/app/quotation-translation-adoption';
 
 /** First-use suggestions are limited to exact category product attributes, not legal or commercial defaults. */
 export function suggestCategoryAttributes(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, review?: QuotationTranslationReview) {
@@ -28,6 +28,7 @@ export function suggestCategoryAttributes(productId: string, view: QuotationFiel
 /** Read-only suggestions from the user's saved rules; never writes quotation values. */
 export async function fetchAttributeSuggestions(productId: string, view: QuotationFieldsView, job: TranslationJob, optionId: string | null, request: typeof fetch = fetch, review?: QuotationTranslationReview) {
   const empty = { mapping: {} as Record<number, string>, revision: null as number | null, skipped: [] as string[] };
+  if (!quotationTranslationMatches(productId, view, job, review)) return { ...empty, message: '최신 상품·콘텐츠와 현재 견적 카테고리에 해당하는 완료된 번역을 선택해주세요.' };
   if (!view.resolved.schema.categoryId || !job.result?.draft.attributes.some(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: '))) {
     return { ...empty, message: '현재 번역 결과에 연결할 상품 속성이 없습니다.' };
   }
