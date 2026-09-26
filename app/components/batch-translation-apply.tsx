@@ -48,4 +48,3 @@ export function BatchTranslationApply({products,disabled,onBusyChange}:{products
   {busy&&<button type="button" className="btn ghost" onClick={()=>{stop.current=true;setMessage('현재 요청을 마친 뒤 중단합니다.');}}>연속 작업 중단</button>}
  </section>;
 }
-
