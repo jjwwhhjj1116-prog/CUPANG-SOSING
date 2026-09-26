@@ -21,6 +21,13 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const [previewId, setPreviewId] = useState<string | null>(null);
   const previewRow = rows.find(row => row.id === previewId);
   const running = useRef<AbortController | null>(null);
+  const focusRow = useRef<string | null>(null);
+  const urlInputs = useRef(new Map<string, HTMLInputElement>());
+  useEffect(() => {
+    if (categoryTarget || busy || !focusRow.current) return;
+    const input = urlInputs.current.get(focusRow.current);
+    if (input) { input.focus(); input.scrollIntoView({ block: 'nearest', inline: 'nearest' }); focusRow.current = null; }
+  }, [rows, categoryTarget, busy]);
   useEffect(() => () => running.current?.abort(), []);
   const visible = visibleIntakeRows(rows, query);
   const pendingRows = rows.filter(row => row.status !== 'saved');
@@ -46,8 +53,9 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   }
   if (categoryTarget) return <div><button type="button" className="btn ghost" onClick={() => setCategoryTarget(null)}>← 상품 대기열</button><CategoryPicker profiles={profiles} selectedId={rows.find(row => row.id === categoryTarget)?.profile.id ?? ''} onAdvanced={onAdvanced} onSelected={profile => {
     onProfile(profile);
-    if (categoryTarget === 'new') onRows(previous => previous.length < 50 ? [...previous, intakeRow(profile, crypto.randomUUID())] : previous);
-    else edit(categoryTarget, { profile });
+    if (categoryTarget === 'new') {
+      if (rows.length < 50) { const id = crypto.randomUUID(); focusRow.current = id; onRows(previous => previous.length < 50 ? [...previous, intakeRow(profile, id)] : previous); }
+    } else { focusRow.current = categoryTarget; edit(categoryTarget, { profile }); }
     setQuery('');
     setCategoryTarget(null);
   }} /></div>;
@@ -57,11 +65,11 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       {visible.map(row => { const index = rows.findIndex(item => item.id === row.id); return <tr key={row.id}>
         <td><input type="checkbox" aria-label={`${index + 1}번째 상품 선택`} disabled={busy || row.status === 'saved'} checked={row.status !== 'saved' && !excluded.includes(row.id)} onChange={event => toggle([row.id], event.target.checked)}/></td>
         <td><button type="button" className="intake-category-button" disabled={busy || row.status === 'saved'} onClick={() => setCategoryTarget(row.id)}>{row.profile.categoryPath.join(' > ')}</button><small className="intake-profile-summary">코드 {row.profile.categoryId || '미입력'} · v{row.profile.revision}<br/>{row.profile.template ? `양식: ${row.profile.template.name}` : 'Excel 양식 미연결'}</small><button type="button" className="btn ghost" aria-expanded={previewId === row.id} onClick={() => setPreviewId(previewId === row.id ? null : row.id)}>견적 항목·양식 확인</button></td>
-        <td><input aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} /></td>
+        <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
         <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}</td>
-        <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => onRows(previous => [...previous, { ...intakeRow(row.profile, crypto.randomUUID()), features: row.features, keywords: row.keywords }])}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => onRows(previous => previous.filter(item => item.id !== row.id))}>행 삭제</button></td>
+        <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => { const id = crypto.randomUUID(); focusRow.current = id; setQuery(''); onRows(previous => previous.length < 50 ? [...previous, { ...intakeRow(row.profile, id), features: row.features, keywords: row.keywords }] : previous); }}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => onRows(previous => previous.filter(item => item.id !== row.id))}>행 삭제</button></td>
       </tr>; })}
     </tbody></table>{rows.length > 0 && !visible.length && <p className="collection-empty">검색 결과가 없습니다. 검색을 해제하면 입력한 상품을 다시 볼 수 있습니다.</p>}{!rows.length && <p className="collection-empty">대기열이 비어있습니다. [+ 상품 추가] 버튼으로 카테고리를 선택해주세요.</p>}</div>
     {previewRow && <div><button type="button" className="btn ghost" onClick={() => setPreviewId(null)}>견적 연결 미리보기 닫기</button><IntakeQuotationPreview profile={previewRow.profile}/></div>}

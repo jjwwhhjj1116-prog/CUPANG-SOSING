@@ -3114,3 +3114,10 @@ AI등록 화면 확인:
 - 기준은 첨부 화면15~23. 카테고리마다 visibility를 적용하며 필드를 새로 추정하지 않는다. 전체 카테고리 실화면 대조는 아님.
 - 편집기69/69, TypeScript, Cloudflare build/check, diff check 통과. 배포566a33e9-ca4f-4648-8c68-ce230b69fade. outputs/step297-tests.log, step297-build.log, step297-deploy.log.
 - 실제1688 수집 실행기·전체 카테고리 기본값 대조·Supplier Hub 자동등록 미완성은 유지된다.
+
+## 298. 카테고리 선택 후 URL 입력으로 이어지는 조작 개선 — 2026-09-26
+
+- 새 카테고리 선택/기존 행 카테고리 변경/행 복제 후 해당 URL 입력칸에 포커스하고 보이는 위치로 이동한다. 행 복제 시 검색 해제로 새 행이 숨겨지는 문제를 방지한다. 행 추가 상한50개는 updater에서도 확인한다.
+- 긴 URL은 입력 아래에서 줄바꿈으로 전체 표시한다. React 텍스트로 표시하며 URL을 실행하거나 새 브라우저를 열지 않는다.
+- 기존 카테고리·대기열15/15, 수정 후 TypeScript, Cloudflare build/check, diff check 통과. 실제 Chrome 포커스·시각 검증은 못했다.
+- 배포d29734ec-28ee-49c0-b8d6-96a9e8b604d5. outputs/step298-tests.log, step298-build.log, step298-deploy.log. 실제1688 수집·전체 카테고리 대조·Supplier Hub 전송 미완성 유지.
