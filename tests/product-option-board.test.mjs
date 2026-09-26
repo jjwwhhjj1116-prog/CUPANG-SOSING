@@ -18,10 +18,10 @@ test('option board fetch checks product identity and propagates abort signal',as
  await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:false,json:async()=>({error:'인증 필요'})})),/인증 필요/);
 });
 function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html',boardData=data,owned=['owner/red.png']){
- let slot=0;const selected=[];const edited=[];const images=[];const states=[boardData,'',0,query];
+ let slot=0;const selected=[];const edited=[];const images=[];const contentSteps=[];const states=[boardData,'',0,query];
  const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,()=>{}];},useEffect(){}};
  const {ProductOptionBoard}=load('app/components/product-option-board.tsx',{react:hooks});
- return {selected,edited,images,tree:ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(owned),onQuotation:id=>selected.push(id),onImage:id=>images.push(id),onEdit:id=>edited.push(id)})};
+ return {selected,edited,images,contentSteps,tree:ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(owned),onQuotation:id=>selected.push(id),onContent:step=>contentSteps.push(step),onImage:id=>images.push(id),onEdit:id=>edited.push(id)})};
 }
 function nodes(value){if(!value||typeof value!=='object')return[];if(Array.isArray(value))return value.flatMap(nodes);return[value,...nodes(value.props?.children)];}
 test('option list opens the clicked option and preserves zero, unknown and deliberately blank names',()=>{
@@ -58,3 +58,23 @@ test('common content fetch rejects mismatched product or failed response',async(
  }
  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:url.endsWith('/options'),json:async()=>url.endsWith('/options')?data:{error:'조회 실패'}})),/조회 실패/);
 });
+
+test('shared content columns count only saved product images and open their matching stages',()=>{
+ const shared={...data,commonAssets:{additional:['owner/a.png','other/x.png'],detail:['owner/top.png','owner/detail.png','owner/bottom.png'],label:[]}};
+ const result=tree('sku-red',undefined,shared,['owner/a.png','owner/top.png','owner/detail.png','owner/bottom.png']);const html=renderToStaticMarkup(result.tree);
+ assert.match(html,/1장.*연결 확인 필요/);assert.match(html,/3장/);assert.match(html,/0장/);
+ for(const text of ['추가 이미지 편집','상세 이미지 편집','표시사항 편집'])nodes(result.tree).find(n=>n.type==='button'&&[n.props.children].flat().join('')===text).props.onClick();
+ assert.deepEqual(result.contentSteps,['추가 이미지','상세 이미지','표시사항']);assert.deepEqual(result.images,[]);
+});
+
+ test('shared image roles preserve detail ordering and reject malformed references',async()=>{
+ const signal=new AbortController().signal;
+ const content={productId:'p1',schemaVersion:1,assets:{main:{value:[]},additional:{value:['a']},detailTop:{value:['top']},detail:{value:['body']},detailBottom:{value:['bottom']},label:{value:['label']}}};
+ const fetcher=async url=>({ok:true,json:async()=>url.endsWith('/options')?data:{content}});
+ const result=await model.readOptionBoard('p1',signal,fetcher);
+ assert.deepEqual(Array.from(result.commonAssets.detail),['top','body','bottom']);
+ assert.deepEqual(Array.from(result.commonAssets.additional),['a']);
+ assert.deepEqual(Array.from(result.commonAssets.label),['label']);
+ content.assets.label.value=[42];
+ await assert.rejects(model.readOptionBoard('p1',signal,fetcher),/이미지 응답/);
+ });

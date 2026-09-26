@@ -3093,3 +3093,10 @@ AI등록 화면 확인:
 - 상품에 속하는 파일 목록만 표시하며 삭제/외부 키가 개별로 지정된 경우 공통으로 대체하지 않는다. 옵션·콘텐츠 상품 ID 및 대표 이미지 배열을 검사하고 오류면 성공 화면으로 표시하지 않는다. 두 GET은 동일한 AbortSignal을 사용한다.
 - 관련6/6, TypeScript, Cloudflare build/check, diff check 통과. 공통 이미지 사용, 개별 연결 오류, 다른 상품 응답/비문자 키/실패 응답 검증. 실제 Chrome 시각 검증은 아님.
 - 배포3e8a9bb1-dacb-47a7-9c81-9f4bd3a3d5f9. 로그 outputs/step294-tests.log, step294-build.log, step294-deploy.log. 실제1688 수집·전체 카테고리 동일성·Supplier Hub 자동등록은 여전히 미완성.
+
+## 295. 옵션 목록에서 공통 콘텐츠 확인·편집 이동 — 2026-09-26
+
+- 추가 이미지·상세 이미지·표시사항 열을 옵션 목록에 추가했다. 저장한 상품 소유 파일 개수를 표시하고 해당 편집 단계로 바로 이동한다. 공통 콘텐츠이므로 옵션별 완료 상태로 표시하지 않는다.
+- 상세 이미지는 상단/본문/하단 순서로 읽는다. 비문자 파일 응답은 거절하고 상품 파일 목록에서 찾지 못하는 연결은 확인 필요로 표시한다. 기존 옵션·콘텐츠 두 조회를 재사용한다.
+- 변경 전 전체957/957, 변경 관련8/8, TypeScript, Cloudflare build/check, diff check 통과. 실제 Chrome 시각 대조는 수행하지 않았다.
+- 배포7fb4cc7c-5b4a-4419-85d4-3227f87065b3. 로그 outputs/step295-full-tests.log, step295-tests.log, step295-build.log, step295-deploy.log. 실제1688 수집 실행기·전체 카테고리 기본값 대조·Supplier Hub 자동등록은 여전히 미완성이다.
