@@ -13,9 +13,9 @@ function harness(handle, focusedAssetRole, lifecycle=false){
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>handle(url,init,content)??Response.json({content}),require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-content.ts');content=model.emptyProductContent('p');
  const component=load('app/components/product-content-editor.tsx').ProductContentEditor;
- const render=(section='이미지')=>{index=0;ei=0;ci=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png"]'},section,focusedAssetRole,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
+ const render=(section='이미지')=>{index=0;ei=0;ci=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png","owner/c.png"]'},section,focusedAssetRole,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
  const button=(name,section)=>nodes(render(section)).find(n=>n.type==='button'&&n.props.children===name);
- return{render,button,model,load,async flush(){effects.splice(0).forEach(fn=>fn());await settle();},get notices(){return notices;},async start(){render();if(lifecycle)effects.splice(0).forEach(fn=>fn());else effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
+ return{render,button,model,load,setStage(stage){focusedAssetRole=stage;},async flush(){effects.splice(0).forEach(fn=>fn());await settle();},get notices(){return notices;},async start(){render();if(lifecycle)effects.splice(0).forEach(fn=>fn());else effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
 }
 
 test('image save sends once, retains another tab draft and reaches resolved quotation image cells',async()=>{
@@ -88,4 +88,25 @@ test('retained source markers identify unsaved SEO and images across stage navig
  const pending=()=>nodes(h.render()).filter(n=>n.props?.['data-quotation-source-step']&&n.props['data-workspace-dirty']).map(n=>n.props['data-quotation-source-step']);
  assert.deepEqual(pending(),['SEO','추가 이미지']);
  h.button('이미지 역할·순서 저장').props.onClick();await settle();assert.deepEqual(pending(),['SEO']);
+});
+
+test('stages 3, 4 and 5 save independently and pending other-stage images survive each save',async()=>{
+ const patches=[];let saved;
+ const h=harness((_url,init,content)=>{if(init?.method!=='PATCH')return;const patch=JSON.parse(init.body).patch;patches.push(patch);saved=h.model.applyContentPatch(saved??content,patch,'2026-09-26T01:00:00Z');return Response.json({content:saved});},'main');
+ await h.start();
+ const assign=(index,role)=>nodes(h.render()).find(n=>n.props?.['aria-label']===`이미지 ${index} 역할`).props.onChange({target:{value:role}});
+ assign(1,'main');h.setStage('additional');assign(2,'additional');h.setStage('detail');assign(3,'detail');
+ h.setStage('main');h.button('이미지 역할·순서 저장').props.onClick();await settle();
+ assert.deepEqual(patches[0].assets,{main:['owner/a.png']});assert.equal(saved.assets.additional.value.length,0);assert.equal(saved.assets.detail.value.length,0);
+ const pending=()=>nodes(h.render()).filter(n=>n.props?.['data-quotation-source-step']&&n.props['data-workspace-dirty']).map(n=>n.props['data-quotation-source-step']);
+ assert.ok(pending().includes('추가 이미지'));assert.ok(pending().includes('상세 이미지'));assert.ok(!pending().includes('대표 이미지'));
+ h.setStage('additional');h.button('이미지 역할·순서 저장').props.onClick();await settle();assert.deepEqual(patches[1].assets,{additional:['owner/b.png']});assert.ok(pending().includes('상세 이미지'));
+ h.setStage('detail');h.button('상세 설명·이미지 저장').props.onClick();await settle();assert.deepEqual(patches[2].assets,{detail:['owner/c.png']});assert.equal(pending().length,0);assert.equal(h.notices,3);
+});
+test('cross-stage image move removes only the saved duplicate and preserves unrelated main-image draft',()=>{
+ const h=harness(()=>{});const {imageStagePatch,mergeSavedImageStage}=h.load('app/image-stage-save.ts');
+ const assets=()=>Object.fromEntries(Object.keys(h.model.assetRoles).map(role=>[role,[]]));
+ const initial=assets();initial.main=['owner/a.png'];const draft=assets();draft.main=['owner/b.png'];draft.additional=['owner/a.png'];draft.detail=['owner/c.png'];
+ const patch=imageStagePatch(initial,draft,'additional');assert.deepEqual(JSON.parse(JSON.stringify(patch)),{main:[],additional:['owner/a.png']});
+ const saved={...initial,...patch};const next=mergeSavedImageStage(initial,draft,saved,'additional');assert.deepEqual(Array.from(next.main),['owner/b.png']);assert.deepEqual(Array.from(next.detail),['owner/c.png']);assert.deepEqual(Array.from(next.additional),['owner/a.png']);
 });

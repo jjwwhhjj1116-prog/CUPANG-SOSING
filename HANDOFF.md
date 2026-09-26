@@ -3159,3 +3159,11 @@ AI등록 화면 확인:
 - 테스트: 관련26/26, 추가 연결8/8, 전체977/977 통과. 이후 인코딩/결과 크기 제한을 보강하고 collector9/9 재검증 통과. TypeScript 및 최종 Cloudflare build/check 통과. 테스트는 합성 공개 HTML 및 mock HTTP/DB를 사용하며 실제1688/Couplus/Hub E2E가 아니다.
 - 기존 supplierChrome.tabs.list()는 이번에도 오류 없이 [] 반환. 새 Chrome/프로필은 열지 않았다. 전체 카테고리 기본값 대조·실제상품 수집 검증·이미지 번역·Supplier Hub 자동등록은 미완성이다.
 - 배포 3c33fcb8-e074-4c67-923b-d5628d4b67e6. outputs/step303-tests.log, step303-collector-tests.log, step303-full-tests.log, step303-build.log, step303-deploy.log.
+
+## 304. 3·4·5단계 이미지 저장 범위 분리 — 2026-09-26
+
+- 기존 이미지 저장은 draft.assets 전체를 보내 다른 이미지 단계의 미저장 작업까지 확정했다. imageStageRoles/imageStagePatch/mergeSavedImageStage를 도입해 대표(main+기존 사이즈표/표시사항 이미지), 추가(additional), 상세(detailTop/detail/detailBottom)를 각각 저장한다. generic 이미지 편집은 전체 저장을 유지한다.
+- 선택 단계로 이미지를 옮기면 해당 파일의 다른 저장 역할만 제거해 한 파일 한 역할 규칙을 유지한다. 다른 단계의 관계없는 미저장 이미지 및 SEO 입력은 보존된다. 각 단계 dirty 표시/저장 버튼도 해당 범위를 기준으로 판단한다. 상세 설명 저장은 기존대로5단계에 포함한다.
+- 실제 ContentEditor 렌더 테스트에서 세 단계의 순차 저장/미저장 배치 유지/견적 mainImage 연결을 확인했다. cross-role 이동에서도 다른 단계의 변경을 유지하는 회귀 검증 추가. 관련41/41, TypeScript, Cloudflare build/check, diff check 통과.
+- 첨부된 Couplus의 단계 구분을 참고한 동작 수정이다. Couplus 실사이트와 동일한 저장 API/시각 동작을 대조한 것은 아니다. 실제1688 수집 확인·전체 카테고리 기본값·이미지 번역·Supplier Hub 자동전송 미완성 유지.
+- 배포 bd8d629b-9581-4428-976a-7c0ece72cbb9. outputs/step304-tests.log, step304-build.log, step304-deploy.log.

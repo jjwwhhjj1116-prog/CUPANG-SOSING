@@ -4,6 +4,7 @@ import { QuotationKeywordReview } from '@/app/components/quotation-keyword-revie
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { assetRoles, detailImageKeys, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
 import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor-tools';
+import { imageStagePatch, imageStageRoles, mergeSavedImageStage } from '@/app/image-stage-save';
 import { fillLabelDraft } from '@/app/label-autofill';
 import { ImageSizeNotice } from '@/app/components/image-size-notice';
 import { currentLabelLayout, moveLabelField, type LabelLayout } from '@/app/product-content';
@@ -90,7 +91,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const initial = draftFrom(content);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
   const editingDetail = section === '이미지' && focusedAssetRole === 'detail';
-  const dirty = (editingDetail && draft.seo.description !== initial.seo.description) || JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey]) || (section==='표시사항'&&(JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
+  const dirty = (editingDetail && draft.seo.description !== initial.seo.description) || (section==='이미지'?imageStageRoles(focusedAssetRole).some(role=>JSON.stringify(draft.assets[role])!==JSON.stringify(initial.assets[role])):JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey])) || (section==='표시사항'&&(JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
   const anyDirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion);
   useEffect(() => {
@@ -144,7 +145,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
-      : section === '표시사항' ? { label: draft.label, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: draft.assets, ...(editingDetail ? { seo: { description: draft.seo.description } } : {}) };
+      : section === '표시사항' ? { label: draft.label, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(editingDetail ? { seo: { description: draft.seo.description } } : {}) };
     try {
       const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent; error?: string };
@@ -153,7 +154,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       const saved = body.content;
       setContent(saved);
       // Preserve unsaved work in other tabs when this section is saved.
-      setDraft(previous => ({ ...previous, [draftKey]: draftFrom(saved)[draftKey], ...(editingDetail ? { seo: { ...previous.seo, description: saved.seo.description.value } } : {}), ...(section==='표시사항'?{labelLayout:draftFrom(saved).labelLayout,customLabels:draftFrom(saved).customLabels}:{}) }));
+      setDraft(previous => ({ ...previous, [draftKey]: section==='이미지'?mergeSavedImageStage(initial.assets,previous.assets,draftFrom(saved).assets,focusedAssetRole):draftFrom(saved)[draftKey], ...(editingDetail ? { seo: { ...previous.seo, description: saved.seo.description.value } } : {}), ...(section==='표시사항'?{labelLayout:draftFrom(saved).labelLayout,customLabels:draftFrom(saved).customLabels}:{}) }));
       setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '저장하지 못했습니다.'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
@@ -253,7 +254,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
           <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt="" width={64} height={64}/><span>{index+1}</span>
         </button>)}</div>}
       </div>}
-      <div className="content-editor-save"><span>{dirty ? '저장하지 않은 변경' : content.revision ? `저장 버전 ${content.revision}` : '아직 저장한 내용 없음'}{section==='이미지'&&<small>대표·추가·상세 이미지의 역할과 순서는 함께 저장됩니다.</small>}</span><button type="button" className="btn primary" disabled={busy || !dirty || conflict} onClick={() => void save()}>{busy ? '저장 중…' : editingDetail?'상세 설명·이미지 저장':section==='이미지'?'이미지 역할·순서 저장':`${section} 저장`}</button></div>
+      <div className="content-editor-save"><span>{dirty ? '저장하지 않은 변경' : content.revision ? `저장 버전 ${content.revision}` : '아직 저장한 내용 없음'}{section==='이미지'&&<small>{focusedAssetRole?'현재 단계의 이미지 배치를 저장합니다. 다른 단계의 입력은 유지됩니다.':'이미지 역할과 순서를 함께 저장합니다.'}</small>}</span><button type="button" className="btn primary" disabled={busy || !dirty || conflict} onClick={() => void save()}>{busy ? '저장 중…' : editingDetail?'상세 설명·이미지 저장':section==='이미지'?'이미지 역할·순서 저장':`${section} 저장`}</button></div>
     </fieldset>}
   </div>;
 }
