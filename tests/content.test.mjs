@@ -255,3 +255,11 @@ test('detail banners preserve legacy content and require owned single images', (
  assert.throws(()=>model.validateContentInput(input({assets:{detailBottom:['other/private']}}),['other/private'],'owner'));
  assert.throws(()=>model.applyContentPatch(next,{assets:{detail:['owner/top']}},now));
 });
+
+test('specifications migrate old content without mutation and persist into printable label rows',()=>{
+ const old=model.emptyProductContent('test');delete old.label.specifications;const before=JSON.stringify(old);
+ const normalized=model.withCurrentLabelFields(old);assert.equal(normalized.label.specifications.value,'');assert.equal(normalized.label.specifications.provenance,'unverified');assert.equal(JSON.stringify(old),before);
+ const {patch}=model.validateContentInput(input({label:{specifications:'확인한 세부 사양'}}),[],'owner');const saved=model.applyContentPatch(normalized,patch,now);
+ assert.equal(saved.label.specifications.value,'확인한 세부 사양');assert.equal(saved.label.specifications.provenance,'manual');assert.equal(model.labelDocumentRows(saved).find(row=>row[0]==='specifications')[2],'확인한 세부 사양');
+ for(const value of [null,12,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{specifications:value}}),[],'owner'));
+});

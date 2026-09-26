@@ -1712,3 +1712,15 @@ test('complete, absent, cleared and explicitly overridden product dimensions ret
  delete input.overrides;row.provenance.lengthCm='manual';
  field=model.resolveQuotationFields(input).rows[1].fields.noticeDimensions;assert.equal(field.value,'');assert.equal(field.source,'option');
 });
+
+test('brace specifications follow saved step-six content and preserve quotation overrides and manual blanks',()=>{
+ const input=fixture();input.categoryId='81452';
+ input.content=contentModel.applyContentPatch(input.content,{label:{specifications:'좌우 공용\n압박 강도 조절 가능'}},'now');
+ let resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.brace_noticeSpecifications.value,'좌우 공용\n압박 강도 조절 가능');assert.equal(resolved.rows[1].fields.brace_noticeSpecifications.source,'content');
+ input.overrides={common:{brace_noticeSpecifications:'견적 공통 수정'},options:{red:{brace_noticeSpecifications:''}}};
+ resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[0].fields.brace_noticeSpecifications.value,'견적 공통 수정');assert.equal(resolved.rows[1].fields.brace_noticeSpecifications.value,'');
+ input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{specifications:''}},'later');
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications.value,'');
+ delete input.content.label.specifications;assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications.value,'');
+ input.categoryId='80719';assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications,undefined);
+});

@@ -405,6 +405,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'noticeDimensions': return dimensions(option);
       // This notice contains product size/weight, not the option's packaging dimensions.
+      case 'brace_noticeSpecifications': return contentValue(content.label.specifications ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'brace_noticeSizeWeight': return contentValue(content.label.dimensions);
       case 'noticeManufacturerImporter': {
         const manufacturer = savedTextOrFallback(content.label.manufacturer, settings.manufacturer); const importer = savedTextOrFallback(content.label.importer, settings.importer);
