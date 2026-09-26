@@ -156,3 +156,34 @@ test('captured company labels feed quotation fields even after workspace default
   assert.equal(row.fields.noticeServiceContact.source,'content');
  }
 });
+
+test('captured target keywords populate SEO and category quotation tags without inventing translated keywords',()=>{
+ const captured={...job,context:{...job.context,keywords:' 빨강, 수납 가방\n빨강, 轻便 ',features:'feature must not replace source description'}};
+ const r=prepare('owner',captured,result,'p',now);
+ assert.deepEqual(Array.from(r.content.seo.keywords.value),['빨강','수납 가방','轻便']);
+ assert.equal(r.content.seo.keywords.provenance,'manual');assert.equal(r.content.seo.description.value,result.description);
+ const resolve=load('app/quotation-schema.ts').resolveQuotationFields;
+ for(const categoryId of ['80719','81452','64497','103495']){
+  const quote=resolve({categoryId,product:r.product,content:r.content,options:r.options,settings});
+  assert.ok(quote.rows.every(row=>row.fields.searchTags.value==='빨강, 수납 가방, 轻便'));
+ }
+ assert.deepEqual(Array.from(prepare('owner',job,result,'p',now).content.seo.keywords.value),[]);
+});
+test('keyword promotion never silently truncates invalid captured input',()=>{
+ for(const keywords of ['x'.repeat(101),Array.from({length:51},(_,i)=>'k'+i).join(','),'bad\u0000']){
+  assert.throws(()=>prepare('owner',{...job,context:{...job.context,keywords}},result,'p',now),/키워드/);
+ }
+});
+
+test('stored target keyword draft survives promotion retry after manual SEO editing',async()=>{
+ const s=storage();const captured={...job,context:{...job.context,keywords:'원본, 검색어'}};
+ try {
+ s.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(captured.context),job.id);
+ const saved=await s.promoteCollection('owner',captured,result);
+ const read=()=>JSON.parse(s.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(saved.product_id).payload);
+ const content=read();assert.deepEqual(content.seo.keywords.value,['원본','검색어']);
+ content.seo.keywords.value=[];content.seo.keywords.provenance='manual';
+ s.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(content),saved.product_id);
+ await s.promoteCollection('owner',captured,result);assert.deepEqual(read().seo.keywords.value,[]);
+ } finally {s.sqlite.close();}
+});

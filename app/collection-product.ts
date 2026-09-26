@@ -5,7 +5,7 @@ import { emptyProductOptions, emptyOptionInput, optionFieldNames, validateOption
 import { workspaceBannerAssignments } from '@/app/workspace-banners';
 import { emptyProductContent } from '@/app/product-content';
 import { initialStatuses } from '@/app/workflow';
-import type { CollectionJob } from '@/app/sourcing';
+import { collectionKeywords, type CollectionJob } from '@/app/sourcing';
 import type { ProductRecord } from '@/db/queries';
 
 export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:CollectionResult,id:string,now:string){
@@ -22,6 +22,8 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   const options={...emptyProductOptions(id),revision:1,updatedAt:now,rows:rows.map(row=>({...row,updatedAt:now,provenance:Object.fromEntries(Object.keys(optionFieldNames).map(key=>[key,['originalName','supplierSku','unitCostCny','minimumOrderQuantity'].includes(key)||key==='stock'&&row.stock!==null||key==='color'&&row.color||key==='size'&&row.size?'collected':['unitsPerPack','included'].includes(key)?'manual':'unverified']))} as ProductOption))};
   const content=emptyProductContent(id);content.revision=1;content.updatedAt=now;
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
+  const keywords=collectionKeywords(job.context.keywords);
+  if (keywords.length) content.seo.keywords={value:keywords,provenance:'manual',updatedAt:now};
   // These are the owner's captured registration inputs, not supplier facts or
   // translated claims. Explicit blanks must survive later workspace changes.
   for (const [field, setting] of [['manufacturer','manufacturer'],['importer','importer'],['contact','serviceContact']] as const) {

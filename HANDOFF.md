@@ -3050,3 +3050,11 @@ AI등록 화면 확인:
 - 검증: 옵션 관련35/35, TypeScript, Cloudflare build/check, diff check 통과. 실제 클릭 핸들러 ID 전달, 선택 행, 없는 ID, 두 옵션 중 한 옵션의 원가 변경을 저장하는 요청을 검사했다. 실제 Chrome 시각 검증은 수행하지 못했다.
 - 배포 fc91d276-f6d3-4845-9977-ca4f522c3d75. 로그 outputs/step288-build.log, step288-deploy.log. 요금제·결제 설정 변경 없음.
 - 핵심 미완성은 동일: 실제1688 URL 수집 실행기, 전카테고리 Couplus/Hub 기본값 대조, Supplier Hub 전송501 구현·실접수. 옵션 편집 개선을 전체 구현 완료로 설명하지 않는다.
+
+## 289. 상품 추가 타겟 키워드 → SEO → 견적 검색태그 연결 — 2026-09-26
+
+- 수집 context에 저장하던 keywords가 상품 생성 시 SEO 초안에서 누락되던 문제 수정. 쉼표/줄바꿈으로 구분하고 공백·중복을 정리해 수동 입력 출처로 반영한다. 상품 특징을 공급자 원문 설명으로 덮어쓰거나 AI 생성·번역 결과로 표시하지 않는다.
+- 기존 견적 resolver가 SEO 검색어를 참조하므로 해당 카테고리 견적 searchTags에 연결된다. 견적 150자/태그20자 제한은 기존 견적 검증에서 계속 안내하며 자동 절삭하지 않는다. 입력 단계에서는 편집기 수용 한도50개/각100자를 공유 검증한다. 부적합 입력은 요청 전과 서버에서 거절하며 입력을 보존한다.
+- 검증44/44: 4개 카테고리 검색태그 연결, 수동 출처, 원문 설명 보존, 잘못된 키워드 요청 차단, SQLite 저장 후 수동 삭제 및 promotion 재시도 보존. TypeScript, build/check, diff check 통과.
+- Chrome 기존 supplierChrome.tabs.list()는 오류 없이 [] 반환. 새 Chrome이나 다른 프로필을 열지 않았다. 실제 Couplus/1688 수집 UI는 대조하지 못했으며 본 변경은 수신 이후 단계의 누락 수정이다.
+- Cloudflare 배포 e0854e98-4eea-4ac5-84a4-ce3fb86ccf67. 로그 outputs/step289-tests.log, step289-build.log, step289-deploy.log. 실제1688 실행기/전카테고리 기본값 대조/Supplier Hub 자동등록은 여전히 미완성이다.

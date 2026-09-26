@@ -74,3 +74,9 @@ test('queue search matches category and URL without changing saved drafts or sel
  assert.deepEqual(Array.from(visibleIntakeRows(rows,'offer/1.html'),r=>r.id),['1']);
  assert.equal(visibleIntakeRows(rows,'no-such-product').length,0);assert.equal(visibleIntakeRows(rows,' ').length,2);assert.equal(JSON.stringify(rows),before);
 });
+
+test('invalid SEO keywords remain in the queue and block submission before any request',async()=>{
+ const draft={...row(1),keywords:'x'.repeat(101)};let calls=0;const errors=[];
+ await assert.rejects(submitIntakeQueue([draft],'price',{signal:new AbortController().signal,fetcher:async()=>{calls++;},onRow:(_id,state)=>errors.push(state),onJobs(){}}));
+ assert.equal(calls,0);assert.equal(draft.keywords.length,101);assert.match(errors[0].message,/키워드/);
+});

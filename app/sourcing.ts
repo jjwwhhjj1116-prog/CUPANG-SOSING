@@ -59,3 +59,12 @@ export function parseCollectionRequest(input: unknown): CollectionRequest[] {
   }
   return [...unique.values()];
 }
+
+/** Owner-supplied target keywords become editable SEO input, never AI output. */
+export function collectionKeywords(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (typeof value !== 'string' || value.length > 2000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value)) throw new Error('타겟 키워드는 제어문자 없이 2,000자 이내로 입력해주세요.');
+  const words = [...new Set(value.split(/[\n,]/).map(word => word.trim()).filter(Boolean))];
+  if (words.length > 50 || words.some(word => word.length > 100)) throw new Error('타겟 키워드는 쉼표 또는 줄바꿈으로 구분해 최대 50개, 각 100자까지 입력해주세요.');
+  return words;
+}

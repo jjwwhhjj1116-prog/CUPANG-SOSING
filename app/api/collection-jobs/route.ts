@@ -1,6 +1,6 @@
 import { usableCategoryCode } from '@/app/category-profiles';
 import { NextResponse } from 'next/server';
-import { collectionBlock, parseCollectionRequest, preservedCollectionRequests } from '@/app/sourcing';
+import { collectionBlock, collectionKeywords, parseCollectionRequest, preservedCollectionRequests } from '@/app/sourcing';
 import { enqueueCollection, listCollectionJobs } from '@/db/collection-jobs';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { getSettings } from '@/db/queries';
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     if(!Number.isSafeInteger(body.expectedProfileRevision)||(body.expectedProfileRevision as number)<1)throw new Error('카테고리 설정 버전이 없습니다. 카테고리를 다시 선택해주세요.');
     expectedProfileRevision=body.expectedProfileRevision as number;
     for(const key of ['features','keywords'])if(body[key]!==undefined&&(typeof body[key]!=='string'||String(body[key]).length>2000))throw new Error('특징·키워드는 각각 2,000자 이하여야 합니다.');
-    features=String(body.features??'');keywords=String(body.keywords??'');
+    features=String(body.features??'');keywords=String(body.keywords??'');collectionKeywords(keywords);
   }
   catch (error) { return NextResponse.json({ error: error instanceof SyntaxError ? '올바른 JSON이 필요합니다.' : error instanceof Error ? error.message : '입력을 확인해주세요.' }, { status: 400 }); }
   try {

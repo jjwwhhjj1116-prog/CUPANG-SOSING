@@ -9,7 +9,7 @@ function load(file, dependencies = {}, mode = 'development') {
   const source = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(output, { exports, crypto, URL, Response, process: { env: { NODE_ENV: mode } }, require: name => {
+  vm.runInNewContext(output, { exports, Error, crypto, URL, Response, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in dependencies) return dependencies[name];
     if (name === '@/db/collection-results') return load('db/collection-results.ts', dependencies);
     if (name === '@/app/category-profiles') return load('app/category-profiles.ts');
@@ -257,4 +257,12 @@ test('queue exposes owner-scoped receipt time without payload and preserves canc
   const cancelled=await queries.cancelCollection('a',a.id);assert.equal(cancelled.received_at,jobs[0].received_at);assert.equal(progress(cancelled).kind,'cancelled');
   assert.equal(progress({...jobs[0],product_id:'saved'}).kind,'imported');assert.equal(progress({status:'awaiting_connector'}).kind,'awaiting_connector');
  }finally{sqlite.close();}
+});
+
+test('invalid target keywords are rejected before queuing an uneditable SEO draft',async()=>{
+ let writes=0;const route=load('app/api/collection-jobs/route.ts',{'@/db/collection-jobs':{enqueueCollection:async()=>{writes++;return [];}}});
+ for(const keywords of ['x'.repeat(101),'bad\u0000',Array.from({length:51},(_,i)=>'k'+i).join(',')]) {
+  const res=await route.POST(request({...payload,keywords}));assert.equal(res.status,400);assert.match((await res.json()).error,/키워드/);
+ }
+ assert.equal(writes,0);
 });

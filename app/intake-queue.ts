@@ -1,4 +1,4 @@
-import { parseCollectionRequest, collectionJobProgress, type CollectionJob, type PreservedCollectionRequest } from '@/app/sourcing';
+import { parseCollectionRequest, collectionKeywords, collectionJobProgress, type CollectionJob, type PreservedCollectionRequest } from '@/app/sourcing';
 import type { CategoryProfile } from '@/app/category-profiles';
 
 export type IntakeRow = {
@@ -27,6 +27,7 @@ export function validateIntakeQueue(rows: readonly IntakeRow[], goal: string) {
     catch (cause) { add(row.id, cause instanceof Error ? cause.message : 'URL을 확인해주세요.'); }
     if (!/^[a-f0-9-]{36}$/.test(row.profile.id) || !Number.isSafeInteger(row.profile.revision) || row.profile.revision < 1) add(row.id, '카테고리를 다시 선택해주세요.');
     if (row.features.length > 2000 || row.keywords.length > 2000) add(row.id, '특징·키워드는 각각 2,000자까지 입력해주세요.');
+    try { collectionKeywords(row.keywords); } catch (cause) { add(row.id, cause instanceof Error ? cause.message : '키워드를 확인해주세요.'); }
     if (!entry) return [];
     seen.set(entry.offerId, [...(seen.get(entry.offerId) ?? []), row.id]);
     return [{ id: row.id, body: { urls: [entry.sourceUrl], goal, profileId: row.profile.id, expectedProfileRevision: row.profile.revision, features: row.features, keywords: row.keywords } }];
