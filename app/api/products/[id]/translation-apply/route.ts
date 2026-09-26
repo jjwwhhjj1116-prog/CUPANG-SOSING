@@ -5,9 +5,8 @@ import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
 import { getTranslationJob } from '@/db/translation-jobs';
 import { saveIntegratedTranslation } from '@/db/translation-adoption';
-import { integratedTranslationPlan } from '@/app/translation-integrated-adoption';
+import { integratedTranslationPlan, applyIntegratedOptions } from '@/app/translation-integrated-adoption';
 import { applyContentPatch } from '@/app/product-content';
-import { applyOptionRows } from '@/app/product-options';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson } from '@/app/request-body';
 
@@ -41,7 +40,7 @@ export async function POST(request: Request, context: Context) {
     if (body.fingerprint !== digest) return json({ error: '검토 이후 자료가 변경되었습니다. 통합 미리보기를 다시 확인해주세요.' }, 409);
     if (!plan.preview.length) return json({ error: '새로 적용할 번역 항목이 없습니다.' }, 409);
     const now = new Date(Math.max(Date.now(), Date.parse(product.updated_at) + 1)).toISOString();
-    const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyOptionRows(options, plan.rows, now);
+    const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
       contentRevision: content.revision, optionRevision: options.revision, jobId: job.id });
     return saved ? json({ productId: id, productVersion: now, contentRevision: nextContent.revision, optionRevision: nextOptions.revision, applied: plan.preview.length })

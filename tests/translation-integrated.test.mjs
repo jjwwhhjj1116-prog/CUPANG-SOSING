@@ -76,3 +76,28 @@ test('API previews without writes, verifies reviewed fingerprint, and applies on
   assert.equal((await call({action:'apply',fingerprint:plan.fingerprint})).status,409);assert.equal(saves,1);
  }finally{h.sqlite.close();}
 });
+
+test('integrated save records same-value translations and skips them in the next option batch',async()=>{
+ const h=harness();try{
+  const {content,options,job}=h.data;
+  job.result.draft.attributes.find(a=>a.sourceIndex===2).value='红色';
+  const before=JSON.stringify(options),plan=model.integratedTranslationPlan(content,options,job,version);
+  assert.ok(plan.preview.some(row=>row.name.includes('값 유지')&&row.before==='红色'&&row.after==='红色'));
+  const next=model.applyIntegratedOptions(options,plan,nextVersion);
+  assert.equal(JSON.stringify(options),before);assert.equal(next.rows[0].color,'红色');assert.equal(next.rows[0].provenance.color,'translated');
+  const saved=await h.store.saveIntegratedTranslation('owner',cm.applyContentPatch(content,plan.patch,nextVersion),next,{productVersion:version,imageKeys:'[]',contentRevision:0,optionRevision:1,jobId});
+  assert.equal(saved,true);
+  const persisted=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  assert.equal(load('app/option-translation.ts').optionTranslationBatch(persisted).total,0);
+  assert.equal(persisted.rows[0].unitCostCny,3);assert.equal(persisted.rows[0].updatedAt,nextVersion);
+ }finally{h.sqlite.close();}
+});
+
+test('integrated completion never marks manual fields or fields absent from the reviewed result',()=>{
+ const {content,options,job}=fixture();
+ options.rows[0].color='';options.rows[0].provenance.color='manual';options.rows[0].size='大';options.rows[0].provenance.size='collected';
+ const plan=model.integratedTranslationPlan(content,options,job,version),next=model.applyIntegratedOptions(options,plan,nextVersion);
+ assert.equal(next.rows[0].color,'');assert.equal(next.rows[0].provenance.color,'manual');assert.equal(next.rows[0].provenance.size,'collected');
+ const pending=load('app/option-translation.ts').optionTranslationBatch(next);
+ assert.equal(pending.total,1);assert.equal(pending.attributes[0].name,'option-size:red');
+});

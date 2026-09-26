@@ -1,6 +1,6 @@
 import { translationBatchAdoption } from '@/app/translation-batch-adoption';
 import { adoptOptionTranslations } from '@/app/option-translation';
-import { optionFieldNames, type ProductOptions } from '@/app/product-options';
+import { applyOptionRows, optionFieldNames, type ProductOptions } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
 
@@ -12,8 +12,20 @@ export function integratedTranslationPlan(content: ProductContent, options: Prod
   for (const row of translated.rows) {
     const current = options.rows.find(item => item.id === row.id)!;
     for (const field of ['translatedName', 'color', 'size'] as const) {
-      if ((current[field] ?? '') !== (row[field] ?? '')) preview.push({ name: `${current.originalName || row.id} · ${optionFieldNames[field]}`, before: current[field] ?? '', after: row[field] ?? '' });
+      const reviewed=translated.reviewed.some(item=>item.optionId===row.id&&item.field===field);
+      const differs=(current[field] ?? '') !== (row[field] ?? '');
+      if (reviewed) preview.push({ name: `${current.originalName || row.id} · ${optionFieldNames[field]}${differs?'':' · 번역 확인 (값 유지)'}`, before: current[field] ?? '', after: row[field] ?? '' });
     }
   }
-  return { patch: text.input?.patch ?? null, rows: translated.rows, preview, skipped: text.skipped };
+  return { patch: text.input?.patch ?? null, rows: translated.rows, reviewedOptions:translated.reviewed, preview, skipped: text.skipped };
+}
+
+/** Call only with a server-recomputed plan from a completed, matching job. */
+export function applyIntegratedOptions(options:ProductOptions,plan:ReturnType<typeof integratedTranslationPlan>,now:string){
+  const next=applyOptionRows(options,plan.rows,now);
+  for(const item of plan.reviewedOptions){
+    const row=next.rows.find(row=>row.id===item.optionId)!;
+    row.provenance[item.field]='translated';row.updatedAt=now;
+  }
+  return next;
 }

@@ -2832,3 +2832,12 @@ AI등록 화면 확인:
 - 제한: 분할은 무료 요청 준비 단계이다. 유료 호출을 자동 반복하거나 실패를 자동 재시도하지 않는다. 번역값이 기존 collected 값과 동일해서 저장 출처가 바뀌지 않은 항목은 계속 미번역 후보에 남을 수 있다. 실제1688 수집 및 Hub접수 검증은 아니다.
 - Cloudflare e47f28e6-fea5-4b0a-8744-004cdb8494b1. 로그 outputs/step264-tests.log, step264-build.log, step264-deploy.log. DB변경·유료AI·운영등록 없음.
 - 다음 시작점: 동일값 번역 완료 처리와 분할 재개 UX 보완 가능. 핵심 미완성은 기존 Chrome 탭 접근/실제1688 수집 실행기/전카테고리 기본값 대조/이미지 번역/Supplier Hub501 전송 구현 및 실접수다.
+
+## 265. 통합 저장에서 동일값 옵션 번역 완료 처리 — 2026-09-26
+
+- 시작 main c557a7d. 분할 번역 후 원문과 번역값이 동일하면 applyOptionRows가 collected 출처를 유지하여 다음 분량에서 재선택되었다.
+- 구현: adoptOptionTranslations가 검증을 통과한 옵션ID/필드 목록을 반환한다. 통합 미리보기에는 동일값도 ‘번역 확인 (값 유지)’로 표시한다. 서버는 완료된 같은 상품/버전/원문 번역 job으로 계획을 다시 계산하고 fingerprint를 검증한 뒤, 해당 필드만 translated 출처로 기록한다. 값/가격/수량을 불필요하게 바꾸지 않는다. 수동 공란 및 결과에 없는 필드는 완료 처리하지 않는다.
+- 검증: translation-integrated/translation-integrated-ui/option-translation/translation-panel-requests39/39, TypeScript, Cloudflare build/check/diff check 통과. 실제 SQLite에 동일값 완료 상태 저장→재조회→다음 분할에서 제외, 원본 불변, 수동 공란 보호 및 미처리 필드 유지 확인.
+- 범위: SEO·표시사항·옵션 통합 저장 경로에 적용했다. 기존 일반 옵션 PATCH는 사용자가 보내는 출처를 신뢰하지 않으며 그대로 유지했다. 기존 옵션만 적용 UI의 동일값 완료 처리는 통합 저장으로 진행해야 한다. 실제 유료 번역 호출·실상품 수집·Hub접수 검증은 아니다.
+- Cloudflare75e894bb-148d-473f-8363-5b7b76c42a64. outputs/step265-tests.log, step265-build.log, step265-deploy.log. DB스키마 변경·유료작업·운영등록 없음.
+- 다음 시작점: 옵션만 적용 경로도 검증된 job을 사용하는 서버 저장 경로로 통일. 핵심 미완성은 실제 Chrome 탭 접근/1688 수집 실행기/전카테고리 Couplus 기본값 대조/이미지번역/Supplier Hub501 전송 및 실접수이다.

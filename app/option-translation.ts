@@ -45,6 +45,7 @@ export function optionTranslationAttributes(options:ProductOptions, allowEmpty =
 export function adoptOptionTranslations(options:ProductOptions,job:TranslationJob,productVersion:string, allowEmpty = false){
  if(job.productId!==options.productId||job.productVersion!==productVersion||job.status!=='completed'||!job.result)throw new Error('상품이 변경됐거나 완료된 번역 결과가 아닙니다. 새 요청을 검토해주세요.');
  const rows=optionInputs(options);let changed=0;const seen=new Set<string>();
+ const reviewed:{optionId:string;field:'translatedName'|'color'|'size'}[]=[];
  for(const translated of job.result.draft.attributes){
   const source=job.review.source.attributes[translated.sourceIndex];
   const binding=source?.name.match(/^option(?:-(color|size))?:([A-Za-z0-9_-]{1,80})$/);
@@ -66,8 +67,9 @@ export function adoptOptionTranslations(options:ProductOptions,job:TranslationJo
   const limit=field?200:500;
   if(!value||value.length>limit||/[\u0000-\u001f]/u.test(value))throw new Error(`번역 옵션 값은 ${limit}자 이내의 한 줄 텍스트여야 합니다.`);
   if(field)row[field]=value;else row.translatedName=value;
+  reviewed.push({optionId:id,field:field??'translatedName'});
   changed++;
  }
  if(!changed&&!allowEmpty)throw new Error('적용할 미번역 옵션 값이 없습니다. 기존 수정값은 유지했습니다.');
- return {rows,changed};
+ return {rows,changed,reviewed};
 }
