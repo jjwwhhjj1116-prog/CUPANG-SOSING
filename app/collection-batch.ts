@@ -40,7 +40,22 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       if (source.images.length) {
         const capacityResponse = await request(path + '/capacity', { cache: 'no-store' });
         const capacityBody = await capacityResponse.json() as { error?: string; capacity?: unknown } | null;
-        if (!capacityResponse.ok) throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
+        if (!capacityResponse.ok) {
+          if ([502,503,504].includes(capacityResponse.status) && !options.shouldStop()) {
+            options.onProgress(job.id, '이미지 확인 지연 · 상품·옵션 초안을 먼저 저장 중');
+            const draft = await runCollectionImport(job.id, source.images.length, {
+              fetcher: options.fetcher, imageIndices: [], shouldStop: options.shouldStop,
+              retryAttempts: 3, retryWait: options.retryWait, onRetry,
+            });
+            options.onResult(job.id, draft.status === 'completed' ? {
+              ...draft, status: 'failed', error: '상품·옵션 초안은 저장했습니다. 이미지 저장 상태를 확인하지 못해 이미지 반영은 재시도가 필요합니다.',
+              warnings: ['원본 이미지 주소는 보존되어 있습니다. 저장된 상품을 열어 내용을 수정할 수 있습니다.'],
+            } : draft);
+            if (draft.status === 'stopped') break;
+            continue;
+          }
+          throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
+        }
         indices = recommendCollectionImages(source, validateCollectionCapacity(capacityBody?.capacity, source.images.length));
       }
       if (options.shouldStop()) break;

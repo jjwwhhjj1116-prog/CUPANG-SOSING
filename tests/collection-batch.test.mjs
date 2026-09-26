@@ -91,3 +91,27 @@ test('batch never retries permission failures and stopping during backoff preven
  await importReceivedJobs([job('a'),job('b')],{shouldStop:()=>stop,onProgress:()=>{},onResult:()=>assert.fail('stopped before writes'),retryWait:async()=>{stop=true;},fetcher:async()=>{calls++;throw new Error('network');}});
  assert.equal(calls,1);
 });
+
+test('temporary capacity outage preserves editable product draft without image writes or false completion',async()=>{
+ const calls=[],results=[];
+ await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),retryWait:async()=>{},fetcher:async url=>{
+  calls.push(url);
+  if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+  if(url.endsWith('/capacity'))return Response.json({error:'temporary'},{status:503});
+  if(url.endsWith('/product'))return Response.json({productId:'draft'});
+  assert.fail('must not download images');
+ }});
+ assert.equal(results[0].productId,'draft');assert.equal(results[0].status,'failed');assert.equal(results[0].completedImages,0);
+ assert.equal(calls.filter(url=>url.endsWith('/capacity')).length,3);assert.equal(calls.filter(url=>url.endsWith('/product')).length,1);
+});
+
+test('capacity permission failures do not fall back to product writes',async()=>{
+ for(const status of [401,403,409,429]){
+  const results=[];
+  await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),retryWait:async()=>{},fetcher:async url=>{
+   if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+   assert.ok(url.endsWith('/capacity'));return Response.json({error:'blocked'},{status});
+  }});
+  assert.equal(results[0].productId,null);assert.equal(results[0].status,'failed');
+ }
+});

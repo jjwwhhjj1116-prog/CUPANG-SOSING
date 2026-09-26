@@ -3100,3 +3100,10 @@ AI등록 화면 확인:
 - 상세 이미지는 상단/본문/하단 순서로 읽는다. 비문자 파일 응답은 거절하고 상품 파일 목록에서 찾지 못하는 연결은 확인 필요로 표시한다. 기존 옵션·콘텐츠 두 조회를 재사용한다.
 - 변경 전 전체957/957, 변경 관련8/8, TypeScript, Cloudflare build/check, diff check 통과. 실제 Chrome 시각 대조는 수행하지 않았다.
 - 배포7fb4cc7c-5b4a-4419-85d4-3227f87065b3. 로그 outputs/step295-full-tests.log, step295-tests.log, step295-build.log, step295-deploy.log. 실제1688 수집 실행기·전체 카테고리 기본값 대조·Supplier Hub 자동등록은 여전히 미완성이다.
+
+## 296. 이미지 상태 조회 장애에서도 수신된 상품 초안 저장 — 2026-09-26
+
+- importReceivedJobs의 capacity 조회가 재시도 후 502/503/504이면 원문 상품·옵션을 먼저 저장한다. productId를 반환해 7단계 편집을 열 수 있고 이미지 작업은 failed로 유지해 재시도 대상에서 빠지지 않는다. 이미지 다운로드는 실행하지 않는다.
+- 401/403/409/429 및 잘못된 원문은 기존 오류 처리 유지. 사용자 중단 시 다음 상품으로 진행하지 않는다. 실제 URL 페이지 수집 실행기를 추가한 작업은 아니다.
+- 관련11/11, TypeScript, Cloudflare build/check, diff check 통과. 기존 Chrome supplierChrome.tabs.list()는 []로 실제 Couplus 대조 불가. 새 Chrome/프로필 생성하지 않음.
+- 배포7df52ea8-4250-4be2-95f6-ab3302531a06. outputs/step296-tests.log, step296-build.log, step296-deploy.log. 실제1688 수집·전체 카테고리 대조·Supplier Hub 자동등록 여전히 미완성.
