@@ -3079,3 +3079,10 @@ AI등록 화면 확인:
 - 콘텐츠 편집기에 단계별 dirty marker를 추가했다. 이미지 역할 저장 후 SEO 초안만 남는 경우도 구분한다. 가격 정책과 옵션은 가격 편집 영역으로 이동한다. 라벨/사이즈 이미지 역할 초안은 해당 역할을 저장할 수 있는 이미지 편집기로 이동한다. 저장 중에는 견적서 진입을 보류한다.
 - 관련10/10, TypeScript, Cloudflare build/check, diff check 통과. 숨겨진 단계/중복 단계/저장 진행/일부 저장 후 남은 초안 검증. 실제 Couplus 동작 동일성 또는 Chrome 시각 검증은 아님.
 - 배포 ecd8eb4c-0e73-4c8d-8b14-c7c9a2426dc4. 로그 outputs/step292-tests.log, step292-build.log, step292-deploy.log. 실제1688 수집·전체 카테고리 기본값 대조·Supplier Hub 자동등록은 여전히 미완성.
+
+## 293. 옵션 목록 → 해당 옵션 이미지 편집 — 2026-09-26
+
+- 옵션별 ‘이미지 편집’을 추가하고 선택 옵션 ID로 옵션 편집 영역을 열어 해당 행·이미지 선택칸에 포커스한다. 가격 편집은 기존 원가 입력 포커스를 유지한다. 해당 옵션을 다시 찾을 필요 없이 저장된 상품 이미지 중 선택해 연결한다.
+- 기존 옵션 API의 전체 목록·revision 검증을 사용한다. 다른 옵션의 이미지/가격을 변경하지 않으며 null 연결 해제는 기존 공통 대표 이미지 선택 규칙을 따른다. 이미지 AI 가공/실수집 구현은 아니다.
+- 관련12/12, TypeScript, Cloudflare build/check, diff check 통과. 개별 이미지가 없는 옵션 클릭 ID, 이미지 저장 시 다른 행 보존, 공통 이미지로 해제 요청을 검증했다. 실제 Chrome 시각 검증은 수행하지 못했다.
+- 배포 d766ea4c-febb-4ff3-9a7d-dad8c0ae9d94. 로그 outputs/step293-tests.log, step293-build.log, step293-deploy.log. 실제1688 수집 실행기·전체 카테고리 동일성·Supplier Hub 자동등록은 여전히 미완성이다.

@@ -95,3 +95,12 @@ test('missing target leaves every option unselected',async()=>{
  assert.equal(all.filter(n=>n.props?.['data-option-target']).length,0);
  assert.ok(all.some(n=>n.type==='p'&&String(n.props.children).includes('선택했던 옵션이 현재 목록에 없습니다')));
 });
+
+test('targeted option image editing saves only that image and clearing restores shared image selection',async()=>{
+ const requests=[];const h=harness(async(_url,init,base)=>{const request=JSON.parse(init.body);requests.push(request);return Response.json({...base,options:{...base.options,revision:base.options.revision+1,rows:request.rows.map(row=>({...row,provenance:{imageKey:"manual"}}))}});},body=>{body.options.rows.push({...body.options.rows[0],id:'b',imageKey:'owner/a.png'});return Response.json(body);},{focusedOptionId:'b',pricingView:false});
+ await h.start();const select=()=>nodes(h.render()).find(n=>n.type==='select'&&n.props['aria-label']==='옵션 2 이미지');
+ assert.equal(nodes(h.render()).filter(n=>n.type==='article'&&n.props['data-option-target']).length,1);
+ select().props.onChange({target:{value:'owner/b.png'}});h.button().props.onClick();await settle();
+ assert.equal(requests[0].rows[0].imageKey,null);assert.equal(requests[0].rows[1].imageKey,'owner/b.png');
+ select().props.onChange({target:{value:''}});h.button().props.onClick();await settle();assert.equal(requests[1].rows[1].imageKey,null);
+});
