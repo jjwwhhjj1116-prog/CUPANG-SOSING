@@ -2895,3 +2895,11 @@ AI등록 화면 확인:
 - 검증: option-editor-tools/option-bulk-packaging-ui/options/quotation-schema/option-editor-requests190/190, TypeScript, Cloudflare build/check/diff 통과. 여러 구성 수량의 서버 기준 기록, 입력 불변/미선택 보호, 공란 처리, 범위·형식 오류, 미리보기 이후 변경 차단, UI 네 값 필수·입력 변경 폐기·적용·되돌리기를 확인했다. 실Chrome 클릭 검증 아님.
 - 배포 Cloudflare0f5dbf8a-4a16-48ae-b11a-6ae9237699f9. outputs/step271-tests.log, step271-build.log, step271-deploy.log. DB스키마 변경·유료 호출·운영등록 없음.
 - 다음 시작점: 실제1688 수집 실행기/전카테고리 Couplus 기본값 대조/이미지 번역/Supplier Hub501 전송과 실접수는 미완성이다. 이번 포장 일괄 편집을 실제 수집 자동화나 전체 복제 완료로 보고하지 않는다.
+
+## 272. 실제 수집 경로의 서버 의존성 확인 — 2026-09-26
+
+- 시작 main c5f2782 clean. 내려받은 쿠플러스 CLI1.3.2의 sourcing/alibaba.js와 core/remote.js를 정적으로 대조했다.
+- 확인: growth.getOfferDetail은 POST /api/aiPage/getProductInfo를 쿠플러스 서버로 호출한다. 독립 Chrome 수집기가 아니다. SKU/배송/속성의 상위 위치는 안내되지만 실제 내부 필드와 원문 응답은 확보되지 않았다. 4,000자 초과 문자열을 생략하는 출력이므로 상세페이지 원문으로 재사용할 수 없다.
+- 미확인: Rocket AI 웹의 실제 호출 경로, 상세 조회 과금, 전카테고리 기본값, 실상품813724060928 수집 및 Supplier Hub 접수. 기존 Chrome tabs.list()는 []였다. 기존 창/프로필 조건을 유지했다.
+- 상세 근거: docs/couplus-cli-execution-analysis-2026-09-25.md의272절. 외부 비공개 호출·인증 저장소 읽기·유료 실행 없음. 기능 코드 변경이 없어 회귀 테스트와 재배포는 실행하지 않았다. 이전271 배포0f5dbf8a-4a16-48ae-b11a-6ae9237699f9 유지.
+- 다음 시작점: 사용자 지정 기존 Chrome 탭이 도구에 노출되면 실제 상품 응답/카테고리 견적 요청을 관찰한다. 현재의 원문 저장 경로를 수집 실행기로 오인하지 말 것. 실제 수집 실행기와 Supplier Hub POST501이 핵심 미완성이다. 주변 기능 수정을 전체 자동화 진척으로 보고하지 않는다.
