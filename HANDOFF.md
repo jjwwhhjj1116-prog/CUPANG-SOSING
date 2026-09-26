@@ -3121,3 +3121,10 @@ AI등록 화면 확인:
 - 긴 URL은 입력 아래에서 줄바꿈으로 전체 표시한다. React 텍스트로 표시하며 URL을 실행하거나 새 브라우저를 열지 않는다.
 - 기존 카테고리·대기열15/15, 수정 후 TypeScript, Cloudflare build/check, diff check 통과. 실제 Chrome 포커스·시각 검증은 못했다.
 - 배포d29734ec-28ee-49c0-b8d6-96a9e8b604d5. outputs/step298-tests.log, step298-build.log, step298-deploy.log. 실제1688 수집·전체 카테고리 대조·Supplier Hub 전송 미완성 유지.
+
+## 299. 단계 저장 성공 직후 견적서 직접 갱신 — 2026-09-26
+
+- DetailPanel에 저장 성공 revision을 추가해 SEO/옵션/이미지/표시사항/번역 완료 저장 시 QuotationPanel refreshToken을 즉시 갱신한다. 목록 재조회 실패 또는 같은 product.updated_at에 의존해 견적 자동값이 남는 상황을 줄인다. 가격 저장은 await 성공 후에만 갱신한다.
+- 견적 편집기 기존 refresh/reconcile을 사용하므로 수동 초안을 버리지 않고 충돌을 확인한다. 자동 저장 또는 Hub 전송 추가 아님.
+- 실제 DetailPanel AST를 렌더하는 연결 테스트2/2, 기존 견적 편집기69/69, TypeScript, Cloudflare build/check, diff check 통과. 수정 시각 동일/가격 저장 실패를 검증했다.
+- 배포0d55691f-123e-472c-abd8-4ca9b72d66ae. outputs/step299-tests.log, step299-refresh-tests.log, step299-build.log, step299-deploy.log. 실제1688 수집·전체 카테고리 대조·Supplier Hub 자동등록 미완성 유지.
