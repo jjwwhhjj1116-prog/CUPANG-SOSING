@@ -74,3 +74,17 @@
 .quotation-fields-summary { display: flex; flex-wrap: wrap; gap: 8px 14px; color: #526079; font-size: 12px; }
 .quotation-fields-summary b { color: #2457b5; }
 @media (max-width: 600px) { .quotation-fields-grid { grid-template-columns: 1fr; }.quotation-fields-heading { flex-direction: column; }.quotation-fields-section-nav button { font-size: 11px; }.quotation-fields-section-nav button small { font-size: 9px; }.quotation-fields-actions { align-items: stretch; }.quotation-fields-actions>div { justify-content: flex-end; width: 100%; } }
+
+/* Continuous quotation form, following the five pages in the reference. */
+.quotation-fields-section{scroll-margin-top:90px;width:100%;max-width:1000px;justify-self:center}
+.quotation-fields-section .quotation-fields-grid{grid-template-columns:minmax(0,1fr);background:#f8f9fb;padding:20px;gap:24px}
+.quotation-fields-section>header h4{color:inherit}
+.registration-workspace .quotation-fields-section[data-section=start]>header{background:#2bbadc;color:white}
+.registration-workspace .quotation-fields-section[data-section=product]>header{background:#7cdcf1;color:#172758}
+.registration-workspace .quotation-fields-section[data-section=image]>header{background:#79bf97;color:#102e20}
+.registration-workspace .quotation-fields-section[data-section=legal]>header{background:#df8db4;color:#362033}
+.registration-workspace .quotation-fields-section[data-section=logistics]>header{background:#080924;color:white}
+.quotation-fields-section>header .quotation-field-help,.quotation-fields-section>header small{color:inherit}
+.quotation-field{scroll-margin-top:90px}
+
+.registration-workspace .quotation-fields-actions{position:sticky;top:0;bottom:auto;padding:10px 14px;border:1px solid #e5eaf2;border-radius:8px;background:#fff;z-index:3}

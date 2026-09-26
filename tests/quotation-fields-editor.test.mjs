@@ -831,3 +831,15 @@ test('older-content review cannot override category identity; same-ID path chang
  assert.equal(adoption.quotationTranslationMatches('p1',view,job,{contentRevision:3}),true);
  assert.equal(adoption.quotationTranslationMatches('other',view,job,{contentRevision:3}),false);
 });
+
+test('quotation renders all five pages together with unique fields and preserved manual drafts',()=>{
+ const view=fixture();const draft=[change('brand','직접 브랜드'),change('packagedWeightG','250')];
+ const html=renderEditor(view,'start',draft);
+ const groups=[...html.matchAll(/data-section="([^"]+)"/g)].map(match=>match[1]);
+ assert.deepEqual(groups,['start','product','image','legal','logistics']);
+ for(const field of view.resolved.schema.fields){
+  assert.equal(html.split(`id="editor-test-${field.id}"`).length-1,1,`${field.id} must be present exactly once`);
+ }
+ assert.match(html,/value="직접 브랜드"/);assert.match(html,/value="250"/);
+ assert.ok(html.indexOf('data-section="product"')<html.indexOf('data-section="logistics"'));
+});
