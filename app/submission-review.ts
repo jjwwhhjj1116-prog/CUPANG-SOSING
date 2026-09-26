@@ -15,7 +15,7 @@ export type SubmissionReview = {
 };
 
 /** Readiness is derived from final saved cells, never legacy status badges. */
-export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[], imageChecks?: ReadonlyMap<string,ImageCheck>, imageCheckSource: 'storage-metadata' | 'attachment-bytes' = 'storage-metadata') {
+export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[], imageChecks?: ReadonlyMap<string,ImageCheck>, imageCheckSource: 'storage-metadata' | 'attachment-bytes' = 'storage-metadata', assetIdentities?: ReadonlyMap<string, string>) {
   // Bound memory while ensuring early review reminders cannot hide later errors.
   const errors: SubmissionIssue[] = [], reviews: SubmissionIssue[] = [];
   let errorCount = 0; let reviewCount = 0;
@@ -40,9 +40,10 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
     if (resolved.schema.fields.some(field => field.id === 'labelImages') && !row.fields.labelImages?.value.trim()) {
       add({kind:'error', code:'LABEL_ATTACHMENT_MISSING', message:'제품 필수 표시사항: 라벨 또는 도안 이미지를 저장하고 견적서에 연결해주세요.', optionId:row.optionId, optionLabel:row.optionLabel, fieldId:'labelImages'});
     }
-    const mainImages = new Set((row.fields.mainImage?.value ?? '').split('\n').map(key => key.trim()).filter(Boolean));
-    if ((row.fields.detailImages?.value ?? '').split('\n').some(key => mainImages.has(key.trim()))) {
-      add({kind:'review', code:'MAIN_DETAIL_DUPLICATE', message:'대표 이미지와 상세 이미지에 같은 파일이 연결되어 있습니다. Supplier Hub 화면에서 반려 가능성을 안내하므로 구성을 확인해주세요.', optionId:row.optionId, optionLabel:row.optionLabel, fieldId:'detailImages'});
+    const identity = (key: string) => assetIdentities?.get(key) ?? key;
+    const mainImages = new Set((row.fields.mainImage?.value ?? '').split('\n').map(key => key.trim()).filter(Boolean).map(identity));
+    if ((row.fields.detailImages?.value ?? '').split('\n').map(key => key.trim()).filter(Boolean).some(key => mainImages.has(identity(key)))) {
+      add({kind:'review', code:'MAIN_DETAIL_DUPLICATE', message:assetIdentities ? '대표 이미지와 상세 이미지에 내용이 동일한 첨부 파일이 연결되어 있습니다. 파일명이 달라도 동일한 바이트이면 표시합니다. Supplier Hub 반려 가능성 안내에 따라 구성을 확인해주세요.' : '대표 이미지와 상세 이미지에 같은 파일이 연결되어 있습니다. Supplier Hub 화면에서 반려 가능성을 안내하므로 구성을 확인해주세요.', optionId:row.optionId, optionLabel:row.optionLabel, fieldId:'detailImages'});
     }
     for (const field of resolved.schema.fields) {
       const cell = row.fields[field.id];

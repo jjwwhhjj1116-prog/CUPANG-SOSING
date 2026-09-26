@@ -1594,3 +1594,26 @@ test('translated Couplus label headings populate saved labels and quotation with
  assert.equal(again.patch?.label?.importer,undefined);assert.equal(again.patch?.label?.manufacturer,undefined);
  assert.ok(again.skipped.some(text=>text.includes('직접 수정')));assert.ok(again.skipped.some(text=>text.includes('여러 개')));
 });
+
+test('archive detects duplicate main and detail bytes across different keys for the same included option',()=>{
+ const input=fixture();
+ input.overrides={common:{},options:{red:{mainImage:'owner/main.png',detailImages:'owner/detail.png'}}};
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64');
+ const assets=[{key:'owner/main.png',name:'assets/main.png',data:png},{key:'owner/detail.png',name:'assets/detail.png',data:Buffer.from(png)},{key:'owner/option.png',name:'assets/option.png',data:Buffer.from(png)}];
+ const before=JSON.stringify(input),resolved=model.resolveQuotationFields(input);
+ const source={...input,state:{revision:1,overrides:input.overrides},categoryContext:{categoryId:'80719'}};
+ const files=load('app/exports/quotation-fields.ts').quotationFieldFiles(source,resolved,assets,'same-revision').files;
+ const review=JSON.parse(files.find(file=>file.name==='submission-review.json').data);
+ const duplicate=review.issues.filter(issue=>issue.code==='MAIN_DETAIL_DUPLICATE');
+ assert.equal(duplicate.length,1);assert.equal(duplicate[0].optionId,'red');assert.equal(duplicate[0].fieldId,'detailImages');
+ assert.match(files.find(file=>file.name==='submission-review.csv').data,/내용이 동일한/);
+ assert.equal(JSON.stringify(input),before);assert.equal(review.submissionReady,false);
+ const identities=load('app/exports/quotation-asset-identities.ts').quotationAssetIdentities;
+ assert.equal(identities(assets).get('owner/detail.png'),'owner/main.png');
+ assets[1].data[assets[1].data.length-1]^=1;
+ assert.equal(identities(assets).get('owner/detail.png'),'owner/detail.png');
+ const inspect=load('app/submission-review.ts').inspectSubmission;
+ assert.equal(inspect(resolved,assets.map(a=>a.key),undefined,'attachment-bytes',identities(assets)).issues.filter(i=>i.code==='MAIN_DETAIL_DUPLICATE').length,0);
+ for(const row of resolved.rows)row.included=false;assets[1].data=Buffer.from(png);
+ assert.equal(inspect(resolved,assets.map(a=>a.key),undefined,'attachment-bytes',identities(assets)).issues.filter(i=>i.code==='MAIN_DETAIL_DUPLICATE').length,0);
+});

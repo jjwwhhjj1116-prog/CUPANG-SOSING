@@ -1,3 +1,4 @@
+import { quotationAssetIdentities } from '@/app/exports/quotation-asset-identities';
 import { supplierHubUploadPage } from '@/app/exports/supplier-hub-upload-page';
 import { supplierHubUploadPlan } from '@/app/exports/supplier-hub-upload-plan';
 import { categoryFields, type CategoryField, type CategoryProfileInput } from '@/app/category-profiles';
@@ -132,7 +133,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const review = { format: 'sourceflow-quotation-review-v1', productId: saved.product.id,
     sourceUrl: saved.product.source_url, inputFingerprint,
     quotationRevision: saved.state.revision, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
-    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys), inspectQuotationAssets(resolved, assets), 'attachment-bytes'),
+    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys), inspectQuotationAssets(resolved, assets), 'attachment-bytes', quotationAssetIdentities(assets)),
   };
   const reviewRows: (string | number)[][] = [['구분', '코드', '옵션 ID', '옵션명', '필드 ID', '확인 사항'],
     ...review.issues.map(issue => [issue.kind === 'error' ? '오류' : '검토', issue.code, issue.optionId ?? '', issue.optionLabel, issue.fieldId ?? '', issue.message])];
