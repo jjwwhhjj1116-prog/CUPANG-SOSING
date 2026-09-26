@@ -38,7 +38,9 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   const current=await readProductContent(owner,product.id);
   if(JSON.parse(product.image_keys).length>=50)return reply({error:'상품 이미지 50개 제한입니다. 이미지를 정리해주세요.'},409);
   if(!env.FILES)return reply({error:'이미지 저장소 연결이 필요합니다.'},503);
-  const downloaded=await downloadCollectionImage(image.url,owner);
+  let downloaded;
+  try{downloaded=await downloadCollectionImage(image.url,owner);}
+  catch{return reply({code:'IMAGE_DOWNLOAD_FAILED',error:'이 원본 이미지의 다운로드 또는 이미지 형식 확인에 실패했습니다. 다른 이미지 저장 후 다시 시도할 수 있습니다.'},502);}
   const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected',...imageDimensionMetadata(downloaded.bytes)}});
   if(!stored)throw new Error('이미지 저장 확인 실패');
   const saved=await saveCollectionImage(owner,id,body.index,downloaded.key,image.role,product,current,skus);

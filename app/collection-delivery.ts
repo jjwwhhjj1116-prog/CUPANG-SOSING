@@ -48,7 +48,7 @@ export async function deliverCollectionResult(jobId:string,offerId:string,input:
    indices=recommendCollectionImages(result,validateCollectionCapacity(body.capacity,result.images.length));
   }catch(cause){return {status:options.shouldStop?.()?'stopped':'failed',receiptConfirmed:true,productId:null,completedImages:0,error:cause instanceof Error?cause.message:'자동 이미지 선택 실패'};}
  }
- const outcome=await runCollectionImport(jobId,result.images.length,{...options,retryAttempts:attempts,fetcher,imageIndices:indices});
+ const outcome=await runCollectionImport(jobId,result.images.length,{...options,continueOnImageError:true,retryAttempts:attempts,fetcher,imageIndices:indices});
  const omitted=automatic?result.images.length-indices.length:0;
  const warnings=[...(omitted?[`원본 이미지 ${result.images.length}개 중 ${indices.length}개를 저장 여유에 맞춰 선택했습니다. 나머지 ${omitted}개 주소는 수집 원문에 보존되어 있습니다.`]:[]),...(outcome.warnings??[])];
  return {...outcome,receiptConfirmed:true,...(warnings.length?{warnings}: {})};

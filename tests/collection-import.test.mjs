@@ -135,3 +135,18 @@ test('import retains indexed assignment warnings through completion, failure and
   assert.equal(outcome.completedImages,mode==='completed'?3:1);
  }
 });
+
+test('known download failure can continue later images and retry without false completion',async()=>{
+ let fail=true;const calls=[],saved=new Set();
+ const fetcher=async(url,init)=>{if(url.endsWith('/product'))return reply({productId:'p'});const index=JSON.parse(init.body).index;calls.push(index);if(index===1&&fail)return {ok:false,status:502,json:async()=>({code:'IMAGE_DOWNLOAD_FAILED',error:'bad image'})};saved.add(index);return reply({key:`owner/${index}`});};
+ const first=await runCollectionImport('job',3,{fetcher,continueOnImageError:true});
+ assert.equal(first.status,'failed');assert.equal(first.completedImages,2);assert.deepEqual([...first.failedImageIndices],[1]);assert.deepEqual(calls,[0,1,2]);assert.match(first.error,/2번/);
+ fail=false;const second=await runCollectionImport('job',3,{fetcher,continueOnImageError:true});assert.equal(second.status,'completed');assert.equal(second.completedImages,3);assert.equal(saved.size,3);
+});
+
+test('continue mode still stops on authentication, storage, malformed or unknown errors',async()=>{
+ for(const response of [{ok:false,status:403,json:async()=>({error:'access'})},{ok:false,status:503,json:async()=>({error:'storage'})},{ok:false,status:502,json:async()=>({error:'unknown'})},reply({})]){
+  let images=0;const result=await runCollectionImport('job',3,{continueOnImageError:true,fetcher:async url=>{if(url.endsWith('/product'))return reply({productId:'p'});images++;return response;}});
+  assert.equal(result.status,'failed');assert.equal(images,1);assert.equal(result.completedImages,0);
+ }
+});

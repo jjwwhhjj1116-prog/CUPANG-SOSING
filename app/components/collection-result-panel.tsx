@@ -54,7 +54,7 @@ function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}
   if(!result||running.current)return;
   running.current=true;stop.current=false;setStopping(false);setWarnings([]);setBusy(true);setImporting(true);
   let outcome;
-  try { outcome=await runCollectionImport(jobId,result.images.length,{retryAttempts:3,onRetry:attempt=>{if(mounted.current)setMessage(`일시적인 연결 오류 · ${attempt}/3회 재시도 중…`);},imageIndices:productOnly?[]:selectedImages,shouldStop:()=>stop.current,onProgress:progress=>{
+  try { outcome=await runCollectionImport(jobId,result.images.length,{continueOnImageError:true,retryAttempts:3,onRetry:attempt=>{if(mounted.current)setMessage(`일시적인 연결 오류 · ${attempt}/3회 재시도 중…`);},imageIndices:productOnly?[]:selectedImages,shouldStop:()=>stop.current,onProgress:progress=>{
    if(mounted.current)setMessage(progress.stage==='product'?'상품·옵션 반영 중…':`원본 이미지 ${progress.completedImages}/${progress.totalImages}개 저장 확인…`);
   }}); } catch(cause) {
    running.current=false;

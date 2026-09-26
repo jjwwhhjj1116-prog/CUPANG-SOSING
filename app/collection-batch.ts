@@ -45,7 +45,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       }
       if (options.shouldStop()) break;
       const result = await runCollectionImport(job.id, source.images.length, {
-        fetcher: options.fetcher, imageIndices: indices, shouldStop: options.shouldStop,
+        continueOnImageError: true, fetcher: options.fetcher, imageIndices: indices, shouldStop: options.shouldStop,
         retryAttempts: 3, retryWait: options.retryWait, onRetry,
         onProgress: progress => options.onProgress(job.id, progress.stage === 'product' ? '상품·옵션 반영 중' : `원본 이미지 ${progress.completedImages}/${progress.totalImages}개 저장 중`),
       });
