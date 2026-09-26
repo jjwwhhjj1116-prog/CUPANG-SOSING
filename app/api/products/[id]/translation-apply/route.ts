@@ -9,6 +9,7 @@ import { integratedTranslationPlan, applyIntegratedOptions } from '@/app/transla
 import { applyContentPatch } from '@/app/product-content';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson } from '@/app/request-body';
+import { readTranslationCategorySource } from '@/db/translation-category-source';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -33,10 +34,14 @@ export async function POST(request: Request, context: Context) {
     const [content, options, job] = await Promise.all([readProductContent(owner, id), readProductOptions(owner, id), getTranslationJob(owner, id, body.jobId as string)]);
     if (!job) return json({ error: '번역 결과를 찾을 수 없습니다.' }, 404);
     const scope = body.scope === 'options' ? 'options' : 'all';
+    let categorySource;
+    try {
+      if (job.review.source.category) categorySource = await readTranslationCategorySource(owner, id, product.source_url, job.review.source.category.id);
+    } catch (error) { return json({ error: error instanceof Error ? error.message : '상품 카테고리를 확인하지 못했습니다.' }, 409); }
     let plan;
     try { plan = integratedTranslationPlan(content, options, job, product.updated_at, scope); }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }
-    const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope });
+    const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null });
     const preview = { scope, productId: id, productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, fingerprint: digest, preview: plan.preview, skipped: plan.skipped };
     if (body.action === 'preview') return json(preview);
     if (body.fingerprint !== digest) return json({ error: '검토 이후 자료가 변경되었습니다. 통합 미리보기를 다시 확인해주세요.' }, 409);
@@ -44,7 +49,7 @@ export async function POST(request: Request, context: Context) {
     const now = new Date(Math.max(Date.now(), Date.parse(product.updated_at) + 1)).toISOString();
     const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
-      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id });
+      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, categorySource });
     return saved ? json({ scope, productId: id, productVersion: now, contentRevision: nextContent.revision, optionRevision: nextOptions.revision, applied: plan.preview.length })
       : json({ error: '저장 중 자료가 변경되었습니다. 아무 항목도 함께 저장하지 않았습니다. 다시 검토해주세요.' }, 409);
   } catch { return json({ error: '통합 저장 상태를 확인하지 못했습니다. 저장본을 조회한 뒤 다시 검토해주세요. 자동 재저장하지 않았습니다.' }, 503); }

@@ -65,6 +65,7 @@ test('API previews without writes, verifies reviewed fingerprint, and applies on
    '@/db/queries':{findProduct:async()=>({id:'p',owner_id:'owner',updated_at:h.sqlite.prepare('SELECT updated_at FROM products').get().updated_at,image_keys:'[]'})},
    '@/db/product-content':{readProductContent:async()=>h.data.content},'@/db/product-options':{readProductOptions:async()=>h.data.options},
    '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job},
+   '@/db/translation-category-source':{readTranslationCategorySource:async()=>{throw Error('legacy job must not read category');}},
    '@/db/translation-adoption':{saveIntegratedTranslation:async(...args)=>{saves++;return h.store.saveIntegratedTranslation(...args);}},
   });
   const context={params:Promise.resolve({id:'p'})};
@@ -110,6 +111,7 @@ test('option-only API binds scope, preserves SEO and labels and persists verifie
    '@/db/queries':{findProduct:async()=>({id:'p',owner_id:'owner',updated_at:h.sqlite.prepare('SELECT updated_at FROM products').get().updated_at,image_keys:'[]'})},
    '@/db/product-content':{readProductContent:async()=>h.data.content},'@/db/product-options':{readProductOptions:async()=>h.data.options},
    '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job},
+   '@/db/translation-category-source':{readTranslationCategorySource:async()=>{throw Error('legacy job must not read category');}},
    '@/db/translation-adoption':{saveIntegratedTranslation:async(...args)=>{saves++;return h.store.saveIntegratedTranslation(...args);}},
   });
   const context={params:Promise.resolve({id:'p'})};
@@ -125,5 +127,72 @@ test('option-only API binds scope, preserves SEO and labels and persists verifie
   const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
   assert.equal(options.rows[0].color,'빨강');assert.equal(options.rows[0].provenance.color,'translated');
   assert.equal((await call({action:'apply',fingerprint:plan.fingerprint})).status,409);assert.equal(saves,1);
+ }finally{h.sqlite.close();}
+});
+
+function collectionTables(h){
+ h.sqlite.exec('CREATE TABLE collection_products(product_id TEXT,owner_id TEXT,job_id TEXT); CREATE TABLE collection_jobs(id TEXT,owner_id TEXT,offer_id TEXT,status TEXT,updated_at TEXT); CREATE TABLE collection_context(job_id TEXT,payload TEXT);');
+ const snapshot={id:'intake',linked:true,updatedAt:version,payload:JSON.stringify({category:{name:'바구니',categoryId:'80719',categoryPath:['주방용품','바구니'],template:null,mappings:[]}})};
+ h.sqlite.prepare('INSERT INTO collection_products VALUES (?,?,?)').run('p','owner','intake');
+ h.sqlite.prepare('INSERT INTO collection_jobs VALUES (?,?,?,?,?)').run('intake','owner','813724060928','awaiting_connector',version);
+ h.sqlite.prepare('INSERT INTO collection_context VALUES (?,?)').run('intake',snapshot.payload);
+ return {offerId:'813724060928',snapshot};
+}
+
+test('integrated category guard commits atomically and rejects a changed link, owner, source or cancellation',async()=>{
+ for(const mode of ['success','payload','link','owner','cancel','time','new-link','still-unlinked']){
+  const h=harness();try{
+   let categorySource=collectionTables(h);
+   const plan=model.integratedTranslationPlan(h.data.content,h.data.options,h.data.job,version);
+   const content=cm.applyContentPatch(h.data.content,plan.patch,nextVersion),options=model.applyIntegratedOptions(h.data.options,plan,nextVersion);
+   if(mode==='payload')h.sqlite.exec("UPDATE collection_context SET payload='{}'");
+   if(mode==='link')h.sqlite.exec("UPDATE collection_products SET job_id='different'");
+   if(mode==='owner')h.sqlite.exec("UPDATE collection_jobs SET owner_id='other'");
+   if(mode==='cancel')h.sqlite.exec("UPDATE collection_jobs SET status='cancelled'");
+   if(mode==='time')h.sqlite.exec("UPDATE collection_jobs SET updated_at='changed'");
+   if(mode==='new-link'||mode==='still-unlinked')categorySource={offerId:categorySource.offerId,snapshot:null};
+   if(mode==='still-unlinked')h.sqlite.exec('DELETE FROM collection_products');
+   const expected=mode==='success'||mode==='still-unlinked';
+   const saved=await h.store.saveIntegratedTranslation('owner',content,options,{productVersion:version,imageKeys:'[]',contentRevision:0,optionRevision:1,jobId,categorySource});
+   assert.equal(saved,expected,mode);
+   assert.equal(h.sqlite.prepare('SELECT updated_at FROM products').get().updated_at,expected?nextVersion:version,mode);
+   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM product_content').get().n,expected?1:0,mode);
+   assert.equal(h.sqlite.prepare('SELECT revision FROM product_options').get().revision,expected?2:1,mode);
+  }finally{h.sqlite.close();}
+ }
+});
+
+test('category source uses exact product intake and refuses mismatched or malformed captured categories',async()=>{
+ const h=harness();try{
+  const source=collectionTables(h);let snapshot=source.snapshot;const calls=[];
+  const reader=load('db/translation-category-source.ts',{'@/db/quotation-fields':{readQuotationCollectionSource:async(...args)=>{calls.push(args);return snapshot;}}}).readTranslationCategorySource;
+  const result=await reader('owner','p','https://detail.1688.com/offer/813724060928.html','80719');
+  assert.equal(result.snapshot.payload,snapshot.payload);assert.deepEqual(calls[0],['owner','813724060928','p']);
+  await assert.rejects(()=>reader('owner','p','https://detail.1688.com/offer/813724060928.html','81452'),/카테고리/);
+  snapshot={...snapshot,payload:'{}'};await assert.rejects(()=>reader('owner','p','https://detail.1688.com/offer/813724060928.html','80719'));
+  snapshot=null;assert.equal((await reader('owner','p','https://detail.1688.com/offer/813724060928.html','80719')).snapshot,null);
+ }finally{h.sqlite.close();}
+});
+
+test('category-aware integrated preview rejects wrong category and invalidates changed intake before saving',async()=>{
+ const h=harness();try{
+  const source=collectionTables(h);let snapshot=source.snapshot,saves=0;
+  h.data.job.review.source.category={id:'81452',path:['다른 분류']};
+  const reader=load('db/translation-category-source.ts',{'@/db/quotation-fields':{readQuotationCollectionSource:async()=>snapshot}});
+  const route=load('app/api/products/[id]/translation-apply/route.ts',{
+   '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=> 'owner'},
+   '@/db/queries':{findProduct:async()=>({id:'p',updated_at:version,image_keys:'[]',source_url:'https://detail.1688.com/offer/813724060928.html'})},
+   '@/db/product-content':{readProductContent:async()=>h.data.content},'@/db/product-options':{readProductOptions:async()=>h.data.options},
+   '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job},'@/db/translation-category-source':reader,
+   '@/db/translation-adoption':{saveIntegratedTranslation:async(...args)=>{saves++;return h.store.saveIntegratedTranslation(...args);}},
+  });
+  const call=body=>route.POST(new Request('https://local/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,expectedVersion:version,...body})}),{params:Promise.resolve({id:'p'})});
+  for(const scope of ['all','options'])assert.equal((await call({action:'preview',scope})).status,409);
+  assert.equal(saves,0);h.data.job.review.source.category.id='80719';
+  const preview=await call({action:'preview'});assert.equal(preview.status,200);const plan=await preview.json();
+  snapshot={...snapshot,updatedAt:'changed'};
+  assert.equal((await call({action:'apply',fingerprint:plan.fingerprint})).status,409);assert.equal(saves,0);
+  snapshot=source.snapshot;
+  assert.equal((await call({action:'apply',fingerprint:plan.fingerprint})).status,200);assert.equal(saves,1);
  }finally{h.sqlite.close();}
 });

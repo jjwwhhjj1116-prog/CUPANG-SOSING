@@ -2923,3 +2923,13 @@ AI등록 화면 확인:
 - 검증: quotation-fields-editor/quotation-attribute-rules-api68/68, TypeScript, Cloudflare build/check/diff 통과. 처음 기존 오류문구 테스트1건이 실패했고 최신 자료라는 의미를 유지하는 문구로 수정한 후 재실행 통과. 다른 카테고리·이전버전 확인·서버규칙 재사용·네트워크 호출없음·입력 불변성·동일번호 및 이전자료 호환을 검사했다. 실브라우저 검증 없음.
 - 배포90148d1e-3a8b-428e-b4ce-13c8da2ef644. outputs/step274-tests.log, step274-build.log, step274-deploy.log. DB변경·유료호출·운영등록 없음.
 - 다음 시작점: 기존 Chrome의 실제 상품/카테고리 응답 접근과 수집 실행기 구현, 전카테고리 자동값 대조, 이미지 번역, Hub POST501 전송/실접수가 핵심 미완성이다. 이번 검증 수정은 그 전체 구현 완료가 아니다.
+
+## 275. SEO·표시사항·옵션 통합 저장의 수집 카테고리 검증 — 2026-09-26
+
+- 시작 main466ed8a clean. 이전274는 견적 속성 연결만 검증했다. 이번에는 translation-apply의 all/options 저장 경로를 보완했다.
+- 구현: category가 기록된 번역은 상품에 정확히 연결된 수집 요청을 읽고 당시 선택한 categoryId와 비교한다. 견적 읽기와 동일한 readQuotationCollectionSource를 재사용하므로 같은URL의 다른 요청을 선택하지 않는다. 해당 원문과 요청 수정시각을 미리보기 지문에 포함한다.
+- DB: 저장 transaction의 첫 상품 UPDATE에서 수집 연결/소유자/상품번호/요청 상태/수정시각/원문 payload가 읽은 값과 동일한지 재검사한다. 바뀌었으면 content/options를 모두 쓰지 않는다. 기존 수동 입력 상품의 연결 없음도 저장 시점까지 보존한다. DB스키마 변경 없음.
+- 호환과 범위: category 없는 이전 번역은 기존 검증을 유지한다. 수집 연결이 없는 수동 상품은 category 일치를 입증하지 못하며 기존 동작을 보존한다. 비교 대상은 상품추가 시 저장한 분류이며 견적 화면에서 일시 선택한 별도 프로필이 아니다. 수동값·공란 보호는 기존 통합 계획을 유지한다.
+- 검증: 통합9/9 및 전체915/915, TypeScript/Cloudflare build/check/diff 통과. 실제 SQLite 저장에서 성공, 원문/연결/소유자/상태/시각 변경, 연결없음→새연결 경합을 검증했다. API의 잘못된 카테고리409, 미리보기 후 원문변경409, 동일 원문 저장200, all/options 및 이전 자료 호환도 포함한다. 실제 브라우저 클릭·유료번역·Hub접수 검증은 아니다.
+- 배포5ece457e-df77-4e75-8189-b107877c64ea. outputs/step275-tests.log, step275-full-tests.log, step275-build.log, step275-deploy.log. 유료 호출·운영상품 등록 없음.
+- 다음 시작점: 실제1688 수집 실행기, 전카테고리 자동값 대조, 이미지 번역, Supplier Hub POST501 전송/실접수는 여전히 미완성. 이번 저장 검증을 전체 자동화 완료로 보고하지 않는다.
