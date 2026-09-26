@@ -56,3 +56,19 @@ test('declared page charset is decoded and oversized parsed receipts are rejecte
  p.image=[];p.hasVariant=Array.from({length:200},(_,i)=>({...p.hasVariant[0],sku:String(i)+'s'.repeat(150),name:'n'.repeat(500),color:'c'.repeat(190),size:'s'.repeat(190),image:`https://cbu01.alicdn.com/${i}/${'a'.repeat(1850)}.jpg`}));
  assert.throws(()=>parsePublicProduct(html(p),url),/크기/);
 });
+
+test('intake retries a partially imported product from its receipt without recollecting or declaring early success',async()=>{
+ let attempts=0;const updates=[],progress=[];
+ const {collectIntakeProduct}=load('app/intake-collection.ts',{'@/app/collection-batch':{importReceivedJobs:async(jobs,options)=>{
+  assert.equal(jobs[0].product_id,'existing-product');assert.equal(jobs[0].received_at,'2026-09-26T00:00:00Z');attempts++;
+  options.onResult('job',attempts===1?{status:'failed',productId:'existing-product',completedImages:1,error:'image failed'}:{status:'completed',productId:'existing-product',completedImages:2});
+ }}});
+ const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',product_id:'existing-product',received_at:'2026-09-26T00:00:00Z'};
+ const options={signal:new AbortController().signal,fetcher:async()=>{throw Error('must not recollect');},onJob:j=>updates.push(j),onProgress:m=>progress.push(m)};
+ await assert.rejects(collectIntakeProduct(job,options),/image failed/);assert.equal(attempts,1);
+ assert.match(await collectIntakeProduct(job,options),/초안 저장됨/);assert.equal(attempts,2);
+ assert.ok(updates.every(j=>j.product_id==='existing-product'));assert.ok(!progress.includes('상품 페이지에서 정보 가져오는 중'));
+ const controller=new AbortController();controller.abort();await collectIntakeProduct(job,{...options,signal:controller.signal});assert.equal(attempts,2);
+ await assert.rejects(collectIntakeProduct({...job,status:'cancelled'},options),/취소/);assert.equal(attempts,2);
+ await assert.rejects(collectIntakeProduct({...job,received_at:'bad-date'},options),/시각/);assert.equal(attempts,2);
+});

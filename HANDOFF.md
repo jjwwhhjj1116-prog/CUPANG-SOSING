@@ -3199,3 +3199,10 @@ AI등록 화면 확인:
 - Validation: 20 relevant tests passed; final navigation adjustment rechecked 2/2; tsc, production build/artifact check and diff check passed.
 - Deployed Cloudflare version 05e0f969-e698-46af-a272-be73bed7285d.
 - Existing Chrome tabs.list returned []. No live Couplus parity, actual 1688 collection or Supplier Hub transmission verified. Broad completion gaps from 307 remain.
+
+## 309 — Resume partial intake image import instead of reporting existing product as complete (2026-09-26)
+- collectIntakeProduct no longer skips import solely because a product_id exists. Received jobs resume the existing idempotent receipt/capacity/product/image pipeline, without recollecting the source page.
+- Cancelled jobs and malformed received timestamps fail before import; aborted requests emit no callbacks. Legacy product links without a receipt retain the existing open-product behavior.
+- Failed image recovery keeps the row retryable, preserving its existing product ID. Existing downstream recovery preserves manual edits and excludes removed source images.
+- Validation: public collector/intake, collection batch, collection product and collection image suites 39/39 passed; tsc, Cloudflare build/artifact and diff checks passed.
+- Deployment 21ae16a2-833e-4685-a1c8-6fcafce10932. No actual 1688 or live Couplus parity verification in this turn. Full category defaults, real image translation and Supplier Hub automatic submission remain incomplete.
