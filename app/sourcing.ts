@@ -2,7 +2,7 @@ import { is1688ProductUrl } from '@/app/workflow';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 
-export const collectionBlock = '1688 상품 상세 수집 공급원이 연결되지 않았습니다. URL은 보관되며, 연결만으로 유료 작업이나 등록이 자동 실행되지는 않습니다.';
+export const collectionBlock = '상품 추가 시 URL의 공개 상품 정보를 가져옵니다. 페이지에서 옵션·원가를 확인할 수 없으면 입력을 유지합니다. 초안을 확인·수정한 뒤 등록전송을 진행하세요.';
 export type CollectionRequest = { offerId: string; sourceUrl: string; goal: string };
 export type CollectionContext = { category: CategoryProfile; settings: WorkspaceSettings; features: string; keywords: string; capturedAt: string };
 export type CollectionJob = {

@@ -3149,3 +3149,13 @@ AI등록 화면 확인:
 - 목록 제목/접근성 이름과 검색에 저장 SEO 제목을 연결한다. 원본 제목 및 URL 검색도 유지한다. 원본 Product 객체와 편집 콜백은 바꾸지 않는다.
 - 관련21/21, TypeScript, Cloudflare build/check, diff check 통과. 새 테스트는 직접 비운 값/선택 대표 이미지/미소유 파일/원본 및 수정 제목 검색을 확인한다. 실제 Chrome UI 및 Couplus 대조 검증은 아님.
 - 배포 cb4d8ea5-9bf9-4ad2-ae38-be80ae2c3bdc. outputs/step302-tests.log, step302-build.log, step302-deploy.log. 실제1688 수집 실행기·전체 카테고리 기본값 대조·Supplier Hub 자동등록은 아직 미완성.
+
+## 303. URL 대기열 → 공개 상품 페이지 수집 → 편집 초안 연결 — 2026-09-26
+
+- 새 POST /api/collection-jobs/[id]/collect: 운영 Access 검증, owner 범위의 기존 job 조회, 취소 요청 거절, 기존 receipt 재사용 후 canonical 1688 URL을 서버에서 읽는다. 로그인 쿠키나 사용자 브라우저는 사용하지 않는다. redirect manual, credentials omit, 15초 timeout, HTML2MiB, 결과512KiB 제한. 응답 charset을 적용하고 잘못된 인코딩은 거절한다.
+- public-product-collector는 공개 HTML의 명시적 schema.org Product/ProductGroup JSON-LD만 해석한다. 요청 offer URL 일치/단일 상품 필수. hasVariant의 SKU, 옵션명, 단일 Offer CNY 가격, eligibleQuantity.minValue 필수. 추측 SKU/원가/최소수량/재고는 만들지 않는다. 재고는 null. 공개 이미지 URL은 기존 Alibaba CDN 검증을 적용한다. 원문 그대로 보존하며 번역·SEO 생성은 하지 않는다.
+- 중요: 이 데이터 형식이 실제1688 지정상품에 존재하는지는 검증하지 못했다. Couplus 내부 수집 동작 복제가 아니라 제한적인 공개 페이지 수집 경로다. 로그인/JS 전용 페이지, 가격범위, 누락 옵션 데이터는422로 남는다. 상세 이미지 추출·모든 옵션 수집 보장은 없다. 표준 근거 https://schema.org/Product / https://schema.org/Offer / https://schema.org/eligibleQuantity 는1688 형식의 근거가 아니다.
+- IntakeQueuePanel에서 URL 요청 저장 후 collectIntakeProduct를 실행한다. 카테고리/기본설정 불일치 시 실행하지 않는다. 확정 receipt를 기존 importReceivedJobs로 넘겨 상품·옵션·이미지 저장 흐름을 사용한다. onJobs로 product_id가 반영되면 목록을 다시 조회한다. 실패 행은 입력 유지/재시도 가능. 자동 Hub 전송 없음.
+- 테스트: 관련26/26, 추가 연결8/8, 전체977/977 통과. 이후 인코딩/결과 크기 제한을 보강하고 collector9/9 재검증 통과. TypeScript 및 최종 Cloudflare build/check 통과. 테스트는 합성 공개 HTML 및 mock HTTP/DB를 사용하며 실제1688/Couplus/Hub E2E가 아니다.
+- 기존 supplierChrome.tabs.list()는 이번에도 오류 없이 [] 반환. 새 Chrome/프로필은 열지 않았다. 전체 카테고리 기본값 대조·실제상품 수집 검증·이미지 번역·Supplier Hub 자동등록은 미완성이다.
+- 배포 3c33fcb8-e074-4c67-923b-d5628d4b67e6. outputs/step303-tests.log, step303-collector-tests.log, step303-full-tests.log, step303-build.log, step303-deploy.log.

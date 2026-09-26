@@ -5,6 +5,7 @@ import { intakeRow, submitIntakeQueue, visibleIntakeRows, type IntakeRow } from 
 import { collectionBlock, type CollectionJob } from '@/app/sourcing';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { CategoryAdvancedSeed } from '@/app/category-catalog';
+import { collectIntakeProduct } from '@/app/intake-collection';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 
 export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal }: {
@@ -47,6 +48,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
     try {
       await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, selectedIds: new Set(selected.map(row => row.id)),
+        collect: (job,onProgress) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,onJob:updated=>onJobs([updated]),onProgress}),
         onRow: (id, patch) => onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row)), onJobs });
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { running.current = null; if (!controller.signal.aborted) { setBusy(false); onBusy(false); } }

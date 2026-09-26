@@ -50,6 +50,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
   onRow: (id: string, state: Pick<IntakeRow, 'status' | 'message'>) => void;
   onJobs: (jobs: CollectionJob[]) => void;
   selectedIds?: ReadonlySet<string>;
+  collect?: (job:CollectionJob,onProgress:(message:string)=>void)=>Promise<string|undefined>;
 }) {
   if (options.signal.aborted) return;
   const selectedRows = options.selectedIds ? rows.filter(row => options.selectedIds!.has(row.id)) : rows;
@@ -68,6 +69,12 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
       if (!response.ok || !Array.isArray(result.jobs) || result.jobs.length !== 1 || result.jobs[0].source_url !== request.body.urls[0] || !Array.isArray(result.preservedRequests)) throw Error(result.error || '해당 상품의 저장 결과를 확인하지 못했습니다. 입력은 유지됩니다.');
       options.onJobs(result.jobs);
       const differences = result.preservedRequests?.flatMap(item => item.differences) ?? [];
+      if(!differences.length&&options.collect) {
+        const message=await options.collect(result.jobs[0],message=>options.onRow(request.id,{status:'draft',message}));
+        if(options.signal.aborted)break;
+        if(!message)throw Error('상품 반영 결과를 확인하지 못했습니다.');
+        options.onRow(request.id,{status:'saved',message});continue;
+      }
       options.onRow(request.id, differences.length ? { status: 'error', message: `기존 요청 유지 · ${[...new Set(differences)].join(', ')} 불일치. 기존 요청을 확인해주세요.` } : { status: 'saved', message: `요청 저장됨 · ${collectionJobProgress(result.jobs[0]).label}` });
     } catch (cause) {
       if (options.signal.aborted) break;
