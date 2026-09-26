@@ -3142,3 +3142,10 @@ AI등록 화면 확인:
 - 목록 SEO는 저장 제목의 입력됨/미입력, 대표/추가/상세/표시사항은 실제 상품 파일 목록에 연결된 고유 이미지 수를 표시한다. 상세 상단/본문/하단을 합산한다. 미소유/삭제 이미지가 연결돼 있으면 확인 필요 표시. 전송/검토 완료로 간주하지 않는다. 등록번호 SF 접두어를 기존 작업창과 같은 YP로 맞춤.
 - 관련22/22 통과. 전체967 중962 통과, 5건은 content.test의 새 모듈 로딩 미등록으로 실패했다. 로더 수정 후 content+summary19/19 재검증 통과. TypeScript/build/check/diff 통과. 실제Chrome시각검증은 아님.
 - 배포62609e6c-3bf5-40e6-ac4b-616be1142fd3. outputs/step301-tests.log, step301-full-tests.log, step301-content-tests.log, step301-build.log, step301-deploy.log. 실제1688 수집·전체 카테고리 대조·Supplier Hub 자동등록 미완성 유지.
+
+## 302. 저장된 SEO 상품명과 대표 이미지를 상품 목록에 반영 — 2026-09-26
+
+- content_summary에 seoTitle/mainImageKey를 추가한다. SEO 제목 미설정은 원본 제목을 표시하며 수동으로 비운 제목은 미입력으로 유지한다. 대표 이미지는 저장된 main 역할의 상품 소유 파일만 선택하고 첫 업로드 파일로 대체하지 않는다.
+- 목록 제목/접근성 이름과 검색에 저장 SEO 제목을 연결한다. 원본 제목 및 URL 검색도 유지한다. 원본 Product 객체와 편집 콜백은 바꾸지 않는다.
+- 관련21/21, TypeScript, Cloudflare build/check, diff check 통과. 새 테스트는 직접 비운 값/선택 대표 이미지/미소유 파일/원본 및 수정 제목 검색을 확인한다. 실제 Chrome UI 및 Couplus 대조 검증은 아님.
+- 배포 cb4d8ea5-9bf9-4ad2-ae38-be80ae2c3bdc. outputs/step302-tests.log, step302-build.log, step302-deploy.log. 실제1688 수집 실행기·전체 카테고리 기본값 대조·Supplier Hub 자동등록은 아직 미완성.

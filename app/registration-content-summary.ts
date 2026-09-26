@@ -1,5 +1,5 @@
 import type { ProductContent } from '@/app/product-content';
-export type RegistrationContentSummary = { seo: boolean; main: number; additional: number; detail: number; label: number; missingImages: boolean };
+export type RegistrationContentSummary = { seo: boolean; seoTitle: string | null; mainImageKey: string | null; main: number; additional: number; detail: number; label: number; missingImages: boolean };
 export function registrationContentSummary(product: {id:string;image_keys:string}, content: ProductContent | null): RegistrationContentSummary {
   const keys:unknown=JSON.parse(product.image_keys);
   if(!Array.isArray(keys)||keys.some(key=>typeof key!=='string'))throw Error('Invalid product images');
@@ -10,5 +10,9 @@ export function registrationContentSummary(product: {id:string;image_keys:string
     if(saved.some(key=>!keys.includes(key)))missingImages=true;
     return new Set(saved.filter(key=>keys.includes(key))).size;
   };
-  return {seo:typeof content?.seo?.title?.value==='string'&&!!content.seo.title.value.trim(),main:count(['main']),additional:count(['additional']),detail:count(['detailTop','detail','detailBottom']),label:count(['label']),missingImages};
+  const title=content?.seo?.title;
+  const seoTitle=typeof title?.value==='string'&&(title.provenance==='manual'||title.value!=='')?title.value:null;
+  const main=count(['main']);
+  const mainImageKey=content?.assets?.main?.value?.find(key=>keys.includes(key))??null;
+  return {seoTitle,mainImageKey,seo:typeof content?.seo?.title?.value==='string'&&!!content.seo.title.value.trim(),main,additional:count(['additional']),detail:count(['detailTop','detail','detailBottom']),label:count(['label']),missingImages};
 }

@@ -34,3 +34,13 @@ test('batched listing enforces owner and product bounds, isolates corrupt conten
   assert.equal(Object.keys(await readRegistrationSummaries('owner',[])).length,0);
  }finally{sqlite.close();}
 });
+
+test('listing preserves saved SEO title, deliberate blank and selected main image',()=>{
+ const product={id:'p',image_keys:'["first-upload","chosen"]'},content=emptyProductContent('p');
+ assert.equal(registrationContentSummary(product,content).seoTitle,null);
+ content.seo.title.value='edited title';content.assets.main.value=['chosen'];
+ let summary=registrationContentSummary(product,content);assert.equal(summary.seoTitle,'edited title');assert.equal(summary.mainImageKey,'chosen');
+ content.seo.title.value='';content.seo.title.provenance='manual';content.assets.main.value=[];
+ summary=registrationContentSummary(product,content);assert.equal(summary.seoTitle,'');assert.equal(summary.mainImageKey,null);
+ content.assets.main.value=['foreign'];summary=registrationContentSummary(product,content);assert.equal(summary.mainImageKey,null);assert.equal(summary.missingImages,true);
+});
