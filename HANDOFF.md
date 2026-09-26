@@ -2850,3 +2850,11 @@ AI등록 화면 확인:
 - 검증: translation-integrated/translation-integrated-ui/option-translation/translation-panel-requests40/40, TypeScript, Cloudflare build/check 및 diff check 통과. SQLite 옵션 범위 저장 후 SEO/표시사항 동일성, 범위 바꿔치기409, 잘못된 범위400, UI 응답 범위 검증 및 기존 충돌/취소 검사를 포함한다.
 - 배포: Cloudflare2d7caa6c-bfbb-4ee2-9599-b798c82ae100. outputs/step266-tests.log, step266-build.log, step266-deploy.log. DB스키마 변경·유료AI 호출·Supplier Hub 운영등록 없음. 실제 Chrome 클릭 검증은 수행하지 않았다.
 - 다음 시작점: 실제1688 수집 실행기, 전카테고리 Couplus 기본값 대조, 이미지번역, Supplier Hub501 전송 구현과 실접수 검증이 여전히 미완성이다. 이 저장 경로 보완을 전체 자동화 완료로 보고하지 않는다.
+
+## 267. 실제 실행 연결 재확인 및 전체 회귀 검사 — 2026-09-26
+
+- 시작 main e0a1c4e clean. 기존 supplierChrome.tabs.list()를 재호출했으며 오류 없이 []가 반환되었다. 새 탭·창·프로필을 만들지 않았다. 실제 1688 상품/쿠플러스/Hub 화면에 접근하거나 제어했다고 보고하지 않는다. 빈 배열만으로 확장 고장이나 로그아웃을 단정하지 않는다.
+- 실제 실행 경로 재확인: collection-delivery는 이미 주어진 구조화 원문을 저장하는 함수이며 페이지 수집 실행기가 아니다. 실제 페이지 선택자/요청 계약은 확인되지 않았다. Supplier Hub POST501은 유지된다. 이 제약을 임의 성공 응답이나 추측한 비공개 API로 대체하지 않았다.
+- 검증: npm test 전체896/896 통과. 출력 outputs/step267-tests.log. 최근 번역 범위 저장/분할/카테고리 맥락/기본값 변경을 포함한 전체 회귀 검사를 수행했다. 실브라우저 또는 실상품 E2E가 아니다.
+- 기능 코드 변경 없음. 기존 운영 배포2d7caa6c-bfbb-4ee2-9599-b798c82ae100 유지. 불필요한 재배포·유료호출·운영상품 등록 없음.
+- 다음 시작점: 도구에 사용자 지정 기존 Chrome 탭이 반환되는지부터 확인한다. 접근 가능해지면 상품813724060928의 실제 SKU·가격·옵션/상세 이미지 구조와 쿠플러스 category→quotation 요청 흐름을 관찰하고 수집 실행기를 구현한다. 전체 카테고리 기본값과 Hub 최종접수는 미확인이다. 반복적인 주변 UI 수정으로 이 핵심 미완성을 대신하지 않는다.
