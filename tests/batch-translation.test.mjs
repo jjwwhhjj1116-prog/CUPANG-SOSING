@@ -8,16 +8,16 @@ const native=createRequire(import.meta.url);
 function load(file,deps={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,fetch:deps.fetch,require:name=>deps[name]??native(name)});return exports;}
 const {readBatchTranslationTarget:read}=load('app/batch-translation.ts');
 const version='2026-09-25T00:00:00.000Z';
-const job={id:'11111111-1111-1111-1111-111111111111',productId:'p',productVersion:version,status:'completed',result:{},createdAt:version};
+const job={id:'11111111-1111-1111-1111-111111111111',productId:'p',productVersion:version,contentRevision:1,status:'completed',result:{},createdAt:version};
 const signal=()=>new AbortController().signal;
 test('batch discovery chooses newest current completed result using read requests only',async()=>{
  const newer={...job,id:'22222222-2222-2222-2222-222222222222',createdAt:'2026-09-25T01:00:00.000Z'};
  const jobs=[job,{...newer,productId:'other'},{...newer,productVersion:'old'},{...newer,status:'running'},newer,null];const before=JSON.stringify(jobs),calls=[];
- const result=await read('p',async(url,init)=>{calls.push([url,init]);return Response.json(url.endsWith('/translation')?{jobs}:{product:{id:'p',updated_at:version}});},signal());
- assert.equal(result.jobId,newer.id);assert.equal(result.version,version);assert.equal(calls.length,2);assert.ok(calls.every(([,init])=>!init.method&&!init.body));assert.equal(JSON.stringify(jobs),before);
+ const result=await read('p',async(url,init)=>{calls.push([url,init]);return Response.json(url.endsWith('/translation')?{jobs}:url.endsWith('/content')?{content:{schemaVersion:1,productId:'p',revision:1}}:{product:{id:'p',updated_at:version}});},signal());
+ assert.equal(result.jobId,newer.id);assert.equal(result.version,version);assert.equal(calls.length,3);assert.ok(calls.every(([,init])=>!init.method&&!init.body));assert.equal(JSON.stringify(jobs),before);
 });
 test('missing completed result is distinct from failed or malformed discovery',async()=>{
- const fetcher=async url=>Response.json(url.endsWith('/translation')?{jobs:[]}:{product:{id:'p',updated_at:version}});
+ const fetcher=async url=>Response.json(url.endsWith('/translation')?{jobs:[]}:url.endsWith('/content')?{content:{schemaVersion:1,productId:'p',revision:1}}:{product:{id:'p',updated_at:version}});
  assert.equal((await read('p',fetcher,signal())).jobId,null);
  for(const value of [null,{jobs:null},{jobs:{}}])await assert.rejects(()=>read('p',async url=>Response.json(url.endsWith('/translation')?value:{product:{id:'p',updated_at:version}}),signal()));
  let calls=0;await assert.rejects(()=>read('p',async()=>{calls++;return Response.json({product:{id:'other',updated_at:version}});},signal()));assert.equal(calls,1);
@@ -38,4 +38,21 @@ test('batch view isolates product failures and links exact reviewed result witho
  render();await settle();const tree=render();assert.deepEqual(calls,['bad','p','empty']);assert.match(JSON.stringify(tree),/개별 조회 실패/);assert.match(JSON.stringify(tree),/완료 번역이 없습니다/);
  const previews=nodes(tree).filter(n=>n.type===Preview);assert.equal(previews.length,1);assert.equal(previews[0].props.productId,'p');assert.equal(previews[0].props.version,version);assert.equal(previews[0].props.jobId,job.id);assert.equal(previews[0].props.disabled,false);
  const batch=nodes(tree).find(n=>typeof n.props?.onBusyChange==='function');batch.props.onBusyChange(true);const locked=render();assert.equal(nodes(locked).find(n=>n.type===Preview).props.disabled,true);assert.ok(nodes(locked).filter(n=>n.type==='button').every(n=>n.props.disabled));
+});
+
+test('batch discovery skips newer jobs from another content revision and keeps the applicable result',async()=>{
+ const newer={...job,id:'22222222-2222-2222-2222-222222222222',createdAt:'2026-09-26T01:00:00.000Z',contentRevision:0};
+ const jobs=[newer,job,{...newer,contentRevision:2},{...newer,contentRevision:undefined}],calls=[];
+ const fetcher=async url=>{calls.push(url);return Response.json(url.endsWith('/translation')?{jobs}:url.endsWith('/content')?{content:{schemaVersion:1,productId:'p',revision:1}}:{product:{id:'p',updated_at:version}});};
+ assert.equal((await read('p',fetcher,signal())).jobId,job.id);assert.equal(calls.length,3);
+ jobs.splice(1,1);assert.equal((await read('p',fetcher,signal())).jobId,null);
+});
+
+test('invalid content identity or revision never chooses a result and late content reads are discarded',async()=>{
+ for(const content of [null,{schemaVersion:1,productId:'other',revision:1},{schemaVersion:2,productId:'p',revision:1},{schemaVersion:1,productId:'p',revision:-1},{schemaVersion:1,productId:'p',revision:'1'}]){
+  await assert.rejects(()=>read('p',async url=>Response.json(url.endsWith('/translation')?{jobs:[job]}:url.endsWith('/content')?{content}:{product:{id:'p',updated_at:version}}),signal()),/콘텐츠/);
+ }
+ const controller=new AbortController();
+ const result=await read('p',async url=>{if(url.endsWith('/content')){controller.abort();return Response.json({content:{schemaVersion:1,productId:'p',revision:1}});}return Response.json(url.endsWith('/translation')?{jobs:[job]}:{product:{id:'p',updated_at:version}});},controller.signal);
+ assert.equal(result,null);
 });

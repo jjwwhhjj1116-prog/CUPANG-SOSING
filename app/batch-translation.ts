@@ -18,7 +18,13 @@ export async function readBatchTranslationTarget(productId: string, fetcher: typ
   const translations = await read(`${path}/translation`);
   if (signal.aborted) return null;
   if (!Array.isArray(translations?.jobs)) throw Error('저장된 번역 목록을 확인하지 못했습니다.');
+  const contentResponse = await read(`${path}/content`);
+  if (signal.aborted) return null;
+  const content = record(contentResponse.content);
+  if (content.productId !== productId || content.schemaVersion !== 1 || typeof content.revision !== 'number'
+    || !Number.isSafeInteger(content.revision) || content.revision < 0) throw Error('상품 콘텐츠의 저장 버전을 확인하지 못했습니다.');
   const jobs = translations.jobs.map(record).filter((job): job is Record<string, unknown> & {id:string;createdAt:string} => job.productId === productId && job.productVersion === version
+    && job.contentRevision === content.revision
     && job.status === 'completed' && !!job.result && typeof job.id === 'string' && /^[a-f0-9-]{36}$/.test(job.id)
     && typeof job.createdAt === 'string' && Number.isFinite(Date.parse(job.createdAt)));
   jobs.sort((a: { createdAt: string; id: string }, b: { createdAt: string; id: string }) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id));

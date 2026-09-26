@@ -2969,3 +2969,13 @@ AI등록 화면 확인:
 - 검증: 관련24/24, 전체924/924 통과. 이후 개별 작업 버튼 잠금 보완에 대해 관련24/24 및 TypeScript/Cloudflare build/check/diff 재통과. 정확한 미리보기 지문, 순차 저장, 중복 클릭, 중복 상품 차단, 잘못된 응답/부분 실패/응답 유실 중단, 진행 중 중단 처리, UI 결과 표시를 검사했다. 실제 Chrome 클릭 검증 아님.
 - 배포0d5bf446-4e88-4df0-b9b3-fc830423494a. outputs/step279-tests.log, step279-full-tests.log, step279-build.log, step279-deploy.log. README 갱신. DB변경·유료 호출·운영상품 등록 없음.
 - 다음 시작점: 지정 기존 Chrome 탭을 통한 실제1688 원문/전카테고리 견적 계약 확보, 실수집 실행기, 이미지 번역 실검증, Supplier Hub POST501 구현 및 접수 검증이 핵심 미완성이다. 이번 기능은 이미 완료된 번역의 다상품 적용이며 전체 자동등록 완료가 아니다.
+
+## 280. 일괄 번역 대상의 콘텐츠 버전 선택 — 2026-09-26
+
+- 시작 main609431d clean. 기존 Chrome tabs.list()=[]로 실카테고리/1688 화면 대조는 수행하지 못했다. 다른 창·탭·프로필 생성 없음.
+- 코드 확인: readBatchTranslationTarget은 상품 버전만 비교하고 콘텐츠 revision은 비교하지 않았다. 더 최근의 불일치 작업이 있으면 적용 가능한 완료 번역보다 먼저 선택하여 통합 적용 단계에서 거절될 수 있었다. 실제 운영 실패 관찰은 아니다.
+- 수정: 콘텐츠 GET의 상품 ID/schemaVersion/정수 revision을 검증하고, 상품 버전과 콘텐츠 revision 모두 일치하는 완료 번역 중 최신 작업을 선택한다. 이전/이후/누락 revision은 제외한다. 콘텐츠 조회가 잘못되면 번역 없음으로 숨기지 않고 오류를 전달한다. 조회 중 닫힌 화면의 늦은 응답은 폐기한다.
+- 범위: 개별·일괄 완료 번역 대상 조회에 공통 적용한다. 현재 저장된 원문을 변경하거나 새 유료 번역을 실행하지 않는다. 저장 시점의 서버 버전·카테고리·fingerprint 검증은 그대로 유지한다.
+- 검증: batch-translation/batch-translation-apply/translation-integrated/UI26/26, TypeScript, Cloudflare build/check/diff 통과. 전체 테스트는 이번에 재실행하지 않았으며 이전279의924/924와 구분한다. 실Chrome 클릭/Hub접수 검증 아님.
+- 배포0b617b21-1040-416d-9d55-a674a45f85cd. outputs/step280-tests.log, step280-build.log, step280-deploy.log. DB변경·유료 호출·운영등록 없음.
+- 다음 시작점: 기존 Chrome 접근 가능한 탭에서 실제1688 상품 응답 및 카테고리별 Couplus/Hub 견적 계약 확인. 실제 수집 실행기·전카테고리 기본값 대조·이미지 번역 실검증·Supplier Hub POST501 구현/실접수는 여전히 미완성이다.
