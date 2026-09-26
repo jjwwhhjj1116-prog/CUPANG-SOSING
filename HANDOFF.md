@@ -3042,3 +3042,11 @@ AI등록 화면 확인:
 - 검증: 새 테스트2/2, TypeScript, Cloudflare build/check, diff check 통과. 조회 응답 상품 ID 불일치, 실패 응답, abort signal 전달, 옵션 클릭 대상, 재고0/미확인, 수동 공란, 검색, 다른 상품 이미지 표시 방지를 검사했다. 실제 Chrome 시각/클릭 검증은 아님.
 - 코드6755a70, 배포340ad40b-ad6e-40a8-96e0-650c26a29184. 로그 outputs/step287-tests.log, step287-build.log, step287-deploy.log. 운영 URL https://sourceflow.jjwwhhjj1116.workers.dev . 요금제·결제 설정 변경 및 Supplier Hub 운영 등록 없음.
 - 핵심 미완성: 실제1688 URL 수집 실행기, 전카테고리 Couplus/Hub 자동 기본값 대조, Supplier Hub 전송501 구현·실접수. 이번 변경은 저장된 상품의 옵션 탐색/견적 편집 연결이다.
+
+## 288. 옵션 목록에서 해당 옵션 가격 편집으로 이동 — 2026-09-26
+
+- 옵션 목록의 각 행에 ‘가격 편집’을 연결했다. 선택한 옵션 ID를 가격 편집기로 전달하여 해당 행을 강조·선택하고 원가 입력으로 이동한다. 전체 편집 버튼은 특정 옵션을 강제 선택하지 않는다.
+- 전체 옵션 목록은 그대로 유지한다. 선택 옵션의 원가·구성 수량 수정 후 저장할 때 다른 옵션이 누락되지 않는다. 삭제된 옵션 ID라면 안내하고 다른 행을 대신 선택하지 않는다.
+- 검증: 옵션 관련35/35, TypeScript, Cloudflare build/check, diff check 통과. 실제 클릭 핸들러 ID 전달, 선택 행, 없는 ID, 두 옵션 중 한 옵션의 원가 변경을 저장하는 요청을 검사했다. 실제 Chrome 시각 검증은 수행하지 못했다.
+- 배포 fc91d276-f6d3-4845-9977-ca4f522c3d75. 로그 outputs/step288-build.log, step288-deploy.log. 요금제·결제 설정 변경 없음.
+- 핵심 미완성은 동일: 실제1688 URL 수집 실행기, 전카테고리 Couplus/Hub 기본값 대조, Supplier Hub 전송501 구현·실접수. 옵션 편집 개선을 전체 구현 완료로 설명하지 않는다.

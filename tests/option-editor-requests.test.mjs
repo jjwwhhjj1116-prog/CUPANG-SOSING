@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
-function harness(handler, readHandler){
+function harness(handler, readHandler, props={}){
  const state=[],refs=[],effects=[],cleanups=[],cache=new Map();let si=0,ri=0,first=true,saves=0;
  const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],v=>{state[i]=typeof v==='function'?v(state[i]):v;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useMemo:fn=>fn(),useCallback:fn=>fn,useEffect(fn){if(first)effects.push(fn);}};
  let body;
@@ -15,7 +15,7 @@ function harness(handler, readHandler){
  const model=load('app/product-options.ts');body={options:{...model.emptyProductOptions('p'),revision:1,rows:[{...model.emptyOptionInput('a'),unitCostCny:2,included:true,updatedAt:'before',provenance:{}}]},productVersion:'2026-09-24T00:00:00Z',pricing:{policy:{exchangeRate:100,supplyMargin:0,coupangMargin:0,minimumMargin:0,msrpMultiple:1,roundingUnit:1},policySource:'saved-product',rows:[]}};
  const component=load('app/components/product-options-editor.tsx').ProductOptionsEditor;
  const product={id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png"]',updated_at:body.productVersion};
- const render=()=>{si=0;ri=0;const root=component({product,onSaved(){saves++;}});const tree=root.type(root.props);first=false;return tree;};
+ const render=()=>{si=0;ri=0;const root=component({...props,product,onSaved(){saves++;}});const tree=root.type(root.props);first=false;return tree;};
  const button=()=>nodes(render()).find(n=>n.type==='button'&&n.props.children==='옵션 저장·가격 계산');
  const image=()=>nodes(render()).find(n=>n.type==='select'&&n.props['aria-label']==='옵션 1 이미지');
  return{render,button,image,product,get saves(){return saves;},async start(){render();effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
@@ -77,4 +77,21 @@ test('quantity edits preserve packaging and expose an explicit confirmation for 
  quantity().props.onChange({target:{value:'3',valueAsNumber:3}});assert.equal(confirmation().props.checked,false);
  confirmation().props.onChange({target:{checked:true}});h.button().props.onClick();await settle();
  assert.equal(submitted.rows[0].packagingConfirmed,true);assert.equal(submitted.rows[0].unitsPerPack,3);assert.equal(submitted.rows[0].packagedWeightG,450);
+});
+
+test('targeted price editing selects one option and saves all other rows unchanged',async()=>{
+ let request;
+ const h=harness(async(_url,init)=>{request=JSON.parse(init.body);return Response.json({error:'검증 종료'},{status:409});},body=>{body.options.rows.push({...body.options.rows[0],id:'b',unitCostCny:7});return Response.json(body);},{focusedOptionId:'b',pricingView:true});
+ await h.start();const all=nodes(h.render());
+ assert.equal(all.find(n=>n.props?.['aria-label']==='가격 옵션 1 선택').props.checked,false);
+ assert.equal(all.find(n=>n.props?.['aria-label']==='가격 옵션 2 선택').props.checked,true);
+ assert.equal(all.filter(n=>n.type==='tr'&&n.props['data-option-target']).length,1);
+ all.find(n=>n.props?.['aria-label']==='가격 옵션 2 개당 원가').props.onChange({target:{value:'9',valueAsNumber:9}});
+ h.button().props.onClick();await settle();assert.equal(request.rows.length,2);assert.equal(request.rows[0].unitCostCny,2);assert.equal(request.rows[1].unitCostCny,9);
+});
+test('missing target leaves every option unselected',async()=>{
+ const h=harness(()=>{},undefined,{focusedOptionId:'deleted',pricingView:true});await h.start();const all=nodes(h.render());
+ assert.equal(all.find(n=>n.props?.['aria-label']==='가격 옵션 1 선택').props.checked,false);
+ assert.equal(all.filter(n=>n.props?.['data-option-target']).length,0);
+ assert.ok(all.some(n=>n.type==='p'&&String(n.props.children).includes('선택했던 옵션이 현재 목록에 없습니다')));
 });

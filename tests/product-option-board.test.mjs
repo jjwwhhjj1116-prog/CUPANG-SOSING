@@ -18,10 +18,10 @@ test('option board fetch checks product identity and propagates abort signal',as
  await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:false,json:async()=>({error:'인증 필요'})})),/인증 필요/);
 });
 function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html'){
- let slot=0;const selected=[];const states=[data,'',0,query];
+ let slot=0;const selected=[];const edited=[];const states=[data,'',0,query];
  const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,()=>{}];},useEffect(){}};
  const {ProductOptionBoard}=load('app/components/product-option-board.tsx',{react:hooks});
- return {selected,tree:ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(['owner/red.png']),onQuotation:id=>selected.push(id),onEdit(){}})};
+ return {selected,edited,tree:ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(['owner/red.png']),onQuotation:id=>selected.push(id),onEdit:id=>edited.push(id)})};
 }
 function nodes(value){if(!value||typeof value!=='object')return[];if(Array.isArray(value))return value.flatMap(nodes);return[value,...nodes(value.props?.children)];}
 test('option list opens the clicked option and preserves zero, unknown and deliberately blank names',()=>{
@@ -31,4 +31,11 @@ test('option list opens the clicked option and preserves zero, unknown and delib
  const buttons=nodes(result.tree).filter(n=>n.type==='button'&&n.props.children==='견적서 열기');buttons[1].props.onClick();assert.deepEqual(result.selected,['blue']);
  const filtered=tree('sku-red');assert.equal(nodes(filtered.tree).filter(n=>n.type==='button'&&n.props.children==='견적서 열기').length,1);
  const unsafe=renderToStaticMarkup(tree('','javascript:alert(1)').tree);assert.ok(!unsafe.includes('href="javascript:'));
+});
+
+test('price buttons retain the chosen option ID and general editing does not pass a click event',()=>{
+ const result=tree();const buttons=nodes(result.tree).filter(n=>n.type==='button');
+ buttons.filter(n=>n.props.children==='가격 편집')[1].props.onClick();
+ buttons.find(n=>n.props.children==='옵션·번들·가격 수정').props.onClick({type:'click'});
+ assert.deepEqual(result.edited,['blue',undefined]);
 });

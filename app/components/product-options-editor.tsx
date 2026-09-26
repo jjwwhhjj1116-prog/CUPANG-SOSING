@@ -7,7 +7,7 @@ import { applyOptionBulk, duplicateOption, moveOption, optionBulkPriceBase, prev
 import type { PricePolicy } from '@/app/pricing';
 import { mergeOptionDraft, refreshOptionPriceBase } from '@/app/option-price-refresh';
 
-type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; onSaved?: () => void; pricingView?: boolean };
+type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; onSaved?: () => void; pricingView?: boolean; focusedOptionId?: string };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 const originNames = { manual: '직접 입력', collected: '수집 원문', translated: '번역 결과', unverified: '미확인' };
 async function fetchOptions(endpoint: string, signal?: AbortSignal): Promise<ProductOptionsResponse> {
@@ -17,7 +17,7 @@ async function fetchOptions(endpoint: string, signal?: AbortSignal): Promise<Pro
   return body;
 }
 export function ProductOptionsEditor(props: Props) { return <OptionsEditor key={props.product.id} {...props} />; }
-function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
+function OptionsEditor({ product, onSaved, pricingView = false, focusedOptionId }: Props) {
   const [saved, setSaved] = useState<ProductOptionsResponse | null>(null);
   const [rows, setRows] = useState<OptionInput[]>([]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -25,10 +25,11 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
   const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [conflict, setConflict] = useState(false);
   const [snapshotVersion, setSnapshotVersion] = useState(product.updated_at);
   const [refreshNotice, setRefreshNotice] = useState('');
+  const editorRoot=useRef<HTMLDivElement>(null);
   const activeRequest=useRef<AbortController|null>(null);
   useEffect(()=>()=>{activeRequest.current?.abort();},[]);
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/options`;
-  const applyLoaded = useCallback((body: ProductOptionsResponse) => { setSaved(body); setRows(optionInputs(body.options)); setSnapshotVersion(body.productVersion); setSelected(new Set()); setError(''); setMessage(''); setConflict(false); }, []);
+  const applyLoaded = useCallback((body: ProductOptionsResponse) => { setSaved(body); setRows(optionInputs(body.options)); setSnapshotVersion(body.productVersion); setSelected(new Set(focusedOptionId && body.options.rows.some(row=>row.id===focusedOptionId) ? [focusedOptionId] : [])); setError(''); setMessage(''); setConflict(false); }, [focusedOptionId]);
   useEffect(() => {
     const controller = new AbortController();
     fetchOptions(endpoint, controller.signal).then(body => { if (!controller.signal.aborted) applyLoaded(body); })
@@ -36,6 +37,12 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [endpoint, applyLoaded]);
+  useEffect(()=>{
+    if(loading || !focusedOptionId)return;
+    const target=editorRoot.current?.querySelector<HTMLElement>('[data-option-target="true"]');
+    target?.scrollIntoView({block:'center'});
+    target?.querySelector<HTMLInputElement>('input[type="number"]')?.focus({preventScroll:true});
+  },[loading,pricingView,focusedOptionId]);
   const calculations = useMemo(() => saved ? calculateOptionPrices(rows, saved.pricing.policy) : [], [rows, saved]);
   const dirty = saved !== null && JSON.stringify(rows) !== JSON.stringify(optionInputs(saved.options));
   const changedElsewhere = Boolean(product.updated_at && (!snapshotVersion || Date.parse(product.updated_at) > Date.parse(snapshotVersion)));
@@ -92,13 +99,14 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
   }
   const numberKeys = ['unitCostCny', 'unitsPerPack', 'minimumOrderQuantity', 'stock', 'widthCm', 'lengthCm', 'heightCm', 'weightKg', 'packagedWeightG', 'packagedWidthMm', 'packagedLengthMm', 'packagedHeightMm'] as const;
 
-  return <div className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+  return <div ref={editorRoot} className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
     <div className="panel-note"><div><strong>옵션·SKU별 견적 구성</strong><p>옵션 원가와 판매 단위당 구성 수량으로 각각 계산합니다. 상품의 대표 원가는 별도로 유지됩니다. 원문·한국어 이름을 수정해 저장할 수 있으며 자동 수집·번역이 실행되는 화면은 아닙니다. 공급자 재고는 수집 시점 또는 직접 입력한 값이며 실시간 재고가 아닙니다. 구성 수량·최소 주문 수량·견적 수량과는 별개입니다. 포장 무게(g)와 포장 치수(mm)는 실제 배송할 포장 상태를 입력하면 견적서 물류 정보에 자동 반영됩니다.</p></div></div>
     {loading && <p role="status">저장한 옵션과 가격 설정을 불러오는 중입니다.</p>}
     {error && <div role="alert" className="panel-note"><div><strong>{error}</strong>{conflict && <p>입력 내용을 보관한 후 최신 상품·가격·옵션을 확인해주세요.</p>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>{saved ? '입력 버리고 저장본 불러오기' : '다시 불러오기'}</button></div></div>}
     {message && <p role="status">{message}</p>}
     {(refreshNotice || conflict) && <div role="status" className="panel-note"><div><p>{refreshNotice || '저장 중 상품 버전이 바뀌었습니다. 옵션 입력을 유지한 채 최신 가격을 확인할 수 있습니다.'}</p><button type="button" className="btn primary" disabled={busy || loading || !saved} onClick={() => void refreshPricesKeepingDraft()}>입력 유지 · 최신 가격 적용</button><button type="button" className="btn ghost" disabled={busy || loading || !saved} onClick={() => void refreshPricesKeepingDraft(true)}>입력 유지 · 서버 변경 합치기</button><button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>입력 버리고 최신 저장본 불러오기</button></div></div>}
     {saved && <>
+      {focusedOptionId && <p role="status">{rows.some(row=>row.id===focusedOptionId) ? '옵션 목록에서 선택한 행을 강조했습니다. 원가·구성 수량을 수정한 뒤 저장하세요.' : '선택했던 옵션이 현재 목록에 없습니다. 다른 옵션으로 자동 선택하지 않았습니다.'}</p>}
       <p style={{ color: '#64748b', fontSize: 13 }}>계산 기준: {saved.pricing.policySource === 'saved-product' ? '상품에 저장한 가격 설정' : '상품의 기존 환율·마진 + 현재 기본설정'} · 환율 {saved.pricing.policy.exchangeRate}원 · 공급 마진 {saved.pricing.policy.supplyMargin}% · 쿠팡 마진 {saved.pricing.policy.coupangMargin}% · 최소 마진 {won(saved.pricing.policy.minimumMargin)} · {saved.pricing.policy.roundingUnit}원 단위 {saved.pricing.policy.roundingMode === 'nearest' ? '반올림' : '올림'}</p>
       <fieldset disabled={busy || loading} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}><strong>전체 {rows.length}개 · 견적 포함 {included}개</strong><button type="button" className="btn ghost" disabled={rows.length >= OPTION_LIMIT} onClick={() => setRows(previous => [...previous, emptyOptionInput(crypto.randomUUID())])}>＋ 옵션 추가</button></div>
@@ -106,14 +114,14 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
         {!rows.length && <div className="empty"><strong>저장한 옵션이 없습니다.</strong><small>수집된 옵션이 연결되면 여기에 표시됩니다. 확인한 옵션을 추가해 수정할 수도 있습니다.</small></div>}
         {pricingView && <div className="option-price-table-wrap"><table className="option-price-table"><caption>옵션별 가격 정보 · 저장된 가격 정책 기준</caption><thead><tr><th>선택</th><th>견적 포함</th><th>옵션명 / SKU</th><th>개당 원가(CNY)</th><th>구성 수량</th><th>공급가</th><th>판매가</th><th>공급 마진</th></tr></thead><tbody>{rows.map((row,index)=>{
           const result=calculations.find(item=>item.optionId===row.id);
-          return <tr key={row.id}><td><input type="checkbox" aria-label={`가격 옵션 ${index+1} 선택`} checked={selected.has(row.id)} onChange={event=>setSelected(previous=>{const next=new Set(previous);if(event.target.checked)next.add(row.id);else next.delete(row.id);return next;})}/></td><td><input type="checkbox" aria-label={`가격 옵션 ${index+1} 견적 포함`} checked={row.included} onChange={event=>update(row.id,'included',event.target.checked)}/></td><td><strong>{row.translatedName||row.originalName||`옵션 ${index+1}`}</strong><small>{row.supplierSku||'SKU 미입력'}</small></td><td><input aria-label={`가격 옵션 ${index+1} 개당 원가`} type="number" min="0" step="any" value={row.unitCostCny===null||!Number.isFinite(row.unitCostCny)?'':row.unitCostCny} onChange={event=>update(row.id,'unitCostCny',event.target.value===''?null:event.target.valueAsNumber)}/></td><td><input aria-label={`가격 옵션 ${index+1} 구성 수량`} type="number" min="1" step="1" value={Number.isFinite(row.unitsPerPack)?row.unitsPerPack:''} onChange={event=>update(row.id,'unitsPerPack',event.target.valueAsNumber)}/></td>{!row.included?<td colSpan={3}>견적 제외</td>:result?.calculation?<><td>{won(result.calculation.supplyPrice)}</td><td>{won(result.calculation.salePrice)}</td><td>{won(result.calculation.marginKrw)}<small>{result.calculation.actualMargin.toFixed(1)}%</small></td></>:<td colSpan={3} role="status">{result?.error||'원가를 확인해주세요.'}</td>}</tr>;
+          return <tr key={row.id} data-option-target={row.id===focusedOptionId}><td><input type="checkbox" aria-label={`가격 옵션 ${index+1} 선택`} checked={selected.has(row.id)} onChange={event=>setSelected(previous=>{const next=new Set(previous);if(event.target.checked)next.add(row.id);else next.delete(row.id);return next;})}/></td><td><input type="checkbox" aria-label={`가격 옵션 ${index+1} 견적 포함`} checked={row.included} onChange={event=>update(row.id,'included',event.target.checked)}/></td><td><strong>{row.translatedName||row.originalName||`옵션 ${index+1}`}</strong><small>{row.supplierSku||'SKU 미입력'}</small></td><td><input aria-label={`가격 옵션 ${index+1} 개당 원가`} type="number" min="0" step="any" value={row.unitCostCny===null||!Number.isFinite(row.unitCostCny)?'':row.unitCostCny} onChange={event=>update(row.id,'unitCostCny',event.target.value===''?null:event.target.valueAsNumber)}/></td><td><input aria-label={`가격 옵션 ${index+1} 구성 수량`} type="number" min="1" step="1" value={Number.isFinite(row.unitsPerPack)?row.unitsPerPack:''} onChange={event=>update(row.id,'unitsPerPack',event.target.valueAsNumber)}/></td>{!row.included?<td colSpan={3}>견적 제외</td>:result?.calculation?<><td>{won(result.calculation.supplyPrice)}</td><td>{won(result.calculation.salePrice)}</td><td>{won(result.calculation.marginKrw)}<small>{result.calculation.actualMargin.toFixed(1)}%</small></td></>:<td colSpan={3} role="status">{result?.error||'원가를 확인해주세요.'}</td>}</tr>;
         })}</tbody></table><p>옵션명·이미지·치수·복제는 상단 옵션·사이즈표에서 수정합니다. 왼쪽 가격 정책은 저장한 뒤 이 표에 반영됩니다.</p></div>}
         <div className="panel-stack" hidden={pricingView}>{rows.map((row, index) => {
           const calculated = calculations.find(value => value.optionId === row.id);
           const stored = saved.options.rows.find(item => item.id === row.id);
           const packagingBasis = stored?.packagingUnitsPerPack ?? (stored && [stored.packagedWeightG,stored.packagedWidthMm,stored.packagedLengthMm,stored.packagedHeightMm].some(value => value != null) ? stored.unitsPerPack : undefined);
           const packagingChanged = packagingBasis !== undefined && packagingBasis !== row.unitsPerPack && [row.packagedWeightG,row.packagedWidthMm,row.packagedLengthMm,row.packagedHeightMm].some(value => value != null);
-          return <article key={row.id} style={{ border: '1px solid #dfe4ec', borderRadius: 12, padding: 16 }}>
+          return <article data-option-target={row.id===focusedOptionId} key={row.id} style={{ border: '1px solid #dfe4ec', borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'space-between' }}><label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" aria-label={`옵션 ${index + 1} 일괄 편집 선택`} checked={selected.has(row.id)} onChange={event => setSelected(previous => { const next = new Set(previous); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} /><strong>옵션 {index + 1}</strong></label><label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={row.included} onChange={event => update(row.id, 'included', event.target.checked)} />견적 포함</label><div style={{ display: 'flex', gap: 6 }}><button type="button" className="btn ghost" aria-label={`옵션 ${index + 1} 위로`} disabled={index === 0} onClick={() => setRows(previous => moveOption(previous, row.id, -1))}>↑</button><button type="button" className="btn ghost" aria-label={`옵션 ${index + 1} 아래로`} disabled={index === rows.length - 1} onClick={() => setRows(previous => moveOption(previous, row.id, 1))}>↓</button><button type="button" className="btn ghost" disabled={rows.length >= OPTION_LIMIT} title="이름·원가·치수·이미지를 유지하고 공급자 SKU는 비운 미포함 옵션을 만듭니다." onClick={() => setRows(previous => duplicateOption(previous, row.id, crypto.randomUUID()))}>복제</button><button type="button" className="btn ghost" aria-label={`옵션 ${index + 1} 삭제`} onClick={() => setRows(previous => previous.filter(value => value.id !== row.id))}>삭제</button></div></div>
             <div className="form-grid">{(['originalName', 'translatedName', 'supplierSku', 'color', 'size'] as const).map(key => <label className={`field ${key === 'supplierSku' ? 'full' : ''}`} key={key}><span>{optionFieldNames[key]} <small style={{ color: '#64748b', fontWeight: 400 }}>{origin(row, key)}</small></span><input aria-label={`옵션 ${index + 1} ${optionFieldNames[key]}`} value={row[key] ?? ''} maxLength={key === 'originalName' || key === 'translatedName' ? 500 : 200} onChange={event => update(row.id, key, event.target.value)} /></label>)}</div>
             <div className="form-grid">{numberKeys.map(key => <label className="field" key={key}><span>{optionFieldNames[key]}{key === 'stock' && <small> · {origin(row, key)} · 공란은 미확인</small>}{key === 'unitCostCny' && row.included ? ' · 필수' : ''}</span><input aria-label={`옵션 ${index + 1} ${optionFieldNames[key]}`} type="number" min={0} step={key === 'unitsPerPack' || key === 'minimumOrderQuantity' || key === 'stock' || key.startsWith('packaged') ? 1 : 'any'} value={row[key] === null || !Number.isFinite(row[key]) ? '' : row[key]} onChange={event => { const value = event.target.value === '' ? null : event.target.valueAsNumber; if (key === 'unitsPerPack') update(row.id, key, value ?? NaN); else update(row.id, key, value); }} /></label>)}</div>
