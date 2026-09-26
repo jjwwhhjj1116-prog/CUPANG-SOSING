@@ -1,11 +1,13 @@
 import type { ResolvedQuotation } from '@/app/quotation-schema';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 import { ExportSizeError, utf8ByteLength } from '@/app/exports/zip';
+import { quotationDetailContent } from '@/app/exports/quotation-detail-content';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]!));
 /** Local review only: final image order, with manual HTML preserved as inert source. */
 export function quotationDetailPage(resolved: ResolvedQuotation, assets: readonly BundleAsset[], description: string): string {
   const files = new Map(assets.map(asset => [asset.key, asset.name]));
+  const fragments = quotationDetailContent(resolved, assets, description);
   const parts: string[] = []; let bytes = 0;
   const add = (text: string) => {
     bytes += utf8ByteLength(text);
@@ -20,7 +22,11 @@ export function quotationDetailPage(resolved: ResolvedQuotation, assets: readonl
     if (manual) {
       add('<aside>수동 HTML이 적용된 옵션입니다. 아래 이미지는 별도 상세 이미지 필드의 순서이며, 수동 HTML을 렌더링한 결과가 아닙니다.</aside>');
       add(`<details open><summary>보존된 수동 HTML 원문${html.value ? '' : ' · 직접 비움'}</summary><pre>${escape(html.value)}</pre></details>`);
-    } else if (description) add(`<pre>${escape(description)}</pre>`);
+    } else {
+      const fragment = fragments.rows.find(item => item.optionId === row.optionId)!;
+      add(`<details><summary>설명·상세 이미지 통합 HTML 원문 (첨부 파일 기준)</summary><pre>${escape(fragment.html)}</pre></details>`);
+      if (description) add(`<pre>${escape(description)}</pre>`);
+    }
     const keys = (row.fields.detailImages?.value ?? '').split('\n').map(key => key.trim()).filter(Boolean);
     if (!keys.length) add('<p>최종 견적서에 연결된 상세 이미지가 없습니다.</p>');
     for (const [index, key] of keys.entries()) {

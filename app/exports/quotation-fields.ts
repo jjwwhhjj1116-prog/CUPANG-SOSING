@@ -12,6 +12,7 @@ import type { QuotationRowData } from '@/app/exports/quotation-data';
 import type { QuotationExportSource } from '@/app/exports/quotation-source';
 import { ExportSizeError, utf8ByteLength } from '@/app/exports/zip';
 import { quotationDetailPage } from '@/app/exports/quotation-detail';
+import { quotationDetailContent } from '@/app/exports/quotation-detail-content';
 import { quotationImageIndex } from '@/app/exports/quotation-image-index';
 import { inspectQuotationAssets } from '@/app/exports/quotation-image-checks';
 import { quotationLabelsPage } from '@/app/exports/quotation-labels';
@@ -129,6 +130,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const scopeArchive = JSON.stringify({ format: 'sourceflow-quotation-scopes-v1', categoryId: saved.categoryContext.categoryId, saved: saved.savedScopes ?? saved.state });
   const imageIndex = quotationImageIndex(resolved, assets);
   const detailPage = quotationDetailPage(resolved, assets, saved.content.seo.description.value);
+  const detailContent = JSON.stringify(quotationDetailContent(resolved, assets, saved.content.seo.description.value));
   const labelsPage = quotationLabelsPage(resolved);
   const review = { format: 'sourceflow-quotation-review-v1', productId: saved.product.id,
     sourceUrl: saved.product.source_url, inputFingerprint,
@@ -141,7 +143,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const plan = supplierHubUploadPlan(resolved, assets);
   const uploadPage = supplierHubUploadPage(plan);
   const uploadPlan = JSON.stringify({ ...plan, productId: saved.product.id, inputFingerprint });
-  ensureFieldBudget(document, [rows, overrides, reviewRows], utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage) + utf8ByteLength(labelsPage) + utf8ByteLength(reviewJson) + utf8ByteLength(uploadPlan) + utf8ByteLength(uploadPage));
+  ensureFieldBudget(document, [rows, overrides, reviewRows], utf8ByteLength(detailContent) + utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage) + utf8ByteLength(labelsPage) + utf8ByteLength(reviewJson) + utf8ByteLength(uploadPlan) + utf8ByteLength(uploadPage));
   return { review, warnings: document.warnings, files: [
     { name: 'supplier-hub-upload.html', data: uploadPage },
     { name: 'supplier-hub-upload-plan.json', data: uploadPlan },
@@ -149,6 +151,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
     { name: 'submission-review.csv', data: quotationCsv(reviewRows) },
     { name: 'quotation-images.html', data: imageIndex },
     { name: 'quotation-detail.html', data: detailPage },
+    { name: 'quotation-detail-content.json', data: detailContent },
     { name: 'quotation-labels.html', data: labelsPage },
     { name: 'quotation-saved-scopes.json', data: scopeArchive },
     { name: 'quotation-fields.json', data: JSON.stringify(document) },

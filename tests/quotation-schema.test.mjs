@@ -1645,3 +1645,45 @@ test('quotation flags old packaging basis while retaining facts and respects exp
  target=model.resolveQuotationFields(input).rows.find(row=>row.optionId===option.id);
  for(const key of ['packagedWeightG','packagedDimensionsMm'])assert.ok(!target.fields[key].issues.some(message=>message.includes('개입 기준')));
 });
+
+
+test('detail fragments join final banner/image order with escaped saved description and remain local',()=>{
+ const input=fixture();input.product.image_keys=JSON.stringify(['owner/main.png','owner/option.png','owner/detail.png','owner/top.png','owner/bottom.png']);
+ input.content.assets.detailTop.value=['owner/top.png'];input.content.assets.detailBottom.value=['owner/bottom.png'];
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:'assets/image-'+index+'.png'}));
+ const before=JSON.stringify(input),resolved=model.resolveQuotationFields(input);
+ const make=load('app/exports/quotation-detail-content.ts').quotationDetailContent;
+ const result=make(resolved,assets,input.content.seo.description.value),row=result.rows.find(row=>row.optionId==='red');
+ assert.equal(result.submissionReady,false);assert.equal(result.imageBase,'archive-root-relative');
+ assert.equal(row.mode,'generated');assert.deepEqual(clone(row.images),['assets/image-3.png','assets/image-2.png','assets/image-4.png']);
+ assert.ok(row.html.indexOf('image-3.png')<row.html.indexOf('image-2.png'));assert.ok(row.html.indexOf('image-2.png')<row.html.indexOf('image-4.png'));
+ assert.match(row.html,/&lt;script&gt;/);assert.doesNotMatch(row.html,/<script>|https?:/);assert.equal(JSON.stringify(input),before);
+ const saved={...input,state:{revision:0,overrides:{common:{},options:{}}},categoryContext:{categoryId:'80719'}};
+ const files=load('app/exports/quotation-fields.ts').quotationFieldFiles(saved,resolved,assets,'version').files;
+ const packaged=JSON.parse(files.find(file=>file.name==='quotation-detail-content.json').data);
+ assert.equal(packaged.rows.find(row=>row.optionId==='red').html,row.html);
+ assert.match(files.find(file=>file.name==='quotation-detail.html').data,/설명·상세 이미지 통합 HTML 원문/);
+});
+
+test('detail fragments preserve manual HTML and intentional blanks without appending images',()=>{
+ const input=fixture();input.overrides={common:{detailHtml:'<script>raw()</script>'},options:{red:{detailHtml:''}}};
+ input.options.rows.push({...clone(input.options.rows[0]),id:'blue',included:true},{...clone(input.options.rows[0]),id:'excluded',included:false});
+ const make=load('app/exports/quotation-detail-content.ts').quotationDetailContent;
+ const rows=make(model.resolveQuotationFields(input),[],input.content.seo.description.value).rows;
+ assert.equal(rows.find(row=>row.optionId==='red').html,'');assert.equal(rows.find(row=>row.optionId==='red').mode,'manual');
+ assert.ok(rows.every(row=>!row.images.length));assert.ok(!rows.some(row=>row.optionId==='excluded'));
+ assert.equal(rows.find(row=>row.optionId==='blue').html,'<script>raw()</script>');
+});
+
+test('detail fragments honor final image overrides, reject unsafe files, and bound repeated HTML',()=>{
+ const input=fixture();input.overrides={common:{detailImages:'owner/main.png',altText:''},options:{red:{detailImages:''}}};
+ const make=load('app/exports/quotation-detail-content.ts').quotationDetailContent;
+ input.options.rows.push({...clone(input.options.rows[0]),id:'blue',included:true});
+ const resolved=model.resolveQuotationFields(input),assets=[{key:'owner/main.png',name:'assets/main.png'}];
+ const rows=make(resolved,assets,'').rows;assert.equal(rows.find(row=>row.optionId==='red').html,'');
+ assert.deepEqual(clone(rows.find(row=>row.optionId==='blue').images),['assets/main.png']);assert.match(rows.find(row=>row.optionId==='blue').html,/alt=""/);
+ for(const name of ['../main.png','https://example.test/a.png','assets/a.png" onerror="bad()'])assert.throws(()=>make(resolved,[{key:'owner/main.png',name}],''),/첨부 파일/);
+ assert.throws(()=>make(resolved,[],''),/첨부 파일/);
+ const huge={rows:Array.from({length:50},(_,i)=>({optionId:String(i),optionLabel:'row',included:true,fields:{detailHtml:{source:'manual-option',value:'x'.repeat(150000)}}}))};
+ assert.throws(()=>make(huge,[],''),/6MB/);
+});
