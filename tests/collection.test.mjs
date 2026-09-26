@@ -266,3 +266,12 @@ test('invalid target keywords are rejected before queuing an uneditable SEO draf
  }
  assert.equal(writes,0);
 });
+
+test('displayed registration settings must match persisted settings before queue creation',async()=>{
+ const {savedRegistrationSettings}=load('app/workspace-settings.ts');const settings=savedRegistrationSettings({brand:'저장 브랜드',exchangeRate:350,serviceContact:''});let writes=0;
+ const api=load('app/api/collection-jobs/route.ts',{'@/db/queries':{getSettings:async()=>({payload:JSON.stringify(settings)})},'@/db/collection-jobs':{enqueueCollection:async(owner,entries,context)=>{writes++;assert.equal(context.settings.exchangeRate,350);assert.equal(context.settings.brand,'저장 브랜드');return [];}}});
+ for(const changed of [{...settings,exchangeRate:190},{...settings,brand:''},{...settings,topImageEnabled:true,topImageKey:'owner/other.png'}]){const r=await api.POST(request({...payload,expectedSettings:changed}));assert.equal(r.status,409);assert.equal((await r.json()).code,'REGISTRATION_SETTINGS_CHANGED');}
+ assert.equal(writes,0);
+ const reversed=Object.fromEntries(Object.entries(settings).reverse());assert.equal((await api.POST(request({...payload,expectedSettings:reversed}))).status,200);assert.equal(writes,1);
+ assert.equal((await api.POST(request({...payload,expectedSettings:null}))).status,400);assert.equal(writes,1);
+});

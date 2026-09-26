@@ -80,3 +80,12 @@ test('invalid SEO keywords remain in the queue and block submission before any r
  await assert.rejects(submitIntakeQueue([draft],'price',{signal:new AbortController().signal,fetcher:async()=>{calls++;},onRow:(_id,state)=>errors.push(state),onJobs(){}}));
  assert.equal(calls,0);assert.equal(draft.keywords.length,101);assert.match(errors[0].message,/키워드/);
 });
+
+test('queue freezes displayed settings across rows and stops further rows when settings change',async()=>{
+ const settings={brand:'처음',exchangeRate:350};const requests=[],states=[];
+ const options={signal:new AbortController().signal,expectedSettings:settings,onJobs(){},onRow:(id,state)=>states.push({id,...state}),fetcher:async(_url,init)=>{const body=JSON.parse(init.body);requests.push(body);settings.brand='도중 변경';return response(saved(body));}};
+ await submitIntakeQueue([row(1),row(2)],'price',options);assert.equal(requests.length,2);assert.equal(requests[0].expectedSettings.brand,'처음');assert.equal(requests[1].expectedSettings.brand,'처음');
+ requests.length=0;states.length=0;let collected=0;
+ await submitIntakeQueue([row(1),row(2)],'price',{...options,collect:async()=>{collected++;},fetcher:async(_url,init)=>{requests.push(JSON.parse(init.body));return response({code:'REGISTRATION_SETTINGS_CHANGED',error:'기본설정 변경'},409);}});
+ assert.equal(requests.length,1);assert.equal(collected,0);assert.equal(states.length,1);assert.equal(states[0].status,'error');assert.equal(states[0].id,'1');
+});

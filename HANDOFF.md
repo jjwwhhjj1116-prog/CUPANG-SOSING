@@ -3167,3 +3167,12 @@ AI등록 화면 확인:
 - 실제 ContentEditor 렌더 테스트에서 세 단계의 순차 저장/미저장 배치 유지/견적 mainImage 연결을 확인했다. cross-role 이동에서도 다른 단계의 변경을 유지하는 회귀 검증 추가. 관련41/41, TypeScript, Cloudflare build/check, diff check 통과.
 - 첨부된 Couplus의 단계 구분을 참고한 동작 수정이다. Couplus 실사이트와 동일한 저장 API/시각 동작을 대조한 것은 아니다. 실제1688 수집 확인·전체 카테고리 기본값·이미지 번역·Supplier Hub 자동전송 미완성 유지.
 - 배포 bd8d629b-9581-4428-976a-7c0ece72cbb9. outputs/step304-tests.log, step304-build.log, step304-deploy.log.
+
+## 305. 상품 추가 시 화면 기본설정과 서버 저장값 일치 검증 — 2026-09-26
+
+- IntakeQueuePanel에 현재 대시보드 settings를 전달하고 submitIntakeQueue 시작 시 한 번 복사한다. 행마다 expectedSettings를 전송해 여러 URL 처리 도중 다른 탭의 설정 변경으로 서로 다른 설정이 섞이는 것을 방지한다.
+- POST collection-jobs는 expectedSettings가 제공된 경우 형식 검사/정규화 후 현재 저장값과 비교한다. 불일치 시 enqueue 전에409 REGISTRATION_SETTINGS_CHANGED를 반환한다. 클라이언트는 해당 행 오류를 표시하고 나머지 행 전송을 멈춘다. URL/카테고리/이미 저장한 요청은 유지한다. 이전 클라이언트의 expectedSettings 없는 요청은 호환 유지.
+- API 비교는 문자열 키 순서 차이를 정규화하며 명시적 빈 값도 비교한다. 실제 context에는 클라이언트 데이터가 아니라 서버에서 읽은 설정을 저장한다. 읽기 직후 설정 변경이 발생해도 읽은 snapshot을 사용한다. 설정 변경을 다른 상품에 소급 적용하지 않는다.
+- 관련55/55, TypeScript, Cloudflare build/check, diff check 통과. 테스트는 행 간 settings 변경, 중단 뒤 나머지 입력 유지, 다른 가격/브랜드/배너 거절, 동일 설정의 키 순서 허용 등을 확인한다.
+- 기존 Chrome 탭 조회는 다시 []를 반환했다. 이번 수정은 설정 일관성 수정이며 Couplus 실사이트 동일성 검증은 아니다. 실제1688 수집 검증·전체 카테고리 기본값 대조·이미지 번역·Supplier Hub 자동등록 미완성 유지.
+- 배포90e53ee0-4332-41a6-995d-325a592f736b. outputs/step305-tests.log, step305-build.log, step305-deploy.log.

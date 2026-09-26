@@ -1,4 +1,5 @@
 import { parseCollectionRequest, collectionKeywords, collectionJobProgress, type CollectionJob, type PreservedCollectionRequest } from '@/app/sourcing';
+import type { WorkspaceSettings } from '@/app/workspace-settings';
 import type { CategoryProfile } from '@/app/category-profiles';
 
 export type IntakeRow = {
@@ -50,6 +51,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
   onRow: (id: string, state: Pick<IntakeRow, 'status' | 'message'>) => void;
   onJobs: (jobs: CollectionJob[]) => void;
   selectedIds?: ReadonlySet<string>;
+  expectedSettings?: WorkspaceSettings;
   collect?: (job:CollectionJob,onProgress:(message:string)=>void)=>Promise<string|undefined>;
 }) {
   if (options.signal.aborted) return;
@@ -60,12 +62,14 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
     throw Error(`${validation.errors.length}개 행의 입력을 확인해주세요. 각 행에 오류를 표시했습니다. 아직 요청을 전송하지 않았습니다.`);
   }
   const requests = validation.requests;
+  const expectedSettings=options.expectedSettings?JSON.parse(JSON.stringify(options.expectedSettings)) as WorkspaceSettings:undefined;
   for (const request of requests) {
     if (options.signal.aborted) break;
     try {
-      const response = await options.fetcher('/api/collection-jobs', { method: 'POST', signal: options.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(request.body) });
-      const result = await response.json() as { jobs?: CollectionJob[]; preservedRequests?: PreservedCollectionRequest[]; error?: string };
+      const response = await options.fetcher('/api/collection-jobs', { method: 'POST', signal: options.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({...request.body,...(expectedSettings?{expectedSettings}:{})}) });
+      const result = await response.json() as { jobs?: CollectionJob[]; preservedRequests?: PreservedCollectionRequest[]; error?: string; code?: string };
       if (options.signal.aborted) break;
+      if(!response.ok&&result.code==='REGISTRATION_SETTINGS_CHANGED'){options.onRow(request.id,{status:'error',message:result.error||'기본설정을 다시 확인해주세요.'});break;}
       if (!response.ok || !Array.isArray(result.jobs) || result.jobs.length !== 1 || result.jobs[0].source_url !== request.body.urls[0] || !Array.isArray(result.preservedRequests)) throw Error(result.error || '해당 상품의 저장 결과를 확인하지 못했습니다. 입력은 유지됩니다.');
       options.onJobs(result.jobs);
       const differences = result.preservedRequests?.flatMap(item => item.differences) ?? [];

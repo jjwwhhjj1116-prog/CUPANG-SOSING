@@ -4,7 +4,7 @@ import { collectionBlock, collectionKeywords, parseCollectionRequest, preservedC
 import { enqueueCollection, listCollectionJobs } from '@/db/collection-jobs';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { getSettings } from '@/db/queries';
-import { savedRegistrationSettings } from '@/app/workspace-settings';
+import { savedRegistrationSettings, validateSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 
 // Production requests require a verified Access assertion; ownership never falls
@@ -21,10 +21,11 @@ export async function GET() {
 }
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
-  let entries;let profileId:string;let expectedProfileRevision:number;let features:string;let keywords:string;
+  let entries;let profileId:string;let expectedProfileRevision:number;let features:string;let keywords:string;let expectedSettings:WorkspaceSettings|undefined;
   try {
     const input:unknown=await request.json();entries = parseCollectionRequest(input);
     const body=input as Record<string,unknown>;
+    if(Object.hasOwn(body,'expectedSettings')){validateSettings(body.expectedSettings);expectedSettings=savedRegistrationSettings(body.expectedSettings);}
     if(typeof body.profileId!=='string'||!/^[a-f0-9-]{36}$/.test(body.profileId))throw new Error('URL 입력 전에 카테고리·견적서 연결을 선택해주세요.');
     profileId=body.profileId;
     if(!Number.isSafeInteger(body.expectedProfileRevision)||(body.expectedProfileRevision as number)<1)throw new Error('카테고리 설정 버전이 없습니다. 카테고리를 다시 선택해주세요.');
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
     if(!usableCategoryCode(category.categoryId))return NextResponse.json({error:'선택한 카테고리 번호가 없거나 형식이 올바르지 않습니다. 설정에서 실제 번호를 수정한 뒤 다시 선택해주세요.',code:'CATEGORY_CODE_INVALID'},{status:400});
     const savedSettings=await getSettings(owner);
     const settings=savedRegistrationSettings(savedSettings?JSON.parse(savedSettings.payload):null);
+    if(expectedSettings&&JSON.stringify(expectedSettings)!==JSON.stringify(settings))return NextResponse.json({error:'기본설정이 변경되었습니다. 입력한 URL과 카테고리는 유지됩니다. 기본설정을 다시 불러온 뒤 시작해주세요.',code:'REGISTRATION_SETTINGS_CHANGED'},{status:409});
     const context={category,settings,features,keywords,capturedAt:new Date().toISOString()};
     const jobs = await enqueueCollection(owner, entries, context);
     return NextResponse.json({ jobs, preservedRequests: preservedCollectionRequests(jobs, entries, context), message: collectionBlock, executionStarted: false }, { headers: { 'cache-control': 'no-store' } });
