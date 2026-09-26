@@ -3128,3 +3128,10 @@ AI등록 화면 확인:
 - 견적 편집기 기존 refresh/reconcile을 사용하므로 수동 초안을 버리지 않고 충돌을 확인한다. 자동 저장 또는 Hub 전송 추가 아님.
 - 실제 DetailPanel AST를 렌더하는 연결 테스트2/2, 기존 견적 편집기69/69, TypeScript, Cloudflare build/check, diff check 통과. 수정 시각 동일/가격 저장 실패를 검증했다.
 - 배포0d55691f-123e-472c-abd8-4ca9b72d66ae. outputs/step299-tests.log, step299-refresh-tests.log, step299-build.log, step299-deploy.log. 실제1688 수집·전체 카테고리 대조·Supplier Hub 자동등록 미완성 유지.
+
+## 300. 헬스보호대 옵션 사이즈 → 비노출 패션잡화 사이즈 연결 — 2026-09-26
+
+- 81452의 brace_size에 저장된 옵션 size가 관찰된 8개 선택지와 정확히 일치하면 연결한다. 별칭/상품 치수는 변환하지 않고 확인 안내한다. 수동 견적 옵션값/공통값과 직접 지운 옵션 사이즈는 유지한다.
+- 필드/선택지 근거는 기존 Couplus 및 Hub 관찰 스키마. 이 자동 연결 자체의 Couplus 실동작 동일성은 이번에 대조하지 못했다. 다른 카테고리에 확장하지 않았다.
+- 견적167/167, TypeScript, Cloudflare build/check, diff check 통과. 배포b13b339f-d3d7-4e72-800a-6839783fd557. outputs/step300-tests.log, step300-build.log, step300-deploy.log.
+- 실제1688 수집 실행기·전체 카테고리 기본값 대조·Supplier Hub 자동등록 미완성 유지.

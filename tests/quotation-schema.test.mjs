@@ -1724,3 +1724,27 @@ test('brace specifications follow saved step-six content and preserve quotation 
  delete input.content.label.specifications;assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications.value,'');
  input.categoryId='80719';assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications,undefined);
 });
+
+test('brace fashion size links exact option choices while retaining manual quotation edits',()=>{
+ const input=fixture();input.categoryId='81452';
+ for(const size of ['S','M','L','XL','Free Size','XXS','XS','XXL이상']){
+  input.options.rows[0].size=size;
+  const resolved=model.resolveQuotationFields(input);
+  assert.equal(resolved.rows[1].fields.brace_size.value,size);assert.equal(resolved.rows[1].fields.brace_size.source,'option');
+  assert.equal(resolved.rows[1].fields.size.value,size);
+ }
+ input.overrides={common:{brace_size:'M'},options:{red:{brace_size:'L'}}};
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_size.value,'L');
+ input.overrides.options.red.brace_size='';assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_size.source,'manual-option');
+ delete input.overrides.options.red.brace_size;assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_size.value,'M');
+});
+test('brace fashion size never guesses aliases, measurements or restores intentionally blank option size',()=>{
+ const input=fixture();input.categoryId='81452';
+ for(const size of ['Medium','Free','20 × 30 cm']){
+  input.options.rows[0].size=size;const fields=model.resolveQuotationFields(input).rows[1].fields;
+  assert.equal(fields.size.value,size);assert.equal(fields.brace_size.value,'');assert.ok(fields.brace_size.issues.some(issue=>issue.includes('선택지')));
+ }
+ input.options.rows[0].size='';input.options.rows[0].provenance.size='manual';
+ const fields=model.resolveQuotationFields(input).rows[1].fields;assert.equal(fields.brace_size.value,'');assert.equal(fields.brace_size.source,'option');
+ input.categoryId='80719';assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_size,undefined);
+});

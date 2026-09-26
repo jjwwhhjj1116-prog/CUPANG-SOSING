@@ -384,6 +384,16 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'color': case 'brace_noticeColor': case 'marathon_noticeColor': return option?.provenance.color === 'manual'
         ? { value: option.color ?? '', source: 'option' } : literal(option?.color, 'option');
+      case 'brace_size': {
+        // Link a saved purchasing size only when it is an exact observed choice.
+        // Do not convert physical dimensions or infer size synonyms.
+        if (!option) return literal('', 'empty');
+        if (option.provenance.size === 'manual' && !option.size) return { value: '', source: 'option' };
+        if (!option.size) return literal('', 'empty');
+        const choice = definition.choices?.find(item => item.value === option.size && item.value !== '');
+        return choice ? { value: choice.value, source: 'option' }
+          : { value: '', source: 'empty', issues: ['옵션 사이즈가 패션잡화 사이즈 선택지와 일치하지 않습니다. 확인한 값을 선택해주세요.'] };
+      }
       case 'size': case 'marathon_noticeSize':
         if (option?.size || option?.provenance.size === 'manual') return { value: option.size ?? '', source: 'option' };
         // 81452 expects a purchasing size (S/Medium/Free), not physical dimensions.
