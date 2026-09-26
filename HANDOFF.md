@@ -3058,3 +3058,10 @@ AI등록 화면 확인:
 - 검증44/44: 4개 카테고리 검색태그 연결, 수동 출처, 원문 설명 보존, 잘못된 키워드 요청 차단, SQLite 저장 후 수동 삭제 및 promotion 재시도 보존. TypeScript, build/check, diff check 통과.
 - Chrome 기존 supplierChrome.tabs.list()는 오류 없이 [] 반환. 새 Chrome이나 다른 프로필을 열지 않았다. 실제 Couplus/1688 수집 UI는 대조하지 못했으며 본 변경은 수신 이후 단계의 누락 수정이다.
 - Cloudflare 배포 e0854e98-4eea-4ac5-84a4-ce3fb86ccf67. 로그 outputs/step289-tests.log, step289-build.log, step289-deploy.log. 실제1688 실행기/전카테고리 기본값 대조/Supplier Hub 자동등록은 여전히 미완성이다.
+
+## 290. 표시사항 단계 첫 진입 시 기본정보 초안 작성 — 2026-09-26
+
+- 6단계 표시사항에 처음 진입하면 기존 fillLabelDraft를 실행해 저장된 SEO 상품명·제조사·수입원·연락처로 미작성 항목을 채운다. 별도 채우기 버튼은 재시도용으로 유지한다. 서버 저장과 Supplier Hub 전송은 실행하지 않고 사용자가 초안을 확인·저장한다.
+- 상품 작업 공간에서 자동 시도는 한 번이다. 수동 수정/수동 공란, 다른 단계의 미저장 입력을 보존한다. 단계 이동 후 사용자가 지운 값을 자동 복원하지 않는다. 설정 응답 전에 창을 닫으면 요청을 취소하고 결과를 무시한다. 인증/법적 항목을 해당없음으로 추정하지 않는다.
+- 관련10/10, TypeScript, Cloudflare build/check, diff check 통과. 첫 진입 호출/자동 저장 없음/재진입 수동 공란/다른 단계 초안 보류/늦은 응답 무시와 기존 표시사항 저장 경로 검증. Chrome 실제 시각 검증은 아님.
+- 배포98ec85c2-f7ad-4a8f-b332-3584a6342cba. 로그 outputs/step290-tests.log, step290-build.log, step290-deploy.log. 전체 카테고리 Couplus 동등성 및 실제1688 수집·Supplier Hub 접수는 여전히 미완성.

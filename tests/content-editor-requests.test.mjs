@@ -7,15 +7,15 @@ import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
-function harness(handle, focusedAssetRole){
- const slots=[],effects=[],cleanups=[],cache=new Map();let index=0,first=true,notices=0,content;
- const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useCallback:fn=>fn,useEffect(fn){if(first)effects.push(fn);}};
+function harness(handle, focusedAssetRole, lifecycle=false){
+ const slots=[],effects=[],cleanups=[],cache=new Map(), dependencies=[],callbacks=[];let ei=0,ci=0;let index=0,first=true,notices=0,content;
+ const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useCallback(fn,deps){if(!lifecycle)return fn;const i=ci++;if(!callbacks[i]||deps.some((v,j)=>!Object.is(v,callbacks[i].deps[j])))callbacks[i]={fn,deps};return callbacks[i].fn;},useEffect(fn,deps){const i=ei++;if(lifecycle){if(!dependencies[i]||deps.some((v,j)=>!Object.is(v,dependencies[i][j]))){dependencies[i]=deps;effects.push(()=>{cleanups[i]?.();cleanups[i]=fn();});}}else if(first)effects.push(fn);}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>handle(url,init,content)??Response.json({content}),require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-content.ts');content=model.emptyProductContent('p');
  const component=load('app/components/product-content-editor.tsx').ProductContentEditor;
- const render=(section='이미지')=>{index=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png"]'},section,focusedAssetRole,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
+ const render=(section='이미지')=>{index=0;ei=0;ci=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png"]'},section,focusedAssetRole,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
  const button=(name,section)=>nodes(render(section)).find(n=>n.type==='button'&&n.props.children===name);
- return{render,button,model,load,get notices(){return notices;},async start(){render();effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
+ return{render,button,model,load,async flush(){effects.splice(0).forEach(fn=>fn());await settle();},get notices(){return notices;},async start(){render();if(lifecycle)effects.splice(0).forEach(fn=>fn());else effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
 }
 
 test('image save sends once, retains another tab draft and reaches resolved quotation image cells',async()=>{
@@ -56,4 +56,26 @@ test('detail step saves explanation and image roles together while preserving an
  assert.equal(resolved.rows[0].fields.detailImages.value,'owner/a.png');assert.equal(resolved.rows[0].fields.detailHtml.value,'<p>번역 설명<br>&lt;script&gt;실행 금지&lt;/script&gt;</p>');
  nodes(h.render()).find(n=>n.props?.['aria-label']==='상세페이지 설명').props.onChange({target:{value:''}});
  assert.equal(h.button('상세 설명·이미지 저장').props.disabled,false);h.button('상세 설명·이미지 저장').props.onClick();await settle();assert.equal(patch.seo.description,'');assert.equal(saved.seo.description.provenance,'manual');
+});
+
+test('entering labels prepares saved defaults once and preserves a later manual clear across steps',async()=>{
+ let fills=0,writes=0;
+ const h=harness((url,init)=>{if(url.endsWith('/registration-settings')){fills++;return Response.json({settings:{manufacturer:'저장 제조사',importer:'저장 수입원',serviceContact:'연락처'}});}if(init?.method==='PATCH')writes++;},undefined,true);
+ await h.start();h.render('SEO');await h.flush();assert.equal(fills,0);
+ h.render('표시사항');await h.flush();assert.equal(fills,1);assert.equal(writes,0);
+ const fields=nodes(h.render('표시사항')).filter(n=>n.type==='textarea');
+ assert.ok(fields.some(n=>n.props.value==='상품'));assert.ok(fields.some(n=>n.props.value==='저장 제조사'));
+ fields.find(n=>n.props.value==='저장 제조사').props.onChange({target:{value:''}});
+ h.render('SEO');await h.flush();h.render('표시사항');await h.flush();
+ assert.equal(fills,1);assert.ok(!nodes(h.render('표시사항')).some(n=>n.type==='textarea'&&n.props.value==='저장 제조사'));
+ h.unmount();
+});
+test('label auto draft waits for existing edits and ignores late settings after unmount',async()=>{
+ let finish,signal,fills=0;const pending=new Promise(resolve=>finish=resolve);
+ const h=harness((url,init)=>{if(url.endsWith('/registration-settings')){fills++;signal=init.signal;return pending.then(()=>Response.json({settings:{manufacturer:'늦은 제조사'}}));}},undefined,true);
+ await h.start();const title=nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500);title.props.onChange({target:{value:'수정 중'}});
+ h.render('표시사항');await h.flush();assert.equal(fills,0);
+ nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.onChange({target:{value:''}});
+ h.render('표시사항');await h.flush();assert.equal(fills,1);h.unmount();assert.equal(signal.aborted,true);finish();await settle();
+ assert.ok(!JSON.stringify(h.render('표시사항')).includes('늦은 제조사'));
 });

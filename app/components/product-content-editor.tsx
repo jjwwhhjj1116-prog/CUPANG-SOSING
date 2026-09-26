@@ -57,6 +57,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const [snapshotVersion, setSnapshotVersion] = useState(product.updated_at);
   const [refreshNotice, setRefreshNotice] = useState('');
   const activeRequest=useRef<AbortController|null>(null);
+  const labelAutofillAttempted=useRef(false);
   useEffect(()=>()=>{activeRequest.current?.abort();},[]);
   const [assetFilterOverride, setAssetFilterOverride] = useState<{step:string;filter:AssetEditorFilter}|null>(null);
   const filterStep=focusedAssetRole??'all';
@@ -129,6 +130,14 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '기본설정 반영 실패'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }
+
+  // Prepare a reviewable draft once on first entry; never refill a field the
+  // owner clears later or discard unsaved edits in another stage.
+  useEffect(() => {
+    if (section !== '표시사항' || !loaded || loading || busy || anyDirty || activeRequest.current || labelAutofillAttempted.current) return;
+    labelAutofillAttempted.current = true;
+    void fillLabel();
+  }, [section, loaded, loading, busy, anyDirty]);
 
   async function save() {
     if(!loaded || busy || loading || conflict || activeRequest.current)return;
