@@ -101,3 +101,29 @@ test('integrated completion never marks manual fields or fields absent from the 
  const pending=load('app/option-translation.ts').optionTranslationBatch(next);
  assert.equal(pending.total,1);assert.equal(pending.attributes[0].name,'option-size:red');
 });
+
+test('option-only API binds scope, preserves SEO and labels and persists verified options',async()=>{
+ const h=harness();try{
+  let saves=0;
+  const route=load('app/api/products/[id]/translation-apply/route.ts',{
+   '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=> 'owner'},
+   '@/db/queries':{findProduct:async()=>({id:'p',owner_id:'owner',updated_at:h.sqlite.prepare('SELECT updated_at FROM products').get().updated_at,image_keys:'[]'})},
+   '@/db/product-content':{readProductContent:async()=>h.data.content},'@/db/product-options':{readProductOptions:async()=>h.data.options},
+   '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job},
+   '@/db/translation-adoption':{saveIntegratedTranslation:async(...args)=>{saves++;return h.store.saveIntegratedTranslation(...args);}},
+  });
+  const context={params:Promise.resolve({id:'p'})};
+  const call=body=>route.POST(new Request('https://local/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,expectedVersion:version,scope:'options',...body})}),context);
+  const preview=await call({action:'preview'});assert.equal(preview.status,200);const plan=await preview.json();assert.equal(saves,0);assert.equal(plan.preview.length,2);assert.equal(plan.scope,'options');
+  assert.equal((await call({action:'preview',scope:'invalid'})).status,400);
+  assert.equal((await call({action:'apply',scope:'all',fingerprint:plan.fingerprint})).status,409);assert.equal(saves,0);
+  assert.equal((await call({action:'apply',fingerprint:'0'.repeat(64)})).status,409);assert.equal(saves,0);
+  const saved=await call({action:'apply',fingerprint:plan.fingerprint});assert.equal(saved.status,200);assert.equal(saves,1);
+  const receipt=await saved.json();assert.equal(receipt.contentRevision,1);assert.equal(receipt.optionRevision,2);assert.equal(receipt.applied,plan.preview.length);assert.equal(receipt.scope,'options');
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  assert.deepEqual(content.seo,JSON.parse(JSON.stringify(h.data.content.seo)));assert.deepEqual(content.label,JSON.parse(JSON.stringify(h.data.content.label)));
+  const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  assert.equal(options.rows[0].color,'빨강');assert.equal(options.rows[0].provenance.color,'translated');
+  assert.equal((await call({action:'apply',fingerprint:plan.fingerprint})).status,409);assert.equal(saves,1);
+ }finally{h.sqlite.close();}
+});

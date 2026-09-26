@@ -50,9 +50,7 @@ test('closing during source reads, paid action or content save ignores late resp
  }
 });
 
-test('closing during option adoption lookup prevents a subsequent PATCH',async()=>{
- const pending=deferred();const h=harness(()=>pending.promise);await settle();const click=h.button(adoptOptions);click();click();assert.equal(h.calls.length,1);h.close();pending.resolve(Response.json({productVersion:'v',options:{revision:1}}));await settle();assert.equal(h.calls.length,1);assert.equal(h.saved,0);assert.equal(h.late,0);
-});
+
 
 const refresh='작업 상태 다시 조회 · 무료';
 test('combined preview sends exactly one revision-bound content PATCH and preserves request lock',async()=>{
@@ -144,16 +142,11 @@ test('closing a combined source load aborts both requests and prevents partial i
  pending.resolve(Response.json({productVersion:'v',title:'지연',description:'',attributes:[],options:{productId:'p'}}));await settle();assert.equal(h.late,0);assert.equal(h.saved,0);
 });
 
-test('option adoption verifies product before PATCH and confirms receipt before announcing success',async()=>{
- for(const mode of ['wrong-product','wrong-version','bad-receipt','success']){
-  const h=harness(async(_url,init)=>init.method==='PATCH'?Response.json({confirmed:mode==='success'}):Response.json({productVersion:mode==='wrong-version'?'other':'v',options:{productId:mode==='wrong-product'?'other':'p',revision:1}}));
-  await settle();h.button(adoptOptions)();await settle();
-  assert.equal(h.calls.filter(c=>c.init.method==='PATCH').length,mode.startsWith('wrong-')?0:1);
-  assert.equal(h.saved,mode==='success'?1:0);
-  const output=JSON.stringify(h.render());
-  if(mode==='bad-receipt'){assert.match(output,/저장 응답 불일치/);assert.doesNotMatch(output,/개 항목에 검토한 초안을 적용했습니다/);}
-  if(mode==='success')assert.match(output,/개 항목에 검토한 초안을 적용했습니다/);
- }
+test('option adoption delegates to the verified scoped preview without direct writes',async()=>{
+ const h=harness(()=>{throw Error('unexpected request');});await settle();
+ const editors=nodes(h.render()).filter(n=>typeof n.type==='function'&&n.props.jobId);
+ assert.ok(editors.some(n=>n.props.scope==='options'&&n.props.productId==='p'&&n.props.version==='v'));
+ assert.ok(editors.some(n=>!n.props.scope));assert.equal(h.calls.length,0);assert.equal(h.saved,0);
 });
 
 test('large source loads only the available option batch and reports the preserved remainder',async()=>{

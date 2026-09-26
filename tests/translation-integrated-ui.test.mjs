@@ -56,3 +56,14 @@ test('late preview and apply responses are ignored after changing product contex
   assert.doesNotMatch(JSON.stringify(h.render()),/함께 저장했습니다/);
  }
 });
+
+test('option scope is included in requests and rejects mismatched preview or receipt scope',async()=>{
+ for(const mode of ['success','preview-mismatch','receipt-mismatch']){
+  const h=harness(async init=>JSON.parse(init.body).action==='preview'?Response.json({...plan,scope:mode==='preview-mismatch'?'all':'options'}):Response.json({scope:mode==='receipt-mismatch'?'all':'options',productId:'p',productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2,applied:1}));
+  h.render({scope:'options'});h.click(0);await settle();
+  assert.equal(JSON.parse(h.calls[0].init.body).scope,'options');
+  if(mode==='preview-mismatch')assert.equal(nodes(h.render()).filter(n=>n.type==='button').length,1);
+  else{h.click(1);await settle();assert.equal(JSON.parse(h.calls[1].init.body).scope,'options');}
+  assert.equal(h.saved,mode==='success'?1:0);
+ }
+});

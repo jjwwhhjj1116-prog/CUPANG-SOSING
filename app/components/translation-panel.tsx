@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
-import { optionTranslationBatch, adoptOptionTranslations, confirmOptionTranslationSave } from '@/app/option-translation';
+import { optionTranslationBatch } from '@/app/option-translation';
 import type { ProductOptionsResponse } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
 import { translationAdoptionInput, translationSeoFields, type TranslationSeoField } from '@/app/translation-adoption';
@@ -178,21 +178,6 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'옵션 조회 실패');}
     finally{finishRequest(controller);}
   }
-  async function adoptOptions() {
-    if(!job)return;const controller=beginRequest();if(!controller)return;setBusy(true);setError('');setNotice('');
-    try {
-      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal:controller.signal});
-      const current=await response.json() as ProductOptionsResponse & {error?:string};if(controller.signal.aborted)return;
-      if(!response.ok)throw Error(current.error??'옵션 조회 실패');
-      if(current.productVersion!==version||current.options?.productId!==productId)throw Error('현재 상품과 옵션 조회 결과가 다릅니다. 최신 상품을 다시 열어주세요.');
-      const next=adoptOptionTranslations(current.options,job,current.productVersion);
-      const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/options`,{signal:controller.signal,method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.options.revision,expectedProductVersion:current.productVersion,rows:next.rows})});
-      const value=await saved.json() as {error?:string};if(controller.signal.aborted)return;if(!saved.ok)throw Error(value.error??'옵션 저장 실패');
-      confirmOptionTranslationSave(value,current.options,current.productVersion,next.rows);
-      setNotice(`옵션명·색상·사이즈 ${next.changed}개 항목에 검토한 초안을 적용했습니다. 직접 수정한 값·가격·수량은 보존했습니다.`);onContentSaved?.();
-    }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'옵션 적용 실패');}
-    finally{finishRequest(controller);}
-  }
   function prepare() {
     if(activeRequest.current||!mounted.current)return;
     let pairs: { name: string; value: string }[];
@@ -256,7 +241,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
           {translationSeoFields.map(field => <div key={field} className="translation-field"><label><input type="checkbox" checked={selectedFields.includes(field)} disabled={busy || !content || job.productVersion !== version} onChange={event => setSelectedFields(previous => event.target.checked ? [...previous, field] : previous.filter(item => item !== field))} />함께 저장할 항목 선택</label><strong>{field === 'title' ? '한국어 상품명' : field === 'keywords' ? 'SEO 검색어' : '한국어 설명'}</strong><pre>{Array.isArray(job.result!.draft[field]) ? (job.result!.draft[field] as string[]).join(', ') : job.result!.draft[field]}</pre><details><summary>현재 저장된 내용과 비교</summary><pre>{content ? JSON.stringify(content.seo[field].value, null, 2) : '불러오지 못함'}</pre></details><button className="btn" type="button" disabled={busy || !content || job.productVersion !== version} onClick={() => void adopt([field])}>검토한 초안을 이 항목에 적용 · 기존 내용 교체</button></div>)}
           <button className="btn blue" type="button" disabled={busy || !content || !selectedFields.length || job.productVersion !== version} onClick={() => void adopt(selectedFields)}>검토한 {selectedFields.length}개 항목 함께 저장 · 선택한 기존 내용 교체</button>
           {content && <TranslationLabelMappingEditor key={`${job.id}:${content.revision}`} content={content} job={job} version={version} disabled={busy || job.productVersion !== version} onApply={mappings => void adopt([], mappings)} />}
-          {job.result.draft.attributes.length > 0 && <details><summary>번역된 속성·옵션 확인</summary><ul>{job.result.draft.attributes.map(attribute => <li key={attribute.sourceIndex}>{attribute.name}: {attribute.value}</li>)}</ul><button className="btn" type="button" disabled={busy || job.productVersion !== version} onClick={()=>void adoptOptions()}>검토한 옵션 번역 적용 · 미번역 이름·수집 속성</button></details>}
+          {job.result.draft.attributes.length > 0 && <details><summary>번역된 속성·옵션 확인</summary><ul>{job.result.draft.attributes.map(attribute => <li key={attribute.sourceIndex}>{attribute.name}: {attribute.value}</li>)}</ul><TranslationIntegratedPreview scope="options" productId={productId} version={version} jobId={job.id} disabled={busy || stale} onSaved={onContentSaved} /></details>}
         </>}
       </div>}
     </>}

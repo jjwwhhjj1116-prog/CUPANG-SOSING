@@ -4,9 +4,9 @@ import { applyOptionRows, optionFieldNames, type ProductOptions } from '@/app/pr
 import type { ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
 
-export function integratedTranslationPlan(content: ProductContent, options: ProductOptions, job: TranslationJob, version: string) {
+export function integratedTranslationPlan(content: ProductContent, options: ProductOptions, job: TranslationJob, version: string, scope: 'all' | 'options' = 'all') {
   if (options.productId !== content.productId || job.contentRevision !== content.revision) throw Error('상품 또는 번역 원문의 콘텐츠 버전이 변경되었습니다. 최신 자료를 확인해주세요.');
-  const text = translationBatchAdoption(content, job, version);
+  const text = scope === 'options' ? { input: null, preview: [], skipped: [] } : translationBatchAdoption(content, job, version);
   const translated = adoptOptionTranslations(options, job, version, true);
   const preview = [...text.preview];
   for (const row of translated.rows) {

@@ -2841,3 +2841,12 @@ AI등록 화면 확인:
 - 범위: SEO·표시사항·옵션 통합 저장 경로에 적용했다. 기존 일반 옵션 PATCH는 사용자가 보내는 출처를 신뢰하지 않으며 그대로 유지했다. 기존 옵션만 적용 UI의 동일값 완료 처리는 통합 저장으로 진행해야 한다. 실제 유료 번역 호출·실상품 수집·Hub접수 검증은 아니다.
 - Cloudflare75e894bb-148d-473f-8363-5b7b76c42a64. outputs/step265-tests.log, step265-build.log, step265-deploy.log. DB스키마 변경·유료작업·운영등록 없음.
 - 다음 시작점: 옵션만 적용 경로도 검증된 job을 사용하는 서버 저장 경로로 통일. 핵심 미완성은 실제 Chrome 탭 접근/1688 수집 실행기/전카테고리 Couplus 기본값 대조/이미지번역/Supplier Hub501 전송 및 실접수이다.
+
+## 266. 옵션 전용 번역 적용을 검증된 서버 저장으로 통일 — 2026-09-26
+
+- 시작 main669e6e5 clean. 기존 옵션만 적용은 브라우저가 번역 rows를 일반 PATCH로 보내 동일값 번역 완료 출처가 저장되지 않았다.
+- 구현: translation-apply에 all/options 범위를 추가했다. options 미리보기는 SEO·표시사항을 제외하고 완료된 같은 상품/버전/원문 job의 옵션만 계산한다. 저장 지문에 범위를 포함해 통합/옵션 미리보기를 바꾸어 사용하는 요청을 거절한다. UI 옵션 적용은 이 검토·저장 컴포넌트를 사용하며 일반 PATCH 경로를 제거했다. 범위가 바뀌면 미리보기를 폐기하고 응답 범위도 확인한다.
+- 저장: 기존 원자적 D1 transaction을 유지한다. 옵션만 저장해도 콘텐츠 revision은 함께 증가하지만 SEO·표시사항 값/출처는 유지한다. 서버가 확인한 옵션 필드만 translated로 기록하므로 같은 값의 번역도 다음 분할에서 제외된다. 수동 공란은 보호한다.
+- 검증: translation-integrated/translation-integrated-ui/option-translation/translation-panel-requests40/40, TypeScript, Cloudflare build/check 및 diff check 통과. SQLite 옵션 범위 저장 후 SEO/표시사항 동일성, 범위 바꿔치기409, 잘못된 범위400, UI 응답 범위 검증 및 기존 충돌/취소 검사를 포함한다.
+- 배포: Cloudflare2d7caa6c-bfbb-4ee2-9599-b798c82ae100. outputs/step266-tests.log, step266-build.log, step266-deploy.log. DB스키마 변경·유료AI 호출·Supplier Hub 운영등록 없음. 실제 Chrome 클릭 검증은 수행하지 않았다.
+- 다음 시작점: 실제1688 수집 실행기, 전카테고리 Couplus 기본값 대조, 이미지번역, Supplier Hub501 전송 구현과 실접수 검증이 여전히 미완성이다. 이 저장 경로 보완을 전체 자동화 완료로 보고하지 않는다.
