@@ -1550,3 +1550,27 @@ test('all 26 observed categories carry saved stages into quotation without leaki
   assert.equal(output.label,'label.png');assert.equal(cleared.label,'');assert.equal(output.detailImage,'detail.png');
  }
 });
+
+test('80719 missing model follows current SEO title and exported quotation without changing label input',()=>{
+ const input=fixture();input.content.label.model={value:'',provenance:'unverified',updatedAt:null};
+ let resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows[1].fields.model.value,'번역된 가방');assert.equal(resolved.rows[1].fields.model.source,'content');
+ assert.equal(resolved.rows[1].fields.model.needsReview,true);assert.equal(input.content.label.model.value,'');
+ input.content.seo.title.value='새 SEO 상품명';resolved=model.resolveQuotationFields(input);
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].model,'새 SEO 상품명');
+ input.content.seo.title.value='';assert.equal(model.resolveQuotationFields(input).rows[1].fields.model.value,input.product.title);
+ input.content.seo.title.provenance='manual';assert.equal(model.resolveQuotationFields(input).rows[1].fields.model.value,'');
+});
+
+test('80719 model fallback preserves deliberate blanks, overrides and long titles; other categories are unchanged',()=>{
+ const input=fixture();input.content.label.model={value:'',provenance:'manual',updatedAt:null};
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.model.value,'');
+ input.content.label.model.provenance='unverified';input.content.seo.title.value='가'.repeat(51);
+ let field=model.resolveQuotationFields(input).rows[1].fields.model;assert.equal(field.value,'');assert.ok(field.issues.some(text=>text.includes('50자')));
+ input.content.seo.title.value='가'.repeat(50);assert.equal(model.resolveQuotationFields(input).rows[1].fields.model.value,input.content.seo.title.value);
+ input.overrides={common:{model:'공통 모델'},options:{red:{model:''}}};
+ let rows=model.resolveQuotationFields(input).rows;assert.equal(rows[0].fields.model.value,'공통 모델');assert.equal(rows[1].fields.model.value,'');
+ delete input.overrides;input.categoryId='81452';assert.equal(model.resolveQuotationFields(input).rows[1].fields.model.value,'');
+ input.categoryId='80719';input.content.label.model.value='실제 모델';assert.equal(model.resolveQuotationFields(input).rows[1].fields.model.value,'실제 모델');
+});

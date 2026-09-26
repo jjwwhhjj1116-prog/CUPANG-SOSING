@@ -2789,3 +2789,12 @@ AI등록 화면 확인:
 - 검증: option-price-refresh/option-editor-requests/option-editor-tools 22/22, TypeScript, Cloudflare build/check, git diff --check 통과. UI 모의 409→최신 조회→로컬 이미지+서버 재고 병합→최신 revision 저장까지 검사. 실제 Chrome UI 또는 Supplier Hub 실접수 검증은 아니다.
 - Cloudflare 배포 c23c0e22-ca44-4681-a21d-7b441077fa57. 로그 outputs/step259-tests.log, step259-build.log, step259-deploy.log. DB 변경·유료 AI·운영 상품 등록 없음.
 - 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근 및 상품813724060928 관찰, 실제1688 수집 실행기, 전 카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화는 미완성이다.
+
+## 260. 80719 모델명 미입력 시 상품명 자동 연결 — 2026-09-26
+
+- 시작 main cc39ac8 clean. 기존 Chrome supplierChrome.tabs.list는 []를 반환했다. 새 브라우저/프로필을 열지 않았으며 실사이트 관찰은 미수행이다.
+- 근거: 사용자가 제공한 쿠플러스 80719 견적 화면 15·16의 모델명 작성 안내는 모델명이 없는 경우 상품명과 동일 입력, 최대50자를 명시한다. 실제 자동 실행 결과 관찰과는 구분한다.
+- 구현: 80719 공통 모델명이 미입력일 때 저장된 SEO 상품명, 없으면 수집 상품명으로 견적 초안을 채운다. 직접 비운 모델명/SEO명, 공통·옵션별 견적 수동값을 우선 유지한다. 50자 초과는 잘라내지 않고 입력 필요 사유를 표시한다. 실제 모델명이 생기면 우선 연결한다. 라벨 원본은 변경하지 않으며 다른 카테고리 및 별도의 품번 속성에는 이 규칙을 적용하지 않는다. 모델명은 계속 상품·인증증빙 검토 대상이다.
+- 검증: 견적 스키마155/155, 상품추가 견적 미리보기3/3, TypeScript, Cloudflare build/check, diff check 통과. SEO 변경→견적→내보내기 모델 값, 수동 공란/오버라이드,50자 경계, 다른 카테고리 비적용을 검사했다. 실제 Couplus/Hub 접수 검증은 아니다.
+- Cloudflare 배포 f198aa7f-c033-4467-9260-af2d1059381b. outputs/step260-tests.log, step260-intake-tests.log, step260-build.log, step260-deploy.log. DB변경·유료AI·운영등록 없음.
+- 남은 핵심/다음 시작점: 기존 Chrome 실제 탭 접근 및 상품813724060928 관찰, 실제1688 수집 실행기, 전 카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.

@@ -168,6 +168,8 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     ? { ...item, required: item.id !== 'searchTags' }
     : observed && item.id === 'barcode' ? { ...item, help: '실제 바코드 입력 방식에서는 6~14자의 영문 대문자·숫자·하이픈·공백을 사용합니다. 앞뒤 공백과 연속 공백은 허용되지 않습니다.' } : item);
   if (categoryId === '80719') {
+    const modelIndex = fields.findIndex(item => item.id === 'model');
+    fields[modelIndex] = { ...fields[modelIndex], help: '6단계 모델명이 미입력일 때 50자 이내의 SEO 상품명(없으면 수집 상품명)을 연결합니다. 직접 비운 값은 유지합니다. 인증 대상 상품은 증빙의 모델명과 일치하는지 확인해주세요.' };
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...category80719.filter(item => item.section === 'product'));
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...category80719.filter(item => item.section === 'legal'));
   } else if (hub) {
@@ -351,7 +353,14 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     switch (id) {
       case 'title': return { value: title, source: titleSource };
       case 'category': return literal(schema.categoryId ? `${schema.categoryPath.join(' > ')}${schema.categoryPath.length ? ' ' : ''}(${schema.categoryId})` : '', 'schema');
-      case 'model': return contentValue(content.label.model);
+      case 'model': {
+        const saved = contentValue(content.label.model);
+        // The supplied 80719 form explicitly permits the product name when no
+        // model is entered. Keep this observed rule scoped to that category.
+        if (saved.source !== 'empty' || schema.categoryId !== '80719') return saved;
+        if (title.length > (definition.maxLength ?? 50)) return { value: '', source: 'empty', issues: ['상품명이 모델명 50자 제한을 초과합니다. 확인한 모델명을 입력해주세요.'] };
+        return { value: title, source: titleSource };
+      }
       case 'brand': return literal(settings.brand, 'settings');
       case 'manufacturer': return contentValue(content.label.manufacturer, settings.manufacturer);
       case 'tradeType': return literal(settings.tradeType, 'settings');
