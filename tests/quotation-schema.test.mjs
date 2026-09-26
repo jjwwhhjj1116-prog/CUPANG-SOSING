@@ -1574,3 +1574,23 @@ test('80719 model fallback preserves deliberate blanks, overrides and long title
  delete input.overrides;input.categoryId='81452';assert.equal(model.resolveQuotationFields(input).rows[1].fields.model.value,'');
  input.categoryId='80719';input.content.label.model.value='실제 모델';assert.equal(model.resolveQuotationFields(input).rows[1].fields.model.value,'실제 모델');
 });
+
+test('translated Couplus label headings populate saved labels and quotation without guessing packaging or certification',()=>{
+ const input=fixture(),time='2026-09-26T00:00:00.000Z';input.categoryId='103495';input.content=contentModel.emptyProductContent('p1');
+ const translated=[['제조원','확인 제조사'],['수입 및 판매원','확인 수입사'],['사용 시 주의사항','화기 주의'],['제품 유형','운동용품'],['사용기준','성인용'],['A/S 책임자와 전화번호','판매자 연락처'],['포장 재질','비닐'],['KC 인증 대상','미확인']];
+ const job={productId:'p1',productVersion:time,contentRevision:0,status:'completed',review:{source:{attributes:translated.map((_,i)=>({name:`상품속성: 원문${i}`,value:`원문값${i}`}))}},result:{draft:{title:'번역 상품',description:'설명',keywords:['상품'],attributes:translated.map(([name,value],sourceIndex)=>({sourceIndex,name,value}))}}};
+ const plan=load('app/translation-integrated-adoption.ts').integratedTranslationPlan(input.content,input.options,job,time);
+ input.content=contentModel.applyContentPatch(input.content,plan.patch,time);
+ assert.equal(input.content.label.importer.value,'확인 수입사');assert.equal(input.content.label.usageStandard.value,'성인용');
+ assert.equal(input.content.label.material.value,'');assert.equal(input.content.label.kcInformation.value,'');
+ const resolved=model.resolveQuotationFields(input),fields=resolved.rows[1].fields;
+ assert.equal(fields.manufacturer.value,'확인 제조사');assert.match(fields.noticeManufacturerImporter.value,/확인 수입사/);
+ assert.equal(fields.marathon_noticeCaution.value,'화기 주의');assert.equal(fields.marathon_noticeKind.value,'운동용품');assert.equal(fields.noticeServiceContact.value,'판매자 연락처');
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
+ assert.equal(load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0].marathon_noticeCaution,'화기 주의');
+ input.content.label.importer={value:'',provenance:'manual',updatedAt:time};job.contentRevision=input.content.revision;
+ job.result.draft.attributes.push({sourceIndex:8,name:'제조사',value:'다른 제조사'});job.review.source.attributes.push({name:'상품속성: 중복',value:'중복 원문'});
+ const again=load('app/translation-integrated-adoption.ts').integratedTranslationPlan(input.content,input.options,job,time);
+ assert.equal(again.patch?.label?.importer,undefined);assert.equal(again.patch?.label?.manufacturer,undefined);
+ assert.ok(again.skipped.some(text=>text.includes('직접 수정')));assert.ok(again.skipped.some(text=>text.includes('여러 개')));
+});

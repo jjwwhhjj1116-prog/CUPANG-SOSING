@@ -9,7 +9,12 @@ const equivalentHeadings: Partial<Record<LabelField, readonly string[]>> = {
   material: ['소재'],
   components: ['구성품'],
   dimensions: ['크기 및 중량'],
-  precautions: ['취급 및 사용 주의사항'],
+  precautions: ['취급 및 사용 주의사항', '사용 시 주의사항'],
+  manufacturer: ['제조원'],
+  importer: ['수입 및 판매원'],
+  contact: ['A/S 책임자와 전화번호'],
+  productType: ['제품 유형'],
+  usageStandard: ['사용기준'],
 };
 /** Exact display names and explicit equivalents only; ambiguous sources require review. */
 export function suggestTranslationLabels(content: ProductContent, job: TranslationJob, productVersion: string) {

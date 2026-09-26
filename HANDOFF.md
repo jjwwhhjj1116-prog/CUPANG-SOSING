@@ -2798,3 +2798,11 @@ AI등록 화면 확인:
 - 검증: 견적 스키마155/155, 상품추가 견적 미리보기3/3, TypeScript, Cloudflare build/check, diff check 통과. SEO 변경→견적→내보내기 모델 값, 수동 공란/오버라이드,50자 경계, 다른 카테고리 비적용을 검사했다. 실제 Couplus/Hub 접수 검증은 아니다.
 - Cloudflare 배포 f198aa7f-c033-4467-9260-af2d1059381b. outputs/step260-tests.log, step260-intake-tests.log, step260-build.log, step260-deploy.log. DB변경·유료AI·운영등록 없음.
 - 남은 핵심/다음 시작점: 기존 Chrome 실제 탭 접근 및 상품813724060928 관찰, 실제1688 수집 실행기, 전 카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.
+
+## 261. 번역 속성의 표시사항·견적 연결 누락 보완 — 2026-09-26
+
+- 시작 main f97edac clean. 코드 확인: collection-delivery는 제공된 결과 수신/반영 함수이며 실제1688 수집기가 아니다. Supplier Hub POST는 여전히501이다. 이 핵심 미완성 상태를 유지해서 명시한다.
+- 구현: 번역 완료 속성의 정확한 동의 항목명 ‘제조원’, ‘수입 및 판매원’, ‘사용 시 주의사항’, ‘A/S 책임자와 전화번호’, ‘제품 유형’, ‘사용기준’을 기존 표시사항 필드로 연결한다. 부분 문자열 추정은 하지 않는다. 포장재질이나 인증대상 판단은 연결하지 않으며 수동값/공란과 복수 후보 보호를 유지한다.
+- 검증: quotation-schema/translation-label-mapping/translation-integrated161/161, TypeScript, Cloudflare build/check/diff check 통과. 번역 통합 적용→표시사항 저장→103495 견적 제조사/수입사/주의사항/종류/연락처→내보내기까지 모의 데이터로 검증했다. 실상품 수집·실제 번역 서비스 실행·Hub 실접수 검증은 아니다.
+- Cloudflare 배포9291aca5-c1cd-4075-9105-527861c357ef. outputs/step261-tests.log, step261-build.log, step261-deploy.log. DB변경·유료AI·운영등록 없음. 이번 변경은 이미 완료된 번역 결과의 연결 보완이다.
+- 다음 시작점/핵심 남은 작업: 기존 Chrome 탭 접근을 통한 상품813724060928 관찰과 실제1688 수집 실행기, 모든 카테고리의 Couplus 기본값/공식 양식 비교, 이미지 번역 품질, Supplier Hub 실제 전송 어댑터 및 접수 결과 검증. 전체 자동화 미완성.
