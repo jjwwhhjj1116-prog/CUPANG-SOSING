@@ -18,7 +18,7 @@ function harness(handler,status='completed',failInitial=false,emptyJobs=false){
  let initial=0;
  const fetcher=async(url,init)=>{if(initial<2){initial++;return failInitial?Response.json({error:'초기 조회 실패'},{status:503}):Response.json(url.endsWith('/translation')?view:{content});}calls.push({url,init});return handler(url,init,{content,job,view});};
  const exports={};const file='app/components/translation-panel.tsx';
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationAttributes:options=>options.attributes??[],adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationBatch:(options,capacity=50)=>({attributes:(options.attributes??[]).slice(0,capacity),remaining:Math.max(0,(options.attributes??[]).length-capacity)}),adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
  const render=()=>{index=0;const wrapper=exports.default({productId:'p',version:'v',title:'원문',onContentSaved(){saved++;}});const tree=wrapper.type(wrapper.props);first=false;return tree;};
  const buttons=()=>nodes(render()).filter(n=>n.type==='button');
  render();effects.forEach(fn=>cleanup.push(fn()));
@@ -100,8 +100,8 @@ test('new translation automatically reads linked source and guidance without sav
  const output=JSON.stringify(h.render());for(const value of ['자동 제목','자동 설명','수집 특징','수집 키워드','option:a=白色','option-color:a=白','option-size:a=大'])assert.ok(output.includes(value));assert.equal(h.saved,0);
  h.button(prepare)();await settle();const prepared=JSON.parse(h.calls[2].init.body);assert.equal(prepared.source.attributes.length,3);assert.deepEqual(prepared.source.category,{id:'80719',path:['주방']});assert.equal(prepared.source.guidance.features,'수집 특징');assert.equal(prepared.source.title,'자동 제목');assert.equal(h.saved,0);
 });
-test('automatic option failure, mismatched identity and over-capacity never partially fill a source',async()=>{
- for(const mode of ['failure','product','version','overflow','multiline']){
+test('automatic option failure, mismatched identity and malformed options never partially fill a source',async()=>{
+ for(const mode of ['failure','product','version','multiline']){
   const h=harness(async url=>url.endsWith('/options')?(mode==='failure'?Response.json({error:'옵션 실패'},{status:503}):Response.json({productVersion:mode==='version'?'old':'v',options:{productId:mode==='product'?'other':'p',attributes:[{name:'option:a',value:mode==='multiline'?'白\n色':'白'}]}})):Response.json({productVersion:'v',title:'부분 입력 금지',description:'설명',jobId:'s',sourceUrl:'https://example.invalid',attributes:mode==='overflow'?Array.from({length:50},()=>({name:'재질',value:'면'})):[]}),'completed',false,true);
   await settle();assert.equal(h.calls.length,2);assert.doesNotMatch(JSON.stringify(h.render()),/부분 입력 금지/);assert.equal(h.saved,0);assert.equal(nodes(h.render()).find(n=>n.type==='input'&&n.props.maxLength===1000).props.disabled,false);
  }
@@ -128,8 +128,8 @@ test('combined source load fills product and option inputs in one read operation
  assert.equal(h.calls.length,2);assert.ok(h.calls.every(call=>call.init.cache==='no-store'&&!call.init.method));
  const rendered=JSON.stringify(h.render());assert.match(rendered,/수집 제목/);assert.match(rendered,/수집 설명/);assert.match(rendered,/option:a=白色/);assert.match(rendered,/저장 특징/);assert.equal(h.saved,0);
 });
-test('combined source failure, wrong product and capacity overflow preserve all edited inputs',async()=>{
- for(const mode of ['failure','wrong','overflow']){
+test('combined source failure, wrong product preserve all edited inputs',async()=>{
+ for(const mode of ['failure','wrong']){
   const h=harness(async url=>url.endsWith('/options')?(mode==='failure'?Response.json({error:'옵션 실패'},{status:503}):Response.json({productVersion:'v',options:{productId:mode==='wrong'?'other':'p',attributes:[{name:'option:a',value:'白色'}]}})):Response.json({productVersion:'v',title:'교체되면 안됨',description:'설명',attributes:mode==='overflow'?Array.from({length:50},()=>({name:'재질',value:'면'})):[],jobId:'s',sourceUrl:'https://example.invalid',message:'원문'}));
   await settle();const fields=nodes(h.render()).filter(n=>n.type==='input'||n.type==='textarea');
   fields.find(n=>n.props.maxLength===1000).props.onChange({target:{value:'유지 제목'}});
@@ -153,5 +153,14 @@ test('option adoption verifies product before PATCH and confirms receipt before 
   const output=JSON.stringify(h.render());
   if(mode==='bad-receipt'){assert.match(output,/저장 응답 불일치/);assert.doesNotMatch(output,/개 항목에 검토한 초안을 적용했습니다/);}
   if(mode==='success')assert.match(output,/개 항목에 검토한 초안을 적용했습니다/);
+ }
+});
+
+test('large source loads only the available option batch and reports the preserved remainder',async()=>{
+ for(const count of [2,50]){
+  const h=harness(async(url,init,{job})=>Response.json(init.method==='POST'?{job}:url.endsWith('/options')?{productVersion:'v',options:{productId:'p',attributes:Array.from({length:60},(_,i)=>({name:`option:a${i}`,value:'白色'}))}}:{productVersion:'v',title:'분할 상품',description:'설명',jobId:'s',sourceUrl:'https://example.invalid',attributes:Array.from({length:count},(_,i)=>({name:`재질${i}`,value:'면'}))}),'completed',false,true);
+  await settle();const tree=JSON.stringify(h.render());assert.match(tree,/분할 상품/);assert.ok(tree.includes(`남은 옵션 번역 항목 ${60-(50-count)}개`));
+  const area=nodes(h.render()).find(n=>n.type==='textarea'&&n.props.rows===3);
+  assert.equal(area.props.value?area.props.value.split('\n').length:0,50-count);assert.equal(h.saved,0);assert.ok(h.calls.every(call=>!call.init.method));
  }
 });

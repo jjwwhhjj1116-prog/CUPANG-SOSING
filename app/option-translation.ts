@@ -19,7 +19,7 @@ export function confirmOptionTranslationSave(input: unknown, current: ProductOpt
   }
  }
 }
-export function optionTranslationAttributes(options:ProductOptions, allowEmpty = false){
+function pendingOptionAttributes(options:ProductOptions){
  const attributes=options.rows.flatMap(row=>{
   const values=row.originalName.trim()&&!row.translatedName.trim()&&row.provenance.translatedName!=='manual'?[{name:`option:${row.id}`,value:row.originalName}]:[];
   for(const field of ['color','size'] as const){
@@ -27,6 +27,16 @@ export function optionTranslationAttributes(options:ProductOptions, allowEmpty =
   }
   return values;
  });
+ return attributes;
+}
+/** Select a bounded batch from current saved values; never mark unselected items completed. */
+export function optionTranslationBatch(options:ProductOptions, capacity=50){
+ if(!Number.isInteger(capacity)||capacity<0||capacity>50)throw new Error('번역 요청의 남은 항목 수를 확인해주세요.');
+ const pending=pendingOptionAttributes(options);
+ return {attributes:pending.slice(0,capacity),remaining:Math.max(0,pending.length-capacity),total:pending.length};
+}
+export function optionTranslationAttributes(options:ProductOptions, allowEmpty = false){
+ const attributes=pendingOptionAttributes(options);
  if(!attributes.length&&!allowEmpty)throw new Error('번역할 빈 한국어 옵션명 또는 수집한 색상·사이즈가 없습니다.');
  if(attributes.length>50)throw new Error('한 번에 번역할 옵션명·색상·사이즈는 합계 50개까지입니다. 옵션을 나누어 작업해주세요.');
  return attributes;

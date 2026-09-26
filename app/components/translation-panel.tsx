@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranslationJob, TranslationView } from '@/app/automation/translation';
-import { optionTranslationAttributes, adoptOptionTranslations, confirmOptionTranslationSave } from '@/app/option-translation';
+import { optionTranslationBatch, adoptOptionTranslations, confirmOptionTranslationSave } from '@/app/option-translation';
 import type { ProductOptionsResponse } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
 import { translationAdoptionInput, translationSeoFields, type TranslationSeoField } from '@/app/translation-adoption';
@@ -23,11 +23,12 @@ function validateCollectedSource(value: CollectedSource, version: string) {
 }
 function collectedOptionText(source: CollectedSource, options: ProductOptionsResponse, productId: string, version: string) {
   if(options.productVersion!==version||options.options?.productId!==productId)throw Error('옵션과 현재 상품이 일치하지 않습니다. 최신 상품을 다시 열어주세요.');
-  const pairs=optionTranslationAttributes(options.options,true);
+  const batch=optionTranslationBatch(options.options,50-(source.attributes?.length??0)); const pairs=batch.attributes;
   if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
-  if((source.attributes?.length??0)+pairs.length>50)throw Error('상품 속성과 옵션 원문이 합계 50개를 초과합니다. 기존 입력은 유지했습니다. 각각 불러와 번역 범위를 나누어주세요.');
-  return pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n');
+
+  return {text:pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n'),remaining:batch.remaining};
 }
+function batchRemainder(count:number){return count?` 남은 옵션 번역 항목 ${count}개는 저장 원문에 유지됩니다. 이번 결과를 저장한 뒤 미번역 옵션 불러오기로 다음 분량을 준비하세요.`:'';}
 const statuses: Record<TranslationJob['status'], string> = { prepared: '검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 실행 차단', completed: '초안 생성 완료', failed: '실패 · 재호출 안 함', uncertain: '결과 확인 필요 · 재호출 안 함' };
 
 async function readTranslationState(productId:string,signal:AbortSignal){
@@ -100,8 +101,8 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
           if(controller.signal.aborted)return;
           if(!optionResponse.ok)throw Error(options.error??'옵션 조회 실패');
           const optionText=collectedOptionText(value,options,productId,version);
-          applyCollectedSource(value);setAttributes(optionText);
-          setNotice('수집 원문·상품 속성·특징·키워드와 미번역 옵션명·수집 색상·사이즈를 자동으로 불러왔습니다. 검토 후 번역 요청을 준비하세요. AI 호출과 상품 저장은 실행하지 않았습니다.');
+          applyCollectedSource(value);setAttributes(optionText.text);
+          setNotice('수집 원문·상품 속성·특징·키워드와 미번역 옵션명·수집 색상·사이즈를 자동으로 불러왔습니다. 검토 후 번역 요청을 준비하세요. AI 호출과 상품 저장은 실행하지 않았습니다.'+batchRemainder(optionText.remaining));
         }catch(reason){if(!controller.signal.aborted)setNotice(`${reason instanceof Error?reason.message:'수집 원문 조회 실패'} 원문 불러오기로 다시 시도하거나 직접 입력할 수 있습니다.`);}
       })
       .catch(reason=>{if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'조회 실패');})
@@ -147,16 +148,16 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
       const value=await response.json() as CollectedSource;if(controller.signal.aborted)return;
       if(!response.ok)throw Error(value.error??'원문 조회 실패');
       validateCollectedSource(value,version);
-      let optionText: string | null = null;
+      let optionText: ReturnType<typeof collectedOptionText> | null = null;
       if(optionResponse) {
         const optionSource=await optionResponse.json() as ProductOptionsResponse & {error?:string};
         if(controller.signal.aborted)return;
         if(!optionResponse.ok)throw Error(optionSource.error??'옵션 조회 실패');
         optionText=collectedOptionText(value,optionSource,productId,version);
       }
-      if(optionText!==null)setAttributes(optionText);
+      if(optionText!==null)setAttributes(optionText.text);
       applyCollectedSource(value);
-      setNotice(value.message+(includeOptions?' 미번역 옵션명·수집 색상·사이즈도 함께 불러왔습니다.':'')+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.');
+      setNotice(value.message+(includeOptions?' 미번역 옵션명·수집 색상·사이즈도 함께 불러왔습니다.':'')+' 입력란만 채웠으며 번역 호출이나 상품 저장은 하지 않았습니다.'+batchRemainder(optionText?.remaining??0));
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'원문 조회 실패');}
     finally{finishRequest(controller);}
   }
@@ -168,10 +169,12 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
       const value=await response.json() as ProductOptionsResponse & {error?:string};if(controller.signal.aborted)return;
       if(!response.ok)throw Error(value.error??'옵션 조회 실패');
       if(value.productVersion!==version)throw Error('상품이 변경되었습니다. 최신 상품을 다시 열어주세요.');
-      const pairs=optionTranslationAttributes(value.options);
+      if(value.options?.productId!==productId)throw Error('다른 상품의 옵션입니다.');
+      const batch=optionTranslationBatch(value.options,50-(includeCollectedAttributes?collectedAttributes.length:0)); const pairs=batch.attributes;
+      if(!pairs.length)throw Error(batch.remaining?'상품 속성이 요청 한도 50개를 사용합니다. 상품 속성의 번역 포함을 해제한 뒤 옵션을 불러와주세요.':'번역할 미번역 옵션이 없습니다.');
       if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
       setAttributes(pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n'));
-      setNotice(`미번역 옵션명·수집 색상·사이즈 ${pairs.length}개 항목을 번역 검토에 넣었습니다. 아직 유료 호출하지 않았습니다.`);
+      setNotice(`미번역 옵션명·수집 색상·사이즈 ${pairs.length}개 항목을 번역 검토에 넣었습니다. 아직 유료 호출하지 않았습니다.`+batchRemainder(batch.remaining));
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'옵션 조회 실패');}
     finally{finishRequest(controller);}
   }

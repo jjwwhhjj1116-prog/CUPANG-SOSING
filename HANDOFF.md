@@ -2823,3 +2823,12 @@ AI등록 화면 확인:
 - 검증: translation/translation-panel-requests37/37, TypeScript, Cloudflare build/check/diff check 통과. UI→prepare 요청 포함, 카테고리 변경 fingerprint 차이, 잘못된 코드/경로, 구버전 호환, 검색어 제한 검사. 유료AI 실제호출·결과 품질·실제 수집·Hub 접수는 미검증이다.
 - Cloudflare96d01b80-b865-45d5-b4b4-588256356d79 배포. 로그 outputs/step263-tests.log, step263-build.log, step263-deploy.log. DB변경·유료작업·운영등록 없음.
 - 핵심 남은 작업: 기존 Chrome 실제 탭 접근,1688 수집 실행기,전카테고리 Couplus 기본값/공식양식 대조,이미지 번역 품질,Supplier Hub501 전송 어댑터와 실접수. 이번 변경은 수집 실행기 자체를 구현한 것이 아니다.
+
+## 264. 옵션 번역 요청의 50개 한도 분할 불러오기 — 2026-09-26
+
+- 시작 main d2cb781 clean. 자동 수집원문/옵션 불러오기는 상품속성+옵션번역항목 합계50 초과 시 전체 입력을 거절했다.
+- 구현: 현재 저장된 미번역 옵션명 및 collected 색상/사이즈를 안정된 순서로 모으고 남은 요청 용량만 선택한다. 원문 속성 개수를 먼저 예약한다. 초과분은 원문에 남기고 개수를 명시한다. 결과를 저장한 후 다음 불러오기에서 저장본의 남은 항목을 선택한다. 50개를 상품속성이 모두 사용하면 원문만 채우며 옵션 별도 불러오기 시 속성 포함 해제 안내를 제공한다. 수동값/명시 공란은 선택하지 않는다. 기존 엄격 optionTranslationAttributes 함수 계약은 유지한다.
+- 검증: option-translation/translation-panel-requests29/29, TypeScript, Cloudflare build/check/diff check 통과.75항목→48항목 번역 적용/저장→나머지27항목, 원본 불변, 수동 공란, 용량0/잘못된 용량, UI 대용량 원문 불러오기/남은 개수, 요청 실패·상품 불일치·취소 검사를 포함한다.
+- 제한: 분할은 무료 요청 준비 단계이다. 유료 호출을 자동 반복하거나 실패를 자동 재시도하지 않는다. 번역값이 기존 collected 값과 동일해서 저장 출처가 바뀌지 않은 항목은 계속 미번역 후보에 남을 수 있다. 실제1688 수집 및 Hub접수 검증은 아니다.
+- Cloudflare e47f28e6-fea5-4b0a-8744-004cdb8494b1. 로그 outputs/step264-tests.log, step264-build.log, step264-deploy.log. DB변경·유료AI·운영등록 없음.
+- 다음 시작점: 동일값 번역 완료 처리와 분할 재개 UX 보완 가능. 핵심 미완성은 기존 Chrome 탭 접근/실제1688 수집 실행기/전카테고리 기본값 대조/이미지 번역/Supplier Hub501 전송 구현 및 실접수다.

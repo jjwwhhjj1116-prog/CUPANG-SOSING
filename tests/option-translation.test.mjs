@@ -90,3 +90,18 @@ test('option save confirmation checks the committed version and every submitted 
  ]){const changed=JSON.parse(JSON.stringify(response));change(changed);assert.throws(()=>model.confirmOptionTranslationSave(changed,options,before,next.rows),/저장 여부/);}
  assert.throws(()=>model.confirmOptionTranslationSave(null,options,before,next.rows));
 });
+
+test('option batches cover remaining fields after committed translations and preserve manual blanks',()=>{
+ const {options}=fixture();options.rows=Array.from({length:25},(_,i)=>({...options.rows[0],id:`row${i}`,translatedName:'',color:'白',size:'大',provenance:{translatedName:'unverified',color:'collected',size:'collected'}}));
+ const before=JSON.stringify(options),first=model.optionTranslationBatch(options,48);
+ assert.equal(first.attributes.length,48);assert.equal(first.remaining,27);assert.equal(first.total,75);assert.equal(JSON.stringify(options),before);
+ const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:first.attributes}},result:{draft:{attributes:first.attributes.map((_,sourceIndex)=>({sourceIndex,name:'번역',value:'한국어'}))}}};
+ const adopted=model.adoptOptionTranslations(options,job,'v');
+ const saved=optionsModel.applyOptionRows(options,adopted.rows,'next');
+ const second=model.optionTranslationBatch(saved);assert.equal(second.attributes.length,27);assert.equal(second.remaining,0);
+ assert.ok(second.attributes.every(pair=>!first.attributes.some(old=>old.name===pair.name)));
+ saved.rows[20].provenance.translatedName='manual';saved.rows[20].translatedName='';
+ assert.equal(model.optionTranslationBatch(saved).total,26);
+ assert.equal(model.optionTranslationBatch(options,0).remaining,75);
+ for(const capacity of [-1,51,1.5,NaN])assert.throws(()=>model.optionTranslationBatch(options,capacity));
+});
