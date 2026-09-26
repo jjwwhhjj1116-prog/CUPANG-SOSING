@@ -843,3 +843,41 @@ test('quotation renders all five pages together with unique fields and preserved
  assert.match(html,/value="직접 브랜드"/);assert.match(html,/value="250"/);
  assert.ok(html.indexOf('data-section="product"')<html.indexOf('data-section="logistics"'));
 });
+
+test('all-option save copies edited fields only and preserves automatic prices, images and excluded options',()=>{
+ const view=fixture({common:{model:'공통 모델'},options:{blue:{brand:'기존 브랜드'},excluded:{brand:'제외 브랜드'}}});
+ const edits=[change('brand','새 브랜드','red'),change('manufacturer','제조사'),change('model','파랑 모델','blue')];
+ const before=JSON.stringify({view,edits});const plan=editor.quotationSavePlan(view,edits,'red',true);
+ assert.equal(plan.propagated.length,1);assert.equal(plan.propagated[0].before,'기존 브랜드');assert.equal(plan.propagated[0].after,'새 브랜드');
+ assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue','brand').value,'새 브랜드');
+ assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue','model').value,'파랑 모델');
+ assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'excluded','brand').value,'제외 브랜드');
+ for(const id of ['supplyPrice','salePrice','mainImage'])assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue',id).source,editor.resolveQuotationEditorCell(view,edits,'blue',id).source);
+ assert.equal(JSON.stringify({view,edits}),before);
+ assert.equal(JSON.stringify(editor.quotationSavePlan(view,edits,'red',false).changes),JSON.stringify(edits));
+});
+
+test('all-option save preserves explicit blanks and restores per-option automatic values without copying resolved defaults',()=>{
+ const view=fixture({common:{brand:'공통'},options:{red:{brand:'빨강'},blue:{brand:'파랑'}}});
+ let plan=editor.quotationSavePlan(view,[change('brand','','red')],'red',true);
+ assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue','brand').value,'');
+ plan=editor.quotationSavePlan(view,[change('brand',null,'red')],'red',true);
+ assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue','brand').value,'공통');
+ assert.equal(plan.changes.find(item=>item.optionId==='blue').value,null);
+ const same=editor.quotationSavePlan(view,[change('brand','파랑','red')],'red',true);assert.equal(same.propagated.length,0);
+ for(const id of [null,'missing','excluded'])assert.throws(()=>editor.quotationSavePlan(view,[change('brand','A','red')],id,true),/원본 옵션/);
+ assert.throws(()=>editor.quotationSavePlan(view,[change('category','wrong','red')],'red',true),/항목/);
+});
+
+test('all-option save sends expanded edits in one revision-checked request',async()=>{
+ const view=fixture(),edits=[change('brand','전체 적용 브랜드','red')],calls=[];
+ const states=[view,edits,[],false,false,'','','start','red',[],true,null,true];let slot=0;
+ const hooks={useState(initial){const i=slot++;return [i<states.length?states[i]:initial,()=>{}];},useEffect(){},useCallback:f=>f,useRef:value=>({current:value}),useId:()=> 'save-test'};
+ const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init)=>{calls.push({url,...JSON.parse(init.body)});return Response.json({...view,revision:2});}});
+ const wrapper=loaded.QuotationFieldsEditor({productId:'p1'});const tree=wrapper.type(wrapper.props);
+ function nodes(value){if(!value||typeof value!=='object')return[];if(Array.isArray(value))return value.flatMap(nodes);return[value,...nodes(value.props?.children)];}
+ const button=nodes(tree).find(n=>n.type==='button'&&typeof n.props.children==='string'&&n.props.children.startsWith('견적 입력 저장'));
+ assert.ok(button);assert.equal(button.props.disabled,false);button.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
+ assert.equal(calls.length,1);assert.equal(calls[0].expectedRevision,view.revision);assert.equal(calls[0].expectedInputFingerprint,view.inputFingerprint);
+ assert.equal(calls[0].changes.length,2);assert.ok(calls[0].changes.some(item=>item.optionId==='blue'&&item.value==='전체 적용 브랜드'));
+});
