@@ -1,3 +1,4 @@
+import { readRegistrationSummaries } from '@/db/product-content';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { insertProduct, listProducts, type ProductRecord } from '@/db/queries';
 import { NextResponse } from 'next/server';
@@ -8,7 +9,11 @@ async function ownerId() { return await getWorkspaceOwnerId(); }
 
 export async function GET() {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({error:'Cloudflare Access 로그인 또는 서버 인증 설정을 확인해주세요.'},{status:503});
-  try { return NextResponse.json({ products: await listProducts(await ownerId()) }); }
+  try {
+    const owner=await ownerId();const products=await listProducts(owner);
+    const summaries=await readRegistrationSummaries(owner,products).catch(()=>null);
+    return NextResponse.json({products:products.map(product=>({...product,content_summary:summaries?.[product.id]??null}))},{headers:{'cache-control':'no-store'}});
+  }
   catch { return NextResponse.json({ error: '상품 목록을 읽지 못했습니다. 다시 시도해주세요.' }, { status: 503 }); }
 }
 

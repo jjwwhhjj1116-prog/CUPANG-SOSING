@@ -1,3 +1,4 @@
+import { registrationContentSummary } from '@/app/registration-content-summary';
 import { env } from 'cloudflare:workers';
 import { emptyProductContent, withCurrentLabelFields, type ProductContent } from '@/app/product-content';
 
@@ -39,4 +40,25 @@ export async function saveProductContent(ownerId: string, content: ProductConten
       .bind(content.updatedAt, content.updatedAt, content.productId, ownerId, content.productId, ownerId, content.revision),
   ]);
   return result[0].results[0] ? content : null;
+}
+
+/** Batched read for the visible product listing; never query another owner's data. */
+export async function readRegistrationSummaries(ownerId: string, products: {id:string;image_keys:string}[]) {
+  const summaries: Record<string, import('@/app/registration-content-summary').RegistrationContentSummary | null> = {};
+  if (!products.length) return summaries;
+  const db = await database();
+  for (let offset=0;offset<products.length;offset+=80) {
+    const chunk=products.slice(offset,offset+80);
+    const rows=await db.prepare(`SELECT product_id, payload, revision FROM product_content WHERE owner_id=? AND product_id IN (${chunk.map(()=>'?').join(',')})`).bind(ownerId,...chunk.map(product=>product.id)).all<{product_id:string;payload:string;revision:number}>();
+    const records=new Map(rows.results.map(row=>[row.product_id,row]));
+    for(const product of chunk) {
+      try {
+        const row=records.get(product.id);
+        const content=row?JSON.parse(row.payload) as ProductContent:null;
+        if(row&&content?.revision!==row.revision)throw Error('Invalid content revision');
+        summaries[product.id]=registrationContentSummary(product,content);
+      } catch { summaries[product.id]=null; }
+    }
+  }
+  return summaries;
 }

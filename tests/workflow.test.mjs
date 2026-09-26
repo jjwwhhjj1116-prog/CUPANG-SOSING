@@ -14,6 +14,7 @@ function load(relative, overrides = {}) {
     exports, crypto, URL, Response, TextEncoder, TextDecoder, Uint8Array, DataView, process: {env: {NODE_ENV: 'development'}},
     require: name => {
       if (name in overrides) return overrides[name];
+      if (name === '@/db/product-content') return {readRegistrationSummaries: async()=>({})};
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'test-owner' }), getWorkspaceOwnerId: async () => 'test-owner' };
       if (name === '@/db/workspace-banners' || name === '@/app/workspace-banners') return load(name.slice(2)+'.ts');

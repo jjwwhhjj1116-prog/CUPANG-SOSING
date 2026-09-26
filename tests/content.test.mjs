@@ -10,6 +10,7 @@ function load(file, overrides = {}, mode = 'development') {
   const exports = {};
   vm.runInNewContext(source, { exports, Response, TextDecoder, Uint8Array, structuredClone, process: { env: { NODE_ENV: mode } }, require(name) {
     if (name in overrides) return overrides[name];
+    if (name === '@/app/registration-content-summary') return load('app/registration-content-summary.ts');
     if (name === '@/app/product-content') return load('app/product-content.ts');
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
     if (name === 'next/server') return { NextResponse: Response };

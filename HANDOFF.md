@@ -3135,3 +3135,10 @@ AI등록 화면 확인:
 - 필드/선택지 근거는 기존 Couplus 및 Hub 관찰 스키마. 이 자동 연결 자체의 Couplus 실동작 동일성은 이번에 대조하지 못했다. 다른 카테고리에 확장하지 않았다.
 - 견적167/167, TypeScript, Cloudflare build/check, diff check 통과. 배포b13b339f-d3d7-4e72-800a-6839783fd557. outputs/step300-tests.log, step300-build.log, step300-deploy.log.
 - 실제1688 수집 실행기·전체 카테고리 기본값 대조·Supplier Hub 자동등록 미완성 유지.
+
+## 301. 상품 목록에 실제 저장 콘텐츠 요약 연결 — 2026-09-26
+
+- GET products에 owner 범위와 목록 상품 ID를 제한한 content_summary를 추가한다. 기존 product_content에서 최대80개 ID씩 묶어 조회(바인드81개 이하)하며 추가 테이블/마이그레이션은 없다. 요약 전체 조회 실패 시 상품 목록은 유지하고 null을 반환한다. 손상된 개별 데이터/불일치 revision은 해당 상품만 null이다.
+- 목록 SEO는 저장 제목의 입력됨/미입력, 대표/추가/상세/표시사항은 실제 상품 파일 목록에 연결된 고유 이미지 수를 표시한다. 상세 상단/본문/하단을 합산한다. 미소유/삭제 이미지가 연결돼 있으면 확인 필요 표시. 전송/검토 완료로 간주하지 않는다. 등록번호 SF 접두어를 기존 작업창과 같은 YP로 맞춤.
+- 관련22/22 통과. 전체967 중962 통과, 5건은 content.test의 새 모듈 로딩 미등록으로 실패했다. 로더 수정 후 content+summary19/19 재검증 통과. TypeScript/build/check/diff 통과. 실제Chrome시각검증은 아님.
+- 배포62609e6c-3bf5-40e6-ac4b-616be1142fd3. outputs/step301-tests.log, step301-full-tests.log, step301-content-tests.log, step301-build.log, step301-deploy.log. 실제1688 수집·전체 카테고리 대조·Supplier Hub 자동등록 미완성 유지.

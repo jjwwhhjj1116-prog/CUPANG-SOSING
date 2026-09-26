@@ -1,16 +1,24 @@
 'use client';
 /* eslint-disable @next/next/no-img-element -- Private image URLs require the current authenticated session. */
 
+import type { RegistrationContentSummary } from '@/app/registration-content-summary';
 import { useState } from 'react';
 import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
 
-type BoardProduct = {id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
+type BoardProduct = {content_summary?:RegistrationContentSummary|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
 export function filterRegistrationProducts<T extends BoardProduct>(products:T[],query:string,from:string|null,to:string|null) {
   return products.filter(product=>{
     const time=Date.parse(product.created_at);
     return `${product.title} ${product.source_url}`.toLowerCase().includes(query.trim().toLowerCase())
       &&(!from||(Number.isFinite(time)&&time>=Date.parse(from)))&&(!to||(Number.isFinite(time)&&time<Date.parse(to)));
   });
+}
+export function registrationStepLabel(product: BoardProduct, step: string) {
+  const summary=product.content_summary;
+  if(step==='SEO')return summary?summary.seo?'입력됨':'미입력':'확인 필요';
+  const roles:Record<string,'main'|'additional'|'detail'|'label'>={'대표 이미지':'main','추가 이미지':'additional','상세 이미지':'detail','표시사항':'label'};
+  if(roles[step])return summary?summary[roles[step]]+'장':'확인 필요';
+  return step==='견적서'?product.quote_status==='완료'?'저장값 확인':'대기':step==='가격'?'가격 보기':'편집';
 }
 const steps=[['SEO','SEO 설정'],['가격','가격 설정'],['대표 이미지','대표 이미지'],['추가 이미지','추가 이미지'],['상세 이미지','상세 이미지'],['옵션','옵션 / 사이즈표'],['표시사항','한글 표시사항'],['견적서','견적서']];
 const dateTime=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'});
@@ -37,10 +45,10 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
     <div className="table-wrap"><table className="couplus-work-table"><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.length>0&&rows.every(product=>selected.has(product.id))} onChange={event=>toggle(rows.map(product=>product.id),event.target.checked)}/></th><th>등록번호 / 등록일</th><th>상품이미지</th><th>상품명 · 원본 URL</th>{steps.map(([,label])=><th key={label}>{label}</th>)}<th>등록 상태</th><th>관리</th></tr></thead><tbody>
     {rows.map(product=>{const image=thumbnail(product.image_keys);return <tr key={product.id}>
       <td><input type="checkbox" aria-label={`${product.title} 선택`} checked={selected.has(product.id)} onChange={event=>toggle([product.id],event.target.checked)}/></td>
-      <td><span className="registration-id">SF-{product.id.slice(0,8).toUpperCase()}</span><time dateTime={product.created_at}>{Number.isFinite(Date.parse(product.created_at))?dateTime.format(new Date(product.created_at)):'날짜 미확인'}</time></td>
+      <td><span className="registration-id">YP-{product.id.slice(0,8).toUpperCase()}</span><time dateTime={product.created_at}>{Number.isFinite(Date.parse(product.created_at))?dateTime.format(new Date(product.created_at)):'날짜 미확인'}</time></td>
       <td><button type="button" className="registration-thumbnail" onClick={()=>onOpen(product,'대표 이미지')} aria-label={`${product.title} 대표 이미지 열기`}>{image?<img src={image} width={56} height={56} alt="상품 이미지"/>:<span>이미지<br/>없음</span>}</button></td>
-      <td className="registration-product"><button type="button" className="registration-title" onClick={()=>onOpen(product)}>{product.title}</button><button type="button" className="registration-options" onClick={()=>onOptions?onOptions(product):onOpen(product,'옵션')}>옵션 {product.options_count}개</button><a href={sourceUrl(product.source_url)} target="_blank" rel="noreferrer">{product.source_url||'원본 URL 미입력'}</a><small>공급 {product.supply_price.toLocaleString('ko-KR')}원 · 판매 {product.sale_price.toLocaleString('ko-KR')}원</small></td>
-      {steps.map(([step,label])=><td key={step}><button type="button" className="registration-cell-button" aria-label={`${product.title} ${label} 열기`} onClick={()=>onOpen(product,step)}>{step==='SEO'?product.seo_status==='완료'?'저장값 확인':'대기':step==='견적서'?product.quote_status==='완료'?'저장값 확인':'대기':step==='가격'?'가격 보기':'편집'}</button></td>)}
+      <td className="registration-product"><button type="button" className="registration-title" onClick={()=>onOpen(product)}>{product.title}</button><button type="button" className="registration-options" onClick={()=>onOptions?onOptions(product):onOpen(product,'옵션')}>옵션 {product.options_count}개</button><a href={sourceUrl(product.source_url)} target="_blank" rel="noreferrer">{product.source_url||'원본 URL 미입력'}</a><small>공급 {product.supply_price.toLocaleString('ko-KR')}원 · 판매 {product.sale_price.toLocaleString('ko-KR')}원</small>{product.content_summary?.missingImages&&<small className="collection-error">이미지 연결 확인 필요</small>}</td>
+      {steps.map(([step,label])=><td key={step}><button type="button" className="registration-cell-button" aria-label={`${product.title} ${label} 열기`} onClick={()=>onOpen(product,step)}>{registrationStepLabel(product,step)}</button></td>)}
       <td><span className="registration-state">{product.registration_status}</span></td><td><button type="button" className="btn ghost" aria-label={`${product.title} 상세`} onClick={()=>onOpen(product)}>열기</button></td>
     </tr>;})}
     </tbody></table>{!rows.length&&<div className="empty"><strong>{loading?'상품을 불러오는 중입니다.':error?'상품 조회 오류를 확인해주세요.':'조건에 맞는 상품이 없습니다.'}</strong><small>상품을 추가하거나 조회 기간·검색어를 변경하세요.</small></div>}</div>
