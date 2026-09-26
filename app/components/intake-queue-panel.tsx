@@ -3,14 +3,14 @@ import { useEffect, useRef, useState } from 'react';
 import { CategoryPicker } from '@/app/components/category-picker';
 import { intakeRow, submitIntakeQueue, visibleIntakeRows, type IntakeRow } from '@/app/intake-queue';
 import { collectionBlock, type CollectionJob } from '@/app/sourcing';
-import type { WorkspaceSettings } from '@/app/workspace-settings';
+import { savedRegistrationSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { CategoryAdvancedSeed } from '@/app/category-catalog';
 import { collectIntakeProduct } from '@/app/intake-collection';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 
-export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings }: {
-  settings:WorkspaceSettings;
+export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, onSettingsReloaded }: {
+  settings:WorkspaceSettings; onSettingsReloaded:(settings:WorkspaceSettings)=>void;
   rows: IntakeRow[]; onRows: (update: (rows: IntakeRow[]) => IntakeRow[]) => void;
   profiles: CategoryProfile[]; onProfile: (profile: CategoryProfile) => void;
   onAdvanced: (seed?: CategoryAdvancedSeed) => void; onJobs: (jobs: CollectionJob[]) => void; onBusy: (busy: boolean) => void;
@@ -21,6 +21,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const [excluded, setExcluded] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [settingsChanged,setSettingsChanged]=useState(false);
+  const [settingsMessage,setSettingsMessage]=useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
   const previewRow = rows.find(row => row.id === previewId);
   const running = useRef<AbortController | null>(null);
@@ -45,11 +47,24 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if (running.current) return;
     onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft', message: '' } : row));
   }
+  async function reloadSettings() {
+    if(running.current)return;
+    const controller=new AbortController();running.current=controller;setBusy(true);onBusy(true);setError('');setSettingsMessage('');
+    try {
+      const response=await fetch('/api/settings',{cache:'no-store',signal:controller.signal});
+      const body:unknown=await response.json();
+      if(controller.signal.aborted)return;
+      if(!response.ok||!body||typeof body!=='object'||!Object.hasOwn(body,'settings'))throw Error('최신 기본설정을 불러오지 못했습니다. 입력은 유지됩니다.');
+      const settings=savedRegistrationSettings((body as {settings:unknown}).settings);
+      onSettingsReloaded(settings);setSettingsChanged(false);setSettingsMessage('최신 기본설정을 불러왔습니다. URL·카테고리와 처리할 상품 선택은 유지됩니다. 시작을 누르면 남은 상품을 처리합니다.');
+    }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'기본설정 조회 실패');}
+    finally{if(running.current===controller)running.current=null;if(!controller.signal.aborted){setBusy(false);onBusy(false);}}
+  }
   async function submit() {
-    if (running.current || !pending) return;
+    if (running.current || !pending || settingsChanged) return;
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
     try {
-      await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, selectedIds: new Set(selected.map(row => row.id)),
+      await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{setSettingsChanged(true);setSettingsMessage('');}, selectedIds: new Set(selected.map(row => row.id)),
         collect: (job,onProgress) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,onJob:updated=>onJobs([updated]),onProgress}),
         onRow: (id, patch) => onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row)), onJobs });
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
@@ -83,7 +98,9 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={goal === id} onChange={() => onGoal(id)} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
     <p className="collection-notice">{collectionBlock}</p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
     {selected.some(row => !visible.some(item => item.id === row.id)) && <p className="collection-notice">검색으로 숨겨진 선택 상품도 함께 처리합니다. 선택 {pending}건 중 숨겨진 상품 {selected.filter(row => !visible.some(item => item.id === row.id)).length}건</p>}
+    {settingsChanged&&<div className="panel-note"><p>기본설정이 변경돼 남은 상품 처리를 멈췄습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reloadSettings()}>최신 기본설정 불러오기</button></div>}
+    {settingsMessage&&<p role="status">{settingsMessage}</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
-    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => setCategoryTarget('new')}>＋ 상품 추가</button><button type="button" className="btn primary" disabled={busy || !pending} onClick={() => void submit()}>{busy ? '요청 저장 중…' : `${pending === pendingRows.length ? '전체' : '선택'} 요청 저장 (${pending}건)`}</button></div>
+    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => setCategoryTarget('new')}>＋ 상품 추가</button><button type="button" className="btn primary" disabled={busy || !pending || settingsChanged} onClick={() => void submit()}>{busy ? '요청 저장 중…' : `${pending === pendingRows.length ? '전체' : '선택'} 요청 저장 (${pending}건)`}</button></div>
   </div>;
 }

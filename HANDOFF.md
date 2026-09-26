@@ -3176,3 +3176,11 @@ AI등록 화면 확인:
 - 관련55/55, TypeScript, Cloudflare build/check, diff check 통과. 테스트는 행 간 settings 변경, 중단 뒤 나머지 입력 유지, 다른 가격/브랜드/배너 거절, 동일 설정의 키 순서 허용 등을 확인한다.
 - 기존 Chrome 탭 조회는 다시 []를 반환했다. 이번 수정은 설정 일관성 수정이며 Couplus 실사이트 동일성 검증은 아니다. 실제1688 수집 검증·전체 카테고리 기본값 대조·이미지 번역·Supplier Hub 자동등록 미완성 유지.
 - 배포90e53ee0-4332-41a6-995d-325a592f736b. outputs/step305-tests.log, step305-build.log, step305-deploy.log.
+
+## 306. 기본설정 변경으로 멈춘 대기열에서 입력 유지 후 재개 — 2026-09-26
+
+- submitIntakeQueue에서 REGISTRATION_SETTINGS_CHANGED를 UI에 전달한다. IntakeQueuePanel은 최신 설정 조회 버튼을 제공하고 그동안 기존 설정으로 다시 전송하는 시작 버튼을 잠근다.
+- GET /api/settings no-store/AbortSignal로 읽고 설정 존재 및 유효성을 검증한 뒤 대시보드 settings에 반영한다. URL/카테고리/특징/키워드/선택 상태/저장된 행은 바꾸지 않는다. 성공 후 사용자가 시작을 눌러 남은 행만 진행한다. 설정 조회 자체는 수집이나 전송을 실행하지 않는다.
+- 조회 실패는 기존 설정을 유지하며 다시 조회 가능하다. running ref로 중복 조회/제출을 방지하고 unmount 시 abort 및 늦은 응답 적용을 차단한다.
+- 관련31/31 통과, 최종 메시지 정리 뒤 실제 패널 회귀3/3 재검증 통과. TypeScript, Cloudflare build/check, diff check 통과. 실제 Couplus/1688/Supplier Hub E2E 검증이 아니다.
+- 배포 c04bce26-bf12-497d-bf13-1688ab804cb6. outputs/step306-tests.log, step306-reload-tests.log, step306-build.log, step306-deploy.log. 전체 카테고리 기본값 대조/실제1688 수집 검증/이미지 번역/Hub 자동전송은 미완성 유지.
