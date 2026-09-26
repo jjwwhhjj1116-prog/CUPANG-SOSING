@@ -11,17 +11,17 @@ function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpil
 const model=load('app/components/product-option-board.tsx');
 const data={options:{schemaVersion:1,productId:'p1',revision:1,rows:[{id:'red',originalName:'Red',translatedName:'빨강',supplierSku:'sku-red',unitCostCny:4.5,unitsPerPack:2,stock:0,included:true,imageKey:'owner/red.png',provenance:{}},{id:'blue',originalName:'Blue',translatedName:'',supplierSku:'sku-blue',unitCostCny:null,unitsPerPack:1,stock:null,included:false,imageKey:'other/private.png',provenance:{translatedName:'manual'}}]},pricing:{rows:[{optionId:'red',calculation:{supplyPrice:4000,salePrice:6000},error:null}]}};
 test('option board fetch checks product identity and propagates abort signal',async()=>{
- const signal=new AbortController().signal;let request;
- assert.equal(await model.readOptionBoard('p1',signal,async(url,init)=>{request={url,...init};return {ok:true,json:async()=>data};}),data);
+ const signal=new AbortController().signal;const requests=[];
+ const received=await model.readOptionBoard('p1',signal,async(url,init)=>{requests.push({url,...init});return {ok:true,json:async()=>url.endsWith('/options')?data:{content:{productId:'p1',schemaVersion:1,assets:{main:{value:['owner/shared.png']}}}}};});assert.equal(received.options,data.options);assert.deepEqual(Array.from(received.commonImageKeys),['owner/shared.png']);const request=requests[0];assert.equal(requests[1].signal,signal);assert.equal(requests[1].url,'/api/products/p1/content');
  assert.equal(request.url,'/api/products/p1/options');assert.equal(request.signal,signal);assert.equal(request.cache,'no-store');
  for(const bad of [null,{}, {...data,options:{...data.options,productId:'p2'}}])await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:true,json:async()=>bad})),/응답/);
  await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:false,json:async()=>({error:'인증 필요'})})),/인증 필요/);
 });
-function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html'){
- let slot=0;const selected=[];const edited=[];const images=[];const states=[data,'',0,query];
+function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html',boardData=data,owned=['owner/red.png']){
+ let slot=0;const selected=[];const edited=[];const images=[];const states=[boardData,'',0,query];
  const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,()=>{}];},useEffect(){}};
  const {ProductOptionBoard}=load('app/components/product-option-board.tsx',{react:hooks});
- return {selected,edited,images,tree:ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(['owner/red.png']),onQuotation:id=>selected.push(id),onImage:id=>images.push(id),onEdit:id=>edited.push(id)})};
+ return {selected,edited,images,tree:ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(owned),onQuotation:id=>selected.push(id),onImage:id=>images.push(id),onEdit:id=>edited.push(id)})};
 }
 function nodes(value){if(!value||typeof value!=='object')return[];if(Array.isArray(value))return value.flatMap(nodes);return[value,...nodes(value.props?.children)];}
 test('option list opens the clicked option and preserves zero, unknown and deliberately blank names',()=>{
@@ -43,4 +43,18 @@ test('price buttons retain the chosen option ID and general editing does not pas
 test('image editing passes the clicked option identity even when it has no individual image',()=>{
  const result=tree();const buttons=nodes(result.tree).filter(n=>n.type==='button'&&n.props.children==='이미지 편집');
  assert.equal(buttons.length,2);buttons[1].props.onClick();assert.deepEqual(result.images,['blue']);assert.deepEqual(result.edited,[]);assert.deepEqual(result.selected,[]);
+});
+
+test('option list uses the common main image only for null individual selection',()=>{
+ const shared={...data,commonImageKeys:['owner/shared.png'],options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:null}))}};
+ const html=renderToStaticMarkup(tree('',undefined,shared,['owner/shared.png']).tree);assert.match(html,/공통 대표 이미지/);assert.match(html,/src="\/api\/files\/owner\/shared.png"/);
+ shared.options.rows[0].imageKey='missing.png';const html2=renderToStaticMarkup(tree('sku-red',undefined,shared,['owner/shared.png']).tree);assert.match(html2,/이미지 연결 확인 필요/);assert.ok(!html2.includes('src='));
+ assert.ok(!renderToStaticMarkup(tree('',undefined,shared,[]).tree).includes('src='));
+});
+test('common content fetch rejects mismatched product or failed response',async()=>{
+ const signal=new AbortController().signal;
+ for(const content of [null,{productId:'other',schemaVersion:1,assets:{main:{value:[]}}},{productId:'p1',schemaVersion:1,assets:{main:{value:[1]}}}]){
+  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?data:{content}})),/이미지 응답/);
+ }
+ await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:url.endsWith('/options'),json:async()=>url.endsWith('/options')?data:{error:'조회 실패'}})),/조회 실패/);
 });

@@ -3086,3 +3086,10 @@ AI등록 화면 확인:
 - 기존 옵션 API의 전체 목록·revision 검증을 사용한다. 다른 옵션의 이미지/가격을 변경하지 않으며 null 연결 해제는 기존 공통 대표 이미지 선택 규칙을 따른다. 이미지 AI 가공/실수집 구현은 아니다.
 - 관련12/12, TypeScript, Cloudflare build/check, diff check 통과. 개별 이미지가 없는 옵션 클릭 ID, 이미지 저장 시 다른 행 보존, 공통 이미지로 해제 요청을 검증했다. 실제 Chrome 시각 검증은 수행하지 못했다.
 - 배포 d766ea4c-febb-4ff3-9a7d-dad8c0ae9d94. 로그 outputs/step293-tests.log, step293-build.log, step293-deploy.log. 실제1688 수집 실행기·전체 카테고리 동일성·Supplier Hub 자동등록은 여전히 미완성이다.
+
+## 294. 옵션 목록의 공통 대표 이미지 표시 일치 — 2026-09-26
+
+- 옵션 목록에서 개별 imageKey가 null이면 ‘개별 이미지 없음’만 표시하던 불일치를 수정했다. 저장된 콘텐츠의 대표 이미지와 옵션을 읽고 견적 resolver와 같은 quotationMainImageKeys 규칙을 사용한다. 개별/공통 이미지를 구분해서 표시한다.
+- 상품에 속하는 파일 목록만 표시하며 삭제/외부 키가 개별로 지정된 경우 공통으로 대체하지 않는다. 옵션·콘텐츠 상품 ID 및 대표 이미지 배열을 검사하고 오류면 성공 화면으로 표시하지 않는다. 두 GET은 동일한 AbortSignal을 사용한다.
+- 관련6/6, TypeScript, Cloudflare build/check, diff check 통과. 공통 이미지 사용, 개별 연결 오류, 다른 상품 응답/비문자 키/실패 응답 검증. 실제 Chrome 시각 검증은 아님.
+- 배포3e8a9bb1-dacb-47a7-9c81-9f4bd3a3d5f9. 로그 outputs/step294-tests.log, step294-build.log, step294-deploy.log. 실제1688 수집·전체 카테고리 동일성·Supplier Hub 자동등록은 여전히 미완성.
