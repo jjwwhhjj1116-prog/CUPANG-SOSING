@@ -89,3 +89,5 @@
 
 .registration-workspace .quotation-fields-actions{position:sticky;top:0;bottom:auto;padding:10px 14px;border:1px solid #e5eaf2;border-radius:8px;background:#fff;z-index:3}
 .quotation-apply-all{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#334155;white-space:nowrap}.quotation-apply-all input{accent-color:#2bbadc;width:18px;height:18px}
+
+.quotation-field-group{grid-column:1/-1;margin:16px 0 0;padding:0 0 12px;border-bottom:1px solid #dfe4ed;color:#17245c;font-size:14px;font-weight:700}

@@ -3107,3 +3107,10 @@ AI등록 화면 확인:
 - 401/403/409/429 및 잘못된 원문은 기존 오류 처리 유지. 사용자 중단 시 다음 상품으로 진행하지 않는다. 실제 URL 페이지 수집 실행기를 추가한 작업은 아니다.
 - 관련11/11, TypeScript, Cloudflare build/check, diff check 통과. 기존 Chrome supplierChrome.tabs.list()는 []로 실제 Couplus 대조 불가. 새 Chrome/프로필 생성하지 않음.
 - 배포7df52ea8-4250-4be2-95f6-ab3302531a06. outputs/step296-tests.log, step296-build.log, step296-deploy.log. 실제1688 수집·전체 카테고리 대조·Supplier Hub 자동등록 여전히 미완성.
+
+## 297. 견적서 항목 소제목을 첨부 Couplus 화면에 맞춤 — 2026-09-26
+
+- 연속 5개 페이지 내 상품(기본 정보/가격 정보/노출 속성/비노출 속성), 이미지(기본 이미지/라벨 이미지/상세 정보), 법적 정보(기본 법적 정보/인증 정보/상품 고시 정보) 구분을 추가했다. 필드 순서와 입력 ID/자동값/저장 규칙은 유지한다.
+- 기준은 첨부 화면15~23. 카테고리마다 visibility를 적용하며 필드를 새로 추정하지 않는다. 전체 카테고리 실화면 대조는 아님.
+- 편집기69/69, TypeScript, Cloudflare build/check, diff check 통과. 배포566a33e9-ca4f-4648-8c68-ce230b69fade. outputs/step297-tests.log, step297-build.log, step297-deploy.log.
+- 실제1688 수집 실행기·전체 카테고리 기본값 대조·Supplier Hub 자동등록 미완성은 유지된다.
