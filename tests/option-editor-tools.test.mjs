@@ -137,3 +137,20 @@ test('editing quantity invalidates a prior packaging confirmation in bulk previe
  assert.equal(plan.rows[0].packagedWeightG,450);assert.equal(plan.rows[0].packagingConfirmed,false);
  assert.equal(rows[0].packagingConfirmed,true);
 });
+
+test('bulk packaging preserves other facts, confirms selected quantities on save and can explicitly clear',()=>{
+ const rows=[row('a',{unitsPerPack:2,packagedWeightG:100}),row('b',{unitsPerPack:3}),row('c',{packagedWeightG:999})];
+ const value={packagedWeightG:480,packagedWidthMm:400,packagedLengthMm:320,packagedHeightMm:90};
+ const before=JSON.stringify(rows),plan=tools.previewOptionBulk(rows,['a','b'],{type:'packaging',value},policy);
+ assert.equal(JSON.stringify(rows),before);assert.equal(plan.rows[2].packagedWeightG,999);
+ for(const change of plan.changes)assert.equal(change.beforePrice,change.afterPrice);
+ const next=tools.applyOptionBulk(rows,plan,policy);
+ for(const selected of next.slice(0,2)){assert.equal(selected.packagedWeightG,480);assert.equal(selected.packagingConfirmed,true);assert.equal(selected.widthCm,10);}
+ const saved=model.applyOptionRows(model.emptyProductOptions('p'),next,'2026-09-26T00:00:00Z');
+ assert.equal(saved.rows[0].packagingUnitsPerPack,2);assert.equal(saved.rows[1].packagingUnitsPerPack,3);
+ const clear=tools.previewOptionBulk(model.optionInputs(saved),['a'],{type:'clearPackaging'},policy);
+ const cleared=model.applyOptionRows(saved,clear.rows,'2026-09-26T00:00:01Z');
+ assert.equal(cleared.rows[0].packagedWeightG,null);assert.equal(cleared.rows[0].packagingUnitsPerPack,undefined);assert.equal(cleared.rows[0].widthCm,10);assert.equal(cleared.rows[1].packagedWeightG,480);
+ for(const bad of [null,{},[],{...value,extra:1},{...value,packagedWeightG:0},{...value,packagedWidthMm:1.1},{...value,packagedWidthMm:1000001}])assert.throws(()=>tools.previewOptionBulk(rows,['a'],{type:'packaging',value:bad},policy));
+ assert.throws(()=>tools.applyOptionBulk(rows.map(r=>({...r,unitsPerPack:4})),plan,policy),/미리보기/);
+});
