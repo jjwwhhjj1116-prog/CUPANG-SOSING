@@ -1633,3 +1633,15 @@ test('saved option packaging flows to category logistics and export without subs
  input.overrides={common:{packagedWeightG:'500'},options:{[option.id]:{packagedDimensionsMm:'',packagedWeightG:'490'}}};
  target=read().rows.find(row=>row.optionId===option.id);assert.equal(target.fields.packagedDimensionsMm.value,'');assert.equal(target.fields.packagedWeightG.value,'490');
 });
+
+test('quotation flags old packaging basis while retaining facts and respects explicit quotation overrides',()=>{
+ const input=fixture();const option=input.options.rows[0];Object.assign(option,{unitsPerPack:2,packagingUnitsPerPack:1,packagedWeightG:450,packagedWidthMm:400,packagedLengthMm:300,packagedHeightMm:80});
+ let target=model.resolveQuotationFields(input).rows.find(row=>row.optionId===option.id);
+ for(const key of ['packagedWeightG','packagedDimensionsMm'])assert.ok(target.fields[key].validationIssues.some(message=>message.includes('1개입 기준')));
+ assert.equal(target.fields.packagedWeightG.value,'450');
+ option.packagingUnitsPerPack=2;target=model.resolveQuotationFields(input).rows.find(row=>row.optionId===option.id);
+ for(const key of ['packagedWeightG','packagedDimensionsMm'])assert.ok(!target.fields[key].issues.some(message=>message.includes('개입 기준')));
+ option.packagingUnitsPerPack=1;input.overrides={common:{},options:{[option.id]:{packagedWeightG:'500',packagedDimensionsMm:'400*300*100'}}};
+ target=model.resolveQuotationFields(input).rows.find(row=>row.optionId===option.id);
+ for(const key of ['packagedWeightG','packagedDimensionsMm'])assert.ok(!target.fields[key].issues.some(message=>message.includes('개입 기준')));
+});

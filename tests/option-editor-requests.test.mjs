@@ -63,3 +63,18 @@ test('packaging inputs edit and clear grams and millimetres in the option save r
  input.props.onChange({target:{value:'',valueAsNumber:NaN}});
  assert.equal(nodes(h.render()).find(n=>n.type==='input'&&n.props['aria-label']==='옵션 1 포장 높이 mm').props.value,'');
 });
+
+test('quantity edits preserve packaging and expose an explicit confirmation for the current quantity',async()=>{
+ let submitted;
+ const h=harness(async(_url,init)=>{submitted=JSON.parse(init.body);return Response.json({error:'검증용 저장 중단'},{status:409});},body=>{
+  Object.assign(body.options.rows[0],{packagedWeightG:450,packagedWidthMm:400,packagedLengthMm:300,packagedHeightMm:80,packagingUnitsPerPack:1});return Response.json(body);
+ });await h.start();
+ const quantity=()=>nodes(h.render()).find(n=>n.type==='input'&&n.props['aria-label']==='옵션 1 판매 단위당 구성 수량');
+ quantity().props.onChange({target:{value:'2',valueAsNumber:2}});
+ assert.ok(nodes(h.render()).some(n=>n.type==='p'&&Array.isArray(n.props.children)&&n.props.children.join('').includes('1개입 기준')));
+ const confirmation=()=>nodes(h.render()).find(n=>n.type==='label'&&JSON.stringify(n.props.children).includes('현재 구성의 포장 무게')).props.children[0];
+ confirmation().props.onChange({target:{checked:true}});assert.equal(confirmation().props.checked,true);
+ quantity().props.onChange({target:{value:'3',valueAsNumber:3}});assert.equal(confirmation().props.checked,false);
+ confirmation().props.onChange({target:{checked:true}});h.button().props.onClick();await settle();
+ assert.equal(submitted.rows[0].packagingConfirmed,true);assert.equal(submitted.rows[0].unitsPerPack,3);assert.equal(submitted.rows[0].packagedWeightG,450);
+});

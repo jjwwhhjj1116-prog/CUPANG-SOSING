@@ -19,8 +19,9 @@ export type OptionValues = {
   unitsPerPack: number; minimumOrderQuantity: number | null; widthCm: number | null; lengthCm: number | null;
   heightCm: number | null; weightKg: number | null; included: boolean; imageKey: string | null;
 };
-export type OptionInput = OptionValues & { id: string };
+export type OptionInput = OptionValues & { id: string; packagingConfirmed?: boolean };
 export type ProductOption = OptionInput & {
+  packagingUnitsPerPack?: number;
   provenance: Record<OptionField, 'unverified' | 'manual' | 'collected' | 'translated'>;
   updatedAt: string;
 };
@@ -69,9 +70,10 @@ export function validateOptionsInput(input: unknown, ownerId: string, imageKeys:
   if (!Array.isArray(body.rows) || body.rows.length > OPTION_LIMIT) throw new Error(`옵션은 최대 ${OPTION_LIMIT}개입니다.`);
   const identifiers = new Set<string>(); const supplierSkus = new Set<string>();
   const rows = body.rows.map((value, index): OptionInput => {
-    const raw = object(value, ['id', ...Object.keys(optionFieldNames)], `${index + 1}번 옵션`);
+    const raw = object(value, ['id', 'packagingConfirmed', ...Object.keys(optionFieldNames)], `${index + 1}번 옵션`);
     if (typeof raw.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(raw.id) || identifiers.has(raw.id)) throw new Error('옵션 ID가 잘못되었거나 중복되었습니다.');
     identifiers.add(raw.id);
+    if (raw.packagingConfirmed !== undefined && typeof raw.packagingConfirmed !== 'boolean') throw Error('포장 정보 확인 여부를 확인해주세요.');
     const originalName = text(raw.originalName, 500, '옵션명 원문'); const translatedName = text(raw.translatedName, 500, '옵션명 한국어');
     const supplierSku = text(raw.supplierSku, 200, '공급자 SKU');
     if (!originalName && !translatedName && !supplierSku) throw new Error(`${index + 1}번 옵션의 이름 또는 공급자 SKU를 입력해주세요.`);
@@ -82,7 +84,7 @@ export function validateOptionsInput(input: unknown, ownerId: string, imageKeys:
     const unitCostCny = number(raw.unitCostCny, 1e9, false, !raw.included, '개당 원가 CNY');
     if (raw.stock !== undefined && raw.stock !== null && (!Number.isSafeInteger(raw.stock) || (raw.stock as number) < 0)) throw new Error('공급자 재고는 0 이상 안전한 정수로 입력해주세요. 미확인은 공란으로 두세요.');
     return {
-      id: raw.id, originalName, translatedName, supplierSku, included: raw.included, imageKey: raw.imageKey as string | null, unitCostCny,
+      id: raw.id, ...(raw.packagingConfirmed !== undefined ? {packagingConfirmed: raw.packagingConfirmed as boolean} : {}), originalName, translatedName, supplierSku, included: raw.included, imageKey: raw.imageKey as string | null, unitCostCny,
       ...(raw.color !== undefined ? { color: text(raw.color, 200, '색상') } : {}),
       ...(raw.size !== undefined ? { size: text(raw.size, 200, '구매 사이즈') } : {}),
       ...(raw.stock !== undefined ? { stock: raw.stock as number | null } : {}),
@@ -119,7 +121,12 @@ export function applyOptionRows(current: ProductOptions, rows: OptionInput[], no
         if (key === 'color' || key === 'size') return [key, row[key] === '' ? 'unverified' : 'manual'];
         return [key, row[key] === '' || row[key] === null ? 'unverified' : 'manual'];
       })) as ProductOption['provenance'];
-      return { ...row, provenance, updatedAt: changed ? now : before!.updatedAt };
+      const { packagingConfirmed, ...values } = row;
+      const hasPackaging = ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'].some(key => values[key as keyof OptionValues] != null);
+      const hadPackaging = before && ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'].some(key => before[key as keyof OptionValues] != null);
+      const packagingUnitsPerPack = hasPackaging ? packagingConfirmed ? row.unitsPerPack : hadPackaging ? before.packagingUnitsPerPack ?? before.unitsPerPack : row.unitsPerPack : undefined;
+      if (packagingUnitsPerPack !== before?.packagingUnitsPerPack) changed = true;
+      return { ...values, ...(packagingUnitsPerPack === undefined ? {} : {packagingUnitsPerPack}), provenance, updatedAt: changed ? now : before!.updatedAt };
     }),
   };
 }

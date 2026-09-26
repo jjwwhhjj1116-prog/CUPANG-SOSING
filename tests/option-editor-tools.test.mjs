@@ -130,3 +130,10 @@ test('new bundle retains source packaging but leaves its own packaging unmeasure
  assert.equal(plan.rows[0].packagedWeightG,450);
  for(const key of ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'])assert.equal(plan.rows[1][key],null);
 });
+
+test('editing quantity invalidates a prior packaging confirmation in bulk preview',()=>{
+ const rows=[row('a',{packagedWeightG:450,packagingConfirmed:true})];
+ const plan=tools.previewOptionBulk(rows,['a'],{type:'unitsPerPack',value:2},policy);
+ assert.equal(plan.rows[0].packagedWeightG,450);assert.equal(plan.rows[0].packagingConfirmed,false);
+ assert.equal(rows[0].packagingConfirmed,true);
+});

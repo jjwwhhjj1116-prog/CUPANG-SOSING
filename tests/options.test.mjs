@@ -166,3 +166,17 @@ test('packaging measurements validate separately, survive older clients and pres
  for(const key of fields)for(const invalid of [0,-1,1.2,'400',Infinity,NaN])assert.throws(()=>model.validateOptionsInput(payload([row('a',{[key]:invalid})]),'owner',[]));
  assert.throws(()=>model.validateOptionsInput(payload([row('a',{packagedWidthMm:1000001})]),'owner',[]));
 });
+
+test('packaging basis survives quantity edits and only explicit confirmation advances it',()=>{
+ const original=row('a',{packagedWeightG:450,packagedWidthMm:400,packagedLengthMm:300,packagedHeightMm:80});
+ let saved=model.applyOptionRows(model.emptyProductOptions('test'),[original],version);
+ assert.equal(saved.rows[0].packagingUnitsPerPack,1);
+ saved=model.applyOptionRows(saved,[{...original,unitsPerPack:2}],nextVersion);
+ assert.equal(saved.rows[0].packagingUnitsPerPack,1);assert.equal(saved.rows[0].packagedWeightG,450);
+ const confirmed=model.validateOptionsInput(payload([{...original,unitsPerPack:2,packagingConfirmed:true}]),'owner',[]);
+ saved=model.applyOptionRows(saved,confirmed.rows,nextVersion);
+ assert.equal(saved.rows[0].packagingUnitsPerPack,2);assert.equal(saved.rows[0].packagingConfirmed,undefined);
+ assert.equal(model.optionInputs(saved)[0].packagingConfirmed,undefined);
+ assert.throws(()=>model.validateOptionsInput(payload([{...original,packagingConfirmed:'true'}]),'owner',[]));
+ assert.throws(()=>model.validateOptionsInput(payload([{...original,packagingUnitsPerPack:2}]),'owner',[]));
+});
