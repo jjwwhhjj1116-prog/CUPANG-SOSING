@@ -16,6 +16,7 @@ import { QuotationPanel } from '@/app/components/quotation-panel';
 import { SubmissionReviewPanel } from '@/app/components/submission-review-panel';
 import { CollectionResultPanel } from '@/app/components/collection-result-panel';
 import { CollectionBatchPanel } from '@/app/components/collection-batch-panel';
+import { ProductOptionBoard } from '@/app/components/product-option-board';
 import { RegistrationBoard } from '@/app/components/registration-board';
 import TranslationPanel from '@/app/components/translation-panel';
 import ImageGenerationPanel from '@/app/components/image-generation-panel';
@@ -118,6 +119,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const productNavigation=useRef(0);
   useEffect(()=>()=>{productNavigation.current++;},[]);
   const [busy, setBusy] = useState(false);
+  const [optionBoardProduct, setOptionBoardProduct] = useState<Product|null>(null);
   const [batchOpen, setBatchOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyProductId, setHistoryProductId] = useState('');
@@ -282,7 +284,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
           <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><a href={job.source_url} target="_blank" rel="noreferrer" style={{overflowWrap:"anywhere"}}>{job.source_url}</a><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small>{job.received_at&&<small>원문 수신 {new Date(job.received_at).toLocaleString('ko-KR')}</small>}</div><span className={`collection-status ${collectionJobProgress(job).kind}`}>{collectionJobProgress(job).label}</span><CollectionResultPanel jobId={job.id} offerId={job.offer_id} productId={job.product_id} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
         </details>
 
-        <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} loading={loading} error={loadError} onArchive={()=>setView('archive')}/></>}
+        <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={setOptionBoardProduct} loading={loading} error={loadError} onArchive={()=>setView('archive')}/></>}
       </section>
 
       {addOpen&&<Modal wide title="상품 대기열" subtitle="상품마다 카테고리·URL·특징·키워드를 지정합니다." onClose={()=>{if(!busy&&!intakeDraft.loading)setAddOpen(false);}}>
@@ -306,6 +308,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
         <footer className="registration-navigation">{detailStepIndex>=0?<><button type="button" className="btn ghost" disabled={detailStepIndex===0} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex-1])}>← 이전{detailStepIndex>0?` · ${registrationSteps[detailStepIndex-1]}`:''}</button><div><strong>{detailStepIndex+1} / {registrationSteps.length} · {tab}</strong><small>입력 단계이며 자동화 완료 상태를 뜻하지 않습니다.</small></div><button type="button" className="btn primary" disabled={detailStepIndex===registrationSteps.length-1} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex+1])}>{detailStepIndex===registrationSteps.length-1?'마지막 단계':`다음 · ${registrationSteps[detailStepIndex+1]} →`}</button></>:<><span>보조 작업 · {supportingTabs.find(item=>item.value===tab)?.label}</span><button type="button" className="btn primary" onClick={()=>selectDetailTab(lastRegistrationStep)}>{registrationSteps.indexOf(lastRegistrationStep)+1}. {lastRegistrationStep} 단계로 돌아가기 →</button></>}</footer>
       </aside></div>}
 
+      {optionBoardProduct&&<Modal wide title={optionBoardProduct.title} subtitle="옵션별 상품 자료와 견적서를 확인합니다." onClose={()=>setOptionBoardProduct(null)}><ProductOptionBoard key={optionBoardProduct.id} productId={optionBoardProduct.id} sourceUrl={optionBoardProduct.source_url} imageKeys={optionBoardProduct.image_keys} onEdit={()=>{openProduct(optionBoardProduct,'가격');setOptionBoardProduct(null);}} onQuotation={optionId=>{openProduct(optionBoardProduct,'견적서',undefined,{optionId,fieldId:'title'});setOptionBoardProduct(null);}}/></Modal>}
       {transmitOpen&&<Modal title="Supplier Hub 등록 전송" subtitle="선택 상품의 실제 저장 자료를 검사하고 필요한 항목을 수정하세요." onClose={()=>setTransmitOpen(false)}><SubmissionReviewPanel products={products.filter(product=>selected.has(product.id))} profiles={categoryProfiles} onEdit={(id,preferredProfileId,target)=>{const product=products.find(item=>item.id===id);if(product){setTransmitOpen(false);openProduct(product,'견적서',preferredProfileId,target);}}}/></Modal>}
 
       {connectionsOpen&&<Modal title="연동 상태" subtitle="현재 실행 중인 서버를 확인합니다. Cloudflare 운영 배포 여부와는 별개입니다." onClose={()=>setConnectionsOpen(false)}>
