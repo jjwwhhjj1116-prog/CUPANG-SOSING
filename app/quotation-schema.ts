@@ -326,6 +326,10 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   function dimensions(option: ProductOption | null): Automatic {
     // An explicit removal must not silently restore a shared label measurement.
     if (option && (['widthCm', 'lengthCm', 'heightCm'] as const).some(key => option[key] === null && option.provenance[key] === 'manual')) return { value: '', source: 'option' };
+    if (option && [option.widthCm, option.lengthCm, option.heightCm].some(value => value != null)
+      && [option.widthCm, option.lengthCm, option.heightCm].some(value => value == null)) {
+      return { value: '', source: 'option', issues: ['상품 가로·세로·높이를 모두 입력해주세요(cm). 일부 옵션 치수를 공통 크기로 대체하지 않았습니다.'] };
+    }
     return option && option.widthCm && option.lengthCm && option.heightCm
       ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
   }

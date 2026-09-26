@@ -2979,3 +2979,12 @@ AI등록 화면 확인:
 - 검증: batch-translation/batch-translation-apply/translation-integrated/UI26/26, TypeScript, Cloudflare build/check/diff 통과. 전체 테스트는 이번에 재실행하지 않았으며 이전279의924/924와 구분한다. 실Chrome 클릭/Hub접수 검증 아님.
 - 배포0b617b21-1040-416d-9d55-a674a45f85cd. outputs/step280-tests.log, step280-build.log, step280-deploy.log. DB변경·유료 호출·운영등록 없음.
 - 다음 시작점: 기존 Chrome 접근 가능한 탭에서 실제1688 상품 응답 및 카테고리별 Couplus/Hub 견적 계약 확인. 실제 수집 실행기·전카테고리 기본값 대조·이미지 번역 실검증·Supplier Hub POST501 구현/실접수는 여전히 미완성이다.
+
+## 281. 불완전한 옵션 상품 치수의 공통값 대체 방지 — 2026-09-26
+
+- 시작 mainfc98707 clean. 기존 Chrome tabs.list()=[]였고 실제 사이트 관찰은 하지 못했다.
+- 확인: 견적 resolver의 noticeDimensions는 옵션 가로·세로·높이가 모두 없을 때뿐 아니라 일부만 있을 때도 공통 label.dimensions를 사용했다. 옵션에 입력한 일부 수치와 다른 공통 치수가 견적에 나타날 수 있었다.
+- 수정: 옵션 상품 치수 일부가 있고 나머지가 미입력이면 공통값을 대신 넣지 않고 공란과 세 치수 입력 안내를 반환한다. 완전한 옵션 치수는 기존처럼 cm로 연결하고, 모두 미입력인 경우만 공통 표시사항을 사용한다. 직접 비운 옵션 치수와 견적 공통/옵션 수동값·공란은 기존 우선순위를 유지한다. 포장 치수·무게나 인증 판단을 변경하지 않는다.
+- 검증: 견적164/164, TypeScript/Cloudflare build/check/diff 통과. 세 방향 각각의 부분 입력, 원본 불변, 완성된 치수, 전체 미입력, 직접 공란, 공통/옵션 견적 수정값 보존을 확인했다. 실제 Chrome·Supplier Hub 접수 검증 아님. 전체 회귀는 이번에 재실행하지 않았다.
+- 배포3733eb7d-a3a1-4d0a-9611-d2133bff5c0e. outputs/step281-tests.log, step281-build.log, step281-deploy.log. DB변경·유료AI·운영 등록 없음.
+- 다음 시작점: 실제1688 수집 실행기, 전카테고리 Couplus/Hub 기본값/양식 대조, 이미지 번역 실검증, Supplier Hub POST501 구현·실접수는 여전히 미완성이다. 기존 Chrome 접근 가능한 탭과 실제 요청/응답 근거가 필요하다. 이번 변경은 입력값의 견적 연결 정합성 수정이다.

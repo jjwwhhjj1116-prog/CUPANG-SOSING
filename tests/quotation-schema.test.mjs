@@ -1687,3 +1687,28 @@ test('detail fragments honor final image overrides, reject unsafe files, and bou
  const huge={rows:Array.from({length:50},(_,i)=>({optionId:String(i),optionLabel:'row',included:true,fields:{detailHtml:{source:'manual-option',value:'x'.repeat(150000)}}}))};
  assert.throws(()=>make(huge,[],''),/6MB/);
 });
+
+test('partial product dimensions never fall back to a different shared label measurement',()=>{
+ for(const dimension of ['widthCm','lengthCm','heightCm']){
+  const input=fixture(),row=input.options.rows[0];
+  for(const key of ['widthCm','lengthCm','heightCm']){row[key]=null;row.provenance[key]='unverified';}
+  row[dimension]=12;row.provenance[dimension]='manual';
+  const before=JSON.stringify(input),field=model.resolveQuotationFields(input).rows[1].fields.noticeDimensions;
+  assert.equal(field.value,'');assert.equal(field.source,'option');assert.ok(field.issues.some(issue=>issue.includes('모두 입력')));assert.equal(JSON.stringify(input),before);
+ }
+});
+
+test('complete, absent, cleared and explicitly overridden product dimensions retain their priorities',()=>{
+ const input=fixture(),row=input.options.rows[0];
+ row.widthCm=12;row.lengthCm=13;row.heightCm=14;
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeDimensions.value,'12 × 13 × 14 cm');
+ for(const key of ['widthCm','lengthCm','heightCm']){row[key]=null;row.provenance[key]='unverified';}
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticeDimensions.value,input.content.label.dimensions.value);
+ row.widthCm=12;
+ input.overrides={common:{noticeDimensions:'직접 확인한 공통 크기'},options:{}};
+ let field=model.resolveQuotationFields(input).rows[1].fields.noticeDimensions;assert.equal(field.value,'직접 확인한 공통 크기');assert.ok(!field.issues.some(issue=>issue.includes('모두 입력')));
+ input.overrides={common:{},options:{red:{noticeDimensions:''}}};
+ field=model.resolveQuotationFields(input).rows[1].fields.noticeDimensions;assert.equal(field.value,'');assert.equal(field.source,'manual-option');
+ delete input.overrides;row.provenance.lengthCm='manual';
+ field=model.resolveQuotationFields(input).rows[1].fields.noticeDimensions;assert.equal(field.value,'');assert.equal(field.source,'option');
+});
