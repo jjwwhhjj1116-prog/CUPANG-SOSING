@@ -2780,3 +2780,12 @@ AI등록 화면 확인:
 - 검증: option-editor-tools/option-editor-requests/quotation-schema166/166, TypeScript, 변경 TS ESLint, Cloudflare build/check/diff check 통과. 모든 정책 항목 변경 시 이전 적용 거절, 원본 불변, 환율 재계산, 제외 옵션 보존, 번들→견적 내보내기 기존 통합 검사 포함. 실제 Chrome/Hub 접수 검증은 아니다.
 - 배포08b70d1e-6cd6-41a3-af23-6dfbf961b1aa. outputs/step258-tests.log, step258-build.log, step258-deploy.log. DB변경·유료AI·운영상품등록 없음.
 - 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근 및 상품813724060928 관찰, 실제1688 수집 실행기, 전카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화 미완성.
+
+## 259. 수동 옵션 입력과 서버의 다른 항목 변경 병합 — 2026-09-26
+
+- 시작 main c5ecdf2. 기존 Chrome 바인딩 tabs.list는 빈 목록을 반환했다. 새 창/프로필을 열지 않았다. 실제 Couplus/1688/Hub 관찰은 수행하지 못했다.
+- 구현: 옵션 충돌·변경 알림에서 ‘입력 유지 · 서버 변경 합치기’를 선택하면 최초 저장본/최신 서버값/현재 초안을 항목별 비교한다. 서로 다른 항목 변경은 병합하고 동일 항목의 서로 다른 변경은 항목명을 알려주며 초안 전체를 유지한다. 직접 입력한 빈값, 원가, 이미지, 추가한 옵션을 보존한다. 서버 옵션 추가·삭제·순서 변경이나 로컬 삭제 행의 서버 수정은 추측 병합하지 않는다.
+- 병합은 조회 및 초안 변경만 수행한다. 사용자가 결과 확인 후 저장하면 최신 옵션 revision과 상품 version으로 PATCH한다. 기존 가격 정책만 갱신하는 동작도 유지한다.
+- 검증: option-price-refresh/option-editor-requests/option-editor-tools 22/22, TypeScript, Cloudflare build/check, git diff --check 통과. UI 모의 409→최신 조회→로컬 이미지+서버 재고 병합→최신 revision 저장까지 검사. 실제 Chrome UI 또는 Supplier Hub 실접수 검증은 아니다.
+- Cloudflare 배포 c23c0e22-ca44-4681-a21d-7b441077fa57. 로그 outputs/step259-tests.log, step259-build.log, step259-deploy.log. DB 변경·유료 AI·운영 상품 등록 없음.
+- 핵심 남은 작업/다음 시작점: 기존 Chrome 실제 탭 접근 및 상품813724060928 관찰, 실제1688 수집 실행기, 전 카테고리 Couplus 기본값/공식견적 양식 대조, 이미지 번역 품질, Supplier Hub POST501 어댑터와 실접수 확인. 전체 자동화는 미완성이다.

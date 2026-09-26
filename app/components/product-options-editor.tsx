@@ -5,7 +5,7 @@ import { calculateOptionPrices, emptyOptionInput, optionInputs, optionFieldNames
 import { productImageKeys } from '@/app/product-content';
 import { applyOptionBulk, duplicateOption, moveOption, optionBulkPriceBase, previewOptionBulk, type BulkOptionAction, type BulkOptionPreview } from '@/app/option-editor-tools';
 import type { PricePolicy } from '@/app/pricing';
-import { refreshOptionPriceBase } from '@/app/option-price-refresh';
+import { mergeOptionDraft, refreshOptionPriceBase } from '@/app/option-price-refresh';
 
 type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; onSaved?: () => void; pricingView?: boolean };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
@@ -58,17 +58,17 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
     const controller=new AbortController();activeRequest.current=controller;
     setLoading(true); try { const body = await fetchOptions(endpoint,controller.signal); if(controller.signal.aborted)return; applyLoaded(body); setRefreshNotice(''); } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '저장본을 불러오지 못했습니다.'); } finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setLoading(false); }
   }
-  async function refreshPricesKeepingDraft() {
+  async function refreshPricesKeepingDraft(merge = false) {
     if (!saved || busy || loading || activeRequest.current) return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     try {
       const latest = await fetchOptions(endpoint,controller.signal);
       if(controller.signal.aborted)return;
-      const refreshed = refreshOptionPriceBase(saved, latest, rows);
+      const refreshed = merge ? mergeOptionDraft(saved, latest, rows) : refreshOptionPriceBase(saved, latest, rows);
       setSaved(refreshed.saved); setRows(refreshed.rows); setSnapshotVersion(latest.productVersion);
       setConflict(false); setRefreshNotice('');
-      setMessage('옵션 입력을 유지하고 최신 가격 정책을 적용했습니다. 계산 결과를 확인한 뒤 옵션을 저장하세요.');
+      setMessage(merge ? '서로 다른 항목의 변경을 합쳤습니다. 옵션과 가격을 확인한 뒤 저장하세요. 아직 서버에 저장하지 않았습니다.' : '옵션 입력을 유지하고 최신 가격 정책을 적용했습니다. 계산 결과를 확인한 뒤 옵션을 저장하세요.');
       onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '최신 가격 확인 실패'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
@@ -97,7 +97,7 @@ function OptionsEditor({ product, onSaved, pricingView = false }: Props) {
     {loading && <p role="status">저장한 옵션과 가격 설정을 불러오는 중입니다.</p>}
     {error && <div role="alert" className="panel-note"><div><strong>{error}</strong>{conflict && <p>입력 내용을 보관한 후 최신 상품·가격·옵션을 확인해주세요.</p>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>{saved ? '입력 버리고 저장본 불러오기' : '다시 불러오기'}</button></div></div>}
     {message && <p role="status">{message}</p>}
-    {(refreshNotice || conflict) && <div role="status" className="panel-note"><div><p>{refreshNotice || '저장 중 상품 버전이 바뀌었습니다. 옵션 입력을 유지한 채 최신 가격을 확인할 수 있습니다.'}</p><button type="button" className="btn primary" disabled={busy || loading || !saved} onClick={() => void refreshPricesKeepingDraft()}>입력 유지 · 최신 가격 적용</button><button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>입력 버리고 최신 저장본 불러오기</button></div></div>}
+    {(refreshNotice || conflict) && <div role="status" className="panel-note"><div><p>{refreshNotice || '저장 중 상품 버전이 바뀌었습니다. 옵션 입력을 유지한 채 최신 가격을 확인할 수 있습니다.'}</p><button type="button" className="btn primary" disabled={busy || loading || !saved} onClick={() => void refreshPricesKeepingDraft()}>입력 유지 · 최신 가격 적용</button><button type="button" className="btn ghost" disabled={busy || loading || !saved} onClick={() => void refreshPricesKeepingDraft(true)}>입력 유지 · 서버 변경 합치기</button><button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>입력 버리고 최신 저장본 불러오기</button></div></div>}
     {saved && <>
       <p style={{ color: '#64748b', fontSize: 13 }}>계산 기준: {saved.pricing.policySource === 'saved-product' ? '상품에 저장한 가격 설정' : '상품의 기존 환율·마진 + 현재 기본설정'} · 환율 {saved.pricing.policy.exchangeRate}원 · 공급 마진 {saved.pricing.policy.supplyMargin}% · 쿠팡 마진 {saved.pricing.policy.coupangMargin}% · 최소 마진 {won(saved.pricing.policy.minimumMargin)} · {saved.pricing.policy.roundingUnit}원 단위 {saved.pricing.policy.roundingMode === 'nearest' ? '반올림' : '올림'}</p>
       <fieldset disabled={busy || loading} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
