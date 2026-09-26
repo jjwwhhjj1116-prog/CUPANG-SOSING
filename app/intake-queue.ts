@@ -8,6 +8,14 @@ export type IntakeRow = {
 export function intakeRow(profile: CategoryProfile, id: string): IntakeRow {
   return { id, profile, url: '', features: '', keywords: '', status: 'draft', message: '' };
 }
+
+export function visibleIntakeRows(rows: readonly IntakeRow[], query: string): IntakeRow[] {
+  const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  return rows.filter(row => {
+    const text = [row.profile.categoryPath.join(' '), row.profile.categoryId, row.url, row.features, row.keywords, row.message].join(' ').toLocaleLowerCase();
+    return words.every(word => text.includes(word));
+  });
+}
 export function validateIntakeQueue(rows: readonly IntakeRow[], goal: string) {
   if (!rows.length || rows.length > 50) throw Error('상품을 1~50개 추가해주세요.');
   const errors = new Map<string, string[]>();
@@ -40,9 +48,11 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
   signal: AbortSignal; fetcher: typeof fetch;
   onRow: (id: string, state: Pick<IntakeRow, 'status' | 'message'>) => void;
   onJobs: (jobs: CollectionJob[]) => void;
+  selectedIds?: ReadonlySet<string>;
 }) {
   if (options.signal.aborted) return;
-  const validation = validateIntakeQueue(rows, goal);
+  const selectedRows = options.selectedIds ? rows.filter(row => options.selectedIds!.has(row.id)) : rows;
+  const validation = validateIntakeQueue(selectedRows, goal);
   if (validation.errors.length) {
     for (const error of validation.errors) options.onRow(error.id, { status: 'error', message: error.messages.join(' ') });
     throw Error(`${validation.errors.length}개 행의 입력을 확인해주세요. 각 행에 오류를 표시했습니다. 아직 요청을 전송하지 않았습니다.`);

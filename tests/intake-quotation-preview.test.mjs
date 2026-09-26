@@ -53,3 +53,21 @@ test('opening preview and changing category preserves row URL and notes and disp
  nodes(tree).find(n=>n.props?.className==='intake-category-button').props.onClick();tree=render();const next={...profile,categoryId:'77442',revision:3};nodes(tree).find(n=>n.type===Picker).props.onSelected(next);
  tree=render();assert.equal(nodes(tree).find(n=>n.type===Preview).props.profile,next);assert.equal(rows[0].url,'https://detail.1688.com/offer/1.html');assert.equal(rows[0].features,'특징');assert.equal(rows[0].keywords,'검색어');assert.equal(rows[0].status,'draft');
 });
+
+test('queue starts with add button and retains selection while filtering rows',()=>{
+ let rows=[];const slots=[];let cursor=0;
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(){}};
+ function Picker(){}function Preview(){}
+ const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{'react':hooks,'@/app/components/category-picker':{CategoryPicker:Picker},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:Preview}});
+ const render=()=>{cursor=0;return IntakeQueuePanel({rows,onRows:update=>{rows=update(rows);},profiles:[profile],onProfile(){},onJobs(){},onBusy(){},goal:'price',onGoal(){}});};
+ let tree=render();assert.ok(!nodes(tree).some(n=>n.type===Picker));
+ nodes(tree).find(n=>n.type==='button'&&n.props.children==='＋ 상품 추가').props.onClick();tree=render();assert.ok(nodes(tree).some(n=>n.type===Picker));
+ nodes(tree).find(n=>n.type==='button').props.onClick();
+ rows=[{id:'a',profile,url:'https://detail.1688.com/offer/1.html',features:'red',keywords:'',status:'draft',message:''},{id:'b',profile,url:'https://detail.1688.com/offer/2.html',features:'blue',keywords:'',status:'draft',message:''}];tree=render();
+ const get=(label)=>nodes(tree).find(n=>n.props?.['aria-label']===label);
+ get('2번째 상품 선택').props.onChange({target:{checked:false}});tree=render();assert.equal(get('2번째 상품 선택').props.checked,false);
+ get('상품 대기열 검색').props.onChange({target:{value:'blue'}});tree=render();assert.ok(!get('1번째 상품 선택'));assert.equal(get('2번째 상품 선택').props.checked,false);assert.match(JSON.stringify(tree),/검색으로 숨겨진 선택 상품/);
+ get('검색 결과 전체 선택').props.onChange({target:{checked:true}});tree=render();assert.equal(get('2번째 상품 선택').props.checked,true);
+ get('상품 대기열 검색').props.onChange({target:{value:''}});tree=render();assert.equal(get('1번째 상품 선택').props.checked,true);assert.equal(get('2번째 상품 선택').props.checked,true);
+ assert.equal(rows[0].features,'red');assert.equal(rows[1].features,'blue');
+});

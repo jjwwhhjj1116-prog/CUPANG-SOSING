@@ -59,3 +59,18 @@ test('saved rows are excluded from duplicate checks and cancelled preflight emit
  const controller=new AbortController();controller.abort();let updates=0;
  await submitIntakeQueue([{...row(1),url:'invalid'}],'price',{signal:controller.signal,fetcher:async()=>{updates++;},onJobs(){updates++;},onRow(){updates++;}});assert.equal(updates,0);
 });
+
+test('selected queue submission ignores unselected invalid rows and never submits saved rows',async()=>{
+ const rows=[row(1),{...row(2),url:'invalid'},{...row(3),status:'saved'}];
+ const before=JSON.stringify(rows),calls=[],updates=[];
+ await submitIntakeQueue(rows,'price',{selectedIds:new Set(['1','3']),signal:new AbortController().signal,fetcher:async(_url,init)=>{const body=JSON.parse(init.body);calls.push(body);return response(saved(body));},onJobs(){},onRow:(id,state)=>updates.push({id,...state})});
+ assert.equal(calls.length,1);assert.equal(calls[0].urls[0],'https://detail.1688.com/offer/1.html');assert.equal(updates.length,1);assert.equal(updates[0].id,'1');assert.equal(JSON.stringify(rows),before);
+ await assert.rejects(submitIntakeQueue(rows,'price',{selectedIds:new Set(),signal:new AbortController().signal,fetcher:async()=>{throw Error('must not send');},onJobs(){},onRow(){}}),/1~50/);
+});
+
+test('queue search matches category and URL without changing saved drafts or selection',()=>{
+ const {visibleIntakeRows}=load('app/intake-queue.ts');const rows=[row(1),row(2)];const before=JSON.stringify(rows);
+ assert.deepEqual(Array.from(visibleIntakeRows(rows,'주방용품 특징2'),r=>r.id),['2']);
+ assert.deepEqual(Array.from(visibleIntakeRows(rows,'offer/1.html'),r=>r.id),['1']);
+ assert.equal(visibleIntakeRows(rows,'no-such-product').length,0);assert.equal(visibleIntakeRows(rows,' ').length,2);assert.equal(JSON.stringify(rows),before);
+});
