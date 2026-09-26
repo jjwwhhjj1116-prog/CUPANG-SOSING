@@ -57,7 +57,7 @@ test('attribute adoption preserves manual clear, rejects changed collected sourc
 
 test('translation limit counts attributes rather than just option rows',()=>{
  const {options}=fixture();options.rows=[];
- for(let i=0;i<17;i++)options.rows.push({...optionsModel.emptyOptionInput(`a${i}`),originalName:'原文',color:'白',size:'小',provenance:{color:'collected',size:'collected'}});
+ for(let i=0;i<17;i++)options.rows.push({...optionsModel.emptyOptionInput(`a${i}`),included:true,originalName:'原文',color:'白',size:'小',provenance:{color:'collected',size:'collected'}});
  assert.throws(()=>model.optionTranslationAttributes(options),/50/);
  options.rows[16].size='';assert.equal(model.optionTranslationAttributes(options).length,50);
 });
@@ -104,4 +104,35 @@ test('option batches cover remaining fields after committed translations and pre
  assert.equal(model.optionTranslationBatch(saved).total,26);
  assert.equal(model.optionTranslationBatch(options,0).remaining,75);
  for(const capacity of [-1,51,1.5,NaN])assert.throws(()=>model.optionTranslationBatch(options,capacity));
+});
+
+test('excluded options consume no translation capacity and resume when included again',()=>{
+ const {options,job}=fixture();
+ const row=options.rows[0];row.color='白';row.size='小';row.provenance.color='collected';row.provenance.size='collected';
+ const source=model.optionTranslationAttributes(options);
+ job.review.source.attributes=source;
+ job.result.draft.attributes=source.map((item,sourceIndex)=>({sourceIndex,value:'번역값'}));
+ row.included=false;
+ const before=JSON.stringify(options);
+ assert.equal(model.optionTranslationBatch(options,1).total,0);
+ assert.equal(model.optionTranslationBatch(options,1).remaining,0);
+ assert.equal(model.optionTranslationAttributes(options,true).length,0);
+ assert.throws(()=>model.optionTranslationAttributes(options),/없습니다/);
+ const ignored=model.adoptOptionTranslations(options,job,'v',true);
+ assert.equal(ignored.changed,0);assert.equal(ignored.reviewed.length,0);
+ assert.equal(ignored.rows[0].translatedName,'');assert.equal(ignored.rows[0].color,'白');assert.equal(ignored.rows[0].size,'小');
+ assert.equal(JSON.stringify(options),before);
+ row.included=true;
+ assert.equal(model.optionTranslationBatch(options,1).total,3);
+ assert.equal(model.optionTranslationBatch(options,1).remaining,2);
+ assert.equal(model.adoptOptionTranslations(options,job,'v').changed,3);
+});
+
+test('excluded rows before active rows do not starve a bounded translation batch',()=>{
+ const {options}=fixture();
+ options.rows[1].translatedName='';options.rows[1].provenance.translatedName='unverified';
+ options.rows[0].included=false;
+ const batch=model.optionTranslationBatch(options,1);
+ assert.equal(batch.total,1);assert.equal(batch.remaining,0);
+ assert.equal(batch.attributes[0].name,'option:b');
 });

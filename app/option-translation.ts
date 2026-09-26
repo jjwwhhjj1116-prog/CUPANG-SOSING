@@ -21,6 +21,7 @@ export function confirmOptionTranslationSave(input: unknown, current: ProductOpt
 }
 function pendingOptionAttributes(options:ProductOptions){
  const attributes=options.rows.flatMap(row=>{
+  if(!row.included)return [];
   const values=row.originalName.trim()&&!row.translatedName.trim()&&row.provenance.translatedName!=='manual'?[{name:`option:${row.id}`,value:row.originalName}]:[];
   for(const field of ['color','size'] as const){
    if(row[field]?.trim()&&row.provenance[field]==='collected')values.push({name:`option-${field}:${row.id}`,value:row[field]!});
@@ -55,6 +56,9 @@ export function adoptOptionTranslations(options:ProductOptions,job:TranslationJo
   const key=`${id}:${field??'translatedName'}`;
   if(!row||seen.has(key))throw new Error('옵션 원문이나 연결이 변경되었습니다. 새 번역 요청을 만들어주세요.');
   seen.add(key);
+  // Excluded rows remain available for later use, but must not be changed by
+  // a batch prepared before they were excluded.
+  if(!row.included)continue;
   if(field){
    // Only unchanged collected attributes may be replaced. Reviewed/manual blanks stay blank.
    if(options.rows.find(value=>value.id===id)?.provenance[field]!=='collected')continue;
