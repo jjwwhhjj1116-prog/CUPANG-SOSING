@@ -123,3 +123,10 @@ test('bulk previews must be recalculated after any price policy change without c
  assert.equal(fresh.changes[0].afterPrice,preview.changes[0].afterPrice*2);
  assert.equal(applied[1].included,false);assert.equal(applied[1].unitsPerPack,rows[1].unitsPerPack);
 });
+
+test('new bundle retains source packaging but leaves its own packaging unmeasured',()=>{
+ const rows=[row('a',{packagedWeightG:450,packagedWidthMm:400,packagedLengthMm:300,packagedHeightMm:80})];
+ const plan=tools.previewOptionBulk(rows,['a'],{type:'addBundle',value:2,newIds:{a:'bundle'}},policy);
+ assert.equal(plan.rows[0].packagedWeightG,450);
+ for(const key of ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'])assert.equal(plan.rows[1][key],null);
+});

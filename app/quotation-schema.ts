@@ -416,6 +416,14 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'noticeReleaseDate': return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance);
       case 'noticeServiceContact': return contentValue(content.label.contact, settings.serviceContact);
+      case 'packagedWeightG': return option?.provenance.packagedWeightG === 'manual' ? { value: option.packagedWeightG == null ? '' : String(option.packagedWeightG), source: 'option' } : literal(option?.packagedWeightG, 'option');
+      case 'packagedDimensionsMm': {
+        const dimensions = [option?.packagedWidthMm, option?.packagedLengthMm, option?.packagedHeightMm];
+        if (dimensions.every(value => value != null)) return literal(dimensions.join('*'), 'option');
+        const entered = dimensions.some(value => value != null);
+        const cleared = option && (['packagedWidthMm','packagedLengthMm','packagedHeightMm'] as const).some(key => option.provenance[key] === 'manual');
+        return { value: '', source: entered || cleared ? 'option' : 'empty', issues: entered ? ['포장 가로·세로·높이를 모두 입력해주세요(mm).'] : [] };
+      }
       case 'boxSkuQuantity': return literal(settings.boxSkuQuantity, 'settings');
       // Certification applicability, country, packaging measurements, barcode,
       // and attribute values never come from category names or blanket defaults.

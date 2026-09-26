@@ -1617,3 +1617,19 @@ test('archive detects duplicate main and detail bytes across different keys for 
  for(const row of resolved.rows)row.included=false;assets[1].data=Buffer.from(png);
  assert.equal(inspect(resolved,assets.map(a=>a.key),undefined,'attachment-bytes',identities(assets)).issues.filter(i=>i.code==='MAIN_DETAIL_DUPLICATE').length,0);
 });
+
+test('saved option packaging flows to category logistics and export without substituting product measurements',()=>{
+ const input=fixture();const option=input.options.rows[0];
+ Object.assign(option,{packagedWeightG:480,packagedWidthMm:400,packagedLengthMm:320,packagedHeightMm:90,widthCm:38,lengthCm:31,heightCm:14,weightKg:0.375});
+ for(const key of ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'])option.provenance[key]='manual';
+ const read=()=>model.resolveQuotationFields(input);let resolved=read();let target=resolved.rows.find(row=>row.optionId===option.id);
+ assert.equal(target.fields.packagedWeightG.value,'480');assert.equal(target.fields.packagedDimensionsMm.value,'400*320*90');
+ const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows({...input,state:{overrides:input.overrides}},resolved,[{key:'owner/main.png',name:'assets/main.png'},{key:'owner/option.png',name:'assets/option.png'},{key:'owner/detail.png',name:'assets/detail.png'}]);
+ assert.equal(exported.find(row=>row.skuId===option.supplierSku).packagedWeightG,480);
+ assert.equal(exported.find(row=>row.skuId===option.supplierSku).packagedDimensionsMm,'400*320*90');
+ option.packagedHeightMm=null;option.packagedWeightG=null;
+ target=read().rows.find(row=>row.optionId===option.id);
+ assert.equal(target.fields.packagedWeightG.value,'');assert.equal(target.fields.packagedDimensionsMm.value,'');assert.ok(target.fields.packagedDimensionsMm.issues.some(message=>message.includes('모두 입력')));
+ input.overrides={common:{packagedWeightG:'500'},options:{[option.id]:{packagedDimensionsMm:'',packagedWeightG:'490'}}};
+ target=read().rows.find(row=>row.optionId===option.id);assert.equal(target.fields.packagedDimensionsMm.value,'');assert.equal(target.fields.packagedWeightG.value,'490');
+});

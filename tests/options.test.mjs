@@ -150,3 +150,19 @@ test('supplier stock keeps zero distinct from unknown and survives legacy saves'
   }
   for (const stock of [-1,0.5,'0',NaN,Infinity,Number.MAX_SAFE_INTEGER+1]) assert.throws(()=>model.validateOptionsInput(payload([row('a',{stock})]),'owner',[]));
 });
+
+test('packaging measurements validate separately, survive older clients and preserve explicit clearing',()=>{
+ const fields=['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'];
+ const input=row('a',{packagedWeightG:480,packagedWidthMm:400,packagedLengthMm:320,packagedHeightMm:90});
+ const valid=model.validateOptionsInput(payload([input]),'owner',[]);
+ let saved=model.applyOptionRows(model.emptyProductOptions('test'),valid.rows,version);
+ for(const key of fields)assert.equal(saved.rows[0].provenance[key],'manual');
+ const legacy={...input};for(const key of fields)delete legacy[key];
+ saved=model.applyOptionRows(saved,model.validateOptionsInput(payload([legacy]),'owner',[]).rows,nextVersion);
+ for(const key of fields)assert.equal(saved.rows[0][key],input[key]);
+ saved=model.applyOptionRows(saved,[{...legacy,packagedWeightG:null}],nextVersion);
+ assert.equal(saved.rows[0].packagedWeightG,null);assert.equal(saved.rows[0].provenance.packagedWeightG,'manual');
+ assert.equal(saved.rows[0].packagedWidthMm,400);
+ for(const key of fields)for(const invalid of [0,-1,1.2,'400',Infinity,NaN])assert.throws(()=>model.validateOptionsInput(payload([row('a',{[key]:invalid})]),'owner',[]));
+ assert.throws(()=>model.validateOptionsInput(payload([row('a',{packagedWidthMm:1000001})]),'owner',[]));
+});

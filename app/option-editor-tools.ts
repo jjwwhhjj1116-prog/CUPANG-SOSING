@@ -28,7 +28,7 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
     if (action.type === 'addBundle') return [{ ...row }, { ...row, id: action.newIds[row.id],
       translatedName: row.translatedName ? `${row.translatedName} (${action.value}개입)`.slice(0, 500) : '',
       originalName: row.originalName || row.supplierSku, unitsPerPack: action.value,
-      supplierSku: '', stock: null, minimumOrderQuantity: null, widthCm: null, lengthCm: null, heightCm: null, weightKg: null }];
+      supplierSku: '', stock: null, minimumOrderQuantity: null, widthCm: null, lengthCm: null, heightCm: null, weightKg: null, packagedWeightG: null, packagedWidthMm: null, packagedLengthMm: null, packagedHeightMm: null }];
     if (action.type === 'remove') return [];
     if (action.type === 'include' || action.type === 'exclude') return [{ ...row, included: action.type === 'include' }];
     if ('value' in action) return [{ ...row, [action.type]: action.value }];

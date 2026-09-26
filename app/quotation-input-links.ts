@@ -8,6 +8,7 @@ const links: Readonly<Record<string, string>> = {
   brand: '기본설정 브랜드', manufacturer: '6단계 제조사 → 기본설정 제조사',
   tradeType: '기본설정 거래타입', taxType: '기본설정 과세여부', importType: '기본설정 수입여부',
   boxSkuQuantity: '기본설정 박스 내 SKU 수량', model: '6단계 모델명 · 80719에서 미입력 시 50자 이내 SEO 상품명 → 수집 상품명',
+  packagedWeightG: '옵션 포장 무게 · g', packagedDimensionsMm: '옵션 포장 가로·세로·높이 · mm',
   quantity: '2단계 옵션 판매단위 수량', color: '옵션 색상', brace_noticeColor: '옵션 색상', marathon_noticeColor: '옵션 색상',
   size: '옵션 사이즈 · 카테고리가 허용하는 경우 상품 치수', marathon_noticeSize: '옵션 사이즈',
   weight: '80719 옵션 상품 중량 · 포장 무게와 별개',

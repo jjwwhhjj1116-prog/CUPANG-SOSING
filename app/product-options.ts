@@ -8,11 +8,13 @@ export const optionFieldNames = {
   color: '색상', size: '구매 사이즈', stock: '공급자 재고',
   unitCostCny: '개당 원가 CNY', unitsPerPack: '판매 단위당 구성 수량', minimumOrderQuantity: '최소 주문 수량',
   widthCm: '가로 cm', lengthCm: '세로 cm', heightCm: '높이 cm', weightKg: '판매 단위 무게 kg',
+  packagedWeightG: '포장 무게 g', packagedWidthMm: '포장 가로 mm', packagedLengthMm: '포장 세로 mm', packagedHeightMm: '포장 높이 mm',
   included: '견적 포함', imageKey: '옵션 이미지',
 } as const;
 export type OptionField = keyof typeof optionFieldNames;
 export type OptionValues = {
   color?: string; size?: string; stock?: number | null;
+  packagedWeightG?: number | null; packagedWidthMm?: number | null; packagedLengthMm?: number | null; packagedHeightMm?: number | null;
   originalName: string; translatedName: string; supplierSku: string; unitCostCny: number | null;
   unitsPerPack: number; minimumOrderQuantity: number | null; widthCm: number | null; lengthCm: number | null;
   heightCm: number | null; weightKg: number | null; included: boolean; imageKey: string | null;
@@ -43,7 +45,7 @@ export function quotationMainImageKeys(option: Pick<OptionValues, 'imageKey'> | 
 export function emptyProductOptions(productId: string): ProductOptions { return { schemaVersion: 1, productId, revision: 0, updatedAt: null, rows: [] }; }
 export function emptyOptionInput(id: string): OptionInput {
   return { id, originalName: '', translatedName: '', supplierSku: '', color: '', size: '', stock: null, unitCostCny: null, unitsPerPack: 1,
-    minimumOrderQuantity: null, widthCm: null, lengthCm: null, heightCm: null, weightKg: null, included: false, imageKey: null };
+    minimumOrderQuantity: null, widthCm: null, lengthCm: null, heightCm: null, weightKg: null, packagedWeightG: null, packagedWidthMm: null, packagedLengthMm: null, packagedHeightMm: null, included: false, imageKey: null };
 }
 function object(value: unknown, keys: readonly string[], name: string) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} 객체가 필요합니다.`);
@@ -84,6 +86,10 @@ export function validateOptionsInput(input: unknown, ownerId: string, imageKeys:
       ...(raw.color !== undefined ? { color: text(raw.color, 200, '색상') } : {}),
       ...(raw.size !== undefined ? { size: text(raw.size, 200, '구매 사이즈') } : {}),
       ...(raw.stock !== undefined ? { stock: raw.stock as number | null } : {}),
+      ...(raw.packagedWeightG !== undefined ? { packagedWeightG: number(raw.packagedWeightG, 1e9, true, true, optionFieldNames.packagedWeightG) } : {}),
+      ...(raw.packagedWidthMm !== undefined ? { packagedWidthMm: number(raw.packagedWidthMm, 1e6, true, true, optionFieldNames.packagedWidthMm) } : {}),
+      ...(raw.packagedLengthMm !== undefined ? { packagedLengthMm: number(raw.packagedLengthMm, 1e6, true, true, optionFieldNames.packagedLengthMm) } : {}),
+      ...(raw.packagedHeightMm !== undefined ? { packagedHeightMm: number(raw.packagedHeightMm, 1e6, true, true, optionFieldNames.packagedHeightMm) } : {}),
       unitsPerPack: number(raw.unitsPerPack, 1e6, true, false, '구성 수량')!,
       minimumOrderQuantity: number(raw.minimumOrderQuantity, 1e9, true, true, '최소 주문 수량'),
       widthCm: number(raw.widthCm, 1e5, false, true, '가로 cm'), lengthCm: number(raw.lengthCm, 1e5, false, true, '세로 cm'),
@@ -99,6 +105,7 @@ export function applyOptionRows(current: ProductOptions, rows: OptionInput[], no
       const before = previous.get(row.id); let changed = !before;
       // Older clients omit the new attributes. Omission must not erase saved facts.
       row = { ...row, color: row.color ?? before?.color ?? '', size: row.size ?? before?.size ?? '', stock: row.stock === undefined ? before?.stock ?? null : row.stock };
+      for (const key of ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'] as const) row[key] = row[key] === undefined ? before?.[key] ?? null : row[key];
       const provenance = Object.fromEntries((Object.keys(optionFieldNames) as OptionField[]).map(key => {
         if (before && before[key] === row[key]) return [key, before.provenance[key] ?? 'unverified'];
         changed = true;

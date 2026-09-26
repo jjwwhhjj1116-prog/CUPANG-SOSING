@@ -2867,3 +2867,13 @@ AI등록 화면 확인:
 - 검증: quotation-schema157/157, TypeScript, Cloudflare build/check/diff 통과. 다른 키의 동일 바이트 검출, 내용 변경 시 미검출, 제외 옵션 미검출, JSON/CSV 결과 및 입력 불변성 확인. 실Chrome UI/Hub접수 검증 아님.
 - 배포 Cloudflarec796fc69-9b25-445b-8462-0f23d39cba24. outputs/step268-tests.log, step268-build.log, step268-deploy.log. 유료AI·DB스키마변경·운영등록 없음.
 - 다음 시작점: 실제1688 수집 실행기와 전카테고리 자동작성값 대조, 이미지 번역, Supplier Hub POST501 제거를 위한 실제 계약 확인 및 접수 검증이 핵심 미완성이다. 이 첨부 검사 보완은 전체 자동화 완료가 아니다.
+
+## 269. 옵션 포장 정보 → 견적 물류 항목 연동 — 2026-09-26
+
+- 시작 main3ee635f clean. 옵션 편집에는 상품 자체 cm/kg만 있었고 견적 필수 포장 g/mm의 저장·연동 입력이 없었다.
+- 구현: 옵션에 packagedWeightG/packagedWidthMm/packagedLengthMm/packagedHeightMm을 선택적 필드로 추가하고 편집 화면 숫자 입력을 연결했다. 실제 배송 포장 상태의 양의 정수를 저장한다. 무게 최대1e9g, 각 치수 최대1e6mm. 상품 치수·중량에서 추정하거나 단위를 임의 변환하지 않는다.
+- 견적: 저장한 포장 무게는 packagedWeightG, 가로/세로/높이 세 값은 packagedDimensionsMm의 가로*세로*높이로 자동 반영된다. 부분 입력은 공란과 검증 오류로 표시한다. 견적 공통/옵션 수동 수정 우선순위와 명시 공란을 보존한다. 입력 경로 안내 및 최종 내보내기도 같은 값을 사용한다.
+- 호환: 이전 클라이언트가 새 필드를 생략해도 기존 포장값을 삭제하지 않는다. 새 번들은 원래 상품의 포장 수치를 복사하지 않고 미측정으로 둔다. DB 스키마 변경 없음.
+- 검증: 관련205/205, 전체900/900 통과 후 숫자 입력 step=1 및 UI 입력/공란 검사를 추가하여 UI4/4 통과. TypeScript, Cloudflare build/check/diff 통과. 옵션 저장값→견적→export 연결, 수동 우선순위, 상품치수와 분리, 부분 입력, 이전클라이언트 생략, 잘못된 숫자, 새번들 공란 검사 포함. 실제 Chrome 클릭·실상품 수집·Hub접수 검증 아님.
+- 배포 Cloudflare4bd2df2f-f0d9-4cd3-acd0-478a8841b234. 로그 outputs/step269-tests.log, step269-full-tests.log, step269-ui-tests.log, step269-build.log, step269-deploy.log. 유료AI·운영등록 없음.
+- 다음 시작점: 실제1688 실행 수집, 전카테고리 Couplus 기본값 대조, 이미지 번역, Supplier Hub501 전송 및 접수 검증은 여전히 미완성. 이번 변경은 사람이 확인한 포장값의 단계 간 자동연동이며, 쿠플러스 전체 복제 완료나 포장치수 자동수집을 의미하지 않는다.

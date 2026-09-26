@@ -51,3 +51,15 @@ test('explicit merge keeps local image and remote stock, then saves against the 
  assert.equal(requests.length,2);assert.equal(requests[1].expectedRevision,2);assert.equal(requests[1].expectedProductVersion,h.product.updated_at);
  assert.equal(requests[1].rows[0].imageKey,'owner/b.png');assert.equal(requests[1].rows[0].stock,20);
 });
+test('packaging inputs edit and clear grams and millimetres in the option save request',async()=>{
+ let submitted;
+ const h=harness(async(_url,init)=>{submitted=JSON.parse(init.body);return Response.json({error:'검증용 저장 중단'},{status:409});});await h.start();
+ for(const [label,value] of [['포장 무게 g',480],['포장 가로 mm',400],['포장 세로 mm',320],['포장 높이 mm',90]]){
+  const input=nodes(h.render()).find(n=>n.type==='input'&&n.props['aria-label']===`옵션 1 ${label}`);
+  assert.ok(input);assert.equal(input.props.step,1);input.props.onChange({target:{value:String(value),valueAsNumber:value}});
+ }
+ h.button().props.onClick();await settle();assert.equal(submitted.rows[0].packagedWeightG,480);assert.equal(submitted.rows[0].packagedHeightMm,90);
+ const input=nodes(h.render()).find(n=>n.type==='input'&&n.props['aria-label']==='옵션 1 포장 높이 mm');
+ input.props.onChange({target:{value:'',valueAsNumber:NaN}});
+ assert.equal(nodes(h.render()).find(n=>n.type==='input'&&n.props['aria-label']==='옵션 1 포장 높이 mm').props.value,'');
+});
