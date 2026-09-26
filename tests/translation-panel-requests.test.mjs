@@ -9,10 +9,10 @@ const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...no
 const label=t=>Array.isArray(t)?t.map(label).join(''):typeof t==='string'||typeof t==='number'?String(t):'';
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(r=>setImmediate(r));};
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
-function harness(handler,status='completed',failInitial=false,emptyJobs=false){
+function harness(handler,status='completed',failInitial=false,emptyJobs=false,jobVersion='v',jobContentRevision=1){
  const slots=[],effects=[],cleanup=[],calls=[];let index=0,first=true,closed=false,late=0,saved=0;
  const content={revision:1,seo:Object.fromEntries(['title','description','keywords'].map(k=>[k,{value:k==='keywords'?[]:'manual'}]))};
- const job={id:'j',status,productVersion:'v',contentRevision:1,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt:'2026-09-24',source:{}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
+ const job={id:'j',status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt:'2026-09-24',source:{}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
  const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,issues:[]}};
  const hooks={useCallback:fn=>fn,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  let initial=0;
@@ -155,5 +155,30 @@ test('large source loads only the available option batch and reports the preserv
   await settle();const tree=JSON.stringify(h.render());assert.match(tree,/분할 상품/);assert.ok(tree.includes(`남은 옵션 번역 항목 ${60-(50-count)}개`));
   const area=nodes(h.render()).find(n=>n.type==='textarea'&&n.props.rows===3);
   assert.equal(area.props.value?area.props.value.split('\n').length:0,50-count);assert.equal(h.saved,0);assert.ok(h.calls.every(call=>!call.init.method));
+ }
+});
+
+
+test('historical jobs allow the next batch to prefill source context and remaining options without paid calls',async()=>{
+ for(const [jobVersion,revision] of [['previous-version',1],['v',0]]){
+  const h=harness(async(url,init,{job})=>Response.json(init.method==='POST'?{job}:url.endsWith('/options')?{productVersion:'v',options:{productId:'p',attributes:[{name:'option:remaining',value:'绿色'}]}}:{productVersion:'v',title:'다음 분할 원문',description:'원문 설명',attributes:[],jobId:'source',sourceUrl:'https://detail.1688.com/offer/813724060928.html',requestContext:{categoryId:'80719',categoryPath:['주방용품','바구니'],capturedAt:'2026-09-26',features:'원래 특징',keywords:'원래 키워드'}}),'completed',false,false,jobVersion,revision);
+  await settle();
+  assert.equal(h.calls.length,2);assert.ok(h.calls.every(call=>!call.init.method));assert.equal(h.saved,0);
+  const tree=JSON.stringify(h.render());assert.match(tree,/다음 분할 원문/);assert.match(tree,/option:remaining=绿色/);assert.match(tree,/원래 특징/);assert.match(tree,/원래 키워드/);
+  h.button(prepare)();await settle();
+  const prepared=JSON.parse(h.calls.at(-1).init.body);
+  assert.equal(prepared.action,'prepare');assert.equal(prepared.source.category.id,'80719');assert.equal(prepared.source.guidance.features,'원래 특징');
+  assert.equal(prepared.source.attributes[0].name,'option:remaining');assert.equal(h.saved,0);
+ }
+});
+
+test('historical-job prefill failures and closing preserve a usable form and never start translation',async()=>{
+ for(const mode of ['failed','wrong-options','closed']){
+  const pending=deferred();
+  const h=harness(async url=>mode==='closed'?pending.promise:mode==='failed'?Response.json({error:'원문 조회 실패'},{status:503}):Response.json(url.endsWith('/options')?{productVersion:'v',options:{productId:'other',attributes:[]}}:{productVersion:'v',title:'교체 금지',description:'설명',attributes:[],jobId:'source',sourceUrl:'https://example.invalid'}),'completed',false,false,'old');
+  await settle();
+  if(mode==='closed'){h.close();pending.resolve(Response.json({title:'지연 원문'}));await settle();assert.equal(h.late,0);assert.equal(h.calls[0].init.signal.aborted,true);}
+  else {const tree=JSON.stringify(h.render());assert.doesNotMatch(tree,/교체 금지/);const field=nodes(h.render()).find(n=>n.type==='input'&&n.props.maxLength===1000);assert.equal(field.props.disabled,false);}
+  assert.ok(h.calls.every(call=>!call.init.method));assert.equal(h.saved,0);
  }
 });

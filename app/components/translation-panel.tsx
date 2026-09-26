@@ -87,7 +87,10 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
       .then(async next=>{
         if(controller.signal.aborted)return;
         setView(next.view);setContent(next.content);
-        if(next.view.jobs.length)return;
+        // Saving a batch changes the product/content version. Historical jobs
+        // must not disable source prefill for the next batch of pending options.
+        // A current job still keeps its existing workflow untouched.
+        if(next.view.jobs.some(item=>item.productVersion===version&&item.contentRevision===next.content.revision))return;
         try {
           const response=await fetch(`/api/products/${encodeURIComponent(productId)}/translation-source`,{cache:'no-store',signal:controller.signal});
           if(controller.signal.aborted||response.status===404)return;
