@@ -18,6 +18,7 @@ function harness(request,existing=false){
   if(name.endsWith('.css'))return{};
   if(name==='@/app/category-profiles')return{usableCategoryCode:()=>true};
   if(name==='@/app/quotation-schema')return{getQuotationSchema:()=>({fields:[],status:'observed'})};
+  if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};
   if(name==='@/app/components/category-quotation-preview')return{CategoryQuotationPreview:()=>null};
   if(name==='@/app/category-catalog')return{categoryChoices:profiles=>existing?profiles.map(profile=>({...choice,path:profile.categoryPath,categoryId:profile.categoryId})): [choice],canConfirmCategory:()=>true,categoryAdvancedSeed:()=>({}),categoryChoicesAtPath:()=>[choice],categoryLevel:()=>[],categoryObservationScope:{},categoryProfileForChoice:()=>({categoryId:'80719'}),searchCategoryChoices:()=>[]};
   return native(name);
@@ -29,7 +30,7 @@ function harness(request,existing=false){
 test('category confirmation creates one profile and reports one selection despite repeated clicks',async()=>{
  const wait=pending(),h=harness(()=>wait.promise),click=h.confirm();click();click();assert.equal(h.calls.length,1);
  wait.resolve(Response.json({profile:{id:'new',categoryId:'80719',categoryPath:['test'],revision:1}}));await settle();click();assert.equal(h.calls.length,1);assert.equal(h.selected.length,1);
- const saved=harness(async()=>Response.json({profiles:[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:2,template:{id:'latest-template'}}]}),true),choose=saved.confirm();choose();choose();await settle();assert.equal(saved.selected.length,1);assert.equal(saved.calls.length,1);assert.equal(saved.calls[0].method,undefined);assert.equal(saved.selected[0].revision,2);assert.equal(saved.selected[0].template.id,'latest-template');
+ const saved=harness(async()=>Response.json({profiles:[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1,template:{id:'latest-template'}}]}),true),choose=saved.confirm();choose();choose();await settle();assert.equal(saved.selected.length,1);assert.equal(saved.calls.length,1);assert.equal(saved.calls[0].method,undefined);assert.equal(saved.selected[0].revision,1);assert.equal(saved.selected[0].template.id,'latest-template');
 });
 test('failed category save unlocks retry while closing the picker ignores a late successful response',async()=>{
  let attempt=0;const h=harness(async()=>++attempt===1?Response.json({error:'저장 실패'},{status:500}):Response.json({profile:{id:'new',categoryId:'80719',categoryPath:['test'],revision:1}}));
@@ -71,4 +72,14 @@ test('category create retry keeps the same request key and serialized selection'
  assert.match(h.calls[0].headers['Idempotency-Key'],/^[0-9a-f-]{36}$/);
  assert.equal(h.calls[0].headers['Idempotency-Key'],h.calls[1].headers['Idempotency-Key']);
  assert.equal(h.calls[0].body,h.calls[1].body);
+});
+
+test('same category with a changed quotation revision displays its new mapping before selection',async()=>{
+ let revision=2;
+ const h=harness(async()=>Response.json({profiles:[{id:'saved',categoryId:'80719',categoryPath:['test'],revision,template:{name:'updated.xlsx'},mappings:[{column:0,field:'constant',constant:'updated default'}]}]}),true);
+ h.confirm()();await settle();assert.equal(h.selected.length,0);assert.match(JSON.stringify(h.render()),/견적 설정이 변경/);
+ const preview=nodes(h.render()).find(n=>n.props?.profile?.template?.name==='updated.xlsx');
+ assert.equal(preview.props.profile.revision,2);assert.equal(preview.props.profile.mappings[0].constant,'updated default');
+ revision=3;h.confirm()();await settle();assert.equal(h.selected.length,0);
+ h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].revision,3);
 });

@@ -6,6 +6,7 @@ import { canConfirmCategory, categoryAdvancedSeed, categoryChoices, categoryChoi
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { CategoryQuotationPreview } from '@/app/components/category-quotation-preview';
 import './category-picker.css';
+import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 
 function codeEvidenceLabel(choice: CategoryChoice) {
   if (choice.codeEvidence === 'supplier-hub') return 'Supplier Hub 코드 확인 · 전체 경로 일치';
@@ -26,6 +27,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
   const createRequest = useRef<{ body: string; id: string } | null>(null);
   useEffect(() => () => { activeRequest.current?.abort(); }, []);
   const selected = choices.find(choice => choice.key === selectedKey);
+  const selectedProfile = profiles.find(profile => profile.id === selected?.profileId);
   const schema = selected?.categoryId ? getQuotationSchema(selected.categoryId, selected.path) : null;
   const visible = searchCategoryChoices(choices, query);
   const connections = categoryChoicesAtPath(choices, path).filter(choice => choice.isLeaf);
@@ -61,6 +63,9 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
           setPath(latest.categoryPath);
           throw new Error('다른 화면에서 이 설정의 카테고리가 변경되었습니다. 갱신된 분류와 견적 항목을 확인한 뒤 선택 완료를 눌러주세요.');
         }
+        if (latest.revision !== existing.revision) {
+          throw new Error('선택한 카테고리의 견적 설정이 변경되었습니다. 아래 갱신된 양식과 열 연결을 확인한 뒤 선택 완료를 눌러주세요.');
+        }
         completed.current = true; onSelected(latest); return;
       }
       const body = JSON.stringify(categoryProfileForChoice(selected));
@@ -94,7 +99,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
     {unresolvedBranch && <div className="category-unconfirmed" role="status"><strong>{path.join(' › ')}</strong><p>이 가지의 하위 목록은 아직 확보하지 못했습니다. {path[0] === '기프트카드' ? '쿠플러스에서 다른 분류의 이전 목록이 남아 있어 해당 하위 목록을 가져오지 않았습니다.' : '최종 분류 이름과 실제 코드를 확인한 뒤 저장 설정으로 연결해주세요.'}</p></div>}
     {selected?.isLeaf && <div className={`category-summary ${canConfirmCategory(selected) ? '' : 'unconfirmed'}`}><strong>{selected.path.join(' › ')}</strong><span>{selected.evidence === 'saved' ? '저장한 설정' : '쿠플러스 화면 관찰'} · {selected.categoryId ? `카테고리 ${selected.categoryId}` : '분류 코드 미확인'}</span><p>{codeEvidenceLabel(selected)}{selected.codeObservedAt ? ` · ${selected.codeObservedAt.slice(0, 10)}` : ''}</p><p>{!selected.categoryId ? '이름과 경로만 확인한 최종 분류입니다. 실제 코드를 임의로 만들거나 다른 분류의 견적 항목을 재사용하지 않습니다.' : schema?.status === 'observed' ? `견적 항목: 화면에서 확인한 ${schema.fields.length}개 항목에 기본설정, 상품명, 옵션 가격과 이미지를 연결합니다. 코드 확인과 별도로 기록한 항목 근거이며 공식 접수를 검증한 것은 아닙니다.` : schema?.evidence ?? '카테고리별 견적 항목을 확인해주세요.'}</p><small>{selected.templateLinked ? '저장한 원본 Excel 연결 있음 · 공식 접수 검증은 별도입니다.' : '공식 견적서 원본·열 연결 미확인 · Excel 양식 설정에서 연결할 수 있습니다.'}</small></div>}
     <details className="category-scope"><summary>현재 지원 범위와 확인 근거</summary><p>{categoryObservationScope.rootsWithSecondLevel}개 대분류의 2단계 {categoryObservationScope.secondLevel}개와 주방수납/정리 최종 {categoryObservationScope.completeSubtreeLeaves}개 경로를 확인했습니다. 코드 {categoryObservationScope.knownCodes}개 중 {categoryObservationScope.supplierHubCodes}개는 {categoryObservationScope.supplierHubObservedDate} Supplier Hub 개별등록 화면과 대조했습니다. 전체 최종 분류·카테고리별 양식·공식 접수는 아직 모두 검증되지 않았습니다.</p></details>
-    {selected?.isLeaf && schema && <CategoryQuotationPreview key={selected.key} schema={schema} />}
+    {selected?.isLeaf && schema && (selectedProfile ? <IntakeQuotationPreview key={`${selected.key}:${selectedProfile.revision}`} profile={selectedProfile}/> : <CategoryQuotationPreview key={selected.key} schema={schema} />)}
     {selected?.categoryId && !usableCategoryCode(selected.categoryId) && <p role="alert">저장된 카테고리 번호 형식이 올바르지 않습니다. 카테고리·Excel 양식 설정에서 영문·숫자·하이픈·밑줄 100자 이하의 실제 번호로 수정해주세요. 기존 설정은 보존되어 있습니다.</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
     <div className="modal-actions"><button className="btn ghost" type="button" disabled={busy} onClick={() => onAdvanced(categoryAdvancedSeed(selected, path))}>{selected?.categoryId ? '카테고리·Excel 양식 설정' : '선택 경로로 실제 코드·양식 연결'}</button><button className="btn primary" type="button" disabled={!canConfirmCategory(selected) || busy} onClick={() => void confirm()}>{busy ? '설정 중…' : '선택 완료 · URL 입력'}</button></div>

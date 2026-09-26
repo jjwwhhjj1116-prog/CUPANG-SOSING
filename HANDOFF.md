@@ -3184,3 +3184,10 @@ AI등록 화면 확인:
 - 조회 실패는 기존 설정을 유지하며 다시 조회 가능하다. running ref로 중복 조회/제출을 방지하고 unmount 시 abort 및 늦은 응답 적용을 차단한다.
 - 관련31/31 통과, 최종 메시지 정리 뒤 실제 패널 회귀3/3 재검증 통과. TypeScript, Cloudflare build/check, diff check 통과. 실제 Couplus/1688/Supplier Hub E2E 검증이 아니다.
 - 배포 c04bce26-bf12-497d-bf13-1688ab804cb6. outputs/step306-tests.log, step306-reload-tests.log, step306-build.log, step306-deploy.log. 전체 카테고리 기본값 대조/실제1688 수집 검증/이미지 번역/Hub 자동전송은 미완성 유지.
+
+## 307 — Category selection previews the saved quotation mapping (2026-09-26)
+- CategoryPicker renders the selected saved profile's actual template, column mappings, constants and category field preview before URL entry.
+- A same-category revision change during confirmation refreshes the visible profile and requires reviewing that updated mapping; unchanged revisions still proceed directly. Repeated changes remain unselected until the displayed revision matches.
+- Validation: category-picker-requests + intake-quotation-preview 11/11; tsc; Cloudflare build/artifact check; diff check passed.
+- Deployed Cloudflare version 3b8475ed-de81-4ad5-93b7-cd13e9b59b65.
+- Existing selected Chrome binding returned [] tabs. No live Couplus comparison, real 1688 import, translation or Supplier Hub transmission was verified. All-category parity and Supplier Hub submission remain incomplete; this change does not implement them.
