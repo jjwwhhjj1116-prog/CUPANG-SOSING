@@ -175,6 +175,14 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   }
 
   return <div className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={anyDirty} data-workspace-saving={busy}>
+    {([
+      ['SEO', JSON.stringify(draft.seo)!==JSON.stringify(initial.seo)],
+      ['대표 이미지', JSON.stringify(draft.assets.main)!==JSON.stringify(initial.assets.main)],
+      ['추가 이미지', JSON.stringify(draft.assets.additional)!==JSON.stringify(initial.assets.additional)],
+      ['상세 이미지', ['detailTop','detail','detailBottom'].some(key=>JSON.stringify(draft.assets[key as AssetRole])!==JSON.stringify(initial.assets[key as AssetRole]))],
+      ['표시사항', JSON.stringify(draft.label)!==JSON.stringify(initial.label)||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)],
+      ['대표 이미지', JSON.stringify(draft.assets.size)!==JSON.stringify(initial.assets.size)||JSON.stringify(draft.assets.label)!==JSON.stringify(initial.assets.label)],
+    ] as const).map(([step,changed],index)=><span hidden key={index} data-quotation-source-step={step} data-workspace-dirty={changed}/>)}
     <div className="panel-note"><div><strong>{sectionTitle} 작업 자료</strong><p>{section === '표시사항' ? '필요한 표시사항을 기록하고 수정합니다. 빈 항목과 인증·법적 적합성은 카테고리 기준 확인이 필요합니다.' : section === '이미지' ? '업로드한 이미지를 역할과 순서에 맞게 배치합니다. 파일을 지정해도 번역·배경 제거가 실행되지는 않습니다.' : '수집·번역 결과를 검토하고 상품명, 검색어, 설명을 수정하는 작업 공간입니다. 작성하지 않은 내용은 자동으로 채우지 않습니다.'}</p></div></div>
     {loading && <p role="status">저장한 작업 자료를 불러오는 중입니다.</p>}
     {error && <div role="alert" className="panel-note"><div><strong>{error}</strong>{conflict && <p>현재 입력을 복사해 보관한 뒤 저장본을 불러와 변경 내용을 확인해주세요.</p>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void load()}>{loaded ? '입력 버리고 저장본 불러오기' : '다시 불러오기'}</button></div></div>}

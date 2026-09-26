@@ -79,3 +79,13 @@ test('label auto draft waits for existing edits and ignores late settings after 
  h.render('표시사항');await h.flush();assert.equal(fills,1);h.unmount();assert.equal(signal.aborted,true);finish();await settle();
  assert.ok(!JSON.stringify(h.render('표시사항')).includes('늦은 제조사'));
 });
+
+test('retained source markers identify unsaved SEO and images across stage navigation and clear after save',async()=>{
+ const h=harness((_url,init,content)=>init?.method==='PATCH'?Response.json({content:h.model.applyContentPatch(content,JSON.parse(init.body).patch,'now')}):undefined);
+ await h.start();
+ nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.onChange({target:{value:'새 상품명'}});
+ nodes(h.render()).find(n=>n.props?.['aria-label']==='이미지 1 역할').props.onChange({target:{value:'additional'}});
+ const pending=()=>nodes(h.render()).filter(n=>n.props?.['data-quotation-source-step']&&n.props['data-workspace-dirty']).map(n=>n.props['data-quotation-source-step']);
+ assert.deepEqual(pending(),['SEO','추가 이미지']);
+ h.button('이미지 역할·순서 저장').props.onClick();await settle();assert.deepEqual(pending(),['SEO']);
+});

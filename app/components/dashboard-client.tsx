@@ -1,7 +1,7 @@
 'use client';
 
 import { registrationSteps, initialRegistrationStep, type CollectionEditorTab } from '@/app/registration-navigation';
-import { requestWorkspaceClose, workspaceEditState } from '@/app/workspace-close';
+import { requestWorkspaceClose, workspaceEditState, quotationSourceState } from '@/app/workspace-close';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
@@ -140,6 +140,17 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [editingCategory, setEditingCategory] = useState<CategoryProfile|null>(null);
   const [categorySeed,setCategorySeed]=useState<CategoryProfileInput|undefined>();
   function selectDetailTab(value: string) {
+    if (value === '견적서') {
+      const pending=quotationSourceState(detailBody.current);
+      if(pending.busy){setCloseNotice('저장 중인 작업이 있습니다. 저장이 끝나면 견적서를 열어주세요.');return;}
+      if(pending.steps.length){
+        setCloseNotice(pending.steps.join(' · ')+'에 저장하지 않은 입력이 있습니다. 해당 단계에서 저장하면 견적서에 반영됩니다.');
+        setTab(pending.steps[0]);
+        if(registrationSteps.includes(pending.steps[0]))setLastRegistrationStep(pending.steps[0]);
+        detailBody.current?.scrollTo({top:0});return;
+      }
+    }
+    setCloseNotice('');
     setTab(value);
     if (registrationSteps.includes(value)) setLastRegistrationStep(value);
     detailBody.current?.scrollTo({ top: 0 });
@@ -355,7 +366,7 @@ function DetailPanel({ tab, product, settings, onUpload, onSavePrice, onSaved, o
     <div hidden={tab!=='표시사항'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={onSaved}/></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div hidden={tab!=='번역'}><TranslationPanel productId={product.id} version={product.updated_at} title={product.title} onContentSaved={onSaved}/></div>
-    <div hidden={!['옵션','가격'].includes(tab)} className={tab==='가격'?'pricing-workspace':'panel-stack'}>
+    <div data-quotation-source-step="가격" hidden={!['옵션','가격'].includes(tab)} className={tab==='가격'?'pricing-workspace':'panel-stack'}>
       <section hidden={tab!=='가격'} className="pricing-policy-panel"><h3>가격 정책 설정</h3><PriceEditor productId={product.id} version={product.updated_at} sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={onSavePrice}/></section>
       <section className="pricing-options-panel"><ProductOptionsEditor focusedOptionId={focusedOptionId} product={product} onSaved={onSaved} pricingView={tab==='가격'}/><div hidden={tab!=='옵션'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={onSaved}/></div></section>
     </div>
