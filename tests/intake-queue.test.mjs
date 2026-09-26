@@ -89,3 +89,16 @@ test('queue freezes displayed settings across rows and stops further rows when s
  await submitIntakeQueue([row(1),row(2)],'price',{...options,collect:async()=>{collected++;},fetcher:async(_url,init)=>{requests.push(JSON.parse(init.body));return response({code:'REGISTRATION_SETTINGS_CHANGED',error:'기본설정 변경'},409);}});
  assert.equal(requests.length,1);assert.equal(collected,0);assert.equal(states.length,1);assert.equal(states[0].status,'error');assert.equal(states[0].id,'1');
 });
+
+test('saved intake navigation requires one linked product and canonical URL, preserving unfinished rows',()=>{
+ const {intakeProductId}=load('app/intake-queue.ts');const item={...row(1),status:'saved'};
+ const job={source_url:'https://detail.1688.com/offer/1.html',status:'awaiting_connector',product_id:'product-one'};
+ assert.equal(intakeProductId(item,[job]),'product-one');
+ assert.equal(intakeProductId(item,[job,{...job}]),'product-one');
+ for(const status of ['draft','error'])assert.equal(intakeProductId({...item,status},[job]),null);
+ assert.equal(intakeProductId(item,[{...job,status:'cancelled'}]),null);
+ assert.equal(intakeProductId(item,[{...job,product_id:null}]),null);
+ assert.equal(intakeProductId(item,[job,{...job,product_id:'another'}]),null);
+ assert.equal(intakeProductId({...item,url:'invalid'},[job]),null);
+ assert.equal(intakeProductId({...item,url:row(2).url},[job]),null);
+});

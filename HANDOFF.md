@@ -3191,3 +3191,11 @@ AI등록 화면 확인:
 - Validation: category-picker-requests + intake-quotation-preview 11/11; tsc; Cloudflare build/artifact check; diff check passed.
 - Deployed Cloudflare version 3b8475ed-de81-4ad5-93b7-cd13e9b59b65.
 - Existing selected Chrome binding returned [] tabs. No live Couplus comparison, real 1688 import, translation or Supplier Hub transmission was verified. All-category parity and Supplier Hub submission remain incomplete; this change does not implement them.
+
+## 308 — Open saved intake products in the seven-stage editor (2026-09-26)
+- Saved intake rows now have an explicit 1~7단계 확인·수정 action when a unique non-cancelled collection job links their canonical URL to a product. Unfinished/unlinked/ambiguous rows do not expose navigation.
+- Dashboard reads that existing owner-scoped product and opens SEO in the existing seven-stage editor; closes the intake modal only after a successful read. Other intake rows remain in parent state. No automatic navigation or Hub submission.
+- Navigation is single-flight and aborts on modal unmount. Read errors remain visible and retryable. Local navigation busy state does not leave dashboard locked after successful unmount.
+- Validation: 20 relevant tests passed; final navigation adjustment rechecked 2/2; tsc, production build/artifact check and diff check passed.
+- Deployed Cloudflare version 05e0f969-e698-46af-a272-be73bed7285d.
+- Existing Chrome tabs.list returned []. No live Couplus parity, actual 1688 collection or Supplier Hub transmission verified. Broad completion gaps from 307 remain.

@@ -87,3 +87,12 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
     }
   }
 }
+
+/** Only a uniquely linked saved receipt can open an existing product editor. */
+export function intakeProductId(row: IntakeRow, jobs: readonly CollectionJob[]): string | null {
+  if (row.status !== 'saved') return null;
+  let sourceUrl: string;
+  try { sourceUrl = parseCollectionRequest({urls:[row.url]})[0].sourceUrl; } catch { return null; }
+  const ids = [...new Set(jobs.filter(job => job.status !== 'cancelled' && job.source_url === sourceUrl && job.product_id).map(job => job.product_id!))];
+  return ids.length === 1 ? ids[0] : null;
+}
