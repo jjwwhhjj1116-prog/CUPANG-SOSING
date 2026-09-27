@@ -1,3 +1,4 @@
+import { isOwnedImageKey } from '@/app/image-files';
 import { quotationWorkbookIssues } from '@/app/exports/quotation-workbook-issues';
 import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
@@ -35,7 +36,8 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     if(input.action !== 'preview' && input.fingerprint !== revision) return json({error:'검토 후 상품·옵션·설정·카테고리 또는 견적 수정값이 변경됐습니다. 자료 검토를 다시 실행해주세요.'},409);
     const resolved = resolveQuotationExport(saved);
     if(!resolved.rows.some(row => row.included)) return json({error:'견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션은 출력하지 않습니다.'},400);
-    const requestedKeys = quotationAttachmentKeys(saved,resolved);
+    if (quotationAttachmentKeys(saved,resolved).some(key => !isOwnedImageKey(owner,key))) return json({error:'상품의 첨부 이미지 소유자를 확인해주세요.'},409);
+    const requestedKeys = quotationAttachmentKeys(saved,resolved,'quotation');
     const assets = await loadAttachments(owner,product.image_keys,requestedKeys);
     const original = await env.FILES.get(template.storageKey);
     if(!original) return json({error:'견적서 원본 파일을 찾을 수 없습니다.'},409);
@@ -67,7 +69,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
       {name:'quotation-report.json',data:JSON.stringify(report,null,2)},
       {name:'options.json',data:JSON.stringify(options,null,2)},
       ...fields.files,
-    ]);
+    ], 'quotation');
     return new Response(bytes.buffer as ArrayBuffer,{headers:{'content-type':'application/zip','content-disposition':'attachment; filename="sourceflow-quotation-review.zip"','cache-control':'no-store','x-content-type-options':'nosniff'}});
   } catch(error) {
     if(error instanceof AttachmentError) return json({error:error.message},error.status);

@@ -21,13 +21,16 @@ export function imageExtension(bytes: Uint8Array) {
   throw new Error('PNG/JPEG/WebP/GIF/AVIF 이미지 파일만 검토 패키지에 넣을 수 있습니다.');
 }
 
-export function createReviewBundle(product: ProductRecord, content: ProductContent, assets: BundleAsset[], extraFiles: {name:string;data:string|Uint8Array}[] = []) {
+export function createReviewBundle(product: ProductRecord, content: ProductContent, assets: BundleAsset[], extraFiles: {name:string;data:string|Uint8Array}[] = [], assetScope: 'snapshot' | 'quotation' = 'snapshot') {
   const hasQuotationFields=extraFiles.some(file=>file.name==='quotation-fields.json');
   const exportedAt=new Date().toISOString();
   const title=content.seo.title.provenance === 'manual' ? content.seo.title.value : content.seo.title.value || product.title;
+  const omittedSnapshotImages = new Set<string>();
   const roleFiles=Object.fromEntries(Object.entries(content.assets).map(([role,field])=>[role,field.value.map(key=>{
-    const asset=assets.find(item=>item.key===key);if(!asset)throw new Error('첨부 파일이 누락되었습니다.');return asset.name;
-  })]));
+    const asset=assets.find(item=>item.key===key);
+    if(!asset){if(assetScope==='quotation'){omittedSnapshotImages.add(key);return null;}throw new Error('첨부 파일이 누락되었습니다.');}
+    return asset.name;
+  }).filter((name): name is string => name !== null)]));
   const missing:string[]=[];
   if(!content.seo.title.value.trim())missing.push('노출 상품명');
   if(!content.seo.description.value.trim())missing.push('상세 설명');
@@ -42,9 +45,9 @@ export function createReviewBundle(product: ProductRecord, content: ProductConte
   })];
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="840" height="${70+labelLines.length*30}" viewBox="0 0 840 ${70+labelLines.length*30}"><rect width="100%" height="100%" fill="white"/><g font-family="sans-serif" font-size="18" fill="#111827">${labelLines.map((text,index)=>`<text x="24" y="${36+index*30}">${escape(text)}</text>`).join('')}</g></svg>`;
   const html=`<!doctype html><html lang="ko"><meta charset="utf-8"><title>${escape(title)}</title><style>body{max-width:860px;margin:32px auto;padding:20px;font-family:sans-serif;line-height:1.7}img{max-width:100%;height:auto}.note{background:#fff2ce;padding:12px}pre{white-space:pre-wrap;font-family:inherit}</style><body><p class="note">내부 검토 자료 · 자동 번역/공식 견적서 검증을 의미하지 않습니다.</p><h1>${escape(title)}</h1><p>${escape(content.seo.keywords.value.join(', '))}</p><pre>${escape(content.seo.description.value)}</pre>${detailImageKeys(roleFiles).map(name=>`<img src="${escape(name)}" alt="상세 이미지">`).join('')}</body></html>`;
-  const manifest={format:'sourceflow-review-bundle-v1',productId:product.id,contentRevision:content.revision,productUpdatedAt:product.updated_at,exportedAt,submissionReady:false,missing,assets:roleFiles,pricePolicy:product.pricing_policy?JSON.parse(product.pricing_policy):null};
+  const manifest={format:'sourceflow-review-bundle-v1',productId:product.id,contentRevision:content.revision,productUpdatedAt:product.updated_at,exportedAt,submissionReady:false,missing,assetScope,omittedSnapshotImages:[...omittedSnapshotImages],assets:roleFiles,pricePolicy:product.pricing_policy?JSON.parse(product.pricing_policy):null};
   return zipFiles([
-    {name:'README.txt',data:'YOOFAM PLUS 내부 검토 패키지\nSupplier Hub 공식 Excel/등록 패키지가 아닙니다.\n원문 수집·자동 번역·필수 서류 검증 상태는 manifest.json을 확인하세요.\nlabel-review.svg는 사용자가 저장한 표시사항을 조판한 초안입니다.\n'+(hasQuotationFields?'업로드할 상품 이미지·라벨을 구분해서 보려면 supplier-hub-upload.html을 여세요.\nSupplier Hub 영역별 첨부 파일 목록은 supplier-hub-upload-plan.json에 있습니다. 업로드나 동의 완료 기록이 아닙니다.\n같은 저장값의 오류·검토 목록은 submission-review.json/CSV에 있습니다. JSON에는 검사 한계와 생략 건수가 포함됩니다. 실제 파일 내용이나 Hub 접수 성공 검증은 아닙니다.\n옵션별 최종 이미지와 Excel 첨부 파일명은 quotation-images.html에서 확인하세요.\n옵션별 최종 표시사항 값은 quotation-labels.html에서 확인하세요. label-review.svg는 원래 상품 표시사항입니다.\n상세 이미지의 세로 배치와 설명은 quotation-detail.html에서 확인하세요. 수동 HTML은 실행하지 않고 원문으로 표시합니다.\n견적서 최종 수정값은 quotation-fields.json/CSV, 모든 수동 수정 원본은 quotation-overrides.csv에 있습니다.\nproduct-snapshot.csv와 content.json/HTML/SVG는 원래 저장한 상품·콘텐츠 자료이며 견적 전용 수정값과 다를 수 있습니다.\nJSON의 이미지 참조는 assets 매핑에서 첨부 파일명으로 확인하세요.\n':'')},
+    {name:'README.txt',data:(assetScope==='quotation'?'이 패키지는 포함 옵션의 최종 견적 이미지 파일만 첨부합니다. 교체·제외된 원래 이미지 참조는 content.json에 보존하고, 첨부에서 빠진 원래 콘텐츠 이미지는 manifest.json의 omittedSnapshotImages에 기록합니다.\n':'')+'YOOFAM PLUS 내부 검토 패키지\nSupplier Hub 공식 Excel/등록 패키지가 아닙니다.\n원문 수집·자동 번역·필수 서류 검증 상태는 manifest.json을 확인하세요.\nlabel-review.svg는 사용자가 저장한 표시사항을 조판한 초안입니다.\n'+(hasQuotationFields?'업로드할 상품 이미지·라벨을 구분해서 보려면 supplier-hub-upload.html을 여세요.\nSupplier Hub 영역별 첨부 파일 목록은 supplier-hub-upload-plan.json에 있습니다. 업로드나 동의 완료 기록이 아닙니다.\n같은 저장값의 오류·검토 목록은 submission-review.json/CSV에 있습니다. JSON에는 검사 한계와 생략 건수가 포함됩니다. 실제 파일 내용이나 Hub 접수 성공 검증은 아닙니다.\n옵션별 최종 이미지와 Excel 첨부 파일명은 quotation-images.html에서 확인하세요.\n옵션별 최종 표시사항 값은 quotation-labels.html에서 확인하세요. label-review.svg는 원래 상품 표시사항입니다.\n상세 이미지의 세로 배치와 설명은 quotation-detail.html에서 확인하세요. 수동 HTML은 실행하지 않고 원문으로 표시합니다.\n견적서 최종 수정값은 quotation-fields.json/CSV, 모든 수동 수정 원본은 quotation-overrides.csv에 있습니다.\nproduct-snapshot.csv와 content.json/HTML/SVG는 원래 저장한 상품·콘텐츠 자료이며 견적 전용 수정값과 다를 수 있습니다.\nJSON의 이미지 참조는 assets 매핑에서 첨부 파일명으로 확인하세요.\n':'')},
     {name:'manifest.json',data:JSON.stringify(manifest,null,2)},
     {name:'content.json',data:JSON.stringify(content,null,2)},
     {name:hasQuotationFields?'product-snapshot.csv':'quotation-review.csv',data:quotationCsv([['문서',hasQuotationFields?'원래 저장한 상품 요약 · 견적 수정값은 quotation-fields 확인':'내부 검토용'],['상품명','원가 CNY','공급가 KRW','판매가 KRW','MSRP KRW','옵션 수'],[title,product.source_price_cny,product.supply_price,product.sale_price,product.msrp,product.options_count]])},

@@ -179,7 +179,7 @@ test('saved common/option overrides populate mapped cells and preserve blanks, i
     get: async path => { requested.push(path); const data = path === key ? bytes : png; return { size: data.length, arrayBuffer: async () => data.slice().buffer }; },
   });
   const reviewResponse = await route.POST(request(preview),context); assert.equal(reviewResponse.status,200); const review = await reviewResponse.json();
-  assert.deepEqual(review.rows[0], ['',12345,12,'첫 옵션 재질','MODEL-007','image-002.png','00123456']);
+  assert.deepEqual(review.rows[0], ['',12345,12,'첫 옵션 재질','MODEL-007','image-001.png','00123456']);
   assert.equal(review.rows[1][0],'견적 전용 이름'); assert.equal(review.rows[1][3],'확인한 재질');
   assert.equal(review.report.quotationRevision,4); assert.ok(review.report.warnings.some(value=>value.includes('검색태그')&&value.includes('미연결')));
   assert.ok(requested.includes('owner/manual.png')); assert.ok(review.report.warnings.some(value=>value.includes('retiredField')));
@@ -187,11 +187,11 @@ test('saved common/option overrides populate mapped cells and preserve blanks, i
   const files=unzipSync(new Uint8Array(await response.arrayBuffer())); const decode=value=>new TextDecoder().decode(value);
   const doc=JSON.parse(decode(files['quotation-fields.json'])); assert.equal(doc.submissionReady,false); assert.equal(doc.categoryContext.categoryId,'80719');
   assert.equal(doc.rows.filter(row=>row.included).length,2); assert.equal(doc.rows.find(row=>row.optionId==='first').fields.title.source,'manual-option');
-  assert.equal(doc.overrides.options.deleted.color,'삭제 옵션 수정'); assert.equal(doc.assets['owner/manual.png'],'assets/image-002.png'); assert.equal(doc.uploadFilenames['owner/manual.png'],'image-002.png');
-  assert.ok(decode(files[quotationName(files,'csv')]).includes('"","12345","12","첫 옵션 재질","MODEL-007","image-002.png","00123456"'));
+  assert.equal(doc.overrides.options.deleted.color,'삭제 옵션 수정'); assert.equal(doc.assets['owner/manual.png'],'assets/image-001.png'); assert.equal(doc.uploadFilenames['owner/manual.png'],'image-001.png');
+  assert.ok(decode(files[quotationName(files,'csv')]).includes('"","12345","12","첫 옵션 재질","MODEL-007","image-001.png","00123456"'));
   assert.ok(decode(files['quotation-fields.csv']).includes('"product","2. Product Page · 상품 페이지","model"'));
   assert.ok(decode(files['quotation-overrides.csv']).includes('삭제 옵션 수정')); assert.ok(decode(files['quotation-overrides.csv']).includes('제외 옵션 수정')); assert.ok(decode(files['quotation-overrides.csv']).includes('다른 분류에서 작성'));
-  assert.deepEqual(files['assets/image-002.png'],png); assert.ok(files['product-snapshot.csv']); assert.ok(!files['quotation-review.csv']);
+  assert.deepEqual(files['assets/image-001.png'],png); assert.ok(files['product-snapshot.csv']); assert.ok(!files['quotation-review.csv']);
 });
 
 test('quotation preview fingerprint binds override state, settings, selected profile and stable source reads', async () => {
@@ -516,4 +516,32 @@ test('workbook violations reach preview and packaged submission review with the 
   const files=unzipSync(new Uint8Array(await output.arrayBuffer()));const review=JSON.parse(new TextDecoder().decode(files['submission-review.json']));
   assert.deepEqual(review.issues.filter(i=>i.code==='EXCEL_VALUE_INVALID'),errors);assert.ok(review.errorCount>=2);
  }
+});
+
+
+test('final quotation fetches only final included images after replacement and preserves snapshot references', async () => {
+ const old='owner/option.png', replacement='owner/replacement.png';
+ const savedContent=contentModel.applyContentPatch(content,{assets:{main:[old]}},product.updated_at);
+ const savedFields={schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{mainImage:replacement,detailImages:replacement},options:{excluded:{mainImage:'owner/excluded.png'}}}};
+ const original=JSON.stringify({savedContent,savedFields,options}); const reads=[];
+ const route=routeWith({find:async()=>({...product,image_keys:JSON.stringify([old,replacement,'owner/excluded.png'])}),readContent:async()=>savedContent,readFields:async()=>savedFields,get:async key=>{
+  reads.push(key); if(key===old||key==='owner/excluded.png')throw Error('superseded or excluded image must not be fetched');
+  const bytes=key===templateKey?templateBytes:png;return {size:bytes.length,arrayBuffer:async()=>bytes.slice().buffer};
+ }});
+ const response=await route.POST(request(preview),context);assert.equal(response.status,200,await response.clone().text());const review=await response.json();
+ assert.equal(review.rows[0][3],'image-001.png');assert.equal(review.rows[1][3],'image-001.png');
+ const result=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(result.status,200,await result.clone().text());
+ const files=unzipSync(new Uint8Array(await result.arrayBuffer()));const read=name=>JSON.parse(new TextDecoder().decode(files[name]));
+ assert.equal(Object.keys(files).filter(key=>key.startsWith('assets/')).length,1);
+ const manifest=read('manifest.json');assert.equal(manifest.assetScope,'quotation');assert.deepEqual(manifest.omittedSnapshotImages,[old]);assert.deepEqual(manifest.assets.main,[]);
+ assert.deepEqual(read('content.json').assets.main.value,[old]);
+ const final=read('quotation-fields.json');assert.deepEqual(Object.keys(final.assets),[replacement]);assert.equal(final.rows[0].fields.mainImage.value,replacement);
+ assert.ok(!reads.includes(old));assert.ok(!reads.includes('owner/excluded.png'));
+ assert.equal(JSON.stringify({savedContent,savedFields,options}),original);
+});
+
+test('final quotation still rejects missing final replacement bytes',async()=>{
+ const replacement='owner/replacement.png';
+ const route=routeWith({find:async()=>({...product,image_keys:JSON.stringify([replacement])}),readFields:async()=>({schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{mainImage:replacement},options:{}}}),get:async()=>null});
+ const response=await route.POST(request(preview),context);assert.equal(response.status,409);assert.match((await response.json()).error,/저장소/);
 });

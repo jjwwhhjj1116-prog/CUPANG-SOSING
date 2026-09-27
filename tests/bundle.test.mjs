@@ -225,7 +225,7 @@ test('plain bundle preserves final quotation overrides and rejects changes in ev
 });
 
 test('bundle uses only the owned selected or captured category and tracks collection-context changes',async()=>{
-  const profile={id:'chosen',revision:1,name:'관찰한 카테고리',categoryId:'80719',categoryPath:['주방용품'],template:null,mappings:[]};
+  const profile={id:'chosen',revision:1,name:'관찰한 카테고리',categoryId:'80719',categoryPath:[...load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath],template:null,mappings:[]};
   const chosen=new Request('http://localhost/api/products/product-1/bundle?profileId=chosen');
   assert.equal((await routeWith().GET(chosen,context)).status,404);
   const response=await routeWith({readProfile:async()=>profile}).GET(chosen,context);assert.equal(response.status,200);

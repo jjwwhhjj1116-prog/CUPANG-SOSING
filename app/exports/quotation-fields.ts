@@ -59,13 +59,17 @@ export function quotationMappingIssues(resolved: ResolvedQuotation, profile: Cat
     message: `${field.label}: ${field.required ? '필수 항목' : field.manualOptions.length ? '직접 수정한 항목' : '자동 작성 항목'}이 Excel 열에 연결되지 않았습니다. 카테고리 양식에서 열을 연결한 뒤 다시 준비해주세요.`,
   }));
 }
-export function quotationAttachmentKeys(saved: QuotationExportSource, resolved: ResolvedQuotation) {
+export function quotationAttachmentKeys(saved: QuotationExportSource, resolved: ResolvedQuotation, scope: 'snapshot' | 'quotation' = 'snapshot') {
   const imageFields = resolved.schema.fields.filter(field => field.type === 'images');
+  const finalKeys = resolved.rows.filter(row => row.included).flatMap(row => imageFields.flatMap(field => imageKeys(row.fields[field.id].value)));
+  const finalSet = new Set(finalKeys);
+  // Keep existing filenames stable where possible, but do not fetch superseded
+  // snapshot images for a final quotation. Snapshot bundles retain all sources.
   return [...new Set([
     ...Object.values(saved.content.assets).flatMap(field => field.value),
     ...saved.options.rows.filter(row => row.included && row.imageKey).map(row => row.imageKey!),
-    ...resolved.rows.filter(row => row.included).flatMap(row => imageFields.flatMap(field => imageKeys(row.fields[field.id].value))),
-  ])];
+    ...finalKeys,
+  ])].filter(key => scope === 'snapshot' || finalSet.has(key));
 }
 
 /** Uses the resolver's one price calculation and final manual overrides. */
