@@ -39,3 +39,7 @@ Generated title: 와이홉 우드 패턴 선글라스 남녀공용 레트로 패
 - Apply-to-all unchecked. No save/reset/AI action or transmission performed in this form.
 
 This covers only the fresh 80719 form. It does not establish all-category defaults, Supplier Hub acceptance, or the supplier collection mechanism.
+
+## Price-stage follow-up
+
+Read-only navigation of this new test draft to stage 2 confirmed FX350, supply margin50%, Coupang margin40%, nearest10KRW, minimum margin enabled3000, bundling disabled. For CNY5.23 the UI explicitly shows converted cost1830.5, supply4830, actual margin2999.5 and sale8050. Therefore nearest rounding is applied after the minimum target, without a second ceiling to restore3000. YOOFAM PLUS previously produced4840; corrected using this evidence. Explicit ceiling mode remains unchanged. No price inputs or save/recalculate buttons were changed.

@@ -27,6 +27,21 @@ const request = body => new Request('http://localhost', {method:'POST',body:JSON
 const input = { policy, expectedVersion:product.updated_at };
 const context = { params: Promise.resolve({id:product.id}) };
 
+test('fresh Couplus six-option draft uses nearest rounding after applying minimum margin',()=>{
+  const observed={exchangeRate:350,supplyMargin:50,coupangMargin:40,minimumMargin:3000,msrpMultiple:1.3,roundingUnit:10,roundingMode:'nearest'};
+  const {emptyOptionInput,calculateOptionPrices}=load('app/product-options.ts');
+  const rows=[3.42,5.23,3.42,5.23,3.42,5.23].map((cost,index)=>({...emptyOptionInput(`observed-${index}`),unitCostCny:cost,included:true}));
+  for(const [index,row] of calculateOptionPrices(rows,observed).entries()){
+    assert.equal(row.error,null);
+    const value=row.calculation;
+    assert.equal(value.supplyPrice,index%2?4830:4200);
+    assert.equal(value.salePrice,index%2?8050:7000);
+    assert.equal(value.marginKrw,index%2?2999.5:3003);
+  }
+  // Keep explicit ceiling policies unchanged; observed Couplus used nearest.
+  assert.equal(pricing.calculatePrice(5.23,{...observed,roundingMode:'up'}).supplyPrice,4840);
+});
+
 test('pricing handles zero margin, minimum margin, percentage margin, and rounding',()=>{
   assert.equal(pricing.calculatePrice(10,policy).supplyPrice,1000);
   assert.equal(pricing.calculatePrice(10,{...policy,minimumMargin:305}).supplyPrice,1310);

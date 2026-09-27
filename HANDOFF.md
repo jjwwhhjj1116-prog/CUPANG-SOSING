@@ -3741,3 +3741,10 @@ AI등록 화면 확인:
 - Removed inferred80719 title-to-model fallback based fresh draft evidence; preserves actual model input and manual overrides. Updated input provenance hint and regression tests.
 -197 tests passed; TypeScript, Cloudflare build/artifact and diff checks passed. Deployed97e040ff-0264-4c74-a0c5-4ab5693280cd.
 - Core unfinished: our live1688 collection, full category/default parity, image translation and real Supplier Hub POST adapter (still501). Do not claim full completion.
+
+## Step 404 — observed minimum-margin rounding correction
+- Direct public HTTP read of user1688 URL returned200 HTML with captcha redirect instead of product. Later Chrome source404 navigation was rejected by browser site-safety policy (no permission prompt/Auto-review attempted); no workaround attempted. Do not reattempt via alternate browser/raw commands. Existing own-product Couplus pricing comparison was unaffected.
+- Read own new Couplus260927024001 stage2 via five Previous clicks; no save/recalculate/input mutations. cou403 marked handoff. Confirmed FX350, supply50%, Coupang40%, nearest10, min3000 enabled. CNY5.23 shows cost1830.5, supply4830, actual margin2999.5, sale8050. Existing engine returned4840 due to second ceiling after nearest rounding.
+- Added failing six-option observed regression, removed second ceiling, retained explicit up mode, corrected price editor explanation. Expanded SQLite promotion-to-category-quotation integration with5.23 case across4 category schemas and changed workspace settings.
+-210 tests passed, tsc/build/artifact checks passed. Deployed1ac71e83-24e2-4c3d-a0e9-7a6d339add46. Existing saved products not rewritten.
+- Still incomplete: our real1688 source collection (public request captcha, browser policy blocks), full category/default parity, image translation, and Supplier Hub real POST adapter (501). Tests use recorded numeric evidence/fixtures, not successful our live supplier collection or final Hub acceptance.

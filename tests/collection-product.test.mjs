@@ -29,7 +29,7 @@ const result={schemaVersion:1,offerId:'123',sourceUrl:job.source_url,provider:'f
 test('observed pricing survives SQLite promotion, workspace changes and category quotation resolution',async()=>{
  const capturedSettings=load('app/observed-price-preset.ts').applyObservedPricePreset({...settings,brand:'저장 브랜드'});
  const capturedJob={...job,context:{...job.context,settings:capturedSettings}};
- const receipt={...result,options:[{...result.options[0],unitPriceCny:25.6},{...result.options[1],unitPriceCny:0.1}]};
+ const receipt={...result,options:[{...result.options[0],unitPriceCny:25.6},{...result.options[1],unitPriceCny:0.1},{...result.options[0],sku:'fresh-observed',unitPriceCny:5.23}]};
  const s=storage();
  try{
   s.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(capturedJob.context),job.id);
@@ -44,7 +44,7 @@ test('observed pricing survives SQLite promotion, workspace changes and category
   for(const categoryId of ['80719','81452','64497','103495']){
    const quote=resolver({categoryId,product,content,options,settings:changedSettings});
    const prices=quote.rows.filter(row=>row.optionId).map(row=>['supplyPrice','salePrice','msrp'].map(key=>row.fields[key].value));
-   assert.deepEqual(JSON.parse(JSON.stringify(prices)),[['17920','29870','38830'],['3040','5070','6590']],categoryId);
+   assert.deepEqual(JSON.parse(JSON.stringify(prices)),[['17920','29870','38830'],['3040','5070','6590'],['4830','8050','10470']],categoryId);
   }
   const bundled={...options,rows:options.rows.map((row,index)=>({...row,unitsPerPack:index===0?2:1}))};
   const quote=resolver({categoryId:'80719',product,content,options:bundled,settings:changedSettings});

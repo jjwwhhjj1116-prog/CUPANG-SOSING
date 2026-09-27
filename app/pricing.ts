@@ -18,8 +18,10 @@ export function calculatePrice(sourcePriceCny: number, input: PricePolicy) {
   const cost = multiply(decimal(sourcePriceCny), decimal(p.exchangeRate));
   const supplyTarget = divide(multiply(cost, hundred), subtract(hundred, decimal(p.supplyMargin)));
   const minimumTarget = add(cost, decimal(p.minimumMargin));
-  let supply = roundCurrency(compare(supplyTarget, minimumTarget) >= 0 ? supplyTarget : minimumTarget, p.roundingUnit, p.roundingMode);
-  if (compare(rational(supply), minimumTarget) < 0) supply = roundCurrency(minimumTarget, p.roundingUnit);
+  // Apply the selected rounding once, after selecting the margin target.
+  // Fresh Couplus draft 260927024002: 5.23 * 350 + 3000 = 4830.5,
+  // rounded to 4830 (actual margin 2999.5). A second ceiling changes its price.
+  const supply = roundCurrency(compare(supplyTarget, minimumTarget) >= 0 ? supplyTarget : minimumTarget, p.roundingUnit, p.roundingMode);
   const sale = roundCurrency(divide(multiply(rational(supply), hundred), subtract(hundred, decimal(p.coupangMargin))), p.roundingUnit, p.roundingMode);
   const market = roundCurrency(multiply(rational(sale), decimal(p.msrpMultiple)), p.roundingUnit, p.roundingMode);
   const margin = subtract(rational(supply), cost);
