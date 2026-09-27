@@ -4113,3 +4113,9 @@ AI등록 화면 확인:
 - Per-option product dimensions now render in cm and reach quotation exports. Packaging dimensions remain separate. Manual option clears and common/per-option quotation overrides retain priority.
 - 200 quotation schema/field tests passed, including differently sized options, packaging separation, clears and export. Typecheck/build/artifact/diff checks passed. Deployed a5604822-5079-41be-a3ac-9edc77c9f785.
 - No external browser/products changed this step. This is saved-value linkage, not verification of live1688 collection or Couplus default parity. All-category defaults, official XLSX, image AI, installed extension refresh and final Hub registration remain unverified.
+
+## Step 462 — Honor short Retry-After on idempotent collection storage (2026-09-28)
+- Collection storage retry helper previously failed every HTTP429 immediately and ignored Retry-After on transient gateway errors. It now retries HTTP429 only with valid short server-directed Retry-After, honoring numeric seconds or HTTP-date up to 10 seconds. Existing 502/503/504 fallback remains bounded; long/malformed backoff is returned intact rather than retried early.
+- Maximum three attempts, identical request object/body, failed response release and cooperative stop retained. Missing 429 backoff remains terminal. This helper does not invoke collection providers, AI generation or Hub submission.
+- 52 related retry/import/batch/delivery tests passed; typecheck/build/artifact/diff checks passed. Deployed 6090c40e-27e0-43b9-8002-a4d6b7941817. No browser or external product mutations.
+- Actual live1688 collection, all-category Couplus defaults, official XLSX acquisition, image AI, extension refresh and final Hub registration remain unverified.
