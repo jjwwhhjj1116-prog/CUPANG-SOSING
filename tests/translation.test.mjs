@@ -10,7 +10,7 @@ function load(file, overrides = {}, mode = 'development', fetcher = () => { thro
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
   vm.runInNewContext(code, { exports, crypto, TextEncoder, TextDecoder, structuredClone, Response, URL, AbortSignal,
-    fetch: fetcher, process: { env: { NODE_ENV: mode } }, require: name => {
+    setTimeout: overrides.__setTimeout ?? setTimeout, clearTimeout: overrides.__clearTimeout ?? clearTimeout, fetch: fetcher, process: { env: { NODE_ENV: mode } }, require: name => {
       if (name in overrides) return overrides[name];
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
@@ -311,4 +311,20 @@ test('Workers AI configuration rejects absent binding, unsupported model and unk
   for (const override of [{ AI: undefined }, { SOURCEFLOW_TEXT_MODEL: '@cf/unknown/model' }, { SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '0' }, { SOURCEFLOW_TEXT_PROVIDER: 'typo' }]) {
     assert.equal(model.translationConfiguration({ ...env, ...override }).configured, false);
   }
+});
+
+test('Workers AI deadline returns an uncertain outcome once and discards late results', async () => {
+  let deadline; let cleared = 0; let calls = 0; let complete;
+  const bounded = load('app/automation/translation.ts', {
+    __setTimeout: (callback, milliseconds) => { assert.equal(milliseconds, 60000); deadline = callback; return 42; },
+    __clearTimeout: handle => { assert.equal(handle, 42); cleared++; },
+  });
+  const config = bounded.requireTranslationConfig({ SOURCEFLOW_TEXT_PROVIDER: 'workers-ai', SOURCEFLOW_TEXT_MODEL: bounded.WORKERS_TEXT_MODEL, SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '1024',
+    AI: { run: () => { calls++; return new Promise(resolve => { complete = resolve; }); } } });
+  const review = await bounded.prepareTranslationReview(source, config);
+  const pending = bounded.executeTranslation(review, config);
+  deadline();
+  await assert.rejects(pending, error => error.code === 'PROVIDER_OUTCOME_UNCERTAIN' && error.mayHaveBeenCharged);
+  complete({ response: draft }); await Promise.resolve();
+  assert.equal(calls, 1); assert.equal(cleared, 1);
 });

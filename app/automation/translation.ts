@@ -160,13 +160,18 @@ export async function executeTranslation(review: TranslationReview, config: Tran
   if (config.provider === 'workers-ai') {
     if (!config.ai || config.model !== WORKERS_TEXT_MODEL) throw new TranslationError('TRANSLATION_NOT_CONFIGURED', 'Workers AI 설정을 확인해주세요.');
     let payload: unknown;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      payload = await config.ai.run(config.model, {
+      const pending = config.ai.run(config.model, {
         messages: [{ role: 'system', content: request.instructions }, { role: 'user', content: JSON.stringify(review.source) }],
         max_tokens: review.maxOutputTokens, stream: false,
         response_format: { type: 'json_schema', json_schema: translationSchema },
       });
+      payload = await Promise.race([pending, new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Workers AI response deadline exceeded')), 60000);
+      })]);
     } catch { throw new TranslationError('PROVIDER_OUTCOME_UNCERTAIN', 'Cloudflare 초안 생성 응답을 확인하지 못했습니다. 사용 한도와 실행 이력을 확인해주세요. 자동 재시도하지 않았습니다.', true); }
+    finally { if (timeout !== undefined) clearTimeout(timeout); }
     try {
       if (!payload || typeof payload !== 'object' || JSON.stringify(payload).length > 512 * 1024) throw new Error('Invalid envelope');
       const envelope = payload as { response?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
