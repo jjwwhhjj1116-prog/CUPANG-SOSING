@@ -87,10 +87,26 @@ for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL
    assert.equal(rows[0].translatedName,'검정 옵션');assert.equal(rows[0].color,'검정');assert.equal(rows[0].unitCostCny,25.6);
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
    const view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,'자동 생성 수납 상품');assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
-   const edit=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'35000'}]})}),qc);assert.equal(edit.status,200);
+   const edit=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'35000'},...(automatic==='fresh'?[{fieldKey:'title',optionId:null,value:'검토 완료 상품명'},{fieldKey:'searchTags',optionId:null,value:'검토 검색어'},{fieldKey:'additionalImages',optionId:'collected-1',value:''},{fieldKey:'detailHtml',optionId:null,value:'<p>직접 수정한 상세 설명</p>'},{fieldKey:'noticeMaterial',optionId:null,value:'검토 재질'},{fieldKey:'packagedWeightG',optionId:'collected-1',value:'420'},{fieldKey:'packagedDimensionsMm',optionId:'collected-1',value:'100*200*300'}]:[])]})}),qc);assert.equal(edit.status,200);
    assert.match(await run(),/저장된 SEO·옵션값/);assert.equal(generations,expectedGenerations);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,expectedGenerations);
    assert.ok(rows.every(r=>r.translatedName==='검정 옵션'&&r.color==='검정'));
    const after=await (await qr.GET(new Request(qu),qc)).json();assert.equal(after.resolved.rows.find(r=>r.optionId==='collected-1').fields.salePrice.value,'35000');
+   if(automatic==='fresh'){
+    const expected={title:'검토 완료 상품명',searchTags:'검토 검색어',salePrice:'35000',additionalImages:'',detailHtml:'<p>직접 수정한 상세 설명</p>',noticeMaterial:'검토 재질',packagedWeightG:'420',packagedDimensionsMm:'100*200*300'};
+    const finalRow=after.resolved.rows.find(row=>row.optionId==='collected-1');
+    for(const [field,value] of Object.entries(expected))assert.equal(finalRow.fields[field].value,value,`reviewed ${field} survives intake retry`);
+    const sourceModule=load('app/exports/quotation-source.ts');
+    const exportedSource=await sourceModule.readQuotationExportSource('owner',latest.product_id,null);
+    const resolved=sourceModule.resolveQuotationExport(exportedSource);
+    const assets=[...objects.keys()].map((key,index)=>({key,name:`assets/review-${index}.png`,bytes:png}));
+    const output=load('app/exports/quotation-fields.ts').resolvedQuotationRows(exportedSource,resolved,assets)[0];
+    for(const [field,value] of Object.entries(expected))assert.equal(String(output[field]),value,`export retains ${field}`);
+    assert.equal(output.material,'검토 재질');
+    assert.equal(output.sourceUrl,sourceUrl);
+    assert.equal(output.skuId,'5627721589407');
+    assert.match(output.mainImage,/^review-\d+\.png$/);
+    assert.ok(exportedSource.content.assets.additional.value.length>0,'excluding quotation images must not delete source images');
+   }
    assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');return;
   }
   await assert.rejects(run(),/SEO 요청을 준비/);assert.ok(latest.product_id);const seo=sqlite.prepare('SELECT * FROM translation_jobs').get();assert.equal(seo.status,'prepared');const review=JSON.parse(seo.review);assert.equal(review.source.category.id,'80719');assert.equal(review.source.title,'原文商品');assert.equal(review.source.guidance.keywords,'수납,바스켓');assert.ok(review.source.attributes.some(pair=>pair.name==='option:collected-1'));assert.equal(seo.result,null);

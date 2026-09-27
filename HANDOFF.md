@@ -3696,3 +3696,10 @@ AI등록 화면 확인:
 - Selected field sticks to the left, headers stick to the top, with layered opaque cells and a bounded keyboard-focusable scroll region.
 - Existing Chrome localhost UI confirms URL selection in the combobox. Empty local queue means populated-row scroll was not visually verified. TypeScript, Cloudflare build/artifact and diff checks pass. No new unit tests for this reversible presentation change.
 - No actual source fetch or Hub transmission performed. Actual1688 verification and Supplier Hub POST501 adapter remain incomplete.
+
+## Step 397 — reviewed draft through final quotation export integration coverage (2026-09-27)
+- Expanded the fresh intake integration scenario beyond sale-price persistence: common title/tags/detail HTML/material and option sale price/cleared additional images/packaging weight/dimensions survive an intake retry.
+- Reads the persisted export source and resolves final export rows, checks all eight values, material alias, canonical source URL, supplier SKU and image filename. Underlying additional images remain preserved and Hub status stays unsent.
+- All 6 integration scenarios pass. Actual route handlers and SQLite are exercised; supplier/model/image responses remain fixtures, not live-site evidence. No runtime bug found by these checks.
+- Updated outdated API setup documentation that described SEO as preparation-only after image downloads. Runtime already uses the ordered draft-before-images flow.
+- Test/documentation-only change; no production rebuild or redeployment needed. Actual1688 verification, own API access, all-category equivalence and Supplier Hub adapter remain incomplete.
