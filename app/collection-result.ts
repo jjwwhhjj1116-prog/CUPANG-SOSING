@@ -43,7 +43,8 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
     const row=record(value,['url','role']);const url=new URL(text(row.url,2048));
     if(url.protocol!=='https:'||url.username||url.password||url.port||url.hash||!(url.hostname==='alicdn.com'||url.hostname.endsWith('.alicdn.com')))throw new Error('이미지는 HTTPS Alibaba CDN 주소만 허용합니다.');
     if(!['main','additional','detail'].includes(String(row.role)))throw new Error('이미지 역할을 확인해주세요.');
-    if(seen.has(url.href))throw new Error('중복 이미지 주소가 있습니다.');seen.add(url.href);
+    const assignment=`${row.role}:${url.href}`;
+    if(seen.has(assignment))throw new Error('같은 배치에 중복 이미지 주소가 있습니다.');seen.add(assignment);
     if(row.role==='main'&&++mainCount>1)throw new Error('대표 이미지는 한 장만 지정해주세요.');
     return {url:url.href,role:row.role as 'main'|'additional'|'detail'};
   });

@@ -61,7 +61,9 @@ test('markup is inert, entity-decoded once, bounded and unsupported image source
  const d=parseDescription('<script><img src="https://evil.test/a"></script><style>bad</style><template><img src="https://evil.test/a"></template><p>safe &lt;img&gt;</p><!-- ignore --><svg><image href="https://evil.test/a"/></svg>');
  assert.equal(d.text,'safe <img>');assert.equal(d.images.length,0);
  for(const html of ['<img src="https://alicdn.com.evil.test/a">','<img src="javascript:alert(1)">','<img src="/relative.jpg">','<img>','x'.repeat(20001),'x'.repeat(2*1024*1024+1)])assert.throws(()=>parseDescription(html));
- const f=fixture();f.result.result.description='<img src="https://cbu01.alicdn.com/main.jpg">';assert.throws(()=>parse(f,url),/다중 배치/);
+ const f=fixture();f.result.result.description='<img src="https://cbu01.alicdn.com/main.jpg">';
+ const shared=parse(f,url);assert.equal(shared.images.filter(image=>image.url==='https://cbu01.alicdn.com/main.jpg').length,2);
+ assert.equal(shared.images.at(-1).role,'detail');assert.equal(shared.options[0].imageIndex,1);
  const repeated=parseDescription('<img src="https://cbu01.alicdn.com/a.jpg"><img src="https://cbu01.alicdn.com/a.jpg">');assert.equal(repeated.images.length,1);
 });
 

@@ -126,6 +126,28 @@ test('API imports a receipt image once and retry skips download and object write
  }finally{h.sqlite.close();}
 });
 
+test('same source bytes in three roles survive API storage, quotation resolution and retry independently',async()=>{
+ const h=storage();try{
+  h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(collectedOptions()),'before');
+  const images=['main','additional','detail'].map(role=>({url:'https://cbu01.alicdn.com/shared.png',role}));
+  h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',JSON.stringify({options:[{sku:'a',imageIndex:1}],images}),'now');
+  let downloads=0;const objects=new Map();
+  const api=load('app/api/collection-jobs/[id]/images/route.ts',{'cloudflare:workers':{env:{DB:h.db,FILES:{head:async key=>objects.has(key)?{size:png.length}:null,put:async(key,bytes)=>{objects.set(key,bytes);return {};}}}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},fetch:async()=>{downloads++;return new Response(png);}});
+  const send=index=>api.POST(new Request('http://localhost/api/collection-jobs/job/images',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({index})}),{params:Promise.resolve({id:'job'})});
+  for(const index of [0,1,2]){const response=await send(index);assert.equal(response.status,200,await response.clone().text());assert.deepEqual((await response.json()).warnings,[]);}
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  const keys=images.map(({role})=>content.assets[role].value[0]);assert.equal(new Set(keys).size,3);assert.equal(objects.size,3);
+  assert.equal(options.rows[0].imageKey,keys[1]);
+  const product=h.sqlite.prepare('SELECT * FROM products').get();assert.equal(JSON.parse(product.image_keys).length,3);
+  const resolved=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'77442',product,content,options,settings:load('app/workspace-settings.ts').defaultSettings});
+  const fields=resolved.rows.find(row=>row.optionId==='a').fields;
+  assert.equal(fields.mainImage.value,keys[1]);assert.ok(fields.additionalImages.value.includes(keys[1]));assert.ok(fields.detailImages.value.includes(keys[2]));
+  for(const index of [2,0,1])assert.equal((await (await send(index)).json()).reused,true);
+  assert.equal(downloads,3);assert.equal(objects.size,3);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,3);
+ }finally{h.sqlite.close();}
+});
+
 
 test('identical original never duplicates a file assigned to a banner or another role',()=>{
  for(const role of ['main','additional','detail','detailTop','detailBottom','label','size']){

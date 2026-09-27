@@ -23,7 +23,8 @@ export function attachCollectedOptionImage(current:ProductOptions,skus:readonly 
  return next;
 }
 
-export async function downloadCollectionImage(source:string,owner:string,fetcher:typeof fetch=fetch){
+export async function downloadCollectionImage(source:string,owner:string,fetcher:typeof fetch=fetch,role?:'main'|'additional'|'detail'){
+ if(role!==undefined&&!['main','additional','detail'].includes(role))throw new Error('이미지 배치를 확인해주세요.');
  const url=new URL(source);
  if(url.protocol!=='https:'||url.username||url.password||url.port||url.hash||!(url.hostname==='alicdn.com'||url.hostname.endsWith('.alicdn.com')))throw new Error('허용된 Alibaba 이미지 주소가 아닙니다.');
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
@@ -33,7 +34,9 @@ export async function downloadCollectionImage(source:string,owner:string,fetcher
   if(Number(response.headers.get('content-length'))>MAX_IMAGE_BYTES){await response.body?.cancel();throw new Error('이미지는 10MB 이하여야 합니다.');}
   const bytes=await readBoundedStream(response.body,MAX_IMAGE_BYTES);const actual=imageFileType(bytes);
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes.buffer as ArrayBuffer))).map(b=>b.toString(16).padStart(2,'0')).join('');
-  const key=`${owner}/collected-${digest}.${actual.extension}`;
+  // Separate role copies preserve the existing one-file/one-role editor model.
+  // Receipts saved before role namespacing still reuse their original keys.
+  const key=`${owner}/collected-${role?`${role}-`:''}${digest}.${actual.extension}`;
   if(!isOwnedImageKey(owner,key))throw new Error('이미지 소유자를 확인해주세요.');
   return {bytes,key,...actual};
  }finally{clearTimeout(timer);}

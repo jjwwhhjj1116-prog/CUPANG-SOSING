@@ -36,8 +36,7 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
   function image(value: unknown, role: 'main' | 'additional' | 'detail') {
     const url = new URL(text(value, '이미지 주소'));
     if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || !(url.hostname === 'alicdn.com' || url.hostname.endsWith('.alicdn.com'))) throw Error('이미지는 HTTPS Alibaba CDN 주소만 허용합니다.');
-    let index = images.findIndex(entry => entry.url === url.href);
-    if (index >= 0 && role === 'detail' && images[index].role !== 'detail') throw Error('같은 이미지가 상품·상세에 함께 사용됩니다. 다중 배치 변환을 확인해야 합니다.');
+    let index = images.findIndex(entry => entry.url === url.href && entry.role === role);
     if (index === -1) { index = images.length; images.push({url: url.href, role}); }
     return index;
   }
