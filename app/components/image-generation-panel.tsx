@@ -3,6 +3,7 @@
 /* Authenticated R2 previews use the existing file route without a public image optimizer. */
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useState } from 'react';
+import { adoptGeneratedOptionImage } from '@/app/option-image-adoption';
 import { generatedImagesRolePatch } from '@/app/image-role-adoption';
 import type { ProductContent } from '@/app/product-content';
 import type { ImageEditJob, ImageEditView, ImagePurpose, ImageQuality, ImageSize } from '@/app/automation/image-edit';
@@ -66,6 +67,16 @@ export default function ImageGenerationPanel({ productId, version, imageKeys, on
     }catch(reason){setError(reason instanceof Error?reason.message:'이미지 적용 실패');}
     finally{setBusy(false);}
   }
+  async function adoptOptionImages() {
+    if (!job) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const count = await adoptGeneratedOptionImage(productId, job, imageKeys);
+      setNotice(`같은 원본을 사용하던 옵션 ${count}개의 대표 이미지를 변경했습니다. 견적서에도 이 이미지가 반영됩니다.`);
+      onProductChanged?.();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '옵션 이미지 적용 실패'); }
+    finally { setBusy(false); }
+  }
   async function refresh() {
     setBusy(true); setError('');
     try { const response = await fetch(`/api/products/${productId}/image-generation`); const next = await response.json() as ImageEditView & { error?: string }; if (!response.ok) throw Error(next.error ?? '조회 실패'); setView(next); }
@@ -119,7 +130,7 @@ export default function ImageGenerationPanel({ productId, version, imageKeys, on
         {job.status === 'approved' && <button className="btn blue" type="button" disabled={busy || stale} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 이미지 1장 가공 · 비용 발생</button>}
         {job.status === 'running' && <><p>실행 중이거나 결과 확인이 필요한 상태입니다. 같은 작업으로 유료 호출을 반복하지 않습니다.</p><button className="btn" type="button" disabled={busy} onClick={() => void refresh()}>저장된 실행 상태 새로고침 · 무료</button></>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
-        {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}
+        {job.result && <div className="translation-field"><h4>생성 결과 검토</h4><img src={imageUrl(job.result.storageKey)} alt="AI 가공 결과 · 검토 필요" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /><p>번역 정확성·상표·인증·법적 표시사항을 확인한 결과가 아닙니다. 원본과 비교한 뒤 이미지 역할을 지정해주세요.</p><p>{job.result.attached ? '상품 이미지 목록에 추가했습니다. 대표·상세 역할은 자동 지정하지 않았습니다.' : '가공 중 상품이 변경되어 결과만 보관했습니다. 아래 버튼은 저장한 결과를 무료로 첨부합니다.'}</p>{job.result.attached && <><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptRoles()}>검토한 결과를 원본의 대표·추가·상세 위치에 적용</button><button className="btn" type="button" disabled={busy || !imageKeys.includes(job.result.storageKey)} onClick={()=>void adoptOptionImages()}>검토한 결과를 같은 원본의 옵션 대표 이미지에 적용</button><small>가공 요청 이후 콘텐츠를 수정했다면 이미지 편집에서 직접 선택해주세요.</small></>}{!job.result.attached && <button className="btn" type="button" disabled={busy} onClick={() => void action({ action: 'attach', jobId: job.id, expectedVersion: version })}>생성된 결과를 현재 상품에 추가 · 무료</button>}</div>}
       </div>}
     </>}
   </section>;

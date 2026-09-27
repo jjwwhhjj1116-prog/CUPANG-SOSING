@@ -3662,3 +3662,10 @@ AI등록 화면 확인:
 - recommendCollectionImages accepts bounded reservedSlots, default0 for existing manual/group/batch callers. Reserved space limits only new files; attached reusable originals remain selected even for an already-full product, excluded files remain excluded. No deletion or claim that existing full products are repaired.
 - 43 related capacity/batch/import/intake tests pass, including captured banners2 + new originals47 + label1, resume/full storage, default50 compatibility and fresh source-to-draft integration. TypeScript/build/artifact/diff passed. Deployment version is in outputs/step383-deploy.log.
 - Actual1688 collection access, image translation, Supplier Hub adapter501, all-category equivalence remain unfinished. No live browser or external submission performed this turn.
+
+## Step 386 — reviewed generated image adoption for option quotations (2026-09-27)
+- Found common-role image adoption leaves per-option imageKey unchanged; quotation prefers option image over common image.
+- Added explicit reviewed-result option-image adoption. Reads latest option rows, replaces only matching original keys (including excluded options without changing inclusion), preserves null common fallback and manually different images, saves through existing options API with both revision and product-version CAS. No automatic retry on conflicts.
+- 20 related tests passed including actual quotation main-key resolution, latest names/prices/stock preservation, failures/no matching rows and invalid jobs. TypeScript, Cloudflare build/artifact, diff checks passed.
+- Deployed production b52d93a3-d08f-4130-9658-de7ac26b53ee. No paid image request, browser operation or live Supplier Hub submission performed.
+- Actual1688 URL collection verification, image translation service, all-category Couplus parity and Supplier Hub POST501 transport remain incomplete.
