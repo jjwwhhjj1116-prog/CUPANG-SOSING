@@ -30,3 +30,15 @@ test('failed and mismatched option responses cannot display prices; changing pro
 test('closing option preview aborts and ignores late reads',async()=>{
  let resolve;const pending=new Promise(r=>resolve=r);const h=harness(()=>pending);h.close();assert.equal(h.calls[0].init.signal.aborted,true);resolve(Response.json({productVersion:'v',options:{productId:'p',rows}}));await settle();assert.equal(h.late,0);
 });
+
+test('observed option margins use rounded prices and preserve fractional costs with minimum toggle',async()=>{
+ const observed={exchangeRate:350,supplyMargin:50,coupangMargin:40,minimumMargin:3000,msrpMultiple:1.3,roundingUnit:10,roundingMode:'nearest'};
+ const h=harness(async()=>Response.json({productVersion:'v',options:{productId:'p',rows:[{...rows[0],unitCostCny:5.23,unitsPerPack:1}]}}));
+ await settle();
+ const enabled=h.render(observed);
+ for(const amount of ['1,830.5원','4,830원','2,999.5원','8,050원','3,220원','10,470원'])assert.ok(enabled.includes(amount),amount);
+ assert.match(enabled,/62.10/);assert.match(enabled,/40.00/);
+ const disabled=h.render({...observed,minimumMargin:0});
+ for(const amount of ['3,660원','1,829.5원','6,100원','2,440원'])assert.ok(disabled.includes(amount),amount);
+ assert.doesNotMatch(disabled,/2,999.5원/);assert.equal(h.calls.length,1);
+});

@@ -3804,3 +3804,9 @@ AI등록 화면 확인:
 - Added missing minimum margin on/off in stage2 PriceEditor. Off persists policyminimumMargin0 through existing shared price-save path; reenabling restores last positive edited amount in current editor. Existing product unchanged until user saves. 0minimum initial uses3000 on first enable.
 - Removed Math.round from margin display, preserving up to6 fractionalKRWdigits: observed2999.5 no longer falsely displayed3000. Added convertedcost/Coupangmargin amounts and sourceCNY up to6digits.
 - 32priceeditor/pricing/optionpreview/quotationprice tests pass; tsc/build/artifact/diff pass; deployed version outputs/step412-deploy.log. No sourcecollection orHubtransport change. Browserexistingprice411 remains available; no browser actions this turn. Existing user products untouched.
+
+## Step 413 — per-option actual cost and margin comparison
+- Stage2 option policy preview now shows converted KRW cost, actual supply margin amount/percentage and Coupang margin amount/percentage alongside rounded supply/sale/MSRP. Uses shared calculateOptionPrices; fractional amounts displayed up to6decimals. Excluded/error colspan updated.
+- Recorded5.23CNY350/50/40/nearest10/min3000 case verifies1830.5cost,4830supply,2999.5margin,8050sale,3220Coupangmargin; disablingminimum locally verifies3660/6100 and1829.5margin without another fetch. No existing remote products changed.
+-33 targeted tests, tsc, build/artifact/diff passed. Deployed f49c31ec-e1b7-4ea7-8093-d743e373e216.
+- This is price-review UI parity only. Live1688 collection, fullcategory/default parity, image translation and actualHubPOST501 remain unfinished; no end-to-end completion claim.

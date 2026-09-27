@@ -22,7 +22,7 @@ export function OptionPricePreview({productId,version,policy}:{productId:string;
  },[productId,version,key]);
  const rows=current?.options?.rows;
  const calculations=rows?calculateOptionPrices(rows,policy):[];
- const money=(value:number)=>value.toLocaleString('ko-KR')+'원';
+ const money=(value:number)=>value.toLocaleString('ko-KR',{maximumFractionDigits:6})+'원';
  return <section aria-label="옵션별 가격 미리보기" aria-busy={!current}>
   <h4>옵션·번들별 가격 미리보기</h4>
   <p>현재 입력한 가격 정책과 저장된 옵션 기준입니다. 옵션 편집 중인 값은 먼저 저장해주세요. 견적서에서 직접 수정한 가격은 이 계산보다 우선합니다.</p>
@@ -30,8 +30,9 @@ export function OptionPricePreview({productId,version,policy}:{productId:string;
   {current?.error&&<p role="alert">{current.error}</p>}
   {current&&<button type="button" className="btn ghost" onClick={()=>setAttempt(value=>value+1)}>옵션 가격 다시 조회</button>}
   {rows?.length===0&&<p>저장된 옵션이 없습니다. 위 대표 원가 계산을 사용합니다.</p>}
-  {!!rows?.length&&<div className="table-wrap"><table><thead><tr><th>옵션</th><th>구성 수량</th><th>판매단위 원가 CNY</th><th>공급가</th><th>판매가</th><th>권장소비자가</th></tr></thead><tbody>{rows.map((row,index)=>{
-   const result=calculations[index];return <tr key={row.id}><th scope="row">{optionQuotationName(row)||row.id}</th><td>{row.unitsPerPack}</td>{!row.included?<td colSpan={4}>견적 제외</td>:result.error?<td colSpan={4} role="alert">{result.error}</td>:<><td>¥ {result.sourceCostCny}</td><td>{money(result.calculation!.supplyPrice)}</td><td>{money(result.calculation!.salePrice)}</td><td>{money(result.calculation!.msrp)}</td></>}</tr>;
+  {!!rows?.length&&<div className="table-wrap"><table><thead><tr><th>옵션</th><th>구성 수량</th><th>판매단위 원가 CNY</th><th>원화 원가</th><th>공급가</th><th>공급 마진</th><th>판매가</th><th>쿠팡 마진</th><th>권장소비자가</th></tr></thead><tbody>{rows.map((row,index)=>{
+   const result=calculations[index], price=result.calculation;
+   return <tr key={row.id}><th scope="row">{optionQuotationName(row)||row.id}</th><td>{row.unitsPerPack}</td>{!row.included?<td colSpan={7}>견적 제외</td>:result.error?<td colSpan={7} role="alert">{result.error}</td>:price&&<><td>¥ {result.sourceCostCny}</td><td>{money(price.costKrw)}</td><td>{money(price.supplyPrice)}</td><td>{money(price.marginKrw)}<small> ({price.actualMargin.toFixed(2)}%)</small></td><td>{money(price.salePrice)}</td><td>{money(price.salePrice-price.supplyPrice)}<small> ({(price.salePrice>0?(price.salePrice-price.supplyPrice)/price.salePrice*100:0).toFixed(2)}%)</small></td><td>{money(price.msrp)}</td></>}</tr>;
   })}</tbody></table></div>}
  </section>;
 }
