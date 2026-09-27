@@ -110,3 +110,17 @@ test('partial import exposes the confirmed product for editing while keeping the
  assert.equal(load('app/intake-queue.ts').intakeProductId(rows[0],[]),'confirmed-product');
  assert.equal(intakeQueueRequests(rows,'price').length,1);
 });
+
+test('restored pending intake recovers an editor only from the same captured category and inputs',()=>{
+ const {intakeProductId}=load('app/intake-queue.ts');const item=row(1);
+ const job={source_url:'https://detail.1688.com/offer/1.html',status:'awaiting_connector',product_id:'partial',context:{category:item.profile,features:item.features,keywords:item.keywords}};
+ const before=JSON.stringify(item);
+ for(const status of ['draft','error'])assert.equal(intakeProductId({...item,status},[job]),'partial');
+ assert.equal(intakeProductId(item,[job,{...job,product_id:'other'}]),null);
+ for(const altered of [
+  {...job,status:'cancelled'}, {...job,product_id:null}, {...job,source_url:'https://detail.1688.com/offer/2.html'},
+  {...job,context:null}, {...job,context:{...job.context,features:'changed'}}, {...job,context:{...job.context,keywords:'changed'}},
+  ...[{id:profile(2).id},{revision:2},{categoryId:'different'}].map(patch=>({...job,context:{...job.context,category:{...item.profile,...patch}}})),
+ ])assert.equal(intakeProductId(item,[altered]),null);
+ assert.equal(JSON.stringify(item),before);
+});

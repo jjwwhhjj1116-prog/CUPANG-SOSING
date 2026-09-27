@@ -88,12 +88,21 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
   }
 }
 
-/** Only a uniquely linked saved receipt can open an existing product editor. */
+/** Recover an existing editor only from a confirmed link or matching saved context. */
 export function intakeProductId(row: IntakeRow, jobs: readonly CollectionJob[]): string | null {
   if (row.productId) return row.productId;
-  if (row.status !== 'saved') return null;
   let sourceUrl: string;
   try { sourceUrl = parseCollectionRequest({urls:[row.url]})[0].sourceUrl; } catch { return null; }
-  const ids = [...new Set(jobs.filter(job => job.status !== 'cancelled' && job.source_url === sourceUrl && job.product_id).map(job => job.product_id!))];
+  const ids = [...new Set(jobs.filter(job => {
+    if (job.status === 'cancelled' || job.source_url !== sourceUrl || !job.product_id) return false;
+    // Pending rows lose transient progress when the server draft is restored.
+    // A matching URL alone must never attach a different category's quotation.
+    if (row.status === 'saved') return true;
+    const context = job.context;
+    return context?.category.id === row.profile.id
+      && context.category.revision === row.profile.revision
+      && context.category.categoryId === row.profile.categoryId
+      && context.features === row.features && context.keywords === row.keywords;
+  }).map(job => job.product_id!))];
   return ids.length === 1 ? ids[0] : null;
 }

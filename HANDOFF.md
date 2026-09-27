@@ -3232,3 +3232,9 @@ AI등록 화면 확인:
 - User may explicitly select a remaining option or common values. Removed-option edits are never retargeted.
 - Validation: quotation editor/panel/detail refresh suites 82/82; tsc, production build/artifact and diff checks passed.
 - Deployed 29c50290-3ccc-4ece-8d23-733ec6cdf7db. No live Couplus parity or real Hub transmission verified. All-category defaults, actual translation and Hub submission gaps remain.
+
+## 314 — Restore saved partial product navigation after reload (2026-09-27)
+- Pending intake rows can recover the existing product editor from owner-scoped collection job context after draft reload. Requires canonical URL, profile ID/revision/category ID, features and keywords to match; excludes cancelled/missing/ambiguous products.
+- Recovery exposes only the existing click-to-open editor. It does not submit, collect, send to Supplier Hub, change draft status or mark image processing complete. Explicit transient product links and legacy saved-row navigation remain supported.
+- Validation: intake queue/navigation/draft suites 20/20; TypeScript, production build, Cloudflare artifact check and diff check passed. UI test verifies restored draft opens existing editor without requests and input changes remove the recovered link.
+- Deployed 9e185b3f-956f-457f-9f49-b511a15ac485. Existing Chrome tabs.list again returned []; no live Couplus or 1688 comparison performed. Actual comprehensive 1688 collection, full category defaults, image translation and Supplier Hub automatic registration remain incomplete; this change does not establish parity.
