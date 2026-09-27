@@ -3,7 +3,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
-import { getTranslationJob } from '@/db/translation-jobs';
+import { getTranslationJob, findIntakeTranslation } from '@/db/translation-jobs';
 import { saveIntegratedTranslation } from '@/db/translation-adoption';
 import { integratedTranslationPlan, applyIntegratedOptions } from '@/app/translation-integrated-adoption';
 import { applyContentPatch } from '@/app/product-content';
@@ -41,7 +41,17 @@ export async function POST(request: Request, context: Context) {
       if (job.review.source.category) categorySource = await readTranslationCategorySource(owner, id, product.source_url, job.review.source.category.id);
     } catch (error) { return json({ error: error instanceof Error ? error.message : '상품 카테고리를 확인하지 못했습니다.' }, 409); }
     let plan;
-    try { plan = integratedTranslationPlan(content, options, job, product.updated_at, scope); }
+    try {
+      let applicationJob=job;
+      if(job.productVersion!==product.updated_at){
+        const initial=await findIntakeTranslation(owner,id);
+        if(initial?.id!==job.id || job.status!=='completed' || !job.result || job.contentRevision!==content.revision)throw Error('생성 이후 콘텐츠가 변경되었습니다. 저장된 결과를 다시 검토해주세요.');
+        // Reuse an immutable completed result only when content is unchanged.
+        // Option adoption still checks originals and preserves manual values.
+        applicationJob={...job,productVersion:product.updated_at};
+      }
+      plan = integratedTranslationPlan(content, options, applicationJob, product.updated_at, scope);
+    }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }
     let attributeRules;
     if (plan.categoryAttributes) {
@@ -64,7 +74,7 @@ export async function POST(request: Request, context: Context) {
     const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
     if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
-      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, categorySource, attributeRules });
+      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, jobProductVersion:job.productVersion, categorySource, attributeRules });
     return saved ? json({ scope, productId: id, productVersion: now, contentRevision: nextContent.revision, optionRevision: nextOptions.revision, applied: plan.preview.length })
       : json({ error: '저장 중 자료가 변경되었습니다. 아무 항목도 함께 저장하지 않았습니다. 다시 검토해주세요.' }, 409);
   } catch { return json({ error: '통합 저장 상태를 확인하지 못했습니다. 저장본을 조회한 뒤 다시 검토해주세요. 자동 재저장하지 않았습니다.' }, 503); }

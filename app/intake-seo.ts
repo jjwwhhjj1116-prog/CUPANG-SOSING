@@ -14,7 +14,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     const response = await fetcher(`${base}/translation`, {
       method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(next),
     });
-    const body = await response.json() as { job?: TranslationJob; error?: string; remainingOptions?: number; autoDraft?: boolean; intakePreserved?: boolean; productVersion?:string; productId?:string; done?:boolean; optionsOnly?:boolean };
+    const body = await response.json() as { job?: TranslationJob; error?: string; remainingOptions?: number; autoDraft?: boolean; intakePreserved?: boolean; productVersion?:string; productId?:string; done?:boolean; optionsOnly?:boolean; applyVersion?:string };
     if (signal.aborted) return '';
     if(response.ok && body.done === true && next.action==='prepare-intake-options' && typeof next.expectedVersion==='string'
       && body.productId===productId && body.productVersion===next.expectedVersion){
@@ -38,18 +38,19 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     if(job.status==='running')job=await awaitIntakeTranslation(job,fetcher,signal);
     if(signal.aborted)return '';
     if(job.status!=='completed'||!job.result)return `상품은 저장됐지만 SEO 초안은 아직 반영되지 않았습니다. ${job.error?.message ?? (job.status==='running'?'생성 중입니다. 작업 상태를 다시 확인해주세요.':'생성 결과를 확인해주세요.')}`;
+    const applyVersion=body.applyVersion??job.productVersion;
     const send=async(action:'preview'|'apply',fingerprint?:string)=>{
-      const response=await fetcher(`${base}/translation-apply`,{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,jobId:job.id,expectedVersion:job.productVersion,...(body.optionsOnly?{scope:'options'}:{}),...(fingerprint?{fingerprint}:{})})});
+      const response=await fetcher(`${base}/translation-apply`,{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,jobId:job.id,expectedVersion:applyVersion,...(body.optionsOnly?{scope:'options'}:{}),...(fingerprint?{fingerprint}:{})})});
       const value=await response.json() as {error?:string;productId?:string;productVersion?:string;preview?:unknown[];fingerprint?:string;applied?:number};
       if(!response.ok)throw Error(value.error||'SEO 초안 반영 상태를 확인해주세요.');
       return value;
     };
     const preview=await send('preview');if(signal.aborted)return '';
-    if(preview.productId!==productId||preview.productVersion!==job.productVersion||!Array.isArray(preview.preview)||typeof preview.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(preview.fingerprint))throw Error('초안 반영 대상이 일치하지 않습니다.');
+    if(preview.productId!==productId||preview.productVersion!==applyVersion||!Array.isArray(preview.preview)||typeof preview.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(preview.fingerprint))throw Error('초안 반영 대상이 일치하지 않습니다.');
     if(!preview.preview.length){
       // An unchanged SEO result does not mean untranslated options are done.
       // Advance without writing, retaining the version checked by preview.
-      if(!body.optionsOnly){next={action:'prepare-intake-options',expectedVersion:job.productVersion};continue;}
+      if(!body.optionsOnly){next={action:'prepare-intake-options',expectedVersion:applyVersion};continue;}
       return `SEO 생성 결과를 보존했습니다. 반영할 추가 항목이 없어 자동 처리를 멈췄습니다.${remainder}`;
     }
     const saved=await send('apply',preview.fingerprint);if(signal.aborted)return '';

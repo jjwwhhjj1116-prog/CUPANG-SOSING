@@ -5,7 +5,7 @@ import type { TranslationCategorySource } from '@/db/translation-category-source
 
 /** Existing tables are initialized by the source reads. D1 batch is atomic. */
 export async function saveIntegratedTranslation(owner: string, content: ProductContent, options: ProductOptions, source: {
-  productVersion: string; imageKeys: string; contentRevision: number; optionRevision: number; jobId: string;
+  productVersion: string; imageKeys: string; contentRevision: number; optionRevision: number; jobId: string; jobProductVersion?: string;
   categorySource?: TranslationCategorySource;
   attributeRules?: { categoryId: string; payload: string | null };
 }) {
@@ -39,7 +39,7 @@ export async function saveIntegratedTranslation(owner: string, content: ProductC
       AND COALESCE((SELECT revision FROM product_options WHERE product_id=? AND owner_id=?),0)=?
       AND EXISTS(SELECT 1 FROM translation_jobs WHERE id=? AND owner_id=? AND product_id=? AND status='completed' AND product_version=? AND content_revision=?)
       ${categoryGuard} ${rulesGuard} RETURNING id`).bind(now, options.rows.filter(row => row.included).length, id, owner, source.productVersion, source.imageKeys,
-        id, owner, source.contentRevision, id, owner, source.optionRevision, source.jobId, owner, id, source.productVersion, source.contentRevision, ...categoryArgs, ...rulesArgs),
+        id, owner, source.contentRevision, id, owner, source.optionRevision, source.jobId, owner, id, source.jobProductVersion??source.productVersion, source.contentRevision, ...categoryArgs, ...rulesArgs),
     env.DB.prepare(`INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at)
       SELECT ?,?,?,?,? WHERE changes()=1
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)

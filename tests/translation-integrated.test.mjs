@@ -242,3 +242,35 @@ test('saved rule preview rejects values that the quotation field cannot retain',
  assert.equal(result.snapshot.bindings.length,0);assert.equal(result.preview.length,0);assert.equal(result.skipped.length,1);
  assert.equal(result.snapshot.reservedFields[0],field.id);
 });
+
+test('completed initial result resumes after price-only changes but rejects content/source races',async()=>{
+ for(const variant of ['resume','content','other-job','original','race']){
+  const h=harness();try{
+   h.sqlite.prepare('UPDATE products SET updated_at=?').run(nextVersion);
+   h.data.options.rows[0].unitCostCny=8;
+   const originalJob=JSON.stringify(h.data.job);
+   if(variant==='content')h.data.content.revision++;
+   if(variant==='original')h.data.options.rows[0].originalName='不同';
+   const route=load('app/api/products/[id]/translation-apply/route.ts',{
+    '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=> 'owner'},
+    '@/db/queries':{findProduct:async()=>({id:'p',owner_id:'owner',updated_at:nextVersion,image_keys:'[]'})},
+    '@/db/product-content':{readProductContent:async()=>h.data.content},'@/db/product-options':{readProductOptions:async()=>h.data.options},
+    '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job,findIntakeTranslation:async()=>variant==='other-job'?null:h.data.job},
+    '@/db/translation-category-source':{readTranslationCategorySource:async()=>{throw Error('unexpected category lookup');}},
+    '@/db/translation-adoption':{saveIntegratedTranslation:async(...args)=>{if(variant==='race')h.sqlite.exec("UPDATE products SET updated_at='newer'");return h.store.saveIntegratedTranslation(...args);}},
+   });
+   const call=body=>route.POST(new Request('https://local/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,expectedVersion:nextVersion,...body})}),{params:Promise.resolve({id:'p'})});
+   const preview=await call({action:'preview'});
+   if(['content','other-job','original'].includes(variant)){assert.equal(preview.status,409,variant);continue;}
+   assert.equal(preview.status,200);const plan=await preview.json();
+   const saved=await call({action:'apply',fingerprint:plan.fingerprint});assert.equal(saved.status,variant==='race'?409:200);
+   assert.equal(JSON.stringify(h.data.job),originalJob);
+   if(variant==='resume'){
+    const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+    const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+    assert.equal(content.seo.title.value,'한국어 상품');assert.equal(options.rows[0].unitCostCny,8);assert.equal(options.rows[0].translatedName,'빨강 옵션');
+    assert.equal(h.sqlite.prepare('SELECT product_version FROM translation_jobs').get().product_version,version);
+   }else assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM product_content').get().n,0);
+  }finally{h.sqlite.close();}
+ }
+});

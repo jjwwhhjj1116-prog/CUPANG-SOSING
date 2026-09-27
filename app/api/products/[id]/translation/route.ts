@@ -54,7 +54,11 @@ export async function POST(request: Request, context: Context) {
         const expiredUnstarted = prior && ['prepared','approved'].includes(prior.status) &&
           Date.parse(prior.review.expiresAt) <= Date.now() && prior.productVersion === product.updated_at;
         if(prior && ['prepared','approved'].includes(prior.status) && !prior.startedAt && !prior.result && !prior.error && prior.productVersion!==product.updated_at)staleUnstarted=prior;
-        if(prior && !expiredUnstarted && !staleUnstarted)return json({job:prior,replayed:true,autoDraft:prior.productVersion===product.updated_at,intakePreserved:prior.productVersion!==product.updated_at,productVersion:product.updated_at,configuration:configuration()});
+        if(prior && !expiredUnstarted && !staleUnstarted){
+          const resumeCompleted=prior.status==='completed' && !!prior.result && prior.contentRevision===(await readProductContent(owner,id)).revision;
+          return json({job:prior,replayed:true,autoDraft:resumeCompleted||prior.productVersion===product.updated_at,intakePreserved:!resumeCompleted&&prior.productVersion!==product.updated_at,
+            ...(resumeCompleted?{applyVersion:product.updated_at}:{}),productVersion:product.updated_at,configuration:configuration()});
+        }
       }
       const { findProductCollection } = await import('@/db/collection-products');
       const { readCollectionResult } = await import('@/db/collection-results');
