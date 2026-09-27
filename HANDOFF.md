@@ -3703,3 +3703,10 @@ AI등록 화면 확인:
 - All 6 integration scenarios pass. Actual route handlers and SQLite are exercised; supplier/model/image responses remain fixtures, not live-site evidence. No runtime bug found by these checks.
 - Updated outdated API setup documentation that described SEO as preparation-only after image downloads. Runtime already uses the ordered draft-before-images flow.
 - Test/documentation-only change; no production rebuild or redeployment needed. Actual1688 verification, own API access, all-category equivalence and Supplier Hub adapter remain incomplete.
+
+## Step 399 — right Chrome recovered; sports gloves category (2026-09-27)
+- Correct persistent browser is otherChrome (browser ID2), rightCou tab727916527; ID3 is wrong Chrome. Existing logged-in user tabs are visible through user.openTabs(), not just tabs.list(). No login needed. Supplier Hub user tab727916999 is present.
+- Read existing Couplus product260927002001, option 버클3선, quote step7. Current rightCou remains in quote dialog and marked handoff. Do not save/reset/transmit this user's product during analysis.
+- Added category81221 스포츠/레져>스포츠잡화>스포츠장갑 and category-specific3 exposed/13 hidden/12 notice fields, exact visible select choices and DOM empty N/A values. No invented automatic defaults; saved values cannot establish initial generation behavior. No Supplier Hub validation claim.
+- Added docs/couplus-81221-analysis.md and schema regression test.172 tests passed, tsc/build/artifact/diff checks passed.
+- Deployed version e45a3456-2b22-486e-a1e2-085a0adf22fc. Actual1688 collection and Supplier Hub transmission adapter remain incomplete.

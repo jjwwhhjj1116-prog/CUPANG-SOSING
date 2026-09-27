@@ -1,3 +1,4 @@
+import { couplus81221Fields, couplus81221Path } from '@/app/couplus-glove-schema';
 import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
 import { couplus64497Fields, couplus64497Path } from '@/app/couplus-toothbrush-schema';
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
@@ -183,8 +184,8 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     fields.splice(fields.findIndex(item => item.section === 'logistics'), 0, ...hub.notices.map(item => field(item.id, 'legal', item.label,
       { reviewRequired: true, help: '공식 상품 미리보기의 상품고시 항목입니다. 실제 상품·증빙에 맞게 작성해주세요.' })));
   }
-  const couplusFields = categoryId === '103495' ? couplus103495Fields : categoryId === '64497' ? couplus64497Fields : categoryId === '77442' ? couplus77442Fields : categoryId === '81452' ? couplus81452Fields : null;
-  const couplusPath = categoryId === '103495' ? couplus103495Path : categoryId === '64497' ? couplus64497Path : categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
+  const couplusFields = categoryId === '81221' ? couplus81221Fields : categoryId === '103495' ? couplus103495Fields : categoryId === '64497' ? couplus64497Fields : categoryId === '77442' ? couplus77442Fields : categoryId === '81452' ? couplus81452Fields : null;
+  const couplusPath = categoryId === '81221' ? couplus81221Path : categoryId === '103495' ? couplus103495Path : categoryId === '64497' ? couplus64497Path : categoryId === '77442' ? couplus77442Path : categoryId === '81452' ? couplus81452Path : null;
   if (couplusFields && !hub) {
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...couplusFields.filter(item => item.section === 'product').map(item => (categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || categoryId === '77442')
       ? { ...item, ...(['수납/정리용품 재질', '상품 재질'].includes(item.label) ? { contentField: 'material' as const } : {}), required: item.visibility === 'exposed', help: item.type === 'select' ? item.help : item.id === 'size'
