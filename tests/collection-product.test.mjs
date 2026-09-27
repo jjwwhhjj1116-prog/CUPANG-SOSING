@@ -26,6 +26,20 @@ test('new source attributes populate editable labels and the category quotation 
  assert.equal(draft.product.supplier_hub_status,'미전송');
 });
 
+test('explicit product dimensions reach quotation notices without becoming package measurements or option sizes',()=>{
+ const source={...result,attributes:[{name:'产品尺寸',value:'38 × 31 × 14 cm'},{name:'包装尺寸',value:'50 × 40 × 20 cm'}]};
+ const draft=prepare('owner',job,source,'p',now);
+ assert.equal(draft.content.label.dimensions.value,'38 × 31 × 14 cm');
+ assert.equal(draft.content.label.dimensions.provenance,'collected');
+ assert.equal(draft.options.rows[0].size,'');
+ const quote=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings});
+ assert.equal(quote.rows[0].fields.noticeDimensions.value,'38 × 31 × 14 cm');
+ for(const attributes of [
+  [{name:'包装尺寸',value:'50 × 40 × 20 cm'},{name:'尺寸',value:'XL'},{name:'净重',value:'200g'}],
+  [{name:'产品尺寸',value:'38cm'},{name:'product dimensions',value:'40cm'}],
+ ])assert.equal(prepare('owner',job,{...result,attributes},'p',now).content.label.dimensions.value,'');
+});
+
 test('conflicting attributes remain in source; partial matches and legal claims are not adopted',()=>{
  const attributes=[{name:'材质',value:'尼龙'},{name:'material',value:'棉'},{name:'型号',value:'A'},{name:'MODEL',value:'A'},{name:'货号',value:'SKU-123'},{name:'包装材质',value:'纸'},{name:'产地',value:'中国'},{name:'KC 인증정보',value:'인증됨'}];
  const draft=prepare('owner',job,{...result,attributes},'p',now);

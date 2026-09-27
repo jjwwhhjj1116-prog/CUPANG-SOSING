@@ -3957,3 +3957,9 @@ AI등록 화면 확인:
 - Found popup validation refresh overwrote nested registration evidence. Preserve it only for same origin/product/category/fingerprint, filename, complete state and nonempty matching quotationID; preserve original registration observedAt. Other states/IDs/identities clear prior nested evidence.
 -17 related popup/reader/handoff tests passed, TypeScript/build/artifact/diff checks passed. Extension0.2.9 ZIP and app link deployed version452d531b-4fc1-4404-adbf-b715eeb47cfb. Installed refresh not verified.
 - Fullworkflow still incomplete: own1688 acquisition, official workbook acquisition, live own upload/validation/final registration and all-category parity remain unverified; supplier-hubPOST501 unchanged. Preserve unrelated tests/submission-review.test.mjs.
+
+## Step 438 — explicit product dimensions into label and quotation drafts
+- Reviewed intake collection/import/SEO flow. Added exact whole product-attribute aliases 제품 크기/제품 치수/产品尺寸/product dimensions to initial collected label dimensions. Does not parse/invent measurements or units, populate packing dimensions, adopt generic SKU 尺寸, or infer weight.
+- Shared source-bound translation adoption covers these aliases; manual values/blanks remain protected. Conflicting source dimensions remain unfilled. New products only; existing work products untouched.
+-42 collection-product/translation-adoption tests passed, including original dimensions ->80719 noticeDimensions, packaging/SKU exclusion, conflict and manual-edit preservation. Typecheck/build/artifact/diff pass. Production ad0f414b-e2bd-41c6-964b-43eb4297bf52.
+- Fixture verification only, not actual1688 acquisition or finalHub registration. Wholeworkflow remains incomplete; official workbook not acquired, POST501 persists. No extension changes (latest0.2.9). Preserve unrelated tests/submission-review.test.mjs.

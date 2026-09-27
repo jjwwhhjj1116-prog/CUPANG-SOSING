@@ -7,6 +7,7 @@ const names: Partial<Record<LabelField, readonly string[]>> = {
   material: ['재질', '材质', 'material'],
   model: ['모델명', '型号', 'model'],
   components: ['제품 구성품', '구성품', '包装清单', 'package contents'],
+  dimensions: ['제품 크기', '제품 치수', '产品尺寸', 'product dimensions'],
 };
 
 export function collectionLabelField(name: string): LabelField | undefined {

@@ -22,6 +22,17 @@ test('translated heading variations retain exact collected source bindings and p
  plan=translationBatchAdoption(content,job,'v');assert.equal(plan.input,null);
 });
 
+test('product dimensions translation follows collected source and never overwrites reviewed dimensions',()=>{
+ const content=emptyProductContent('p');
+ content.label.dimensions={value:'宽38厘米 高31厘米',provenance:'collected',updatedAt:'before'};
+ const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 产品尺寸',value:'宽38厘米 高31厘米'}]}},result:{draft:{title:'',description:'',keywords:[],attributes:[{sourceIndex:0,name:'제품 치수',value:'너비 38cm 높이 31cm'}]}}};
+ assert.equal(translationBatchAdoption(content,job,'v').input.patch.label.dimensions,'너비 38cm 높이 31cm');
+ for(const value of ['', '직접 확인한 크기']){
+  content.label.dimensions={value,provenance:'manual',updatedAt:'after'};
+  assert.equal(translationBatchAdoption(content,job,'v').input,null);
+ }
+});
+
 test('conflicting source facts and renamed headings cannot redirect a known material into model',()=>{
  const content=emptyProductContent('p');content.label.material={value:'尼龙',provenance:'collected',updatedAt:'before'};
  const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 材质',value:'尼龙'},{name:'상품속성: material',value:'棉'}]}},result:{draft:{title:'',description:'',keywords:[],attributes:[{sourceIndex:0,name:'모델명',value:'나일론'}]}}};
