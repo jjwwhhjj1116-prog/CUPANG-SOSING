@@ -12,13 +12,13 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{p
 function harness(handler,status='completed',failInitial=false,emptyJobs=false,jobVersion='v',jobContentRevision=1){
  const slots=[],effects=[],cleanup=[],calls=[];let index=0,first=true,closed=false,late=0,saved=0;
  const content={revision:1,seo:Object.fromEntries(['title','description','keywords'].map(k=>[k,{value:k==='keywords'?[]:'manual'}]))};
- const job={id:'j',status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt:'2026-09-24',source:{}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
+ const job={id:'j',productId:'p',status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt:'2026-09-24',source:{}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
  const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,issues:[]}};
  const hooks={useCallback:fn=>fn,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  let initial=0;
  const fetcher=async(url,init)=>{if(initial<2){initial++;return failInitial?Response.json({error:'초기 조회 실패'},{status:503}):Response.json(url.endsWith('/translation')?view:{content});}calls.push({url,init});return handler(url,init,{content,job,view});};
  const exports={};const file='app/components/translation-panel.tsx';
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationBatch:(options,capacity=50)=>({attributes:(options.attributes??[]).slice(0,capacity),remaining:Math.max(0,(options.attributes??[]).length-capacity)}),adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,fetch:fetcher,require(name){if(name==='@/app/reviewed-translation'){const result={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/reviewed-translation.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:result,Error});return result;}if(name==='react')return hooks;if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationBatch:(options,capacity=50)=>({attributes:(options.attributes??[]).slice(0,capacity),remaining:Math.max(0,(options.attributes??[]).length-capacity)}),adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
  const render=()=>{index=0;const wrapper=exports.default({productId:'p',version:'v',title:'원문',onContentSaved(){saved++;}});const tree=wrapper.type(wrapper.props);first=false;return tree;};
  const buttons=()=>nodes(render()).filter(n=>n.type==='button');
  render();effects.forEach(fn=>cleanup.push(fn()));
@@ -27,9 +27,21 @@ function harness(handler,status='completed',failInitial=false,emptyJobs=false,jo
 const collect='수집 원문 불러오기 · 상품명·설명·상품 속성 입력 교체';
 const options='미번역 옵션 불러오기 · 속성 입력 교체';
 const prepare='번역 요청 검토하기 · 무료';
-const execute='승인한 번역 1회 실행 · 비용 발생';
+const execute='승인한 SEO 초안 작성 계속';
 const adopt='검토한 초안을 이 항목에 적용 · 기존 내용 교체';
 const adoptOptions='검토한 옵션 번역 적용 · 미번역 이름·수집 속성';
+
+test('reviewed SEO button continues approval into execution while locking concurrent clicks',async()=>{
+ const pending=deferred();
+ const h=harness(async(_url,init,{job})=>JSON.parse(init.body).action==='approve'?pending.promise:Response.json({job:{...job,status:'running'}}),'prepared');await settle();
+ const approval=nodes(h.render()).find(n=>n.type==='label'&&label(n.props.children).includes('위 모델'));const checkbox=nodes(approval).find(n=>n.type==='input');
+ checkbox.props.onChange({target:{checked:true}});
+ const click=h.button('SEO 초안 작성');click();click();assert.equal(h.calls.length,1);
+ const approvalBody=JSON.parse(h.calls[0].init.body);assert.equal(approvalBody.action,'approve');
+ pending.resolve(Response.json({job:{id:'j',productId:'p',status:'approved',productVersion:'v',contentRevision:1,review:{}}}));await settle();
+ assert.deepEqual(h.calls.map(call=>JSON.parse(call.init.body).action),['approve','execute']);
+ assert.match(JSON.stringify(h.render()),/SEO 초안을 작성하고 있습니다/);assert.equal(h.saved,0);
+});
 
 test('translation actions lock before rerender across prepare, execute, source and adoption; failures permit explicit retry',async()=>{
  for(const [action,status] of [[prepare,'completed'],[execute,'approved'],[adopt,'completed']]){

@@ -11,6 +11,7 @@ import { translationLabelAdoption, type TranslationLabelMapping } from '@/app/tr
 import { TranslationLabelMappingEditor } from '@/app/components/translation-label-mapping';
 import { TranslationBatchPreview } from '@/app/components/translation-batch-preview';
 import { TranslationIntegratedPreview } from '@/app/components/translation-integrated-preview';
+import { runReviewedTranslation } from '@/app/reviewed-translation';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
@@ -140,6 +141,21 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '요청 실패'); }
     finally { finishRequest(controller); }
   }
+  async function writeReviewedDraft() {
+    if (!job || stale || (job.status === 'prepared' && !confirmed)) return;
+    const controller=beginRequest();if(!controller)return;
+    setBusy(true);setError('');setNotice('SEO 초안 작성 중…');
+    try {
+      const result=await runReviewedTranslation(productId,job,{signal:controller.signal,fetcher:fetch,onJob:saved=>{
+        if(controller.signal.aborted)return;
+        setView(previous=>previous?{...previous,jobs:[saved,...previous.jobs.filter(item=>item.id!==saved.id)]}:previous);
+        setSelectedId(saved.id);setConfirmed(false);setSelectedFields([]);
+      }});
+      if(controller.signal.aborted)return;
+      setNotice(result?.message??(result?.job.status==='completed'?'SEO 초안이 작성되었습니다. 아래 결과를 확인하고 적용해주세요.':result?.job.status==='running'?'SEO 초안을 작성하고 있습니다. 잠시 후 작업 상태를 조회해주세요.':''));
+    }catch(reason){if(!controller.signal.aborted){setNotice('');setError(reason instanceof Error?reason.message:'SEO 초안 작성 상태를 확인하지 못했습니다.');}}
+    finally{finishRequest(controller);}
+  }
   async function loadCollectedSource(includeOptions = false) {
     const controller=beginRequest();if(!controller)return;
     setBusy(true);setError('');setNotice('');
@@ -231,8 +247,8 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         <p>전송 범위: 아래 상품명·설명·속성 원문 및 포함한 SEO 참고 메모. 수신 서비스: {job.review.destination}. 승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
         <details><summary>실제로 전송할 원문 확인</summary><pre>{JSON.stringify(job.review.source, null, 2)}</pre></details>
         {stale && <p className="form-error">이 요청 이후 상품 또는 콘텐츠가 변경되었습니다. 새 유료 실행에는 새 검토 요청이 필요합니다. 기존 결과는 확인할 수 있습니다.</p>}
-        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || stale} />위 모델·원문·유료 API 요청 1회를 검토하고 승인합니다.</label><button type="button" className="btn" disabled={busy || stale || !confirmed} onClick={() => void action({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true })}>유료 요청 승인 · 아직 호출하지 않음</button></>}
-        {job.status === 'approved' && <button type="button" className="btn blue" disabled={busy || stale} onClick={() => void action({ action: 'execute', jobId: job.id })}>승인한 번역 1회 실행 · 비용 발생</button>}
+        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || stale} />위 모델·원문·유료 API 요청 1회를 검토하고 승인합니다.</label><button type="button" className="btn blue" disabled={busy || stale || !confirmed} onClick={() => void writeReviewedDraft()}>SEO 초안 작성</button></>}
+        {job.status === 'approved' && <button type="button" className="btn blue" disabled={busy || stale} onClick={() => void writeReviewedDraft()}>승인한 SEO 초안 작성 계속</button>}
         {job.status === 'running' && <p>이미 시작된 요청을 다시 호출하지 않습니다. 장시간 상태가 유지되면 OpenAI 사용량과 서버 실행 이력을 확인해주세요.</p>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
         {job.result && <>
