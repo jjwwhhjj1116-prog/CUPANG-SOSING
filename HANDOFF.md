@@ -3748,3 +3748,18 @@ AI등록 화면 확인:
 - Added failing six-option observed regression, removed second ceiling, retained explicit up mode, corrected price editor explanation. Expanded SQLite promotion-to-category-quotation integration with5.23 case across4 category schemas and changed workspace settings.
 -210 tests passed, tsc/build/artifact checks passed. Deployed1ac71e83-24e2-4c3d-a0e9-7a6d339add46. Existing saved products not rewritten.
 - Still incomplete: our real1688 source collection (public request captcha, browser policy blocks), full category/default parity, image translation, and Supplier Hub real POST adapter (501). Tests use recorded numeric evidence/fixtures, not successful our live supplier collection or final Hub acceptance.
+
+## Step 405 — official Supplier Hub UI investigation, no runtime change
+- Supplier Hub existing rightChrome login is working. New same-browser tab hub405 opened https://supplier.coupang.com/qvt/registration. Existing records untouched; no uploads, consent, validation or submission.
+- Official download modal code81221 search yielded no visible result. Tree selected 스포츠/레저용품 > 스포츠잡화 > 소품 > 스포츠장갑, then official download button clicked. Modal closed; file bytes/name/download completion not obtained. Do not equate tree label with code81221 without workbook evidence. No blocked downloads-internal page or external-path workaround.
+- Existing unsaved rightHub400 Start Page remains81221. Entering temporary form title then Next resets title and stays Start Page; no saved product. No login issue observed. Both Hub tabs marked handoff.
+- POST /api/supplier-hub still unconditional501. No meaningful live adapter implementation could be completed with current observed UI and missing official workbook/protocol. No deploy/push this step; investigation only.
+- Next prerequisite: actual downloaded official workbook as artifact for exact mapping; do not keep adding unrelated status/guard changes and claim transmission progress. Need separately implement/test transport and acceptance before reporting completed workflow.
+
+## Step 406 — Supplier Hub individual form input recovered;81221 rules
+- Existing rightHub400 new Start Page: ordinary fill/type showed DOM value but Next reset it. After typing YOOFAM sample gloves, explicit native Backspace then s keypress allowed Next to reach Product Page. Do not infer site login failure from earlier reset. This is tool-level input behavior, not a deployed browser adapter.
+- Next displayed last-saved21:39 on NEW verification draft YOOFAM sample gloves, category81221. No existing product modified and no final submission. rightHub400 remains new Product Page, marked handoff.
+- Read model(required), color/quantity/size(required), supply/sale(required), search tags(optional),8 select lists(actual N/A value empty),13 hidden fields, barcode rules and100-option maximum. Choices match existing Couplus glove fields. Saved actual DOM evidence docs/supplier-hub-81221-product-2026-09-27.txt.
+- Enabled observed81221 product rules in quotation resolver: required fields, price relation, barcode and100-option limit. Preserves field IDs, model link and manual overrides. Legal12-field list is still Couplus evidence; no all-stage validation claim.
+-182 tests passed; tsc/build/artifact/diff checks passed. Deployedbb0665f4-ac2c-4433-9fc4-0dd635d4fb61. Step405 handoff investigation included in same commit.
+- Still incomplete: actual1688 collection, full catalog/default parity, image translation and Supplier Hub transmission (POST501). Official downloaded workbook bytes not acquired. Do not ask repeated permission or call this end-to-end complete.

@@ -1,7 +1,8 @@
 import type { QuotationField } from '@/app/quotation-schema';
 
 // Couplus rendered quotation 260927002001, observed 2026-09-27.
-// Saved values do not establish automatic defaults or Supplier Hub validation rules.
+// Product fields/choices and requirements also checked in Supplier Hub's new
+// 81221 Product Page on 2026-09-27. Legal fields remain Couplus observations.
 export const couplus81221Path = ['스포츠/레져', '스포츠 잡화', '스포츠 장갑'];
 const attributes: [string, string, string[]?][] = [
   ['season', '사용계절', ['사계절용', '봄/가을용', '여름용', '겨울용', '봄용', '가을용']],
@@ -18,7 +19,7 @@ const attributes: [string, string, string[]?][] = [
 ];
 const make = (id: string, label: string, section: QuotationField['section'], visibility: QuotationField['visibility']): QuotationField => ({
   id, label, section, visibility, type: 'text', required: false, reviewRequired: true, maxLength: 2000,
-  help: '쿠플러스 스포츠장갑 견적 화면에서 확인한 항목입니다. Supplier Hub 규격과 자동 기본값은 추가 대조가 필요합니다.',
+  help: section === 'product' ? 'Supplier Hub 스포츠장갑 상품정보에서 확인한 항목입니다. 실제 상품값을 입력해주세요.' : '쿠플러스 스포츠장갑 견적 화면에서 확인한 고시 항목입니다. Supplier Hub 법적정보와 자동 기본값은 추가 대조가 필요합니다.',
 });
 export const couplus81221Fields: QuotationField[] = [
   ...[['color', '색상'], ['quantity', '수량'], ['size', '사이즈']].map(([id, label]) => make(id, label, 'product', 'exposed')),

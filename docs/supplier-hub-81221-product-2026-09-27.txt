@@ -1,0 +1,315 @@
+- banner:
+  - generic: 웨비나
+  - strong: 9월 29일~30일
+  - text: 프리미엄 데이터 신규 패키지 실전 활용법을 확인하세요!
+  - link "신청하기 →":
+    - /url: https://forms.cloud.microsoft/r/uxE1fR3gGC
+  - link:
+    - /url: /
+  - button "한국어": 한국어
+  - button "와이홉": 와이홉
+  - link "온라인 문의":
+    - /url: /supplier/qna/ko/requests/new
+  - link "나의 문의내역":
+    - /url: /supplier/qna/ko/requests
+  - link "도움말":
+    - /url: /help
+  - list:
+    - link "홈":
+      - /url: /dashboard
+    - button "상품": 상품
+    - button "물류": 물류
+    - button "정산": 정산
+    - button "애널리틱스": 애널리틱스
+    - link "마이샵":
+      - /url: /retail/store/guide
+    - link "광고 관리":
+      - /url: /marketing/ads-center/home
+    - button "라이브 & 숏츠": 라이브 & 숏츠
+    - button "프로모션": 프로모션
+    - link "계약":
+      - /url: /contract/list
+  - link "개별 상품 등록":
+    - /url: /sr/registration
+  - link "대량 상품 등록":
+    - /url: /qvt/registration
+  - link "상품 등록 상태 확인":
+    - /url: /qvt/wims
+  - link "상품 수정 요청":
+    - /url: /sr/retail-edit
+  - link "상품 추출":
+    - /url: /qvt/conversion
+  - link "쿠팡 상품 공급 요청":
+    - /url: /enigma/vsss
+- link "info 견적서 등록에 어려움을 겪고 계시나요? 여기서 지원 요청을 접수해보세요.":
+  - /url: https://helpseller.coupangcorp.com/hc/ko/requests/new?ticket_form_id=900002904263
+  - generic: info
+  - text: 견적서 등록에 어려움을 겪고 계시나요? 여기서 지원 요청을 접수해보세요.
+- link "info Wing 에서 판매하는 상품을 '상품추출' 기능을 이용하여 더 간편하게 로켓배송으로 전환해 보세요.":
+  - /url: /qvt/conversion/wing
+  - generic: info
+  - text: Wing 에서 판매하는 상품을 '상품추출' 기능을 이용하여 더 간편하게 로켓배송으로 전환해 보세요.
+- list:
+  - generic: 기본정보
+  - generic: "2"
+  - generic: 상품정보
+  - generic: "3"
+  - generic: 이미지/콘텐츠
+  - generic: "4"
+  - generic: 법적정보
+  - generic: "5"
+  - generic: 물류
+- heading "YOOFAM sample gloves" [level=4]
+- generic: "카테고리: 스포츠/레져>스포츠 잡화>스포츠 장갑 (81221)"
+- group "Product Page":
+  - text: 모델명
+  - generic: "*"
+  - generic: help
+  - textbox "예) ModelNumber123"
+  - text: 브랜드
+  - generic: "*"
+  - generic: help
+  - textbox "예) 탐사"
+  - checkbox "브랜드 없음"
+  - generic: 브랜드 없음
+  - text: 옵션 및 가격
+  - generic: "*"
+  - generic: help
+  - generic: (* 녹색 별이 표시된 옵션은 택1 필수입력)
+  - table:
+    - rowgroup:
+      - row "예) 블랙(색상), 화이트(색상), 레드(색상), 네온(색상), 로고(패턴), 무지(색상), 캐릭터(패턴), 매쉬(패턴) 예) 1개, 2개, 4개, 1세트, 1박스 예) S, Medium, Free, 대, one size 등 예) 6500 예) 9900 예) 8805864565456":
+        - cell "예) 블랙(색상), 화이트(색상), 레드(색상), 네온(색상), 로고(패턴), 무지(색상), 캐릭터(패턴), 매쉬(패턴)"
+        - cell "예) 1개, 2개, 4개, 1세트, 1박스"
+        - cell "예) S, Medium, Free, 대, one size 등"
+        - cell "예) 6500"
+        - cell "예) 9900"
+        - cell "예) 8805864565456"
+        - cell:
+          - checkbox
+        - cell
+  - table:
+    - rowgroup:
+      - row "색상 * help 수량 * help 사이즈 * help 공급가 * help 쿠팡 판매가 * help 상품 바코드 * help 쿠팡 바코드 help 전체삭제":
+        - columnheader "색상 * help":
+          - 'generic "* 노출 속성은 고객이 상품을 구매할 때 선택 옵션으로 사용되는 정보입니다. 노출 속성은 필수로 입력해야 하며, 정확한 값을 기재해야 합니다. * 속성에는 없지만 필수 정보가 있다면 상품명에 기입해주세요 (노출속성에 모델명, 수량으로 구성되어 있는데 색상으로 제품이 구분된다면 색상을 상품명에 기입해주세요) * 속성에 중량(g), 용량(ml)이 같이 있다면 상품에 표기된 정보 1개만 작성해주세요 * 법정계량단위만 등록이 가능합니다. - 길이 : 미터(m) / 센티미터(㎝) / 킬로미터(㎞) - 넓이 : 제곱미터(㎡) / 제곱킬로미터(㎢) / 헥타아르(㏊) - 부피 : 세제곱미터(㎥) / 세제곱센티미터(㎤) / 리터(ℓ) - 질량 : 그램(g) / 킬로그램(㎏)) / 톤(t) - 온도 : 섭씨도(℃) - 전류 : 암페어(A), 켈빈(K), 볼트(V), 헤르츠(Hz) - A4, B4, 16절, 8절 규격화된 종이 사이즈는 허용"':
+            - text: 색상 *
+            - generic: help
+        - columnheader "수량 * help":
+          - 'generic "* 노출 속성은 고객이 상품을 구매할 때 선택 옵션으로 사용되는 정보입니다. 노출 속성은 필수로 입력해야 하며, 정확한 값을 기재해야 합니다. * 속성에는 없지만 필수 정보가 있다면 상품명에 기입해주세요 (노출속성에 모델명, 수량으로 구성되어 있는데 색상으로 제품이 구분된다면 색상을 상품명에 기입해주세요) * 속성에 중량(g), 용량(ml)이 같이 있다면 상품에 표기된 정보 1개만 작성해주세요 * 법정계량단위만 등록이 가능합니다. - 길이 : 미터(m) / 센티미터(㎝) / 킬로미터(㎞) - 넓이 : 제곱미터(㎡) / 제곱킬로미터(㎢) / 헥타아르(㏊) - 부피 : 세제곱미터(㎥) / 세제곱센티미터(㎤) / 리터(ℓ) - 질량 : 그램(g) / 킬로그램(㎏)) / 톤(t) - 온도 : 섭씨도(℃) - 전류 : 암페어(A), 켈빈(K), 볼트(V), 헤르츠(Hz) - A4, B4, 16절, 8절 규격화된 종이 사이즈는 허용"':
+            - text: 수량 *
+            - generic: help
+        - columnheader "사이즈 * help":
+          - 'generic "* 노출 속성은 고객이 상품을 구매할 때 선택 옵션으로 사용되는 정보입니다. 노출 속성은 필수로 입력해야 하며, 정확한 값을 기재해야 합니다. * 속성에는 없지만 필수 정보가 있다면 상품명에 기입해주세요 (노출속성에 모델명, 수량으로 구성되어 있는데 색상으로 제품이 구분된다면 색상을 상품명에 기입해주세요) * 속성에 중량(g), 용량(ml)이 같이 있다면 상품에 표기된 정보 1개만 작성해주세요 * 법정계량단위만 등록이 가능합니다. - 길이 : 미터(m) / 센티미터(㎝) / 킬로미터(㎞) - 넓이 : 제곱미터(㎡) / 제곱킬로미터(㎢) / 헥타아르(㏊) - 부피 : 세제곱미터(㎥) / 세제곱센티미터(㎤) / 리터(ℓ) - 질량 : 그램(g) / 킬로그램(㎏)) / 톤(t) - 온도 : 섭씨도(℃) - 전류 : 암페어(A), 켈빈(K), 볼트(V), 헤르츠(Hz) - A4, B4, 16절, 8절 규격화된 종이 사이즈는 허용"':
+            - text: 사이즈 *
+            - generic: help
+        - columnheader "공급가 * help":
+          - generic "* 공급사가 쿠팡에 제공하는 가격입니다.":
+            - text: 공급가 *
+            - generic: help
+        - columnheader "쿠팡 판매가 * help":
+          - generic "* 공급사가 제안하는 소비자 판매가를 입력하여주세요. * 값이 비어있거나, 공급가보다 금액이 작을 수 없습니다.":
+            - text: 쿠팡 판매가 *
+            - generic: help
+        - columnheader "상품 바코드 * help":
+          - generic "상품의 바코드를 입력하여 주세요. 아래는 사용할 수 있는 바코드 형태입니다. * 알파벳 대문자, 숫자, 하이픈(-)만 사용 가능 * 6자 ~ 14자 범위 내 사용 가능 * 공백 허용 가능 단, 맨 앞과 뒤, 연속적인 공백은 사용불가 만약, 상품의 고유 바코드가 없거나, 바코드 운영 규정에 부합하지 않는 경우 '바코드 없음(쿠팡 바코드 생성 요청)'을 선택하세요. 바코드 생성 이후에는 수정이 어려울 수 있으니 잘못 입력된 부분은 없는지 반드시 확인 해주세요":
+            - text: 상품 바코드 *
+            - generic: help
+        - columnheader "쿠팡 바코드 help":
+          - generic "상품의 고유 바코드가 없거나, 바코드 운영 규정에 부합하지 않는 경우 '쿠팡 바코드'를 선택해주세요":
+            - text: 쿠팡 바코드
+            - generic: help
+        - columnheader "전체삭제":
+          - button "전체삭제" [disabled]
+    - rowgroup
+  - table:
+    - rowgroup:
+      - row
+    - rowgroup
+  - table:
+    - rowgroup
+  - button "add":
+    - generic: add
+  - button "옵션 추가 (최대 100개)"
+  - button "모든 옵션 한 번에 입력하기"
+  - generic: MSRP, OSRP 데이터 이용 약관 *
+  - button "자세히보기"
+  - checkbox "이용약관을 읽고 동의합니다."
+  - generic: 이용약관을 읽고 동의합니다.
+  - text: 제조사
+  - generic: "*"
+  - generic: help
+  - textbox "예) 쿠팡"
+  - text: 거래타입
+  - generic: "*"
+  - generic: help
+  - radio "제조사" [checked]
+  - generic: 제조사
+  - radio "공식총판사"
+  - generic: 공식총판사
+  - radio "공식대리점"
+  - generic: 공식대리점
+  - radio "기타 도소매업자"
+  - generic: 기타 도소매업자
+  - generic: info
+  - text: 거래타입은 쿠팡에서 상품 관리에 중요하게 사용되므로 정확히 선택해주세요. 여러 유형에 해당되는 경우 쿠팡 로켓배송 매입 비중이 가장 높은 타입으로 선택해주세요.
+  - text: "- 제조사 : 제조사 직거래, 글로벌 업체의 한국법인 또는 제조사가 브랜드 라이선스를 보유하며 수입, 생산, 판매"
+  - text: "- 공식총판사 : 제조사 지정 공식 총판사가 쿠팡과 거래하며, 제조사의 물류 운영을 담당"
+  - text: "- 공식대리점 : 제조사 지정 공식 대리점 또는 제조사 혹은 글로벌브랜드의 법인이 아니면서 글로벌 브랜드로부터 공식 라이선스를 받아 수입 판매하는 경우"
+  - text: "- 기타 도소매업자 : 위를 제외한 모든 거래업체, 병행수입사"
+  - text: 과세여부
+  - generic: "*"
+  - generic: help
+  - radio "과세" [checked]
+  - generic: 과세
+  - radio "면세"
+  - generic: 면세
+  - radio "영세"
+  - generic: 영세
+  - generic: info
+  - text: 만약 내 상품의 과세 여부를 모를 경우 아래 사이트에서 과세 법령을 검색해 주세요.
+  - text: https://txsi.hometax.go.kr/docs/main.jsp
+  - text: 수입여부
+  - generic: "*"
+  - generic: help
+  - radio "수입대상아님" [checked]
+  - generic: 수입대상아님
+  - radio "수입상품"
+  - generic: 수입상품
+  - radio "병행수입상품"
+  - generic: 병행수입상품
+  - text: 검색태그
+  - generic: help
+  - textbox "검색태그 입력 시, 콤마를 넣어 구분해주세요. (,)"
+  - text: 검색 부가 정보
+  - generic: help
+  - generic: 사용계절
+  - combobox:
+    - option "사계절용"
+    - option "봄/가을용"
+    - option "여름용"
+    - option "겨울용"
+    - option "봄용"
+    - option "가을용"
+    - option "해당사항없음" [selected]
+  - generic: 스마트폰 터치 가능 여부
+  - combobox:
+    - option "터치 가능"
+    - option "해당사항없음" [selected]
+  - generic: 모델명/품번
+  - textbox "예) 154834-541, SJ157-75, BJFK34123(15)"
+  - generic: 사용대상 구분
+  - combobox:
+    - option "남성용"
+    - option "여성용"
+    - option "남녀공용"
+    - option "아동/유아용"
+    - option "시니어 남성용"
+    - option "시니어 여성용"
+    - option "시니어 남녀공용"
+    - option "해당사항없음" [selected]
+  - generic: 패션잡화 사이즈
+  - combobox:
+    - option "S"
+    - option "M"
+    - option "L"
+    - option "XL"
+    - option "Free Size"
+    - option "XXS"
+    - option "XS"
+    - option "XXL이상"
+    - option "해당사항없음" [selected]
+  - generic: 스포츠 장비재질
+  - combobox:
+    - option "나무"
+    - option "알루미늄"
+    - option "플라스틱"
+    - option "카본"
+    - option "스틸"
+    - option "티타늄"
+    - option "그래파이트"
+    - option "강철"
+    - option "스테인리스"
+    - option "두랄루민"
+    - option "해당사항없음" [selected]
+  - generic: 장갑형태
+  - combobox:
+    - option "손가락장갑"
+    - option "벙어리장갑"
+    - option "손가락+벙어리장갑"
+    - option "손가락 반장갑"
+    - option "해당사항없음" [selected]
+  - generic: 색상계열
+  - combobox:
+    - option "블랙계열"
+    - option "네이비계열"
+    - option "그레이계열"
+    - option "실버계열"
+    - option "레드계열"
+    - option "오렌지계열"
+    - option "옐로우계열"
+    - option "그린계열"
+    - option "블루계열"
+    - option "바이올렛/보라계열"
+    - option "핑크계열"
+    - option "화이트계열"
+    - option "브라운계열"
+    - option "골드계열"
+    - option "베이지계열"
+    - option "멀티(혼합)컬러"
+    - option "투명계열"
+    - option "아이보리 계열"
+    - option "해당사항없음" [selected]
+  - generic: 방수 가능여부
+  - combobox:
+    - option "방수가능"
+    - option "해당사항없음" [selected]
+  - generic: 스포츠 종류
+  - 'textbox "예) 예: 농구, 축구, 배구, 테니스, 야구"'
+  - generic: Global Trade Item Number
+  - textbox "예)":
+    - /placeholder: "예) "
+  - generic: Parent Manufacturer Part Number
+  - textbox "예)":
+    - /placeholder: "예) "
+  - generic: Manufacturer Part Number
+  - textbox "예) MG-05-010,NK-G-01,AD-G-02,P-G-03,UA-G-04,S-G-05"
+- button "arrow_back":
+  - generic: arrow_back
+- generic: "마지막 저장: 2026.09.27 21:39"
+- button "저장하기"
+- button "미리보기"
+- button "다음 arrow_forward":
+  - text: 다음
+  - generic: arrow_forward
+- contentinfo:
+  - generic: "서플라이어 콜센터 : 1600-9879 (월-금 9:00-19:00)"
+  - generic: © Copyright 2026 Coupang.com, or its affiliates. All rights reserved.
+  - list:
+    - link "Speak Up 채널/ Ethics 웹사이트":
+      - /url: https://ethics.coupang.com/ko/index.html
+    - link "공정거래 업무지침":
+      - /url: /pdf/gnb/fair-trade-guidelines.ko.pdf
+    - link "이용약관":
+      - /url: /policies/terms
+    - link "개인정보 처리방침":
+      - /url: /policies/privacy-policy
+    - link "고객지원":
+      - /url: /help/cs
+    - link "온라인 문의":
+      - /url: /supplier/qna/ko/requests/new
+    - link "나의 문의내역":
+      - /url: /supplier/qna/ko/requests
+    - link "도움말":
+      - /url: /help
+- tab "":
+  - generic: 
+- tab "":
+  - generic: 
+- tab " 0":
+  - generic: 
+  - text: "0"
+- tab:
+- generic: 
+- text:  
+- textbox

@@ -33,9 +33,21 @@ test('81221 uses the observed glove form without borrowing kitchen or brace fiel
   assert.equal(schema.fields.find(f => f.id === 'glove_touch').choices[0].value, '');
   assert.equal(schema.fields.find(f => f.id === 'glove_touch').choices[1].value, '터치 가능');
   assert.equal(schema.submissionReady, false);
-  assert.match(schema.evidence, /Supplier Hub 공식 규격은 미확인/);
+  assert.match(schema.evidence, /공식 상품정보/);
   const changes = model.validateQuotationChanges([{ fieldKey: 'glove_touch', optionId: null, value: '터치 가능' }], { schema, optionIds: [] });
   assert.ok(changes);
+});
+
+test('81221 enforces observed Hub required fields, price relation, barcode and option limit',()=>{
+ const schema=model.getQuotationSchema('81221');
+ for(const id of ['model','color','quantity','size','supplyPrice','salePrice'])assert.equal(schema.fields.find(f=>f.id===id).required,true,id);
+ assert.equal(schema.fields.find(f=>f.id==='searchTags').required,false);
+ assert.equal(schema.maxIncludedOptions,100);
+ assert.equal(schema.salePriceMustCoverSupply,true);
+ assert.ok(model.quotationBarcodeIssues('81221','existing','abc').length);
+ assert.equal(model.quotationBarcodeIssues('81221','existing','ABC123').length,0);
+ assert.equal(model.quotationBarcodeIssues('81221','request-coupang','').length,0);
+ assert.equal(schema.submissionReady,false);
 });
 
 test('stage-six model reaches glove quotation and export while manual overrides remain authoritative', () => {
