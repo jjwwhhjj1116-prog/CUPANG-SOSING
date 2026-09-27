@@ -881,3 +881,19 @@ test('all-option save sends expanded edits in one revision-checked request',asyn
  assert.equal(calls.length,1);assert.equal(calls[0].expectedRevision,view.revision);assert.equal(calls[0].expectedInputFingerprint,view.inputFingerprint);
  assert.equal(calls[0].changes.length,2);assert.ok(calls[0].changes.some(item=>item.optionId==='blue'&&item.value==='전체 적용 브랜드'));
 });
+
+test('deleting the active option on refresh keeps its identity and draft instead of switching to common edits',async()=>{
+ const view=fixture(),edits=[change('brand','미저장 값','red')],states=[view,edits,[],false,false,'','','start','red',[],true,null,false];let slot=0;
+ const next=clone(view);next.resolved.rows=next.resolved.rows.filter(row=>row.optionId!=='red');next.automatic.rows=next.automatic.rows.filter(row=>row.optionId!=='red');
+ const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=initial;return[states[i],v=>states[i]=typeof v==='function'?v(states[i]):v];},useEffect(){},useCallback:f=>f,useRef:v=>({current:v}),useId:()=> 'deleted-option'};
+ let reads=0,writes=0;const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init)=>{if(init?.method==='PUT')writes++;else reads++;return Response.json(next);}});
+ const nodes=v=>Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[];
+ const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1'});return nodes(wrapper.type(wrapper.props));};
+ render().find(n=>n.type==='button'&&n.props.children==='기본값 다시 반영').props.onClick();await new Promise(r=>setTimeout(r,20));
+ assert.equal(reads,1);assert.equal(states[8],'red');assert.equal(states[1][0].value,'미저장 값');
+ let tree=render();assert.ok(tree.some(n=>n.props?.role==='alert'&&String(n.props.children).includes('공통값으로 자동 전환하지')));
+ assert.equal(tree.filter(n=>n.type==='fieldset').length,0);
+ const save=tree.find(n=>n.type==='button'&&String(n.props.children).startsWith('견적 입력 저장'));assert.equal(save.props.disabled,true);save.props.onClick();await new Promise(r=>setTimeout(r,10));assert.equal(writes,0);
+ tree.find(n=>n.type==='select'&&n.props.value==='red').props.onChange({target:{value:'blue'}});
+ tree=render();assert.equal(states[8],'blue');assert.ok(tree.some(n=>n.type==='fieldset'));assert.equal(states[1][0].optionId,'red');
+});

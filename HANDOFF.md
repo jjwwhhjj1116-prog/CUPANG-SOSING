@@ -3225,3 +3225,10 @@ AI등록 화면 확인:
 - Explicit review targets retain priority. Product-level entry remains common. Existing quotation initial-target handling and refresh behavior remain unchanged.
 - Validation: detail refresh/quotation panel/option editor request suites 20/20; tsc, production build/artifact check, diff check passed.
 - Cloudflare deployment d87c69d4-959d-4874-9d45-d28a847b6beb. No live Couplus comparison or actual Hub registration in this turn; broad completion gaps remain as documented in 311.
+
+## 313 — Do not fall back to common quotation edits after option deletion (2026-09-27)
+- Initial quotation selection retains a requested option ID even if it is absent. Refresh no longer resets deleted active options to common values; all-option propagation is cleared.
+- Missing active option displays a disabled selector placeholder and explicit reselection notice, hides field editing/translation/label actions, and blocks save in both UI and handler. Dirty changes remain available through existing conflict resolution.
+- User may explicitly select a remaining option or common values. Removed-option edits are never retargeted.
+- Validation: quotation editor/panel/detail refresh suites 82/82; tsc, production build/artifact and diff checks passed.
+- Deployed 29c50290-3ccc-4ece-8d23-733ec6cdf7db. No live Couplus parity or real Hub transmission verified. All-category defaults, actual translation and Hub submission gaps remain.
