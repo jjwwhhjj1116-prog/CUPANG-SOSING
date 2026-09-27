@@ -69,6 +69,26 @@ async function inputFrom(files = entries(), updates = {}) {
   };
 }
 
+test('OOXML shared and inline text escapes decode once, including literal escape text and surrogate pairs', async () => {
+  const files = entries().map(([name, value]) => [name, name === 'xl/sharedStrings.xml'
+    ? '<sst><si><t>상품_x000A_명</t></si></sst>'
+    : name === 'xl/worksheets/sheet2.xml'
+      ? '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>원문 _x005F_x000D_ _xD83D__xDE00_</t></is></c><c r="B1" t="inlineStr"><is><r><t>첫줄_x000D_</t></r><r><t>다음줄</t></r></is></c></row></sheetData></worksheet>' : value]);
+  const archive = await reader.readXlsxArchive(zip(files));
+  const inspection = reader.inspectXlsxArchive(archive);
+  assert.equal(reader.xlsxHeaders(inspection, '견적서', 3)[0], '상품\n명');
+  assert.deepEqual(Array.from(reader.xlsxHeaders(inspection, '참고', 1)), ['원문 _x000D_ 😀', '첫줄\r다음줄']);
+  assert.deepEqual(Array.from(reader.xlsxStaticListValues(archive, inspection, "'참고'!$A$1:$B$1", '견적서')), ['원문 _x000D_ 😀', '첫줄\r다음줄']);
+});
+
+test('exported product text resembling OOXML escapes round trips without changing the product name', async () => {
+  const title = '모델 _x000D_ / _x005F_ / _xABCD_';
+  const input = await inputFrom(undefined, { rows: [{ title, supplyPrice: 12500, skuName: '검정' }] });
+  const result = await createMappedQuotation(input);
+  const archive = await reader.readXlsxArchive(result.bytes.buffer);
+  assert.equal(reader.xlsxHeaders(reader.inspectXlsxArchive(archive), '견적서', 5)[0], title);
+});
+
 test('mapped XLSX changes only selected cells while preserving other parts, styles, row formatting and unmapped formulas', async () => {
   const input = await inputFrom(); const result = await createMappedQuotation(input);
   const originals = await reader.readXlsxArchive(input.originalBytes); const generated = await reader.readXlsxArchive(result.bytes.buffer);

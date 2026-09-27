@@ -3969,3 +3969,9 @@ AI등록 화면 확인:
 - Public parser now resolves exact @id-only local references from root/@graph definitions for variants, offers, images, attributes, minimum quantities and inventory. Never requests referenced URLs or merges ambiguous definitions. Existing source URL/SKU/currency/price checks remain.
 -22 public collector/route/intake fixture tests passed including reference graph, zero stock, image indices, missing/duplicate/external references. TypeScript/build/artifact/diff passed; deployed630fce54-5790-45ee-8127-310d7e1b0b74.
 - This is parser compatibility only; actual1688 source, official workbook acquisition, live Hub registration remain incomplete; POST501 unchanged. Extension0.2.9 unchanged. Preserve unrelated tests/submission-review.test.mjs.
+
+## Step 440 — OOXML text fidelity for category templates
+- Reused right Chrome otherChrome/hub420; authenticated Supplier Hub. Selected observed kitchen storage basket category through official download dialog and clicked download; dialog closed but no new file in default Downloads and no tool download artifact. Official workbook acquisition remains unverified. Existing products untouched; tab left at upload page with no files/consents changed.
+- Fixed shared/inline/rich Excel string decoding of OOXML UTF-16 escapes in the bounded inspector. Single pass preserves escaped literal sequences; also fixes static dropdown list values derived from those cells. Formula text is not decoded or executed.
+-49 mapped quotation tests pass, including multiline headings, literal escape text, surrogate pairs, list values and generated product name round trip. TypeScript/build/artifact/diff pass. Deployed d3f09436-f681-4ab7-b486-c2f3fcf5e53f.
+- Full workflow remains incomplete: actual owned1688 acquisition, official workbook, all-category parity and own Hub upload/finalregistration unverified; supplier-hub POST501 persists. Extension stays0.2.9. Preserve unrelated tests/submission-review.test.mjs dirty state.

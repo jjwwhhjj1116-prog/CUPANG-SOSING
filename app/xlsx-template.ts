@@ -90,7 +90,12 @@ function xml(bytes: Uint8Array | undefined): XmlNode {
 }
 function children(node: XmlNode, name: string) { return node.children.filter(child => localName(child.name) === name); }
 function allText(node: XmlNode): string { return node.text + node.children.map(allText).join(''); }
-function richText(node: XmlNode): string { return children(node, 't').map(allText).join('') + children(node, 'r').map(run => children(run, 't').map(allText).join('')).join(''); }
+function richText(node: XmlNode): string {
+  const text = children(node, 't').map(allText).join('') + children(node, 'r').map(run => children(run, 't').map(allText).join('')).join('');
+  // OOXML escapes UTF-16 code units. Decode once: _x005F_x000D_ represents
+  // the literal text _x000D_, not a carriage return. Do not decode formulas/XML.
+  return text.replace(/_x([\da-f]{4})_/gi, (_match, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+}
 function relationshipPath(base: string, target: string): string {
   if (/^[a-z][\w+.-]*:|^\/\/|[\\?#\u0000-\u001f]/i.test(target)) return fail('외부 또는 비정상적인 Excel 관계 경로입니다.');
   const parts = (target.startsWith('/') ? target.slice(1) : `${base.slice(0, base.lastIndexOf('/') + 1)}${target}`).split('/'); const result: string[] = [];
