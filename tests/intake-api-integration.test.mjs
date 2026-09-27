@@ -9,7 +9,7 @@ import {memoryDatabase,runtimeDDL} from '../scripts/check-db-schema.mjs';
 
 // Real route handlers and persistence; only auth, Alibaba and R2 are fixtures.
 // This is not evidence of a live Alibaba or Supplier Hub transaction.
-for(const automatic of [false,true,'many'])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
+for(const automatic of [false,true,'many','stale'])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...v){args=v;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const result=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
  const objects=new Map(),network=[],calls=[],cache=new Map();
@@ -57,11 +57,12 @@ for(const automatic of [false,true,'many'])test(`URL intake persists a category-
    }
    let generations=0;bindings.AI={run:async(model,input)=>{generations++;assert.equal(model,bindings.SOURCEFLOW_TEXT_MODEL);const source=JSON.parse(input.messages[1].content);assert.equal(source.category.id,'80719');return {response:{title:generations===1?'자동 생성 수납 상품':'후속 요청 상품명',description:'검토용 설명',keywords:['수납'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('상품속성:')?(automatic===true?'상품 모양':'바구니 형태'):'옵션',value:pair.name.startsWith('상품속성:')?'사각형':pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};}};
    let expiredJobId;
-   if(automatic===true){
+   if(automatic===true||automatic==='stale'){
     const productId=sqlite.prepare('SELECT id FROM products').get().id;
     const prepared=await fetcher(`/api/products/${productId}/translation`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'prepare-collected',intake:true})});
     assert.equal(prepared.status,201);
     const oldJob=(await prepared.json()).job;expiredJobId=oldJob.id;
+    if(automatic==='stale')sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run(new Date(Date.now()+1000).toISOString(),productId);
     oldJob.review.expiresAt='2026-01-01T00:00:00.000Z';
     sqlite.prepare('UPDATE translation_jobs SET review=?,expires_at=? WHERE id=?').run(JSON.stringify(oldJob.review),oldJob.review.expiresAt,oldJob.id);
    }
@@ -80,8 +81,8 @@ for(const automatic of [false,true,'many'])test(`URL intake persists a category-
    const after=await (await qr.GET(new Request(qu),qc)).json();assert.equal(after.resolved.rows.find(r=>r.optionId==='collected-1').fields.salePrice.value,'35000');
    assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');return;
   }
-  assert.match(await run(),/SEO 요청을 준비/);assert.ok(latest.product_id);const seo=sqlite.prepare('SELECT * FROM translation_jobs').get();assert.equal(seo.status,'prepared');const review=JSON.parse(seo.review);assert.equal(review.source.category.id,'80719');assert.equal(review.source.title,'原文商品');assert.equal(review.source.guidance.keywords,'수납,바스켓');assert.ok(review.source.attributes.some(pair=>pair.name==='option:collected-1'));assert.equal(seo.result,null);
-  await run();assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
+  await assert.rejects(run(),/SEO 요청을 준비/);assert.ok(latest.product_id);const seo=sqlite.prepare('SELECT * FROM translation_jobs').get();assert.equal(seo.status,'prepared');const review=JSON.parse(seo.review);assert.equal(review.source.category.id,'80719');assert.equal(review.source.title,'原文商品');assert.equal(review.source.guidance.keywords,'수납,바스켓');assert.ok(review.source.attributes.some(pair=>pair.name==='option:collected-1'));assert.equal(seo.result,null);
+  await assert.rejects(run());assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
   const prepareRoute=load('app/api/products/[id]/translation/route.ts');
   const injected=await prepareRoute.POST(new Request(`https://app.test/api/products/${latest.product_id}/translation`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'prepare-collected',source:{title:'다른 원문'}})}),{params:Promise.resolve({id:latest.product_id})});assert.equal(injected.status,400);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
   const quoteRoute=load('app/api/products/[id]/quotation-fields/route.ts');
@@ -99,14 +100,14 @@ for(const automatic of [false,true,'many'])test(`URL intake persists a category-
   const save=await quoteRoute.PUT(new Request(quoteUrl,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(edit)}),quoteContext);
   const saved=await save.json();assert.equal(save.status,200,JSON.stringify(saved));assert.equal(optionRow(saved).fields.salePrice.value,'35000');
   sqlite.prepare('UPDATE products SET title=? WHERE id=?').run('검토 후 수정한 상품명',latest.product_id);
-  const previousRequests=network.length;assert.match(await run(),/초안 저장/);assert.equal(network.length,previousRequests);
+  const previousRequests=network.length;await assert.rejects(run(),/SEO 요청을 준비/);assert.equal(network.length,previousRequests);
   assert.equal(sqlite.prepare('SELECT count(*) n FROM products').get().n,1);const product=sqlite.prepare('SELECT * FROM products').get();assert.equal(product.title,'검토 후 수정한 상품명');assert.equal(product.supplier_hub_status,'미전송');
   const resumed=await (await quoteRoute.GET(new Request(quoteUrl),quoteContext)).json();assert.equal(optionRow(resumed).fields.salePrice.value,'35000');assert.equal(resumed.categoryContext.categoryId,'80719');
   const stale=await quoteRoute.PUT(new Request(quoteUrl,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(edit)}),quoteContext);assert.equal(stale.status,409);
   // Editing the quotation advances the product version and requires a fresh review.
-  assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,2);await run();assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,2);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,2);await assert.rejects(run());assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,2);
   const before=network.length;delete deps['cloudflare:workers'].env.OPENAI_API_KEY;
-  assert.match(await run(),/SEO 요청 준비는 완료되지/);assert.equal(network.length,before);assert.equal(sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
+  await assert.rejects(run(),/SEO 요청 준비는 완료되지/);assert.equal(network.length,before);assert.equal(sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
   assert.equal(calls.filter(path=>path.endsWith('/collect')).length,1);assert.equal(network.filter(host=>host==='gw.open.1688.com').length,1);
   // Exercise approval, execution claim, provider validation and persistence
   // through real handlers. Only the external model response is a fixture.

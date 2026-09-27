@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
-import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation } from '@/db/translation-jobs';
+import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation, refreshUnstartedIntake } from '@/db/translation-jobs';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
@@ -44,6 +44,7 @@ export async function POST(request: Request, context: Context) {
       const optionsOnly = body.action === 'prepare-intake-options';
       if (Object.keys(body).some(key => !(optionsOnly ? ['action','expectedVersion'] : ['action','intake']).includes(key)) || (body.intake !== undefined && body.intake !== true)) throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
       const autoDraft = (body.intake === true || optionsOnly) && config.provider === 'workers-ai';
+      let staleUnstarted: TranslationJob | null = null;
       if(optionsOnly){
         const initial=await findIntakeTranslation(owner,id);
         if(!autoDraft || body.expectedVersion!==product.updated_at || initial?.status!=='completed')return conflict();
@@ -52,7 +53,8 @@ export async function POST(request: Request, context: Context) {
         const prior=await findIntakeTranslation(owner,id);
         const expiredUnstarted = prior && ['prepared','approved'].includes(prior.status) &&
           Date.parse(prior.review.expiresAt) <= Date.now() && prior.productVersion === product.updated_at;
-        if(prior && !expiredUnstarted)return json({job:prior,replayed:true,autoDraft:prior.productVersion===product.updated_at,intakePreserved:prior.productVersion!==product.updated_at,productVersion:product.updated_at,configuration:configuration()});
+        if(prior && ['prepared','approved'].includes(prior.status) && !prior.startedAt && !prior.result && !prior.error && prior.productVersion!==product.updated_at)staleUnstarted=prior;
+        if(prior && !expiredUnstarted && !staleUnstarted)return json({job:prior,replayed:true,autoDraft:prior.productVersion===product.updated_at,intakePreserved:prior.productVersion!==product.updated_at,productVersion:product.updated_at,configuration:configuration()});
       }
       const { findProductCollection } = await import('@/db/collection-products');
       const { readCollectionResult } = await import('@/db/collection-results');
@@ -77,7 +79,8 @@ export async function POST(request: Request, context: Context) {
       const job: TranslationJob = { id: crypto.randomUUID(), productId: id, productVersion: product.updated_at, contentRevision: content.revision,
         status: 'prepared', review, result: null, error: null, createdAt: new Date().toISOString(), approvedAt: null, startedAt: null, finishedAt: null };
       // Reopening/retrying the same source does not create another paid job.
-      const saved = await createTranslationJob(owner, job, optionsOnly ? `intake-options-${await fingerprint(source.attributes)}` : autoDraft ? 'intake-auto-v1' : `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
+      const saved = staleUnstarted ? await refreshUnstartedIntake(owner,staleUnstarted,job,requestFingerprint)
+        : await createTranslationJob(owner, job, optionsOnly ? `intake-options-${await fingerprint(source.attributes)}` : autoDraft ? 'intake-auto-v1' : `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
       if (!saved || saved.conflict) return conflict();
       return json({ job: saved.job, replayed: saved.replayed, remainingOptions, autoDraft, optionsOnly, configuration: configuration() }, saved.replayed ? 200 : 201);
     }

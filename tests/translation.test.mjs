@@ -364,3 +364,31 @@ test('expired intake renewal never resets executed jobs or bypasses changed sour
     } finally {sqlite.close();}
   }
 });
+
+test('stale unstarted intake refresh is atomic, clears approval and preserves manual content', async () => {
+ for(const variant of ['prepared','approved','running','completed','failed','uncertain','started','claimed','result','error','race','content','owner']){
+  const {sqlite,store,product}=harness();
+  try{
+   const review=await model.prepareTranslationReview(source,config);
+   const previous={id:crypto.randomUUID(),productId:'product',productVersion:product.updated_at,contentRevision:2,status:'prepared',review,createdAt:new Date().toISOString()};
+   await store.createTranslationJob('owner',previous,'intake-auto-v1','old-source');
+   const version='2026-09-23T00:00:00.000Z';
+   sqlite.prepare('UPDATE products SET updated_at=?').run(version);sqlite.exec('UPDATE product_content SET revision=3');
+   if(['approved','running','completed','failed','uncertain'].includes(variant))sqlite.prepare('UPDATE translation_jobs SET status=?,approved_at=?').run(variant,previous.createdAt);
+   if(variant==='started')sqlite.prepare('UPDATE translation_jobs SET started_at=?').run(previous.createdAt);
+   if(variant==='claimed')sqlite.exec("UPDATE translation_jobs SET claim_token='other-worker'");
+   if(variant==='result')sqlite.exec("UPDATE translation_jobs SET result='{}'");
+   if(variant==='error')sqlite.exec("UPDATE translation_jobs SET error='{}'");
+   if(variant==='race')sqlite.exec("UPDATE products SET updated_at='newer'");
+   if(variant==='content')sqlite.exec('UPDATE product_content SET revision=4');
+   const fresh={...previous,id:crypto.randomUUID(),productVersion:version,contentRevision:3,review:await model.prepareTranslationReview({...source,title:'新的商品'},config)};
+   const refreshed=await store.refreshUnstartedIntake(variant==='owner'?'other-owner':'owner',previous,fresh,'new-source');
+   if(['prepared','approved'].includes(variant)){
+    assert.ok(refreshed);assert.equal(refreshed.job.id,previous.id);assert.equal(refreshed.job.productVersion,version);assert.equal(refreshed.job.contentRevision,3);assert.equal(refreshed.job.status,'prepared');assert.equal(refreshed.job.approvedAt,null);
+    assert.equal(await store.approveTranslationJob('owner','product',previous.id,review.fingerprint,new Date().toISOString()),null);
+    assert.equal(await store.refreshUnstartedIntake('owner',previous,fresh,'new-source'),null);
+   }else{assert.equal(refreshed,null);assert.equal(sqlite.prepare('SELECT product_version FROM translation_jobs').get().product_version,previous.productVersion);}
+   assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload,'MANUAL_CONTENT_MUST_NOT_CHANGE');
+  }finally{sqlite.close();}
+ }
+});
