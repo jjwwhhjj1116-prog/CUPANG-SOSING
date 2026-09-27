@@ -20,6 +20,7 @@ type Props = {
 type Draft = {
   seo: { title: string; keywords: string; description: string };
   label: Record<LabelField, string>;
+  labelProductNameLinked: boolean;
   labelLayout: LabelLayout;
   customLabels: CustomLabel[];
   assets: Record<AssetRole, string[]>;
@@ -28,6 +29,7 @@ function draftFrom(content: ProductContent): Draft {
   return {
     seo: { title: content.seo.title.value, keywords: content.seo.keywords.value.join('\n'), description: content.seo.description.value },
     label: Object.fromEntries(Object.entries(content.label).map(([key, field]) => [key, field.value])) as Draft['label'],
+    labelProductNameLinked: content.labelProductNameLinked === true,
     labelLayout: currentLabelLayout(content.labelLayout),
     customLabels: (content.customLabels??[]).map(item=>({...item})),
     assets: Object.fromEntries(Object.entries(content.assets).map(([key, field]) => [key, [...field.value]])) as Draft['assets'],
@@ -91,7 +93,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const initial = draftFrom(content);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
   const editingDetail = section === '이미지' && focusedAssetRole === 'detail';
-  const dirty = (editingDetail && draft.seo.description !== initial.seo.description) || (section==='이미지'?imageStageRoles(focusedAssetRole).some(role=>JSON.stringify(draft.assets[role])!==JSON.stringify(initial.assets[role])):JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey])) || (section==='표시사항'&&(JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
+  const dirty = (editingDetail && draft.seo.description !== initial.seo.description) || (section==='이미지'?imageStageRoles(focusedAssetRole).some(role=>JSON.stringify(draft.assets[role])!==JSON.stringify(initial.assets[role])):JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey])) || (section==='표시사항'&&(draft.labelProductNameLinked!==initial.labelProductNameLinked||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
   const anyDirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion);
   useEffect(() => {
@@ -124,7 +126,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       if(controller.signal.aborted)return;
       if (!response.ok) throw new Error(body.error || '저장된 기본설정을 읽지 못했습니다.');
       const next = fillLabelDraft(draft.label, content, product.title, body.settings, body.categoryId ?? null);
-      setDraft(previous => ({ ...previous, label: next.label }));
+      setDraft(previous => ({ ...previous, label: next.label, labelProductNameLinked: previous.labelProductNameLinked || (next.filled.includes('productName') && next.label.productName === content.seo.title.value) }));
       setMessage(next.filled.length
         ? `${next.filled.map(key => labelFields[key]).join(' · ')} 입력을 채웠습니다. 실제 상품과 대조한 뒤 표시사항을 저장하면 PNG와 견적 자료에 반영됩니다.${next.referenceFields.length ? ` ${next.referenceFields.map(key => labelFields[key]).join(' · ')}은 쿠플러스 참조 화면의 기본값이며 이 상품에서 확인된 정보는 아닙니다.` : ''}`
         : '채울 수 있는 빈 항목이 없습니다. 직접 입력·직접 비운 항목은 보존했습니다.');
@@ -145,7 +147,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
-      : section === '표시사항' ? { label: draft.label, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(editingDetail ? { seo: { description: draft.seo.description } } : {}) };
+      : section === '표시사항' ? { label: draft.label, labelProductNameLinked: draft.labelProductNameLinked, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(editingDetail ? { seo: { description: draft.seo.description } } : {}) };
     try {
       const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent; error?: string };
@@ -154,7 +156,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       const saved = body.content;
       setContent(saved);
       // Preserve unsaved work in other tabs when this section is saved.
-      setDraft(previous => ({ ...previous, [draftKey]: section==='이미지'?mergeSavedImageStage(initial.assets,previous.assets,draftFrom(saved).assets,focusedAssetRole):draftFrom(saved)[draftKey], ...(editingDetail ? { seo: { ...previous.seo, description: saved.seo.description.value } } : {}), ...(section==='표시사항'?{labelLayout:draftFrom(saved).labelLayout,customLabels:draftFrom(saved).customLabels}:{}) }));
+      setDraft(previous => ({ ...previous, [draftKey]: section==='이미지'?mergeSavedImageStage(initial.assets,previous.assets,draftFrom(saved).assets,focusedAssetRole):draftFrom(saved)[draftKey], ...(editingDetail ? { seo: { ...previous.seo, description: saved.seo.description.value } } : {}), ...(section==='SEO' && previous.labelProductNameLinked === initial.labelProductNameLinked && previous.label.productName === initial.label.productName ? {label:{...previous.label,productName:saved.label.productName.value}}:{}), ...(section==='표시사항'?{labelProductNameLinked:saved.labelProductNameLinked===true,labelLayout:draftFrom(saved).labelLayout,customLabels:draftFrom(saved).customLabels}:{}) }));
       setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '저장하지 못했습니다.'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
@@ -181,7 +183,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       ['대표 이미지', JSON.stringify(draft.assets.main)!==JSON.stringify(initial.assets.main)],
       ['추가 이미지', JSON.stringify(draft.assets.additional)!==JSON.stringify(initial.assets.additional)],
       ['상세 이미지', ['detailTop','detail','detailBottom'].some(key=>JSON.stringify(draft.assets[key as AssetRole])!==JSON.stringify(initial.assets[key as AssetRole]))],
-      ['표시사항', JSON.stringify(draft.label)!==JSON.stringify(initial.label)||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)],
+      ['표시사항', draft.labelProductNameLinked!==initial.labelProductNameLinked||JSON.stringify(draft.label)!==JSON.stringify(initial.label)||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)],
       ['대표 이미지', JSON.stringify(draft.assets.size)!==JSON.stringify(initial.assets.size)||JSON.stringify(draft.assets.label)!==JSON.stringify(initial.assets.label)],
     ] as const).map(([step,changed],index)=><span hidden key={index} data-quotation-source-step={step} data-workspace-dirty={changed}/>)}
     <div className="panel-note"><div><strong>{sectionTitle} 작업 자료</strong><p>{section === '표시사항' ? '필요한 표시사항을 기록하고 수정합니다. 빈 항목과 인증·법적 적합성은 카테고리 기준 확인이 필요합니다.' : section === '이미지' ? '업로드한 이미지를 역할과 순서에 맞게 배치합니다. 파일을 지정해도 번역·배경 제거가 실행되지는 않습니다.' : '수집·번역 결과를 검토하고 상품명, 검색어, 설명을 수정하는 작업 공간입니다. 작성하지 않은 내용은 자동으로 채우지 않습니다.'}</p></div></div>
@@ -199,13 +201,14 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         <label className="field"><span>상품 설명 · 텍스트 <Origin field={content.seo.description} /></span><textarea rows={8} maxLength={20000} value={draft.seo.description} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))} /></label>
       </div>}
       {section === '표시사항' && <>
+        <label><input type="checkbox" checked={draft.labelProductNameLinked} onChange={event=>{const linked=event.target.checked;setDraft(previous=>({...previous,labelProductNameLinked:linked,label:{...previous.label,...(linked?{productName:content.seo.title.value}:{})}}));}}/> 품명을 SEO 상품명과 연동</label><small>연동해 저장하면 이후 1단계 상품명 변경도 반영됩니다. 품명을 직접 수정하면 연동이 해제됩니다.</small>
         <p className="panel-note">↑↓로 라벨 순서를 바꾸고 표시 여부를 선택하세요. 숨긴 값은 보존되며 견적서 입력값은 바뀌지 않습니다. 변경 후 표시사항을 저장하고 라벨 이미지를 다시 생성해주세요.</p>
         <button type="button" className="btn ghost" onClick={()=>setDraft(previous=>({...previous,labelLayout:currentLabelLayout()}))}>기본 순서·전체 표시로 복원</button>
         <div className="form-grid">{draft.labelLayout.order.map((key,index) => <div className={`field ${key === 'precautions' || key === 'qualityAssurance' ? 'full' : ''}`} key={key}>
           <div className="quote-actions"><label><input type="checkbox" checked={!draft.labelLayout.hidden.includes(key)} onChange={event=>{const visible=event.target.checked;setDraft(previous=>({...previous,labelLayout:{...previous.labelLayout,hidden:visible?previous.labelLayout.hidden.filter(item=>item!==key):[...previous.labelLayout.hidden.filter(item=>item!==key),key]}}));}}/>{labelFields[key]} 라벨에 표시</label>
             <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 위로`} disabled={index===0} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,-1)}))}>↑</button>
             <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 아래로`} disabled={index===draft.labelLayout.order.length-1} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,1)}))}>↓</button></div>
-          <label className="field"><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, label: { ...previous.label, [key]: event.target.value } }))} /></label>
+          <label className="field"><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => setDraft(previous => ({ ...previous, ...(key==='productName'?{labelProductNameLinked:false}:{}), label: { ...previous.label, [key]: event.target.value } }))} /></label>
           {key === 'specifications' && <p className="muted">확인한 상품별 세부 사양을 입력하세요. 헬스보호대 견적서의 같은 항목에 반영됩니다.</p>}
           {key === 'kcInformation' && <p className="muted">확인한 KC 인증정보를 입력하세요. 헬스보호대 견적의 KC 인증정보에 연결됩니다. 일반 인증·허가 사항과 별도로 저장하며, 인증번호·인증 마크 타입을 자동 판정하지 않습니다.</p>}
         </div>)}</div>

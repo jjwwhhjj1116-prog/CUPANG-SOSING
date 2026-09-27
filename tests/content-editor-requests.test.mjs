@@ -127,3 +127,26 @@ test('category label defaults appear for review and reach quotation only after e
  assert.equal(resolved.rows[0].fields.noticeCountryOfOrigin.value,'대한민국');assert.equal(resolved.rows[0].fields.noticeCountryOfOrigin.source,'content');
  h.unmount();
 });
+
+test('saved SEO name propagates through linked label and quotation while manually edited labels stay intact',async()=>{
+ let saved;
+ const h=harness((url,init,content)=>{
+  if(url.endsWith('/registration-settings'))return Response.json({settings:{}});
+  if(init?.method==='PATCH'){saved=h.model.applyContentPatch(saved??content,JSON.parse(init.body).patch,'now');return Response.json({content:saved});}
+ },undefined,true);
+ await h.start();
+ const changeTitle=value=>nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.onChange({target:{value}});
+ const saveTitle=async value=>{changeTitle(value);h.button('SEO 저장','SEO').props.onClick();await settle();};
+ await saveTitle('처음 상품명');h.render('표시사항');await h.flush();
+ assert.ok(nodes(h.render('표시사항')).some(n=>n.type==='textarea'&&n.props.value==='처음 상품명'));
+ h.button('표시사항 저장','표시사항').props.onClick();await settle();assert.equal(saved.labelProductNameLinked,true);
+ await saveTitle('수정 상품명');
+ assert.ok(nodes(h.render('표시사항')).some(n=>n.type==='textarea'&&n.props.value==='수정 상품명'));
+ const resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:{id:'p',title:'원문',image_keys:'[]',source_price_cny:1,supply_price:1,sale_price:2,msrp:3},content:saved,options:h.load('app/product-options.ts').emptyProductOptions('p'),settings:h.load('app/workspace-settings.ts').defaultSettings});
+ assert.equal(resolved.rows[0].fields.title.value,'수정 상품명');assert.equal(resolved.rows[0].fields.noticeNameModel.value,'수정 상품명');
+ nodes(h.render('표시사항')).find(n=>n.type==='textarea'&&n.props.value==='수정 상품명').props.onChange({target:{value:'직접 입력 중'}});
+ await saveTitle('다음 상품명');assert.ok(nodes(h.render('표시사항')).some(n=>n.type==='textarea'&&n.props.value==='직접 입력 중'));
+ h.button('표시사항 저장','표시사항').props.onClick();await settle();assert.equal(saved.labelProductNameLinked,false);
+ await saveTitle('최종 상품명');assert.equal(saved.label.productName.value,'직접 입력 중');
+ h.unmount();
+});

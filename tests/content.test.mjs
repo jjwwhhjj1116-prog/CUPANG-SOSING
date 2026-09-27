@@ -264,3 +264,20 @@ test('specifications migrate old content without mutation and persist into print
  assert.equal(saved.label.specifications.value,'확인한 세부 사양');assert.equal(saved.label.specifications.provenance,'manual');assert.equal(model.labelDocumentRows(saved).find(row=>row[0]==='specifications')[2],'확인한 세부 사양');
  for(const value of [null,12,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{specifications:value}}),[],'owner'));
 });
+
+test('explicit SEO-label binding survives saves while manual names and legacy documents stay independent',()=>{
+ let current=model.emptyProductContent('test');
+ const command=patch=>model.validateContentInput(input(patch,current.revision),[],'owner').patch;
+ current=model.applyContentPatch(current,command({seo:{title:'첫 상품명'},labelProductNameLinked:true}),now);
+ assert.equal(current.label.productName.value,'첫 상품명');assert.equal(current.label.productName.provenance,'generated');
+ current=model.applyContentPatch(current,command({seo:{title:'변경 상품명'}}),'later');assert.equal(current.label.productName.value,'변경 상품명');
+ current=model.applyContentPatch(current,command({seo:{title:''}}),'blank');assert.equal(current.label.productName.value,'');
+ current=model.applyContentPatch(current,command({label:{productName:'직접 품명'}}),'manual');assert.equal(current.labelProductNameLinked,false);
+ current=model.applyContentPatch(current,command({seo:{title:'다시 변경'}}),'after');assert.equal(current.label.productName.value,'직접 품명');
+ current=model.applyContentPatch(current,command({label:{productName:''}}),'clear');
+ current=model.applyContentPatch(current,command({seo:{title:'마지막'}}),'final');assert.equal(current.label.productName.value,'');
+ const legacy=model.emptyProductContent('test');legacy.label.productName={value:'기존 품명',provenance:'manual',updatedAt:now};
+ assert.equal(model.applyContentPatch(legacy,{seo:{title:'새 이름'}},now).label.productName.value,'기존 품명');
+ for(const invalid of ['true',1,null])assert.throws(()=>model.validateContentInput(input({labelProductNameLinked:invalid}),[],'owner'));
+ assert.throws(()=>model.applyContentPatch(current,{labelProductNameLinked:true,label:{productName:'다른 이름'}},now),/연동 품명/);
+});

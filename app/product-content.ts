@@ -35,11 +35,13 @@ export type ProductContent = {
   schemaVersion: 1; productId: string; revision: number; updatedAt: string | null;
   seo: { title: ContentField<string>; keywords: ContentField<string[]>; description: ContentField<string> };
   label: Record<LabelField, ContentField<string>>;
+  labelProductNameLinked?: boolean;
   labelLayout?: LabelLayout;
   customLabels?: CustomLabel[];
   assets: Record<AssetRole, ContentField<string[]>>;
 };
 export type ContentPatch = {
+  labelProductNameLinked?: boolean;
   seo?: { title?: string; keywords?: string[]; description?: string };
   label?: Partial<Record<LabelField, string>>;
   labelLayout?: LabelLayout;
@@ -86,8 +88,12 @@ function plainText(value: unknown, max: number, name: string) {
 export function validateContentInput(input: unknown, ownedKeys: readonly string[], ownerId: string): { expectedRevision: number; patch: ContentPatch } {
   const body = object(input, ['expectedRevision', 'patch'], '콘텐츠 요청');
   if (!Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0) throw new Error('저장 버전을 다시 불러와주세요.');
-  const raw = object(body.patch, ['seo', 'label', 'assets', 'labelLayout', 'customLabels'], '편집 내용');
+  const raw = object(body.patch, ['seo', 'label', 'assets', 'labelLayout', 'customLabels', 'labelProductNameLinked'], '편집 내용');
   const patch: ContentPatch = {};
+  if ('labelProductNameLinked' in raw) {
+    if (typeof raw.labelProductNameLinked !== 'boolean') throw new Error('품명 연동은 켜짐/꺼짐 값이어야 합니다.');
+    patch.labelProductNameLinked = raw.labelProductNameLinked;
+  }
   if('customLabels' in raw){
     if(!Array.isArray(raw.customLabels)||raw.customLabels.length>CUSTOM_LABEL_LIMIT)throw new Error(`추가 표시사항은 최대 ${CUSTOM_LABEL_LIMIT}개입니다.`);
     const ids=new Set<string>();
@@ -136,7 +142,7 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
       });
     }
   }
-  if (!Object.hasOwn(patch,'customLabels')&&!Object.values(patch).some(value => Object.keys(value).length)) throw new Error('저장할 편집 내용이 없습니다.');
+  if (!Object.hasOwn(patch,'labelProductNameLinked')&&!Object.hasOwn(patch,'customLabels')&&!Object.values(patch).some(value => Object.keys(value).length)) throw new Error('저장할 편집 내용이 없습니다.');
   return { expectedRevision: body.expectedRevision as number, patch };
 }
 
@@ -154,6 +160,12 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
     if (patch.seo.keywords !== undefined) next.seo.keywords = edited(current.seo.keywords, patch.seo.keywords);
   }
   for (const key of Object.keys(patch.label ?? {}) as LabelField[]) next.label[key] = edited(current.label[key], patch.label![key]!);
+  if (patch.labelProductNameLinked !== undefined) next.labelProductNameLinked = patch.labelProductNameLinked;
+  else if (patch.label?.productName !== undefined && patch.label.productName !== current.label.productName.value) next.labelProductNameLinked = false;
+  if (next.labelProductNameLinked) {
+    if (patch.label?.productName !== undefined && patch.label.productName !== next.seo.title.value) throw new Error('연동 품명이 저장된 SEO 상품명과 다릅니다. 직접 수정한 품명은 연동을 해제해주세요.');
+    next.label.productName = { value: next.seo.title.value, provenance: 'generated', updatedAt: current.label.productName.value !== next.seo.title.value || !current.labelProductNameLinked ? now : current.label.productName.updatedAt };
+  }
   for (const key of Object.keys(patch.assets ?? {}) as AssetRole[]) next.assets[key] = edited(current.assets[key], patch.assets![key]!);
   const keys = Object.values(next.assets).flatMap(field => field.value);
   if (keys.length > 50 || new Set(keys).size !== keys.length) throw new Error('이미지는 최대 50개이며 한 파일에는 한 역할만 지정할 수 있습니다.');
