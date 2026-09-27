@@ -158,3 +158,22 @@ test('explicit source product name survives SEO rename even when its value equal
  assert.equal(JSON.stringify(content),before);
  assert.equal(applyContentPatch(saved,{seo:{title:'후속 제목 수정'}},'later').label.productName.value,'기존 품명');
 });
+
+test('first automatic label name remains linked through later SEO edits while explicit unlink stays off',()=>{
+ for(const linked of [undefined,false]){
+  const content=emptyProductContent('p');
+  if(linked!==undefined)content.labelProductNameLinked=linked;
+  content.seo.title={value:'原文',provenance:'collected',updatedAt:'before'};
+  const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[]}},result:{draft:{title:'초안 상품명',description:'',keywords:[],attributes:[]}}};
+  const plan=translationBatchAdoption(content,job,'v');
+  const saved=applyContentPatch(content,plan.input.patch,'after');
+  assert.equal(saved.label.productName.value,'초안 상품명');
+  assert.equal(saved.labelProductNameLinked,linked===undefined);
+  const edited=applyContentPatch(saved,{seo:{title:'직접 수정한 상품명'}},'later');
+  assert.equal(edited.label.productName.value,linked===undefined?'직접 수정한 상품명':'초안 상품명');
+  if(linked===undefined)assert.match(plan.preview.find(row=>row.name.startsWith('품명')).name,/연동/);
+  const manual=applyContentPatch(saved,{label:{productName:'별도 표시사항 품명'}},'manual');
+  assert.equal(manual.labelProductNameLinked,false);
+  assert.equal(applyContentPatch(manual,{seo:{title:'다음 상품명'}},'last').label.productName.value,'별도 표시사항 품명');
+ }
+});

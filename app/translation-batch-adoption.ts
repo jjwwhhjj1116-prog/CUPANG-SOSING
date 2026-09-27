@@ -57,7 +57,10 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   if (!hasSourceName && !labelName.value.trim() && labelName.provenance !== 'manual'
     && !content.labelProductNameLinked && !patch.label?.productName && effectiveTitle.trim()) {
     patch.label = { ...patch.label, productName: effectiveTitle };
-    preview.push({ name: '품명 · 저장할 상품명 연결', before: labelName.value, after: effectiveTitle });
+    // A first automatic title copy should keep following future SEO edits.
+    // An explicitly disabled link remains disabled, including legacy drafts.
+    if (content.labelProductNameLinked === undefined) patch.labelProductNameLinked = true;
+    preview.push({ name: patch.labelProductNameLinked ? '품명 · SEO 상품명 연동' : '품명 · 저장할 상품명 연결', before: labelName.value, after: effectiveTitle });
   }
   return { input: preview.length ? validateContentInput({ expectedRevision: content.revision, patch }, [], '') : null, preview, skipped };
 }

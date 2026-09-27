@@ -3677,3 +3677,9 @@ AI등록 화면 확인:
 - Permission/conflict/rate-limit responses, malformed successful capacity and cancellation do not fall back to writes. Added regression coverage for these plus preserved draft hook and bounded retries.
 - 34 related tests, TypeScript, Cloudflare build/artifact and diff checks passed. Existing production deployment recorded in outputs/step387-deploy.log.
 - Actual1688 collection, own API provisioning, image translation service, all-category parity and Supplier Hub transmission/receipt remain unfinished.
+
+## Step 388 — retain initial SEO-to-label name linkage (2026-09-27)
+- Audited captured category/settings promotion and integrated translation. Found first automatic fallback name copy on an untouched empty label did not persist its SEO link, leaving later title edits stale in stage six.
+- Enables name linkage only when its state was never explicitly set. Explicit false, manual labels/blanks, distinct source-name mappings remain protected. Preview identifies enabled linkage.
+- Baseline whole suite before this edit: 1119 passed. Post-edit targeted translation/label/integration tests: 31 passed, covering later SEO updates, explicit unlink and manual label replacement. TypeScript/build/artifact/diff checks passed.
+- Existing production deployed; version in outputs/step388-deploy.log. No external collection, image translation or Supplier Hub transaction was executed. Live URL verification, all-category parity and Supplier Hub POST501 adapter remain incomplete.
