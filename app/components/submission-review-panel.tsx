@@ -7,6 +7,7 @@ import type { CategoryProfile } from '@/app/category-profiles';
 import type { SubmissionReview } from '@/app/submission-review';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 import { validateSubmissionReviewResponse } from '@/app/submission-review-response';
+import { SubmissionPackage } from '@/app/components/submission-package';
 
 type Target = {id:string;title:string;source_url:string};
 type Result = {id:string;report?:SubmissionReview;error?:string};
@@ -56,6 +57,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit}:{products:Targe
           <small>검사 시각: {new Date(report.checkedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} (한국시간)</small>
           <details><summary>수정·확인할 항목 보기</summary><QuotationReviewIssues key={requestKey} issues={report.issues} omittedIssueCount={report.omittedIssueCount} disabled={false} onInspect={target=>onEdit(product.id,profileId||undefined,{...target,categoryId:report.categoryId})}/></details>
           <details><summary>검사 범위</summary><ul>{report.limits.map(limit=><li key={limit}>{limit}</li>)}</ul></details>
+          <SubmissionPackage key={JSON.stringify([requestKey,report.fingerprint])} productId={product.id} profileId={profileId} categoryId={report.categoryId}/>
         </>}
         <button type="button" className="btn primary" onClick={()=>onEdit(product.id,profileId||undefined,report?{optionId:null,fieldId:'category',categoryId:report.categoryId}:undefined)}>견적서 수정하기</button>
       </article>;

@@ -4,7 +4,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { ownsTemplateKey } from '@/db/category-templates';
 import { categoryProfileIssues, quotationStartRow } from '@/app/category-profiles';
 import { createMappedQuotation } from '@/app/exports/mapped-quotation';
-import { readQuotationExportSource, resolveQuotationExport, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
+import { readMappedQuotationSource, resolveQuotationExport, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
 import { quotationMappingCoverage, quotationAttachmentKeys, resolvedQuotationRows, quotationFieldFiles } from '@/app/exports/quotation-fields';
 import { loadAttachments, AttachmentError } from '@/app/exports/attachments';
 import { createReviewBundle } from '@/app/exports/review-bundle';
@@ -14,15 +14,15 @@ import { ExportSizeError } from '@/app/exports/zip';
 const json = (body: unknown, status = 200) => NextResponse.json(body, {status, headers:{'cache-control':'no-store'}});
 export async function POST(request: Request, context: {params: Promise<{id: string}>}) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({error:'운영 인증 연결 후 견적서 생성 기능을 사용할 수 있습니다.'},503);
-  let input: {action:'preview'|'export'; profileId:string; dataStartRow?:number; fingerprint?:string};
+  let input: {action:'preview'|'export'; profileId?:string; dataStartRow?:number; fingerprint?:string};
   try {
     input = await readBoundedJson(request,4096) as typeof input;
-    if(!input || !['preview','export'].includes(input.action) || typeof input.profileId !== 'string' || input.profileId.length > 100 || (input.dataStartRow !== undefined && (!Number.isInteger(input.dataStartRow) || input.dataStartRow < 2 || input.dataStartRow > 10000))) throw new Error('카테고리 연결과 입력 시작 행을 확인해주세요.');
+    if(!input || !['preview','export'].includes(input.action) || (input.profileId !== undefined && (typeof input.profileId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.profileId))) || (input.dataStartRow !== undefined && (!Number.isInteger(input.dataStartRow) || input.dataStartRow < 2 || input.dataStartRow > 10000))) throw new Error('카테고리 연결과 입력 시작 행을 확인해주세요.');
     if(input.action === 'export' && (typeof input.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint))) throw new Error('자료 검토를 먼저 실행해주세요.');
   } catch(error) {return json({error:error instanceof Error ? error.message : '입력을 확인해주세요.'},error instanceof RequestBodyError?error.status:400);}
   try {
     const owner = await getWorkspaceOwnerId(); const {id} = await context.params;
-    const saved = await readQuotationExportSource(owner,id,input.profileId);
+    const saved = await readMappedQuotationSource(owner,id,input.profileId ?? null);
     const {product,content,options,profile} = saved;
     if(!profile) return json({error:'카테고리 연결을 찾을 수 없습니다.'},404);
     const template = profile.template;
@@ -47,13 +47,13 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     }
     catch(error) {return json({error:error instanceof Error?error.message:'견적서 양식을 채우지 못했습니다.'},error instanceof ExportSizeError?413:400);}
     let latest;
-    try { latest = await readQuotationExportSource(owner,id,input.profileId); }
+    try { latest = await readMappedQuotationSource(owner,id,input.profileId ?? null); }
     catch(error) { if(error instanceof QuotationExportError && error.status === 404) return json({error:'자료 생성 중 상품 또는 카테고리가 변경됐습니다.'},409); throw error; }
     if(await quotationExportFingerprint(latest,input.dataStartRow ?? quotationStartRow(latest.profile?.template)) !== revision) return json({error:'자료 생성 중 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.'},409);
     const mappingCoverage = quotationMappingCoverage(resolved, profile);
     const mappingWarnings = mappingCoverage.map(field => `${field.label}: ${field.required ? '카테고리 필수 항목' : field.manualOptions.length ? '수동 수정 항목' : '자동 작성 항목'}이 Excel 열에 연결되지 않았습니다. 최종값은 quotation-fields 파일에만 보존됩니다.`);
     const warnings = [...mappingWarnings,...categoryProfileIssues(profile),...generated.report.warnings,...fields.warnings,'Supplier Hub 공식 접수 검증 전인 검토용 파일입니다.','제조사·수입자·연락처 기본설정은 실제 상품과 일치하는지 확인해주세요.'];
-    const report = {...generated.report,mappingCoverage,warnings,productId:id,productVersion:product.updated_at,contentRevision:content.revision,optionRevision:options.revision,quotationRevision:saved.state.revision,profileId:profile.id,profileRevision:profile.revision,templateSha256:template.sha256,submissionReady:false};
+    const report = {...generated.report,mappingCoverage,warnings,productId:id,categoryId:saved.categoryContext.categoryId,productVersion:product.updated_at,contentRevision:content.revision,optionRevision:options.revision,quotationRevision:saved.state.revision,profileId:profile.id,profileRevision:profile.revision,templateSha256:template.sha256,submissionReady:false};
     if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename:generated.filename,rows:generated.values,headers:template.headers});
     const bytes = createReviewBundle(product,content,assets,[
       {name:`quotation-filled.${template.format}`,data:generated.bytes},

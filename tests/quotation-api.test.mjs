@@ -65,14 +65,14 @@ test('quotation data keeps representative product price separate and does not cr
 
 function routeWith({ find = async () => product, readOptions = async () => options, readContent = async () => content, readProfile = async () => profile,
   readFields = async () => ({ schemaVersion: 1, productId: 'test', revision: 0, overrides: { common: {}, options: {} }, updatedAt: null }),
-  readSettings = async () => null, sourcesCurrent = async () => true,
+  readSettings = async () => null, sourcesCurrent = async () => true, readCollection = async () => null,
   get = async key => key === templateKey ? { size: templateBytes.length, arrayBuffer: async () => templateBytes.slice().buffer } : { size: png.length, arrayBuffer: async () => png.slice().buffer },
   mode,
 } = {}) {
   return load('app/api/products/[id]/quotation/route.ts', {
     '@/db/queries': { findProduct: find, getSettings: readSettings }, '@/db/product-options': { readProductOptions: readOptions },
     '@/db/product-content': { readProductContent: readContent }, '@/db/category-profiles': { getCategoryProfile: readProfile },
-    '@/db/quotation-fields': { readQuotationFields: async (...args) => { const state=await readFields(...args); const selected=await readProfile(); if (!selected) return state; return { ...state, overrides:{common:{},options:{}}, categoryOverrides:{['category:'+selected.categoryId]:state.overrides} }; }, readQuotationCollectionSource: async () => null, quotationSourcesCurrent: sourcesCurrent },
+    '@/db/quotation-fields': { readQuotationFields: async (...args) => { const state=await readFields(...args); const selected=await readProfile(); if (!selected) return state; return { ...state, overrides:{common:{},options:{}}, categoryOverrides:{['category:'+selected.categoryId]:state.overrides} }; }, readQuotationCollectionSource: readCollection, quotationSourcesCurrent: sourcesCurrent },
     'cloudflare:workers': { env: { FILES: { get } } },
   }, mode);
 }
@@ -431,4 +431,31 @@ test('all 26 recorded category schemas preserve edited fields through actual XLS
   assert.equal(doc.schema.categoryId,categoryId);assert.equal(doc.rows.length,2);assert.equal(doc.rows[0].fields[field.id].source,'manual-common');assert.equal(doc.rows[1].fields[field.id].source,'manual-option');
   assert.equal(doc.rows[1].fields.title.value,'');assert.equal(doc.excludedOptions[0].optionId,'excluded');
  }
+});
+
+test('registration package uses the captured profile without asking for the category again',async()=>{
+ const sourced={...product,source_url:'https://detail.1688.com/offer/813724060928.html'};
+ const captured={id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})};
+ let currentContent=content;
+ const route=routeWith({find:async()=>sourced,readCollection:async()=>captured,readContent:async()=>currentContent});
+ const response=await route.POST(request({action:'preview'}),context);assert.equal(response.status,200);
+ const review=await response.json();assert.equal(review.report.profileId,profile.id);assert.equal(review.report.categoryId,profile.categoryId);
+ const download=await route.POST(request({action:'export',fingerprint:review.fingerprint}),context);assert.equal(download.status,200);
+ const files=unzipSync(new Uint8Array(await download.arrayBuffer()));assert.ok(files['quotation-filled.csv']);assert.ok(files['supplier-hub-upload-plan.json']);assert.ok(files['assets/image-001.png']);
+ currentContent={...content,revision:content.revision+1};
+ assert.equal((await route.POST(request({action:'export',fingerprint:review.fingerprint}),context)).status,409);
+});
+
+test('automatic package refuses missing or repurposed captured profiles',async()=>{
+ const find=async()=>({...product,source_url:'https://detail.1688.com/offer/813724060928.html'});
+ const readCollection=async()=>({id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})});
+ assert.equal((await routeWith().POST(request({action:'preview'}),context)).status,409);
+ assert.equal((await routeWith({find,readCollection,readProfile:async()=>null}).POST(request({action:'preview'}),context)).status,404);
+ assert.equal((await routeWith({find,readCollection,readProfile:async()=>({...profile,categoryId:'different'})}).POST(request({action:'preview'}),context)).status,409);
+});
+
+test('automatic package rejects a collection link changed between context and template reads',async()=>{
+ let count=0;
+ const route=routeWith({find:async()=>({...product,source_url:'https://detail.1688.com/offer/813724060928.html'}),readCollection:async()=>({id:++count===1?'collection':'replacement',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})})});
+ assert.equal((await route.POST(request({action:'preview'}),context)).status,409);
 });

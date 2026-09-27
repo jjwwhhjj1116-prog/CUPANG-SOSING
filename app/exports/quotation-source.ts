@@ -50,6 +50,18 @@ export async function readQuotationExportSource(owner: string, productId: string
   return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
+/** Resolve only the profile captured when this product was collected; never guess by label. */
+export async function readMappedQuotationSource(owner: string, productId: string, profileId: string | null) {
+  if (profileId) return readQuotationExportSource(owner, productId, profileId);
+  const captured = await readQuotationExportSource(owner, productId, null);
+  const context = captured.categoryContext;
+  if (!context.profileId || !context.categoryId) throw new QuotationExportError('상품 추가 시 선택한 카테고리 양식이 없습니다. 견적서에서 사용할 양식을 선택해주세요.', 409);
+  const saved = await readQuotationExportSource(owner, productId, context.profileId);
+  if (saved.profile?.categoryId !== context.categoryId || JSON.stringify(saved.source.collection) !== JSON.stringify(captured.source.collection)) {
+    throw new QuotationExportError('수집 당시 카테고리와 현재 양식이 달라졌습니다. 카테고리를 확인하고 다시 검사해주세요.', 409);
+  }
+  return saved;
+}
 export function resolveQuotationExport(saved: QuotationExportSource) {
   const resolved = resolveQuotationFields({ categoryId: saved.categoryContext.categoryId, categoryPath: saved.categoryContext.categoryPath,
     product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides });
