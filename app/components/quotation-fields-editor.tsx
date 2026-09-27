@@ -285,7 +285,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const [applyAll, setApplyAll] = useState(false);
   const initialTarget = useRef(navigationTarget); const pendingFocus = useRef<string | null>(null);
   const requests = useRef(0); const observedRefresh = useRef(refreshToken); const prefix = useId();
-  const invalidateRequests = useCallback(() => { requests.current++; }, []);
+  const activeWrite = useRef<AbortController | null>(null);
+  const invalidateRequests = useCallback(() => { requests.current++; activeWrite.current?.abort(); activeWrite.current=null; }, []);
   const dirty = changes.length > 0;
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
@@ -307,7 +308,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     const element = document.getElementById(`${prefix}-${pendingFocus.current}`);
     if (element) { element.scrollIntoView({ block: 'center' }); element.focus({ preventScroll: true }); pendingFocus.current = null; }
   }, [loading, view, active, selectedOption, prefix]);
-  const refresh = useCallback(async (discard = false) => {
+  const refresh = useCallback(async (discard = false, afterConflict = false) => {
+    if (activeWrite.current && !afterConflict) return;
     const id = ++requests.current; setLoading(true); setError(''); setBulk(null);
     try {
       const saved = await fetchView(endpoint);
@@ -337,20 +339,22 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     setBulk(null); setMessage('');
   }
   async function save() {
-    if (!view || !changes.length || conflicts.length || !view.resolved.rows.some(row => row.optionId === selectedOption)) return;
+    if (!view || !changes.length || conflicts.length || busy || loading || activeWrite.current || !view.resolved.rows.some(row => row.optionId === selectedOption)) return;
+    const controller = new AbortController(); activeWrite.current=controller;
     setBusy(true); setError(''); setMessage(''); setBulk(null);
     try {
       const plan = quotationSavePlan(view, changes, selectedOption, applyAll);
       validateQuotationChanges(plan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides });
-      const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes: plan.changes }) });
+      const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint, changes: plan.changes }) });
       const body = await response.json() as QuotationFieldsView & { error?: string };
+      if (controller.signal.aborted) return;
       if (!response.ok || !body.resolved || !body.automatic) {
-        if (response.status === 409) { await refresh(); setError(body.error || '저장 중 원본이 바뀌었습니다. 현재 입력을 보존했습니다. 최신 값을 검토한 뒤 다시 저장해주세요.'); return; }
+        if (response.status === 409) { await refresh(false,true); if(controller.signal.aborted)return; setError(body.error || '저장 중 원본이 바뀌었습니다. 현재 입력을 보존했습니다. 최신 값을 검토한 뒤 다시 저장해주세요.'); return; }
         throw new Error(body.error || '견적 입력을 저장하지 못했습니다.');
       }
       setView(body); setChanges([]); setConflicts([]); setApplyAll(false); setMessage(`견적 입력 저장 완료${plan.propagated.length ? ` · 다른 옵션 ${new Set(plan.propagated.map(item => item.optionId)).size}개에도 적용했습니다.` : ' · 출력 미리보기에 반영됩니다.'}`); onSaved?.();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '견적 입력 저장 실패'); }
-    finally { setBusy(false); }
+    } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '견적 입력 저장 실패'); }
+    finally { if(activeWrite.current===controller)activeWrite.current=null; if(!controller.signal.aborted)setBusy(false); }
   }
   const schema = view?.resolved.schema;
   const row = view?.resolved.rows.find(item => item.optionId === selectedOption);

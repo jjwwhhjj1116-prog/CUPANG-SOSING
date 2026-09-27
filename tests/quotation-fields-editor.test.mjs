@@ -897,3 +897,20 @@ test('deleting the active option on refresh keeps its identity and draft instead
  tree.find(n=>n.type==='select'&&n.props.value==='red').props.onChange({target:{value:'blue'}});
  tree=render();assert.equal(states[8],'blue');assert.ok(tree.some(n=>n.type==='fieldset'));assert.equal(states[1][0].optionId,'red');
 });
+
+test('all-option save ignores duplicate clicks and aborted late responses without clearing edits',async()=>{
+ for(const abort of [false,true]){
+  const view=fixture(),edits=[change('brand','전체 브랜드','red')];const states=[view,edits,[],false,false,'','','start','red',[],true,null,true];let slot=0,calls=0,notices=0,finish,signal;const effects=[];
+  const pending=new Promise(resolve=>finish=resolve);
+  const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,v=>states[i]=typeof v==='function'?v(states[i]):v];},useEffect(fn){effects.push(fn);},useCallback:f=>f,useRef:v=>({current:v}),useId:()=> 'save-race'};
+  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{if(init?.method!=='PUT')return Response.json(view);calls++;signal=init.signal;await pending;return Response.json({...view,revision:2});}});
+  const root=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});const tree=root.type(root.props);
+  const nodes=v=>Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[];
+  const click=nodes(tree).find(n=>n.type==='button'&&String(n.props.children).startsWith('견적 입력 저장')).props.onClick;
+  const refresh=nodes(tree).find(n=>n.type==='button'&&n.props.children==='기본값 다시 반영').props.onClick;
+  click();click();refresh();assert.equal(calls,1);
+  if(abort){signal.throwIfAborted();const initial=effects.find(fn=>String(fn).includes('fetchView(endpoint'));assert.ok(initial);const cleanup=initial();cleanup();assert.equal(signal.aborted,true);}
+  finish();await new Promise(resolve=>setTimeout(resolve,20));assert.equal(notices,abort?0:1);
+  assert.equal(states[1].length,abort?1:0);
+ }
+});

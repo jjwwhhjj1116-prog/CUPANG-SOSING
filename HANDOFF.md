@@ -3281,3 +3281,9 @@ AI등록 화면 확인:
 - Existing current-stage save and quotation resolution remain in use. Test verifies reorder/exclude, boundary controls, filtered preview, failed-save draft preservation, retry and exact additionalImages quotation order.
 - Validation: content editor request suite 11/11, TypeScript, Cloudflare production build/artifact and diff checks passed. Deployed e82a0f20-7f7a-4b5f-9ce8-86e797601fb7.
 - Based on supplied Couplus image workflow screenshots; no live visual parity verification. Full category parity, actual comprehensive 1688 collection, image translation and Supplier Hub automatic registration remain incomplete.
+
+## 321 — Guard quotation save and all-option propagation requests (2026-09-27)
+- Existing all-option save correctly propagates changed source fields only. Found that its PUT lacked a synchronous in-flight guard and abort/late-response protection.
+- Added active write controller, duplicate-click guard, abort on unmount/endpoint invalidation, and ignored aborted responses/errors. Manual/focus refresh cannot race a pending write; 409 still performs its explicit reconcile refresh and preserves edits.
+- Validation: quotation editor suite 71/71 including duplicate click plus refresh during pending save and cleanup before late response; TypeScript, production build/artifact and diff checks passed. Deployed 3317b1e6-8e0f-4bd9-8b55-bbb0b9c38ca1.
+- This is a persistence fix, not a new Supplier Hub submission executor. No live Couplus parity verification; full category match, actual comprehensive 1688 import, image translation and automatic Supplier Hub registration remain incomplete.
