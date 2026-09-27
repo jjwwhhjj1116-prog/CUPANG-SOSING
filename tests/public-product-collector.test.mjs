@@ -247,3 +247,29 @@ test('direct offer price stays authoritative and a measured MOQ is not treated a
  offer.eligibleQuantity={minValue:2,unitText:'kg'};
  assert.throws(()=>parsePublicProduct(html(p),url),/단위/);
 });
+
+
+test('direct common material and model reach editable labels and quotation fields',()=>{
+ const p={...product(),material:'尼龙',model:'MODEL-123'};
+ const result=parsePublicProduct(html(p),url);
+ const settings=load('app/workspace-settings.ts').defaultSettings;
+ const now=new Date().toISOString();
+ const job={id:'source',offer_id:result.offerId,goal:'price',context:{category:{id:'category',categoryId:'80719'},settings,features:'',keywords:''}};
+ const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',job,result,'draft',now);
+ assert.equal(draft.content.label.material.value,'尼龙');assert.equal(draft.content.label.model.value,'MODEL-123');
+ assert.equal(draft.content.label.material.provenance,'collected');
+ const view=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings});
+ assert.equal(view.rows[0].fields.noticeMaterial.value,'尼龙');assert.equal(view.rows[0].fields.model.value,'MODEL-123');
+ assert.equal(draft.product.supplier_hub_status,'미전송');
+});
+
+test('direct product facts preserve conflicts and never promote variant-only material or model',()=>{
+ const p={...product(),material:'尼龙',model:'A',additionalProperty:[{'@type':'PropertyValue',name:'材质',value:'棉'},{'@type':'PropertyValue',name:'model',value:'A'}]};
+ let result=parsePublicProduct(html(p),url);
+ const adopt=load('app/collection-label-attributes.ts').collectionLabelAttributes;
+ assert.equal(adopt(result.attributes).material,undefined);assert.equal(adopt(result.attributes).model,'A');
+ assert.equal(result.attributes.filter(a=>a.name==='model').length,1);
+ delete p.material;delete p.model;delete p.additionalProperty;
+ p.hasVariant[0].material='SKU material';p.hasVariant[0].model='SKU model';
+ result=parsePublicProduct(html(p),url);assert.equal(adopt(result.attributes).material,undefined);assert.equal(adopt(result.attributes).model,undefined);
+});

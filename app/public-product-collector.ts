@@ -54,7 +54,7 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
  const product=matches[0];
  // Preserve explicitly published product facts for the downstream SEO review.
  // Variant-specific facts must not become common facts for every SKU.
- const attributes = product.additionalProperty === undefined ? undefined : list(product.additionalProperty).map(entry => {
+ const attributes = product.additionalProperty === undefined ? [] : list(product.additionalProperty).map(entry => {
   const property = resolve(entry);
   if (!hasType(property, 'PropertyValue')) throw Error('상품 속성 형식을 확인하지 못했습니다.');
   const name = required(property.name, '상품 속성명');
@@ -65,6 +65,14 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
    : property.unitCode !== undefined ? required(property.unitCode, '상품 속성 단위 코드') : '';
   return {name, value: unit ? `${value} ${unit}` : value};
  });
+ // Schema.org also publishes these common product facts directly, outside
+ // additionalProperty. Keep conflicts as separate evidence so downstream label
+ // adoption can leave ambiguous values blank. Never promote variant facts.
+ for(const name of ['material','model'] as const){
+  const value=product[name];
+  if(typeof value!=='string'||!value.trim())continue;
+  if(!attributes.some(attribute=>attribute.name.trim().toLowerCase()===name&&attribute.value.trim()===value.trim()))attributes.push({name,value});
+ }
  const variants=product.hasVariant===undefined?[product]:list(product.hasVariant).map(resolve);
  if(!variants.length||variants.length>200)throw Error('옵션 1~200개를 확인해야 합니다.');
  const images: {url:string;role:'main'|'additional'|'detail'}[]=[];
@@ -119,7 +127,7 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
  const description=parseAlibabaDescription(product.description);
  for(const url of description.images)if(!images.some(image=>image.url===url&&image.role==='detail'))images.push({url,role:'detail'});
  const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:'public-product-jsonld-v1',collectedAt:new Date(now).toISOString(),
-  title:required(product.name,'상품명'),description:description.text,options,images,...(attributes !== undefined ? {attributes} : {})},source.offerId,now);
+  title:required(product.name,'상품명'),description:description.text,options,images,...(product.additionalProperty !== undefined || attributes.length ? {attributes} : {})},source.offerId,now);
  if(new TextEncoder().encode(JSON.stringify(result)).byteLength>COLLECTION_RESULT_LIMIT)throw Error('수집 결과 크기가 한도를 초과했습니다.');
  return result;
 }
