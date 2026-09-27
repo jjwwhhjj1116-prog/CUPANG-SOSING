@@ -15,7 +15,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     });
     const body = await response.json() as { job?: TranslationJob; error?: string; remainingOptions?: number; autoDraft?: boolean; intakePreserved?: boolean; productVersion?:string; productId?:string; done?:boolean; optionsOnly?:boolean };
     if (signal.aborted) return '';
-    if(response.ok && body.done && body.productId===productId && body.productVersion===next.expectedVersion)return appliedAny?'SEO·옵션 초안을 생성해 반영했습니다. 내용을 확인하고 수정해주세요.':'기존 SEO 생성 이력과 저장된 수정값을 유지했습니다. 추가 생성 요청하지 않았습니다.';
+    if(response.ok && body.done && body.productId===productId && body.productVersion===next.expectedVersion)return appliedAny?'SEO·옵션 초안을 생성해 반영했습니다. 내용을 확인하고 수정해주세요.':'저장된 SEO·옵션값을 유지했습니다. 추가로 반영할 항목이 없습니다.';
     if (!response.ok || body.job?.productId !== productId) return `상품은 저장됐지만 SEO 요청 준비는 완료되지 않았습니다. ${body.error ?? 'SEO 단계에서 다시 확인해주세요.'}`;
     if(body.intakePreserved){
       if(!body.productVersion)throw Error('현재 상품 버전을 확인하지 못했습니다.');
@@ -39,7 +39,12 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     };
     const preview=await send('preview');if(signal.aborted)return '';
     if(preview.productId!==productId||preview.productVersion!==job.productVersion||!Array.isArray(preview.preview)||typeof preview.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(preview.fingerprint))throw Error('초안 반영 대상이 일치하지 않습니다.');
-    if(!preview.preview.length)return `SEO 생성 결과를 보존했습니다. 반영할 추가 항목이 없어 자동 처리를 멈췄습니다.${remainder}`;
+    if(!preview.preview.length){
+      // An unchanged SEO result does not mean untranslated options are done.
+      // Advance without writing, retaining the version checked by preview.
+      if(!body.optionsOnly){next={action:'prepare-intake-options',expectedVersion:job.productVersion};continue;}
+      return `SEO 생성 결과를 보존했습니다. 반영할 추가 항목이 없어 자동 처리를 멈췄습니다.${remainder}`;
+    }
     const saved=await send('apply',preview.fingerprint);if(signal.aborted)return '';
     if(saved.productId!==productId||typeof saved.productVersion!=='string'||!Number.isFinite(Date.parse(saved.productVersion))||!Number.isInteger(saved.applied)||(saved.applied??0)<1)throw Error('초안 저장 결과를 확인해주세요.');
     appliedAny=true;next={action:'prepare-intake-options',expectedVersion:saved.productVersion};
