@@ -240,6 +240,8 @@ test('real XLSX pipeline writes final override values, identifiers and attachmen
   assert.ok(sheet.includes('첫 옵션 견적명'));assert.ok(sheet.includes('수동 모델'));assert.ok(sheet.includes('<c r="C2" t="inlineStr"><is><t xml:space="preserve">00001234</t>'));
   assert.ok(sheet.includes('image-001.png'));assert.ok(!sheet.includes('assets/image-001.png'));assert.ok(sheet.includes('<c r="E2"><f>1+1</f><v>2</v></c>'));
   assert.deepEqual(workbook['xl/workbook.xml'],unzipSync(bytes)['xl/workbook.xml']);assert.deepEqual(files['assets/image-001.png'],png);
+  const single=await route.POST(request({...preview,action:'download',fingerprint:review.fingerprint}),context);assert.equal(single.status,200);assert.equal(single.headers.get('content-type'),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.deepEqual(new Uint8Array(await single.arrayBuffer()),files[review.filename]);
 });
 
 test('advanced Excel mapping contains every observed/common field without claiming unknown category compatibility',()=>{
@@ -478,4 +480,20 @@ test('TSV review package preserves its format through filename and attachment ma
  const response=await route.POST(request(preview),context);assert.equal(response.status,200);const review=await response.json();assert.equal(review.filename,`YOOFAM-${review.fingerprint}.tsv`);
  const exported=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(exported.status,200);
  const files=unzipSync(new Uint8Array(await exported.arrayBuffer()));assert.equal(quotationName(files,'tsv'),review.filename);assert.ok(new TextDecoder().decode(files[review.filename]).includes('\t'));
+});
+
+test('standalone quotation equals the reviewed ZIP entry and keeps version checks',async()=>{
+ const route=routeWith();const review=await (await route.POST(request(preview),context)).json();
+ assert.equal((await route.POST(request({...preview,action:'download'}),context)).status,400);
+ assert.equal((await route.POST(request({...preview,action:'download',fingerprint:'0'.repeat(64)}),context)).status,409);
+ const single=await route.POST(request({...preview,action:'download',fingerprint:review.fingerprint}),context);
+ assert.equal(single.status,200);assert.equal(single.headers.get('content-type'),'text/csv;charset=utf-8');
+ assert.equal(single.headers.get('content-disposition'),`attachment; filename="${review.filename}"`);
+ assert.equal(single.headers.get('x-quotation-fingerprint'),review.fingerprint);assert.equal(single.headers.get('cache-control'),'no-store');
+ const zip=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);
+ const files=unzipSync(new Uint8Array(await zip.arrayBuffer()));
+ assert.deepEqual(new Uint8Array(await single.arrayBuffer()),files[review.filename]);
+ let reads=0;
+ const changed=routeWith({find:async()=>++reads===1?product:{...product,updated_at:'2026-09-28T00:00:00.000Z'}});
+ assert.equal((await changed.POST(request({...preview,action:'download',fingerprint:review.fingerprint}),context)).status,409);
 });

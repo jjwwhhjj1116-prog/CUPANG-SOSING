@@ -20,15 +20,15 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
   const [message,setMessage]=useState('');
   const active=useRef<AbortController|null>(null);
   useEffect(()=>()=>active.current?.abort(),[]);
-  async function run(action:'preview'|'export') {
-    if(active.current || (action==='export'&&!preview))return;
+  async function run(action:'preview'|'export'|'download') {
+    if(active.current || (action!=='preview'&&!preview))return;
     const controller=new AbortController();active.current=controller;
     setBusy(true);setError('');setMessage('');
     if(action==='preview')setPreview(null);
     try {
       const response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation`,{
         method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},
-        body:JSON.stringify({action,...(profileId?{profileId}:{}),...(action==='export'?{fingerprint:preview!.fingerprint}:{})}),
+        body:JSON.stringify({action,...(profileId?{profileId}:{}),...(action!=='preview'?{fingerprint:preview!.fingerprint}:{})}),
       });
       if(!response.ok){
         const body=await response.json() as {error?:string};
@@ -49,12 +49,18 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
         const submissionReview=validatePackageReview(data.submissionReview,productId,categoryId,data.fingerprint);
         if(!controller.signal.aborted)setPreview({...data,submissionReview});
       }else{
-        if(!response.headers.get('content-type')?.startsWith('application/zip'))throw new Error('견적서 ZIP 응답을 확인하지 못했습니다.');
+        if(action==='download'){
+          const extension=preview!.filename.split('.').at(-1);
+          const mime=extension==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':extension==='csv'?'text/csv':'text/tab-separated-values';
+          if(response.headers.get('content-type')?.split(';')[0]!==mime
+            || response.headers.get('x-quotation-fingerprint')!==preview!.fingerprint
+            || response.headers.get('content-disposition')!==`attachment; filename="${preview!.filename}"`)throw new Error('검토한 견적서와 다운로드 파일이 일치하지 않습니다. 다시 준비해주세요.');
+        }else if(!response.headers.get('content-type')?.startsWith('application/zip'))throw new Error('견적서 ZIP 응답을 확인하지 못했습니다.');
         const blob=await response.blob();if(controller.signal.aborted)return;
         const url=URL.createObjectURL(blob);const anchor=document.createElement('a');
-        anchor.href=url;anchor.download=`YOOFAM-PLUS-quotation-${productId}.zip`;anchor.click();
+        anchor.href=url;anchor.download=action==='download'?preview!.filename:`YOOFAM-PLUS-quotation-${productId}.zip`;anchor.click();
         setTimeout(()=>URL.revokeObjectURL(url),1000);
-        setMessage('작성된 견적서와 첨부 파일을 내려받았습니다. Supplier Hub 등록은 아직 실행되지 않았습니다.');
+        setMessage(action==='download'?'검토한 견적서 파일을 내려받았습니다.':'작성된 견적서와 첨부 파일을 내려받았습니다. Supplier Hub 등록은 아직 실행되지 않았습니다.');
       }
     }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'견적서 준비 실패');}
     finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
@@ -70,6 +76,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <details><summary>Excel 입력값 확인</summary><div className="table-wrap"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{String(cell)||'—'}</td>)}</tr>)}</tbody></table></div></details>
       <details><summary>양식·첨부 확인 항목 ({preview.report.warnings.length})</summary><ul>{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>
       <p>ZIP에는 작성된 Excel/CSV, 상품 이미지, 라벨과 업로드 준비 목록이 포함됩니다. 검토 후 저장값이 바뀌면 다시 준비해야 합니다.</p>
+      <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('download')}>견적서 파일 다운로드</button>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
     </>}
   </section>;

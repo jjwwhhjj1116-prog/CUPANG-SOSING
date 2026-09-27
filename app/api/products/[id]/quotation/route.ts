@@ -15,11 +15,11 @@ import { quotationFilename } from '@/app/exports/quotation-filename';
 const json = (body: unknown, status = 200) => NextResponse.json(body, {status, headers:{'cache-control':'no-store'}});
 export async function POST(request: Request, context: {params: Promise<{id: string}>}) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({error:'운영 인증 연결 후 견적서 생성 기능을 사용할 수 있습니다.'},503);
-  let input: {action:'preview'|'export'; profileId?:string; dataStartRow?:number; fingerprint?:string};
+  let input: {action:'preview'|'export'|'download'; profileId?:string; dataStartRow?:number; fingerprint?:string};
   try {
     input = await readBoundedJson(request,4096) as typeof input;
-    if(!input || !['preview','export'].includes(input.action) || (input.profileId !== undefined && (typeof input.profileId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.profileId))) || (input.dataStartRow !== undefined && (!Number.isInteger(input.dataStartRow) || input.dataStartRow < 2 || input.dataStartRow > 10000))) throw new Error('카테고리 연결과 입력 시작 행을 확인해주세요.');
-    if(input.action === 'export' && (typeof input.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint))) throw new Error('자료 검토를 먼저 실행해주세요.');
+    if(!input || !['preview','export','download'].includes(input.action) || (input.profileId !== undefined && (typeof input.profileId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.profileId))) || (input.dataStartRow !== undefined && (!Number.isInteger(input.dataStartRow) || input.dataStartRow < 2 || input.dataStartRow > 10000))) throw new Error('카테고리 연결과 입력 시작 행을 확인해주세요.');
+    if(input.action !== 'preview' && (typeof input.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint))) throw new Error('자료 검토를 먼저 실행해주세요.');
   } catch(error) {return json({error:error instanceof Error ? error.message : '입력을 확인해주세요.'},error instanceof RequestBodyError?error.status:400);}
   try {
     const owner = await getWorkspaceOwnerId(); const {id} = await context.params;
@@ -31,7 +31,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     const dataStartRow = input.dataStartRow ?? quotationStartRow(template);
     const revision = await quotationExportFingerprint(saved,dataStartRow);
     const filename = quotationFilename(revision,template.format);
-    if(input.action === 'export' && input.fingerprint !== revision) return json({error:'검토 후 상품·옵션·설정·카테고리 또는 견적 수정값이 변경됐습니다. 자료 검토를 다시 실행해주세요.'},409);
+    if(input.action !== 'preview' && input.fingerprint !== revision) return json({error:'검토 후 상품·옵션·설정·카테고리 또는 견적 수정값이 변경됐습니다. 자료 검토를 다시 실행해주세요.'},409);
     const resolved = resolveQuotationExport(saved);
     if(!resolved.rows.some(row => row.included)) return json({error:'견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션은 출력하지 않습니다.'},400);
     const requestedKeys = quotationAttachmentKeys(saved,resolved);
@@ -57,6 +57,10 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     const warnings = [...mappingWarnings,...categoryProfileIssues(profile),...generated.report.warnings,...fields.warnings,'Supplier Hub 공식 접수 검증 전인 검토용 파일입니다.','제조사·수입자·연락처 기본설정은 실제 상품과 일치하는지 확인해주세요.'];
     const report = {...generated.report,mappingCoverage,warnings,productId:id,categoryId:saved.categoryContext.categoryId,productVersion:product.updated_at,contentRevision:content.revision,optionRevision:options.revision,quotationRevision:saved.state.revision,profileId:profile.id,profileRevision:profile.revision,templateSha256:template.sha256,submissionReady:false};
     if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename,rows:generated.values,headers:template.headers});
+    if(input.action === 'download') return new Response(new Uint8Array(generated.bytes).buffer as ArrayBuffer,{headers:{
+      'content-type':generated.mimeType,'content-disposition':`attachment; filename="${filename}"`,
+      'x-quotation-fingerprint':revision,'cache-control':'no-store','x-content-type-options':'nosniff',
+    }});
     const bytes = createReviewBundle(product,content,assets,[
       {name:filename,data:generated.bytes},
       {name:'quotation-report.json',data:JSON.stringify(report,null,2)},

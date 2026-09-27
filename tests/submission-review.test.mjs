@@ -42,7 +42,7 @@ test('package preview displays byte errors and editing uses its resolved categor
  });
  const calls=[];
  const html=renderToStaticMarkup(createElement(SubmissionPackage,{productId:'p',profileId:'',categoryId:review.categoryId,onInspect:(...args)=>calls.push(args)}));
- assert.match(html,/첨부 파일 검사/);assert.ok(html.includes(review.issues[0].message));
+ assert.match(html,/첨부 파일 검사/);assert.match(html,/견적서 파일 다운로드/);assert.ok(html.includes(review.issues[0].message));
  inspectProps.onInspect({optionId:'red',fieldId:'detailImages'});
  assert.equal(calls[0][0],'resolved-profile');assert.equal(calls[0][1].optionId,'red');assert.equal(calls[0][1].categoryId,review.categoryId);
 });
