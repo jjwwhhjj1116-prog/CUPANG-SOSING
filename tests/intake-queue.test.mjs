@@ -92,10 +92,10 @@ test('queue freezes displayed settings across rows and stops further rows when s
 
 test('saved intake navigation requires one linked product and canonical URL, preserving unfinished rows',()=>{
  const {intakeProductId}=load('app/intake-queue.ts');const item={...row(1),status:'saved'};
- const job={source_url:'https://detail.1688.com/offer/1.html',status:'awaiting_connector',product_id:'product-one'};
+ const job={source_url:'https://detail.1688.com/offer/1.html',status:'awaiting_connector',product_id:'product-one',context:{category:item.profile,features:item.features,keywords:item.keywords}};
  assert.equal(intakeProductId(item,[job]),'product-one');
  assert.equal(intakeProductId(item,[job,{...job}]),'product-one');
- for(const status of ['draft','error'])assert.equal(intakeProductId({...item,status},[job]),null);
+ for(const status of ['draft','error','saved'])assert.equal(intakeProductId({...item,status},[{...job,context:null}]),null);
  assert.equal(intakeProductId(item,[{...job,status:'cancelled'}]),null);
  assert.equal(intakeProductId(item,[{...job,product_id:null}]),null);
  assert.equal(intakeProductId(item,[job,{...job,product_id:'another'}]),null);
@@ -115,12 +115,14 @@ test('restored pending intake recovers an editor only from the same captured cat
  const {intakeProductId}=load('app/intake-queue.ts');const item=row(1);
  const job={source_url:'https://detail.1688.com/offer/1.html',status:'awaiting_connector',product_id:'partial',context:{category:item.profile,features:item.features,keywords:item.keywords}};
  const before=JSON.stringify(item);
- for(const status of ['draft','error'])assert.equal(intakeProductId({...item,status},[job]),'partial');
+ for(const status of ['draft','error','saved'])assert.equal(intakeProductId({...item,status},[job]),'partial');
  assert.equal(intakeProductId(item,[job,{...job,product_id:'other'}]),null);
  for(const altered of [
   {...job,status:'cancelled'}, {...job,product_id:null}, {...job,source_url:'https://detail.1688.com/offer/2.html'},
   {...job,context:null}, {...job,context:{...job.context,features:'changed'}}, {...job,context:{...job.context,keywords:'changed'}},
   ...[{id:profile(2).id},{revision:2},{categoryId:'different'}].map(patch=>({...job,context:{...job.context,category:{...item.profile,...patch}}})),
- ])assert.equal(intakeProductId(item,[altered]),null);
+ ])for(const status of ['draft','error','saved'])assert.equal(intakeProductId({...item,status},[altered]),null);
+ const wrongCategory={...job,product_id:'wrong-category-product',context:{...job.context,category:profile(2)}};
+ assert.equal(intakeProductId({...item,status:'saved'},[wrongCategory,job]),'partial');
  assert.equal(JSON.stringify(item),before);
 });

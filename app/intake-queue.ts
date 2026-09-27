@@ -97,7 +97,6 @@ export function intakeProductId(row: IntakeRow, jobs: readonly CollectionJob[]):
     if (job.status === 'cancelled' || job.source_url !== sourceUrl || !job.product_id) return false;
     // Pending rows lose transient progress when the server draft is restored.
     // A matching URL alone must never attach a different category's quotation.
-    if (row.status === 'saved') return true;
     const context = job.context;
     return context?.category.id === row.profile.id
       && context.category.revision === row.profile.revision
