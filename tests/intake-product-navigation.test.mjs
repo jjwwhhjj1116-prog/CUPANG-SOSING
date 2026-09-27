@@ -32,3 +32,11 @@ test('editor read failure keeps the queue and allows retry; unmount aborts the r
  h.button('1~7단계 확인').props.onClick();await settle();assert.match(JSON.stringify(h.render()),/상품 조회 실패/);assert.equal(h.rows.length,2);
  h.button('1~7단계 확인').props.onClick();await settle();assert.equal(attempts,2);h.close();assert.equal(signal.aborted,true);
 });
+
+test('partially saved row opens for editing and editing its URL clears the confirmed product link',async()=>{
+ const opened=[];const h=harness(async id=>opened.push(id));
+ h.rows[0].status='error';h.rows[0].message='이미지 실패';h.rows[0].productId='partial-product';
+ h.button('1~7단계 확인').props.onClick();await settle();assert.deepEqual(opened,['partial-product']);assert.equal(h.rows[0].status,'error');
+ nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 1688 링크').props.onChange({target:{value:'https://detail.1688.com/offer/999.html'}});
+ assert.equal(h.rows[0].productId,undefined);assert.equal(h.button('1~7단계 확인'),undefined);assert.equal(h.rows[0].status,'draft');
+});

@@ -46,7 +46,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   }
   function edit(id: string, patch: Partial<IntakeRow>) {
     if (running.current) return;
-    onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft', message: '' } : row));
+    onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft', message: '', productId: undefined } : row));
   }
   async function openSavedProduct(id:string) {
     if(running.current || !onOpenProduct)return;
@@ -73,7 +73,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
     try {
       await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{setSettingsChanged(true);setSettingsMessage('');}, selectedIds: new Set(selected.map(row => row.id)),
-        collect: (job,onProgress) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,onJob:updated=>onJobs([updated]),onProgress}),
+        collect: (job,onProgress,onProduct) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,onJob:updated=>{onJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress}),
         onRow: (id, patch) => onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row)), onJobs });
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { running.current = null; if (!controller.signal.aborted) { setBusy(false); onBusy(false); } }

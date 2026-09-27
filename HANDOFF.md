@@ -3206,3 +3206,9 @@ AI등록 화면 확인:
 - Failed image recovery keeps the row retryable, preserving its existing product ID. Existing downstream recovery preserves manual edits and excludes removed source images.
 - Validation: public collector/intake, collection batch, collection product and collection image suites 39/39 passed; tsc, Cloudflare build/artifact and diff checks passed.
 - Deployment 21ae16a2-833e-4685-a1c8-6fcafce10932. No actual 1688 or live Couplus parity verification in this turn. Full category defaults, real image translation and Supplier Hub automatic submission remain incomplete.
+
+## 310 — Review partially imported products directly from intake (2026-09-27)
+- Intake collector now reports the confirmed product ID to its specific row. Image failures keep that link while leaving the row retryable; the existing seven-stage editor action is available even if image import failed.
+- URL/category/features/keyword edits clear the confirmed link; duplicate rows start without it. Links are transient UI state, not persisted as unverified IDs in intake drafts. Existing owner-scoped product read remains the navigation authority.
+- Validation: intake navigation/queue/public collector suites 25/25, tsc, production build/artifact and diff checks passed.
+- Cloudflare deployment f61505ab-d5f9-46b2-9dba-a78906cdad21. No live Couplus/1688 parity verification in this turn; all-category defaults, image translation execution and Hub automatic submission remain incomplete.

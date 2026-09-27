@@ -4,7 +4,7 @@ import type { CategoryProfile } from '@/app/category-profiles';
 
 export type IntakeRow = {
   id: string; profile: CategoryProfile; url: string; features: string; keywords: string;
-  status: 'draft' | 'saved' | 'error'; message: string;
+  status: 'draft' | 'saved' | 'error'; message: string; productId?: string;
 };
 export function intakeRow(profile: CategoryProfile, id: string): IntakeRow {
   return { id, profile, url: '', features: '', keywords: '', status: 'draft', message: '' };
@@ -48,12 +48,12 @@ export function intakeQueueRequests(rows: readonly IntakeRow[], goal: string) {
 /** Existing endpoint keeps owner checks, profile revision checks and offer deduplication. */
 export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string, options: {
   signal: AbortSignal; fetcher: typeof fetch;
-  onRow: (id: string, state: Pick<IntakeRow, 'status' | 'message'>) => void;
+  onRow: (id: string, state: Pick<IntakeRow, 'status' | 'message'> & Pick<Partial<IntakeRow>, 'productId'>) => void;
   onJobs: (jobs: CollectionJob[]) => void;
   selectedIds?: ReadonlySet<string>;
   expectedSettings?: WorkspaceSettings;
   onSettingsChanged?:()=>void;
-  collect?: (job:CollectionJob,onProgress:(message:string)=>void)=>Promise<string|undefined>;
+  collect?: (job:CollectionJob,onProgress:(message:string)=>void,onProduct:(id:string)=>void)=>Promise<string|undefined>;
 }) {
   if (options.signal.aborted) return;
   const selectedRows = options.selectedIds ? rows.filter(row => options.selectedIds!.has(row.id)) : rows;
@@ -75,7 +75,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
       options.onJobs(result.jobs);
       const differences = result.preservedRequests?.flatMap(item => item.differences) ?? [];
       if(!differences.length&&options.collect) {
-        const message=await options.collect(result.jobs[0],message=>options.onRow(request.id,{status:'draft',message}));
+        const message=await options.collect(result.jobs[0],message=>options.onRow(request.id,{status:'draft',message}),id=>{if(!options.signal.aborted&&id)options.onRow(request.id,{status:'draft',message:'상품 초안 저장됨 · 이미지 반영 중',productId:id});});
         if(options.signal.aborted)break;
         if(!message)throw Error('상품 반영 결과를 확인하지 못했습니다.');
         options.onRow(request.id,{status:'saved',message});continue;
@@ -90,6 +90,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
 
 /** Only a uniquely linked saved receipt can open an existing product editor. */
 export function intakeProductId(row: IntakeRow, jobs: readonly CollectionJob[]): string | null {
+  if (row.productId) return row.productId;
   if (row.status !== 'saved') return null;
   let sourceUrl: string;
   try { sourceUrl = parseCollectionRequest({urls:[row.url]})[0].sourceUrl; } catch { return null; }
