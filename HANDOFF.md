@@ -3810,3 +3810,17 @@ AI등록 화면 확인:
 - Recorded5.23CNY350/50/40/nearest10/min3000 case verifies1830.5cost,4830supply,2999.5margin,8050sale,3220Coupangmargin; disablingminimum locally verifies3660/6100 and1829.5margin without another fetch. No existing remote products changed.
 -33 targeted tests, tsc, build/artifact/diff passed. Deployed f49c31ec-e1b7-4ea7-8093-d743e373e216.
 - This is price-review UI parity only. Live1688 collection, fullcategory/default parity, image translation and actualHubPOST501 remain unfinished; no end-to-end completion claim.
+
+## Step 414 — live Supplier Hub transport prerequisite audit
+- Reused existing rightChrome otherChrome, tab727916999 dashboard login working. Navigated observed /qvt/registration and inspected official category download modal only. No uploads/consents/product modifications/submissions.
+- Tested Khan category-ID search with actual DOM input80719 and81221; each leaves selectedcategoryempty/download disabled. Initial native input accidentally8071 selected fan safety net; removed selection and verified subsequent correctinputs before search. Do not use accidental8071result as80719mapping.
+- Individual-registration category IDs cannot yet be assumed to match bulk-template Khan IDs. Blank searches alone do not prove invalid IDs or different namespaces. No official workbook bytes or upload protocol obtained. Closed modal; tab remainsbulkregistration.
+- Read real POST /api/supplier-hub: unconditional501. No runtimechanges/deploy thisturn; no reason to manufacture an adapter or claim success from UIread. Needs verified template/category correspondence and upload/validation/receipt implementation. Existing supplier work untouched.
+
+## Step 415 — official guide link observation only
+- Opened observed /help/view?no=699 in rightChrome hub414, clicked official guide attachment. No workbook bytes obtained. User asked to attach latest official XLSX; none received. No runtimechange/deploy. Do not reask permission or claim live template verified.
+
+## Step 416 — preserve first input row formatting for added quotation rows
+- XLSX writer previously created new option rows without input-row cell styles or height. New rows now inherit only s/customFormat/ht/customHeight and mapped-cell style s from the exact selected first input row. Existingrows unchanged; no nearest-row/header guesses if inputrow absent. No examples/formulas/unmappedcells/hidden/metadata copied.
+-47 mappedquotation tests pass including archive roundtrip values, stylebytes preserved, numeric/inlineStr output, excluded metadata and existingrow intact. tsc/build/artifact/diff pass. Synthetic fixtures only, officialworkbook parity notverified.
+- Deployed26a77eb1-a579-4297-a9bc-a573b1b2b776. No browseractions416, remoteproducts untouched. Main live1688collection, fullcatalog/translation, SupplierHubPOST501 remain unfinished. This exportfix is not realregistration.

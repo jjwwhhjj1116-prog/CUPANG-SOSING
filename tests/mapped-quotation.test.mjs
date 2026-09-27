@@ -79,8 +79,8 @@ test('mapped XLSX changes only selected cells while preserving other parts, styl
   assert.ok(sheet.includes('<c r="B5" s="1"><f>C5*2</f><v>246</v></c>'));
   assert.ok(sheet.includes('<c r="C5" s="1"><v>12500</v></c>'));
   assert.ok(sheet.includes('<c r="F5" t="inlineStr"><is><t>이 열은 변경 금지</t></is></c>'));
-  assert.ok(sheet.indexOf('<row r="6">') < sheet.indexOf('<row r="7">'));
-  assert.ok(sheet.includes('<c r="A6" t="inlineStr"><is><t xml:space="preserve">=HYPERLINK("test")</t>'));
+  assert.ok(sheet.indexOf('<row r="6" ht="30" customHeight="1">') < sheet.indexOf('<row r="7">'));
+  assert.ok(sheet.includes('<c r="A6" s="2" t="inlineStr"><is><t xml:space="preserve">=HYPERLINK("test")</t>'));
   assert.ok(sheet.includes('<dataValidation type="list" sqref="D5:D10"><formula1>"검정,흰색"</formula1></dataValidation>'));
   assert.equal(result.report.verification, 'draft'); assert.equal(result.report.missingRequired.length, 0); assert.equal(result.report.blankCells.length, 1);
   assert.equal(result.filename, '테스트-원본-검토용.xlsx'); assert.ok(result.bytes.length < 10_000_000);
@@ -92,9 +92,23 @@ test('mapped XLSX expands sparse/new/self-closing rows and dimension without rep
   const result = await createMappedQuotation(input); const archive = await reader.readXlsxArchive(result.bytes.buffer); const sheet = decode(archive.get('xl/worksheets/sheet1.xml'));
   assert.match(sheet, /<dimension ref="A1:F11"\/>/);
   assert.match(sheet, /<row r="10" s="1" customFormat="1"><c r="A10"/);
-  assert.match(sheet, /<row r="11"><c r="A11"/);
+  assert.match(sheet, /<row r="11" s="1" customFormat="1"><c r="A11"/);
   assert.deepEqual(JSON.parse(JSON.stringify(result.report.missingRequired)), [{ row: 10, column: 4, header: '옵션' }]);
   assert.ok(sheet.includes('<v>0</v>')); assert.ok(sheet.includes('아래 원본 행'));
+});
+
+test('new option rows inherit input cell formats without copying example content or hidden state', async () => {
+ const input=await inputFrom(entries(xml=>xml.replace('r="5" ht="30"','r="5" hidden="1" outlineLevel="2" ht="30"').replace('r="A5" s="2"','r="A5" cm="4" s="2"')));
+ const result=await createMappedQuotation(input),archive=await reader.readXlsxArchive(result.bytes.buffer);
+ const sheet=decode(archive.get('xl/worksheets/sheet1.xml'));
+ const added=sheet.match(/<row r="6"[^>]*>[\s\S]*?<\/row>/)[0];
+ assert.match(added,/<row r="6" ht="30" customHeight="1">/);
+ assert.match(added,/<c r="A6" s="2" t="inlineStr">/);
+ assert.match(added,/<c r="C6" s="1"><v>13000<\/v>/);
+ assert.match(added,/<c r="D6" s="2" t="inlineStr">/);
+ assert.doesNotMatch(added,/hidden=|outlineLevel=|cm=|<f>|r="B6"|r="F6"|예시|이 열은 변경 금지/);
+ assert.match(sheet,/<row r="5" hidden="1" outlineLevel="2" ht="30"/);
+ assert.deepEqual(Array.from(reader.xlsxHeaders(reader.inspectXlsxArchive(archive),'견적서',6)),['=HYPERLINK("test")','','13000','흰색','']);
 });
 
 test('mapped XLSX inserts new rows immediately before rewritten rows and preserves namespace prefixes', async () => {
@@ -297,7 +311,7 @@ test('XLSX choice label output uses category choices while preserving blank cell
  const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');const field=schema.fields.find(f=>f.type==='select'&&f.choices.some(c=>c.value&&c.value!==c.label));const choice=field.choices.find(c=>c.value&&c.value!==c.label);
  const input=await inputFrom();input.profile.categoryId='80719';input.profile.mappings=[{column:0,field:field.id,required:false,choiceFormat:'label'}];input.rows=[{[field.id]:choice.value},{[field.id]:''}];
  const before=JSON.stringify(input.profile);const result=await createMappedQuotation(input);const archive=await reader.readXlsxArchive(result.bytes.buffer);
- const inspection=reader.inspectXlsxArchive(archive);assert.equal(reader.xlsxHeaders(inspection,'견적서',5)[0],choice.label);assert.ok(decode(archive.get('xl/worksheets/sheet1.xml')).includes('<c r="A6" t="inlineStr"><is><t xml:space="preserve"></t></is></c>'));
+ const inspection=reader.inspectXlsxArchive(archive);assert.equal(reader.xlsxHeaders(inspection,'견적서',5)[0],choice.label);assert.ok(decode(archive.get('xl/worksheets/sheet1.xml')).includes('<c r="A6" s="2" t="inlineStr"><is><t xml:space="preserve"></t></is></c>'));
  const original=await reader.readXlsxArchive(input.originalBytes);assert.equal(decode(archive.get('xl/styles.xml')),decode(original.get('xl/styles.xml')));assert.equal(JSON.stringify(input.profile),before);
 });
 

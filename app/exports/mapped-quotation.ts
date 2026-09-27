@@ -49,9 +49,15 @@ function applyEdits(source: string, edits: Edit[], origin = 0): string {
   for (const edit of ordered) { if (edit.start < origin || edit.end > last || edit.end < edit.start) fail('견적서 셀 수정 영역이 겹칩니다.'); source = source.slice(0, edit.start - origin) + edit.text + source.slice(edit.end - origin); last = edit.start; }
   return source;
 }
-function cellXml(source: string, existing: XmlSpan | undefined, reference: string, value: string | number, prefix: string): string {
+function formatAttributes(node: XmlSpan | undefined, keys: readonly string[]) {
+  return keys.filter(key => node && Object.hasOwn(node.attributes, key)).map(key => {
+    const value = node!.attributes[key].replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return ` ${key}="${value}"`;
+  }).join('');
+}
+function cellXml(source: string, existing: XmlSpan | undefined, reference: string, value: string | number, prefix: string, format?: XmlSpan): string {
   const tag = existing?.name ?? `${prefix}c`;
-  let opening = existing ? source.slice(existing.start, existing.openEnd).replace(/\s+t\s*=\s*(?:"[^"]*"|'[^']*')/, '').replace(/\s*\/?>$/, '') : `<${tag} r="${reference}"`;
+  let opening = existing ? source.slice(existing.start, existing.openEnd).replace(/\s+t\s*=\s*(?:"[^"]*"|'[^']*')/, '').replace(/\s*\/?>$/, '') : `<${tag} r="${reference}"${formatAttributes(format, ['s'])}`;
   // Only the value/type is replaced. Style indices and all other cell attributes remain.
   const extension = existing?.children.filter(node => !['v', 'is', 'f'].includes(node.local)).map(node => source.slice(node.start, node.end)).join('') ?? '';
   if (typeof value === 'number') return `${opening}><${prefix}v>${value}</${prefix}v>${extension}</${tag}>`;
@@ -80,9 +86,14 @@ function writeWorksheet(source: string, sheetName: string, profile: CategoryProf
     }
   }
   const edits: Edit[] = []; const newRows: { row: number; text: string }[] = [];
+  // Only the explicitly selected first input row supplies formatting for new
+  // rows. Do not copy example values, formulas, metadata or hidden-row flags.
+  const formatRow = rows.get(startRow);
+  const formatCells = new Map(formatRow?.children.filter(node => node.local === 'c').map(cell => [coordinate(cell.attributes.r).column, cell]));
+  const rowFormat = formatAttributes(formatRow, ['s', 'customFormat', 'ht', 'customHeight']);
   for (const [index, rowValues] of values.entries()) {
     const rowNumber = startRow + index; const row = rows.get(rowNumber);
-    if (!row) { newRows.push({ row: rowNumber, text: `<${prefix}row r="${rowNumber}">${mappedColumns.map(column => cellXml(source, undefined, `${columnName(column)}${rowNumber}`, rowValues[column], prefix)).join('')}</${prefix}row>` }); continue; }
+    if (!row) { newRows.push({ row: rowNumber, text: `<${prefix}row r="${rowNumber}"${rowFormat}>${mappedColumns.map(column => cellXml(source, undefined, `${columnName(column)}${rowNumber}`, rowValues[column], prefix, formatCells.get(column))).join('')}</${prefix}row>` }); continue; }
     const cells = row.children.filter(node => node.local === 'c'); const seen = new Set<number>();
     for (const cell of cells) { const column = coordinate(cell.attributes.r).column; if (seen.has(column)) fail('워크시트 셀 좌표가 중복되었습니다.'); seen.add(column); }
     const cellEdits: Edit[] = [];
