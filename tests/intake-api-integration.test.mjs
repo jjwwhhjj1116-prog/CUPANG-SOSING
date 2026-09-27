@@ -6,6 +6,7 @@ import ts from 'typescript';
 import * as parse5 from 'parse5';
 import {webcrypto} from 'node:crypto';
 import {memoryDatabase,runtimeDDL} from '../scripts/check-db-schema.mjs';
+import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 
 // Real route handlers and persistence; only auth, Alibaba and R2 are fixtures.
 // This is not evidence of a live Alibaba or Supplier Hub transaction.
@@ -22,7 +23,7 @@ for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL
   payload.result.result.productAttribute=Array.from({length:50},(_,i)=>({attributeName:'属性'+i,value:'原文'}));
  }
  const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async (target,init)=>{const host=new URL(target).hostname;network.push(host);if(host==='gw.open.1688.com')return Response.json(payload);if(host==='api.openai.com'){
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,Blob,CompressionStream,DecompressionStream,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async (target,init)=>{const host=new URL(target).hostname;network.push(host);if(host==='gw.open.1688.com')return Response.json(payload);if(host==='api.openai.com'){
  const request=JSON.parse(init.body);assert.equal(request.model,'fixture-model');assert.equal(request.store,false);
  const source=JSON.parse(request.input[0].content[0].text);assert.equal(source.category.id,'80719');assert.equal(source.title,'原文商品');
  const draft={title:'한국어 수납 상품',description:'검토한 한국어 설명',keywords:['추천 검색어'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('option-color:')?'색상':'옵션명',value:pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))};
@@ -106,6 +107,48 @@ for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL
     assert.equal(output.skuId,'5627721589407');
     assert.match(output.mainImage,/^review-\d+\.png$/);
     assert.ok(exportedSource.content.assets.additional.value.length>0,'excluding quotation images must not delete source images');
+    // Carry the same reviewed draft through the real XLSX route, R2 reads,
+    // ZIP manifest and stale-review guard. This workbook is deliberately synthetic.
+    const fields=['categoryId','category','title','searchTags','supplyPrice','salePrice','msrp','mainImage','additionalImages','detailHtml','noticeMaterial','packagedWeightG','packagedDimensionsMm'];
+    const workbook=quotationWorkbook(fields);
+    const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
+    const storageKey=load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');
+    objects.set(storageKey,workbook);
+    deps['cloudflare:workers'].env.FILES.get=async key=>{
+      const bytes=objects.get(key);return bytes?{size:bytes.byteLength,arrayBuffer:async()=>bytes.slice().buffer}:null;
+    };
+    const profile={name:'테스트 양식',categoryId:'80719',categoryPath:context.category.categoryPath,
+      template:{name:'synthetic.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},
+      mappings:fields.map((field,column)=>({field,column,required:false}))};
+    await load('db/category-profiles.ts').createCategoryProfile('owner',profile,'cat');
+    const exportRoute=load('app/api/products/[id]/quotation/route.ts');
+    const exportRequest=body=>exportRoute.POST(new Request('https://app.test/api/products/'+latest.product_id+'/quotation',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),qc);
+    const previewResponse=await exportRequest({action:'preview'}),preview=await previewResponse.json();
+    assert.equal(previewResponse.status,200,JSON.stringify(preview));
+    assert.equal(preview.report.profileId,'cat');assert.equal(preview.report.categoryId,'80719');
+    const download=await exportRequest({action:'download',fingerprint:preview.fingerprint});
+    assert.equal(download.status,200,await download.clone().text());
+    const reader=load('app/xlsx-template.ts');
+    const archive=await reader.readXlsxArchive(await download.arrayBuffer());
+    const cells=reader.xlsxHeaders(reader.inspectXlsxArchive(archive),'견적서',2);
+    const actual=Object.fromEntries(fields.map((field,index)=>[field,cells[index]]));
+    for(const [field,value] of Object.entries(expected))assert.equal(actual[field],value,`XLSX retains reviewed ${field}`);
+    assert.equal(actual.categoryId,'80719');assert.equal(actual.category,context.category.categoryPath.join(' > ')+' (80719)');assert.equal(actual.supplyPrice,'17920');assert.equal(actual.msrp,'38830');
+    assert.match(actual.mainImage,/^image-\d+\.png$/);
+    const packaged=await exportRequest({action:'export',fingerprint:preview.fingerprint});
+    assert.equal(packaged.status,200,await packaged.clone().text());
+    const bundle=await reader.readXlsxArchive(await packaged.arrayBuffer());
+    assert.deepEqual(Buffer.from(bundle.get(preview.filename)),Buffer.from(await (await exportRequest({action:'download',fingerprint:preview.fingerprint})).arrayBuffer()));
+    const plan=JSON.parse(new TextDecoder().decode(bundle.get('supplier-hub-upload-plan.json')));
+    assert.equal(plan.categoryId,'80719');assert.equal(plan.quotation.file.filename,preview.filename);
+    assert.ok(plan.productImages.some(image=>image.filename===actual.mainImage));
+    assert.ok(plan.productImages.every(image=>bundle.has(image.archivePath)));
+    const changed=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:after.revision,expectedInputFingerprint:after.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'36000'}]})}),qc);
+    assert.equal(changed.status,200,await changed.clone().text());
+    assert.equal((await exportRequest({action:'export',fingerprint:preview.fingerprint})).status,409);
+    const refreshed=await (await exportRequest({action:'preview'})).json();
+    assert.equal(refreshed.rows[0][fields.indexOf('salePrice')],36000);
+    assert.notEqual(refreshed.fingerprint,preview.fingerprint);
    }
    assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');return;
   }
