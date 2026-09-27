@@ -33,7 +33,12 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
     try{await capacityResponse.body?.cancel();}catch{/* The failed response has no product data. */}
     return {status:stopped()?'stopped':'failed',productId,completedImages,capacityUnavailable:true,error:'이미지 저장 여유를 일시적으로 확인하지 못했습니다.'};
    }
-   const capacityBody=await capacityResponse.json() as {capacity?:unknown;error?:string};
+   let capacityBody: {capacity?:unknown;error?:string};
+   try { capacityBody=await capacityResponse.json(); }
+   catch {
+    if(!capacityResponse.ok)throw new Error('이미지 저장 여유 조회 실패');
+    return {status:stopped()?'stopped':'failed',productId,completedImages,capacityUnavailable:true,error:'이미지 저장 여유 응답을 읽지 못했습니다.'};
+   }
    if(!capacityResponse.ok)throw new Error(capacityBody.error||'이미지 저장 여유 조회 실패');
    const capacity=validateCollectionCapacity(capacityBody.capacity,totalImages);
    if(indices.some(index=>capacity.blockedIndices?.includes(index)))throw new Error('상품에서 제외한 원본 이미지가 선택되어 있습니다. 수신 결과를 다시 조회하고 해당 이미지 선택을 해제해주세요.');

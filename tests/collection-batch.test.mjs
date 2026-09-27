@@ -145,16 +145,16 @@ test('intake image reservation survives batch selection and still creates the sa
 });
 
 test('network and HTML capacity outages retain source-based draft preparation without image writes',async()=>{
- for(const failure of ['network','html']){
+ for(const failure of ['network','html','successful-html','truncated-json']){
   const calls=[],results=[],prepared=[];
   await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),onProductSaved:async(id,productId)=>prepared.push([id,productId]),retryWait:async()=>{},fetcher:async url=>{
    calls.push(url);
    if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
-   if(url.endsWith('/capacity')){if(failure==='network')throw TypeError('network unavailable');return new Response('<html>Bad gateway</html>',{status:502});}
+   if(url.endsWith('/capacity')){if(failure==='network')throw TypeError('network unavailable');return new Response(failure==='truncated-json'?'{"capacity":':'<html>Bad gateway</html>',{status:failure==='html'?502:200});}
    if(url.endsWith('/product'))return Response.json({productId:'draft'});
    assert.fail('outage must not trigger image writes');
   }});
-  assert.equal(calls.filter(url=>url.endsWith('/capacity')).length,3);
+  assert.equal(calls.filter(url=>url.endsWith('/capacity')).length,['network','html'].includes(failure)?3:1);
   assert.deepEqual(prepared,[['a','draft']]);assert.equal(results[0].productId,'draft');assert.equal(results[0].status,'failed');assert.equal(results[0].completedImages,0);
  }
 });
@@ -168,8 +168,8 @@ test('stopping during capacity network failure does not save a product or prepar
  assert.equal(results.length,0);
 });
 
-test('HTML access denial and malformed successful capacity never cause fallback writes',async()=>{
- for(const status of [200,401,403,409,429]){
+test('HTML access denial never causes fallback writes',async()=>{
+ for(const status of [401,403,409,429]){
   const results=[];
   await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),retryWait:async()=>{},fetcher:async url=>{
    if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
@@ -180,7 +180,7 @@ test('HTML access denial and malformed successful capacity never cause fallback 
 });
 
 test('a transient second capacity read still saves and prepares the source draft exactly once',async()=>{
- for(const failure of ['network',502,503,504]){
+ for(const failure of ['network',200,502,503,504]){
   let reads=0;const calls=[],results=[],prepared=[];
   await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},retryWait:async()=>{},onResult:(_id,r)=>results.push(r),onProductSaved:async(_id,id)=>prepared.push(id),fetcher:async url=>{
    calls.push(url);
@@ -192,15 +192,15 @@ test('a transient second capacity read still saves and prepares the source draft
    }
    assert.ok(url.endsWith('/product'));return Response.json({productId:'draft'});
   }});
-  assert.equal(reads,4);assert.equal(calls.filter(url=>url.endsWith('/product')).length,1);
+  assert.equal(reads,failure===200?2:4);assert.equal(calls.filter(url=>url.endsWith('/product')).length,1);
   assert.deepEqual(prepared,['draft']);assert.equal(results[0].productId,'draft');
   assert.equal(results[0].status,'failed');assert.equal(results[0].completedImages,0);
   assert.match(results[0].error,/초안은 저장/);
  }
 });
 
-test('second capacity denial, malformed success or cancellation does not create a draft',async()=>{
- for(const failure of [200,401,403,409,429,'cancel']){
+test('second capacity denial or cancellation does not create a draft',async()=>{
+ for(const failure of [401,403,409,429,'cancel']){
   let reads=0,stopped=false;const results=[];
   await importReceivedJobs([job('a')],{shouldStop:()=>stopped,onProgress:()=>{},retryWait:async()=>{},onResult:(_id,r)=>results.push(r),onProductSaved:async()=>assert.fail('no draft preparation'),fetcher:async url=>{
    if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
@@ -210,5 +210,18 @@ test('second capacity denial, malformed success or cancellation does not create 
    return new Response('invalid capacity',{status:failure});
   }});
   assert.equal(results[0].productId,null);assert.equal(results[0].status,failure==='cancel'?'stopped':'failed');
+ }
+});
+
+
+test('readable but invalid capacity data never authorizes image selection or fallback writes',async()=>{
+ for(const badRead of [1,2])for(const capacity of [null,{}, {usedSlots:0,totalImages:2,reusableIndices:[]}, {usedSlots:0,totalImages:1,reusableIndices:[0],blockedIndices:[0]}]){
+  let reads=0;const results=[];
+  await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),fetcher:async url=>{
+   if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+   assert.ok(url.endsWith('/capacity'));
+   return Response.json({capacity:++reads===badRead?capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}});
+  }});
+  assert.equal(results[0].status,'failed');assert.equal(results[0].productId,null);
  }
 });

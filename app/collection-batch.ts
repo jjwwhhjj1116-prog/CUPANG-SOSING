@@ -43,6 +43,11 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
         let capacityResponse: Response | undefined;
         try { capacityResponse = await request(path + '/capacity', { cache: 'no-store' }); }
         catch { if (options.shouldStop()) break; }
+        let capacityBody: { error?: string; capacity?: unknown } | null = null;
+        if (capacityResponse?.ok) {
+          try { capacityBody = await capacityResponse.json(); }
+          catch { capacityResponse = undefined; }
+        }
         // A proxy may return HTML (or no response). Neither should discard an
         // already verified source or prevent saving its editable text draft.
         if (!capacityResponse || [502,503,504].includes(capacityResponse.status)) {
@@ -62,10 +67,10 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
           break;
         }
         if (options.shouldStop()) break;
-        let capacityBody: { error?: string; capacity?: unknown } | null;
-        try { capacityBody = await capacityResponse.json(); }
-        catch { throw Error('이미지 저장 여유 응답을 확인하지 못했습니다.'); }
-        if (!capacityResponse.ok) throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
+        if (!capacityResponse.ok) {
+          try { capacityBody = await capacityResponse.json(); } catch { /* Keep HTTP failures terminal. */ }
+          throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
+        }
         indices = recommendCollectionImages(source, validateCollectionCapacity(capacityBody?.capacity, source.images.length), 'all', options.reservedImageSlots);
       }
       if (options.shouldStop()) break;
