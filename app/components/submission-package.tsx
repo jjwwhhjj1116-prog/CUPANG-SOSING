@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { verifyQuotationResultSource, QuotationResultSourceChanged } from '@/app/quotation-result-source';
 import { isQuotationFilename } from '@/app/exports/quotation-filename';
 import { validatePackageReview, type PackageReview } from '@/app/submission-review-response';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
@@ -31,6 +32,8 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       if(action==='result'){
         if(!categoryId)throw new Error('카테고리를 먼저 확인해주세요.');
         setHubResult(null);
+        await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
+        if(controller.signal.aborted)return;
         const result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal);
         if(!controller.signal.aborted){setHubResult(result);if(!result)setMessage('아직 가져온 결과가 없습니다. Supplier Hub 탭의 확장에서 검증 결과 확인을 실행한 뒤 다시 불러오세요.');}
         return;
@@ -80,7 +83,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
         setTimeout(()=>URL.revokeObjectURL(url),1000);
         setMessage(action==='download'?'검토한 견적서 파일을 내려받았습니다.':'작성된 견적서와 첨부 파일을 내려받았습니다. Supplier Hub 등록은 아직 실행되지 않았습니다.');
       }
-    }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'견적서 준비 실패');}
+    }catch(cause){if(!controller.signal.aborted){if(cause instanceof QuotationResultSourceChanged){setPreview(null);setHubResult(null);}setError(cause instanceof Error?cause.message:'견적서 준비 실패');}}
     finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
   }
   return <section className="panel-stack" aria-label="견적서와 첨부 파일 준비" aria-busy={busy}>

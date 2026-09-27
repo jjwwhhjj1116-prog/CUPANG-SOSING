@@ -163,7 +163,7 @@ test('production review requires verified authentication before reading product 
 });
 
 function renderPanel(products,results=[]) {
-  let index=0;const states=['',0,{key:JSON.stringify([JSON.stringify(products.map(product=>product.id)),'',0]),results,finished:true}];
+  let index=0;const states=['',0,{key:JSON.stringify([JSON.stringify(products.map(product=>product.id)),JSON.stringify(products.map(product=>[product.id,product.updated_at])),'','[]',0]),results,finished:true}];
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
     '@/app/components/submission-package':{SubmissionPackage:()=>null},
     '@/app/components/quotation-review-issues':load('app/components/quotation-review-issues.tsx',{react:nativeRequire('react')}),

@@ -4010,3 +4010,9 @@ AI등록 화면 확인:
 - Tests cover delayed observations without popup callbacks, duplicate in-flight requests, sender/tab mismatch, invalid quotation/state/scope and preserved matching SKU observations. 26 related tests passed, tsc/build/artifact/diff checks passed.
 - Packaged extension 0.2.11; app download link deployed, version 6c7ca729-f43f-4b8a-adf3-350438a79421. Installed Chrome extension refresh not verified. Worker/browser termination recovery is not guaranteed.
 - No live external records changed; source collection, official XLSX and actual Hub final registration still unverified. Does not implement final registration or automatic consent.
+
+## Step 447 — Check current quotation before reading extension results (2026-09-28)
+- Result lookup now re-previews the saved quotation and checks product/category/profile/fingerprint/filename before querying extension observations. A source conflict clears the prepared view and old result; transient errors keep preparation for retry while hiding old observations.
+- Added source identity/cancellation/error tests. Fixed the existing submission-review render fixture to include product and profile revision keys; the two baseline failures were reproduced using the HEAD test before fixing the fixture. No runtime review-panel behavior was changed.
+- 39 related tests pass, tsc/production build/artifact/diff checks pass. Deployed c99dc448-a391-4c1a-8aff-600ea2963ee9. Extension remains 0.2.11.
+- No live collection or final Supplier Hub registration performed; official XLSX remains unavailable. This prevents mismatching stale result display, not completion of external submission.
