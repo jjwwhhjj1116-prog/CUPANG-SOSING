@@ -74,3 +74,40 @@ test('native login identity resolves from approved session only and never falls 
  assert.equal((await auth.getChatGPTUser()).membership.role,'admin');assert.equal(await auth.getWorkspaceOwnerId(),'admin');
  r.sql.prepare("UPDATE members SET status='suspended'").run();assert.equal(await auth.getChatGPTUser(),null);r.sql.close();
 });
+
+test('reactivation enforces capacity, requires company and never revives revoked sessions',async()=>{
+ const r=runtime();r.insert('admin','admin','approved');r.insert('first','member','approved');r.insert('second','member','rejected');
+ const token=await r.store.createSession('first');
+ assert.equal(await r.store.reviewMember('admin','second','approve'),false);
+ assert.equal(await r.store.reviewMember('admin','first','suspend'),true);
+ assert.equal(await r.store.reviewMember('admin','second','approve'),true);
+ assert.equal(await r.store.reviewMember('admin','first','approve'),false);
+ await r.store.reviewMember('admin','second','suspend');
+ r.sql.prepare("UPDATE members SET company_code='' WHERE id='first'").run();
+ assert.equal(await r.store.reviewMember('admin','first','approve'),false);
+ await r.store.updateMemberCompany('admin','first','NEW','New Company');
+ assert.equal(await r.store.reviewMember('admin','first','approve'),true);
+ assert.equal(await r.store.sessionMember(`yoofam_session=${token}`),null);r.sql.close();
+});
+
+test('company reassignment is admin only, audited and revokes only changed member sessions',async()=>{
+ const r=runtime();r.insert('admin','admin','approved');r.insert('member','member','approved');
+ const adminToken=await r.store.createSession('admin'),token=await r.store.createSession('member');
+ assert.equal(await r.store.updateMemberCompany('member','admin','FORGED','Forged'),false);
+ assert.equal(await r.store.updateMemberCompany('admin','member','CODE','Company'),false);
+ assert.equal(r.sql.prepare('SELECT count(*) n FROM member_audit').get().n,0);
+ assert.ok(await r.store.sessionMember(`yoofam_session=${token}`));
+ r.setUser({userId:'member',membership:{id:'member',role:'member'}});
+ assert.equal((await r.post({action:'company',memberId:'member',companyCode:'NEW',companyName:'New'})).status,403);
+ r.setUser({userId:'admin',membership:{id:'admin',role:'admin'}});
+ const response=await r.post({action:'company',memberId:'member',companyCode:'NEW',companyName:'New'});
+ assert.equal(response.status,200);assert.equal((await response.json()).reauthenticate,false);
+ assert.equal(await r.store.sessionMember(`yoofam_session=${token}`),null);
+ assert.ok(await r.store.sessionMember(`yoofam_session=${adminToken}`));
+ assert.equal(r.sql.prepare('SELECT count(*) n FROM member_audit').get().n,1);
+ assert.equal(r.sql.prepare("SELECT company_code FROM members WHERE id='member'").get().company_code,'NEW');
+ assert.equal((await r.post({action:'company',memberId:'missing',companyCode:'NEW',companyName:'New'})).status,404);
+ const own=await r.post({action:'company',companyCode:'ADMIN',companyName:'Admin'});
+ assert.equal((await own.json()).reauthenticate,true);
+ assert.equal(await r.store.sessionMember(`yoofam_session=${adminToken}`),null);r.sql.close();
+});

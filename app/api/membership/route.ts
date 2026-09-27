@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers';
 import {NextResponse} from 'next/server';
 import {getChatGPTUser} from '@/app/chatgpt-auth';
-import {membersDb,memberColumns,createSession,rateLimit,reviewMember} from '@/db/members';
+import {membersDb,memberColumns,createSession,rateLimit,reviewMember,updateMemberCompany} from '@/db/members';
 import {memberEmail,memberCompany,validPassword,passwordHash,verifyPassword,tokenHash,type WorkspaceMember} from '@/app/workspace-members';
 import {readBoundedJson} from '@/app/request-body';
 const config=()=>env as {YOOFAM_AUTH_ENABLED?:string;YOOFAM_PASSWORD_PEPPER?:string};
@@ -48,8 +48,12 @@ export async function POST(request:Request){
  if(user.membership.role!=='admin')return reply({error:'관리자만 승인할 수 있습니다.'},403);
  if(action==='company'){
   const code=memberCompany(body.companyCode),name=memberCompany(body.companyName);
-  await db.prepare("UPDATE members SET company_code=?,company_name=?,updated_at=? WHERE id=? AND role='admin' AND status='approved'").bind(code,name,new Date().toISOString(),user.userId).run();
-  return reply({ok:true});
+  const id=body.memberId===undefined?user.userId:body.memberId;
+  if(typeof id!=='string'||!id||id.length>100)return reply({error:'수정할 계정을 선택해주세요.'},400);
+  const target=await db.prepare('SELECT id FROM members WHERE id=?').bind(id).first();
+  if(!target)return reply({error:'계정을 찾을 수 없습니다.'},404);
+  const changed=await updateMemberCompany(user.userId,id,code,name);
+  return reply({ok:true,reauthenticate:changed&&id===user.userId});
  }
  if(!['approve','reject','suspend'].includes(String(action))||typeof body.memberId!=='string')return reply({error:'처리할 가입 요청을 선택해주세요.'},400);
  const changed=await reviewMember(user.userId,body.memberId,action as 'approve'|'reject'|'suspend');
