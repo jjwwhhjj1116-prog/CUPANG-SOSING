@@ -3511,3 +3511,9 @@ AI등록 화면 확인:
 -Actual route/SQLite intake test stores a rule connecting a differently named source translation to basketShape and confirms quotation adoption. Unit/SQLite tests cover reserved fallbacks, empty selection values, stale signatures, changed/added rules during save and scope preservation. Full1075/1075 passed; after changing preview field IDs to readable labels, focused15tests and TypeScript/build/artifact rerun.
 -No browser/source/model/Hub action in this turn. Previous SupplierHub login request remains pending, latest358 observation login. Full workflow remains incomplete: real1688 access, image translation, all-category parity and actual HubPOST501/receipt path.
 -Deployed e312e27e-2278-4f66-8584-2e50aa039827 with Workers AI/free-plan configuration preserved.
+
+## 361 — Validate saved-rule draft bindings before presenting adoption (2026-09-27)
+-Reproduced failing regression: a source value exceeding a category text field limit was presented as a saved-rule binding, but quotation resolver later discarded it. applyIntakeAttributeRules now runs the same quotationValueIssues validation before adding a binding; invalid values remain skipped with the exact reason and reserved destinations still prevent fallback remapping.
+-Preview uses quotationAttributeDisplay so an observed empty-code choice is shown with its label and blank storage meaning. Stored wire value remains unchanged.
+-186 integrated/schema/intake tests passed including the before-fix failing length-limit case. TypeScript/build/artifact/diff checks run for this change. No actual source/model/Hub request; full workflow remains incomplete (live1688, image translation, all-category parity, HubPOST501). Previous login request remains pending; no browser action this turn.
+-Deployed a63eb4fb-3883-476a-8c16-7ee001b05642 with Workers AI/free-plan configuration preserved.

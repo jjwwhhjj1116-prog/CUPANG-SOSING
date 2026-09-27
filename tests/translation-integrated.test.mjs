@@ -231,3 +231,14 @@ test('atomic adoption rejects newly added or changed attribute rules during save
   }finally{h.sqlite.close();}
  }
 });
+
+test('saved rule preview rejects values that the quotation field cannot retain',()=>{
+ const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');
+ const field=schema.fields.find(f=>f.section==='product'&&f.visibility!=='common'&&f.type==='text'&&f.maxLength);
+ assert.ok(field);
+ const rules={format:'sourceflow-attribute-rules-v1',categoryId:'80719',rules:[{sourceName:'상품속성: test',fieldId:field.id,fieldSignature:JSON.stringify(field)}]};
+ const snapshot={categoryId:'80719',jobId:'j',values:[{sourceName:'상품속성: test',name:'번역된 원문',value:'가'.repeat(field.maxLength+1)}]};
+ const result=load('app/intake-attribute-rules.ts').applyIntakeAttributeRules(snapshot,JSON.stringify(rules));
+ assert.equal(result.snapshot.bindings.length,0);assert.equal(result.preview.length,0);assert.equal(result.skipped.length,1);
+ assert.equal(result.snapshot.reservedFields[0],field.id);
+});
