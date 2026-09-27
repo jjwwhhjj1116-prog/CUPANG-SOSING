@@ -6,6 +6,7 @@ import ts from 'typescript';
 import {webcrypto} from 'node:crypto';
 import {readPackageZip,prepareAttachments} from '../extensions/supplier-hub/package.mjs';
 import {attachToSupplierHub} from '../extensions/supplier-hub/attach.mjs';
+import {validateHandoff,HANDOFF_ORIGINS} from '../extensions/supplier-hub/handoff-store.mjs';
 
 const code=ts.transpileModule(fs.readFileSync(new URL('../app/exports/zip.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 const exports={};vm.runInNewContext(code,{exports,TextEncoder,Uint8Array,Uint32Array,DataView});
@@ -60,5 +61,14 @@ test('decode all files before upload and report a partial attempt without automa
 });
 test('extension limits permissions to explicit active-tab actions',()=>{
   const manifest=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
-  assert.deepEqual(manifest.permissions,['activeTab','scripting']);assert.equal(manifest.host_permissions,undefined);assert.equal(manifest.background,undefined);assert.equal(manifest.content_scripts,undefined);
+  assert.deepEqual(manifest.permissions,['activeTab','scripting']);assert.equal(manifest.host_permissions,undefined);
+  assert.equal(manifest.background.service_worker,'handoff-worker.mjs');
+  assert.deepEqual(manifest.content_scripts[0].matches,HANDOFF_ORIGINS.map(origin=>origin+'/*'));
+});
+test('web handoff accepts only top-frame app senders and bounded product-specific packages',()=>{
+  const request={type:'YOOFAM_PREPARE_PACKAGE',productId:'product-1',categoryId:'80719',fingerprint:'a'.repeat(64),base64:'UEs='};
+  const sender={tab:{id:1},frameId:0,url:HANDOFF_ORIGINS[0]+'/products'};
+  assert.equal(validateHandoff(request,sender).fingerprint,request.fingerprint);
+  for(const bad of [{...sender,url:'https://evil.example/'},{...sender,url:HANDOFF_ORIGINS[0]+'.evil.example/'},{...sender,frameId:1},{...sender,tab:null}])assert.throws(()=>validateHandoff(request,bad));
+  for(const change of [{productId:'../other'},{fingerprint:'wrong'},{categoryId:''},{base64:'!'},{base64:'x'.repeat(40*1024*1024+1)}])assert.throws(()=>validateHandoff({...request,...change},sender));
 });

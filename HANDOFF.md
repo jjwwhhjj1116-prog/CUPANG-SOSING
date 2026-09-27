@@ -3857,3 +3857,13 @@ AI등록 화면 확인:
 - Installation bundle outputs/YOOFAM-PLUS-supplier-hub-extension-0.1.0.zip. README includes scope/install/verification limits and official Chrome API sources.
 - NOT installed in user Chrome. No real file upload, consent, validation, final registration, or existing-product mutation. Web app button is not integrated; /api/supplier-hub remains501. This is a concrete attachment substep, not end-to-end completion. Do not report deployment (web app unchanged) or verified remote acceptance.
 - Browser existing binding otherChrome, hub420 tab727916999 remains right Chrome. User's original restrictions remain. Blocked1688source must not be retried viaalternatechannel.
+
+## Step 422 — web-to-extension prepared package handoff (2026-09-27)
+- SubmissionPackage adds Supplier Hub 확장으로 파일 준비 after preview. Only XLSX/category/no local validation errors enable it. Pings extension before calling existing quotation export with reviewed fingerprint; stale source HTTP409 clears preview. Existing downloads unchanged. Does not call or fake supplier-hub POST.
+- Added app/supplier-hub-handoff.ts window messaging with request nonce, same-window/origin matching, timeout/abort cleanup and bounded base64 ZIP. Ack must match fingerprint and registered:false.
+- Extension0.2 content script runs only exact production domain, localhost3000/127.0.0.1:3000. Worker validates top-frame sender/app origin/identity/size, stores one pending record in extension IndexedDB. No cookie access; no supplier host permission; activeTab+scripting retained.
+- Popup loads package without ZIP picker, validates actual ZIP/category/filename/hash, expires15min; atomically consumes matching pending fingerprint before dispatch. Concurrent/stale/missing package is refused. No automatic replay after popup closure/uncertain result. Manual ZIP still supported.
+- Public install ZIP/link added public/downloads/yoofam-plus-supplier-hub-extension-0.2.0.zip and output copy. Built from extension source. README updated. Not installed in user Chrome, no remote upload test.
+- Tests37/37 (extension8, handoff3, existing submission26); tsc; Cloudflare build/artifact; diff checks pass. Unit/DOM fixtures only, no claim of live IndexedDB/Chrome integration or Hub acceptance.
+- Deployed3906fe3d-fd02-4c14-9064-81c9ccc03cc2 to sourceflow.jjwwhhjj1116.workers.dev.
+- Still missing end-to-end: extension installation/live file acceptance, file validation/consent/final-registration/receipt, own1688collection, complete official category/templates. App POST/supplier-hub remains501. Existing user products untouched. Never call these partial steps full completion.

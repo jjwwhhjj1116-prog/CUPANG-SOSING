@@ -5,6 +5,7 @@ import { isQuotationFilename } from '@/app/exports/quotation-filename';
 import { validatePackageReview, type PackageReview } from '@/app/submission-review-response';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
+import { checkSupplierHubExtension, prepareSupplierHubHandoff } from '@/app/supplier-hub-handoff';
 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
@@ -20,15 +21,19 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
   const [message,setMessage]=useState('');
   const active=useRef<AbortController|null>(null);
   useEffect(()=>()=>active.current?.abort(),[]);
-  async function run(action:'preview'|'export'|'download') {
+  async function run(action:'preview'|'export'|'download'|'handoff') {
     if(active.current || (action!=='preview'&&!preview))return;
     const controller=new AbortController();active.current=controller;
     setBusy(true);setError('');setMessage('');
     if(action==='preview')setPreview(null);
     try {
+      if(action==='handoff'){
+        if(!categoryId||!preview?.filename.endsWith('.xlsx'))throw new Error('선택한 카테고리의 Excel 양식으로 견적서를 준비해주세요.');
+        await checkSupplierHubExtension(controller.signal);
+      }
       const response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation`,{
         method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},
-        body:JSON.stringify({action,...(profileId?{profileId}:{}),...(action!=='preview'?{fingerprint:preview!.fingerprint}:{})}),
+        body:JSON.stringify({action:action==='handoff'?'export':action,...(profileId?{profileId}:{}),...(action!=='preview'?{fingerprint:preview!.fingerprint}:{})}),
       });
       if(!response.ok){
         const body=await response.json() as {error?:string};
@@ -57,6 +62,11 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
             || response.headers.get('content-disposition')!==`attachment; filename="${preview!.filename}"`)throw new Error('검토한 견적서와 다운로드 파일이 일치하지 않습니다. 다시 준비해주세요.');
         }else if(!response.headers.get('content-type')?.startsWith('application/zip'))throw new Error('견적서 ZIP 응답을 확인하지 못했습니다.');
         const blob=await response.blob();if(controller.signal.aborted)return;
+        if(action==='handoff'){
+          await prepareSupplierHubHandoff(blob,{productId,categoryId:categoryId!,fingerprint:preview!.fingerprint},controller.signal);
+          if(!controller.signal.aborted)setMessage('확장에 견적서와 첨부 파일을 준비했습니다. 같은 Chrome의 Supplier Hub 대량 등록 탭에서 확장을 눌러 파일을 전달하세요. 아직 등록되지 않았습니다.');
+          return;
+        }
         const url=URL.createObjectURL(blob);const anchor=document.createElement('a');
         anchor.href=url;anchor.download=action==='download'?preview!.filename:`YOOFAM-PLUS-quotation-${productId}.zip`;anchor.click();
         setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -78,6 +88,8 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <p>ZIP에는 작성된 Excel/CSV, 상품 이미지, 라벨과 업로드 준비 목록이 포함됩니다. 검토 후 저장값이 바뀌면 다시 준비해야 합니다.</p>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('download')}>견적서 파일 다운로드</button>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
+      <button type="button" className="btn primary" disabled={busy||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>Supplier Hub 확장으로 파일 준비</button>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.0.zip" download>첨부 확장 다운로드 (0.2.0)</a>
     </>}
   </section>;
 }
