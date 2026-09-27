@@ -3901,3 +3901,9 @@ AI등록 화면 확인:
 - Result reader accepts exact canonical saved YOOFAM64hex.xlsx filename as read-only query identity, so DOM attempt-marker loss on same-tab reload no longer prevents result reading. Wrong file matches still not-found; no auto upload/revalidation.
 - Fixed popup saving attempt identity before attachment refusal: now writes only after dispatched state, so rejected/partial attempt cannot overwrite previous product link. Lost response remains unresolved; newtab/browserrestartID recovery not implemented.
 - Related20 tests plus2actual-popup-module VM tests passed (22); typecheck/build/artifact/diff checked. Extension0.2.5 built. No live actual upload/receipt or fullworkflowverified. Existing workproductsuntouched.
+
+## Step 429 — observed basic settings layout parity
+- Used existing designated right Chrome only. Couplus new-product action returned explicit daily limit 25 products exceeded; no bypass attempted. Inspected basic settings read-only, never saved vendor settings or modified existing products.
+- Matched four-card desktop layout: registration/pricing, image work/AI. Removed full-width image card; adjacent image toggles and conditional banner editors retain disabled banner keys. Translation prompt stays editable; hidden-attribute setting moved to AI card. Price heading and background-removal label match observed UI. Existing settings/pricing logic unchanged; no false vendor server-AI capability copied.
+- Typecheck and Cloudflare build/artifact/diff checks passed. No live UI visual verification claimed. Deployed version721506c5-85c5-4932-a2cf-9e756ce7ad86.
+- Whole workflow remains incomplete: actual own1688 source, acquired official workbook, live upload/validation/final registration and all-category parity unverified; supplier-hub POST still501. Couplus basic-settings panel remains open. No new extension changes.

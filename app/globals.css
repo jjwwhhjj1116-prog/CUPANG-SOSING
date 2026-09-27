@@ -266,7 +266,13 @@ html,body{background:#fff}
 .couplus-settings section{margin:0;border:1px solid #dfe2e8;border-radius:10px;overflow:hidden;padding:0 20px 20px}
 .couplus-settings section h3{margin:0 -20px 20px;padding:19px 20px;background:#c9cdd5;color:#151655;font-size:16px}
 .couplus-settings .settings-registration .form-grid{grid-template-columns:1fr}
-.couplus-settings .settings-images,.couplus-settings>.modal-actions,.couplus-settings>.collection-error{grid-column:1/-1}
+.couplus-settings>.modal-actions,.couplus-settings>.collection-error{grid-column:1/-1}
+.couplus-settings section{min-width:0}
+.couplus-settings .settings-image-option{display:grid;gap:10px;margin-bottom:22px}
+.couplus-settings .settings-image-option .switch-row{margin:0}
+.couplus-settings .settings-image-option small,.couplus-settings .settings-images>small{color:#727c8f;line-height:1.6}
+.couplus-settings .settings-image-option textarea{min-height:140px;resize:vertical}
+.couplus-settings .settings-image-option input[type=file]{max-width:100%}
 .couplus-settings .field>span{font-size:14px;color:#27334c}
 .couplus-settings .field input,.couplus-settings .field select{min-height:44px}
 .couplus-settings>.modal-actions{position:sticky;bottom:-24px;background:#fff;padding:18px 0;margin:0;border-top:1px solid #e4e7ed;z-index:2}
