@@ -38,6 +38,8 @@ export type ProductContent = {
   labelProductNameLinked?: boolean;
   labelLayout?: LabelLayout;
   customLabels?: CustomLabel[];
+  /** Source-derived draft attributes are scoped to the category used for translation. */
+  categoryAttributes?: { categoryId: string; jobId: string; values: { name: string; value: string }[] };
   assets: Record<AssetRole, ContentField<string[]>>;
 };
 export type ContentPatch = {

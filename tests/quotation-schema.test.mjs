@@ -1770,3 +1770,17 @@ test('saved import declaration links only to categories containing that notice a
  const other=fixture();other.categoryId='81452';other.content.label.importDeclaration.value='confirmed';
  assert.equal(model.resolveQuotationFields(other).rows[0].fields.noticeImportDeclaration,undefined);
 });
+
+test('category source attributes fill only exact valid product fields and preserve overrides',()=>{
+ const input=fixture();
+ input.content.categoryAttributes={categoryId:'80719',jobId:'source',values:[{name:'바구니 형태',value:'사각형'},{name:'KC 인증정보',value:'임의 인증'},{name:'판매가',value:'1'}]};
+ const read=()=>model.resolveQuotationFields(input).rows.find(row=>row.optionId==='red').fields;
+ assert.equal(read().basketShape.value,'사각형');assert.equal(read().basketShape.source,'content');
+ const price=read().salePrice.value;assert.notEqual(price,'1');
+ input.overrides={common:{basketShape:'원형'},options:{}};assert.equal(read().basketShape.value,'원형');
+ input.overrides={common:{},options:{red:{basketShape:''}}};assert.equal(read().basketShape.value,'');
+ input.overrides={common:{},options:{}};
+ input.content.categoryAttributes.categoryId='64497';assert.notEqual(read().basketShape.value,'사각형');
+ input.content.categoryAttributes.categoryId='80719';input.content.categoryAttributes.values.push({name:'바구니 형태',value:'원형'});assert.notEqual(read().basketShape.value,'사각형');
+ input.content.categoryAttributes.values=[{name:'바구니 형태',value:'존재하지 않는 선택지'}];assert.notEqual(read().basketShape.value,'존재하지 않는 선택지');
+});

@@ -16,6 +16,7 @@ for(const automatic of [false,true,'many'])test(`URL intake persists a category-
  const sourceUrl='https://detail.1688.com/offer/813724060928.html';
  const png=new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'));
  const payload={result:{success:true,result:{offerId:'813724060928',subject:'原文商品',minOrderQuantity:2,productImage:{images:['https://cbu01.alicdn.com/main.jpg']},description:'<p>원문 설명</p><img src="https://cbu01.alicdn.com/detail.jpg">',productSkuInfos:[{skuId:'5627721589407',price:'25.6',amountOnSale:'12',skuAttributes:[{attributeName:'颜色',value:'黑色',skuImageUrl:'https://cbu01.alicdn.com/black.jpg'}]}]}}};
+ if(automatic===true)payload.result.result.productAttribute=[{attributeName:'形状',value:'方形'}];
  if(automatic==='many'){
   const original=payload.result.result.productSkuInfos[0];payload.result.result.productSkuInfos=Array.from({length:60},(_,i)=>({...structuredClone(original),skuId:String(5627721589407+i)}));
   payload.result.result.productAttribute=Array.from({length:50},(_,i)=>({attributeName:'属性'+i,value:'原文'}));
@@ -49,16 +50,17 @@ for(const automatic of [false,true,'many'])test(`URL intake persists a category-
    const bindings=deps['cloudflare:workers'].env;delete bindings.OPENAI_API_KEY;
    bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';bindings.SOURCEFLOW_TEXT_MODEL='@cf/meta/llama-3.1-8b-instruct';
    const expectedGenerations=automatic==='many'?4:1;
-   let generations=0;bindings.AI={run:async(model,input)=>{generations++;assert.equal(model,bindings.SOURCEFLOW_TEXT_MODEL);const source=JSON.parse(input.messages[1].content);assert.equal(source.category.id,'80719');return {response:{title:generations===1?'자동 생성 수납 상품':'후속 요청 상품명',description:'검토용 설명',keywords:['수납'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:'옵션',value:pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};}};
+   let generations=0;bindings.AI={run:async(model,input)=>{generations++;assert.equal(model,bindings.SOURCEFLOW_TEXT_MODEL);const source=JSON.parse(input.messages[1].content);assert.equal(source.category.id,'80719');return {response:{title:generations===1?'자동 생성 수납 상품':'후속 요청 상품명',description:'검토용 설명',keywords:['수납'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('상품속성:')?'바구니 형태':'옵션',value:pair.name.startsWith('상품속성:')?'사각형':pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};}};
    assert.match(await run(),/SEO·옵션 초안을 생성해 반영/);assert.equal(generations,expectedGenerations);
    const content=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
+   if(automatic==='many'){assert.equal(content.categoryAttributes.categoryId,'80719');assert.equal(content.categoryAttributes.values.length,50);}
    assert.equal(content.seo.title.value,'자동 생성 수납 상품');assert.equal(content.label.productName.value,'자동 생성 수납 상품');
    const rows=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload).rows;
    assert.equal(rows[0].translatedName,'검정 옵션');assert.equal(rows[0].color,'검정');assert.equal(rows[0].unitCostCny,25.6);
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
-   const view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,'자동 생성 수납 상품');assert.equal(row.fields.supplyPrice.value,'17920');
+   const view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,'자동 생성 수납 상품');assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
    const edit=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'35000'}]})}),qc);assert.equal(edit.status,200);
-   assert.match(await run(),/기존 SEO 생성 이력/);assert.equal(generations,expectedGenerations);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,expectedGenerations);
+   assert.match(await run(),/저장된 SEO·옵션값/);assert.equal(generations,expectedGenerations);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,expectedGenerations);
    assert.ok(rows.every(r=>r.translatedName==='검정 옵션'&&r.color==='검정'));
    const after=await (await qr.GET(new Request(qu),qc)).json();assert.equal(after.resolved.rows.find(r=>r.optionId==='collected-1').fields.salePrice.value,'35000');
    assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');return;

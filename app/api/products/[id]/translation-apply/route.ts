@@ -48,6 +48,7 @@ export async function POST(request: Request, context: Context) {
     if (!plan.preview.length) return json({ error: '새로 적용할 번역 항목이 없습니다.' }, 409);
     const now = new Date(Math.max(Date.now(), Date.parse(product.updated_at) + 1)).toISOString();
     const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
+    if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
       contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, categorySource });
     return saved ? json({ scope, productId: id, productVersion: now, contentRevision: nextContent.revision, optionRevision: nextOptions.revision, applied: plan.preview.length })

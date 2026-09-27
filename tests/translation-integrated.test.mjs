@@ -196,3 +196,13 @@ test('category-aware integrated preview rejects wrong category and invalidates c
   assert.equal((await call({action:'apply',fingerprint:plan.fingerprint})).status,200);assert.equal(saves,1);
  }finally{h.sqlite.close();}
 });
+
+test('integrated source attributes are category scoped and option batches cannot replace them',()=>{
+ const {content,options,job}=fixture();job.review.source.category={id:'80719',path:['주방용품']};
+ const plan=model.integratedTranslationPlan(content,options,job,version);
+ assert.equal(plan.categoryAttributes.categoryId,'80719');assert.equal(plan.categoryAttributes.jobId,job.id);
+ assert.equal(plan.categoryAttributes.values.length,1);assert.equal(plan.categoryAttributes.values[0].name,'재질');
+ content.categoryAttributes=plan.categoryAttributes;
+ assert.equal(model.integratedTranslationPlan(content,options,job,version,'options').categoryAttributes,undefined);
+ delete job.review.source.category;assert.equal(model.integratedTranslationPlan(content,options,job,version).categoryAttributes,undefined);
+});
