@@ -1,5 +1,6 @@
 import type { TranslationJob } from '@/app/automation/translation';
 import { runReviewedTranslation } from '@/app/reviewed-translation';
+import { awaitIntakeTranslation } from '@/app/intake-translation-result';
 
 /** User-started intake produces editable content; never submits to Supplier Hub. */
 export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal) {
@@ -30,6 +31,8 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
       if(!executed||signal.aborted)return '';
       job=executed.job;
     }
+    if(job.status==='running')job=await awaitIntakeTranslation(job,fetcher,signal);
+    if(signal.aborted)return '';
     if(job.status!=='completed'||!job.result)return `상품은 저장됐지만 SEO 초안은 아직 반영되지 않았습니다. ${job.error?.message ?? (job.status==='running'?'생성 중입니다. 작업 상태를 다시 확인해주세요.':'생성 결과를 확인해주세요.')}`;
     const send=async(action:'preview'|'apply',fingerprint?:string)=>{
       const response=await fetcher(`${base}/translation-apply`,{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,jobId:job.id,expectedVersion:job.productVersion,...(body.optionsOnly?{scope:'options'}:{}),...(fingerprint?{fingerprint}:{})})});
