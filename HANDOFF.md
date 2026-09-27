@@ -3717,3 +3717,10 @@ AI등록 화면 확인:
 - Reproduced missing glove_model stage-six link with failing test; added explicit contentField:model. Found all17 glove-specific fields missing categoryFields causing export omission; registered them for template mapping/export.
 - Tests:173 passed before final coverage case; all3 glove tests pass including final coverage. tsc/build/artifact/diff checks passed. Manual model overrides and deliberate blanks preserved.
 - Actual1688 collection, image translation and real Hub submission adapter remain incomplete. Do not claim workflow complete.
+
+## Step 401 — Supplier Hub category identity and field isolation
+- User reiterates category selection must determine Supplier Hub code, form and defaults before URL intake. Existing working products remain untouched. No browser/product mutations this turn.
+- Fixed81221 catalog/schema path to the directly observed Hub path 스포츠/레져>스포츠 잡화>스포츠 장갑; evidence is official code/path only, not complete field/default verification. This removes duplicate 스포츠잡화 branch introduced399.
+- Reproduced categoryFieldScope(glove_*) returning null, allowing mappings to unrelated category codes. Scoped all17 glove fields to81221, checked all known category-specific fields against their own code and rejection by another code.
+- Added registry-wide export mapping coverage test and fail-explicitly guard so future schema fields cannot be silently discarded by resolvedQuotationRows.
+-199 targeted tests pass; tsc/build/artifact/diff checks pass. Deployed step401. No change to existing saved profiles/products. Full catalog/default parity, official Excel binaries, live1688 collection and Supplier Hub submission remain incomplete.

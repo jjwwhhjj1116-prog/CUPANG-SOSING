@@ -2,7 +2,7 @@ import type { QuotationField } from '@/app/quotation-schema';
 
 // Couplus rendered quotation 260927002001, observed 2026-09-27.
 // Saved values do not establish automatic defaults or Supplier Hub validation rules.
-export const couplus81221Path = ['스포츠/레져', '스포츠잡화', '스포츠장갑'];
+export const couplus81221Path = ['스포츠/레져', '스포츠 잡화', '스포츠 장갑'];
 const attributes: [string, string, string[]?][] = [
   ['season', '사용계절', ['사계절용', '봄/가을용', '여름용', '겨울용', '봄용', '가을용']],
   ['touch', '스마트폰 터치 가능 여부', ['터치 가능']],

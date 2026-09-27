@@ -24,7 +24,7 @@ const contentModel = load('app/product-content.ts');
 const optionModel = load('app/product-options.ts');
 test('81221 uses the observed glove form without borrowing kitchen or brace fields', () => {
   const schema = model.getQuotationSchema('81221');
-  assert.deepEqual(Array.from(schema.categoryPath), ['스포츠/레져', '스포츠잡화', '스포츠장갑']);
+  assert.deepEqual(Array.from(schema.categoryPath), ['스포츠/레져', '스포츠 잡화', '스포츠 장갑']);
   assert.equal(schema.fields.filter(f => f.visibility === 'exposed').length, 3);
   assert.equal(schema.fields.filter(f => f.visibility === 'hidden').length, 13);
   assert.equal(schema.fields.filter(f => f.section === 'legal' && !['kcMarkType','kcCertificationNumber','emcCertificationNumber','safetyDeclarationNumber'].includes(f.id)).length, 12);

@@ -64,6 +64,10 @@ export function quotationAttachmentKeys(saved: QuotationExportSource, resolved: 
 
 /** Uses the resolver's one price calculation and final manual overrides. */
 export function resolvedQuotationRows(saved: QuotationExportSource, resolved: ResolvedQuotation, assets: BundleAsset[]): QuotationRowData[] {
+  const unsupported = resolved.schema.fields.filter(field => !Object.hasOwn(categoryFields, field.id));
+  if (unsupported.length) {
+    throw new Error(`견적서 내보내기 연결이 없는 항목입니다: ${unsupported.map(field => field.label).join(', ')}. 항목 연결을 확인한 뒤 다시 내려받아주세요.`);
+  }
   const included = resolved.rows.filter(row => row.included);
   if (!included.length) throw new Error('견적서에 포함할 옵션을 한 개 이상 선택해주세요.');
   return included.map(row => {

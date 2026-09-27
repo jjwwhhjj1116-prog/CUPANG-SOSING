@@ -508,7 +508,7 @@ export type QuotationRowValues = Partial<Record<Exclude<CategoryField, 'constant
   selectedEmptyChoices?: readonly string[];
 };
 export function categoryFieldScope(field: string): string | null {
-  return field.startsWith('marathon_') ? '103495' : field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
+  return field.startsWith('glove_') ? '81221' : field.startsWith('marathon_') ? '103495' : field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
 }
 export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;
