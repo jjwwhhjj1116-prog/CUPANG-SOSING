@@ -7,10 +7,19 @@ import type { TranslationCategorySource } from '@/db/translation-category-source
 export async function saveIntegratedTranslation(owner: string, content: ProductContent, options: ProductOptions, source: {
   productVersion: string; imageKeys: string; contentRevision: number; optionRevision: number; jobId: string;
   categorySource?: TranslationCategorySource;
+  attributeRules?: { categoryId: string; payload: string | null };
 }) {
   if (!env.DB || content.productId !== options.productId || !content.updatedAt || content.updatedAt !== options.updatedAt
     || content.revision !== source.contentRevision + 1 || options.revision !== source.optionRevision + 1) throw Error('통합 저장 자료가 일치하지 않습니다.');
   const id = content.productId, now = content.updatedAt;
+  let rulesGuard = ''; const rulesArgs: string[] = [];
+  if (source.attributeRules) {
+    const { categoryId, payload } = source.attributeRules;
+    rulesGuard = payload === null
+      ? ' AND NOT EXISTS(SELECT 1 FROM quotation_attribute_rules WHERE owner_id=products.owner_id AND category_id=?)'
+      : ' AND EXISTS(SELECT 1 FROM quotation_attribute_rules WHERE owner_id=products.owner_id AND category_id=? AND payload=?)';
+    rulesArgs.push(categoryId); if (payload !== null) rulesArgs.push(payload);
+  }
   let categoryGuard = ''; const categoryArgs: string[] = [];
   if (source.categorySource) {
     const { offerId, snapshot } = source.categorySource;
@@ -29,8 +38,8 @@ export async function saveIntegratedTranslation(owner: string, content: ProductC
       AND COALESCE((SELECT revision FROM product_content WHERE product_id=? AND owner_id=?),0)=?
       AND COALESCE((SELECT revision FROM product_options WHERE product_id=? AND owner_id=?),0)=?
       AND EXISTS(SELECT 1 FROM translation_jobs WHERE id=? AND owner_id=? AND product_id=? AND status='completed' AND product_version=? AND content_revision=?)
-      ${categoryGuard} RETURNING id`).bind(now, options.rows.filter(row => row.included).length, id, owner, source.productVersion, source.imageKeys,
-        id, owner, source.contentRevision, id, owner, source.optionRevision, source.jobId, owner, id, source.productVersion, source.contentRevision, ...categoryArgs),
+      ${categoryGuard} ${rulesGuard} RETURNING id`).bind(now, options.rows.filter(row => row.included).length, id, owner, source.productVersion, source.imageKeys,
+        id, owner, source.contentRevision, id, owner, source.optionRevision, source.jobId, owner, id, source.productVersion, source.contentRevision, ...categoryArgs, ...rulesArgs),
     env.DB.prepare(`INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at)
       SELECT ?,?,?,?,? WHERE changes()=1
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)

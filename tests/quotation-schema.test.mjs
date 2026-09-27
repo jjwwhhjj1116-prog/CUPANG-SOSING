@@ -1784,3 +1784,13 @@ test('category source attributes fill only exact valid product fields and preser
  input.content.categoryAttributes.categoryId='80719';input.content.categoryAttributes.values.push({name:'바구니 형태',value:'원형'});assert.notEqual(read().basketShape.value,'사각형');
  input.content.categoryAttributes.values=[{name:'바구니 형태',value:'존재하지 않는 선택지'}];assert.notEqual(read().basketShape.value,'존재하지 않는 선택지');
 });
+
+test('saved attribute bindings outrank name guesses and stale or absent bindings stay reserved',()=>{
+ const input=fixture();const field=model.getQuotationSchema('80719').fields.find(f=>f.id==='basketShape');
+ input.content.categoryAttributes={categoryId:'80719',jobId:'j',values:[{name:'바구니 형태',value:'원형'}],reservedFields:['basketShape'],bindings:[{fieldId:'basketShape',fieldSignature:JSON.stringify(field),value:'사각형'}]};
+ const read=()=>model.resolveQuotationFields(input).rows.find(row=>row.optionId==='red').fields.basketShape;
+ assert.equal(read().value,'사각형');
+ input.content.categoryAttributes.bindings[0].value='';assert.equal(read().value,'');assert.equal(read().source,'content');
+ input.content.categoryAttributes.bindings[0].fieldSignature='stale';assert.notEqual(read().value,'원형');
+ input.content.categoryAttributes.bindings=[];assert.notEqual(read().value,'원형');
+});

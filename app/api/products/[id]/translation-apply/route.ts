@@ -10,6 +10,8 @@ import { applyContentPatch } from '@/app/product-content';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson } from '@/app/request-body';
 import { readTranslationCategorySource } from '@/db/translation-category-source';
+import { getAttributeRules } from '@/db/quotation-attribute-rules';
+import { applyIntakeAttributeRules } from '@/app/intake-attribute-rules';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -41,6 +43,18 @@ export async function POST(request: Request, context: Context) {
     let plan;
     try { plan = integratedTranslationPlan(content, options, job, product.updated_at, scope); }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }
+    let attributeRules;
+    if (plan.categoryAttributes) {
+      const savedRules = await getAttributeRules(owner, plan.categoryAttributes.categoryId);
+      attributeRules = { categoryId: plan.categoryAttributes.categoryId, payload: savedRules ? JSON.stringify(savedRules.rules) : null };
+      if (attributeRules.payload) {
+        try {
+          const applied = applyIntakeAttributeRules(plan.categoryAttributes, attributeRules.payload);
+          plan.categoryAttributes = applied.snapshot; plan.skipped.push(...applied.skipped);
+          plan.preview.push(...applied.preview);
+        } catch (error) { return json({ error: error instanceof Error ? error.message : '카테고리 연결 규칙을 확인해주세요.' }, 409); }
+      }
+    }
     const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null });
     const preview = { scope, productId: id, productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, fingerprint: digest, preview: plan.preview, skipped: plan.skipped };
     if (body.action === 'preview') return json(preview);
@@ -50,7 +64,7 @@ export async function POST(request: Request, context: Context) {
     const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
     if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
-      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, categorySource });
+      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, categorySource, attributeRules });
     return saved ? json({ scope, productId: id, productVersion: now, contentRevision: nextContent.revision, optionRevision: nextOptions.revision, applied: plan.preview.length })
       : json({ error: '저장 중 자료가 변경되었습니다. 아무 항목도 함께 저장하지 않았습니다. 다시 검토해주세요.' }, 409);
   } catch { return json({ error: '통합 저장 상태를 확인하지 못했습니다. 저장본을 조회한 뒤 다시 검토해주세요. 자동 재저장하지 않았습니다.' }, 503); }

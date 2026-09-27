@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { DatabaseSync } from 'node:sqlite';
-function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,Error,crypto,TextEncoder,TextDecoder,Response,URL,process:{env:{NODE_ENV:'development'}},require:name=>name in overrides?overrides[name]:name==='next/server'?{NextResponse:{json:(body,init)=>Response.json(body,init)}}:load(name.slice(2)+'.ts',overrides)});return exports;}
+function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,Error,crypto,TextEncoder,TextDecoder,Response,URL,process:{env:{NODE_ENV:'development'}},require:name=>name in overrides?overrides[name]:name==='@/db/quotation-attribute-rules'?{getAttributeRules:async()=>null}:name==='next/server'?{NextResponse:{json:(body,init)=>Response.json(body,init)}}:load(name.slice(2)+'.ts',overrides)});return exports;}
 const cm=load('app/product-content.ts'),om=load('app/product-options.ts');
 const model=load('app/translation-integrated-adoption.ts');
 const version='2026-09-25T00:00:00.000Z',nextVersion='2026-09-25T00:00:01.000Z',jobId='11111111-1111-4111-8111-111111111111';
@@ -20,7 +20,7 @@ function harness(){
  sqlite.exec(`CREATE TABLE products(id TEXT PRIMARY KEY,owner_id TEXT,updated_at TEXT,image_keys TEXT,quote_status TEXT,options_count INTEGER);
  CREATE TABLE product_content(product_id TEXT PRIMARY KEY,owner_id TEXT,revision INTEGER,payload TEXT,updated_at TEXT);
  CREATE TABLE product_options(product_id TEXT PRIMARY KEY,owner_id TEXT,revision INTEGER,payload TEXT,updated_at TEXT);
- CREATE TABLE translation_jobs(id TEXT PRIMARY KEY,owner_id TEXT,product_id TEXT,status TEXT,product_version TEXT,content_revision INTEGER);`);
+ CREATE TABLE quotation_attribute_rules(owner_id TEXT,category_id TEXT,payload TEXT); CREATE TABLE translation_jobs(id TEXT PRIMARY KEY,owner_id TEXT,product_id TEXT,status TEXT,product_version TEXT,content_revision INTEGER);`);
  sqlite.prepare('INSERT INTO products VALUES (?,?,?,?,?,?)').run('p','owner',version,'[]','대기',1);
  sqlite.prepare('INSERT INTO translation_jobs VALUES (?,?,?,?,?,?)').run(jobId,'owner','p','completed',version,0);
  const data=fixture();sqlite.prepare('INSERT INTO product_options VALUES (?,?,?,?,?)').run('p','owner',1,JSON.stringify(data.options),version);
@@ -205,4 +205,29 @@ test('integrated source attributes are category scoped and option batches cannot
  content.categoryAttributes=plan.categoryAttributes;
  assert.equal(model.integratedTranslationPlan(content,options,job,version,'options').categoryAttributes,undefined);
  delete job.review.source.category;assert.equal(model.integratedTranslationPlan(content,options,job,version).categoryAttributes,undefined);
+});
+
+test('saved rules reserve sources and destinations, preserve empty choices and reject stale signatures',()=>{
+ const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');
+ const field=schema.fields.find(f=>f.id==='basketShape');
+ const rule={format:'sourceflow-attribute-rules-v1',categoryId:'80719',rules:[{sourceName:'상품속성: 形状',fieldId:field.id,fieldSignature:JSON.stringify(field)}]};
+ const snapshot={categoryId:'80719',jobId:'j',values:[{sourceName:'상품속성: 形状',name:'상품 모양',value:'사각형'},{sourceName:'상품속성: other',name:'바구니 형태',value:'원형'}]};
+ const helper=load('app/intake-attribute-rules.ts').applyIntakeAttributeRules;
+ const applied=helper(snapshot,JSON.stringify(rule));assert.equal(applied.snapshot.bindings[0].value,'사각형');assert.equal(applied.snapshot.values.length,1);assert.equal(applied.snapshot.reservedFields[0],'basketShape');
+ snapshot.values[0].value='해당사항없음';assert.equal(helper(snapshot,JSON.stringify(rule)).snapshot.bindings[0].value,'');
+ snapshot.values[0].value='invalid';assert.equal(helper(snapshot,JSON.stringify(rule)).snapshot.bindings.length,0);assert.equal(helper(snapshot,JSON.stringify(rule)).snapshot.reservedFields[0],'basketShape');
+ rule.rules[0].fieldSignature='stale';assert.throws(()=>helper(snapshot,JSON.stringify(rule)),/양식이 변경/);
+});
+
+test('atomic adoption rejects newly added or changed attribute rules during save',async()=>{
+ for(const mode of ['absent','added','same','changed']){
+  const h=harness();try{
+   const {content,options,job}=h.data,plan=model.integratedTranslationPlan(content,options,job,version);
+   const payload=mode==='same'||mode==='changed'?'saved':null;
+   if(mode!=='absent')h.sqlite.prepare('INSERT INTO quotation_attribute_rules VALUES(?,?,?)').run('owner','80719',mode==='same'?'saved':'changed');
+   const saved=await h.store.saveIntegratedTranslation('owner',cm.applyContentPatch(content,plan.patch,nextVersion),model.applyIntegratedOptions(options,plan,nextVersion),{productVersion:version,imageKeys:'[]',contentRevision:0,optionRevision:1,jobId,attributeRules:{categoryId:'80719',payload}});
+   assert.equal(saved,mode==='absent'||mode==='same');
+   if(!saved)assert.equal(h.sqlite.prepare('SELECT count(*) n FROM product_content').get().n,0);
+  }finally{h.sqlite.close();}
+ }
 });

@@ -456,9 +456,11 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       if (automatic.source === 'empty' && content.categoryAttributes?.categoryId === schema.categoryId
         && definition.section === 'product' && definition.visibility !== 'common' && !definition.readOnly
         && ['text', 'textarea', 'select'].includes(definition.type)) {
-        const matches = content.categoryAttributes.values.filter(item => item.name === definition.label);
+        const binding = content.categoryAttributes.bindings?.find(item => item.fieldId === definition.id && item.fieldSignature === JSON.stringify(definition));
+        const matches = binding ? [{ name: definition.label, value: binding.value }]
+          : content.categoryAttributes.reservedFields?.includes(definition.id) ? [] : content.categoryAttributes.values.filter(item => item.name === definition.label);
         const destinations = schema.fields.filter(field => field.section === 'product' && field.visibility !== 'common' && field.label === definition.label);
-        if (matches.length === 1 && destinations.length === 1 && matches[0].value.trim()) {
+        if (matches.length === 1 && (binding || destinations.length === 1) && (binding || matches[0].value.trim())) {
           let value: string | undefined = matches[0].value;
           if (definition.type === 'select') {
             const choices = new Set(definition.choices?.filter(choice => choice.value === value || choice.label === value).map(choice => choice.value));

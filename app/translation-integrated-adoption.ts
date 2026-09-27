@@ -11,8 +11,8 @@ export function integratedTranslationPlan(content: ProductContent, options: Prod
   const preview = [...text.preview];
   const attributes = scope === 'all' && job.review.source.category && job.result
     ? job.result.draft.attributes.filter(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: '))
-      .map(item => ({ name: item.name.trim(), value: item.value.trim() })).filter(item => item.name && item.value) : [];
-  const categoryAttributes = attributes.length ? { categoryId: job.review.source.category!.id, jobId: job.id, values: attributes } : undefined;
+      .map(item => ({ name: item.name.trim(), value: item.value.trim(), sourceName: job.review.source.attributes[item.sourceIndex].name })).filter(item => item.name && item.value) : [];
+  const categoryAttributes: ProductContent['categoryAttributes'] = attributes.length ? { categoryId: job.review.source.category!.id, jobId: job.id, values: attributes } : undefined;
   if (categoryAttributes && JSON.stringify(content.categoryAttributes) !== JSON.stringify(categoryAttributes)) {
     preview.push({ name: '카테고리 상품 속성 원문 번역', before: (content.categoryAttributes?.values ?? []).map(item => `${item.name}: ${item.value}`).join('\n'), after: attributes.map(item => `${item.name}: ${item.value}`).join('\n') });
   }

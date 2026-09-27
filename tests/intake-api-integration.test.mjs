@@ -50,7 +50,12 @@ for(const automatic of [false,true,'many'])test(`URL intake persists a category-
    const bindings=deps['cloudflare:workers'].env;delete bindings.OPENAI_API_KEY;
    bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';bindings.SOURCEFLOW_TEXT_MODEL='@cf/meta/llama-3.1-8b-instruct';
    const expectedGenerations=automatic==='many'?4:1;
-   let generations=0;bindings.AI={run:async(model,input)=>{generations++;assert.equal(model,bindings.SOURCEFLOW_TEXT_MODEL);const source=JSON.parse(input.messages[1].content);assert.equal(source.category.id,'80719');return {response:{title:generations===1?'자동 생성 수납 상품':'후속 요청 상품명',description:'검토용 설명',keywords:['수납'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('상품속성:')?'바구니 형태':'옵션',value:pair.name.startsWith('상품속성:')?'사각형':pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};}};
+   if(automatic===true){
+    const field=load('app/quotation-schema.ts').getQuotationSchema('80719').fields.find(f=>f.id==='basketShape');
+    const rules={format:'sourceflow-attribute-rules-v1',categoryId:'80719',rules:[{sourceName:'상품속성: 形状',fieldId:field.id,fieldSignature:JSON.stringify(field)}]};
+    sqlite.prepare('INSERT INTO quotation_attribute_rules(owner_id,category_id,payload,revision,updated_at) VALUES(?,?,?,?,?)').run('owner','80719',JSON.stringify(rules),1,new Date().toISOString());
+   }
+   let generations=0;bindings.AI={run:async(model,input)=>{generations++;assert.equal(model,bindings.SOURCEFLOW_TEXT_MODEL);const source=JSON.parse(input.messages[1].content);assert.equal(source.category.id,'80719');return {response:{title:generations===1?'자동 생성 수납 상품':'후속 요청 상품명',description:'검토용 설명',keywords:['수납'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('상품속성:')?(automatic===true?'상품 모양':'바구니 형태'):'옵션',value:pair.name.startsWith('상품속성:')?'사각형':pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};}};
    assert.match(await run(),/SEO·옵션 초안을 생성해 반영/);assert.equal(generations,expectedGenerations);
    const content=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
    if(automatic==='many'){assert.equal(content.categoryAttributes.categoryId,'80719');assert.equal(content.categoryAttributes.values.length,50);}
