@@ -1,6 +1,7 @@
 import { parseCollectionRequest } from '@/app/sourcing';
 import { COLLECTION_RESULT_LIMIT, validateCollectionResult } from '@/app/collection-result';
 import { parse, type DefaultTreeAdapterMap } from 'parse5';
+import { parseAlibabaDescription } from '@/app/alibaba-description';
 
 const MAX_HTML = 2 * 1024 * 1024;
 type RecordValue = Record<string, unknown>;
@@ -76,8 +77,12 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
   return {sku:required(variant.sku??offer.sku,'SKU'),name:required(variant.name,'옵션명'),unitPriceCny:number(offer.price),minimumOrder,stock,
    ...(indices.length?{imageIndex:indices[0]}:{}),...(typeof variant.color==='string'?{color:variant.color}:{}),...(typeof variant.size==='string'?{size:variant.size}:{})};
  });
+ // Append details after SKU images so their recorded image indices remain
+ // stable. The same source may serve both gallery and detail roles.
+ const description=parseAlibabaDescription(product.description);
+ for(const url of description.images)if(!images.some(image=>image.url===url&&image.role==='detail'))images.push({url,role:'detail'});
  const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:'public-product-jsonld-v1',collectedAt:new Date(now).toISOString(),
-  title:required(product.name,'상품명'),description:typeof product.description==='string'?product.description:'',options,images,...(attributes !== undefined ? {attributes} : {})},source.offerId,now);
+  title:required(product.name,'상품명'),description:description.text,options,images,...(attributes !== undefined ? {attributes} : {})},source.offerId,now);
  if(new TextEncoder().encode(JSON.stringify(result)).byteLength>COLLECTION_RESULT_LIMIT)throw Error('수집 결과 크기가 한도를 초과했습니다.');
  return result;
 }

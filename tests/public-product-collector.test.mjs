@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file,deps={},mode='development') {const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,Response,TextDecoder,TextEncoder,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:mode}},require:name=>deps[name]??(name==='parse5'?parse5:name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts',deps,mode))});return exports;}
+function load(file,deps={},mode='development') {const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,Error,URL,Response,TextDecoder,TextEncoder,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:mode}},require:name=>deps[name]??(name==='parse5'?parse5:name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts',deps,mode))});return exports;}
 const url='https://detail.1688.com/offer/813724060928.html';
 const product=()=>({'@type':'ProductGroup',url,name:'原文商品',image:['https://cbu01.alicdn.com/a.jpg'],hasVariant:[{'@type':'Product',name:'黑色',sku:'real-sku',color:'黑色',image:'https://cbu01.alicdn.com/b.jpg',offers:{'@type':'Offer',price:'25.6',priceCurrency:'CNY',eligibleQuantity:{minValue:2}}}]});
 const html=p=>`<html><script type="application/ld+json">${JSON.stringify(p)}</script></html>`;
@@ -16,6 +16,37 @@ test('explicit public data produces original SKU, image relation and price witho
 test('login, unrelated and ambiguous products or incomplete option data never become drafts',()=>{
  for(const input of ['<html>Login</html>',html({...product(),url:'https://detail.1688.com/offer/999.html'}),html([product(),product()])])assert.throws(()=>parsePublicProduct(input,url));
  for(const mutate of [p=>delete p.hasVariant[0].sku,p=>delete p.hasVariant[0].offers.eligibleQuantity,p=>p.hasVariant[0].offers.priceCurrency='USD',p=>p.hasVariant[0].offers['@type']='AggregateOffer',p=>p.hasVariant[0].offers.price='25-30',p=>p.image='https://127.0.0.1/a']){const p=product();mutate(p);assert.throws(()=>parsePublicProduct(html(p),url));}
+});
+
+test('public detail HTML preserves text and ordered detail images without shifting SKU image indices',()=>{
+ const p=product();p.description='<div>尺寸 &amp; 材质</div><img src="//cbu01.alicdn.com/a.jpg"><p>38 cm</p><img data-src="https://cbu01.alicdn.com/detail.jpg" src="placeholder"><img src="https://cbu01.alicdn.com/detail.jpg"><script>unsafe()</script><template><img src="https://evil.test/ignore"></template>';
+ const encoded=`<script type="application/ld+json">${JSON.stringify(p).replace(/</g,'\\u003c')}</script>`;
+ const receipt=parsePublicProduct(encoded,url);
+ assert.equal(receipt.description,'尺寸 & 材质\n\n38 cm');
+ assert.equal(receipt.options[0].imageIndex,1);
+ assert.deepEqual(JSON.parse(JSON.stringify(receipt.images)),[
+  {url:'https://cbu01.alicdn.com/a.jpg',role:'main'},
+  {url:'https://cbu01.alicdn.com/b.jpg',role:'additional'},
+  {url:'https://cbu01.alicdn.com/a.jpg',role:'detail'},
+  {url:'https://cbu01.alicdn.com/detail.jpg',role:'detail'},
+ ]);
+ const settings=load('app/workspace-settings.ts').defaultSettings;
+ const job={id:'job',offer_id:receipt.offerId,goal:'seo-price',context:{category:{id:'cat',categoryId:'80719'},settings,keywords:''}};
+ const prepared=load('app/collection-product.ts').prepareCollectionProduct('owner',job,receipt,'p',new Date().toISOString());
+ let content=prepared.content,keys=[];
+ const {attachCollectedImage}=load('app/collection-image.ts');
+ receipt.images.forEach((image,index)=>{const next=attachCollectedImage(content,keys,`owner/source-${index}.jpg`,image.role,new Date().toISOString());content=next.content;keys=next.keys;});
+ assert.equal(content.seo.description.value,receipt.description);
+ assert.deepEqual(Array.from(content.assets.detail.value),['owner/source-2.jpg','owner/source-3.jpg']);
+ const resolved=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:{...prepared.product,image_keys:JSON.stringify(keys)},content,options:prepared.options,settings});
+ assert.equal(resolved.rows[0].fields.detailImages.value,'owner/source-2.jpg\nowner/source-3.jpg');
+});
+
+test('description image collection rejects unsupported sources and a combined gallery/detail overflow',()=>{
+ for(const description of ['<img src="http://cbu01.alicdn.com/a.jpg">','<img src="https://evil.test/a.jpg">','<img>',123])assert.throws(()=>parsePublicProduct(html({...product(),description}),url));
+ const description=Array.from({length:199},(_,i)=>`<img src="https://cbu01.alicdn.com/detail-${i}.jpg">`).join('');
+ assert.throws(()=>parsePublicProduct(html({...product(),description}),url));
+ assert.equal(parsePublicProduct(html({...product(),description:'原文 38 cm'}),url).description,'原文 38 cm');
 });
 test('network fetch is canonical, credentialless, bounded and does not follow login redirects',async()=>{
  let calls=0;const r=await collectPublicProduct(url+'?tracking=1',{fetcher:async(target,init)=>{calls++;assert.equal(target,url);assert.equal(init.redirect,'manual');assert.equal(init.credentials,'omit');assert.equal(init.headers.cookie,undefined);return new Response(html(product()),{headers:{'content-type':'text/html'}});}});assert.equal(calls,1);assert.equal(r.offerId,'813724060928');

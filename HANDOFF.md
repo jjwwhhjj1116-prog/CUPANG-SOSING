@@ -3584,3 +3584,11 @@ AI등록 화면 확인:
 - Typed cancellation becomes HTTP409 COLLECTION_CANCELLED, preventing transient-error retry. Existing edit/conflict behavior and normal idempotent image imports remain unchanged.
 - Real SQLite/route tests cancel during download and during R2 storage and compare complete product/content/options/image-receipt snapshots; verify retry makes no additional download. 46 image/import/batch tests, tsc, Cloudflare build/artifact, diff checks passed.
 - Deployed 1eebdc15-3dff-4ea6-a301-2a0f3c9f3978. No live external collection/upload tests this turn; Hub adapter remains501, live1688, image translation, all-category parity still unfinished. Do not call full workflow complete.
+
+## Step 372 — public source detail images feed the draft quotation (2026-09-27)
+- Existing Chrome binding returned no tabs; opened Couplus URL in a tab on that binding (no new browser/profile). cou372 shows email/password login. No protected1688 access attempted.
+- Found public JSON-LD collector only collected gallery/variant images and copied HTML description verbatim; detail images never reached stage5. Reused inert parseAlibabaDescription to extract text and explicit HTTPS Alibaba CDN detail images.
+- Append detail-role images after all SKU image indices are established; retain same source in gallery/detail roles independently and deduplicate repeated detail references. Existing result validation enforces combined 200-image bound. No supplier HTML/scripts execute or network resources load during parsing.
+- Test follows public fixture -> receipt -> product preparation -> collected image role attachment -> category80719 quotation resolution. Verifies plain description, ordered detailImages, unchanged SKU image index, lazy-image source and duplicate handling, unsupported detail URLs/invalid description/combined overflow.
+- 48 public collector/Alibaba result/product tests passed, TypeScript and Cloudflare build/artifact/diff checks passed. Deployed 92e4f1b1-d48a-4030-ab17-2b17b2b0f65a.
+- This fixes a supported-source data-loss path; does NOT establish that actual1688 pages expose supported JSON-LD. Real source collection, image translation, Hub upload/receipt adapter501 and all-category parity remain unfinished. Existing immutable receipts are not retroactively rewritten.
