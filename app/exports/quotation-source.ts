@@ -10,6 +10,7 @@ import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { validateCategoryProfile } from '@/app/category-profiles';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { fingerprint } from '@/app/automation/model';
+import { validateCategoryIdentity } from '@/app/category-identity';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -41,6 +42,10 @@ export async function readQuotationExportSource(owner: string, productId: string
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };
       }
     }
+  }
+  if (categoryContext.categoryId) {
+    try { validateCategoryIdentity({ categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath }); }
+    catch (error) { throw new QuotationExportError(error instanceof Error ? error.message : '카테고리 연결을 확인해주세요.', 409); }
   }
   const source: QuotationSourceGuard = { productVersion: product.updated_at, imageKeys: product.image_keys, pricingPolicy: product.pricing_policy ?? null,
     contentRevision: content.revision, optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,

@@ -3724,3 +3724,11 @@ AI등록 화면 확인:
 - Reproduced categoryFieldScope(glove_*) returning null, allowing mappings to unrelated category codes. Scoped all17 glove fields to81221, checked all known category-specific fields against their own code and rejection by another code.
 - Added registry-wide export mapping coverage test and fail-explicitly guard so future schema fields cannot be silently discarded by resolvedQuotationRows.
 -199 targeted tests pass; tsc/build/artifact/diff checks pass. Deployed step401. No change to existing saved profiles/products. Full catalog/default parity, official Excel binaries, live1688 collection and Supplier Hub submission remain incomplete.
+
+## Step 402 — category identity validated across intake and export
+- No browser actions or existing product mutations. Focused on user requirement: selected Hub code controls quotation identity.
+- Added category-identity.ts comparing full known schema paths by exact component order with NFKC/whitespace normalization. Unknown codes stay unconfirmed; no inferred identity or default values.
+- Category-profile POST/PUT reject contradictory known code/path. Collection POST rejects legacy mismatches with400 CATEGORY_IDENTITY_MISMATCH before settings/enqueue/supplier requests. Final export source rejects contradictions with409.
+-4 identity tests including actual collection route with isolated dependencies,6 real-route/SQLite intake integration fixture scenarios and3 export tests pass(13 total). tsc/build/artifact/diff checks pass. Deployed step402.
+- Existing profiles are not rewritten; users with genuinely conflicting saved paths must reselect the correct category. Explicit matching category switches still supported.
+- Still incomplete: full official category/template/default catalog, actual1688 collection/image translation and Supplier Hub real transmission adapter. Do not report overall completion.
