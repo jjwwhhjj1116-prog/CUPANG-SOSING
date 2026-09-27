@@ -143,3 +143,38 @@ test('intake image reservation survives batch selection and still creates the sa
  assert.equal(results[0].status,'completed');assert.equal(saved.length,47);assert.ok(saved.includes(0)&&saved.includes(59));
  assert.match(results[0].warnings.at(-1),/13개/);assert.equal(saved.length+2+1,50);
 });
+
+test('network and HTML capacity outages retain source-based draft preparation without image writes',async()=>{
+ for(const failure of ['network','html']){
+  const calls=[],results=[],prepared=[];
+  await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),onProductSaved:async(id,productId)=>prepared.push([id,productId]),retryWait:async()=>{},fetcher:async url=>{
+   calls.push(url);
+   if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+   if(url.endsWith('/capacity')){if(failure==='network')throw TypeError('network unavailable');return new Response('<html>Bad gateway</html>',{status:502});}
+   if(url.endsWith('/product'))return Response.json({productId:'draft'});
+   assert.fail('outage must not trigger image writes');
+  }});
+  assert.equal(calls.filter(url=>url.endsWith('/capacity')).length,3);
+  assert.deepEqual(prepared,[['a','draft']]);assert.equal(results[0].productId,'draft');assert.equal(results[0].status,'failed');assert.equal(results[0].completedImages,0);
+ }
+});
+
+test('stopping during capacity network failure does not save a product or prepare SEO',async()=>{
+ let stopped=false;const results=[];
+ await importReceivedJobs([job('a')],{shouldStop:()=>stopped,onProgress:()=>{},onResult:(_id,r)=>results.push(r),onProductSaved:async()=>assert.fail('no SEO after stop'),retryWait:async()=>{},fetcher:async url=>{
+  if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+  assert.ok(url.endsWith('/capacity'));stopped=true;throw TypeError('aborted');
+ }});
+ assert.equal(results.length,0);
+});
+
+test('HTML access denial and malformed successful capacity never cause fallback writes',async()=>{
+ for(const status of [200,401,403,409,429]){
+  const results=[];
+  await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,r)=>results.push(r),retryWait:async()=>{},fetcher:async url=>{
+   if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+   assert.ok(url.endsWith('/capacity'));return new Response('<html>Error</html>',{status});
+  }});
+  assert.equal(results[0].status,'failed');assert.equal(results[0].productId,null);
+ }
+});

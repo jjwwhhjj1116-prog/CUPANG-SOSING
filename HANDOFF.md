@@ -3669,3 +3669,11 @@ AI등록 화면 확인:
 - 20 related tests passed including actual quotation main-key resolution, latest names/prices/stock preservation, failures/no matching rows and invalid jobs. TypeScript, Cloudflare build/artifact, diff checks passed.
 - Deployed production b52d93a3-d08f-4130-9658-de7ac26b53ee. No paid image request, browser operation or live Supplier Hub submission performed.
 - Actual1688 URL collection verification, image translation service, all-category Couplus parity and Supplier Hub POST501 transport remain incomplete.
+
+## Step 387 — preserve editable draft during capacity transport outages (2026-09-27)
+- Existing supplierChrome had no bound tabs. Opened Hub registration on same binding; loaded ID/password login form. User notified via async login request, no other profile/browser used. No real submission observed.
+- Confirmed Supplier Hub POST is still 501, not an implemented adapter. No unobserved protocol was invented.
+- Fixed source import falling out before product/SEO save when capacity requests exhausted network retries or returned HTML 502/503/504. Uses existing product-only fallback and draft hook after verified receipt; images remain incomplete/retryable, never falsely reported complete.
+- Permission/conflict/rate-limit responses, malformed successful capacity and cancellation do not fall back to writes. Added regression coverage for these plus preserved draft hook and bounded retries.
+- 34 related tests, TypeScript, Cloudflare build/artifact and diff checks passed. Existing production deployment recorded in outputs/step387-deploy.log.
+- Actual1688 collection, own API provisioning, image translation service, all-category parity and Supplier Hub transmission/receipt remain unfinished.

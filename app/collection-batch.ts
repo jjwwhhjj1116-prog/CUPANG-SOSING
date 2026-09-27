@@ -40,10 +40,13 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       if (options.shouldStop()) break;
       let indices: number[] = [];
       if (source.images.length) {
-        const capacityResponse = await request(path + '/capacity', { cache: 'no-store' });
-        const capacityBody = await capacityResponse.json() as { error?: string; capacity?: unknown } | null;
-        if (!capacityResponse.ok) {
-          if ([502,503,504].includes(capacityResponse.status) && !options.shouldStop()) {
+        let capacityResponse: Response | undefined;
+        try { capacityResponse = await request(path + '/capacity', { cache: 'no-store' }); }
+        catch { if (options.shouldStop()) break; }
+        // A proxy may return HTML (or no response). Neither should discard an
+        // already verified source or prevent saving its editable text draft.
+        if (!capacityResponse || [502,503,504].includes(capacityResponse.status)) {
+          if (!options.shouldStop()) {
             options.onProgress(job.id, '이미지 확인 지연 · 상품·옵션 초안을 먼저 저장 중');
             const draft = await runCollectionImport(job.id, source.images.length, {
               onProductSaved: productId => options.onProductSaved?.(job.id, productId) ?? Promise.resolve(), fetcher: options.fetcher, imageIndices: [], shouldStop: options.shouldStop,
@@ -56,8 +59,13 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
             if (draft.status === 'stopped') break;
             continue;
           }
-          throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
+          break;
         }
+        if (options.shouldStop()) break;
+        let capacityBody: { error?: string; capacity?: unknown } | null;
+        try { capacityBody = await capacityResponse.json(); }
+        catch { throw Error('이미지 저장 여유 응답을 확인하지 못했습니다.'); }
+        if (!capacityResponse.ok) throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
         indices = recommendCollectionImages(source, validateCollectionCapacity(capacityBody?.capacity, source.images.length), 'all', options.reservedImageSlots);
       }
       if (options.shouldStop()) break;
