@@ -9,14 +9,19 @@ import { QuotationReviewIssues } from '@/app/components/quotation-review-issues'
 import { validateSubmissionReviewResponse } from '@/app/submission-review-response';
 import { SubmissionPackage } from '@/app/components/submission-package';
 
-type Target = {id:string;title:string;source_url:string};
+type Target = {id:string;title:string;source_url:string;updated_at:string};
 type Result = {id:string;report?:SubmissionReview;error?:string};
 export function SubmissionReviewPanel({products,profiles,onEdit}:{products:Target[];profiles:CategoryProfile[];onEdit:(id:string,profileId?:string,target?:QuotationNavigationTarget)=>void}) {
   const [profileId,setProfileId]=useState('');
   const [run,setRun]=useState(0);
   const [snapshot,setSnapshot]=useState<{key:string;results:Result[];finished:boolean}>({key:'',results:[],finished:false});
   const targetKey=JSON.stringify(products.map(product=>product.id));
-  const requestKey=JSON.stringify([targetKey,profileId,run]);
+  // A saved profile revision includes changes to the workbook and its column mappings.
+  // Automatic category selection can resolve a different profile for each product.
+  const profileKey=JSON.stringify(profiles.filter(profile=>!profileId||profile.id===profileId)
+    .map(profile=>[profile.id,profile.revision,profile.categoryId]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
+  const productKey=JSON.stringify(products.map(product=>[product.id,product.updated_at]));
+  const requestKey=JSON.stringify([targetKey,productKey,profileId,profileKey,run]);
   const results=snapshot.key===requestKey?snapshot.results:[];
   const busy=products.length>0&&(snapshot.key!==requestKey||!snapshot.finished);
   useEffect(()=>{

@@ -3938,3 +3938,9 @@ AI등록 화면 확인:
 - Returned package productId now checked against app handoff identity, alongside category/fingerprint filename. Manual ZIP uses same checks. No live file upload or userproduct edits.
 -12 extension/package/popup tests passed, tsc/build/artifact passed; rebuilt final ZIP after product identity fix. Extension0.2.7 download deployed0f2de18f-c203-4f34-bd5b-6d4a155e81ee. Installed extension refresh/version unverified.
 - Existing wholeworkflow limitations unchanged: officialtemplate/source integration/finalHub registration unverified; supplier-hubPOST501. Preserve unrelated tests/submission-review.test.mjs.
+
+## Step 435 — invalidate stale registration review on saved category/product changes
+- SubmissionReviewPanel request identity now includes saved product updated_at and relevant profile revision/category IDs. Automatic mode observes all profiles; explicit mode observes only its selected profile. Profile order alone does not restart requests.
+- On change, prior review/package is immediately hidden, previous request aborted, and latest review fetched. Existing package React key also changes, discarding previously prepared data. Late aborted responses cannot restore obsolete results. Missing explicit profiles remain explicit so server rejects them rather than silently selecting another category.
+- Nine focused component/profile-selection tests passed, TypeScript/build/artifact/diff checks passed. Deployed production version 2062ae41-3cf6-47c0-892e-fdbb9b75f38f.
+- This fixes frontend invalidation only when refreshed saved props arrive; it does not claim cross-tab realtime detection or live wholeworkflow completion. Official workbook, own1688 acquisition, actual Hub final registration remain unverified; supplier-hub POST remains501. Existing customer products untouched. Preserve unrelated tests/submission-review.test.mjs change.
