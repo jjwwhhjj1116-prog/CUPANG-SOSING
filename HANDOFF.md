@@ -3951,3 +3951,9 @@ AI등록 화면 확인:
 - Reader now uses unique visible copy button in quotationID cell, exact full ID match, verifies visible label equals full ID or observed first8...; excludes conflicting/ambiguous/hidden controls. No clipboard/private state access, no filter or product changes.
 - Live readonly DOM comparison for existing quotation: old text comparison0, full copy-ID comparison6. This verifies UI matching only, not our upload or registration. Existing products untouched.
 -9 focused tests passed, tsc/build/artifact checked. Extension0.2.8 ZIP and link deployed version b7b1b410-a430-4aa7-84b3-0a6a85965960; installed version refresh unverified. Remaining source/workbook/finalregistration limitations and POST501 unchanged. Preserve unrelated tests/submission-review.test.mjs.
+
+## Step 437 — retain matching SKU evidence when validation is refreshed
+- Reused existing right Chrome hub420, opened /qvt/registration validation progress through observed UI. Actual table remains empty; no live quotation validation or final registration claimed. No user products changed. Tab remains validation progress modal.
+- Found popup validation refresh overwrote nested registration evidence. Preserve it only for same origin/product/category/fingerprint, filename, complete state and nonempty matching quotationID; preserve original registration observedAt. Other states/IDs/identities clear prior nested evidence.
+-17 related popup/reader/handoff tests passed, TypeScript/build/artifact/diff checks passed. Extension0.2.9 ZIP and app link deployed version452d531b-4fc1-4404-adbf-b715eeb47cfb. Installed refresh not verified.
+- Fullworkflow still incomplete: own1688 acquisition, official workbook acquisition, live own upload/validation/final registration and all-category parity remain unverified; supplier-hubPOST501 unchanged. Preserve unrelated tests/submission-review.test.mjs.

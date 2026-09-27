@@ -15,3 +15,31 @@ test('a rejected or partial attachment cannot overwrite the previous product ide
 test('only confirmed dispatch saves the exact app product identity for reload recovery',async()=>{
  const puts=await popup('dispatched');assert.equal(puts.length,1);assert.equal(puts[0].key,'attempt:123');assert.equal(puts[0].value.productId,'p');assert.equal(puts[0].value.origin,'http://localhost:3000');assert.equal(puts[0].value.base64,undefined);
 });
+
+async function refreshValidation(previousChanges={},resultChanges={}){
+ const identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+ const result={filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-complete',quotationId:'quotation-123',registered:false,...resultChanges};
+ const registration={quotationId:'quotation-123',scope:'visible-page',registered:false,observedAt:1234,rows:[{title:'상품',skuId:'SKU1',status:'상품 검수중'}]};
+ const previous={...identity,...result,state:'validation-complete',quotationId:'quotation-123',observedAt:1200,registration,...previousChanges};
+ const nodes=new Map(),puts=[];
+ const context=vm.createContext({Date,URL,Uint8Array,atob,pendingPackage:async()=>null,
+  transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key==='attempt:123'?identity:previous;},resultKey:()=> 'result:key',
+  readSupplierHubValidation(){},document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{disabled:false,addEventListener(event,handler){this[event]=handler;}});return nodes.get(selector);}},
+  chrome:{tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration'}]},scripting:{executeScript:async()=>[{result}]}}});
+ vm.runInContext(source,context);await nodes.get('#result').click();return{saved:puts[0],previous,registration};
+}
+
+test('refreshing the same completed validation preserves SKU rows and their original observation time',async()=>{
+ const {saved,registration}=await refreshValidation();
+ assert.equal(saved.registration,registration);assert.equal(saved.registration.observedAt,1234);
+ assert.ok(saved.observedAt>1234);assert.equal(saved.registered,false);
+});
+
+test('changed quotation, validation status or app identity cannot inherit previously observed SKU rows',async()=>{
+ for(const result of [{quotationId:'other'},{quotationId:''},{state:'validation-rejected'},{state:'validation-pending'},{state:'not-found'}]){
+  const {saved}=await refreshValidation({},result);assert.equal(saved.registration,undefined);assert.equal(saved.state,result.state??'validation-complete');
+ }
+ for(const previous of [{productId:'other'},{categoryId:'999'},{origin:'http://127.0.0.1:3000'},{fingerprint:'b'.repeat(64)},{filename:'other.xlsx'},{state:'validation-pending'},{registration:{quotationId:'other'}}]){
+  assert.equal((await refreshValidation(previous)).saved.registration,undefined);
+ }
+});

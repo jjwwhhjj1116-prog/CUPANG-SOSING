@@ -55,7 +55,14 @@ resultButton.addEventListener('click',async()=>{
     const result=execution?.result;
     if(!result||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(result.state))throw Error('검증 결과를 확인하지 못했습니다.');
     if(identity&&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`){
-      await transferRecord('put',resultKey(identity),{...identity,...result,observedAt:Date.now()});
+      const key=resultKey(identity),previous=await transferRecord('get',key);
+      // Refreshing file validation does not refresh or erase a matching SKU observation.
+      // A different quotation or a non-complete validation must not inherit old rows.
+      const keepRegistration=result.state==='validation-complete'&&previous?.state==='validation-complete'
+        &&['origin','productId','categoryId','fingerprint'].every(field=>previous[field]===identity[field])
+        &&previous.filename===result.filename&&typeof result.quotationId==='string'&&Boolean(result.quotationId.trim())
+        &&previous.quotationId===result.quotationId&&previous.registration?.quotationId===result.quotationId;
+      await transferRecord('put',key,{...identity,...result,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{})});
     }
     status.textContent=result.state==='not-found'?'전달한 견적서의 결과가 아직 목록에 없습니다. Supplier Hub 안내에 따르면 검증은 최대 2시간 걸릴 수 있습니다.':`견적서: ${result.filename}\n검증 상태: ${result.status}\n견적서 ID: ${result.quotationId||'아직 표시되지 않음'}\n${result.detail}\n검증 완료 후에도 상품별 등록 상태를 별도로 확인해야 합니다.`;
   }catch(error){status.textContent=error.message;}
