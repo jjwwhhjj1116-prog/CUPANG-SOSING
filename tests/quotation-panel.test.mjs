@@ -148,3 +148,17 @@ test('saved quotation edits invalidate preview and notify the surrounding stages
  nodes(h.render()).find(n=>n.type===h.Editor).props.onSaved();
  assert.equal(saved,1);assert.doesNotMatch(JSON.stringify(h.render()),/출력 미리보기/);
 });
+
+test('quotation profile changes notify price scope, including fallback after a category is reassigned',async()=>{
+ const h=await requestHarness();const selected=[];
+ // Re-run context loading with an explicit profile, as when opened from submission review.
+ h.render({preferredProfileId:'saved',onProfileChange:id=>selected.push(id)});await h.settle();
+ assert.equal(selected.at(-1),'saved');
+ nodes(h.render()).find(n=>n.type==='select').props.onChange({target:{value:''}});
+ assert.equal(selected.at(-1),undefined);
+ nodes(h.render()).find(n=>n.type==='select').props.onChange({target:{value:'saved'}});
+ assert.equal(selected.at(-1),'saved');
+ h.setRefresh(async()=>Response.json({profiles:[{id:'saved',name:'다른 분류',categoryId:'other',categoryPath:['다름'],template:{name:'다른 원본'}}]}));
+ button(h.render(),'저장한 양식 새로고침').props.onClick();await h.settle();
+ assert.equal(selected.at(-1),undefined);assert.equal(h.calls.length,0);
+});

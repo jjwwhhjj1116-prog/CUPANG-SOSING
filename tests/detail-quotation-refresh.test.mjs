@@ -9,10 +9,10 @@ const file=fs.readFileSync(new URL('../app/components/dashboard-client.tsx',impo
 const ast=ts.createSourceFile('dashboard.tsx',file,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 const part=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='DetailPanel');
 function harness(rejectPrice=false,props={}){
- let revision=0,saved=0;const exports={};
+ let cursor=0,saved=0;const slots=[];const exports={};
  const names=['ProductContentEditor','ImageGenerationPanel','DocumentImagePanel','TranslationPanel','PriceEditor','ProductOptionsEditor','QuotationPanel','LegacyQuotePanel','AutomationPanel'];
- vm.runInNewContext(ts.transpileModule('export '+part.getText(ast),{fileName:'test.tsx',compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require,useState:()=>[revision,fn=>{revision=fn(revision);}],imageSteps:['대표 이미지','추가 이미지','상세 이미지'],savedPricePolicy:()=>({}),...Object.fromEntries(names.map(name=>[name,name]))});
- const render=()=>exports.DetailPanel({tab:'SEO',product:{id:'p',updated_at:'unchanged',image_keys:'[]'},settings:{},onSaved:()=>{saved++;},onSavePrice:async()=>{if(rejectPrice)throw Error('save failed');},...props});
+ vm.runInNewContext(ts.transpileModule('export '+part.getText(ast),{fileName:'test.tsx',compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require,useState:initial=>{const slot=cursor++;if(!(slot in slots))slots[slot]=initial;return [slots[slot],next=>{slots[slot]=typeof next==='function'?next(slots[slot]):next;}];},imageSteps:['대표 이미지','추가 이미지','상세 이미지'],savedPricePolicy:()=>({}),...Object.fromEntries(names.map(name=>[name,name]))});
+ const render=()=>{cursor=0;return exports.DetailPanel({tab:'SEO',product:{id:'p',updated_at:'unchanged',image_keys:'[]'},settings:{},onSaved:()=>{saved++;},onSavePrice:async()=>{if(rejectPrice)throw Error('save failed');},...props});};
  const nodes=x=>Array.isArray(x)?x.flatMap(nodes):x&&typeof x==='object'?[x,...nodes(x.props?.children)]:[];
  const component=(type)=>nodes(render()).find(n=>n.type===type);
  return {component,saves:()=>saved};
@@ -50,4 +50,15 @@ test('stage-seven saves notify the workspace and refresh stage-two prices with a
  h.component('QuotationPanel').props.onSaved();
  assert.notEqual(h.component('PriceEditor').props.refreshToken,before);
  assert.equal(h.component('PriceEditor').props.version,'unchanged');assert.equal(h.saves(),1);
+});
+
+test('stage-seven category choice reaches stage-two prices without remounting or resetting quotation selection',()=>{
+ const h=harness(false,{preferredProfileId:'original'});
+ assert.equal(h.component('PriceEditor').props.profileId,'original');
+ h.component('QuotationPanel').props.onProfileChange('replacement');
+ assert.equal(h.component('PriceEditor').props.profileId,'replacement');
+ assert.equal(h.component('QuotationPanel').props.preferredProfileId,'original');
+ h.component('QuotationPanel').props.onProfileChange(undefined);
+ assert.equal(h.component('PriceEditor').props.profileId,undefined);
+ assert.equal(h.saves(),0);
 });

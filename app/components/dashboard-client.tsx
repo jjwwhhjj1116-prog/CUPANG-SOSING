@@ -354,6 +354,8 @@ function Modal({ title, subtitle, onClose, children, wide=false }: { title:strin
 }
 function DetailPanel({ tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, focusedOptionId }: { focusedOptionId?:string; quotationTarget?:QuotationNavigationTarget; preferredProfileId?:string; onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
+  const [quotationScope,setQuotationScope] = useState<{requested?:string;selected?:string}>({requested:preferredProfileId,selected:preferredProfileId});
+  const pricingProfileId=quotationScope.requested===preferredProfileId?quotationScope.selected:preferredProfileId;
   function sourceSaved() { setQuotationRefresh(value => value + 1); onSaved(); }
   async function saveSourcePrice(policy: PricePolicy) { await onSavePrice(policy); setQuotationRefresh(value => value + 1); }
   const isImageStep=imageSteps.includes(tab);
@@ -370,10 +372,10 @@ function DetailPanel({ tab, product, settings, onUpload, onSavePrice, onSaved, o
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div hidden={tab!=='번역'}><TranslationPanel productId={product.id} version={product.updated_at} title={product.title} onContentSaved={sourceSaved}/></div>
     <div data-quotation-source-step={tab==='대표 이미지'?'대표 이미지':'가격'} hidden={!['옵션','가격','대표 이미지'].includes(tab)} className={tab==='가격'?'pricing-workspace':'panel-stack'}>
-      <section hidden={tab!=='가격'} className="pricing-policy-panel"><h3>가격 정책 설정</h3><PriceEditor refreshToken={String(quotationRefresh)} profileId={preferredProfileId} productId={product.id} version={product.updated_at} sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={saveSourcePrice} onQuotationSaved={sourceSaved}/></section>
+      <section hidden={tab!=='가격'} className="pricing-policy-panel"><h3>가격 정책 설정</h3><PriceEditor refreshToken={String(quotationRefresh)} profileId={pricingProfileId} productId={product.id} version={product.updated_at} sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={saveSourcePrice} onQuotationSaved={sourceSaved}/></section>
       <section className="pricing-options-panel"><ProductOptionsEditor focusedOptionId={focusedOptionId} product={product} onSaved={sourceSaved} pricingView={tab==='가격'} imageView={tab==='대표 이미지'}/><div hidden={tab!=='옵션'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={sourceSaved}/></div></section>
     </div>
-    <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel onSaved={sourceSaved} productId={product.id} preferredProfileId={preferredProfileId} navigationTarget={quotationTarget ?? (focusedOptionId ? {optionId:focusedOptionId,fieldId:'title'} : undefined)} refreshToken={`${product.updated_at}:${quotationRefresh}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
+    <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel onProfileChange={selected=>setQuotationScope({requested:preferredProfileId,selected})} onSaved={sourceSaved} productId={product.id} preferredProfileId={preferredProfileId} navigationTarget={quotationTarget ?? (focusedOptionId ? {optionId:focusedOptionId,fieldId:'title'} : undefined)} refreshToken={`${product.updated_at}:${quotationRefresh}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
   </>;
 }
 function LegacyQuotePanel({ product, settings }: {product:Product;settings:Settings}) {

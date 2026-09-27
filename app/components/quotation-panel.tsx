@@ -16,11 +16,11 @@ type Preview = {
   submissionReview?: QuotationPreviewReviewData;
   report:{dataStartRow:number;mappingCoverage?:QuotationMappingFinding[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {onSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+type QuotationPanelProps = {onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
   return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId])} {...props}/>;
 }
-function QuotationPanelContent({onSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget}: QuotationPanelProps) {
+function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [useSavedRow,setUseSavedRow]=useState(true);
@@ -57,7 +57,7 @@ function QuotationPanelContent({onSaved,productId,onManageCategories,refreshToke
       const selection=selectQuotationProfile(savedProfiles,data.categoryContext,preferredProfileId,navigationTarget?.categoryId);
       const savedId=selection.profileId;
       setConnectionWarning(selection.warning);
-      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);
+      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);onProfileChange?.(savedId||undefined);
       setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
       setStartRow(quotationStartRow(savedProfiles.find(profile=>profile.id===savedId)?.template));
     }).catch(cause=>{if(!controller.signal.aborted)setContextError(cause instanceof Error?cause.message:'카테고리 연결 확인 실패');})
@@ -94,7 +94,7 @@ function QuotationPanelContent({onSaved,productId,onManageCategories,refreshToke
       const current=body.profiles.find(profile=>profile.id===profileId);
       setProfiles(body.profiles);
       if(profileId&&(!current||current.categoryId!==selected?.categoryId)){
-        setProfileId('');setOverrideProfileId(undefined);setUseSavedRow(true);
+        setProfileId('');setOverrideProfileId(undefined);onProfileChange?.(undefined);setUseSavedRow(true);
         setConnectionWarning('선택한 양식이 삭제되었거나 카테고리가 변경되었습니다. 수집 당시 분류로 돌아갑니다. Excel 양식을 다시 선택해주세요.');
       }
       setProfileVersion(version=>version+1);
@@ -120,7 +120,7 @@ function QuotationPanelContent({onSaved,productId,onManageCategories,refreshToke
     {(selected?.categoryId ?? capturedCategoryId)==='80719' && <p>바스켓 이름으로 확인한 공식 탐색 경로: 주방용품 → 주방수납/잡화 → 건조대/진열대/정리대 → 주방수납바구니/바스켓</p>}
     <small>2026-09-23 다운로드 화면 관찰 기준입니다. 이 화면의 ‘칸 카테고리 아이디’와 앱의 상품 카테고리 코드는 동일하다고 검증되지 않았습니다. 코드가 검색되지 않으면 분류명으로 탐색하세요. 경로 안내만으로 Excel 원본 연결이 완료되지는 않습니다.</small></div></div>
     <div className="panel-note"><div><strong>저장한 양식으로 견적서 만들기</strong><p>상품·옵션·이미지 자료를 연결된 Excel 열에 채웁니다. 원본은 보존하고 채운 사본과 첨부 이미지를 ZIP으로 내려받습니다.</p></div></div>
-    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty||refreshingProfiles} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
+    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty||refreshingProfiles} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);onProfileChange?.(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
     <button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void refreshProfiles()}>{refreshingProfiles?'양식 확인 중…':'저장한 양식 새로고침'}</button>
     {profileRefreshError&&<p role="alert">{profileRefreshError} 기존 선택을 유지했습니다. 다시 시도해주세요.</p>}
     {selected&&<p>{selected.categoryPath.join(' > ')}<br/>{selected.template?.name??'원본 양식을 먼저 연결해주세요.'}</p>}

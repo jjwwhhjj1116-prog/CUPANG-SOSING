@@ -3313,3 +3313,9 @@ AI등록 화면 확인:
 - Reconfirmed public collector supports JSON-LD only and Supplier Hub POST remains a 501 placeholder. No usable connector was found. Existing Chrome binding returned [] tabs; requested user to check the existing Chrome extension connection, without opening a window/profile or repeating authentication.
 - Full suite initially 1018/1019: one quotation-fields test still expected missing captured contact to inherit later workspace settings, contradicting the intentional 322 snapshot isolation. Corrected that obsolete expectation; full rerun 1019/1019 passed.
 - This turn changes a regression test only. No new runtime functionality or deployment; live end-to-end registration is not verified or complete. Await existing Chrome tabs to inspect actual Couplus collection and Supplier Hub submission/receipt behavior rather than inventing an adapter contract.
+
+## 326 — Keep quotation category selection and stage-two price scope aligned (2026-09-27)
+- QuotationPanel's local category/profile selection previously never reached PriceEditor, so stage seven could display one category's overrides while stage two edited another. Added selection notifications at initial resolution, explicit selection and invalidated-profile fallback.
+- DetailPanel routes that selection to stage-two quotation prices without feeding it back into QuotationPanel's initial-profile key (which would reset the selected editor). Product timestamp validation and save conflicts remain intact.
+- Validation: related suites 25/25; TypeScript, production build/artifact, diff checks passed. Deployed ae35ec3d-6a3c-4a36-940c-03f0d11b8bf9.
+- Existing Chrome still returns [] tabs. This is not evidence of browser failure or missing user approval. No actual 1688 collection, full category parity, image translation or Supplier Hub submission completion was verified this turn; those remain unfinished.
