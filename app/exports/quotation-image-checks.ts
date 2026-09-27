@@ -24,7 +24,13 @@ export function inspectQuotationAssets(resolved: ResolvedQuotation, assets: read
       checks.set(key, { kind: 'error', message: '첨부 이미지 파일이 없거나 허용 크기를 벗어났습니다.' });
       continue;
     }
-    try { imageFileType(data); }
+    try {
+      const type = imageFileType(data);
+      if (type.extension === 'gif' && uses.has('detailImages')) {
+        checks.set(key, { kind: 'error', message: '상세 HTML에 포함될 GIF 이미지입니다. Supplier Hub에서 지원하지 않으므로 PNG 또는 JPEG 이미지로 교체해주세요.' });
+        continue;
+      }
+    }
     catch { checks.set(key, { kind: 'error', message: '첨부 이미지 파일 형식을 확인해주세요.' }); continue; }
     if (!uses.has('mainImage') && !uses.has('detailImages')) continue;
     const size = imageDimensions(data);

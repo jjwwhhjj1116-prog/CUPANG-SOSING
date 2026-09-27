@@ -3569,3 +3569,11 @@ AI등록 화면 확인:
 - Tests updated to look up manifest filename; API asserts stability, changed-revision filename/stale rejection, TSV export. 196 focused tests pass (26 API +170 schema), tsc/build/artifact/diff checks pass. Smoke script filenames updated but scripts NOT run. New doc supplier-hub-validation-observation-2026-09-27.md contains observed facts/limits.
 - Deployed efb94535-baf6-4e02-bbf4-1dc32c522280. No actual Hub acceptance of generated filenames/contents established.
 - Remaining: official workbook bytes/mapping comparison; real Hub upload/receipt adapter still501; live1688 collection, image translation and all-category Couplus parity incomplete.
+
+## Step 370 — surface archived-image errors during package preparation (2026-09-27)
+- Existing supplierChrome hub370 at qvt/registration currently displays ID/password login. No new browser/profile and no authentication bypass. Actual upload DOM could not be observed this turn.
+- SubmissionPackage now displays the returned byte-level submissionReview, not just template warnings, with the existing option/field edit navigation. Edit uses the actual resolved category profile even when the panel used automatic captured-profile selection.
+- Package review validates product/category/source fingerprint, report state and bounded issue totals before rendering. Shared report issue validation retained existing review behavior.
+- Archived GIF bytes referenced as detailImages produce an error (even a misleading PNG filename); scoped to detail HTML based on observed Hub restriction, not a blanket rejection of all GIF uses. Original assets remain unchanged and review ZIP remains downloadable.
+- Tests: 171 schema +26 quotation API passed in initial run; submission review tests found three existing missing child-component mocks from step368 and were repaired; all26 submission review tests then passed including package display/navigation and identity tests. TypeScript, production build/artifact and diff checks passed.
+- Deployed b7f86345-2d7b-4b28-88bf-86f8bd914884. Real Hub registration remains absent (POST501); live1688 verification, actual image translation, official workbook bytes and all-category parity remain unfinished. This release does not complete the requested end-to-end workflow.

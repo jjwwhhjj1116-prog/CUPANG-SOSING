@@ -23,6 +23,30 @@ function load(file, overrides={}, mode='development', cache=new Map()) {
 }
 const {inspectSubmission}=load('app/submission-review.ts');
 
+test('package byte review binds category, product and generated fingerprint before exposing errors',()=>{
+ const validate=load('app/submission-review-response.ts').validatePackageReview;
+ const report={...inspectSubmission(resolved(),[]),productId:'p',inputFingerprint:'a'.repeat(64)};
+ assert.equal(validate(report,'p',report.categoryId,report.inputFingerprint),report);
+ for(const mutate of [r=>r.productId='other',r=>r.categoryId='other',r=>r.inputFingerprint='b'.repeat(64),r=>r.submissionReady=true,r=>r.errorCount=-1,r=>r.omittedIssueCount++,r=>r.issues[0].fieldId={},r=>delete r.issues]){
+  const bad=structuredClone(report);mutate(bad);assert.throws(()=>validate(bad,'p',report.categoryId,report.inputFingerprint));
+ }
+});
+
+test('package preview displays byte errors and editing uses its resolved category profile',()=>{
+ const review={...inspectSubmission(resolved(),[]),productId:'p',inputFingerprint:'a'.repeat(64)};
+ const preview={fingerprint:review.inputFingerprint,filename:`YOOFAM-${review.inputFingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],submissionReview:review,report:{profileId:'resolved-profile',rowCount:1,warnings:[]}};
+ let index=0,inspectProps;const states=[preview,false,'',''];
+ const {SubmissionPackage}=load('app/components/submission-package.tsx',{
+  react:{useState:()=>[states[index++],()=>{}],useEffect:()=>{},useRef:()=>({current:null})},
+  '@/app/components/quotation-review-issues':{QuotationReviewIssues:props=>{inspectProps=props;return createElement('p',null,props.issues.map(issue=>issue.message).join(' / '));}},
+ });
+ const calls=[];
+ const html=renderToStaticMarkup(createElement(SubmissionPackage,{productId:'p',profileId:'',categoryId:review.categoryId,onInspect:(...args)=>calls.push(args)}));
+ assert.match(html,/첨부 파일 검사/);assert.ok(html.includes(review.issues[0].message));
+ inspectProps.onInspect({optionId:'red',fieldId:'detailImages'});
+ assert.equal(calls[0][0],'resolved-profile');assert.equal(calls[0][1].optionId,'red');assert.equal(calls[0][1].categoryId,review.categoryId);
+});
+
 test('review responses bind product and requested profile and reject inconsistent or malformed reports',()=>{
  const {validateSubmissionReviewResponse:validate}=load('app/submission-review-response.ts');
  const report={...inspectSubmission(resolved(),[]),productId:'p',requestedProfileId:'profile-1',title:'상품',sourceUrl:'https://example.com/item',checkedAt:'2026-09-25T00:00:00.000Z',fingerprint:'a'.repeat(64)};
@@ -141,6 +165,7 @@ test('production review requires verified authentication before reading product 
 function renderPanel(products,results=[]) {
   let index=0;const states=['',0,{key:JSON.stringify([JSON.stringify(products.map(product=>product.id)),'',0]),results,finished:true}];
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
+    '@/app/components/submission-package':{SubmissionPackage:()=>null},
     '@/app/components/quotation-review-issues':load('app/components/quotation-review-issues.tsx',{react:nativeRequire('react')}),
     react:{useState:()=>[states[index++],()=>{}],useEffect:()=>{}},
   });
@@ -153,6 +178,7 @@ test('review panel keeps successful but wrong-product responses out of its repor
   const hooks={useState(initial){const i=cursor++;slots[i]??=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useEffect(fn){effects.push(fn);}};
   const report={...inspectSubmission(resolved(),[]),productId:valid?'p':'other',requestedProfileId:null,title:'상품',sourceUrl:'https://example.com/item',checkedAt:'2026-09-25T00:00:00.000Z',fingerprint:'a'.repeat(64)};
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
+   '@/app/components/submission-package':{SubmissionPackage:()=>null},
    react:hooks,fetch:async()=>Response.json(report),
    '@/app/components/quotation-review-issues':{QuotationReviewIssues:()=>null},
   });

@@ -1251,6 +1251,20 @@ test('archive review inspects final attachment bytes and preserves image guidanc
 });
 
 
+test('detail attachment GIF is detected from bytes even with a PNG filename and reaches option review',()=>{
+ const resolved=model.resolveQuotationFields(fixture());
+ const gif=Buffer.from('47494638396120032003000000','hex');
+ const assets=['main','option','detail'].map(name=>({key:`owner/${name}.png`,name:`assets/${name}.png`,data:gif}));
+ const checks=load('app/exports/quotation-image-checks.ts').inspectQuotationAssets(resolved,assets);
+ assert.equal(checks.get('owner/detail.png').kind,'error');
+ assert.match(checks.get('owner/detail.png').message,/GIF/);
+ assert.notEqual(checks.get('owner/main.png')?.kind,'error');
+ const review=load('app/submission-review.ts').inspectSubmission(resolved,assets.map(a=>a.key),checks,'attachment-bytes');
+ assert.ok(review.issues.some(issue=>issue.kind==='error'&&issue.optionId==='red'&&issue.fieldId==='detailImages'&&issue.message.includes('GIF')));
+ resolved.rows.forEach(row=>row.included=false);
+ assert.equal(load('app/exports/quotation-image-checks.ts').inspectQuotationAssets(resolved,assets).size,0);
+});
+
 test('quotation label PNG plan follows category fields and final option overrides without changing saved content',()=>{
  const input=fixture(); input.categoryId='103495';
  input.options.rows.push({...clone(input.options.rows[0]),id:'blue',translatedName:'파랑',color:'파랑'});
