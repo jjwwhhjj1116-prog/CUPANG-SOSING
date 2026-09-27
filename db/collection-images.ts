@@ -3,6 +3,9 @@ import type {ProductRecord} from '@/db/queries';
 import type {ProductContent} from '@/app/product-content';
 import {attachCollectedImage,attachCollectedOptionImage} from '@/app/collection-image';
 import {readProductOptions} from '@/db/product-options';
+export class CollectionImageCancelledError extends Error {
+ constructor(){super('취소된 수집 요청입니다. 이미지를 상품에 반영하지 않았습니다.');}
+}
 export const collectionImagesSchema=`CREATE TABLE IF NOT EXISTS collection_images (
  job_id TEXT NOT NULL REFERENCES collection_jobs(id), image_index INTEGER NOT NULL,
  owner_id TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id),
@@ -21,6 +24,7 @@ export async function saveCollectionImage(owner:string,jobId:string,index:number
   db.prepare(`INSERT INTO collection_images(job_id,image_index,owner_id,product_id,object_key,operation_id,created_at)
    SELECT ?,?,p.owner_id,p.id,?,?,? FROM products p JOIN collection_products cp ON cp.product_id=p.id AND cp.owner_id=p.owner_id
    WHERE p.id=? AND p.owner_id=? AND cp.job_id=? AND p.updated_at=? AND p.image_keys=?
+   AND EXISTS(SELECT 1 FROM collection_jobs j WHERE j.id=cp.job_id AND j.owner_id=p.owner_id AND j.status='awaiting_connector')
    AND COALESCE((SELECT revision FROM product_content WHERE product_id=p.id AND owner_id=p.owner_id),0)=?
    AND COALESCE((SELECT revision FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id),0)=?
    ON CONFLICT(job_id,image_index) DO NOTHING`).bind(jobId,index,key,operation,now,product.id,owner,jobId,product.updated_at,product.image_keys,current.revision,options.revision),
@@ -33,7 +37,13 @@ export async function saveCollectionImage(owner:string,jobId:string,index:number
   db.prepare(`UPDATE products SET image_keys=?,quote_status='대기',updated_at=? WHERE id=? AND owner_id=? AND ${guard}`)
    .bind(JSON.stringify(next.keys),now,product.id,owner,operation,owner,product.id),
  ]);
- const saved=await readCollectionImage(owner,jobId,index);if(!saved)throw new Error('상품이 변경됐습니다. 다시 시도하면 기존 편집을 보존해 반영합니다.');return saved;
+ const saved=await readCollectionImage(owner,jobId,index);
+ if(!saved){
+  const job=await db.prepare('SELECT status FROM collection_jobs WHERE id=? AND owner_id=?').bind(jobId,owner).first<{status:string}>();
+  if(job?.status==='cancelled')throw new CollectionImageCancelledError();
+  throw new Error('상품이 변경됐습니다. 다시 시도하면 기존 편집을 보존해 반영합니다.');
+ }
+ return saved;
 }
 
 export async function listCollectionImageIndices(owner:string,jobId:string,productId:string):Promise<number[]> {

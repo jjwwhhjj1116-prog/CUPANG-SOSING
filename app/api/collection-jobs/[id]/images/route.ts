@@ -9,7 +9,7 @@ import {readCollectionResult} from '@/db/collection-results';
 import {findProduct} from '@/db/queries';
 import {readProductContent} from '@/db/product-content';
 import {readProductOptions} from '@/db/product-options';
-import {readCollectionImage,saveCollectionImage} from '@/db/collection-images';
+import {readCollectionImage,saveCollectionImage,CollectionImageCancelledError} from '@/db/collection-images';
 import {productImageKeys} from '@/app/product-content';
 import {MAX_IMAGE_BYTES} from '@/app/image-files';
 import {downloadCollectionImage,collectedImageWarnings} from '@/app/collection-image';
@@ -41,9 +41,14 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   let downloaded;
   try{downloaded=await downloadCollectionImage(image.url,owner,undefined,image.role);}
   catch{return reply({code:'IMAGE_DOWNLOAD_FAILED',error:'이 원본 이미지의 다운로드 또는 이미지 형식 확인에 실패했습니다. 다른 이미지 저장 후 다시 시도할 수 있습니다.'},502);}
+  const latestJob=await findCollectionJob(owner,id);
+  if(!latestJob || latestJob.status==='cancelled')return reply({code:'COLLECTION_CANCELLED',error:'취소된 수집 요청입니다. 내려받은 이미지를 상품에 반영하지 않았습니다.'},409);
   const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected',...imageDimensionMetadata(downloaded.bytes)}});
   if(!stored)throw new Error('이미지 저장 확인 실패');
   const saved=await saveCollectionImage(owner,id,body.index,downloaded.key,image.role,product,current,skus);
   return reply({key:saved.object_key,warnings:await warnings(saved.object_key),message:'원본 이미지를 저장했습니다. 번역·가공은 실행하지 않았습니다.'});
- }catch(error){return reply({error:error instanceof RequestBodyError?error.message:'이미지 반영을 완료하지 못했습니다. 다시 시도해도 완료된 이미지는 중복 반영되지 않습니다.'},error instanceof RequestBodyError?error.status:503);}
+ }catch(error){
+  if(error instanceof CollectionImageCancelledError)return reply({code:'COLLECTION_CANCELLED',error:error.message},409);
+  return reply({error:error instanceof RequestBodyError?error.message:'이미지 반영을 완료하지 못했습니다. 다시 시도해도 완료된 이미지는 중복 반영되지 않습니다.'},error instanceof RequestBodyError?error.status:503);
+ }
 }

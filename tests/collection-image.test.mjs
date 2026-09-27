@@ -105,6 +105,27 @@ test('failed companion update rolls back receipt and product; concurrent edits r
  await assert.rejects(()=>h.store.saveCollectionImage('owner','job',0,'owner/a.png','main',h.product,h.current));assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,0);assert.equal(h.sqlite.prepare('SELECT image_keys FROM products').get().image_keys,'[]');
  }finally{h.sqlite.close();}}
 });
+test('cancellation during download or object storage never mutates product, content or option drafts',async()=>{
+ for(const stage of ['download','storage']){
+  const h=storage();try{
+   h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(collectedOptions()),'before');
+   h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',JSON.stringify({options:[{sku:'a',imageIndex:0}],images:[{url:'https://cbu01.alicdn.com/test.png',role:'main'}]}),'now');
+   const snapshot=()=>JSON.stringify(['products','product_content','product_options','collection_images'].map(table=>h.sqlite.prepare(`SELECT * FROM ${table}`).all()));
+   const before=snapshot();let downloads=0,writes=0;
+   const cancel=()=>h.sqlite.exec("UPDATE collection_jobs SET status='cancelled' WHERE id='job'");
+   const api=load('app/api/collection-jobs/[id]/images/route.ts',{
+    'cloudflare:workers':{env:{DB:h.db,FILES:{put:async()=>{writes++;if(stage==='storage')cancel();return {};}}}},
+    '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},
+    fetch:async()=>{downloads++;if(stage==='download')cancel();return new Response(png);},
+   });
+   const send=()=>api.POST(new Request('http://localhost/api/collection-jobs/job/images',{method:'POST',headers:{'content-type':'application/json'},body:'{"index":0}'}),{params:Promise.resolve({id:'job'})});
+   const response=await send();assert.equal(response.status,409,await response.clone().text());assert.equal((await response.json()).code,'COLLECTION_CANCELLED');
+   assert.equal(snapshot(),before);assert.equal(writes,stage==='download'?0:1);
+   assert.equal((await send()).status,409);assert.equal(downloads,1);assert.equal(snapshot(),before);
+  }finally{h.sqlite.close();}
+ }
+});
+
 test('production route rejects unauthenticated requests before storage or outbound calls',async()=>{
  const api=load('app/api/collection-jobs/[id]/images/route.ts',{'cloudflare:workers':{env:{}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>null}},'production');
  const r=await api.POST(new Request('https://example.test',{method:'POST'}),{params:Promise.resolve({id:'job'})});assert.equal(r.status,503);
