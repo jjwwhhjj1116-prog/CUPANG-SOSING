@@ -1,7 +1,7 @@
 import { collectionRequestWithRetry } from '@/app/collection-retry';
 import { validateCollectionCapacity, collectionSelectionFits } from '@/app/collection-capacity';
 export type CollectionImportProgress = {stage:'product'|'images';completedImages:number;totalImages:number};
-export type CollectionImportOutcome = {status:'completed'|'stopped'|'failed';productId:string|null;completedImages:number;error?:string;warnings?:string[];failedImageIndices?:number[]};
+export type CollectionImportOutcome = {status:'completed'|'stopped'|'failed';productId:string|null;completedImages:number;error?:string;warnings?:string[];failedImageIndices?:number[];capacityUnavailable?:boolean};
 export function collectionImageSelection(totalImages:number,imageIndices?:readonly number[]):number[]{
  if(!Number.isInteger(totalImages)||totalImages<0||totalImages>200)throw new Error('수집 이미지 수를 확인해주세요.');
  const indices=imageIndices?[...imageIndices]:Array.from({length:totalImages},(_,index)=>index);
@@ -23,7 +23,16 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
  try{
   if(stopped())return {status:'stopped',productId,completedImages};
   if(selectedTotal>0){
-   const capacityResponse=await request(base+'/capacity',{cache:'no-store'});
+   let capacityResponse: Response;
+   try { capacityResponse=await request(base+'/capacity',{cache:'no-store'}); }
+   catch (error) {
+    if(stopped())return {status:'stopped',productId,completedImages};
+    return {status:'failed',productId,completedImages,capacityUnavailable:true,error:error instanceof Error?error.message:'이미지 저장 여유 조회 실패'};
+   }
+   if([502,503,504].includes(capacityResponse.status)){
+    try{await capacityResponse.body?.cancel();}catch{/* The failed response has no product data. */}
+    return {status:stopped()?'stopped':'failed',productId,completedImages,capacityUnavailable:true,error:'이미지 저장 여유를 일시적으로 확인하지 못했습니다.'};
+   }
    const capacityBody=await capacityResponse.json() as {capacity?:unknown;error?:string};
    if(!capacityResponse.ok)throw new Error(capacityBody.error||'이미지 저장 여유 조회 실패');
    const capacity=validateCollectionCapacity(capacityBody.capacity,totalImages);

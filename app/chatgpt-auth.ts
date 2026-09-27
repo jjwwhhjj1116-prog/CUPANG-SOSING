@@ -2,14 +2,16 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { env } from 'cloudflare:workers';
 import { authenticateCloudflareAccess, AccessAuthenticationError } from '@/app/cloudflare-access';
+import type { WorkspaceMember } from '@/app/workspace-members';
 
 export type ChatGPTUser = {
   userId: string;
   displayName: string;
   email: string;
   fullName: string | null;
-  /** Present only after the server verified the Cloudflare Access JWT. */
+  /** Present only after server authentication (Access JWT or approved member session). */
   verifiedAccess?: boolean;
+  membership?: WorkspaceMember;
 };
 
 const USER_ID_HEADER = 'oai-authenticated-user-id';
@@ -24,6 +26,11 @@ const CALLBACK_PATH = '/callback';
 
 export async function getChatGPTUser(onAccessError?: (error: AccessAuthenticationError) => void): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
+  if ((env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED === 'true') {
+    const { sessionMember } = await import('@/db/members');
+    const membership = await sessionMember(requestHeaders.get('cookie'));
+    return membership ? {userId:membership.id,email:membership.email,displayName:membership.email,fullName:null,verifiedAccess:true,membership} : null;
+  }
   if (process.env.NODE_ENV === 'production') {
     const accessEnv = env as { CLOUDFLARE_ACCESS_TEAM_DOMAIN?: string; CLOUDFLARE_ACCESS_AUD?: string };
     try {
@@ -56,7 +63,7 @@ export async function getChatGPTUser(onAccessError?: (error: AccessAuthenticatio
 /** Resolve ownership again without ever downgrading a failed production login to local-demo. */
 export async function getWorkspaceOwnerId(): Promise<string> {
   const user = await getChatGPTUser();
-  if (process.env.NODE_ENV === 'production' && !user?.verifiedAccess) throw new AccessAuthenticationError('missing_token');
+  if ((process.env.NODE_ENV === 'production' || (env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true') && !user?.verifiedAccess) throw new AccessAuthenticationError('missing_token');
   return user?.userId ?? 'local-demo';
 }
 

@@ -178,3 +178,37 @@ test('HTML access denial and malformed successful capacity never cause fallback 
   assert.equal(results[0].status,'failed');assert.equal(results[0].productId,null);
  }
 });
+
+test('a transient second capacity read still saves and prepares the source draft exactly once',async()=>{
+ for(const failure of ['network',502,503,504]){
+  let reads=0;const calls=[],results=[],prepared=[];
+  await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},retryWait:async()=>{},onResult:(_id,r)=>results.push(r),onProductSaved:async(_id,id)=>prepared.push(id),fetcher:async url=>{
+   calls.push(url);
+   if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+   if(url.endsWith('/capacity')){
+    if(++reads===1)return Response.json({capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}});
+    if(failure==='network')throw TypeError('connection lost');
+    return new Response('gateway unavailable',{status:failure});
+   }
+   assert.ok(url.endsWith('/product'));return Response.json({productId:'draft'});
+  }});
+  assert.equal(reads,4);assert.equal(calls.filter(url=>url.endsWith('/product')).length,1);
+  assert.deepEqual(prepared,['draft']);assert.equal(results[0].productId,'draft');
+  assert.equal(results[0].status,'failed');assert.equal(results[0].completedImages,0);
+  assert.match(results[0].error,/초안은 저장/);
+ }
+});
+
+test('second capacity denial, malformed success or cancellation does not create a draft',async()=>{
+ for(const failure of [200,401,403,409,429,'cancel']){
+  let reads=0,stopped=false;const results=[];
+  await importReceivedJobs([job('a')],{shouldStop:()=>stopped,onProgress:()=>{},retryWait:async()=>{},onResult:(_id,r)=>results.push(r),onProductSaved:async()=>assert.fail('no draft preparation'),fetcher:async url=>{
+   if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+   assert.ok(url.endsWith('/capacity'));
+   if(++reads===1)return Response.json({capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}});
+   if(failure==='cancel'){stopped=true;throw TypeError('cancelled');}
+   return new Response('invalid capacity',{status:failure});
+  }});
+  assert.equal(results[0].productId,null);assert.equal(results[0].status,failure==='cancel'?'stopped':'failed');
+ }
+});
