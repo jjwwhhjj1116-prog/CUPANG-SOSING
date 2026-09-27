@@ -22,7 +22,7 @@ for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL
   const original=payload.result.result.productSkuInfos[0];payload.result.result.productSkuInfos=Array.from({length:60},(_,i)=>({...structuredClone(original),skuId:String(5627721589407+i)}));
   payload.result.result.productAttribute=Array.from({length:50},(_,i)=>({attributeName:'属性'+i,value:'原文'}));
  }
- const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5};
+ const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length,httpMetadata:{contentType:'image/png'}}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,Blob,CompressionStream,DecompressionStream,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async (target,init)=>{const host=new URL(target).hostname;network.push(host);if(host==='gw.open.1688.com')return Response.json(payload);if(host==='api.openai.com'){
  const request=JSON.parse(init.body);assert.equal(request.model,'fixture-model');assert.equal(request.store,false);
  const source=JSON.parse(request.input[0].content[0].text);assert.equal(source.category.id,'80719');assert.equal(source.title,'原文商品');
@@ -87,7 +87,18 @@ for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL
    const rows=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload).rows;
    assert.equal(rows[0].translatedName,'검정 옵션');assert.equal(rows[0].color,'검정');assert.equal(rows[0].unitCostCny,25.6);
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
-   const view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,'자동 생성 수납 상품');assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
+   let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,'자동 생성 수납 상품');assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
+   if(automatic==='fresh'){
+    const contentRoute=load('app/api/products/[id]/content/route.ts');
+    const keys=[...objects.keys()];assert.equal(keys.length,3);
+    for(let i=0;i<4;i++){const key='owner/stage-image-'+i+'.png';objects.set(key,png);keys.push(key);}
+    sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify(keys),latest.product_id);
+    const savedContent=await contentRoute.PATCH(new Request('https://app.test/api/products/'+latest.product_id+'/content',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:content.revision,patch:{seo:{title:'1단계 수정 상품명',keywords:['1단계 검색어'],description:'수정 설명 & 줄바꿈\n둘째 줄'},label:{material:'6단계 재질',countryOfOrigin:'중국'},assets:{main:[keys[0]],additional:[keys[2],keys[1]],detailTop:[keys[3]],detail:[keys[4]],detailBottom:[keys[5]],label:[keys[6]]}}})}),qc);
+    assert.equal(savedContent.status,200,await savedContent.clone().text());
+    view=await (await qr.GET(new Request(qu),qc)).json();
+    const stageRow=view.resolved.rows.find(r=>r.optionId==='collected-1');
+    for(const [field,value] of Object.entries({title:'1단계 수정 상품명',searchTags:'1단계 검색어',noticeMaterial:'6단계 재질',noticeCountryOfOrigin:'중국',additionalImages:[keys[2],keys[1]].join('\n'),detailImages:[keys[3],keys[4],keys[5]].join('\n'),labelImages:keys[6],detailHtml:'<p>수정 설명 &amp; 줄바꿈<br>둘째 줄</p>'}))assert.equal(stageRow.fields[field].value,value,'source-stage edit '+field);
+   }
    const edit=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'35000'},...(automatic==='fresh'?[{fieldKey:'title',optionId:null,value:'검토 완료 상품명'},{fieldKey:'searchTags',optionId:null,value:'검토 검색어'},{fieldKey:'additionalImages',optionId:'collected-1',value:''},{fieldKey:'detailHtml',optionId:null,value:'<p>직접 수정한 상세 설명</p>'},{fieldKey:'noticeMaterial',optionId:null,value:'검토 재질'},{fieldKey:'packagedWeightG',optionId:'collected-1',value:'420'},{fieldKey:'packagedDimensionsMm',optionId:'collected-1',value:'100*200*300'}]:[])]})}),qc);assert.equal(edit.status,200);
    assert.match(await run(),/저장된 SEO·옵션값/);assert.equal(generations,expectedGenerations);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,expectedGenerations);
    assert.ok(rows.every(r=>r.translatedName==='검정 옵션'&&r.color==='검정'));
@@ -109,7 +120,7 @@ for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL
     assert.ok(exportedSource.content.assets.additional.value.length>0,'excluding quotation images must not delete source images');
     // Carry the same reviewed draft through the real XLSX route, R2 reads,
     // ZIP manifest and stale-review guard. This workbook is deliberately synthetic.
-    const fields=['categoryId','category','title','searchTags','supplyPrice','salePrice','msrp','mainImage','additionalImages','detailHtml','noticeMaterial','packagedWeightG','packagedDimensionsMm'];
+    const fields=['categoryId','category','title','searchTags','supplyPrice','salePrice','msrp','mainImage','additionalImages','detailHtml','noticeMaterial','packagedWeightG','packagedDimensionsMm','detailImages','labelImages','noticeCountryOfOrigin'];
     const workbook=quotationWorkbook(fields);
     const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
     const storageKey=load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');
@@ -133,6 +144,7 @@ for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL
     const cells=reader.xlsxHeaders(reader.inspectXlsxArchive(archive),'견적서',2);
     const actual=Object.fromEntries(fields.map((field,index)=>[field,cells[index]]));
     for(const [field,value] of Object.entries(expected))assert.equal(actual[field],value,`XLSX retains reviewed ${field}`);
+    assert.equal(actual.noticeCountryOfOrigin,'중국');
     assert.equal(actual.categoryId,'80719');assert.equal(actual.category,context.category.categoryPath.join(' > ')+' (80719)');assert.equal(actual.supplyPrice,'17920');assert.equal(actual.msrp,'38830');
     assert.match(actual.mainImage,/^image-\d+\.png$/);
     const packaged=await exportRequest({action:'export',fingerprint:preview.fingerprint});
@@ -143,12 +155,25 @@ for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL
     assert.equal(plan.categoryId,'80719');assert.equal(plan.quotation.file.filename,preview.filename);
     assert.ok(plan.productImages.some(image=>image.filename===actual.mainImage));
     assert.ok(plan.productImages.every(image=>bundle.has(image.archivePath)));
+    for(const [field,group,keys] of [['detailImages',plan.productImages,exportedSource.content.assets.detailTop.value.concat(exportedSource.content.assets.detail.value,exportedSource.content.assets.detailBottom.value)],['labelImages',plan.labelImages,exportedSource.content.assets.label.value]]){
+     const names=actual[field].split('\n');assert.equal(names.length,keys.length);
+     keys.forEach((key,index)=>{const image=group.find(image=>image.key===key);assert.ok(image);assert.equal(names[index],image.filename);assert.ok(bundle.has(image.archivePath));assert.ok(image.references.some(ref=>ref.fieldId===field&&ref.position===index+1));});
+    }
     const changed=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:after.revision,expectedInputFingerprint:after.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'36000'}]})}),qc);
     assert.equal(changed.status,200,await changed.clone().text());
     assert.equal((await exportRequest({action:'export',fingerprint:preview.fingerprint})).status,409);
     const refreshed=await (await exportRequest({action:'preview'})).json();
     assert.equal(refreshed.rows[0][fields.indexOf('salePrice')],36000);
     assert.notEqual(refreshed.fingerprint,preview.fingerprint);
+    const contentRoute=load('app/api/products/[id]/content/route.ts');
+    const sourceEdit=await contentRoute.PATCH(new Request('https://app.test/api/products/'+latest.product_id+'/content',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:exportedSource.content.revision,patch:{seo:{title:'다시 바꾼 1단계 이름'},label:{countryOfOrigin:'대한민국'}}})}),qc);
+    assert.equal(sourceEdit.status,200,await sourceEdit.clone().text());
+    assert.equal((await exportRequest({action:'export',fingerprint:refreshed.fingerprint})).status,409,'editing a source stage invalidates a prepared package');
+    const finalPreview=await(await exportRequest({action:'preview'})).json();
+    assert.equal(finalPreview.rows[0][fields.indexOf('title')],'검토 완료 상품명','final quotation override survives later source edits');
+    assert.equal(finalPreview.rows[0][fields.indexOf('noticeCountryOfOrigin')],'대한민국','unoverridden source edit reaches Excel');
+    assert.equal(finalPreview.rows[0][fields.indexOf('salePrice')],36000);
+    assert.notEqual(finalPreview.fingerprint,refreshed.fingerprint);
    }
    assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');return;
   }

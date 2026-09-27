@@ -3996,3 +3996,10 @@ AI등록 화면 확인:
 - Registration-settings endpoint exposes boxSkuQuantity alongside existing label inputs. Removed unrelated current bundle switch from that snapshot display. Failed reload clears stale displayed settings; product ID participates in child component key.
 - Validation: 47 pricing/collection/registration-settings/option UI tests passed; tsc, Cloudflare build/check and diff check passed.
 - Deployed version eaef3ed7-a5f0-41db-a857-83ebaef4f944. Existing Couplus/Hub products untouched. No new live collection or Hub submission verification; official XLSX still unavailable. Full workflow is not complete.
+
+## Step 445 — Source-stage edits through final quotation export (2026-09-28)
+- Extended real-handler/SQLite integration coverage to save SEO, label fields and distinct image roles through the content PATCH route after URL fixture import.
+- Verified stage edits reach category 80719 quotation fields; explicit stage-7 overrides and blank additional images survive retry. XLSX detail images retain top/body/bottom order, label images use the label upload group, and filenames match actual ZIP entries and manifest positions.
+- Verified later content edits invalidate a prepared export (409), preserved manual final title, and update unoverridden country-of-origin in a fresh Excel preview.
+- All 6 intake integration scenarios passed. External Alibaba/AI/R2 and original XLSX are fixtures; additional owned image records are test setup, not actual image translation or live uploads.
+- Tests/documentation only, no production behavior change or deploy. Production remains eaef3ed7-a5f0-41db-a857-83ebaef4f944. Official XLSX acquisition, real source collection and final Hub registration still unverified. Existing external products untouched.
