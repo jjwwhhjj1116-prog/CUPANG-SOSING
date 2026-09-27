@@ -26,11 +26,18 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   const labels = suggestTranslationLabels(content, job, version);
   skipped.push(...labels.skipped);
   if (labels.mappings.length) {
-    const changed = labels.mappings.filter(mapping => content.label[mapping.field]?.value !== job.result!.draft.attributes.find(item => item.sourceIndex === mapping.sourceIndex)?.value);
+    const effectiveTitle = patch.seo?.title ?? content.seo.title.value;
+    const changed = labels.mappings.filter(mapping => {
+      const value = job.result!.draft.attributes.find(item => item.sourceIndex === mapping.sourceIndex)?.value;
+      return content.label[mapping.field]?.value !== value ||
+        (mapping.field === 'productName' && content.labelProductNameLinked && value !== effectiveTitle);
+    });
     if (changed.length) {
       const adopted = translationLabelAdoption(content, job, version, changed);
       patch.label = adopted.input.patch.label;
-      preview.push(...adopted.preview.map(({ name, before, after }) => ({ name, before, after })));
+      const unlinkName = content.labelProductNameLinked && patch.label?.productName !== undefined && patch.label.productName !== effectiveTitle;
+      if (unlinkName) patch.labelProductNameLinked = false;
+      preview.push(...adopted.preview.map(({ field, name, before, after }) => ({ name: unlinkName && field === 'productName' ? name + ' · 원문 품명 유지, SEO 연동 해제' : name, before, after })));
     }
   }
   // When the source has no separate product-name attribute, use the reviewed

@@ -3444,3 +3444,9 @@ AI등록 화면 확인:
 - Full rerun:1059/1059 pass,0 skipped. TypeScript and diff checks passed. Tests include synthetic intake/API flows and observed-category XLSX output; this does NOT verify live1688 collection, all Couplus categories or Hub submission.
 - Existing supplierChrome.tabs.list() returned[]; opened hubCheck349 via tabs.new() in the same Chrome binding. SupplierHub registration redirected to actual ID/password login. Login request from347 remains unanswered. No new browser/profile/window and no authentication bypass.
 - No production deployment warranted for test-only changes; live remains d0dde58c-c249-49e7-92a5-3093264e8d4d. Full objective incomplete: source retrieval/model activation/image translation/all-category parity and actual Hub POST501 remain unresolved.
+
+## 350 — Preserve explicit source name when applying SEO title (2026-09-27)
+- Reproduced a real regression: a linked label name matching a separate translated source product-name attribute was filtered out as unchanged; applying a new SEO title then silently replaced it. Before-fix regression test failed with new SEO title instead of the separate source name.
+- Batch adoption now retains the explicit label-name patch when link semantics would change its value, disables that link explicitly, and shows the unlink/preserved name in the reviewed preview. Later SEO edits retain the separate name. Manual fields and absent-source SEO-linked behavior remain protected by existing tests.
+-24 related adoption/integrated/intake API tests, TypeScript, production build/artifact/diff checks passed. Deployed887232dc-1e1d-49ce-9565-d9db8a064c4b.
+- No new live browser/model/source call or Hub submission. Full source-to-Hub objective remains incomplete; last Hub check349 was login. Full suite3491059/1059passed;350 adds one regression test.

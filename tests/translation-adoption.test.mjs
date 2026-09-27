@@ -144,3 +144,17 @@ test('batch adoption fills an untouched label name with the effective SEO title 
  assert.equal(translationBatchAdoption(content,job,'v').input,null);
  job.result.draft.attributes.pop();plan=translationBatchAdoption(content,job,'v');assert.equal(plan.input.patch.label.productName,'다른 품명');
 });
+
+test('explicit source product name survives SEO rename even when its value equals the linked old name',()=>{
+ const content=emptyProductContent('p');content.labelProductNameLinked=true;
+ content.seo.title={value:'기존 품명',provenance:'collected',updatedAt:'before'};
+ content.label.productName={value:'기존 품명',provenance:'generated',updatedAt:'before'};
+ const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 产品名称',value:'기존 품명'}]}},result:{draft:{title:'검색용 새 상품명',description:'',keywords:[],attributes:[{sourceIndex:0,name:'제품명',value:'기존 품명'}]}}};
+ const before=JSON.stringify(content),plan=translationBatchAdoption(content,job,'v');
+ const saved=applyContentPatch(content,plan.input.patch,'after');
+ assert.equal(saved.seo.title.value,'검색용 새 상품명');assert.equal(saved.label.productName.value,'기존 품명');assert.equal(saved.labelProductNameLinked,false);
+ assert.equal(plan.preview.filter(row=>row.name.startsWith('품명')).length,1);
+ assert.match(plan.preview.find(row=>row.name.startsWith('품명')).name,/연동 해제/);
+ assert.equal(JSON.stringify(content),before);
+ assert.equal(applyContentPatch(saved,{seo:{title:'후속 제목 수정'}},'later').label.productName.value,'기존 품명');
+});
