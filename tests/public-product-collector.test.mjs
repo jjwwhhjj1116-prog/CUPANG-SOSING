@@ -224,3 +224,26 @@ test('inventory never guesses counts from availability, ranges or measurement un
  assert.throws(()=>parsePublicProduct(html(p),url),/재고 수량/);
  }
 });
+
+test('plain local price specifications preserve explicit CNY cost and minimum order',()=>{
+ const p=product(),offer=p.hasVariant[0].offers;
+ delete offer.price;delete offer.priceCurrency;delete offer.eligibleQuantity;
+ offer.priceSpecification={'@id':'#price'};
+ const specification={'@id':'#price','@type':'PriceSpecification',price:'25.6',priceCurrency:'CNY',eligibleQuantity:{minValue:2}};
+ const result=parsePublicProduct(html({'@graph':[p,specification]}),url);
+ assert.equal(result.options[0].unitPriceCny,25.6);assert.equal(result.options[0].minimumOrder,2);assert.equal(result.options[0].sku,'real-sku');
+ for(const patch of [{priceCurrency:'USD'},{minPrice:20},{priceType:'ListPrice'},{validForMemberTier:'member'},{'@type':'UnitPriceSpecification'},{price:'25-30'},{eligibleQuantity:{minValue:2,unitCode:'KGM'}}]){
+  assert.throws(()=>parsePublicProduct(html({'@graph':[p,{...specification,...patch}]}),url));
+ }
+ offer.priceCurrency='USD';assert.throws(()=>parsePublicProduct(html({'@graph':[p,specification]}),url),/통화/);
+ offer.priceCurrency='CNY';offer.eligibleQuantity={minValue:10};assert.throws(()=>parsePublicProduct(html({'@graph':[p,specification]}),url),/최소 주문/);
+ delete offer.eligibleQuantity;offer.priceSpecification=[specification,specification];assert.throws(()=>parsePublicProduct(html(p),url),/단일/);
+});
+
+test('direct offer price stays authoritative and a measured MOQ is not treated as piece count',()=>{
+ const p=product(),offer=p.hasVariant[0].offers;
+ offer.priceSpecification={'@type':'PriceSpecification',price:'999',priceCurrency:'CNY'};
+ assert.equal(parsePublicProduct(html(p),url).options[0].unitPriceCny,25.6);
+ offer.eligibleQuantity={minValue:2,unitText:'kg'};
+ assert.throws(()=>parsePublicProduct(html(p),url),/단위/);
+});

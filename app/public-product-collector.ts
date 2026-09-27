@@ -79,8 +79,26 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
  const options=variants.map(variant=>{
   const offers=list(variant.offers).map(resolve);
   if(offers.length!==1||!hasType(offers[0],'Offer'))throw Error('옵션별 단일 원가를 확인하지 못했습니다. 가격 범위는 원가로 사용하지 않습니다.');
-  const offer=offers[0];if(offer.priceCurrency!=='CNY')throw Error('옵션 원가의 CNY 통화를 확인하지 못했습니다.');
-  const minimumOrder=number(resolve(offer.eligibleQuantity).minValue);
+  const offer=offers[0];
+  let price=offer.price, currency=offer.priceCurrency, quantity=resolve(offer.eligibleQuantity);
+  if(price===undefined){
+   const specs=list(offer.priceSpecification).map(resolve);
+   if(specs.length!==1||!hasType(specs[0],'PriceSpecification'))throw Error('옵션별 단일 가격 명세를 확인하지 못했습니다.');
+   const spec=specs[0];
+   // Only an unqualified total price is supported, not tier/member/unit prices.
+   if(Object.keys(spec).some(key=>!['@id','@type','price','priceCurrency','eligibleQuantity','valueAddedTaxIncluded'].includes(key))
+     ||list(spec['@type']).some(type=>!['PriceSpecification','https://schema.org/PriceSpecification','http://schema.org/PriceSpecification'].includes(String(type))))throw Error('조건부 가격 명세는 옵션 원가로 사용할 수 없습니다.');
+   if(currency!==undefined&&currency!==spec.priceCurrency)throw Error('옵션과 가격 명세의 통화가 다릅니다.');
+   price=spec.price;currency=spec.priceCurrency;
+   if(spec.eligibleQuantity!==undefined){
+    const specified=resolve(spec.eligibleQuantity);
+    if(offer.eligibleQuantity!==undefined&&JSON.stringify(quantity)!==JSON.stringify(specified))throw Error('옵션과 가격 명세의 최소 주문 조건이 다릅니다.');
+    quantity=specified;
+   }
+  }
+  if(currency!=='CNY')throw Error('옵션 원가의 CNY 통화를 확인하지 못했습니다.');
+  if(quantity.unitCode!==undefined||quantity.unitText!==undefined)throw Error('최소 주문 수량의 단위를 확인해야 합니다.');
+  const minimumOrder=number(quantity.minValue);
   if(!Number.isSafeInteger(minimumOrder)||minimumOrder<1)throw Error('최소 주문 수량을 확인하지 못했습니다.');
   // Keep the seller's stated quantity, including zero. Availability labels and
   // ranges are not counts; weight/volume inventory cannot become piece stock.
@@ -93,7 +111,7 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
    if(!Number.isSafeInteger(stock)||stock<0)throw Error('옵션 재고 수량은 0 이상 정수여야 합니다.');
   }
   const indices=addImages(variant.image);
-  return {sku:required(variant.sku??offer.sku,'SKU'),name:required(variant.name,'옵션명'),unitPriceCny:number(offer.price),minimumOrder,stock,
+  return {sku:required(variant.sku??offer.sku,'SKU'),name:required(variant.name,'옵션명'),unitPriceCny:number(price),minimumOrder,stock,
    ...(indices.length?{imageIndex:indices[0]}:{}),...(typeof variant.color==='string'?{color:variant.color}:{}),...(typeof variant.size==='string'?{size:variant.size}:{})};
  });
  // Append details after SKU images so their recorded image indices remain

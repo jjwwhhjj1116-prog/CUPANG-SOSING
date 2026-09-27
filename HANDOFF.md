@@ -4016,3 +4016,10 @@ AI등록 화면 확인:
 - Added source identity/cancellation/error tests. Fixed the existing submission-review render fixture to include product and profile revision keys; the two baseline failures were reproduced using the HEAD test before fixing the fixture. No runtime review-panel behavior was changed.
 - 39 related tests pass, tsc/production build/artifact/diff checks pass. Deployed c99dc448-a391-4c1a-8aff-600ea2963ee9. Extension remains 0.2.11.
 - No live collection or final Supplier Hub registration performed; official XLSX remains unavailable. This prevents mismatching stale result display, not completion of external submission.
+
+## Step 448 — Explicit public price specification fallback (2026-09-28)
+- Public JSON-LD parser accepts one local/plain PriceSpecification when Offer.price is absent, preserving exact CNY price and explicit minimum quantity. Existing direct Offer.price stays authoritative.
+- Rejects multiple specifications, unknown/conditional fields or types, currency conflicts, inconsistent quantities and measured MOQ units. No inferred unit-price conversion, membership tiers, ranges or remote reference fetching.
+- Primary format references: https://schema.org/priceSpecification and https://schema.org/UnitPriceSpecification (the latter describes conditional/per-unit fields deliberately not treated as total SKU cost).
+- 48 collector/product tests pass; typecheck/build/artifact/diff checks pass. Deployment 6c139f5b-7363-4c7e-9dd3-767699232af6.
+- No actual 1688 access attempted; no proof the specified product publishes this metadata. This is parser coverage, not a working live provider replacement. Official XLSX and real Supplier Hub final submission remain unverified. No external products changed.
