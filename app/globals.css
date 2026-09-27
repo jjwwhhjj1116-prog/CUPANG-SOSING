@@ -312,3 +312,20 @@ html,body{background:#fff}
 .registration-scroll{isolation:isolate;overflow:auto;position:relative}.registration-height-fixed{height:clamp(350px,55vh,650px)}
 .couplus-work-table th{position:sticky;top:0;z-index:2}.couplus-work-table .registration-pinned{position:sticky;left:0;z-index:1;background:#fff;box-shadow:3px 0 5px #15254712}
 .couplus-work-table th.registration-pinned{z-index:3;background:#f7f7f9}.registration-scroll:focus-visible{outline:2px solid #25b9df;outline-offset:2px}
+
+/* Keep the chosen intake field visible while comparing wide product rows. */
+.intake-queue-tools label.intake-pin-control{flex:0 1 230px;min-width:180px}
+.intake-pin-control select{width:100%;padding:10px 12px;border:1px solid #aeb6c7;border-radius:4px;background:#fff;color:#526079;font:inherit}
+.intake-queue-table{max-height:55vh;isolation:isolate}
+.intake-queue-table:focus-visible{outline:2px solid #2bbcdf;outline-offset:2px}
+.intake-queue-table th{position:sticky;top:0;z-index:2}
+.intake-queue-table[data-pinned=category] :is(th,td):nth-child(2),
+.intake-queue-table[data-pinned=url] :is(th,td):nth-child(3),
+.intake-queue-table[data-pinned=features] :is(th,td):nth-child(4),
+.intake-queue-table[data-pinned=keywords] :is(th,td):nth-child(5),
+.intake-queue-table[data-pinned=status] :is(th,td):nth-child(6){position:sticky;left:0;z-index:1;background:#fff;box-shadow:2px 0 0 #dfe2e8}
+.intake-queue-table[data-pinned=category] th:nth-child(2),
+.intake-queue-table[data-pinned=url] th:nth-child(3),
+.intake-queue-table[data-pinned=features] th:nth-child(4),
+.intake-queue-table[data-pinned=keywords] th:nth-child(5),
+.intake-queue-table[data-pinned=status] th:nth-child(6){z-index:3;background:#f7f7f8}

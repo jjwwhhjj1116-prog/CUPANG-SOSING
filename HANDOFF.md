@@ -3690,3 +3690,9 @@ AI등록 화면 확인:
 - Fixed saved rows bypassing captured-context checks when recovering their editor by URL. All statuses now require matching category profile ID/revision/code and features/keywords; explicitly confirmed product links remain available.
 - Regression tests include a same-URL wrong-category job alongside the matching job, all row statuses, missing context and ambiguous products. 13 tests pass; TypeScript, Cloudflare build/artifact and diff checks pass. Deployed; version in outputs/step393-deploy.log.
 - Actual1688 acquisition, all-category parity and Supplier Hub POST501 transport remain incomplete. This correction is not end-to-end completion.
+
+## Step 396 — intake queue column pinning (2026-09-27)
+- Added the supplied Couplus reference's column pin control to the intake queue: category, URL, features, keywords or status; choose placeholder to unpin.
+- Selected field sticks to the left, headers stick to the top, with layered opaque cells and a bounded keyboard-focusable scroll region.
+- Existing Chrome localhost UI confirms URL selection in the combobox. Empty local queue means populated-row scroll was not visually verified. TypeScript, Cloudflare build/artifact and diff checks pass. No new unit tests for this reversible presentation change.
+- No actual source fetch or Hub transmission performed. Actual1688 verification and Supplier Hub POST501 adapter remain incomplete.
