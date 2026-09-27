@@ -157,6 +157,12 @@ function productContentBinding(item: QuotationField): QuotationField {
   if (item.label === '모델명/품번' && item.type === 'text') return { ...item, contentField: 'model' };
   // Packaging and capacity are separate facts from physical dimensions.
   if (item.type !== 'text') return item;
+  // Yoga mat fields were read with centimetre/metre examples in its official form.
+  // Bind only these recorded IDs; identical labels in other categories can mean something else.
+  const yogaDimensions: Readonly<Record<string, 'widthCm' | 'lengthCm'>> = {
+    hub_81467_75aba55303fb: 'lengthCm', hub_81467_a986625d9a2f: 'widthCm',
+  };
+  if (Object.hasOwn(yogaDimensions, item.id)) return { ...item, optionDimension: yogaDimensions[item.id] };
   const keys = { '가로길이': 'widthCm', '세로길이': 'lengthCm', '아이템 높이': 'heightCm' } as const;
   const key = keys[item.label as keyof typeof keys];
   return key ? { ...item, optionDimension: key } : item;

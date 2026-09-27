@@ -1149,7 +1149,7 @@ test('untouched empty measurements inherit label while complete measurements and
 
 test('observed category dimension attributes follow option measurements through quotation export', () => {
   const hub = load('app/hub-product-schemas.ts').hubProductSchemas;
-  const expected = { '가로길이': ['widthCm', '20 cm'], '세로길이': ['lengthCm', '30 cm'], '아이템 높이': ['heightCm', '40 cm'] };
+  const expected = { '길이': ['lengthCm', '30 cm'], '폭': ['widthCm', '20 cm'], '가로길이': ['widthCm', '20 cm'], '세로길이': ['lengthCm', '30 cm'], '아이템 높이': ['heightCm', '40 cm'] };
   let checked = 0;
   for (const categoryId of [...Object.keys(hub), '64497', '77442', '81452']) {
     const input = fixture(); input.categoryId = categoryId;
@@ -1879,4 +1879,27 @@ test('yoga mat official fields, blank selection values and saved stage values re
  assert.equal(manual.fields[material.id].value,'');assert.equal(manual.fields[material.id].source,'manual-option');
  assert.equal(manual.fields.yoga_noticeKc.value,'');
  assert.equal(model.getQuotationSchema('81472').status,'unconfirmed');
+});
+
+
+test('yoga length and width retain per-option values, clears and quotation edits without using packaging',()=>{
+ const input=fixture();input.categoryId='81467';
+ input.options=optionModel.applyOptionRows(input.options,[
+  {...optionModel.optionInputs(input.options)[0],widthCm:61,lengthCm:183,heightCm:0.6,packagedWidthMm:90,packagedLengthMm:90,packagedHeightMm:620},
+  {...optionModel.emptyOptionInput('blue'),originalName:'blue',unitCostCny:3,included:true,widthCm:80,lengthCm:200},
+ ],'2026-09-28T09:00:00Z');
+ const schema=model.getQuotationSchema('81467'),length=schema.fields.find(f=>f.label==='길이'),width=schema.fields.find(f=>f.label==='폭');
+ assert.equal(schema.fields.find(f=>f.label==='두께').optionDimension,undefined);
+ let resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows[1].fields[length.id].value,'183 cm');assert.equal(resolved.rows[1].fields[width.id].value,'61 cm');
+ assert.equal(resolved.rows[2].fields[length.id].value,'200 cm');assert.equal(resolved.rows[2].fields[width.id].value,'80 cm');
+ input.options=optionModel.applyOptionRows(input.options,optionModel.optionInputs(input.options).map(row=>row.id==='red'?{...row,widthCm:null}:row),'2026-09-28T09:01:00Z');
+ resolved=model.resolveQuotationFields(input);
+ assert.equal(resolved.rows[1].fields[width.id].value,'');assert.equal(resolved.rows[1].fields[width.id].source,'option');
+ input.overrides={common:{[length.id]:'190 cm'},options:{blue:{[width.id]:''}}};resolved=model.resolveQuotationFields(input);
+ const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,JSON.parse(input.product.image_keys).map(key=>({key,name:key})));
+ assert.equal(exported[0][length.id],'190 cm');assert.equal(exported[0][width.id],'');
+ assert.equal(exported[1][length.id],'190 cm');assert.equal(exported[1][width.id],'');
+ assert.equal(resolved.rows[2].fields[width.id].source,'manual-option');
+ assert.equal(load('app/quotation-input-links.ts').quotationInputLink(length),'옵션 상품 세로 · cm');
 });
