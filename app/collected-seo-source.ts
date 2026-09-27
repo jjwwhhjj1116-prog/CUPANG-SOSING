@@ -5,9 +5,9 @@ import type { CollectionResult } from '@/app/collection-result';
 import type { CollectionJob } from '@/app/sourcing';
 import type { ProductOptions } from '@/app/product-options';
 
-export function collectedSeoSource(receipt: CollectionResult, job: CollectionJob, options: ProductOptions) {
+export function collectedSeoSource(receipt: CollectionResult, job: CollectionJob, options: ProductOptions, optionsOnly = false) {
   if (receipt.offerId !== job.offer_id || !job.context?.category) throw Error('수집 원문과 선택 카테고리를 확인해주세요.');
-  const attributes = collectedTranslationAttributes(receipt.attributes ?? []);
+  const attributes = optionsOnly ? [] : collectedTranslationAttributes(receipt.attributes ?? []);
   const batch = optionTranslationBatch(options, 50 - attributes.length);
   const category = job.context.category;
   const source = validateTranslationSource({ title: receipt.title, description: receipt.description,

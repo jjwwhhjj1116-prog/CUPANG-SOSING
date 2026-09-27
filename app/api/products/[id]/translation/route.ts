@@ -40,12 +40,17 @@ export async function POST(request: Request, context: Context) {
     const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
     const product = await findProduct(owner, id); if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
     const config = requireTranslationConfig(env as TranslationSecrets);
-    if (body.action === 'prepare-collected') {
-      if (Object.keys(body).some(key => !['action','intake'].includes(key)) || (body.intake !== undefined && body.intake !== true)) throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
-      const autoDraft = body.intake === true && config.provider === 'workers-ai';
-      if(autoDraft){
+    if (body.action === 'prepare-collected' || body.action === 'prepare-intake-options') {
+      const optionsOnly = body.action === 'prepare-intake-options';
+      if (Object.keys(body).some(key => !(optionsOnly ? ['action','expectedVersion'] : ['action','intake']).includes(key)) || (body.intake !== undefined && body.intake !== true)) throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
+      const autoDraft = (body.intake === true || optionsOnly) && config.provider === 'workers-ai';
+      if(optionsOnly){
+        const initial=await findIntakeTranslation(owner,id);
+        if(!autoDraft || body.expectedVersion!==product.updated_at || initial?.status!=='completed')return conflict();
+      }
+      if(autoDraft && !optionsOnly){
         const prior=await findIntakeTranslation(owner,id);
-        if(prior)return json({job:prior,replayed:true,autoDraft:prior.productVersion===product.updated_at,intakePreserved:prior.productVersion!==product.updated_at,configuration:configuration()});
+        if(prior)return json({job:prior,replayed:true,autoDraft:prior.productVersion===product.updated_at,intakePreserved:prior.productVersion!==product.updated_at,productVersion:product.updated_at,configuration:configuration()});
       }
       const { findProductCollection } = await import('@/db/collection-products');
       const { readCollectionResult } = await import('@/db/collection-results');
@@ -59,7 +64,8 @@ export async function POST(request: Request, context: Context) {
         readCollectionResult(owner, link.job_id), findCollectionJob(owner, link.job_id), readProductOptions(owner, id), readProductContent(owner, id),
       ]);
       if (!receipt || !collection || options.productId !== id || parseCollectionRequest({ urls: [product.source_url] })[0].offerId !== receipt.result.offerId) return conflict();
-      const { source, remainingOptions } = collectedSeoSource(receipt.result, collection, options);
+      const { source, remainingOptions } = collectedSeoSource(receipt.result, collection, options, optionsOnly);
+      if(optionsOnly && !source.attributes.length)return json({done:true,productId:id,productVersion:product.updated_at});
       const requestFingerprint = await fingerprint({ source, productVersion: product.updated_at, contentRevision: content.revision, destination: translationDestination(config), model: config.model, maxOutputTokens: config.maxOutputTokens });
       const previous = (await listTranslationJobs(owner, id)).find(item => item.productVersion === product.updated_at && item.contentRevision === content.revision &&
         item.review.destination === translationDestination(config) && item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
@@ -69,9 +75,9 @@ export async function POST(request: Request, context: Context) {
       const job: TranslationJob = { id: crypto.randomUUID(), productId: id, productVersion: product.updated_at, contentRevision: content.revision,
         status: 'prepared', review, result: null, error: null, createdAt: new Date().toISOString(), approvedAt: null, startedAt: null, finishedAt: null };
       // Reopening/retrying the same source does not create another paid job.
-      const saved = await createTranslationJob(owner, job, autoDraft ? 'intake-auto-v1' : `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
+      const saved = await createTranslationJob(owner, job, optionsOnly ? `intake-options-${await fingerprint(source.attributes)}` : autoDraft ? 'intake-auto-v1' : `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
       if (!saved || saved.conflict) return conflict();
-      return json({ job: saved.job, replayed: saved.replayed, remainingOptions, autoDraft, configuration: configuration() }, saved.replayed ? 200 : 201);
+      return json({ job: saved.job, replayed: saved.replayed, remainingOptions, autoDraft, optionsOnly, configuration: configuration() }, saved.replayed ? 200 : 201);
     }
     if (body.action === 'prepare') {
       if (Object.keys(body).some(key => !['action', 'source', 'expectedVersion', 'idempotencyKey'].includes(key)) || typeof body.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.idempotencyKey)) throw new TranslationError('INVALID_REQUEST', '번역 검토 요청 항목과 중복 방지 키를 확인해주세요.');

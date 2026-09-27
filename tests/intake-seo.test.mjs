@@ -10,13 +10,14 @@ test('automatic intake uses one generation and exact preview fingerprint before 
  const actions=[];
  const message=await run('p',async(url,init)=>{const b=JSON.parse(init.body);actions.push(b.action);
  if(b.action==='prepare-collected'){assert.equal(b.intake,true);return Response.json({job,autoDraft:true});}
+ if(b.action==='prepare-intake-options')return Response.json({done:true,productId:'p',productVersion:b.expectedVersion});
  if(b.action==='approve')return Response.json({job:{...job,status:'approved'}});
  if(b.action==='execute')return Response.json({job:{...job,status:'completed',result:{draft:{}}}});
  assert.equal(url,'/api/products/p/translation-apply');assert.equal(b.expectedVersion,'v');
  if(b.action==='preview')return Response.json({productId:'p',productVersion:'v',preview:[{}],fingerprint:'a'.repeat(64)});
- assert.equal(b.fingerprint,'a'.repeat(64));return Response.json({productId:'p',applied:1});
+ assert.equal(b.fingerprint,'a'.repeat(64));return Response.json({productId:'p',productVersion:'2026-09-27T10:00:00Z',applied:1});
  },new AbortController().signal);
- assert.deepEqual(actions,['prepare-collected','approve','execute','preview','apply']);assert.match(message,/초안을 생성해 반영/);
+ assert.deepEqual(actions,['prepare-collected','approve','execute','preview','apply','prepare-intake-options']);assert.match(message,/초안을 생성해 반영/);
 });
 test('preserved revisions and terminal failures cannot trigger another generation or apply',async()=>{
  for(const reply of [{job,intakePreserved:true,autoDraft:false},...['running','failed','uncertain'].map(status=>({job:{...job,status,error:{message:'확인 필요'}},autoDraft:true})),{job:{...job,review:{...job.review,destination:'OpenAI Responses API'}},autoDraft:true}]){
