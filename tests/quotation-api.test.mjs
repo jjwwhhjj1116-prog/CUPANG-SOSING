@@ -395,3 +395,40 @@ test('translated category attributes reach final XLSX cells and manual option ed
  saved.categoryAttributes.values[0].value='다각형';
  assert.equal((await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context)).status,409);
 });
+
+test('all 26 recorded category schemas preserve edited fields through actual XLSX export',async()=>{
+ const catalog=load('app/hub-product-schemas.ts').hubProductSchemas;
+ const schemaModel=load('app/quotation-schema.ts');
+ const ids=[...new Set([...Object.keys(catalog),'80719','81452','64497','103495','77442'])];assert.equal(ids.length,26);
+ const encode=value=>new TextEncoder().encode(value);
+ const bytes=zipSync({
+  '[Content_Types].xml':encode('<Types><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>'),
+  '_rels/.rels':encode('<Relationships><Relationship Id="main" Type="x/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
+  'xl/workbook.xml':encode('<workbook xmlns:r="relationship"><sheets><sheet name="견적" r:id="one"/></sheets></workbook>'),
+  'xl/_rels/workbook.xml.rels':encode('<Relationships><Relationship Id="one" Type="x/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'),
+  'xl/worksheets/sheet1.xml':encode('<worksheet><dimension ref="A1:C1"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>상품명</t></is></c><c r="B1" t="inlineStr"><is><t>옵션명</t></is></c><c r="C1" t="inlineStr"><is><t>분류별 속성</t></is></c></row></sheetData></worksheet>'),
+ },{level:0});
+ const digest=createHash('sha256').update(bytes).digest('hex'),key=`owner/category-templates/${digest}.xlsx`;
+ for(const categoryId of ids){
+  const schema=schemaModel.getQuotationSchema(categoryId);
+  const field=schema.fields.find(f=>f.section==='product'&&f.visibility!=='common'&&!f.readOnly&&(f.type==='text'||f.type==='select'&&f.choices?.some(c=>c.value)));
+  assert.ok(field,categoryId+' category attribute');
+  const value=field.type==='select'?field.choices.find(c=>c.value).value:'기록된 속성';
+  const selected={...profile,categoryId,template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers:['상품명','옵션명','분류별 속성']},mappings:[{column:0,field:'title',required:false},{column:1,field:'skuName',required:false},{column:2,field:field.id,required:false}]};
+  const savedContent=contentModel.applyContentPatch(content,{seo:{title:'수정 상품 '+categoryId}},product.updated_at);
+  const fields={schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{[field.id]:value},options:{second:{title:'',[field.id]:''}}}};
+  const route=routeWith({readProfile:async()=>selected,readContent:async()=>savedContent,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
+  const response=await route.POST(request(preview),context);assert.equal(response.status,200,categoryId+': '+await response.clone().text());const review=await response.json();
+  assert.deepEqual(review.rows,[['수정 상품 '+categoryId,'첫 번째',value],['','第二','']],categoryId);
+  const output=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200,categoryId+' export');
+  const files=unzipSync(new Uint8Array(await output.arrayBuffer())),workbook=unzipSync(files['quotation-filled.xlsx']);
+  const sheet=new TextDecoder().decode(workbook['xl/worksheets/sheet1.xml']);
+  const escape=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+  for(const [cell,expected] of [['A2','수정 상품 '+categoryId],['B2','첫 번째'],['C2',value],['A3',''],['B3','第二'],['C3','']]){
+   assert.ok(sheet.includes(`<c r="${cell}" t="inlineStr"><is><t xml:space="preserve">${escape(expected)}</t>`),categoryId+'/'+cell);
+  }
+  const doc=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));
+  assert.equal(doc.schema.categoryId,categoryId);assert.equal(doc.rows.length,2);assert.equal(doc.rows[0].fields[field.id].source,'manual-common');assert.equal(doc.rows[1].fields[field.id].source,'manual-option');
+  assert.equal(doc.rows[1].fields.title.value,'');assert.equal(doc.excludedOptions[0].optionId,'excluded');
+ }
+});
