@@ -2,7 +2,7 @@ import { quotationAssetIdentities } from '@/app/exports/quotation-asset-identiti
 import { supplierHubUploadPage } from '@/app/exports/supplier-hub-upload-page';
 import { supplierHubUploadPlan, type QuotationAttachment } from '@/app/exports/supplier-hub-upload-plan';
 import { categoryFields, type CategoryField, type CategoryProfileInput } from '@/app/category-profiles';
-import { inspectSubmission } from '@/app/submission-review';
+import { inspectSubmission, type SubmissionIssue } from '@/app/submission-review';
 import { productImageKeys, savedTextOrFallback } from '@/app/product-content';
 import { quotationSections, type ResolvedQuotation } from '@/app/quotation-schema';
 import { quotationCsv } from '@/app/pricing';
@@ -53,6 +53,12 @@ export function quotationMappingCoverage(resolved: ResolvedQuotation, profile: C
   });
 }
 const imageKeys = (value: string) => value.split('\n').map(key => key.trim()).filter(Boolean);
+export function quotationMappingIssues(resolved: ResolvedQuotation, profile: CategoryProfileInput): SubmissionIssue[] {
+  return quotationMappingCoverage(resolved, profile).map(field => ({
+    kind: 'error', code: 'EXCEL_FIELD_UNMAPPED', optionId: null, optionLabel: '견적서 양식', fieldId: field.fieldId,
+    message: `${field.label}: ${field.required ? '필수 항목' : field.manualOptions.length ? '직접 수정한 항목' : '자동 작성 항목'}이 Excel 열에 연결되지 않았습니다. 카테고리 양식에서 열을 연결한 뒤 다시 준비해주세요.`,
+  }));
+}
 export function quotationAttachmentKeys(saved: QuotationExportSource, resolved: ResolvedQuotation) {
   const imageFields = resolved.schema.fields.filter(field => field.type === 'images');
   return [...new Set([
@@ -139,7 +145,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const review = { format: 'sourceflow-quotation-review-v1', productId: saved.product.id,
     sourceUrl: saved.product.source_url, inputFingerprint,
     quotationRevision: saved.state.revision, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
-    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys), inspectQuotationAssets(resolved, assets), 'attachment-bytes', quotationAssetIdentities(assets)),
+    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys), inspectQuotationAssets(resolved, assets), 'attachment-bytes', quotationAssetIdentities(assets), saved.profile ? quotationMappingIssues(resolved, saved.profile) : []),
   };
   const reviewRows: (string | number)[][] = [['구분', '코드', '옵션 ID', '옵션명', '필드 ID', '확인 사항'],
     ...review.issues.map(issue => [issue.kind === 'error' ? '오류' : '검토', issue.code, issue.optionId ?? '', issue.optionLabel, issue.fieldId ?? '', issue.message])];

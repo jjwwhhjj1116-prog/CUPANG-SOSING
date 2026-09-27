@@ -15,7 +15,7 @@ export type SubmissionReview = {
 };
 
 /** Readiness is derived from final saved cells, never legacy status badges. */
-export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[], imageChecks?: ReadonlyMap<string,ImageCheck>, imageCheckSource: 'storage-metadata' | 'attachment-bytes' = 'storage-metadata', assetIdentities?: ReadonlyMap<string, string>) {
+export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: readonly string[], imageChecks?: ReadonlyMap<string,ImageCheck>, imageCheckSource: 'storage-metadata' | 'attachment-bytes' = 'storage-metadata', assetIdentities?: ReadonlyMap<string, string>, additionalIssues: readonly SubmissionIssue[] = []) {
   // Bound memory while ensuring early review reminders cannot hide later errors.
   const errors: SubmissionIssue[] = [], reviews: SubmissionIssue[] = [];
   let errorCount = 0; let reviewCount = 0;
@@ -25,6 +25,7 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
     if (target.length < 1000) target.push(issue);
   };
   const general = (code: string, message: string) => add({kind:'error', code, message, optionId:null, optionLabel:'상품 공통', fieldId:null});
+  for (const issue of additionalIssues) add(issue);
   if (!resolved.schema.categoryId) general('CATEGORY_MISSING', '상품의 카테고리를 선택해주세요.');
   if (resolved.schema.status !== 'observed') general('SCHEMA_UNCONFIRMED', '선택한 카테고리의 공식 상품 속성이 아직 확인되지 않았습니다.');
   const rows = resolved.rows.filter(row => row.included);

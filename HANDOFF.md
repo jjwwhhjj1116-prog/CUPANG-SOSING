@@ -3926,3 +3926,9 @@ AI등록 화면 확인:
 - Known raw field cannot be redirected into another label by a translated heading. Conflicting raw values skip automatic adoption even if only one translation returned. Generic heading aliases retain prior behavior for unidentified raw names.
 -54 related collection/adoption/integrated tests pass, tsc/build/artifact pass. One old generic heading test used raw material for every label: corrected fixture to unidentified source for non-material heading coverage, separate redirect-rejection test added.
 - Deployed8b61de34-04f7-47c7-a665-39f47ff6e996. No live generation/source/Hub registration proof or existing product modifications. All previous fullworkflow limitations remain. No extension change.
+
+## Step 433 — Excel mapping omissions included in package review
+- Export already emitted mapping warnings but submissionReview did not count omissions; app handoff gate checks errorCount, so missing Excel fields could pass that check.
+- quotationMappingIssues now turns required/populated-auto/manual (including manual blank) missing columns into EXCEL_FIELD_UNMAPPED errors. Uses existing alias-aware mapping coverage and included options only. Injected before other review checks with shared 1000 issue cap and accurate totals. Preview and ZIP review JSON/CSV use same result. App handoff disabled via existing errorCount gate.
+- Review downloads remain available to inspect/fix templates. This is not extension/manualZIP enforcement and not proof of official template compliance. No fabricated mappings or acquired workbook claimed.
+-199 schema/field/export tests passed, tsc/build/artifact/diff passed. Deployed1412e467-ae7b-45dd-a0d2-5fec3c58af92. Existing products untouched. Wholeworkflow limitations unchanged (source, officialworkbook, POST501, no livefinalregistration proof). Preserve unrelated tests/submission-review.test.mjs.

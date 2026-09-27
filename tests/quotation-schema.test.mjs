@@ -949,6 +949,16 @@ test('downloaded quotation review matches final saved cells and preserves eviden
  assert.deepEqual(report.issues,expected.issues);assert.equal(report.errorCount,expected.errorCount);assert.equal(report.reviewCount,expected.reviewCount);
  assert.equal(report.inputFingerprint,'snapshot-fingerprint');assert.equal(report.quotationRevision,7);
  assert.equal(report.submissionReady,false);assert.equal(report.transport,'not-connected');
+ const withMissing=load('app/exports/quotation-fields.ts').quotationFieldFiles({...saved,profile:{revision:1,mappings:[]}},resolved,assets,'snapshot-fingerprint');
+ const missingReport=JSON.parse(withMissing.files.find(f=>f.name==='submission-review.json').data);
+ const mappingErrors=missingReport.issues.filter(issue=>issue.code==='EXCEL_FIELD_UNMAPPED');
+ assert.ok(mappingErrors.some(issue=>issue.fieldId==='brand'&&issue.kind==='error'));
+ assert.ok(mappingErrors.some(issue=>issue.fieldId==='msrp'));
+ assert.equal(missingReport.errorCount,report.errorCount+mappingErrors.length);
+ assert.equal(withMissing.review.errorCount,missingReport.errorCount);
+ const completeProfile={revision:2,mappings:resolved.schema.fields.map((field,column)=>({column,field:field.id}))};
+ const linked=load('app/exports/quotation-fields.ts').quotationFieldFiles({...saved,profile:completeProfile},resolved,assets,'snapshot-fingerprint');
+ assert.equal(linked.review.issues.some(issue=>issue.code==='EXCEL_FIELD_UNMAPPED'),false);
  assert.ok(report.issues.some(i=>i.code==='MSRP_EVIDENCE_REVIEW'));
  assert.ok(report.issues.some(i=>i.fieldId==='barcode'&&i.kind==='error'));
  assert.equal(report.issues.some(i=>i.optionId==='excluded'),false);
