@@ -3895,3 +3895,9 @@ AI등록 화면 확인:
 - Added content/worker RESULT request with exact app top-frame sender checks. App SubmissionPackage offers 검증 결과 불러오기 for current reviewed XLSX and displays raw status, quotation ID and observation time; validates response identity, origin, shape. Does not set submitted status or fabricate server receipts.
 - Related19unit tests passed plus final4handoff rerun, tsc/build/artifact passed. Actual rightChrome localhost4243 IndexedDB9/9 (2new persistence/isolation checks); test data only. Browser store427 holds fixture page.
 - No live actual upload/registration evidence obtained. Official XLSX remains unacquired, supplier-hubPOST501 unchanged, own1688 collection/fullcategory parity unresolved. Existing user products untouched. Extension reload required for0.2.4. Current Hub modal remains validationprogress empty.
+
+## Step 428 — same-tab reload result recovery and rejected-dispatch identity fix
+- Inspected actual1688 source code: public-page JSON-LD collector and own Alibaba API adapter exist, but ownAPI credentials/live source integration still not verified. No forbidden retry of policy-blocked1688URL throughanotherchannel. Do NOT claim collection complete.
+- Result reader accepts exact canonical saved YOOFAM64hex.xlsx filename as read-only query identity, so DOM attempt-marker loss on same-tab reload no longer prevents result reading. Wrong file matches still not-found; no auto upload/revalidation.
+- Fixed popup saving attempt identity before attachment refusal: now writes only after dispatched state, so rejected/partial attempt cannot overwrite previous product link. Lost response remains unresolved; newtab/browserrestartID recovery not implemented.
+- Related20 tests plus2actual-popup-module VM tests passed (22); typecheck/build/artifact/diff checked. Extension0.2.5 built. No live actual upload/receipt or fullworkflowverified. Existing workproductsuntouched.

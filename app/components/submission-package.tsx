@@ -99,7 +99,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <button type="button" className="btn primary" disabled={busy||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>Supplier Hub 확장으로 파일 준비</button>
       <button type="button" className="btn ghost" disabled={busy||!categoryId||!preview.filename.endsWith('.xlsx')} onClick={()=>void run('result')}>Supplier Hub 검증 결과 불러오기</button>
       {hubResult&&<div role="status"><strong>{hubResult.state==='not-found'?'검증 목록에서 아직 찾지 못했습니다.':`견적서 검증: ${hubResult.status||'상태 미표시'}`}</strong><p>견적서 ID: {hubResult.quotationId||'미표시'} · 결과 확인 시각: {new Date(hubResult.observedAt).toLocaleString('ko-KR')}</p>{hubResult.detail&&<p>{hubResult.detail}</p>}<p>현재 검토한 견적서 파일의 결과입니다. 상품별 등록 완료는 아직 확인되지 않았습니다.</p></div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.4.zip" download>첨부 확장 다운로드 (0.2.4)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.5.zip" download>첨부 확장 다운로드 (0.2.5)</a>
     </>}
   </section>;
 }
