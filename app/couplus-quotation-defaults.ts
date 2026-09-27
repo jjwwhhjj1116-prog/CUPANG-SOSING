@@ -1,4 +1,10 @@
-// User-supplied Couplus quotation screenshots 15–23, category 80719 only.
+// User-supplied Couplus screenshots 14–23, category 80719 only.
+// Stage-six defaults are reviewable draft text, not verified product facts.
+export function couplusLabelDefaults(categoryId: string | null): Readonly<Record<string, string>> {
+  return categoryId === '80719' ? {
+    countryOfOrigin: '중국', precautions: '용도 외에 사용금지. 파손및화기주의', usageStandard: '14세이상',
+  } : {};
+}
 // These are form defaults, not verified facts about the sourced product.
 const notApplicable80719 = new Set([
   'color','quantity','size','lidIncluded','heightAdjustable','basketShape','storageMaterial',

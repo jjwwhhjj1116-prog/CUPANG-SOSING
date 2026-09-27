@@ -68,3 +68,27 @@ test('cleared SEO title cannot resurrect the old product name in label autofill'
  content.seo.title={value:'새 품명',provenance:'manual',updatedAt:'next'};
  assert.equal(fillLabelDraft(draftOf(content),content,'이전 상품명',{}).label.productName,'새 품명');
 });
+
+test('80719 observed label defaults prepare only untouched review text and require explicit save',()=>{
+ const content=emptyProductContent('p'),before=JSON.stringify(content);
+ const next=fillLabelDraft(draftOf(content),content,'상품',{},'80719');
+ assert.equal(next.label.countryOfOrigin,'중국');assert.equal(next.label.usageStandard,'14세이상');
+ assert.equal(next.label.precautions,'용도 외에 사용금지. 파손및화기주의');assert.equal(next.referenceFields.length,3);
+ assert.equal(JSON.stringify(content),before);
+ for(const category of [null,'81452','103495','80720','unknown']){
+  const other=fillLabelDraft(draftOf(content),content,'상품',{},category);
+  assert.equal(other.label.countryOfOrigin,'');assert.equal(other.label.precautions,'');assert.equal(other.label.usageStandard,'');
+ }
+ const saved=applyContentPatch(content,{label:next.label},'now');
+ assert.equal(documentImagePlan('label',saved,{productId:'p'}).rows.find(row=>row[0]==='사용 기준')[1],'14세이상');
+});
+
+test('observed label defaults preserve sourced facts, explicit blanks and unsaved edits',()=>{
+ const content=emptyProductContent('p');
+ content.label.countryOfOrigin={value:'대한민국',provenance:'collected',updatedAt:'now'};
+ content.label.usageStandard={value:'',provenance:'manual',updatedAt:'now'};
+ const draft=draftOf(content);draft.precautions='사용자가 입력 중인 주의사항';
+ const next=fillLabelDraft(draft,content,'상품',{},'80719');
+ assert.equal(next.label.countryOfOrigin,'대한민국');assert.equal(next.label.usageStandard,'');assert.equal(next.label.precautions,draft.precautions);
+ assert.equal(next.referenceFields.length,0);
+});

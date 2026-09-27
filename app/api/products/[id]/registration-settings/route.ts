@@ -18,16 +18,19 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
     const stored = await getSettings(owner);
     let settings = savedRegistrationSettings(stored ? JSON.parse(stored.payload) : null);
     let source: 'collection' | 'workspace' = 'workspace';
+    let categoryId: string | null = null;
     let offerId: string | null = null;
     try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* Legacy non-1688 source. */ }
     if (offerId) {
       const captured = await readQuotationCollectionSource(owner, offerId, id);
       if (captured?.linked) {
-        settings = collectionRegistrationSettings(settings, JSON.parse(captured.payload)?.settings);
+        const context = JSON.parse(captured.payload);
+        settings = collectionRegistrationSettings(settings, context?.settings);
+        categoryId = typeof context?.category?.categoryId === 'string' ? context.category.categoryId : null;
         source = 'collection';
       }
     }
     // Only the fields needed by label autofill leave this endpoint.
-    return json({ productId: id, source, settings: { manufacturer: settings.manufacturer, importer: settings.importer, serviceContact: settings.serviceContact } });
+    return json({ productId: id, source, categoryId, settings: { manufacturer: settings.manufacturer, importer: settings.importer, serviceContact: settings.serviceContact } });
   } catch { return json({ error: '상품에 연결된 등록 기본설정을 읽지 못했습니다.' }, 503); }
 }

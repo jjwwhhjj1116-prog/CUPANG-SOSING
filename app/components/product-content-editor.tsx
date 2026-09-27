@@ -120,13 +120,13 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     setBusy(true); setError(''); setMessage('');
     try {
       const response = await fetch(`/api/products/${encodeURIComponent(product.id)}/registration-settings`, { cache: 'no-store', signal:controller.signal });
-      const body = await response.json() as { settings?: unknown; error?: string };
+      const body = await response.json() as { settings?: unknown; categoryId?: string | null; error?: string };
       if(controller.signal.aborted)return;
       if (!response.ok) throw new Error(body.error || '저장된 기본설정을 읽지 못했습니다.');
-      const next = fillLabelDraft(draft.label, content, product.title, body.settings);
+      const next = fillLabelDraft(draft.label, content, product.title, body.settings, body.categoryId ?? null);
       setDraft(previous => ({ ...previous, label: next.label }));
       setMessage(next.filled.length
-        ? `${next.filled.map(key => labelFields[key]).join(' · ')} 입력을 채웠습니다. 실제 상품과 대조한 뒤 표시사항을 저장하면 PNG와 견적 자료에 반영됩니다.`
+        ? `${next.filled.map(key => labelFields[key]).join(' · ')} 입력을 채웠습니다. 실제 상품과 대조한 뒤 표시사항을 저장하면 PNG와 견적 자료에 반영됩니다.${next.referenceFields.length ? ` ${next.referenceFields.map(key => labelFields[key]).join(' · ')}은 쿠플러스 참조 화면의 기본값이며 이 상품에서 확인된 정보는 아닙니다.` : ''}`
         : '채울 수 있는 빈 항목이 없습니다. 직접 입력·직접 비운 항목은 보존했습니다.');
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '기본설정 반영 실패'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }

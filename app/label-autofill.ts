@@ -1,9 +1,11 @@
+import { couplusLabelDefaults } from '@/app/couplus-quotation-defaults';
 import { savedTextOrFallback, type LabelField, type ProductContent } from '@/app/product-content';
 
-/** Only explicit saved settings may fill untouched fields; never use demo defaults. */
-export function fillLabelDraft(draft: Record<LabelField, string>, content: ProductContent, productTitle: string, settings: unknown) {
+/** Fill untouched review drafts from saved inputs and category-scoped observed defaults. */
+export function fillLabelDraft(draft: Record<LabelField, string>, content: ProductContent, productTitle: string, settings: unknown, categoryId: string | null = null) {
   const stored = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings as Record<string, unknown> : {};
   const candidates: Partial<Record<LabelField, unknown>> = {
+    ...couplusLabelDefaults(categoryId),
     productName: savedTextOrFallback(content.seo.title, productTitle).trim(),
     manufacturer: stored.manufacturer, importer: stored.importer, contact: stored.serviceContact,
   };
@@ -14,5 +16,5 @@ export function fillLabelDraft(draft: Record<LabelField, string>, content: Produ
     if (typeof value !== 'string' || !value.trim() || value.length > 2000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value)) continue;
     label[key] = value.trim(); filled.push(key);
   }
-  return { label, filled };
+  return { label, filled, referenceFields: filled.filter(key => Object.hasOwn(couplusLabelDefaults(categoryId), key)) };
 }

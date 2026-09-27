@@ -32,3 +32,11 @@ test('authentication, ownership and unavailable source stop before misleading de
  const missing=api({product:false});assert.equal((await missing.get()).status,404);assert.equal(missing.calls.length,1);
  for(const opts of [{fail:true},{captured:{linked:true,payload:'invalid'}}])assert.equal((await api(opts).get()).status,503);
 });
+
+test('label category defaults are scoped to this product linked context only',async()=>{
+ for(const linked of [false,true]){
+  const body=await(await api({captured:{linked,payload:JSON.stringify({category:{categoryId:'80719'},settings:{}})}}).get()).json();
+  assert.equal(body.categoryId,linked?'80719':null);
+ }
+ assert.equal((await(await api().get()).json()).categoryId,null);
+});

@@ -110,3 +110,20 @@ test('cross-stage image move removes only the saved duplicate and preserves unre
  const patch=imageStagePatch(initial,draft,'additional');assert.deepEqual(JSON.parse(JSON.stringify(patch)),{main:[],additional:['owner/a.png']});
  const saved={...initial,...patch};const next=mergeSavedImageStage(initial,draft,saved,'additional');assert.deepEqual(Array.from(next.main),['owner/b.png']);assert.deepEqual(Array.from(next.detail),['owner/c.png']);assert.deepEqual(Array.from(next.additional),['owner/a.png']);
 });
+
+test('category label defaults appear for review and reach quotation only after explicit label save',async()=>{
+ let saved,writes=0;
+ const h=harness((url,init,content)=>{
+  if(url.endsWith('/registration-settings'))return Response.json({categoryId:'80719',settings:{}});
+  if(init?.method==='PATCH'){writes++;saved=h.model.applyContentPatch(content,JSON.parse(init.body).patch,'now');return Response.json({content:saved});}
+ },undefined,true);
+ await h.start();h.render('표시사항');await h.flush();
+ assert.equal(writes,0);assert.match(JSON.stringify(h.render('표시사항')),/쿠플러스 참조 화면의 기본값/);
+ assert.ok(nodes(h.render('표시사항')).some(n=>n.type==='textarea'&&n.props.value==='중국'));
+ // The owner can correct the reference country before saving; stage seven uses that correction.
+ nodes(h.render('표시사항')).find(n=>n.type==='textarea'&&n.props.value==='중국').props.onChange({target:{value:'대한민국'}});
+ h.button('표시사항 저장','표시사항').props.onClick();await settle();assert.equal(writes,1);
+ const resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:{id:'p',title:'상품',image_keys:'[]',source_price_cny:1,supply_price:1,sale_price:2,msrp:3},content:saved,options:h.load('app/product-options.ts').emptyProductOptions('p'),settings:h.load('app/workspace-settings.ts').defaultSettings});
+ assert.equal(resolved.rows[0].fields.noticeCountryOfOrigin.value,'대한민국');assert.equal(resolved.rows[0].fields.noticeCountryOfOrigin.source,'content');
+ h.unmount();
+});

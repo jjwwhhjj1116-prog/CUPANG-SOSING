@@ -3238,3 +3238,10 @@ AI등록 화면 확인:
 - Recovery exposes only the existing click-to-open editor. It does not submit, collect, send to Supplier Hub, change draft status or mark image processing complete. Explicit transient product links and legacy saved-row navigation remain supported.
 - Validation: intake queue/navigation/draft suites 20/20; TypeScript, production build, Cloudflare artifact check and diff check passed. UI test verifies restored draft opens existing editor without requests and input changes remove the recovered link.
 - Deployed 9e185b3f-956f-457f-9f49-b511a15ac485. Existing Chrome tabs.list again returned []; no live Couplus or 1688 comparison performed. Actual comprehensive 1688 collection, full category defaults, image translation and Supplier Hub automatic registration remain incomplete; this change does not establish parity.
+
+## 315 — Observed 80719 stage-six label draft defaults (2026-09-27)
+- User screenshot 14 shows country China, precautions and usage standard in the label form. Added these three exact reference strings only for captured category 80719. They are reviewable form defaults, not inferred product facts or universal category rules.
+- Owner-scoped registration-settings returns categoryId only from this product linked collection context. No category inference from title/URL or another unlinked request.
+- Label entry fills untouched blank draft fields; sourced text, existing manual values, explicit manual blanks and unsaved edits remain. Message distinguishes reference values from confirmed facts. No automatic save or transmission; explicit save feeds existing document and quotation resolvers.
+- Validation: label autofill, registration-settings API and content editor suites 20/20, including corrected country reaching quotation after explicit save. TypeScript, production build/artifact check and diff check passed.
+- Deployed b854b529-eab5-4ad0-a465-5a632526bd57. Chrome tabs.list returned [] again; live all-category comparison unavailable. Full 1688 extraction, all category parity, image translation and automatic Supplier Hub registration remain incomplete.
