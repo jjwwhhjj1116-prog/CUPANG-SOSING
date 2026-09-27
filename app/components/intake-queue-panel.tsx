@@ -72,10 +72,17 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   async function submit() {
     if (running.current || !pending || settingsChanged) return;
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
+    const productIds = new Map<string,string>();
+    const completed = new Set<string>();
     try {
       await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{setSettingsChanged(true);setSettingsMessage('');}, selectedIds: new Set(selected.map(row => row.id)),
         collect: (job,onProgress,onProduct) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,onJob:updated=>{onJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress}),
-        onRow: (id, patch) => onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row)), onJobs });
+        onRow: (id, patch) => {if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row));}, onJobs });
+      // Open only a confirmed single draft after import and SEO finish. Batch
+      // processing and partially failed drafts stay in the editable queue.
+      const single=selected.length===1?selected[0]:undefined;
+      const productId=single&&completed.has(single.id)?productIds.get(single.id):undefined;
+      if(productId&&onOpenProduct&&!controller.signal.aborted)await onOpenProduct(productId,controller.signal);
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { running.current = null; if (!controller.signal.aborted) { setBusy(false); onBusy(false); } }
   }
@@ -101,10 +108,10 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       </tr>; })}
     </tbody></table>{rows.length > 0 && !visible.length && <p className="collection-empty">검색 결과가 없습니다. 검색을 해제하면 입력한 상품을 다시 볼 수 있습니다.</p>}{!rows.length && <p className="collection-empty">대기열이 비어있습니다. [+ 상품 추가] 버튼으로 카테고리를 선택해주세요.</p>}</div>
     {previewRow && <div><button type="button" className="btn ghost" onClick={() => setPreviewId(null)}>견적 연결 미리보기 닫기</button><IntakeQuotationPreview profile={previewRow.profile}/></div>}
-    <fieldset className="goal-list" disabled={busy}><legend>어디까지 진행할까요?</legend>{[
-      ['collect', '상품추가', '원문·옵션·가격 수집을 요청합니다.'], ['price', 'SEO+가격', '수집 후 번역·가격 단계까지의 작업 목표를 저장합니다.'],
-      ['work', '작업개시', '이미지·한글표시사항·견적서까지의 작업 목표를 저장합니다.'], ['transmit', '등록전송', '최종 등록 목표를 저장합니다. 현재 실제 전송은 연결되지 않았습니다.'],
-    ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={goal === id} onChange={() => onGoal(id)} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
+    <fieldset className="goal-list" disabled={busy}><legend>상품 초안 작성</legend>{[
+      ['price', 'SEO·가격 초안 작성', '상품정보를 가져와 초안을 작성합니다. 저장 후 1~7단계에서 확인·수정하세요.'],
+      ['collect', '상품정보만 가져오기', '원문·옵션·가격을 가져오고 SEO 작성은 나중에 진행합니다.'],
+    ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={(goal==='collect'?'collect':'price') === id} onChange={() => onGoal(id)} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
     <p className="collection-notice">{collectionBlock}</p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
     {selected.some(row => !visible.some(item => item.id === row.id)) && <p className="collection-notice">검색으로 숨겨진 선택 상품도 함께 처리합니다. 선택 {pending}건 중 숨겨진 상품 {selected.filter(row => !visible.some(item => item.id === row.id)).length}건</p>}
     {settingsChanged&&<div className="panel-note"><p>기본설정이 변경돼 남은 상품 처리를 멈췄습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reloadSettings()}>최신 기본설정 불러오기</button></div>}
