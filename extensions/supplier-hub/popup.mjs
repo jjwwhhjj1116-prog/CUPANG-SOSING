@@ -3,6 +3,7 @@ import {attachToSupplierHub} from './attach.mjs';
 import {pendingPackage,transferRecord,resultKey} from './handoff-store.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
 import {readSupplierHubValidation} from './result.mjs';
+import {readSupplierHubRegistration} from './registration-result.mjs';
 const picker=document.querySelector('#package'),button=document.querySelector('#attach'),status=document.querySelector('#status'),summary=document.querySelector('#summary');
 let prepared=null,sequence=0,pendingFingerprint=null,pendingExpires=0;
 let packageIdentity=null;
@@ -23,6 +24,25 @@ async function loadPending(){
 void loadPending();
 const validateButton=document.querySelector('#validate');
 const resultButton=document.querySelector('#result');
+const registrationButton=document.querySelector('#registration-result');
+registrationButton.addEventListener('click',async()=>{
+  if(registrationButton.disabled||picker.disabled)return;
+  ++sequence;registrationButton.disabled=true;picker.disabled=true;button.disabled=true;validateButton.disabled=true;resultButton.disabled=true;
+  try{
+    const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+    if(!tab?.id||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/wims')throw Error('파일을 전달한 같은 탭에서 상품 등록 상태 확인 화면을 열어주세요.');
+    const identity=await transferRecord('get',`attempt:${tab.id}`);
+    if(!identity)throw Error('이 탭에서 전달한 상품 정보가 없습니다.');
+    const key=resultKey(identity),saved=await transferRecord('get',key);
+    if(saved?.state!=='validation-complete'||!saved.quotationId||saved.filename!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('먼저 대량 상품 등록 화면에서 해당 파일의 검증 완료 결과와 견적서 ID를 확인해주세요.');
+    const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubRegistration,args:[saved.quotationId]});
+    const result=execution?.result;
+    if(!result||result.quotationId!==saved.quotationId||result.scope!=='visible-page'||result.registered!==false||!Array.isArray(result.rows))throw Error('상품별 결과를 확인하지 못했습니다.');
+    await transferRecord('put',key,{...saved,registration:{...result,observedAt:Date.now()}});
+    status.textContent=`견적서 ID: ${result.quotationId}\n현재 페이지에서 ${result.rows.length}개 확인\n`+result.rows.map(row=>`${row.title}: ${row.status} · ${row.stage} · SKU ${row.skuId||'미표시'}`).join('\n')+'\n현재 페이지의 결과이며 전체 옵션의 등록 완료를 뜻하지 않습니다.';
+  }catch(error){status.textContent=error.message;}
+  finally{registrationButton.disabled=false;picker.disabled=false;button.disabled=!prepared;validateButton.disabled=false;resultButton.disabled=false;}
+});
 resultButton.addEventListener('click',async()=>{
   if(resultButton.disabled||validateButton.disabled||picker.disabled)return;
   ++sequence;resultButton.disabled=true;validateButton.disabled=true;button.disabled=true;picker.disabled=true;

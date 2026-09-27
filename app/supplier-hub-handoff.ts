@@ -17,13 +17,24 @@ function exchange(type:'PING'|'PREPARE'|'RESULT',payload:unknown,signal:AbortSig
   });
 }
 export async function checkSupplierHubExtension(signal:AbortSignal){await exchange('PING',null,signal);}
-export type SupplierHubResult={state:string;filename:string;submittedAt?:string;status?:string;detail?:string;quotationId?:string;observedAt:number;registered:false};
+export type SupplierHubRegistrationRow={title:string;submittedAt:string;category:string;barcode:string;sourceQuotation:string;skuId:string;status:string;stage:string};
+export type SupplierHubRegistration={quotationId:string;scope:'visible-page';registered:false;observedAt:number;rows:SupplierHubRegistrationRow[]};
+export type SupplierHubResult={state:string;filename:string;submittedAt?:string;status?:string;detail?:string;quotationId?:string;observedAt:number;registered:false;registration?:SupplierHubRegistration};
+export function validateRegistrationResult(value:unknown,quotationId:unknown):SupplierHubRegistration{
+  const result=value as SupplierHubRegistration;
+  if(!result||typeof quotationId!=='string'||!quotationId.trim()||result.quotationId!==quotationId||result.scope!=='visible-page'||result.registered!==false||!Number.isFinite(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000||!Array.isArray(result.rows)||result.rows.length>1000||result.rows.some(row=>!row||['title','submittedAt','category','barcode','sourceQuotation','skuId','status','stage'].some(key=>typeof row[key as keyof SupplierHubRegistrationRow]!=='string'||row[key as keyof SupplierHubRegistrationRow].length>20000)))throw new Error('현재 견적서의 상품별 등록 결과인지 확인하지 못했습니다.');
+  return result;
+}
 export async function getSupplierHubResult(identity:PackageIdentity,signal:AbortSignal):Promise<SupplierHubResult|null>{
   const response=await exchange('RESULT',identity,signal);
   if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new Error('견적서 결과의 식별값이 일치하지 않습니다.');
   if(response.record===null)return null;
   const record=response.record as Record<string,unknown>;
   if(!record||record.origin!==window.location.origin||record.productId!==identity.productId||record.categoryId!==identity.categoryId||record.fingerprint!==identity.fingerprint||record.filename!==`YOOFAM-${identity.fingerprint}.xlsx`||record.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(String(record.state))||typeof record.observedAt!=='number'||!Number.isFinite(record.observedAt)||record.observedAt<=0||record.observedAt>Date.now()+60000||['submittedAt','status','detail','quotationId'].some(key=>record[key]!==undefined&&(typeof record[key]!=='string'||String(record[key]).length>20000)))throw new Error('검토한 상품의 검증 결과인지 확인하지 못했습니다.');
+  if(record.registration!==undefined){
+    if(record.state!=='validation-complete')throw new Error('파일 검증 완료 결과가 필요합니다.');
+    validateRegistrationResult(record.registration,record.quotationId);
+  }
   return record as SupplierHubResult;
 }
 export async function prepareSupplierHubHandoff(blob:Blob,identity:PackageIdentity,signal:AbortSignal){

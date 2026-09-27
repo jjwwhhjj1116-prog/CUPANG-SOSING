@@ -13,6 +13,12 @@ function harness(reply){
   return {api:exports,sent,listeners,timers,expire(){for(const cb of [...timers])cb();}};
 }
 const identity={productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+test('registration evidence stays bound to quotation ID and a bounded visible page',()=>{
+ const api=harness().api;
+ const value={quotationId:'123',scope:'visible-page',registered:false,observedAt:Date.now(),rows:[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId:'1',status:'상품 검수 완료',stage:'발주서 발행'}]};
+ assert.equal(api.validateRegistrationResult(value,'123').registered,false);
+ for(const patch of [{quotationId:'other'},{scope:'all'},{registered:true},{observedAt:Infinity},{rows:[{}]},{rows:Array(1001).fill(value.rows[0])}])assert.throws(()=>api.validateRegistrationResult({...value,...patch},'123'));
+});
 test('web package handoff sends exact reviewed identity and bytes, cleans listeners',async()=>{
   const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
   await h.api.checkSupplierHubExtension(new AbortController().signal);
