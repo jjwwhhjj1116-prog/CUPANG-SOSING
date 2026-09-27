@@ -3267,3 +3267,10 @@ AI등록 화면 확인:
 - Stage seven already resolves the option image before the common main image; null restores common selection. No image generation or translation is claimed by this change.
 - Validation: option component/model/API and DetailPanel suites 24/24; TypeScript, production build, Cloudflare artifact and diff checks passed. Tests cover image-only save with unsaved price/name and missing target/explicit clear. No live browser visual comparison this turn.
 - Deployed ed529ee1-bb56-4bee-9c9d-f3cf7557212d. Comprehensive actual 1688 extraction, all-category Couplus parity, image translation and Supplier Hub automatic registration remain incomplete.
+
+## 319 — Initialize linked label fields when collection draft is created (2026-09-27)
+- prepareCollectionProduct now uses the existing label autofill rules before the product/content/options transaction. New source drafts immediately include the linked SEO product name and screenshot-confirmed 80719 country/precautions/usage-standard defaults, instead of requiring a visit and save in stage six first.
+- Defaults carry generated provenance, remain reviewable and do not mark label generation or registration complete. Other categories do not inherit 80719 values. Captured explicit business-setting blanks remain manual and are preserved.
+- Stage-seven resolver consumes the prepared label fields. Later linked SEO edits update product name; existing idempotent promotion preserves manual corrections and explicit blanks on retries.
+- Validation: collection preparation/storage/API suite 20/20, including draft-to-quotation linkage, subsequent SEO edit, category isolation and retry preservation; TypeScript and Cloudflare build/artifact/diff checks passed.
+- Deployed 970b344c-aedd-4c5d-9947-b173cf6b9a47. Existing Chrome returned zero tabs. No live Couplus comparison or actual 1688 product collection verified. Full category matching, comprehensive 1688 import, image translation and Supplier Hub automatic registration remain incomplete.

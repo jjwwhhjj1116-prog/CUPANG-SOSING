@@ -187,3 +187,41 @@ test('stored target keyword draft survives promotion retry after manual SEO edit
  await s.promoteCollection('owner',captured,result);assert.deepEqual(read().seo.keywords.value,[]);
  } finally {s.sqlite.close();}
 });
+
+test('collection creates category-scoped review defaults before opening stage six and keeps SEO name linked',()=>{
+ const captured={...job,context:{...job.context,category:{...job.context.category,categoryId:'80719'}}};
+ const prepared=prepare('owner',captured,result,'p',now);
+ assert.equal(prepared.content.label.productName.value,result.title);
+ assert.equal(prepared.content.labelProductNameLinked,true);
+ assert.equal(prepared.content.label.countryOfOrigin.value,'중국');
+ assert.equal(prepared.content.label.precautions.value,'용도 외에 사용금지. 파손및화기주의');
+ assert.equal(prepared.content.label.usageStandard.value,'14세이상');
+ assert.equal(prepared.content.label.countryOfOrigin.provenance,'generated');
+ assert.equal(prepared.content.label.material.value,'');
+ const resolve=load('app/quotation-schema.ts').resolveQuotationFields;
+ const quote=content=>resolve({categoryId:'80719',product:prepared.product,content,options:prepared.options,settings});
+ assert.equal(quote(prepared.content).rows[0].fields.noticeCountryOfOrigin.value,'중국');
+ const {applyContentPatch}=load('app/product-content.ts');
+ const updated=applyContentPatch(prepared.content,{seo:{title:'검토한 상품명'}},'2026-01-02T00:00:00Z');
+ assert.equal(updated.label.productName.value,'검토한 상품명');
+ assert.equal(quote(updated).rows[0].fields.noticeNameModel.value,'검토한 상품명');
+ assert.equal(prepared.product.supplier_hub_status,'미전송');
+ for(const categoryId of [undefined,'81452','unverified']){
+  const other=prepare('owner',{...captured,context:{...captured.context,category:{...captured.context.category,categoryId}}},result,'p',now);
+  assert.equal(other.content.label.countryOfOrigin.value,'');assert.equal(other.content.label.precautions.value,'');assert.equal(other.content.label.usageStandard.value,'');
+ }
+});
+
+test('retrying imported source never restores defaults over reviewed label or explicit blank',async()=>{
+ const s=storage();try{
+  const captured={...job,context:{...job.context,category:{...job.context.category,categoryId:'80719'}}};
+  s.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(captured.context),job.id);
+  const saved=await s.promoteCollection('owner',captured,result);
+  const content=JSON.parse(s.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(saved.product_id).payload);
+  content.label.countryOfOrigin={value:'',provenance:'manual',updatedAt:now};content.label.productName={value:'검토 완료 품명',provenance:'manual',updatedAt:now};content.labelProductNameLinked=false;
+  s.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(content),saved.product_id);
+  await s.promoteCollection('owner',captured,result);
+  const current=JSON.parse(s.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(saved.product_id).payload);
+  assert.equal(current.label.countryOfOrigin.value,'');assert.equal(current.label.productName.value,'검토 완료 품명');assert.equal(current.labelProductNameLinked,false);
+ }finally{s.sqlite.close();}
+});
