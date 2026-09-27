@@ -28,15 +28,15 @@ test('single completed URL draft opens editing after collection; failures and ba
  }
 });
 function harness(open, collect){
- const slots=[],cleanups=[],calls=[],changes=[];let index=0,first=true,settings,rows,jobContext;
+ const slots=[],cleanups=[],calls=[],changes=[],busy=[];let index=0,first=true,settings,rows,jobContext;
  const hooks={useState(v){const i=index++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return[slots[i],v=>slots[i]=typeof v==='function'?v(slots[i]):v];},useRef(v){const i=index++;return slots[i]??(slots[i]={current:v});},useEffect(fn){if(first){const cleanup=fn();if(cleanup)cleanups.push(cleanup);}}};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,crypto,fetch:async(url,init)=>{calls.push({url,init});if(collect){const body=JSON.parse(init.body);return Response.json({jobs:[{id:'job-'+body.urls[0],source_url:body.urls[0],offer_id:body.urls[0].match(/offer\/(\d+)/)[1],status:'awaiting_connector'}],preservedRequests:[]});}return url==='/api/settings'?Promise.reject(Error('unexpected request')):Response.json({code:'REGISTRATION_SETTINGS_CHANGED',error:'기본설정 변경'},{status:409});},require(name){if(name==='react')return hooks;if(name==='@/app/components/category-picker')return{CategoryPicker:()=>null};if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};if(name==='@/app/intake-collection')return{collectIntakeProduct:collect??(async()=>{throw Error('must not collect');})};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  settings=load('app/workspace-settings.ts').savedRegistrationSettings({brand:'이전',exchangeRate:190});
  rows=[1,2].map(n=>({id:String(n),profile:{id:'00000000-0000-0000-0000-000000000001',revision:1,categoryId:'80719',categoryPath:['주방','바스켓']},url:`https://detail.1688.com/offer/${n}.html`,features:'입력 특징',keywords:'입력 키워드',status:n===1?'saved':'draft',productId:n===1?'p1':undefined,message:''}));
  const Component=load('app/components/intake-queue-panel.tsx').IntakeQueuePanel;
- const render=()=>{index=0;const tree=Component({rows,settings,profiles:[],jobs:[{source_url:rows[0].url,product_id:'p1',status:'awaiting_connector',context:jobContext}],onOpenProduct:open,onRows:update=>rows=update(rows),onProfile(){},onAdvanced(){},onJobs(){},onBusy(){},goal:'price',onGoal(){},onSettingsReloaded:value=>{settings=value;changes.push(value);}});first=false;return tree;};
+ const render=()=>{index=0;const tree=Component({rows,settings,profiles:[],jobs:[{source_url:rows[0].url,product_id:'p1',status:'awaiting_connector',context:jobContext}],onOpenProduct:open,onRows:update=>rows=update(rows),onProfile(){},onAdvanced(){},onJobs(){},onBusy:value=>busy.push(value),goal:'price',onGoal(){},onSettingsReloaded:value=>{settings=value;changes.push(value);}});first=false;return tree;};
  const button=text=>nodes(render()).find(n=>n.type==='button'&&String(n.props.children).includes(text));
- return{render,button,calls,changes,setJobContext(value){jobContext=value;},get rows(){return rows;},get settings(){return settings;},close(){cleanups.forEach(fn=>fn());}};
+ return{render,button,calls,changes,busy,setJobContext(value){jobContext=value;},get rows(){return rows;},get settings(){return settings;},close(){cleanups.forEach(fn=>fn());}};
 }
 
 test('saved row opens its existing editor only on click; double click is coalesced and other inputs survive',async()=>{
@@ -70,4 +70,17 @@ test('restored pending row opens matching server product without collecting or s
  assert.deepEqual(opened,['p1']);assert.equal(h.calls.length,0);assert.equal(h.rows[0].status,'draft');
  nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 특징').props.onChange({target:{value:'다른 특징'}});
  assert.equal(h.button('1~7단계 확인'),undefined);
+});
+
+test('opening a saved draft locks its parent and releases exactly once on success, error or unmount',async()=>{
+ for(const outcome of ['success','error','unmount']){
+  let resolve,reject;const waiting=new Promise((a,b)=>{resolve=a;reject=b;});
+  const h=harness(()=>waiting);
+  const click=h.button('1~7단계 확인').props.onClick;click();click();await settle();
+  assert.deepEqual(h.busy,[true]);
+  if(outcome==='unmount'){h.close();assert.deepEqual(h.busy,[true,false]);}
+  if(outcome==='error')reject(Error('read failed'));else resolve();
+  await settle();assert.deepEqual(h.busy,[true,false]);
+  assert.equal(h.calls.length,0);
+ }
 });

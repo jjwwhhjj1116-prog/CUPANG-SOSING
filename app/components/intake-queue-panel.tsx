@@ -35,7 +35,21 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const input = urlInputs.current.get(focusRow.current);
     if (input) { input.focus(); input.scrollIntoView({ block: 'nearest', inline: 'nearest' }); focusRow.current = null; }
   }, [rows, categoryTarget, busy]);
-  useEffect(() => () => running.current?.abort(), []);
+  useEffect(() => () => {
+    const controller = running.current;
+    if (!controller) return;
+    running.current = null;
+    controller.abort();
+    onBusy(false);
+  }, []);
+  function finish(controller: AbortController) {
+    // A closed queue may already have released its parent lock. A late result
+    // must not unlock another operation started since then.
+    if (running.current !== controller) return;
+    running.current = null;
+    onBusy(false);
+    if (!controller.signal.aborted) setBusy(false);
+  }
   const visible = visibleIntakeRows(rows, query);
   const pendingRows = rows.filter(row => row.status !== 'saved');
   const selected = pendingRows.filter(row => !excluded.includes(row.id));
@@ -51,10 +65,10 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   }
   async function openSavedProduct(id:string) {
     if(running.current || !onOpenProduct)return;
-    const controller=new AbortController();running.current=controller;setBusy(true);setError('');
+    const controller=new AbortController();running.current=controller;setBusy(true);onBusy(true);setError('');
     try { await onOpenProduct(id,controller.signal); }
     catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'저장된 상품을 열지 못했습니다. 다시 시도해주세요.');}
-    finally{if(running.current===controller)running.current=null;if(!controller.signal.aborted){setBusy(false);}}
+    finally { finish(controller); }
   }
   async function reloadSettings() {
     if(running.current)return;
@@ -67,7 +81,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       const settings=savedRegistrationSettings((body as {settings:unknown}).settings);
       onSettingsReloaded(settings);setSettingsChanged(false);setSettingsMessage('최신 기본설정을 불러왔습니다. URL·카테고리와 처리할 상품 선택은 유지됩니다. 시작을 누르면 남은 상품을 처리합니다.');
     }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'기본설정 조회 실패');}
-    finally{if(running.current===controller)running.current=null;if(!controller.signal.aborted){setBusy(false);onBusy(false);}}
+    finally { finish(controller); }
   }
   async function submit() {
     if (running.current || !pending || settingsChanged) return;
@@ -84,7 +98,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       const productId=single&&completed.has(single.id)?productIds.get(single.id):undefined;
       if(productId&&onOpenProduct&&!controller.signal.aborted)await onOpenProduct(productId,controller.signal);
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
-    finally { running.current = null; if (!controller.signal.aborted) { setBusy(false); onBusy(false); } }
+    finally { finish(controller); }
   }
   if (categoryTarget) return <div><button type="button" className="btn ghost" onClick={() => setCategoryTarget(null)}>← 상품 대기열</button><CategoryPicker profiles={profiles} selectedId={rows.find(row => row.id === categoryTarget)?.profile.id ?? ''} onAdvanced={onAdvanced} onSelected={profile => {
     onProfile(profile);
