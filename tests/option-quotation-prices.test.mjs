@@ -9,14 +9,14 @@ const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...no
 const settle=async()=>{for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));};
 const view=()=>({revision:1,inputFingerprint:'a'.repeat(64),productVersion:'v',imageKeys:[],categoryContext:{categoryId:'80719',categoryPath:['주방']},overrides:{common:{},options:{}},resolved:{schema:{fields:['supplyPrice','salePrice','msrp'].map(id=>({id,label:id,type:'number',min:1,integer:true}))},rows:[{optionId:'red',optionLabel:'빨강',included:true,fields:Object.fromEntries(['supplyPrice','salePrice','msrp'].map((id,i)=>[id,{value:String((i+1)*100),source:'pricing'}]))}]},automatic:{rows:[{optionId:'red',fields:{supplyPrice:{value:'100'},salePrice:{value:'200'},msrp:{value:'300'}}}]}});
 function harness(fetcher){
- const slots=[],effects=[],calls=[];let cursor=0,saved=0,version='v';
+ const slots=[],effects=[],calls=[];let cursor=0,saved=0,version='v',refreshToken='0';
  const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>slots[i]=typeof v==='function'?v(slots[i]):v];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){const i=cursor++;if(!slots[i]||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){slots[i]?.cleanup?.();slots[i]={deps};effects.push(()=>slots[i].cleanup=fn());}}};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,fetch:async(url,init)=>{calls.push({url,init});return fetcher(url,init);},require(name){if(name==='react')return react;return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  const Component=load('app/components/option-quotation-prices.tsx').OptionQuotationPrices;
- const render=()=>{cursor=0;const tree=Component({productId:'p',version,profileId:'profile',onSaved(){saved++;}});effects.splice(0).forEach(fn=>fn());return tree;};
+ const render=()=>{cursor=0;const tree=Component({productId:'p',version,refreshToken,profileId:'profile',onSaved(){saved++;}});effects.splice(0).forEach(fn=>fn());return tree;};
  const button=text=>nodes(render()).find(n=>n.type==='button'&&n.props.children===text);
  const input=label=>nodes(render()).find(n=>n.props?.['aria-label']===label);
- render();return {render,button,input,calls,get saved(){return saved;},setVersion(v){version=v;render();},close(){slots.forEach(s=>s?.cleanup?.());}};
+ render();return {render,button,input,calls,get saved(){return saved;},refresh(v){refreshToken=v;render();},setVersion(v){version=v;render();},close(){slots.forEach(s=>s?.cleanup?.());}};
 }
 
 test('stage-two direct price saves only the changed option field using the same quotation version',async()=>{
@@ -47,4 +47,13 @@ test('version changes retain edits and unmount aborts an in-flight write',async(
  const h=harness(async(url,init)=>init.method==='PUT'?pending:Response.json(view()));await settle();
  h.input('빨강 판매가').props.onChange({target:{value:'270'}});h.setVersion('new');assert.equal(h.input('빨강 판매가').props.value,'270');assert.equal(h.calls.length,1);
  h.button('옵션 가격 저장').props.onClick();h.close();assert.equal(h.calls.at(-1).init.signal.aborted,true);finish(Response.json(view()));await settle();assert.equal(h.saved,0);
+});
+
+test('quotation saves refresh clean stage-two prices without changing product version and retain unsaved edits',async()=>{
+ const latest=view();const h=harness(async()=>Response.json(latest));await settle();
+ latest.resolved.rows[0].fields.salePrice.value='260';h.refresh('1');await settle();
+ assert.equal(h.input('빨강 판매가').props.value,'260');assert.equal(h.calls.length,2);
+ h.input('빨강 판매가').props.onChange({target:{value:'280'}});
+ latest.resolved.rows[0].fields.salePrice.value='290';h.refresh('2');await settle();
+ assert.equal(h.input('빨강 판매가').props.value,'280');assert.equal(h.calls.length,2);
 });

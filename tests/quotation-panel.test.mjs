@@ -139,3 +139,12 @@ test('editing during export cancels the old file even when its blob arrives afte
  button(h.render(),'견적 자료 검토').props.onClick();assert.equal(h.calls.length,3);
  h.pending.shift()(Response.json(previewBody));await h.settle();assert.match(JSON.stringify(h.render()),/출력 미리보기/);
 });
+
+test('saved quotation edits invalidate preview and notify the surrounding stages',async()=>{
+ const h=await requestHarness();let saved=0;
+ button(h.render({onSaved:()=>saved++}),'견적 자료 검토').props.onClick();
+ h.pending.shift()(Response.json(previewBody));await h.settle();
+ assert.match(JSON.stringify(h.render()),/출력 미리보기/);
+ nodes(h.render()).find(n=>n.type===h.Editor).props.onSaved();
+ assert.equal(saved,1);assert.doesNotMatch(JSON.stringify(h.render()),/출력 미리보기/);
+});

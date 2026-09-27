@@ -3301,3 +3301,9 @@ AI등록 화면 확인:
 - Option board image-edit callback now opens stage three with the selected option identity, using the image workspace added in 318 instead of the auxiliary option editor.
 - Validation: option board and DetailPanel suites 13/13, TypeScript, Cloudflare production build/artifact and diff checks passed. Deployed d7c56511-1ea2-4f1d-a73c-b8bfcc3db519.
 - No live Couplus parity verification. Full category parity, actual comprehensive 1688 collection, image translation and Supplier Hub automatic registration remain incomplete.
+
+## 324 — Refresh stage-two quotation prices after stage-seven saves (2026-09-27)
+- Found that stage-seven overrides saved without changing product timestamps did not invalidate already mounted stage-two prices. QuotationPanel now notifies the workspace on successful field saves; a separate refresh token reaches OptionQuotationPrices without replacing productVersion validation or remounting the price policy form.
+- Clean price inputs reload the same quotation scope; unsaved prices remain intact for explicit conflict/reload handling. Saved quotation previews are invalidated.
+- Validation: related quotation panel, price editor, option price and DetailPanel suites 23/23, TypeScript, production build/artifact and diff checks passed. Deployed 0cd1ef9f-6fff-4f94-92b6-19d94304cc59.
+- Existing Chrome tab listing returned [] this turn. No live Couplus parity verification. Full category parity, comprehensive actual 1688 collection, image translation and Supplier Hub automatic registration remain incomplete.

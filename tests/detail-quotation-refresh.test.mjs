@@ -44,3 +44,10 @@ test('option workspace carries the same option into quotation while an explicit 
  assert.equal(harness(false,{focusedOptionId:'blue',quotationTarget:review}).component('QuotationPanel').props.navigationTarget,review);
  assert.equal(harness().component('QuotationPanel').props.navigationTarget,undefined);
 });
+
+test('stage-seven saves notify the workspace and refresh stage-two prices with an unchanged timestamp',()=>{
+ const h=harness();const before=h.component('PriceEditor').props.refreshToken;
+ h.component('QuotationPanel').props.onSaved();
+ assert.notEqual(h.component('PriceEditor').props.refreshToken,before);
+ assert.equal(h.component('PriceEditor').props.version,'unchanged');assert.equal(h.saves(),1);
+});

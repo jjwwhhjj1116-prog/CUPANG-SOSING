@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { quotationPriceIssues, quotationValueIssues, type QuotationFieldsView, type QuotationChange } from '@/app/quotation-schema';
 
 const prices = [['supplyPrice','공급가'],['salePrice','판매가'],['msrp','권장소비자가']] as const;
-export function OptionQuotationPrices({productId,version,profileId,onSaved}:{productId:string;version:string;profileId?:string;onSaved?:()=>void}) {
+export function OptionQuotationPrices({productId,version,profileId,onSaved,refreshToken}:{productId:string;version:string;profileId?:string;onSaved?:()=>void;refreshToken?:string}) {
  const [view,setView]=useState<QuotationFieldsView|null>(null);
  const [edits,setEdits]=useState<QuotationChange[]>([]);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
@@ -20,7 +20,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved}:{pro
   }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:'가격 조회 실패');}
   finally{if(request.current===controller)request.current=null;if(!controller.signal.aborted)setBusy(false);}
  }
- useEffect(()=>{if(request.current){request.current.abort();request.current=null;setBusy(false);}if(edits.length){setMessage('상품 정보가 변경됐습니다. 입력은 유지됩니다. 저장 시 최신 버전을 확인합니다.');return;}void load();},[endpoint,version]);
+ useEffect(()=>{if(request.current){request.current.abort();request.current=null;setBusy(false);}if(edits.length){setMessage('상품 정보가 변경됐습니다. 입력은 유지됩니다. 저장 시 최신 버전을 확인합니다.');return;}void load();},[endpoint,version,refreshToken]);
  const rows=view?.resolved.rows.filter(row=>row.included)??[];
  function value(optionId:string|null,fieldKey:string){
   const edit=edits.find(change=>change.optionId===optionId&&change.fieldKey===fieldKey);
