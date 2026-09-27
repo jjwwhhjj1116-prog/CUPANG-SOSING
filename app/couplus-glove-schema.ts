@@ -23,6 +23,7 @@ const make = (id: string, label: string, section: QuotationField['section'], vis
 export const couplus81221Fields: QuotationField[] = [
   ...[['color', '색상'], ['quantity', '수량'], ['size', '사이즈']].map(([id, label]) => make(id, label, 'product', 'exposed')),
   ...attributes.map(([id, label, values]) => ({ ...make(`glove_${id}`, label, 'product', 'hidden'),
+    ...(id === 'model' ? { contentField: 'model' as const } : {}),
     ...(values ? { type: 'select' as const, choices: ['', ...values].map(value => ({ value, label: value || '해당사항없음' })) } : {}),
   })),
   ...[['noticeNameModel', '품명 및 모델명'], ['glove_noticeKc', 'KC 인증정보'], ['glove_noticeSizeWeight', '크기, 중량'],

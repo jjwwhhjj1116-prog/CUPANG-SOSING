@@ -3,6 +3,15 @@ export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
 export class CategoryProfileConflictError extends Error {}
 export const CATEGORY_TEMPLATE_FILE_LIMIT = 5_000_000;
 export const categoryFields = {
+  glove_season: '스포츠장갑: 사용계절', glove_touch: '스포츠장갑: 스마트폰 터치 가능 여부',
+  glove_model: '스포츠장갑: 모델명/품번', glove_user: '스포츠장갑: 사용대상 구분',
+  glove_fashionSize: '스포츠장갑: 패션잡화 사이즈', glove_material: '스포츠장갑: 스포츠 장비재질',
+  glove_shape: '스포츠장갑: 장갑형태', glove_colorGroup: '스포츠장갑: 색상계열',
+  glove_waterproof: '스포츠장갑: 방수 가능여부', glove_sport: '스포츠장갑: 스포츠 종류',
+  glove_gtin: '스포츠장갑: Global Trade Item Number', glove_parentPart: '스포츠장갑: Parent Manufacturer Part Number',
+  glove_part: '스포츠장갑: Manufacturer Part Number', glove_noticeKc: '스포츠장갑: KC 인증정보',
+  glove_noticeSizeWeight: '스포츠장갑: 크기, 중량', glove_noticeColor: '스포츠장갑: 색상',
+  glove_noticeSpecifications: '스포츠장갑: 상품별 세부 사양',
   marathon_sockLength: "마라톤가방: 양말 길이",
   marathon_totalQuantity: "마라톤가방: 총 수량",
   marathon_modelNumber: "마라톤가방: 모델명/품번",

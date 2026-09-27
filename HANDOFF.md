@@ -3710,3 +3710,10 @@ AI등록 화면 확인:
 - Added category81221 스포츠/레져>스포츠잡화>스포츠장갑 and category-specific3 exposed/13 hidden/12 notice fields, exact visible select choices and DOM empty N/A values. No invented automatic defaults; saved values cannot establish initial generation behavior. No Supplier Hub validation claim.
 - Added docs/couplus-81221-analysis.md and schema regression test.172 tests passed, tsc/build/artifact/diff checks passed.
 - Deployed version e45a3456-2b22-486e-a1e2-085a0adf22fc. Actual1688 collection and Supplier Hub transmission adapter remain incomplete.
+
+## Step 400 — preserve existing products; glove field export repair (2026-09-27)
+- User explicitly prohibits touching existing Couplus/Hub working products. No further existing-product reads or mutations this turn. Use isolated dev fixtures and unsaved NEW Hub registration form only.
+- rightHub400 (existing user tab727916999, otherChrome ID2) is logged in. New category tree confirms 스포츠/레져>스포츠 잡화>스포츠 장갑 (81221). Close search dropdown by focusing product name before clicking category tree. Tree children load asynchronously. Category selected but no saved/submitted data. Product-name fill did not persist after Next; still Start Page. Do not claim product rules verified. Marked handoff.
+- Reproduced missing glove_model stage-six link with failing test; added explicit contentField:model. Found all17 glove-specific fields missing categoryFields causing export omission; registered them for template mapping/export.
+- Tests:173 passed before final coverage case; all3 glove tests pass including final coverage. tsc/build/artifact/diff checks passed. Manual model overrides and deliberate blanks preserved.
+- Actual1688 collection, image translation and real Hub submission adapter remain incomplete. Do not claim workflow complete.
