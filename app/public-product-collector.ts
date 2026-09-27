@@ -29,6 +29,24 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
   let parsed: unknown;try{parsed=JSON.parse(content);}catch{continue;}
   for(const entry of list(parsed)){const node=object(entry);nodes.push(node,...list(node['@graph']).map(object));}
  }
+ // Resolve only explicit, local JSON-LD references. Never fetch a referenced URL
+ // or infer an offer from another product's headline price.
+ const definitions=new Map<string,RecordValue[]>();
+ for(const node of nodes){
+  if(typeof node['@id']!=='string'||Object.keys(node).length===1)continue;
+  const id=node['@id'];definitions.set(id,[...(definitions.get(id)??[]),node]);
+ }
+ const resolve=(value:unknown):RecordValue=>{
+  let entry=object(value);const seen=new Set<string>();
+  while(typeof entry['@id']==='string'&&Object.keys(entry).length===1){
+   const id=entry['@id'];
+   if(seen.has(id))throw Error('상품 페이지의 구조화된 정보 참조가 순환합니다.');
+   seen.add(id);const matches=definitions.get(id);
+   if(matches?.length!==1)throw Error('상품 페이지의 구조화된 정보 참조가 없거나 중복됩니다.');
+   entry=matches[0];
+  }
+  return entry;
+ };
  const matches = nodes.filter(node => (hasType(node,'Product') || hasType(node,'ProductGroup')) && list(node.url).some(url => {
   try{return parseCollectionRequest({urls:[url]})[0].offerId===source.offerId;}catch{return false;}
  }));
@@ -37,7 +55,7 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
  // Preserve explicitly published product facts for the downstream SEO review.
  // Variant-specific facts must not become common facts for every SKU.
  const attributes = product.additionalProperty === undefined ? undefined : list(product.additionalProperty).map(entry => {
-  const property = object(entry);
+  const property = resolve(entry);
   if (!hasType(property, 'PropertyValue')) throw Error('상품 속성 형식을 확인하지 못했습니다.');
   const name = required(property.name, '상품 속성명');
   const scalar = property.value;
@@ -47,25 +65,26 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
    : property.unitCode !== undefined ? required(property.unitCode, '상품 속성 단위 코드') : '';
   return {name, value: unit ? `${value} ${unit}` : value};
  });
- const variants=product.hasVariant===undefined?[product]:list(product.hasVariant).map(object);
+ const variants=product.hasVariant===undefined?[product]:list(product.hasVariant).map(resolve);
  if(!variants.length||variants.length>200)throw Error('옵션 1~200개를 확인해야 합니다.');
  const images: {url:string;role:'main'|'additional'|'detail'}[]=[];
  const addImages=(value:unknown)=>list(value).map(item=>{
-  const url=required(typeof item==='string'?item:object(item).contentUrl??object(item).url,'이미지 주소');
+  const image=typeof item==='string'?null:resolve(item);
+  const url=required(typeof item==='string'?item:image?.contentUrl??image?.url,'이미지 주소');
   let index=images.findIndex(image=>image.url===url);
   if(index<0){index=images.length;images.push({url,role:index===0?'main':'additional'});}
   return index;
  });
  addImages(product.image);
  const options=variants.map(variant=>{
-  const offers=list(variant.offers).map(object);
+  const offers=list(variant.offers).map(resolve);
   if(offers.length!==1||!hasType(offers[0],'Offer'))throw Error('옵션별 단일 원가를 확인하지 못했습니다. 가격 범위는 원가로 사용하지 않습니다.');
   const offer=offers[0];if(offer.priceCurrency!=='CNY')throw Error('옵션 원가의 CNY 통화를 확인하지 못했습니다.');
-  const minimumOrder=number(object(offer.eligibleQuantity).minValue);
+  const minimumOrder=number(resolve(offer.eligibleQuantity).minValue);
   if(!Number.isSafeInteger(minimumOrder)||minimumOrder<1)throw Error('최소 주문 수량을 확인하지 못했습니다.');
   // Keep the seller's stated quantity, including zero. Availability labels and
   // ranges are not counts; weight/volume inventory cannot become piece stock.
-  const inventory=object(offer.inventoryLevel);
+  const inventory=resolve(offer.inventoryLevel);
   const countUnit=inventory.unitCode===undefined && inventory.unitText===undefined;
   let stock:number|null=null;
   if(hasType(inventory,'QuantitativeValue') && countUnit && inventory.value!==undefined

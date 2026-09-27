@@ -13,6 +13,23 @@ test('explicit public data produces original SKU, image relation and price witho
  const r=parsePublicProduct(html(product()),url);assert.equal(r.options[0].sku,'real-sku');assert.equal(r.options[0].unitPriceCny,25.6);assert.equal(r.options[0].minimumOrder,2);assert.equal(r.options[0].stock,null);assert.equal(r.options[0].imageIndex,1);assert.equal(r.images[0].role,'main');assert.equal(r.title,'原文商品');
  assert.equal(parsePublicProduct(html({'@graph':[product()]}),url).offerId,'813724060928');
 });
+test('local JSON-LD graph references preserve exact SKU prices, images, stock and source attributes',()=>{
+ const p=product(),variant=p.hasVariant[0],offer=variant.offers;
+ p.hasVariant=[{'@id':'#sku'}];p.image={'@id':'#image'};p.additionalProperty={'@id':'#material'};
+ const graph=[p,{'@id':'#sku',...variant,offers:{'@id':'#offer'}},{'@id':'#offer',...offer,eligibleQuantity:{'@id':'#quantity'},inventoryLevel:{'@id':'#stock'}},
+  {'@id':'#quantity','@type':'QuantitativeValue',minValue:2},{'@id':'#stock','@type':'QuantitativeValue',value:0},
+  {'@id':'#image','@type':'ImageObject',contentUrl:'https://cbu01.alicdn.com/a.jpg'},
+  {'@id':'#material','@type':'PropertyValue',name:'材质',value:'尼龙'}];
+ const result=parsePublicProduct(html({'@graph':graph}),url);
+ assert.equal(result.options[0].sku,'real-sku');assert.equal(result.options[0].unitPriceCny,25.6);
+ assert.equal(result.options[0].stock,0);assert.equal(result.options[0].minimumOrder,2);
+ assert.equal(result.options[0].imageIndex,1);assert.equal(result.attributes[0].value,'尼龙');
+ // No guessed source for missing/ambiguous local references, even when URLs look fetchable.
+ for(const broken of [graph.filter(node=>node['@id']!=='#offer'),[...graph,{'@id':'#offer',...offer}], [{...p,hasVariant:[{'@id':'https://example.com/sku'}]},...graph.slice(1)]]){
+  assert.throws(()=>parsePublicProduct(html({'@graph':broken}),url),/참조/);
+ }
+});
+
 test('login, unrelated and ambiguous products or incomplete option data never become drafts',()=>{
  for(const input of ['<html>Login</html>',html({...product(),url:'https://detail.1688.com/offer/999.html'}),html([product(),product()])])assert.throws(()=>parsePublicProduct(input,url));
  for(const mutate of [p=>delete p.hasVariant[0].sku,p=>delete p.hasVariant[0].offers.eligibleQuantity,p=>p.hasVariant[0].offers.priceCurrency='USD',p=>p.hasVariant[0].offers['@type']='AggregateOffer',p=>p.hasVariant[0].offers.price='25-30',p=>p.image='https://127.0.0.1/a']){const p=product();mutate(p);assert.throws(()=>parsePublicProduct(html(p),url));}

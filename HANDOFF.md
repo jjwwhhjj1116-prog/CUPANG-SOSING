@@ -3963,3 +3963,9 @@ AI등록 화면 확인:
 - Shared source-bound translation adoption covers these aliases; manual values/blanks remain protected. Conflicting source dimensions remain unfilled. New products only; existing work products untouched.
 -42 collection-product/translation-adoption tests passed, including original dimensions ->80719 noticeDimensions, packaging/SKU exclusion, conflict and manual-edit preservation. Typecheck/build/artifact/diff pass. Production ad0f414b-e2bd-41c6-964b-43eb4297bf52.
 - Fixture verification only, not actual1688 acquisition or finalHub registration. Wholeworkflow remains incomplete; official workbook not acquired, POST501 persists. No extension changes (latest0.2.9). Preserve unrelated tests/submission-review.test.mjs.
+
+## Step 439 — local structured product reference support
+- Reviewed actual collection endpoint/provider: public JSON-LD collector default; owned Alibaba API requires explicit enabled bindings/credentials, still unverified. Did not retry policy-blocked source URL or claim a live response.
+- Public parser now resolves exact @id-only local references from root/@graph definitions for variants, offers, images, attributes, minimum quantities and inventory. Never requests referenced URLs or merges ambiguous definitions. Existing source URL/SKU/currency/price checks remain.
+-22 public collector/route/intake fixture tests passed including reference graph, zero stock, image indices, missing/duplicate/external references. TypeScript/build/artifact/diff passed; deployed630fce54-5790-45ee-8127-310d7e1b0b74.
+- This is parser compatibility only; actual1688 source, official workbook acquisition, live Hub registration remain incomplete; POST501 unchanged. Extension0.2.9 unchanged. Preserve unrelated tests/submission-review.test.mjs.
