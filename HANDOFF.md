@@ -3219,3 +3219,9 @@ AI등록 화면 확인:
 - Source explanation identifies stage six. Dynamic label editor and label documents include the new saved field through the existing field registry.
 - Validation: quotation schema/content/document-image/content-editor suites 205/205; tsc, Cloudflare build/artifact check and diff check passed.
 - Deployed 27d9cd91-1242-4d59-a678-91e1cb86c445. Existing Chrome tabs.list returned []. No live parity or actual Hub submission verified. All-category defaults, actual image translation and Hub automatic transmission remain incomplete.
+
+## 312 — Preserve option-row target into quotation stage (2026-09-27)
+- DetailPanel now supplies focusedOptionId as the quotation navigation target when no explicit submission-review target exists. Opening an option price editor and proceeding to quotation starts on that same option instead of common values.
+- Explicit review targets retain priority. Product-level entry remains common. Existing quotation initial-target handling and refresh behavior remain unchanged.
+- Validation: detail refresh/quotation panel/option editor request suites 20/20; tsc, production build/artifact check, diff check passed.
+- Cloudflare deployment d87c69d4-959d-4874-9d45-d28a847b6beb. No live Couplus comparison or actual Hub registration in this turn; broad completion gaps remain as documented in 311.
