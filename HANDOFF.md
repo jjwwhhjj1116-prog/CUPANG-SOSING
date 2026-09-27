@@ -3629,3 +3629,9 @@ AI등록 화면 확인:
 - 33 translation/source/intake integration tests passed, including partial/empty results, reordered complete results, zero-input attributes, legacy compatibility and one-call provider rejection; tsc/build/artifact/diff passed.
 - No live external transaction this turn. Actual1688 collection, image translation, Supplier Hub upload/receipt adapter501 and all-category parity still unfinished. Previous Couplus login request remains unanswered; do not claim full workflow completion.
 - Deployment: Current Version ID: c188ed43-8371-4c83-b4b3-c4efc6a96927
+
+## Step 378 — full regression verification (2026-09-27)
+- Reviewed quotation priority and source linkage: option manual > common manual > resolved saved product/options/content > observed category fallback. Existing category/label bindings and mapped quotation export are covered by the full suite.
+- Ran npm test against f24d6f1: 1,105 tests passed, zero failures/skips/cancellations, 76.038 seconds. Log outputs/step378-full-tests.log. This includes recent intake generation/resume/coverage changes and existing category, source, price, image, export and integration cases.
+- No runtime source edits or deployment this turn; production stays at step377. No regression required a fix. Do not present this as newly implemented end-to-end functionality or live Supplier Hub acceptance.
+- Remaining substantive gaps unchanged: actual1688 collection verification/usable owned source access, actual image translation, Supplier Hub upload/receipt adapter501, complete category parity. Previous Chrome Couplus tab showed login and asynchronous login request remains unanswered; no repeat login request or browser switch this turn.
