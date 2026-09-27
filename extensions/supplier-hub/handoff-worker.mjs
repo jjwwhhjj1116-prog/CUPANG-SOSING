@@ -1,8 +1,12 @@
+import {observeSupplierHubResult} from './observe.mjs';
 import {validateHandoff,pendingPackage,validateResultRequest,resultKey,transferRecord} from './handoff-store.mjs';
 import {dispatchPendingPackage} from './dispatch.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE'].includes(message?.type))return;
+  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT'].includes(message?.type))return;
   (async()=>{try{
+    if(message.type==='YOOFAM_OBSERVE_RESULT'){
+      const result=await observeSupplierHubResult(message,sender);respond({ok:true,result});return;
+    }
     if(message.type==='YOOFAM_DISPATCH_PACKAGE'){
       const result=await dispatchPendingPackage(message,sender);respond({ok:true,result});return;
     }

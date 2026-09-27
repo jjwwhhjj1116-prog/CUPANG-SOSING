@@ -1,9 +1,7 @@
 import {prepareAttachments} from './package.mjs';
 import {attachToSupplierHub} from './attach.mjs';
-import {pendingPackage,transferRecord,resultKey} from './handoff-store.mjs';
+import {pendingPackage,transferRecord} from './handoff-store.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
-import {readSupplierHubValidation} from './result.mjs';
-import {readSupplierHubRegistration} from './registration-result.mjs';
 const picker=document.querySelector('#package'),button=document.querySelector('#attach'),status=document.querySelector('#status'),summary=document.querySelector('#summary');
 let prepared=null,sequence=0,pendingFingerprint=null,pendingExpires=0;
 let packageIdentity=null;
@@ -31,14 +29,9 @@ registrationButton.addEventListener('click',async()=>{
   try{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     if(!tab?.id||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/wims')throw Error('파일을 전달한 같은 탭에서 상품 등록 상태 확인 화면을 열어주세요.');
-    const identity=await transferRecord('get',`attempt:${tab.id}`);
-    if(!identity)throw Error('이 탭에서 전달한 상품 정보가 없습니다.');
-    const key=resultKey(identity),saved=await transferRecord('get',key);
-    if(saved?.state!=='validation-complete'||!saved.quotationId||saved.filename!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('먼저 대량 상품 등록 화면에서 해당 파일의 검증 완료 결과와 견적서 ID를 확인해주세요.');
-    const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubRegistration,args:[saved.quotationId]});
-    const result=execution?.result;
-    if(!result||result.quotationId!==saved.quotationId||result.scope!=='visible-page'||result.registered!==false||!Array.isArray(result.rows))throw Error('상품별 결과를 확인하지 못했습니다.');
-    await transferRecord('put',key,{...saved,registration:{...result,observedAt:Date.now()}});
+    const response=await chrome.runtime.sendMessage({type:'YOOFAM_OBSERVE_RESULT',tabId:tab.id,kind:'registration'});
+    if(!response?.ok)throw Error(response?.error||'결과 조회 응답이 없습니다. 앱에서 저장된 결과를 확인해주세요.');
+    const result=response.result;
     status.textContent=`견적서 ID: ${result.quotationId}\n현재 페이지에서 ${result.rows.length}개 확인\n`+result.rows.map(row=>`${row.title}: ${row.status} · ${row.stage} · SKU ${row.skuId||'미표시'}`).join('\n')+'\n현재 페이지의 결과이며 전체 옵션의 등록 완료를 뜻하지 않습니다.';
   }catch(error){status.textContent=error.message;}
   finally{registrationButton.disabled=false;picker.disabled=false;button.disabled=!prepared;validateButton.disabled=false;resultButton.disabled=false;}
@@ -49,21 +42,9 @@ resultButton.addEventListener('click',async()=>{
   try{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     if(!tab?.id||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/registration')throw Error('현재 창의 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
-    const identity=await transferRecord('get',`attempt:${tab.id}`);
-    const expectedFilename=identity&&/^[a-f0-9]{64}$/.test(identity.fingerprint)?`YOOFAM-${identity.fingerprint}.xlsx`:undefined;
-    const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation,args:expectedFilename?[expectedFilename]:[]});
-    const result=execution?.result;
-    if(!result||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(result.state))throw Error('검증 결과를 확인하지 못했습니다.');
-    if(identity&&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`){
-      const key=resultKey(identity),previous=await transferRecord('get',key);
-      // Refreshing file validation does not refresh or erase a matching SKU observation.
-      // A different quotation or a non-complete validation must not inherit old rows.
-      const keepRegistration=result.state==='validation-complete'&&previous?.state==='validation-complete'
-        &&['origin','productId','categoryId','fingerprint'].every(field=>previous[field]===identity[field])
-        &&previous.filename===result.filename&&typeof result.quotationId==='string'&&Boolean(result.quotationId.trim())
-        &&previous.quotationId===result.quotationId&&previous.registration?.quotationId===result.quotationId;
-      await transferRecord('put',key,{...identity,...result,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{})});
-    }
+    const response=await chrome.runtime.sendMessage({type:'YOOFAM_OBSERVE_RESULT',tabId:tab.id,kind:'validation'});
+    if(!response?.ok)throw Error(response?.error||'결과 조회 응답이 없습니다. 앱에서 저장된 결과를 확인해주세요.');
+    const result=response.result;
     status.textContent=result.state==='not-found'?'전달한 견적서의 결과가 아직 목록에 없습니다. Supplier Hub 안내에 따르면 검증은 최대 2시간 걸릴 수 있습니다.':`견적서: ${result.filename}\n검증 상태: ${result.status}\n견적서 ID: ${result.quotationId||'아직 표시되지 않음'}\n${result.detail}\n검증 완료 후에도 상품별 등록 상태를 별도로 확인해야 합니다.`;
   }catch(error){status.textContent=error.message;}
   finally{resultButton.disabled=false;validateButton.disabled=false;picker.disabled=false;button.disabled=!prepared;}

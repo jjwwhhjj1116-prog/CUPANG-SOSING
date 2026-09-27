@@ -4003,3 +4003,10 @@ AI등록 화면 확인:
 - Verified later content edits invalidate a prepared export (409), preserved manual final title, and update unoverridden country-of-origin in a fresh Excel preview.
 - All 6 intake integration scenarios passed. External Alibaba/AI/R2 and original XLSX are fixtures; additional owned image records are test setup, not actual image translation or live uploads.
 - Tests/documentation only, no production behavior change or deploy. Production remains eaef3ed7-a5f0-41db-a857-83ebaef4f944. Official XLSX acquisition, real source collection and final Hub registration still unverified. Existing external products untouched.
+
+## Step 446 — Worker-owned result observations (2026-09-28)
+- Added observe.mjs and internal YOOFAM_OBSERVE_RESULT worker message. Popup delegates validation and registration reads; worker stores the matching evidence independently of popup callback/lifetime.
+- Exact own-popup sender, active tab and expected Hub path required. Per-tab concurrent observations rejected and lock released on success/failure. Existing quote/file identity, partial-page and registered:false semantics retained; invalid completion flag rejected.
+- Tests cover delayed observations without popup callbacks, duplicate in-flight requests, sender/tab mismatch, invalid quotation/state/scope and preserved matching SKU observations. 26 related tests passed, tsc/build/artifact/diff checks passed.
+- Packaged extension 0.2.11; app download link deployed, version 6c7ca729-f43f-4b8a-adf3-350438a79421. Installed Chrome extension refresh not verified. Worker/browser termination recovery is not guaranteed.
+- No live external records changed; source collection, official XLSX and actual Hub final registration still unverified. Does not implement final registration or automatic consent.

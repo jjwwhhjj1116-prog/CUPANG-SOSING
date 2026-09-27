@@ -1,0 +1,43 @@
+import {transferRecord,resultKey} from './handoff-store.mjs';
+import {readSupplierHubValidation} from './result.mjs';
+import {readSupplierHubRegistration} from './registration-result.mjs';
+
+const activeTabs=new Set();
+export async function observeSupplierHubResult(message,sender){
+  if(sender?.id!==chrome.runtime.id||sender?.url!==chrome.runtime.getURL('popup.html')||sender.tab)throw Error('확장 화면에서 결과를 확인해주세요.');
+  if(!['validation','registration'].includes(message.kind)||!Number.isSafeInteger(message.tabId)||message.tabId<0)throw Error('결과 조회 요청을 확인해주세요.');
+  if(activeTabs.has(message.tabId))throw Error('이 탭의 결과를 확인 중입니다. 잠시 후 다시 확인해주세요.');
+  activeTabs.add(message.tabId);
+  try{
+    const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+    const path=message.kind==='registration'?'/qvt/wims':'/qvt/registration';
+    if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!==path)throw Error('현재 창의 해당 Supplier Hub 결과 화면에서 실행해주세요.');
+    if(message.kind==='registration'){
+      const identity=await transferRecord('get',`attempt:${tab.id}`);
+      if(!identity)throw Error('이 탭에서 전달한 상품 정보가 없습니다.');
+      const key=resultKey(identity),saved=await transferRecord('get',key);
+      if(saved?.state!=='validation-complete'||!saved.quotationId||saved.filename!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('먼저 대량 상품 등록 화면에서 해당 파일의 검증 완료 결과와 견적서 ID를 확인해주세요.');
+      const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubRegistration,args:[saved.quotationId]});
+      const result=execution?.result;
+      if(!result||result.quotationId!==saved.quotationId||result.scope!=='visible-page'||result.registered!==false||!Array.isArray(result.rows))throw Error('상품별 결과를 확인하지 못했습니다.');
+      await transferRecord('put',key,{...saved,registration:{...result,observedAt:Date.now()}});
+      return result;
+    }
+    const identity=await transferRecord('get',`attempt:${tab.id}`);
+    const expectedFilename=identity&&/^[a-f0-9]{64}$/.test(identity.fingerprint)?`YOOFAM-${identity.fingerprint}.xlsx`:undefined;
+    const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation,args:expectedFilename?[expectedFilename]:[]});
+    const result=execution?.result;
+    if(!result||result.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(result.state))throw Error('검증 결과를 확인하지 못했습니다.');
+    if(identity&&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`){
+      const key=resultKey(identity),previous=await transferRecord('get',key);
+      // Refreshing file validation does not refresh or erase a matching SKU observation.
+      // A different quotation or a non-complete validation must not inherit old rows.
+      const keepRegistration=result.state==='validation-complete'&&previous?.state==='validation-complete'
+        &&['origin','productId','categoryId','fingerprint'].every(field=>previous[field]===identity[field])
+        &&previous.filename===result.filename&&typeof result.quotationId==='string'&&Boolean(result.quotationId.trim())
+        &&previous.quotationId===result.quotationId&&previous.registration?.quotationId===result.quotationId;
+      await transferRecord('put',key,{...identity,...result,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{})});
+    }
+    return result;
+  }finally{activeTabs.delete(message.tabId);}
+}

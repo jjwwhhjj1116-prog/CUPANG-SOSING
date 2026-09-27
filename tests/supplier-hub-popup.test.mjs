@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+const observation=fs.readFileSync(new URL('../extensions/supplier-hub/observe.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/popup.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
 async function popup(outcome){
  const nodes=new Map();const puts=[];const messages=[];
@@ -25,7 +26,8 @@ async function refreshValidation(previousChanges={},resultChanges={}){
  const context=vm.createContext({Date,URL,Uint8Array,atob,pendingPackage:async()=>null,
   transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key==='attempt:123'?identity:previous;},resultKey:()=> 'result:key',
   readSupplierHubValidation(){},document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{disabled:false,addEventListener(event,handler){this[event]=handler;}});return nodes.get(selector);}},
-  chrome:{tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration'}]},scripting:{executeScript:async()=>[{result}]}}});
+  chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration'}]},scripting:{executeScript:async()=>[{result}]}}});
+ vm.runInContext(observation,context);context.chrome.runtime.sendMessage=async message=>({ok:true,result:await context.observeSupplierHubResult(message,{id:'extension',url:'chrome-extension://extension/popup.html'})});
  vm.runInContext(source,context);await nodes.get('#result').click();return{saved:puts[0],previous,registration};
 }
 
