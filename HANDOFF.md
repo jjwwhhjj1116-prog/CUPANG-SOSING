@@ -3319,3 +3319,11 @@ AI등록 화면 확인:
 - DetailPanel routes that selection to stage-two quotation prices without feeding it back into QuotationPanel's initial-profile key (which would reset the selected editor). Product timestamp validation and save conflicts remain intact.
 - Validation: related suites 25/25; TypeScript, production build/artifact, diff checks passed. Deployed ae35ec3d-6a3c-4a36-940c-03f0d11b8bf9.
 - Existing Chrome still returns [] tabs. This is not evidence of browser failure or missing user approval. No actual 1688 collection, full category parity, image translation or Supplier Hub submission completion was verified this turn; those remain unfinished.
+
+## 327 — Locate actual product-query transport; no live draft completion yet (2026-09-27)
+- Direct credentialless read of authorized offer 813724060928 returned HTTP200 with a captcha redirect script, not product HTML/JSON-LD. Did not follow or bypass the challenge.
+- Read-only local Couplus GET /api/tools at port9876 responds500: missing mongodb in installed CLI1.2.12. No program restart, dependency installation or browser/profile changes performed.
+- Installed query implementation confirms com.alibaba.fenxiao.crossborder/product.search.queryProductDetail, offerDetailParam and HMAC-SHA1 signing. Bundled third-party credential values must not be copied, committed or used in YOOFAM PLUS.
+- Added standalone app/alibaba-product-api.ts transport using caller-owned credentials, fixed official host, bounded response, cancellation, no redirects/retries, redacted network errors and full raw result retention. Three transport tests and TypeScript pass.
+- Transport is NOT wired into production collection: deployment-owned credentials and a verified actual response for SKU/price/image mapping are missing. No runtime deployment this turn; no URL-to-draft success claimed. Existing public collector remains limited. Supplier Hub adapter remains501.
+- Asked whether user already uses a separate 1688 product-query service; accidentally sent question in Russian and clarified in Korean after user asked what it meant. Do not repeat foreign-language prompt. User has not identified a provider or provided API credentials; do not assume permission for paid subscriptions.
