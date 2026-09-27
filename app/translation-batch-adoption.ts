@@ -41,8 +41,14 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
     ['품명', '제품명', '상품명'].includes(attribute.name.trim())
     && job.review.source.attributes[attribute.sourceIndex]?.name.startsWith('상품속성: '));
   const effectiveTitle = patch.seo?.title ?? content.seo.title.value;
+  // applyContentPatch follows an enabled name link even when no explicit label
+  // patch is present. Include that real change in the review before saving.
+  if (content.labelProductNameLinked && patch.seo?.title !== undefined &&
+    !Object.hasOwn(patch.label ?? {}, 'productName') && labelName.value !== effectiveTitle) {
+    preview.push({ name: '품명 · SEO 상품명 연동', before: labelName.value, after: effectiveTitle });
+  }
   if (!hasSourceName && !labelName.value.trim() && labelName.provenance !== 'manual'
-    && !patch.label?.productName && effectiveTitle.trim()) {
+    && !content.labelProductNameLinked && !patch.label?.productName && effectiveTitle.trim()) {
     patch.label = { ...patch.label, productName: effectiveTitle };
     preview.push({ name: '품명 · 저장할 상품명 연결', before: labelName.value, after: effectiveTitle });
   }

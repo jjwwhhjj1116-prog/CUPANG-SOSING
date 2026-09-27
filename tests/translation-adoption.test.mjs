@@ -8,6 +8,19 @@ const {translationAdoptionInput}=load('app/translation-adoption.ts');
 const {emptyProductContent,applyContentPatch}=load('app/product-content.ts');
 const {translationBatchAdoption}=load('app/translation-batch-adoption.ts');
 
+test('review includes linked label title changes exactly once and preserves an unlinked manual name',()=>{
+ for(const linked of [true,false])for(const oldName of ['原文','']){
+  const content=emptyProductContent('p');content.labelProductNameLinked=linked;
+  content.seo.title={value:'原文',provenance:'collected',updatedAt:'before'};
+  content.label.productName={value:oldName,provenance:linked?'generated':'manual',updatedAt:'before'};
+  const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[]}},result:{draft:{title:'한국어 제목',description:'',keywords:[],attributes:[]}}};
+  const plan=translationBatchAdoption(content,job,'v');const next=applyContentPatch(content,plan.input.patch,'after');
+  const labels=plan.preview.filter(row=>row.name.startsWith('품명'));
+  assert.equal(labels.length,linked?1:0);assert.equal(next.label.productName.value,linked?'한국어 제목':oldName);assert.equal(next.labelProductNameLinked,linked);
+  if(linked){assert.equal(labels[0].before,oldName);assert.equal(labels[0].after,next.label.productName.value);}
+ }
+});
+
 test('batch adoption saves SEO and exact label matches once while protecting manual blanks and unrelated assets',()=>{
  const content=emptyProductContent('p');
  content.seo.title={value:'原文',provenance:'collected',updatedAt:'before'};

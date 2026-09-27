@@ -54,5 +54,22 @@ test('URL intake persists a category-scoped editable quotation and resumes witho
   const before=network.length;delete deps['cloudflare:workers'].env.OPENAI_API_KEY;
   assert.match(await run(),/SEO 요청 준비는 완료되지/);assert.equal(network.length,before);assert.equal(sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
   assert.equal(calls.filter(path=>path.endsWith('/collect')).length,1);assert.equal(network.filter(host=>host==='gw.open.1688.com').length,1);
+  // A synthetic completed AI result lets the actual apply and quotation APIs
+  // verify stage linkage without claiming a live provider response.
+  const current=sqlite.prepare('SELECT * FROM products').get();
+  const prepared=sqlite.prepare('SELECT * FROM translation_jobs WHERE product_version=?').get(current.updated_at);
+  const reviewed=JSON.parse(prepared.review);
+  const result={draft:{title:'한국어 수납 상품',description:'검토한 한국어 설명',keywords:['추천 검색어'],warnings:[],attributes:reviewed.source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('option-color:')?'색상':'옵션명',value:pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};
+  sqlite.prepare("UPDATE translation_jobs SET status='completed',result=? WHERE id=?").run(JSON.stringify(result),prepared.id);
+  const applyRoute=load('app/api/products/[id]/translation-apply/route.ts');
+  const apply=body=>applyRoute.POST(new Request('https://app.test/api/products/'+latest.product_id+'/translation-apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId:prepared.id,expectedVersion:current.updated_at,...body})}),quoteContext);
+  const previewResponse=await apply({action:'preview'}),preview=await previewResponse.json();assert.equal(previewResponse.status,200,JSON.stringify(preview));
+  assert.ok(preview.preview.some(item=>item.name==='품명 · SEO 상품명 연동'&&item.after==='한국어 수납 상품'));
+  const applied=await apply({action:'apply',fingerprint:preview.fingerprint});assert.equal(applied.status,200,await applied.clone().text());
+  const afterContent=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload),afterOptions=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  assert.equal(afterContent.seo.title.value,'한국어 수납 상품');assert.equal(afterContent.label.productName.value,'한국어 수납 상품');assert.equal(afterContent.labelProductNameLinked,true);
+  assert.deepEqual(afterContent.seo.keywords.value,['수납','바스켓']);assert.equal(afterOptions.rows[0].translatedName,'검정 옵션');assert.equal(afterOptions.rows[0].color,'검정');
+  const afterQuote=await (await quoteRoute.GET(new Request(quoteUrl),quoteContext)).json();assert.equal(optionRow(afterQuote).fields.title.value,'한국어 수납 상품');assert.equal(optionRow(afterQuote).fields.salePrice.value,'35000');assert.equal(optionRow(afterQuote).fields.mainImage.value,options.rows[0].imageKey);
+  assert.equal((await apply({action:'apply',fingerprint:preview.fingerprint})).status,409);assert.equal(network.length,before);
  }finally{sqlite.close();}
 });
