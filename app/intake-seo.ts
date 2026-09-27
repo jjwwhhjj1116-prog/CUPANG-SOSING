@@ -3,7 +3,7 @@ import { runReviewedTranslation } from '@/app/reviewed-translation';
 import { awaitIntakeTranslation } from '@/app/intake-translation-result';
 
 /** User-started intake produces editable content; never submits to Supplier Hub. */
-export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal) {
+export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal, onCompleted: () => void = () => {}) {
   if (signal.aborted) return '';
   let generating = false;
   try {
@@ -16,7 +16,11 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     });
     const body = await response.json() as { job?: TranslationJob; error?: string; remainingOptions?: number; autoDraft?: boolean; intakePreserved?: boolean; productVersion?:string; productId?:string; done?:boolean; optionsOnly?:boolean };
     if (signal.aborted) return '';
-    if(response.ok && body.done && body.productId===productId && body.productVersion===next.expectedVersion)return appliedAny?'SEO·옵션 초안을 생성해 반영했습니다. 내용을 확인하고 수정해주세요.':'저장된 SEO·옵션값을 유지했습니다. 추가로 반영할 항목이 없습니다.';
+    if(response.ok && body.done === true && next.action==='prepare-intake-options' && typeof next.expectedVersion==='string'
+      && body.productId===productId && body.productVersion===next.expectedVersion){
+      onCompleted();
+      return appliedAny?'SEO·옵션 초안을 생성해 반영했습니다. 내용을 확인하고 수정해주세요.':'저장된 SEO·옵션값을 유지했습니다. 추가로 반영할 항목이 없습니다.';
+    }
     if (!response.ok || body.job?.productId !== productId) return `상품은 저장됐지만 SEO 요청 준비는 완료되지 않았습니다. ${body.error ?? 'SEO 단계에서 다시 확인해주세요.'}`;
     if(body.intakePreserved){
       if(!body.productVersion)throw Error('현재 상품 버전을 확인하지 못했습니다.');
@@ -56,4 +60,11 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
   } catch (error) {
     return signal.aborted ? '' : generating ? `상품과 생성 이력은 보존했습니다. ${error instanceof Error?error.message:'SEO 생성·반영 상태를 확인해주세요.'} 자동 재요청하지 않았습니다.` : '상품은 저장됐지만 SEO 요청 준비 상태를 확인하지 못했습니다. SEO 단계에서 확인해주세요.';
   }
+}
+
+/** Message text is never evidence that all pending draft fields were saved. */
+export async function prepareIntakeSeoOutcome(productId: string, fetcher: typeof fetch, signal: AbortSignal) {
+  let completed = false;
+  const message = await prepareIntakeSeo(productId, fetcher, signal, () => { completed = true; });
+  return { completed, message };
 }

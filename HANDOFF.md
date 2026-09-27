@@ -3598,3 +3598,10 @@ AI등록 화면 확인:
 - Capacity tests cover 60 SKU images +4 details, captured banners, reusable detail, all details excluded, one/two free slots and group selectors. Batch integration verifies 48 image POSTs including main/detail from65 originals with2 occupied slots and17 omitted images reported.
 - 34 distinct capacity/import/batch tests passed (33 initial,12 batch rerun with1 added); tsc/build/artifact/diff checks passed. Deployed2cafb9e7-5340-4c4e-8783-fb2263dfca25.
 - Does not increase50-image limit or guarantee a complete long detail page. Existing receipt source URLs retained. No real1688/Hub execution this turn; actual collection verification, image translation, Hub adapter501 and complete category parity remain unfinished.
+
+## Step 374 — incomplete SEO must remain resumable in intake (2026-09-27)
+- Found prepareIntakeSeo returned non-empty messages for incomplete/failed/running generation and collectIntakeProduct treated every message as success. Queue marked rows saved and skipped future runs.
+- Added prepareIntakeSeoOutcome with explicit completed flag, set only on server done=true for the expected product/version after prepare-intake-options. Initial unbound done response cannot complete intake. Existing message-only helper remains for compatibility/tests.
+- collectIntakeProduct now throws an incomplete outcome to the queue while retaining the confirmed product ID and stored receipt, so row remains editable/retryable. Add-only collection still completes without SEO. No model auto-retry added; existing job idempotency/version safeguards retained.
+- Tests cover pending/failed/unbound outcomes, queue first-run SEO failure with product link retained, second-run matching terminal response marking same row saved, and unchanged collection-only import/recovery fixtures. 43 tests passed, TypeScript/build/artifact/diff checks passed.
+- Deployed206c2642-cea1-4515-9737-67f2d9034fe6. No live external collection/AI/Hub test this turn. Live1688 collection verification, image translation, Supplier Hub upload/receipt (POST501), fullcategory parity remain unfinished.

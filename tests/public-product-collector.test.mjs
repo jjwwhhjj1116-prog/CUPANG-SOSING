@@ -66,7 +66,7 @@ test('collection is called only after matching intake persistence and failed row
  const {submitIntakeQueue,intakeRow}=load('app/intake-queue.ts');
  const profile={id:'00000000-0000-0000-0000-000000000001',revision:1,categoryId:'80719'};
  const row={...intakeRow(profile,'row'),url};const states=[];let collected=0;
- const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector'};
+ const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',goal:'collect'};
  const options={signal:new AbortController().signal,fetcher:async()=>Response.json({jobs:[job],preservedRequests:[]}),onRow:(_id,state)=>states.push(state),onJobs(){},collect:async(j,onProgress)=>{assert.equal(j.id,'job');collected++;onProgress('fetching');throw Error('missing options');}};
  await submitIntakeQueue([row],'price',options);assert.equal(collected,1);assert.equal(states.at(-1).status,'error');assert.match(states.at(-1).message,/missing options/);assert.equal(row.url,url);
  await submitIntakeQueue([row],'price',{...options,fetcher:async()=>Response.json({jobs:[job],preservedRequests:[{differences:['카테고리']} ]})});assert.equal(collected,1);
@@ -75,9 +75,9 @@ test('collection is called only after matching intake persistence and failed row
 test('user URL collection forwards the confirmed receipt to draft import and reports product only after import',async()=>{
  const source=parsePublicProduct(html(product()),url),updates=[],messages=[];let imported=0;
  const {collectIntakeProduct}=load('app/intake-collection.ts',{'@/app/collection-batch':{importReceivedJobs:async(jobs,options)=>{imported++;assert.equal(jobs[0].received_at,'2026-09-26T00:00:00Z');options.onResult('job',{status:'completed',productId:'product',completedImages:2});}}});
- const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector'};
+ const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',goal:'collect'};
  const options={signal:new AbortController().signal,fetcher:async(path,init)=>{assert.equal(path,'/api/collection-jobs/job/collect');assert.equal(init.method,'POST');return Response.json({jobId:'job',offerId:job.offer_id,receipt:{result:source,receivedAt:'2026-09-26T00:00:00Z'}});},onJob:j=>updates.push(j),onProgress:m=>messages.push(m)};
- const message=await collectIntakeProduct(job,options);assert.equal(imported,1);assert.equal(updates[0].product_id,undefined);assert.equal(updates[1].product_id,'product');assert.match(message,/초안/);
+ const message=await collectIntakeProduct(job,options);assert.equal(imported,1);assert.equal(updates[0].product_id,undefined);assert.equal(updates[1].product_id,'product');assert.match(message,/상품 추가 완료/);
  await assert.rejects(collectIntakeProduct(job,{...options,fetcher:async()=>Response.json({error:'login required'},{status:422})}),/login required/);assert.equal(imported,1);
  await assert.rejects(collectIntakeProduct(job,{...options,fetcher:async()=>Response.json({jobId:'other',offerId:job.offer_id,receipt:{result:source}})}));assert.equal(imported,1);
 });
@@ -95,10 +95,10 @@ test('intake retries a partially imported product from its receipt without recol
   assert.equal(jobs[0].product_id,'existing-product');assert.equal(jobs[0].received_at,'2026-09-26T00:00:00Z');attempts++;
   options.onResult('job',attempts===1?{status:'failed',productId:'existing-product',completedImages:1,error:'image failed'}:{status:'completed',productId:'existing-product',completedImages:2});
  }}});
- const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',product_id:'existing-product',received_at:'2026-09-26T00:00:00Z'};
+ const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',goal:'collect',product_id:'existing-product',received_at:'2026-09-26T00:00:00Z'};
  const options={signal:new AbortController().signal,fetcher:async()=>{throw Error('must not recollect');},onJob:j=>updates.push(j),onProgress:m=>progress.push(m)};
  await assert.rejects(collectIntakeProduct(job,options),/image failed/);assert.equal(attempts,1);
- assert.match(await collectIntakeProduct(job,options),/초안 저장됨/);assert.equal(attempts,2);
+ assert.match(await collectIntakeProduct(job,options),/상품 추가 완료/);assert.equal(attempts,2);
  assert.ok(updates.every(j=>j.product_id==='existing-product'));assert.ok(!progress.includes('상품 페이지에서 정보 가져오는 중'));
  const controller=new AbortController();controller.abort();await collectIntakeProduct(job,{...options,signal:controller.signal});assert.equal(attempts,2);
  await assert.rejects(collectIntakeProduct({...job,status:'cancelled'},options),/취소/);assert.equal(attempts,2);
@@ -131,6 +131,30 @@ test('image failure preserves the saved product and still prepares SEO without r
   calls.push(path);assert.equal(JSON.parse(init.body).action,'prepare-collected');return Response.json({job:{productId:'saved-product',status:'prepared'}});
  }}),error=>/이미지 다운로드 실패/.test(error.message)&&/SEO 요청을 준비/.test(error.message)&&/원본 주소 보존/.test(error.message));
  assert.deepEqual(calls,['/api/products/saved-product/translation']);assert.equal(updates.at(-1).product_id,'saved-product');
+});
+
+test('incomplete SEO keeps the intake row retryable and the confirmed product editable',async()=>{
+ const {collectIntakeProduct}=load('app/intake-collection.ts',{'@/app/collection-batch':{importReceivedJobs:async(jobs,options)=>options.onResult('job',{status:'completed',productId:'saved-product',completedImages:1})}});
+ const {submitIntakeQueue,intakeQueueRequests}=load('app/intake-queue.ts');
+ const profile={id:'00000000-0000-0000-0000-000000000001',revision:1,categoryId:'80719',categoryPath:['주방용품']};
+ let rows=[{id:'row',profile,url,features:'',keywords:'',status:'draft',message:''}];
+ const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',received_at:new Date().toISOString()};
+ let imports=0;
+ const signal=new AbortController().signal;
+ const collect=async(job,progress,linked)=>{
+  imports++;
+  return collectIntakeProduct(job,{signal,onJob:value=>{if(value.product_id)linked(value.product_id);},onProgress:progress,fetcher:async(_url,init)=>{
+   if(imports===1)return Response.json({error:'SEO 일시 실패'},{status:503});
+   const body=JSON.parse(init.body),version='2026-09-27T10:00:00Z';
+   return Response.json(body.action==='prepare-collected'?{job:{productId:'saved-product',status:'completed'},intakePreserved:true,productVersion:version}:{done:true,productId:'saved-product',productVersion:version});
+  }});
+ };
+ const settings={signal,collect,onJobs(){},onRow:(id,patch)=>{rows=rows.map(row=>row.id===id?{...row,...patch}:row);},fetcher:async()=>Response.json({jobs:[job],preservedRequests:[]})};
+ await submitIntakeQueue(rows,'price',settings);
+ assert.equal(rows[0].status,'error');assert.equal(rows[0].productId,'saved-product');assert.match(rows[0].message,/SEO 일시 실패/);
+ assert.equal(intakeQueueRequests(rows,'price').length,1);
+ await submitIntakeQueue(rows,'price',settings);assert.equal(imports,2);assert.equal(rows[0].status,'saved');
+ assert.equal(rows[0].productId,'saved-product');assert.equal(intakeQueueRequests(rows,'price').length,0);
 });
 
 test('failed product creation and stopped import never prepare SEO',async()=>{

@@ -6,6 +6,20 @@ import ts from 'typescript';
 function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,setTimeout:callback=>setTimeout(callback,0),clearTimeout,require:name=>load(name.slice(2)+'.ts')});return exports;}
 const {prepareIntakeSeo:run}=load('app/intake-seo.ts');
 const job={id:'j',productId:'p',productVersion:'v',contentRevision:1,status:'prepared',review:{fingerprint:'f',expiresAt:'2099-01-01T00:00:00Z',destination:'Cloudflare Workers AI'}};
+
+test('draft completion is explicit and cannot be inferred from a success message or unbound done response',async()=>{
+ const outcome=load('app/intake-seo.ts').prepareIntakeSeoOutcome;
+ for(const body of [{done:true,productId:'p'}, {job,autoDraft:false}, {job:{...job,status:'failed',error:{message:'failed'}},autoDraft:true}]){
+  const result=await outcome('p',async()=>Response.json(body),new AbortController().signal);
+  assert.equal(result.completed,false);assert.ok(result.message);
+ }
+ let calls=0;
+ const result=await outcome('p',async(_url,init)=>{
+  calls++;const body=JSON.parse(init.body);
+  return Response.json(body.action==='prepare-collected'?{job,intakePreserved:true,productVersion:'v'}:{done:true,productId:'p',productVersion:'v'});
+ },new AbortController().signal);
+ assert.equal(result.completed,true);assert.equal(calls,2);
+});
 test('automatic intake uses one generation and exact preview fingerprint before saving',async()=>{
  const actions=[];
  const message=await run('p',async(url,init)=>{const b=JSON.parse(init.body);actions.push(b.action);
