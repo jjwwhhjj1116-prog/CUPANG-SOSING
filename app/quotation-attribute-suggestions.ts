@@ -1,6 +1,6 @@
 import type { TranslationJob } from '@/app/automation/translation';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
-import { loadAttributeRules } from '@/app/quotation-attribute-rules';
+import { loadAttributeRules, readAttributeRules } from '@/app/quotation-attribute-rules';
 import { canMapTranslatedAttribute, quotationTranslationDraft, quotationTranslationMatches, type AttributeMapping, type QuotationTranslationReview } from '@/app/quotation-translation-adoption';
 
 /** First-use suggestions are limited to exact category product attributes, not legal or commercial defaults. */
@@ -42,9 +42,18 @@ export async function fetchAttributeSuggestions(productId: string, view: Quotati
       return { mapping: Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId])), revision: 0, skipped: result.skipped,
         message: `저장된 카테고리 규칙이 없어 이름이 정확히 같은 상품 속성 ${result.mappings.length}개를 자동 선택했습니다. 변경 전·후 값을 확인한 뒤 초안에 반영하거나 연결 규칙을 저장해주세요.` };
     }
-    const result = loadAttributeRules(JSON.stringify(body.rules), productId, view, job, optionId, review);
+    const serialized = JSON.stringify(body.rules);
+    const rules = readAttributeRules(serialized, view.resolved.schema);
+    const result = loadAttributeRules(serialized, productId, view, job, optionId, review);
+    // Reserve all explicit rules, even those currently skipped. A missing or
+    // edited value must not silently redirect its source or destination.
+    const reservedSources = new Set(rules.rules.map(rule => rule.sourceName));
+    const reservedFields = new Set(rules.rules.map(rule => rule.fieldId));
+    const inferred = suggestCategoryAttributes(productId, view, job, optionId, review);
+    const additions = inferred.mappings.filter(item => !reservedSources.has(job.review.source.attributes[item.sourceIndex].name) && !reservedFields.has(item.fieldId));
+    result.mappings.push(...additions);
     return { mapping: Object.fromEntries(result.mappings.map(item => [item.sourceIndex, item.fieldId])), revision: body.revision!, skipped: result.skipped,
-      message: `저장된 카테고리 규칙 v${body.revision}으로 ${result.mappings.length}개 연결을 자동 선택했습니다. 변경 전·후 값을 확인한 뒤 견적 초안에 반영해주세요.` };
+      message: `저장된 카테고리 규칙 v${body.revision}으로 ${result.mappings.length}개 연결을 선택했습니다. 이 중 ${additions.length}개는 규칙에 없는 항목명의 정확한 일치로 추가했습니다. 변경 전·후 값을 확인한 뒤 견적 초안에 반영해주세요.` };
   } catch (cause) {
     return { ...empty, message: `번역 결과는 불러왔지만 연결 규칙은 적용하지 못했습니다. ${cause instanceof Error ? cause.message : '서버 규칙을 다시 조회해주세요.'}` };
   }

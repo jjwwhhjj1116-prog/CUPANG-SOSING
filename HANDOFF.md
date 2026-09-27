@@ -3420,3 +3420,9 @@ AI등록 화면 확인:
 - Product creation failure (no product ID), stopped import and aborted requests do not proceed to SEO. No new model execution or automatic Supplier Hub submission added.
 - 15 collector/intake API integration tests, TypeScript, production build/artifact/diff checks passed. New tests cover partial image failure with saved product and no SEO on failed/stopped promotion. All external data/model responses in tests are fixtures, not live verification.
 - Deployed aac8d147-e451-4ae5-8208-490a3a5fa583. Existing actual1688 access/credentials, full category parity, image translation and SupplierHub POST501 remain unresolved; full user workflow is not complete. Workers AI remains off.
+
+## 346 — Fill unruled category attributes alongside saved mappings (2026-09-27)
+- Existing category rules previously suppressed exact-name suggestions for every other source attribute. Suggestions now preserve all explicit rule source/destination reservations and add only otherwise-unmapped exact product-attribute names validated against the current category, option and choices.
+- Skipped explicit rules remain reserved (missing source, manual values, etc.); no source redirection or destination takeover. Manual edits/blanks, ambiguity, legal/commercial fields and invalid/stale rules retain existing protection. Changes remain reviewable draft suggestions, not automatic submission or a claim of Couplus live parity.
+- 76 quotation editor/rules API tests passed including new-rule-plus-exact-field and skipped-rule reservation cases. TypeScript, production build/artifact/diff checks passed. Deployed a17175d3-8f97-4994-ba6a-d9c7ce00529d.
+- Full requested workflow remains incomplete: live1688 retrieval, model activation/live generation, all-category Couplus defaults, image translation and SupplierHub POST501 remain unresolved. No paid service activation or external product submission this turn.

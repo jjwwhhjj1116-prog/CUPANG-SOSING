@@ -914,3 +914,29 @@ test('all-option save ignores duplicate clicks and aborted late responses withou
   assert.equal(states[1].length,abort?1:0);
  }
 });
+
+test('saved category rules also suggest new exact attributes without replacing explicit connections',async()=>{
+ const view=fixture(),job=attributeJob(view);
+ const rules=createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ job.result.draft.attributes[1].name='사이즈';
+ const before=JSON.stringify({view,job,rules});let calls=0;
+ const result=await fetchAttributeSuggestions('p1',view,job,'red',async()=>{calls++;return Response.json({rules,revision:3});});
+ assert.deepEqual(clone(result.mapping),{'0':'noticeMaterial','1':'size'});assert.equal(result.revision,3);assert.equal(calls,1);assert.match(result.message,/1개는 규칙에 없는/);
+ const changes=quotationTranslationDraft('p1',view,job,'red',Object.entries(result.mapping).map(([i,fieldId])=>({sourceIndex:Number(i),fieldId})));
+ assert.equal(changes.find(c=>c.fieldKey==='size').value,'38 cm');assert.equal(JSON.stringify({view,job,rules}),before);
+});
+
+test('skipped explicit rule sources and destinations remain reserved when adding exact suggestions',async()=>{
+ const view=fixture(),job=attributeJob(view);
+ const rules=createAttributeRules('p1',view,job,'red',[{sourceIndex:0,fieldId:'size'}]);
+ // Original source is missing: a different source with the same destination
+ // must not silently take over the saved rule.
+ job.review.source.attributes[0].name='상품속성: other';job.result.draft.attributes[1].name='사이즈';
+ const missing=await fetchAttributeSuggestions('p1',view,job,'red',async()=>Response.json({rules,revision:1}));
+ assert.deepEqual(clone(missing.mapping),{});assert.ok(missing.skipped.length);
+ const manual=fixture({common:{noticeMaterial:''},options:{}}),second=attributeJob(manual);
+ const explicit=createAttributeRules('p1',fixture(),attributeJob(fixture()),'red',[{sourceIndex:0,fieldId:'noticeMaterial'}]);
+ second.result.draft.attributes[0].name='사이즈';
+ const skipped=await fetchAttributeSuggestions('p1',manual,second,'red',async()=>Response.json({rules:explicit,revision:1}));
+ assert.deepEqual(clone(skipped.mapping),{});assert.ok(skipped.skipped.length);
+});
