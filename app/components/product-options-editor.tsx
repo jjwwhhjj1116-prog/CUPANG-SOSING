@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { calculateOptionPrices, emptyOptionInput, optionInputs, optionFieldNames, OPTION_LIMIT, type OptionField, type OptionInput, type ProductOptionsResponse } from '@/app/product-options';
+import { optionImageSaveRows, mergeSavedOptionImages } from '@/app/option-image-save';
 import { productImageKeys } from '@/app/product-content';
 import { applyOptionBulk, duplicateOption, moveOption, optionBulkPriceBase, previewOptionBulk, type BulkOptionAction, type BulkOptionPreview } from '@/app/option-editor-tools';
 import type { PricePolicy } from '@/app/pricing';
 import { mergeOptionDraft, refreshOptionPriceBase } from '@/app/option-price-refresh';
 
-type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; onSaved?: () => void; pricingView?: boolean; focusedOptionId?: string };
+type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; onSaved?: () => void; imageView?: boolean; pricingView?: boolean; focusedOptionId?: string };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 const originNames = { manual: '직접 입력', collected: '수집 원문', translated: '번역 결과', unverified: '미확인' };
 async function fetchOptions(endpoint: string, signal?: AbortSignal): Promise<ProductOptionsResponse> {
@@ -17,7 +18,7 @@ async function fetchOptions(endpoint: string, signal?: AbortSignal): Promise<Pro
   return body;
 }
 export function ProductOptionsEditor(props: Props) { return <OptionsEditor key={props.product.id} {...props} />; }
-function OptionsEditor({ product, onSaved, pricingView = false, focusedOptionId }: Props) {
+function OptionsEditor({ product, onSaved, pricingView = false, imageView = false, focusedOptionId }: Props) {
   const [saved, setSaved] = useState<ProductOptionsResponse | null>(null);
   const [rows, setRows] = useState<OptionInput[]>([]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -25,6 +26,7 @@ function OptionsEditor({ product, onSaved, pricingView = false, focusedOptionId 
   const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [conflict, setConflict] = useState(false);
   const [snapshotVersion, setSnapshotVersion] = useState(product.updated_at);
   const [refreshNotice, setRefreshNotice] = useState('');
+  const [imageOptionId, setImageOptionId] = useState(focusedOptionId || '');
   const editorRoot=useRef<HTMLDivElement>(null);
   const activeRequest=useRef<AbortController|null>(null);
   useEffect(()=>()=>{activeRequest.current?.abort();},[]);
@@ -80,15 +82,16 @@ function OptionsEditor({ product, onSaved, pricingView = false, focusedOptionId 
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '최신 가격 확인 실패'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }
-  async function save() {
+  async function save(imagesOnly = false) {
     if (!saved || busy || loading || conflict || changedElsewhere || activeRequest.current) return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     try {
-      const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: saved.options.revision, expectedProductVersion: saved.productVersion, rows }) });
+      const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: saved.options.revision, expectedProductVersion: saved.productVersion, rows: imagesOnly ? optionImageSaveRows(saved.options, rows) : rows }) });
       const body = await response.json() as ProductOptionsResponse & { error?: string };
       if(controller.signal.aborted)return;
       if (!response.ok || !body.options) { if (response.status === 409) setConflict(true); throw new Error(body.error || '옵션을 저장하지 못했습니다.'); }
+      if (imagesOnly) { setSaved(body); setRows(previous => mergeSavedOptionImages(previous, body.options)); setSnapshotVersion(body.productVersion); setConflict(false); setMessage('옵션 대표 이미지를 저장했습니다. 다른 미저장 입력은 유지했습니다.'); onSaved?.(); return; }
       applyLoaded(body); setMessage(`옵션 ${body.options.rows.length}개 저장 완료 · 견적 포함 ${body.options.rows.filter(row => row.included).length}개`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '옵션을 저장하지 못했습니다.'); } finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }
@@ -98,6 +101,38 @@ function OptionsEditor({ product, onSaved, pricingView = false, focusedOptionId 
     return previous && previous[key] === row[key] ? originNames[previous.provenance[key] ?? 'unverified'] : '미저장 수정';
   }
   const numberKeys = ['unitCostCny', 'unitsPerPack', 'minimumOrderQuantity', 'stock', 'widthCm', 'lengthCm', 'heightCm', 'weightKg', 'packagedWeightG', 'packagedWidthMm', 'packagedLengthMm', 'packagedHeightMm'] as const;
+
+  if (imageView) {
+    const existing = rows.filter(row => saved?.options.rows.some(option => option.id === row.id));
+    const activeId = imageOptionId || existing[0]?.id;
+    const active = existing.find(row => row.id === activeId);
+    const imageDirty = existing.some(row => row.imageKey !== saved?.options.rows.find(option => option.id === row.id)?.imageKey);
+    const fileUrl = (key: string) => '/api/files/' + key.split('/').map(encodeURIComponent).join('/');
+    return <div ref={editorRoot} className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+      <h3>옵션별 대표 이미지</h3>
+      {loading && <p role="status">옵션 이미지를 불러오는 중입니다.</p>}
+      {error && <p role="alert">{error}</p>}
+      {message && <p role="status">{message}</p>}
+      {(refreshNotice || conflict || changedElsewhere) && <p role="status">{refreshNotice || '상품이 변경되었습니다. 입력을 보관한 뒤 최신 저장본을 확인해주세요.'}</p>}
+      <label className="field"><span>대표 이미지를 지정할 옵션</span><select aria-label="대표 이미지 옵션 선택" value={activeId || ''} disabled={busy || loading} onChange={event => setImageOptionId(event.target.value)}>
+        {!active && <option value={activeId || ''}>{activeId ? '선택했던 옵션이 없습니다' : '저장한 옵션이 없습니다'}</option>}
+        {existing.map((row,index) => <option key={row.id} value={row.id}>{row.translatedName || row.originalName || `옵션 ${index+1}`}</option>)}
+      </select></label>
+      {active && <>
+        {active.imageKey ? <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={fileUrl(active.imageKey)} alt="선택 옵션 대표 이미지" style={{width:'100%',height:320,objectFit:'contain',background:'#f7f8fa'}} />
+        </> : <p>이 옵션은 공통 대표 이미지를 사용합니다.</p>}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(100px,1fr))',gap:10}}>{images.map((key,index) => <button type="button" key={key} aria-label={`옵션 대표 이미지 ${index+1} 선택`} aria-pressed={active.imageKey===key} disabled={busy || loading} onClick={() => update(active.id,'imageKey',key)} style={{padding:4,border:active.imageKey===key?'2px solid #29b9df':'1px solid #dfe4ec',background:'white',borderRadius:8}}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={fileUrl(key)} alt={`상품 이미지 ${index+1}`} style={{width:'100%',height:100,objectFit:'contain'}} />
+        </button>)}</div>
+        <button type="button" className="btn ghost" disabled={busy || loading || !active.imageKey} onClick={() => update(active.id,'imageKey',null)}>옵션 이미지 해제·공통 이미지 사용</button>
+      </>}
+      <div style={{display:'flex',gap:8}}><button type="button" className="btn primary" disabled={!active || !imageDirty || busy || loading || conflict || changedElsewhere} onClick={() => void save(true)}>옵션 대표 이미지 저장</button><button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>입력 버리고 저장본 불러오기</button></div>
+      {dirty && <small>대표 이미지 저장은 기존 옵션의 이미지 변경만 반영합니다. 옵션명·가격 등 다른 입력은 해당 단계에서 저장하세요.</small>}
+    </div>;
+  }
 
   return <div ref={editorRoot} className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
     <div className="panel-note"><div><strong>옵션·SKU별 견적 구성</strong><p>옵션 원가와 판매 단위당 구성 수량으로 각각 계산합니다. 상품의 대표 원가는 별도로 유지됩니다. 원문·한국어 이름을 수정해 저장할 수 있으며 자동 수집·번역이 실행되는 화면은 아닙니다. 공급자 재고는 수집 시점 또는 직접 입력한 값이며 실시간 재고가 아닙니다. 구성 수량·최소 주문 수량·견적 수량과는 별개입니다. 포장 무게(g)와 포장 치수(mm)는 실제 배송할 포장 상태를 입력하면 견적서 물류 정보에 자동 반영됩니다.</p></div></div>

@@ -104,3 +104,32 @@ test('targeted option image editing saves only that image and clearing restores 
  assert.equal(requests[0].rows[0].imageKey,null);assert.equal(requests[0].rows[1].imageKey,'owner/b.png');
  select().props.onChange({target:{value:''}});h.button().props.onClick();await settle();assert.equal(requests[1].rows[1].imageKey,null);
 });
+
+test('stage three saves image only while preserving unsaved price and name drafts',async()=>{
+ let request;const props={imageView:false};
+ const h=harness(async(_url,init,base)=>{request=JSON.parse(init.body);return Response.json({...base,options:{...base.options,revision:2,rows:request.rows.map(row=>({...row,provenance:{imageKey:'manual'}}))},productVersion:'2026-09-24T00:01:00Z'});},undefined,props);
+ await h.start();
+ const input=label=>nodes(h.render()).find(n=>n.type==='input'&&n.props['aria-label']===label);
+ input('옵션 1 옵션명 원문').props.onChange({target:{value:'미저장 옵션명'}});
+ const cost=nodes(h.render()).find(n=>n.type==='input'&&n.props.type==='number'&&n.props.value===2);
+ cost.props.onChange({target:{value:'9',valueAsNumber:9}});
+ props.imageView=true;
+ nodes(h.render()).find(n=>n.props?.['aria-label']==='옵션 대표 이미지 2 선택').props.onClick();
+ const save=nodes(h.render()).find(n=>n.type==='button'&&n.props.children==='옵션 대표 이미지 저장');
+ save.props.onClick();await settle();
+ assert.equal(request.rows[0].unitCostCny,2);assert.equal(request.rows[0].originalName,'');assert.equal(request.rows[0].imageKey,'owner/b.png');assert.equal(request.expectedRevision,1);
+ props.imageView=false;
+ assert.equal(input('옵션 1 옵션명 원문').props.value,'미저장 옵션명');
+ assert.equal(nodes(h.render()).find(n=>n.type==='input'&&n.props.type==='number'&&n.props.value===9).props.value,9);
+ assert.equal(h.image().props.value,'owner/b.png');assert.equal(h.saves,1);
+});
+
+test('stage three missing target is not silently changed and explicit clear saves common fallback',async()=>{
+ let request;const props={imageView:true,focusedOptionId:'deleted'};
+ const h=harness(async(_url,init,base)=>{request=JSON.parse(init.body);return Response.json({...base,options:{...base.options,revision:2,rows:request.rows}});},body=>{body.options.rows[0].imageKey='owner/a.png';return Response.json(body);},props);
+ await h.start();const choice=()=>nodes(h.render()).find(n=>n.props?.['aria-label']==='대표 이미지 옵션 선택');
+ assert.equal(choice().props.value,'deleted');assert.equal(nodes(h.render()).some(n=>n.props?.['aria-label']==='옵션 대표 이미지 1 선택'),false);
+ choice().props.onChange({target:{value:'a'}});
+ nodes(h.render()).find(n=>n.type==='button'&&n.props.children==='옵션 이미지 해제·공통 이미지 사용').props.onClick();
+ nodes(h.render()).find(n=>n.type==='button'&&n.props.children==='옵션 대표 이미지 저장').props.onClick();await settle();assert.equal(request.rows[0].imageKey,null);
+});

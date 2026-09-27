@@ -369,9 +369,9 @@ function DetailPanel({ tab, product, settings, onUpload, onSavePrice, onSaved, o
     <div hidden={tab!=='표시사항'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div hidden={tab!=='번역'}><TranslationPanel productId={product.id} version={product.updated_at} title={product.title} onContentSaved={sourceSaved}/></div>
-    <div data-quotation-source-step="가격" hidden={!['옵션','가격'].includes(tab)} className={tab==='가격'?'pricing-workspace':'panel-stack'}>
+    <div data-quotation-source-step={tab==='대표 이미지'?'대표 이미지':'가격'} hidden={!['옵션','가격','대표 이미지'].includes(tab)} className={tab==='가격'?'pricing-workspace':'panel-stack'}>
       <section hidden={tab!=='가격'} className="pricing-policy-panel"><h3>가격 정책 설정</h3><PriceEditor profileId={preferredProfileId} productId={product.id} version={product.updated_at} sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={saveSourcePrice} onQuotationSaved={sourceSaved}/></section>
-      <section className="pricing-options-panel"><ProductOptionsEditor focusedOptionId={focusedOptionId} product={product} onSaved={sourceSaved} pricingView={tab==='가격'}/><div hidden={tab!=='옵션'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={sourceSaved}/></div></section>
+      <section className="pricing-options-panel"><ProductOptionsEditor focusedOptionId={focusedOptionId} product={product} onSaved={sourceSaved} pricingView={tab==='가격'} imageView={tab==='대표 이미지'}/><div hidden={tab!=='옵션'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={sourceSaved}/></div></section>
     </div>
     <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel productId={product.id} preferredProfileId={preferredProfileId} navigationTarget={quotationTarget ?? (focusedOptionId ? {optionId:focusedOptionId,fieldId:'title'} : undefined)} refreshToken={`${product.updated_at}:${quotationRefresh}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
   </>;

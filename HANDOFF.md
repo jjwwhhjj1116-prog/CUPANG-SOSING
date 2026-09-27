@@ -3260,3 +3260,10 @@ AI등록 화면 확인:
 - Loading/save failures preserve edits, double writes are coalesced, version changes preserve dirty rows and abort pending old requests, unmount ignores late responses. Explicit reload discards edits only via its labeled button.
 - Validation: option price editor/preview, policy editor, DetailPanel refresh and quotation-fields API suites 38/38; TypeScript, production build/artifact check and diff check passed. Deployed 87464902-2ad4-41a4-afae-a80a83f87253.
 - No live Couplus/browser visual verification this turn. Full category parity, comprehensive 1688 import, image translation and Supplier Hub automatic registration remain incomplete.
+
+## 318 — Option-specific representative images within stage three (2026-09-27)
+- Existing persistent option editor now has an image view inside stage three: explicit option selector, image preview, owned product thumbnails and clear-to-common action. Stage changes reuse the same draft state. Missing focused option is not silently retargeted.
+- Image-only save overlays imageKey on saved existing options, preserving server prices/names/option membership and leaving unrelated local edits unsaved. Returned image selections merge into the local draft; existing revision/product-version checks, ownership/R2 checks, abort guards and source refresh remain active.
+- Stage seven already resolves the option image before the common main image; null restores common selection. No image generation or translation is claimed by this change.
+- Validation: option component/model/API and DetailPanel suites 24/24; TypeScript, production build, Cloudflare artifact and diff checks passed. Tests cover image-only save with unsaved price/name and missing target/explicit clear. No live browser visual comparison this turn.
+- Deployed ed529ee1-bb56-4bee-9c9d-f3cf7557212d. Comprehensive actual 1688 extraction, all-category Couplus parity, image translation and Supplier Hub automatic registration remain incomplete.
