@@ -1,4 +1,4 @@
-import { calculateOptionPrices, OPTION_LIMIT, type OptionInput } from '@/app/product-options';
+import { calculateOptionPrices, OPTION_LIMIT, type ProductOption, type OptionInput } from '@/app/product-options';
 import type { PricePolicy } from '@/app/pricing';
 import type { AssetRole } from '@/app/product-content';
 
@@ -63,10 +63,19 @@ export function moveOption(rows: readonly OptionInput[], id: string, offset: -1 
   if (index < 0 || target < 0 || target >= rows.length) return [...rows];
   const next = [...rows]; [next[index], next[target]] = [next[target], next[index]]; return next;
 }
-export function duplicateOption(rows: readonly OptionInput[], id: string, newId: string): OptionInput[] {
+export function duplicateOption(rows: readonly OptionInput[], id: string, newId: string, saved?: ProductOption): OptionInput[] {
   if (rows.length >= OPTION_LIMIT || rows.some(row => row.id === newId)) throw new Error('옵션 개수 또는 새 식별자를 확인해주세요.');
   const index = rows.findIndex(row => row.id === id); if (index < 0) throw new Error('복제할 옵션이 없습니다.');
-  const copy = { ...rows[index], id: newId, supplierSku: '', stock: null, included: false };
+  const original = rows[index];
+  const basis = original.packagingConfirmed === true ? original.unitsPerPack
+    : saved?.id === id ? saved.packagingUnitsPerPack ?? saved.unitsPerPack : undefined;
+  // New rows have no persisted packaging history. Do not turn an unresolved
+  // quantity change into confirmed packaging simply by assigning another ID.
+  const copy = { ...original, id: newId, supplierSku: '', stock: null, included: false,
+    ...(basis === original.unitsPerPack ? {} : {
+      packagedWeightG: null, packagedWidthMm: null, packagedLengthMm: null, packagedHeightMm: null, packagingConfirmed: false,
+    }) };
+
   return [...rows.slice(0, index + 1), copy, ...rows.slice(index + 1)];
 }
 export type AssetEditorFilter = 'all' | 'unassigned' | AssetRole;

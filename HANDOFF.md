@@ -4075,3 +4075,9 @@ AI등록 화면 확인:
 - 199 related tests passed, including real route/SQLite intake with enabled rules and disabled direct/rule matching. Typecheck/build/artifact/diff checks passed.
 - Actual 1688 collection, all-category parity, official XLSX, installed extension refresh, image AI and final Hub registration remain unverified. Extension unchanged at 0.2.12.
 - Deployed 946b8d67-6f30-4e17-89b2-6783a64e0cc2.
+
+## Step 456 — Keep unresolved packaging out of duplicated options (2026-09-28)
+- Reproduced: save packaging for one unit, change unitsPerPack to three without reconfirming packaging, duplicate the option. New-ID persistence previously relabeled the copied old packaging as three-unit packaging, losing the stale-basis warning.
+- Duplication now receives its exact saved source row from the editor. Packaging copies only if saved basis equals current quantity or the user explicitly reconfirmed current packaging. Otherwise only the new copy's packaging fields are empty; original option, product dimensions, price, image and color/size remain intact. Missing or foreign saved history cannot establish a packaging basis. New duplicate remains excluded and has no supplier SKU/reported stock.
+- 200 related tests passed, including save/change/duplicate/save/resolve/export regression, normal same-quantity duplication and explicit reconfirmation. Typecheck, Cloudflare build, artifact and diff checks passed.
+- Deployed 7062d56a-1d2d-4327-974b-247e68ef46aa. No external products modified. Actual 1688 collection, all-category/default parity, official XLSX, installed extension refresh, image AI and final Hub registration remain unverified. Extension unchanged at 0.2.12; automatic bundling algorithm is still not implemented.

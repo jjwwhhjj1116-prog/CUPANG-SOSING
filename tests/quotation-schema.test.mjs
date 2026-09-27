@@ -1833,3 +1833,22 @@ test('captured hidden-attribute switch gates translated suggestions, keeps expos
   assert.equal(fields.basketShape.value,'원형');assert.equal(fields.basketShape.source,'manual-option');
  }
 });
+
+
+test('copied stale bundle packaging stays missing in the final quotation while bundle prices recalculate',()=>{
+ const input=fixture(),tools=load('app/option-editor-tools.ts');
+ let rows=optionModel.optionInputs(input.options);
+ Object.assign(rows[0],{packagedWeightG:250,packagedWidthMm:100,packagedLengthMm:200,packagedHeightMm:30,packagingConfirmed:true});
+ input.options=optionModel.applyOptionRows(input.options,rows,'packaging');
+ rows=optionModel.optionInputs(input.options);rows[0].unitsPerPack=3;
+ input.options=optionModel.applyOptionRows(input.options,rows,'bundle');
+ rows=tools.duplicateOption(optionModel.optionInputs(input.options),'red','copy',input.options.rows[0]);rows[1].included=true;
+ input.options=optionModel.applyOptionRows(input.options,rows,'copy');
+ const resolved=model.resolveQuotationFields(input),original=resolved.rows.find(r=>r.optionId==='red'),copy=resolved.rows.find(r=>r.optionId==='copy');
+ assert.equal(original.fields.packagedWeightG.value,'250');assert.ok(original.fields.packagedWeightG.validationIssues.some(message=>message.includes('1개입')));
+ for(const id of ['packagedWeightG','packagedDimensionsMm']){assert.equal(copy.fields[id].value,'');assert.ok(copy.fields[id].validationIssues.some(message=>message.includes('필수')));}
+ assert.equal(copy.fields.quantity.value,'3');assert.equal(copy.fields.supplyPrice.value,'6000');
+ const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:'assets/'+index+'.png'}));
+ const output=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[1];
+ assert.equal(output.packagedWeightG,'');assert.equal(output.packagedDimensionsMm,'');assert.equal(output.supplyPrice,6000);
+});

@@ -154,3 +154,35 @@ test('bulk packaging preserves other facts, confirms selected quantities on save
  for(const bad of [null,{},[],{...value,extra:1},{...value,packagedWeightG:0},{...value,packagedWidthMm:1.1},{...value,packagedWidthMm:1000001}])assert.throws(()=>tools.previewOptionBulk(rows,['a'],{type:'packaging',value:bad},policy));
  assert.throws(()=>tools.applyOptionBulk(rows.map(r=>({...r,unitsPerPack:4})),plan,policy),/미리보기/);
 });
+
+
+test('duplicating a changed bundle cannot confirm packaging from the old quantity',()=>{
+ const original=row('a',{packagedWeightG:120,packagedWidthMm:100,packagedLengthMm:200,packagedHeightMm:30});
+ const initial=model.applyOptionRows(model.emptyProductOptions('p'),[original],'2026-09-28T00:00:00Z');
+ const changed=model.applyOptionRows(initial,[{...model.optionInputs(initial)[0],unitsPerPack:3}],'2026-09-28T00:01:00Z');
+ assert.equal(changed.rows[0].packagingUnitsPerPack,1);
+ const inputs=model.optionInputs(changed),before=JSON.stringify(inputs);
+ const duplicates=tools.duplicateOption(inputs,'a','copy',changed.rows[0]);
+ const saved=model.applyOptionRows(changed,duplicates,'2026-09-28T00:02:00Z');
+ assert.equal(JSON.stringify(inputs),before);
+ assert.equal(saved.rows[0].packagingUnitsPerPack,1);assert.equal(saved.rows[0].packagedWeightG,120);
+ const copy=saved.rows[1];assert.equal(copy.unitsPerPack,3);assert.equal(copy.packagingUnitsPerPack,undefined);
+ for(const key of ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'])assert.equal(copy[key],null);
+ assert.equal(copy.unitCostCny,original.unitCostCny);assert.equal(copy.widthCm,original.widthCm);assert.equal(copy.imageKey,original.imageKey);
+ assert.equal(copy.included,false);assert.equal(copy.supplierSku,'');
+});
+
+test('same-quantity saved or explicitly reconfirmed packaging can be duplicated',()=>{
+ const original=row('a',{packagedWeightG:120,packagedWidthMm:100,packagedLengthMm:200,packagedHeightMm:30});
+ const initial=model.applyOptionRows(model.emptyProductOptions('p'),[original],'v');
+ for(const confirmed of [false,true]){
+  const inputs=model.optionInputs(initial);if(confirmed){inputs[0].unitsPerPack=3;inputs[0].packagingConfirmed=true;}
+  const duplicates=tools.duplicateOption(inputs,'a','copy',initial.rows[0]);
+  const saved=model.applyOptionRows(initial,duplicates,'next');
+  assert.equal(saved.rows[1].packagingUnitsPerPack,confirmed?3:1);assert.equal(saved.rows[1].packagedWeightG,120);
+ }
+ // Missing or another option's history cannot establish the packaging basis.
+ for(const source of [undefined,{...initial.rows[0],id:'other'}]){
+  assert.equal(tools.duplicateOption([original],'a','copy',source)[1].packagedWeightG,null);
+ }
+});
