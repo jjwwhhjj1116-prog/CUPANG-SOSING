@@ -10,7 +10,7 @@ import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 
 // Real route handlers and persistence; only auth, Alibaba and R2 are fixtures.
 // This is not evidence of a live Alibaba or Supplier Hub transaction.
-for(const automatic of [false,true,'many','maximum','resume-options','stale','completed','fresh'])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
+for(const automatic of [false,true,'many','maximum','resume-options','resume-completed-options','stale','completed','fresh'])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...v){args=v;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const result=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
  const objects=new Map(),network=[],calls=[],cache=new Map();
@@ -18,7 +18,7 @@ for(const automatic of [false,true,'many','maximum','resume-options','stale','co
  const png=new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'));
  const payload={result:{success:true,result:{offerId:'813724060928',subject:'原文商品',minOrderQuantity:2,productImage:{images:['https://cbu01.alicdn.com/main.jpg']},description:'<p>원문 설명</p><img src="https://cbu01.alicdn.com/detail.jpg">',productSkuInfos:[{skuId:'5627721589407',price:'25.6',amountOnSale:'12',skuAttributes:[{attributeName:'颜色',value:'黑色',skuImageUrl:'https://cbu01.alicdn.com/black.jpg'}]}]}}};
  if(automatic===true)payload.result.result.productAttribute=[{attributeName:'形状',value:'方形'}];
- if(automatic==='many'||automatic==='maximum'||automatic==='resume-options'){
+ if(automatic==='many'||automatic==='maximum'||(automatic==='resume-options'||automatic==='resume-completed-options')){
   const original=payload.result.result.productSkuInfos[0];payload.result.result.productSkuInfos=Array.from({length:automatic==='maximum'?200:60},(_,i)=>({...structuredClone(original),skuId:String(5627721589407+i),...(automatic==='maximum'?{skuAttributes:[...original.skuAttributes,{attributeName:'尺码',value:'大号'}]}:{})}));
   payload.result.result.productAttribute=Array.from({length:50},(_,i)=>({attributeName:'属性'+i,value:'原文'}));
  }
@@ -36,10 +36,10 @@ for(const automatic of [false,true,'many','maximum','resume-options','stale','co
   sqlite.prepare('INSERT INTO collection_jobs VALUES (?,?,?,?,?,?,?,?)').run('job','owner','813724060928',sourceUrl,'price','awaiting_connector',now,now);
   sqlite.prepare('INSERT INTO collection_context VALUES (?,?)').run('job',JSON.stringify(context));
   let interruptOptions=false;
-  const fetcher=async(path,init)=>{calls.push(path);if(interruptOptions&&path.endsWith('/translation')&&JSON.parse(init.body).action==='approve'){const pending=sqlite.prepare('SELECT id FROM translation_jobs WHERE id=? AND idempotency_key LIKE ?').get(JSON.parse(init.body).jobId,'intake-options-%');if(pending){interruptOptions=false;throw Error('fixture connection interrupted before option approval');}}if(path.endsWith('/translation-apply'))return load('app/api/products/[id]/translation-apply/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});if(path.endsWith('/translation'))return load('app/api/products/[id]/translation/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});const match=/^\/api\/collection-jobs\/job\/(collect|result|capacity|product|images)$/.exec(path);assert.ok(match,`unexpected request ${path}`);const response=await load(`app/api/collection-jobs/[id]/${match[1]}/route.ts`)[init?.method??'GET'](new Request('https://app.test'+path,init),{params:Promise.resolve({id:'job'})});if(!response.ok)assert.fail(`${path}: ${response.status} ${await response.text()}`);return response;};
+  const fetcher=async(path,init)=>{calls.push(path);if(interruptOptions&&((automatic==='resume-options'&&path.endsWith('/translation')&&JSON.parse(init.body).action==='approve')||(automatic==='resume-completed-options'&&path.endsWith('/translation-apply')&&JSON.parse(init.body).scope==='options'))){const pending=sqlite.prepare('SELECT id FROM translation_jobs WHERE id=? AND idempotency_key LIKE ?').get(JSON.parse(init.body).jobId,'intake-options-%');if(pending){interruptOptions=false;throw Error('fixture connection interrupted before option approval');}}if(path.endsWith('/translation-apply'))return load('app/api/products/[id]/translation-apply/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});if(path.endsWith('/translation'))return load('app/api/products/[id]/translation/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});const match=/^\/api\/collection-jobs\/job\/(collect|result|capacity|product|images)$/.exec(path);assert.ok(match,`unexpected request ${path}`);const response=await load(`app/api/collection-jobs/[id]/${match[1]}/route.ts`)[init?.method??'GET'](new Request('https://app.test'+path,init),{params:Promise.resolve({id:'job'})});if(!response.ok)assert.fail(`${path}: ${response.status} ${await response.text()}`);return response;};
   let latest;const run=async()=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner','job'),{signal:new AbortController().signal,fetcher,onJob:job=>{latest=job;},onProgress:()=>{}});
   // The add-only goal must work with no model credentials and leave no AI job.
-  if(automatic!=='fresh'&&automatic!=='resume-options'){
+  if(automatic!=='fresh'&&automatic!=='resume-options'&&automatic!=='resume-completed-options'){
   sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('collect','job');
   delete deps['cloudflare:workers'].env.OPENAI_API_KEY;
   assert.match(await run(),/상품 추가 완료/);
@@ -53,7 +53,7 @@ for(const automatic of [false,true,'many','maximum','resume-options','stale','co
   if(automatic){
    const bindings=deps['cloudflare:workers'].env;delete bindings.OPENAI_API_KEY;
    bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';bindings.SOURCEFLOW_TEXT_MODEL='@cf/meta/llama-3.1-8b-instruct';
-   const expectedGenerations=automatic==='maximum'?13:(automatic==='many'||automatic==='resume-options')?4:1;
+   const expectedGenerations=automatic==='maximum'?13:(automatic==='many'||(automatic==='resume-options'||automatic==='resume-completed-options'))?4:1;
    if(automatic===true){
     const field=load('app/quotation-schema.ts').getQuotationSchema('80719').fields.find(f=>f.id==='basketShape');
     const rules={format:'sourceflow-attribute-rules-v1',categoryId:'80719',rules:[{sourceName:'상품속성: 形状',fieldId:field.id,fieldSignature:JSON.stringify(field)}]};
@@ -76,7 +76,15 @@ for(const automatic of [false,true,'many','maximum','resume-options','stale','co
     if(automatic!=='completed')sqlite.prepare('UPDATE translation_jobs SET review=?,expires_at=? WHERE id=?').run(JSON.stringify(oldJob.review),oldJob.review.expiresAt,oldJob.id);
    }
    let pendingOptionsId;
-   if(automatic==='resume-options'){interruptOptions=true;await assert.rejects(run(),/fixture connection interrupted/);pendingOptionsId=sqlite.prepare("SELECT id FROM translation_jobs WHERE status='prepared' AND idempotency_key LIKE 'intake-options-%'").get().id;assert.equal(generations,1);assert.equal(objects.size,3);}
+   if((automatic==='resume-options'||automatic==='resume-completed-options')){interruptOptions=true;await assert.rejects(run(),/fixture connection interrupted/);pendingOptionsId=sqlite.prepare("SELECT id FROM translation_jobs WHERE idempotency_key LIKE 'intake-options-%'").get().id;assert.equal(generations,automatic==='resume-completed-options'?2:1);assert.equal(objects.size,3);}
+   if(automatic==='resume-completed-options'){
+    const productId=latest.product_id;
+    const contentRoute=load('app/api/products/[id]/content/route.ts');
+    const saved=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
+    const response=await contentRoute.PATCH(new Request('https://app.test/api/products/'+productId+'/content',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:saved.revision,patch:{seo:{title:'검토자가 고친 상품명'},label:{material:'직접 확인한 재질'}}})}),{params:Promise.resolve({id:productId})});
+    assert.equal(response.status,200,await response.clone().text());
+   }
+   const expectedTitle=automatic==='resume-completed-options'?'검토자가 고친 상품명':'자동 생성 수납 상품';
    const start=calls.length;
    assert.match(await run(),/SEO·옵션 초안을 생성해 반영/);assert.equal(generations,expectedGenerations);
    if(pendingOptionsId)assert.equal(sqlite.prepare('SELECT status FROM translation_jobs WHERE id=?').get(pendingOptionsId).status,'completed');
@@ -87,12 +95,12 @@ for(const automatic of [false,true,'many','maximum','resume-options','stale','co
    if(expiredJobId){const saved=sqlite.prepare('SELECT id,status FROM translation_jobs WHERE idempotency_key=?').get('intake-auto-v1');assert.equal(saved.id,expiredJobId);assert.equal(saved.status,'completed');}
    const content=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
    if(automatic==='many'){assert.equal(content.categoryAttributes.categoryId,'80719');assert.equal(content.categoryAttributes.values.length,50);}
-   assert.equal(content.seo.title.value,'자동 생성 수납 상품');assert.equal(content.label.productName.value,'자동 생성 수납 상품');
+   assert.equal(content.seo.title.value,expectedTitle);assert.equal(content.label.productName.value,expectedTitle);if(automatic==='resume-completed-options')assert.equal(content.label.material.value,'직접 확인한 재질');
    const rows=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload).rows;
    if(automatic==='maximum'){assert.equal(rows.length,200);assert.ok(rows.every(row=>row.size==='검정 옵션'&&row.provenance.size==='translated'));}
    assert.equal(rows[0].translatedName,'검정 옵션');assert.equal(rows[0].color,'검정');assert.equal(rows[0].unitCostCny,25.6);
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
-   let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,'자동 생성 수납 상품');assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
+   let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,expectedTitle);assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
    if(automatic==='fresh'){
     const contentRoute=load('app/api/products/[id]/content/route.ts');
     const keys=[...objects.keys()];assert.equal(keys.length,3);

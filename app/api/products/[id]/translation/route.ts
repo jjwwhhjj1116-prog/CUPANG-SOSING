@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
-import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation, refreshUnstartedIntake } from '@/db/translation-jobs';
+import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, refreshUnstartedIntake } from '@/db/translation-jobs';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
@@ -74,6 +74,16 @@ export async function POST(request: Request, context: Context) {
       if (!receipt || !collection || options.productId !== id || parseCollectionRequest({ urls: [product.source_url] })[0].offerId !== receipt.result.offerId) return conflict();
       const { source, remainingOptions } = collectedSeoSource(receipt.result, collection, options, optionsOnly);
       if(optionsOnly && !source.attributes.length)return json({done:true,productId:id,productVersion:product.updated_at});
+      const optionsFingerprint = optionsOnly ? await fingerprint(source.attributes) : null;
+      if(optionsFingerprint){
+        const completed=await findIntakeOptionsTranslation(owner,id,optionsFingerprint);
+        if(completed?.status==='completed' && completed.result){
+          if(JSON.stringify(completed.review.source)!==JSON.stringify(source)
+            || completed.review.destination!==translationDestination(config) || completed.review.model!==config.model
+            || completed.review.maxOutputTokens!==config.maxOutputTokens)return conflict();
+          return json({job:completed,replayed:true,remainingOptions,autoDraft,optionsOnly:true,applyVersion:product.updated_at,configuration:configuration()});
+        }
+      }
       const requestFingerprint = await fingerprint({ source, productVersion: product.updated_at, contentRevision: content.revision, destination: translationDestination(config), model: config.model, maxOutputTokens: config.maxOutputTokens });
       const previous = (await listTranslationJobs(owner, id)).find(item => item.productVersion === product.updated_at && item.contentRevision === content.revision &&
         item.review.destination === translationDestination(config) && item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
@@ -84,7 +94,7 @@ export async function POST(request: Request, context: Context) {
         status: 'prepared', review, result: null, error: null, createdAt: new Date().toISOString(), approvedAt: null, startedAt: null, finishedAt: null };
       // Reopening/retrying the same source does not create another paid job.
       const saved = staleUnstarted ? await refreshUnstartedIntake(owner,staleUnstarted,job,requestFingerprint)
-        : await createTranslationJob(owner, job, optionsOnly ? `intake-options-${await fingerprint(source.attributes)}` : autoDraft ? 'intake-auto-v1' : `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
+        : await createTranslationJob(owner, job, optionsOnly ? `intake-options-${optionsFingerprint}` : autoDraft ? 'intake-auto-v1' : `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
       if (!saved || saved.conflict) return conflict();
       return json({ job: saved.job, replayed: saved.replayed, remainingOptions, autoDraft, optionsOnly, configuration: configuration() }, saved.replayed ? 200 : 201);
     }

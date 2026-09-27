@@ -4039,3 +4039,10 @@ AI등록 화면 확인:
 - 44 related tests passed; extra maximum-case assertions rerun passed. Typecheck, production build, artifact and diff checks passed. Deployed efa2a991-d863-4014-947f-05accbddd88a. No external product/browser changes this turn; real Alibaba/AI/image endpoints remain fixture-only in these tests.
 - Follow-up worth investigating: a completed option batch whose apply is interrupted before subsequent image writes is NOT covered by this fix; unlike the initial SEO job, completed option-job version rebasing is not implemented. Do not claim all interruption states recovered.
 - Actual 1688 collection, all-category parity, original official XLSX and final Hub submission still unverified. Extension stays 0.2.11.
+
+## Step 451 — Resume completed option results without regenerating (2026-09-28)
+- Reproduced completed option generation interrupted before adoption, followed by image writes. Exact owner/product/attribute batch lookup now returns the immutable completed result with the current apply version; current source and model configuration must still match.
+- Only identified option-only batches can rebase across content edits. Current SEO, labels and category content remain intact, option originals/provenance are validated, and manual blanks are preserved. Full SEO replay still requires unchanged content.
+- Atomic adoption guards the immutable job's original content revision separately from the current content CAS. Concurrent content changes reject the entire save; the completed job is never rewritten or regenerated.
+- 60 related tests passed (59 suite tests plus the added atomic regression). Integration exercises real routes/SQLite, interruption, image writes, manual content PATCH, resumed options and quotation title propagation with no extra generation. Typecheck, Cloudflare build, artifact and diff checks passed.
+- Deployed 318faf95-d292-48d0-bb5e-da404362c391. External Alibaba/AI/image endpoints are fixtures in tests; no existing external products modified. Actual 1688 collection, all-category parity, official XLSX and final Hub registration remain unverified. Extension unchanged at 0.2.11.

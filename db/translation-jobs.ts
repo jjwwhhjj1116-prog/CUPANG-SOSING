@@ -125,3 +125,11 @@ export async function findIntakeTranslation(ownerId:string,productId:string) {
  const existing=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?').bind(ownerId,productId,'intake-auto-v1').first<Row>();
  return existing?job(existing):null;
 }
+
+/** Exact immutable option batch lookup, scoped to its owner and product. */
+export async function findIntakeOptionsTranslation(ownerId:string,productId:string,attributesFingerprint:string) {
+ if(!/^[a-f0-9]{64}$/.test(attributesFingerprint))throw Error('Invalid option batch fingerprint');
+ const db=await database();
+ const existing=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?').bind(ownerId,productId,'intake-options-'+attributesFingerprint).first<Row>();
+ return existing?job(existing):null;
+}

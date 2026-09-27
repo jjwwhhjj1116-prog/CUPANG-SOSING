@@ -274,3 +274,37 @@ test('completed initial result resumes after price-only changes but rejects cont
   }finally{h.sqlite.close();}
  }
 });
+
+test('completed option batches retain edited content and manual blanks with atomic race protection',async()=>{
+ for(const variant of ['resume','all','other-job','original','race']){
+  const h=harness();try{
+   h.sqlite.prepare('UPDATE products SET updated_at=?').run(nextVersion);
+   h.data.content=cm.applyContentPatch(h.data.content,{seo:{title:'직접 고친 상품명'},label:{material:'직접 확인한 재질'}},nextVersion);
+   h.sqlite.prepare('INSERT INTO product_content VALUES (?,?,?,?,?)').run('p','owner',1,JSON.stringify(h.data.content),nextVersion);
+   h.data.options.rows[0].translatedName='';h.data.options.rows[0].provenance.translatedName='manual';
+   if(variant==='original')h.data.options.rows[0].originalName='不同';
+   const originalJob=JSON.stringify(h.data.job);
+   const route=load('app/api/products/[id]/translation-apply/route.ts',{
+    '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=> 'owner'},
+    '@/db/queries':{findProduct:async()=>({id:'p',owner_id:'owner',updated_at:nextVersion,image_keys:'[]'})},
+    '@/db/product-content':{readProductContent:async()=>h.data.content},'@/db/product-options':{readProductOptions:async()=>h.data.options},
+    '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job,findIntakeTranslation:async()=>null,findIntakeOptionsTranslation:async()=>variant==='other-job'?null:h.data.job},
+    '@/db/translation-category-source':{readTranslationCategorySource:async()=>{throw Error('unexpected category lookup');}},
+    '@/db/translation-adoption':{saveIntegratedTranslation:async(...args)=>{if(variant==='race')h.sqlite.exec("UPDATE product_content SET revision=2");return h.store.saveIntegratedTranslation(...args);}},
+   });
+   const call=body=>route.POST(new Request('https://local/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,expectedVersion:nextVersion,scope:variant==='all'?'all':'options',...body})}),{params:Promise.resolve({id:'p'})});
+   const preview=await call({action:'preview'});
+   if(['all','other-job','original'].includes(variant)){assert.equal(preview.status,409,variant);continue;}
+   assert.equal(preview.status,200);const plan=await preview.json();
+   const saved=await call({action:'apply',fingerprint:plan.fingerprint});assert.equal(saved.status,variant==='race'?409:200);
+   assert.equal(JSON.stringify(h.data.job),originalJob);
+   const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+   assert.equal(content.seo.title.value,'직접 고친 상품명');assert.equal(content.label.material.value,'직접 확인한 재질');
+   if(variant==='resume'){
+    const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+    assert.equal(options.rows[0].translatedName,'');assert.equal(options.rows[0].color,'빨강');
+   }
+   assert.equal(h.sqlite.prepare('SELECT content_revision FROM translation_jobs').get().content_revision,0);
+  }finally{h.sqlite.close();}
+ }
+});
