@@ -74,3 +74,23 @@ test('candidate collector combines signed request with validated receipt and ref
  const receipt=await collect(url,credentials,options);assert.equal(calls,1);assert.equal(receipt.options.length,2);assert.equal(receipt.offerId,'813724060928');
  const wrong=fixture();wrong.result.result.offerId='999';await assert.rejects(collect(url,credentials,{fetcher:async()=>Response.json(wrong)}),/상품번호/);
 });
+
+
+test('single explicit SKU without variant attributes preserves source facts through draft creation',()=>{
+ const f=fixture();const product=f.result.result;product.productSkuInfos=product.productSkuInfos.slice(0,1);
+ product.productSkuInfos[0].skuAttributes=[];
+ const receipt=parse(f,url);const option=receipt.options[0];
+ assert.equal(option.name,product.subject);assert.equal(option.sku,'5627721589407');
+ assert.equal(option.unitPriceCny,25.6);assert.equal(option.stock,0);assert.equal(option.minimumOrder,2);
+ assert.equal(option.color,undefined);assert.equal(option.size,undefined);assert.equal(option.imageIndex,undefined);
+ const settings=load('app/workspace-settings.ts').defaultSettings;
+ const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',{offer_id:receipt.offerId,source_url:url,
+ context:{category:{id:'80719'},settings}},receipt,'single',new Date().toISOString());
+ assert.equal(draft.options.rows.length,1);assert.equal(draft.options.rows[0].supplierSku,option.sku);
+ assert.equal(draft.options.rows[0].unitCostCny,25.6);assert.equal(draft.content.seo.title.value,product.subject);
+ for(const mutate of [p=>delete p.productSkuInfos[0].skuAttributes,p=>p.productSkuInfos[0].skuAttributes=null,
+ p=>delete p.productSkuInfos[0].skuId,p=>delete p.productSkuInfos[0].price,p=>p.subject='',
+ p=>p.productSkuInfos.push({...p.productSkuInfos[0],skuId:'5627721589408'})]){
+ const invalid=structuredClone(f);mutate(invalid.result.result);assert.throws(()=>parse(invalid,url));
+ }
+});

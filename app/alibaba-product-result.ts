@@ -43,11 +43,12 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
   const mainImages = row(product.productImage).images;
   if (!Array.isArray(mainImages) || !mainImages.length) throw Error('상품 이미지를 확인하지 못했습니다.');
   mainImages.forEach((value, index) => image(value, index === 0 ? 'main' : 'additional'));
+  const singleSku = product.productSkuInfos.length === 1;
   const options = product.productSkuInfos.map(value => {
     const sku = row(value);
     const unitPriceCny = numeric(sku.price);
     if (!Number.isFinite(unitPriceCny) || unitPriceCny <= 0) throw Error('옵션별 원가를 확인하지 못했습니다. 수량별·대행 가격을 임의로 적용하지 않습니다.');
-    if (!Array.isArray(sku.skuAttributes) || !sku.skuAttributes.length) throw Error('옵션 속성을 확인하지 못했습니다.');
+    if (!Array.isArray(sku.skuAttributes) || (!sku.skuAttributes.length && !singleSku)) throw Error('옵션 속성을 확인하지 못했습니다.');
     const attributes = sku.skuAttributes.map(row);
     const indices = attributes.filter(attribute => attribute.skuImageUrl != null && attribute.skuImageUrl !== '').map(attribute => image(attribute.skuImageUrl, 'additional'));
     const stock = sku.amountOnSale == null ? null : numeric(sku.amountOnSale);
@@ -59,7 +60,7 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
     };
     const color = optionAttribute(['颜色','色彩','색상']);
     const size = optionAttribute(['尺码','尺寸','사이즈']);
-    return {sku: identity(sku.skuId), name: attributes.map(attribute => text(attribute.value, '옵션명')).join(' / '), unitPriceCny, minimumOrder, stock,
+    return {sku: identity(sku.skuId), name: attributes.length ? attributes.map(attribute => text(attribute.value, '옵션명')).join(' / ') : text(product.subject, '상품명'), unitPriceCny, minimumOrder, stock,
       ...(indices.length ? {imageIndex: indices[0]} : {}), ...(color ? {color} : {}), ...(size ? {size} : {})};
   });
   const attributes = product.productAttribute == null ? [] : product.productAttribute;
