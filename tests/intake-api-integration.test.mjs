@@ -17,7 +17,12 @@ test('URL intake persists a category-scoped editable quotation and resumes witho
  const png=new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'));
  const payload={result:{success:true,result:{offerId:'813724060928',subject:'原文商品',minOrderQuantity:2,productImage:{images:['https://cbu01.alicdn.com/main.jpg']},description:'<p>원문 설명</p><img src="https://cbu01.alicdn.com/detail.jpg">',productSkuInfos:[{skuId:'5627721589407',price:'25.6',amountOnSale:'12',skuAttributes:[{attributeName:'颜色',value:'黑色',skuImageUrl:'https://cbu01.alicdn.com/black.jpg'}]}]}}};
  const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async target=>{const host=new URL(target).hostname;network.push(host);if(host==='gw.open.1688.com')return Response.json(payload);assert.equal(host,'cbu01.alicdn.com');return new Response(png);},require(name){if(name in deps)return deps[name];assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');}});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async (target,init)=>{const host=new URL(target).hostname;network.push(host);if(host==='gw.open.1688.com')return Response.json(payload);if(host==='api.openai.com'){
+ const request=JSON.parse(init.body);assert.equal(request.model,'fixture-model');assert.equal(request.store,false);
+ const source=JSON.parse(request.input[0].content[0].text);assert.equal(source.category.id,'80719');assert.equal(source.title,'原文商品');
+ const draft={title:'한국어 수납 상품',description:'검토한 한국어 설명',keywords:['추천 검색어'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('option-color:')?'색상':'옵션명',value:pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))};
+ return Response.json({id:'fixture-response',status:'completed',model:'fixture-model',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(draft)}]}],usage:{input_tokens:100,output_tokens:50,total_tokens:150}});
+ }assert.equal(host,'cbu01.alicdn.com');return new Response(png);},require(name){if(name in deps)return deps[name];assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');}});return exports;}
  try{
   const now=new Date().toISOString();
   const settings=load('app/observed-price-preset.ts').applyObservedPricePreset({...load('app/workspace-settings.ts').defaultSettings,brand:'저장 브랜드'});
@@ -64,13 +69,19 @@ test('URL intake persists a category-scoped editable quotation and resumes witho
   const before=network.length;delete deps['cloudflare:workers'].env.OPENAI_API_KEY;
   assert.match(await run(),/SEO 요청 준비는 완료되지/);assert.equal(network.length,before);assert.equal(sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
   assert.equal(calls.filter(path=>path.endsWith('/collect')).length,1);assert.equal(network.filter(host=>host==='gw.open.1688.com').length,1);
-  // A synthetic completed AI result lets the actual apply and quotation APIs
-  // verify stage linkage without claiming a live provider response.
+  // Exercise approval, execution claim, provider validation and persistence
+  // through real handlers. Only the external model response is a fixture.
+  deps['cloudflare:workers'].env.OPENAI_API_KEY='fixture-key';
   const current=sqlite.prepare('SELECT * FROM products').get();
   const prepared=sqlite.prepare('SELECT * FROM translation_jobs WHERE product_version=?').get(current.updated_at);
   const reviewed=JSON.parse(prepared.review);
-  const result={draft:{title:'한국어 수납 상품',description:'검토한 한국어 설명',keywords:['추천 검색어'],warnings:[],attributes:reviewed.source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('option-color:')?'색상':'옵션명',value:pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};
-  sqlite.prepare("UPDATE translation_jobs SET status='completed',result=? WHERE id=?").run(JSON.stringify(result),prepared.id);
+  const translation=body=>prepareRoute.POST(new Request('https://app.test/api/products/'+latest.product_id+'/translation',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),quoteContext);
+  const rejected=await translation({action:'execute',jobId:prepared.id});assert.equal(rejected.status,409);assert.equal(network.length,before);
+  const approved=await translation({action:'approve',jobId:prepared.id,reviewFingerprint:reviewed.fingerprint,confirmPaid:true});assert.equal(approved.status,200,await approved.clone().text());
+  const executed=await translation({action:'execute',jobId:prepared.id}),execution=await executed.json();assert.equal(executed.status,200,JSON.stringify(execution));
+  assert.equal(execution.job.status,'completed');assert.equal(execution.job.result.responseId,'fixture-response');assert.equal(execution.job.result.usage.totalTokens,150);
+  assert.equal(network.length,before+1);assert.equal(sqlite.prepare('SELECT status FROM translation_jobs WHERE id=?').get(prepared.id).status,'completed');
+  const repeated=await translation({action:'execute',jobId:prepared.id});assert.equal(repeated.status,200);assert.equal((await repeated.json()).replayed,true);assert.equal(network.length,before+1);
   const applyRoute=load('app/api/products/[id]/translation-apply/route.ts');
   const apply=body=>applyRoute.POST(new Request('https://app.test/api/products/'+latest.product_id+'/translation-apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId:prepared.id,expectedVersion:current.updated_at,...body})}),quoteContext);
   const previewResponse=await apply({action:'preview'}),preview=await previewResponse.json();assert.equal(previewResponse.status,200,JSON.stringify(preview));
@@ -80,6 +91,6 @@ test('URL intake persists a category-scoped editable quotation and resumes witho
   assert.equal(afterContent.seo.title.value,'한국어 수납 상품');assert.equal(afterContent.label.productName.value,'한국어 수납 상품');assert.equal(afterContent.labelProductNameLinked,true);
   assert.deepEqual(afterContent.seo.keywords.value,['수납','바스켓']);assert.equal(afterOptions.rows[0].translatedName,'검정 옵션');assert.equal(afterOptions.rows[0].color,'검정');
   const afterQuote=await (await quoteRoute.GET(new Request(quoteUrl),quoteContext)).json();assert.equal(optionRow(afterQuote).fields.title.value,'한국어 수납 상품');assert.equal(optionRow(afterQuote).fields.salePrice.value,'35000');assert.equal(optionRow(afterQuote).fields.mainImage.value,options.rows[0].imageKey);
-  assert.equal((await apply({action:'apply',fingerprint:preview.fingerprint})).status,409);assert.equal(network.length,before);
+  assert.equal((await apply({action:'apply',fingerprint:preview.fingerprint})).status,409);assert.equal(network.length,before+1);
  }finally{sqlite.close();}
 });
