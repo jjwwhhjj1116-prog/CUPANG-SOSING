@@ -1,5 +1,6 @@
 import { labelFields, validateContentInput, type LabelField, type ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
+import { collectionLabelField } from '@/app/collection-label-attributes';
 
 export type TranslationLabelMapping = { sourceIndex: number; field: LabelField };
 // Explicit equivalent headings only. Do not collapse component materials, product
@@ -23,8 +24,23 @@ export function suggestTranslationLabels(content: ProductContent, job: Translati
   const attributes = job.result?.draft.attributes ?? [];
   for (const field of Object.keys(labelFields) as LabelField[]) {
     const headings = [labelFields[field], ...(equivalentHeadings[field] ?? [])];
-    const candidates = attributes.filter(attribute => headings.includes(attribute.name.trim())
-      && job.review.source.attributes[attribute.sourceIndex]?.name.startsWith('상품속성: '));
+    const sourceMatches = job.review.source.attributes.filter(source => source.name.startsWith('상품속성: ')
+      && collectionLabelField(source.name.slice('상품속성: '.length)) === field);
+    if (new Set(sourceMatches.map(source => source.value)).size > 1) {
+      skipped.push(`${labelFields[field]}: 원문에 서로 다른 값이 있어 자동 연결하지 않았습니다.`); continue;
+    }
+    const candidates = attributes.filter(attribute => {
+      const source = job.review.source.attributes[attribute.sourceIndex];
+      if (!source?.name.startsWith('상품속성: ')) return false;
+      const sourceField = collectionLabelField(source.name.slice('상품속성: '.length));
+      // A renamed translated heading cannot redirect an identified source fact.
+      if (sourceField && sourceField !== field) return false;
+      if (headings.includes(attribute.name.trim())) return true;
+      // Recover only a still-unchanged collected draft; never overwrite a
+      // later translation or manual edit merely because its heading differs.
+      return sourceField === field && content.label[field].provenance === 'collected'
+        && typeof source.value === 'string' && content.label[field].value === source.value.trim();
+    });
     if (!candidates.length) continue;
     if (candidates.length !== 1) { skipped.push(`${labelFields[field]}: 같은 번역 항목명이 여러 개여서 자동 연결하지 않았습니다.`); continue; }
     const mapping = { sourceIndex: candidates[0].sourceIndex, field };

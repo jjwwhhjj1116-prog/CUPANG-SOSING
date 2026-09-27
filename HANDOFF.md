@@ -3920,3 +3920,9 @@ AI등록 화면 확인:
 - Added collection-label-attributes exact aliases for material (재질/材质/material), model (모델명/型号/model), package contents (제품 구성품/구성품/包装清单/package contents). Distinct conflicting values omitted; exact repeated values accepted. No fuzzy matching, inferred units, origin, legal/certification facts or invented translation.
 - Only initial product creation applies original-language values with collected provenance. Existing promotion reuse still preserves manual edits. Label-to-quotation resolver immediately exposes these inputs; test verified category80719 material/components/model.
 -29 product and intake API integration tests passed, plus tsc/build/artifact/diff checks. These are fixture-backed tests, not live1688 or Hub registration proof. Wholeworkflow blockers from430 unchanged. Existing user products untouched; unrelated tests/submission-review.test.mjs remains unstaged.
+
+## Step 432 — source-bound translated label adoption
+- Exact raw material/model/components aliases now shared with translation label suggestion. If translated heading varies, only an unchanged collected label whose value matches the source can adopt that sourceIndex translation. Manual values/blanks and other saved values remain protected.
+- Known raw field cannot be redirected into another label by a translated heading. Conflicting raw values skip automatic adoption even if only one translation returned. Generic heading aliases retain prior behavior for unidentified raw names.
+-54 related collection/adoption/integrated tests pass, tsc/build/artifact pass. One old generic heading test used raw material for every label: corrected fixture to unidentified source for non-material heading coverage, separate redirect-rejection test added.
+- Deployed8b61de34-04f7-47c7-a665-39f47ff6e996. No live generation/source/Hub registration proof or existing product modifications. All previous fullworkflow limitations remain. No extension change.

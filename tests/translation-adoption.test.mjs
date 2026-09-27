@@ -8,6 +8,26 @@ const {translationAdoptionInput}=load('app/translation-adoption.ts');
 const {emptyProductContent,applyContentPatch}=load('app/product-content.ts');
 const {translationBatchAdoption}=load('app/translation-batch-adoption.ts');
 
+test('translated heading variations retain exact collected source bindings and protect manual edits',()=>{
+ const content=emptyProductContent('p');
+ const pairs=[['material','材质','尼龙','주요 소재','나일론'],['model','型号','B-123','모델 번호','B-123'],['components','包装清单','包 × 1','패키지 내용','가방 × 1']];
+ for(const [field,,value] of pairs)content.label[field]={value,provenance:'collected',updatedAt:'before'};
+ const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:pairs.map(([,name,value])=>({name:'상품속성: '+name,value}))}},result:{draft:{title:'',description:'',keywords:[],attributes:pairs.map((pair,sourceIndex)=>({sourceIndex,name:pair[3],value:pair[4]}))}}};
+ let plan=translationBatchAdoption(content,job,'v');
+ assert.equal(plan.input.patch.label.material,'나일론');assert.equal(plan.input.patch.label.components,'가방 × 1');
+ // Unchanged model values do not require a write.
+ assert.equal(plan.input.patch.label.model,undefined);
+ content.label.material={value:'',provenance:'manual',updatedAt:'edit'};
+ content.label.components={value:'다른 저장값',provenance:'translated',updatedAt:'edit'};
+ plan=translationBatchAdoption(content,job,'v');assert.equal(plan.input,null);
+});
+
+test('conflicting source facts and renamed headings cannot redirect a known material into model',()=>{
+ const content=emptyProductContent('p');content.label.material={value:'尼龙',provenance:'collected',updatedAt:'before'};
+ const job={productId:'p',productVersion:'v',status:'completed',review:{source:{attributes:[{name:'상품속성: 材质',value:'尼龙'},{name:'상품속성: material',value:'棉'}]}},result:{draft:{title:'',description:'',keywords:[],attributes:[{sourceIndex:0,name:'모델명',value:'나일론'}]}}};
+ const plan=translationBatchAdoption(content,job,'v');assert.equal(plan.input,null);assert.ok(plan.skipped.some(message=>message.includes('서로 다른 값')));
+});
+
 test('review includes linked label title changes exactly once and preserves an unlinked manual name',()=>{
  for(const linked of [true,false])for(const oldName of ['原文','']){
   const content=emptyProductContent('p');content.labelProductNameLinked=linked;
@@ -122,6 +142,9 @@ test('explicit equivalent label headings are adopted but conflicting aliases and
  const pairs=[['제품명','productName'],['상품명','productName'],['소재','material'],['구성품','components'],['크기 및 중량','dimensions'],['취급 및 사용 주의사항','precautions']];
  for(const [name,field] of pairs){
   const {content,job}=labelFixture();job.result.draft.attributes=[{sourceIndex:0,name,value:'확인한 상품값'}];
+  // Generic translated-heading coverage must not pretend that a known raw
+  // material attribute is a product name, component list or dimension.
+  if(field!=='material')job.review.source.attributes[0].name='상품속성: 기타 속성';
   const before=JSON.stringify({content,job});let result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings[0].field,field);
   assert.equal(translationLabelAdoption(content,job,'v',result.mappings).input.patch.label[field],'확인한 상품값');assert.equal(JSON.stringify({content,job}),before);
   content.label[field]={value:'',provenance:'manual',updatedAt:'now'};result=suggestTranslationLabels(content,job,'v');assert.equal(result.mappings.length,0);

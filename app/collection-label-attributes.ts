@@ -9,6 +9,10 @@ const names: Partial<Record<LabelField, readonly string[]>> = {
   components: ['제품 구성품', '구성품', '包装清单', 'package contents'],
 };
 
+export function collectionLabelField(name: string): LabelField | undefined {
+  return Object.entries(names).find(([, aliases]) => aliases.includes(name.trim().toLowerCase()))?.[0] as LabelField | undefined;
+}
+
 /** Original-language values for a new editable draft, never translated claims. */
 export function collectionLabelAttributes(attributes: CollectionResult['attributes']) {
   const values: Partial<Record<LabelField, string>> = {};
