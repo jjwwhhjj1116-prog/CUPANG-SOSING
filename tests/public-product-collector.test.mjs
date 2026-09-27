@@ -72,3 +72,21 @@ test('intake retries a partially imported product from its receipt without recol
  await assert.rejects(collectIntakeProduct({...job,status:'cancelled'},options),/취소/);assert.equal(attempts,2);
  await assert.rejects(collectIntakeProduct({...job,received_at:'bad-date'},options),/시각/);assert.equal(attempts,2);
 });
+
+test('public product attributes reach SEO source with explicit units and isolated seller names',()=>{
+ const p=product();p.additionalProperty=[{'@type':'PropertyValue',name:'材质',value:'棉'}, {'@type':'https://schema.org/PropertyValue',name:'重量',value:0.375,unitText:'kg'}, {'@type':'PropertyValue',name:'含附件',value:false}, {'@type':'PropertyValue',name:'option:injected',value:'原文'}, {'@type':'PropertyValue',name:'长度',value:38,unitCode:'CMT'}];
+ p.hasVariant[0].additionalProperty={'@type':'PropertyValue',name:'variant-only',value:'must not become common'};
+ const before=JSON.stringify(p);const receipt=parsePublicProduct(html(p),url);
+ assert.deepEqual(JSON.parse(JSON.stringify(receipt.attributes)),[{name:'材质',value:'棉'},{name:'重量',value:'0.375 kg'},{name:'含附件',value:'false'},{name:'option:injected',value:'原文'},{name:'长度',value:'38 CMT'}]);
+ const {collectedSeoSource}=load('app/collected-seo-source.ts');
+ const source=collectedSeoSource(receipt,{id:'j',offer_id:receipt.offerId,context:{category:{categoryId:'80719',categoryPath:['주방용품']},features:'',keywords:''}},{rows:[]}).source;
+ assert.equal(source.attributes[0].name,'상품속성: 材质');assert.equal(source.attributes[1].value,'0.375 kg');
+ assert.equal(source.attributes[3].name,'상품속성: option:injected');assert.equal(JSON.stringify(p),before);
+});
+
+test('unreadable or excessive public attributes are rejected rather than silently omitted',()=>{
+ for(const additionalProperty of [null,{'@type':'PropertyValue',name:'size',value:{value:1}}, {'@type':'PropertyValue',name:'size',value:1,unitText:[]}, {'@type':'PropertyValue',name:'x'.repeat(191),value:'v'}, Array.from({length:51},()=>({'@type':'PropertyValue',name:'x',value:'v'}))]) {
+  assert.throws(()=>parsePublicProduct(html({...product(),additionalProperty}),url));
+ }
+ assert.equal(parsePublicProduct(html(product()),url).attributes,undefined);
+});

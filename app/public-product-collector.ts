@@ -23,6 +23,19 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
  }));
  if(matches.length!==1)throw Error('이 URL의 상품·옵션 정보를 페이지에서 명확히 확인하지 못했습니다. 로그인 또는 페이지 수집 연결이 필요합니다.');
  const product=matches[0];
+ // Preserve explicitly published product facts for the downstream SEO review.
+ // Variant-specific facts must not become common facts for every SKU.
+ const attributes = product.additionalProperty === undefined ? undefined : list(product.additionalProperty).map(entry => {
+  const property = object(entry);
+  if (!hasType(property, 'PropertyValue')) throw Error('상품 속성 형식을 확인하지 못했습니다.');
+  const name = required(property.name, '상품 속성명');
+  const scalar = property.value;
+  if (!(typeof scalar === 'string' || typeof scalar === 'boolean' || typeof scalar === 'number' && Number.isFinite(scalar))) throw Error('상품 속성 값을 확인하지 못했습니다.');
+  const value = required(String(scalar), '상품 속성 값');
+  const unit = property.unitText !== undefined ? required(property.unitText, '상품 속성 단위')
+   : property.unitCode !== undefined ? required(property.unitCode, '상품 속성 단위 코드') : '';
+  return {name, value: unit ? `${value} ${unit}` : value};
+ });
  const variants=product.hasVariant===undefined?[product]:list(product.hasVariant).map(object);
  if(!variants.length||variants.length>200)throw Error('옵션 1~200개를 확인해야 합니다.');
  const images: {url:string;role:'main'|'additional'|'detail'}[]=[];
@@ -44,7 +57,7 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
    ...(indices.length?{imageIndex:indices[0]}:{}),...(typeof variant.color==='string'?{color:variant.color}:{}),...(typeof variant.size==='string'?{size:variant.size}:{})};
  });
  const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:'public-product-jsonld-v1',collectedAt:new Date(now).toISOString(),
-  title:required(product.name,'상품명'),description:typeof product.description==='string'?product.description:'',options,images},source.offerId,now);
+  title:required(product.name,'상품명'),description:typeof product.description==='string'?product.description:'',options,images,...(attributes !== undefined ? {attributes} : {})},source.offerId,now);
  if(new TextEncoder().encode(JSON.stringify(result)).byteLength>COLLECTION_RESULT_LIMIT)throw Error('수집 결과 크기가 한도를 초과했습니다.');
  return result;
 }
