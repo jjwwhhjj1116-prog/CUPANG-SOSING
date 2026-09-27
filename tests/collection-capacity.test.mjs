@@ -38,6 +38,23 @@ test('role and SKU image selections obey capacity, reuse and exclusions without 
  assert.equal(JSON.stringify({source,cap}),before);
 });
 
+test('large option galleries preserve a detail image in the draft without restoring excluded originals',()=>{
+ const {recommendCollectionImages:select,collectionSelectionFits:fits}=load('app/collection-capacity.ts');
+ const source={images:Array.from({length:65},(_,i)=>({role:i===0?'main':i<61?'additional':'detail'})),options:Array.from({length:60},(_,i)=>({imageIndex:i+1}))};
+ const cap={usedSlots:2,totalImages:65,reusableIndices:[],blockedIndices:[]};
+ const picked=Array.from(select(source,cap));
+ assert.equal(picked.length,48);assert.ok(picked.includes(0));assert.ok(picked.includes(61));assert.equal(fits(cap,picked),true);
+ const reused=Array.from(select(source,{...cap,usedSlots:3,reusableIndices:[64],blockedIndices:[61]}));
+ assert.ok(reused.includes(64));assert.ok(!reused.includes(61));assert.ok(!reused.includes(62));
+ assert.equal(reused.length,48);
+ const excluded=Array.from(select(source,{...cap,blockedIndices:[61,62,63,64]}));
+ assert.ok(excluded.every(index=>index<61));assert.equal(excluded.length,48);
+ assert.deepEqual(Array.from(select(source,{...cap,usedSlots:49})),[0]);
+ assert.deepEqual(Array.from(select(source,{...cap,usedSlots:48})),[0,61]);
+ assert.ok(Array.from(select(source,cap,'options')).every(index=>index>0&&index<61));
+ assert.ok(Array.from(select(source,cap,'detail')).every(index=>index>=61));
+});
+
 test('image recommendations prioritize main and option images within actual remaining capacity',()=>{
  const {recommendCollectionImages:recommend,collectionSelectionFits:fits}=load('app/collection-capacity.ts');
  const source={images:Array.from({length:200},(_,i)=>({role:i===150?'main':i===100?'additional':'detail'})),options:[{imageIndex:180},{imageIndex:180},{imageIndex:199}]};

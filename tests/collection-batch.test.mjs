@@ -35,6 +35,21 @@ test('full storage still imports the product and reports preserved but omitted o
   assert.equal(calls.some(url => url.endsWith('/images')), false);
 });
 
+test('automatic import of a large SKU gallery includes details and reports the omitted source count',async()=>{
+ const images=Array.from({length:65},(_,index)=>({url:`https://cbu01.alicdn.com/${index}.jpg`,role:index===0?'main':index<61?'additional':'detail'}));
+ const options=Array.from({length:60},(_,index)=>({...source.options[0],sku:`sku-${index}`,name:`option-${index}`,imageIndex:index+1}));
+ const saved=[],results=[];
+ await importReceivedJobs([job('a')],{shouldStop:()=>false,onProgress:()=>{},onResult:(_id,result)=>results.push(result),fetcher:async(url,init)=>{
+  if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images,options}}});
+  if(url.endsWith('/capacity'))return Response.json({capacity:{usedSlots:2,totalImages:65,reusableIndices:[]}});
+  if(url.endsWith('/product'))return Response.json({productId:'p'});
+  const index=JSON.parse(init.body).index;saved.push(index);return Response.json({key:`owner/${index}.jpg`});
+ }});
+ assert.equal(results[0].status,'completed');assert.equal(results[0].completedImages,48);
+ assert.ok(saved.includes(0));assert.ok(saved.includes(61));assert.equal(saved.length,48);
+ assert.deepEqual(saved,[...saved].sort((a,b)=>a-b));assert.match(results[0].warnings.at(-1),/17개/);
+});
+
 test('linked recovery survives reload and excludes cancelled or unreceived jobs',()=>{
  const {linkedReceivedJobs}=load('app/collection-batch.ts');
  const jobs=[job('new'),{...job('linked'),product_id:'p'},{...job('cancelled'),product_id:'p2',status:'cancelled'},{...job('empty'),product_id:'p3',received_at:null}];

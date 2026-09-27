@@ -3592,3 +3592,9 @@ AI등록 화면 확인:
 - Test follows public fixture -> receipt -> product preparation -> collected image role attachment -> category80719 quotation resolution. Verifies plain description, ordered detailImages, unchanged SKU image index, lazy-image source and duplicate handling, unsupported detail URLs/invalid description/combined overflow.
 - 48 public collector/Alibaba result/product tests passed, TypeScript and Cloudflare build/artifact/diff checks passed. Deployed 92e4f1b1-d48a-4030-ab17-2b17b2b0f65a.
 - This fixes a supported-source data-loss path; does NOT establish that actual1688 pages expose supported JSON-LD. Real source collection, image translation, Hub upload/receipt adapter501 and all-category parity remain unfinished. Existing immutable receipts are not retroactively rewritten.
+
+## Step 373 — retain detail coverage under the 50-image import limit (2026-09-27)
+- Automatic all-role image recommendation now prioritizes one usable detail image after main images, before a large SKU gallery consumes all remaining slots. Prefer an already attached detail to avoid spending a new slot. Explicitly detached originals remain excluded; group-specific selectors retain previous behavior; selected indices remain source-ordered.
+- Capacity tests cover 60 SKU images +4 details, captured banners, reusable detail, all details excluded, one/two free slots and group selectors. Batch integration verifies 48 image POSTs including main/detail from65 originals with2 occupied slots and17 omitted images reported.
+- 34 distinct capacity/import/batch tests passed (33 initial,12 batch rerun with1 added); tsc/build/artifact/diff checks passed. Deployed2cafb9e7-5340-4c4e-8783-fb2263dfca25.
+- Does not increase50-image limit or guarantee a complete long detail page. Existing receipt source URLs retained. No real1688/Hub execution this turn; actual collection verification, image translation, Hub adapter501 and complete category parity remain unfinished.

@@ -23,8 +23,13 @@ export type CollectionImageGroup = 'all' | 'main' | 'options' | 'additional' | '
 export function recommendCollectionImages(result: Pick<CollectionResult, 'images' | 'options'>, capacity: CollectionCapacity, group: CollectionImageGroup = 'all'): number[] {
   validateCollectionCapacity(capacity, result.images.length);
   const all = result.images.map((_, index) => index);
+  // A large SKU gallery must not consume every slot before stage-five details.
+  // Reuse an attached detail first; never restore an explicitly removed image.
+  const details = all.filter(index => result.images[index].role === 'detail' && !capacity.blockedIndices?.includes(index));
+  const firstDetail = details.find(index => capacity.reusableIndices.includes(index)) ?? details[0];
   const priority = new Set([
     ...all.filter(index => result.images[index].role === 'main'),
+    ...(group === 'all' && firstDetail !== undefined ? [firstDetail] : []),
     ...result.options.flatMap(option => option.imageIndex === undefined ? [] : [option.imageIndex]),
     ...all.filter(index => result.images[index].role === 'additional'),
     ...all,
