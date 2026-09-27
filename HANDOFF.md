@@ -3438,3 +3438,9 @@ AI등록 화면 확인:
 - Generated mapped quotation now precedes manifest generation. Its exact archive filename, byte length and SHA-256 are included in quotation.file and linked from local upload guide. Paths/digest/size are validated; plain review bundles without generated Excel still omit the file. Submission-ready/uploaded remain false.
 - Actual export integration verifies ZIP quotation bytes against manifest size/SHA and guide link.187 quotation/API tests, TypeScript, production build/artifact/diff checks pass. Deployed d0dde58c-c249-49e7-92a5-3093264e8d4d.
 - This binds local export inputs only, not an implemented Hub transport. POST501, actual1688 retrieval, AI activation/image translation and all-category parity remain unresolved. Full workflow remains incomplete.
+
+## 349 — Full regression restored after HTML parser integration (2026-09-27)
+- Ran complete npm test:1059 tests,36 failures. Every failure was an unhandled parse5 dependency in three isolated VM test loaders (bundle, mapped-quotation, quotation-fields) following347. Added the real installed parser to those loaders; no production logic changed.
+- Full rerun:1059/1059 pass,0 skipped. TypeScript and diff checks passed. Tests include synthetic intake/API flows and observed-category XLSX output; this does NOT verify live1688 collection, all Couplus categories or Hub submission.
+- Existing supplierChrome.tabs.list() returned[]; opened hubCheck349 via tabs.new() in the same Chrome binding. SupplierHub registration redirected to actual ID/password login. Login request from347 remains unanswered. No new browser/profile/window and no authentication bypass.
+- No production deployment warranted for test-only changes; live remains d0dde58c-c249-49e7-92a5-3093264e8d4d. Full objective incomplete: source retrieval/model activation/image translation/all-category parity and actual Hub POST501 remain unresolved.
