@@ -20,6 +20,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
   onProgress: (jobId: string, message: string) => void;
   retryWait?: (milliseconds: number) => Promise<void>;
   onProductSaved?: (jobId: string, productId: string) => Promise<void>;
+  reservedImageSlots?: number;
 }) {
   for (const job of jobs) {
     if (options.shouldStop()) break;
@@ -57,7 +58,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
           }
           throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
         }
-        indices = recommendCollectionImages(source, validateCollectionCapacity(capacityBody?.capacity, source.images.length));
+        indices = recommendCollectionImages(source, validateCollectionCapacity(capacityBody?.capacity, source.images.length), 'all', options.reservedImageSlots);
       }
       if (options.shouldStop()) break;
       const result = await runCollectionImport(job.id, source.images.length, {

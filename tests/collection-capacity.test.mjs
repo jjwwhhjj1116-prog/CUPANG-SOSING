@@ -69,3 +69,17 @@ test('image recommendations prioritize main and option images within actual rema
  assert.throws(()=>recommend(source,{...cap,totalImages:199}),/확인/);
  assert.deepEqual(Array.from(recommend({images:[],options:[]},{usedSlots:50,totalImages:0,reusableIndices:[]})),[]);
 });
+
+test('automatic image selection leaves label capacity while preserving existing and excluded originals',()=>{
+ const {recommendCollectionImages:select}=load('app/collection-capacity.ts');
+ const source={images:Array.from({length:60},(_,i)=>({role:i===0?'main':i===59?'detail':'additional'})),options:[{imageIndex:1}]};
+ for(const usedSlots of [0,2]){
+  const picked=Array.from(select(source,{usedSlots,totalImages:60,reusableIndices:[]},'all',1));
+  assert.equal(picked.length,49-usedSlots);assert.ok(picked.includes(0)&&picked.includes(1)&&picked.includes(59));
+ }
+ const cap={usedSlots:49,totalImages:60,reusableIndices:[0,1,59],blockedIndices:[2]};
+ assert.deepEqual(Array.from(select(source,cap,'all',1)),[0,1,59]);
+ assert.deepEqual(Array.from(select(source,{...cap,usedSlots:50},'all',1)),[0,1,59]);
+ assert.equal(Array.from(select(source,{usedSlots:0,totalImages:60,reusableIndices:[]})).length,50);
+ for(const reserved of [-1,0.5,50])assert.throws(()=>select(source,cap,'all',reserved),/예약 공간/);
+});

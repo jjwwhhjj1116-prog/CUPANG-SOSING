@@ -20,8 +20,9 @@ export function collectionSelectionFits(capacity: CollectionCapacity, indices: r
 
 /** Suggest a bounded selection; never downloads, restores excluded images, or changes source order. */
 export type CollectionImageGroup = 'all' | 'main' | 'options' | 'additional' | 'detail';
-export function recommendCollectionImages(result: Pick<CollectionResult, 'images' | 'options'>, capacity: CollectionCapacity, group: CollectionImageGroup = 'all'): number[] {
+export function recommendCollectionImages(result: Pick<CollectionResult, 'images' | 'options'>, capacity: CollectionCapacity, group: CollectionImageGroup = 'all', reservedSlots = 0): number[] {
   validateCollectionCapacity(capacity, result.images.length);
+  if (!Number.isInteger(reservedSlots) || reservedSlots < 0 || reservedSlots > 49) throw new Error('이미지 예약 공간은 0~49개여야 합니다.');
   const all = result.images.map((_, index) => index);
   // A large SKU gallery must not consume every slot before stage-five details.
   // Reuse an attached detail first; never restore an explicitly removed image.
@@ -40,7 +41,12 @@ export function recommendCollectionImages(result: Pick<CollectionResult, 'images
     if (!Number.isInteger(index) || index < 0 || index >= result.images.length) continue;
     if (group !== 'all' && (group === 'options' ? !optionImages.has(index) : result.images[index].role !== group)) continue;
     if (selected.length === 50) break;
-    if (collectionSelectionFits(capacity, [...selected, index])) selected.push(index);
+    const candidate = [...selected, index];
+    const fresh = candidate.filter(item => !capacity.reusableIndices.includes(item)).length;
+    // Never remove already attached originals to make room. Reserve space only
+    // when selecting new files, including when resuming a partially saved draft.
+    if (collectionSelectionFits(capacity, candidate) &&
+      (capacity.reusableIndices.includes(index) || capacity.usedSlots + fresh <= 50 - reservedSlots)) selected.push(index);
   }
   return selected.sort((a, b) => a - b);
 }

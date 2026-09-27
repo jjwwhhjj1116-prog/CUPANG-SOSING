@@ -130,3 +130,16 @@ test('capacity permission failures do not fall back to product writes',async()=>
   assert.equal(results[0].productId,null);assert.equal(results[0].status,'failed');
  }
 });
+
+test('intake image reservation survives batch selection and still creates the saved draft',async()=>{
+ const images=Array.from({length:60},(_,index)=>({url:`https://cbu01.alicdn.com/${index}.jpg`,role:index===0?'main':index===59?'detail':'additional'}));
+ const saved=[],results=[];let prepared=false;
+ await importReceivedJobs([job('a')],{reservedImageSlots:1,shouldStop:()=>false,onProgress:()=>{},onProductSaved:async (_jobId,id)=>{assert.equal(id,'p');prepared=true;},onResult:(_id,result)=>results.push(result),fetcher:async(url,init)=>{
+  if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images}}});
+  if(url.endsWith('/capacity'))return Response.json({capacity:{usedSlots:2,totalImages:60,reusableIndices:[]}});
+  if(url.endsWith('/product'))return Response.json({productId:'p'});
+  assert.equal(prepared,true);const index=JSON.parse(init.body).index;saved.push(index);return Response.json({key:`owner/${index}.jpg`});
+ }});
+ assert.equal(results[0].status,'completed');assert.equal(saved.length,47);assert.ok(saved.includes(0)&&saved.includes(59));
+ assert.match(results[0].warnings.at(-1),/13개/);assert.equal(saved.length+2+1,50);
+});
