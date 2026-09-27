@@ -3402,3 +3402,15 @@ AI등록 화면 확인:
 - Schema reference: https://schema.org/additionalProperty and https://schema.org/PropertyValue . This is supported structured-public-data parsing, NOT proof that actual1688 currently returns that structure. Actual source retrieval is still unverified.
 -35 related tests, TypeScript and production build/artifact/diff checks passed. Deployed6f2abda5-b8cc-4202-86ba-9f576b6d99bf. Workers AI remains off (no binding/vars enabled).
 - Prior diagnostic340: existing Chrome list[]; Cloudflare subscriptions GET403 code10000, workers/account-settings200 default_usage_model=standard. This does NOT establish Free/Paid plan. No credential values output. Own1688 access and SupplierHub POST501/full category parity remain unresolved.
+
+## 342 — Recover actual browser tabs and identify concrete live blockers (2026-09-27)
+- Reused supplierChrome and tabs.new() successfully: Couplus tab727917855, SupplierHub tab727917859. Empty tabs.list() had not invalidated the binding. No alternate Chrome/profile/window was selected. This resolves earlier inability to inspect pages.
+- Couplus AIRocketReg navigation redirected to www.couplus.co.kr login; SupplierHub qvt/registration redirected to actual ID/password login. User was asked to log into these two existing-connected-Chrome tabs; response pending. Do not misreport site blocking for these services.
+- sourceResumeTab was created, but navigation to user-specified1688 offer813724060928 was explicitly denied by browser site-safety policy. No permission prompt/auto-review occurred. Do not work around this rejected browser access via other surfaces/raw commands/indirect execution.
+- No application changes or deployment this turn. Continue from these persistent browser bindings after login; do not reselect browsers or reset runtime. Main objective remains incomplete.
+
+## 344 — Match intake queue controls and layout (2026-09-27)
+- Scoped full-width table input styling away from checkboxes, reduced feature textarea height, aligned goal choices vertically and kept the start action at the modal footer. Fixed search label wrapping observed in actual Chrome screenshot.
+- Start action now says all/selected start with the pending count and product-information loading while busy; existing collection handler is unchanged. Updated interaction tests for both all and partial selections.
+- 16 related tests, TypeScript, production build/artifact checks passed. Verified actual localhost dialog in a new tab of the existing supplierChrome binding (no new browser/profile/window). Deployed 0e13744e-49ed-462c-ad38-af251c2a6ad2; Workers AI remains disabled.
+- Full objective remains incomplete: actual1688 retrieval, live category defaults parity, image translation and Supplier Hub transmission (POST501) are unresolved. No real product collection/submission was performed or claimed in this turn.

@@ -22,20 +22,20 @@ test('settings conflict reload preserves URLs/category/selection and does not au
  const h=harness(async()=>Response.json({settings:{brand:'최신',exchangeRate:350}}));
  nodes(h.render()).find(n=>n.props?.['aria-label']==='2번째 상품 선택').props.onChange({target:{checked:false}});
  const original=JSON.stringify(h.rows.map(({status,message,...row})=>row));
- h.button('요청 저장').props.onClick();await settle();assert.equal(h.calls.length,1);assert.equal(h.button('요청 저장').props.disabled,true);
+ h.button('시작 (').props.onClick();await settle();assert.equal(h.calls.length,1);assert.equal(h.button('시작 (').props.disabled,true);
  h.button('최신 기본설정 불러오기').props.onClick();await settle();
  assert.equal(h.settings.brand,'최신');assert.equal(h.settings.exchangeRate,350);assert.equal(h.calls.length,2);assert.equal(h.changes.length,1);
  assert.equal(JSON.stringify(h.rows.map(({status,message,...row})=>row)),original);assert.equal(nodes(h.render()).find(n=>n.props?.['aria-label']==='2번째 상품 선택').props.checked,false);
- assert.equal(h.button('요청 저장').props.disabled,false);h.button('요청 저장').props.onClick();await settle();assert.equal(JSON.parse(h.calls[2].init.body).expectedSettings.brand,'최신');
+ assert.equal(h.button('시작 (').props.disabled,false);h.button('시작 (').props.onClick();await settle();assert.equal(JSON.parse(h.calls[2].init.body).expectedSettings.brand,'최신');
 });
 test('failed or malformed settings reads retain old values and allow another reload',async()=>{
  for(const body of [null,{}, {settings:{exchangeRate:-1}}]){
-  const h=harness(async()=>Response.json(body));h.button('요청 저장').props.onClick();await settle();h.button('최신 기본설정 불러오기').props.onClick();await settle();
-  assert.equal(h.changes.length,0);assert.equal(h.settings.brand,'이전');assert.equal(h.button('요청 저장').props.disabled,true);assert.equal(h.button('최신 기본설정 불러오기').props.disabled,false);assert.ok(nodes(h.render()).some(n=>n.props?.role==='alert'));
+  const h=harness(async()=>Response.json(body));h.button('시작 (').props.onClick();await settle();h.button('최신 기본설정 불러오기').props.onClick();await settle();
+  assert.equal(h.changes.length,0);assert.equal(h.settings.brand,'이전');assert.equal(h.button('시작 (').props.disabled,true);assert.equal(h.button('최신 기본설정 불러오기').props.disabled,false);assert.ok(nodes(h.render()).some(n=>n.props?.role==='alert'));
  }
 });
 test('double reload is single-flight and unmount discards a late settings response',async()=>{
  let finish,signal;const pending=new Promise(r=>finish=r);const h=harness(init=>{signal=init.signal;return pending;});
- h.button('요청 저장').props.onClick();await settle();const click=h.button('최신 기본설정 불러오기').props.onClick;click();click();assert.equal(h.calls.filter(c=>c.url==='/api/settings').length,1);
+ h.button('시작 (').props.onClick();await settle();const click=h.button('최신 기본설정 불러오기').props.onClick;click();click();assert.equal(h.calls.filter(c=>c.url==='/api/settings').length,1);
  h.close();assert.equal(signal.aborted,true);finish(Response.json({settings:{brand:'늦은 값'}}));await settle();assert.equal(h.changes.length,0);
 });

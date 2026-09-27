@@ -109,6 +109,6 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     {settingsChanged&&<div className="panel-note"><p>기본설정이 변경돼 남은 상품 처리를 멈췄습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reloadSettings()}>최신 기본설정 불러오기</button></div>}
     {settingsMessage&&<p role="status">{settingsMessage}</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
-    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => setCategoryTarget('new')}>＋ 상품 추가</button><button type="button" className="btn primary" disabled={busy || !pending || settingsChanged} onClick={() => void submit()}>{busy ? '요청 저장 중…' : `${pending === pendingRows.length ? '전체' : '선택'} 요청 저장 (${pending}건)`}</button></div>
+    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => setCategoryTarget('new')}>＋ 상품 추가</button><button type="button" className="btn primary" disabled={busy || !pending || settingsChanged} onClick={() => void submit()}>{busy ? '상품정보 가져오는 중…' : `${pending === pendingRows.length ? '전체' : '선택'} 시작 (${pending}건)`}</button></div>
   </div>;
 }
