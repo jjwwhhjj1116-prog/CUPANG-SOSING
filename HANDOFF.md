@@ -3287,3 +3287,10 @@ AI등록 화면 확인:
 - Added active write controller, duplicate-click guard, abort on unmount/endpoint invalidation, and ignored aborted responses/errors. Manual/focus refresh cannot race a pending write; 409 still performs its explicit reconcile refresh and preserves edits.
 - Validation: quotation editor suite 71/71 including duplicate click plus refresh during pending save and cleanup before late response; TypeScript, production build/artifact and diff checks passed. Deployed 3317b1e6-8e0f-4bd9-8b55-bbb0b9c38ca1.
 - This is a persistence fix, not a new Supplier Hub submission executor. No live Couplus parity verification; full category match, actual comprehensive 1688 import, image translation and automatic Supplier Hub registration remain incomplete.
+
+## 322 — Isolate sparse captured registration settings from later workspace facts (2026-09-27)
+- Found that legacy partial collection settings overlaid only present keys, allowing later workspace brand/importer/contact/trade/tax fields into older product quotations.
+- When a captured settings object exists, registration keys now all come from its validated snapshot: missing text facts stay blank, missing box quantity uses the established default 1. Pricing/workflow sources remain unchanged. Products without captured settings retain existing workspace behavior.
+- Shared resolver feeds stage-six registration settings, stage-seven quotation inputs and export snapshots. Explicit captured blanks and current workspace objects are preserved.
+- Validation: registration API and collection preparation/storage suites 25/25 including sparse-snapshot quotation values; TypeScript, Cloudflare build/artifact/diff passed. Deployed e7ddc44b-6648-48f8-acca-aac9a9f72023.
+- No live Couplus parity verification. Full category match, actual comprehensive 1688 import, image translation and automatic Supplier Hub registration remain incomplete.

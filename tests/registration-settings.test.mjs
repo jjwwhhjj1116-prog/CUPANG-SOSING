@@ -21,10 +21,10 @@ test('product label settings prefer the linked snapshot including explicit blank
  assert.deepEqual(body.settings,{manufacturer:'등록 당시 제조사',importer:'',serviceContact:'등록 당시 연락처'});
  assert.deepEqual(h.calls[1],['source','owner','813724060928','p']);
 });
-test('unlinked same-URL settings cannot overwrite this product and sparse snapshots retain current missing fields',async()=>{
+test('unlinked same-URL settings cannot overwrite this product and sparse snapshots keep missing registration facts blank',async()=>{
  for(const linked of [false,true]){
   const h=api({captured:{linked,payload:JSON.stringify({settings:{manufacturer:'당시'}})}}),body=await(await h.get()).json();
-  assert.equal(body.settings.manufacturer,linked?'당시':'현재 제조사');assert.equal(body.settings.importer,'현재 수입원');
+  assert.equal(body.settings.manufacturer,linked?'당시':'현재 제조사');assert.equal(body.settings.importer,linked?'':'현재 수입원');assert.equal(body.settings.serviceContact,linked?'':'현재 연락처');
  }
 });
 test('authentication, ownership and unavailable source stop before misleading defaults',async()=>{

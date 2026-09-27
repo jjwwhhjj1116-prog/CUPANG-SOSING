@@ -225,3 +225,16 @@ test('retrying imported source never restores defaults over reviewed label or ex
   assert.equal(current.label.countryOfOrigin.value,'');assert.equal(current.label.productName.value,'검토 완료 품명');assert.equal(current.labelProductNameLinked,false);
  }finally{s.sqlite.close();}
 });
+
+test('sparse captured business settings never inherit later registration facts in quotation',()=>{
+ const current={...settings,brand:'나중 브랜드',manufacturer:'나중 제조사',importer:'나중 수입원',serviceContact:'나중 연락처',tradeType:'공식대리점',importType:'병행수입상품',taxType:'면세',boxSkuQuantity:999,exchangeRate:777};
+ const resolveSettings=load('app/collection-registration-settings.ts').collectionRegistrationSettings;
+ const resolved=resolveSettings(current,{manufacturer:'당시 제조사'});
+ for(const key of ['brand','importer','serviceContact','tradeType','importType','taxType'])assert.equal(resolved[key],'',key);
+ assert.equal(resolved.manufacturer,'당시 제조사');assert.equal(resolved.boxSkuQuantity,1);assert.equal(resolved.exchangeRate,777);
+ const prepared=prepare('owner',job,result,'p',now);
+ const quote=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:prepared.product,content:load('app/product-content.ts').emptyProductContent('p'),options:prepared.options,settings:resolved});
+ assert.equal(quote.rows[0].fields.brand.value,'');assert.equal(quote.rows[0].fields.manufacturer.value,'당시 제조사');
+ assert.equal(resolveSettings(current,null).brand,'나중 브랜드','products without any captured context keep workspace behavior');
+ assert.equal(current.brand,'나중 브랜드');
+});
