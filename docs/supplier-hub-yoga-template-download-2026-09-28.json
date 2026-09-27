@@ -1,0 +1,18 @@
+{
+  "observedAt": "2026-09-28",
+  "url": "https://supplier.coupang.com/qvt/registration",
+  "registrationCategoryId": "81467",
+  "downloadPath": [
+    "스포츠/레저용품",
+    "헬스/요가",
+    "요가/필라테스",
+    "요가매트"
+  ],
+  "searchTab": "상품명",
+  "searchText": "요가매트",
+  "generationMessage": "Generating quotation file. The file will be downloaded soon.",
+  "fileAcquired": false,
+  "excelVerified": false,
+  "downloadCategoryId": null,
+  "limitations": "Generation success is not file receipt or workbook compatibility. Browser policy blocked chrome://downloads; no workaround attempted. No product data modified."
+}
