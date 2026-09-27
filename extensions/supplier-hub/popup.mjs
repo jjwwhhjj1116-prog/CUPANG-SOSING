@@ -95,16 +95,19 @@ button.addEventListener('click',async()=>{
   try{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     if(!tab?.id||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/registration')throw Error('현재 창의 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
-    // Consume before dispatch: a closed popup or lost response must not silently replay uploads.
+    let result;
+    // The worker consumes, dispatches and records app identity independently of popup lifetime.
     if(pendingFingerprint){
       if(Date.now()>pendingExpires)throw Error('준비한 견적서가 만료되었습니다. 앱에서 다시 준비해주세요.');
-      if(!await pendingPackage('delete',pendingFingerprint))throw Error('다른 견적서가 준비되었거나 이미 전달을 시도했습니다. 확장을 다시 열어주세요.');
+      const response=await chrome.runtime.sendMessage({type:'YOOFAM_DISPATCH_PACKAGE',tabId:tab.id,fingerprint:pendingFingerprint});
+      if(!response?.ok)throw Error(response?.error||'전달 결과 응답이 없습니다. Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.');
+      result=response.result;
+    }else{
+      const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:attachToSupplierHub,args:[prepared]});
+      result=execution?.result;
+      if(result?.state==='dispatched')await transferRecord('put',`attempt:${tab.id}`,packageIdentity);
     }
-    const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:attachToSupplierHub,args:[prepared]});
-    const result=execution?.result;
     if(!result||!['dispatched','partial'].includes(result.state))throw Error('전달 결과를 확인하지 못했습니다. 중복 실행 전에 Supplier Hub 첨부 목록을 확인해주세요.');
-    // A refused attachment must not replace the identity of an earlier upload.
-    if(result.state==='dispatched')await transferRecord('put',`attempt:${tab.id}`,packageIdentity);
     status.textContent=(result.state==='partial'?`일부 전달 후 중단: ${result.error}`:'파일 입력으로 전달했습니다.')+'\nSupplier Hub의 업로드 성공·실패 표시를 확인해주세요. 검증 및 최종 등록은 아직 실행하지 않았습니다.';
   }catch(error){status.textContent=error.message;}
   finally{prepared=null;picker.value='';picker.disabled=false;validateButton.disabled=false;}
