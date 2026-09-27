@@ -17,7 +17,7 @@ const links: Readonly<Record<string, string>> = {
   labelImages: '6단계 한글 표시사항 이미지', noticeNameModel: '6단계 제품명·모델명 → SEO 상품명',
   noticeMaterial: '6단계 재질', noticeDimensions: '옵션 상품 치수 → 6단계 크기',
   brace_noticeSizeWeight: '6단계 크기·중량', noticeManufacturerImporter: '6단계 제조사·수입사 → 기본설정',
-  noticeCountryOfOrigin: '6단계 제조국', marathon_noticeKind: '6단계 상품 유형',
+  noticeCountryOfOrigin: '6단계 제조국', noticeImportDeclaration: '6단계 수입신고 문구 여부', marathon_noticeKind: '6단계 상품 유형',
   marathon_noticeCaution: '6단계 사용 시 주의사항', noticePermission: '6단계 인증정보',
   brace_noticeKc: '6단계 KC 인증정보', noticeComponents: '6단계 구성품', noticeReleaseDate: '6단계 출시년월',
   noticeQualityAssurance: '6단계 품질보증기준', noticeServiceContact: '6단계 연락처 → 기본설정 A/S 연락처',

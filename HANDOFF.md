@@ -3212,3 +3212,10 @@ AI등록 화면 확인:
 - URL/category/features/keyword edits clear the confirmed link; duplicate rows start without it. Links are transient UI state, not persisted as unverified IDs in intake drafts. Existing owner-scoped product read remains the navigation authority.
 - Validation: intake navigation/queue/public collector suites 25/25, tsc, production build/artifact and diff checks passed.
 - Cloudflare deployment f61505ab-d5f9-46b2-9dba-a78906cdad21. No live Couplus/1688 parity verification in this turn; all-category defaults, image translation execution and Hub automatic submission remain incomplete.
+
+## 311 — Link saved import-declaration notice from stage six (2026-09-27)
+- Added the editable importDeclaration label field and its exact noticeImportDeclaration resolver binding. Applies only where the observed category schema already contains that notice. No declaration is inferred from import type or sourcing country.
+- Existing content loads with an empty unverified field. Observed 80719 N/A default remains for untouched data; explicit manual blanks stay blank. Common/option quotation overrides retain priority.
+- Source explanation identifies stage six. Dynamic label editor and label documents include the new saved field through the existing field registry.
+- Validation: quotation schema/content/document-image/content-editor suites 205/205; tsc, Cloudflare build/artifact check and diff check passed.
+- Deployed 27d9cd91-1242-4d59-a678-91e1cb86c445. Existing Chrome tabs.list returned []. No live parity or actual Hub submission verified. All-category defaults, actual image translation and Hub automatic transmission remain incomplete.

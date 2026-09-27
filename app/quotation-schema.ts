@@ -422,6 +422,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         const value = [manufacturer && `제조자: ${manufacturer}`, importer && `수입자: ${importer}`].filter(Boolean).join(' / ');
         return { value, source: (content.label.manufacturer.value && content.label.importer.value) || content.label.manufacturer.provenance === 'manual' || content.label.importer.provenance === 'manual' ? 'content' : value ? 'settings' : 'empty' };
       }
+      case 'noticeImportDeclaration': return contentValue(content.label.importDeclaration ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeCountryOfOrigin': return contentValue(content.label.countryOfOrigin);
       case 'marathon_noticeKind': return contentValue(content.label.productType ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'marathon_noticeCaution': return contentValue(content.label.precautions);

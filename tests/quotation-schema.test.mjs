@@ -1748,3 +1748,23 @@ test('brace fashion size never guesses aliases, measurements or restores intenti
  const fields=model.resolveQuotationFields(input).rows[1].fields;assert.equal(fields.brace_size.value,'');assert.equal(fields.brace_size.source,'option');
  input.categoryId='80719';assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_size,undefined);
 });
+
+test('saved import declaration links only to categories containing that notice and preserves blanks and overrides',()=>{
+ const categories=['80719',...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas)];
+ for(const categoryId of new Set(categories)){
+  const input=fixture();input.categoryId=categoryId;
+  if(!model.getQuotationSchema(categoryId).fields.some(field=>field.id==='noticeImportDeclaration'))continue;
+  const old=clone(input.content);delete old.label.importDeclaration;
+  const upgraded=contentModel.withCurrentLabelFields(old);assert.equal(upgraded.label.importDeclaration.value,'');assert.equal(old.label.importDeclaration,undefined);
+  input.content=contentModel.applyContentPatch(upgraded,{label:{importDeclaration:'확인한 수입신고 문구'}},'2026-09-27T00:00:00Z');
+  let fields=model.resolveQuotationFields(input).rows.find(row=>row.optionId==='red').fields;
+  assert.equal(fields.noticeImportDeclaration.value,'확인한 수입신고 문구',categoryId);assert.equal(fields.noticeImportDeclaration.source,'content');
+  input.content=contentModel.applyContentPatch(input.content,{label:{importDeclaration:''}},'2026-09-27T00:01:00Z');
+  fields=model.resolveQuotationFields(input).rows.find(row=>row.optionId==='red').fields;
+  assert.equal(fields.noticeImportDeclaration.value,'',categoryId);assert.equal(fields.noticeImportDeclaration.source,'content');
+  input.overrides={common:{noticeImportDeclaration:'공통 수정'},options:{red:{noticeImportDeclaration:'옵션 수정'}}};
+  fields=model.resolveQuotationFields(input).rows.find(row=>row.optionId==='red').fields;assert.equal(fields.noticeImportDeclaration.value,'옵션 수정');
+ }
+ const other=fixture();other.categoryId='81452';other.content.label.importDeclaration.value='confirmed';
+ assert.equal(model.resolveQuotationFields(other).rows[0].fields.noticeImportDeclaration,undefined);
+});
