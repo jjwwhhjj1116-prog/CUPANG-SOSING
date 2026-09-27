@@ -1,3 +1,4 @@
+import {searchSupplierHubRegistration} from './registration-search.mjs';
 import {transferRecord,resultKey} from './handoff-store.mjs';
 import {readSupplierHubValidation} from './result.mjs';
 import {readSupplierHubRegistration} from './registration-result.mjs';
@@ -5,18 +6,24 @@ import {readSupplierHubRegistration} from './registration-result.mjs';
 const activeTabs=new Set();
 export async function observeSupplierHubResult(message,sender){
   if(sender?.id!==chrome.runtime.id||sender?.url!==chrome.runtime.getURL('popup.html')||sender.tab)throw Error('확장 화면에서 결과를 확인해주세요.');
-  if(!['validation','registration'].includes(message.kind)||!Number.isSafeInteger(message.tabId)||message.tabId<0)throw Error('결과 조회 요청을 확인해주세요.');
+  if(!['validation','registration','registration-search'].includes(message.kind)||!Number.isSafeInteger(message.tabId)||message.tabId<0)throw Error('결과 조회 요청을 확인해주세요.');
   if(activeTabs.has(message.tabId))throw Error('이 탭의 결과를 확인 중입니다. 잠시 후 다시 확인해주세요.');
   activeTabs.add(message.tabId);
   try{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-    const path=message.kind==='registration'?'/qvt/wims':'/qvt/registration';
+    const path=message.kind!=='validation'?'/qvt/wims':'/qvt/registration';
     if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!==path)throw Error('현재 창의 해당 Supplier Hub 결과 화면에서 실행해주세요.');
-    if(message.kind==='registration'){
+    if(message.kind!=='validation'){
       const identity=await transferRecord('get',`attempt:${tab.id}`);
       if(!identity)throw Error('이 탭에서 전달한 상품 정보가 없습니다.');
       const key=resultKey(identity),saved=await transferRecord('get',key);
       if(saved?.state!=='validation-complete'||!saved.quotationId||saved.filename!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('먼저 대량 상품 등록 화면에서 해당 파일의 검증 완료 결과와 견적서 ID를 확인해주세요.');
+      if(message.kind==='registration-search'){
+        const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:searchSupplierHubRegistration,args:[saved.quotationId]});
+        const result=execution?.result;
+        if(result?.state!=='search-requested'||result.quotationId!==saved.quotationId||result.registered!==false)throw Error('검색 요청 결과를 확인하지 못했습니다. Supplier Hub 화면을 확인해주세요.');
+        return result;
+      }
       const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubRegistration,args:[saved.quotationId]});
       const result=execution?.result;
       if(!result||result.quotationId!==saved.quotationId||result.scope!=='visible-page'||result.registered!==false||!Array.isArray(result.rows))throw Error('상품별 결과를 확인하지 못했습니다.');

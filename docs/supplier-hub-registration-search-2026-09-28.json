@@ -1,0 +1,28 @@
+{
+  "observedAt": "2026-09-28",
+  "url": "https://supplier.coupang.com/qvt/wims",
+  "source": "designated Chrome visible DOM",
+  "quotationInput": {
+    "tag": "input",
+    "id": "quotationFile",
+    "name": "quotationFile",
+    "type": "text"
+  },
+  "label": {
+    "for": "quotationFile",
+    "text": "견적서 ID"
+  },
+  "searchButton": "검색",
+  "otherFilters": [
+    "상품명",
+    "상태",
+    "반려회신필요",
+    "등록 진행 단계",
+    "카테고리",
+    "바코드",
+    "상품 등록일",
+    "SKU ID",
+    "ComIndex"
+  ],
+  "mutations": "Only navigation to registration-status screen; no product changes, file uploads or search execution."
+}

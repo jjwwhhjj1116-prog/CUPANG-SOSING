@@ -93,3 +93,17 @@ button.addEventListener('click',async()=>{
   }catch(error){status.textContent=error.message;}
   finally{prepared=null;picker.value='';picker.disabled=false;validateButton.disabled=false;}
 });
+
+const searchButton=document.querySelector('#registration-search');
+searchButton.addEventListener('click',async()=>{
+ if(searchButton.disabled||picker.disabled)return;
+ ++sequence;searchButton.disabled=true;picker.disabled=true;button.disabled=true;validateButton.disabled=true;resultButton.disabled=true;registrationButton.disabled=true;
+ try{
+  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+  if(!tab?.id||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/wims')throw Error('파일을 전달한 같은 탭에서 상품 등록 상태 확인 화면을 열어주세요.');
+  const response=await chrome.runtime.sendMessage({type:'YOOFAM_OBSERVE_RESULT',tabId:tab.id,kind:'registration-search'});
+  if(!response?.ok||response.result?.state!=='search-requested')throw Error(response?.error||'검색 요청 결과를 확인하지 못했습니다.');
+  status.textContent='검증 완료된 견적서 ID로 검색했습니다. 날짜 등 기존 검색조건은 유지됩니다. 화면 로딩이 끝나면 상품별 등록 상태 확인을 눌러주세요.';
+ }catch(error){status.textContent=error.message;}
+ finally{searchButton.disabled=false;picker.disabled=false;button.disabled=!prepared;validateButton.disabled=false;resultButton.disabled=false;registrationButton.disabled=false;}
+});
