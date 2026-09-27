@@ -17,3 +17,4 @@
 .category-tree-options{max-height:440px}.category-tree button{min-height:60px;padding:16px 22px;font-size:15px}
 .category-tree button.selected{background:#087cff;color:#fff}.category-tree button.selected small.ready{background:#75bf99;color:#fff}
 @media(max-width:760px){.category-tree{gap:12px}.category-tree section{min-width:185px}.category-tree button{font-size:13px;padding:12px}.category-tree h3{font-size:14px;padding:18px}}
+.category-instructions{margin:0;font-size:14px;color:#536176;line-height:1.7}.category-advanced{border-top:1px solid #dfe4ec;padding-top:14px;font-size:13px;color:#536176}.category-advanced>summary{cursor:pointer;padding:8px 0}.category-advanced>p{line-height:1.7}

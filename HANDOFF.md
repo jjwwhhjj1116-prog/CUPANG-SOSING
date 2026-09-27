@@ -3732,3 +3732,12 @@ AI등록 화면 확인:
 -4 identity tests including actual collection route with isolated dependencies,6 real-route/SQLite intake integration fixture scenarios and3 export tests pass(13 total). tsc/build/artifact/diff checks pass. Deployed step402.
 - Existing profiles are not rewritten; users with genuinely conflicting saved paths must reselect the correct category. Explicit matching category switches still supported.
 - Still incomplete: full official category/template/default catalog, actual1688 collection/image translation and Supplier Hub real transmission adapter. Do not report overall completion.
+
+## Step 403 — fresh Couplus intake compared; direct category selection
+- Used existing right Chrome otherChrome browser2 only. Old rightCou tab disappeared; new cou403 tab727918409 opened in same Chrome and logged in successfully. Existing user products were not modified.
+- Created ONE new Couplus verification product260927024001 from813724060928, six sunglasses options. Selected80719 for controlled default comparison; category does not match source. NEVER transmit this test to Hub. Preserve record for further comparison. cou403 remains on own first-option stage7, marked handoff. Hub727916999 untouched.
+- Couplus default target SEO+price, target keyword required to start (tested keyword 상품). Collection/SEO/price completed. Initial model empty, images pending, price4200/7000/MSRP9100; initial form details in docs/couplus-new-intake-observation-2026-09-27.md. This does not prove our collection works.
+- Category picker now prioritizes select/URL action; Excel output/mapping moved into collapsed advanced section. local403 localhost tab verified81221 selection with primary action enabled and advanced collapsed, not saved.
+- Removed inferred80719 title-to-model fallback based fresh draft evidence; preserves actual model input and manual overrides. Updated input provenance hint and regression tests.
+-197 tests passed; TypeScript, Cloudflare build/artifact and diff checks passed. Deployed97e040ff-0264-4c74-a0c5-4ab5693280cd.
+- Core unfinished: our live1688 collection, full category/default parity, image translation and real Supplier Hub POST adapter (still501). Do not claim full completion.
