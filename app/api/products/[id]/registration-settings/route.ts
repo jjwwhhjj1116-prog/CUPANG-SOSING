@@ -30,7 +30,7 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
         source = 'collection';
       }
     }
-    // Only the fields needed by label autofill leave this endpoint.
-    return json({ productId: id, source, categoryId, settings: { manufacturer: settings.manufacturer, importer: settings.importer, serviceContact: settings.serviceContact } });
+    // Only the fields needed by label autofill and option logistics leave this endpoint.
+    return json({ productId: id, source, categoryId, settings: { manufacturer: settings.manufacturer, importer: settings.importer, serviceContact: settings.serviceContact, boxSkuQuantity: settings.boxSkuQuantity } });
   } catch { return json({ error: '상품에 연결된 등록 기본설정을 읽지 못했습니다.' }, 503); }
 }

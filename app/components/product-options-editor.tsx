@@ -145,7 +145,7 @@ function OptionsEditor({ product, onSaved, pricingView = false, imageView = fals
       <p style={{ color: '#64748b', fontSize: 13 }}>계산 기준: {saved.pricing.policySource === 'saved-product' ? '상품에 저장한 가격 설정' : '상품의 기존 환율·마진 + 현재 기본설정'} · 환율 {saved.pricing.policy.exchangeRate}원 · 공급 마진 {saved.pricing.policy.supplyMargin}% · 쿠팡 마진 {saved.pricing.policy.coupangMargin}% · 최소 마진 {won(saved.pricing.policy.minimumMargin)} · {saved.pricing.policy.roundingUnit}원 단위 {saved.pricing.policy.roundingMode === 'nearest' ? '반올림' : '올림'}</p>
       <fieldset disabled={busy || loading} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}><strong>전체 {rows.length}개 · 견적 포함 {included}개</strong><button type="button" className="btn ghost" disabled={rows.length >= OPTION_LIMIT} onClick={() => setRows(previous => [...previous, emptyOptionInput(crypto.randomUUID())])}>＋ 옵션 추가</button></div>
-        {rows.length > 0 && <OptionBulkTools key={JSON.stringify(saved.pricing.policy)} rows={rows} images={images} selected={[...selected].filter(id => rows.some(row => row.id === id))} onSelect={ids => setSelected(new Set(ids))} policy={saved.pricing.policy} onApply={next => { setRows(next); setSelected(previous => new Set([...previous].filter(id => next.some(row => row.id === id)))); }} />}
+        {rows.length > 0 && <OptionBulkTools key={product.id + JSON.stringify(saved.pricing.policy)} productId={product.id} rows={rows} images={images} selected={[...selected].filter(id => rows.some(row => row.id === id))} onSelect={ids => setSelected(new Set(ids))} policy={saved.pricing.policy} onApply={next => { setRows(next); setSelected(previous => new Set([...previous].filter(id => next.some(row => row.id === id)))); }} />}
         {!rows.length && <div className="empty"><strong>저장한 옵션이 없습니다.</strong><small>수집된 옵션이 연결되면 여기에 표시됩니다. 확인한 옵션을 추가해 수정할 수도 있습니다.</small></div>}
         {pricingView && <div className="option-price-table-wrap"><table className="option-price-table"><caption>옵션별 가격 정보 · 저장된 가격 정책 기준</caption><thead><tr><th>선택</th><th>견적 포함</th><th>옵션명 / SKU</th><th>개당 원가(CNY)</th><th>구성 수량</th><th>공급가</th><th>판매가</th><th>공급 마진</th></tr></thead><tbody>{rows.map((row,index)=>{
           const result=calculations.find(item=>item.optionId===row.id);
@@ -176,21 +176,21 @@ function OptionsEditor({ product, onSaved, pricingView = false, imageView = fals
   </div>;
 }
 
-function OptionBulkTools({ rows, images, selected, onSelect, policy, onApply }: { rows: OptionInput[]; images: string[]; selected: string[]; onSelect: (ids: string[]) => void; policy: PricePolicy; onApply: (rows: OptionInput[]) => void }) {
+function OptionBulkTools({ productId, rows, images, selected, onSelect, policy, onApply }: { productId: string; rows: OptionInput[]; images: string[]; selected: string[]; onSelect: (ids: string[]) => void; policy: PricePolicy; onApply: (rows: OptionInput[]) => void }) {
   const [operation, setOperation] = useState<BulkOptionAction['type']>('unitsPerPack');
   const [imageKey, setImageKey] = useState('');
   const [packaging, setPackaging] = useState({packagedWeightG:'',packagedWidthMm:'',packagedLengthMm:'',packagedHeightMm:''});
   const [value, setValue] = useState(''); const [preview, setPreview] = useState<BulkOptionPreview | null>(null);
   const [error, setError] = useState(''); const [undo, setUndo] = useState<{ before: OptionInput[]; after: string } | null>(null);
-  const [settings, setSettings] = useState<{ boxSkuQuantity: number; bundleEnabled: boolean } | null>(null); const [settingsMessage, setSettingsMessage] = useState('');
+  const [settings, setSettings] = useState<{ boxSkuQuantity: number } | null>(null); const [settingsMessage, setSettingsMessage] = useState('');
   const actionNames = { packaging: '포장 무게·치수 입력', clearPackaging: '포장 정보 비우기', addBundle: '번들 추가 (원래 옵션 유지)', unitsPerPack: '판매 단위당 구성 수량', unitCostCny: '개당 원가 CNY', include: '견적에 포함', exclude: '견적에서 제외', remove: '옵션 삭제', imageKey: '옵션 이미지 연결' };
   const current = Boolean(preview && preview.priceBase === optionBulkPriceBase(policy) && preview.base === JSON.stringify(rows) && [...preview.selectedIds].sort().join('\n') === [...selected].sort().join('\n'));
   async function showDefaults() {
     try {
-      const response = await fetch('/api/settings', { cache: 'no-store' }); const body = await response.json() as { settings?: { boxSkuQuantity: number; bundleEnabled: boolean } | null; error?: string };
+      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/registration-settings`, { cache: 'no-store' }); const body = await response.json() as { settings?: { boxSkuQuantity: number } | null; error?: string };
       if (!response.ok) throw new Error(body.error || '기본설정을 불러오지 못했습니다.');
       setSettings(body.settings ?? null); setSettingsMessage(body.settings ? '' : '저장한 기본설정이 없습니다.');
-    } catch (cause) { setSettingsMessage(cause instanceof Error ? cause.message : '기본설정을 불러오지 못했습니다.'); }
+    } catch (cause) { setSettings(null); setSettingsMessage(cause instanceof Error ? cause.message : '기본설정을 불러오지 못했습니다.'); }
   }
   function makePreview() {
     setError('');
@@ -208,7 +208,7 @@ function OptionBulkTools({ rows, images, selected, onSelect, policy, onApply }: 
   return <details style={{ border: '1px solid #dfe4ec', borderRadius: 10, padding: 14, marginBottom: 16 }}>
     <summary style={{ cursor: 'pointer', fontWeight: 700 }}>선택 옵션 일괄 편집 · {selected.length}개 선택</summary>
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 12 }}><button type="button" className="btn ghost" onClick={() => onSelect(rows.map(row => row.id))}>전체 선택</button><button type="button" className="btn ghost" onClick={() => onSelect(rows.filter(row => row.included).map(row => row.id))}>견적 포함 옵션 선택</button><button type="button" className="btn ghost" onClick={() => onSelect([])}>선택 해제</button><button type="button" className="btn ghost" onClick={() => void showDefaults()}>저장한 기본설정 확인</button></div>
-    {settings && <p style={{ fontSize: 13, color: '#64748b' }}>기본설정: 묶음판매 {settings.bundleEnabled ? '켜짐' : '꺼짐'} · 박스 내 SKU {settings.boxSkuQuantity}개(물류 입수)</p>}
+    {settings && <p style={{ fontSize: 13, color: '#64748b' }}>이 상품의 기본 박스 내 SKU {settings.boxSkuQuantity}개(물류 입수)</p>}
     {settingsMessage && <p role="status">{settingsMessage}</p>}
     <p style={{ fontSize: 13, color: '#64748b' }}>판매 구성 수량은 직접 확인한 값으로 지정합니다. 박스 내 SKU 수량은 물류용 기본설정이며 옵션 구성 수량으로 자동 적용하지 않습니다.</p>
     <div className="form-grid"><label className="field"><span>선택 옵션에 적용할 작업</span><select value={operation} onChange={event => { setOperation(event.target.value as BulkOptionAction['type']); setPreview(null); }} style={{ padding: 10, border: '1px solid #dfe4ec', borderRadius: 8 }}>{Object.entries(actionNames).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label>{(operation === 'unitsPerPack' || operation === 'addBundle' || operation === 'unitCostCny') && <label className="field"><span>변경값 · {operation !== 'unitCostCny' ? '개' : 'CNY'}</span><input aria-label="일괄 편집 변경값" type="number" min={0} step={operation !== 'unitCostCny' ? 1 : 'any'} value={value} onChange={event => { setValue(event.target.value); setPreview(null); }} /></label>}</div>

@@ -3990,3 +3990,9 @@ AI등록 화면 확인:
 -23 extension/popup/handoff/dispatch tests passed, including delayed execution without popup callback, sender/tab rejection, expired/mismatched/consumed packages and partial identity preservation. TypeScript/build/artifact/diff passed.
 - Extension0.2.10 ZIP/link deployed e656f28e-9d62-4eff-b2df-4b9b68047dfe. Installed extension refresh remains unverified; no Chrome extensions page control. Existing user products untouched.
 - Actual1688 acquisition, official workbook acquisition, all-category parity, own live Hub upload/final registration remain unverified; supplier-hub POST501 unchanged. Preserve unrelated tests/submission-review.test.mjs.
+
+## Step 444 — Product-scoped box quantity in option editor (2026-09-28)
+- Option bulk editor now loads the product-linked registration snapshot instead of current workspace settings. A captured 50-unit box remains 50 after workspace settings change to 7; legacy sparse snapshots use the same default as quotation resolution.
+- Registration-settings endpoint exposes boxSkuQuantity alongside existing label inputs. Removed unrelated current bundle switch from that snapshot display. Failed reload clears stale displayed settings; product ID participates in child component key.
+- Validation: 47 pricing/collection/registration-settings/option UI tests passed; tsc, Cloudflare build/check and diff check passed.
+- Deployed version eaef3ed7-a5f0-41db-a857-83ebaef4f944. Existing Couplus/Hub products untouched. No new live collection or Hub submission verification; official XLSX still unavailable. Full workflow is not complete.
