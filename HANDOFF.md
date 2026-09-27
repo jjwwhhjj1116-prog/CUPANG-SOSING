@@ -3544,3 +3544,10 @@ AI등록 화면 확인:
 -Expanded actual quotation preview/export route testing across all26 recorded schemas. Each generates ZIP plus filled XLSX, unzips sheet XML and checks edited SEO title, translated/source option names, a category-specific field, common/manual-option precedence, deliberate blank cells and excluded options. Also verifies schema identity and override provenance in quotation-fields.json. Synthetic workbook and storage/auth fixtures; not official-template or liveHub acceptance evidence.
 -21 quotation API tests passed including26-category matrix; TypeScript/diff checks passed. No implementation defect found in tested path, so no production-code changes and no deployment. Production stays93cf7970-b59f-404b-b54b-6fd3bb9efcc1. Only test coverage changed.
 -No browser or external source/model/Hub calls this turn. SameChrome login request from365 remains pending; latestCouplus365email/password and Hub363ID/password screens. Full workflow incomplete: actual1688 collection, image translation, fullcategoryCouplus parity, SupplierHub501/registration receipt adapter. Do not report all functionality implemented or use synthetic XLSX as proof of official acceptance.
+
+## Step 367 — registration board view controls (2026-09-27)
+- Added eight work-column visibility checkboxes and restore-all, identity/name pin selection, and fixed-height Y/N table controls matching supplied board reference.
+- Sticky table header and selected column; core identity/status/manage columns remain visible. View preferences are component-local.
+- Verified: TypeScript, registration-board test (1/1), Cloudflare build/artifact check, git diff check. Existing Chrome localhost UI: SEO column hide/restore and height radio transition passed with local test products. Horizontal sticky positioning not visually verified.
+- Deployed version 4f3b91d3-29ab-4158-9662-3937202b3af0. No live supplier/source operations performed.
+- Still incomplete: actual Supplier Hub POST adapter/receipt (501), live 1688 collection verification, actual image translation, full category parity. Pending existing-browser login request from step 365 remains unanswered.

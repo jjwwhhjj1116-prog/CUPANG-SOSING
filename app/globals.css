@@ -299,3 +299,16 @@ html,body{background:#fff}
 
 .intake-source-url{display:block;margin-top:8px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;color:#526079;line-height:1.5;user-select:all}.intake-queue-table input:focus-visible{outline:2px solid #2bbcdf;outline-offset:2px}
 .image-selected-item{display:flex;flex-direction:column;gap:6px;flex:none}.image-selected-item>button[aria-pressed=true]{outline:2px solid #29b9da}.image-selected-actions{display:flex;gap:3px}.image-selected-actions button{min-width:24px;min-height:28px}.image-selected-actions button:disabled{opacity:.35}
+
+/* Product registration table controls from the supplied workflow reference. */
+.registration-view-tools{display:flex;align-items:center;flex-wrap:wrap;gap:16px;margin:0 0 14px;color:#626c86;font-size:12px}
+.registration-view-tools select,.registration-column-picker summary{background:#fff;border:1px solid #d9dfeb;border-radius:4px;padding:9px 12px;color:#626c86}
+.registration-view-tools select{margin-left:8px;min-width:170px}
+.registration-view-tools fieldset{display:flex;align-items:center;gap:12px;border:0;padding:0;margin:0 0 0 auto}
+.registration-view-tools legend{float:left;margin-right:10px}.registration-view-tools label{display:inline-flex;align-items:center;gap:5px}
+.registration-view-tools input{accent-color:#25b9df}.registration-column-picker{position:relative;min-width:240px}
+.registration-column-picker summary{cursor:pointer;list-style:none}.registration-column-picker summary::after{content:'▾';float:right;margin-left:16px}
+.registration-column-picker>div{position:absolute;top:calc(100% + 5px);left:0;z-index:5;display:grid;gap:10px;min-width:240px;padding:14px;background:#fff;border:1px solid #d9dfeb;border-radius:5px;box-shadow:0 5px 18px #15254720}
+.registration-scroll{isolation:isolate;overflow:auto;position:relative}.registration-height-fixed{height:clamp(350px,55vh,650px)}
+.couplus-work-table th{position:sticky;top:0;z-index:2}.couplus-work-table .registration-pinned{position:sticky;left:0;z-index:1;background:#fff;box-shadow:3px 0 5px #15254712}
+.couplus-work-table th.registration-pinned{z-index:3;background:#f7f7f9}.registration-scroll:focus-visible{outline:2px solid #25b9df;outline-offset:2px}
