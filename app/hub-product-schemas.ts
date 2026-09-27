@@ -16257,6 +16257,226 @@ export const hubProductSchemas: Readonly<Record<string, HubProductSchema>> = {
     "maxIncludedOptions": 100,
     "salePriceMustCoverSupply": true
   },
+  "81467": {
+    "path": [
+      "스포츠/레져",
+      "헬스/요가",
+      "요가/필라테스용품",
+      "요가매트"
+    ],
+    "observedAt": "2026-09-28",
+    "exposed": [
+      {
+        "id": "color",
+        "label": "색상",
+        "required": true
+      },
+      {
+        "id": "quantity",
+        "label": "수량",
+        "required": true
+      },
+      {
+        "id": "size",
+        "label": "사이즈",
+        "required": true
+      }
+    ],
+    "hidden": [
+      {
+        "id": "hub_81467_0460d80c3281",
+        "label": "미끄럼방지 가능여부",
+        "type": "select",
+        "placeholder": "",
+        "choices": [
+          {
+            "value": "미끄럼방지 가능",
+            "label": "미끄럼방지 가능"
+          },
+          {
+            "value": "",
+            "label": "해당사항없음"
+          }
+        ]
+      },
+      {
+        "id": "hub_81467_18f2fac07467",
+        "label": "방수 가능여부",
+        "type": "select",
+        "placeholder": "",
+        "choices": [
+          {
+            "value": "방수가능",
+            "label": "방수가능"
+          },
+          {
+            "value": "",
+            "label": "해당사항없음"
+          }
+        ]
+      },
+      {
+        "id": "hub_81467_75aba55303fb",
+        "label": "길이",
+        "type": "text",
+        "placeholder": "예) 50cm, 60m 등"
+      },
+      {
+        "id": "hub_81467_a986625d9a2f",
+        "label": "폭",
+        "type": "text",
+        "placeholder": "예) 50cm, 1m"
+      },
+      {
+        "id": "hub_81467_d7834d563388",
+        "label": "세탁방법",
+        "type": "select",
+        "placeholder": "",
+        "choices": [
+          {
+            "value": "손세탁권장",
+            "label": "손세탁권장"
+          },
+          {
+            "value": "세탁기사용가능",
+            "label": "세탁기사용가능"
+          },
+          {
+            "value": "드라이클리닝",
+            "label": "드라이클리닝"
+          },
+          {
+            "value": "세탁불가",
+            "label": "세탁불가"
+          },
+          {
+            "value": "",
+            "label": "해당사항없음"
+          }
+        ]
+      },
+      {
+        "id": "hub_81467_6953a4195620",
+        "label": "두께",
+        "type": "text",
+        "placeholder": "예) 150mm, 12cm"
+      },
+      {
+        "id": "hub_81467_2fed4bd946b2",
+        "label": "요가매트 재질",
+        "type": "select",
+        "placeholder": "",
+        "choices": [
+          {
+            "value": "TPE(고무+플라스틱)",
+            "label": "TPE(고무+플라스틱)"
+          },
+          {
+            "value": "NBR(고무)",
+            "label": "NBR(고무)"
+          },
+          {
+            "value": "PVC(플라스틱)",
+            "label": "PVC(플라스틱)"
+          },
+          {
+            "value": "기타",
+            "label": "기타"
+          },
+          {
+            "value": "",
+            "label": "해당사항없음"
+          }
+        ]
+      },
+      {
+        "id": "hub_81467_60e3914a287d",
+        "label": "끈/가방 포함여부",
+        "type": "select",
+        "placeholder": "",
+        "choices": [
+          {
+            "value": "끈/가방 포함",
+            "label": "끈/가방 포함"
+          },
+          {
+            "value": "",
+            "label": "해당사항없음"
+          }
+        ]
+      },
+      {
+        "id": "hub_81467_702b8f6bdee0",
+        "label": "Global Trade Item Number",
+        "type": "text",
+        "placeholder": "예) "
+      },
+      {
+        "id": "hub_81467_019ea26a47cc",
+        "label": "Parent Manufacturer Part Number",
+        "type": "text",
+        "placeholder": "예) "
+      },
+      {
+        "id": "hub_81467_f07b53d0ab24",
+        "label": "Manufacturer Part Number",
+        "type": "text",
+        "placeholder": "예) 05-61350,05-62635,GRID-13,LUL-M-01,MAN-M-02,S-M-03"
+      }
+    ],
+    "notices": [
+      {
+        "id": "noticeNameModel",
+        "label": "품명 및 모델명"
+      },
+      {
+        "id": "yoga_noticeKc",
+        "label": "KC 인증정보"
+      },
+      {
+        "id": "yoga_noticeSizeWeight",
+        "label": "크기, 중량"
+      },
+      {
+        "id": "yoga_noticeColor",
+        "label": "색상"
+      },
+      {
+        "id": "noticeMaterial",
+        "label": "재질"
+      },
+      {
+        "id": "noticeComponents",
+        "label": "제품 구성"
+      },
+      {
+        "id": "noticeReleaseDate",
+        "label": "출시년월"
+      },
+      {
+        "id": "noticeManufacturerImporter",
+        "label": "제조자(수입자)"
+      },
+      {
+        "id": "noticeCountryOfOrigin",
+        "label": "제조국"
+      },
+      {
+        "id": "yoga_noticeSpecifications",
+        "label": "상품별 세부 사양"
+      },
+      {
+        "id": "noticeQualityAssurance",
+        "label": "품질보증기준"
+      },
+      {
+        "id": "noticeServiceContact",
+        "label": "A/S 책임자와 전화번호"
+      }
+    ],
+    "maxIncludedOptions": 100,
+    "salePriceMustCoverSupply": true
+  },
   "109047": {
     "path": [
       "주방용품",

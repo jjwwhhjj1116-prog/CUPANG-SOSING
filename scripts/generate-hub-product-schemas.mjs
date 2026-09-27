@@ -5,8 +5,12 @@ import { createHash } from 'node:crypto';
 // requests and never infers fields for an unobserved category.
 const evidence = JSON.parse(fs.readFileSync('docs/supplier-hub-product-schemas-2026-09-23.json', 'utf8'));
 const catalog = JSON.parse(fs.readFileSync('docs/supplier-hub-category-ids-2026-09-22.json', 'utf8'));
+evidence.records.push(...JSON.parse(fs.readFileSync('docs/supplier-hub-yoga-product-2026-09-28.json', 'utf8')).records);
+catalog.categoryIds.push(...JSON.parse(fs.readFileSync('docs/yoga-category-comparison-2026-09-28.json', 'utf8')).categoryIds);
 const exposedIds = { '색상': 'color', '수량': 'quantity', '사이즈': 'size', '단 수': 'optionLevels' };
 const notices = {
+  'KC 인증정보': 'yoga_noticeKc', '크기, 중량': 'yoga_noticeSizeWeight', '색상': 'yoga_noticeColor',
+  '제품 구성': 'noticeComponents', '상품별 세부 사양': 'yoga_noticeSpecifications',
   '품명 및 모델명': 'noticeNameModel', '재질': 'noticeMaterial', '구성품': 'noticeComponents',
   '크기': 'noticeDimensions', '출시년월': 'noticeReleaseDate', '제조자(수입자)': 'noticeManufacturerImporter',
   '제조국': 'noticeCountryOfOrigin', '수입신고 문구 여부': 'noticeImportDeclaration',
@@ -36,6 +40,7 @@ for (const record of evidence.records) {
   });
   const noticeFields = (record.noticeLabels ?? []).map(label => {
     if (!Object.hasOwn(notices, label)) throw Error(`Unmapped notice ${categoryId}/${label}`);
+    if (notices[label].startsWith('yoga_')) mappingFields[notices[label]] = `${path.at(-1)}: ${label}`;
     return { id: notices[label], label };
   });
   schemas[categoryId] = { path, observedAt, exposed, hidden, notices: noticeFields,

@@ -175,7 +175,7 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     const attributes = [
       ...hub.exposed.map(item => field(item.id, 'product', item.label, { visibility: 'exposed', required: item.required, reviewRequired: true })),
       ...hub.hidden.map(item => field(item.id, 'product', item.label, { visibility: 'hidden', type: item.type, choices: item.choices,
-        ...(['수납/정리용품 재질', '상품 재질'].includes(item.label) ? { contentField: 'material' as const } : {}),
+        ...(['수납/정리용품 재질', '상품 재질', '요가매트 재질'].includes(item.label) ? { contentField: 'material' as const } : {}),
         reviewRequired: true, help: item.placeholder ? `공식 입력 예시: ${item.placeholder.replace(/^예\)\s*/, '')}` : '선택한 카테고리의 공식 상품정보 화면에서 확인한 항목입니다.' })),
     ];
     fields.splice(fields.findIndex(item => item.section === 'image'), 0, ...attributes);
@@ -376,7 +376,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         if (option?.weightKg === null && option.provenance.weightKg === 'manual') return { value: '', source: 'option' };
         return literal(option?.weightKg == null ? '' : `${option.weightKg} kg`, 'option');
       }
-      case 'color': case 'brace_noticeColor': case 'marathon_noticeColor': return option?.provenance.color === 'manual'
+      case 'color': case 'yoga_noticeColor': case 'brace_noticeColor': case 'marathon_noticeColor': return option?.provenance.color === 'manual'
         ? { value: option.color ?? '', source: 'option' } : literal(option?.color, 'option');
       case 'brace_size': {
         // Link a saved purchasing size only when it is an exact observed choice.
@@ -409,8 +409,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'noticeDimensions': return dimensions(option);
       // This notice contains product size/weight, not the option's packaging dimensions.
-      case 'brace_noticeSpecifications': return contentValue(content.label.specifications ?? { value: '', provenance: 'unverified', updatedAt: null });
-      case 'brace_noticeSizeWeight': return contentValue(content.label.dimensions);
+      case 'yoga_noticeSpecifications': case 'brace_noticeSpecifications': return contentValue(content.label.specifications ?? { value: '', provenance: 'unverified', updatedAt: null });
+      case 'yoga_noticeSizeWeight': case 'brace_noticeSizeWeight': return contentValue(content.label.dimensions);
       case 'noticeManufacturerImporter': {
         const manufacturer = savedTextOrFallback(content.label.manufacturer, settings.manufacturer); const importer = savedTextOrFallback(content.label.importer, settings.importer);
         const value = [manufacturer && `제조자: ${manufacturer}`, importer && `수입자: ${importer}`].filter(Boolean).join(' / ');
@@ -421,7 +421,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'marathon_noticeKind': return contentValue(content.label.productType ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'marathon_noticeCaution': return contentValue(content.label.precautions);
       case 'noticePermission': return contentValue(content.label.certification);
-      case 'brace_noticeKc': return contentValue(content.label.kcInformation ?? { value: '', provenance: 'unverified', updatedAt: null });
+      case 'yoga_noticeKc': case 'brace_noticeKc': return contentValue(content.label.kcInformation ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeComponents': return contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeReleaseDate': return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance);

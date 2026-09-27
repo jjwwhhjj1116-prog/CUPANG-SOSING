@@ -1469,7 +1469,7 @@ test('equivalent translated headings reach category quotation notices without re
   if(row.fields.noticeMaterial){checked++;assert.equal(row.fields.noticeMaterial.value,'면');input.overrides={common:{noticeMaterial:''},options:{}};resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows.find(r=>r.optionId==='red').fields.noticeMaterial.value,'');}
   if(row.fields.noticeComponents)assert.equal(row.fields.noticeComponents.value,'본체 1개');
  }
- assert.equal(categories.length,26);assert.ok(checked>=22);
+ assert.equal(categories.length,27);assert.ok(checked>=22);
 });
 
 test('Excel mapping coverage includes explicit automatic empty choices but not genuinely unset cells',()=>{
@@ -1546,9 +1546,9 @@ test('bundle preview through option save and quotation export preserves original
  assert.equal(exported[1].sourcePriceCny,13.5);assert.equal(exported[1].quantity,'3');assert.equal(exported[1].supplyPrice,expected.supplyPrice);
 });
 
-test('all 26 observed categories carry saved stages into quotation without leaking category defaults',()=>{
+test('all observed categories carry saved stages into quotation without leaking category defaults',()=>{
  const ids=[...new Set([...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas),'80719','81452','64497','103495','77442'])];
- assert.equal(ids.length,26);
+ assert.equal(ids.length,27);
  for(const categoryId of ids){
   const input=fixture();input.categoryId=categoryId;
   input.product.image_keys=JSON.stringify(['owner/main.png','owner/option.png','owner/detail.png','owner/add.png','owner/label.png']);
@@ -1851,4 +1851,32 @@ test('copied stale bundle packaging stays missing in the final quotation while b
  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:'assets/'+index+'.png'}));
  const output=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[1];
  assert.equal(output.packagedWeightG,'');assert.equal(output.packagedDimensionsMm,'');assert.equal(output.supplyPrice,6000);
+});
+
+
+test('yoga mat official fields, blank selection values and saved stage values reach export',()=>{
+ const input=fixture();input.categoryId='81467';
+ input.content.label.material.value='TPE(고무+플라스틱)';
+ input.content.label.kcInformation={value:'확인한 인증정보',provenance:'manual',updatedAt:'now'};
+ input.content.label.specifications={value:'확인한 세부 사양',provenance:'manual',updatedAt:'now'};
+ const schema=model.getQuotationSchema('81467');
+ assert.deepEqual(clone(schema.fields.filter(f=>f.visibility==='exposed').map(f=>f.id)),['color','quantity','size']);
+ assert.equal(schema.fields.filter(f=>f.visibility==='hidden').length,11);
+ assert.equal(schema.fields.filter(f=>f.id.startsWith('notice')||f.id.startsWith('yoga_notice')).length,12);
+ assert.equal(schema.maxIncludedOptions,100);assert.equal(schema.salePriceMustCoverSupply,true);
+ assert.equal(schema.fields.find(f=>f.id==='model').required,true);
+ const material=schema.fields.find(f=>f.label==='요가매트 재질');
+ assert.deepEqual(clone(material.choices.map(c=>c.value)),['TPE(고무+플라스틱)','NBR(고무)','PVC(플라스틱)','기타','']);
+ const result=model.resolveQuotationFields(input),row=result.rows[1];
+ assert.equal(row.fields[material.id].value,'TPE(고무+플라스틱)');
+ assert.equal(row.fields.yoga_noticeSizeWeight.value,'20 × 30 × 40 cm');
+ assert.equal(row.fields.yoga_noticeKc.value,'확인한 인증정보');
+ assert.equal(row.fields.yoga_noticeSpecifications.value,'확인한 세부 사양');
+ const output=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,result,JSON.parse(input.product.image_keys).map(key=>({key,name:key})))[0];
+ assert.equal(output[material.id],'TPE(고무+플라스틱)');assert.equal(output.yoga_noticeKc,'확인한 인증정보');
+ input.overrides={common:{},options:{red:{[material.id]:'',yoga_noticeKc:''}}};
+ const manual=model.resolveQuotationFields(input).rows[1];
+ assert.equal(manual.fields[material.id].value,'');assert.equal(manual.fields[material.id].source,'manual-option');
+ assert.equal(manual.fields.yoga_noticeKc.value,'');
+ assert.equal(model.getQuotationSchema('81472').status,'unconfirmed');
 });
