@@ -27,7 +27,14 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  if(options.signal.aborted)return;
  options.onJob(received);
  const outcomes:CollectionImportOutcome[]=[];
- await importReceivedJobs([received],{fetcher:(url,init)=>options.fetcher(url,{...init,signal:options.signal}),shouldStop:()=>options.signal.aborted,
+ let seo:Awaited<ReturnType<typeof prepareIntakeSeoOutcome>>|undefined;
+ const prepareDraft=async(productId:string)=>{
+  options.onJob({...received,product_id:productId});
+  if(job.goal==='collect'||options.signal.aborted||seo)return;
+  options.onProgress('저장 원문으로 SEO·옵션 초안 작성 중');
+  seo=await prepareIntakeSeoOutcome(productId,options.fetcher,options.signal);
+ };
+ await importReceivedJobs([received],{onProductSaved:(_id,productId)=>prepareDraft(productId),fetcher:(url,init)=>options.fetcher(url,{...init,signal:options.signal}),shouldStop:()=>options.signal.aborted,
   onProgress:(_id,message)=>options.onProgress(message),onResult:(_id,outcome)=>{outcomes.push(outcome);if(outcome.productId)options.onJob({...received,product_id:outcome.productId});}});
  if(options.signal.aborted)return;
  const outcome=outcomes[0];
@@ -42,9 +49,9 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
 
  // Image storage can fail after the product transaction commits. Source-based
  // SEO preparation does not depend on image downloads; retain both outcomes.
- options.onProgress('저장 원문으로 SEO 요청 준비 중');
- const seo = await prepareIntakeSeoOutcome(outcome.productId,options.fetcher,options.signal);
+ await prepareDraft(outcome.productId);
+ const draft=seo!;
  if(options.signal.aborted)return;
- if(outcome.status!=='completed' || !seo.completed)throw Error([outcome.status!=='completed'?(outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.'):'',seo.message,...(outcome.warnings??[])].filter(Boolean).join(' '));
- return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',seo.message,...(outcome.warnings??[])].filter(Boolean).join(' ');
+ if(outcome.status!=='completed' || !draft.completed)throw Error([outcome.status!=='completed'?(outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.'):'',draft.message,...(outcome.warnings??[])].filter(Boolean).join(' '));
+ return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',draft.message,...(outcome.warnings??[])].filter(Boolean).join(' ');
 }

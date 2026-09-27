@@ -9,7 +9,7 @@ import {memoryDatabase,runtimeDDL} from '../scripts/check-db-schema.mjs';
 
 // Real route handlers and persistence; only auth, Alibaba and R2 are fixtures.
 // This is not evidence of a live Alibaba or Supplier Hub transaction.
-for(const automatic of [false,true,'many','stale','completed'])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
+for(const automatic of [false,true,'many','stale','completed','fresh'])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...v){args=v;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const result=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
  const objects=new Map(),network=[],calls=[],cache=new Map();
@@ -37,6 +37,7 @@ for(const automatic of [false,true,'many','stale','completed'])test(`URL intake 
   const fetcher=async(path,init)=>{calls.push(path);if(path.endsWith('/translation-apply'))return load('app/api/products/[id]/translation-apply/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});if(path.endsWith('/translation'))return load('app/api/products/[id]/translation/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});const match=/^\/api\/collection-jobs\/job\/(collect|result|capacity|product|images)$/.exec(path);assert.ok(match,`unexpected request ${path}`);const response=await load(`app/api/collection-jobs/[id]/${match[1]}/route.ts`)[init?.method??'GET'](new Request('https://app.test'+path,init),{params:Promise.resolve({id:'job'})});if(!response.ok)assert.fail(`${path}: ${response.status} ${await response.text()}`);return response;};
   let latest;const run=async()=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner','job'),{signal:new AbortController().signal,fetcher,onJob:job=>{latest=job;},onProgress:()=>{}});
   // The add-only goal must work with no model credentials and leave no AI job.
+  if(automatic!=='fresh'){
   sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('collect','job');
   delete deps['cloudflare:workers'].env.OPENAI_API_KEY;
   assert.match(await run(),/상품 추가 완료/);
@@ -44,6 +45,7 @@ for(const automatic of [false,true,'many','stale','completed'])test(`URL intake 
   assert.equal(sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
   assert.match(await run(),/상품 추가 완료/);
   assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,0);
+  }
   sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('price','job');
   deps['cloudflare:workers'].env.OPENAI_API_KEY='fixture-key';
   if(automatic){
@@ -71,7 +73,12 @@ for(const automatic of [false,true,'many','stale','completed'])test(`URL intake 
     oldJob.review.expiresAt='2026-01-01T00:00:00.000Z';
     if(automatic!=='completed')sqlite.prepare('UPDATE translation_jobs SET review=?,expires_at=? WHERE id=?').run(JSON.stringify(oldJob.review),oldJob.review.expiresAt,oldJob.id);
    }
+   const start=calls.length;
    assert.match(await run(),/SEO·옵션 초안을 생성해 반영/);assert.equal(generations,expectedGenerations);
+   const sequence=calls.slice(start);
+   const firstImage=sequence.findIndex(path=>path.endsWith('/images'));
+   const lastDraft=sequence.findLastIndex(path=>path.endsWith('/translation')||path.endsWith('/translation-apply'));
+   assert.ok(lastDraft>=0 && firstImage>lastDraft, 'draft writes must finish before image attachment mutations');
    if(expiredJobId){const saved=sqlite.prepare('SELECT id,status FROM translation_jobs WHERE idempotency_key=?').get('intake-auto-v1');assert.equal(saved.id,expiredJobId);assert.equal(saved.status,'completed');}
    const content=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
    if(automatic==='many'){assert.equal(content.categoryAttributes.categoryId,'80719');assert.equal(content.categoryAttributes.values.length,50);}

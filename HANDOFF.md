@@ -3649,3 +3649,10 @@ AI등록 화면 확인:
 - Reuses existing attachment endpoint revision checks and label role, preserving existing files. Failed attachment retains preview/uploaded key for manual retry without another upload. Does not transmit to Supplier Hub.
 - 14 document-image tests pass, including one-action label generation/attachment, failure retry, size revision races and existing attachment checks. TypeScript/build/artifact/diff passed. Production version 4420ede4-9020-4660-9bad-cd57e215d451.
 - Actual1688 collection verification, actual image translation, Supplier Hub adapter501 and all-category parity remain incomplete. No browser or real Hub submission performed in this turn.
+
+## Step 382 — prepare text draft before image downloads (2026-09-27)
+- Existing supplierChrome list was empty; opened Couplus AIRocketReg on the same browser binding. DOM showed email/password login. Existing login request remains pending; no profile switch, login bypass or real1688/Hub transaction.
+- runCollectionImport now awaits an optional onProductSaved hook after confirmed product persistence and before image attachments. importReceivedJobs forwards it in both regular and capacity-outage draft paths.
+- Intake links the saved product immediately and runs source-based SEO/options preparation in that hook. Image attachments start after draft writes settle to avoid concurrent product/content revision conflicts. Collect-only skips AI. Existing failure/resume paths retain outcomes and manual fields; no repeated SEO preparation within a run.
+- Related53 tests passed, then six API integration tests passed after adding fresh first-run coverage (no prior add-only import). Verifies draft writes precede first image attachment, cancellation preserves product, existing manual quotation edits survive resume, no duplicate generation. TypeScript/build/artifact/diff passed.
+- Does not fix upstream source access: owned API credentials remain absent, public collector compatibility unverified, actual image translation and Supplier Hub adapter501 remain incomplete. Production deployment recorded in outputs/step382-deploy.log.

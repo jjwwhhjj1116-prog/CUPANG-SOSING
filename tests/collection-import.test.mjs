@@ -150,3 +150,15 @@ test('continue mode still stops on authentication, storage, malformed or unknown
   assert.equal(result.status,'failed');assert.equal(images,1);assert.equal(result.completedImages,0);
  }
 });
+
+test('product-saved preparation settles before images and can stop without losing the product',async()=>{
+ for(const stopAfterDraft of [false,true]){
+  let stopped=false,prepared=false;const calls=[];
+  const result=await runCollectionImport('job',2,{shouldStop:()=>stopped,
+   onProductSaved:async productId=>{assert.equal(productId,'p');assert.deepEqual(calls,['product']);await Promise.resolve();prepared=true;stopped=stopAfterDraft;},
+   fetcher:async url=>{if(url.endsWith('/product')){calls.push('product');return reply({productId:'p'});}assert.equal(prepared,true);calls.push('image');return reply({key:'owner/image'});}
+  });
+  assert.equal(result.productId,'p');assert.equal(result.status,stopAfterDraft?'stopped':'completed');
+  assert.equal(result.completedImages,stopAfterDraft?0:2);
+ }
+});
