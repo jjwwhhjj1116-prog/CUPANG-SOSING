@@ -1,3 +1,4 @@
+import * as parse5 from 'parse5';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ function load(file) {
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInNewContext(compiled, { exports, structuredClone, TextEncoder, require(name) {
+    if (name === 'parse5') return parse5;
     if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
     if (!name.startsWith('@/app/')) throw Error(name);
     return load(name.slice(2) + '.ts');

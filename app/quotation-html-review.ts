@@ -1,18 +1,24 @@
+import { parseFragment, type DefaultTreeAdapterMap } from 'parse5';
+
 /** Observed Supplier Hub bulk-upload restriction, 2026-09-24.
  * Static hints only: never fetch or execute HTML. This is not an HTML sanitizer.
  */
 export function unsupportedQuotationMedia(html: string): string[] {
   const unsupported = new Set<string>();
-  const tags = /<!--[\s\S]*?-->|<(\/?)([a-z][\w:-]*)\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
-  for (const tag of html.matchAll(tags)) {
-    if (!tag[2] || tag[1]) continue;
-    const name = tag[2].toLowerCase();
+  const nodes: DefaultTreeAdapterMap['node'][] = [parseFragment(html)];
+  while (nodes.length) {
+    const node = nodes.pop()!;
+    // Inert/raw-text content is not embedded media. parse5 also decodes
+    // character references and resolves duplicate attributes like HTML does.
+    if ('tagName' in node && ['script', 'style', 'template', 'noscript', 'textarea', 'title'].includes(node.tagName)) continue;
+    if ('childNodes' in node) for (let i = node.childNodes.length - 1; i >= 0; i--) nodes.push(node.childNodes[i]);
+    if (!('tagName' in node)) continue;
+    const name = node.tagName;
     if (name === 'video') unsupported.add('동영상');
     if (!['img', 'source', 'embed', 'object', 'video'].includes(name)) continue;
-    const attributes = /(?:^|\s)([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
-    for (const attribute of tag[3].matchAll(attributes)) {
-      if (!['src', 'data', 'type'].includes(attribute[1].toLowerCase())) continue;
-      const value = (attribute[2] ?? attribute[3] ?? attribute[4]).trim();
+    for (const attribute of node.attrs) {
+      if (!['src', 'data', 'type'].includes(attribute.name)) continue;
+      const value = attribute.value.trim();
       const mime = value.toLowerCase();
       if (/^(?:data:)?image\/gif(?:[;,]|$)/.test(mime)) unsupported.add('GIF');
       if (/^(?:data:)?application\/pdf(?:[;,]|$)/.test(mime)) unsupported.add('PDF');

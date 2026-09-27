@@ -1,3 +1,4 @@
+import * as parse5 from 'parse5';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,6 +13,7 @@ function load(file, overrides = {}, mode = 'development', cache = new Map()) {
   const exports = {}; cache.set(file, exports);
   vm.runInNewContext(output, { exports, Error, Response, URL, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, structuredClone, Blob, CompressionStream, DecompressionStream, crypto: webcrypto,
     process: { env: { NODE_ENV: mode } }, require(name) {
+    if (name === 'parse5') return parse5;
       if (name in overrides) return overrides[name];
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };

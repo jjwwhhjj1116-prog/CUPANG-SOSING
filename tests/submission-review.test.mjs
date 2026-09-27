@@ -15,6 +15,7 @@ function load(file, overrides={}, mode='development', cache=new Map()) {
   vm.runInNewContext(output,{exports,Error,URL,Response,Date,structuredClone,AbortController,fetch:overrides.fetch,process:{env:{NODE_ENV:mode}},require(name){
     if(name in overrides)return overrides[name];
     if(name==='next/server')return {NextResponse:Response};
+    if(name==='parse5')return nativeRequire(name);
     if(name==='react/jsx-runtime')return nativeRequire(name);
     if(name.startsWith('@/'))return load(`${name.slice(2)}.ts`,overrides,mode,cache);
     throw Error(name);
@@ -273,4 +274,18 @@ test('stale review navigation does not fall back to common or another field',()=
  source.rows[0].included=false;source.schema.fields[0].readOnly=true;
  const destination=resolveQuotationNavigation(source,{optionId:'red',fieldId:'title'});
  assert.equal(destination.ok,true);assert.match(destination.message,/제외된 옵션/);assert.match(destination.message,/원본 단계/);
+});
+
+test('HTML media inspection parses inert content and decoded attribute values as HTML',()=>{
+ const {unsupportedQuotationMedia:check}=load('app/quotation-html-review.ts');
+ for(const html of [
+  '<script>const sample = \'<img src="demo.gif">\';</script>',
+  '<style>.sample { content: \'<video src="demo.mp4">\' }</style>',
+  '<textarea><img src="demo.gif"></textarea>',
+  '<template><img src="demo.gif"></template>',
+  '<img src="actual.png" src="ignored.gif">',
+ ])assert.deepEqual(Array.from(check(html)),[],html);
+ for(const html of ['<img src="a&#46;gif">','<img src="data:image&#47;gif;base64,AAAA">','<img src="a.gif" src="ignored.png">'])assert.deepEqual(Array.from(check(html)),['GIF'],html);
+ assert.deepEqual(Array.from(check('<object type="application&#47;pdf" data="/unknown"></object>')),['PDF']);
+ assert.deepEqual(Array.from(check('<script>"<img src=a.gif>"</script><img src=real.psd>')),['PSD']);
 });
