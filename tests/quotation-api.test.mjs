@@ -22,6 +22,7 @@ function load(file, overrides = {}, mode = 'development', cache = new Map()) {
     } });
   return exports;
 }
+function quotationName(files,ext){const plan=JSON.parse(new TextDecoder().decode(files['supplier-hub-upload-plan.json']));assert.match(plan.quotation.file.filename,new RegExp('^YOOFAM-[a-f0-9]{64}\\.'+ext+'$'));return plan.quotation.file.filename;}
 const contentModel = load('app/product-content.ts'); const optionsModel = load('app/product-options.ts');
 const { quotationData } = load('app/exports/quotation-data.ts');
 const { defaultSettings } = load('app/workspace-settings.ts');
@@ -87,7 +88,7 @@ test('saved label product type reaches category preview, CSV and review JSON wit
  const route=routeWith({readProfile:async()=>selected,readContent:async()=>savedContent,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
  const response=await route.POST(request(preview),context);assert.equal(response.status,200);const review=await response.json();assert.deepEqual(review.rows,[['러닝용 허리 가방'],['옵션별 가방']]);
  const output=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200);
- const files=unzipSync(new Uint8Array(await output.arrayBuffer()));const csv=new TextDecoder().decode(files['quotation-filled.csv']);assert.match(csv,/러닝용 허리 가방/);assert.match(csv,/옵션별 가방/);
+ const files=unzipSync(new Uint8Array(await output.arrayBuffer()));const csv=new TextDecoder().decode(files[quotationName(files,'csv')]);assert.match(csv,/러닝용 허리 가방/);assert.match(csv,/옵션별 가방/);
  const doc=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));assert.equal(doc.rows[0].fields.marathon_noticeKind.value,'러닝용 허리 가방');assert.equal(doc.rows[1].fields.marathon_noticeKind.value,'옵션별 가방');assert.equal(savedContent.label.productType.value,'러닝용 허리 가방');
 });
 
@@ -119,7 +120,7 @@ test('real preview/export pipeline fills mapped CSV, includes option assets and 
   const exported = await route.POST(request({ ...preview, action: 'export', fingerprint: review.fingerprint }), context);
   assert.equal(exported.status, 200); assert.equal(exported.headers.get('content-type'), 'application/zip'); assert.equal(exported.headers.get('cache-control'), 'no-store');
   const files = unzipSync(new Uint8Array(await exported.arrayBuffer()));
-  const csv = new TextDecoder().decode(files['quotation-filled.csv']);
+  const csv = new TextDecoder().decode(files[quotationName(files,'csv')]);
   assert.ok(csv.includes('"\'=SUM(1,1)"')); assert.ok(csv.includes('"첫 번째","10","image-001.png"'));
   assert.ok(!csv.includes('제외됨')); assert.deepEqual(files['assets/image-001.png'], png);
   const exportedOptions = JSON.parse(new TextDecoder().decode(files['options.json']));
@@ -186,7 +187,7 @@ test('saved common/option overrides populate mapped cells and preserve blanks, i
   const doc=JSON.parse(decode(files['quotation-fields.json'])); assert.equal(doc.submissionReady,false); assert.equal(doc.categoryContext.categoryId,'80719');
   assert.equal(doc.rows.filter(row=>row.included).length,2); assert.equal(doc.rows.find(row=>row.optionId==='first').fields.title.source,'manual-option');
   assert.equal(doc.overrides.options.deleted.color,'삭제 옵션 수정'); assert.equal(doc.assets['owner/manual.png'],'assets/image-002.png'); assert.equal(doc.uploadFilenames['owner/manual.png'],'image-002.png');
-  assert.ok(decode(files['quotation-filled.csv']).includes('"","12345","12","첫 옵션 재질","MODEL-007","image-002.png","00123456"'));
+  assert.ok(decode(files[quotationName(files,'csv')]).includes('"","12345","12","첫 옵션 재질","MODEL-007","image-002.png","00123456"'));
   assert.ok(decode(files['quotation-fields.csv']).includes('"product","2. Product Page · 상품 페이지","model"'));
   assert.ok(decode(files['quotation-overrides.csv']).includes('삭제 옵션 수정')); assert.ok(decode(files['quotation-overrides.csv']).includes('제외 옵션 수정')); assert.ok(decode(files['quotation-overrides.csv']).includes('다른 분류에서 작성'));
   assert.deepEqual(files['assets/image-002.png'],png); assert.ok(files['product-snapshot.csv']); assert.ok(!files['quotation-review.csv']);
@@ -235,7 +236,7 @@ test('real XLSX pipeline writes final override values, identifiers and attachmen
   });
   const reviewResponse=await route.POST(request(preview),context);assert.equal(reviewResponse.status,200);const review=await reviewResponse.json();
   const response=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(response.status,200);
-  const files=unzipSync(new Uint8Array(await response.arrayBuffer()));const workbook=unzipSync(files['quotation-filled.xlsx']);const sheet=new TextDecoder().decode(workbook['xl/worksheets/sheet1.xml']);
+  const files=unzipSync(new Uint8Array(await response.arrayBuffer()));const workbook=unzipSync(files[quotationName(files,'xlsx')]);const sheet=new TextDecoder().decode(workbook['xl/worksheets/sheet1.xml']);
   assert.ok(sheet.includes('첫 옵션 견적명'));assert.ok(sheet.includes('수동 모델'));assert.ok(sheet.includes('<c r="C2" t="inlineStr"><is><t xml:space="preserve">00001234</t>'));
   assert.ok(sheet.includes('image-001.png'));assert.ok(!sheet.includes('assets/image-001.png'));assert.ok(sheet.includes('<c r="E2"><f>1+1</f><v>2</v></c>'));
   assert.deepEqual(workbook['xl/workbook.xml'],unzipSync(bytes)['xl/workbook.xml']);assert.deepEqual(files['assets/image-001.png'],png);
@@ -296,17 +297,17 @@ test('option label PNG references reach mapped CSV, ZIP bytes and Hub preparatio
   const decode = name => new TextDecoder().decode(files[name]);
   const document = JSON.parse(decode('quotation-fields.json'));
   const plan = JSON.parse(decode('supplier-hub-upload-plan.json'));
-  assert.equal(plan.quotation.file.filename,'quotation-filled.csv');
-  assert.equal(plan.quotation.file.byteLength,files['quotation-filled.csv'].byteLength);
-  assert.equal(plan.quotation.file.sha256,createHash('sha256').update(files['quotation-filled.csv']).digest('hex'));
-  assert.ok(decode('supplier-hub-upload.html').includes('href="quotation-filled.csv"'));
+  assert.equal(plan.quotation.file.filename,result.filename); assert.equal(result.filename, 'YOOFAM-'+result.fingerprint+'.csv');
+  assert.equal(plan.quotation.file.byteLength,files[quotationName(files,'csv')].byteLength);
+  assert.equal(plan.quotation.file.sha256,createHash('sha256').update(files[quotationName(files,'csv')]).digest('hex'));
+  assert.ok(decode('supplier-hub-upload.html').includes('href="'+result.filename+'"'));
   assert.equal(plan.submissionReady,false);
   assert.equal(plan.labelImages.length, 2); assert.equal(plan.missingLabels.length, 0); assert.equal(plan.uploaded, false);
   keys.forEach((key, index) => {
     const file = document.assets[key]; const filename = file.split('/').at(-1);
     assert.equal(result.rows[index][1], filename);
     assert.deepEqual(files[file], png);
-    assert.ok(decode('quotation-filled.csv').includes(filename));
+    assert.ok(decode(quotationName(files,'csv')).includes(filename));
     assert.ok(decode('quotation-images.html').includes(file));
     const attachment = plan.labelImages.find(item => item.key === key);
     assert.equal(attachment.archivePath, file);
@@ -324,7 +325,7 @@ test('omitted start row uses saved category layout in preview and exported bytes
  const review=await response.json();assert.equal(review.report.dataStartRow,7);
  const output=await route.POST(request({...automatic,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200);
  const files=unzipSync(new Uint8Array(await output.arrayBuffer()));
- const csv=new TextDecoder().decode(files['quotation-filled.csv']).split('\r\n');
+ const csv=new TextDecoder().decode(files[quotationName(files,'csv')]).split('\r\n');
  assert.match(csv[6],/첫 번째/);assert.match(csv[7],/第二/);
  assert.equal(JSON.parse(new TextDecoder().decode(files['quotation-report.json'])).dataStartRow,7);
  const explicit=await (await route.POST(request({...automatic,dataStartRow:9}),context)).json();assert.equal(explicit.report.dataStartRow,9);
@@ -355,7 +356,7 @@ test('explicit choice labels match preview and exported cells while raw codes an
  const emptyLabel=field.choices.find(choice=>choice.value==='')?.label??'';
  assert.deepEqual(review.rows[0],[choice.value,choice.label,'']);assert.deepEqual(review.rows[1],['',emptyLabel,'']);
  const response=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(response.status,200);
- const files=unzipSync(new Uint8Array(await response.arrayBuffer()));const csv=new TextDecoder().decode(files['quotation-filled.csv']);assert.ok(csv.includes(`"${choice.value}","${choice.label}",""`));
+ const files=unzipSync(new Uint8Array(await response.arrayBuffer()));const csv=new TextDecoder().decode(files[quotationName(files,'csv')]);assert.ok(csv.includes(`"${choice.value}","${choice.label}",""`));
  const doc=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));assert.equal(doc.rows[0].fields[field.id].value,choice.value);assert.equal(fields.overrides.common[field.id],choice.value);
  fields.overrides.common[field.id]='NOT-A-VALID-CHOICE';assert.equal((await route.POST(request(preview),context)).status,400);
 });
@@ -381,7 +382,7 @@ test('translated category attributes reach final XLSX cells and manual option ed
  assert.deepEqual(review.rows,[['사각형','뚜껑포함'],['원형','']]);
  assert.ok(!review.report.mappingCoverage.some(field=>['basketShape','lidIncluded'].includes(field.fieldId)));
  const output=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200);
- const files=unzipSync(new Uint8Array(await output.arrayBuffer())),workbook=unzipSync(files['quotation-filled.xlsx']);
+ const files=unzipSync(new Uint8Array(await output.arrayBuffer())),workbook=unzipSync(files[quotationName(files,'xlsx')]);
  const sheet=new TextDecoder().decode(workbook['xl/worksheets/sheet1.xml']);
  assert.match(sheet,/<c r="A2" t="inlineStr"><is><t xml:space="preserve">사각형<\/t>/);
  assert.match(sheet,/<c r="B2" t="inlineStr"><is><t xml:space="preserve">뚜껑포함<\/t>/);
@@ -390,7 +391,7 @@ test('translated category attributes reach final XLSX cells and manual option ed
  const exported=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));
  assert.equal(exported.rows[0].fields.basketShape.source,'content');assert.equal(exported.rows[1].fields.basketShape.source,'manual-option');
  const plan=JSON.parse(new TextDecoder().decode(files['supplier-hub-upload-plan.json']));
- assert.equal(plan.quotation.file.sha256,createHash('sha256').update(files['quotation-filled.xlsx']).digest('hex'));assert.equal(plan.uploaded,false);
+ assert.equal(plan.quotation.file.sha256,createHash('sha256').update(files[quotationName(files,'xlsx')]).digest('hex'));assert.equal(plan.uploaded,false);
  // A new translated source snapshot after preview invalidates that review.
  saved.categoryAttributes.values[0].value='다각형';
  assert.equal((await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context)).status,409);
@@ -421,7 +422,7 @@ test('all 26 recorded category schemas preserve edited fields through actual XLS
   const response=await route.POST(request(preview),context);assert.equal(response.status,200,categoryId+': '+await response.clone().text());const review=await response.json();
   assert.deepEqual(review.rows,[['수정 상품 '+categoryId,'첫 번째',value],['','第二','']],categoryId);
   const output=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200,categoryId+' export');
-  const files=unzipSync(new Uint8Array(await output.arrayBuffer())),workbook=unzipSync(files['quotation-filled.xlsx']);
+  const files=unzipSync(new Uint8Array(await output.arrayBuffer())),workbook=unzipSync(files[quotationName(files,'xlsx')]);
   const sheet=new TextDecoder().decode(workbook['xl/worksheets/sheet1.xml']);
   const escape=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
   for(const [cell,expected] of [['A2','수정 상품 '+categoryId],['B2','첫 번째'],['C2',value],['A3',''],['B3','第二'],['C3','']]){
@@ -441,7 +442,7 @@ test('registration package uses the captured profile without asking for the cate
  const response=await route.POST(request({action:'preview'}),context);assert.equal(response.status,200);
  const review=await response.json();assert.equal(review.report.profileId,profile.id);assert.equal(review.report.categoryId,profile.categoryId);
  const download=await route.POST(request({action:'export',fingerprint:review.fingerprint}),context);assert.equal(download.status,200);
- const files=unzipSync(new Uint8Array(await download.arrayBuffer()));assert.ok(files['quotation-filled.csv']);assert.ok(files['supplier-hub-upload-plan.json']);assert.ok(files['assets/image-001.png']);
+ const files=unzipSync(new Uint8Array(await download.arrayBuffer()));assert.ok(files[quotationName(files,'csv')]);assert.ok(files['supplier-hub-upload-plan.json']);assert.ok(files['assets/image-001.png']);
  currentContent={...content,revision:content.revision+1};
  assert.equal((await route.POST(request({action:'export',fingerprint:review.fingerprint}),context)).status,409);
 });
@@ -458,4 +459,23 @@ test('automatic package rejects a collection link changed between context and te
  let count=0;
  const route=routeWith({find:async()=>({...product,source_url:'https://detail.1688.com/offer/813724060928.html'}),readCollection:async()=>({id:++count===1?'collection':'replacement',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})})});
  assert.equal((await route.POST(request({action:'preview'}),context)).status,409);
+});
+
+test('quotation filename is stable for unchanged source and changes after a saved edit',async()=>{
+ let current=content;const route=routeWith({readContent:async()=>current});
+ const first=await (await route.POST(request(preview),context)).json();
+ const repeat=await (await route.POST(request(preview),context)).json();
+ assert.equal(first.filename,repeat.filename);assert.equal(first.filename,`YOOFAM-${first.fingerprint}.csv`);
+ current={...content,revision:content.revision+1};
+ const changed=await (await route.POST(request(preview),context)).json();assert.notEqual(changed.filename,first.filename);
+ assert.equal((await route.POST(request({...preview,action:'export',fingerprint:first.fingerprint}),context)).status,409);
+});
+
+test('TSV review package preserves its format through filename and attachment manifest',async()=>{
+ const bytes=new TextEncoder().encode('상품명\t옵션명\r\n');const digest=createHash('sha256').update(bytes).digest('hex');const key=`owner/category-templates/${digest}.tsv`;
+ const selected={...profile,template:{...profile.template,name:'synthetic.tsv',format:'tsv',headers:['상품명','옵션명'],sha256:digest,storageKey:key},mappings:profile.mappings.slice(0,2)};
+ const route=routeWith({readProfile:async()=>selected,get:async path=>{const data=path===key?bytes:png;return {size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
+ const response=await route.POST(request(preview),context);assert.equal(response.status,200);const review=await response.json();assert.equal(review.filename,`YOOFAM-${review.fingerprint}.tsv`);
+ const exported=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(exported.status,200);
+ const files=unzipSync(new Uint8Array(await exported.arrayBuffer()));assert.equal(quotationName(files,'tsv'),review.filename);assert.ok(new TextDecoder().decode(files[review.filename]).includes('\t'));
 });

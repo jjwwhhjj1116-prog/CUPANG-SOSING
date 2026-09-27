@@ -10,6 +10,7 @@ import { loadAttachments, AttachmentError } from '@/app/exports/attachments';
 import { createReviewBundle } from '@/app/exports/review-bundle';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { ExportSizeError } from '@/app/exports/zip';
+import { quotationFilename } from '@/app/exports/quotation-filename';
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, {status, headers:{'cache-control':'no-store'}});
 export async function POST(request: Request, context: {params: Promise<{id: string}>}) {
@@ -29,6 +30,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     if(!template?.storageKey || !ownsTemplateKey(owner,template.storageKey)) return json({error:'카테고리 설정에서 실제 견적서 원본을 연결해주세요.'},409);
     const dataStartRow = input.dataStartRow ?? quotationStartRow(template);
     const revision = await quotationExportFingerprint(saved,dataStartRow);
+    const filename = quotationFilename(revision,template.format);
     if(input.action === 'export' && input.fingerprint !== revision) return json({error:'검토 후 상품·옵션·설정·카테고리 또는 견적 수정값이 변경됐습니다. 자료 검토를 다시 실행해주세요.'},409);
     const resolved = resolveQuotationExport(saved);
     if(!resolved.rows.some(row => row.included)) return json({error:'견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션은 출력하지 않습니다.'},400);
@@ -43,7 +45,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
       generated = await createMappedQuotation({originalBytes:await original.arrayBuffer(),profile,rows,dataStartRow});
       const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(generated.bytes));
       const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-      fields = quotationFieldFiles(saved,resolved,assets,revision,{filename: 'quotation-filled.' + template.format, byteLength: generated.bytes.byteLength, sha256});
+      fields = quotationFieldFiles(saved,resolved,assets,revision,{filename, byteLength: generated.bytes.byteLength, sha256});
     }
     catch(error) {return json({error:error instanceof Error?error.message:'견적서 양식을 채우지 못했습니다.'},error instanceof ExportSizeError?413:400);}
     let latest;
@@ -54,9 +56,9 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     const mappingWarnings = mappingCoverage.map(field => `${field.label}: ${field.required ? '카테고리 필수 항목' : field.manualOptions.length ? '수동 수정 항목' : '자동 작성 항목'}이 Excel 열에 연결되지 않았습니다. 최종값은 quotation-fields 파일에만 보존됩니다.`);
     const warnings = [...mappingWarnings,...categoryProfileIssues(profile),...generated.report.warnings,...fields.warnings,'Supplier Hub 공식 접수 검증 전인 검토용 파일입니다.','제조사·수입자·연락처 기본설정은 실제 상품과 일치하는지 확인해주세요.'];
     const report = {...generated.report,mappingCoverage,warnings,productId:id,categoryId:saved.categoryContext.categoryId,productVersion:product.updated_at,contentRevision:content.revision,optionRevision:options.revision,quotationRevision:saved.state.revision,profileId:profile.id,profileRevision:profile.revision,templateSha256:template.sha256,submissionReady:false};
-    if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename:generated.filename,rows:generated.values,headers:template.headers});
+    if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename,rows:generated.values,headers:template.headers});
     const bytes = createReviewBundle(product,content,assets,[
-      {name:`quotation-filled.${template.format}`,data:generated.bytes},
+      {name:filename,data:generated.bytes},
       {name:'quotation-report.json',data:JSON.stringify(report,null,2)},
       {name:'options.json',data:JSON.stringify(options,null,2)},
       ...fields.files,

@@ -1,5 +1,6 @@
 import type { supplierHubUploadPlan } from '@/app/exports/supplier-hub-upload-plan';
 import { ExportSizeError, utf8ByteLength } from '@/app/exports/zip';
+import { isQuotationFilename } from '@/app/exports/quotation-filename';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]!));
 
@@ -15,7 +16,7 @@ export function supplierHubUploadPage(plan: ReturnType<typeof supplierHubUploadP
   add(`<p>카테고리 코드: ${escape(plan.categoryId ?? '미선택')}</p><section><h2>1. 견적서 Excel</h2><p>최신 공식 양식과 출력 파일의 시트·열 연결을 확인해주세요. 이 화면은 Excel 검증 완료를 의미하지 않습니다.</p><p><a href="https://supplier.coupang.com/qvt/registration" target="_blank" rel="noopener noreferrer">Supplier Hub 대량 등록 열기</a></p></section>`);
   if (plan.quotation.file) {
     const file = plan.quotation.file;
-    if (!/^quotation-filled\.(xlsx|csv)$/.test(file.filename) || !/^[a-f0-9]{64}$/.test(file.sha256) || !Number.isSafeInteger(file.byteLength) || file.byteLength <= 0) throw new Error('견적서 첨부 정보를 확인해주세요.');
+    if (!isQuotationFilename(file.filename) || !/^[a-f0-9]{64}$/.test(file.sha256) || !Number.isSafeInteger(file.byteLength) || file.byteLength <= 0) throw new Error('견적서 첨부 정보를 확인해주세요.');
     add(`<section><h2>작성된 견적서 파일</h2><a href="${escape(file.filename)}" download>${escape(file.filename)}</a><small>${file.byteLength} bytes · SHA-256: ${file.sha256}</small><p>파일 식별 정보이며 Supplier Hub 검증·접수 완료를 의미하지 않습니다.</p></section>`);
   }
   for (const [title, files] of [['2. 상품 이미지', plan.productImages], ['3. 제품 필수 표시사항 · 라벨/도안', plan.labelImages]] as const) {

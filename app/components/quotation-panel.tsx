@@ -131,6 +131,7 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
     {error&&<p role="alert" className="collection-error">{error}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
       <h3>출력 미리보기 · {preview.report.rowCount}행</h3><p>실제 상품 입력 시작: {preview.report.dataStartRow}행 · {useSavedRow?'카테고리 저장 설정':'이번 출력 지정값'}</p>
+      <p style={{overflowWrap:'anywhere'}}>견적서 파일명: {preview.filename}</p>
       {preview.submissionReview && <QuotationPreviewReview review={preview.submissionReview} disabled={busy||dirty} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />}
       <div className="table-wrap quote-preview"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((value,column)=><td key={column}>{String(value)||'—'}</td>)}</tr>)}</tbody></table></div>
       {preview.report.missingRequired.length>0&&<div className="panel-note"><div><strong>필수 연결 값 {preview.report.missingRequired.length}개 미입력</strong><ul>{preview.report.missingRequired.map((field,index)=><li key={index}>{field.row}행 · {field.header||`${field.column}열`}</li>)}</ul></div></div>}

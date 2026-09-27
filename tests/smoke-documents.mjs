@@ -31,7 +31,7 @@ const manifest = JSON.parse(strFromU8(files['manifest.json']));
 const filename = manifest.assets.size.at(-1);
 assert.deepEqual(files[filename], png);
 assert.equal(manifest.submissionReady, false);
-assert.ok(files['quotation-filled.xlsx']);
+assert.ok(files[preview.filename]);
 const report = { checkedAt: new Date().toISOString(), synthetic: true, actualProductCollected: false, paidCalls: 0, supplierSubmissions: 0, productId: product.id, contentRevision: content.revision, imageKey: key, width: dimensions.getUint32(16), height: dimensions.getUint32(20), bytes: png.length, exportedFilename: filename, checks: ['Browser-generated PNG persisted in R2', 'Product and size role link persisted', 'Quotation ZIP contains byte-identical generated document', 'Submission readiness remains false'] };
 const labelKey = content.assets.label.value.at(-1);
 if (labelKey) {

@@ -1,5 +1,6 @@
 import type { ResolvedQuotation } from '@/app/quotation-schema';
 import type { BundleAsset } from '@/app/exports/review-bundle';
+import { isQuotationFilename } from '@/app/exports/quotation-filename';
 
 export type QuotationAttachment = { filename: string; byteLength: number; sha256: string };
 
@@ -8,7 +9,7 @@ type Attachment = { key: string; archivePath: string; filename: string; referenc
 
 /** A local manifest, not an upload command or a record of external consent. */
 export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: readonly BundleAsset[], quotation?: QuotationAttachment) {
-  if (quotation && (!/^quotation-filled\.(xlsx|csv)$/.test(quotation.filename) || !Number.isSafeInteger(quotation.byteLength) || quotation.byteLength <= 0 || !/^[a-f0-9]{64}$/.test(quotation.sha256))) throw new Error('견적서 첨부 파일 정보를 확인해주세요.');
+  if (quotation && (!isQuotationFilename(quotation.filename) || !Number.isSafeInteger(quotation.byteLength) || quotation.byteLength <= 0 || !/^[a-f0-9]{64}$/.test(quotation.sha256))) throw new Error('견적서 첨부 파일 정보를 확인해주세요.');
   const groups = { productImages: new Map<string, Attachment>(), labelImages: new Map<string, Attachment>() };
   const byKey = new Map<string, BundleAsset>();
   const filenames = new Set<string>();

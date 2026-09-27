@@ -48,7 +48,7 @@ assert.equal(preview.report.rowCount,1);assert.equal(preview.rows[0][0],title);a
 assert.ok(preview.report.missingRequired.some(field=>field.header==='제조국'));
 const response=await fetch(`${base}/api/products/${product.id}/quotation`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'export',profileId:profile.id,dataStartRow:2,fingerprint:preview.fingerprint})});
 assert.equal(response.status,200,await (response.status===200?Promise.resolve(''):response.text()));
-const zip=new Uint8Array(await response.arrayBuffer());const files=unzipSync(zip);const workbook=unzipSync(files['quotation-filled.xlsx']);
+const zip=new Uint8Array(await response.arrayBuffer());const files=unzipSync(zip);const workbook=unzipSync(files[preview.filename]);
 assert.deepEqual(files['assets/image-001.png'],new Uint8Array(png));
 assert.equal(strFromU8(workbook['xl/worksheets/sheet2.xml']),raw['xl/worksheets/sheet2.xml']);
 assert.ok(strFromU8(workbook['xl/worksheets/sheet1.xml']).includes('로컬 검증 옵션'));

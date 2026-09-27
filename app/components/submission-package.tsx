@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { isQuotationFilename } from '@/app/exports/quotation-filename';
 
 type Preview = {
-  fingerprint:string; headers:string[]; rows:(string|number)[][];
+  fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
   report:{productId:string;categoryId:string|null;profileId:string;rowCount:number;warnings:string[];submissionReady:false};
 };
 
@@ -33,6 +34,7 @@ export function SubmissionPackage({productId,profileId,categoryId}:{productId:st
       if(action==='preview'){
         const data=await response.json() as Preview;
         if(!data || !/^[a-f0-9]{64}$/.test(data.fingerprint) || data.report?.productId!==productId
+          || !isQuotationFilename(data.filename) || !data.filename.startsWith(`YOOFAM-${data.fingerprint}.`)
           || data.report.categoryId!==categoryId || data.report.submissionReady!==false
           || typeof data.report.profileId!=='string' || (profileId&&data.report.profileId!==profileId)
           || !Array.isArray(data.headers) || !data.headers.every(value=>typeof value==='string')
@@ -57,6 +59,7 @@ export function SubmissionPackage({productId,profileId,categoryId}:{productId:st
     {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
       <strong>저장된 양식으로 작성한 견적서 · {preview.report.rowCount}행</strong>
+      <p style={{overflowWrap:'anywhere'}}>견적서 파일명: {preview.filename}</p>
       <details><summary>Excel 입력값 확인</summary><div className="table-wrap"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{String(cell)||'—'}</td>)}</tr>)}</tbody></table></div></details>
       <details><summary>양식·첨부 확인 항목 ({preview.report.warnings.length})</summary><ul>{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>
       <p>ZIP에는 작성된 Excel/CSV, 상품 이미지, 라벨과 업로드 준비 목록이 포함됩니다. 검토 후 저장값이 바뀌면 다시 준비해야 합니다.</p>
