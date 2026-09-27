@@ -2,6 +2,7 @@ import {prepareAttachments} from './package.mjs';
 import {attachToSupplierHub} from './attach.mjs';
 import {pendingPackage} from './handoff-store.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
+import {readSupplierHubValidation} from './result.mjs';
 const picker=document.querySelector('#package'),button=document.querySelector('#attach'),status=document.querySelector('#status'),summary=document.querySelector('#summary');
 let prepared=null,sequence=0,pendingFingerprint=null,pendingExpires=0;
 async function loadPending(){
@@ -19,6 +20,20 @@ async function loadPending(){
 }
 void loadPending();
 const validateButton=document.querySelector('#validate');
+const resultButton=document.querySelector('#result');
+resultButton.addEventListener('click',async()=>{
+  if(resultButton.disabled||validateButton.disabled||picker.disabled)return;
+  ++sequence;resultButton.disabled=true;validateButton.disabled=true;button.disabled=true;picker.disabled=true;
+  try{
+    const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+    if(!tab?.id||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/registration')throw Error('현재 창의 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
+    const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation});
+    const result=execution?.result;
+    if(!result||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(result.state))throw Error('검증 결과를 확인하지 못했습니다.');
+    status.textContent=result.state==='not-found'?'전달한 견적서의 결과가 아직 목록에 없습니다. Supplier Hub 안내에 따르면 검증은 최대 2시간 걸릴 수 있습니다.':`견적서: ${result.filename}\n검증 상태: ${result.status}\n견적서 ID: ${result.quotationId||'아직 표시되지 않음'}\n${result.detail}\n검증 완료 후에도 상품별 등록 상태를 별도로 확인해야 합니다.`;
+  }catch(error){status.textContent=error.message;}
+  finally{resultButton.disabled=false;validateButton.disabled=false;picker.disabled=false;button.disabled=!prepared;}
+});
 validateButton.addEventListener('click',async()=>{
   if(validateButton.disabled)return;
   ++sequence; // Ignore an in-flight package read while validation owns the popup.
