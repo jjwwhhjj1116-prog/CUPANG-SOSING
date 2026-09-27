@@ -40,8 +40,10 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     let generated, rows, fields;
     try {
       rows = resolvedQuotationRows(saved,resolved,assets);
-      fields = quotationFieldFiles(saved,resolved,assets,revision);
       generated = await createMappedQuotation({originalBytes:await original.arrayBuffer(),profile,rows,dataStartRow});
+      const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(generated.bytes));
+      const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      fields = quotationFieldFiles(saved,resolved,assets,revision,{filename: 'quotation-filled.' + template.format, byteLength: generated.bytes.byteLength, sha256});
     }
     catch(error) {return json({error:error instanceof Error?error.message:'견적서 양식을 채우지 못했습니다.'},error instanceof ExportSizeError?413:400);}
     let latest;

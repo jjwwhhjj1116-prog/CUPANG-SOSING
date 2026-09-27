@@ -296,6 +296,11 @@ test('option label PNG references reach mapped CSV, ZIP bytes and Hub preparatio
   const decode = name => new TextDecoder().decode(files[name]);
   const document = JSON.parse(decode('quotation-fields.json'));
   const plan = JSON.parse(decode('supplier-hub-upload-plan.json'));
+  assert.equal(plan.quotation.file.filename,'quotation-filled.csv');
+  assert.equal(plan.quotation.file.byteLength,files['quotation-filled.csv'].byteLength);
+  assert.equal(plan.quotation.file.sha256,createHash('sha256').update(files['quotation-filled.csv']).digest('hex'));
+  assert.ok(decode('supplier-hub-upload.html').includes('href="quotation-filled.csv"'));
+  assert.equal(plan.submissionReady,false);
   assert.equal(plan.labelImages.length, 2); assert.equal(plan.missingLabels.length, 0); assert.equal(plan.uploaded, false);
   keys.forEach((key, index) => {
     const file = document.assets[key]; const filename = file.split('/').at(-1);

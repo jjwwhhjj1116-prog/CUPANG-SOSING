@@ -1,6 +1,6 @@
 import { quotationAssetIdentities } from '@/app/exports/quotation-asset-identities';
 import { supplierHubUploadPage } from '@/app/exports/supplier-hub-upload-page';
-import { supplierHubUploadPlan } from '@/app/exports/supplier-hub-upload-plan';
+import { supplierHubUploadPlan, type QuotationAttachment } from '@/app/exports/supplier-hub-upload-plan';
 import { categoryFields, type CategoryField, type CategoryProfileInput } from '@/app/category-profiles';
 import { inspectSubmission } from '@/app/submission-review';
 import { productImageKeys, savedTextOrFallback } from '@/app/product-content';
@@ -94,7 +94,7 @@ export function resolvedQuotationRows(saved: QuotationExportSource, resolved: Re
   });
 }
 
-export function quotationFieldFiles(saved: QuotationExportSource, resolved: ResolvedQuotation, assets: BundleAsset[], inputFingerprint: string) {
+export function quotationFieldFiles(saved: QuotationExportSource, resolved: ResolvedQuotation, assets: BundleAsset[], inputFingerprint: string, quotation?: QuotationAttachment) {
   const fileByKey = new Map(assets.map(asset => [asset.key, asset.name]));
   const fields = new Map(resolved.schema.fields.map(field => [field.id, field]));
   const mapped = new Set(saved.profile?.mappings.filter(mapping => mapping.field !== 'constant').map(mapping => aliases[mapping.field] ?? mapping.field) ?? []);
@@ -140,7 +140,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const reviewRows: (string | number)[][] = [['구분', '코드', '옵션 ID', '옵션명', '필드 ID', '확인 사항'],
     ...review.issues.map(issue => [issue.kind === 'error' ? '오류' : '검토', issue.code, issue.optionId ?? '', issue.optionLabel, issue.fieldId ?? '', issue.message])];
   const reviewJson = JSON.stringify(review);
-  const plan = supplierHubUploadPlan(resolved, assets);
+  const plan = supplierHubUploadPlan(resolved, assets, quotation);
   const uploadPage = supplierHubUploadPage(plan);
   const uploadPlan = JSON.stringify({ ...plan, productId: saved.product.id, inputFingerprint });
   ensureFieldBudget(document, [rows, overrides, reviewRows], utf8ByteLength(detailContent) + utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage) + utf8ByteLength(labelsPage) + utf8ByteLength(reviewJson) + utf8ByteLength(uploadPlan) + utf8ByteLength(uploadPage));

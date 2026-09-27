@@ -1,11 +1,14 @@
 import type { ResolvedQuotation } from '@/app/quotation-schema';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 
+export type QuotationAttachment = { filename: string; byteLength: number; sha256: string };
+
 type Reference = { optionId: string | null; optionLabel: string; fieldId: string; position: number };
 type Attachment = { key: string; archivePath: string; filename: string; references: Reference[] };
 
 /** A local manifest, not an upload command or a record of external consent. */
-export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: readonly BundleAsset[]) {
+export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: readonly BundleAsset[], quotation?: QuotationAttachment) {
+  if (quotation && (!/^quotation-filled\.(xlsx|csv)$/.test(quotation.filename) || !Number.isSafeInteger(quotation.byteLength) || quotation.byteLength <= 0 || !/^[a-f0-9]{64}$/.test(quotation.sha256))) throw new Error('견적서 첨부 파일 정보를 확인해주세요.');
   const groups = { productImages: new Map<string, Attachment>(), labelImages: new Map<string, Attachment>() };
   const byKey = new Map<string, BundleAsset>();
   const filenames = new Set<string>();
@@ -37,7 +40,7 @@ export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: reado
   return { format: 'sourceflow-supplier-hub-upload-plan-v1',
     destination: 'https://supplier.coupang.com/qvt/registration', categoryId: resolved.schema.categoryId,
     submissionReady: false, uploaded: false,
-    quotation: { status: 'official-template-verification-required' },
+    quotation: { status: 'official-template-verification-required', ...(quotation ? {file: {...quotation}} : {}) },
     productImages: [...groups.productImages.values()], labelImages: [...groups.labelImages.values()], missingLabels,
     legalDocuments: { status: 'applicability-and-files-unverified' },
     agreements: { priceData: 'unconfirmed', labelBusinessContact: 'unconfirmed' },
