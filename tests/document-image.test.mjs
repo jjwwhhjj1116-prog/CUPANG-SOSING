@@ -151,7 +151,7 @@ test('size attachment revision zero means no options row and cannot match anothe
   }
 });
 
-function panelHarness({ productVersion = version, optionVersion = version } = {}) {
+function panelHarness({ productVersion = version, optionVersion = version, section = 'size', failFirst = true } = {}) {
   const state = []; let hook = 0; let resolveSettled; let canvases = 0; let uploads = 0; const attached = [];
   const react = {
     useState(initial) { const index = hook++; if (!(index in state)) state[index] = initial; return [state[index], value => { state[index] = typeof value === 'function' ? value(state[index]) : value; if (index === 1 && value === false) resolveSettled?.(); }]; },
@@ -164,16 +164,16 @@ function panelHarness({ productVersion = version, optionVersion = version } = {}
     document: { fonts: { load: async () => [], ready: Promise.resolve() }, createElement() { canvases++; return { width: 0, height: 0, getContext: () => ({ measureText: text => ({ width: text.length * 10 }), fillRect() {}, strokeRect() {}, fillText() {} }), toBlob: callback => callback(new Blob([png], { type: 'image/png' })) }; } },
     fetch: async (path, init) => {
       if (path === '/api/files') { uploads++; return Response.json({ key: 'owner/document.png' }); }
-      if (path.endsWith('/attachments')) { attached.push(JSON.parse(init.body)); return attached.length === 1 ? Response.json({ error: '일시적인 저장 오류' }, { status: 503 }) : Response.json({ productVersion: nextVersion }); }
+      if (path.endsWith('/attachments')) { attached.push(JSON.parse(init.body)); return failFirst && attached.length === 1 ? Response.json({ error: '일시적인 저장 오류' }, { status: 503 }) : Response.json({ productVersion: nextVersion }); }
       if (path.endsWith('/options')) return Response.json({ options, productVersion: optionVersion });
-      if (path.endsWith('/content')) return Response.json({ content: empty() });
+      if (path.endsWith('/content')) return Response.json({ content: contentModel.applyContentPatch(empty(), { label: { productName: '저장한 상품명', material: '면' } }, version) });
       return Response.json({ product: { updated_at: productVersion } });
     },
   });
-  const render = () => { hook = 0; const wrapper = api.DocumentImagePanel({ productId: 'test', version: productVersion, section: 'size' }); return wrapper.type(wrapper.props); };
+  const render = () => { hook = 0; const wrapper = api.DocumentImagePanel({ productId: 'test', version: productVersion, section }); return wrapper.type(wrapper.props); };
   const find = (node, label) => {
     if (!node || typeof node !== 'object') return null;
-    if (node.type === 'button' && node.props.children === label) return node;
+    if (node.type === 'button' && [node.props.children].flat().join('') === label) return node;
     for (const child of [node.props?.children].flat(Infinity)) { const found = find(child, label); if (found) return found; }
     return null;
   };
@@ -187,6 +187,24 @@ test('size preview refuses parallel GETs that combine an older options snapshot 
   const panel = panelHarness({ productVersion: nextVersion, optionVersion: version });
   await panel.click('저장한 값으로 PNG 미리보기');
   assert.match(panel.error, /상품 또는 옵션이 변경/); assert.equal(panel.preview, null); assert.equal(panel.canvases, 0); assert.equal(panel.uploads, 0);
+});
+
+test('stage six generates and attaches the newly rendered label in one action', async () => {
+  const panel = panelHarness({ section: 'label', failFirst: false });
+  await panel.click('표시사항 생성·견적 첨부');
+  assert.equal(panel.error, ''); assert.equal(panel.uploads, 1); assert.equal(panel.attached.length, 1);
+  assert.ok(panel.preview); assert.equal(panel.attached[0].role, 'label');
+  assert.equal(panel.attached[0].expectedContentRevision, panel.preview.contentRevision);
+  assert.equal(panel.attached[0].expectedVersion, panel.preview.productVersion);
+  assert.equal(panel.attached[0].expectedOptionRevision, undefined);
+});
+
+test('one-action label attachment failure keeps preview and reuses uploaded bytes on retry', async () => {
+  const panel = panelHarness({ section: 'label' });
+  await panel.click('표시사항 생성·견적 첨부');
+  assert.match(panel.error, /일시적인/); assert.ok(panel.preview);
+  await panel.click('PNG 업로드·상품 자료에 추가');
+  assert.equal(panel.error, ''); assert.equal(panel.uploads, 1); assert.equal(panel.attached.length, 2);
 });
 
 test('size preview carries the rendered options revision and retries attachment with the already-uploaded PNG', async () => {

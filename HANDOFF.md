@@ -3643,3 +3643,9 @@ AI등록 화면 확인:
 - 53 API/submission review tests passed. Additional targeted3 tests passed after extending XLSX test to compare direct bytes with ZIP entry. Tests cover stale/missing fingerprint, mutation during generation, CSV/XLSX byte equality, original template formulas, manual final fields and leading-zero identifiers. TypeScript/build/artifact/diff checks passed.
 - Actual1688 collection verification, image translation, Supplier Hub upload/receipt adapter501 and full category parity remain unfinished. Official uploaded workbook compatibility and external acceptance remain unverified. Previous Couplus login question remains pending; current Hub login question also pending.
 - Deployment: Current Version ID: a0882f40-27e3-43d5-8a08-d9c578d4a4f6
+
+## Step 380 — stage-six one-action label generation and attachment (2026-09-27)
+- DocumentImagePanel adds generate-and-attach using freshly rendered saved content directly, avoiding React preview state timing. Existing preview-only/manual attachment remains. Same action available for size documents.
+- Reuses existing attachment endpoint revision checks and label role, preserving existing files. Failed attachment retains preview/uploaded key for manual retry without another upload. Does not transmit to Supplier Hub.
+- 14 document-image tests pass, including one-action label generation/attachment, failure retry, size revision races and existing attachment checks. TypeScript/build/artifact/diff passed. Production version 4420ede4-9020-4660-9bad-cd57e215d451.
+- Actual1688 collection verification, actual image translation, Supplier Hub adapter501 and all-category parity remain incomplete. No browser or real Hub submission performed in this turn.

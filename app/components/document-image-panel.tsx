@@ -25,7 +25,8 @@ function Panel({ productId, version, section, onSaved }: Props) {
   // A freshly fetched preview can be newer than the dashboard prop. Only a
   // later dashboard version invalidates it; the server still checks exact CAS.
   const stale = Boolean(preview && Date.parse(version) > Date.parse(attachedVersion ?? preview.productVersion));
-  async function generate() {
+  async function generate(andAttach = false) {
+    if (busy) return;
     setBusy(true); setError(''); setMessage('');
     try {
       const path = `/api/products/${encodeURIComponent(productId)}`;
@@ -36,15 +37,22 @@ function Panel({ productId, version, section, onSaved }: Props) {
       const rendered = await renderDocument(documentImagePlan(section, contents.content, optionState.options));
       if (!alive.current) return;
       uploadedKey.current = null; setAttachedVersion(null);
-      setPreview({ ...rendered, url: URL.createObjectURL(rendered.blob), productVersion: product.product.updated_at, contentRevision: contents.content.revision, optionRevision: optionState.options.revision });
+      const generated = { ...rendered, url: URL.createObjectURL(rendered.blob), productVersion: product.product.updated_at, contentRevision: contents.content.revision, optionRevision: optionState.options.revision };
+      setPreview(generated);
       setMessage('저장한 값으로 PNG를 만들었습니다. 미리보기를 확인한 후 다운로드하거나 상품에 첨부하세요.');
+      if (andAttach) await attachPreview(generated);
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : '이미지를 만들지 못했습니다.'); }
     finally { if (alive.current) setBusy(false); }
   }
   async function attach() {
-    if (!preview || stale) return;
+    if (!preview || stale || busy) return;
     setBusy(true); setError(''); setMessage('');
     try {
+      await attachPreview(preview);
+    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'PNG 첨부를 저장하지 못했습니다.'); }
+    finally { if (alive.current) setBusy(false); }
+  }
+  async function attachPreview(preview: Preview) {
       if (!uploadedKey.current) {
         const form = new FormData(); form.set('file', new File([preview.blob], `sourceflow-${section}.png`, { type: 'image/png' }));
         const response = await fetch('/api/files', { method: 'POST', body: form }); const body = await response.json() as { key?: string; error?: string };
@@ -57,12 +65,11 @@ function Panel({ productId, version, section, onSaved }: Props) {
       if (!response.ok || !body.productVersion) throw new Error(body.error || '파일은 업로드되었지만 상품 자료에 연결하지 못했습니다.');
       if (!alive.current) return;
       setAttachedVersion(body.productVersion); setMessage(`${name} PNG를 상품 자료에 추가했습니다. 기존 파일과 이미지 역할은 보존했습니다.`); onSaved?.();
-    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'PNG 첨부를 저장하지 못했습니다.'); }
-    finally { if (alive.current) setBusy(false); }
   }
   return <section className="panel-stack" style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid #dfe4ec' }} aria-label={`${name} 문서 이미지`} aria-busy={busy}>
     <div><strong>{name} PNG 만들기</strong><p style={{ color: '#64748b', marginTop: 8 }}>저장한 {section === 'label' ? '표시사항을' : '옵션 치수·무게를'} 이미지로 조판합니다. AI 호출 없이 브라우저에서 만들며 미입력 값은 추정하지 않습니다.{section === 'size' ? ` 한 장 최대 ${MAX_SIZE_ROWS}개 포함 옵션.` : ''} 높이 최대 {MAX_DOCUMENT_HEIGHT.toLocaleString('ko-KR')}px.</p></div>
     <button type="button" className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? '처리 중…' : '저장한 값으로 PNG 미리보기'}</button>
+    <button type="button" className="btn primary" disabled={busy} onClick={() => void generate(true)}>{name} 생성·견적 첨부</button>
     {error && <p role="alert" style={{ color: '#a34410' }}>{error}</p>}
     {message && <p role="status">{message}</p>}
     {stale && <p role="status" style={{ color: '#a34410' }}>상품 자료가 변경되었습니다. 최신 저장값으로 미리보기를 다시 만들어주세요.</p>}
