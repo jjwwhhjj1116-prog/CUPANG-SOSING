@@ -359,3 +359,39 @@ test('explicit choice labels match preview and exported cells while raw codes an
  const doc=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));assert.equal(doc.rows[0].fields[field.id].value,choice.value);assert.equal(fields.overrides.common[field.id],choice.value);
  fields.overrides.common[field.id]='NOT-A-VALID-CHOICE';assert.equal((await route.POST(request(preview),context)).status,400);
 });
+
+test('translated category attributes reach final XLSX cells and manual option edits survive export',async()=>{
+ const encode=value=>new TextEncoder().encode(value);
+ const headers=['바구니 형태','뚜껑 포함여부'];
+ const bytes=zipSync({
+  '[Content_Types].xml':encode('<Types><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>'),
+  '_rels/.rels':encode('<Relationships><Relationship Id="main" Type="x/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
+  'xl/workbook.xml':encode('<workbook xmlns:r="relationship"><sheets><sheet name="견적" r:id="one"/></sheets></workbook>'),
+  'xl/_rels/workbook.xml.rels':encode('<Relationships><Relationship Id="one" Type="x/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'),
+  'xl/worksheets/sheet1.xml':encode('<worksheet><dimension ref="A1:B1"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>바구니 형태</t></is></c><c r="B1" t="inlineStr"><is><t>뚜껑 포함여부</t></is></c></row></sheetData></worksheet>'),
+ },{level:0});
+ const digest=createHash('sha256').update(bytes).digest('hex'),key=`owner/category-templates/${digest}.xlsx`;
+ const mapping=load('app/quotation-mapping.ts',{'./category-profiles':load('app/category-profiles.ts'),'./quotation-schema':load('app/quotation-schema.ts')}).suggestQuotationMappings(headers,'80719');
+ assert.equal(mapping.unmatchedColumns.length,0);assert.equal(mapping.ambiguousColumns.length,0);
+ const selected={...profile,categoryId:'80719',template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers},mappings:mapping.mappings};
+ const saved=structuredClone(content);saved.categoryAttributes={categoryId:'80719',jobId:'source-job',values:[{name:'바구니 형태',value:'사각형'},{name:'뚜껑 포함여부',value:'뚜껑포함'}]};
+ const fields={schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{},options:{second:{basketShape:'원형',lidIncluded:''}}}};
+ const route=routeWith({readProfile:async()=>selected,readContent:async()=>saved,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
+ const response=await route.POST(request(preview),context);assert.equal(response.status,200,await response.clone().text());const review=await response.json();
+ assert.deepEqual(review.rows,[['사각형','뚜껑포함'],['원형','']]);
+ assert.ok(!review.report.mappingCoverage.some(field=>['basketShape','lidIncluded'].includes(field.fieldId)));
+ const output=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200);
+ const files=unzipSync(new Uint8Array(await output.arrayBuffer())),workbook=unzipSync(files['quotation-filled.xlsx']);
+ const sheet=new TextDecoder().decode(workbook['xl/worksheets/sheet1.xml']);
+ assert.match(sheet,/<c r="A2" t="inlineStr"><is><t xml:space="preserve">사각형<\/t>/);
+ assert.match(sheet,/<c r="B2" t="inlineStr"><is><t xml:space="preserve">뚜껑포함<\/t>/);
+ assert.match(sheet,/<c r="A3" t="inlineStr"><is><t xml:space="preserve">원형<\/t>/);
+ assert.match(sheet,/<c r="B3" t="inlineStr"><is><t xml:space="preserve"><\/t>/);
+ const exported=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));
+ assert.equal(exported.rows[0].fields.basketShape.source,'content');assert.equal(exported.rows[1].fields.basketShape.source,'manual-option');
+ const plan=JSON.parse(new TextDecoder().decode(files['supplier-hub-upload-plan.json']));
+ assert.equal(plan.quotation.file.sha256,createHash('sha256').update(files['quotation-filled.xlsx']).digest('hex'));assert.equal(plan.uploaded,false);
+ // A new translated source snapshot after preview invalidates that review.
+ saved.categoryAttributes.values[0].value='다각형';
+ assert.equal((await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context)).status,409);
+});
