@@ -3876,3 +3876,10 @@ AI등록 화면 확인:
 - Unit tests extension+handoff11/11; Cloudflare build/artifact/diff checks pass. Package0.2.1 built withupdatedREADME; app download link0.2.1. Public old0.2.0 retained.
 - Deployed50f2e753-21ff-46a7-a87c-65d757576f9f. No live extension installation/upload/validation/registration claimed. SupplierHubPOST remains501; finalconsent/registration/receipt missing; actual1688blockedsource and fullcategoryparity still incomplete.
 - Fixture node server session91042 listening4243; extension423 shows completed7/0. No newChrome/profile or userproduct edits. Next concrete user action: chrome://extensions → developer mode → load unpacked repo extensions/supplier-hub (or extracted0.2.1ZIP) in their selected profile. Afterinstallation refreshYOOFAMpage and useownisolatedtestonly.
+
+## Step 425 — 2026-09-27: explicit Supplier Hub file validation request
+- User confirmed loading the extension in their existing right Chrome. Installation version/handshake has not been independently verified. No additional Chrome/profile opened; localhost app opened in same Chrome.
+- Closed observed MSRP terms modal and restored accidentally selected checkbox to unchecked; both agreement checkboxes verified false. No files uploaded and no existing product modified.
+- Extension 0.2.2 now records filenames after complete dispatch; explicit validation action requires this completed attempt, all filenames visible, both actual Hub agreement checkboxes checked, and unique visible enabled file-validation button. Marks request before click to prevent duplicates. Does not auto-assert agreements, claim validation success, or submit final registration.
+- Added validation tests: 14 related tests passed; tsc and production build/artifact checks passed. Download zip updated to 0.2.2. Unpacked extension needs reload for changes.
+- Live official XLSX upload/validation/final registration still unverified. Official template acquisition, own 1688 source, category parity, and /api/supplier-hub POST 501 remain unresolved. Do not present whole workflow as complete.

@@ -42,6 +42,7 @@ export function attachToSupplierHub(payload) {
       input.dispatchEvent(new Event('change',{bubbles:true}));
       dispatched.push({group:key,count:transfer.files.length});
     }
+    document.documentElement.dataset.yoofamAttachmentAttempt=JSON.stringify({state:'dispatched',files:prepared.flatMap(({transfer})=>Array.from(transfer.files,file=>file.name))});
     return {state:'dispatched',dispatched,registered:false};
   }catch(error){return {state:'partial',dispatched,registered:false,error:String(error?.message||error)};}
 }
