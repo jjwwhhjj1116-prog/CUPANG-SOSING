@@ -2,6 +2,8 @@ import { usableCategoryCode } from '@/app/category-profiles';
 import type { CategoryProfile, CategoryProfileInput } from './category-profiles';
 import observation from '../docs/couplus-category-dom-2026-09-22.json';
 import hubObservation from '../docs/supplier-hub-category-ids-2026-09-22.json';
+import yogaObservation from '../docs/yoga-category-comparison-2026-09-28.json';
+const observedNodes = [...observation.nodes, ...yogaObservation.nodes];
 
 export type CategoryChoice = {
   key: string; categoryId: string; path: string[]; profileId?: string; profileName?: string;
@@ -22,13 +24,13 @@ const knownCodes: { categoryId: string; path: string[]; observedAt: string; code
   // Full breadcrumb and code observed in saved Couplus quotation; siblings are not fully observed.
   { categoryId: '77442', path: ['완구/취미', '보드게임', '바둑/체스/윷놀이', '바둑', '바둑알+바둑판'], observedAt: '2026-09-24', codeEvidence: 'supplier-hub' },
 ];
-const observedLeafPaths = new Set(observation.nodes.flatMap(node => node.children.filter(child => child.isLeaf).map(child => pathKey([...node.path, child.label]))));
+const observedLeafPaths = new Set(observedNodes.flatMap(node => node.children.filter(child => child.isLeaf).map(child => pathKey([...node.path, child.label]))));
 // Only connect a code to a leaf whose entire path was independently observed.
 // Conflicting evidence for a path is excluded, rather than taking the last ID.
 function hubCodes() {
   const byPath = new Map<string, { categoryId: string; observedAt: string }>();
   const conflicts = new Set<string>();
-  for (const record of hubObservation.categoryIds) {
+  for (const record of [...hubObservation.categoryIds, ...yogaObservation.categoryIds]) {
     const key = pathKey(record.path);
     if (!observedLeafPaths.has(key) || !/^[1-9]\d{0,19}$/.test(record.categoryId)) continue;
     if (byPath.has(key) && byPath.get(key)?.categoryId !== record.categoryId) conflicts.add(key);
@@ -39,7 +41,7 @@ function hubCodes() {
 }
 const confirmedHubCodes = hubCodes();
 function observedChoices(): CategoryChoice[] {
-  const branches = new Set(observation.nodes.map(node => pathKey(node.path)));
+  const branches = new Set(observedNodes.map(node => pathKey(node.path)));
   const items = new Map<string, CategoryChoice>();
   const add = (path: string[], isLeaf: boolean) => {
     const hubCode = isLeaf ? confirmedHubCodes.get(pathKey(path)) : undefined;
@@ -50,7 +52,7 @@ function observedChoices(): CategoryChoice[] {
       codeEvidence: hubCode ? 'supplier-hub' : couplusCode ? couplusCode.codeEvidence ?? 'couplus' : 'unconfirmed', codeObservedAt: hubCode?.observedAt ?? (couplusCode?.observedAt ?? null) });
   };
   for (const root of observation.rootLabels) add([root], false);
-  for (const node of observation.nodes) for (const child of node.children) add([...node.path, child.label], child.isLeaf);
+  for (const node of observedNodes) for (const child of node.children) add([...node.path, child.label], child.isLeaf);
   for (const record of knownCodes) {
     for (let depth = 1; depth <= record.path.length; depth++) {
       const path = record.path.slice(0, depth);
@@ -62,12 +64,13 @@ function observedChoices(): CategoryChoice[] {
 export const observedCategories: CategoryChoice[] = observedChoices();
 export const categoryObservationScope = {
   observedAt: observation.observedAt, roots: observation.rootLabels.length,
-  rootsWithSecondLevel: observation.nodes.filter(node => node.path.length === 1).length,
-  secondLevel: observation.nodes.filter(node => node.path.length === 1).reduce((sum, node) => sum + node.children.length, 0),
+  rootsWithSecondLevel: observedNodes.filter(node => node.path.length === 1).length,
+  secondLevel: observedNodes.filter(node => node.path.length === 1).reduce((sum, node) => sum + node.children.length, 0),
   completeSubtree: '주방용품 > 주방수납/정리', completeSubtreeLeaves: observedCategories.filter(choice => choice.isLeaf && choice.path[0] === '주방용품' && choice.path[1] === '주방수납/정리').length,
+  yogaSubtreeLeaves: observedCategories.filter(choice => choice.isLeaf && choice.path.slice(0, 3).join('>') === '스포츠/레져>헬스/요가>요가/필라테스용품').length,
   knownCodes: observedCategories.filter(choice => choice.isLeaf && choice.categoryId).length,
   supplierHubCodes: observedCategories.filter(choice => choice.codeEvidence === 'supplier-hub').length,
-  supplierHubObservedDate: hubObservation.observedDate,
+  supplierHubObservedDate: `${hubObservation.observedDate} ~ ${yogaObservation.observedAt}`,
   fullCatalogVerified: false, supplierHubMappingVerified: false,
 } as const;
 export function categoryChoices(profiles: CategoryProfile[]): CategoryChoice[] {

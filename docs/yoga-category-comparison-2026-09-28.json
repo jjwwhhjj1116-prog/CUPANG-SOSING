@@ -1,0 +1,253 @@
+{
+  "observedAt": "2026-09-28",
+  "sources": [
+    "https://couplus.co.kr/AIRocketReg",
+    "https://supplier.coupang.com/sr/registration"
+  ],
+  "surface": "Rendered Couplus category selector and Supplier Hub empty individual-registration category textbox; no existing products edited or forms submitted.",
+  "status": "category-path-and-code-only",
+  "quotationFieldsVerified": false,
+  "nodes": [
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가"
+      ],
+      "children": [
+        {
+          "label": "요가/필라테스 잡화",
+          "isLeaf": false
+        },
+        {
+          "label": "요가/필라테스용품",
+          "isLeaf": false
+        },
+        {
+          "label": "헬스기구/용품",
+          "isLeaf": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품"
+      ],
+      "children": [
+        {
+          "label": "마사지볼/라크로스볼",
+          "isLeaf": true
+        },
+        {
+          "label": "메디신볼/토닝볼",
+          "isLeaf": true
+        },
+        {
+          "label": "요가매트",
+          "isLeaf": true
+        },
+        {
+          "label": "요가매트 가방",
+          "isLeaf": true
+        },
+        {
+          "label": "요가밴드",
+          "isLeaf": true
+        },
+        {
+          "label": "요가블럭",
+          "isLeaf": true
+        },
+        {
+          "label": "요가스트랩/벨트",
+          "isLeaf": true
+        },
+        {
+          "label": "요가타올",
+          "isLeaf": true
+        },
+        {
+          "label": "요가해먹/고정장치",
+          "isLeaf": true
+        },
+        {
+          "label": "짐볼",
+          "isLeaf": true
+        },
+        {
+          "label": "폼롤러",
+          "isLeaf": true
+        },
+        {
+          "label": "필라테스 링",
+          "isLeaf": true
+        },
+        {
+          "label": "필라테스기구/리포머",
+          "isLeaf": true
+        },
+        {
+          "label": "필라테스의자",
+          "isLeaf": true
+        }
+      ]
+    }
+  ],
+  "categoryIds": [
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "마사지볼/라크로스볼"
+      ],
+      "categoryId": "81477",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>마사지볼/라크로스볼 (81477)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "메디신볼/토닝볼"
+      ],
+      "categoryId": "81470",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>메디신볼/토닝볼 (81470)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "요가매트"
+      ],
+      "categoryId": "81467",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>요가매트 (81467)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "요가매트 가방"
+      ],
+      "categoryId": "81468",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>요가매트 가방 (81468)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "요가밴드"
+      ],
+      "categoryId": "81471",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>요가밴드 (81471)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "요가블럭"
+      ],
+      "categoryId": "81472",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>요가블럭 (81472)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "요가스트랩/벨트"
+      ],
+      "categoryId": "81473",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>요가스트랩/벨트 (81473)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "요가타올"
+      ],
+      "categoryId": "81476",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>요가타올 (81476)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "요가해먹/고정장치"
+      ],
+      "categoryId": "110580",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>요가해먹/고정장치 (110580)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "짐볼"
+      ],
+      "categoryId": "81469",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>짐볼 (81469)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "폼롤러"
+      ],
+      "categoryId": "81475",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>폼롤러 (81475)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "필라테스 링"
+      ],
+      "categoryId": "81474",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>필라테스 링 (81474)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "필라테스기구/리포머"
+      ],
+      "categoryId": "103692",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>필라테스기구/리포머 (103692)",
+      "observedAt": "2026-09-28"
+    },
+    {
+      "path": [
+        "스포츠/레져",
+        "헬스/요가",
+        "요가/필라테스용품",
+        "필라테스의자"
+      ],
+      "categoryId": "103693",
+      "displayedValue": "스포츠/레져>헬스/요가>요가/필라테스용품>필라테스의자 (103693)",
+      "observedAt": "2026-09-28"
+    }
+  ]
+}

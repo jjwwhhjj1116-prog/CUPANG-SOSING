@@ -6,11 +6,13 @@ import ts from 'typescript';
 
 const observation = JSON.parse(fs.readFileSync(new URL('../docs/couplus-category-dom-2026-09-22.json', import.meta.url), 'utf8'));
 const hubObservation = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-category-ids-2026-09-22.json', import.meta.url), 'utf8'));
+const yogaObservation = JSON.parse(fs.readFileSync(new URL('../docs/yoga-category-comparison-2026-09-28.json', import.meta.url), 'utf8'));
 const braceObservation = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-81452-product-2026-09-24.json', import.meta.url), 'utf8'));
 const source = ts.transpileModule(fs.readFileSync(new URL('../app/category-catalog.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-function load(hub = hubObservation) {
+function load(hub = hubObservation, yoga = yogaObservation) {
   const model = {};
   vm.runInNewContext(source, { exports: model, require(name) {
+    if (name === '../docs/yoga-category-comparison-2026-09-28.json') return yoga;
     if (name === '../docs/couplus-category-dom-2026-09-22.json') return observation;
     if (name === '../docs/supplier-hub-category-ids-2026-09-22.json') return hub;
     if (name === '@/app/category-profiles') { const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/category-profiles.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports }); return exports; }
@@ -33,19 +35,19 @@ test('hierarchy imports only observed root/child paths with exact order and all 
     if (node.path.length === 1) count += node.children.length;
   }
   assert.equal(count, 173);
-  assert.equal(choices.filter(choice => choice.isLeaf).length, 27);
+  assert.equal(choices.filter(choice => choice.isLeaf).length, 41);
   assert.equal(choices.filter(model.canConfirmCategory).length, model.categoryObservationScope.knownCodes);
   const verified = choices.filter(choice => choice.codeEvidence === 'supplier-hub');
   assert.equal(verified.length, model.categoryObservationScope.supplierHubCodes);
   assert.ok(verified.length >= 5);
-  for (const choice of verified.filter(choice => !['64497','103495','77442','81221'].includes(choice.categoryId))) assert.ok([...hubObservation.categoryIds, braceObservation].some(record => record.categoryId === choice.categoryId && JSON.stringify(record.path) === JSON.stringify(choice.path)));
+  for (const choice of verified.filter(choice => !['64497','103495','77442','81221'].includes(choice.categoryId))) assert.ok([...hubObservation.categoryIds, ...yogaObservation.categoryIds, braceObservation].some(record => record.categoryId === choice.categoryId && JSON.stringify(record.path) === JSON.stringify(choice.path)));
   assert.deepEqual(plain(model.categoryLevel(choices, ['기프트카드'], 1)), []);
   assert.equal(choices.find(choice => choice.path.join() === '기프트카드').childrenObserved, false);
   assert.equal(model.categoryObservationScope.fullCatalogVerified, false);
 });
 
 test('unknown leaves and unobserved branches cannot become 80719 profiles, but observed known code preserves its exact path', () => {
-  const partial = load({ ...hubObservation, categoryIds: [] });
+  const partial = load({ ...hubObservation, categoryIds: [] }, { ...yogaObservation, categoryIds: [] });
   for (const choice of partial.categoryChoices([])) {
     if (choice.categoryId === '80719') {
       assert.deepEqual(plain(choice.path), knownPath);
@@ -113,7 +115,7 @@ test('only exact observed leaf paths receive Hub IDs; branches, similar labels a
     { path: ['주방용품', '주방수납/정리', '기타수납/정리용품'], categoryId: '80720', observedAt: '2026-09-22' },
     { path: ['주방용품', '주방수납/정리', '기타수납/정리용품'], categoryId: '99993', observedAt: '2026-09-22' },
   ];
-  const bounded = load({ ...hubObservation, categoryIds: records, verifiedLeafCount: 9999 });
+  const bounded = load({ ...hubObservation, categoryIds: records, verifiedLeafCount: 9999 }, { ...yogaObservation, categoryIds: [] });
   const choices = bounded.categoryChoices([]);
   assert.equal(bounded.categoryObservationScope.supplierHubCodes, 6);
   assert.equal(bounded.categoryObservationScope.knownCodes, 7);
@@ -180,4 +182,21 @@ test('invalid legacy saved codes stay visible for repair but cannot confirm cate
     assert.throws(() => model.categoryProfileForChoice(saved));
     assert.equal(model.categoryAdvancedSeed(saved).profileId, 'legacy');
   }
+});
+
+test('all 14 yoga leaves retain observed order, exact Hub codes and no invented quotation mappings', () => {
+ const branch = ['스포츠/레져','헬스/요가','요가/필라테스용품'];
+ const choices = model.categoryChoices([]);
+ assert.equal(model.categoryObservationScope.yogaSubtreeLeaves,14);
+ assert.deepEqual(plain(model.categoryLevel(choices,branch,3)),yogaObservation.nodes[1].children.map(c=>c.label));
+ for (const record of yogaObservation.categoryIds) {
+  const choice = model.categoryChoicesAtPath(choices,record.path)[0];
+  assert.equal(choice.categoryId,record.categoryId);
+  assert.equal(choice.codeEvidence,'supplier-hub');
+  assert.equal(model.canConfirmCategory(choice),true);
+  const draft = model.categoryProfileForChoice(choice);
+  assert.deepEqual(plain(draft.categoryPath),record.path);
+  assert.equal(draft.template,null);
+  assert.deepEqual(plain(draft.mappings),[]);
+ }
 });
