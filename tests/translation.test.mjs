@@ -278,3 +278,37 @@ test('category context is bounded, fingerprinted and sent only with the new inst
  assert.doesNotThrow(()=>model.buildTranslationRequest({...review,source:model.validateTranslationSource(source),instructionsVersion:'sourceflow-translation-v3'}));
  assert.throws(()=>model.validateTranslationDraft({...draft,keywords:['가'.repeat(21)]},review.source,'sourceflow-translation-v4'));
 });
+
+test('Workers AI uses its server binding without OpenAI secrets and validates source facts', async () => {
+  let calls = 0;
+  const ai = { run: async (name, input) => {
+    calls++; assert.equal(name, model.WORKERS_TEXT_MODEL);
+    assert.equal(input.response_format.type, 'json_schema');
+    assert.equal(input.stream, false); assert.equal(input.max_tokens, 1024);
+    assert.equal(JSON.parse(input.messages[1].content).title, source.title);
+    return { response: draft, usage: { prompt_tokens: 100, completion_tokens: 80, total_tokens: 180 } };
+  } };
+  const own = model.requireTranslationConfig({ SOURCEFLOW_TEXT_PROVIDER: 'workers-ai', SOURCEFLOW_TEXT_MODEL: model.WORKERS_TEXT_MODEL, SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '1024', AI: ai });
+  const review = await model.prepareTranslationReview(source, own);
+  assert.equal(review.destination, 'Cloudflare Workers AI');
+  assert.ok(review.paidNotice.includes('Paid')); assert.ok(!JSON.stringify(review).includes('apiKey'));
+  const result = await model.executeTranslation(review, own, () => { throw Error('Must not call OpenAI'); });
+  assert.equal(calls, 1); assert.equal(result.draft.title, draft.title);
+  assert.equal(result.usage.totalTokens, 180); assert.equal(result.appliedToContent, false);
+  assert.match(result.responseId, /^workers-ai-local:/);
+  await assert.rejects(model.executeTranslation({ ...review, destination: 'OpenAI Responses API' }, own), /변경/);
+  assert.equal(calls, 1);
+  for (const response of [null, {}, { response: { ...draft, title: '999 인증' } }, { response: 'not json' }]) {
+    await assert.rejects(model.executeTranslation(review, { ...own, ai: { run: async () => response } }));
+  }
+  let failedCalls = 0;
+  await assert.rejects(model.executeTranslation(review, { ...own, ai: { run: async () => { failedCalls++; throw Error('quota'); } } }), error => error.code === 'PROVIDER_OUTCOME_UNCERTAIN');
+  assert.equal(failedCalls, 1);
+});
+
+test('Workers AI configuration rejects absent binding, unsupported model and unknown provider', () => {
+  const env = { SOURCEFLOW_TEXT_PROVIDER: 'workers-ai', SOURCEFLOW_TEXT_MODEL: model.WORKERS_TEXT_MODEL, SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '1024', AI: { run: async () => ({}) } };
+  for (const override of [{ AI: undefined }, { SOURCEFLOW_TEXT_MODEL: '@cf/unknown/model' }, { SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '0' }, { SOURCEFLOW_TEXT_PROVIDER: 'typo' }]) {
+    assert.equal(model.translationConfiguration({ ...env, ...override }).configured, false);
+  }
+});

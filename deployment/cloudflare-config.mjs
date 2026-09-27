@@ -26,6 +26,7 @@ export function productionConfig(environment, hosting) {
   const team = required(environment, 'CLOUDFLARE_ACCESS_TEAM_DOMAIN', /^(?:https:\/\/)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com\/?$/);
   const audience = required(environment, 'CLOUDFLARE_ACCESS_AUD', /^[a-f0-9]{64}$/i);
   const domain = environment.SOURCEFLOW_CUSTOM_DOMAIN?.trim();
+  const workersAi = environment.SOURCEFLOW_TEXT_PROVIDER === 'workers-ai';
   if (domain && (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain) || /(?:^|\.)workers\.dev$/.test(domain))) throw new Error('SOURCEFLOW_CUSTOM_DOMAIN은 직접 소유한 호스트 이름만 입력해주세요. workers.dev는 비워두면 사용됩니다.');
   return {
     name, account_id: accountId, main: 'vinext/server/app-router-entry',
@@ -34,9 +35,11 @@ export function productionConfig(environment, hosting) {
     ...(domain ? { routes: [{ pattern: domain, custom_domain: true }] } : {}),
     d1_databases: [{ binding: 'DB', database_name: databaseName, database_id: databaseId, migrations_dir: 'db/migrations' }],
     r2_buckets: [{ binding: 'FILES', bucket_name: bucket }],
+    ...(workersAi ? { ai: { binding: 'AI' } } : {}),
     vars: {
       NODE_ENV: 'production', SOURCEFLOW_DEPLOYMENT_MODE: 'production', SOURCEFLOW_SITES_PROJECT_ID: SITES_PROJECT_ID,
       CLOUDFLARE_ACCESS_TEAM_DOMAIN: team.replace(/\/$/, ''), CLOUDFLARE_ACCESS_AUD: audience,
+      ...(workersAi ? { SOURCEFLOW_TEXT_PROVIDER: 'workers-ai', SOURCEFLOW_TEXT_MODEL: '@cf/meta/llama-3.1-8b-instruct', SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '4096' } : {}),
     },
   };
 }
@@ -54,7 +57,9 @@ export function assertProductionArtifactConfig(config, hosting) {
     SOURCEFLOW_R2_BUCKET_NAME: bucket?.bucket_name,
     CLOUDFLARE_ACCESS_TEAM_DOMAIN: config.vars.CLOUDFLARE_ACCESS_TEAM_DOMAIN, CLOUDFLARE_ACCESS_AUD: config.vars.CLOUDFLARE_ACCESS_AUD,
     SOURCEFLOW_CUSTOM_DOMAIN: domain,
+    SOURCEFLOW_TEXT_PROVIDER: config.vars.SOURCEFLOW_TEXT_PROVIDER,
   }, hosting);
+  if (JSON.stringify(config.ai ?? null) !== JSON.stringify(expected.ai ?? null) || (expected.ai && (config.vars.SOURCEFLOW_TEXT_MODEL !== expected.vars.SOURCEFLOW_TEXT_MODEL || config.vars.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS !== expected.vars.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS))) throw new Error('Workers AI 바인딩 또는 모델 설정이 운영 구성과 다릅니다.');
   if (config.preview_urls !== false || config.workers_dev !== expected.workers_dev || JSON.stringify(config.routes ?? []) !== JSON.stringify(expected.routes ?? [])) throw new Error('공개 URL·미리보기 URL 설정이 검토된 운영 구성과 다릅니다.');
   if (!config.compatibility_flags?.includes('nodejs_compat') || config.compatibility_date !== COMPATIBILITY_DATE || config.no_bundle !== true) throw new Error('Worker 실행 호환성 또는 빌드 구성을 확인해주세요.');
   return expected;

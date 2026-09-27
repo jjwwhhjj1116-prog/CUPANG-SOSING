@@ -5,7 +5,7 @@ export type TranslationSource = { title: string; description: string; attributes
 export type TranslationDraft = { title: string; keywords: string[]; description: string; attributes: { sourceIndex: number; name: string; value: string }[]; warnings: string[] };
 export type TranslationReview = {
   model: string; maxOutputTokens: number; source: TranslationSource; inputCharacters: number;
-  instructionsVersion: 'sourceflow-translation-v1' | 'sourceflow-translation-v2' | 'sourceflow-translation-v3' | 'sourceflow-translation-v4'; destination: 'OpenAI Responses API';
+  instructionsVersion: 'sourceflow-translation-v1' | 'sourceflow-translation-v2' | 'sourceflow-translation-v3' | 'sourceflow-translation-v4'; destination: 'OpenAI Responses API' | 'Cloudflare Workers AI';
   paidNotice: string; pricingUrl: string; expiresAt: string; fingerprint: string;
 };
 export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false };
@@ -18,8 +18,11 @@ export type TranslationJob = {
 };
 export type TranslationConfiguration = { configured: boolean; model: string | null; maxOutputTokens: number | null; issues: string[] };
 export type TranslationView = { jobs: TranslationJob[]; configuration: TranslationConfiguration };
-export type TranslationSecrets = { OPENAI_API_KEY?: string; SOURCEFLOW_TEXT_MODEL?: string; SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS?: string };
-export type TranslationConfig = { apiKey: string; model: string; maxOutputTokens: number };
+export type WorkersAiBinding = { run(model: string, input: Record<string, unknown>): Promise<unknown> };
+export type TranslationSecrets = { OPENAI_API_KEY?: string; SOURCEFLOW_TEXT_MODEL?: string; SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS?: string; SOURCEFLOW_TEXT_PROVIDER?: string; AI?: WorkersAiBinding };
+export type TranslationConfig = { apiKey: string; model: string; maxOutputTokens: number; provider?: 'openai' | 'workers-ai'; ai?: WorkersAiBinding };
+export const WORKERS_TEXT_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+export const translationDestination = (config: TranslationConfig): TranslationReview['destination'] => config.provider === 'workers-ai' ? 'Cloudflare Workers AI' : 'OpenAI Responses API';
 
 export class TranslationError extends Error {
   constructor(public code: string, message: string, public mayHaveBeenCharged = false) { super(message); }
@@ -30,6 +33,13 @@ export function translationConfiguration(secrets: TranslationSecrets): Translati
   const tokens = Number(secrets.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS);
   const maxOutputTokens = Number.isInteger(tokens) && tokens >= 256 && tokens <= 8000 ? tokens : null;
   const issues: string[] = [];
+  if (secrets.SOURCEFLOW_TEXT_PROVIDER === 'workers-ai') {
+    if (typeof secrets.AI?.run !== 'function') issues.push('Cloudflare AI 바인딩을 설정해주세요.');
+    if (model !== WORKERS_TEXT_MODEL) issues.push('검증된 Workers AI JSON 모델을 지정해주세요.');
+    if (!maxOutputTokens) issues.push('서버 SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS를 256~8000 정수로 설정해주세요.');
+    return { configured: !issues.length, model, maxOutputTokens, issues };
+  }
+  if (secrets.SOURCEFLOW_TEXT_PROVIDER && secrets.SOURCEFLOW_TEXT_PROVIDER !== 'openai') issues.push('지원하지 않는 텍스트 생성 서비스입니다.');
   if (!secrets.OPENAI_API_KEY?.trim()) issues.push('서버 시크릿 OPENAI_API_KEY를 설정해주세요. 브라우저에 키를 입력하지 않습니다.');
   if (!model || !/^[a-zA-Z0-9_.:-]{1,100}$/.test(model)) issues.push('서버 SOURCEFLOW_TEXT_MODEL에 Structured Outputs를 지원하는 사용 가능 모델 ID를 지정해주세요.');
   if (!maxOutputTokens) issues.push('서버 SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS를 256~8000 정수로 설정해주세요.');
@@ -39,6 +49,7 @@ export function translationConfiguration(secrets: TranslationSecrets): Translati
 export function requireTranslationConfig(secrets: TranslationSecrets): TranslationConfig {
   const config = translationConfiguration(secrets);
   if (!config.configured) throw new TranslationError('TRANSLATION_NOT_CONFIGURED', config.issues.join(' '));
+  if (secrets.SOURCEFLOW_TEXT_PROVIDER === 'workers-ai') return { apiKey: '', model: config.model!, maxOutputTokens: config.maxOutputTokens!, provider: 'workers-ai', ai: secrets.AI };
   return { apiKey: secrets.OPENAI_API_KEY!.trim(), model: config.model!, maxOutputTokens: config.maxOutputTokens! };
 }
 
@@ -76,10 +87,14 @@ export function validateTranslationSource(input: unknown): TranslationSource {
 
 export async function prepareTranslationReview(source: TranslationSource, config: TranslationConfig, now = new Date()) {
   const details = { model: config.model, maxOutputTokens: config.maxOutputTokens, source,
-    instructionsVersion: 'sourceflow-translation-v4' as const, destination: 'OpenAI Responses API' as const,
+    instructionsVersion: 'sourceflow-translation-v4' as const, destination: translationDestination(config),
     inputCharacters: JSON.stringify(source).length,
     paidNotice: '승인 후 실행 버튼을 누르면 이 원문을 OpenAI에 보내는 유료 API 요청 1회가 발생합니다. 입력 및 출력 토큰 사용량에 따라 청구되며 정확한 금액은 현재 확정하지 않았습니다. 실패·시간초과도 비용이 발생했을 수 있으며 자동 재시도하지 않습니다.',
     pricingUrl: 'https://developers.openai.com/api/docs/pricing', expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() };
+  if (config.provider === 'workers-ai') {
+    details.paidNotice = '초안 작성 시 이 원문을 Cloudflare Workers AI에 1회 전송합니다. Workers Free는 일일 무료 한도를 넘으면 요청이 중단됩니다. Paid 플랜에서는 초과 사용량이 과금될 수 있습니다. 자동 재시도하지 않습니다.';
+    details.pricingUrl = 'https://developers.cloudflare.com/workers-ai/platform/pricing/';
+  }
   return { ...details, fingerprint: await fingerprint(details) } satisfies TranslationReview;
 }
 
@@ -139,9 +154,32 @@ function usageOf(input: unknown): TranslationResult['usage'] {
 
 /** Called only after an atomic, persisted execution claim. No automatic transport retries. */
 export async function executeTranslation(review: TranslationReview, config: TranslationConfig, fetcher: typeof fetch = fetch): Promise<TranslationResult> {
-  if (config.model !== review.model || config.maxOutputTokens !== review.maxOutputTokens) throw new TranslationError('CONFIGURATION_CHANGED', '검토한 모델 설정이 변경되었습니다. 새 요청을 검토해주세요.');
+  if (translationDestination(config) !== review.destination || config.model !== review.model || config.maxOutputTokens !== review.maxOutputTokens) throw new TranslationError('CONFIGURATION_CHANGED', '검토한 모델 설정이 변경되었습니다. 새 요청을 검토해주세요.');
   validateTranslationSource(review.source);
   const request = buildTranslationRequest(review);
+  if (config.provider === 'workers-ai') {
+    if (!config.ai || config.model !== WORKERS_TEXT_MODEL) throw new TranslationError('TRANSLATION_NOT_CONFIGURED', 'Workers AI 설정을 확인해주세요.');
+    let payload: unknown;
+    try {
+      payload = await config.ai.run(config.model, {
+        messages: [{ role: 'system', content: request.instructions }, { role: 'user', content: JSON.stringify(review.source) }],
+        max_tokens: review.maxOutputTokens, stream: false,
+        response_format: { type: 'json_schema', json_schema: translationSchema },
+      });
+    } catch { throw new TranslationError('PROVIDER_OUTCOME_UNCERTAIN', 'Cloudflare 초안 생성 응답을 확인하지 못했습니다. 사용 한도와 실행 이력을 확인해주세요. 자동 재시도하지 않았습니다.', true); }
+    try {
+      if (!payload || typeof payload !== 'object' || JSON.stringify(payload).length > 512 * 1024) throw new Error('Invalid envelope');
+      const envelope = payload as { response?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
+      const output = typeof envelope.response === 'string' ? JSON.parse(envelope.response) : envelope.response;
+      const draft = validateTranslationDraft(output, review.source, review.instructionsVersion);
+      return { draft, responseId: `workers-ai-local:${crypto.randomUUID()}`, model: review.model,
+        usage: usageOf({ input_tokens: envelope.usage?.prompt_tokens, output_tokens: envelope.usage?.completion_tokens, total_tokens: envelope.usage?.total_tokens }),
+        generatedAt: new Date().toISOString(), provenance: 'generated', appliedToContent: false };
+    } catch (error) {
+      if (error instanceof TranslationError) throw new TranslationError(error.code, error.message, true);
+      throw new TranslationError('INVALID_MODEL_OUTPUT', 'Cloudflare 응답을 검증하지 못했습니다. 결과를 적용하지 않았습니다.', true);
+    }
+  }
   let response: Response;
   try {
     response = await fetcher('https://api.openai.com/v1/responses', { method: 'POST', redirect: 'error',

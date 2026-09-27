@@ -53,3 +53,13 @@ test('artifact check verifies compiled files, Sites ID and the exact packaged SQ
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 });
+
+test('Workers AI deployment is opt-in and binds only the validated model', () => {
+  assert.equal(productionConfig(input, hosting).ai, undefined);
+  const config = { ...productionConfig({ ...input, SOURCEFLOW_TEXT_PROVIDER: 'workers-ai' }, hosting), no_bundle: true };
+  assert.deepEqual(config.ai, { binding: 'AI' });
+  assert.equal(config.vars.SOURCEFLOW_TEXT_PROVIDER, 'workers-ai');
+  assert.doesNotThrow(() => assertProductionArtifactConfig(config, hosting));
+  assert.throws(() => assertProductionArtifactConfig({ ...config, ai: { binding: 'OTHER' } }, hosting));
+  assert.throws(() => assertProductionArtifactConfig({ ...config, vars: { ...config.vars, SOURCEFLOW_TEXT_MODEL: 'different' } }, hosting));
+});

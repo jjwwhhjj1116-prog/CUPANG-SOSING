@@ -194,7 +194,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
       if(!pairs.length)throw Error(batch.remaining?'상품 속성이 요청 한도 50개를 사용합니다. 상품 속성의 번역 포함을 해제한 뒤 옵션을 불러와주세요.':'번역할 미번역 옵션이 없습니다.');
       if(pairs.some(pair=>/[\r\n]/.test(pair.value)))throw Error('여러 줄 옵션 원문은 옵션 편집에서 한 줄로 정리해주세요.');
       setAttributes(pairs.map(pair=>`${pair.name}=${pair.value}`).join('\n'));
-      setNotice(`미번역 옵션명·수집 색상·사이즈 ${pairs.length}개 항목을 번역 검토에 넣었습니다. 아직 유료 호출하지 않았습니다.`+batchRemainder(batch.remaining));
+      setNotice(`미번역 옵션명·수집 색상·사이즈 ${pairs.length}개 항목을 번역 검토에 넣었습니다. 아직 생성 요청하지 않았습니다.`+batchRemainder(batch.remaining));
     }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'옵션 조회 실패');}
     finally{finishRequest(controller);}
   }
@@ -247,12 +247,12 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         <p>{job.review.paidNotice} <a href={job.review.pricingUrl} target="_blank" rel="noreferrer">공식 요금표</a></p>
         <p>전송 범위: 아래 상품명·설명·속성 원문 및 포함한 SEO 참고 메모. 수신 서비스: {job.review.destination}. 승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
         <details><summary>실제로 전송할 원문 확인</summary><pre>{JSON.stringify(job.review.source, null, 2)}</pre></details>
-        {stale && <p className="form-error">이 요청 이후 상품 또는 콘텐츠가 변경되었습니다. 새 유료 실행에는 새 검토 요청이 필요합니다. 기존 결과는 확인할 수 있습니다.</p>}
+        {stale && <p className="form-error">이 요청 이후 상품 또는 콘텐츠가 변경되었습니다. 새 실행에는 새 검토 요청이 필요합니다. 기존 결과는 확인할 수 있습니다.</p>}
         {expired&&!stale&&<><p>검토 기한이 지났습니다. 같은 원문·옵션으로 검토 기한을 갱신할 수 있습니다.</p><button type="button" className="btn" disabled={busy||!view.configuration.configured} onClick={()=>void action({action:'prepare',expectedVersion:version,idempotencyKey:crypto.randomUUID(),source:job.review.source})}>같은 원문으로 검토 기한 갱신</button></>}
         {stale&&<button type="button" className="btn" disabled={busy||!view.configuration.configured} onClick={()=>void action({action:'prepare-collected'})}>현재 상품 원문으로 SEO 요청 다시 준비</button>}
-        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || stale || expired} />위 모델·원문·유료 API 요청 1회를 검토하고 승인합니다.</label><button type="button" className="btn blue" disabled={busy || stale || expired || !confirmed} onClick={() => void writeReviewedDraft()}>SEO 초안 작성</button></>}
+        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || stale || expired} />위 모델·원문·위 서비스의 사용 조건과 생성 요청 1회를 검토하고 승인합니다.</label><button type="button" className="btn blue" disabled={busy || stale || expired || !confirmed} onClick={() => void writeReviewedDraft()}>SEO 초안 작성</button></>}
         {job.status === 'approved' && <button type="button" className="btn blue" disabled={busy || stale || expired} onClick={() => void writeReviewedDraft()}>승인한 SEO 초안 작성 계속</button>}
-        {job.status === 'running' && <p>이미 시작된 요청을 다시 호출하지 않습니다. 장시간 상태가 유지되면 OpenAI 사용량과 서버 실행 이력을 확인해주세요.</p>}
+        {job.status === 'running' && <p>이미 시작된 요청을 다시 호출하지 않습니다. 장시간 상태가 유지되면 생성 서비스 사용량과 서버 실행 이력을 확인해주세요.</p>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
         {job.result && <>
           <p>AI 생성 초안 · 출처 검토 필요 · 기존 콘텐츠에 자동 적용하지 않았습니다.</p>

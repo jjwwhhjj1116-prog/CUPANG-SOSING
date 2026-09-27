@@ -6,7 +6,7 @@ import { readProductContent } from '@/db/product-content';
 import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob } from '@/db/translation-jobs';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
-import { TranslationError, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
+import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -55,9 +55,9 @@ export async function POST(request: Request, context: Context) {
       ]);
       if (!receipt || !collection || options.productId !== id || parseCollectionRequest({ urls: [product.source_url] })[0].offerId !== receipt.result.offerId) return conflict();
       const { source, remainingOptions } = collectedSeoSource(receipt.result, collection, options);
-      const requestFingerprint = await fingerprint({ source, productVersion: product.updated_at, contentRevision: content.revision, model: config.model, maxOutputTokens: config.maxOutputTokens });
+      const requestFingerprint = await fingerprint({ source, productVersion: product.updated_at, contentRevision: content.revision, destination: translationDestination(config), model: config.model, maxOutputTokens: config.maxOutputTokens });
       const previous = (await listTranslationJobs(owner, id)).find(item => item.productVersion === product.updated_at && item.contentRevision === content.revision &&
-        item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
+        item.review.destination === translationDestination(config) && item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
         (!['prepared', 'approved'].includes(item.status) || Date.parse(item.review.expiresAt) > Date.now()));
       if (previous) return json({ job: previous, replayed: true, remainingOptions, configuration: configuration() });
       const review = await prepareTranslationReview(source, config);
@@ -76,7 +76,7 @@ export async function POST(request: Request, context: Context) {
       const review = await prepareTranslationReview(source, config);
       const job: TranslationJob = { id: crypto.randomUUID(), productId: id, productVersion: product.updated_at, contentRevision: content.revision,
         status: 'prepared', review, result: null, error: null, createdAt: new Date().toISOString(), approvedAt: null, startedAt: null, finishedAt: null };
-      const requestFingerprint = await fingerprint({ source, productVersion: job.productVersion, contentRevision: job.contentRevision, model: config.model, maxOutputTokens: config.maxOutputTokens });
+      const requestFingerprint = await fingerprint({ source, productVersion: job.productVersion, contentRevision: job.contentRevision, destination: translationDestination(config), model: config.model, maxOutputTokens: config.maxOutputTokens });
       const saved = await createTranslationJob(owner, job, body.idempotencyKey, requestFingerprint);
       if (!saved || saved.conflict) return conflict();
       return json({ job: saved.job, replayed: saved.replayed, configuration: configuration() }, saved.replayed ? 200 : 201);
@@ -86,16 +86,16 @@ export async function POST(request: Request, context: Context) {
     if (Object.keys(body).some(key => !allowed.includes(key))) throw new TranslationError('INVALID_REQUEST', '클라이언트가 모델이나 결과를 지정할 수 없습니다.');
     const existing = await getTranslationJob(owner, id, body.jobId);
     if (!existing) return json({ error: '번역 요청을 찾을 수 없습니다.' }, 404);
-    if (existing.review.model !== config.model || existing.review.maxOutputTokens !== config.maxOutputTokens) return conflict();
+    if (existing.review.destination !== translationDestination(config) || existing.review.model !== config.model || existing.review.maxOutputTokens !== config.maxOutputTokens) return conflict();
     if (body.action === 'approve') {
-      if (body.confirmPaid !== true || body.reviewFingerprint !== existing.review.fingerprint) return json({ error: '검토한 원문과 모델의 유료 호출 승인이 필요합니다.', code: 'PAID_APPROVAL_REQUIRED' }, 400);
+      if (body.confirmPaid !== true || body.reviewFingerprint !== existing.review.fingerprint) return json({ error: '검토한 원문과 모델의 생성 요청 승인이 필요합니다.', code: 'PAID_APPROVAL_REQUIRED' }, 400);
       if (existing.status === 'approved') return json({ job: existing, replayed: true });
       const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString());
       return approved ? json({ job: approved }) : conflict();
     }
     if (['completed', 'failed', 'uncertain'].includes(existing.status)) return json({ job: existing, replayed: true });
     if (existing.status === 'running') return json({ job: existing, replayed: true, message: '이미 실행 중이거나 결과 확인이 필요합니다. 중복 호출하지 않았습니다.' }, 202);
-    if (existing.status !== 'approved') return json({ error: '먼저 검토한 유료 요청을 승인해주세요.', code: 'PAID_APPROVAL_REQUIRED' }, 409);
+    if (existing.status !== 'approved') return json({ error: '먼저 검토한 생성 요청을 승인해주세요.', code: 'PAID_APPROVAL_REQUIRED' }, 409);
     const claim = crypto.randomUUID();
     const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString());
     if (!claimed) {
@@ -108,7 +108,7 @@ export async function POST(request: Request, context: Context) {
     catch (error) { executionError = error instanceof TranslationError ? { code: error.code, message: error.message, mayHaveBeenCharged: error.mayHaveBeenCharged } : { code: 'PROVIDER_OUTCOME_UNCERTAIN', message: '실행 결과를 확인할 수 없습니다. 자동 재시도하지 않습니다.', mayHaveBeenCharged: true }; }
     try {
       const finished = await finishTranslationJob(owner, id, claimed.id, claim, result, executionError, new Date().toISOString());
-      return finished ? json({ job: finished }) : json({ error: '호출 후 결과 저장 상태가 불확실합니다. 다시 유료 요청을 만들기 전에 실행 이력을 확인해주세요.', code: 'RESULT_PERSISTENCE_UNCERTAIN' }, 503);
+      return finished ? json({ job: finished }) : json({ error: '호출 후 결과 저장 상태가 불확실합니다. 다시 생성 요청을 만들기 전에 실행 이력을 확인해주세요.', code: 'RESULT_PERSISTENCE_UNCERTAIN' }, 503);
     } catch { return json({ error: '호출 후 결과 저장에 실패했습니다. 비용이 발생했을 수 있으며 중복 호출을 차단했습니다.', code: 'RESULT_PERSISTENCE_UNCERTAIN' }, 503); }
   } catch (error) {
     if (error instanceof TranslationError) return json({ error: error.message, code: error.code, configuration: configuration() }, error.code === 'TRANSLATION_NOT_CONFIGURED' ? 503 : 400);
