@@ -1,7 +1,6 @@
 import {prepareAttachments} from './package.mjs';
 import {attachToSupplierHub} from './attach.mjs';
 import {pendingPackage,transferRecord} from './handoff-store.mjs';
-import {requestSupplierHubValidation} from './validate.mjs';
 const picker=document.querySelector('#package'),button=document.querySelector('#attach'),status=document.querySelector('#status'),summary=document.querySelector('#summary');
 let prepared=null,sequence=0,pendingFingerprint=null,pendingExpires=0;
 let packageIdentity=null;
@@ -56,8 +55,9 @@ validateButton.addEventListener('click',async()=>{
   try{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     if(!tab?.id||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/registration')throw Error('현재 창의 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
-    const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:requestSupplierHubValidation});
-    if(execution?.result?.state!=='validation-requested')throw Error('검증 요청 결과를 확인하지 못했습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
+    const response=await chrome.runtime.sendMessage({type:'YOOFAM_VALIDATE_PACKAGE',tabId:tab.id});
+    if(!response?.ok)throw Error(response?.error||'검증 요청 응답이 없습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
+    if(response.result?.state!=='validation-requested')throw Error('검증 요청 결과를 확인하지 못했습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
     status.textContent='파일 검증을 요청했습니다. Supplier Hub의 검증 진행상태에서 결과를 확인해주세요. 최종 등록은 아직 실행하지 않았습니다.';
   }catch(error){status.textContent=error.message;}
   finally{validateButton.disabled=false;picker.disabled=false;button.disabled=!prepared;}
