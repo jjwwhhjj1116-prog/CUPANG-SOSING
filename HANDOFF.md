@@ -3307,3 +3307,9 @@ AI등록 화면 확인:
 - Clean price inputs reload the same quotation scope; unsaved prices remain intact for explicit conflict/reload handling. Saved quotation previews are invalidated.
 - Validation: related quotation panel, price editor, option price and DetailPanel suites 23/23, TypeScript, production build/artifact and diff checks passed. Deployed 0cd1ef9f-6fff-4f94-92b6-19d94304cc59.
 - Existing Chrome tab listing returned [] this turn. No live Couplus parity verification. Full category parity, comprehensive actual 1688 collection, image translation and Supplier Hub automatic registration remain incomplete.
+
+## 325 — Full regression check and live workflow blocker (2026-09-27)
+- User completion criterion explicitly remains category selection -> actual 1688 source -> stages 1–7 draft -> user edits -> Supplier Hub submit -> confirmed registration.
+- Reconfirmed public collector supports JSON-LD only and Supplier Hub POST remains a 501 placeholder. No usable connector was found. Existing Chrome binding returned [] tabs; requested user to check the existing Chrome extension connection, without opening a window/profile or repeating authentication.
+- Full suite initially 1018/1019: one quotation-fields test still expected missing captured contact to inherit later workspace settings, contradicting the intentional 322 snapshot isolation. Corrected that obsolete expectation; full rerun 1019/1019 passed.
+- This turn changes a regression test only. No new runtime functionality or deployment; live end-to-end registration is not verified or complete. Await existing Chrome tabs to inspect actual Couplus collection and Supplier Hub submission/receipt behavior rather than inventing an adapter contract.

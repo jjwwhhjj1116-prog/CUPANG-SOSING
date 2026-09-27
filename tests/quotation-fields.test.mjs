@@ -351,13 +351,13 @@ test('product-linked registration defaults survive workspace changes in editor a
  }finally{h.sqlite.close();}
 });
 
-test('captured registration blanks and missing legacy keys stay distinct, and unrelated URL requests do not change defaults',async()=>{
+test('captured registration blanks and missing legacy facts never inherit later settings, while unrelated URL requests retain workspace defaults',async()=>{
  const h=await harness();try{
   const helper=h.load('app/collection-registration-settings.ts').collectionRegistrationSettings;
   const current={...h.load('app/workspace-settings.ts').defaultSettings,brand:'현재',serviceContact:'연락처',exchangeRate:220};
   const captured={brand:'',taxType:'',exchangeRate:190};const before=JSON.stringify(captured);
   const result=helper(current,captured);
-  assert.equal(result.brand,'');assert.equal(result.taxType,'');assert.equal(result.serviceContact,'연락처');assert.equal(result.exchangeRate,220);
+  assert.equal(result.brand,'');assert.equal(result.taxType,'');assert.equal(result.serviceContact,'');assert.equal(result.exchangeRate,220);
   assert.equal(current.brand,'현재');assert.equal(JSON.stringify(captured),before);
   const job=await linkedFixture(h);h.sqlite.prepare('DELETE FROM collection_products WHERE job_id=?').run(job.id);
   await h.queries.saveSettings('owner',JSON.stringify(current));
