@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
+import {webcrypto} from 'node:crypto';
 function load(file) {
  const exports={}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
- {exports,URL,Date,TextEncoder,structuredClone,require(name){return load(name.slice(2)+'.ts');}});return exports;
+ {exports,URL,URLSearchParams,Date,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,crypto:webcrypto,structuredClone,require(name){if(name==='parse5')return parse5;return load(name.slice(2)+'.ts');}});return exports;
 }
 const {parseAlibabaProduct:parse}=load('app/alibaba-product-result.ts');
 const url='https://detail.1688.com/offer/813724060928.html';
@@ -40,4 +42,33 @@ test('candidate receipt feeds the existing captured category/settings draft prep
  assert.equal(draft.content.seo.title.value,'原文商品');assert.equal(draft.content.seo.title.provenance,'collected');
  assert.equal(draft.content.label.manufacturer.value,'입력 제조사');assert.equal(draft.options.rows[0].supplierSku,'5627721589407');
  assert.equal(draft.options.rows[0].unitCostCny,25.6);assert.equal(draft.options.rows[1].unitCostCny,28);
+});
+
+test('detail HTML supplies original text, ordered images and explicit color/size to draft fields',()=>{
+ const f=fixture();f.result.result.description='<p>원문 &amp; 설명</p><p><img src="//cbu01.alicdn.com/detail.jpg?a=1&amp;b=2"></p><img data-src="https://cbu01.alicdn.com/detail2.jpg" src="data:image/gif;base64,placeholder">';
+ f.result.result.productSkuInfos[0].skuAttributes[0].attributeName='颜色';f.result.result.productSkuInfos[0].skuAttributes[1].attributeName='尺码';
+ const result=parse(f,url);assert.equal(result.description,'원문 & 설명');assert.equal(result.options[0].color,'黑色');assert.equal(result.options[0].size,'M');
+ assert.deepEqual(JSON.parse(JSON.stringify(result.images.slice(2))),[{url:'https://cbu01.alicdn.com/detail.jpg?a=1&b=2',role:'detail'},{url:'https://cbu01.alicdn.com/detail2.jpg',role:'detail'}]);
+ assert.equal(result.options[0].imageIndex,1);
+ const settings=load('app/workspace-settings.ts').defaultSettings;
+ const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',{offer_id:result.offerId,context:{category:{id:'80719'},settings}},result,'p',new Date().toISOString());
+ assert.equal(draft.content.seo.description.value,'원문 & 설명');assert.equal(draft.options.rows[0].color,'黑色');assert.equal(draft.options.rows[0].size,'M');
+ assert.equal(draft.options.rows[0].provenance.color,'collected');
+});
+
+test('markup is inert, entity-decoded once, bounded and unsupported image sources fail explicitly',()=>{
+ const parseDescription=load('app/alibaba-description.ts').parseAlibabaDescription;
+ const d=parseDescription('<script><img src="https://evil.test/a"></script><style>bad</style><template><img src="https://evil.test/a"></template><p>safe &lt;img&gt;</p><!-- ignore --><svg><image href="https://evil.test/a"/></svg>');
+ assert.equal(d.text,'safe <img>');assert.equal(d.images.length,0);
+ for(const html of ['<img src="https://alicdn.com.evil.test/a">','<img src="javascript:alert(1)">','<img src="/relative.jpg">','<img>','x'.repeat(20001),'x'.repeat(2*1024*1024+1)])assert.throws(()=>parseDescription(html));
+ const f=fixture();f.result.result.description='<img src="https://cbu01.alicdn.com/main.jpg">';assert.throws(()=>parse(f,url),/다중 배치/);
+ const repeated=parseDescription('<img src="https://cbu01.alicdn.com/a.jpg"><img src="https://cbu01.alicdn.com/a.jpg">');assert.equal(repeated.images.length,1);
+});
+
+test('candidate collector combines signed request with validated receipt and refuses other products',async()=>{
+ const collect=load('app/alibaba-product-collector.ts').collectAlibabaProduct;
+ let calls=0;const options={fetcher:async(target)=>{calls++;assert.equal(new URL(target).hostname,'gw.open.1688.com');return Response.json(fixture());}};
+ const credentials={appKey:'12345',appSecret:'test-secret',accessToken:'test-token'};
+ const receipt=await collect(url,credentials,options);assert.equal(calls,1);assert.equal(receipt.options.length,2);assert.equal(receipt.offerId,'813724060928');
+ const wrong=fixture();wrong.result.result.offerId='999';await assert.rejects(collect(url,credentials,{fetcher:async()=>Response.json(wrong)}),/상품번호/);
 });
