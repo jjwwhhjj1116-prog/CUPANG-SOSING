@@ -2,6 +2,7 @@ import type { CollectionJob } from '@/app/sourcing';
 import { validateCollectionReceiptResponse } from '@/app/collection-receipt-response';
 import { importReceivedJobs } from '@/app/collection-batch';
 import type { CollectionImportOutcome } from '@/app/collection-import';
+import { prepareIntakeSeo } from '@/app/intake-seo';
 
 /** A user-initiated fetch produces an editable draft only, never a Hub submission. */
 export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void}) {
@@ -31,5 +32,8 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  if(options.signal.aborted)return;
  const outcome=outcomes[0];
  if(!outcome||outcome.status!=='completed'||!outcome.productId)throw Error(outcome?.error||'상품 반영을 완료하지 못했습니다. 원문은 보존됩니다.');
- return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',...(outcome.warnings??[])].join(' ');
+ options.onProgress('저장 원문으로 SEO 요청 준비 중');
+ const seo = await prepareIntakeSeo(outcome.productId,options.fetcher,options.signal);
+ if(options.signal.aborted)return;
+ return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',seo,...(outcome.warnings??[])].filter(Boolean).join(' ');
 }

@@ -40,6 +40,34 @@ export async function POST(request: Request, context: Context) {
     const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
     const product = await findProduct(owner, id); if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
     const config = requireTranslationConfig(env as TranslationSecrets);
+    if (body.action === 'prepare-collected') {
+      if (Object.keys(body).some(key => key !== 'action')) throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
+      const { findProductCollection } = await import('@/db/collection-products');
+      const { readCollectionResult } = await import('@/db/collection-results');
+      const { findCollectionJob } = await import('@/db/collection-jobs');
+      const { readProductOptions } = await import('@/db/product-options');
+      const { parseCollectionRequest } = await import('@/app/sourcing');
+      const { collectedSeoSource } = await import('@/app/collected-seo-source');
+      const link = await findProductCollection(owner, id);
+      if (!link) return json({ error: '상품에 연결된 수집 원문이 없습니다.' }, 409);
+      const [receipt, collection, options, content] = await Promise.all([
+        readCollectionResult(owner, link.job_id), findCollectionJob(owner, link.job_id), readProductOptions(owner, id), readProductContent(owner, id),
+      ]);
+      if (!receipt || !collection || options.productId !== id || parseCollectionRequest({ urls: [product.source_url] })[0].offerId !== receipt.result.offerId) return conflict();
+      const { source, remainingOptions } = collectedSeoSource(receipt.result, collection, options);
+      const requestFingerprint = await fingerprint({ source, productVersion: product.updated_at, contentRevision: content.revision, model: config.model, maxOutputTokens: config.maxOutputTokens });
+      const previous = (await listTranslationJobs(owner, id)).find(item => item.productVersion === product.updated_at && item.contentRevision === content.revision &&
+        item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
+        (!['prepared', 'approved'].includes(item.status) || Date.parse(item.review.expiresAt) > Date.now()));
+      if (previous) return json({ job: previous, replayed: true, remainingOptions, configuration: configuration() });
+      const review = await prepareTranslationReview(source, config);
+      const job: TranslationJob = { id: crypto.randomUUID(), productId: id, productVersion: product.updated_at, contentRevision: content.revision,
+        status: 'prepared', review, result: null, error: null, createdAt: new Date().toISOString(), approvedAt: null, startedAt: null, finishedAt: null };
+      // Reopening/retrying the same source does not create another paid job.
+      const saved = await createTranslationJob(owner, job, `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
+      if (!saved || saved.conflict) return conflict();
+      return json({ job: saved.job, replayed: saved.replayed, remainingOptions, configuration: configuration() }, saved.replayed ? 200 : 201);
+    }
     if (body.action === 'prepare') {
       if (Object.keys(body).some(key => !['action', 'source', 'expectedVersion', 'idempotencyKey'].includes(key)) || typeof body.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.idempotencyKey)) throw new TranslationError('INVALID_REQUEST', '번역 검토 요청 항목과 중복 방지 키를 확인해주세요.');
       if (body.expectedVersion !== product.updated_at) return conflict();
