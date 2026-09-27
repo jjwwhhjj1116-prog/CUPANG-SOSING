@@ -31,9 +31,13 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   onProgress:(_id,message)=>options.onProgress(message),onResult:(_id,outcome)=>{outcomes.push(outcome);if(outcome.productId)options.onJob({...received,product_id:outcome.productId});}});
  if(options.signal.aborted)return;
  const outcome=outcomes[0];
- if(!outcome||outcome.status!=='completed'||!outcome.productId)throw Error(outcome?.error||'상품 반영을 완료하지 못했습니다. 원문은 보존됩니다.');
+ if(!outcome||!outcome.productId)throw Error(outcome?.error||'상품 반영을 완료하지 못했습니다. 원문은 보존됩니다.');
+ if(outcome.status==='stopped')return;
+ // Image storage can fail after the product transaction commits. Source-based
+ // SEO preparation does not depend on image downloads; retain both outcomes.
  options.onProgress('저장 원문으로 SEO 요청 준비 중');
  const seo = await prepareIntakeSeo(outcome.productId,options.fetcher,options.signal);
  if(options.signal.aborted)return;
+ if(outcome.status!=='completed')throw Error([outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.',seo,...(outcome.warnings??[])].filter(Boolean).join(' '));
  return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',seo,...(outcome.warnings??[])].filter(Boolean).join(' ');
 }

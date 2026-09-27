@@ -3414,3 +3414,9 @@ AI등록 화면 확인:
 - Start action now says all/selected start with the pending count and product-information loading while busy; existing collection handler is unchanged. Updated interaction tests for both all and partial selections.
 - 16 related tests, TypeScript, production build/artifact checks passed. Verified actual localhost dialog in a new tab of the existing supplierChrome binding (no new browser/profile/window). Deployed 0e13744e-49ed-462c-ad38-af251c2a6ad2; Workers AI remains disabled.
 - Full objective remains incomplete: actual1688 retrieval, live category defaults parity, image translation and Supplier Hub transmission (POST501) are unresolved. No real product collection/submission was performed or claimed in this turn.
+
+## 345 — Keep source-based SEO preparation available after image import failure (2026-09-27)
+- Found intake orchestration discarded SEO preparation whenever image import failed, even after the product/options transaction succeeded. Now prepares SEO from the saved receipt/product in that case, then retains the image failure and warnings as a retryable error. Does not mark partial imports complete or overwrite saved edits.
+- Product creation failure (no product ID), stopped import and aborted requests do not proceed to SEO. No new model execution or automatic Supplier Hub submission added.
+- 15 collector/intake API integration tests, TypeScript, production build/artifact/diff checks passed. New tests cover partial image failure with saved product and no SEO on failed/stopped promotion. All external data/model responses in tests are fixtures, not live verification.
+- Deployed aac8d147-e451-4ae5-8208-490a3a5fa583. Existing actual1688 access/credentials, full category parity, image translation and SupplierHub POST501 remain unresolved; full user workflow is not complete. Workers AI remains off.

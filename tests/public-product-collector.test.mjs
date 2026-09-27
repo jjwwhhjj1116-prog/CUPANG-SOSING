@@ -90,3 +90,22 @@ test('unreadable or excessive public attributes are rejected rather than silentl
  }
  assert.equal(parsePublicProduct(html(product()),url).attributes,undefined);
 });
+
+test('image failure preserves the saved product and still prepares SEO without reporting import success',async()=>{
+ const updates=[],calls=[];
+ const {collectIntakeProduct}=load('app/intake-collection.ts',{'@/app/collection-batch':{importReceivedJobs:async(jobs,options)=>options.onResult('job',{status:'failed',productId:'saved-product',completedImages:1,error:'원본 이미지 다운로드 실패',warnings:['원본 주소 보존']})}});
+ const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',received_at:'2026-09-26T00:00:00Z'};
+ await assert.rejects(collectIntakeProduct(job,{signal:new AbortController().signal,onJob:j=>updates.push(j),onProgress:()=>{},fetcher:async(path,init)=>{
+  calls.push(path);assert.equal(JSON.parse(init.body).action,'prepare-collected');return Response.json({job:{productId:'saved-product',status:'prepared'}});
+ }}),error=>/이미지 다운로드 실패/.test(error.message)&&/SEO 요청을 준비/.test(error.message)&&/원본 주소 보존/.test(error.message));
+ assert.deepEqual(calls,['/api/products/saved-product/translation']);assert.equal(updates.at(-1).product_id,'saved-product');
+});
+
+test('failed product creation and stopped import never prepare SEO',async()=>{
+ for(const outcome of [{status:'failed',productId:null,error:'상품 저장 실패',completedImages:0},{status:'stopped',productId:'saved-product',completedImages:0}]){
+  const {collectIntakeProduct}=load('app/intake-collection.ts',{'@/app/collection-batch':{importReceivedJobs:async(jobs,options)=>options.onResult('job',outcome)}});
+  let requests=0;const run=()=>collectIntakeProduct({id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',received_at:'2026-09-26T00:00:00Z'},{signal:new AbortController().signal,onJob:()=>{},onProgress:()=>{},fetcher:async()=>{requests++;throw Error('unexpected SEO request');}});
+  if(outcome.status==='failed')await assert.rejects(run(),/상품 저장 실패/);else assert.equal(await run(),undefined);
+  assert.equal(requests,0);
+ }
+});
