@@ -1,10 +1,11 @@
 import { readRegistrationSummaries } from '@/db/product-content';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
-import { insertProduct, listProducts, type ProductRecord } from '@/db/queries';
+import { getSettings, insertProduct, listProducts, type ProductRecord } from '@/db/queries';
 import { NextResponse } from 'next/server';
 import { initialStatuses, is1688ProductUrl } from '@/app/workflow';
 
-function roundPrice(value: number, unit = 100) { return Math.ceil(value / unit) * unit; }
+import { savedRegistrationSettings } from '@/app/workspace-settings';
+import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
 async function ownerId() { return await getWorkspaceOwnerId(); }
 
 export async function GET() {
@@ -31,26 +32,31 @@ export async function POST(request: Request) {
   }
   const sourcePriceCny = Number(body.sourcePriceCny);
   if (!Number.isFinite(sourcePriceCny) || sourcePriceCny <= 0) return NextResponse.json({ error: '확인한 상품 원가를 입력해주세요.' }, { status: 400 });
-  const exchangeRate = Number(body.exchangeRate ?? 190);
-  const supplyMargin = Number(body.supplyMargin ?? 40);
-  const coupangMargin = Number(body.coupangMargin ?? 35);
-  const minimumMargin = Number(body.minimumMargin ?? 3000);
-  const msrpMultiple = Number(body.msrpMultiple ?? 1.3);
   const optionsCount = Number(body.optionsCount ?? 1);
-  if (![exchangeRate, supplyMargin, coupangMargin, minimumMargin, msrpMultiple, optionsCount].every(Number.isFinite)
-    || exchangeRate <= 0 || supplyMargin < 0 || supplyMargin >= 100 || coupangMargin < 0 || coupangMargin >= 100
-    || minimumMargin < 0 || msrpMultiple <= 0 || !Number.isInteger(optionsCount) || optionsCount < 1) {
-    return NextResponse.json({ error: '환율·마진·시장가격 배수·옵션 수를 확인해주세요.' }, { status: 400 });
+  if (!Number.isSafeInteger(optionsCount) || optionsCount < 1 || optionsCount > 200) {
+    return NextResponse.json({ error: '옵션 수는 1~200개여야 합니다.' }, { status: 400 });
   }
-  const landedCost = sourcePriceCny * exchangeRate;
-  const supplyPrice = roundPrice(Math.max(landedCost / (1 - supplyMargin / 100), landedCost + minimumMargin));
-  const salePrice = roundPrice(supplyPrice / (1 - coupangMargin / 100));
-  const msrp = roundPrice(salePrice * msrpMultiple);
-  if (![supplyPrice, salePrice, msrp].every(Number.isSafeInteger)) return NextResponse.json({ error: '계산 가능한 가격 범위를 초과했습니다.' }, { status: 400 });
+  let owner:string,settings:ReturnType<typeof savedRegistrationSettings>;
+  try { owner=await ownerId();const stored=await getSettings(owner);settings=savedRegistrationSettings(stored?JSON.parse(stored.payload):null); }
+  catch { return NextResponse.json({error:'저장된 기본설정을 읽지 못했습니다. 다시 시도해주세요.'},{status:503}); }
+  let policy:PricePolicy,calculation:ReturnType<typeof calculatePrice>;
+  try {
+    const input:Record<string,unknown>={...settings};
+    for(const key of ['exchangeRate','supplyMargin','coupangMargin','minimumMargin','msrpMultiple','roundingUnit','roundingMode'] as const){
+      if(Object.hasOwn(body,key))input[key]=body[key];
+    }
+    const enabled=Object.hasOwn(body,'minimumMarginEnabled')?body.minimumMarginEnabled:settings.minimumMarginEnabled;
+    if(typeof enabled!=='boolean')throw Error('최소 마진 적용 여부를 확인해주세요.');
+    policy=pricePolicy(input);
+    if(!enabled)policy.minimumMargin=0;
+    calculation=calculatePrice(sourcePriceCny,policy);
+  }catch(error){return NextResponse.json({error:error instanceof Error?error.message:'가격 설정을 확인해주세요.'},{status:400});}
+  const {exchangeRate,supplyMargin,coupangMargin}=policy;
+  const {supplyPrice,salePrice,msrp}=calculation;
   const goalStage = String(body.goalStage ?? 'price');
   const now = new Date().toISOString();
   const product: ProductRecord = {
-    id: crypto.randomUUID(), owner_id: await ownerId(), source_url: sourceUrl,
+    id: crypto.randomUUID(), owner_id: owner, source_url: sourceUrl,
     title: String(body.title ?? '').trim() || `1688 소싱 상품 ${now.slice(5, 10).replace('-', '')}`,
     source_price_cny: sourcePriceCny, exchange_rate: exchangeRate, supply_margin: supplyMargin,
     coupang_margin: coupangMargin, supply_price: supplyPrice, sale_price: salePrice,
@@ -58,6 +64,6 @@ export async function POST(request: Request) {
     ...initialStatuses, image_keys: '[]',
     goal_stage: goalStage, created_at: now, updated_at: now,
   };
-  try { return NextResponse.json({ product: await insertProduct(product) }, { status: 201 }); }
+  try { return NextResponse.json({ product: await insertProduct(product,policy) }, { status: 201 }); }
   catch { return NextResponse.json({ error: '상품을 저장하지 못했습니다. 저장 여부를 목록에서 확인한 뒤 다시 시도해주세요.' }, { status: 503 }); }
 }

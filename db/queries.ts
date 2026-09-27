@@ -49,9 +49,9 @@ export async function listProducts(ownerId: string) {
   return result.results;
 }
 
-export async function insertProduct(product: ProductRecord) {
+export async function insertProduct(product: ProductRecord, policy?: PricePolicy) {
   await ensureDatabase();
-  await database().prepare(`INSERT INTO products (
+  const insert = database().prepare(`INSERT INTO products (
     id, owner_id, source_url, title, source_price_cny, exchange_rate,
     supply_margin, coupang_margin, supply_price, sale_price, msrp, options_count,
     seo_status, image_status, quote_status, registration_status,
@@ -64,7 +64,15 @@ export async function insertProduct(product: ProductRecord) {
       product.options_count, product.seo_status, product.image_status, product.quote_status,
       product.registration_status, product.supplier_hub_status, product.image_keys,
       product.goal_stage, product.created_at, product.updated_at,
-    ).run();
+    );
+  // Keep the policy with the initial price, including disabled minimum margin
+  // and rounding. A later workspace change must not recalculate this draft.
+  if (policy) {
+    const payload=JSON.stringify(policy);
+    await database().batch([insert,database().prepare('INSERT INTO product_price_policy(product_id,payload) VALUES(?,?)').bind(product.id,payload)]);
+    return {...product,pricing_policy:payload};
+  }
+  await insert.run();
   return product;
 }
 
