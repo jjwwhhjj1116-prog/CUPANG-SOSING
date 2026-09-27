@@ -134,3 +134,21 @@ test('HTML parser accepts an unquoted JSON-LD type and ignores commented or text
   assert.equal(parsePublicProduct(wrapper(html(product()))+html(product()),url).offerId,'813724060928');
  }
 });
+
+test('published per-offer inventory preserves zero and remains distinct across SKUs',()=>{
+ const p=product();p.hasVariant.push({...structuredClone(p.hasVariant[0]),sku:'second-sku'});
+ p.hasVariant[0].offers.inventoryLevel={'@type':'QuantitativeValue',value:0};
+ p.hasVariant[1].offers.inventoryLevel={'@type':'https://schema.org/QuantitativeValue',value:'123'};
+ const result=parsePublicProduct(html(p),url);
+ assert.equal(result.options[0].stock,0);assert.equal(result.options[1].stock,123);
+});
+test('inventory never guesses counts from availability, ranges or measurement units',()=>{
+ for(const inventory of [undefined,{'@type':'QuantitativeValue',minValue:1,maxValue:10},{'@type':'QuantitativeValue',value:3,unitCode:'KGM'},{'@type':'QuantitativeValue',value:3,unitText:'kg'},{'@type':'QuantitativeValue',value:3,minValue:1},123]){
+ const p=product();p.hasVariant[0].offers.availability='https://schema.org/InStock';p.hasVariant[0].offers.inventoryLevel=inventory;
+ assert.equal(parsePublicProduct(html(p),url).options[0].stock,null);
+ }
+ for(const value of [-1,1.5,'unknown',Number.MAX_SAFE_INTEGER+1]){
+ const p=product();p.hasVariant[0].offers.inventoryLevel={'@type':'QuantitativeValue',value};
+ assert.throws(()=>parsePublicProduct(html(p),url),/재고 수량/);
+ }
+});

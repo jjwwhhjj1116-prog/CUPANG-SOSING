@@ -62,8 +62,18 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
   const offer=offers[0];if(offer.priceCurrency!=='CNY')throw Error('옵션 원가의 CNY 통화를 확인하지 못했습니다.');
   const minimumOrder=number(object(offer.eligibleQuantity).minValue);
   if(!Number.isSafeInteger(minimumOrder)||minimumOrder<1)throw Error('최소 주문 수량을 확인하지 못했습니다.');
+  // Keep the seller's stated quantity, including zero. Availability labels and
+  // ranges are not counts; weight/volume inventory cannot become piece stock.
+  const inventory=object(offer.inventoryLevel);
+  const countUnit=inventory.unitCode===undefined && inventory.unitText===undefined;
+  let stock:number|null=null;
+  if(hasType(inventory,'QuantitativeValue') && countUnit && inventory.value!==undefined
+    && inventory.minValue===undefined && inventory.maxValue===undefined){
+   stock=number(inventory.value);
+   if(!Number.isSafeInteger(stock)||stock<0)throw Error('옵션 재고 수량은 0 이상 정수여야 합니다.');
+  }
   const indices=addImages(variant.image);
-  return {sku:required(variant.sku??offer.sku,'SKU'),name:required(variant.name,'옵션명'),unitPriceCny:number(offer.price),minimumOrder,stock:null,
+  return {sku:required(variant.sku??offer.sku,'SKU'),name:required(variant.name,'옵션명'),unitPriceCny:number(offer.price),minimumOrder,stock,
    ...(indices.length?{imageIndex:indices[0]}:{}),...(typeof variant.color==='string'?{color:variant.color}:{}),...(typeof variant.size==='string'?{size:variant.size}:{})};
  });
  const result=validateCollectionResult({schemaVersion:1,sourceUrl:source.sourceUrl,provider:'public-product-jsonld-v1',collectedAt:new Date(now).toISOString(),
