@@ -1,7 +1,7 @@
 <!doctype html><html lang="ko"><meta charset="utf-8"><title>YOOFAM 확장 보관소 브라우저 검사</title>
 <h1>확장 보관소 브라우저 검사</h1><p id="status">검사 중</p><ol id="results"></ol>
 <script type="module">
-import {pendingPackage} from '/handoff-store.mjs';
+import {pendingPackage,transferRecord,resultKey} from '/handoff-store.mjs';
 const list=document.querySelector('#results');let failures=0,passed=0;
 const a={fingerprint:'a'.repeat(64),base64:'UEs=',productId:'a'},b={fingerprint:'b'.repeat(64),base64:'UEs=',productId:'b'};
 const assert=(value,message)=>{if(!value)throw Error(message);};
@@ -13,5 +13,7 @@ await check('오래된 팝업은 새 패키지를 삭제하지 못함',async()=>
 await check('동시 전달 8개 중 하나만 패키지 소비',async()=>{const results=await Promise.all(Array.from({length:8},()=>pendingPackage('delete',b.fingerprint)));assert(results.filter(Boolean).length===1,'중복 소비');assert(await pendingPackage('get')===undefined,'소비 후 잔존');});
 await check('이미 소비한 패키지를 재전송하지 않음',async()=>{assert(await pendingPackage('delete',b.fingerprint)===false,'빈 자료를 소비함');});
 await check('잘못된 작업과 누락된 식별값 거부',async()=>{for(const [action,value] of [['delete',undefined],['unknown',a]]){let rejected=false;try{await pendingPackage(action,value);}catch{rejected=true;}assert(rejected,'잘못된 작업 승인');}});
+await check('전송 대상 기록이 패키지 소비 후에도 유지',async()=>{await transferRecord('put','attempt:123',{productId:'test-only'});assert((await transferRecord('get','attempt:123')).productId==='test-only','기록 유실');});
+await check('결과가 상품과 앱 출처별로 분리 저장',async()=>{const id={origin:'http://localhost:3000',productId:'fixture',categoryId:'80719',fingerprint:'a'.repeat(64)};await transferRecord('put',resultKey(id),{quotationId:'fixture-id',registered:false});assert((await transferRecord('get',resultKey(id))).quotationId==='fixture-id','결과 유실');assert(await transferRecord('get',resultKey({...id,productId:'other'}))===undefined,'다른 상품 결과 혼합');assert(await transferRecord('get',resultKey({...id,origin:'https://sourceflow.jjwwhhjj1116.workers.dev'}))===undefined,'출처 결과 혼합');await transferRecord('put',resultKey(id),null);await transferRecord('put','attempt:123',null);});
 document.querySelector('#status').textContent=`완료: ${passed} 통과 / ${failures} 실패`;
 </script></html>

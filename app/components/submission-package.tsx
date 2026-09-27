@@ -5,7 +5,7 @@ import { isQuotationFilename } from '@/app/exports/quotation-filename';
 import { validatePackageReview, type PackageReview } from '@/app/submission-review-response';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
-import { checkSupplierHubExtension, prepareSupplierHubHandoff } from '@/app/supplier-hub-handoff';
+import { checkSupplierHubExtension, prepareSupplierHubHandoff, getSupplierHubResult, type SupplierHubResult } from '@/app/supplier-hub-handoff';
 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
@@ -19,14 +19,22 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const [message,setMessage]=useState('');
+  const [hubResult,setHubResult]=useState<SupplierHubResult|null>(null);
   const active=useRef<AbortController|null>(null);
   useEffect(()=>()=>active.current?.abort(),[]);
-  async function run(action:'preview'|'export'|'download'|'handoff') {
+  async function run(action:'preview'|'export'|'download'|'handoff'|'result') {
     if(active.current || (action!=='preview'&&!preview))return;
     const controller=new AbortController();active.current=controller;
     setBusy(true);setError('');setMessage('');
-    if(action==='preview')setPreview(null);
+    if(action==='preview'){setPreview(null);setHubResult(null);}
     try {
+      if(action==='result'){
+        if(!categoryId)throw new Error('카테고리를 먼저 확인해주세요.');
+        setHubResult(null);
+        const result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal);
+        if(!controller.signal.aborted){setHubResult(result);if(!result)setMessage('아직 가져온 결과가 없습니다. Supplier Hub 탭의 확장에서 검증 결과 확인을 실행한 뒤 다시 불러오세요.');}
+        return;
+      }
       if(action==='handoff'){
         if(!categoryId||!preview?.filename.endsWith('.xlsx'))throw new Error('선택한 카테고리의 Excel 양식으로 견적서를 준비해주세요.');
         await checkSupplierHubExtension(controller.signal);
@@ -89,7 +97,9 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('download')}>견적서 파일 다운로드</button>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
       <button type="button" className="btn primary" disabled={busy||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>Supplier Hub 확장으로 파일 준비</button>
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.3.zip" download>첨부 확장 다운로드 (0.2.3)</a>
+      <button type="button" className="btn ghost" disabled={busy||!categoryId||!preview.filename.endsWith('.xlsx')} onClick={()=>void run('result')}>Supplier Hub 검증 결과 불러오기</button>
+      {hubResult&&<div role="status"><strong>{hubResult.state==='not-found'?'검증 목록에서 아직 찾지 못했습니다.':`견적서 검증: ${hubResult.status||'상태 미표시'}`}</strong><p>견적서 ID: {hubResult.quotationId||'미표시'} · 결과 확인 시각: {new Date(hubResult.observedAt).toLocaleString('ko-KR')}</p>{hubResult.detail&&<p>{hubResult.detail}</p>}<p>현재 검토한 견적서 파일의 결과입니다. 상품별 등록 완료는 아직 확인되지 않았습니다.</p></div>}
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.4.zip" download>첨부 확장 다운로드 (0.2.4)</a>
     </>}
   </section>;
 }

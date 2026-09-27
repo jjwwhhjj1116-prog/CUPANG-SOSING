@@ -31,3 +31,16 @@ test('mismatched acknowledgement, oversized payload, cancellation and extension 
   const idle=harness(),controller=new AbortController(),pending=idle.api.checkSupplierHubExtension(controller.signal);controller.abort();await assert.rejects(pending,/취소/);assert.equal(idle.listeners.size,0);
   const failed=harness((m,emit)=>emit(m,{ok:false,error:'저장 실패'}));await assert.rejects(()=>failed.api.checkSupplierHubExtension(new AbortController().signal),/저장 실패/);assert.equal(failed.sent.length,1);
 });
+
+test('result retrieval uses exact reviewed identity and never promotes validation to registration',async()=>{
+  const record={...identity,origin:'https://sourceflow.jjwwhhjj1116.workers.dev',filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-complete',status:'완료',quotationId:'123',observedAt:Date.now(),registered:false};
+  const h=harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,record,registered:false}));
+  const result=await h.api.getSupplierHubResult(identity,new AbortController().signal);
+  assert.equal(h.sent[0].type,'RESULT');assert.equal(result.quotationId,'123');assert.equal(result.registered,false);assert.equal(h.listeners.size,0);
+  for(const change of [{productId:'other'},{categoryId:'999'},{fingerprint:'b'.repeat(64)},{filename:'different.xlsx'},{registered:true},{observedAt:NaN},{state:'registered'},{detail:{}}]){
+    const wrong=harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,record:{...record,...change},registered:false}));
+    await assert.rejects(()=>wrong.api.getSupplierHubResult(identity,new AbortController().signal));
+  }
+  const missing=harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,record:null,registered:false}));
+  assert.equal(await missing.api.getSupplierHubResult(identity,new AbortController().signal),null);
+});

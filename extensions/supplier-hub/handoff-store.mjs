@@ -6,6 +6,22 @@ export function validateHandoff(message,sender){
   return {productId:message.productId,categoryId:message.categoryId,fingerprint:message.fingerprint,base64:message.base64,createdAt:Date.now(),origin};
 }
 async function database(){return new Promise((resolve,reject)=>{const request=indexedDB.open('yoofam-quotation-handoff',1);request.onupgradeneeded=()=>request.result.createObjectStore('pending');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
+export function validateResultRequest(message,sender){
+  let origin;try{origin=new URL(sender?.url).origin;}catch{throw Error('앱 출처를 확인하지 못했습니다.');}
+  if(!sender?.tab||sender.frameId!==0||!HANDOFF_ORIGINS.includes(origin)||message?.type!=='YOOFAM_GET_RESULT'||!/^\w[\w-]{0,99}$/.test(message.productId)||!/^\d{1,20}$/.test(message.categoryId)||!/^[a-f0-9]{64}$/.test(message.fingerprint))throw Error('견적서 결과 요청을 확인해주세요.');
+  return {origin,productId:message.productId,categoryId:message.categoryId,fingerprint:message.fingerprint};
+}
+export function resultKey(identity){
+  return `result:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
+}
+export async function transferRecord(action,key,value){
+  if(!['get','put'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+|result:https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  const db=await database();try{return await new Promise((resolve,reject)=>{
+    const transaction=db.transaction('pending',action==='get'?'readonly':'readwrite'),store=transaction.objectStore('pending');let result;
+    const request=action==='get'?store.get(key):store.put(value,key);
+    request.onsuccess=()=>{result=request.result;};transaction.oncomplete=()=>resolve(result);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||Error('전송 기록 저장 실패'));
+  });}finally{db.close();}
+}
 export async function pendingPackage(action,value){
   if(!['get','put','delete'].includes(action))throw Error('지원하지 않는 패키지 작업입니다.');
   if(action==='delete'&&(typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value)))throw Error('삭제할 견적서 식별값을 확인해주세요.');

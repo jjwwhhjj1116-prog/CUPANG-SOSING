@@ -1,10 +1,11 @@
 import {prepareAttachments} from './package.mjs';
 import {attachToSupplierHub} from './attach.mjs';
-import {pendingPackage} from './handoff-store.mjs';
+import {pendingPackage,transferRecord,resultKey} from './handoff-store.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
 import {readSupplierHubValidation} from './result.mjs';
 const picker=document.querySelector('#package'),button=document.querySelector('#attach'),status=document.querySelector('#status'),summary=document.querySelector('#summary');
 let prepared=null,sequence=0,pendingFingerprint=null,pendingExpires=0;
+let packageIdentity=null;
 async function loadPending(){
   const version=sequence;
   try{
@@ -14,6 +15,7 @@ async function loadPending(){
     if(result.categoryId!==saved.categoryId||result.quotation[0].name!==`YOOFAM-${saved.fingerprint}.xlsx`)throw Error('앱에서 검토한 견적서와 파일이 일치하지 않습니다.');
     if(version!==sequence)return;
     prepared=result;pendingFingerprint=saved.fingerprint;pendingExpires=saved.createdAt+15*60*1000;
+    packageIdentity={origin:saved.origin,productId:saved.productId,categoryId:saved.categoryId,fingerprint:saved.fingerprint};
     summary.textContent=`앱에서 준비한 상품 ${saved.productId}\n카테고리 ${result.categoryId}\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개`;
     button.disabled=false;status.textContent='현재 Supplier Hub 회사 계정과 파일 목록을 확인한 뒤 전달하세요.';
   }catch(error){if(version===sequence)status.textContent=error.message;}
@@ -30,6 +32,10 @@ resultButton.addEventListener('click',async()=>{
     const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation});
     const result=execution?.result;
     if(!result||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(result.state))throw Error('검증 결과를 확인하지 못했습니다.');
+    const identity=await transferRecord('get',`attempt:${tab.id}`);
+    if(identity&&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`){
+      await transferRecord('put',resultKey(identity),{...identity,...result,observedAt:Date.now()});
+    }
     status.textContent=result.state==='not-found'?'전달한 견적서의 결과가 아직 목록에 없습니다. Supplier Hub 안내에 따르면 검증은 최대 2시간 걸릴 수 있습니다.':`견적서: ${result.filename}\n검증 상태: ${result.status}\n견적서 ID: ${result.quotationId||'아직 표시되지 않음'}\n${result.detail}\n검증 완료 후에도 상품별 등록 상태를 별도로 확인해야 합니다.`;
   }catch(error){status.textContent=error.message;}
   finally{resultButton.disabled=false;validateButton.disabled=false;picker.disabled=false;button.disabled=!prepared;}
@@ -48,7 +54,7 @@ validateButton.addEventListener('click',async()=>{
   finally{validateButton.disabled=false;picker.disabled=false;button.disabled=!prepared;}
 });
 picker.addEventListener('change',async()=>{
-  const version=++sequence;prepared=null;pendingFingerprint=null;button.disabled=true;summary.textContent='';
+  const version=++sequence;prepared=null;pendingFingerprint=null;packageIdentity=null;button.disabled=true;summary.textContent='';
   try{
     const file=picker.files[0];if(!file)return;if(file.size>30*1024*1024)throw Error('ZIP 파일은 30MB 이하여야 합니다.');
     const result=await prepareAttachments(new Uint8Array(await file.arrayBuffer()));if(version!==sequence)return;
@@ -66,6 +72,7 @@ button.addEventListener('click',async()=>{
       if(Date.now()>pendingExpires)throw Error('준비한 견적서가 만료되었습니다. 앱에서 다시 준비해주세요.');
       if(!await pendingPackage('delete',pendingFingerprint))throw Error('다른 견적서가 준비되었거나 이미 전달을 시도했습니다. 확장을 다시 열어주세요.');
     }
+    await transferRecord('put',`attempt:${tab.id}`,packageIdentity);
     const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:attachToSupplierHub,args:[prepared]});
     const result=execution?.result;
     if(!result||!['dispatched','partial'].includes(result.state))throw Error('전달 결과를 확인하지 못했습니다. 중복 실행 전에 Supplier Hub 첨부 목록을 확인해주세요.');

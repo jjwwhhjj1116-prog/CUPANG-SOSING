@@ -1,5 +1,5 @@
 type PackageIdentity={productId:string;categoryId:string;fingerprint:string};
-function exchange(type:'PING'|'PREPARE',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
+function exchange(type:'PING'|'PREPARE'|'RESULT',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
   return new Promise((resolve,reject)=>{
     if(signal.aborted){reject(new Error('작업을 취소했습니다.'));return;}
     const requestId=crypto.randomUUID();
@@ -11,12 +11,21 @@ function exchange(type:'PING'|'PREPARE',payload:unknown,signal:AbortSignal):Prom
       if(!result||result.ok!==true)reject(new Error(typeof result?.error==='string'?result.error:'확장에 견적서를 전달하지 못했습니다.'));
       else resolve(result);
     };
-    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:20000);
+    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':type==='RESULT'?'검증 결과 응답이 없습니다. 첨부 확장 0.2.4 이상으로 새로고침하고 결과를 다시 확인해주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:20000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type,payload},window.location.origin);
   });
 }
 export async function checkSupplierHubExtension(signal:AbortSignal){await exchange('PING',null,signal);}
+export type SupplierHubResult={state:string;filename:string;submittedAt?:string;status?:string;detail?:string;quotationId?:string;observedAt:number;registered:false};
+export async function getSupplierHubResult(identity:PackageIdentity,signal:AbortSignal):Promise<SupplierHubResult|null>{
+  const response=await exchange('RESULT',identity,signal);
+  if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new Error('견적서 결과의 식별값이 일치하지 않습니다.');
+  if(response.record===null)return null;
+  const record=response.record as Record<string,unknown>;
+  if(!record||record.origin!==window.location.origin||record.productId!==identity.productId||record.categoryId!==identity.categoryId||record.fingerprint!==identity.fingerprint||record.filename!==`YOOFAM-${identity.fingerprint}.xlsx`||record.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(String(record.state))||typeof record.observedAt!=='number'||!Number.isFinite(record.observedAt)||record.observedAt<=0||record.observedAt>Date.now()+60000||['submittedAt','status','detail','quotationId'].some(key=>record[key]!==undefined&&(typeof record[key]!=='string'||String(record[key]).length>20000)))throw new Error('검토한 상품의 검증 결과인지 확인하지 못했습니다.');
+  return record as SupplierHubResult;
+}
 export async function prepareSupplierHubHandoff(blob:Blob,identity:PackageIdentity,signal:AbortSignal){
   if(blob.size>30*1024*1024)throw new Error('첨부 패키지는 30MB 이하여야 합니다.');
   const bytes=new Uint8Array(await blob.arrayBuffer());let text='';

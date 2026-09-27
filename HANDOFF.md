@@ -3889,3 +3889,9 @@ AI등록 화면 확인:
 - Opened actual 검증 진행상태: five headers 견적서 명 / 견적서 등록일 / 검증 상태 / 검증 결과 / 견적서 ID. Current rows empty. UI says last month only, up to2hours, 반려 -> detail download/fix/resubmit; 완료 -> check per-product registration status.
 - Extension0.2.3 result action opens observed progress button, reads visible table only, matches exact own YOOFAM64hex.xlsx after validation-requested marker; returns raw status/details/quotationID, never registered:true. Missing/ambiguous results fail closed. Refresh remains actual Hub button. Page reload loses attempt marker, no recovery implemented.
 -17 extension/handoff/result/validation tests passed; actual table selectors confirmed live readonly. No remote upload/result receipt verified. Whole task remains incomplete, POST501 unchanged.
+
+## Step 427 — return extension validation evidence to product review
+- Extension0.2.4 stores app identity (origin/product/category/fingerprint) separately at attempt:<tabID> before dispatch. Manual ZIP clears identity. Result action persists matched filename evidence under exact origin/product/category/fingerprint key; no raw package duplicate stored.
+- Added content/worker RESULT request with exact app top-frame sender checks. App SubmissionPackage offers 검증 결과 불러오기 for current reviewed XLSX and displays raw status, quotation ID and observation time; validates response identity, origin, shape. Does not set submitted status or fabricate server receipts.
+- Related19unit tests passed plus final4handoff rerun, tsc/build/artifact passed. Actual rightChrome localhost4243 IndexedDB9/9 (2new persistence/isolation checks); test data only. Browser store427 holds fixture page.
+- No live actual upload/registration evidence obtained. Official XLSX remains unacquired, supplier-hubPOST501 unchanged, own1688 collection/fullcategory parity unresolved. Existing user products untouched. Extension reload required for0.2.4. Current Hub modal remains validationprogress empty.
