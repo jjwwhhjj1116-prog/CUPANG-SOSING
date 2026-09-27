@@ -400,10 +400,10 @@ test('translated category attributes reach final XLSX cells and manual option ed
  assert.equal((await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context)).status,409);
 });
 
-test('all 26 recorded category schemas preserve edited fields through actual XLSX export',async()=>{
+test('all recorded category schemas preserve edited fields through actual XLSX export',async()=>{
  const catalog=load('app/hub-product-schemas.ts').hubProductSchemas;
  const schemaModel=load('app/quotation-schema.ts');
- const ids=[...new Set([...Object.keys(catalog),'80719','81452','64497','103495','77442'])];assert.equal(ids.length,26);
+ const ids=[...new Set([...Object.keys(catalog),'80719','81452','64497','103495','77442'])];assert.equal(ids.length,27);
  const encode=value=>new TextEncoder().encode(value);
  const bytes=zipSync({
   '[Content_Types].xml':encode('<Types><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>'),

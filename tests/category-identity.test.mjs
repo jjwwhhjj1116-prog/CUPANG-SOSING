@@ -49,7 +49,7 @@ test('collection route rejects a mismatched saved category before enqueueing or 
  const deps={
   'next/server':{NextResponse:Response},
   '@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true}),getWorkspaceOwnerId:async()=>'test-owner'},
-  '@/db/category-profiles':{getCategoryProfile:async()=>({id:profileId,revision:1,categoryId:'81221',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']})},
+  '@/db/category-profiles':{getCategoryProfile:async()=>({id:profileId,revision:1,categoryId:'81472',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']})},
   '@/db/queries':{getSettings:async()=>{settingsRead++;return null;}},
   '@/db/collection-jobs':{enqueueCollection:async()=>{queued++;return[];},listCollectionJobs:async()=>[]},
  };
@@ -60,4 +60,16 @@ test('collection route rejects a mismatched saved category before enqueueing or 
  assert.equal(response.status,400);
  const body=await response.json(); assert.equal(body.code,'CATEGORY_IDENTITY_MISMATCH',JSON.stringify(body));
  assert.equal(queued,0);assert.equal(settingsRead,0);
+});
+
+
+test('all observed yoga codes validate full paths before their quotation forms are available',()=>{
+ const records=JSON.parse(fs.readFileSync(new URL('../docs/yoga-category-comparison-2026-09-28.json',import.meta.url),'utf8')).categoryIds;
+ for(const record of records){
+  assert.doesNotThrow(()=>identity.validateCategoryIdentity({categoryId:record.categoryId,categoryPath:record.path}));
+  const different=records.find(r=>r.categoryId!==record.categoryId);
+  assert.throws(()=>identity.validateCategoryIdentity({categoryId:record.categoryId,categoryPath:different.path}),/경로가 일치하지 않습니다/);
+  assert.throws(()=>identity.validateCategoryIdentity({categoryId:record.categoryId,categoryPath:[record.path.at(-1)]}),/경로가 일치하지 않습니다/);
+  if(record.categoryId!=='81467')assert.equal(schemas.getQuotationSchema(record.categoryId).status,'unconfirmed');
+ }
 });

@@ -1,8 +1,10 @@
+import { observedCategoryPaths } from '@/app/observed-category-paths';
 import { getQuotationSchema } from '@/app/quotation-schema';
 
 /** Compare complete observed paths; never identify a category by its leaf name. */
 export function validateCategoryIdentity(category: { categoryId: string; categoryPath: readonly string[] }) {
-  const expected = getQuotationSchema(category.categoryId).categoryPath;
+  const schemaPath = getQuotationSchema(category.categoryId).categoryPath;
+  const expected = Object.hasOwn(observedCategoryPaths, category.categoryId) ? observedCategoryPaths[category.categoryId] : schemaPath;
   // Unknown codes remain explicitly unconfirmed; this check does not invent a catalog.
   if (!expected.length) return;
   const normalize = (part: string) => part.normalize('NFKC').replace(/\s+/gu, '');

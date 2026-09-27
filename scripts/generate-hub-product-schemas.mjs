@@ -7,6 +7,18 @@ const evidence = JSON.parse(fs.readFileSync('docs/supplier-hub-product-schemas-2
 const catalog = JSON.parse(fs.readFileSync('docs/supplier-hub-category-ids-2026-09-22.json', 'utf8'));
 evidence.records.push(...JSON.parse(fs.readFileSync('docs/supplier-hub-yoga-product-2026-09-28.json', 'utf8')).records);
 catalog.categoryIds.push(...JSON.parse(fs.readFileSync('docs/yoga-category-comparison-2026-09-28.json', 'utf8')).categoryIds);
+// Category identity is known independently of whether its form is recorded.
+const categoryPaths = {};
+const pathCodes = new Map();
+for (const record of catalog.categoryIds) {
+  if (!/^[1-9]\d{0,19}$/.test(record.categoryId) || !record.path.length) throw Error('Invalid category identity');
+  const key = JSON.stringify(record.path);
+  if (categoryPaths[record.categoryId] && JSON.stringify(categoryPaths[record.categoryId]) !== key) throw Error('Conflicting category paths: ' + record.categoryId);
+  if (pathCodes.has(key) && pathCodes.get(key) !== record.categoryId) throw Error('Conflicting category codes: ' + key);
+  categoryPaths[record.categoryId] = record.path;
+  pathCodes.set(key, record.categoryId);
+}
+fs.writeFileSync('app/observed-category-paths.ts', '// Generated from recorded Supplier Hub category IDs; does not establish quotation-field parity.\nexport const observedCategoryPaths: Readonly<Record<string, readonly string[]>> = ' + JSON.stringify(categoryPaths, null, 2) + ';\n');
 const exposedIds = { '색상': 'color', '수량': 'quantity', '사이즈': 'size', '단 수': 'optionLevels' };
 const notices = {
   'KC 인증정보': 'yoga_noticeKc', '크기, 중량': 'yoga_noticeSizeWeight', '색상': 'yoga_noticeColor',
