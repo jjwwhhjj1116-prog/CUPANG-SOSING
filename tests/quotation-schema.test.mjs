@@ -1818,3 +1818,18 @@ test('saved attribute bindings outrank name guesses and stale or absent bindings
  input.content.categoryAttributes.bindings[0].fieldSignature='stale';assert.notEqual(read().value,'원형');
  input.content.categoryAttributes.bindings=[];assert.notEqual(read().value,'원형');
 });
+
+
+test('captured hidden-attribute switch gates translated suggestions, keeps exposed fields and manual edits',()=>{
+ for(const hiddenAttributes of [false,true,undefined])for(const binding of [false,true]){
+  const input=fixture();input.options.rows[0].color='';input.options.rows[0].provenance.color='unverified';
+  const schema=model.getQuotationSchema('80719'),field=schema.fields.find(f=>f.id==='basketShape');
+  input.content.categoryAttributes={categoryId:'80719',jobId:'j',hiddenAttributes,values:[{name:'바구니 형태',value:'사각형'},{name:'색상',value:'파랑'}],...(binding?{bindings:[{fieldId:field.id,fieldSignature:JSON.stringify(field),value:'원형'}]}:{})};
+  let fields=model.resolveQuotationFields(input).rows.find(r=>r.optionId==='red').fields;
+  assert.equal(fields.basketShape.value,hiddenAttributes===false?'':binding?'원형':'사각형');
+  assert.equal(fields.color.value,'파랑');assert.equal(fields.title.value,'번역된 가방');
+  input.overrides={common:{basketShape:'다각형'},options:{red:{basketShape:'원형'}}};
+  fields=model.resolveQuotationFields(input).rows.find(r=>r.optionId==='red').fields;
+  assert.equal(fields.basketShape.value,'원형');assert.equal(fields.basketShape.source,'manual-option');
+ }
+});

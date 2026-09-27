@@ -39,7 +39,7 @@ export type ProductContent = {
   labelLayout?: LabelLayout;
   customLabels?: CustomLabel[];
   /** Source-derived draft attributes are scoped to the category used for translation. */
-  categoryAttributes?: { categoryId: string; jobId: string; values: { name: string; value: string; sourceName?: string }[];
+  categoryAttributes?: { hiddenAttributes?: boolean; categoryId: string; jobId: string; values: { name: string; value: string; sourceName?: string }[];
     bindings?: { fieldId: string; fieldSignature: string; value: string }[]; reservedFields?: string[] };
   assets: Record<AssetRole, ContentField<string[]>>;
 };

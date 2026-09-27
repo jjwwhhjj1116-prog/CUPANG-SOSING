@@ -4067,3 +4067,11 @@ AI등록 화면 확인:
 - 70 related tests passed, including source import/API integration and both capacity reads; typecheck, Cloudflare build, artifact and diff checks passed. Deployed d7070fc2-ebcd-4530-a7f2-30e60420fe6a.
 - Read the signed-in Couplus empty add queue in the designated existing Chrome; observed collect, SEO+price, work, transmit choices and descriptions. No source URL entered and no existing external product edited. User's review-before-transmission requirement remains authoritative.
 - Actual 1688 collection, all-category/default parity, original official XLSX, installed extension refresh, image AI and final Hub registration remain unverified. This change addresses draft retention only, not those missing live validations.
+
+## Step 455 — Honor captured hidden-attribute auto-fill switch (2026-09-28)
+- Read the current Couplus Basic Settings in designated Chrome only. Confirmed the hidden-attribute checkbox is separate and off; no settings saved or existing products edited. Evidence: docs/couplus-basic-settings-observation-2026-09-28.md.
+- Found hiddenAttributes persisted in settings but unused by category suggestion adoption. Translation apply now reads the exact linked collection snapshot (already fingerprinted and transaction guarded), persists its boolean with category attributes, and both rule adoption and quotation name/binding resolution skip hidden suggestions when false.
+- Exposed attributes, SEO, options, label facts and manual quotation overrides retain their behavior. Legacy snapshots lacking this flag keep existing behavior. Source attribute translation remains available for SEO/labels; this is not a claim of identical Couplus model generation or speed.
+- 199 related tests passed, including real route/SQLite intake with enabled rules and disabled direct/rule matching. Typecheck/build/artifact/diff checks passed.
+- Actual 1688 collection, all-category parity, official XLSX, installed extension refresh, image AI and final Hub registration remain unverified. Extension unchanged at 0.2.12.
+- Deployed 946b8d67-6f30-4e17-89b2-6783a64e0cc2.

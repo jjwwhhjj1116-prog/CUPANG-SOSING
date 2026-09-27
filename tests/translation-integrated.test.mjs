@@ -308,3 +308,18 @@ test('completed option batches retain edited content and manual blanks with atom
   }finally{h.sqlite.close();}
  }
 });
+
+
+test('hidden auto-fill setting persists in source snapshots and suppresses hidden rules only',()=>{
+ const {content,options,job}=fixture();job.review.source.category={id:'80719',path:['주방용품']};
+ const plan=model.integratedTranslationPlan(content,options,job,version,'all',false);
+ assert.equal(plan.categoryAttributes.hiddenAttributes,false);assert.equal(plan.patch.seo.title,'한국어 상품');assert.equal(plan.rows[0].color,'빨강');
+ const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');
+ const rules=['basketShape','color'].map(id=>{const field=schema.fields.find(f=>f.id===id);return {fieldId:id,sourceName:'상품속성: '+id,fieldSignature:JSON.stringify(field)};});
+ const snapshot={...plan.categoryAttributes,values:[{sourceName:'상품속성: basketShape',name:'모양',value:'사각형'},{sourceName:'상품속성: color',name:'색상',value:'파랑'}]};
+ const payload=JSON.stringify({format:'sourceflow-attribute-rules-v1',categoryId:'80719',rules});
+ const apply=load('app/intake-attribute-rules.ts').applyIntakeAttributeRules;
+ const off=apply(snapshot,payload);assert.deepEqual(Array.from(off.snapshot.bindings,b=>b.fieldId),['color']);assert.equal(off.skipped.length,1);
+ assert.ok(off.snapshot.reservedFields.includes('basketShape'));assert.equal(off.snapshot.hiddenAttributes,false);
+ assert.equal(apply({...snapshot,hiddenAttributes:true},payload).snapshot.bindings.length,2);
+});

@@ -448,6 +448,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       // Only fill an absent category product attribute; explicit content/option
       // values and manual overrides keep priority. Never infer legal defaults.
       if (automatic.source === 'empty' && content.categoryAttributes?.categoryId === schema.categoryId
+        && !(definition.visibility === 'hidden' && content.categoryAttributes.hiddenAttributes === false)
         && definition.section === 'product' && definition.visibility !== 'common' && !definition.readOnly
         && ['text', 'textarea', 'select'].includes(definition.type)) {
         const binding = content.categoryAttributes.bindings?.find(item => item.fieldId === definition.id && item.fieldSignature === JSON.stringify(definition));

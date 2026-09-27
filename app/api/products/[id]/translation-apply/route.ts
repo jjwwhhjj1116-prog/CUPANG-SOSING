@@ -52,7 +52,10 @@ export async function POST(request: Request, context: Context) {
         // retains all current content and checks exact option originals/provenance.
         applicationJob={...job,productVersion:product.updated_at,...(optionBatch?{contentRevision:content.revision}:{})};
       }
-      plan = integratedTranslationPlan(content, options, applicationJob, product.updated_at, scope);
+      // Use the immutable intake settings, not settings changed after collection.
+      const capturedSettings = categorySource?.snapshot?.linked ? JSON.parse(categorySource.snapshot.payload)?.settings : null;
+      const hiddenAttributes = typeof capturedSettings?.hiddenAttributes === 'boolean' ? capturedSettings.hiddenAttributes : undefined;
+      plan = integratedTranslationPlan(content, options, applicationJob, product.updated_at, scope, hiddenAttributes);
     }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }
     let attributeRules;
