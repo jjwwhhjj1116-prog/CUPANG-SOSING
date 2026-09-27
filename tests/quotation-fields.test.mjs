@@ -38,7 +38,7 @@ const context={params:Promise.resolve({id:'product'})};
 const request=(body,profileId)=>new Request('http://localhost/api/products/product/quotation-fields'+(profileId?'?profileId='+profileId:''),{method:body?'PUT':'GET',headers:{'content-type':'application/json',origin:'http://localhost'},...(body?{body:JSON.stringify(body)}:{})});
 async function get(h,profileId){const response=await h.route.GET(request(null,profileId),context);assert.equal(response.status,200,await response.clone().text());return response.json();}
 function put(h,view,changes,profileId){return h.route.PUT(request({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},profileId),context);}
-async function profile(h,id='80719'){return h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'LOCAL TEST category',categoryId:id,categoryPath:id==='80719'?['주방용품','주방수납/정리','주방수납바구니/바스켓']:['미확인 카테고리'],template:null,mappings:[]});}
+async function profile(h,id='80719'){return h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'LOCAL TEST category',categoryId:id,categoryPath:h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath.length?[...h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath]:['미확인 카테고리'],template:null,mappings:[]});}
 const baseGuard=()=>({productVersion:version,imageKeys:product.image_keys,pricingPolicy:null,contentRevision:0,optionRevision:0,settingsPayload:null,profile:null,collection:null});
 
 async function linkedFixture(h) {
@@ -104,7 +104,7 @@ test('unsaved and partial settings do not inject example registration facts into
    const exports=h.load('app/exports/quotation-source.ts');
    const saved=await exports.readQuotationExportSource('owner','product',selected.id);
    assert.equal(saved.settings.importer,'');assert.equal(saved.settings.serviceContact,'');
-   assert.equal(saved.settings.exchangeRate,payload?.exchangeRate??190);
+   assert.equal(saved.settings.exchangeRate,payload?.exchangeRate??(payload?190:350));
    assert.deepEqual(JSON.parse(JSON.stringify(exports.resolveQuotationExport(saved))),view.resolved);
   }
  }finally{h.sqlite.close();}
@@ -117,7 +117,7 @@ test('price policy remains valid without registration facts and still rejects ma
   const empty=settingsModel.savedRegistrationSettings(null);
   assert.equal(empty.brand,'');assert.equal(empty.tradeType,'');
   const actual=options.resolveOptionPricePolicy(product,empty);
-  const baseline=options.resolveOptionPricePolicy(product,settingsModel.defaultSettings);
+  const baseline=options.resolveOptionPricePolicy(product,settingsModel.newWorkspaceSettings);
   assert.deepEqual(JSON.parse(JSON.stringify(actual)),JSON.parse(JSON.stringify(baseline)));
   for(const change of [{roundingUnit:7},{minimumMarginEnabled:'false'},{minimumMargin:-1}])assert.throws(()=>options.resolveOptionPricePolicy(product,{...empty,...change}));
   assert.throws(()=>settingsModel.savedRegistrationSettings({tradeType:'invalid'}));
@@ -398,5 +398,18 @@ test('new exact product link during explicit-profile save is detected atomically
   h.setBeforeSave(()=>h.sqlite.prepare('INSERT INTO collection_products VALUES(?,?,?,?)').run(jobs[0].id,'owner','product',version));
   assert.equal((await put(h,view,[{fieldKey:'brand',optionId:null,value:'오래된 값'}],selected.id)).status,409);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM product_quotation_fields').get().n,0);
+ }finally{h.sqlite.close();}
+});
+
+test('category code/path mismatch stops editor reads and writes before saving quotation fields',async()=>{
+ const h=await harness();try{
+  const valid=await profile(h);const view=await get(h,valid.id);
+  const invalid=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'Mismatched fixture',categoryId:'80719',categoryPath:['wrong path'],template:null,mappings:[]});
+  const before=await h.store.readQuotationFields('owner','product');
+  for(const response of [await h.route.GET(request(null,invalid.id),context),await put(h,view,[{fieldKey:'brand',optionId:null,value:'must not save'}],invalid.id)]){
+   assert.equal(response.status,409);assert.equal((await response.json()).code,'QUOTATION_CATEGORY_MISMATCH');
+  }
+  assert.deepEqual(await h.store.readQuotationFields('owner','product'),before);
+  assert.equal((await get(h,valid.id)).resolved.schema.categoryId,'80719');
  }finally{h.sqlite.close();}
 });

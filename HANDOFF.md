@@ -3831,3 +3831,11 @@ AI등록 화면 확인:
 - Intake UI now offers SEO/price draft(default) or sourceonly; removed misleading work/transmit goalcards. Existing persisted noncollectgoals still preserved to avoid requestdedup conflicts, displaydraftchoice and nevercauseHubsubmission. APIcompat unchanged.
 -21 intake queue/navigation/settings tests passed, tsc/build/artifact/diff passed. Fixed older navigationtestfixture missing confirmedproductId on savedrow; restoredpendingtest explicitlydeletesid to exercisecontextrecovery. New tests single/failure/batch/openfailure plus duplicateclick.
 - Deployed6ea53751-9686-42b9-93f0-b44b74e14a50. Live1688collection, fullcategory/translation and actualHubPOST501 remainunfinished. Browser endtoend notverified; no remoteproductsmodified.
+
+## Step 419 — quotation editor/export category identity consistency (2026-09-27)
+- Found real discrepancy: quotation export rejects mismatched observed category code/path, while quotation-fields GET/PUT previously allowed it. Added same validateCategoryIdentity check to editor snapshot, returns 409 QUOTATION_CATEGORY_MISMATCH before field resolution/save; no existing products altered.
+- Added read/write no-mutation regression. Updated stale fixtures to full observed category paths; retained explicit unknown category fixture. Updated new-workspace policy expectations to step 411 defaults, preserving legacy partial-settings expectations.
+- Audit initially 247/257; corrected suite 257/258 (only unknown fixture empty path), final affected quotation-fields rerun 25/25. All remaining 233 tests passed in combined run, including 26 recorded category XLSX pipelines. Typecheck, Cloudflare build/artifact and diff checks passed.
+- Deployed version 09876133-af53-45d7-8db4-53b333773a62 at sourceflow.jjwwhhjj1116.workers.dev.
+- Still incomplete: real Supplier Hub POST transport remains 501; no real receipt, official XLSX verification, own 1688 blocked-source collection or full catalog parity. Do not claim end-to-end completion. Do not retry blocked 1688 through alternate channel. Only user's existing right Chrome allowed, existing work items must not be changed.
+- Step 418 read-only research found WING keyed OpenAPI, not a confirmed Supplier Hub quote endpoint; no integration made. Native Chrome tool transport works; no reinstall/login blanket diagnosis.

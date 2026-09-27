@@ -26,6 +26,7 @@ function quotationName(files,ext){const plan=JSON.parse(new TextDecoder().decode
 const contentModel = load('app/product-content.ts'); const optionsModel = load('app/product-options.ts');
 const { quotationData } = load('app/exports/quotation-data.ts');
 const { defaultSettings } = load('app/workspace-settings.ts');
+const categoryPath = id => [...load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath];
 const policy = { exchangeRate: 100, supplyMargin: 0, coupangMargin: 0, minimumMargin: 0, msrpMultiple: 1, roundingUnit: 10 };
 const product = { id: 'test', owner_id: 'owner', title: '원문 상품', source_url: 'synthetic://test', source_price_cny: 999, supply_price: 99900, sale_price: 99900, msrp: 99900,
   pricing_policy: JSON.stringify(policy), exchange_rate: 190, supply_margin: 40, coupang_margin: 35, options_count: 2, image_keys: '["owner/option.png"]', updated_at: '2026-09-22T00:00:00.000Z' };
@@ -82,7 +83,7 @@ const context = { params: Promise.resolve({ id: 'test' }) }; const preview = { a
 
 test('saved label product type reaches category preview, CSV and review JSON with per-option override precedence',async()=>{
  const bytes=new TextEncoder().encode('종류\r\n');const digest=createHash('sha256').update(bytes).digest('hex');const key=`owner/category-templates/${digest}.csv`;
- const selected={...profile,categoryId:'103495',template:{...profile.template,headers:['종류'],sha256:digest,storageKey:key},mappings:[{column:0,field:'marathon_noticeKind',required:false}]};
+ const selected={...profile,categoryId:'103495',categoryPath:categoryPath('103495'),template:{...profile.template,headers:['종류'],sha256:digest,storageKey:key},mappings:[{column:0,field:'marathon_noticeKind',required:false}]};
  const savedContent=contentModel.applyContentPatch(content,{label:{productType:'러닝용 허리 가방'}},product.updated_at);
  const fields={schemaVersion:1,productId:'test',revision:1,overrides:{common:{},options:{second:{marathon_noticeKind:'옵션별 가방'}}},updatedAt:product.updated_at};
  const route=routeWith({readProfile:async()=>selected,readContent:async()=>savedContent,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
@@ -171,7 +172,7 @@ test('saved common/option overrides populate mapped cells and preserve blanks, i
       options: { first: { title: '', supplyPrice: '12345', noticeMaterial: '첫 옵션 재질' }, excluded: { model: '제외 옵션 수정' }, deleted: { color: '삭제 옵션 수정' } } } };
   const bytes = new TextEncoder().encode('상품명,공급가,박스수량,재질,모델명,이미지,바코드\r\n');
   const digest = createHash('sha256').update(bytes).digest('hex'); const key = `owner/category-templates/${digest}.csv`;
-  const advanced = { ...profile, categoryId: '80719', categoryPath: ['주방용품'], template: { ...profile.template, sha256: digest, headers: ['상품명','공급가','박스수량','재질','모델명','이미지','바코드'], storageKey: key },
+  const advanced = { ...profile, categoryId: '80719', categoryPath: categoryPath('80719'), template: { ...profile.template, sha256: digest, headers: ['상품명','공급가','박스수량','재질','모델명','이미지','바코드'], storageKey: key },
     mappings: ['title','supplyPrice','boxQuantity','material','model','mainImage','barcode'].map((field,column) => ({ field,column,required:false })) };
   const requested = [];
   const route = routeWith({ find: async () => ({ ...product, image_keys: '["owner/option.png","owner/manual.png"]' }), readFields: async () => state, readProfile: async () => advanced,
@@ -229,7 +230,7 @@ test('real XLSX pipeline writes final override values, identifiers and attachmen
     'xl/worksheets/sheet1.xml':encode('<worksheet><dimension ref="A1:D2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>상품명</t></is></c><c r="B1" t="inlineStr"><is><t>모델명</t></is></c><c r="C1" t="inlineStr"><is><t>바코드</t></is></c><c r="D1" t="inlineStr"><is><t>이미지</t></is></c></row><row r="2"><c r="E2"><f>1+1</f><v>2</v></c></row></sheetData></worksheet>'),
   },{level:0});
   const digest=createHash('sha256').update(bytes).digest('hex');const key=`owner/category-templates/${digest}.xlsx`;
-  const advanced={...profile,categoryId:'80719',template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers:['상품명','모델명','바코드','이미지']},
+  const advanced={...profile,categoryId:'80719',categoryPath:categoryPath('80719'),template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers:['상품명','모델명','바코드','이미지']},
     mappings:['title','model','barcode','mainImage'].map((field,column)=>({field,column,required:false}))};
   const route=routeWith({readProfile:async()=>advanced,readFields:async()=>({schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{model:'수동 모델',barcode:'00001234'},options:{first:{title:'첫 옵션 견적명'}}}}),
     get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};},
@@ -282,7 +283,7 @@ test('option label PNG references reach mapped CSV, ZIP bytes and Hub preparatio
   const bytes = new TextEncoder().encode('상품명,라벨\r\n');
   const digest = createHash('sha256').update(bytes).digest('hex');
   const key = `owner/category-templates/${digest}.csv`;
-  const labelProfile = { ...profile, categoryId: '80719', template: { ...profile.template, sha256: digest, storageKey: key, headers: ['상품명', '라벨'] },
+  const labelProfile = { ...profile, categoryId: '80719', categoryPath: categoryPath('80719'), template: { ...profile.template, sha256: digest, storageKey: key, headers: ['상품명', '라벨'] },
     mappings: [{ column: 0, field: 'title', required: false }, { column: 1, field: 'labelImages', required: false }] };
   const state = { schemaVersion: 1, productId: 'test', revision: 2, updatedAt: product.updated_at,
     overrides: { common: {}, options: { first: { labelImages: keys[0] }, second: { labelImages: keys[1] }, excluded: { labelImages: 'owner/excluded.png' } } } };
@@ -351,7 +352,7 @@ test('explicit choice labels match preview and exported cells while raw codes an
  const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');const field=schema.fields.find(f=>f.type==='select'&&f.choices.some(c=>c.value&&c.value!==c.label));
  assert.ok(field);const choice=field.choices.find(c=>c.value&&c.value!==c.label);
  const bytes=new TextEncoder().encode('선택코드,선택문구,공란\r\n');const digest=createHash('sha256').update(bytes).digest('hex');const key=`owner/category-templates/${digest}.csv`;
- const selected={...profile,categoryId:'80719',template:{...profile.template,headers:['선택코드','선택문구','공란'],sha256:digest,storageKey:key},mappings:[{column:0,field:field.id,required:false},{column:1,field:field.id,required:false,choiceFormat:'label'},{column:2,field:'title',required:false}]};
+ const selected={...profile,categoryId:'80719',categoryPath:categoryPath('80719'),template:{...profile.template,headers:['선택코드','선택문구','공란'],sha256:digest,storageKey:key},mappings:[{column:0,field:field.id,required:false},{column:1,field:field.id,required:false,choiceFormat:'label'},{column:2,field:'title',required:false}]};
  const fields={schemaVersion:1,productId:'test',revision:1,overrides:{common:{[field.id]:choice.value,title:''},options:{second:{[field.id]:''}}},updatedAt:product.updated_at};
  const route=routeWith({readProfile:async()=>selected,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
  const reviewed=await route.POST(request(preview),context);assert.equal(reviewed.status,200);const review=await reviewed.json();
@@ -376,7 +377,7 @@ test('translated category attributes reach final XLSX cells and manual option ed
  const digest=createHash('sha256').update(bytes).digest('hex'),key=`owner/category-templates/${digest}.xlsx`;
  const mapping=load('app/quotation-mapping.ts',{'./category-profiles':load('app/category-profiles.ts'),'./quotation-schema':load('app/quotation-schema.ts')}).suggestQuotationMappings(headers,'80719');
  assert.equal(mapping.unmatchedColumns.length,0);assert.equal(mapping.ambiguousColumns.length,0);
- const selected={...profile,categoryId:'80719',template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers},mappings:mapping.mappings};
+ const selected={...profile,categoryId:'80719',categoryPath:categoryPath('80719'),template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers},mappings:mapping.mappings};
  const saved=structuredClone(content);saved.categoryAttributes={categoryId:'80719',jobId:'source-job',values:[{name:'바구니 형태',value:'사각형'},{name:'뚜껑 포함여부',value:'뚜껑포함'}]};
  const fields={schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{},options:{second:{basketShape:'원형',lidIncluded:''}}}};
  const route=routeWith({readProfile:async()=>selected,readContent:async()=>saved,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
@@ -417,7 +418,7 @@ test('all 26 recorded category schemas preserve edited fields through actual XLS
   const field=schema.fields.find(f=>f.section==='product'&&f.visibility!=='common'&&!f.readOnly&&(f.type==='text'||f.type==='select'&&f.choices?.some(c=>c.value)));
   assert.ok(field,categoryId+' category attribute');
   const value=field.type==='select'?field.choices.find(c=>c.value).value:'기록된 속성';
-  const selected={...profile,categoryId,template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers:['상품명','옵션명','분류별 속성']},mappings:[{column:0,field:'title',required:false},{column:1,field:'skuName',required:false},{column:2,field:field.id,required:false}]};
+  const selected={...profile,categoryId,categoryPath:categoryPath(categoryId),template:{...profile.template,format:'xlsx',sheetName:'견적',name:'fixture.xlsx',sha256:digest,storageKey:key,headers:['상품명','옵션명','분류별 속성']},mappings:[{column:0,field:'title',required:false},{column:1,field:'skuName',required:false},{column:2,field:field.id,required:false}]};
   const savedContent=contentModel.applyContentPatch(content,{seo:{title:'수정 상품 '+categoryId}},product.updated_at);
   const fields={schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{[field.id]:value},options:{second:{title:'',[field.id]:''}}}};
   const route=routeWith({readProfile:async()=>selected,readContent:async()=>savedContent,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});

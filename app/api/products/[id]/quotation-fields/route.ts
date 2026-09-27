@@ -10,6 +10,7 @@ import { readQuotationFields, readQuotationCollectionSource, quotationSourcesCur
 import { applyQuotationChanges, resolveQuotationFields, validateQuotationChanges, type QuotationFieldsView } from '@/app/quotation-schema';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { validateCategoryProfile } from '@/app/category-profiles';
+import { validateCategoryIdentity } from '@/app/category-identity';
 import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
 import { parseCollectionRequest } from '@/app/sourcing';
@@ -51,6 +52,10 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };
       }
     }
+  }
+  if (categoryContext.categoryId) {
+    try { validateCategoryIdentity({ categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath }); }
+    catch (error) { throw new FieldsError(error instanceof Error ? error.message : '카테고리를 다시 선택해주세요.', 409, 'QUOTATION_CATEGORY_MISMATCH'); }
   }
   const source: QuotationSourceGuard = { productVersion: product.updated_at, imageKeys: product.image_keys, pricingPolicy: product.pricing_policy ?? null,
     contentRevision: content.revision, optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,
