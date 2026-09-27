@@ -7,10 +7,12 @@ export function validateHandoff(message,sender){
 }
 async function database(){return new Promise((resolve,reject)=>{const request=indexedDB.open('yoofam-quotation-handoff',1);request.onupgradeneeded=()=>request.result.createObjectStore('pending');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
 export async function pendingPackage(action,value){
+  if(!['get','put','delete'].includes(action))throw Error('지원하지 않는 패키지 작업입니다.');
+  if(action==='delete'&&(typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value)))throw Error('삭제할 견적서 식별값을 확인해주세요.');
   const db=await database();try{return await new Promise((resolve,reject)=>{
     const transaction=db.transaction('pending',action==='get'?'readonly':'readwrite'),store=transaction.objectStore('pending');let result;
     const request=action==='put'?store.put(value,'package'):store.get('package');
-    request.onsuccess=()=>{result=request.result;if(action==='delete'){const matches=result?.fingerprint===value;if(matches)store.delete('package');result=matches;}};
+    request.onsuccess=()=>{result=request.result;if(action==='delete'){const matches=Boolean(result&&result.fingerprint===value);if(matches)store.delete('package');result=matches;}};
     transaction.oncomplete=()=>resolve(result);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||Error('패키지 저장이 중단되었습니다.'));
   });}finally{db.close();}
 }

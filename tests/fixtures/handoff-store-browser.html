@@ -1,0 +1,17 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><title>YOOFAM 확장 보관소 브라우저 검사</title>
+<h1>확장 보관소 브라우저 검사</h1><p id="status">검사 중</p><ol id="results"></ol>
+<script type="module">
+import {pendingPackage} from '/handoff-store.mjs';
+const list=document.querySelector('#results');let failures=0,passed=0;
+const a={fingerprint:'a'.repeat(64),base64:'UEs=',productId:'a'},b={fingerprint:'b'.repeat(64),base64:'UEs=',productId:'b'};
+const assert=(value,message)=>{if(!value)throw Error(message);};
+async function check(name,run){const item=document.createElement('li');try{await run();item.textContent='PASS '+name;passed++;}catch(error){item.textContent='FAIL '+name+': '+error.message;failures++;}list.append(item);}
+await check('저장 후 새 연결에서 동일한 패키지 읽기',async()=>{await pendingPackage('put',a);assert(JSON.stringify(await pendingPackage('get'))===JSON.stringify(a),'자료 불일치');});
+await check('읽은 객체를 변경해도 저장 원본 유지',async()=>{const value=await pendingPackage('get');value.productId='mutated';assert((await pendingPackage('get')).productId==='a','원본 변경');});
+await check('새 패키지를 준비하면 이전 패키지 교체',async()=>{await pendingPackage('put',b);assert((await pendingPackage('get')).fingerprint===b.fingerprint,'교체 실패');});
+await check('오래된 팝업은 새 패키지를 삭제하지 못함',async()=>{assert(await pendingPackage('delete',a.fingerprint)===false,'오래된 삭제 승인');assert((await pendingPackage('get')).fingerprint===b.fingerprint,'새 패키지 유실');});
+await check('동시 전달 8개 중 하나만 패키지 소비',async()=>{const results=await Promise.all(Array.from({length:8},()=>pendingPackage('delete',b.fingerprint)));assert(results.filter(Boolean).length===1,'중복 소비');assert(await pendingPackage('get')===undefined,'소비 후 잔존');});
+await check('이미 소비한 패키지를 재전송하지 않음',async()=>{assert(await pendingPackage('delete',b.fingerprint)===false,'빈 자료를 소비함');});
+await check('잘못된 작업과 누락된 식별값 거부',async()=>{for(const [action,value] of [['delete',undefined],['unknown',a]]){let rejected=false;try{await pendingPackage(action,value);}catch{rejected=true;}assert(rejected,'잘못된 작업 승인');}});
+document.querySelector('#status').textContent=`완료: ${passed} 통과 / ${failures} 실패`;
+</script></html>

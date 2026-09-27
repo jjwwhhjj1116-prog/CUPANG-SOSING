@@ -89,7 +89,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('download')}>견적서 파일 다운로드</button>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
       <button type="button" className="btn primary" disabled={busy||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>Supplier Hub 확장으로 파일 준비</button>
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.0.zip" download>첨부 확장 다운로드 (0.2.0)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.1.zip" download>첨부 확장 다운로드 (0.2.1)</a>
     </>}
   </section>;
 }

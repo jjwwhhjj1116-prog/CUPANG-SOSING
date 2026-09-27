@@ -1,4 +1,4 @@
-# YOOFAM PLUS Supplier Hub 첨부 연결 — 0.2.0 개발 버전
+# YOOFAM PLUS Supplier Hub 첨부 연결 — 0.2.1 개발 버전
 
 YOOFAM PLUS가 생성한 **견적서 + 첨부 ZIP**을 읽어 현재 Supplier Hub 대량 등록 탭의 Excel, 상품 이미지, 라벨 입력에 파일을 전달합니다. 공식 API 주소를 추측하거나 로그인 쿠키를 복사하지 않습니다.
 
@@ -22,7 +22,7 @@ YOOFAM PLUS가 생성한 **견적서 + 첨부 ZIP**을 읽어 현재 Supplier Hu
 4. 현재 회사 계정과 파일 목록을 확인한 후 `현재 탭에 파일 전달`을 누릅니다.
 5. Supplier Hub의 실제 업로드 결과를 확인합니다. 공식 양식의 적합성 검증과 최종 등록은 별도입니다.
 
-현재는 관찰한 DOM 구조를 재현한 테스트만 통과했습니다. 실계정 파일 업로드·검증·등록 시험은 수행하지 않았고, 이 확장도 사용자 Chrome에 설치하지 않았습니다. 작업 중인 기존 상품을 시험에 사용하지 않습니다.
+관찰한 DOM 구조를 재현한 테스트와, 동일한 Chrome의 전용 localhost 테스트 페이지에서 실제 IndexedDB 저장·교체·동시 소비 7개 검사를 통과했습니다. 확장 자체의 실계정 파일 업로드·검증·등록 시험은 수행하지 않았고, 이 확장도 사용자 Chrome에 설치하지 않았습니다. 작업 중인 기존 상품을 시험에 사용하지 않습니다.
 
 ## 근거와 테스트
 
@@ -30,3 +30,4 @@ YOOFAM PLUS가 생성한 **견적서 + 첨부 ZIP**을 읽어 현재 Supplier Hu
 - [Chrome scripting 공식 문서](https://developer.chrome.com/docs/extensions/reference/api/scripting), [activeTab 공식 문서](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab).
 - `node --test tests/supplier-hub-extension.test.mjs tests/supplier-hub-handoff.test.mjs`
 - 테스트 XLSX 바이트는 체크섬 전달을 위한 합성 자료이며 공식 양식 검증의 근거가 아닙니다.
+- 저장소 실제 브라우저 검사: `node scripts/test-handoff-store-browser.mjs` 실행 후 기존 Chrome에서 `http://127.0.0.1:4243/` 열기. 이 전용 origin의 시험 데이터만 사용합니다.
