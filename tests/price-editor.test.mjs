@@ -13,7 +13,7 @@ function harness(){
   if(name==='react')return{useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return[slots[i],v=>{if(!Object.is(slots[i],v))changed=true;slots[i]=v;}];}};
   if(name==='@/app/components/option-quotation-prices')return{OptionQuotationPrices:()=>null};
   if(name==='@/app/components/option-price-preview')return{OptionPricePreview:()=>null};
-  if(name==='@/app/pricing')return{calculatePrice:(_cost,p)=>({supplyPrice:p.exchangeRate,salePrice:1,msrp:1,marginKrw:1,actualMargin:1})};
+  if(name==='@/app/pricing')return{calculatePrice:(_cost,p)=>({supplyPrice:p.exchangeRate,salePrice:1,msrp:1,costKrw:1830.5,marginKrw:2999.5,actualMargin:1})};
   return native(name);
  }});
  const render=()=>{let tree;for(let i=0;i<10;i++){cursor=0;changed=false;tree=exports.PriceEditor({initial,sourcePrice:2,onSave:async p=>{if(fail)throw Error('save failed');initial={...p};}});if(!changed)return tree;}throw Error('render loop');};
@@ -30,4 +30,22 @@ test('successful saves establish the new policy and failed saves keep the draft'
 });
 test('equivalent rounding defaults do not create a false conflict',()=>{
  const h=harness();h.input().props.onChange({target:{value:'275'}});h.update({...base,roundingMode:'up'});assert.equal(h.input().props.value,275);assert.equal(h.reset(),undefined);
+});
+
+test('minimum margin toggle restores the edited amount and saves disabled policy as zero',async()=>{
+ const h=harness();h.update({...base,minimumMargin:4500});h.render();
+ const toggle=()=>nodes(h.render()).find(n=>n.type==='input'&&n.props.type==='checkbox');
+ const minimum=()=>nodes(h.render()).find(n=>n.type==='label'&&n.props.children?.[0]?.props?.children==='최소 공급 마진 (원)').props.children[1];
+ assert.equal(toggle().props.checked,true);
+ minimum().props.onChange({target:{value:'5500'}});
+ toggle().props.onChange({target:{checked:false}});
+ assert.equal(minimum().props.value,0);assert.equal(toggle().props.checked,false);
+ toggle().props.onChange({target:{checked:true}});assert.equal(minimum().props.value,5500);
+ toggle().props.onChange({target:{checked:false}});await h.render().props.onSubmit({preventDefault(){}});
+ assert.equal(minimum().props.value,0);assert.equal(h.render().props['data-workspace-dirty'],false);
+});
+
+test('margin and converted cost retain the fractional won instead of showing false minimum attainment',()=>{
+ const text=JSON.stringify(harness().render());
+ assert.match(text,/2,999.5원/);assert.match(text,/1,830.5원/);assert.doesNotMatch(text,/3,000원/);
 });

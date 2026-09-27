@@ -3799,3 +3799,8 @@ AI등록 화면 확인:
 - newWorkspaceSettings seeds null/undefined settings with observed pricing and removeBackgroundfalse. Legacy defaultSettings retained for previously saved incomplete payloads so existing prices/settings unchanged. Registration business facts stay blank without explicit saved values. SKUbox account50 not made globaldefault because UI itself saysdefault1.
 - Added formula + synchronized numeric/range margin controls in basicsettings. Settings saved by normal user flow, no remote admin settings mutation. Detailed evidence docs/couplus-price-settings-2026-09-27.md.
 - 51tests pass; tsc/build/artifact/diff pass; deployed version outputs/step411-deploy.log. No claim allpriceboundary/bundling parity; no live1688 orHubtransport completion. Browserprice411 remains basicsettings open for further read-only comparison.
+
+## Step 412 — product price minimum toggle and accurate decimal display
+- Added missing minimum margin on/off in stage2 PriceEditor. Off persists policyminimumMargin0 through existing shared price-save path; reenabling restores last positive edited amount in current editor. Existing product unchanged until user saves. 0minimum initial uses3000 on first enable.
+- Removed Math.round from margin display, preserving up to6 fractionalKRWdigits: observed2999.5 no longer falsely displayed3000. Added convertedcost/Coupangmargin amounts and sourceCNY up to6digits.
+- 32priceeditor/pricing/optionpreview/quotationprice tests pass; tsc/build/artifact/diff pass; deployed version outputs/step412-deploy.log. No sourcecollection orHubtransport change. Browserexistingprice411 remains available; no browser actions this turn. Existing user products untouched.
