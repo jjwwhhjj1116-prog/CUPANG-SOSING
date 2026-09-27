@@ -3274,3 +3274,10 @@ AI등록 화면 확인:
 - Stage-seven resolver consumes the prepared label fields. Later linked SEO edits update product name; existing idempotent promotion preserves manual corrections and explicit blanks on retries.
 - Validation: collection preparation/storage/API suite 20/20, including draft-to-quotation linkage, subsequent SEO edit, category isolation and retry preservation; TypeScript and Cloudflare build/artifact/diff checks passed.
 - Deployed 970b344c-aedd-4c5d-9947-b173cf6b9a47. Existing Chrome returned zero tabs. No live Couplus comparison or actual 1688 product collection verified. Full category matching, comprehensive 1688 import, image translation and Supplier Hub automatic registration remain incomplete.
+
+## 320 — Edit selected image order directly in the thumbnail strip (2026-09-27)
+- Stage image strip now exposes per-image previous/next and exclusion controls alongside preview. It edits the existing ordered draft arrays; exclusion leaves the owned source file intact. Controls use original array indices even when unavailable references are omitted from display.
+- Selected thumbnail preview no longer changes the library filter. A selected owned image can be previewed even when the current library filter excludes it.
+- Existing current-stage save and quotation resolution remain in use. Test verifies reorder/exclude, boundary controls, filtered preview, failed-save draft preservation, retry and exact additionalImages quotation order.
+- Validation: content editor request suite 11/11, TypeScript, Cloudflare production build/artifact and diff checks passed. Deployed e82a0f20-7f7a-4b5f-9ce8-86e797601fb7.
+- Based on supplied Couplus image workflow screenshots; no live visual parity verification. Full category parity, actual comprehensive 1688 collection, image translation and Supplier Hub automatic registration remain incomplete.

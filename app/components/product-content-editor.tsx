@@ -111,7 +111,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   let imageKeys: string[] = [];
   try { imageKeys = productImageKeys(product.image_keys); } catch { /* API reports invalid stored references on save. */ }
   const visibleImages = orderedEditorImages(imageKeys, draft.assets, assetFilter);
-  const activePreview = previewKey && visibleImages.includes(previewKey) ? previewKey : visibleImages[0] ?? null;
+  const activePreview = previewKey && imageKeys.includes(previewKey) ? previewKey : visibleImages[0] ?? null;
   const detailPreview = focusedAssetRole === 'detail' ? detailImageKeys(draft.assets).filter(key => imageKeys.includes(key)) : [];
   const unavailableImages = [...new Set(Object.values(draft.assets).flat())].filter(key => !imageKeys.includes(key));
   const sectionTitle = section === '이미지' && focusedAssetRole ? assetRoles[focusedAssetRole] : section;
@@ -252,10 +252,17 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
             {role && <div className="image-asset-order"><span>{assetRoles[role]} {position + 1}번째</span><div><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}
           </div>;
         })}</div></aside></div>
-        {focusedAssetRole && <div className="image-selected-strip" aria-label="현재 선택 이미지 순서">{draft.assets[focusedAssetRole].filter(key=>imageKeys.includes(key)).map((key,index)=><button type="button" key={key} onClick={()=>{setAssetFilter(focusedAssetRole);setPreviewKey(key);}} aria-label={`선택 이미지 ${index+1} 미리보기`}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt="" width={64} height={64}/><span>{index+1}</span>
-        </button>)}</div>}
+        {focusedAssetRole && <div className="image-selected-strip" aria-label="현재 선택 이미지 순서">{draft.assets[focusedAssetRole].map((key,index)=> imageKeys.includes(key) && <div key={key} className="image-selected-item">
+          <button type="button" onClick={()=>setPreviewKey(key)} aria-label={`선택 이미지 ${index+1} 미리보기`} aria-pressed={activePreview===key}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt="" width={64} height={64}/><span>{index+1}</span>
+          </button>
+          <div className="image-selected-actions">
+            <button type="button" aria-label={`선택 이미지 ${index+1} 앞으로`} disabled={index===0} onClick={()=>move(focusedAssetRole,index,-1)}>←</button>
+            <button type="button" aria-label={`선택 이미지 ${index+1} 뒤로`} disabled={index===draft.assets[focusedAssetRole].length-1} onClick={()=>move(focusedAssetRole,index,1)}>→</button>
+            <button type="button" aria-label={`선택 이미지 ${index+1} 제외`} onClick={()=>assign(key,'')}>×</button>
+          </div>
+        </div>)}</div>}
       </div>}
       <div className="content-editor-save"><span>{dirty ? '저장하지 않은 변경' : content.revision ? `저장 버전 ${content.revision}` : '아직 저장한 내용 없음'}{section==='이미지'&&<small>{focusedAssetRole?'현재 단계의 이미지 배치를 저장합니다. 다른 단계의 입력은 유지됩니다.':'이미지 역할과 순서를 함께 저장합니다.'}</small>}</span><button type="button" className="btn primary" disabled={busy || !dirty || conflict} onClick={() => void save()}>{busy ? '저장 중…' : editingDetail?'상세 설명·이미지 저장':section==='이미지'?'이미지 역할·순서 저장':`${section} 저장`}</button></div>
     </fieldset>}

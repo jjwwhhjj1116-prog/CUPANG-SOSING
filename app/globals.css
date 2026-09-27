@@ -294,3 +294,4 @@ html,body{background:#fff}
 .option-price-table tr[data-option-target=true]{background:#e9f9ff;outline:2px solid #2bbadc;outline-offset:-2px}.pricing-options-panel article[data-option-target=true]{border-color:#2bbadc!important;box-shadow:0 0 0 2px #2bbadc25}
 
 .intake-source-url{display:block;margin-top:8px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;color:#526079;line-height:1.5;user-select:all}.intake-queue-table input:focus-visible{outline:2px solid #2bbcdf;outline-offset:2px}
+.image-selected-item{display:flex;flex-direction:column;gap:6px;flex:none}.image-selected-item>button[aria-pressed=true]{outline:2px solid #29b9da}.image-selected-actions{display:flex;gap:3px}.image-selected-actions button{min-width:24px;min-height:28px}.image-selected-actions button:disabled{opacity:.35}

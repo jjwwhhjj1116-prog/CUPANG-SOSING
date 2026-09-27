@@ -150,3 +150,21 @@ test('saved SEO name propagates through linked label and quotation while manuall
  await saveTitle('최종 상품명');assert.equal(saved.label.productName.value,'직접 입력 중');
  h.unmount();
 });
+
+test('selected image strip reorders and removes additional images before saving exact quotation order',async()=>{
+ let saved,patch,fail=true;
+ const h=harness((_url,init,content)=>{if(init?.method!=='PATCH')return;patch=JSON.parse(init.body).patch;if(fail)return Response.json({error:'일시적 오류'},{status:503});saved=h.model.applyContentPatch(content,patch,'2026-09-27T01:00:00Z');return Response.json({content:saved});},'additional');
+ await h.start();const find=label=>nodes(h.render()).find(n=>n.props?.['aria-label']===label);
+ for(let i=1;i<=3;i++)find(`이미지 ${i} 역할`).props.onChange({target:{value:'additional'}});
+ assert.equal(find('선택 이미지 1 앞으로').props.disabled,true);assert.equal(find('선택 이미지 3 뒤로').props.disabled,true);
+ find('선택 이미지 3 앞으로').props.onClick();find('선택 이미지 1 제외').props.onClick();
+ nodes(h.render()).find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='미지정 ').props.onClick();
+ find('선택 이미지 1 미리보기').props.onClick();
+ assert.equal(nodes(h.render()).find(n=>n.type==='img'&&n.props.alt==='이미지 3 큰 미리보기').props.src,'/api/files/owner/c.png');
+ h.button('이미지 역할·순서 저장').props.onClick();await settle();assert.equal(h.notices,0);
+ assert.deepEqual(patch.assets.additional,['owner/c.png','owner/b.png']);assert.ok(find('선택 이미지 2 미리보기'));
+ fail=false;h.button('이미지 역할·순서 저장').props.onClick();await settle();assert.equal(h.notices,1);
+ const resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:{id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png","owner/c.png"]',source_price_cny:1,supply_price:1,sale_price:2,msrp:3},content:saved,options:h.load('app/product-options.ts').emptyProductOptions('p'),settings:h.load('app/workspace-settings.ts').defaultSettings});
+ assert.equal(resolved.rows[0].fields.additionalImages.value,'owner/c.png\nowner/b.png');
+ assert.ok(find('이미지 1 역할'),'removing selection does not delete source file');
+});
