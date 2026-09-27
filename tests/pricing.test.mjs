@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 function load(file, overrides = {}, mode = 'development') {
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(output, { exports, Response, process: { env: { NODE_ENV: mode } }, require: name => {
+  vm.runInNewContext(output, { exports, Response, Error, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in overrides) return overrides[name];
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/pricing') return load('app/pricing.ts');
@@ -216,4 +216,32 @@ test('nearest rounding matches the observed example while legacy ceilings and mi
  assert.equal(pricing.calculatePrice(1,{...policy,msrpMultiple:1.05,roundingMode:'nearest'}).msrp,110);
  assert.equal(pricing.pricePolicy({...policy,roundingMode:'nearest'}).roundingMode,'nearest');
  assert.throws(()=>pricing.pricePolicy({...policy,roundingMode:'invalid'}));
+});
+
+
+test('nearest rounding zero gives an actionable error without changing the rounding rule',()=>{
+ const nearest={...policy,exchangeRate:100,roundingUnit:100,roundingMode:'nearest'};
+ assert.throws(()=>pricing.calculatePrice(0.49,nearest),/반올림한 공급가가 0원/);
+ assert.equal(pricing.calculatePrice(0.5,nearest).supplyPrice,100);
+ assert.equal(pricing.calculatePrice(0.49,{...nearest,roundingUnit:1}).supplyPrice,49);
+ assert.equal(pricing.calculatePrice(0.49,{...nearest,minimumMargin:1}).supplyPrice,100);
+ assert.equal(pricing.calculatePrice(0.49,{...nearest,roundingMode:'up'}).supplyPrice,100);
+});
+
+test('zero-rounded included option prevents the entire policy save, and corrected units permit it',async()=>{
+ let writes=0;
+ const route=load('app/api/products/[id]/pricing/route.ts',{
+  '@/db/queries':{findProduct:async()=>product,applyProductPrice:async()=>{writes++;return product;}},
+  '@/db/product-options':{readProductOptions:async()=>({productId:product.id,rows:[
+   {id:'small',included:true,unitCostCny:0.49,unitsPerPack:1},
+   {id:'normal',included:true,unitCostCny:10,unitsPerPack:1},
+  ]})},
+ });
+ const nearest={...policy,roundingUnit:100,roundingMode:'nearest'};
+ const failed=await route.POST(request({...input,policy:nearest}),context);
+ assert.equal(failed.status,400);assert.equal(writes,0);
+ const body=await failed.json();assert.equal(body.code,'INVALID_OPTION_PRICE');
+ assert.deepEqual(body.options.map(row=>row.optionId),['small']);assert.match(body.options[0].error,/가격 처리 단위를 줄이거나/);
+ const fixed=await route.POST(request({...input,policy:{...nearest,roundingUnit:1}}),context);
+ assert.equal(fixed.status,200);assert.equal(writes,1);
 });

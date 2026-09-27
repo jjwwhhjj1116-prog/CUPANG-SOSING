@@ -4119,3 +4119,9 @@ AI등록 화면 확인:
 - Maximum three attempts, identical request object/body, failed response release and cooperative stop retained. Missing 429 backoff remains terminal. This helper does not invoke collection providers, AI generation or Hub submission.
 - 52 related retry/import/batch/delivery tests passed; typecheck/build/artifact/diff checks passed. Deployed 6090c40e-27e0-43b9-8002-a4d6b7941817. No browser or external product mutations.
 - Actual live1688 collection, all-category Couplus defaults, official XLSX acquisition, image AI, extension refresh and final Hub registration remain unverified.
+
+## Step 463 — Explain zero supply price after nearest rounding (2026-09-28)
+- Reviewed shared option/quotation pricing and existing observed decimal examples. Found nearest rounding can yield zero supply for low-cost items at a coarse unit; the later margin division returned an unrelated price-range error.
+- Shared calculation now rejects zero immediately with an actionable instruction to reduce the rounding unit or set minimum margin. No rounding formula or existing saved product changed. Included-option API validation continues to prevent the entire policy write until corrected.
+- 29 pricing/create/UI tests passed, including below-half/tie boundaries, minimum-margin and unit correction, legacy ceiling behavior and no-write API regression. VM tests now share Error constructor across loaded modules so actual error propagation is exercised. Typecheck, Cloudflare build/artifact and diff checks passed.
+- Deployed cb705624-003a-4845-94a4-1c415ad9cf9e. No browser or external product mutations. Actual 1688 collection, all-category Couplus defaults, official XLSX acquisition, image AI, extension refresh and final Hub registration remain unverified; this does not complete the requested workflow.

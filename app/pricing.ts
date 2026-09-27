@@ -22,6 +22,7 @@ export function calculatePrice(sourcePriceCny: number, input: PricePolicy) {
   // Fresh Couplus draft 260927024002: 5.23 * 350 + 3000 = 4830.5,
   // rounded to 4830 (actual margin 2999.5). A second ceiling changes its price.
   const supply = roundCurrency(compare(supplyTarget, minimumTarget) >= 0 ? supplyTarget : minimumTarget, p.roundingUnit, p.roundingMode);
+  if (supply === BigInt(0)) throw new Error('반올림한 공급가가 0원입니다. 가격 처리 단위를 줄이거나 최소 공급 마진을 설정해주세요.');
   const sale = roundCurrency(divide(multiply(rational(supply), hundred), subtract(hundred, decimal(p.coupangMargin))), p.roundingUnit, p.roundingMode);
   const market = roundCurrency(multiply(rational(sale), decimal(p.msrpMultiple)), p.roundingUnit, p.roundingMode);
   const margin = subtract(rational(supply), cost);
