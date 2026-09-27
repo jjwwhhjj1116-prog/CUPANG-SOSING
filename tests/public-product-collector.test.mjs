@@ -1,9 +1,10 @@
+import * as parse5 from 'parse5';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file,deps={},mode='development') {const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,Response,TextDecoder,TextEncoder,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:mode}},require:name=>deps[name]??(name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts',deps,mode))});return exports;}
+function load(file,deps={},mode='development') {const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,Response,TextDecoder,TextEncoder,AbortController,setTimeout,clearTimeout,process:{env:{NODE_ENV:mode}},require:name=>deps[name]??(name==='parse5'?parse5:name==='next/server'?{NextResponse:Response}:load(name.slice(2)+'.ts',deps,mode))});return exports;}
 const url='https://detail.1688.com/offer/813724060928.html';
 const product=()=>({'@type':'ProductGroup',url,name:'原文商品',image:['https://cbu01.alicdn.com/a.jpg'],hasVariant:[{'@type':'Product',name:'黑色',sku:'real-sku',color:'黑色',image:'https://cbu01.alicdn.com/b.jpg',offers:{'@type':'Offer',price:'25.6',priceCurrency:'CNY',eligibleQuantity:{minValue:2}}}]});
 const html=p=>`<html><script type="application/ld+json">${JSON.stringify(p)}</script></html>`;
@@ -122,5 +123,14 @@ test('add-only intake stops after import without requiring or preparing SEO, inc
    else await assert.rejects(run(),/이미지 실패.*원문 보존/);
   }
   assert.equal(requests,0);assert.equal(updates.at(-1).product_id,'saved-product');assert.ok(!progress.some(m=>m.includes('SEO')));
+ }
+});
+
+test('HTML parser accepts an unquoted JSON-LD type and ignores commented or text-only scripts',()=>{
+ const data=JSON.stringify(product());
+ assert.equal(parsePublicProduct(`<script type=application/ld+json>${data}</script>`,url).options[0].sku,'real-sku');
+ for(const wrapper of [text=>`<!-- ${text} -->`,text=>`<textarea>${text}</textarea>`,text=>`<template>${text}</template>`]){
+  assert.throws(()=>parsePublicProduct(wrapper(html(product())),url));
+  assert.equal(parsePublicProduct(wrapper(html(product()))+html(product()),url).offerId,'813724060928');
  }
 });

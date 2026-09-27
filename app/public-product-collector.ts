@@ -1,5 +1,6 @@
 import { parseCollectionRequest } from '@/app/sourcing';
 import { COLLECTION_RESULT_LIMIT, validateCollectionResult } from '@/app/collection-result';
+import { parse, type DefaultTreeAdapterMap } from 'parse5';
 
 const MAX_HTML = 2 * 1024 * 1024;
 type RecordValue = Record<string, unknown>;
@@ -12,10 +13,19 @@ function number(value: unknown): number { return typeof value === 'number' ? val
  * currency, quantity or option prices from a headline price range. */
 export function parsePublicProduct(html: string, sourceUrl: string, now = Date.now()) {
  const source = parseCollectionRequest({urls:[sourceUrl]})[0];
+ if(new TextEncoder().encode(html).byteLength>MAX_HTML)throw Error('상품 페이지 크기가 수집 한도를 초과했습니다.');
  const nodes: RecordValue[] = [];
- for(const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
-  if(!/\btype\s*=\s*(["'])application\/ld\+json\1/i.test(match[1]))continue;
-  let parsed: unknown;try{parsed=JSON.parse(match[2]);}catch{continue;}
+ const pending: DefaultTreeAdapterMap['node'][] = [parse(html)];
+ while(pending.length) {
+  const element = pending.pop()!;
+  if('childNodes' in element) for(const child of element.childNodes) pending.push(child);
+  // Parse inert HTML only. Comments, textarea text and template contents are
+  // not active metadata scripts; no seller script is executed.
+  if(!('tagName' in element) || element.tagName!=='script'
+    || element.namespaceURI!=='http://www.w3.org/1999/xhtml'
+    || element.attrs.find(attribute=>attribute.name==='type')?.value.trim().toLowerCase()!=='application/ld+json')continue;
+  const content=element.childNodes.map(child=>'value' in child?child.value:'').join('');
+  let parsed: unknown;try{parsed=JSON.parse(content);}catch{continue;}
   for(const entry of list(parsed)){const node=object(entry);nodes.push(node,...list(node['@graph']).map(object));}
  }
  const matches = nodes.filter(node => (hasType(node,'Product') || hasType(node,'ProductGroup')) && list(node.url).some(url => {

@@ -3517,3 +3517,8 @@ AI등록 화면 확인:
 -Preview uses quotationAttributeDisplay so an observed empty-code choice is shown with its label and blank storage meaning. Stored wire value remains unchanged.
 -186 integrated/schema/intake tests passed including the before-fix failing length-limit case. TypeScript/build/artifact/diff checks run for this change. No actual source/model/Hub request; full workflow remains incomplete (live1688, image translation, all-category parity, HubPOST501). Previous login request remains pending; no browser action this turn.
 -Deployed a63eb4fb-3883-476a-8c16-7ee001b05642 with Workers AI/free-plan configuration preserved.
+
+## 362 — Parse real public-product JSON-LD elements with the HTML parser (2026-09-27)
+-Reproduced valid unquoted script type being missed. Replaced script regex matching with existing parse5 AST traversal: supports normal HTML attribute syntax and only accepts real HTML JSON-LD script elements. Comments, textarea text and inert template content cannot masquerade as source product data. Direct parsing also enforces the existing 2MB UTF-8 input limit. No new dependency or network collection method.
+-Focused public/intake tests and TypeScript passed; full1077/1077 tests, production build, artifact and diff checks passed. Regression fixtures cover unquoted type and inert decoys mixed with actual product data.
+-Deployed 52fee5de-9e27-431f-be59-62dd1e477255 preserving Workers AI/free configuration. No live1688/model/Hub transaction performed. Full workflow remains incomplete: real source access, image translation, all-category parity, HubPOST501 and actual receipt protocol. Prior1688 browser safety denial remains in effect; no alternate access attempted. PreviousHub login request remains pending.
