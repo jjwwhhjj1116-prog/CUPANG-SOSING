@@ -17,3 +17,17 @@ test('observed account preset reproduces the supplied 25.6 CNY example without c
   for (const key of Object.keys(original)) if (!changed.has(key)) assert.equal(next[key], original[key], key);
   assert.equal(JSON.stringify(original), before);
 });
+
+test('unsaved workspace starts with the observed account pricing but never invents registration facts',()=>{
+ const {savedRegistrationSettings}=load('app/workspace-settings.ts');
+ const {observedCouplusPricePreset}=load('app/observed-price-preset.ts');
+ const fresh=savedRegistrationSettings(null);
+ for(const [key,value] of Object.entries(observedCouplusPricePreset))assert.equal(fresh[key],value,key);
+ for(const key of ['brand','manufacturer','importer','serviceContact','tradeType','importType','taxType'])assert.equal(fresh[key],'');
+ for(const [cost,supply,sale,msrp] of [[3.42,4200,7000,9100],[5.23,4830,8050,10470],[25.6,17920,29870,38830]]){
+  const value=calculatePrice(cost,fresh);assert.deepEqual([value.supplyPrice,value.salePrice,value.msrp],[supply,sale,msrp]);
+ }
+ const old=savedRegistrationSettings({exchangeRate:190,supplyMargin:40,coupangMargin:35,roundingUnit:100});
+ assert.equal(old.exchangeRate,190);assert.equal(old.roundingMode,'up');
+ assert.equal(savedRegistrationSettings(undefined).exchangeRate,350);
+});

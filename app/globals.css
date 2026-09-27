@@ -345,3 +345,7 @@ html,body{background:#fff}
 .membership-card label { display:grid; gap:8px; font-size:14px; }
 .membership-card input { border:1px solid var(--line); border-radius:7px; padding:10px; width:100%; }
 .membership-page button:disabled { cursor:not-allowed; opacity:.5; }
+.settings-margin { min-width:0; margin:0; padding:12px; border:1px solid var(--line); border-radius:8px; }
+.settings-margin legend { padding:0 5px; font-size:13px; font-weight:600; }
+.settings-margin input[type=range] { width:100%; margin:12px 0; accent-color:#2cb9de; }
+.settings-margin small { display:block; color:var(--muted); font-size:12px; }

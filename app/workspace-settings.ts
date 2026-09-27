@@ -9,9 +9,15 @@ export const defaultSettings = {
   topImageEnabled: false, bottomImageEnabled: false, topImageKey: '', bottomImageKey: '', translationPrompt: '', hiddenAttributes: false,
 };
 export type WorkspaceSettings = typeof defaultSettings;
+// Initial values for this deployment, matched to the user's observed Couplus
+// account (2026-09-27). Existing saved payloads retain legacy missing-field rules.
+export const newWorkspaceSettings: WorkspaceSettings = {
+  ...defaultSettings, exchangeRate:350, supplyMargin:50, coupangMargin:40,
+  roundingUnit:10, roundingMode:'nearest', removeBackground:false,
+};
 /** Runtime registration facts must come from an explicit saved payload, not UI examples. */
 export function savedRegistrationSettings(input: unknown): WorkspaceSettings {
-  const settings = input === null || input === undefined ? { ...defaultSettings } : validateSettings(input);
+  const settings = input === null || input === undefined ? { ...newWorkspaceSettings } : validateSettings(input);
   const stored = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
   for (const key of ['brand', 'manufacturer', 'importer', 'serviceContact', 'tradeType', 'importType', 'taxType'] as const) {
     if (!Object.hasOwn(stored, key)) settings[key] = '';

@@ -15,7 +15,7 @@ test('unsaved registration examples never become promoted product label facts',(
  const blank=savedRegistrationSettings(null);
  const promoted=prepare('owner',{...job,context:{...job.context,settings:blank}},result,'p',now);
  for(const key of ['manufacturer','importer','contact'])assert.equal(promoted.content.label[key].value,'');
- assert.equal(promoted.policy.exchangeRate,settings.exchangeRate);
+ assert.equal(promoted.policy.exchangeRate,350);assert.equal(promoted.policy.roundingMode,'nearest');
  assert.equal(validateSettings(blank).tradeType,'');assert.equal(validateSettings(blank).importType,'');
  assert.throws(()=>validateSettings({...blank,tradeType:'invalid'}));assert.throws(()=>validateSettings({...blank,importType:'invalid'}));
  const current={...settings,brand:'later',manufacturer:'later'};
