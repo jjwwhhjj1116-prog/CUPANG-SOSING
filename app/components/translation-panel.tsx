@@ -11,7 +11,7 @@ import { translationLabelAdoption, type TranslationLabelMapping } from '@/app/tr
 import { TranslationLabelMappingEditor } from '@/app/components/translation-label-mapping';
 import { TranslationBatchPreview } from '@/app/components/translation-batch-preview';
 import { TranslationIntegratedPreview } from '@/app/components/translation-integrated-preview';
-import { runReviewedTranslation } from '@/app/reviewed-translation';
+import { runReviewedTranslation, translationReviewExpired } from '@/app/reviewed-translation';
 
 type Props = { productId: string; version: string; title: string; onContentSaved?: () => void };
 type RequestContext = { categoryId: string; categoryPath: string[]; features: string; keywords: string; capturedAt: string };
@@ -77,6 +77,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
   }
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || (content && job.contentRevision !== content.revision)));
+  const expired = Boolean(job && translationReviewExpired(job));
   const applyCollectedSource = useCallback((value: CollectedSource) => {
     setRequestContext(value.requestContext??null);setGuidance({features:value.requestContext?.features??'',keywords:value.requestContext?.keywords??''});setIncludeGuidance(true);
     setSourceTitle(value.title);setDescription(value.description);setCollectedAttributes(value.attributes??[]);setIncludeCollectedAttributes(true);
@@ -142,7 +143,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     finally { finishRequest(controller); }
   }
   async function writeReviewedDraft() {
-    if (!job || stale || (job.status === 'prepared' && !confirmed)) return;
+    if (!job || stale || expired || (job.status === 'prepared' && !confirmed)) return;
     const controller=beginRequest();if(!controller)return;
     setBusy(true);setError('');setNotice('SEO 초안 작성 중…');
     try {
@@ -247,8 +248,10 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         <p>전송 범위: 아래 상품명·설명·속성 원문 및 포함한 SEO 참고 메모. 수신 서비스: {job.review.destination}. 승인 유효 기한: {new Date(job.review.expiresAt).toLocaleString()}</p>
         <details><summary>실제로 전송할 원문 확인</summary><pre>{JSON.stringify(job.review.source, null, 2)}</pre></details>
         {stale && <p className="form-error">이 요청 이후 상품 또는 콘텐츠가 변경되었습니다. 새 유료 실행에는 새 검토 요청이 필요합니다. 기존 결과는 확인할 수 있습니다.</p>}
-        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || stale} />위 모델·원문·유료 API 요청 1회를 검토하고 승인합니다.</label><button type="button" className="btn blue" disabled={busy || stale || !confirmed} onClick={() => void writeReviewedDraft()}>SEO 초안 작성</button></>}
-        {job.status === 'approved' && <button type="button" className="btn blue" disabled={busy || stale} onClick={() => void writeReviewedDraft()}>승인한 SEO 초안 작성 계속</button>}
+        {expired&&!stale&&<><p>검토 기한이 지났습니다. 같은 원문·옵션으로 검토 기한을 갱신할 수 있습니다.</p><button type="button" className="btn" disabled={busy||!view.configuration.configured} onClick={()=>void action({action:'prepare',expectedVersion:version,idempotencyKey:crypto.randomUUID(),source:job.review.source})}>같은 원문으로 검토 기한 갱신</button></>}
+        {stale&&<button type="button" className="btn" disabled={busy||!view.configuration.configured} onClick={()=>void action({action:'prepare-collected'})}>현재 상품 원문으로 SEO 요청 다시 준비</button>}
+        {job.status === 'prepared' && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || stale || expired} />위 모델·원문·유료 API 요청 1회를 검토하고 승인합니다.</label><button type="button" className="btn blue" disabled={busy || stale || expired || !confirmed} onClick={() => void writeReviewedDraft()}>SEO 초안 작성</button></>}
+        {job.status === 'approved' && <button type="button" className="btn blue" disabled={busy || stale || expired} onClick={() => void writeReviewedDraft()}>승인한 SEO 초안 작성 계속</button>}
         {job.status === 'running' && <p>이미 시작된 요청을 다시 호출하지 않습니다. 장시간 상태가 유지되면 OpenAI 사용량과 서버 실행 이력을 확인해주세요.</p>}
         {job.error && <p role="alert">{job.error.message}{job.error.mayHaveBeenCharged ? ' 비용이 발생했을 수 있습니다.' : ''}</p>}
         {job.result && <>

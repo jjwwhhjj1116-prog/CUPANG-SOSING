@@ -9,10 +9,10 @@ const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...no
 const label=t=>Array.isArray(t)?t.map(label).join(''):typeof t==='string'||typeof t==='number'?String(t):'';
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(r=>setImmediate(r));};
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
-function harness(handler,status='completed',failInitial=false,emptyJobs=false,jobVersion='v',jobContentRevision=1){
+function harness(handler,status='completed',failInitial=false,emptyJobs=false,jobVersion='v',jobContentRevision=1,expiresAt='2099-09-24'){
  const slots=[],effects=[],cleanup=[],calls=[];let index=0,first=true,closed=false,late=0,saved=0;
  const content={revision:1,seo:Object.fromEntries(['title','description','keywords'].map(k=>[k,{value:k==='keywords'?[]:'manual'}]))};
- const job={id:'j',productId:'p',status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt:'2026-09-24',source:{}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
+ const job={id:'j',productId:'p',status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt,source:{title:'검토된 원문',description:'저장 설명',attributes:[],provenance:'manual',reference:'수집 원문'}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
  const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,issues:[]}};
  const hooks={useCallback:fn=>fn,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  let initial=0;
@@ -31,6 +31,23 @@ const execute='승인한 SEO 초안 작성 계속';
 const adopt='검토한 초안을 이 항목에 적용 · 기존 내용 교체';
 const adoptOptions='검토한 옵션 번역 적용 · 미번역 이름·수집 속성';
 
+test('expired review renews the exact reviewed source without overwriting edited form or executing AI',async()=>{
+ const pending=deferred();const h=harness(()=>pending.promise,'prepared',false,false,'v',1,'2000-01-01');await settle();
+ nodes(h.render()).find(n=>n.type==='input'&&n.props.maxLength===1000).props.onChange({target:{value:'작성 중인 별도 입력'}});
+ const disabled=nodes(h.render()).find(n=>n.type==='button'&&label(n.props.children)==='SEO 초안 작성');assert.equal(disabled.props.disabled,true);disabled.props.onClick();assert.equal(h.calls.length,0);
+ const renew=h.button('같은 원문으로 검토 기한 갱신');renew();renew();assert.equal(h.calls.length,1);
+ const request=JSON.parse(h.calls[0].init.body);assert.equal(request.action,'prepare');assert.equal(request.expectedVersion,'v');assert.equal(request.source.title,'검토된 원문');assert.equal(request.source.description,'저장 설명');
+ pending.resolve(Response.json({job:{id:'renewed',productId:'p',status:'prepared',productVersion:'v',contentRevision:1,review:{model:'mock',inputCharacters:10,maxOutputTokens:1000,expiresAt:'2099-01-01',source:request.source}}}));await settle();
+ assert.equal(h.calls.length,1);assert.equal(h.saved,0);assert.match(JSON.stringify(h.render()),/작성 중인 별도 입력/);
+});
+
+test('stale review prepares from current saved product without copying an old client source',async()=>{
+ const h=harness(async()=>Response.json({error:'changed'},{status:409}),'prepared',false,false,'old');await settle();
+ // Old-version mounting also tries a read-only prefill. Only examine the action.
+ const before=h.calls.length;h.button('현재 상품 원문으로 SEO 요청 다시 준비')();await settle();
+ assert.equal(h.calls.length,before+1);assert.deepEqual(JSON.parse(h.calls.at(-1).init.body),{action:'prepare-collected'});assert.equal(h.saved,0);
+});
+
 test('reviewed SEO button continues approval into execution while locking concurrent clicks',async()=>{
  const pending=deferred();
  const h=harness(async(_url,init,{job})=>JSON.parse(init.body).action==='approve'?pending.promise:Response.json({job:{...job,status:'running'}}),'prepared');await settle();
@@ -38,7 +55,7 @@ test('reviewed SEO button continues approval into execution while locking concur
  checkbox.props.onChange({target:{checked:true}});
  const click=h.button('SEO 초안 작성');click();click();assert.equal(h.calls.length,1);
  const approvalBody=JSON.parse(h.calls[0].init.body);assert.equal(approvalBody.action,'approve');
- pending.resolve(Response.json({job:{id:'j',productId:'p',status:'approved',productVersion:'v',contentRevision:1,review:{}}}));await settle();
+ pending.resolve(Response.json({job:{id:'j',productId:'p',status:'approved',productVersion:'v',contentRevision:1,review:{expiresAt:'2099-09-24'}}}));await settle();
  assert.deepEqual(h.calls.map(call=>JSON.parse(call.init.body).action),['approve','execute']);
  assert.match(JSON.stringify(h.render()),/SEO 초안을 작성하고 있습니다/);assert.equal(h.saved,0);
 });

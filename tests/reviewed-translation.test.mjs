@@ -5,7 +5,14 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/reviewed-translation.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error});
 const run=exports.runReviewedTranslation;
-const job={id:'job',productId:'p',productVersion:'v',contentRevision:1,status:'prepared',review:{fingerprint:'review'}};
+const job={id:'job',productId:'p',productVersion:'v',contentRevision:1,status:'prepared',review:{fingerprint:'review',expiresAt:'2099-01-01T00:00:00Z'}};
+
+test('expired or missing review deadline makes no approval or execution request',async()=>{
+ for(const status of ['prepared','approved'])for(const expiresAt of ['2000-01-01T00:00:00Z','invalid',undefined]){
+  let calls=0;await assert.rejects(()=>run('p',{...job,status,review:{...job.review,expiresAt}},{signal:new AbortController().signal,onJob:()=>{},fetcher:async()=>{calls++;}}),/기한/);assert.equal(calls,0);
+ }
+ assert.equal(exports.translationReviewExpired({...job,status:'completed',review:{expiresAt:'2000-01-01'}}),false);
+});
 test('one reviewed action acknowledges approval then executes exactly once',async()=>{
  const calls=[],saved=[];
  const result=await run('p',job,{signal:new AbortController().signal,onJob:j=>saved.push(j.status),fetcher:async(url,init)=>{assert.equal(url,'/api/products/p/translation');const body=JSON.parse(init.body);calls.push(body);return Response.json({job:{...job,status:body.action==='approve'?'approved':'completed'}});}});
