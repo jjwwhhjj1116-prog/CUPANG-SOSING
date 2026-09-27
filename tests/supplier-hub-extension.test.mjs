@@ -17,7 +17,9 @@ const image=new Uint8Array([137,80,78,71]);
 async function fixture(change=()=>{}){
   const digest=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
   const plan={format:'sourceflow-supplier-hub-upload-plan-v1',destination:'https://supplier.coupang.com/qvt/registration',categoryId:'80719',quotation:{file:{filename:title,byteLength:workbook.length,sha256:digest}},productImages:[{archivePath:'assets/photo.png',filename:'photo.png'}],labelImages:[{archivePath:'assets/label.png',filename:'label.png'}],missingLabels:[]};
-  const files=[{name:title,data:workbook},{name:'assets/photo.png',data:image},{name:'assets/label.png',data:image},{name:'assets/unused.png',data:image}];change(plan,files);
+  plan.productId='product';plan.inputFingerprint='a'.repeat(64);
+  const review={format:'sourceflow-quotation-review-v1',productId:'product',categoryId:'80719',inputFingerprint:plan.inputFingerprint,submissionReady:false,transport:'not-connected',includedOptions:1,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]};
+  const files=[{name:title,data:workbook},{name:'assets/photo.png',data:image},{name:'assets/label.png',data:image},{name:'assets/unused.png',data:image},{name:'submission-review.json',data:JSON.stringify(review)}];change(plan,files);
   return zip([...files,{name:'supplier-hub-upload-plan.json',data:JSON.stringify(plan)}]);
 }
 test('app-produced ZIP resolves exact workbook and only manifest-referenced attachments',async()=>{
@@ -32,6 +34,16 @@ test('corrupted, truncated and inconsistent ZIP entries are rejected',async()=>{
 });
 test('manifest digest, image names, completeness and destination must match',async()=>{
   for(const change of [p=>p.quotation.file.sha256='b'.repeat(64),p=>p.quotation.file.byteLength++,p=>p.destination='https://example.com',p=>p.productImages[0].filename='different.png',p=>p.missingLabels.push({optionId:'one'}),p=>p.labelImages=[],(p,f)=>f.splice(2,1),p=>p.productImages.push({...p.productImages[0]}),p=>p.quotation.file.filename='quotation.csv'])await assert.rejects(()=>fixture(change).then(prepareAttachments));
+});
+
+test('manual ZIP cannot bypass review errors or mix another product/category/fingerprint',async()=>{
+ const changeReview=patch=>(plan,files)=>{const file=files.find(f=>f.name==='submission-review.json');file.data=JSON.stringify({...JSON.parse(file.data),...patch});};
+ const issue={kind:'error',code:'EXCEL_FIELD_UNMAPPED',message:'필수 열 미연결',optionId:null,optionLabel:'견적서 양식',fieldId:'model'};
+ for(const patch of [{productId:'other'},{categoryId:'999'},{inputFingerprint:'b'.repeat(64)},{errorCount:1,issues:[issue]},{errorCount:1,omittedIssueCount:1},{issues:[issue]},{includedOptions:0},{submissionReady:true},{reviewCount:2},{issues:[{kind:'review'}]}])await assert.rejects(()=>fixture(changeReview(patch)).then(prepareAttachments));
+ await assert.rejects(()=>fixture((p,files)=>files.splice(files.findIndex(f=>f.name==='submission-review.json'),1)).then(prepareAttachments),/검사 결과/);
+ await assert.rejects(()=>fixture(p=>p.inputFingerprint='b'.repeat(64)).then(prepareAttachments),/식별값/);
+ const review={...issue,kind:'review',code:'EVIDENCE_REVIEW'};
+ assert.ok(await prepareAttachments(await fixture(changeReview({reviewCount:2,omittedIssueCount:1,issues:[review]}))));
 });
 
 function dom({duplicate=false,existing=false,visibleFilename=false,disabled=false,detach=false,wrong=false}={}){

@@ -13,7 +13,7 @@ async function loadPending(){
     const saved=await pendingPackage('get');if(!saved||version!==sequence)return;
     if(!Number.isFinite(saved.createdAt)||Date.now()-saved.createdAt>15*60*1000){await pendingPackage('delete',saved.fingerprint);status.textContent='준비한 견적서가 만료되었습니다. 앱에서 다시 준비해주세요.';return;}
     const result=await prepareAttachments(Uint8Array.from(atob(saved.base64),c=>c.charCodeAt(0)));
-    if(result.categoryId!==saved.categoryId||result.quotation[0].name!==`YOOFAM-${saved.fingerprint}.xlsx`)throw Error('앱에서 검토한 견적서와 파일이 일치하지 않습니다.');
+    if(result.productId!==saved.productId||result.categoryId!==saved.categoryId||result.quotation[0].name!==`YOOFAM-${saved.fingerprint}.xlsx`)throw Error('앱에서 검토한 견적서와 파일이 일치하지 않습니다.');
     if(version!==sequence)return;
     prepared=result;pendingFingerprint=saved.fingerprint;pendingExpires=saved.createdAt+15*60*1000;
     packageIdentity={origin:saved.origin,productId:saved.productId,categoryId:saved.categoryId,fingerprint:saved.fingerprint};

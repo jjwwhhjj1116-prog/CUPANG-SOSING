@@ -38,6 +38,18 @@ export async function prepareAttachments(bytes) {
   if(plan.format!=='sourceflow-supplier-hub-upload-plan-v1'||plan.destination!=='https://supplier.coupang.com/qvt/registration'||typeof plan.categoryId!=='string'||!plan.categoryId.trim())throw Error('상품 카테고리와 업로드 준비 목록을 확인해주세요.');
   const quote=plan.quotation?.file;
   if(!quote||!/^YOOFAM-[a-f0-9]{64}\.xlsx$/.test(quote.filename))throw Error('공식 Excel 양식으로 작성한 XLSX가 필요합니다. CSV/TSV는 전송하지 않습니다.');
+  if(typeof plan.productId!=='string'||!plan.productId.trim()||plan.productId.length>200||typeof plan.inputFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(plan.inputFingerprint)||quote.filename!==`YOOFAM-${plan.inputFingerprint}.xlsx`)throw Error('상품과 견적서 파일의 식별값이 일치하지 않습니다.');
+  const reviewBytes=files.get('submission-review.json');
+  if(!reviewBytes||reviewBytes.length>2*1024*1024)throw Error('견적서 검사 결과가 없습니다. 앱에서 다시 검사하고 ZIP을 준비해주세요.');
+  const review=JSON.parse(decoder.decode(reviewBytes));
+  if(!review||review.format!=='sourceflow-quotation-review-v1'||review.productId!==plan.productId||review.categoryId!==plan.categoryId||review.inputFingerprint!==plan.inputFingerprint||review.submissionReady!==false||review.transport!=='not-connected'||!Number.isSafeInteger(review.includedOptions)||review.includedOptions<1||review.includedOptions>200||!['errorCount','reviewCount','omittedIssueCount'].every(key=>Number.isSafeInteger(review[key])&&review[key]>=0)||!Number.isSafeInteger(review.errorCount+review.reviewCount)||!Array.isArray(review.issues)||review.issues.length>1000)throw Error('검사 결과가 현재 상품·카테고리·견적서와 일치하지 않습니다.');
+  let errors=0,reviews=0;
+  for(const issue of review.issues){
+    if(!issue||!['error','review'].includes(issue.kind)||typeof issue.code!=='string'||typeof issue.message!=='string'||typeof issue.optionLabel!=='string'||(issue.optionId!==null&&typeof issue.optionId!=='string')||(issue.fieldId!==null&&typeof issue.fieldId!=='string'))throw Error('검사 항목 형식을 확인하지 못했습니다.');
+    if(issue.kind==='error')errors++;else reviews++;
+  }
+  if(errors>review.errorCount||reviews>review.reviewCount||review.errorCount+review.reviewCount-review.issues.length!==review.omittedIssueCount)throw Error('검사 항목 수가 일치하지 않습니다.');
+  if(review.errorCount>0)throw Error(`견적서에 수정이 필요한 오류가 ${review.errorCount}개 있습니다. 앱에서 수정 후 다시 준비해주세요.`);
   const data=files.get(quote.filename);
   if(!data||data.length!==quote.byteLength||!/^\w{64}$/.test(quote.sha256)||data[0]!==0x50||data[1]!==0x4b)throw Error('견적서 첨부 정보가 일치하지 않습니다.');
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),b=>b.toString(16).padStart(2,'0')).join('');
@@ -53,6 +65,6 @@ export async function prepareAttachments(bytes) {
   };
   const productImages=group(plan.productImages),labelImages=group(plan.labelImages);
   if(!labelImages.length||!Array.isArray(plan.missingLabels)||plan.missingLabels.length)throw Error('모든 포함 옵션의 표시사항 라벨을 연결해주세요.');
-  return {categoryId:plan.categoryId,quotation:[file(quote.filename,data)],productImages,labelImages};
+  return {productId:plan.productId,categoryId:plan.categoryId,quotation:[file(quote.filename,data)],productImages,labelImages};
 }
 function encodeBase64(bytes){let text='';for(let i=0;i<bytes.length;i+=16384)text+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(text);}
