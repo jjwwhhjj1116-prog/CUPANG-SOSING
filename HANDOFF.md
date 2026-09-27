@@ -3621,3 +3621,11 @@ AI등록 화면 확인:
 - 33 integration/intake/SEO/batch tests passed, including completed-before-apply interruption, one model generation total, immutable job history, changed content/noninitial job/changed original rejection, DB race rejection and preserved edited cost. TypeScript/build/artifact/diff checks passed.
 - Live1688 collection, actual image translation, Hub upload/receipt adapter501 and all-category parity remain unfinished. Couplus source comparison remains login-dependent; prior static CLI evidence indicates its own server getProductInfo endpoint, not public HTML equivalence. No live external transaction verified this turn.
 - Deployment: Current Version ID: a66ee54d-4d15-40b0-8191-56b51c6979ba
+
+## Step 377 — complete source-attribute coverage for newly generated drafts (2026-09-27)
+- Found validateTranslationDraft allowed omissions of source attributes. Initial intake can then move to option-only batches, silently losing common seller facts from category/label drafting.
+- New reviews use sourceflow-translation-v5: ask for exactly one result per input sourceIndex, no merged/omitted attributes; preserve ambiguous original wording with a warning rather than inventing facts. Source field indexes, duplicate rejection, quotation keyword limits and unsupported-number validation remain enforced.
+- v5 rejects missing coverage with INCOMPLETE_SOURCE_ATTRIBUTES before accepting a completed result. Does not retry provider calls or claim missing data is complete. Existing v1-v4 saved reviews retain their original rules and instructions.
+- 33 translation/source/intake integration tests passed, including partial/empty results, reordered complete results, zero-input attributes, legacy compatibility and one-call provider rejection; tsc/build/artifact/diff passed.
+- No live external transaction this turn. Actual1688 collection, image translation, Supplier Hub upload/receipt adapter501 and all-category parity still unfinished. Previous Couplus login request remains unanswered; do not claim full workflow completion.
+- Deployment: Current Version ID: c188ed43-8371-4c83-b4b3-c4efc6a96927
