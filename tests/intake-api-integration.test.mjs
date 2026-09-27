@@ -9,7 +9,7 @@ import {memoryDatabase,runtimeDDL} from '../scripts/check-db-schema.mjs';
 
 // Real route handlers and persistence; only auth, Alibaba and R2 are fixtures.
 // This is not evidence of a live Alibaba or Supplier Hub transaction.
-test('URL intake persists a category-scoped editable quotation and resumes without replacing edits',async()=>{
+for(const automatic of [false,true])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...v){args=v;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const result=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
  const objects=new Map(),network=[],calls=[],cache=new Map();
@@ -29,7 +29,7 @@ test('URL intake persists a category-scoped editable quotation and resumes witho
   const context={category:{id:'cat',name:'바스켓',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],mappings:[],template:null},settings,features:'',keywords:'수납,바스켓',capturedAt:now};
   sqlite.prepare('INSERT INTO collection_jobs VALUES (?,?,?,?,?,?,?,?)').run('job','owner','813724060928',sourceUrl,'price','awaiting_connector',now,now);
   sqlite.prepare('INSERT INTO collection_context VALUES (?,?)').run('job',JSON.stringify(context));
-  const fetcher=async(path,init)=>{calls.push(path);if(path.endsWith('/translation'))return load('app/api/products/[id]/translation/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});const match=/^\/api\/collection-jobs\/job\/(collect|result|capacity|product|images)$/.exec(path);assert.ok(match,`unexpected request ${path}`);const response=await load(`app/api/collection-jobs/[id]/${match[1]}/route.ts`)[init?.method??'GET'](new Request('https://app.test'+path,init),{params:Promise.resolve({id:'job'})});if(!response.ok)assert.fail(`${path}: ${response.status} ${await response.text()}`);return response;};
+  const fetcher=async(path,init)=>{calls.push(path);if(path.endsWith('/translation-apply'))return load('app/api/products/[id]/translation-apply/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});if(path.endsWith('/translation'))return load('app/api/products/[id]/translation/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});const match=/^\/api\/collection-jobs\/job\/(collect|result|capacity|product|images)$/.exec(path);assert.ok(match,`unexpected request ${path}`);const response=await load(`app/api/collection-jobs/[id]/${match[1]}/route.ts`)[init?.method??'GET'](new Request('https://app.test'+path,init),{params:Promise.resolve({id:'job'})});if(!response.ok)assert.fail(`${path}: ${response.status} ${await response.text()}`);return response;};
   let latest;const run=async()=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner','job'),{signal:new AbortController().signal,fetcher,onJob:job=>{latest=job;},onProgress:()=>{}});
   // The add-only goal must work with no model credentials and leave no AI job.
   sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('collect','job');
@@ -41,6 +41,22 @@ test('URL intake persists a category-scoped editable quotation and resumes witho
   assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,0);
   sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('price','job');
   deps['cloudflare:workers'].env.OPENAI_API_KEY='fixture-key';
+  if(automatic){
+   const bindings=deps['cloudflare:workers'].env;delete bindings.OPENAI_API_KEY;
+   bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';bindings.SOURCEFLOW_TEXT_MODEL='@cf/meta/llama-3.1-8b-instruct';
+   let generations=0;bindings.AI={run:async(model,input)=>{generations++;assert.equal(model,bindings.SOURCEFLOW_TEXT_MODEL);const source=JSON.parse(input.messages[1].content);assert.equal(source.category.id,'80719');return {response:{title:'자동 생성 수납 상품',description:'검토용 설명',keywords:['수납'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:'옵션',value:pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};}};
+   assert.match(await run(),/SEO·옵션 초안을 생성해 반영/);assert.equal(generations,1);
+   const content=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
+   assert.equal(content.seo.title.value,'자동 생성 수납 상품');assert.equal(content.label.productName.value,'자동 생성 수납 상품');
+   const rows=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload).rows;
+   assert.equal(rows[0].translatedName,'검정 옵션');assert.equal(rows[0].color,'검정');assert.equal(rows[0].unitCostCny,25.6);
+   const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
+   const view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,'자동 생성 수납 상품');assert.equal(row.fields.supplyPrice.value,'17920');
+   const edit=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'35000'}]})}),qc);assert.equal(edit.status,200);
+   assert.match(await run(),/기존 SEO 생성 이력/);assert.equal(generations,1);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
+   const after=await (await qr.GET(new Request(qu),qc)).json();assert.equal(after.resolved.rows.find(r=>r.optionId==='collected-1').fields.salePrice.value,'35000');
+   assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');return;
+  }
   assert.match(await run(),/SEO 요청을 준비/);assert.ok(latest.product_id);const seo=sqlite.prepare('SELECT * FROM translation_jobs').get();assert.equal(seo.status,'prepared');const review=JSON.parse(seo.review);assert.equal(review.source.category.id,'80719');assert.equal(review.source.title,'原文商品');assert.equal(review.source.guidance.keywords,'수납,바스켓');assert.ok(review.source.attributes.some(pair=>pair.name==='option:collected-1'));assert.equal(seo.result,null);
   await run();assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
   const prepareRoute=load('app/api/products/[id]/translation/route.ts');

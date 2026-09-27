@@ -81,3 +81,10 @@ export async function finishTranslationJob(ownerId: string, productId: string, i
     .bind(status, result ? JSON.stringify(result) : null, error ? JSON.stringify(error) : null, now, ownerId, productId, id, claim).first<Row>();
   return row ? job(row) : null;
 }
+
+/** One intake generation per product, independent of later edit revisions. */
+export async function findIntakeTranslation(ownerId:string,productId:string) {
+ const db=await database();
+ const existing=await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?').bind(ownerId,productId,'intake-auto-v1').first<Row>();
+ return existing?job(existing):null;
+}

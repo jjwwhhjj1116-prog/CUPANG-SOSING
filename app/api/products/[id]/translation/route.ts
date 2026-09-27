@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
-import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob } from '@/db/translation-jobs';
+import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation } from '@/db/translation-jobs';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
@@ -41,7 +41,12 @@ export async function POST(request: Request, context: Context) {
     const product = await findProduct(owner, id); if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
     const config = requireTranslationConfig(env as TranslationSecrets);
     if (body.action === 'prepare-collected') {
-      if (Object.keys(body).some(key => key !== 'action')) throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
+      if (Object.keys(body).some(key => !['action','intake'].includes(key)) || (body.intake !== undefined && body.intake !== true)) throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
+      const autoDraft = body.intake === true && config.provider === 'workers-ai';
+      if(autoDraft){
+        const prior=await findIntakeTranslation(owner,id);
+        if(prior)return json({job:prior,replayed:true,autoDraft:prior.productVersion===product.updated_at,intakePreserved:prior.productVersion!==product.updated_at,configuration:configuration()});
+      }
       const { findProductCollection } = await import('@/db/collection-products');
       const { readCollectionResult } = await import('@/db/collection-results');
       const { findCollectionJob } = await import('@/db/collection-jobs');
@@ -59,14 +64,14 @@ export async function POST(request: Request, context: Context) {
       const previous = (await listTranslationJobs(owner, id)).find(item => item.productVersion === product.updated_at && item.contentRevision === content.revision &&
         item.review.destination === translationDestination(config) && item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
         (!['prepared', 'approved'].includes(item.status) || Date.parse(item.review.expiresAt) > Date.now()));
-      if (previous) return json({ job: previous, replayed: true, remainingOptions, configuration: configuration() });
+      if (previous && !autoDraft) return json({ job: previous, replayed: true, remainingOptions, configuration: configuration() });
       const review = await prepareTranslationReview(source, config);
       const job: TranslationJob = { id: crypto.randomUUID(), productId: id, productVersion: product.updated_at, contentRevision: content.revision,
         status: 'prepared', review, result: null, error: null, createdAt: new Date().toISOString(), approvedAt: null, startedAt: null, finishedAt: null };
       // Reopening/retrying the same source does not create another paid job.
-      const saved = await createTranslationJob(owner, job, `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
+      const saved = await createTranslationJob(owner, job, autoDraft ? 'intake-auto-v1' : `collected-${requestFingerprint}-${Math.floor(Date.now() / 900000)}`, requestFingerprint);
       if (!saved || saved.conflict) return conflict();
-      return json({ job: saved.job, replayed: saved.replayed, remainingOptions, configuration: configuration() }, saved.replayed ? 200 : 201);
+      return json({ job: saved.job, replayed: saved.replayed, remainingOptions, autoDraft, configuration: configuration() }, saved.replayed ? 200 : 201);
     }
     if (body.action === 'prepare') {
       if (Object.keys(body).some(key => !['action', 'source', 'expectedVersion', 'idempotencyKey'].includes(key)) || typeof body.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.idempotencyKey)) throw new TranslationError('INVALID_REQUEST', '번역 검토 요청 항목과 중복 방지 키를 확인해주세요.');
