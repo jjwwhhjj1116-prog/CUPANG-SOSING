@@ -20,8 +20,8 @@ function identity(value: unknown): string {
   throw Error('상품번호 또는 SKU 번호를 확인하지 못했습니다.');
 }
 
-/** Candidate mapping, not enabled in production until verified against an owned
- * API response. Only explicit SKU prices are supported; headline/tier/consignment
+/** Mapping remains pending live verification against an owned API response.
+ * Only explicit SKU prices are supported; headline/tier/consignment
  * prices must not silently replace them. No translated/generated facts here. */
 export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = Date.now()) {
   const source = parseCollectionRequest({ urls: [sourceUrl] })[0];

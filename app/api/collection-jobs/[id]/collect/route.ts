@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
+import { env } from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findCollectionJob } from '@/db/collection-jobs';
 import { readCollectionResult, storeCollectionResult } from '@/db/collection-results';
 import { collectPublicProduct } from '@/app/public-product-collector';
+import { collectionProvider } from '@/app/collection-provider';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function POST(request:Request,context:{params:Promise<{id:string}>}) {
  try {
@@ -12,7 +14,15 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   if(job.status==='cancelled')return reply({error:'취소된 수집 요청입니다.'},409);
   const existing=await readCollectionResult(owner,id);
   if(existing)return reply({jobId:id,offerId:job.offer_id,receipt:existing});
-  let result;try{result=await collectPublicProduct(job.source_url,{signal:request.signal});}
+  let provider;
+  try{provider=collectionProvider(env as unknown as Record<string,unknown>);}
+  catch{return reply({error:'1688 상품조회 API의 서버 설정을 확인해야 합니다.',code:'SOURCE_CONFIGURATION_REQUIRED'},503);}
+  let result;try{
+   if(provider.kind==='alibaba-api'){
+    const {collectAlibabaProduct}=await import('@/app/alibaba-product-collector');
+    result=await collectAlibabaProduct(job.source_url,provider.credentials,{signal:request.signal});
+   }else result=await collectPublicProduct(job.source_url,{signal:request.signal});
+  }
   catch(cause){return reply({error:cause instanceof Error?cause.message:'상품 페이지를 읽지 못했습니다.',code:'SOURCE_NOT_COLLECTED'},422);}
   if(result.offerId!==job.offer_id)return reply({error:'요청 상품번호가 일치하지 않습니다.'},409);
   const saved=await storeCollectionResult(owner,id,result);
