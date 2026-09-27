@@ -1,0 +1,31 @@
+# YOOFAM PLUS Supplier Hub 첨부 연결 — 개발 버전
+
+YOOFAM PLUS가 생성한 **견적서 + 첨부 ZIP**을 읽어 현재 Supplier Hub 대량 등록 탭의 Excel, 상품 이미지, 라벨 입력에 파일을 전달합니다. 공식 API 주소를 추측하거나 로그인 쿠키를 복사하지 않습니다.
+
+## 현재 범위
+
+- 앱의 원본 비압축 ZIP 형식, 파일 CRC, 견적서 SHA-256, 목록과 파일명 일치를 확인합니다.
+- XLSX만 견적서로 전달하며 포함 옵션에 라벨이 빠져 있으면 중단합니다.
+- 현재 창의 활성 `https://supplier.coupang.com/qvt/registration` 탭에서만 실행합니다.
+- 실제 화면에서 관찰한 구역 제목으로 입력을 찾습니다. 기존 첨부, 중복 구역, 비활성 입력이 있으면 변경 전에 중단합니다.
+- 파일 선택의 `change` 이벤트를 전달합니다. 이는 Supplier Hub의 서버 업로드 성공을 의미하지 않습니다.
+- 부분 실패 또는 결과 불명 시 재시도하지 않습니다. 입력이 변경되었을 수 있으므로 실제 첨부 목록을 먼저 확인해야 합니다.
+- 약관 동의, 법적 서류 해당없음 선택, 파일 검증, 최종 등록, 접수번호 저장은 **아직 구현하지 않았습니다**.
+- 웹페이지의 등록전송 버튼과 직접 연결되지 않았습니다. 기존 `/api/supplier-hub` POST도 미구현 상태입니다.
+
+## 개발 설치·확인
+
+1. 사용자가 지정한 Chrome 프로필에서 `chrome://extensions`의 개발자 모드를 켜고 이 폴더를 압축해제된 확장으로 로드합니다.
+2. Supplier Hub에서 **기존 작업 파일이 없는** 대량 상품 등록 화면을 엽니다.
+3. 확장 버튼을 눌러 YOOFAM PLUS의 검토된 견적서 + 첨부 ZIP을 선택합니다.
+4. 현재 회사 계정과 파일 목록을 확인한 후 `현재 탭에 파일 전달`을 누릅니다.
+5. Supplier Hub의 실제 업로드 결과를 확인합니다. 공식 양식의 적합성 검증과 최종 등록은 별도입니다.
+
+현재는 관찰한 DOM 구조를 재현한 테스트만 통과했습니다. 실계정 파일 업로드·검증·등록 시험은 수행하지 않았고, 이 확장도 사용자 Chrome에 설치하지 않았습니다. 작업 중인 기존 상품을 시험에 사용하지 않습니다.
+
+## 근거와 테스트
+
+- 2026-09-27 기존 로그인 Chrome의 Supplier Hub 대량 상품 등록 화면에서 제목을 가진 각 구역에 `input[type=file]` 하나씩 있는 구조를 확인했습니다.
+- [Chrome scripting 공식 문서](https://developer.chrome.com/docs/extensions/reference/api/scripting), [activeTab 공식 문서](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab).
+- `node --test tests/supplier-hub-extension.test.mjs`
+- 테스트 XLSX 바이트는 체크섬 전달을 위한 합성 자료이며 공식 양식 검증의 근거가 아닙니다.

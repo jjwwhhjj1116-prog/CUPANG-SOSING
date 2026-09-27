@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "YOOFAM PLUS 견적서 첨부",
+  "version": "0.1.0",
+  "description": "검토한 YOOFAM PLUS 패키지를 현재 Supplier Hub 등록 탭의 파일 입력으로 전달합니다.",
+  "permissions": ["activeTab", "scripting"],
+  "action": { "default_popup": "popup.html", "default_title": "YOOFAM PLUS 견적서 첨부" }
+}
