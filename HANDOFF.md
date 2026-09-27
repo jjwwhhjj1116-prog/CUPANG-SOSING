@@ -3914,3 +3914,9 @@ AI등록 화면 확인:
 - App validates nested quotationID/shape/size/time/scope and renders SKU/status/stage with current-page scope, never registered:true or all-options complete. Unknown pagination/total coverage deliberately not inferred.
 -25 related unit tests, typecheck, build/artifact/diff checks passed. Production3fa0b995-e6dd-477b-b78f-c5c99d9baa69. Extension source/download0.2.6; installed update not verified, reload required. Current Hub tab remains /qvt/wims.
 - Wholeworkflow unresolved: supplier-hub POST501, actual own1688 source, official workbook acquisition, live file dispatch/validation/final registration and all-category parity. No success fabricated. Preserve unrelated tests/submission-review.test.mjs LF-only change.
+
+## Step 431 — original product attributes linked into stages six/seven
+- Found prepareCollectionProduct preserved structured color/size but did not populate label material/model/components from receipt.attributes.
+- Added collection-label-attributes exact aliases for material (재질/材质/material), model (모델명/型号/model), package contents (제품 구성품/구성품/包装清单/package contents). Distinct conflicting values omitted; exact repeated values accepted. No fuzzy matching, inferred units, origin, legal/certification facts or invented translation.
+- Only initial product creation applies original-language values with collected provenance. Existing promotion reuse still preserves manual edits. Label-to-quotation resolver immediately exposes these inputs; test verified category80719 material/components/model.
+-29 product and intake API integration tests passed, plus tsc/build/artifact/diff checks. These are fixture-backed tests, not live1688 or Hub registration proof. Wholeworkflow blockers from430 unchanged. Existing user products untouched; unrelated tests/submission-review.test.mjs remains unstaged.

@@ -10,6 +10,29 @@ function load(file,deps={},mode='development'){
 }
 const settings=load('app/workspace-settings.ts').defaultSettings;
 const prepare=load('app/collection-product.ts').prepareCollectionProduct;
+
+test('new source attributes populate editable labels and the category quotation without inventing translation',()=>{
+ const source={...result,attributes:[{name:'材质',value:'尼龙'},{name:'型号',value:'B-123'},{name:'包装清单',value:'包 × 1'}]};
+ const draft=prepare('owner',job,source,'p',now);
+ for(const [field,value] of [['material','尼龙'],['model','B-123'],['components','包 × 1']]){
+  assert.equal(draft.content.label[field].value,value);
+  assert.equal(draft.content.label[field].provenance,'collected');
+ }
+ const resolved=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings});
+ const row=resolved.rows.find(row=>row.optionId);
+ assert.equal(row.fields.noticeMaterial.value,'尼龙');
+ assert.equal(row.fields.noticeComponents.value,'包 × 1');
+ assert.equal(row.fields.model.value,'B-123');
+ assert.equal(draft.product.supplier_hub_status,'미전송');
+});
+
+test('conflicting attributes remain in source; partial matches and legal claims are not adopted',()=>{
+ const attributes=[{name:'材质',value:'尼龙'},{name:'material',value:'棉'},{name:'型号',value:'A'},{name:'MODEL',value:'A'},{name:'货号',value:'SKU-123'},{name:'包装材质',value:'纸'},{name:'产地',value:'中国'},{name:'KC 인증정보',value:'인증됨'}];
+ const draft=prepare('owner',job,{...result,attributes},'p',now);
+ assert.equal(draft.content.label.material.value,'');assert.equal(draft.content.label.model.value,'A');
+ assert.notEqual(draft.content.label.kcInformation.value,'인증됨');
+ assert.equal(attributes[0].value,'尼龙');
+});
 test('unsaved registration examples never become promoted product label facts',()=>{
  const {savedRegistrationSettings,validateSettings}=load('app/workspace-settings.ts');
  const blank=savedRegistrationSettings(null);

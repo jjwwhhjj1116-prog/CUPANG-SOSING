@@ -4,6 +4,7 @@ import { calculatePrice, pricePolicy } from '@/app/pricing';
 import { emptyProductOptions, emptyOptionInput, optionFieldNames, validateOptionsInput, type ProductOption } from '@/app/product-options';
 import { workspaceBannerAssignments } from '@/app/workspace-banners';
 import { fillLabelDraft } from '@/app/label-autofill';
+import { collectionLabelAttributes } from '@/app/collection-label-attributes';
 import { emptyProductContent, type LabelField } from '@/app/product-content';
 import { initialStatuses } from '@/app/workflow';
 import { collectionKeywords, type CollectionJob } from '@/app/sourcing';
@@ -25,6 +26,9 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
   const keywords=collectionKeywords(job.context.keywords);
   if (keywords.length) content.seo.keywords={value:keywords,provenance:'manual',updatedAt:now};
+  for (const [field, value] of Object.entries(collectionLabelAttributes(result.attributes))) {
+    content.label[field as LabelField] = { value, provenance: 'collected', updatedAt: now };
+  }
   // These are the owner's captured registration inputs, not supplier facts or
   // translated claims. Explicit blanks must survive later workspace changes.
   for (const [field, setting] of [['manufacturer','manufacturer'],['importer','importer'],['contact','serviceContact']] as const) {
