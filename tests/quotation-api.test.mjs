@@ -498,3 +498,22 @@ test('standalone quotation equals the reviewed ZIP entry and keeps version check
  const changed=routeWith({find:async()=>++reads===1?product:{...product,updated_at:'2026-09-28T00:00:00.000Z'}});
  assert.equal((await changed.POST(request({...preview,action:'download',fingerprint:review.fingerprint}),context)).status,409);
 });
+
+test('workbook violations reach preview and packaged submission review with the correct option',async()=>{
+ const {quotationWorkbook}=await import('./helpers/quotation-workbook.mjs');
+ for(const rule of ['<dataValidation type="list" sqref="A2:A3"><formula1>"허용 상품"</formula1></dataValidation>','<dataValidation type="whole" operator="greaterThan" sqref="B2:B3"><formula1>999999</formula1></dataValidation>']){
+  const archive=unzipSync(quotationWorkbook(['상품명','공급가']));
+  archive['xl/worksheets/sheet1.xml']=new TextEncoder().encode(new TextDecoder().decode(archive['xl/worksheets/sheet1.xml']).replace('</worksheet>',`<dataValidations count="1">${rule}</dataValidations></worksheet>`));
+  const bytes=zipSync(archive,{level:0});const digest=createHash('sha256').update(bytes).digest('hex'),key=`owner/category-templates/${digest}.xlsx`;
+  const selected={...profile,categoryId:'80719',categoryPath:categoryPath('80719'),template:{...profile.template,format:'xlsx',sheetName:'견적서',name:'fixture.xlsx',sha256:digest,storageKey:key,headers:['상품명','공급가']},mappings:[{column:0,field:'title',required:true},{column:1,field:'supplyPrice',required:true}]};
+  const route=routeWith({readProfile:async()=>selected,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
+  const response=await route.POST(request(preview),context);assert.equal(response.status,200);const checked=await response.json();
+  const errors=checked.submissionReview.issues.filter(i=>i.code==='EXCEL_VALUE_INVALID');
+  assert.equal(errors.length,2);assert.equal(errors[0].optionId,'first');assert.equal(errors[1].optionId,'second');assert.match(errors[0].message,/2행/);
+  assert.equal(errors[0].fieldId,rule.includes('type="list"')?'title':'supplyPrice');
+  assert.equal(checked.report.validationIssueCount,2);
+  const output=await route.POST(request({...preview,action:'export',fingerprint:checked.fingerprint}),context);assert.equal(output.status,200);
+  const files=unzipSync(new Uint8Array(await output.arrayBuffer()));const review=JSON.parse(new TextDecoder().decode(files['submission-review.json']));
+  assert.deepEqual(review.issues.filter(i=>i.code==='EXCEL_VALUE_INVALID'),errors);assert.ok(review.errorCount>=2);
+ }
+});

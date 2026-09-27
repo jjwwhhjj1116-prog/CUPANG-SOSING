@@ -1,3 +1,4 @@
+import { quotationWorkbookIssues } from '@/app/exports/quotation-workbook-issues';
 import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
@@ -45,7 +46,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
       generated = await createMappedQuotation({originalBytes:await original.arrayBuffer(),profile,rows,dataStartRow});
       const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(generated.bytes));
       const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-      fields = quotationFieldFiles(saved,resolved,assets,revision,{filename, byteLength: generated.bytes.byteLength, sha256});
+      fields = quotationFieldFiles(saved,resolved,assets,revision,{filename, byteLength: generated.bytes.byteLength, sha256},quotationWorkbookIssues(generated.report,profile,resolved));
     }
     catch(error) {return json({error:error instanceof Error?error.message:'견적서 양식을 채우지 못했습니다.'},error instanceof ExportSizeError?413:400);}
     let latest;

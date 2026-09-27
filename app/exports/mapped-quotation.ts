@@ -4,9 +4,10 @@ import { inspectXlsxArchive, readXlsxArchive, xlsxHeaders, xlsxWorksheetPath, xl
 
 export type QuotationData = QuotationRowValues;
 export type QuotationCellIssue = { row: number; column: number; header: string };
+export type QuotationValidationIssue = QuotationCellIssue & { message: string };
 export type MappedQuotationReport = {
   verification: 'draft'; rowCount: number; dataStartRow: number;
-  missingRequired: QuotationCellIssue[]; blankCells: QuotationCellIssue[]; warnings: string[];
+  validationIssues: QuotationValidationIssue[]; validationIssueCount: number; missingRequired: QuotationCellIssue[]; blankCells: QuotationCellIssue[]; warnings: string[];
 };
 export type MappedQuotationInput = { originalBytes: ArrayBuffer; profile: CategoryProfileInput; rows: QuotationData[]; dataStartRow: number };
 export type MappedQuotationResult = { bytes: Uint8Array; filename: string; mimeType: string; report: MappedQuotationReport; values: (string | number)[][] };
@@ -153,10 +154,10 @@ function delimitedValue(value: string | number): string | number { return /^[\s]
 function delimitedCell(value: string | number): string { return `"${String(delimitedValue(value)).replace(/"/g, '""')}"`; }
 
 /** Check supported static constraints without evaluating workbook formulas. */
-function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection, rows: QuotationData[]): string[] {
+function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection, rows: QuotationData[]): { warnings: string[]; issues: QuotationValidationIssue[]; count: number } {
   const root = spans(source);
   const fields = getQuotationSchema(profile.categoryId, profile.categoryPath).fields;
-  const warnings: string[] = []; let mismatches = 0; let unchecked = 0; let uncertainLengths = 0;
+  const warnings: string[] = []; const issues: QuotationValidationIssue[] = []; let mismatches = 0; let unchecked = 0; let uncertainLengths = 0;
   const rules = root.children.filter(node => node.local === 'dataValidations').flatMap(node => node.children.filter(child => child.local === 'dataValidation'));
   for (const rule of rules) {
     let areas: ReturnType<typeof range>[];
@@ -214,6 +215,7 @@ function validationWarnings(source: string, profile: CategoryProfileInput, value
       if (verdict === null) { uncertainLengths++; continue; }
       if (verdict) continue;
       mismatches++;
+      if (issues.length < 1000) issues.push({row:startRow+index,column:mapping.column+1,header:profile.template!.headers[mapping.column],message:description});
       if (warnings.length < 20) {
         let suggestion = '';
         if (rule.attributes.type === 'list') {
@@ -236,7 +238,7 @@ function validationWarnings(source: string, profile: CategoryProfileInput, value
   if (uncertainLengths) warnings.push(`글자 수 검사 ${uncertainLengths}개는 특수문자의 Excel 호환성 설정 또는 숫자 셀 서식에 따라 달라질 수 있어 판정하지 않았습니다. Excel에서 확인해주세요.`);
   if (unchecked) warnings.push(`원본 유효성 검사 ${unchecked}개는 수식·참조·지원하지 않는 규칙이므로 검사하지 못했습니다. Excel에서 확인해주세요.`);
   if (root.children.some(node => node.local === 'extLst')) warnings.push('Excel 확장 규칙은 검사하지 않았습니다. 원본 프로그램에서 유효성 검사를 확인해주세요.');
-  return warnings;
+  return {warnings,issues,count:mismatches};
 }
 
 export async function createMappedQuotation(input: MappedQuotationInput): Promise<MappedQuotationResult> {
@@ -247,7 +249,7 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
   if (input.originalBytes.byteLength < 1 || input.originalBytes.byteLength > 5_000_000) fail('견적서 원본은 5MB 이하이어야 합니다.');
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', input.originalBytes))).map(byte => byte.toString(16).padStart(2, '0')).join('');
   if (hash !== template.sha256) fail('선택한 견적서와 저장된 원본 파일 지문이 일치하지 않습니다.');
-  const report: MappedQuotationReport = { verification: 'draft', rowCount: input.rows.length, dataStartRow: input.dataStartRow, missingRequired: [], blankCells: [], warnings: ['생성 결과는 검토용입니다. Supplier Hub 접수·카테고리별 필수 정보 검증은 완료되지 않았습니다.'] };
+  const report: MappedQuotationReport = { verification: 'draft', rowCount: input.rows.length, dataStartRow: input.dataStartRow, validationIssues: [], validationIssueCount: 0, missingRequired: [], blankCells: [], warnings: ['생성 결과는 검토용입니다. Supplier Hub 접수·카테고리별 필수 정보 검증은 완료되지 않았습니다.'] };
   const schemaFields = getQuotationSchema(profile.categoryId, profile.categoryPath).fields;
   let payloadSize = 0;
   const values = input.rows.map((data, index) => {
@@ -278,7 +280,9 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     const updated = encoder.encode(writeWorksheet(source, template.sheetName, profile, values, input.dataStartRow));
     if (updated.byteLength > 10_000_000) fail('생성한 워크시트가 10MB를 초과합니다.');
     files.set(path, updated); const updatedInspection = inspectXlsxArchive(files);
-    report.warnings.push(...validationWarnings(source, profile, values, input.dataStartRow, files, updatedInspection, input.rows));
+    const validation = validationWarnings(source, profile, values, input.dataStartRow, files, updatedInspection, input.rows);
+    report.validationIssues=validation.issues; report.validationIssueCount=validation.count;
+    report.warnings.push(...validation.warnings);
     report.warnings.push(...inspection.warnings, '기존 수식과 유효성 검사 규칙을 보존했습니다. 수식 계산값과 신규 행의 검사 범위는 Excel에서 확인해주세요.');
     bytes = await zip(files); mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   } else {

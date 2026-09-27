@@ -426,3 +426,22 @@ test('dropdown mismatches suggest only a proven code or label alternative withou
   assert.ok((await run(labelValue, '', undefined, empty.id, [empty.id])).report.warnings.some(value => value.includes('‘표시 문구’')));
   assert.ok(!(await run(labelValue, '', undefined, empty.id)).report.warnings.some(value => value.includes('출력 형식을')));
 });
+
+test('workbook review distinguishes definite violations, required blanks and unchecked formulas',async()=>{
+ const {quotationWorkbookIssues}=load('app/exports/quotation-workbook-issues.ts');
+ const input=await inputFrom(entries(),{rows:[{title:'상품',supplyPrice:100,skuName:''}]});
+ const result=await createMappedQuotation(input);
+ assert.equal(result.report.validationIssueCount,1);assert.equal(result.report.validationIssues[0].column,4);
+ const resolved={rows:[{included:false,optionId:'excluded',optionLabel:'제외'},{included:true,optionId:'option-1',optionLabel:'첫 옵션'}],schema:{fields:[{id:'title'},{id:'supplyPrice'}]}};
+ const issues=quotationWorkbookIssues(result.report,input.profile,resolved);
+ assert.equal(issues.filter(i=>i.code==='EXCEL_VALUE_INVALID').length,1);
+ assert.equal(issues.filter(i=>i.code==='EXCEL_REQUIRED_MISSING').length,0,'same blank is not reported twice');
+ assert.equal(issues[0].optionId,'option-1');assert.equal(issues[0].fieldId,null,'SKU mapping is not a quotation editor field');
+ const unchecked=await createMappedQuotation(await inputFrom(entries(v=>v.replace('"검정,흰색"','UnresolvedName'))));
+ assert.equal(unchecked.report.validationIssueCount,0);assert.equal(unchecked.report.validationIssues.length,0);
+ assert.ok(unchecked.report.warnings.some(v=>v.includes('검사하지 못했습니다')));
+ const blank=await createMappedQuotation(await inputFrom(entries(v=>v.replace('type="list"','type="list" allowBlank="true"')),{rows:[{title:'상품',skuName:'',supplyPrice:100}]}));
+ assert.equal(quotationWorkbookIssues(blank.report,input.profile,resolved)[0].code,'EXCEL_REQUIRED_MISSING');
+ const overflow=quotationWorkbookIssues({...result.report,validationIssueCount:1001},input.profile,resolved);
+ assert.equal(overflow.at(-1).code,'EXCEL_VALUE_INVALID_OVERFLOW');
+});

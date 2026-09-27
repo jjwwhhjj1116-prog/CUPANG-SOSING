@@ -4053,3 +4053,10 @@ AI등록 화면 확인:
 - 41 related tests passed including lost popup callback, concurrency, foreign sender/tab, invalid success, and popup-to-worker delegation. Typecheck/build/artifact/diff checks passed. ZIP root file list checked including the new module.
 - Packaged extension 0.2.12 and deployed download link; deployment d270b4cb-bd1f-4793-9216-0de85d04c0e0. Installed extension refresh not verified. Browser/service-worker termination recovery is not guaranteed; uncertain request results require Hub status inspection rather than automatic retries.
 - This does not add automatic consent or final-registration automation. Actual source collection, all-category parity, official XLSX and end-to-end live registration remain unverified.
+
+## Step 453 — Workbook violations block extension handoff (2026-09-28)
+- Found static Excel validation failures were only report warnings, absent from submission-review.json. Invalid dropdown/numeric/text-length cells could therefore miss the existing error-based handoff gate.
+- Mapped exporter now records definite violations with row/column/header and total count (up to 1000 details); unevaluated rules remain warnings. Workbook review maps included row positions to option IDs and canonical quotation fields, merges required blanks without duplicate cell errors, and preserves overflow as an explicit error.
+- Quotation API supplies these issues to both preview and ZIP submission review. Existing UI/extension error checks now prevent handoff of these packages. Review/download exports remain available for correction; this is not official Hub validation.
+- 91 related tests passed: exact API preview/ZIP errors for list/numeric rules, included option matching, unresolved-formula distinction, required blanks and overflow; existing exporter and extension package tests pass. Typecheck/build/artifact/diff checks pass.
+- Deployed a56d0ead-f8b2-410f-a7bb-6dcb8a1feba2. Extension unchanged at 0.2.12. No external records edited. Synthetic workbooks are fixtures; actual 1688 collection, all-category parity, official workbook acquisition and real Hub completion remain unverified.
