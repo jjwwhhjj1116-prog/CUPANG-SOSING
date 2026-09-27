@@ -9,15 +9,15 @@ export const categoryProfileSchema = `CREATE TABLE IF NOT EXISTS category_profil
 type Row = { id: string; payload: string; revision: number; created_at: string; updated_at: string };
 async function database() {
   if (!env.DB) throw new Error('D1 unavailable');
-  await env.DB.batch([env.DB.prepare(categoryProfileSchema), env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner ON category_profiles(owner_id, updated_at)')]);
+  await env.DB.batch([env.DB.prepare(categoryProfileSchema), env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner_id ON category_profiles(owner_id, id)')]);
   return env.DB;
 }
 function profile(row: Row): CategoryProfile {
   return { ...validateCategoryProfile(JSON.parse(row.payload)), id: row.id, revision: row.revision, verification: 'draft', createdAt: row.created_at, updatedAt: row.updated_at };
 }
-export async function listCategoryProfiles(ownerId: string): Promise<CategoryProfile[]> {
+export async function listCategoryProfiles(ownerId: string, afterId = ''): Promise<CategoryProfile[]> {
   const db = await database();
-  return (await db.prepare('SELECT * FROM category_profiles WHERE owner_id=? ORDER BY updated_at DESC, id DESC LIMIT 100').bind(ownerId).all<Row>()).results.map(profile);
+  return (await db.prepare('SELECT * FROM category_profiles WHERE owner_id=? AND id>? ORDER BY id ASC LIMIT 101').bind(ownerId, afterId).all<Row>()).results.map(profile);
 }
 export async function getCategoryProfile(ownerId: string, id: string): Promise<CategoryProfile | null> {
   const db = await database();
@@ -28,11 +28,11 @@ export const findCategoryProfile = getCategoryProfile;
 export async function createCategoryProfile(ownerId: string, input: CategoryProfileInput, requestId?: string): Promise<CategoryProfile | null> {
   const payload = JSON.stringify(validateCategoryProfile(input));
   const db = await database(); const now = new Date().toISOString();
-  // Atomic limit check: simultaneous tabs cannot create unlimited profiles.
+  // Each category retains its own configuration; request IDs still prevent duplicate retries.
   const result = await db.prepare(`INSERT INTO category_profiles(id,owner_id,payload,revision,created_at,updated_at)
-    SELECT ?,?,?,1,?,? WHERE (SELECT COUNT(*) FROM category_profiles WHERE owner_id=?) < 100
+    VALUES (?,?,?,1,?,?)
     ON CONFLICT(id) DO NOTHING RETURNING *`)
-    .bind(requestId ?? crypto.randomUUID(), ownerId, payload, now, now, ownerId).first<Row>();
+    .bind(requestId ?? crypto.randomUUID(), ownerId, payload, now, now).first<Row>();
   if (result) return profile(result);
   if (requestId) {
     const saved = await db.prepare('SELECT * FROM category_profiles WHERE owner_id=? AND id=?').bind(ownerId, requestId).first<Row>();

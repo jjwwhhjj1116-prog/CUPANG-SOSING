@@ -1,4 +1,5 @@
 'use client';
+import { loadCategoryProfiles } from '@/app/load-category-profiles';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { usableCategoryCode, type CategoryProfile } from '@/app/category-profiles';
@@ -48,10 +49,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
     try {
       const existing = profiles.find(profile => profile.id === selected.profileId);
       if (existing) {
-        const response = await fetch('/api/category-profiles', { cache: 'no-store', signal: controller.signal });
-        const result = await response.json() as { profiles?: CategoryProfile[]; error?: string };
+        const result = { profiles: await loadCategoryProfiles(controller.signal) };
         if (controller.signal.aborted) return;
-        if (!response.ok || !Array.isArray(result.profiles)) throw new Error(result.error || '최신 카테고리 설정을 확인하지 못했습니다. 다시 시도해주세요.');
         const latest = result.profiles.find(profile => profile.id === existing.id);
         if (latest && (!Number.isSafeInteger(latest.revision) || latest.revision < 1 || !Array.isArray(latest.categoryPath))) throw new Error('카테고리 설정 응답이 올바르지 않습니다. 다시 시도해주세요.');
         setRefreshedProfiles(result.profiles);

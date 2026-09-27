@@ -1,4 +1,5 @@
 'use client';
+import { loadCategoryProfiles } from '@/app/load-category-profiles';
 
 import { registrationSteps, initialRegistrationStep, type CollectionEditorTab } from '@/app/registration-navigation';
 import { requestWorkspaceClose, workspaceEditState, quotationSourceState } from '@/app/workspace-close';
@@ -70,7 +71,7 @@ function fetchWorkspace() {
     readJson<{ products: Product[] }>('/api/products'),
     readJson<{ settings: Partial<Settings> | null }>('/api/settings'),
     readJson<{ jobs: CollectionJob[] }>('/api/collection-jobs'),
-    readJson<{ profiles: CategoryProfile[] }>('/api/category-profiles'),
+    loadCategoryProfiles().then(profiles => ({ profiles })),
   ]);
 }
 const goalOptions = [

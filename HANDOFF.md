@@ -4023,3 +4023,11 @@ AI등록 화면 확인:
 - Primary format references: https://schema.org/priceSpecification and https://schema.org/UnitPriceSpecification (the latter describes conditional/per-unit fields deliberately not treated as total SKU cost).
 - 48 collector/product tests pass; typecheck/build/artifact/diff checks pass. Deployment 6c139f5b-7363-4c7e-9dd3-767699232af6.
 - No actual 1688 access attempted; no proof the specified product publishes this metadata. This is parser coverage, not a working live provider replacement. Official XLSX and real Supplier Hub final submission remain unverified. No external products changed.
+
+## Step 449 — Remove the 100-category ceiling (2026-09-28)
+- Reopened Couplus in the existing designated Chrome connection, signed in as Yhope. Observed the queue default SEO+가격, category-before-URL sequence, and 주방용품 > 보관/밀폐용기 > 아이스트레이/얼음틀. No source URL was submitted and no existing product was edited. No new category code or form schema inferred from this inspection.
+- Removed the atomic 100-profile creation cap. API now returns up to 100 owner-scoped profiles plus nextCursor using indexed stable ID keyset pagination. Request-id replay/conflict checks remain.
+- Shared complete-list loader connected to dashboard, category confirmation and quotation panel initial/refresh loads. Later-page failures/invalid cursors/duplicates abort instead of publishing a partial list; cancellation is preserved.
+- Tests cover 205 real SQLite records across three API pages, owner isolation, 101st creation, client cancellation and invalid pagination. Updated the old creation-cap expectation and corrected the unrelated 80719 formatting-test path so it reaches its intended formatting validation.
+- 52 related tests passed; tsc, Cloudflare build, artifact and diff checks passed. Deployed 9f5f375f-ed58-4917-9e4f-b18b6e352fed. Existing old owner index is harmless; new owner/id index is created lazily by repository initialization.
+- Category lists are not a cross-request immutable snapshot; concurrent inserts before a cursor require a refresh. All-category schema parity, actual 1688 collection, official XLSX and final Supplier Hub registration remain unverified. Extension unchanged at 0.2.11.

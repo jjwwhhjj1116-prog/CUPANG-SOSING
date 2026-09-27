@@ -13,9 +13,15 @@ const owner = async () => await getWorkspaceOwnerId();
 const body = (request: Request) => readBoundedJson(request, CATEGORY_PROFILE_BODY_LIMIT);
 const inputStatus = (error: unknown) => error instanceof RequestBodyError ? error.status : 400;
 const errorText = (error: unknown) => error instanceof SyntaxError ? '올바른 JSON이 필요합니다.' : error instanceof Error ? error.message : '입력을 확인해주세요.';
-export async function GET() {
+export async function GET(request?: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
-  try { return NextResponse.json({ profiles: await listCategoryProfiles(await owner()) }, options); }
+  const after = request ? new URL(request.url).searchParams.get('after') ?? '' : '';
+  if (after && !/^[a-zA-Z0-9_-]{1,100}$/.test(after)) return NextResponse.json({ error: '카테고리 목록 위치가 올바르지 않습니다.' }, { status: 400, ...options });
+  try {
+    const records = await listCategoryProfiles(await owner(), after);
+    const profiles = records.slice(0, 100);
+    return NextResponse.json({ profiles, nextCursor: records.length > 100 ? profiles.at(-1)!.id : null }, options);
+  }
   catch { return NextResponse.json({ error: '카테고리 설정을 읽지 못했습니다.' }, { status: 503, ...options }); }
 }
 export async function POST(request: Request) {
@@ -32,7 +38,7 @@ export async function POST(request: Request) {
     const ownerId = await owner();
     try { await validateStoredTemplate(ownerId, input.template); } catch (error) { if (error instanceof TemplateValidationError) return NextResponse.json({ error: errorText(error) }, { status: 400, ...options }); throw error; }
     const profile = await createCategoryProfile(ownerId, input, requestId);
-    if (!profile) return NextResponse.json({ error: '카테고리 설정은 최대 100개입니다. 기존 설정을 수정해주세요.' }, { status: 409, ...options });
+    if (!profile) return NextResponse.json({ error: '카테고리 저장 요청이 충돌했습니다. 목록을 다시 불러온 뒤 저장해주세요.' }, { status: 409, ...options });
     return NextResponse.json({ profile }, { status: 201, ...options });
   } catch (error) {
     if (error instanceof CategoryProfileConflictError) return NextResponse.json({ error: error.message }, { status: 409, ...options });

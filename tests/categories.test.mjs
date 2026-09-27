@@ -24,6 +24,20 @@ function load(file, overrides = {}, mode = 'development') {
   return exports;
 }
 const model = load('app/category-profiles.ts');
+test('category API pages all owner settings using an ID cursor without leaking another owner',async()=>{
+ const sqlite=new DatabaseSync(':memory:');
+ const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;}};return q;},async batch(queries){return queries.map(q=>({results:q.execute()}));}};
+ const storage=load('db/category-profiles.ts',{'cloudflare:workers':{env:{DB:db}}});
+ const route=load('app/api/category-profiles/route.ts',{'@/db/category-profiles':storage});
+ try{
+  for(let i=0;i<205;i++)await storage.createCategoryProfile('owner',{...draft,name:`category ${i}`},`profile-${String(i).padStart(3,'0')}`);
+  await storage.createCategoryProfile('other',draft,'profile-099-other');
+  const records=[];let after='';let pages=0;
+  do{const response=await route.GET(new Request(`http://localhost/api/category-profiles?after=${after}`));assert.equal(response.status,200);const body=await response.json();assert.ok(body.profiles.length<=100);records.push(...body.profiles);after=body.nextCursor;pages++;}while(after);
+  assert.equal(pages,3);assert.equal(records.length,205);assert.equal(new Set(records.map(p=>p.id)).size,205);assert.equal(records.at(-1).name,'category 204');assert.ok(!records.some(p=>p.id==='profile-099-other'));
+  assert.equal((await route.GET(new Request('http://localhost/api/category-profiles?after=../bad'))).status,400);
+ }finally{sqlite.close();}
+});
 const draft = { name: '테스트 초안', categoryId: '', categoryPath: ['테스트', '견적 검증용'], template: null, mappings: [] };
 const mapped = { ...draft, categoryId: 'synthetic-category', template: { name: 'synthetic-template.csv', format: 'csv', sha256: 'a'.repeat(64), sheetName: '', headerRow: 1, headers: ['상품명', '공급가', '카테고리', '필수 확인값'] }, mappings: [{ column: 0, field: 'title', required: true }, { column: 1, field: 'supplyPrice', required: true }, { column: 2, field: 'categoryId', required: true }, { column: 3, field: 'constant', constant: '', required: true }] };
 const request = (body, method = 'POST') => new Request('http://localhost/api/category-profiles', { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -294,7 +308,7 @@ test('invalid legacy category codes remain readable but cannot be saved by POST 
 });
 
 test('category writes reject label formatting on non-select fields before storage while legacy records remain readable',async()=>{
- let writes=0,lookups=0;const invalid={...mapped,categoryId:'80719',mappings:[{column:0,field:'title',required:true,choiceFormat:'label'}]};
+ let writes=0,lookups=0;const invalid={...mapped,categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],mappings:[{column:0,field:'title',required:true,choiceFormat:'label'}]};
  assert.equal(model.validateCategoryProfile(invalid).mappings[0].choiceFormat,'label');
  const route=load('app/api/category-profiles/route.ts',{'@/db/category-profiles':{createCategoryProfile:async()=>{writes++;},updateCategoryProfile:async()=>{writes++;},getCategoryProfile:async()=>{lookups++;return invalid;},listCategoryProfiles:async()=>[invalid]}});
  assert.equal((await route.GET()).status,200);
@@ -320,7 +334,8 @@ test('SQLite category creation replays identical requests without duplicate rows
   await assert.rejects(storage.createCategoryProfile('owner',{...draft,name:'different'},id),/이미 저장된/);
   for(let i=1;i<100;i++)await storage.createCategoryProfile('owner',draft);
   assert.equal((await storage.createCategoryProfile('owner',draft,id)).id,id);
-  assert.equal(await storage.createCategoryProfile('owner',draft),null);
+  assert.ok((await storage.createCategoryProfile('owner',draft)).id);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM category_profiles WHERE owner_id=?').get('owner').n,101);
   await storage.updateCategoryProfile('owner',id,1,{...draft,name:'edited'});
   await assert.rejects(storage.createCategoryProfile('owner',draft,id),/이미 저장된/);
   assert.equal((await storage.getCategoryProfile('owner',id)).name,'edited');

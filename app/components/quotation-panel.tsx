@@ -1,4 +1,5 @@
 'use client';
+import { loadCategoryProfiles } from '@/app/load-category-profiles';
 
 import { QuotationMappingReview, type QuotationMappingFinding } from '@/app/components/quotation-mapping-review';
 
@@ -48,9 +49,7 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
     const controller=new AbortController();
 
     Promise.all([
-      fetch('/api/category-profiles',{cache:'no-store',signal:controller.signal}).then(async response=>{
-        const body=await response.json() as {profiles:CategoryProfile[];error?:string};if(!response.ok)throw new Error(body.error||'카테고리 목록을 읽지 못했습니다.');return body.profiles;
-      }),
+      loadCategoryProfiles(controller.signal),
       fetch(`/api/products/${encodeURIComponent(productId)}/quotation-fields`,{cache:'no-store',signal:controller.signal}).then(async response=>{const body=await response.json() as QuotationFieldsView & {error?:string};if(!response.ok)throw new Error(body.error||'수집 당시 카테고리를 읽지 못했습니다.');return body;}),
     ]).then(([savedProfiles,data])=>{
       if(controller.signal.aborted)return;
@@ -87,10 +86,8 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
     const controller=new AbortController();profileRequest.current=controller;
     setRefreshingProfiles(true);setProfileRefreshError('');setPreview(null);
     try {
-      const response=await fetch('/api/category-profiles',{cache:'no-store',signal:controller.signal});
-      const body=await response.json() as {profiles:CategoryProfile[];error?:string};
+      const body={profiles:await loadCategoryProfiles(controller.signal)};
       if(controller.signal.aborted)return;
-      if(!response.ok)throw new Error(body.error||'저장한 양식을 다시 읽지 못했습니다.');
       const current=body.profiles.find(profile=>profile.id===profileId);
       setProfiles(body.profiles);
       if(profileId&&(!current||current.categoryId!==selected?.categoryId)){
