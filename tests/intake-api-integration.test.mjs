@@ -26,6 +26,16 @@ test('URL intake persists a category-scoped editable quotation and resumes witho
   sqlite.prepare('INSERT INTO collection_context VALUES (?,?)').run('job',JSON.stringify(context));
   const fetcher=async(path,init)=>{calls.push(path);if(path.endsWith('/translation'))return load('app/api/products/[id]/translation/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});const match=/^\/api\/collection-jobs\/job\/(collect|result|capacity|product|images)$/.exec(path);assert.ok(match,`unexpected request ${path}`);const response=await load(`app/api/collection-jobs/[id]/${match[1]}/route.ts`)[init?.method??'GET'](new Request('https://app.test'+path,init),{params:Promise.resolve({id:'job'})});if(!response.ok)assert.fail(`${path}: ${response.status} ${await response.text()}`);return response;};
   let latest;const run=async()=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner','job'),{signal:new AbortController().signal,fetcher,onJob:job=>{latest=job;},onProgress:()=>{}});
+  // The add-only goal must work with no model credentials and leave no AI job.
+  sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('collect','job');
+  delete deps['cloudflare:workers'].env.OPENAI_API_KEY;
+  assert.match(await run(),/상품 추가 완료/);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,0);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
+  assert.match(await run(),/상품 추가 완료/);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,0);
+  sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('price','job');
+  deps['cloudflare:workers'].env.OPENAI_API_KEY='fixture-key';
   assert.match(await run(),/SEO 요청을 준비/);assert.ok(latest.product_id);const seo=sqlite.prepare('SELECT * FROM translation_jobs').get();assert.equal(seo.status,'prepared');const review=JSON.parse(seo.review);assert.equal(review.source.category.id,'80719');assert.equal(review.source.title,'原文商品');assert.equal(review.source.guidance.keywords,'수납,바스켓');assert.ok(review.source.attributes.some(pair=>pair.name==='option:collected-1'));assert.equal(seo.result,null);
   await run();assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
   const prepareRoute=load('app/api/products/[id]/translation/route.ts');

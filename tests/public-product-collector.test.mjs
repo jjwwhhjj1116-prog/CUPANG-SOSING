@@ -109,3 +109,18 @@ test('failed product creation and stopped import never prepare SEO',async()=>{
   assert.equal(requests,0);
  }
 });
+
+
+test('add-only intake stops after import without requiring or preparing SEO, including retries',async()=>{
+ for(const status of ['completed','failed']){
+  const updates=[],progress=[];let requests=0;
+  const {collectIntakeProduct}=load('app/intake-collection.ts',{'@/app/collection-batch':{importReceivedJobs:async(jobs,options)=>options.onResult('job',{status,productId:'saved-product',completedImages:1,error:status==='failed'?'이미지 실패':undefined,warnings:['원문 보존']})}});
+  const options={signal:new AbortController().signal,onJob:j=>updates.push(j),onProgress:m=>progress.push(m),fetcher:async()=>{requests++;throw Error('unexpected SEO request');}};
+  for(const product_id of [undefined,'saved-product']){
+   const run=()=>collectIntakeProduct({id:'job',offer_id:'813724060928',source_url:url,goal:'collect',product_id,status:'awaiting_connector',received_at:'2026-09-26T00:00:00Z'},options);
+   if(status==='completed')assert.match(await run(),/상품 추가 완료.*원문 보존/);
+   else await assert.rejects(run(),/이미지 실패.*원문 보존/);
+  }
+  assert.equal(requests,0);assert.equal(updates.at(-1).product_id,'saved-product');assert.ok(!progress.some(m=>m.includes('SEO')));
+ }
+});

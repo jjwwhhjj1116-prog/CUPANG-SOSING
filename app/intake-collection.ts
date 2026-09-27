@@ -33,6 +33,13 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  const outcome=outcomes[0];
  if(!outcome||!outcome.productId)throw Error(outcome?.error||'상품 반영을 완료하지 못했습니다. 원문은 보존됩니다.');
  if(outcome.status==='stopped')return;
+ // The add-only choice ends at source import, including on resume. It must
+ // not depend on AI configuration or prepare a generation request.
+ if(job.goal==='collect'){
+  if(outcome.status!=='completed')throw Error([outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.',...(outcome.warnings??[])].filter(Boolean).join(' '));
+  return ['상품 추가 완료 · 옵션·가격을 확인한 뒤 다음 단계를 진행해주세요.',...(outcome.warnings??[])].filter(Boolean).join(' ');
+ }
+
  // Image storage can fail after the product transaction commits. Source-based
  // SEO preparation does not depend on image downloads; retain both outcomes.
  options.onProgress('저장 원문으로 SEO 요청 준비 중');
