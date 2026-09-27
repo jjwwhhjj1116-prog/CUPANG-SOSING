@@ -38,7 +38,7 @@ function load(relative, overrides = {}) {
 }
 const request = body => new Request('http://localhost/api/products', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const input = { sourceUrl: 'https://detail.1688.com/offer/123456789.html', title: 'LOCAL TEST ONLY', sourcePriceCny: 10 };
-const productRoute = queries => load('app/api/products/route.ts', { '@/db/queries': queries });
+const productRoute = queries => load('app/api/products/route.ts', { '@/db/queries': {getSettings:async()=>null,...queries} });
 
 test('all requested goals remain manual/pending after successful storage', async () => {
   for (const goalStage of ['collect', 'price', 'work', 'transmit']) {

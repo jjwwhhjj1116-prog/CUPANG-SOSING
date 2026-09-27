@@ -40,7 +40,7 @@ function seedCompanions(db) {
 
 test('checked-in bootstrap matches every runtime table, constraint, column and named index on fresh SQLite', () => {
   const result = checkDatabaseSchema();
-  assert.equal(result.tables, 19); assert.equal(result.indexes, 10); assert.equal(result.runtimeModules, 14);
+  assert.equal(result.tables, 23); assert.equal(result.indexes, 13); assert.equal(result.runtimeModules, 15);
 });
 
 test('legacy Drizzle schema upgrade preserves product/settings rows, defaults, PK declarations and indexes', () => {
@@ -75,8 +75,12 @@ test('reapplying bootstrap preserves every current table including uncertain/run
     db.prepare('INSERT INTO collection_images VALUES(?,?,?,?,?,?,?)').run('synthetic-job',0,owner,productId,'local-demo/original.png','operation',now);
     db.prepare('INSERT INTO quotation_attribute_rules VALUES(?,?,?,?,?)').run(owner,'80719',json,2,now);
     db.prepare('INSERT INTO intake_drafts VALUES(?,?,?,?)').run(owner,1,json,now);
+    db.prepare("INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run('test-admin','admin@example.invalid','synthetic-hash','admin','approved','test-company','테스트 회사',now,now);
+    db.prepare('INSERT INTO member_sessions VALUES (?,?,?)').run('synthetic-session','test-admin',12345);
+    db.prepare('INSERT INTO member_rate_limits VALUES (?,?,?)').run('synthetic-rate',2,12345);
+    db.prepare('INSERT INTO member_audit VALUES (?,?,?,?,?)').run('synthetic-audit','test-admin','test-admin','company',now);
     const before = tableData(db); const schema = schemaSnapshot(db);
-    assert.equal(before.length, 19); assert.ok(before.every(table => table.rows.length === 1));
+    assert.equal(before.length, 23); assert.ok(before.every(table => table.rows.length === 1));
     db.exec(migrations); db.exec(migrations);
     assert.deepEqual(tableData(db), before); assert.deepEqual(schemaSnapshot(db), schema);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
@@ -120,7 +124,7 @@ test('schema checker detects missing indexes, changed CHECK/default/unique defin
 });
 
 test('quotation-fields migration adds one guarded table without changing the existing thirteen tables or rows', () => {
-  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql']);
+  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql','0009_members.sql','0010_category_profile_pagination.sql']);
   const db=memoryDatabase();
   try {
     db.exec(bootstrap);seedLegacy(db);seedCompanions(db);

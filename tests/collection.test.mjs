@@ -4,12 +4,13 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
+import path from 'node:path';
 
 function load(file, dependencies = {}, mode = 'development') {
   const source = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(output, { exports, Error, crypto, URL, Response, process: { env: { NODE_ENV: mode } }, require: name => {
+  vm.runInNewContext(output, { exports, Error, structuredClone, crypto, URL, Response, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in dependencies) return dependencies[name];
     if (name === '@/db/collection-results') return load('db/collection-results.ts', dependencies);
     if (name === '@/app/category-profiles') return load('app/category-profiles.ts');
@@ -19,8 +20,10 @@ function load(file, dependencies = {}, mode = 'development') {
     if (name === '@/app/pricing') return load('app/pricing.ts');
     if (name === '@/app/chatgpt-auth') return {getChatGPTUser:async()=>null,getWorkspaceOwnerId:async()=>'local-demo'};
     if (name === '@/db/queries') return {getSettings:async()=>null};
-    if (name === '@/db/category-profiles') return {getCategoryProfile:async()=>({id:'12345678-1234-1234-1234-123456789012',revision:1,categoryId:'80719',verification:'draft'})};
+    if (name === '@/db/category-profiles') return {getCategoryProfile:async()=>({id:'12345678-1234-1234-1234-123456789012',revision:1,categoryId:'80719',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath,verification:'draft'})};
     if (name === 'next/server') return { NextResponse: Response };
+    if (name.startsWith('@/app/')) return load(name.slice(2)+'.ts', dependencies);
+    if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file),name)+'.ts',dependencies);
     throw new Error(`Unexpected dependency: ${name}`);
   } });
   return exports;
@@ -170,7 +173,7 @@ test('intake requires category selection before URL staging and rejects missing 
 
 test('changed category settings return 409 before settings reads or enqueue; matching snapshot is preserved',async()=>{
  let reads=0,writes=0,captured;
- const category={id:payload.profileId,revision:2,categoryId:'81452',categoryPath:['헬스보호대'],template:null,mappings:[],verification:'draft'};
+ const category={id:payload.profileId,revision:2,categoryId:'81452',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('81452').categoryPath,template:null,mappings:[],verification:'draft'};
  const route=load('app/api/collection-jobs/route.ts',{
   '@/db/category-profiles':{getCategoryProfile:async()=>category},
   '@/db/queries':{getSettings:async()=>{reads++;return null;}},
@@ -188,13 +191,13 @@ test('changed category settings return 409 before settings reads or enqueue; mat
 test('mixed intake reports only requests whose persisted context differs and never replaces original data',async()=>{
  const {sqlite,queries}=storage();
  try{
-  let category={id:payload.profileId,revision:1,categoryId:'80719',categoryPath:['바스켓'],template:null,mappings:[]};
+  let category={id:payload.profileId,revision:1,categoryId:'80719',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath,template:null,mappings:[]};
   const route=load('app/api/collection-jobs/route.ts',{'@/db/collection-jobs':queries,'@/db/category-profiles':{getCategoryProfile:async()=>category}});
   const first=await (await route.POST(request({...payload,features:'원래 특징'}))).json();
   assert.equal(first.preservedRequests.length,0);
   const repeated=await (await route.POST(request({...payload,features:'원래 특징'}))).json();
   assert.equal(repeated.preservedRequests.length,0);
-  category={...category,revision:2,categoryId:'81452',categoryPath:['보호대']};
+  category={...category,revision:2,categoryId:'81452',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('81452').categoryPath};
   const mixed=await (await route.POST(request({...payload,expectedProfileRevision:2,urls:[url,'https://detail.1688.com/offer/987654321.html'],goal:'work',features:'새 특징',keywords:'새 키워드'}))).json();
   assert.equal(mixed.jobs.length,2);assert.equal(mixed.preservedRequests.length,1);
   assert.equal(mixed.preservedRequests[0].sourceUrl,url);

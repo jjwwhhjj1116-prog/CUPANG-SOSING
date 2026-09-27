@@ -57,7 +57,7 @@ test('category choices distinguish unfilled cells from explicit empty N/A and ne
    element.props.onChange({target:{value:'unset'}});element.props.onChange({target:{value:'choice-99999'}});assert.deepEqual(written,['']);
   }
  }
- assert.equal(ids.length,26);assert.ok(covered>100);
+ assert.ok(ids.includes('81467'));assert.equal(ids.length,27);assert.ok(covered>100);
 });
 
 test('choice input keeps out-of-list saved values and ordinary clear choices intact',()=>{

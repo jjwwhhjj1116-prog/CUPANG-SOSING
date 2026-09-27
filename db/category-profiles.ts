@@ -9,7 +9,7 @@ export const categoryProfileSchema = `CREATE TABLE IF NOT EXISTS category_profil
 type Row = { id: string; payload: string; revision: number; created_at: string; updated_at: string };
 async function database() {
   if (!env.DB) throw new Error('D1 unavailable');
-  await env.DB.batch([env.DB.prepare(categoryProfileSchema), env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner_id ON category_profiles(owner_id, id)')]);
+  await env.DB.batch([env.DB.prepare(categoryProfileSchema), env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner ON category_profiles(owner_id, updated_at)'), env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_category_profiles_owner_id ON category_profiles(owner_id, id)')]);
   return env.DB;
 }
 function profile(row: Row): CategoryProfile {
