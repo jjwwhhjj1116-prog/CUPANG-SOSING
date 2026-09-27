@@ -50,7 +50,9 @@ export async function POST(request: Request, context: Context) {
       }
       if(autoDraft && !optionsOnly){
         const prior=await findIntakeTranslation(owner,id);
-        if(prior)return json({job:prior,replayed:true,autoDraft:prior.productVersion===product.updated_at,intakePreserved:prior.productVersion!==product.updated_at,productVersion:product.updated_at,configuration:configuration()});
+        const expiredUnstarted = prior && ['prepared','approved'].includes(prior.status) &&
+          Date.parse(prior.review.expiresAt) <= Date.now() && prior.productVersion === product.updated_at;
+        if(prior && !expiredUnstarted)return json({job:prior,replayed:true,autoDraft:prior.productVersion===product.updated_at,intakePreserved:prior.productVersion!==product.updated_at,productVersion:product.updated_at,configuration:configuration()});
       }
       const { findProductCollection } = await import('@/db/collection-products');
       const { readCollectionResult } = await import('@/db/collection-results');

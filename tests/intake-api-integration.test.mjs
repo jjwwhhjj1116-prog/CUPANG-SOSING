@@ -56,7 +56,17 @@ for(const automatic of [false,true,'many'])test(`URL intake persists a category-
     sqlite.prepare('INSERT INTO quotation_attribute_rules(owner_id,category_id,payload,revision,updated_at) VALUES(?,?,?,?,?)').run('owner','80719',JSON.stringify(rules),1,new Date().toISOString());
    }
    let generations=0;bindings.AI={run:async(model,input)=>{generations++;assert.equal(model,bindings.SOURCEFLOW_TEXT_MODEL);const source=JSON.parse(input.messages[1].content);assert.equal(source.category.id,'80719');return {response:{title:generations===1?'자동 생성 수납 상품':'후속 요청 상품명',description:'검토용 설명',keywords:['수납'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('상품속성:')?(automatic===true?'상품 모양':'바구니 형태'):'옵션',value:pair.name.startsWith('상품속성:')?'사각형':pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))}};}};
+   let expiredJobId;
+   if(automatic===true){
+    const productId=sqlite.prepare('SELECT id FROM products').get().id;
+    const prepared=await fetcher(`/api/products/${productId}/translation`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'prepare-collected',intake:true})});
+    assert.equal(prepared.status,201);
+    const oldJob=(await prepared.json()).job;expiredJobId=oldJob.id;
+    oldJob.review.expiresAt='2026-01-01T00:00:00.000Z';
+    sqlite.prepare('UPDATE translation_jobs SET review=?,expires_at=? WHERE id=?').run(JSON.stringify(oldJob.review),oldJob.review.expiresAt,oldJob.id);
+   }
    assert.match(await run(),/SEO·옵션 초안을 생성해 반영/);assert.equal(generations,expectedGenerations);
+   if(expiredJobId){const saved=sqlite.prepare('SELECT id,status FROM translation_jobs WHERE idempotency_key=?').get('intake-auto-v1');assert.equal(saved.id,expiredJobId);assert.equal(saved.status,'completed');}
    const content=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
    if(automatic==='many'){assert.equal(content.categoryAttributes.categoryId,'80719');assert.equal(content.categoryAttributes.values.length,50);}
    assert.equal(content.seo.title.value,'자동 생성 수납 상품');assert.equal(content.label.productName.value,'자동 생성 수납 상품');

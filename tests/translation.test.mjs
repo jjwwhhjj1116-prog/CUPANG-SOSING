@@ -328,3 +328,39 @@ test('Workers AI deadline returns an uncertain outcome once and discards late re
   complete({ response: draft }); await Promise.resolve();
   assert.equal(calls, 1); assert.equal(cleared, 1);
 });
+
+test('expired unstarted intake keeps one job, renews review and clears old approval', async () => {
+  for (const state of ['prepared','approved']) {
+    const {sqlite,store,product}=harness();
+    try {
+      const review=await model.prepareTranslationReview(source,config,new Date('2026-01-01T00:00:00Z'));
+      const value={id:crypto.randomUUID(),productId:'product',productVersion:product.updated_at,contentRevision:2,status:'prepared',review,createdAt:'2026-01-01T00:00:00.000Z'};
+      await store.createTranslationJob('owner',value,'intake-auto-v1','same-source');
+      sqlite.prepare('UPDATE translation_jobs SET status=?,approved_at=?').run(state,state==='approved'?value.createdAt:null);
+      const fresh={...value,id:crypto.randomUUID(),createdAt:new Date().toISOString(),review:await model.prepareTranslationReview(source,config)};
+      const result=await store.createTranslationJob('owner',fresh,'intake-auto-v1','same-source');
+      assert.equal(result.job.id,value.id);assert.equal(result.job.status,'prepared');assert.equal(result.job.approvedAt,null);
+      assert.equal(result.job.review.fingerprint,fresh.review.fingerprint);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
+      assert.equal(await store.approveTranslationJob('owner','product',value.id,review.fingerprint,fresh.createdAt),null);
+      assert.ok(await store.approveTranslationJob('owner','product',value.id,fresh.review.fingerprint,fresh.createdAt));
+    } finally {sqlite.close();}
+  }
+});
+
+test('expired intake renewal never resets executed jobs or bypasses changed source/content', async () => {
+  for (const variant of ['running','completed','failed','uncertain','source','content','product']) {
+    const {sqlite,store,product}=harness();
+    try {
+      const review=await model.prepareTranslationReview(source,config,new Date('2026-01-01T00:00:00Z'));
+      const value={id:crypto.randomUUID(),productId:'product',productVersion:product.updated_at,contentRevision:2,status:'prepared',review,createdAt:'2026-01-01T00:00:00.000Z'};
+      await store.createTranslationJob('owner',value,'intake-options-fixture','same-source');
+      if(['running','completed','failed','uncertain'].includes(variant))sqlite.prepare('UPDATE translation_jobs SET status=?,started_at=?').run(variant,value.createdAt);
+      if(variant==='content')sqlite.exec('UPDATE product_content SET revision=3');
+      if(variant==='product')sqlite.exec("UPDATE products SET updated_at='changed'");
+      const fresh={...value,createdAt:new Date().toISOString(),review:await model.prepareTranslationReview(source,config)};
+      const result=await store.createTranslationJob('owner',fresh,'intake-options-fixture',variant==='source'?'changed-source':'same-source');
+      assert.equal(result.job.review.fingerprint,review.fingerprint);
+      assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
+    } finally {sqlite.close();}
+  }
+});

@@ -49,6 +49,21 @@ export async function createTranslationJob(ownerId: string, value: TranslationJo
       value.review.fingerprint, JSON.stringify(value.review), value.review.expiresAt, value.createdAt,
       value.productId, ownerId, value.productVersion, value.productId, ownerId, value.contentRevision).first<Row>();
   if (row) return { job: job(row), replayed: false, conflict: false };
+  // Resume an expired, never-started automatic draft without creating a second
+  // job. Exact source/config/version identity and atomic state guards are required.
+  if (key === 'intake-auto-v1' || key.startsWith('intake-options-')) {
+    const renewed = await db.prepare(`UPDATE translation_jobs
+      SET status='prepared',review_fingerprint=?,review=?,expires_at=?,approved_at=NULL
+      WHERE owner_id=? AND product_id=? AND idempotency_key=? AND request_fingerprint=?
+      AND status IN ('prepared','approved') AND expires_at<=? AND started_at IS NULL
+      AND claim_token IS NULL AND result IS NULL AND error IS NULL
+      AND product_version=? AND content_revision=?
+      AND EXISTS(SELECT 1 FROM products WHERE id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id AND updated_at=translation_jobs.product_version)
+      AND COALESCE((SELECT revision FROM product_content WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id),0)=content_revision
+      RETURNING *`).bind(value.review.fingerprint, JSON.stringify(value.review), value.review.expiresAt,
+        ownerId, value.productId, key, requestFingerprint, value.createdAt, value.productVersion, value.contentRevision).first<Row>();
+    if (renewed) return { job: job(renewed), replayed: true, conflict: false };
+  }
   const existing = await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?').bind(ownerId, value.productId, key).first<Row>();
   return existing ? { job: job(existing), replayed: true, conflict: existing.request_fingerprint !== requestFingerprint } : null;
 }
