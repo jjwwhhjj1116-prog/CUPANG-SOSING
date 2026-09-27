@@ -3294,3 +3294,10 @@ AI등록 화면 확인:
 - Shared resolver feeds stage-six registration settings, stage-seven quotation inputs and export snapshots. Explicit captured blanks and current workspace objects are preserved.
 - Validation: registration API and collection preparation/storage suites 25/25 including sparse-snapshot quotation values; TypeScript, Cloudflare build/artifact/diff passed. Deployed e7ddc44b-6648-48f8-acca-aac9a9f72023.
 - No live Couplus parity verification. Full category match, actual comprehensive 1688 import, image translation and automatic Supplier Hub registration remain incomplete.
+
+## 323 — Show saved quotation prices on option board and open stage-three images (2026-09-27)
+- Option board previously displayed calculated policy prices even after stage-two/seven quotation price overrides. It now reads resolved quotation prices and preserves intentional blank overrides as missing input.
+- Validates matching product version, option revision and content revision across its reads, requires price fields for each option, and surfaces quotation lookup failures rather than presenting stale calculated prices as final. Existing abort signal reaches the additional read.
+- Option board image-edit callback now opens stage three with the selected option identity, using the image workspace added in 318 instead of the auxiliary option editor.
+- Validation: option board and DetailPanel suites 13/13, TypeScript, Cloudflare production build/artifact and diff checks passed. Deployed d7c56511-1ea2-4f1d-a73c-b8bfcc3db519.
+- No live Couplus parity verification. Full category parity, actual comprehensive 1688 collection, image translation and Supplier Hub automatic registration remain incomplete.

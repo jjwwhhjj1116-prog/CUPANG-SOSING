@@ -8,11 +8,12 @@ import {createRequire} from 'node:module';
 import {renderToStaticMarkup} from 'react-dom/server';
 const native=createRequire(import.meta.url);
 function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,fetch,AbortController,require(name){if(name in overrides)return overrides[name];if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;}
+function quotation(contentRevision=undefined){return {productVersion:data.productVersion,optionRevision:1,contentRevision,resolved:{rows:data.options.rows.map(row=>({optionId:row.id,fields:{supplyPrice:{value:'4100'},salePrice:{value:'6200'}}}))}};}
 const model=load('app/components/product-option-board.tsx');
-const data={options:{schemaVersion:1,productId:'p1',revision:1,rows:[{id:'red',originalName:'Red',translatedName:'빨강',supplierSku:'sku-red',unitCostCny:4.5,unitsPerPack:2,stock:0,included:true,imageKey:'owner/red.png',provenance:{}},{id:'blue',originalName:'Blue',translatedName:'',supplierSku:'sku-blue',unitCostCny:null,unitsPerPack:1,stock:null,included:false,imageKey:'other/private.png',provenance:{translatedName:'manual'}}]},pricing:{rows:[{optionId:'red',calculation:{supplyPrice:4000,salePrice:6000},error:null}]}};
+const data={productVersion:'v1',options:{schemaVersion:1,productId:'p1',revision:1,rows:[{id:'red',originalName:'Red',translatedName:'빨강',supplierSku:'sku-red',unitCostCny:4.5,unitsPerPack:2,stock:0,included:true,imageKey:'owner/red.png',provenance:{}},{id:'blue',originalName:'Blue',translatedName:'',supplierSku:'sku-blue',unitCostCny:null,unitsPerPack:1,stock:null,included:false,imageKey:'other/private.png',provenance:{translatedName:'manual'}}]},pricing:{rows:[{optionId:'red',calculation:{supplyPrice:4000,salePrice:6000},error:null}]}};
 test('option board fetch checks product identity and propagates abort signal',async()=>{
  const signal=new AbortController().signal;const requests=[];
- const received=await model.readOptionBoard('p1',signal,async(url,init)=>{requests.push({url,...init});return {ok:true,json:async()=>url.endsWith('/options')?data:{content:{productId:'p1',schemaVersion:1,assets:{main:{value:['owner/shared.png']}}}}};});assert.equal(received.options,data.options);assert.deepEqual(Array.from(received.commonImageKeys),['owner/shared.png']);const request=requests[0];assert.equal(requests[1].signal,signal);assert.equal(requests[1].url,'/api/products/p1/content');
+ const received=await model.readOptionBoard('p1',signal,async(url,init)=>{requests.push({url,...init});return {ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content:{productId:'p1',schemaVersion:1,assets:{main:{value:['owner/shared.png']}}}}};});assert.equal(received.options,data.options);assert.deepEqual(Array.from(received.commonImageKeys),['owner/shared.png']);const request=requests[0];assert.equal(requests[1].signal,signal);assert.equal(requests[1].url,'/api/products/p1/content');
  assert.equal(request.url,'/api/products/p1/options');assert.equal(request.signal,signal);assert.equal(request.cache,'no-store');
  for(const bad of [null,{}, {...data,options:{...data.options,productId:'p2'}}])await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:true,json:async()=>bad})),/응답/);
  await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:false,json:async()=>({error:'인증 필요'})})),/인증 필요/);
@@ -54,7 +55,7 @@ test('option list uses the common main image only for null individual selection'
 test('common content fetch rejects mismatched product or failed response',async()=>{
  const signal=new AbortController().signal;
  for(const content of [null,{productId:'other',schemaVersion:1,assets:{main:{value:[]}}},{productId:'p1',schemaVersion:1,assets:{main:{value:[1]}}}]){
-  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?data:{content}})),/이미지 응답/);
+  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content}})),/이미지 응답/);
  }
  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:url.endsWith('/options'),json:async()=>url.endsWith('/options')?data:{error:'조회 실패'}})),/조회 실패/);
 });
@@ -70,7 +71,7 @@ test('shared content columns count only saved product images and open their matc
  test('shared image roles preserve detail ordering and reject malformed references',async()=>{
  const signal=new AbortController().signal;
  const content={productId:'p1',schemaVersion:1,assets:{main:{value:[]},additional:{value:['a']},detailTop:{value:['top']},detail:{value:['body']},detailBottom:{value:['bottom']},label:{value:['label']}}};
- const fetcher=async url=>({ok:true,json:async()=>url.endsWith('/options')?data:{content}});
+ const fetcher=async url=>({ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation():{content}});
  const result=await model.readOptionBoard('p1',signal,fetcher);
  assert.deepEqual(Array.from(result.commonAssets.detail),['top','body','bottom']);
  assert.deepEqual(Array.from(result.commonAssets.additional),['a']);
@@ -78,3 +79,21 @@ test('shared content columns count only saved product images and open their matc
  content.assets.label.value=[42];
  await assert.rejects(model.readOptionBoard('p1',signal,fetcher),/이미지 응답/);
  });
+
+test('option board shows saved quotation overrides and preserves intentional blank instead of calculated price',()=>{
+ const updated={...data,quotationPrices:{red:{supplyPrice:'5120',salePrice:''},blue:{supplyPrice:'',salePrice:''}}};
+ const html=renderToStaticMarkup(tree('sku-red',undefined,updated).tree);
+ assert.match(html,/5,120원 \(견적 공급가\)/);assert.match(html,/미입력 \(견적 판매가\)/);assert.doesNotMatch(html,/4,000원|6,000원/);
+});
+
+test('option board verifies quotation snapshot revisions and propagates errors instead of presenting stale calculated prices',async()=>{
+ const signal=new AbortController().signal;
+ const content={productId:'p1',schemaVersion:1,revision:2,assets:{main:{value:[]}}};
+ for(const quote of [{...quotation(2),productVersion:'stale'},{...quotation(2),optionRevision:7},quotation(1),{...quotation(2),resolved:{rows:[]}}]){
+  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quote})),/変更|변경|응답/);
+ }
+ let quoteSignal;
+ const result=await model.readOptionBoard('p1',signal,async(url,init)=>{if(url.endsWith('/quotation-fields'))quoteSignal=init.signal;return {ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quotation(2)};});
+ assert.equal(quoteSignal,signal);assert.equal(result.quotationPrices.red.supplyPrice,'4100');
+ await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:!url.endsWith('/quotation-fields'),json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:{error:'견적 조회 실패'}})),/견적 조회 실패/);
+});
