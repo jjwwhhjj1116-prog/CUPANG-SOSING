@@ -65,22 +65,28 @@ export async function createTranslationJob(ownerId: string, value: TranslationJo
     if (renewed) return { job: job(renewed), replayed: true, conflict: false };
   }
   const existing = await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?').bind(ownerId, value.productId, key).first<Row>();
+  if (existing && /^intake-options-[a-f0-9]{64}$/.test(key) && existing.request_fingerprint !== requestFingerprint) {
+    const previous = job(existing);
+    if (['prepared','approved'].includes(previous.status) && !previous.startedAt && !previous.result && !previous.error && previous.productVersion !== value.productVersion) {
+      return await refreshUnstartedIntake(ownerId, previous, value, requestFingerprint, key);
+    }
+  }
   return existing ? { job: job(existing), replayed: true, conflict: existing.request_fingerprint !== requestFingerprint } : null;
 }
 
 /** Replace stale preparation only: no executed generation or old approval survives. */
-export async function refreshUnstartedIntake(ownerId:string, previous:TranslationJob, value:TranslationJob, requestFingerprint:string) {
-  if(previous.productId!==value.productId || previous.productVersion===value.productVersion)return null;
+export async function refreshUnstartedIntake(ownerId:string, previous:TranslationJob, value:TranslationJob, requestFingerprint:string, key = 'intake-auto-v1') {
+  if((key !== 'intake-auto-v1' && !/^intake-options-[a-f0-9]{64}$/.test(key)) || previous.productId!==value.productId || previous.productVersion===value.productVersion)return null;
   const db=await database();
   const row=await db.prepare(`UPDATE translation_jobs SET request_fingerprint=?,product_version=?,content_revision=?,
     status='prepared',review_fingerprint=?,review=?,expires_at=?,approved_at=NULL
-    WHERE owner_id=? AND product_id=? AND id=? AND idempotency_key='intake-auto-v1'
+    WHERE owner_id=? AND product_id=? AND id=? AND idempotency_key=?
     AND product_version=? AND content_revision=? AND review_fingerprint=?
     AND status IN ('prepared','approved') AND started_at IS NULL AND claim_token IS NULL AND result IS NULL AND error IS NULL
     AND EXISTS(SELECT 1 FROM products WHERE id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id AND updated_at=?)
     AND COALESCE((SELECT revision FROM product_content WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id),0)=?
     RETURNING *`).bind(requestFingerprint,value.productVersion,value.contentRevision,value.review.fingerprint,JSON.stringify(value.review),value.review.expiresAt,
-      ownerId,value.productId,previous.id,previous.productVersion,previous.contentRevision,previous.review.fingerprint,value.productVersion,value.contentRevision).first<Row>();
+      ownerId,value.productId,previous.id,key,previous.productVersion,previous.contentRevision,previous.review.fingerprint,value.productVersion,value.contentRevision).first<Row>();
   return row?{job:job(row),replayed:true,conflict:false}:null;
 }
 
