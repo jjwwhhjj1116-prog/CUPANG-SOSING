@@ -68,7 +68,17 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
     warnings.push(`원본 ${index+1}번 이미지 저장 응답을 확인하지 못했습니다. 재시도 시 저장 여부를 다시 확인합니다.`);
     continue;
    }
-   const image=await imageResponse.json() as {error?:string;key?:string;warnings?:unknown;code?:string};
+   let image: {error?:string;key?:string;warnings?:unknown;code?:string};
+   try { image=await imageResponse.json(); }
+   catch (error) {
+    // fetch() resolves at headers: a successful write can still lose its body.
+    // Keep this image unconfirmed, as with a lost response before headers.
+    // HTTP failures and explicit cancellation must remain terminal.
+    if(!imageResponse.ok || !options.continueOnImageError || stopped())throw error;
+    failedImageIndices.push(index);
+    warnings.push(`원본 ${index+1}번 이미지 저장 응답을 읽지 못했습니다. 재시도 시 저장 여부를 다시 확인합니다.`);
+    continue;
+   }
    if(!imageResponse.ok){
     if(options.continueOnImageError && imageResponse.status===502 && image.code==='IMAGE_DOWNLOAD_FAILED' && !stopped()){
      failedImageIndices.push(index);warnings.push(`원본 ${index+1}번 이미지 다운로드 실패 · 다른 이미지는 계속 저장합니다.`);continue;

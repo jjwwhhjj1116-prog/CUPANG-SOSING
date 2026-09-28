@@ -190,3 +190,33 @@ test('cancellation during an uncertain image write stops batch continuation',asy
  }});
  assert.equal(result.status,'stopped');assert.equal(result.completedImages,0);assert.deepEqual(calls,[0]);
 });
+
+test('lost successful response body does not prevent later images and remains unconfirmed until resume',async()=>{
+ let lose=true;const saved=new Set(),calls=[];
+ const fetcher=async(url,init)=>{
+  if(url.endsWith('/product'))return reply({productId:'p'});
+  const index=JSON.parse(init.body).index;calls.push(index);saved.add(index);
+  if(index===1&&lose)return {ok:true,status:200,json:async()=>{throw new TypeError('stream disconnected');}};
+  return reply({key:`owner/${index}`});
+ };
+ const first=await runCollectionImport('job',3,{fetcher,continueOnImageError:true});
+ assert.equal(first.status,'failed');assert.equal(first.productId,'p');assert.equal(first.completedImages,2);
+ assert.deepEqual([...first.failedImageIndices],[1]);assert.deepEqual(calls,[0,1,2]);
+ assert.match(first.warnings[0],/응답을 읽지/);assert.equal(saved.size,3);
+ lose=false;calls.length=0;
+ const resumed=await runCollectionImport('job',3,{fetcher,continueOnImageError:true});
+ assert.equal(resumed.status,'completed');assert.equal(resumed.completedImages,3);assert.equal(saved.size,3);
+});
+
+test('unreadable HTTP errors, strict mode and cancellation still stop further image requests',async()=>{
+ for(const mode of ['http','strict','cancel']){
+  let stop=false;const calls=[];
+  const result=await runCollectionImport('job',3,{continueOnImageError:mode!=='strict',shouldStop:()=>stop,fetcher:async(url,init)=>{
+   if(url.endsWith('/product'))return reply({productId:'p'});
+   calls.push(JSON.parse(init.body).index);
+   return {ok:mode!=='http',status:mode==='http'?403:200,json:async()=>{if(mode==='cancel')stop=true;throw Error('unreadable body');}};
+  }});
+  assert.equal(result.status,mode==='cancel'?'stopped':'failed');assert.equal(result.completedImages,0);
+  assert.deepEqual(calls,[0]);assert.equal(result.productId,'p');
+ }
+});
