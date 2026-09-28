@@ -192,6 +192,48 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.equal(finalPreview.rows[0][fields.indexOf('noticeCountryOfOrigin')],'대한민국','unoverridden source edit reaches Excel');
     assert.equal(finalPreview.rows[0][fields.indexOf('salePrice')],36000);
     assert.notEqual(finalPreview.fingerprint,refreshed.fingerprint);
+    // Editing the selling pack after reviewing a quotation must recalculate
+    // automatic prices while preserving explicitly reviewed quotation cells.
+    // Exercise persistence and the generated workbook, not a pricing-only mock.
+    const optionRoute=load('app/api/products/[id]/options/route.ts');
+    const optionUrl='https://app.test/api/products/'+latest.product_id+'/options';
+    const optionState=await(await optionRoute.GET(new Request(optionUrl),qc)).json();
+    const packRows=load('app/product-options.ts').optionInputs(optionState.options);
+    packRows[0].unitsPerPack=2;
+    packRows[0].translatedName='직접 수정한 2개입';
+    packRows.push({...packRows[0],id:'manual-second',supplierSku:'manual-second-sku',unitsPerPack:1,translatedName:'추가한 1개입'});
+    const packSave=await optionRoute.PATCH(new Request(optionUrl,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:optionState.options.revision,expectedProductVersion:optionState.productVersion,rows:packRows})}),qc);
+    assert.equal(packSave.status,200,await packSave.clone().text());
+    assert.equal((await exportRequest({action:'export',fingerprint:finalPreview.fingerprint})).status,409);
+    const packPreviewResponse=await exportRequest({action:'preview'}),packPreview=await packPreviewResponse.json();
+    assert.equal(packPreviewResponse.status,200,JSON.stringify(packPreview));
+    assert.equal(packPreview.rows[0][fields.indexOf('supplyPrice')],35840);
+    assert.equal(packPreview.rows[0][fields.indexOf('salePrice')],36000,'manual sale price survives pack recalculation');
+    assert.equal(packPreview.rows[0][fields.indexOf('msrp')],77650);
+    assert.equal(packPreview.rows.length,2);
+    assert.equal(packPreview.rows[1][fields.indexOf('supplyPrice')],17920);
+    assert.equal(packPreview.rows[1][fields.indexOf('salePrice')],29870,'first option override must not leak into the new option');
+    const packSource=await sourceModule.readQuotationExportSource('owner',latest.product_id,null);
+    const packOutput=load('app/exports/quotation-fields.ts').resolvedQuotationRows(packSource,sourceModule.resolveQuotationExport(packSource),assets)[0];
+    assert.equal(packOutput.sourcePriceCny,51.2);assert.equal(packOutput.skuName,'직접 수정한 2개입');
+    const packDownload=await exportRequest({action:'download',fingerprint:packPreview.fingerprint});
+    assert.equal(packDownload.status,200,await packDownload.clone().text());
+    const packArchive=await reader.readXlsxArchive(await packDownload.arrayBuffer());
+    const packCells=reader.xlsxHeaders(reader.inspectXlsxArchive(packArchive),'견적서',2);
+    assert.equal(packCells[fields.indexOf('supplyPrice')],'35840');
+    assert.equal(packCells[fields.indexOf('salePrice')],'36000');
+    assert.equal(packCells[fields.indexOf('msrp')],'77650');
+    const secondCells=reader.xlsxHeaders(reader.inspectXlsxArchive(packArchive),'견적서',3);
+    assert.equal(secondCells[fields.indexOf('salePrice')],'29870');
+    assert.equal(secondCells[fields.indexOf('title')],'검토 완료 상품명','common review applies to a new option');
+    const currentOptions=await(await optionRoute.GET(new Request(optionUrl),qc)).json();
+    const excludedRows=load('app/product-options.ts').optionInputs(currentOptions.options).map(row=>({...row,included:false}));
+    const exclude=await optionRoute.PATCH(new Request(optionUrl,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:currentOptions.options.revision,expectedProductVersion:currentOptions.productVersion,rows:excludedRows})}),qc);
+    assert.equal(exclude.status,200,await exclude.clone().text());
+    const emptyExport=await exportRequest({action:'preview'});
+    assert.notEqual(emptyExport.status,200,'excluded options must not become a common product row');
+    assert.match(await emptyExport.text(),/옵션/);
+    assert.equal((await exportRequest({action:'export',fingerprint:packPreview.fingerprint})).status,409);
    }
    assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');return;
   }
