@@ -21,7 +21,7 @@ function harness(request,existing=false){
   if(name==='@/app/quotation-schema')return{getQuotationSchema:()=>({fields:[],status:'observed'})};
   if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};
   if(name==='@/app/components/category-quotation-preview')return{CategoryQuotationPreview:()=>null};
-  if(name==='@/app/category-catalog')return{categoryChoices:profiles=>existing?profiles.map(profile=>({...choice,path:profile.categoryPath,categoryId:profile.categoryId})): [choice],canConfirmCategory:()=>true,categoryAdvancedSeed:()=>({}),categoryChoicesAtPath:()=>[choice],categoryLevel:()=>[],categoryObservationScope:{},categoryProfileForChoice:()=>({categoryId:'80719'}),searchCategoryChoices:()=>[]};
+  if(name==='@/app/category-catalog')return{categoryChoices:profiles=>existing?profiles.map(profile=>({...choice,path:profile.categoryPath,categoryId:profile.categoryId})): [choice],canConfirmCategory:()=>true,categoryAdvancedSeed:()=>({}),categoryChoicesAtPath:()=>[choice],categoryLevel:()=>[],categoryObservationScope:{},categoryProfileForChoice:()=>({categoryId:'80719'}),searchCategoryChoices:()=>[choice]};
   return native(name);
  }});
  const render=()=>{index=0;const tree=exports.CategoryPicker({profiles:existing?[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1}]:[],selectedId:'saved',onSelected:p=>selected.push(p),onAdvanced(){}});first=false;return tree;};
@@ -83,4 +83,18 @@ test('same category with a changed quotation revision displays its new mapping b
  assert.equal(preview.props.profile.revision,2);assert.equal(preview.props.profile.mappings[0].constant,'updated default');
  revision=3;h.confirm()();await settle();assert.equal(h.selected.length,0);
  h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].revision,3);
+});
+
+
+test('search leaf opens URL entry with one click while retaining identity validation and duplicate protection',async()=>{
+ const wait=pending(),h=harness(()=>wait.promise);
+ nodes(h.render()).find(n=>n.type==='input'&&n.props.type==='search').props.onChange({target:{value:'test'}});
+ const search=()=>nodes(h.render()).find(n=>n.type==='div'&&n.props.className==='category-search-results').props.children[0][0].props.onClick;
+ const click=search();click();click();assert.equal(h.calls.length,1);assert.equal(h.selected.length,0);
+ wait.resolve(Response.json({profile:{id:'new',categoryId:'80719',categoryPath:['test'],revision:1}}));await settle();
+ assert.equal(h.selected.length,1);click();assert.equal(h.selected.length,1);assert.equal(h.calls.length,1);
+ const invalid=harness(async()=>Response.json({profile:{id:'new',categoryId:'wrong',categoryPath:['test'],revision:1}}));
+ nodes(invalid.render()).find(n=>n.type==='input'&&n.props.type==='search').props.onChange({target:{value:'test'}});
+ nodes(invalid.render()).find(n=>n.type==='div'&&n.props.className==='category-search-results').props.children[0][0].props.onClick();await settle();
+ assert.equal(invalid.selected.length,0);assert.match(JSON.stringify(invalid.render()),/URL 입력을 중단/);
 });

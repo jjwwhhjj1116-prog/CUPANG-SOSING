@@ -42,12 +42,12 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
     setPath(next); const leaves = categoryChoicesAtPath(choices, next).filter(choice => choice.isLeaf);
     setSelectedKey(leaves.length === 1 ? leaves[0].key : leaves.some(choice => choice.key === selectedKey) ? selectedKey : ''); setError('');
   }
-  async function confirm() {
-    if (!selected || !canConfirmCategory(selected) || busy || activeRequest.current || completed.current) return;
+  async function confirm(target = selected) {
+    if (!target || !canConfirmCategory(target) || busy || activeRequest.current || completed.current) return;
     const controller = new AbortController(); activeRequest.current = controller;
     setBusy(true); setError('');
     try {
-      const existing = profiles.find(profile => profile.id === selected.profileId);
+      const existing = profiles.find(profile => profile.id === target.profileId);
       if (existing) {
         const result = { profiles: await loadCategoryProfiles(controller.signal) };
         if (controller.signal.aborted) return;
@@ -67,7 +67,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
         }
         completed.current = true; onSelected(latest); return;
       }
-      const body = JSON.stringify(categoryProfileForChoice(selected));
+      const body = JSON.stringify(categoryProfileForChoice(target));
       if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
       const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': createRequest.current.id }, body, signal: controller.signal });
       const result = await response.json() as { profile: CategoryProfile; error?: string };
@@ -76,8 +76,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       const saved = result.profile;
       if (!saved || typeof saved.id !== 'string' || !saved.id.trim()
         || !Number.isSafeInteger(saved.revision) || saved.revision < 1
-        || saved.categoryId !== selected.categoryId
-        || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(selected.path)) {
+        || saved.categoryId !== target.categoryId
+        || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(target.path)) {
         throw new Error('저장된 카테고리 코드·경로·버전이 선택한 분류와 일치하지 않습니다. URL 입력을 중단했습니다. 카테고리 설정을 다시 확인해주세요.');
       }
       completed.current = true; onSelected(result.profile);
@@ -89,7 +89,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
     {path.length > 0 && <nav className="category-breadcrumb" aria-label="선택한 카테고리 경로">{path.map((name,index)=><button type="button" key={index} disabled={busy} onClick={()=>navigate(path.slice(0,index+1))}>{name}</button>)}</nav>}
     {profiles.length > 0 && <label className="field"><span>저장한 카테고리 설정</span><select value={selected?.profileId ?? ''} disabled={busy} onChange={event => { const found = choices.find(choice => choice.profileId === event.target.value); if (found) { choose(found); setQuery(''); } }}><option value="">저장한 설정 선택</option>{profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId || '코드 미입력'} · {profile.categoryPath.join(' › ')}</option>)}</select></label>}
     <label className="field"><span>카테고리 검색</span><input type="search" placeholder="카테고리 이름 또는 번호" value={query} onChange={event => setQuery(event.target.value)} disabled={busy}/></label>
-    {query.trim() ? <div className="category-search-results">{visible.map(choice => <button key={choice.key} type="button" className={selectedKey === choice.key ? 'selected' : ''} onClick={() => { if (choice.isLeaf) choose(choice); else { navigate(choice.path); setQuery(''); } }} disabled={busy}><span>{choice.path.join(' › ')}{choice.profileName && <em>{choice.profileName}</em>}</span><small className={canConfirmCategory(choice) ? 'ready' : 'unconfirmed'}>{choice.categoryId ? `${choice.evidence === 'saved' ? '저장 설정 · ' : ''}${choice.categoryId}` : choice.isLeaf ? '최종 · 코드 미확인' : choice.childrenObserved ? '하위 분류 보기' : '하위 목록 미확인'}</small></button>)}{!visible.length && <p>관찰한 목록과 저장 설정에서 일치하는 분류가 없습니다. 전체 목록에 없는 것으로 단정할 수는 없습니다.</p>}</div> : <div className="category-tree">{Array.from({ length: depths }, (_, depth) => <section key={depth}><h3>{depth + 1}단계 카테고리</h3><div className="category-tree-options">{categoryLevel(choices, path, depth).map(name => {
+    {query.trim() ? <div className="category-search-results">{visible.map(choice => <button key={choice.key} type="button" className={selectedKey === choice.key ? 'selected' : ''} onClick={() => { if (activeRequest.current || completed.current) return; if (choice.isLeaf) { choose(choice); if (canConfirmCategory(choice)) void confirm(choice); } else { navigate(choice.path); setQuery(''); } }} disabled={busy}><span>{choice.path.join(' › ')}{choice.profileName && <em>{choice.profileName}</em>}</span><small className={canConfirmCategory(choice) ? 'ready' : 'unconfirmed'}>{choice.categoryId ? `${choice.evidence === 'saved' ? '저장 설정 · ' : ''}${choice.categoryId}` : choice.isLeaf ? '최종 · 코드 미확인' : choice.childrenObserved ? '하위 분류 보기' : '하위 목록 미확인'}</small></button>)}{!visible.length && <p>관찰한 목록과 저장 설정에서 일치하는 분류가 없습니다. 전체 목록에 없는 것으로 단정할 수는 없습니다.</p>}</div> : <div className="category-tree">{Array.from({ length: depths }, (_, depth) => <section key={depth}><h3>{depth + 1}단계 카테고리</h3><div className="category-tree-options">{categoryLevel(choices, path, depth).map(name => {
       const next = [...path.slice(0, depth), name]; const exact = categoryChoicesAtPath(choices, next); const leaves = exact.filter(choice => choice.isLeaf);
       const known = leaves.some(canConfirmCategory); const children = categoryLevel(choices, next, next.length).length > 0;
       return <button type="button" key={name} className={path[depth] === name ? 'selected' : ''} disabled={busy} onClick={() => navigate(next)}><span>{name}</span><small className={known ? 'ready' : 'unconfirmed'}>{known ? '설정 선택' : leaves.length ? '최종 · 코드 미확인' : children ? '›' : '하위 미확인'}</small></button>;

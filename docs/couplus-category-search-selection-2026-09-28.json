@@ -1,0 +1,13 @@
+{
+  "observedAt": "2026-09-28",
+  "url": "https://couplus.co.kr/AIRocketReg",
+  "browser": "existing designated otherChrome",
+  "action": "Opened empty product queue, opened category picker, searched 요가매트, clicked exact leaf path",
+  "categoryPath": ["스포츠/레져", "헬스/요가", "요가/필라테스용품", "요가매트"],
+  "result": "Search result click immediately closed category picker and created one empty queue row; separate 선택 완료 button no longer present",
+  "queueFields": ["1688 상품 링크", "상품 특징", "타겟 키워드"],
+  "defaultGoal": "SEO+가격",
+  "cleanup": "Deleted only the newly created empty queue row and closed queue",
+  "sourceFetchObserved": false,
+  "existingProductsModified": false
+}
