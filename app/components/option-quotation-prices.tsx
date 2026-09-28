@@ -9,6 +9,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
  const request=useRef<AbortController|null>(null);
  const endpoint=`/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId?`?profileId=${encodeURIComponent(profileId)}`:''}`;
+ const editingEndpoint=useRef(endpoint);
  useEffect(()=>()=>request.current?.abort(),[]);
  async function load(){
   if(request.current)return;
@@ -20,7 +21,15 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:'가격 조회 실패');}
   finally{if(request.current===controller)request.current=null;if(!controller.signal.aborted)setBusy(false);}
  }
- useEffect(()=>{if(request.current){request.current.abort();request.current=null;setBusy(false);}if(edits.length){setMessage('상품 정보가 변경됐습니다. 입력은 유지됩니다. 저장 시 최신 버전을 확인합니다.');return;}void load();},[endpoint,version,refreshToken]);
+ useEffect(()=>{
+  if(request.current){request.current.abort();request.current=null;setBusy(false);}
+  // Preserve edits on a refresh of this quotation only. Another product or
+  // category must never display or submit this quotation's pending prices.
+  if(editingEndpoint.current!==endpoint){
+   editingEndpoint.current=endpoint;setView(null);setEdits([]);setMessage('');void load();return;
+  }
+  if(edits.length){setMessage('상품 정보가 변경됐습니다. 입력은 유지됩니다. 저장 시 최신 버전을 확인합니다.');return;}void load();
+ },[endpoint,version,refreshToken]);
  const rows=view?.resolved.rows.filter(row=>row.included)??[];
  function value(optionId:string|null,fieldKey:string){
   const edit=edits.find(change=>change.optionId===optionId&&change.fieldKey===fieldKey);

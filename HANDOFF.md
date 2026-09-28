@@ -4193,3 +4193,9 @@ AI등록 화면 확인:
 - Baseline full suite passed 1257/1257 before this edit. After edit, parser/intake integration suite passed 19/19; typecheck, Cloudflare build/artifact and diff checks passed. Added coverage for repeated main/SKU URLs with separate detail placement. Logs outputs/step474-*.log.
 - Deployed 4088b5aa-d8be-4f66-8c84-058aad6b6994. No live working products modified. No GitHub push retry.
 - Parser fixture verification is not evidence of a successful live1688 API request. Credentials/provider availability, live collection, all-category/default parity, official XLSX acquisition/mapping, image AI, installed extension refresh and final Hub registration remain unverified/incomplete. Prior tool restrictions still apply.
+
+## Step 475 — Isolate pending option prices by quotation endpoint (2026-09-28)
+- OptionQuotationPrices previously retained pending edits on any endpoint change, including a different product/category. Separate endpoint identity changes from version/refresh changes: clear the old view and edits, abort the old request and load the selected quotation. Same-quotation refresh still preserves user input.
+- Regression coverage verifies failed new-category reads cannot display/save old prices and late aborted save responses cannot replace the newly selected quotation or invoke onSaved. Related option-price/editor suite passed 13/13; typecheck, Cloudflare build/artifact and diff checks passed.
+- Deployed c4e04a2a-5d6f-48c3-a899-277fc34d5cde. No existing live products changed. Local commit only; prior GitHub push denial not retried.
+- Live1688 collection, full category/default parity, official XLSX mapping, image AI and final Hub registration remain incomplete/unverified. This UI regression fix does not establish end-to-end completion.
