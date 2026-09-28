@@ -22,6 +22,12 @@ const aliases: Partial<Record<CategoryField, string[]>> = {
   supplyPrice: ['공급가', '공급가(KRW)'], salePrice: ['판매가', '쿠팡 판매가', '판매가(KRW)'],
   msrp: ['권장소비자가격'], sourcePriceCny: ['중국원가(CNY)', '원가(CNY)'],
   importer: ['수입 및 판매원', '수입·판매원'], serviceContact: ['A/S 연락처'],
+  // Supplier Hub category workbook v190, downloaded 2026-09-28.
+  barcode: ['상품 바코드'], mainImage: ['대표이미지 파일명'],
+  additionalImages: ['추가이미지 파일명'], detailImages: ['상세이미지 파일명'],
+  detailHtml: ['HTML 상품 상세 컨텐츠'], altText: ['이미지 대체 텍스트'],
+  shelfLifeDays: ['유통기간 *식품의 경우 소비기간 (일수기재)'],
+  labelImages: ['제품 필수 표시사항 (라벨 또는 도안 이미지)'],
 };
 
 export type QuotationMappingSuggestion = {

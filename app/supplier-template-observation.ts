@@ -10,11 +10,11 @@ export function supplierTemplateObservation(categoryId: string) {
   } as const;
   if (categoryId !== '80719') return null;
   return {
-    observedAt: '2026-09-24',
+    observedAt: '2026-09-28',
     registrationPath: ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'],
     downloadPath: ['주방용품', '주방수납/잡화', '건조대/진열대/정리대', '주방수납바구니/바스켓'],
     url: 'https://supplier.coupang.com/qvt/registration',
-    excelVerified: false,
-    downloadCategoryId: null,
+    excelVerified: true,
+    downloadCategoryId: '6269',
   } as const;
 }

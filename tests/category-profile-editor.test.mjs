@@ -81,13 +81,14 @@ test('changing actual header rows keeps manual constants and explicit disconnect
   assert.equal(saved.template.headerRow,2);
 });
 
-test('template guidance distinguishes observed download taxonomy from registration category and never claims verified Excel',()=>{
+test('template guidance records inspected Excel category correspondence without claiming submission success',()=>{
  const h=harness();let tree=JSON.stringify(h.render());
- assert.match(tree,/건조대\/진열대\/정리대/);assert.match(tree,/주방수납\/잡화/);assert.match(tree,/동일성은 미확인/);assert.match(tree,/원본 양식은 연결/);
+ assert.match(tree,/건조대\/진열대\/정리대/);assert.match(tree,/주방수납\/잡화/);assert.match(tree,/칸 카테고리 6269/);assert.match(tree,/실제 제출 검증은 별도/);assert.match(tree,/원본 양식은 연결/);
  const input=h.find(node=>node.type==='input'&&node.props.value==='80719');input.props.onChange({target:{value:'81452'}});
  tree=JSON.stringify(h.render());assert.doesNotMatch(tree,/건조대\/진열대\/정리대/);assert.match(tree,/공식 다운로드 경로는 아직 대조하지/);
  const observation=load('app/supplier-template-observation.ts').supplierTemplateObservation('80719');
- assert.equal(observation.excelVerified,false);assert.equal(observation.downloadCategoryId,null);
+ assert.equal(observation.excelVerified,true);assert.equal(observation.downloadCategoryId,'6269');
+ assert.equal(load('app/supplier-template-observation.ts').supplierTemplateObservation('81467').excelVerified,false);
  assert.equal(load('app/supplier-template-observation.ts').supplierTemplateObservation('unknown'),null);
 });
 

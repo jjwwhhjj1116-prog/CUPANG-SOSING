@@ -20,6 +20,22 @@ function load(file) {
 const { suggestQuotationMappings: suggest } = load('app/quotation-mapping.ts');
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('official Supplier Hub v190 basket headers connect draft media and barcode fields', () => {
+  const headers=JSON.parse(fs.readFileSync(new URL('./fixtures/supplier-basket-v190-headers.json',import.meta.url),'utf8'));
+  const result=suggest(headers,'80719');
+  const fields=new Map(result.mappings.map(mapping=>[mapping.column,mapping.field]));
+  for(const [column,field] of [[3,'barcode'],[38,'mainImage'],[39,'additionalImages'],[40,'detailImages'],[41,'detailHtml'],[42,'altText'],[51,'shelfLifeDays'],[60,'labelImages']])assert.equal(fields.get(column),field);
+  assert.equal(result.mappings.length,70);
+  assert.deepEqual(plain(result.ambiguousColumns),[]);
+  // The notice-name column contains original formulas; sourcing channel is
+  // not the 1688 URL. Neither may be inferred or overwritten by these aliases.
+  assert.deepEqual(plain(result.unmatchedColumns),[0,61,72,73]);
+  const values={barcode:'바코드 없음(쿠팡 바코드 생성 요청)',mainImage:'main.jpg',additionalImages:'extra.jpg',detailImages:'detail.jpg',detailHtml:'<p>상세</p>',altText:'상품 설명',shelfLifeDays:'0',labelImages:'label.png'};
+  const profile={name:'공식 바스켓 열 대조',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],mappings:result.mappings.filter(mapping=>Object.hasOwn(values,mapping.field)),template:{name:'basket.csv',format:'csv',sha256:'a'.repeat(64),sheetName:'',headerRow:1,headers}};
+  const row=load('app/category-profiles.ts').mapQuotationRow(profile,values,load('app/quotation-schema.ts').getQuotationSchema('80719').fields).values;
+  for(const [column,field] of fields)if(Object.hasOwn(values,field))assert.equal(String(row[column]),values[field]);
+});
+
 test('saved category mappings cannot silently export attributes absent from the selected schema', () => {
   const profiles = load('app/category-profiles.ts');
   const getSchema = load('app/quotation-schema.ts').getQuotationSchema;

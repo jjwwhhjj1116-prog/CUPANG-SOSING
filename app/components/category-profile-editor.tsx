@@ -160,7 +160,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
         {templateObservation ? <>
           <p>상품 등록 분류: {templateObservation.registrationPath.join(' → ')}</p>
           <p>공식 다운로드 화면에서 확인한 경로: <strong>{templateObservation.downloadPath.join(' → ')}</strong></p>
-          <small>{templateObservation.observedAt} 화면 관찰. 말단 이름은 같지만 상위 경로가 다릅니다. 다운로드 화면의 칸 카테고리 ID와 상품 등록 번호의 동일성은 미확인입니다.</small>
+          <small>{templateObservation.observedAt} 확인. {templateObservation.excelVerified ? `공식 Excel에서 등록 카테고리 ${draft.categoryId}와 칸 카테고리 ${templateObservation.downloadCategoryId}의 대응을 확인했습니다. 실제 제출 검증은 별도입니다.` : '말단 이름은 같지만 상위 경로가 다릅니다. 다운로드 화면의 칸 카테고리 ID와 상품 등록 번호의 동일성은 미확인입니다.'}</small>
         </> : <p>이 카테고리의 공식 다운로드 경로는 아직 대조하지 않았습니다. 등록 화면의 번호나 이름만으로 양식을 확정하지 마세요.</p>}
         <p>내려받은 파일을 아래 원본 입력에 연결하고 시트·머리글·열 연결을 확인하세요. {draft.template ? '현재 원본 양식은 연결되어 있습니다.' : '현재 원본 양식이 연결되지 않았습니다.'} 파일 연결이나 열 자동 추천은 공식 카테고리 일치·제출 성공 검증을 뜻하지 않습니다.</p>
       </details>
