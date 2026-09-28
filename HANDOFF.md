@@ -4275,3 +4275,12 @@ AI등록 화면 확인:
 - 관련 63/63 테스트, TypeScript, 빌드, 산출물 검사, ZIP 내용/버전, diff 검사 통과.
 - 배포 54fe3e0c-e5dd-4736-90f9-5a28dbca639c. 전체 진행률 추정 약40% 유지. 실1688 수집·실공식 XLSX·카테고리 전체 대응·최종 Hub 등록은 미완료. 검색 성공을 등록 완료로 처리하지 않는다.
 - GitHub push 및 이전 거절된 동작 재시도 없음.
+
+## 487. 실제 수집 경로와 운영 API 미설정 확인
+
+- 운영 collect route는 기본 public-product-jsonld-v1을 사용. ALIBABA_PRODUCT_API_ENABLED=true인 경우에만 후보 공식 API 어댑터를 선택한다. 공개 페이지 수집 실패를 해결한 구현은 아직 아니다.
+- wrangler secret list로 이름의 존재만 확인: ALIBABA_PRODUCT_API_ENABLED, ALIBABA_APP_KEY, ALIBABA_APP_SECRET, ALIBABA_ACCESS_TOKEN 모두 미등록. 로컬 운영 설정에도 해당 키 없음. 비밀 값 조회/출력 없음. 기존 productionConfig vars에도 Alibaba 설정 없음.
+- 지정 otherChrome(browser2) 재사용하여 쿠플러스 AIRocketReg를 열었으나 로그인 화면. 비밀번호 입력/기존 상품 수정 없음. 사용자에게 같은 Chrome 쿠플러스 로그인 요청을 비동기로 전달했으며 회신 대기.
+- 공식 API 문서 검색으로 확정적인 새 구현 근거는 얻지 못함. 외부 검색의 비공식 예제에 맞춰 계약을 임의 변경하지 않았다. 후보 어댑터의 실제 응답 검증이 필요하다.
+- 이번 작업은 원인 확인이며 제품 코드 수정·재배포 없음. 배포는 54fe3e0c-e5dd-4736-90f9-5a28dbca639c 그대로. 약40% 추정 유지, 실1688→초안→Hub 접수 미완료. 과거 사이트 안전 거절/다운로드 거절/푸시 거절 재시도 없음.
+- 다음 핵심: 로그인된 Couplus 상품추가 UI의 수집 흐름을 직접 대조하고, 우리 배포가 실제로 사용할 수 있는 상품 데이터 공급 경로를 확정. 테스트 통과 개수만 늘리는 것을 이 연결의 완료로 보고하지 않는다.
