@@ -4212,3 +4212,9 @@ AI등록 화면 확인:
 - Excluding all options via the actual options route rejects export instead of inventing a common product row. Prior ZIP fingerprint is rejected after both option mutations. Suite passed 11/11, log outputs/step477-tests.log; git diff check passed.
 - Test-only change; no new deployment or live product changes. Latest deployment remains ebd875de-03d6-4f8b-b09c-00359bebc676. No GitHub push retry.
 - Alibaba/AI/R2 responses and workbook in this test are fixtures. This does not establish live1688 collection, official-template parity, live image generation or final Supplier Hub registration. Those remain incomplete; prior restrictions remain in force.
+
+## Step 478 — Same-tab navigation to quotation status search (2026-09-28)
+- Reused designated otherChrome and opened blank Supplier Hub registration form. Followed observed 상품 등록 상태 확인 link to /qvt/wims; confirmed quotation-ID input and search page. No existing products changed or files uploaded.
+- Extension 0.2.17 registration-search accepts the original /qvt/registration tab after exact stored file validation completes, navigates that same tab to /qvt/wims, waits for the observed quotation-ID control, then invokes the existing exact-ID search. Changed active tabs, unexpected redirects and unready forms stop the action. Navigation/search never imply registered:true.
+- All 52 supplier-hub tests passed; typecheck/build/artifact/diff checks passed. ZIP inspected for manifest 0.2.17 and new navigation module. Deployed 6f60420e-934f-479c-8140-5bd00e64df1d. No GitHub push retry.
+- Installed extension refresh and live end-to-end execution remain unverified. Live1688 acquisition, all-category/default parity, official workbook mapping, image AI and final Hub registration remain incomplete. This change connects validation to status lookup; it does not implement or prove final registration. Prior denied actions remain restricted.

@@ -1,4 +1,5 @@
 import {searchSupplierHubRegistration} from './registration-search.mjs';
+import {openSupplierHubRegistrationStatus} from './registration-navigation.mjs';
 import {transferRecord,resultKey} from './handoff-store.mjs';
 import {readSupplierHubValidation} from './result.mjs';
 import {readSupplierHubRegistration} from './registration-result.mjs';
@@ -12,13 +13,15 @@ export async function observeSupplierHubResult(message,sender){
   try{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     const path=message.kind!=='validation'?'/qvt/wims':'/qvt/registration';
-    if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!==path)throw Error('현재 창의 해당 Supplier Hub 결과 화면에서 실행해주세요.');
+    const allowedPaths=message.kind==='registration-search'?['/qvt/registration','/qvt/wims']:[path];
+    if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||!allowedPaths.includes(new URL(tab.url).pathname))throw Error('현재 창의 해당 Supplier Hub 결과 화면에서 실행해주세요.');
     if(message.kind!=='validation'){
       const identity=await transferRecord('get',`attempt:${tab.id}`);
       if(!identity)throw Error('이 탭에서 전달한 상품 정보가 없습니다.');
       const key=resultKey(identity),saved=await transferRecord('get',key);
       if(saved?.state!=='validation-complete'||!saved.quotationId||saved.filename!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('먼저 대량 상품 등록 화면에서 해당 파일의 검증 완료 결과와 견적서 ID를 확인해주세요.');
       if(message.kind==='registration-search'){
+        await openSupplierHubRegistrationStatus(tab.id);
         const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:searchSupplierHubRegistration,args:[saved.quotationId]});
         const result=execution?.result;
         if(result?.state!=='search-requested'||result.quotationId!==saved.quotationId||result.registered!==false)throw Error('검색 요청 결과를 확인하지 못했습니다. Supplier Hub 화면을 확인해주세요.');

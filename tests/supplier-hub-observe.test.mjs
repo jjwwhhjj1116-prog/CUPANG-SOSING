@@ -8,7 +8,7 @@ function setup({kind='validation',senderChanges={},tabChanges={},resultChanges={
  const saved={...identity,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-1',state:'validation-complete',registered:false,...savedChanges};
  const result=kind==='validation'?{...saved,...resultChanges}:{quotationId:'quote-1',scope:'visible-page',rows:[{title:'상품',skuId:'sku-1'}],registered:false,...resultChanges};
  const puts=[],scripts=[];
- const context=vm.createContext({Date,URL,searchSupplierHubRegistration(){},readSupplierHubValidation(){},readSupplierHubRegistration(){},resultKey:()=> 'result:key',
+ const context=vm.createContext({Date,URL,openSupplierHubRegistrationStatus:async()=>{},searchSupplierHubRegistration(){},readSupplierHubValidation(){},readSupplierHubRegistration(){},resultKey:()=> 'result:key',
   transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key==='attempt:123'?(missing?null:identity):saved;},
   chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com'+(kind==='validation'?'/qvt/registration':'/qvt/wims'),...tabChanges}]},scripting:{executeScript:async input=>{scripts.push(input);await onExecute?.();return [{result}];}}}
  });
@@ -43,7 +43,15 @@ test('registration search uses only the saved validated ID and does not save sea
  const h=setup({kind:'registration-search',resultChanges:{state:'search-requested'}});
  const result=await h.run();assert.equal(result.state,'search-requested');assert.equal(h.puts.length,0);
  assert.equal(h.scripts[0].args[0],'quote-1');
- for(const opts of [{missing:true},{savedChanges:{state:'validation-pending'}},{savedChanges:{filename:'other.xlsx'}},{resultChanges:{state:'unknown'}},{resultChanges:{state:'search-requested',quotationId:'other'}},{resultChanges:{state:'search-requested',registered:true}},{senderChanges:{id:'other'}},{tabChanges:{url:'https://supplier.coupang.com/qvt/registration'}}]){
+ for(const opts of [{missing:true},{savedChanges:{state:'validation-pending'}},{savedChanges:{filename:'other.xlsx'}},{resultChanges:{state:'unknown'}},{resultChanges:{state:'search-requested',quotationId:'other'}},{resultChanges:{state:'search-requested',registered:true}},{senderChanges:{id:'other'}}]){
   const bad=setup({kind:'registration-search',...opts});await assert.rejects(bad.run());assert.equal(bad.puts.length,0);
  }
+});
+
+
+test('validated search may start on the same upload tab, but missing validation never navigates',async()=>{
+ const h=setup({kind:'registration-search',tabChanges:{url:'https://supplier.coupang.com/qvt/registration'},resultChanges:{state:'search-requested'}});
+ assert.equal((await h.run()).state,'search-requested');assert.equal(h.scripts.length,1);
+ const missing=setup({kind:'registration-search',missing:true,tabChanges:{url:'https://supplier.coupang.com/qvt/registration'}});
+ await assert.rejects(missing.run());assert.equal(missing.scripts.length,0);
 });
