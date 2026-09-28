@@ -1,3 +1,5 @@
+import { usableCategoryCode } from '@/app/category-profiles';
+import { validateCategoryIdentity } from '@/app/category-identity';
 import { validateCollectionResult, type CollectionResult } from '@/app/collection-result';
 import { validateSettings } from '@/app/workspace-settings';
 import { calculatePrice, pricePolicy } from '@/app/pricing';
@@ -12,6 +14,12 @@ import type { ProductRecord } from '@/db/queries';
 
 export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:CollectionResult,id:string,now:string){
   if(!job.context?.category?.id)throw new Error('요청 당시 카테고리와 기본설정이 필요합니다.');
+  const category = job.context.category;
+  if (!usableCategoryCode(category.categoryId) || !Array.isArray(category.categoryPath)
+    || !category.categoryPath.length || category.categoryPath.some(part => typeof part !== 'string' || !part.trim())) {
+    throw new Error('수집 요청의 카테고리 코드와 전체 경로를 다시 선택해주세요. 원문은 보존됩니다.');
+  }
+  validateCategoryIdentity(category);
   const {offerId,...raw}=receipt;const result=validateCollectionResult(raw,job.offer_id);
   if(offerId!==job.offer_id)throw new Error('원문의 상품번호가 다릅니다.');
   const settings=validateSettings(job.context.settings);

@@ -38,7 +38,7 @@ test('candidate receipt feeds the existing captured category/settings draft prep
  const settings=load('app/observed-price-preset.ts').applyObservedPricePreset(load('app/workspace-settings.ts').defaultSettings);
  const now=new Date().toISOString();const receipt=parse(fixture(),url);
  const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',{offer_id:receipt.offerId,source_url:url,
- context:{category:{id:'80719'},settings:{...settings,manufacturer:'입력 제조사'},keywords:'사용자 키워드'}},receipt,'product',now);
+ context:{category:{id:'80719',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings:{...settings,manufacturer:'입력 제조사'},keywords:'사용자 키워드'}},receipt,'product',now);
  assert.equal(draft.content.seo.title.value,'原文商品');assert.equal(draft.content.seo.title.provenance,'collected');
  assert.equal(draft.content.label.manufacturer.value,'입력 제조사');assert.equal(draft.options.rows[0].supplierSku,'5627721589407');
  assert.equal(draft.options.rows[0].unitCostCny,25.6);assert.equal(draft.options.rows[1].unitCostCny,28);
@@ -51,7 +51,7 @@ test('detail HTML supplies original text, ordered images and explicit color/size
  assert.deepEqual(JSON.parse(JSON.stringify(result.images.slice(2))),[{url:'https://cbu01.alicdn.com/detail.jpg?a=1&b=2',role:'detail'},{url:'https://cbu01.alicdn.com/detail2.jpg',role:'detail'}]);
  assert.equal(result.options[0].imageIndex,1);
  const settings=load('app/workspace-settings.ts').defaultSettings;
- const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',{offer_id:result.offerId,context:{category:{id:'80719'},settings}},result,'p',new Date().toISOString());
+ const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',{offer_id:result.offerId,context:{category:{id:'80719',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings}},result,'p',new Date().toISOString());
  assert.equal(draft.content.seo.description.value,'원문 & 설명');assert.equal(draft.options.rows[0].color,'黑色');assert.equal(draft.options.rows[0].size,'M');
  assert.equal(draft.options.rows[0].provenance.color,'collected');
 });
@@ -85,7 +85,7 @@ test('single explicit SKU without variant attributes preserves source facts thro
  assert.equal(option.color,undefined);assert.equal(option.size,undefined);assert.equal(option.imageIndex,undefined);
  const settings=load('app/workspace-settings.ts').defaultSettings;
  const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',{offer_id:receipt.offerId,source_url:url,
- context:{category:{id:'80719'},settings}},receipt,'single',new Date().toISOString());
+ context:{category:{id:'80719',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings}},receipt,'single',new Date().toISOString());
  assert.equal(draft.options.rows.length,1);assert.equal(draft.options.rows[0].supplierSku,option.sku);
  assert.equal(draft.options.rows[0].unitCostCny,25.6);assert.equal(draft.content.seo.title.value,product.subject);
  for(const mutate of [p=>delete p.productSkuInfos[0].skuAttributes,p=>p.productSkuInfos[0].skuAttributes=null,

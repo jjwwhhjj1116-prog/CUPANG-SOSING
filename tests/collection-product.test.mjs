@@ -60,7 +60,7 @@ test('unsaved registration examples never become promoted product label facts',(
  assert.equal(resolved.brand,'');assert.equal(resolved.manufacturer,'');
 });
 const now='2026-01-01T00:00:00.000Z';
-const job={id:'job',offer_id:'123',source_url:'https://detail.1688.com/offer/123.html',goal:'transmit',status:'awaiting_connector',created_at:now,updated_at:now,context:{category:{id:'cat'},settings,features:'feature',keywords:'',capturedAt:now}};
+const job={id:'job',offer_id:'123',source_url:'https://detail.1688.com/offer/123.html',goal:'transmit',status:'awaiting_connector',created_at:now,updated_at:now,context:{category:{id:'cat',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings,features:'feature',keywords:'',capturedAt:now}};
 const result={schemaVersion:1,offerId:'123',sourceUrl:job.source_url,provider:'fixture',collectedAt:now,title:'原文商品',description:'原文説明',images:[],options:[{sku:'a',name:'黑',unitPriceCny:3.25,minimumOrder:2,stock:null},{sku:'b',name:'白',unitPriceCny:5,minimumOrder:1,stock:0}]};
 
 test('observed pricing survives SQLite promotion, workspace changes and category quotation resolution',async()=>{
@@ -160,7 +160,7 @@ test('promotion initializes label business fields from captured settings includi
   assert.equal(prepared.content.label[key].value,value);assert.equal(prepared.content.label[key].provenance,'manual');
   assert.equal(prepared.content.label[key].updatedAt,now);
  }
- for(const key of ['material','countryOfOrigin','certification','kcInformation'])assert.equal(prepared.content.label[key].provenance,'unverified');
+ for(const key of ['material','certification','kcInformation'])assert.equal(prepared.content.label[key].provenance,'unverified');
  assert.equal(JSON.stringify(captured),before);
  const sparse={...captured,context:{...captured.context,settings:{...captured.context.settings}}};
  for(const key of ['manufacturer','importer','serviceContact'])delete sparse.context.settings[key];
@@ -243,8 +243,8 @@ test('collection creates category-scoped review defaults before opening stage si
  assert.equal(updated.label.productName.value,'검토한 상품명');
  assert.equal(quote(updated).rows[0].fields.noticeNameModel.value,'검토한 상품명');
  assert.equal(prepared.product.supplier_hub_status,'미전송');
- for(const categoryId of [undefined,'81452','unverified']){
-  const other=prepare('owner',{...captured,context:{...captured.context,category:{...captured.context.category,categoryId}}},result,'p',now);
+ for(const categoryId of ['81452','999999']){
+  const other=prepare('owner',{...captured,context:{...captured.context,category:{...captured.context.category,categoryId,categoryPath:categoryId==='81452'?load('app/quotation-schema.ts').getQuotationSchema(categoryId).categoryPath:['미확인 카테고리']}}},result,'p',now);
   assert.equal(other.content.label.countryOfOrigin.value,'');assert.equal(other.content.label.precautions.value,'');assert.equal(other.content.label.usageStandard.value,'');
  }
 });
@@ -274,4 +274,29 @@ test('sparse captured business settings never inherit later registration facts i
  assert.equal(quote.rows[0].fields.brand.value,'');assert.equal(quote.rows[0].fields.manufacturer.value,'당시 제조사');
  assert.equal(resolveSettings(current,null).brand,'나중 브랜드','products without any captured context keep workspace behavior');
  assert.equal(current.brand,'나중 브랜드');
+});
+
+test('promotion revalidates captured category identity before building any product draft',()=>{
+ const before=JSON.stringify(job);
+ for(const category of [
+  {id:'cat'}, {...job.context.category,categoryId:'bad/code'},
+  {...job.context.category,categoryPath:[]}, {...job.context.category,categoryPath:['바스켓']},
+  {...job.context.category,categoryId:'81467'}, {...job.context.category,categoryPath:[null]},
+ ])assert.throws(()=>prepare('owner',{...job,context:{...job.context,category}},result,'p',now),/카테고리/);
+ assert.equal(JSON.stringify(job),before);
+ assert.equal(prepare('owner',job,result,'p',now).product.supplier_hub_status,'미전송');
+});
+
+test('invalid captured category cannot create storage rows and never alters an already linked product',async()=>{
+ const s=storage();try{
+  const invalid={...job,context:{...job.context,category:{...job.context.category,categoryPath:['다른 카테고리']}}};
+  await assert.rejects(()=>s.promoteCollection('owner',invalid,result),/카테고리/);
+  assert.equal(s.sqlite.prepare('SELECT count(*) AS n FROM products').get().n,0);
+  assert.equal(s.sqlite.prepare('SELECT count(*) AS n FROM collection_products').get().n,0);
+  const saved=await s.promoteCollection('owner',job,result);
+  const before=s.sqlite.prepare('SELECT * FROM products').all();
+  const reused=await s.promoteCollection('owner',invalid,result);
+  assert.equal(reused.product_id,saved.product_id);
+  assert.deepEqual(s.sqlite.prepare('SELECT * FROM products').all(),before);
+ }finally{s.sqlite.close();}
 });

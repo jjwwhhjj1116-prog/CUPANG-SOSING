@@ -48,7 +48,7 @@ test('public detail HTML preserves text and ordered detail images without shifti
   {url:'https://cbu01.alicdn.com/detail.jpg',role:'detail'},
  ]);
  const settings=load('app/workspace-settings.ts').defaultSettings;
- const job={id:'job',offer_id:receipt.offerId,goal:'seo-price',context:{category:{id:'cat',categoryId:'80719'},settings,keywords:''}};
+ const job={id:'job',offer_id:receipt.offerId,goal:'seo-price',context:{category:{id:'cat',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings,keywords:''}};
  const prepared=load('app/collection-product.ts').prepareCollectionProduct('owner',job,receipt,'p',new Date().toISOString());
  let content=prepared.content,keys=[];
  const {attachCollectedImage}=load('app/collection-image.ts');
@@ -254,7 +254,7 @@ test('direct common material and model reach editable labels and quotation field
  const result=parsePublicProduct(html(p),url);
  const settings=load('app/workspace-settings.ts').defaultSettings;
  const now=new Date().toISOString();
- const job={id:'source',offer_id:result.offerId,goal:'price',context:{category:{id:'category',categoryId:'80719'},settings,features:'',keywords:''}};
+ const job={id:'source',offer_id:result.offerId,goal:'price',context:{category:{id:'category',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings,features:'',keywords:''}};
  const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',job,result,'draft',now);
  assert.equal(draft.content.label.material.value,'尼龙');assert.equal(draft.content.label.model.value,'MODEL-123');
  assert.equal(draft.content.label.material.provenance,'collected');
