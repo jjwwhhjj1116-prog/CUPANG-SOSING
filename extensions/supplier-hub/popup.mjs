@@ -1,5 +1,6 @@
 import {prepareAttachments} from './package.mjs';
 import {attachToSupplierHub} from './attach.mjs';
+import {verifySupplierHubCompany} from './company.mjs';
 import {pendingPackage,transferRecord} from './handoff-store.mjs';
 const picker=document.querySelector('#package'),button=document.querySelector('#attach'),status=document.querySelector('#status'),summary=document.querySelector('#summary');
 let prepared=null,sequence=0,pendingFingerprint=null,pendingExpires=0;
@@ -85,6 +86,8 @@ button.addEventListener('click',async()=>{
       if(!response?.ok)throw Error(response?.error||'전달 결과 응답이 없습니다. Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.');
       result=response.result;
     }else{
+      const [companyCheck]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:[prepared.company]});
+      if(companyCheck?.result?.code!==prepared.company.code)throw Error('Supplier Hub 회사코드를 확인하지 못했습니다.');
       const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:attachToSupplierHub,args:[prepared]});
       result=execution?.result;
       if(result?.state==='dispatched')await transferRecord('put',`attempt:${tab.id}`,packageIdentity);

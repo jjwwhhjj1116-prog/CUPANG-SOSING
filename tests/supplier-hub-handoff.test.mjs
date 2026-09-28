@@ -20,7 +20,7 @@ test('registration evidence stays bound to quotation ID and a bounded visible pa
  for(const patch of [{quotationId:'other'},{scope:'all'},{registered:true},{observedAt:Infinity},{rows:[{}]},{rows:Array(1001).fill(value.rows[0])}])assert.throws(()=>api.validateRegistrationResult({...value,...patch},'123'));
 });
 test('web package handoff sends exact reviewed identity and bytes, cleans listeners',async()=>{
-  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
+  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
   await h.api.checkSupplierHubExtension(new AbortController().signal);
   await h.api.prepareSupplierHubHandoff(new Blob(['ZIP fixture']),identity,new AbortController().signal);
   assert.equal(h.sent[0].type,'PING');assert.equal(h.sent[1].payload.fingerprint,identity.fingerprint);
@@ -49,4 +49,10 @@ test('result retrieval uses exact reviewed identity and never promotes validatio
   }
   const missing=harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,record:null,registered:false}));
   assert.equal(await missing.api.getSupplierHubResult(identity,new AbortController().signal),null);
+});
+
+test('old extension without company binding cannot prepare a new handoff',async()=>{
+ const h=harness((m,emit)=>emit(m,{ok:true,version:'0.2.17'}));
+ await assert.rejects(h.api.checkSupplierHubExtension(new AbortController().signal),/0.2.18/);
+ assert.equal(h.sent.length,1);
 });

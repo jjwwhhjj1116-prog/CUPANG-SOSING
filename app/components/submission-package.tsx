@@ -11,7 +11,7 @@ import { checkSupplierHubExtension, prepareSupplierHubHandoff, getSupplierHubRes
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
   submissionReview:PackageReview;
-  report:{productId:string;categoryId:string|null;profileId:string;rowCount:number;warnings:string[];submissionReady:false};
+  report:{company?:{code:string;name:string}|null;productId:string;categoryId:string|null;profileId:string;rowCount:number;warnings:string[];submissionReady:false};
 };
 
 /** Reuses the reviewed XLSX exporter. Preparing or downloading never marks a product submitted. */
@@ -90,6 +90,8 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
     <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('preview')}>{busy?'견적서 준비 중…':'견적서 + 첨부 파일 준비'}</button>
     {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
+      {preview.report.company&&<p>등록 회사: {preview.report.company.name} · {preview.report.company.code}</p>}
+      {preview.report.company===null&&<p role="alert">계정 관리에서 승인된 회사정보를 확인한 뒤 견적서를 다시 준비해주세요.</p>}
       <strong>저장된 양식으로 작성한 견적서 · {preview.report.rowCount}행</strong>
       <p style={{overflowWrap:'anywhere'}}>견적서 파일명: {preview.filename}</p>
       <strong>첨부 파일 검사 · 수정 필요 {preview.submissionReview.errorCount}개 · 확인 {preview.submissionReview.reviewCount}개</strong>
@@ -99,11 +101,11 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <p>ZIP에는 작성된 Excel/CSV, 상품 이미지, 라벨과 업로드 준비 목록이 포함됩니다. 검토 후 저장값이 바뀌면 다시 준비해야 합니다.</p>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('download')}>견적서 파일 다운로드</button>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
-      <button type="button" className="btn primary" disabled={busy||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>Supplier Hub 확장으로 파일 준비</button>
-      <button type="button" className="btn ghost" disabled={busy||!categoryId||!preview.filename.endsWith('.xlsx')} onClick={()=>void run('result')}>Supplier Hub 검증 결과 불러오기</button>
+      <button type="button" className="btn primary" disabled={busy||preview.report.company===null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>Supplier Hub 확장으로 파일 준비</button>
+      <button type="button" className="btn ghost" disabled={busy||preview.report.company===null||!categoryId||!preview.filename.endsWith('.xlsx')} onClick={()=>void run('result')}>Supplier Hub 검증 결과 불러오기</button>
       {hubResult&&<div role="status"><strong>{hubResult.state==='not-found'?'검증 목록에서 아직 찾지 못했습니다.':`견적서 검증: ${hubResult.status||'상태 미표시'}`}</strong><p>견적서 ID: {hubResult.quotationId||'미표시'} · 결과 확인 시각: {new Date(hubResult.observedAt).toLocaleString('ko-KR')}</p>{hubResult.detail&&<p>{hubResult.detail}</p>}<p>현재 검토한 견적서 파일의 결과입니다. 상품별 등록 완료는 아직 확인되지 않았습니다.</p></div>}
       {hubResult?.registration&&<div className="panel-stack"><strong>상품별 등록 상태 · 현재 페이지 {hubResult.registration.rows.length}개</strong><p>확인 시각: {new Date(hubResult.registration.observedAt).toLocaleString('ko-KR')} · 견적서 ID: {hubResult.registration.quotationId}</p>{hubResult.registration.rows.length?<div className="table-wrap"><table><thead><tr><th>상품명</th><th>SKU ID</th><th>상태</th><th>등록 진행 단계</th></tr></thead><tbody>{hubResult.registration.rows.map((row,index)=><tr key={index}><td>{row.title}</td><td>{row.skuId||'—'}</td><td>{row.status}</td><td>{row.stage}</td></tr>)}</tbody></table></div>:<p>현재 페이지에 이 견적서의 상품이 없습니다. Supplier Hub에서 견적서 ID로 검색한 뒤 다시 확인하세요.</p>}<small>현재 페이지에 표시된 상품만 확인한 결과입니다. 전체 옵션의 등록 완료 여부는 아직 확인되지 않았습니다.</small></div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.17.zip" download>첨부 확장 다운로드 (0.2.17)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.18.zip" download>첨부 확장 다운로드 (0.2.18)</a>
     </>}
   </section>;
 }

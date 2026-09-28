@@ -6,6 +6,8 @@ export function requestSupplierHubValidation(reviewedAgreements = {}) {
   try{attempt=JSON.parse(data.yoofamAttachmentAttempt||'');}catch{throw Error('이 화면에서 확장으로 전달한 파일이 없습니다.');}
   if(attempt.state!=='dispatched'||!Array.isArray(attempt.files)||!attempt.files.length)throw Error('파일 전달이 완료되지 않았거나 검증을 이미 요청했습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
   const visible=document.body.innerText||'';
+  const companyCodes=Array.from(visible.matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
+  if(!attempt.company||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},attempt.company.code)||({A01526306:'유앤채',A01464742:'와이홉'})[attempt.company.code]!==attempt.company.name||companyCodes.length!==1||companyCodes[0]!==attempt.company.code)throw Error('파일 전달 시 회사와 현재 Supplier Hub 회사가 다릅니다.');
   const filenames=visible.split(/[\s<>"'(),;]+/);
   if(attempt.files.some(name=>typeof name!=='string'||!filenames.includes(name)))throw Error('전달한 파일이 모두 첨부 목록에 표시되는지 확인해주세요. 아직 검증하지 않았습니다.');
   const definitions=[

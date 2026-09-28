@@ -22,7 +22,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
   const original=payload.result.result.productSkuInfos[0];payload.result.result.productSkuInfos=Array.from({length:automatic==='maximum'?200:60},(_,i)=>({...structuredClone(original),skuId:String(5627721589407+i),...(automatic==='maximum'?{skuAttributes:[...original.skuAttributes,{attributeName:'尺码',value:'大号'}]}:{})}));
   payload.result.result.productAttribute=Array.from({length:50},(_,i)=>({attributeName:'属性'+i,value:'原文'}));
  }
- const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length,httpMetadata:{contentType:'image/png'}}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5};
+ const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length,httpMetadata:{contentType:'image/png'}}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',status:'approved',companyCode:'A01464742',companyName:'와이홉'}}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,Blob,CompressionStream,DecompressionStream,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async (target,init)=>{const host=new URL(target).hostname;network.push(host);if(host==='gw.open.1688.com')return Response.json(payload);if(host==='api.openai.com'){
  const request=JSON.parse(init.body);assert.equal(request.model,'fixture-model');assert.equal(request.store,false);
  const source=JSON.parse(request.input[0].content[0].text);assert.equal(source.category.id,'80719');assert.equal(source.title,'原文商品');
@@ -169,7 +169,11 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.equal(packaged.status,200,await packaged.clone().text());
     const bundle=await reader.readXlsxArchive(await packaged.arrayBuffer());
     assert.deepEqual(Buffer.from(bundle.get(preview.filename)),Buffer.from(await (await exportRequest({action:'download',fingerprint:preview.fingerprint})).arrayBuffer()));
-    const plan=JSON.parse(new TextDecoder().decode(bundle.get('supplier-hub-upload-plan.json')));
+    const plan=JSON.parse(new TextDecoder().decode(bundle.get('supplier-hub-upload-plan.json'))); assert.deepEqual(plan.company,{code:'A01464742',name:'와이홉'});
+    const originalIdentity=deps['@/app/chatgpt-auth'].getChatGPTUser;
+    deps['@/app/chatgpt-auth'].getChatGPTUser=async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',status:'approved',companyCode:'A01526306',companyName:'유앤채'}});
+    assert.equal((await exportRequest({action:'export',fingerprint:preview.fingerprint})).status,409,'company change invalidates reviewed package');
+    deps['@/app/chatgpt-auth'].getChatGPTUser=originalIdentity;
     assert.equal(plan.categoryId,'80719');assert.equal(plan.quotation.file.filename,preview.filename);
     assert.ok(plan.productImages.some(image=>image.filename===actual.mainImage));
     assert.ok(plan.productImages.every(image=>bundle.has(image.archivePath)));

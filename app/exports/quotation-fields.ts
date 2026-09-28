@@ -156,7 +156,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const reviewJson = JSON.stringify(review);
   const plan = supplierHubUploadPlan(resolved, assets, quotation);
   const uploadPage = supplierHubUploadPage(plan);
-  const uploadPlan = JSON.stringify({ ...plan, productId: saved.product.id, inputFingerprint });
+  const uploadPlan = JSON.stringify({ ...plan, productId: saved.product.id, inputFingerprint, company: saved.company ?? null });
   ensureFieldBudget(document, [rows, overrides, reviewRows], utf8ByteLength(detailContent) + utf8ByteLength(scopeArchive) + utf8ByteLength(imageIndex) + utf8ByteLength(detailPage) + utf8ByteLength(labelsPage) + utf8ByteLength(reviewJson) + utf8ByteLength(uploadPlan) + utf8ByteLength(uploadPage));
   return { review, warnings: document.warnings, files: [
     { name: 'supplier-hub-upload.html', data: uploadPage },

@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/validation-dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
 function setup({sender={},tab={},result={state:'validation-requested',validated:false,registered:false},execute}={}){
  const scripts=[];
- const context=vm.createContext({URL,requestSupplierHubValidation(){},chrome:{runtime:{id:'ext',getURL:name=>'chrome-extension://ext/'+name},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration',...tab}]},scripting:{executeScript:async input=>{scripts.push(input);await execute?.();return [{result}];}}}});
+ const context=vm.createContext({URL,verifySupplierHubCompany(){},requestSupplierHubValidation(){},chrome:{runtime:{id:'ext',getURL:name=>'chrome-extension://ext/'+name},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration',...tab}]},scripting:{executeScript:async input=>{if(input.func===context.verifySupplierHubCompany)return [{result:{code:'A01464742'}}];scripts.push(input);await execute?.();return [{result}];}}}});
  vm.runInContext(source,context);
  return {scripts,run:(reviewedAgreements)=>context.dispatchSupplierHubValidation({tabId:123,reviewedAgreements},{id:'ext',url:'chrome-extension://ext/popup.html',...sender})};
 }

@@ -11,6 +11,8 @@ import { validateCategoryProfile } from '@/app/category-profiles';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { fingerprint } from '@/app/automation/model';
 import { validateCategoryIdentity } from '@/app/category-identity';
+import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -18,6 +20,8 @@ export class QuotationExportError extends Error {
 
 /** A saved-source snapshot shared by both downloads. No automatic values are written back. */
 export async function readQuotationExportSource(owner: string, productId: string, profileId: string | null) {
+  const user = await getChatGPTUser();
+  const company = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
   const product = await findProduct(owner, productId);
   if (!product) throw new QuotationExportError('상품을 찾을 수 없습니다.', 404);
   const [content, options, savedSettings, state, profile] = await Promise.all([
@@ -52,7 +56,7 @@ export async function readQuotationExportSource(owner: string, productId: string
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   // This also detects changes during the independent source reads before any R2 work starts.
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
-  return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source };
+  return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
 /** Resolve only the profile captured when this product was collected; never guess by label. */

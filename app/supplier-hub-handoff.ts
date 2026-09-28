@@ -16,7 +16,10 @@ function exchange(type:'PING'|'PREPARE'|'RESULT',payload:unknown,signal:AbortSig
     window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type,payload},window.location.origin);
   });
 }
-export async function checkSupplierHubExtension(signal:AbortSignal){await exchange('PING',null,signal);}
+export async function checkSupplierHubExtension(signal:AbortSignal){
+  const result=await exchange('PING',null,signal);
+  if(result.companyBinding!==true)throw new Error('회사코드 확인을 지원하는 첨부 확장 0.2.18 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+}
 export type SupplierHubRegistrationRow={title:string;submittedAt:string;category:string;barcode:string;sourceQuotation:string;skuId:string;status:string;stage:string};
 export type SupplierHubRegistration={quotationId:string;scope:'visible-page';registered:false;observedAt:number;rows:SupplierHubRegistrationRow[]};
 export type SupplierHubResult={state:string;filename:string;submittedAt?:string;status?:string;detail?:string;quotationId?:string;observedAt:number;registered:false;registration?:SupplierHubRegistration};

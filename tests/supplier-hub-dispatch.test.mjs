@@ -8,11 +8,11 @@ function setup({outcome='dispatched',savedChanges={},senderChanges={},consume=tr
   const saved={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint,createdAt:Date.now(),base64:'UEs=',...savedChanges};
   const sender={id:'extension',url:'chrome-extension://extension/popup.html',...senderChanges};
   const context=vm.createContext({Date,URL,Uint8Array,atob,
-    prepareAttachments:async()=>({productId:'p',categoryId:'80719',quotation:[{name:`YOOFAM-${fingerprint}.xlsx`}]}),attachToSupplierHub(){},
+    verifySupplierHubCompany(){},prepareAttachments:async()=>({company:{code:'A01464742',name:'와이홉'},productId:'p',categoryId:'80719',quotation:[{name:`YOOFAM-${fingerprint}.xlsx`}]}),attachToSupplierHub(){},
     pendingPackage:async action=>{calls.push(action);return action==='get'?saved:consume;},
     transferRecord:async(action,key,value)=>{puts.push({key,value});},
     chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration',...tabChanges}]},
-      scripting:{executeScript:async()=>{calls.push('execute');await onExecute?.();if(outcome==='rejected')throw Error('existing attachment');return [{result:{state:outcome,registered:false}}];}}},
+      scripting:{executeScript:async(input)=>{if(input.func===context.verifySupplierHubCompany)return [{result:{code:'A01464742'}}];calls.push('execute');await onExecute?.();if(outcome==='rejected')throw Error('existing attachment');return [{result:{state:outcome,registered:false}}];}}},
   });
   vm.runInContext(source,context);
   return {calls,puts,run:()=>context.dispatchPendingPackage({tabId:123,fingerprint},sender)};

@@ -17,7 +17,7 @@ const image=new Uint8Array([137,80,78,71]);
 async function fixture(change=()=>{}){
   const digest=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
   const plan={format:'sourceflow-supplier-hub-upload-plan-v1',destination:'https://supplier.coupang.com/qvt/registration',categoryId:'80719',quotation:{file:{filename:title,byteLength:workbook.length,sha256:digest}},productImages:[{archivePath:'assets/photo.png',filename:'photo.png'}],labelImages:[{archivePath:'assets/label.png',filename:'label.png'}],missingLabels:[]};
-  plan.productId='product';plan.inputFingerprint='a'.repeat(64);
+  plan.company={code:'A01464742',name:'와이홉'};plan.productId='product';plan.inputFingerprint='a'.repeat(64);
   const review={format:'sourceflow-quotation-review-v1',productId:'product',categoryId:'80719',inputFingerprint:plan.inputFingerprint,submissionReady:false,transport:'not-connected',includedOptions:1,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]};
   const files=[{name:title,data:workbook},{name:'assets/photo.png',data:image},{name:'assets/label.png',data:image},{name:'assets/unused.png',data:image},{name:'submission-review.json',data:JSON.stringify(review)}];change(plan,files);
   return zip([...files,{name:'supplier-hub-upload-plan.json',data:JSON.stringify(plan)}]);
@@ -52,7 +52,7 @@ function dom({duplicate=false,existing=false,visibleFilename=false,disabled=fals
   const inputs=titles.map((text,index)=>({files:existing&&index===3?[{}]:[],disabled:disabled&&index===2,isConnected:true,closest:()=>null,parentElement:{innerText:text,querySelectorAll:()=>[{}]},dispatchEvent(e){events.push(index);if(detach&&index===0)inputs[1].isConnected=false;}}));
   if(duplicate)inputs.push({...inputs[1]});
   class Transfer{constructor(){this.files=[];this.items={add:file=>this.files.push(file)};}}
-  const document={body:{innerText:visibleFilename?'상품이미지 existing.png':''},documentElement:{dataset:{}},querySelectorAll:()=>inputs};
+  const document={body:{innerText:visibleFilename?'Company Code: A01464742 상품이미지 existing.png':'Company Code: A01464742'},documentElement:{dataset:{}},querySelectorAll:()=>inputs};
   const context={document,location:{origin:wrong?'https://example.com':'https://supplier.coupang.com',pathname:'/qvt/registration'},DataTransfer:Transfer,File,Event,Uint8Array,atob};
   return {run:payload=>vm.runInNewContext(`(${attachToSupplierHub.toString()})(payload)`,{...context,payload}),inputs,events};
 }
@@ -93,4 +93,10 @@ test('stored results are scoped to app origin, product, category and fingerprint
   for(const change of [{origin:HANDOFF_ORIGINS[1]},{productId:'q'},{categoryId:'999'},{fingerprint:'b'.repeat(64)}])assert.notEqual(resultKey(identity),resultKey({...identity,...change}));
   for(const change of [{frameId:1},{tab:null},{url:'https://evil.example'}])assert.throws(()=>validateResultRequest(request,{...sender,...change}));
   for(const change of [{type:'YOOFAM_PREPARE_PACKAGE'},{productId:'../p'},{fingerprint:'x'},{categoryId:''}])assert.throws(()=>validateResultRequest({...request,...change},sender));
+});
+
+test('unbound or mismatched company packages cannot reach file inputs',async()=>{
+ for(const company of [undefined,null,{code:'A99999999',name:'와이홉'},{code:'A01464742',name:'유앤채'}])await assert.rejects(fixture(p=>{p.company=company;}).then(prepareAttachments),/회사정보/);
+ const other=await prepareAttachments(await fixture(p=>{p.company={code:'A01526306',name:'유앤채'};}));
+ const h=dom();assert.throws(()=>h.run(other),/회사코드/);assert.deepEqual(h.events,[]);
 });

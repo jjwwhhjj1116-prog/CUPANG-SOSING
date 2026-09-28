@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YOOFAM PLUS 견적서 첨부",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "description": "검토한 YOOFAM PLUS 패키지를 현재 Supplier Hub 등록 탭의 파일 입력으로 전달합니다.",
   "permissions": ["activeTab", "scripting"],
   "background": { "service_worker": "handoff-worker.mjs", "type": "module" },

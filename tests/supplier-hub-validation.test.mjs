@@ -5,10 +5,10 @@ import {requestSupplierHubValidation} from '../extensions/supplier-hub/validate.
 
 function fixture(options={}){
   let clicks=0;
-  const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',files:['YOOFAM-test.xlsx','label.png']})};
+  const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company:{code:'A01464742',name:'와이홉'},files:['YOOFAM-test.xlsx','label.png']})};
   if(options.marker!==undefined)dataset.yoofamAttachmentAttempt=options.marker;
   const button={innerText:'파일 검증하기',disabled:!!options.disabled,getClientRects:()=>options.hidden?[]:[{}],getAttribute:()=>options.ariaDisabled?'true':null,click(){clicks++;if(options.clickError)throw Error('lost result');}};
-  const document={documentElement:{dataset},body:{innerText:options.missing?'YOOFAM-test.xlsx':'YOOFAM-test.xlsx\nlabel.png'},querySelectorAll(selector){
+  const document={documentElement:{dataset},body:{innerText:options.missing?'Company Code: A01464742\nYOOFAM-test.xlsx':'Company Code: A01464742\nYOOFAM-test.xlsx\nlabel.png'},querySelectorAll(selector){
     if(selector==='button')return options.duplicate?[button,button]:[button];
     return options.missingAgreement?[]:[{checked:!options.unchecked,disabled:false}];
   }};
@@ -35,8 +35,8 @@ test('only explicitly reviewed matching agreements are clicked before validation
   const clicks=[];
   const inputs=texts.map((text,index)=>({checked:false,disabled:false,labels:[{innerText:mode==='changed'&&index===1?'changed terms':text}],click(){clicks.push(index);if(mode!=='not-applied')this.checked=true;}}));
   const button={innerText:'파일 검증하기',get disabled(){return inputs.some(input=>!input.checked);},getClientRects:()=>[{}],getAttribute:()=>null,click(){clicks.push('validate');}};
-  const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',files:['a.xlsx']})};
-  const document={documentElement:{dataset},body:{innerText:'a.xlsx'},querySelectorAll(selector){return selector==='button'?[button]:[inputs[selector.includes('msrpAgreement')?0:1]];}};
+  const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company:{code:'A01464742',name:'와이홉'},files:['a.xlsx']})};
+  const document={documentElement:{dataset},body:{innerText:'Company Code: A01464742\na.xlsx'},querySelectorAll(selector){return selector==='button'?[button]:[inputs[selector.includes('msrpAgreement')?0:1]];}};
   const reviewed=mode==='invalid'?{priceData:'yes',labelBusinessContact:true}:{priceData:true,labelBusinessContact:mode!=='partial'};
   const run=()=>vm.runInNewContext('('+requestSupplierHubValidation.toString()+')(reviewed)',{document,reviewed,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'}});
   if(mode==='success'){assert.equal(run().state,'validation-requested');assert.deepEqual(clicks,[0,1,'validate']);assert.throws(run);}
@@ -47,13 +47,19 @@ test('only explicitly reviewed matching agreements are clicked before validation
 
 test('legal exemption requires explicit choice and preserves existing legal attachments',()=>{
  for(const mode of ['confirmed','unchecked','existing-file','uploaded-name','changed-section','duplicate','disabled','not-applied']){
-  const clicks=[];const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',files:['a.xlsx']})};
+  const clicks=[];const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company:{code:'A01464742',name:'와이홉'},files:['a.xlsx']})};
   const section={innerText:mode==='changed-section'?'다른 구역':'상품 개별법령에 따른 필수 서류'+(mode==='uploaded-name'?' evidence.pdf':''),parentElement:null,querySelectorAll(selector){return selector.includes('radio')?[{},{}]:[{files:mode==='existing-file'?[{}]:[]}];}};
   const input={checked:false,disabled:mode==='disabled',labels:[{innerText:'해당없음'}],parentElement:section,click(){clicks.push('legal');if(mode!=='not-applied')this.checked=true;}};
   const button={innerText:'파일 검증하기',disabled:false,getClientRects:()=>[{}],getAttribute:()=>null,click(){clicks.push('validate');}};
-  const document={documentElement:{dataset},body:{innerText:'a.xlsx'},querySelectorAll(selector){if(selector==='button')return [button];if(selector.includes('radio'))return mode==='duplicate'?[input,input]:[input];return [{checked:true,disabled:false}];}};
+  const document={documentElement:{dataset},body:{innerText:'Company Code: A01464742\na.xlsx'},querySelectorAll(selector){if(selector==='button')return [button];if(selector.includes('radio'))return mode==='duplicate'?[input,input]:[input];return [{checked:true,disabled:false}];}};
   const run=()=>vm.runInNewContext('('+requestSupplierHubValidation.toString()+')(reviewed)',{document,reviewed:{legalDocumentsNotApplicable:mode!=='unchecked'},location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'}});
   if(['confirmed','unchecked'].includes(mode)){run();assert.deepEqual(clicks,mode==='confirmed'?['legal','validate']:['validate']);}
   else{assert.throws(run);assert.deepEqual(clicks,mode==='not-applied'?['legal']:[]);assert.equal(JSON.parse(dataset.yoofamAttachmentAttempt).state,'dispatched');}
  }
+});
+
+test('validation rejects a company switch after attachment without clicking',()=>{
+ const f=fixture();const attempt=JSON.parse(f.dataset.yoofamAttachmentAttempt);
+ attempt.company={code:'A01526306',name:'유앤채'};f.dataset.yoofamAttachmentAttempt=JSON.stringify(attempt);
+ assert.throws(()=>f.run(),/회사/);assert.equal(f.clicks,0);
 });

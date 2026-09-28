@@ -1,4 +1,5 @@
 import {requestSupplierHubValidation} from './validate.mjs';
+import {verifySupplierHubCompany} from './company.mjs';
 
 const activeTabs=new Set();
 /** Keep an explicitly requested validation alive independently of the popup. */
@@ -10,6 +11,8 @@ export async function dispatchSupplierHubValidation(message,sender){
   try{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/registration')throw Error('현재 창의 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
+    const [companyCheck]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:[]});
+    if(!['A01526306','A01464742'].includes(companyCheck?.result?.code))throw Error('검증 요청 전 회사코드를 확인하지 못했습니다.');
     const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:requestSupplierHubValidation,args:[message.reviewedAgreements??{}]});
     const result=execution?.result;
     if(result?.state!=='validation-requested'||result.validated!==false||result.registered!==false)throw Error('검증 요청 결과를 확인하지 못했습니다. Supplier Hub에서 진행 상태를 확인해주세요.');

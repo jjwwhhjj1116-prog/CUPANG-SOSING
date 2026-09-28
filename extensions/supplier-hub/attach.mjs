@@ -2,6 +2,9 @@
 // Select by observed visible section wording, never private application state.
 export function attachToSupplierHub(payload) {
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration')throw Error('현재 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
+  const company=payload?.company;
+  const companyCodes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
+  if(!company||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},company.code)||({A01526306:'유앤채',A01464742:'와이홉'})[company.code]!==company.name||companyCodes.length!==1||companyCodes[0]!==company.code)throw Error('회원 회사와 Supplier Hub 회사코드가 일치하지 않습니다.');
   const definitions=[['quotation','작성이 완료된 견적서 Excel 파일을 업로드하십시오.'],['productImages','상품 이미지를 업로드하십시오.'],['labelImages','제품 필수 표시사항을 업로드하십시오.']];
   const all=Array.from(document.querySelectorAll('input[type="file"]'));
   const targets=definitions.map(([key,title])=>{
@@ -42,7 +45,7 @@ export function attachToSupplierHub(payload) {
       input.dispatchEvent(new Event('change',{bubbles:true}));
       dispatched.push({group:key,count:transfer.files.length});
     }
-    document.documentElement.dataset.yoofamAttachmentAttempt=JSON.stringify({state:'dispatched',files:prepared.flatMap(({transfer})=>Array.from(transfer.files,file=>file.name))});
+    document.documentElement.dataset.yoofamAttachmentAttempt=JSON.stringify({state:'dispatched',company,files:prepared.flatMap(({transfer})=>Array.from(transfer.files,file=>file.name))});
     return {state:'dispatched',dispatched,registered:false};
   }catch(error){return {state:'partial',dispatched,registered:false,error:String(error?.message||error)};}
 }
