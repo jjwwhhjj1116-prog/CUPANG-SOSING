@@ -94,3 +94,20 @@ test('single explicit SKU without variant attributes preserves source facts thro
  const invalid=structuredClone(f);mutate(invalid.result.result);assert.throws(()=>parse(invalid,url));
  }
 });
+
+
+test('repeated main and SKU images share one gallery entry without losing detail placement',()=>{
+ const f=fixture();const product=f.result.result;
+ product.productImage.images=['https://cbu01.alicdn.com/main.jpg','https://cbu01.alicdn.com/main.jpg','https://cbu01.alicdn.com/black.jpg'];
+ product.productSkuInfos[0].skuAttributes[0].skuImageUrl='https://cbu01.alicdn.com/main.jpg';
+ product.description='<img src="https://cbu01.alicdn.com/main.jpg"><img src="https://cbu01.alicdn.com/detail.jpg">';
+ const before=JSON.stringify(f),receipt=parse(f,url);
+ assert.deepEqual(JSON.parse(JSON.stringify(receipt.images)),[
+  {url:'https://cbu01.alicdn.com/main.jpg',role:'main'},
+  {url:'https://cbu01.alicdn.com/black.jpg',role:'additional'},
+  {url:'https://cbu01.alicdn.com/main.jpg',role:'detail'},
+  {url:'https://cbu01.alicdn.com/detail.jpg',role:'detail'},
+ ]);
+ assert.deepEqual(Array.from(receipt.options,option=>option.imageIndex),[0,1]);
+ assert.equal(JSON.stringify(f),before);
+});

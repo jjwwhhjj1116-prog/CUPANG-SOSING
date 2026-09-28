@@ -36,7 +36,11 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
   function image(value: unknown, role: 'main' | 'additional' | 'detail') {
     const url = new URL(text(value, '이미지 주소'));
     if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || !(url.hostname === 'alicdn.com' || url.hostname.endsWith('.alicdn.com'))) throw Error('이미지는 HTTPS Alibaba CDN 주소만 허용합니다.');
-    let index = images.findIndex(entry => entry.url === url.href && entry.role === role);
+    // Gallery and SKU references can point to the same original. Reuse its
+    // index instead of spending another attachment slot; detail placement is
+    // separate because it has its own order in the product description.
+    let index = images.findIndex(entry => entry.url === url.href
+      && (role === 'detail' ? entry.role === 'detail' : entry.role !== 'detail'));
     if (index === -1) { index = images.length; images.push({url: url.href, role}); }
     return index;
   }
