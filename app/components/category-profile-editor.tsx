@@ -2,7 +2,8 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { useEffect, useRef, useState } from 'react';
 import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, quotationStartRow, parseTemplateText, validateCategoryCodeForSave, validateCategoryProfile, validateQuotationChoiceFormats, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
-import { inspectXlsx, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
+import { inspectXlsxArchive, readXlsxArchive, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
+import { suggestQuotationChoiceFormats } from '@/app/quotation-choice-format';
 import { refreshCategoryMappings, relocateQuotationMappings, suggestQuotationMappings, suggestQuotationHeader } from '@/app/quotation-mapping';
 import { supplierTemplateObservation } from '@/app/supplier-template-observation';
 
@@ -20,6 +21,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
   const [textTemplate, setTextTemplate] = useState<{ text: string; format: 'csv' | 'tsv' } | null>(null);
   const templateGeneration = useRef(0);
   const automaticMappings = useRef<ColumnMapping[]>([]);
+  const workbookFiles = useRef<Map<string, Uint8Array> | null>(null);
   const protectedColumns = useRef(new Set<number>());
   const saving = useRef(false);
   const createRequest = useRef<{ body: string; id: string } | null>(null);
@@ -41,11 +43,11 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
         const bytes = await response.arrayBuffer();
         if (!active || generation !== templateGeneration.current) return;
         if (template.format === 'xlsx') {
-          const inspection = await inspectXlsx(bytes);
-          if (active && generation === templateGeneration.current) { setWorkbook(inspection); setTextTemplate(null); }
+          const files = await readXlsxArchive(bytes); const inspection = inspectXlsxArchive(files);
+          if (active && generation === templateGeneration.current) { workbookFiles.current = files; setWorkbook(inspection); setTextTemplate(null); }
         } else {
           const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-          if (active && generation === templateGeneration.current) { setTextTemplate({ text, format: template.format }); setWorkbook(null); }
+          if (active && generation === templateGeneration.current) { workbookFiles.current = null; setTextTemplate({ text, format: template.format }); setWorkbook(null); }
         }
       } catch (error) { if (active && generation === templateGeneration.current) setError(error instanceof Error ? error.message : '저장된 원본을 확인해주세요.'); }
     })();
@@ -61,8 +63,9 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       if (extension !== 'csv' && extension !== 'tsv' && extension !== 'xlsx') throw new Error('XLSX·UTF-8 CSV·TSV 파일을 선택해주세요.');
       const bytes = await file.arrayBuffer();
       let headers: string[]; let inspection: XlsxInspection | null = null; let textSource: { text: string; format: 'csv' | 'tsv' } | null = null; let sheetName = ''; let selectedRow = headerRow; let headerNotice = '';
+      let files: Map<string, Uint8Array> | null = null;
       if (extension === 'xlsx') {
-        inspection = await inspectXlsx(bytes);
+        files = await readXlsxArchive(bytes); inspection = inspectXlsxArchive(files);
         const candidate = suggestQuotationHeader(inspection, draft.categoryId);
         headerNotice = candidate ? '열 이름을 기준으로 작성 시트·머리글 행을 추천했습니다. 공식 분류 일치 여부는 별도 확인이 필요합니다. ' : '작성 시트를 확정할 근거가 부족하거나 후보가 여러 개입니다. 시트·머리글 행을 직접 선택해주세요. ';
         sheetName = candidate?.sheetName ?? inspection.sheets[0].name;
@@ -86,6 +89,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       // Discard old column positions, then suggest exact labels in this category.
       const suggested = suggestQuotationMappings(headers, draft.categoryId);
       automaticMappings.current = suggested.mappings; protectedColumns.current.clear();
+      workbookFiles.current = files;
       setDraft(current => ({ ...current, template, mappings: suggested.mappings }));
       setWorkbook(inspection); setTextTemplate(textSource); setHeaderRow(selectedRow);
       setMessage(`${headerNotice}${headers.length}개 열 중 ${suggested.mappings.length}개를 이름으로 자동 연결했습니다. 미연결 ${suggested.unmatchedColumns.length}개 · 중복/모호 ${suggested.ambiguousColumns.length}개. 시트·머리글 행과 연결 결과를 확인한 뒤 설정을 저장해주세요. ${inspection?.warnings.join(' ') ?? ''}`);
@@ -182,6 +186,16 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
           setDraft(current => ({ ...current, mappings: [...current.mappings, ...additions].sort((a, b) => a.column - b.column) }));
           setMessage(`기존 연결을 유지하고 ${additions.length}개 열을 자동 연결했습니다. 저장 전에 결과를 확인해주세요.`);
         }}>미연결 열 자동 연결</button>
+        {workbook && <button type="button" className="btn ghost" disabled={busy} onClick={() => {
+          try {
+            if (!workbookFiles.current) throw new Error('견적서 원본을 먼저 불러와주세요.');
+            const changes = suggestQuotationChoiceFormats(workbookFiles.current, workbook, draft.template!.sheetName, quotationStartRow(draft.template!), draft.categoryId, draft.mappings);
+            for (const change of changes) protectedColumns.current.add(change.column);
+            automaticMappings.current = automaticMappings.current.filter(mapping => !changes.some(change => change.column === mapping.column));
+            setDraft(current => ({ ...current, mappings: current.mappings.map(mapping => ({ ...mapping, ...changes.find(change => change.column === mapping.column) })) }));
+            setError(''); setMessage(`${changes.length}개 열의 출력 형식을 원본 드롭다운에 맞췄습니다. 전체 선택지가 한 가지 형식으로 일치하는 열만 적용했습니다. 입력 시작 행과 최종 미리보기를 확인해주세요.`);
+          } catch (error) { setError(error instanceof Error ? error.message : '원본 선택 목록을 확인해주세요.'); }
+        }}>원본 드롭다운에 맞춰 출력 형식 적용</button>}
         <p>선택형 열은 원본 양식에 맞춰 저장 코드 또는 표시 문구로 출력할 수 있습니다. 공란은 그대로 유지하며, 공식 양식과의 일치는 미리보기에서 확인해주세요.</p>
         <div style={{ overflowX: 'auto', maxHeight: 340, overflowY: 'auto' }}>
           <table style={{ width: '100%', textAlign: 'left' }}><thead><tr><th>견적서 열</th><th>상품 자료</th><th>필수</th><th>출력 형식 / 고정값</th></tr></thead><tbody>

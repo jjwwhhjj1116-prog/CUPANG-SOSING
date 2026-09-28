@@ -445,3 +445,38 @@ test('workbook review distinguishes definite violations, required blanks and unc
  const overflow=quotationWorkbookIssues({...result.report,validationIssueCount:1001},input.profile,resolved);
  assert.equal(overflow.at(-1).code,'EXCEL_VALUE_INVALID_OVERFLOW');
 });
+
+test('template choice formats are suggested from the entire static dropdown, and exported accordingly',async()=>{
+ const {suggestQuotationChoiceFormats}=load('app/quotation-choice-format.ts');
+ const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');
+ const field=schema.fields.find(f=>f.type==='select'&&f.choices?.some(c=>c.value===''&&c.label==='해당사항없음'));
+ assert.ok(field,'fixture uses a real empty-code choice');
+ for(const choiceFormat of ['label','value']){
+  const allowed=field.choices.map(choice=>choice[choiceFormat]).join(',');
+  const input=await inputFrom(entries(sheet=>sheet.replace('"검정,흰색"',`"${allowed}"`)),{rows:[{[field.id]:'',selectedEmptyChoices:[field.id]}]});
+  input.profile.categoryId='80719';input.profile.mappings=[{column:3,field:field.id,required:false,choiceFormat:choiceFormat==='label'?'value':'label'}];
+  const files=await reader.readXlsxArchive(input.originalBytes);const inspection=reader.inspectXlsxArchive(files);
+  const before=JSON.stringify(input.profile.mappings);
+  const suggested=suggestQuotationChoiceFormats(files,inspection,'견적서',5,'80719',input.profile.mappings);
+  assert.equal(suggested.length,1);assert.equal(suggested[0].choiceFormat,choiceFormat);assert.equal(JSON.stringify(input.profile.mappings),before);
+  input.profile.mappings=input.profile.mappings.map(m=>({...m,...suggested.find(s=>s.column===m.column)}));
+  const output=await createMappedQuotation(input);assert.equal(output.report.validationIssueCount,0);
+  assert.equal(output.values[0][3],choiceFormat==='label'?'해당사항없음':'');
+ }
+});
+
+test('unknown, mixed, overlapping and out-of-range lists do not guess a choice format',async()=>{
+ const {suggestQuotationChoiceFormats}=load('app/quotation-choice-format.ts');
+ const mapping=[{column:3,field:'barcodeMode',required:false}];
+ const rules=[
+  '<dataValidation type="list" sqref="D5:D10"><formula1>"실제 바코드 입력"</formula1></dataValidation>',
+  '<dataValidation type="list" sqref="D5:D10"><formula1>"existing,request-coupang,실제 바코드 입력,바코드 없음(쿠팡 바코드 생성 요청)"</formula1></dataValidation>',
+  '<dataValidation type="list" sqref="D5:D10"><formula1>INDIRECT(A5)</formula1></dataValidation>',
+  '<dataValidation type="list" sqref="D8:D10"><formula1>"실제 바코드 입력,바코드 없음(쿠팡 바코드 생성 요청)"</formula1></dataValidation>',
+  '<dataValidation type="list" sqref="D5:D10"><formula1>"실제 바코드 입력,바코드 없음(쿠팡 바코드 생성 요청)"</formula1></dataValidation>'.repeat(2)
+ ];
+ for(const rule of rules){
+  const files=await reader.readXlsxArchive(zip(entries(s=>s.replace(/<dataValidations[\s\S]*?<\/dataValidations>/,`<dataValidations>${rule}</dataValidations>`))));
+  assert.equal(suggestQuotationChoiceFormats(files,reader.inspectXlsxArchive(files),'견적서',5,'80719',mapping).length,0);
+ }
+});

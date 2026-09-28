@@ -1,6 +1,35 @@
 /** A bounded, read-only OOXML inspector. It never executes formulas or loads relationships over the network. */
 export type WorksheetHeaders = { name: string; rows: { rowNumber: number; values: string[] }[] };
 export type XlsxInspection = { sheets: WorksheetHeaders[]; warnings: string[] };
+/** Read only static list rules covering a specific cell; ambiguous rules are not guessed. */
+export function xlsxChoiceLists(files: Map<string, Uint8Array>, inspection: XlsxInspection, sheetName: string, columns: readonly number[], row: number) {
+  const sheet = xml(files.get(xlsxWorksheetPath(files, sheetName)));
+  return new Map(columns.map(column => [column, cellChoices(sheet, files, inspection, sheetName, column, row)]));
+}
+function cellChoices(sheet: XmlNode, files: Map<string, Uint8Array>, inspection: XlsxInspection, sheetName: string, column: number, row: number): string[] | null {
+  if (children(sheet, 'extLst').length) return null;
+  const position = (ref: string) => {
+    const match = /^\$?([A-Z]{1,3})\$?([1-9]\d*)$/.exec(ref);
+    if (!match) return null;
+    let col = 0; for (const letter of match[1]) col = col * 26 + letter.charCodeAt(0) - 64;
+    return { column: col - 1, row: Number(match[2]) };
+  };
+  const matches: XmlNode[] = [];
+  for (const rule of children(sheet, 'dataValidations').flatMap(group => children(group, 'dataValidation'))) {
+    let covers = false;
+    for (const ref of (rule.attributes.sqref ?? '').trim().split(/\s+/)) {
+      const parts = ref.split(':'); const start = position(parts[0]), end = position(parts[1] ?? parts[0]);
+      if (parts.length > 2 || !start || !end || start.row > end.row || start.column > end.column) return null;
+      covers ||= start.column <= column && end.column >= column && start.row <= row && end.row >= row;
+    }
+    if (covers) matches.push(rule);
+  }
+  if (matches.length !== 1 || matches[0].attributes.type !== 'list') return null;
+  const formulas = children(matches[0], 'formula1');
+  if (formulas.length !== 1 || formulas[0].children.length) return null;
+  const expression = formulas[0].text.trim();
+  return /^"[^"]*"$/.test(expression) ? expression.slice(1, -1).split(',') : xlsxStaticListValues(files, inspection, expression, sheetName);
+}
 const MAX_FILE = 5_000_000;
 const MAX_EXPANDED = 25_000_000;
 const MAX_ENTRY = 10_000_000;
