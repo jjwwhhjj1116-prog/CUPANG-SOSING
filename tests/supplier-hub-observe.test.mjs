@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/observe.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
-function setup({kind='validation',senderChanges={},tabChanges={},resultChanges={},onExecute,missing=false,savedChanges={}}={}){
- const identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+function setup({kind='validation',senderChanges={},tabChanges={},resultChanges={},onExecute,missing=false,savedChanges={},companyCodes,legacy=false}={}){
+ const identity={company:{code:'A01464742',name:'와이홉'},origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
  const saved={...identity,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-1',state:'validation-complete',registered:false,...savedChanges};
  const result=kind==='validation'?{...saved,...resultChanges}:{quotationId:'quote-1',scope:'visible-page',rows:[{title:'상품',skuId:'sku-1'}],registered:false,...resultChanges};
- const puts=[],scripts=[];
- const context=vm.createContext({Date,URL,openSupplierHubRegistrationStatus:async()=>{},searchSupplierHubRegistration(){},readSupplierHubValidation(){},readSupplierHubRegistration(){},resultKey:()=> 'result:key',
+ if(legacy)delete identity.company;
+ const puts=[],scripts=[];let companyChecks=0;
+ const context=vm.createContext({Date,URL,verifySupplierHubCompany(){},openSupplierHubRegistrationStatus:async()=>{},searchSupplierHubRegistration(){},readSupplierHubValidation(){},readSupplierHubRegistration(){},resultKey:()=> 'result:key',
   transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key==='attempt:123'?(missing?null:identity):saved;},
-  chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com'+(kind==='validation'?'/qvt/registration':'/qvt/wims'),...tabChanges}]},scripting:{executeScript:async input=>{scripts.push(input);await onExecute?.();return [{result}];}}}
+  chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com'+(kind==='validation'?'/qvt/registration':'/qvt/wims'),...tabChanges}]},scripting:{executeScript:async input=>{if(input.func===context.verifySupplierHubCompany){const code=companyCodes?.[companyChecks++]??'A01464742';return [{result:{code}}];}scripts.push(input);await onExecute?.();return [{result}];}}}
  });
  vm.runInContext(source,context);
  return {puts,scripts,run:()=>context.observeSupplierHubResult({tabId:123,kind},{id:'extension',url:'chrome-extension://extension/popup.html',...senderChanges})};
@@ -54,4 +55,21 @@ test('validated search may start on the same upload tab, but missing validation 
  assert.equal((await h.run()).state,'search-requested');assert.equal(h.scripts.length,1);
  const missing=setup({kind:'registration-search',missing:true,tabChanges:{url:'https://supplier.coupang.com/qvt/registration'}});
  await assert.rejects(missing.run());assert.equal(missing.scripts.length,0);
+});
+
+test('company switches cannot read or save another company result',async()=>{
+ for(const kind of ['validation','registration','registration-search']){
+  const before=setup({kind,companyCodes:['A01526306']});
+  await assert.rejects(before.run(),/회사/);assert.equal(before.scripts.length,0);assert.equal(before.puts.length,0);
+  const during=setup({kind,companyCodes:['A01464742','A01526306'],resultChanges:kind==='registration-search'?{state:'search-requested'}:{}});
+  await assert.rejects(during.run(),/회사/);assert.equal(during.puts.length,0);
+  if(kind==='registration-search')assert.equal(during.scripts.length,0,'company rechecked after navigation before searching');
+ }
+});
+
+test('legacy attempts and company-mismatched validation cannot initiate a registration search',async()=>{
+ for(const options of [{legacy:true},{savedChanges:{company:{code:'A01526306',name:'유앤채'}}},{savedChanges:{company:undefined}}]){
+  const h=setup({kind:'registration-search',...options});await assert.rejects(h.run(),/회사/);
+  assert.equal(h.scripts.length,0);assert.equal(h.puts.length,0);
+ }
 });

@@ -23,8 +23,8 @@ test('worker saves confirmed dispatch identity without a popup response callback
   await new Promise(resolve=>setImmediate(resolve));assert.equal(run.puts.length,0);
   finish();assert.equal((await pending).state,'dispatched');
   assert.deepEqual(run.calls,['get','delete','execute']);
-  assert.equal(run.puts[0].key,'attempt:123');assert.equal(run.puts[0].value.productId,'p');
-  assert.deepEqual(Object.keys(run.puts[0].value).sort(),['categoryId','fingerprint','origin','productId']);
+  assert.equal(run.puts[0].value.company.code,'A01464742');assert.equal(run.puts[0].key,'attempt:123');assert.equal(run.puts[0].value.productId,'p');
+  assert.deepEqual(Object.keys(run.puts[0].value).sort(),['categoryId','company','fingerprint','origin','productId']);
 });
 test('partial or rejected dispatch preserves previous identity and is not retried',async()=>{
   for(const outcome of ['partial','rejected']){

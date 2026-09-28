@@ -18,15 +18,15 @@ test('app package dispatch is delegated to worker without passing files or writi
 });
 
 async function refreshValidation(previousChanges={},resultChanges={}){
- const identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+ const identity={company:{code:'A01464742',name:'와이홉'},origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
  const result={filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-complete',quotationId:'quotation-123',registered:false,...resultChanges};
  const registration={quotationId:'quotation-123',scope:'visible-page',registered:false,observedAt:1234,rows:[{title:'상품',skuId:'SKU1',status:'상품 검수중'}]};
  const previous={...identity,...result,state:'validation-complete',quotationId:'quotation-123',observedAt:1200,registration,...previousChanges};
  const nodes=new Map(),puts=[];
- const context=vm.createContext({Date,URL,Uint8Array,atob,pendingPackage:async()=>null,
+ const context=vm.createContext({Date,URL,Uint8Array,atob,verifySupplierHubCompany(){},pendingPackage:async()=>null,
   transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key==='attempt:123'?identity:previous;},resultKey:()=> 'result:key',
   readSupplierHubValidation(){},document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{disabled:false,addEventListener(event,handler){this[event]=handler;}});return nodes.get(selector);}},
-  chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration'}]},scripting:{executeScript:async()=>[{result}]}}});
+  chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration'}]},scripting:{executeScript:async input=>[{result:input.func===context.verifySupplierHubCompany?{code:identity.company.code}:result}]}}});
  vm.runInContext(observation,context);context.chrome.runtime.sendMessage=async message=>({ok:true,result:await context.observeSupplierHubResult(message,{id:'extension',url:'chrome-extension://extension/popup.html'})});
  vm.runInContext(source,context);await nodes.get('#result').click();return{saved:puts[0],previous,registration};
 }
