@@ -57,13 +57,15 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
     const indices = attributes.filter(attribute => attribute.skuImageUrl != null && attribute.skuImageUrl !== '').map(attribute => image(attribute.skuImageUrl, 'additional'));
     const stock = sku.amountOnSale == null ? null : numeric(sku.amountOnSale);
     const optionAttribute = (names: string[]) => {
-      const matching = attributes.filter(attribute => typeof attribute.attributeName === 'string' && names.includes(attribute.attributeName.trim()));
+      // The request uses country=en; match explicit translated attribute names
+      // as well as original names, without guessing from packaging dimensions.
+      const matching = attributes.filter(attribute => typeof attribute.attributeName === 'string' && names.includes(attribute.attributeName.trim().toLowerCase()));
       const values = [...new Set(matching.map(attribute => text(attribute.value, '옵션 속성')))];
       if (values.length > 1) throw Error('동일 옵션 속성에 서로 다른 값이 있습니다.');
       return values[0];
     };
-    const color = optionAttribute(['颜色','色彩','색상']);
-    const size = optionAttribute(['尺码','尺寸','사이즈']);
+    const color = optionAttribute(['颜色','色彩','색상','color','colour']);
+    const size = optionAttribute(['尺码','尺寸','사이즈','size']);
     return {sku: identity(sku.skuId), name: attributes.length ? attributes.map(attribute => text(attribute.value, '옵션명')).join(' / ') : text(product.subject, '상품명'), unitPriceCny, minimumOrder, stock,
       ...(indices.length ? {imageIndex: indices[0]} : {}), ...(color ? {color} : {}), ...(size ? {size} : {})};
   });

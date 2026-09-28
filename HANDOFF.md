@@ -4256,3 +4256,12 @@ AI등록 화면 확인:
 - Original archive is retained in editor memory for read-only rules; selected-sheet XML is parsed once per action. No formula execution or network relationship loads. Applying changes marks columns as manually protected against later automatic mapping refresh; saving uses existing profile revision and fingerprint workflow. Export itself does not silently change formats.
 - Regression covers empty-code label/value roundtrip through generated XLSX and no validation mismatch, insufficient/both-representation lists, dynamic formula, wrong input row and overlapping rules. Related64/64; full1279/1279 passed. Typecheck, production build, artifact and diff checks passed. Deployment8085aa20-d83f-41e2-a404-77a19eb3f868.
 - No browser/live-product changes. This was tested with constructed workbooks, not the real official workbook. Live acquisition, official template/category parity and actual completed registration remain unverified; rough progress stays40%. No restricted access or push retried.
+
+## 485. 영문 API 옵션 속성 → 견적서 출력 누락 수정
+
+- `country=en`으로 요청하는 API 후보 응답의 Color/Colour/Size 속성을 중국어·한국어 속성과 함께 정확한 이름으로 인식한다. 대소문자·앞뒤 공백만 정규화하고 Package size 등은 추측하지 않는다. 상충하는 별칭 값은 거부한다.
+- 합성 응답 → prepareCollectionProduct → resolveQuotationFields → resolvedQuotationRows 통합 검증에서 옵션별 색상·사이즈 전달, 수동 수정 및 의도적 빈칸 우선, 다른 옵션 보존을 확인했다.
+- 관련 테스트 211/211, TypeScript, Cloudflare 빌드·산출물 검사, git diff --check 통과.
+- 배포: f745343c-e1bd-4c26-b5bf-6be354c64ae4 / https://sourceflow.jjwwhhjj1116.workers.dev
+- 실제 API 응답을 확보한 검증이 아니다. 실제 1688 수집 및 Supplier Hub 접수 종단 간 완료는 여전히 미확인. 전체 완성도 약 40%는 측정값이 아닌 보수적 추정이며 이번 수정으로 올리지 않았다.
+- 기존 상품, 브라우저, 회원 회사정보 변경 없음. GitHub push 재시도 없음(467 자동 검토 거절 유지).

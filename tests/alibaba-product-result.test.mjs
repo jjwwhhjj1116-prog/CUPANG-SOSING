@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import path from 'node:path';
 import * as parse5 from 'parse5';
 import {webcrypto} from 'node:crypto';
 function load(file) {
  const exports={}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
- {exports,URL,URLSearchParams,Date,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,crypto:webcrypto,structuredClone,require(name){if(name==='parse5')return parse5;return load(name.slice(2)+'.ts');}});return exports;
+ {exports,URL,URLSearchParams,Date,TextEncoder,TextDecoder,Uint8Array,AbortController,setTimeout,clearTimeout,crypto:webcrypto,structuredClone,require(name){if(name==='parse5')return parse5;if(name.startsWith('./'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return load(name.slice(2)+'.ts');}});return exports;
 }
 const {parseAlibabaProduct:parse}=load('app/alibaba-product-result.ts');
 const url='https://detail.1688.com/offer/813724060928.html';
@@ -110,4 +111,44 @@ test('repeated main and SKU images share one gallery entry without losing detail
  ]);
  assert.deepEqual(Array.from(receipt.options,option=>option.imageIndex),[0,1]);
  assert.equal(JSON.stringify(f),before);
+});
+
+test('English API variant attributes reach quotation export and manual review edits take precedence',()=>{
+ const f=fixture();
+ f.result.result.productSkuInfos.forEach((sku,index)=>{
+  sku.skuAttributes[0].attributeName=index?'Colour':' COLOR ';
+  sku.skuAttributes[0].value=index?'Green':'Black';
+  sku.skuAttributes[1].attributeName='Size';
+ });
+ const before=JSON.stringify(f),receipt=parse(f,url);
+ const settings=load('app/observed-price-preset.ts').applyObservedPricePreset(load('app/workspace-settings.ts').defaultSettings);
+ const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',{offer_id:receipt.offerId,source_url:url,
+  context:{category:{id:'80719',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings}},receipt,'p',new Date().toISOString());
+ const input={...draft,categoryId:'80719',settings,product:{...draft.product,pricing_policy:JSON.stringify(draft.policy)}};
+ const {resolveQuotationFields:resolve}=load('app/quotation-schema.ts');
+ const {resolvedQuotationRows:exportRows}=load('app/exports/quotation-fields.ts');
+ const exported=exportRows(input,resolve(input),[]);
+ assert.equal(draft.options.rows[0].provenance.color,'collected');
+ assert.equal(draft.options.rows[1].provenance.size,'collected');
+ assert.equal(exported[0].color,'Black');assert.equal(exported[0].size,'M');
+ assert.equal(exported[1].color,'Green');assert.equal(exported[1].size,'L');
+ input.overrides={common:{},options:{[draft.options.rows[0].id]:{color:'검정',size:''}}};
+ const reviewed=exportRows(input,resolve(input),[]);
+ assert.equal(reviewed[0].color,'검정');assert.equal(reviewed[0].size,'');
+ assert.equal(reviewed[1].color,'Green');assert.equal(reviewed[1].size,'L');
+ assert.equal(JSON.stringify(f),before);
+});
+
+test('variant aliases reject contradictory values and do not infer size or color from other attributes',()=>{
+ for(const [a,b] of [['Color','颜色'],['Colour','색상'],['Size','尺码']]){
+  const f=fixture();f.result.result.productSkuInfos[0].skuAttributes=[{attributeName:a,value:'A'},{attributeName:b,value:'B'}];
+  assert.throws(()=>parse(f,url),/서로 다른 값/);
+ }
+ const f=fixture();f.result.result.productSkuInfos[0].skuAttributes=[
+  {attributeName:'Package size',value:'38x31x14'},
+  {attributeName:'Color description',value:'assorted'},
+ ];
+ const result=parse(f,url);assert.equal(result.options[0].size,undefined);assert.equal(result.options[0].color,undefined);
+ f.result.result.productSkuInfos[0].skuAttributes=[{attributeName:'Color',value:'Black'},{attributeName:'颜色',value:'Black'}];
+ assert.equal(parse(f,url).options[0].color,'Black');
 });
