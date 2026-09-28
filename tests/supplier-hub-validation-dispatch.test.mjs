@@ -7,7 +7,7 @@ function setup({sender={},tab={},result={state:'validation-requested',validated:
  const scripts=[];
  const context=vm.createContext({URL,requestSupplierHubValidation(){},chrome:{runtime:{id:'ext',getURL:name=>'chrome-extension://ext/'+name},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration',...tab}]},scripting:{executeScript:async input=>{scripts.push(input);await execute?.();return [{result}];}}}});
  vm.runInContext(source,context);
- return {scripts,run:()=>context.dispatchSupplierHubValidation({tabId:123},{id:'ext',url:'chrome-extension://ext/popup.html',...sender})};
+ return {scripts,run:(reviewedAgreements)=>context.dispatchSupplierHubValidation({tabId:123,reviewedAgreements},{id:'ext',url:'chrome-extension://ext/popup.html',...sender})};
 }
 test('validation survives missing popup callback and rejects concurrent requests',async()=>{
  let release;const pending=new Promise(r=>release=r);const h=setup({execute:()=>pending});
@@ -26,4 +26,10 @@ test('uncertain or falsely completed validation responses never report success',
   await assert.rejects(h.run(),/확인하지 못/);
  }
  const h=setup({execute:()=>{throw Error('tab closed');}});await assert.rejects(h.run(),/tab closed/);
+});
+
+
+test('popup choices are passed only to the current active validation action',async()=>{
+ const h=setup();const choices={priceData:true,labelBusinessContact:false};await h.run(choices);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.scripts[0].args)),[choices]);
 });

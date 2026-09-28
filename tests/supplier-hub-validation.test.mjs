@@ -27,3 +27,19 @@ test('unrelated, partial, missing-upload, disabled and unacknowledged forms rema
 test('lost click result cannot silently trigger a second remote validation request',()=>{
   const f=fixture({clickError:true});assert.throws(()=>f.run(),/lost result/);assert.throws(()=>f.run(),/이미 요청/);assert.equal(f.clicks,1);
 });
+
+
+test('only explicitly reviewed matching agreements are clicked before validation',()=>{
+ const texts=['제공된 권장소비자가격 또는 공식 판매처 가격 데이터에 대한 쿠팡 약관에 동의합니다.','상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.'];
+ for(const mode of ['success','partial','changed','not-applied','invalid']){
+  const clicks=[];
+  const inputs=texts.map((text,index)=>({checked:false,disabled:false,labels:[{innerText:mode==='changed'&&index===1?'changed terms':text}],click(){clicks.push(index);if(mode!=='not-applied')this.checked=true;}}));
+  const button={innerText:'파일 검증하기',get disabled(){return inputs.some(input=>!input.checked);},getClientRects:()=>[{}],getAttribute:()=>null,click(){clicks.push('validate');}};
+  const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',files:['a.xlsx']})};
+  const document={documentElement:{dataset},body:{innerText:'a.xlsx'},querySelectorAll(selector){return selector==='button'?[button]:[inputs[selector.includes('msrpAgreement')?0:1]];}};
+  const reviewed=mode==='invalid'?{priceData:'yes',labelBusinessContact:true}:{priceData:true,labelBusinessContact:mode!=='partial'};
+  const run=()=>vm.runInNewContext('('+requestSupplierHubValidation.toString()+')(reviewed)',{document,reviewed,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'}});
+  if(mode==='success'){assert.equal(run().state,'validation-requested');assert.deepEqual(clicks,[0,1,'validate']);assert.throws(run);}
+  else {assert.throws(run);assert.ok(!clicks.includes('validate'));assert.equal(JSON.parse(dataset.yoofamAttachmentAttempt).state,'dispatched');if(mode!=='not-applied')assert.deepEqual(clicks,[]);}
+ }
+});

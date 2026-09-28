@@ -1,0 +1,21 @@
+{
+  "observedAt": "2026-09-28",
+  "url": "https://supplier.coupang.com/qvt/registration",
+  "browser": "designated existing otherChrome",
+  "mutation": false,
+  "agreements": [
+    {
+      "id": "msrpAgreement",
+      "name": "msrpAgreement",
+      "text": "제공된 권장소비자가격 또는 공식 판매처 가격 데이터에 대한 쿠팡 약관에 동의합니다."
+    },
+    {
+      "id": "labelContactAgreement",
+      "name": "labelContactAgreement",
+      "text": "상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다."
+    }
+  ],
+  "validationButton": "파일 검증하기",
+  "observedDisabled": true,
+  "liveUploadTested": false
+}
