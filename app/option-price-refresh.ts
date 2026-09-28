@@ -26,7 +26,11 @@ export function mergeOptionDraft(base: ProductOptionsResponse, latest: ProductOp
         throw new Error(`옵션 ${row.id} · ${optionFieldNames[key]}이 양쪽에서 변경되었습니다. 현재 입력은 유지했습니다.`);
       if(remoteChanged && !localChanged)Object.assign(merged,{[key]:after[index][key]});
     }
-    if (merged.unitsPerPack !== row.unitsPerPack) merged.packagingConfirmed = false;
+    // Confirmation applies to the exact pack and measurements the user saw.
+    // A disjoint remote measurement edit must not inherit that confirmation.
+    if (['unitsPerPack','packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'].some(
+      key => !Object.is(merged[key as keyof OptionInput], row[key as keyof OptionInput])
+    )) merged.packagingConfirmed = false;
     return merged;
   });
   return {saved:latest,rows};

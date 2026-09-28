@@ -51,3 +51,24 @@ test('merge rejects remote structure changes, inconsistent versions and other pr
  n.options.productId='other';assert.throws(()=>mergeOptionDraft(b,n,b.options.rows),/다른 상품/);
  const stale=latest(b);stale.productVersion='2020-01-01';assert.throws(()=>mergeOptionDraft(b,stale,b.options.rows),/최신 상품/);
 });
+
+test('merged remote packaging measurements invalidate confirmation for a locally changed pack',()=>{
+ const {mergeOptionDraft}=load('app/option-price-refresh.ts');
+ for(const field of ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm']){
+  const b=base();Object.assign(b.options.rows[0],{packagedWeightG:100,packagedWidthMm:100,packagedLengthMm:100,packagedHeightMm:100,packagingUnitsPerPack:1,provenance:{}});
+  const n=latest(b);n.options.revision++;n.options.rows[0][field]=200;
+  const draft=[{...model.optionInputs(b.options)[0],unitsPerPack:2,packagingConfirmed:true}];
+  const merged=mergeOptionDraft(b,n,draft);
+  assert.equal(merged.rows[0][field],200);assert.equal(merged.rows[0].unitsPerPack,2);
+  assert.equal(merged.rows[0].packagingConfirmed,false);assert.equal(draft[0].packagingConfirmed,true);
+  const saved=model.applyOptionRows(n.options,merged.rows,'2026-09-28T10:00:00.000Z');
+  assert.equal(saved.rows[0].packagingUnitsPerPack,1);
+ }
+});
+
+test('unrelated remote edits preserve the exact packaging confirmation',()=>{
+ const {mergeOptionDraft}=load('app/option-price-refresh.ts');
+ const b=base(),n=latest(b);n.options.revision++;n.options.rows[0].stock=12;
+ const draft=[{...model.optionInputs(b.options)[0],unitsPerPack:2,packagingConfirmed:true}];
+ assert.equal(mergeOptionDraft(b,n,draft).rows[0].packagingConfirmed,true);
+});
