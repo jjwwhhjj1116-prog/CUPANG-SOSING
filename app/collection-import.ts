@@ -29,7 +29,7 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
     if(stopped())return {status:'stopped',productId,completedImages};
     return {status:'failed',productId,completedImages,capacityUnavailable:true,error:error instanceof Error?error.message:'이미지 저장 여유 조회 실패'};
    }
-   if([502,503,504].includes(capacityResponse.status)){
+   if([429,502,503,504].includes(capacityResponse.status)){
     try{await capacityResponse.body?.cancel();}catch{/* The failed response has no product data. */}
     return {status:stopped()?'stopped':'failed',productId,completedImages,capacityUnavailable:true,error:'이미지 저장 여유를 일시적으로 확인하지 못했습니다.'};
    }

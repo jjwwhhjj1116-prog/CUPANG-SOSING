@@ -50,7 +50,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
         }
         // A proxy may return HTML (or no response). Neither should discard an
         // already verified source or prevent saving its editable text draft.
-        if (!capacityResponse || [502,503,504].includes(capacityResponse.status)) {
+        if (!capacityResponse || [429,502,503,504].includes(capacityResponse.status)) {
           if (!options.shouldStop()) {
             options.onProgress(job.id, '이미지 확인 지연 · 상품·옵션 초안을 먼저 저장 중');
             const draft = await runCollectionImport(job.id, source.images.length, {
