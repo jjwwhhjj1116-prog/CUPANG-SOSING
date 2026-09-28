@@ -1,0 +1,17 @@
+{
+  "url": "https://supplier.coupang.com/qvt/registration",
+  "browser": "otherChrome",
+  "mutation": false,
+  "section": "상품 개별법령에 따른 필수 서류",
+  "radio": {
+    "id": "undefined-N",
+    "value": "N",
+    "label": "해당없음"
+  },
+  "initialSelection": "해당함",
+  "ancestor": {
+    "radioCount": 2,
+    "fileCount": 1
+  },
+  "liveSelectionTested": false
+}

@@ -48,5 +48,5 @@ test('changed quotation, validation status or app identity cannot inherit previo
 
 test('validation delegates to worker with active tab identity and explicit unchecked agreement choices',async()=>{
  const {messages,puts}=await popup('validation-requested','#validate');
- assert.equal(messages.length,1);assert.equal(messages[0].type,'YOOFAM_VALIDATE_PACKAGE');assert.equal(messages[0].tabId,123);assert.equal(Object.keys(messages[0]).length,3);assert.deepEqual(JSON.parse(JSON.stringify(messages[0].reviewedAgreements)),{priceData:false,labelBusinessContact:false});assert.equal(puts.length,0);
+ assert.equal(messages.length,1);assert.equal(messages[0].type,'YOOFAM_VALIDATE_PACKAGE');assert.equal(messages[0].tabId,123);assert.equal(Object.keys(messages[0]).length,3);assert.deepEqual(JSON.parse(JSON.stringify(messages[0].reviewedAgreements)),{priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});assert.equal(puts.length,0);
 });

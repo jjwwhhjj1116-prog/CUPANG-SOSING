@@ -43,3 +43,17 @@ test('only explicitly reviewed matching agreements are clicked before validation
   else {assert.throws(run);assert.ok(!clicks.includes('validate'));assert.equal(JSON.parse(dataset.yoofamAttachmentAttempt).state,'dispatched');if(mode!=='not-applied')assert.deepEqual(clicks,[]);}
  }
 });
+
+
+test('legal exemption requires explicit choice and preserves existing legal attachments',()=>{
+ for(const mode of ['confirmed','unchecked','existing-file','uploaded-name','changed-section','duplicate','disabled','not-applied']){
+  const clicks=[];const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',files:['a.xlsx']})};
+  const section={innerText:mode==='changed-section'?'다른 구역':'상품 개별법령에 따른 필수 서류'+(mode==='uploaded-name'?' evidence.pdf':''),parentElement:null,querySelectorAll(selector){return selector.includes('radio')?[{},{}]:[{files:mode==='existing-file'?[{}]:[]}];}};
+  const input={checked:false,disabled:mode==='disabled',labels:[{innerText:'해당없음'}],parentElement:section,click(){clicks.push('legal');if(mode!=='not-applied')this.checked=true;}};
+  const button={innerText:'파일 검증하기',disabled:false,getClientRects:()=>[{}],getAttribute:()=>null,click(){clicks.push('validate');}};
+  const document={documentElement:{dataset},body:{innerText:'a.xlsx'},querySelectorAll(selector){if(selector==='button')return [button];if(selector.includes('radio'))return mode==='duplicate'?[input,input]:[input];return [{checked:true,disabled:false}];}};
+  const run=()=>vm.runInNewContext('('+requestSupplierHubValidation.toString()+')(reviewed)',{document,reviewed:{legalDocumentsNotApplicable:mode!=='unchecked'},location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'}});
+  if(['confirmed','unchecked'].includes(mode)){run();assert.deepEqual(clicks,mode==='confirmed'?['legal','validate']:['validate']);}
+  else{assert.throws(run);assert.deepEqual(clicks,mode==='not-applied'?['legal']:[]);assert.equal(JSON.parse(dataset.yoofamAttachmentAttempt).state,'dispatched');}
+ }
+});

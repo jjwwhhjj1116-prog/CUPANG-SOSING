@@ -13,7 +13,7 @@ export function requestSupplierHubValidation(reviewedAgreements = {}) {
     ['labelBusinessContact','labelContactAgreement','상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.'],
   ];
   if(!reviewedAgreements||typeof reviewedAgreements!=='object'||Array.isArray(reviewedAgreements)
-    ||Object.keys(reviewedAgreements).some(key=>!definitions.some(([name])=>name===key)||typeof reviewedAgreements[key]!=='boolean'))throw Error('동의 선택값을 확인해주세요.');
+    ||Object.keys(reviewedAgreements).some(key=>(!definitions.some(([name])=>name===key)&&key!=='legalDocumentsNotApplicable')||typeof reviewedAgreements[key]!=='boolean'))throw Error('동의 선택값을 확인해주세요.');
   const agreement=(key,id,text)=>{
     const matches=document.querySelectorAll('input[type="checkbox"][id="'+id+'"]');
     if(matches.length!==1||matches[0].disabled)throw Error('Supplier Hub의 동의 항목을 확인해주세요.');
@@ -26,13 +26,34 @@ export function requestSupplierHubValidation(reviewedAgreements = {}) {
   };
   // Check every required choice before changing any checkbox. Values are only
   // supplied by the user's current popup selections, never by package content.
+  const legalChoice=()=>{
+    const candidates=Array.from(document.querySelectorAll('input[type="radio"][id="undefined-N"]')).filter(input=>{
+      if(!Array.from(input.labels||[]).some(label=>(label.innerText||'').trim()==='해당없음'))return false;
+      let section=input.parentElement;
+      for(let depth=0;section&&depth<8;depth++,section=section.parentElement){
+        if(section.querySelectorAll('input[type="radio"]').length>2)return false;
+        if((section.innerText||'').includes('상품 개별법령에 따른 필수 서류')){
+          if(Array.from(section.querySelectorAll('input[type="file"]')).some(file=>file.files?.length)
+            ||/[^\s<>]+\.(?:pdf|xlsx|xls|jpe?g|png|webp|gif|avif)\b/i.test(section.innerText||''))throw Error('법적 서류가 이미 첨부되어 있습니다. 기존 첨부를 유지하고 Supplier Hub에서 확인해주세요.');
+          return true;
+        }
+      }return false;
+    });
+    if(candidates.length!==1||candidates[0].disabled)throw Error('법적 서류 해당없음 항목을 확인하지 못했습니다.');
+    return candidates[0];
+  };
   definitions.forEach(args=>agreement(...args));
+  if(reviewedAgreements.legalDocumentsNotApplicable===true)legalChoice();
   const validationButton=()=>{
     const buttons=Array.from(document.querySelectorAll('button')).filter(button=>(button.innerText||'').trim()==='파일 검증하기'&&button.getClientRects().length);
     if(buttons.length!==1)throw Error('파일 검증 버튼을 확인해주세요.');
     return buttons[0];
   };
   validationButton();
+  if(reviewedAgreements.legalDocumentsNotApplicable===true){
+    const input=legalChoice();if(!input.checked)input.click();
+    if(!legalChoice().checked)throw Error('법적 서류 선택이 반영되지 않았습니다. Supplier Hub에서 확인해주세요.');
+  }
   for(const args of definitions){const input=agreement(...args);if(!input.checked)input.click();}
   if(definitions.some(args=>!agreement(...args).checked))throw Error('동의 선택이 화면에 반영되지 않았습니다. Supplier Hub에서 확인해주세요.');
   const button=validationButton();
