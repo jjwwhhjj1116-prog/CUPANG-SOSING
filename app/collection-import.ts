@@ -56,7 +56,18 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
    if(stopped())return {status:'stopped',productId,completedImages,...(failedImageIndices.length?{failedImageIndices}:{}),...(warnings.length?{warnings}: {})};
    activeImageIndex=index;
    options.onProgress?.({stage:'images',completedImages,totalImages:selectedTotal});
-   const imageResponse=await request(`${base}/images`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({index})});
+   let imageResponse: Response;
+   try {
+    imageResponse=await request(`${base}/images`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({index})});
+   } catch (error) {
+    // A lost acknowledgement may follow a successful write. Keep this index
+    // unconfirmed, but let independent images finish in batch mode. A retry
+    // reuses the server's idempotent image endpoint instead of duplicating it.
+    if(!options.continueOnImageError || stopped())throw error;
+    failedImageIndices.push(index);
+    warnings.push(`원본 ${index+1}번 이미지 저장 응답을 확인하지 못했습니다. 재시도 시 저장 여부를 다시 확인합니다.`);
+    continue;
+   }
    const image=await imageResponse.json() as {error?:string;key?:string;warnings?:unknown;code?:string};
    if(!imageResponse.ok){
     if(options.continueOnImageError && imageResponse.status===502 && image.code==='IMAGE_DOWNLOAD_FAILED' && !stopped()){
@@ -69,7 +80,7 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
    if(Array.isArray(image.warnings))for(const warning of image.warnings){if(typeof warning==='string'&&warning.trim())warnings.push(`원본 ${index+1}번: ${warning}`);}
    options.onProgress?.({stage:'images',completedImages,totalImages:selectedTotal});
   }
-  if(failedImageIndices.length)return {status:'failed',productId,completedImages,failedImageIndices,warnings,error:`원본 ${failedImageIndices.map(index=>index+1).join(', ')}번 이미지 다운로드에 실패했습니다. 저장된 이미지는 재시도 시 재사용합니다.`};
+  if(failedImageIndices.length)return {status:'failed',productId,completedImages,failedImageIndices,warnings,error:`원본 ${failedImageIndices.map(index=>index+1).join(', ')}번 이미지 저장을 완료하지 못했습니다. 저장된 이미지는 재시도 시 재사용합니다.`};
   return {status:'completed',productId,completedImages,...(warnings.length?{warnings}: {})};
  }catch(error){return {status:stopped()?'stopped':'failed',productId,completedImages,...(failedImageIndices.length?{failedImageIndices}:{}),...(warnings.length?{warnings}: {}),error:(activeImageIndex===null?'':`원본 ${activeImageIndex+1}번 이미지: `)+(error instanceof Error?error.message:'저장 결과를 확인하지 못했습니다.')};}
 }

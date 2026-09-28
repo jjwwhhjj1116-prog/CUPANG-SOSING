@@ -162,3 +162,31 @@ test('product-saved preparation settles before images and can stop without losin
   assert.equal(result.completedImages,stopAfterDraft?0:2);
  }
 });
+
+test('batch import continues after exhausted lost acknowledgements and reuses saved images on resume',async()=>{
+ let lose=true;const saved=new Set(),calls=[];
+ const fetcher=async(url,init)=>{
+  if(url.endsWith('/product'))return reply({productId:'p'});
+  const index=JSON.parse(init.body).index;calls.push(index);saved.add(index);
+  if(index===1&&lose)throw Error('response lost after storage');
+  return reply({key:`owner/${index}`});
+ };
+ const options={fetcher,continueOnImageError:true,retryAttempts:3,retryWait:async()=>{}};
+ const first=await runCollectionImport('job',3,options);
+ assert.equal(first.status,'failed');assert.equal(first.productId,'p');assert.equal(first.completedImages,2);
+ assert.deepEqual([...first.failedImageIndices],[1]);assert.deepEqual(calls,[0,1,1,1,2]);
+ assert.match(first.warnings[0],/응답을 확인하지/);assert.equal(saved.size,3);
+ lose=false;calls.length=0;
+ const resumed=await runCollectionImport('job',3,options);
+ assert.equal(resumed.status,'completed');assert.equal(resumed.completedImages,3);
+ assert.deepEqual(calls,[0,1,2]);assert.equal(saved.size,3);
+});
+
+test('cancellation during an uncertain image write stops batch continuation',async()=>{
+ let stop=false;const calls=[];
+ const result=await runCollectionImport('job',3,{continueOnImageError:true,retryAttempts:3,retryWait:async()=>{},shouldStop:()=>stop,fetcher:async(url,init)=>{
+  if(url.endsWith('/product'))return reply({productId:'p'});
+  calls.push(JSON.parse(init.body).index);stop=true;throw Error('aborted');
+ }});
+ assert.equal(result.status,'stopped');assert.equal(result.completedImages,0);assert.deepEqual(calls,[0]);
+});
