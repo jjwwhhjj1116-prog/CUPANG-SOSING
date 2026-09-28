@@ -15,7 +15,27 @@ export async function readSupplierHubValidation(expectedFilename) {
   const headings=['견적서 명','견적서 등록일','검증 상태','검증 결과','견적서 ID'];
   const normalize=value=>(value||'').replace(/\?/g,'').replace(/\s+/g,' ').trim();
   const table=()=>Array.from(document.querySelectorAll('table')).filter(element=>element.getClientRects().length&&Array.from(element.querySelectorAll('thead th')).map(cell=>normalize(cell.innerText)).join('|')===headings.join('|'));
-  if(!table().length){
+  const existing=table();
+  if(existing.length>1)throw Error('검증 결과 표가 중복되어 있습니다.');
+  if(existing.length===1){
+    const refresh=Array.from(document.querySelectorAll('button')).filter(button=>normalize(button.innerText).replace(/^refresh\s*/,'')==='새로고침'&&button.getClientRects().length);
+    if(refresh.length!==1||refresh[0].disabled||refresh[0].getAttribute('aria-disabled')==='true')throw Error('검증 결과 새로고침 버튼을 확인해주세요.');
+    // Observe before clicking so a synchronous redraw cannot be missed. Wait
+    // for table redraws to settle; unchanged results retain their visible state.
+    await new Promise((resolve,reject)=>{
+      let quiet;
+      const finish=()=>{clearTimeout(timer);clearTimeout(quiet);observer.disconnect();resolve();};
+      const observer=new MutationObserver(records=>{
+        if(records.some(record=>existing[0].contains(record.target)||!existing[0].isConnected)){
+          clearTimeout(quiet);quiet=setTimeout(finish,250);
+        }
+      });
+      const timer=setTimeout(finish,6000);
+      observer.observe(document.body,{childList:true,subtree:true,characterData:true});
+      try{refresh[0].click();}catch(error){clearTimeout(timer);observer.disconnect();reject(error);}
+    });
+  }
+  if(!existing.length){
     const buttons=Array.from(document.querySelectorAll('button')).filter(button=>normalize(button.innerText)==='검증 진행상태 확인하기'&&button.getClientRects().length&&!button.disabled);
     if(buttons.length!==1)throw Error('Supplier Hub 검증 진행상태 버튼을 찾지 못했습니다.');
     buttons[0].click();

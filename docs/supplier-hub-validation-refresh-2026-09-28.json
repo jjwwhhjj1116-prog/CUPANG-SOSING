@@ -1,0 +1,16 @@
+{
+  "url": "https://supplier.coupang.com/qvt/registration",
+  "browser": "otherChrome",
+  "action": "Opened validation status dialog only; no file upload or product changes",
+  "dialog": "검증 진행상태",
+  "refreshButton": "refresh 새로고침",
+  "headings": [
+    "견적서 명",
+    "견적서 등록일",
+    "검증 상태",
+    "검증 결과",
+    "견적서 ID"
+  ],
+  "observedRows": "데이터가 없습니다",
+  "liveUploadTested": false
+}
