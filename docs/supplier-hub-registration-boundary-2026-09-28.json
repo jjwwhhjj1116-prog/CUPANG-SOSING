@@ -1,0 +1,18 @@
+{
+  "observedAt": "2026-09-28",
+  "surface": "user-designated existing otherChrome binding",
+  "url": "https://supplier.coupang.com/qvt/registration",
+  "company": { "name": "와이홉", "code": "A01464742", "source": "visible company menu" },
+  "uploadSections": ["견적서 Excel", "상품 이미지", "제품 필수 표시사항", "법적 필수서류"],
+  "actions": ["검증 진행상태 확인하기", "파일 검증하기", "상품 등록 상태 확인"],
+  "finalRegistrationActionObserved": false,
+  "guidePage": "https://supplier.coupang.com/help/view?no=699",
+  "guideBodyRead": false,
+  "guideLimitation": "Guide page linked a separate document. Opening it returned Debugger unattached; document contents were not verified.",
+  "writes": "No files attached, no validation submitted, no existing products changed.",
+  "implementationGaps": [
+    "app/api/supplier-hub POST remains HTTP 501",
+    "Extension has attachment, validation and visible-page result reading only",
+    "Approved membership company is not bound to package/current Hub company"
+  ]
+}
