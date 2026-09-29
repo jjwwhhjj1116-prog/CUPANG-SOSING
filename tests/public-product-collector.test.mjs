@@ -13,6 +13,20 @@ test('explicit public data produces original SKU, image relation and price witho
  const r=parsePublicProduct(html(product()),url);assert.equal(r.options[0].sku,'real-sku');assert.equal(r.options[0].unitPriceCny,25.6);assert.equal(r.options[0].minimumOrder,2);assert.equal(r.options[0].stock,null);assert.equal(r.options[0].imageIndex,1);assert.equal(r.images[0].role,'main');assert.equal(r.title,'原文商品');
  assert.equal(parsePublicProduct(html({'@graph':[product()]}),url).offerId,'813724060928');
 });
+test('public product page can identify the exact offer by JSON-LD id or main entity',()=>{
+ const byId=product();delete byId.url;byId['@id']=url+'?from=structured-data';
+ assert.equal(parsePublicProduct(html(byId),url).options[0].sku,'real-sku');
+ const byPage=product();delete byPage.url;byPage.mainEntityOfPage={'@type':'WebPage','@id':url};
+ assert.equal(parsePublicProduct(html({'@graph':[byPage]}),url).title,'原文商品');
+ byPage.mainEntityOfPage=url;
+ assert.equal(parsePublicProduct(html(byPage),url).offerId,'813724060928');
+ byPage.mainEntityOfPage={'@id':'#product-page'};
+ assert.equal(parsePublicProduct(html({'@graph':[byPage,{'@type':'WebPage','@id':'#product-page',url}]}),url).title,'原文商品');
+ assert.throws(()=>parsePublicProduct(html(byPage),url),/이 URL의 상품/);
+ byPage.mainEntityOfPage='https://detail.1688.com/offer/999.html';
+ assert.throws(()=>parsePublicProduct(html(byPage),url),/이 URL의 상품/);
+ assert.throws(()=>parsePublicProduct(html([byId,{...byId,'@id':url}]),url),/이 URL의 상품/);
+});
 test('local JSON-LD graph references preserve exact SKU prices, images, stock and source attributes',()=>{
  const p=product(),variant=p.hasVariant[0],offer=variant.offers;
  p.hasVariant=[{'@id':'#sku'}];p.image={'@id':'#image'};p.additionalProperty={'@id':'#material'};

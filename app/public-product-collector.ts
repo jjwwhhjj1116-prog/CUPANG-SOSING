@@ -47,9 +47,27 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
   }
   return entry;
  };
- const matches = nodes.filter(node => (hasType(node,'Product') || hasType(node,'ProductGroup')) && list(node.url).some(url => {
-  try{return parseCollectionRequest({urls:[url]})[0].offerId===source.offerId;}catch{return false;}
- }));
+ // Product JSON-LD may identify its page with url, @id or
+ // mainEntityOfPage. Require an explicit detail URL in one of those fields;
+ // never match a product from its title, seller text or a nested SKU alone.
+ const matchesSourceUrl=(value:unknown):boolean=>{
+  if(typeof value!=='string')return false;
+  try{return parseCollectionRequest({urls:[value]})[0].offerId===source.offerId;}catch{return false;}
+ };
+ const identifiesSource=(value:unknown):boolean=>{
+  if(matchesSourceUrl(value))return true;
+  const entry=object(value);
+  if(list(entry['@id']).some(matchesSourceUrl)||list(entry.url).some(matchesSourceUrl))return true;
+  // A WebPage reference may point at another node in the same JSON-LD graph.
+  // Resolve only that local node, never a remote URL or a guessed product.
+  if(Object.keys(entry).length!==1||typeof entry['@id']!=='string')return false;
+  try{
+   const page=resolve(entry);
+   return page!==entry && list(page.url).some(matchesSourceUrl);
+  }catch{return false;}
+ };
+ const matches = nodes.filter(node => (hasType(node,'Product') || hasType(node,'ProductGroup'))
+  && [...list(node.url),...list(node['@id']),...list(node.mainEntityOfPage)].some(identifiesSource));
  if(matches.length!==1)throw Error('이 URL의 상품·옵션 정보를 페이지에서 명확히 확인하지 못했습니다. 로그인 또는 페이지 수집 연결이 필요합니다.');
  const product=matches[0];
  // Preserve explicitly published product facts for the downstream SEO review.
