@@ -106,7 +106,7 @@ test('saved intake navigation requires one linked product and canonical URL, pre
 test('partial import exposes the confirmed product for editing while keeping the row retryable',async()=>{
  let rows=[row(1)];const options={signal:new AbortController().signal,fetcher:async(_url,init)=>response(saved(JSON.parse(init.body))),onJobs(){},onRow(id,patch){rows=rows.map(r=>r.id===id?{...r,...patch}:r);},collect:async(job,progress,linked)=>{linked('confirmed-product');progress('이미지 반영 중');throw Error('image failed');}};
  await submitIntakeQueue(rows,'price',options);
- assert.equal(rows[0].status,'error');assert.equal(rows[0].productId,'confirmed-product');assert.equal(rows[0].message,'저장 확인 실패 · 입력 유지');
+ assert.equal(rows[0].status,'error');assert.equal(rows[0].productId,'confirmed-product');assert.match(rows[0].message,/^상품·옵션 초안 저장됨 · 나머지 단계 미완료/);
  assert.equal(load('app/intake-queue.ts').intakeProductId(rows[0],[]),'confirmed-product');
  assert.equal(intakeQueueRequests(rows,'price').length,1);
 });

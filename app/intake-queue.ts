@@ -66,6 +66,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
   const expectedSettings=options.expectedSettings?JSON.parse(JSON.stringify(options.expectedSettings)) as WorkspaceSettings:undefined;
   for (const request of requests) {
     if (options.signal.aborted) break;
+    let savedProductId: string | undefined;
     try {
       const response = await options.fetcher('/api/collection-jobs', { method: 'POST', signal: options.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({...request.body,...(expectedSettings?{expectedSettings}:{})}) });
       const result = await response.json() as { jobs?: CollectionJob[]; preservedRequests?: PreservedCollectionRequest[]; error?: string; code?: string };
@@ -75,7 +76,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
       options.onJobs(result.jobs);
       const differences = result.preservedRequests?.flatMap(item => item.differences) ?? [];
       if(!differences.length&&options.collect) {
-        const message=await options.collect(result.jobs[0],message=>options.onRow(request.id,{status:'draft',message}),id=>{if(!options.signal.aborted&&id)options.onRow(request.id,{status:'draft',message:'상품 초안 저장됨 · 이미지 반영 중',productId:id});});
+        const message=await options.collect(result.jobs[0],message=>options.onRow(request.id,{status:'draft',message}),id=>{if(!options.signal.aborted&&id){savedProductId=id;options.onRow(request.id,{status:'draft',message:'상품 초안 저장됨 · 이미지 반영 중',productId:id});}});
         if(options.signal.aborted)break;
         if(!message)throw Error('상품 반영 결과를 확인하지 못했습니다.');
         options.onRow(request.id,{status:'saved',message});continue;
@@ -83,7 +84,9 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
       options.onRow(request.id, differences.length ? { status: 'error', message: `기존 요청 유지 · ${[...new Set(differences)].join(', ')} 불일치. 기존 요청을 확인해주세요.` } : { status: 'saved', message: `요청 저장됨 · ${collectionJobProgress(result.jobs[0]).label}` });
     } catch (cause) {
       if (options.signal.aborted) break;
-      options.onRow(request.id, { status: 'error', message: cause instanceof Error ? cause.message : '저장 확인 실패 · 입력 유지' });
+      const message=cause instanceof Error ? cause.message : '저장 확인 실패 · 입력 유지';
+      options.onRow(request.id, { status: 'error', message: savedProductId ? `상품·옵션 초안 저장됨 · 나머지 단계 미완료. ${message}` : message,
+        ...(savedProductId ? {productId:savedProductId} : {}) });
     }
   }
 }

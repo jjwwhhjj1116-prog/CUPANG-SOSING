@@ -15,7 +15,7 @@ export function collectionJobProgress(job: Pick<CollectionJob, 'status' | 'produ
   if(job.product_id)return {kind:'imported',label:'상품 반영됨'};
   if(job.status==='cancelled')return {kind:'cancelled',label:'취소됨'};
   if(job.received_at)return {kind:'received',label:'원문 수신 · 상품 반영 대기'};
-  return {kind:'awaiting_connector',label:'수집 연결 대기'};
+  return {kind:'awaiting_connector',label:'URL 저장됨 · 상품정보 가져오기 전'};
 }
 
 export type PreservedCollectionRequest = { offerId: string; sourceUrl: string; differences: string[] };

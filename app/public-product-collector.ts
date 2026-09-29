@@ -31,8 +31,12 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
  }
  // Resolve only explicit, local JSON-LD references. Never fetch a referenced URL
  // or infer an offer from another product's headline price.
+ // Pages sometimes emit the same JSON-LD graph in multiple script tags.
+ // Byte-identical objects are one piece of evidence; distinct objects that
+ // identify the same offer remain ambiguous and must still be rejected.
+ const uniqueNodes=[...new Map(nodes.map(node=>[JSON.stringify(node),node])).values()];
  const definitions=new Map<string,RecordValue[]>();
- for(const node of nodes){
+ for(const node of uniqueNodes){
   if(typeof node['@id']!=='string'||Object.keys(node).length===1)continue;
   const id=node['@id'];definitions.set(id,[...(definitions.get(id)??[]),node]);
  }
@@ -66,7 +70,7 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
    return page!==entry && list(page.url).some(matchesSourceUrl);
   }catch{return false;}
  };
- const matches = nodes.filter(node => (hasType(node,'Product') || hasType(node,'ProductGroup'))
+ const matches = uniqueNodes.filter(node => (hasType(node,'Product') || hasType(node,'ProductGroup'))
   && [...list(node.url),...list(node['@id']),...list(node.mainEntityOfPage)].some(identifiesSource));
  if(matches.length!==1)throw Error('이 URL의 상품·옵션 정보를 페이지에서 명확히 확인하지 못했습니다. 로그인 또는 페이지 수집 연결이 필요합니다.');
  const product=matches[0];

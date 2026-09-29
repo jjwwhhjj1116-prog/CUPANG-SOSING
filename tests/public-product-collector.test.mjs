@@ -27,6 +27,16 @@ test('public product page can identify the exact offer by JSON-LD id or main ent
  assert.throws(()=>parsePublicProduct(html(byPage),url),/이 URL의 상품/);
  assert.throws(()=>parsePublicProduct(html([byId,{...byId,'@id':url}]),url),/이 URL의 상품/);
 });
+test('repeated identical JSON-LD is one source but conflicting copies remain ambiguous',()=>{
+ const p=product();
+ assert.equal(parsePublicProduct(html([p,structuredClone(p)]),url).options[0].unitPriceCny,25.6);
+ assert.equal(parsePublicProduct(html(p)+html(p),url).title,'原文商品');
+ const other=structuredClone(p);other.hasVariant[0].offers.price='31';
+ assert.throws(()=>parsePublicProduct(html([p,other]),url),/이 URL의 상품/);
+ const page={'@type':'WebPage','@id':'#page',url};
+ const linked={...p,mainEntityOfPage:{'@id':'#page'}};delete linked.url;
+ assert.equal(parsePublicProduct(html({'@graph':[linked,page,structuredClone(page)]}),url).title,'原文商品');
+});
 test('local JSON-LD graph references preserve exact SKU prices, images, stock and source attributes',()=>{
  const p=product(),variant=p.hasVariant[0],offer=variant.offers;
  p.hasVariant=[{'@id':'#sku'}];p.image={'@id':'#image'};p.additionalProperty={'@id':'#material'};
@@ -45,7 +55,7 @@ test('local JSON-LD graph references preserve exact SKU prices, images, stock an
 });
 
 test('login, unrelated and ambiguous products or incomplete option data never become drafts',()=>{
- for(const input of ['<html>Login</html>',html({...product(),url:'https://detail.1688.com/offer/999.html'}),html([product(),product()])])assert.throws(()=>parsePublicProduct(input,url));
+ for(const input of ['<html>Login</html>',html({...product(),url:'https://detail.1688.com/offer/999.html'}),html([product(),{...product(),name:'다른 상품'}])])assert.throws(()=>parsePublicProduct(input,url));
  for(const mutate of [p=>delete p.hasVariant[0].sku,p=>delete p.hasVariant[0].offers.eligibleQuantity,p=>p.hasVariant[0].offers.priceCurrency='USD',p=>p.hasVariant[0].offers['@type']='AggregateOffer',p=>p.hasVariant[0].offers.price='25-30',p=>p.image='https://127.0.0.1/a']){const p=product();mutate(p);assert.throws(()=>parsePublicProduct(html(p),url));}
 });
 
@@ -183,6 +193,7 @@ test('incomplete SEO keeps the intake row retryable and the confirmed product ed
  const settings={signal,collect,onJobs(){},onRow:(id,patch)=>{rows=rows.map(row=>row.id===id?{...row,...patch}:row);},fetcher:async()=>Response.json({jobs:[job],preservedRequests:[]})};
  await submitIntakeQueue(rows,'price',settings);
  assert.equal(rows[0].status,'error');assert.equal(rows[0].productId,'saved-product');assert.match(rows[0].message,/SEO 일시 실패/);
+ assert.match(rows[0].message,/상품·옵션 초안 저장됨 · 나머지 단계 미완료/);
  assert.equal(intakeQueueRequests(rows,'price').length,1);
  await submitIntakeQueue(rows,'price',settings);assert.equal(imports,2);assert.equal(rows[0].status,'saved');
  assert.equal(rows[0].productId,'saved-product');assert.equal(intakeQueueRequests(rows,'price').length,0);
