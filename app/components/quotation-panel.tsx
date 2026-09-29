@@ -115,7 +115,7 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
       <li>내려받은 원본을 아래 ‘카테고리·양식 관리’에서 연결하고 시트·머리글·입력 시작 행을 확인하세요.</li>
     </ol>
     {(selected?.categoryId ?? capturedCategoryId)==='80719' && <p>바스켓 이름으로 확인한 공식 탐색 경로: 주방용품 → 주방수납/잡화 → 건조대/진열대/정리대 → 주방수납바구니/바스켓</p>}
-    <small>2026-09-23 다운로드 화면 관찰 기준입니다. 이 화면의 ‘칸 카테고리 아이디’와 앱의 상품 카테고리 코드는 동일하다고 검증되지 않았습니다. 코드가 검색되지 않으면 분류명으로 탐색하세요. 경로 안내만으로 Excel 원본 연결이 완료되지는 않습니다.</small></div></div>
+    <small>2026-09-28 공식 Excel 원본에서 칸 카테고리 6269와 상품 등록 카테고리 80719의 대응을 확인했습니다. 다른 카테고리는 각각 원본을 확인해야 합니다. 경로 안내만으로 Excel 원본 연결이나 실제 제출이 완료되지는 않습니다.</small></div></div>
     <div className="panel-note"><div><strong>저장한 양식으로 견적서 만들기</strong><p>상품·옵션·이미지 자료를 연결된 Excel 열에 채웁니다. 원본은 보존하고 채운 사본과 첨부 이미지를 ZIP으로 내려받습니다.</p></div></div>
     <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty||refreshingProfiles} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);onProfileChange?.(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
     <button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void refreshProfiles()}>{refreshingProfiles?'양식 확인 중…':'저장한 양식 새로고침'}</button>

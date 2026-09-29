@@ -1,6 +1,26 @@
 /** A bounded, read-only OOXML inspector. It never executes formulas or loads relationships over the network. */
 export type WorksheetHeaders = { name: string; rows: { rowNumber: number; values: string[] }[] };
 export type XlsxInspection = { sheets: WorksheetHeaders[]; warnings: string[] };
+export function supplierHubSheetSignature(inspection: XlsxInspection, sheetName: string): boolean {
+  const kan = /^QF_(\d+)_/.exec(sheetName)?.[1];
+  const firstRow = inspection.sheets.find(value => value.name === sheetName)?.rows.find(value => value.rowNumber === 1);
+  return Boolean(kan && firstRow?.values.some(value => new RegExp(`^Retail_Categorized_Excel:Kan:${kan}:Notice\\d+:Version\\d+$`).test(value.trim())));
+}
+/** Recognize Supplier Hub's annotated QF sheet only when the original layout is unambiguous. */
+export function supplierHubEntryLayout(inspection: XlsxInspection, sheetName: string, headerRow: number): { dataStartRow: number; categoryIds: string[] } | null {
+  const sheet = inspection.sheets.find(value => value.name === sheetName);
+  if (!sheet || !supplierHubSheetSignature(inspection, sheetName) || headerRow !== 5) return null;
+  const row = (number: number) => sheet.rows.find(value => value.rowNumber === number)?.values ?? [];
+  const headers = row(5), markers = row(6), guidance = row(7), examples = row(8);
+  if (headers.filter(Boolean).length < 20 || markers.filter(value => /^(?:필수|선택|조건부 필수)$/.test(value.trim())).length < 20
+    || guidance.filter(Boolean).length < 20 || examples.filter(Boolean).length < 20) return null;
+  const categoryIds = [...new Set([...examples.join(' ').matchAll(/\((\d{4,7})\)/g)].map(match => match[1]))];
+  return { dataStartRow: 9, categoryIds };
+}
+export function supplierHubRequirementRow(inspection: XlsxInspection, sheetName: string, headerRow: number): string[] | null {
+  if (!supplierHubEntryLayout(inspection, sheetName, headerRow)) return null;
+  return inspection.sheets.find(value => value.name === sheetName)?.rows.find(value => value.rowNumber === headerRow + 1)?.values ?? null;
+}
 /** Read only static list rules covering a specific cell; ambiguous rules are not guessed. */
 export function xlsxChoiceLists(files: Map<string, Uint8Array>, inspection: XlsxInspection, sheetName: string, columns: readonly number[], row: number) {
   const sheet = xml(files.get(xlsxWorksheetPath(files, sheetName)));

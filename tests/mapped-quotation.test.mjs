@@ -69,6 +69,35 @@ async function inputFrom(files = entries(), updates = {}) {
   };
 }
 
+test('official annotated quotation starts after guide/example rows and rejects a different registration category', async () => {
+  const sheetName = 'QF_6269_주방수납';
+  const headers = ['카테고리', '상품명', ...Array.from({ length: 18 }, (_, index) => `항목${index + 1}`)];
+  const row = (number, cells) => `<row r="${number}">${cells.map(([column, value]) => `<c r="${column}${number}" t="inlineStr"><is><t>${value}</t></is></c>`).join('')}</row>`;
+  const letter = index => String.fromCharCode(65 + index);
+  const cells = values => values.map((value, index) => [letter(index), value]);
+  const xml = `<worksheet><sheetData>${row(1, [['B', 'Retail_Categorized_Excel:Kan:6269:Notice17:Version190']])}${row(5, cells(headers))}${row(6, cells(headers.map(() => '필수')))}${row(7, cells(headers.map(() => '작성 안내')))}${row(8, cells(headers.map((_, index) => index === 1 ? 'E.g. 주방수납바구니/바스켓 (80719)' : '예시')))}<row r="9"><c r="T9"><f>1+1</f><v>2</v></c></row></sheetData></worksheet>`;
+  const fixture = entries().map(([name, value]) => [name, name === 'xl/workbook.xml' ? value.replace('name="견적서"', `name="${sheetName}"`) : name === 'xl/worksheets/sheet1.xml' ? xml : value]);
+  const input = await inputFrom(fixture, { dataStartRow: 6, rows: [{ title: '새 상품' }] });
+  input.profile = { ...input.profile, categoryId: '80719', template: { ...input.profile.template, sheetName, headerRow: 5, headers }, mappings: [{ column: 1, field: 'title', required: true }] };
+  const inspection = reader.inspectXlsxArchive(await reader.readXlsxArchive(input.originalBytes));
+  assert.deepEqual(JSON.parse(JSON.stringify(reader.supplierHubEntryLayout(inspection, sheetName, 5))), { dataStartRow: 9, categoryIds: ['80719'] });
+  await assert.rejects(createMappedQuotation(input), /상품 입력은 9행부터/);
+  await assert.rejects(createMappedQuotation({ ...input, profile: { ...input.profile, categoryId: '81452' }, dataStartRow: 9 }), /카테고리.*다릅니다/);
+  await assert.rejects(createMappedQuotation({ ...input, profile: { ...input.profile, categoryId: '' }, dataStartRow: 9 }), /카테고리.*다릅니다/);
+  const result = await createMappedQuotation({ ...input, dataStartRow: 9 });
+  const output = reader.inspectXlsxArchive(await reader.readXlsxArchive(result.bytes.buffer));
+  assert.equal(reader.xlsxHeaders(output, sheetName, 6)[1], '필수');
+  assert.match(reader.xlsxHeaders(output, sheetName, 8)[1], /80719/);
+  assert.equal(reader.xlsxHeaders(output, sheetName, 9)[1], '새 상품');
+  const lookalike = JSON.parse(JSON.stringify(inspection));
+  lookalike.sheets.find(sheet => sheet.name === sheetName).rows.find(entry => entry.rowNumber === 6).values[1] = '다른 문구';
+  assert.equal(reader.supplierHubEntryLayout(lookalike, sheetName, 5), null);
+  const brokenFixture = fixture.map(([name, value]) => [name, name === 'xl/worksheets/sheet1.xml' ? value.replace('<t>필수</t>', '<t>임의</t>') : value]);
+  const brokenInput = await inputFrom(brokenFixture, { dataStartRow: 9, rows: [{ title: '검증용' }] });
+  brokenInput.profile = { ...input.profile, template: { ...input.profile.template, sha256: brokenInput.profile.template.sha256 } };
+  await assert.rejects(createMappedQuotation(brokenInput), /입력 행 구성을 확인하지 못했습니다/);
+});
+
 test('OOXML shared and inline text escapes decode once, including literal escape text and surrogate pairs', async () => {
   const files = entries().map(([name, value]) => [name, name === 'xl/sharedStrings.xml'
     ? '<sst><si><t>상품_x000A_명</t></si></sst>'

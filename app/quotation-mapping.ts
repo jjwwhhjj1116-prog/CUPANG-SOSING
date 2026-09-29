@@ -17,7 +17,7 @@ export function suggestQuotationHeader(workbook: XlsxInspection, categoryId: str
 // different facts, just as 판매 수량 and 박스 내 SKU 수량 are different facts.
 const headerKey = (value: string) => value.normalize('NFKC').replace(/[＊*]/gu, '').replace(/\s+/gu, '').trim();
 const aliases: Partial<Record<CategoryField, string[]>> = {
-  title: ['상품명', '한국어 상품명'], categoryId: ['카테고리 번호', '카테고리 ID', '카테고리 코드'],
+  title: ['상품명', '한국어 상품명'], category: ['카테고리'], categoryId: ['카테고리 번호', '카테고리 ID', '카테고리 코드'],
   sourceUrl: ['1688 링크', '1688 상품 URL', '구매 링크'], skuName: ['옵션명'], skuId: ['원본 SKU 번호', '공급자 SKU'],
   supplyPrice: ['공급가', '공급가(KRW)'], salePrice: ['판매가', '쿠팡 판매가', '판매가(KRW)'],
   msrp: ['권장소비자가격'], sourcePriceCny: ['중국원가(CNY)', '원가(CNY)'],
@@ -39,7 +39,7 @@ export type QuotationMappingSuggestion = {
  */
 export function relocateQuotationMappings(
   previousHeaders: readonly string[], headers: readonly string[], categoryId: string | null,
-  mappings: readonly ColumnMapping[], automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>,
+  mappings: readonly ColumnMapping[], automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>, requirementRow?: readonly string[] | null,
 ) {
   const before = previousHeaders.map(headerKey), after = headers.map(headerKey);
   const destinations = new Map<number, number>();
@@ -54,7 +54,7 @@ export function relocateQuotationMappings(
   const protectedNext = new Set([...protectedColumns].flatMap(column => {
     const destination = destinations.get(column); return destination === undefined ? [] : [destination];
   }));
-  const suggestion = suggestQuotationMappings(headers, categoryId);
+  const suggestion = suggestQuotationMappings(headers, categoryId, requirementRow);
   const occupied = new Set(retained.map(mapping => mapping.column));
   const additions = suggestion.mappings.filter(mapping => !occupied.has(mapping.column) && !protectedNext.has(mapping.column));
   const carriedAutomatic = automatic.flatMap(mapping => {
@@ -75,7 +75,7 @@ export function relocateQuotationMappings(
  */
 export function refreshCategoryMappings(
   headers: readonly string[], categoryId: string | null, mappings: readonly ColumnMapping[],
-  automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>,
+  automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>, requirementRow?: readonly string[] | null,
 ) {
   const previous = new Map(automatic.map(mapping => [mapping.column, mapping]));
   const retained = mappings.filter(mapping => {
@@ -84,13 +84,13 @@ export function refreshCategoryMappings(
       || before.required !== mapping.required || before.constant !== mapping.constant || before.choiceFormat !== mapping.choiceFormat;
   });
   const occupied = new Set(retained.map(mapping => mapping.column));
-  const suggestion = suggestQuotationMappings(headers, categoryId);
+  const suggestion = suggestQuotationMappings(headers, categoryId, requirementRow);
   const nextAutomatic = suggestion.mappings.filter(mapping => !occupied.has(mapping.column) && !protectedColumns.has(mapping.column));
   return { ...suggestion, mappings: [...retained, ...nextAutomatic].sort((a, b) => a.column - b.column), automatic: nextAutomatic };
 }
 
 /** Creates an editable draft from exact labels in the chosen category only. */
-export function suggestQuotationMappings(headers: readonly string[], categoryId: string | null): QuotationMappingSuggestion {
+export function suggestQuotationMappings(headers: readonly string[], categoryId: string | null, requirementRow?: readonly string[] | null): QuotationMappingSuggestion {
   const schema = getQuotationSchema(categoryId);
   const candidates = new Map<string, Set<CategoryField>>();
   const required = new Map(schema.fields.map(field => [field.id, field.required]));
@@ -108,7 +108,7 @@ export function suggestQuotationMappings(headers: readonly string[], categoryId:
     if (fields.size !== 1 || normalized.filter(value => value === key).length > 1) { ambiguousColumns.push(column); return; }
     const field = [...fields][0];
     const markedRequired = /^[*＊]\s*|[*＊]\s*$/u.test(headers[column].trim());
-    mappings.push({ column, field, required: Boolean(required.get(field)) || markedRequired });
+    mappings.push({ column, field, required: Boolean(required.get(field)) || markedRequired || requirementRow?.[column]?.trim() === '필수' });
   });
   return { mappings, unmatchedColumns, ambiguousColumns };
 }

@@ -36,6 +36,17 @@ test('official Supplier Hub v190 basket headers connect draft media and barcode 
   for(const [column,field] of fields)if(Object.hasOwn(values,field))assert.equal(String(row[column]),values[field]);
 });
 
+test('official requirement row makes connected barcode and image columns required without treating a conditional marker as unconditional', () => {
+  const headers = JSON.parse(fs.readFileSync(new URL('./fixtures/supplier-basket-v190-headers.json', import.meta.url), 'utf8'));
+  const markers = Array(headers.length).fill('선택');
+  for (const column of [3, 38, 40, 42, 60]) markers[column] = '필수';
+  markers[4] = '조건부 필수';
+  const mappings = new Map(suggest(headers, '80719', markers).mappings.map(value => [value.column, value]));
+  for (const column of [3, 38, 40, 42, 60]) assert.equal(mappings.get(column).required, true);
+  assert.equal(mappings.get(39).required, false);
+  assert.equal(mappings.get(4).required, true); // The existing app schema still requires model review.
+});
+
 test('saved category mappings cannot silently export attributes absent from the selected schema', () => {
   const profiles = load('app/category-profiles.ts');
   const getSchema = load('app/quotation-schema.ts').getQuotationSchema;

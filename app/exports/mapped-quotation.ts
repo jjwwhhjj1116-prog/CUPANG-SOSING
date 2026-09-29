@@ -1,6 +1,6 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type QuotationRowValues, type CategoryProfileInput } from '@/app/category-profiles';
-import { inspectXlsxArchive, readXlsxArchive, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
+import { inspectXlsxArchive, readXlsxArchive, supplierHubEntryLayout, supplierHubSheetSignature, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
 
 export type QuotationData = QuotationRowValues;
 export type QuotationCellIssue = { row: number; column: number; header: string };
@@ -273,6 +273,10 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
   if (template.format === 'xlsx') {
     const files = await readXlsxArchive(input.originalBytes); const inspection = inspectXlsxArchive(files);
     if ([...files.keys()].some(path => /(?:^|\/)vbaProject\.bin$|^_xmlsignatures\//i.test(path))) fail('매크로 또는 전자서명된 Excel은 수정할 수 없습니다.');
+    const layout = supplierHubEntryLayout(inspection, template.sheetName, template.headerRow);
+    if (supplierHubSheetSignature(inspection, template.sheetName) && !layout) fail('공식 견적서의 입력 행 구성을 확인하지 못했습니다. 안내·예시 행을 보존하기 위해 출력을 중단했습니다.');
+    if (layout && input.dataStartRow < layout.dataStartRow) fail(`공식 견적서 ${template.headerRow + 1}~${layout.dataStartRow - 1}행은 작성 안내·예시입니다. 상품 입력은 ${layout.dataStartRow}행부터 가능합니다.`);
+    if (layout?.categoryIds.length && !layout.categoryIds.includes(profile.categoryId)) fail(`공식 견적서 카테고리 ${layout.categoryIds.join(', ')}와 선택한 상품 카테고리 ${profile.categoryId || '(미입력)'}가 다릅니다.`);
     const headers = xlsxHeaders(inspection, template.sheetName, template.headerRow);
     if (JSON.stringify(headers.map(value => value.trim())) !== JSON.stringify(template.headers)) fail('견적서 원본 머리글과 열 연결이 일치하지 않습니다.');
     const path = xlsxWorksheetPath(files, template.sheetName); const original = files.get(path); if (!original) fail('원본 시트를 찾을 수 없습니다.');

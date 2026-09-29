@@ -2,7 +2,7 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { useEffect, useRef, useState } from 'react';
 import { CATEGORY_PROFILE_BODY_LIMIT, CATEGORY_TEMPLATE_FILE_LIMIT, categoryFields, categoryFieldScope, categoryProfileIssues, quotationStartRow, parseTemplateText, validateCategoryCodeForSave, validateCategoryProfile, validateQuotationChoiceFormats, type CategoryField, type CategoryProfile, type CategoryProfileInput, type ColumnMapping } from '@/app/category-profiles';
-import { inspectXlsxArchive, readXlsxArchive, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
+import { inspectXlsxArchive, readXlsxArchive, supplierHubEntryLayout, supplierHubRequirementRow, supplierHubSheetSignature, xlsxHeaders, type XlsxInspection } from '@/app/xlsx-template';
 import { suggestQuotationChoiceFormats } from '@/app/quotation-choice-format';
 import { refreshCategoryMappings, relocateQuotationMappings, suggestQuotationMappings, suggestQuotationHeader } from '@/app/quotation-mapping';
 import { supplierTemplateObservation } from '@/app/supplier-template-observation';
@@ -26,7 +26,8 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
   const saving = useRef(false);
   const createRequest = useRef<{ body: string; id: string } | null>(null);
   const changeCategory = (categoryId: string) => {
-    const next = refreshCategoryMappings(draft.template?.headers ?? [], categoryId, draft.mappings, automaticMappings.current, protectedColumns.current);
+    const requirementRow = workbook && draft.template ? supplierHubRequirementRow(workbook, draft.template.sheetName, draft.template.headerRow) : null;
+    const next = refreshCategoryMappings(draft.template?.headers ?? [], categoryId, draft.mappings, automaticMappings.current, protectedColumns.current, requirementRow);
     automaticMappings.current = next.automatic;
     setDraft({ ...draft, categoryId, mappings: next.mappings });
     if (draft.template) setMessage('카테고리에 맞춰 자동 연결을 갱신했습니다. 저장된 연결·직접 수정한 연결·고정값은 보존합니다. 원본 양식이 새 카테고리에 맞는지 확인해주세요.');
@@ -62,21 +63,29 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       const extension = file.name.split('.').at(-1)?.toLowerCase();
       if (extension !== 'csv' && extension !== 'tsv' && extension !== 'xlsx') throw new Error('XLSX·UTF-8 CSV·TSV 파일을 선택해주세요.');
       const bytes = await file.arrayBuffer();
-      let headers: string[]; let inspection: XlsxInspection | null = null; let textSource: { text: string; format: 'csv' | 'tsv' } | null = null; let sheetName = ''; let selectedRow = headerRow; let headerNotice = '';
+      let headers: string[]; let inspection: XlsxInspection | null = null; let textSource: { text: string; format: 'csv' | 'tsv' } | null = null; let sheetName = ''; let selectedRow = headerRow; let headerNotice = ''; let dataStartRow: number;
       let files: Map<string, Uint8Array> | null = null;
       if (extension === 'xlsx') {
         files = await readXlsxArchive(bytes); inspection = inspectXlsxArchive(files);
         const candidate = suggestQuotationHeader(inspection, draft.categoryId);
+        const officialSheets = inspection.sheets.filter(sheet => supplierHubSheetSignature(inspection!, sheet.name));
+        if (officialSheets.length && (!candidate || !officialSheets.some(sheet => sheet.name === candidate.sheetName))) throw new Error('공식 견적서의 상품 작성 시트와 머리글을 확정하지 못했습니다. 파일의 카테고리와 버전을 확인해주세요.');
         headerNotice = candidate ? '열 이름을 기준으로 작성 시트·머리글 행을 추천했습니다. 공식 분류 일치 여부는 별도 확인이 필요합니다. ' : '작성 시트를 확정할 근거가 부족하거나 후보가 여러 개입니다. 시트·머리글 행을 직접 선택해주세요. ';
         sheetName = candidate?.sheetName ?? inspection.sheets[0].name;
         selectedRow = candidate?.rowNumber ?? inspection.sheets[0].rows.find(row => row.rowNumber === headerRow)?.rowNumber ?? inspection.sheets[0].rows[0]?.rowNumber ?? headerRow;
         headers = xlsxHeaders(inspection, sheetName, selectedRow);
+        const layout = supplierHubEntryLayout(inspection, sheetName, selectedRow);
+        if (supplierHubSheetSignature(inspection, sheetName) && !layout) throw new Error('공식 견적서의 머리글·필수·안내·예시 행 구성을 확인하지 못했습니다. 해당 양식을 검증한 뒤 연결해주세요.');
+        if (layout?.categoryIds.length && draft.categoryId && !layout.categoryIds.includes(draft.categoryId)) throw new Error(`선택한 상품 등록 카테고리 ${draft.categoryId}가 공식 견적서 예시의 카테고리 ${layout.categoryIds.join(', ')}와 다릅니다. 해당 카테고리 양식을 선택해주세요.`);
+        dataStartRow = layout?.dataStartRow ?? selectedRow + 1;
+        if (layout) headerNotice += `공식 양식의 안내·예시 행을 확인해 상품 입력 ${dataStartRow}행을 추천했습니다. `;
       } else {
         let text: string;
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
         catch { throw new Error('UTF-8 형식으로 저장한 CSV·TSV 파일을 선택해주세요.'); }
         headers = parseTemplateText(text, extension === 'tsv' ? '\t' : ',', headerRow);
         textSource = { text, format: extension };
+        dataStartRow = selectedRow + 1;
       }
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))).map(byte => byte.toString(16).padStart(2, '0')).join('');
       const form = new FormData(); form.set('file', file);
@@ -85,9 +94,10 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       if (!response.ok || !result.template?.storageKey || result.template.sha256 !== hash) throw new Error(result.error ?? '견적서 원본 저장 결과를 확인하지 못했습니다.');
       if (generation !== templateGeneration.current) return;
       templateGeneration.current++;
-      const template = { name: file.name, format: extension, sha256: hash, sheetName, headerRow: selectedRow, dataStartRow: selectedRow + 1, headers, storageKey: result.template.storageKey } as const;
+      const template = { name: file.name, format: extension, sha256: hash, sheetName, headerRow: selectedRow, dataStartRow, headers, storageKey: result.template.storageKey } as const;
       // Discard old column positions, then suggest exact labels in this category.
-      const suggested = suggestQuotationMappings(headers, draft.categoryId);
+      const requirementRow = inspection ? supplierHubRequirementRow(inspection, sheetName, selectedRow) : null;
+      const suggested = suggestQuotationMappings(headers, draft.categoryId, requirementRow);
       automaticMappings.current = suggested.mappings; protectedColumns.current.clear();
       workbookFiles.current = files;
       setDraft(current => ({ ...current, template, mappings: suggested.mappings }));
@@ -103,11 +113,16 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       const headers = workbook ? xlsxHeaders(workbook, sheetName, rowNumber)
         : textTemplate ? parseTemplateText(textTemplate.text, textTemplate.format === 'tsv' ? '\t' : ',', rowNumber)
           : (() => { throw new Error('저장된 원본을 불러온 뒤 머리글 행을 변경해주세요.'); })();
-      const relocated = relocateQuotationMappings(draft.template.headers, headers, draft.categoryId, draft.mappings, automaticMappings.current, protectedColumns.current);
+      const requirementRow = workbook ? supplierHubRequirementRow(workbook, sheetName, rowNumber) : null;
+      const relocated = relocateQuotationMappings(draft.template.headers, headers, draft.categoryId, draft.mappings, automaticMappings.current, protectedColumns.current, requirementRow);
+      const layout = workbook ? supplierHubEntryLayout(workbook, sheetName, rowNumber) : null;
+      if (workbook && supplierHubSheetSignature(workbook, sheetName) && !layout) throw new Error('공식 견적서의 입력 행 구성을 확인하지 못했습니다. 머리글과 원본 양식을 확인해주세요.');
+      if (layout?.categoryIds.length && draft.categoryId && !layout.categoryIds.includes(draft.categoryId)) throw new Error(`선택한 상품 등록 카테고리 ${draft.categoryId}가 공식 견적서 예시의 카테고리 ${layout.categoryIds.join(', ')}와 다릅니다.`);
+      const dataStartRow = layout?.dataStartRow ?? rowNumber + 1;
       automaticMappings.current = relocated.automatic; protectedColumns.current = relocated.protectedColumns;
-      setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, dataStartRow: rowNumber + 1, headers } : null, mappings: relocated.mappings }));
+      setDraft(current => ({ ...current, template: current.template ? { ...current.template, sheetName, headerRow: rowNumber, dataStartRow, headers } : null, mappings: relocated.mappings }));
       setHeaderRow(rowNumber); setError('');
-      setMessage(`동일한 열 이름의 연결 ${relocated.retainedCount}개 보존 · 새 자동 연결 ${relocated.addedCount}개. 직접 해제한 동일 항목도 유지합니다. ${relocated.lostColumns.length ? `이전 설정 중 이름이 없거나 중복·누락되어 옮기지 못한 열: ${relocated.lostColumns.map(column => `${column + 1}. ${draft.template!.headers[column] || '(이름 없는 열)'}`).join(', ')}. ` : ''}입력 시작 행을 새 머리글 다음 행으로 초기화했습니다. 바뀐 시트와 실제 입력 시작 행을 확인해주세요.`);
+      setMessage(`동일한 열 이름의 연결 ${relocated.retainedCount}개 보존 · 새 자동 연결 ${relocated.addedCount}개. 직접 해제한 동일 항목도 유지합니다. ${relocated.lostColumns.length ? `이전 설정 중 이름이 없거나 중복·누락되어 옮기지 못한 열: ${relocated.lostColumns.map(column => `${column + 1}. ${draft.template!.headers[column] || '(이름 없는 열)'}`).join(', ')}. ` : ''}입력 시작 행을 ${dataStartRow}행으로 설정했습니다. 바뀐 시트와 실제 입력 시작 행을 확인해주세요.`);
     } catch (error) { setError(error instanceof Error ? error.message : '머리글을 확인해주세요.'); }
   };
   const setMapping = (column: number, change: Partial<ColumnMapping> | null) => {
@@ -128,6 +143,9 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
     try {
       const profile = validateCategoryProfile({ ...draft, categoryPath: path.split(/\s*>\s*/).filter(Boolean) });
       validateCategoryCodeForSave(profile.categoryId);
+      const layout = workbook && profile.template?.format === 'xlsx' ? supplierHubEntryLayout(workbook, profile.template.sheetName, profile.template.headerRow) : null;
+      if (workbook && profile.template?.format === 'xlsx' && supplierHubSheetSignature(workbook, profile.template.sheetName) && !layout) throw new Error('공식 견적서의 입력 행 구성을 확인하지 못했습니다. 저장 전에 원본을 확인해주세요.');
+      if (layout?.categoryIds.length && !layout.categoryIds.includes(profile.categoryId)) throw new Error(`공식 견적서 예시 카테고리 ${layout.categoryIds.join(', ')}와 상품 등록 카테고리 ${profile.categoryId || '(미입력)'}가 다릅니다.`);
       validateQuotationChoiceFormats(profile, getQuotationSchema(profile.categoryId).fields);
       const body = JSON.stringify(value ? { id: value.id, expectedRevision: value.revision, profile } : profile);
       if (new TextEncoder().encode(body).byteLength > CATEGORY_PROFILE_BODY_LIMIT) throw new Error('카테고리 설정 전체는 UTF-8 JSON 기준 300,000바이트 이하로 저장할 수 있습니다. 열 이름이나 고정값을 줄여주세요.');
@@ -145,6 +163,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
   };
   const issues = categoryProfileIssues(draft);
   const templateObservation = supplierTemplateObservation(draft.categoryId);
+  const confirmedLayout = workbook && draft.template?.format === 'xlsx' ? supplierHubEntryLayout(workbook, draft.template.sheetName, draft.template.headerRow) : null;
   return <form className="settings-form" onSubmit={save}>
     <section>
       <h3>카테고리별 견적서 설정</h3>
@@ -174,11 +193,13 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
         {workbook && draft.template && <label className="field"><span>Excel 시트</span><select value={draft.template.sheetName} disabled={busy} onChange={event => { const sheet = workbook.sheets.find(sheet => sheet.name === event.target.value); selectHeaders(event.target.value, sheet?.rows.find(row => row.rowNumber === headerRow)?.rowNumber ?? sheet?.rows[0]?.rowNumber ?? 1); }}>{workbook.sheets.map(sheet => <option value={sheet.name} key={sheet.name}>{sheet.name}</option>)}</select></label>}
       </div>
       <p>원본 파일을 그대로 보존하고 실제 열 이름·시트·지문을 연결합니다. 수식은 실행하지 않습니다. 열 연결 후에도 카테고리별 필수 정보와 Supplier Hub 제출 검증이 필요합니다.</p>
+      {confirmedLayout && quotationStartRow(draft.template!) < confirmedLayout.dataStartRow && <p role="alert">이 공식 양식의 {draft.template!.headerRow + 1}~{confirmedLayout.dataStartRow - 1}행은 작성 안내·예시입니다. 상품 입력 시작 행을 {confirmedLayout.dataStartRow}행 이상으로 바꿔주세요. 기존 설정으로 견적서 출력을 시도하면 중단됩니다.</p>}
       <p>견적서 파일은 5MB 이하 한 개, 카테고리 설정 전체는 UTF-8 JSON 기준 300KB 이하입니다. 한글 등 다중 바이트 문자는 바이트 수로 계산됩니다.</p>
       {draft.template && <>
         <p><strong>{draft.template.name}</strong> · {draft.template.sheetName && `${draft.template.sheetName} · `}{draft.template.headers.length}열 · 머리글 {draft.template.headerRow}행 {draft.template.storageKey && <a href={`/api/category-profiles/template?key=${encodeURIComponent(draft.template.storageKey)}`}>원본 다운로드</a>}</p>
         <button type="button" className="btn ghost" disabled={busy} onClick={() => {
-          const suggested = suggestQuotationMappings(draft.template!.headers, draft.categoryId);
+          const requirementRow = workbook ? supplierHubRequirementRow(workbook, draft.template!.sheetName, draft.template!.headerRow) : null;
+          const suggested = suggestQuotationMappings(draft.template!.headers, draft.categoryId, requirementRow);
           const occupied = new Set(draft.mappings.map(mapping => mapping.column));
           const additions = suggested.mappings.filter(mapping => !occupied.has(mapping.column));
           automaticMappings.current = [...automaticMappings.current, ...additions];
