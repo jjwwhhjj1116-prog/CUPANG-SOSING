@@ -76,7 +76,7 @@ test('official annotated quotation starts after guide/example rows and rejects a
   const letter = index => String.fromCharCode(65 + index);
   const cells = values => values.map((value, index) => [letter(index), value]);
   const officialCategory = '주방용품>주방수납/정리>주방수납바구니/바스켓 (80719)';
-  const xml = `<worksheet><sheetData>${row(1, [['B', 'Retail_Categorized_Excel:Kan:6269:Notice17:Version190']])}${row(5, cells(headers))}${row(6, cells(headers.map(() => '필수')))}${row(7, cells(headers.map(() => '작성 안내')))}${row(8, cells(headers.map((_, index) => index === 1 ? 'E.g. 주방수납바구니/바스켓 (80719)' : '예시')))}<row r="9"><c r="T9"><f>1+1</f><v>2</v></c></row></sheetData><dataValidations count="1"><dataValidation type="list" sqref="A9:A1008"><formula1>"${officialCategory}"</formula1></dataValidation></dataValidations></worksheet>`;
+  const xml = `<worksheet><sheetData>${row(1, [['B', 'Retail_Categorized_Excel:Kan:6269:Notice17:Version190']])}${row(5, cells(headers))}${row(6, cells(headers.map((_, index) => index === 0 || index === 1 || index === 19 ? '필수' : '선택')))}${row(7, cells(headers.map(() => '작성 안내')))}${row(8, cells(headers.map((_, index) => index === 1 ? 'E.g. 주방수납바구니/바스켓 (80719)' : '예시')))}<row r="9"><c r="T9"><f>1+1</f><v>2</v></c></row></sheetData><dataValidations count="1"><dataValidation type="list" sqref="A9:A1008"><formula1>"${officialCategory}"</formula1></dataValidation></dataValidations></worksheet>`;
   const fixture = entries().map(([name, value]) => [name, name === 'xl/workbook.xml' ? value.replace('name="견적서"', `name="${sheetName}"`) : name === 'xl/worksheets/sheet1.xml' ? xml : value]);
   const input = await inputFrom(fixture, { dataStartRow: 6, rows: [{ category: '주방용품 > 주방수납/정리 > 주방수납바구니/바스켓 (80719)', title: '새 상품' }] });
   input.profile = { ...input.profile, categoryId: '80719', template: { ...input.profile.template, sheetName, headerRow: 5, headers }, mappings: [{ column: 0, field: 'category', required: true }, { column: 1, field: 'title', required: true }] };
@@ -94,6 +94,18 @@ test('official annotated quotation starts after guide/example rows and rejects a
   assert.equal(reader.xlsxHeaders(output, sheetName, 9)[1], '새 상품');
   assert.equal(reader.xlsxHeaders(output, sheetName, 9)[0], officialCategory);
   assert.equal(result.report.validationIssueCount, 0);
+  const noRequiredFormula = fixture.map(([name, value]) => [name, name === 'xl/worksheets/sheet1.xml' ? value.replace('<c r="T9"><f>1+1</f><v>2</v></c>', '<c r="T9" t="inlineStr"><is><t>임의값</t></is></c>') : value]);
+  const unmappedInput = await inputFrom(noRequiredFormula, { dataStartRow: 9, rows: input.rows });
+  unmappedInput.profile = { ...input.profile, template: { ...input.profile.template, sha256: unmappedInput.profile.template.sha256 } };
+  await assert.rejects(createMappedQuotation(unmappedInput), /필수 열인데 연결되지 않았고 원본 자동값도 확인되지 않았습니다/);
+  await assert.rejects(createMappedQuotation({ ...input, dataStartRow: 9, rows: [input.rows[0], input.rows[0]] }), /T10.*필수 열인데 연결되지 않았고/);
+  const staticNoticeFixture = noRequiredFormula.map(([name, value]) => [name, name === 'xl/worksheets/sheet1.xml'
+    ? value.replace('<t>항목18</t>', '<t>고시명</t>').replace('<t>임의값</t>', '<t>주방용품</t>') : value]);
+  const staticNoticeInput = await inputFrom(staticNoticeFixture, { dataStartRow: 9, rows: input.rows });
+  staticNoticeInput.profile = { ...input.profile, categoryPath: ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'],
+    template: { ...input.profile.template, headers: [...headers.slice(0, 19), '고시명'], sha256: staticNoticeInput.profile.template.sha256 } };
+  await createMappedQuotation(staticNoticeInput);
+  await assert.rejects(createMappedQuotation({ ...staticNoticeInput, profile: { ...staticNoticeInput.profile, categoryPath: ['생활용품'] } }), /T9.*고시명.*필수 열인데 연결되지 않았고/);
   const lookalike = JSON.parse(JSON.stringify(inspection));
   lookalike.sheets.find(sheet => sheet.name === sheetName).rows.find(entry => entry.rowNumber === 6).values[1] = '다른 문구';
   assert.equal(reader.supplierHubEntryLayout(lookalike, sheetName, 5), null);

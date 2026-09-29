@@ -1,6 +1,6 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type QuotationRowValues, type CategoryProfileInput } from '@/app/category-profiles';
-import { inspectXlsxArchive, readXlsxArchive, supplierHubEntryLayout, supplierHubSheetSignature, xlsxChoiceLists, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
+import { inspectXlsxArchive, readXlsxArchive, supplierHubEntryLayout, supplierHubRequirementRow, supplierHubSheetSignature, xlsxChoiceLists, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
 
 export type QuotationData = QuotationRowValues;
 export type QuotationCellIssue = { row: number; column: number; header: string };
@@ -126,6 +126,32 @@ function writeWorksheet(source: string, sheetName: string, profile: CategoryProf
     edits.push({ start: dimension.start, end: dimension.end, text: source.slice(dimension.start, dimension.end).replace(/(\sref\s*=\s*)(?:"[^"]*"|'[^']*')/, `$1"${reference}"`) });
   }
   return applyEdits(source, edits);
+}
+
+/** An official workbook can contain required columns that are intentionally
+ * maintained by the template. Verify every exported row before preserving one. */
+function verifyOfficialUnmappedRequired(source: string, inspection: XlsxInspection, profile: CategoryProfileInput, startRow: number, count: number): void {
+  const template = profile.template!;
+  const markers = supplierHubRequirementRow(inspection, template.sheetName, template.headerRow);
+  if (!markers) fail('공식 견적서의 필수 항목 표시를 확인하지 못했습니다.');
+  const mapped = new Set(profile.mappings.map(mapping => mapping.column));
+  const required = markers.flatMap((marker, column) => marker.trim() === '필수' && !mapped.has(column) ? [column] : []);
+  if (!required.length) return;
+  const data = spans(source).children.find(node => node.local === 'sheetData');
+  if (!data) fail('공식 견적서의 상품 행을 확인하지 못했습니다.');
+  const originalRows = new Map(data.children.filter(node => node.local === 'row').map(row => [Number(row.attributes.r), row]));
+  for (let rowNumber = startRow; rowNumber < startRow + count; rowNumber++) {
+    const row = originalRows.get(rowNumber);
+    for (const column of required) {
+      const header = template.headers[column] || `${column + 1}열`;
+      const value = inspection.sheets.find(sheet => sheet.name === template.sheetName)?.rows.find(item => item.rowNumber === rowNumber)?.values[column]?.trim() ?? '';
+      const cell = row?.children.find(node => node.local === 'c' && coordinate(node.attributes.r).column === column);
+      const formula = cell?.children.find(node => node.local === 'f');
+      const hasFormula = Boolean(formula && !formula.selfClosing && source.slice(formula.openEnd, formula.closeStart).trim());
+      const matchingNotice = header.trim() === '고시명' && value === profile.categoryPath[0];
+      if (!matchingNotice && !hasFormula) fail(`공식 견적서 ${columnName(column)}${rowNumber} (${header})은 필수 열인데 연결되지 않았고 원본 자동값도 확인되지 않았습니다. 양식에서 열을 연결해주세요.`);
+    }
+  }
 }
 
 const crcTable = Array.from({ length: 256 }, (_, value) => { for (let bit = 0; bit < 8; bit++) value = (value >>> 1) ^ ((value & 1) ? 0xedb88320 : 0); return value >>> 0; });
@@ -294,6 +320,7 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     }
     const path = xlsxWorksheetPath(files, template.sheetName); const original = files.get(path); if (!original) fail('원본 시트를 찾을 수 없습니다.');
     const source = decoder.decode(original);
+    if (layout) verifyOfficialUnmappedRequired(source, inspection, profile, input.dataStartRow, values.length);
     const updated = encoder.encode(writeWorksheet(source, template.sheetName, profile, values, input.dataStartRow));
     if (updated.byteLength > 10_000_000) fail('생성한 워크시트가 10MB를 초과합니다.');
     files.set(path, updated); const updatedInspection = inspectXlsxArchive(files);

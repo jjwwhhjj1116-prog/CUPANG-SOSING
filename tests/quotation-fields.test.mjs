@@ -121,7 +121,7 @@ test('price policy remains valid without registration facts and still rejects ma
   assert.deepEqual(JSON.parse(JSON.stringify(actual)),JSON.parse(JSON.stringify(baseline)));
   for(const change of [{roundingUnit:7},{minimumMarginEnabled:'false'},{minimumMargin:-1}])assert.throws(()=>options.resolveOptionPricePolicy(product,{...empty,...change}));
   assert.throws(()=>settingsModel.savedRegistrationSettings({tradeType:'invalid'}));
-  assert.equal(settingsModel.defaultSettings.brand,'SourceFlow Select');
+  assert.equal(settingsModel.defaultSettings.brand,'');
  }finally{h.sqlite.close();}
 });
 

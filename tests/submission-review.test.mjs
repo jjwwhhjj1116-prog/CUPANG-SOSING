@@ -189,12 +189,13 @@ test('review panel keeps successful but wrong-product responses out of its repor
   cleanups.forEach(fn=>fn?.());
  }
 });
-test('review UI shows actual issues and URL, escapes source text and keeps transmission disabled',()=>{
+test('review UI shows actual issues and URL, escapes source text and has no misleading global send button',()=>{
   const report={...inspectSubmission(resolved(),[]),checkedAt:'2026-09-23T00:00:00Z'};
   const html=renderPanel([{id:'p',title:'<script>unsafe</script>',source_url:'javascript:alert(1)'}],[{id:'p',report}]);
   assert.ok(html.includes('입력 오류 1개'));assert.ok(html.includes('증빙 확인 1개'));
   assert.ok(html.includes('견적서 수정하기'));assert.ok(html.includes('&lt;script&gt;'));
-  assert.ok(!html.includes('href="javascript:'));assert.match(html,/disabled="">Supplier Hub 전송/);
+  assert.ok(!html.includes('href="javascript:'));assert.doesNotMatch(html,/<button[^>]*>Supplier Hub 전송/);
+  assert.doesNotMatch(html,/전송 연결 대기/);
 });
 test('empty selection and failed review do not display old ready badges',()=>{
   assert.ok(renderPanel([]).includes('검사할 상품을 선택'));
