@@ -281,10 +281,12 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     if (JSON.stringify(headers.map(value => value.trim())) !== JSON.stringify(template.headers)) fail('견적서 원본 머리글과 열 연결이 일치하지 않습니다.');
     if (layout) {
       const categoryColumns = profile.mappings.filter(mapping => mapping.field === 'category').map(mapping => mapping.column);
+      if (categoryColumns.length !== 1) fail('공식 견적서는 카테고리 열을 정확히 하나 연결해야 합니다. 카테고리 코드가 빠진 초안은 출력할 수 없습니다.');
       const lists = xlsxChoiceLists(files, inspection, template.sheetName, categoryColumns, input.dataStartRow);
       for (const column of categoryColumns) {
         const matches = lists.get(column)?.filter(value => /\((\d+)\)\s*$/.exec(value)?.[1] === profile.categoryId) ?? [];
-        if (matches.length !== 1) continue;
+        if (matches.length !== 1) fail(`공식 견적서 ${column + 1}열에서 카테고리 코드 ${profile.categoryId}에 해당하는 드롭다운 값을 하나로 확인하지 못했습니다.`);
+        if (values.some(row => !String(row[column] ?? '').trim())) fail(`공식 견적서 ${column + 1}열 카테고리가 비어 있습니다. 모든 상품의 카테고리를 확인해주세요.`);
         let updated = 0;
         for (const row of values) if (String(row[column] ?? '').trim() && row[column] !== matches[0]) { row[column] = matches[0]; updated++; }
         if (updated) report.warnings.push(`공식 견적서 ${column + 1}열 카테고리 ${updated}개를 원본 드롭다운의 등록 코드 ${profile.categoryId}와 일치하는 경로로 기록했습니다.`);

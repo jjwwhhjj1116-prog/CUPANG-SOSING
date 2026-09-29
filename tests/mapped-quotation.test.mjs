@@ -85,6 +85,8 @@ test('official annotated quotation starts after guide/example rows and rejects a
   await assert.rejects(createMappedQuotation(input), /상품 입력은 9행부터/);
   await assert.rejects(createMappedQuotation({ ...input, profile: { ...input.profile, categoryId: '81452' }, dataStartRow: 9 }), /카테고리.*다릅니다/);
   await assert.rejects(createMappedQuotation({ ...input, profile: { ...input.profile, categoryId: '' }, dataStartRow: 9 }), /카테고리.*다릅니다/);
+  await assert.rejects(createMappedQuotation({ ...input, profile: { ...input.profile, mappings: input.profile.mappings.filter(mapping => mapping.field !== 'category') }, dataStartRow: 9 }), /카테고리 열을 정확히 하나/);
+  await assert.rejects(createMappedQuotation({ ...input, rows: [{ category: '', title: '새 상품' }], dataStartRow: 9 }), /카테고리가 비어/);
   const result = await createMappedQuotation({ ...input, dataStartRow: 9 });
   const output = reader.inspectXlsxArchive(await reader.readXlsxArchive(result.bytes.buffer));
   assert.equal(reader.xlsxHeaders(output, sheetName, 6)[1], '필수');
@@ -99,6 +101,11 @@ test('official annotated quotation starts after guide/example rows and rejects a
   const brokenInput = await inputFrom(brokenFixture, { dataStartRow: 9, rows: [{ title: '검증용' }] });
   brokenInput.profile = { ...input.profile, template: { ...input.profile.template, sha256: brokenInput.profile.template.sha256 } };
   await assert.rejects(createMappedQuotation(brokenInput), /입력 행 구성을 확인하지 못했습니다/);
+  const duplicateCategory = `${officialCategory},다른경로 (80719)`;
+  const ambiguousFixture = fixture.map(([name, value]) => [name, name === 'xl/worksheets/sheet1.xml' ? value.replace(`"${officialCategory}"`, `"${duplicateCategory}"`) : value]);
+  const ambiguousInput = await inputFrom(ambiguousFixture, { dataStartRow: 9, rows: input.rows });
+  ambiguousInput.profile = { ...input.profile, template: { ...input.profile.template, sha256: ambiguousInput.profile.template.sha256 } };
+  await assert.rejects(createMappedQuotation(ambiguousInput), /드롭다운 값을 하나로 확인하지 못했습니다/);
 });
 
 test('OOXML shared and inline text escapes decode once, including literal escape text and surrogate pairs', async () => {
