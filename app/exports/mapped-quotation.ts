@@ -1,6 +1,6 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type QuotationRowValues, type CategoryProfileInput } from '@/app/category-profiles';
-import { inspectXlsxArchive, readXlsxArchive, supplierHubEntryLayout, supplierHubSheetSignature, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
+import { inspectXlsxArchive, readXlsxArchive, supplierHubEntryLayout, supplierHubSheetSignature, xlsxChoiceLists, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
 
 export type QuotationData = QuotationRowValues;
 export type QuotationCellIssue = { row: number; column: number; header: string };
@@ -279,6 +279,17 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     if (layout?.categoryIds.length && !layout.categoryIds.includes(profile.categoryId)) fail(`공식 견적서 카테고리 ${layout.categoryIds.join(', ')}와 선택한 상품 카테고리 ${profile.categoryId || '(미입력)'}가 다릅니다.`);
     const headers = xlsxHeaders(inspection, template.sheetName, template.headerRow);
     if (JSON.stringify(headers.map(value => value.trim())) !== JSON.stringify(template.headers)) fail('견적서 원본 머리글과 열 연결이 일치하지 않습니다.');
+    if (layout) {
+      const categoryColumns = profile.mappings.filter(mapping => mapping.field === 'category').map(mapping => mapping.column);
+      const lists = xlsxChoiceLists(files, inspection, template.sheetName, categoryColumns, input.dataStartRow);
+      for (const column of categoryColumns) {
+        const matches = lists.get(column)?.filter(value => /\((\d+)\)\s*$/.exec(value)?.[1] === profile.categoryId) ?? [];
+        if (matches.length !== 1) continue;
+        let updated = 0;
+        for (const row of values) if (String(row[column] ?? '').trim() && row[column] !== matches[0]) { row[column] = matches[0]; updated++; }
+        if (updated) report.warnings.push(`공식 견적서 ${column + 1}열 카테고리 ${updated}개를 원본 드롭다운의 등록 코드 ${profile.categoryId}와 일치하는 경로로 기록했습니다.`);
+      }
+    }
     const path = xlsxWorksheetPath(files, template.sheetName); const original = files.get(path); if (!original) fail('원본 시트를 찾을 수 없습니다.');
     const source = decoder.decode(original);
     const updated = encoder.encode(writeWorksheet(source, template.sheetName, profile, values, input.dataStartRow));
