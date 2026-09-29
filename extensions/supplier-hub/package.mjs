@@ -67,6 +67,6 @@ export async function prepareAttachments(bytes) {
   if(!labelImages.length||!Array.isArray(plan.missingLabels)||plan.missingLabels.length)throw Error('모든 포함 옵션의 표시사항 라벨을 연결해주세요.');
   const company=plan.company;
   if(!company||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},company.code)||({A01526306:'유앤채',A01464742:'와이홉'})[company.code]!==company.name)throw Error('승인된 회원 회사정보가 없는 견적서입니다. 회사정보를 확인하고 앱에서 다시 준비해주세요.');
-  return {productId:plan.productId,categoryId:plan.categoryId,company:{code:company.code,name:company.name},quotation:[file(quote.filename,data)],productImages,labelImages};
+  return {productId:plan.productId,categoryId:plan.categoryId,includedOptions:review.includedOptions,company:{code:company.code,name:company.name},quotation:[file(quote.filename,data)],productImages,labelImages};
 }
 function encodeBase64(bytes){let text='';for(let i=0;i<bytes.length;i+=16384)text+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(text);}

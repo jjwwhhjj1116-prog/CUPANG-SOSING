@@ -15,9 +15,9 @@ function harness(reply){
 const identity={productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
 test('registration evidence stays bound to quotation ID and a bounded visible page',()=>{
  const api=harness().api;
- const value={quotationId:'123',scope:'visible-page',registered:false,observedAt:Date.now(),rows:[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId:'1',status:'상품 검수 완료',stage:'발주서 발행'}]};
+ const value={quotationId:'123',scope:'visible-page',registered:false,observedAt:Date.now(),includedOptions:2,rows:[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId:'1',status:'상품 검수 완료',stage:'발주서 발행'}]};
  assert.equal(api.validateRegistrationResult(value,'123').registered,false);
- for(const patch of [{quotationId:'other'},{scope:'all'},{registered:true},{observedAt:Infinity},{rows:[{}]},{rows:Array(1001).fill(value.rows[0])}])assert.throws(()=>api.validateRegistrationResult({...value,...patch},'123'));
+ for(const patch of [{quotationId:'other'},{scope:'all'},{registered:true},{observedAt:Infinity},{includedOptions:0},{includedOptions:201},{rows:[{}]},{rows:Array(1001).fill(value.rows[0])}])assert.throws(()=>api.validateRegistrationResult({...value,...patch},'123'));
 });
 test('web package handoff sends exact reviewed identity and bytes, cleans listeners',async()=>{
   const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
@@ -49,6 +49,15 @@ test('result retrieval uses exact reviewed identity and never promotes validatio
   }
   const missing=harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,record:null,registered:false}));
   assert.equal(await missing.api.getSupplierHubResult(identity,new AbortController().signal),null);
+});
+test('result retrieval keeps the submitted option count bound to the observed quotation',async()=>{
+ const record={...identity,origin:'https://sourceflow.jjwwhhjj1116.workers.dev',filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-complete',quotationId:'123',observedAt:Date.now(),registered:false,includedOptions:3,
+  registration:{quotationId:'123',scope:'visible-page',observedAt:Date.now(),registered:false,includedOptions:3,rows:[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId:'sku',status:'검수중',stage:'확인중'}]}};
+ const response=value=>harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,record:value,registered:false})).api.getSupplierHubResult(identity,new AbortController().signal);
+ assert.equal((await response(record)).registration.includedOptions,3);
+ await assert.rejects(response({...record,registration:{...record.registration,includedOptions:2}}),/옵션 수/);
+ await assert.rejects(response({...record,includedOptions:undefined}),/옵션 수/);
+ await assert.rejects(response({...record,includedOptions:201}),/검토한 상품/);
 });
 
 test('old extension without company binding cannot prepare a new handoff',async()=>{

@@ -29,7 +29,7 @@ export async function dispatchPendingPackage(message,sender){
     throw Error('전달 결과를 확인하지 못했습니다. Supplier Hub 첨부 목록을 확인해주세요. 자동 재전송하지 않습니다.');
   if(result.state==='dispatched'){
     const {origin,productId,categoryId,fingerprint}=saved;
-    await transferRecord('put',`attempt:${tab.id}`,{origin,productId,categoryId,fingerprint,company:prepared.company});
+    await transferRecord('put',`attempt:${tab.id}`,{origin,productId,categoryId,fingerprint,company:prepared.company,includedOptions:prepared.includedOptions});
   }
   return result;
 }

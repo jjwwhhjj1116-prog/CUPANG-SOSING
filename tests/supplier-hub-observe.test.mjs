@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/observe.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
-function setup({kind='validation',senderChanges={},tabChanges={},resultChanges={},onExecute,missing=false,savedChanges={},companyCodes,legacy=false}={}){
- const identity={company:{code:'A01464742',name:'와이홉'},origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+function setup({kind='validation',senderChanges={},tabChanges={},resultChanges={},onExecute,missing=false,savedChanges={},identityChanges={},companyCodes,legacy=false}={}){
+ const identity={company:{code:'A01464742',name:'와이홉'},origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64),includedOptions:3,...identityChanges};
  const saved={...identity,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-1',state:'validation-complete',registered:false,...savedChanges};
  const result=kind==='validation'?{...saved,...resultChanges}:{quotationId:'quote-1',scope:'visible-page',rows:[{title:'상품',skuId:'sku-1'}],registered:false,...resultChanges};
  if(legacy)delete identity.company;
@@ -22,7 +22,7 @@ test('worker persists validation and SKU observations without a popup callback',
   const job=h.run();await new Promise(resolve=>setImmediate(resolve));assert.equal(h.puts.length,0);
   await assert.rejects(h.run(),/확인 중/);assert.equal(h.scripts.length,1);
   finish();await job;assert.equal(h.puts.length,1);assert.equal(h.puts[0].productId,'p');
-  assert.equal(h.puts[0].registered,false);if(kind==='registration')assert.equal(h.puts[0].registration.quotationId,'quote-1');
+  assert.equal(h.puts[0].registered,false);if(kind==='registration'){assert.equal(h.puts[0].registration.quotationId,'quote-1');assert.equal(h.puts[0].registration.includedOptions,3);assert.equal(h.puts[0].registration.rows.length,1);}
   await h.run();assert.equal(h.puts.length,2,'lock released after successful observation');
  }
 });
@@ -37,6 +37,11 @@ test('mismatched or invalid results never become saved registration evidence',as
   await assert.rejects(h.run(),error=>!error.message.includes('확인 중'),'failed requests release the lock');
  }
  const h=setup({resultChanges:{filename:'other.xlsx'}});await h.run();assert.equal(h.puts.length,0);
+});
+test('invalid option count cannot be attached to a validation or registration result',async()=>{
+ for(const options of [{kind:'validation',identityChanges:{includedOptions:0}},{kind:'registration',savedChanges:{includedOptions:0}}]){
+  const h=setup(options);await assert.rejects(h.run(),/옵션 수/);assert.equal(h.puts.length,0);
+ }
 });
 
 

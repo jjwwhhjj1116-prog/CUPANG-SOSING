@@ -19,6 +19,7 @@ export async function observeSupplierHubResult(message,sender){
     const identity=await transferRecord('get',`attempt:${tab.id}`);
     // Legacy app attempts cannot infer their company from the current login.
     if(identity&&!identity.company)throw Error('전송 기록에 회사정보가 없습니다. 기존 견적서는 Supplier Hub에서 직접 확인해주세요.');
+    if(identity?.includedOptions!==undefined&&(!Number.isSafeInteger(identity.includedOptions)||identity.includedOptions<1||identity.includedOptions>200))throw Error('전송한 견적서의 옵션 수를 확인하지 못했습니다.');
     const checkCompany=async()=>{
       const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:identity?[identity.company]:[]});
       const code=execution?.result?.code;
@@ -42,9 +43,12 @@ export async function observeSupplierHubResult(message,sender){
       const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubRegistration,args:[saved.quotationId]});
       const result=execution?.result;
       if(!result||result.quotationId!==saved.quotationId||result.scope!=='visible-page'||result.registered!==false||!Array.isArray(result.rows))throw Error('상품별 결과를 확인하지 못했습니다.');
+      const includedOptions=saved.includedOptions;
+      if(includedOptions!==undefined&&(!Number.isSafeInteger(includedOptions)||includedOptions<1||includedOptions>200))throw Error('저장한 견적서의 옵션 수를 확인하지 못했습니다.');
       await checkCompany();
-      await transferRecord('put',key,{...saved,registration:{...result,observedAt:Date.now()}});
-      return result;
+      const registration={...result,...(includedOptions===undefined?{}:{includedOptions}),observedAt:Date.now()};
+      await transferRecord('put',key,{...saved,registration});
+      return registration;
     }
     const expectedFilename=identity&&/^[a-f0-9]{64}$/.test(identity.fingerprint)?`YOOFAM-${identity.fingerprint}.xlsx`:undefined;
     const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation,args:expectedFilename?[expectedFilename]:[]});
@@ -58,6 +62,7 @@ export async function observeSupplierHubResult(message,sender){
       const keepRegistration=result.state==='validation-complete'&&previous?.state==='validation-complete'
         &&['origin','productId','categoryId','fingerprint'].every(field=>previous[field]===identity[field])
         &&previous.company?.code===identity.company.code&&previous.company?.name===identity.company.name
+        &&previous.includedOptions===identity.includedOptions&&previous.registration?.includedOptions===identity.includedOptions
         &&previous.filename===result.filename&&typeof result.quotationId==='string'&&Boolean(result.quotationId.trim())
         &&previous.quotationId===result.quotationId&&previous.registration?.quotationId===result.quotationId;
       await transferRecord('put',key,{...identity,...result,company:identity.company,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{})});

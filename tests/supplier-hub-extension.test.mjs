@@ -24,7 +24,7 @@ async function fixture(change=()=>{}){
 }
 test('app-produced ZIP resolves exact workbook and only manifest-referenced attachments',async()=>{
   const result=await prepareAttachments(await fixture());
-  assert.equal(result.categoryId,'80719');assert.deepEqual(result.quotation,[{name:title,base64:Buffer.from(workbook).toString('base64')}]);
+  assert.equal(result.categoryId,'80719');assert.equal(result.includedOptions,1);assert.deepEqual(result.quotation,[{name:title,base64:Buffer.from(workbook).toString('base64')}]);
   assert.deepEqual(result.productImages.map(f=>f.name),['photo.png']);assert.deepEqual(result.labelImages.map(f=>f.name),['label.png']);
 });
 test('corrupted, truncated and inconsistent ZIP entries are rejected',async()=>{

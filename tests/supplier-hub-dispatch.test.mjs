@@ -8,7 +8,7 @@ function setup({outcome='dispatched',savedChanges={},senderChanges={},consume=tr
   const saved={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint,createdAt:Date.now(),base64:'UEs=',...savedChanges};
   const sender={id:'extension',url:'chrome-extension://extension/popup.html',...senderChanges};
   const context=vm.createContext({Date,URL,Uint8Array,atob,
-    verifySupplierHubCompany(){},prepareAttachments:async()=>({company:{code:'A01464742',name:'와이홉'},productId:'p',categoryId:'80719',quotation:[{name:`YOOFAM-${fingerprint}.xlsx`}]}),attachToSupplierHub(){},
+    verifySupplierHubCompany(){},prepareAttachments:async()=>({company:{code:'A01464742',name:'와이홉'},productId:'p',categoryId:'80719',includedOptions:3,quotation:[{name:`YOOFAM-${fingerprint}.xlsx`}]}),attachToSupplierHub(){},
     pendingPackage:async action=>{calls.push(action);return action==='get'?saved:consume;},
     transferRecord:async(action,key,value)=>{puts.push({key,value});},
     chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration',...tabChanges}]},
@@ -24,7 +24,8 @@ test('worker saves confirmed dispatch identity without a popup response callback
   finish();assert.equal((await pending).state,'dispatched');
   assert.deepEqual(run.calls,['get','delete','execute']);
   assert.equal(run.puts[0].value.company.code,'A01464742');assert.equal(run.puts[0].key,'attempt:123');assert.equal(run.puts[0].value.productId,'p');
-  assert.deepEqual(Object.keys(run.puts[0].value).sort(),['categoryId','company','fingerprint','origin','productId']);
+  assert.equal(run.puts[0].value.includedOptions,3);
+  assert.deepEqual(Object.keys(run.puts[0].value).sort(),['categoryId','company','fingerprint','includedOptions','origin','productId']);
 });
 test('partial or rejected dispatch preserves previous identity and is not retried',async()=>{
   for(const outcome of ['partial','rejected']){

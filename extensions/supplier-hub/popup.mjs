@@ -15,7 +15,7 @@ async function loadPending(){
     if(version!==sequence)return;
     prepared=result;pendingFingerprint=saved.fingerprint;pendingExpires=saved.createdAt+15*60*1000;
     packageIdentity={origin:saved.origin,productId:saved.productId,categoryId:saved.categoryId,fingerprint:saved.fingerprint};
-    summary.textContent=`앱에서 준비한 상품 ${saved.productId}\n카테고리 ${result.categoryId}\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개`;
+    summary.textContent=`앱에서 준비한 상품 ${saved.productId}\n카테고리 ${result.categoryId} · 포함 옵션 ${result.includedOptions}개\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개`;
     button.disabled=false;status.textContent='현재 Supplier Hub 회사 계정과 파일 목록을 확인한 뒤 전달하세요.';
   }catch(error){if(version===sequence)status.textContent=error.message;}
 }
@@ -32,7 +32,7 @@ registrationButton.addEventListener('click',async()=>{
     const response=await chrome.runtime.sendMessage({type:'YOOFAM_OBSERVE_RESULT',tabId:tab.id,kind:'registration'});
     if(!response?.ok)throw Error(response?.error||'결과 조회 응답이 없습니다. 앱에서 저장된 결과를 확인해주세요.');
     const result=response.result;
-    status.textContent=`견적서 ID: ${result.quotationId}\n현재 페이지에서 ${result.rows.length}개 확인\n`+result.rows.map(row=>`${row.title}: ${row.status} · ${row.stage} · SKU ${row.skuId||'미표시'}`).join('\n')+'\n현재 페이지의 결과이며 전체 옵션의 등록 완료를 뜻하지 않습니다.';
+    status.textContent=`견적서 ID: ${result.quotationId}\n현재 페이지에서 ${result.rows.length}개 확인${result.includedOptions?` · 초안 포함 옵션 ${result.includedOptions}개`:''}\n`+result.rows.map(row=>`${row.title}: ${row.status} · ${row.stage} · SKU ${row.skuId||'미표시'}`).join('\n')+'\n현재 페이지의 결과이며 전체 옵션의 등록 완료를 뜻하지 않습니다.';
   }catch(error){status.textContent=error.message;}
   finally{registrationButton.disabled=false;picker.disabled=false;button.disabled=!prepared;validateButton.disabled=false;resultButton.disabled=false;}
 });
@@ -59,7 +59,7 @@ validateButton.addEventListener('click',async()=>{
     const response=await chrome.runtime.sendMessage({type:'YOOFAM_VALIDATE_PACKAGE',tabId:tab.id,reviewedAgreements:{priceData:document.querySelector('#agree-price').checked===true,labelBusinessContact:document.querySelector('#agree-contact').checked===true,legalDocumentsNotApplicable:document.querySelector('#legal-not-applicable').checked===true}});
     if(!response?.ok)throw Error(response?.error||'검증 요청 응답이 없습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
     if(response.result?.state!=='validation-requested')throw Error('검증 요청 결과를 확인하지 못했습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
-    status.textContent='파일 검증을 요청했습니다. Supplier Hub의 검증 진행상태에서 결과를 확인해주세요. 최종 등록은 아직 실행하지 않았습니다.';
+    status.textContent='파일 검증을 요청했습니다. Supplier Hub의 검증 진행상태와 상품별 등록 상태에서 결과를 확인해주세요. 등록 완료는 아직 확인되지 않았습니다.';
   }catch(error){status.textContent=error.message;}
   finally{validateButton.disabled=false;picker.disabled=false;button.disabled=!prepared;}
 });
@@ -69,7 +69,7 @@ picker.addEventListener('change',async()=>{
   try{
     const file=picker.files[0];if(!file)return;if(file.size>30*1024*1024)throw Error('ZIP 파일은 30MB 이하여야 합니다.');
     const result=await prepareAttachments(new Uint8Array(await file.arrayBuffer()));if(version!==sequence)return;
-    prepared=result;summary.textContent=`카테고리 ${result.categoryId}\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개`;button.disabled=false;
+    prepared=result;summary.textContent=`카테고리 ${result.categoryId} · 포함 옵션 ${result.includedOptions}개\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개`;button.disabled=false;
     status.textContent='파일 내용과 현재 Supplier Hub 회사 계정을 확인한 뒤 전달하세요.';
   }catch(error){if(version===sequence)status.textContent=error.message;}
 });
