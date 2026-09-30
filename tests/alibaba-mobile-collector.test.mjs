@@ -98,7 +98,7 @@ test('explicit common range-price model applies the tier at MOQ rather than the 
   assert.throws(() => parser.parseAlibabaMobileProduct(page, changed));
 });
 
-function transportFixture({failure, changeSku, signal = new AbortController().signal, wrappedSignal = false} = {}) {
+function transportFixture({failure, changeSku, desktopResponse, signal = new AbortController().signal, wrappedSignal = false} = {}) {
   const calls = [], transientToken = 'anonymousOnly_1700000000000';
   let skuRequests = 0, requestSignal;
   const fetcher = async (target, init) => {
@@ -107,7 +107,7 @@ function transportFixture({failure, changeSku, signal = new AbortController().si
     requestSignal ??= init.signal;
     assert.equal(init.signal, requestSignal);
     if (!wrappedSignal) assert.equal(init.signal, signal);
-    if (url.hostname === 'detail.1688.com') return new Response('<script>window._config_={"action":"noop"};</script>', {headers: {'content-type': 'text/html'}});
+    if (url.hostname === 'detail.1688.com') return desktopResponse ? desktopResponse() : new Response('<script>window._config_={"action":"noop"};</script>', {headers: {'content-type': 'text/html'}});
     if (url.hostname === 'm.1688.com') return new Response(pageHtml(mobile), {headers: {'content-type': 'text/html'}});
     if (url.hostname === 'itemcdn.tmall.com') return new Response(detail, {headers: {'content-type': 'text/plain'}});
     assert.equal(url.origin + url.pathname, 'https://h5api.m.1688.com/h5/mtop.mbox.fc.common.gateway/1.0/');
@@ -137,6 +137,32 @@ test('URL collection uses the official mobile source after a JSON-LD-less PC pag
   assert.equal(h.calls.filter(call => call.url.hostname === 'h5api.m.1688.com').length, 2);
   assert.ok(!JSON.stringify(result).includes('anonymousOnly')); assert.ok(!JSON.stringify(result).includes('neverReuse'));
   assert.ok(h.calls.filter(call => call.url.hostname !== 'h5api.m.1688.com').every(call => !call.init.headers.cookie));
+});
+
+test('PC transport redirects use the same offer public mobile source without following Location or replaying cookies',async()=>{
+ for(const status of [301,302,303,307,308]){
+  let released=0;
+  const h=transportFixture({wrappedSignal:true,desktopResponse:()=>new Response(new ReadableStream({cancel(){released++;}}),{
+   status,headers:{location:'https://untrusted.example/login?token=not-source','set-cookie':'_m_h5_tk=neverReplay_1700000000000; Path=/','content-type':'text/html'},
+  })});
+  const result=await load('app/public-product-collector.ts').collectPublicProduct(sourceUrl,{fetcher:h.fetcher,signal:h.signal});
+  assert.equal(result.provider,'1688-public-mobile-v1');assert.equal(result.options.length,6);assert.equal(released,1);
+  assert.equal(h.calls.length,5);assert.equal(h.calls[1].url.href,'https://m.1688.com/offer/813724060928.html');
+  assert.ok(h.calls.every(call=>call.url.hostname!=='untrusted.example'));
+  assert.ok(h.calls.every(call=>!String(call.init.headers.cookie??'').includes('neverReplay')));
+ }
+});
+
+test('public PC authentication errors and cancelled redirects never start another source request',async()=>{
+ for(const status of [401,403]){
+  const h=transportFixture({wrappedSignal:true,desktopResponse:()=>new Response('',{status})});
+  await assert.rejects(load('app/public-product-collector.ts').collectPublicProduct(sourceUrl,{fetcher:h.fetcher,signal:h.signal}));
+  assert.equal(h.calls.length,1);
+ }
+ const controller=new AbortController(),h=transportFixture({wrappedSignal:true,signal:controller.signal,desktopResponse:()=>{controller.abort();return new Response('',{status:302});}});
+ await assert.rejects(load('app/public-product-collector.ts').collectPublicProduct(sourceUrl,{fetcher:h.fetcher,signal:h.signal}),/취소/);assert.equal(h.calls.length,1);
+ const stopped=new AbortController();stopped.abort();let calls=0;
+ await assert.rejects(load('app/public-product-collector.ts').collectPublicProduct(sourceUrl,{signal:stopped.signal,fetcher:async()=>{calls++;throw Error('should not fetch');}}),/취소/);assert.equal(calls,0);
 });
 
 test('verification, login, redirects and incorrect SKU identities stop before details or receipt creation', async () => {

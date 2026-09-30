@@ -135,8 +135,39 @@ test('Cloudflare source failure -> Chrome public raw capture -> owner receipt ->
   const receipt=await h.load('db/collection-results.ts').readCollectionResult('owner','job');assert.equal(receipt.result.provider,'chrome-public-mobile-v1');assert.equal(receipt.result.options.length,6);
   const options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options WHERE product_id=?').get(latest.product_id).payload).rows;assert.equal(options.length,6);
   assert.deepEqual(options.map(row=>row.unitCostCny),[3.6,5.5,3.6,5.5,3.6,5.5]);
+  assert.equal(h.stats.maxDownloads,3);assert.equal(h.stats.downloads,19);
+  assert.equal(h.calls.filter(path=>path.endsWith('/images-batch')).length,7);
+  assert.equal(h.calls.filter(path=>path.endsWith('/images')).length,0);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,19);
   assert.ok(h.aiSources.length>0);assert.equal(h.network.some(host=>host==='supplier.coupang.com'),false);
   const repeated=await h.route('/api/collection-jobs/job/browser-capture',{method:'POST',body:raw()});assert.equal(repeated.status,200);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
+ }finally{h.close();}
+});
+
+test('Chrome mobile draft retries a failed image without recollection, duplicate files or lost manual edits',async()=>{
+ const h=mobileIntakeHarness({sourceFetcher:async()=>new Response('',{status:302})});
+ const run=async()=>h.load('app/intake-collection.ts').collectIntakeProduct(await h.load('db/collection-jobs.ts').findCollectionJob('owner','job'),{
+  signal:new AbortController().signal,fetcher:(path,init)=>h.route(path,{method:init?.method??'GET',body:init?.body}),onJob:()=>{},onProgress:()=>{},
+  captureFromBrowser:async()=>fixture().run(),
+ });
+ try{
+  h.stats.failImageIndex=4;await assert.rejects(run(),/원본 5번/);
+  const product=h.sqlite.prepare('SELECT * FROM products').get();assert.equal(product.options_count,6);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,18);
+  const base='/api/products/'+product.id,content=await (await h.route(base+'/content')).json();
+  assert.equal((await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.content.revision,patch:{seo:{title:'직접 확인한 상품명'},detail:{description:'수동 상세 설명'},assets:{main:[],additional:[],detail:[]}}}})).status,200);
+  const quote=await (await h.route(base+'/quotation-fields')).json();
+  const updatedQuote=await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:quote.revision,expectedInputFingerprint:quote.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'9900'}]}});
+  assert.equal(updatedQuote.status,200);assert.equal((await updatedQuote.json()).resolved.rows.find(row=>row.optionId==='collected-1').fields.salePrice.value,'9900');
+  const downloads=h.stats.downloads,sourceRequests=h.network.filter(host=>host==='detail.1688.com').length;
+  h.stats.failImageIndex=null;assert.match(await run(),/상품 초안 저장됨/);
+  assert.equal(h.stats.downloads-downloads,1);assert.equal(h.stats.maxDownloads,3);
+  assert.equal(h.network.filter(host=>host==='detail.1688.com').length,sourceRequests);
+  assert.equal(h.aiSources.length,1);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,19);
+  const saved=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  assert.equal(saved.seo.title.value,'직접 확인한 상품명');assert.equal(saved.detail.description.value,'수동 상세 설명');assert.deepEqual(saved.assets.main.value,[]);
+  const reviewed=await (await h.route(base+'/quotation-fields')).json();assert.equal(reviewed.resolved.rows.find(row=>row.optionId==='collected-1').fields.salePrice.value,'9900');
+  assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
  }finally{h.close();}
 });

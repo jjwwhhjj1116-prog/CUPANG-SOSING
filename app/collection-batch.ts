@@ -76,7 +76,10 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       }
       if (options.shouldStop()) break;
       let result = await runCollectionImport(job.id, source.images.length, {
-        ...(source.provider==='1688-public-mobile-v1'&&options.assignToStage===false?{imageBatchSize:3 as const}:{}),
+        // Every verified intake receipt stores originals in the same library.
+        // Transport/provider names must not turn Chrome/API intake back into
+        // one round trip per image. Stage assignment still uses serial writes.
+        ...(options.assignToStage===false?{imageBatchSize:3 as const}:{}),
         assignToStage: options.assignToStage,
         continueOnImageError: true, onProductSaved: productId => options.onProductSaved?.(job.id, productId) ?? Promise.resolve(), fetcher: options.fetcher, imageIndices: indices, shouldStop: options.shouldStop,
         retryAttempts: 3, retryWait: options.retryWait, onRetry,

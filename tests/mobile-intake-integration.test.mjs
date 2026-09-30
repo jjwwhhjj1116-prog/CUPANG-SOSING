@@ -80,8 +80,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
  }finally{h.close();}
 });
 
-for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`recorded mobile source reaches editable six-SKU draft, manual review and XLSX (${company.companyCode})`,async()=>{
- const h=mobileIntakeHarness(company);
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])for(const desktopStatus of [200,302])test(`recorded mobile source reaches editable six-SKU draft, manual review and XLSX (${company.companyCode}, PC=${desktopStatus})`,async()=>{
+ const h=mobileIntakeHarness({...company,desktopStatus});
  try{
   assert.match(await h.intake(),/상품 초안 저장됨/);
   const product=h.sqlite.prepare('SELECT * FROM products').get();

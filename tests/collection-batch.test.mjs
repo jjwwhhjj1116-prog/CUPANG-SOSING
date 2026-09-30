@@ -7,6 +7,38 @@ function load(file) { const exports = {}; vm.runInNewContext(ts.transpileModule(
 const { importReceivedJobs, pendingReceivedJobs } = load('app/collection-batch.ts');
 const job = id => ({ id, offer_id: '123', source_url: 'https://detail.1688.com/offer/123.html', status: 'awaiting_connector', received_at: '2026-09-25T00:00:00Z', product_id: null });
 const source = { schemaVersion: 1, offerId: '123', sourceUrl: job('a').source_url, provider: 'synthetic-test', collectedAt: '2026-09-25T00:00:00Z', title: 'fixture', description: '', options: [{ sku: 'a', name: 'one', unitPriceCny: 2, minimumOrder: 1, stock: null }], images: [] };
+
+test('library intake uses bounded batches regardless of server or Chrome source provider',async()=>{
+ const images=Array.from({length:8},(_,index)=>({url:`https://cbu01.alicdn.com/${index}.jpg`,role:index===0?'main':'detail'}));
+ for(const provider of ['1688-public-mobile-v1','chrome-public-mobile-v1','public-product-jsonld-v1','chrome-product-jsonld-v1','1688-openapi-candidate-v1']){
+  const selected=[],results=[];let saved=false;
+  await importReceivedJobs([job('a')],{assignToStage:false,reservedImageSlots:1,shouldStop:()=>false,onProgress:()=>{},
+   onProductSaved:async()=>{saved=true;},onResult:(_id,result)=>results.push(result),fetcher:async(url,init)=>{
+    if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,provider,images}}});
+    // Existing/reusable and removed originals still use the same selection
+    // contract; batch speed must never restore a user's removed file.
+    if(url.endsWith('/capacity'))return Response.json({capacity:{usedSlots:43,totalImages:8,reusableIndices:[0],blockedIndices:[1]}});
+    if(url.endsWith('/product'))return Response.json({productId:'p'});
+    assert.ok(url.endsWith('/images-batch'),provider);assert.equal(saved,true);
+    const {indices}=JSON.parse(init.body);assert.ok(indices.length<=3);selected.push(...indices);
+    return Response.json({results:indices.map(index=>({index,status:200,key:`owner/${index}.png`}))});
+   }});
+  assert.equal(results[0].status,'completed',JSON.stringify({provider,result:results[0]}));assert.equal(results[0].completedImages,7);
+  assert.deepEqual(selected,[0,2,3,4,5,6,7]);assert.equal(selected.includes(1),false);
+  assert.equal(43+selected.filter(index=>index!==0).length+1,50);
+ }
+});
+
+test('explicit stage image assignment retains its serial assignment requests',async()=>{
+ const results=[],selected=[];
+ await importReceivedJobs([job('a')],{assignToStage:true,shouldStop:()=>false,onProgress:()=>{},onResult:(_id,result)=>results.push(result),fetcher:async(url,init)=>{
+  if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,provider:'chrome-public-mobile-v1',images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+  if(url.endsWith('/capacity'))return Response.json({capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}});
+  if(url.endsWith('/product'))return Response.json({productId:'p'});
+  assert.ok(url.endsWith('/images'));selected.push(JSON.parse(init.body));return Response.json({key:'owner/a.png'});
+ }});
+ assert.equal(results[0].status,'completed');assert.deepEqual(selected,[{index:0}]);
+});
 test('only received, non-cancelled, unlinked jobs are initially selected', () => {
   assert.deepEqual(Array.from(pendingReceivedJobs([job('a'), { ...job('b'), product_id: 'p' }, { ...job('c'), status: 'cancelled' }, { ...job('d'), received_at: null }]), item => item.id), ['a']);
 });
