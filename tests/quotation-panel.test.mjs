@@ -36,7 +36,7 @@ test('deleted inspection profile keeps quotation editor and explicit replacement
  assert.deepEqual(calls.map(([,method])=>method),['GET','GET']);
 });
 
-async function requestHarness(){
+async function requestHarness(options={}){
  const slots=[],effects=[],pending=[],calls=[];let index=0;let props={productId:'p',refreshToken:'v1',onManageCategories(){}};let downloads=0;
  const Editor=()=>null;
  let profileReads=0;let refreshResponse;
@@ -48,7 +48,7 @@ async function requestHarness(){
   '@/app/components/quotation-preview-review':{QuotationPreviewReview:()=>null},
   '@/app/components/quotation-mapping-review':{QuotationMappingReview:()=>null},
   URL:{createObjectURL(){downloads++;return'blob:test';},revokeObjectURL(){}},document:{createElement(){return{click(){}};}},
-  fetch:async(url,init)=>{if(init?.method==='POST'){calls.push(init);return await new Promise(resolve=>pending.push(resolve));}if(url==='/api/category-profiles'&&profileReads++>0&&refreshResponse)return await refreshResponse(init);return Response.json(url==='/api/category-profiles'?{profiles:[{id:'saved',name:'원본',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본',headerRow:1}}]}:{categoryContext:{profileId:'saved',categoryId:'80719'}});},
+  fetch:async(url,init)=>{if(init?.method==='POST'){calls.push(init);return await new Promise(resolve=>pending.push(resolve));}if(url==='/api/category-profiles'&&profileReads++>0&&refreshResponse)return await refreshResponse(init);return Response.json(url==='/api/category-profiles'?{profiles:options.profiles??[{id:'saved',name:'원본',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본',headerRow:1}}]}:{categoryContext:options.categoryContext??{profileId:'saved',categoryId:'80719'}});},
  });
  const render=(updates={})=>{props={...props,...updates};index=0;const outer=panel.QuotationPanel(props);const tree=outer.type(outer.props);effects.splice(0).forEach(fn=>fn());return tree;};
  const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
@@ -57,6 +57,17 @@ async function requestHarness(){
 }
 const previewBody={fingerprint:'f',filename:'quote.csv',headers:['상품명'],rows:[['이전 상품']],report:{dataStartRow:2,rowCount:1,missingRequired:[],warnings:[],contentRevision:1,optionRevision:1,profileRevision:1}};
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&n.props.children===label);
+test('linked product keeps its captured category profile in the quotation editor',async()=>{
+ const h=await requestHarness({categoryContext:{source:'collection',profileId:'saved',categoryId:'80719',categoryPath:['바스켓']},profiles:[
+  {id:'saved',name:'수집 양식',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본'}},
+  {id:'other',name:'같은 코드의 다른 양식',categoryId:'80719',categoryPath:['바스켓'],template:{name:'다른 원본'}},
+ ]});
+ const tree=h.render({preferredProfileId:'other'});
+ assert.equal(nodes(tree).find(n=>n.type===h.Editor).props.profileId,'saved');
+ const select=nodes(tree).find(n=>n.type==='select');
+ assert.equal(select.props.disabled,true);
+ assert.deepEqual(nodes(select).filter(n=>n.type==='option').map(n=>n.props.value),['','saved']);
+});
 test('opening a reviewed profile with a changed category blocks automatic template selection',async()=>{
  const h=await requestHarness();
  h.render({preferredProfileId:'saved',navigationTarget:{optionId:'red',fieldId:'material',categoryId:'77442'}});

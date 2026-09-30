@@ -48,6 +48,24 @@ async function linkedFixture(h) {
  return jobs[0];
 }
 
+test('linked products reject a different saved quotation profile before editing or saving',async()=>{
+ const h=await harness();try{
+  const job=await linkedFixture(h);
+  const captured=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get(job.id).payload);
+  const replacement=await profile(h,'80719');
+  assert.notEqual(replacement.id,captured.category.id);
+  const view=await get(h);
+  const read=await h.route.GET(request(null,replacement.id),context);
+  assert.equal(read.status,409);
+  assert.equal((await read.json()).code,'QUOTATION_CATEGORY_MISMATCH');
+  const write=await put(h,view,[{fieldKey:'brand',optionId:null,value:'wrong template'}],replacement.id);
+  assert.equal(write.status,409);
+  assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM product_quotation_fields').get().n,0);
+  const matching=await get(h,captured.category.id);
+  assert.equal(matching.categoryContext.profileId,captured.category.id);
+ }finally{h.sqlite.close();}
+});
+
 test('product-bound category is shared by editor and export and missing context never falls back',async()=>{
  const h=await harness();try{
   const job=await linkedFixture(h);const view=await get(h);
@@ -371,9 +389,10 @@ test('captured registration blanks and missing legacy facts never inherit later 
 
 test('captured input changed during explicit-profile save rejects stale quotation edits',async()=>{
  const h=await harness();try{
-  const job=await linkedFixture(h);const selected=await profile(h);const view=await get(h,selected.id);
+  const job=await linkedFixture(h);const captured=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get(job.id).payload);
+  const selectedId=captured.category.id;const view=await get(h,selectedId);
   h.setBeforeSave(()=>h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run('{}',job.id));
-  const response=await put(h,view,[{fieldKey:'brand',optionId:null,value:'저장되면 안됨'}],selected.id);
+  const response=await put(h,view,[{fieldKey:'brand',optionId:null,value:'저장되면 안됨'}],selectedId);
   assert.equal(response.status,409);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM product_quotation_fields').get().n,0);
  }finally{h.sqlite.close();}

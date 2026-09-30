@@ -46,6 +46,13 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
       const source = await readQuotationCollectionSource(owner, offerId, id); collection = { offerId, snapshot: source };
       const captured = source ? JSON.parse(source.payload) : null;
       if (source?.linked) settings = collectionRegistrationSettings(settings, captured?.settings);
+      if (source?.linked && profile) {
+        const selected = captured?.category ? validateCategoryProfile(captured.category) : null;
+        if (!selected || captured.category.id !== profile.id || selected.categoryId !== profile.categoryId
+          || JSON.stringify(selected.categoryPath) !== JSON.stringify(profile.categoryPath)) {
+          throw new FieldsError('상품 추가 시 선택한 카테고리와 견적서 양식이 다릅니다. 선택한 카테고리 양식을 사용해주세요.', 409, 'QUOTATION_CATEGORY_MISMATCH');
+        }
+      }
       if (!profile && captured?.category) {
         const category = validateCategoryProfile(captured.category);
         categoryContext = { source: 'collection', profileId: typeof captured.category.id === 'string' ? captured.category.id : null,

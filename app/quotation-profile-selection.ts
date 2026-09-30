@@ -3,6 +3,20 @@ import type { QuotationFieldsView } from '@/app/quotation-schema';
 
 /** A profile ID is mutable; auto-selection also requires its captured category code. */
 export function selectQuotationProfile(profiles: readonly CategoryProfile[], context: QuotationFieldsView['categoryContext'], preferredId?: string, reviewedCategoryId?: string | null) {
+  if (context.source === 'collection' && context.profileId) {
+    const captured = profiles.find(profile => profile.id === context.profileId);
+    if (!captured || captured.categoryId !== context.categoryId
+      || JSON.stringify(captured.categoryPath) !== JSON.stringify(context.categoryPath)) return {
+      profileId: '', warning: `상품 추가 시 선택한 카테고리(${context.categoryId || '미확인'}) 설정이 삭제되었거나 현재 저장 설정(${captured?.categoryId || '미확인'})과 달라졌습니다. 원래 분류를 유지합니다. 카테고리 설정을 확인해주세요.`,
+    };
+    if (reviewedCategoryId !== undefined && captured.categoryId !== reviewedCategoryId) return {
+      profileId: '', warning: `검사 당시 카테고리(${reviewedCategoryId || '미확인'})와 상품 추가 시 선택한 카테고리(${captured.categoryId})가 다릅니다. 다시 검사해주세요.`,
+    };
+    if (preferredId && preferredId !== captured.id) return {
+      profileId: captured.id, warning: '상품 추가 시 선택한 카테고리 양식만 사용할 수 있습니다. 다른 양식을 적용하지 않았습니다.',
+    };
+    return { profileId: captured.id, warning: '' };
+  }
   if (preferredId) {
     if (!profiles.some(profile => profile.id === preferredId)) return {
       profileId: '',

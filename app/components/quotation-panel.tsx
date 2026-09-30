@@ -38,6 +38,8 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
   const [connectionWarning,setConnectionWarning]=useState('');
   const [loadAttempt,setLoadAttempt]=useState(0);
   const [capturedCategoryId,setCapturedCategoryId]=useState<string|null>(null);
+  const [capturedProfileId,setCapturedProfileId]=useState<string|null>(null);
+  const [capturedCategoryPath,setCapturedCategoryPath]=useState<string[]>([]);
   const activeRequest=useRef<AbortController|null>(null);
   const profileRequest=useRef<AbortController|null>(null);
   const [refreshingProfiles,setRefreshingProfiles]=useState(false);
@@ -58,6 +60,8 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
       setConnectionWarning(selection.warning);
       setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);onProfileChange?.(savedId||undefined);
       setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
+      setCapturedProfileId(data.categoryContext.source==='collection'?data.categoryContext.profileId:null);
+      setCapturedCategoryPath(data.categoryContext.source==='collection'?data.categoryContext.categoryPath:[]);
       setStartRow(quotationStartRow(savedProfiles.find(profile=>profile.id===savedId)?.template));
     }).catch(cause=>{if(!controller.signal.aborted)setContextError(cause instanceof Error?cause.message:'카테고리 연결 확인 실패');})
       .finally(()=>{if(!controller.signal.aborted)setContextLoaded(true);});
@@ -90,7 +94,8 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
       if(controller.signal.aborted)return;
       const current=body.profiles.find(profile=>profile.id===profileId);
       setProfiles(body.profiles);
-      if(profileId&&(!current||current.categoryId!==selected?.categoryId)){
+      if(profileId&&(!current||current.categoryId!==selected?.categoryId
+        || (capturedProfileId && (current.id!==capturedProfileId || JSON.stringify(current.categoryPath)!==JSON.stringify(capturedCategoryPath))))) {
         setProfileId('');setOverrideProfileId(undefined);onProfileChange?.(undefined);setUseSavedRow(true);
         setConnectionWarning('선택한 양식이 삭제되었거나 카테고리가 변경되었습니다. 수집 당시 분류로 돌아갑니다. Excel 양식을 다시 선택해주세요.');
       }
@@ -100,7 +105,7 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
   }
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
-    {connectionWarning && !overrideProfileId && <p role="status" className="panel-note">{connectionWarning}</p>}
+    {connectionWarning && <p role="status" className="panel-note">{connectionWarning}</p>}
     <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={reviewTarget?.sequence??0} navigationTarget={reviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onDirtyChange={value=>{
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
       setDirty(value);
@@ -117,7 +122,8 @@ function QuotationPanelContent({onProfileChange,onSaved,productId,onManageCatego
     {(selected?.categoryId ?? capturedCategoryId)==='80719' && <p>바스켓 이름으로 확인한 공식 탐색 경로: 주방용품 → 주방수납/잡화 → 건조대/진열대/정리대 → 주방수납바구니/바스켓</p>}
     <small>2026-09-28 공식 Excel 원본에서 칸 카테고리 6269와 상품 등록 카테고리 80719의 대응을 확인했습니다. 다른 카테고리는 각각 원본을 확인해야 합니다. 경로 안내만으로 Excel 원본 연결이나 실제 제출이 완료되지는 않습니다.</small></div></div>
     <div className="panel-note"><div><strong>저장한 양식으로 견적서 만들기</strong><p>상품·옵션·이미지 자료를 연결된 Excel 열에 채웁니다. 원본은 보존하고 채운 사본과 첨부 이미지를 ZIP으로 내려받습니다.</p></div></div>
-    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty||refreshingProfiles} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);onProfileChange?.(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
+    <label className="field"><span>카테고리·견적서 연결</span><select value={profileId} disabled={busy||dirty||refreshingProfiles||!!capturedProfileId} onChange={event=>{setProfileId(event.target.value);setOverrideProfileId(event.target.value||undefined);setConnectionWarning('');onProfileChange?.(event.target.value||undefined);setUseSavedRow(true);setPreview(null);setStartRow(quotationStartRow(profiles.find(profile=>profile.id===event.target.value)?.template));}}><option value="">수집할 때 선택한 카테고리 사용</option>{profiles.filter(profile=>!capturedProfileId||profile.id===capturedProfileId).map(profile=><option key={profile.id} value={profile.id}>{profile.name}{profile.template?'':' · 양식 미연결'}</option>)}</select></label>
+    {capturedProfileId&&<small>상품 추가 시 선택한 카테고리와 견적서 양식을 사용합니다. 양식 변경은 카테고리·양식 관리에서 확인해주세요.</small>}
     <button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void refreshProfiles()}>{refreshingProfiles?'양식 확인 중…':'저장한 양식 새로고침'}</button>
     {profileRefreshError&&<p role="alert">{profileRefreshError} 기존 선택을 유지했습니다. 다시 시도해주세요.</p>}
     {selected&&<p>{selected.categoryPath.join(' > ')}<br/>{selected.template?.name??'원본 양식을 먼저 연결해주세요.'}</p>}
