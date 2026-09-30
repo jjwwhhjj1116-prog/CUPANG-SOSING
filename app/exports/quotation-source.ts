@@ -40,6 +40,13 @@ export async function readQuotationExportSource(owner: string, productId: string
       const captured = await readQuotationCollectionSource(owner, offerId, productId); collection = { offerId, snapshot: captured };
       const payload = captured ? JSON.parse(captured.payload) : null;
       if (captured?.linked) settings = collectionRegistrationSettings(settings, payload?.settings);
+      if (captured?.linked && profile) {
+        const selected = payload?.category ? validateCategoryProfile(payload.category) : null;
+        if (!selected || payload.category.id !== profile.id || selected.categoryId !== profile.categoryId
+          || JSON.stringify(selected.categoryPath) !== JSON.stringify(profile.categoryPath)) {
+          throw new QuotationExportError('상품 추가 시 선택한 카테고리와 견적서 양식이 다릅니다. 선택한 카테고리 양식을 사용해주세요.', 409);
+        }
+      }
       if (!profile && payload?.category) {
         const category = validateCategoryProfile(payload.category);
         categoryContext = { source: 'collection', profileId: typeof payload.category.id === 'string' ? payload.category.id : null,
@@ -61,12 +68,18 @@ export async function readQuotationExportSource(owner: string, productId: string
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
 /** Resolve only the profile captured when this product was collected; never guess by label. */
 export async function readMappedQuotationSource(owner: string, productId: string, profileId: string | null) {
-  if (profileId) return readQuotationExportSource(owner, productId, profileId);
   const captured = await readQuotationExportSource(owner, productId, null);
   const context = captured.categoryContext;
-  if (!context.profileId || !context.categoryId) throw new QuotationExportError('상품 추가 시 선택한 카테고리 양식이 없습니다. 견적서에서 사용할 양식을 선택해주세요.', 409);
-  const saved = await readQuotationExportSource(owner, productId, context.profileId);
-  if (saved.profile?.categoryId !== context.categoryId || JSON.stringify(saved.source.collection) !== JSON.stringify(captured.source.collection)) {
+  const linked = Boolean(captured.source.collection?.snapshot?.linked);
+  const selectedProfileId = profileId || context.profileId;
+  if (!selectedProfileId || (!profileId && !context.categoryId)) throw new QuotationExportError('상품 추가 시 선택한 카테고리 양식이 없습니다. 견적서에서 사용할 양식을 선택해주세요.', 409);
+  if (linked && selectedProfileId !== context.profileId) {
+    throw new QuotationExportError('상품 추가 시 선택한 카테고리와 견적서 양식이 다릅니다. 선택한 카테고리 양식을 사용해주세요.', 409);
+  }
+  const saved = await readQuotationExportSource(owner, productId, selectedProfileId);
+  if (JSON.stringify(saved.source.collection) !== JSON.stringify(captured.source.collection)
+    || (linked && (saved.profile?.id !== context.profileId || saved.profile.categoryId !== context.categoryId
+      || JSON.stringify(saved.profile.categoryPath) !== JSON.stringify(context.categoryPath)))) {
     throw new QuotationExportError('수집 당시 카테고리와 현재 양식이 달라졌습니다. 카테고리를 확인하고 다시 검사해주세요.', 409);
   }
   return saved;

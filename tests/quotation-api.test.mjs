@@ -450,6 +450,22 @@ test('registration package uses the captured profile without asking for the cate
  assert.equal((await route.POST(request({action:'export',fingerprint:review.fingerprint}),context)).status,409);
 });
 
+test('collected product cannot preview or export under a different explicitly selected category profile',async()=>{
+ const sourced={...product,source_url:'https://detail.1688.com/offer/813724060928.html'};
+ const captured={id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})};
+ const route=routeWith({find:async()=>sourced,readCollection:async()=>captured});
+ const correct=await route.POST(request({...preview,profileId:profile.id}),context);
+ assert.equal(correct.status,200);
+ const review=await correct.json();
+ const wrong=await route.POST(request({...preview,profileId:'another-profile'}),context);
+ assert.equal(wrong.status,409);
+ assert.match((await wrong.json()).error,/선택한 카테고리/);
+ const wrongExport=await route.POST(request({...preview,action:'export',profileId:'another-profile',fingerprint:review.fingerprint}),context);
+ assert.equal(wrongExport.status,409);
+ const repurposed=routeWith({find:async()=>sourced,readCollection:async()=>captured,readProfile:async()=>({...profile,categoryPath:['다른 경로']})});
+ assert.equal((await repurposed.POST(request(preview),context)).status,409);
+});
+
 test('automatic package refuses missing or repurposed captured profiles',async()=>{
  const find=async()=>({...product,source_url:'https://detail.1688.com/offer/813724060928.html'});
  const readCollection=async()=>({id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})});

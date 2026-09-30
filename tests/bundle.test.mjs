@@ -232,6 +232,8 @@ test('bundle uses only the owned selected or captured category and tracks collec
   let doc=JSON.parse(decode(readArchive(new Uint8Array(await response.arrayBuffer()))['quotation-fields.json']));assert.equal(doc.categoryContext.source,'profile');assert.equal(doc.schema.status,'observed');
   const sourceProduct={...product,source_url:'https://detail.1688.com/offer/100001.html'};
   const captured={id:'job',payload:JSON.stringify({category:profile}),updatedAt:product.updated_at};
+  const wrongCategory=routeWith({find:async()=>sourceProduct,readCollection:async()=>({...captured,linked:true}),readProfile:async()=>({...profile,categoryId:'81452'})});
+  assert.equal((await wrongCategory.GET(chosen,context)).status,409);
   const fromCollection=await routeWith({find:async()=>sourceProduct,readCollection:async()=>captured}).GET(getRequest(),context);
   assert.equal(fromCollection.status,200);doc=JSON.parse(decode(readArchive(new Uint8Array(await fromCollection.arrayBuffer()))['quotation-fields.json']));assert.equal(doc.categoryContext.source,'collection');assert.equal(doc.schema.categoryId,'80719');
   let downloaded=false;
