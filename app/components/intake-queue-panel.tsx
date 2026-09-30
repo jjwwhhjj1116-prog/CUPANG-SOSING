@@ -127,7 +127,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       ['price', 'SEO·가격 초안 작성', '상품정보를 가져와 초안을 작성합니다. 저장 후 1~7단계에서 확인·수정하세요.'],
       ['collect', '상품정보만 가져오기', '원문·옵션·가격을 가져오고 SEO 작성은 나중에 진행합니다.'],
     ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={(goal==='collect'?'collect':'price') === id} onChange={() => onGoal(id)} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
-    <p className="collection-notice">{collectionBlock} 공개 조회가 막히면 현재 Chrome에서 다시 확인합니다. <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.26.zip" download>상품 수집·전송 확장 0.2.26 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
+    <p className="collection-notice">{collectionBlock} 공개 조회가 막히면 현재 Chrome에서 다시 확인합니다. <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.27.zip" download>상품 수집·전송 확장 0.2.27 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
     {selected.some(row => !visible.some(item => item.id === row.id)) && <p className="collection-notice">검색으로 숨겨진 선택 상품도 함께 처리합니다. 선택 {pending}건 중 숨겨진 상품 {selected.filter(row => !visible.some(item => item.id === row.id)).length}건</p>}
     {settingsChanged&&<div className="panel-note"><p>기본설정이 변경돼 남은 상품 처리를 멈췄습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reloadSettings()}>최신 기본설정 불러오기</button></div>}
     {settingsMessage&&<p role="status">{settingsMessage}</p>}

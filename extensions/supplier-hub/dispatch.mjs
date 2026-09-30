@@ -2,6 +2,7 @@ import {prepareAttachments} from './package.mjs';
 import {attachToSupplierHub} from './attach.mjs';
 import {pendingPackage,transferRecord} from './handoff-store.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
+import {verifyAppQuotationSource} from './source-check.mjs';
 
 // Own the app-package dispatch in the worker rather than in the disposable popup.
 // This is a single user-requested attempt, never an automatic upload retry.
@@ -20,8 +21,11 @@ export async function dispatchPendingPackage(message,sender){
   const prepared=await prepareAttachments(Uint8Array.from(atob(saved.base64),c=>c.charCodeAt(0)));
   if(prepared.productId!==saved.productId||prepared.categoryId!==saved.categoryId||prepared.quotation[0]?.name!==`YOOFAM-${saved.fingerprint}.xlsx`)
     throw Error('앱에서 검토한 견적서와 파일이 일치하지 않습니다.');
+  if(!Number.isSafeInteger(saved.windowId)||tab.windowId!==saved.windowId)throw Error('견적서를 준비한 앱과 같은 Chrome 창에서 전달해주세요.');
+  await verifyAppQuotationSource(saved,prepared,saved);
   const [companyCheck]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:[prepared.company]});
   if(companyCheck?.result?.code!==prepared.company.code)throw Error('Supplier Hub 회사코드를 확인하지 못했습니다.');
+  await verifyAppQuotationSource(saved,prepared,saved);
   if(!await pendingPackage('delete',saved.fingerprint))throw Error('이미 전달을 시도했거나 준비된 파일이 변경되었습니다.');
   const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:attachToSupplierHub,args:[prepared]});
   const result=execution?.result;

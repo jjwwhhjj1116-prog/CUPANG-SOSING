@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
+import {submissionPackageUI} from './helpers/submission-package-ui.mjs';
 
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 const prices=[[4260,7100,9230],[4930,8220,10690]];
@@ -42,6 +43,22 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const plan=JSON.parse(new TextDecoder().decode(files.get('supplier-hub-upload-plan.json')));
   assert.deepEqual(plan.company,preview.report.company);assert.ok(files.has(plan.quotation.file.filename));
   assert.equal(plan.productImages.length,3);assert.equal(plan.labelImages.length,1);
+  assert.equal(plan.profileId,'cat');
+  const ui=submissionPackageUI({route:h.route,productId:product.id});
+  await ui.click('견적서 + 첨부 파일 준비');assert.equal(ui.button('등록 전송').props.disabled,true);
+  assert.equal(ui.button('확장에 첨부 파일 준비').props.disabled,false);
+  await ui.click('확장에 첨부 파일 준비');assert.deepEqual(ui.alerts(),[]);
+  ui.choose();assert.equal(ui.button('등록 전송').props.disabled,false);
+  await ui.click('등록 전송');assert.deepEqual(ui.alerts(),[]);
+  const transfers=ui.calls.filter(call=>['prepare','transmit'].includes(call.action));assert.equal(transfers.length,2);
+  for(const transfer of transfers){
+   assert.deepEqual(transfer.files.company,preview.report.company);assert.equal(transfer.files.productId,product.id);
+   assert.equal(transfer.files.categoryId,'80719');assert.equal(transfer.files.profileId,'cat');assert.equal(transfer.files.includedOptions,6);
+   assert.equal(transfer.files.quotation[0].name,preview.filename);assert.equal(transfer.files.productImages.length,3);assert.equal(transfer.files.labelImages.length,1);
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(transfers[1].agreements)),{priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true});
+  assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+  assert.equal(ui.calls.filter(call=>call.action==='source').length,4,'app and extension each compare the real saved source before both transfers');
   assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
   // Clearing a real mandatory input must block again, without hiding the
   // remaining image or form reviews. No test submits this synthetic category.
@@ -51,6 +68,9 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(invalid.submissionReview.errorCount,1);
   assert.equal(invalid.submissionReview.issues.find(issue=>issue.kind==='error').fieldId,'packagedWeightG');
   assert.notEqual(invalid.fingerprint,preview.fingerprint);
+  const blocked=submissionPackageUI({route:h.route,productId:product.id});await blocked.click('견적서 + 첨부 파일 준비');blocked.choose();
+  assert.equal(blocked.button('등록 전송').props.disabled,true);assert.equal(blocked.button('확장에 첨부 파일 준비').props.disabled,true);
+  assert.equal(blocked.calls.some(call=>['prepare','transmit'].includes(call.action)),false);
  }finally{h.close();}
 });
 

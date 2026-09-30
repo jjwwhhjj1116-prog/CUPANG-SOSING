@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
-function setup({outcome='dispatched',savedChanges={},senderChanges={},consume=true,tabChanges={},onExecute}={}){
+function setup({outcome='dispatched',savedChanges={},senderChanges={},consume=true,tabChanges={},onExecute,sourceChangedAt}={}){
   const fingerprint='a'.repeat(64),calls=[],puts=[];
-  const saved={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint,createdAt:Date.now(),base64:'UEs=',...savedChanges};
+  const saved={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint,createdAt:Date.now(),base64:'UEs=',appTabId:7,windowId:17,...savedChanges};let sourceChecks=0;
   const sender={id:'extension',url:'chrome-extension://extension/popup.html',...senderChanges};
   const context=vm.createContext({Date,URL,Uint8Array,atob,
     verifySupplierHubCompany(){},prepareAttachments:async()=>({company:{code:'A01464742',name:'와이홉'},productId:'p',categoryId:'80719',includedOptions:3,quotation:[{name:`YOOFAM-${fingerprint}.xlsx`}]}),attachToSupplierHub(){},
+    verifyAppQuotationSource:async()=>{calls.push('verify-source');if(++sourceChecks===sourceChangedAt)throw Error('최신 저장본 변경');},
     pendingPackage:async action=>{calls.push(action);return action==='get'?saved:consume;},
     transferRecord:async(action,key,value)=>{puts.push({key,value});},
-    chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration',...tabChanges}]},
+    chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',...tabChanges}]},
       scripting:{executeScript:async(input)=>{if(input.func===context.verifySupplierHubCompany)return [{result:{code:'A01464742'}}];calls.push('execute');await onExecute?.();if(outcome==='rejected')throw Error('existing attachment');return [{result:{state:outcome,registered:false}}];}}},
   });
   vm.runInContext(source,context);
@@ -22,7 +23,7 @@ test('worker saves confirmed dispatch identity without a popup response callback
   const run=setup({onExecute:()=>execution});const pending=run.run();
   await new Promise(resolve=>setImmediate(resolve));assert.equal(run.puts.length,0);
   finish();assert.equal((await pending).state,'dispatched');
-  assert.deepEqual(run.calls,['get','delete','execute']);
+  assert.deepEqual(run.calls,['get','verify-source','verify-source','delete','execute']);
   assert.equal(run.puts[0].value.company.code,'A01464742');assert.equal(run.puts[0].key,'attempt:123');assert.equal(run.puts[0].value.productId,'p');
   assert.equal(run.puts[0].value.includedOptions,3);
   assert.deepEqual(Object.keys(run.puts[0].value).sort(),['categoryId','company','fingerprint','includedOptions','origin','productId']);
@@ -30,8 +31,14 @@ test('worker saves confirmed dispatch identity without a popup response callback
 test('partial or rejected dispatch preserves previous identity and is not retried',async()=>{
   for(const outcome of ['partial','rejected']){
     const run=setup({outcome});if(outcome==='partial')assert.equal((await run.run()).state,'partial');else await assert.rejects(run.run());
-    assert.equal(run.puts.length,0);assert.deepEqual(run.calls,['get','delete','execute']);
+    assert.equal(run.puts.length,0);assert.deepEqual(run.calls,['get','verify-source','verify-source','delete','execute']);
   }
+});
+
+test('old prepared packages and changed source stay unconsumed without an upload',async()=>{
+ for(const options of [{sourceChangedAt:1},{sourceChangedAt:2},{savedChanges:{windowId:undefined}},{tabChanges:{windowId:18}}]){
+  const run=setup(options);await assert.rejects(run.run());assert.equal(run.calls.includes('delete'),false);assert.equal(run.calls.includes('execute'),false);assert.equal(run.puts.length,0);
+ }
 });
 test('only own popup can dispatch into the selected current Hub tab',async()=>{
   for(const options of [{senderChanges:{id:'other'}},{senderChanges:{url:'http://localhost:3000/'}},{senderChanges:{tab:{id:123}}},{tabChanges:{id:456}},{tabChanges:{url:'https://supplier.coupang.com/qvt/wims'}}]){

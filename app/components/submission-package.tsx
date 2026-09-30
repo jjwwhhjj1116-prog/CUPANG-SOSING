@@ -106,6 +106,10 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
             || response.headers.get('content-disposition')!==`attachment; filename="${preview!.filename}"`)throw new Error('검토한 견적서와 다운로드 파일이 일치하지 않습니다. 다시 준비해주세요.');
         }else if(!response.headers.get('content-type')?.startsWith('application/zip'))throw new Error('견적서 ZIP 응답을 확인하지 못했습니다.');
         const blob=await response.blob();if(controller.signal.aborted)return;
+        if(action==='transmit'||action==='handoff'){
+          await verifyQuotationResultSource({productId,categoryId:categoryId!,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
+          if(controller.signal.aborted)return;
+        }
         if(action==='transmit'){
           setAttemptedFingerprint(preview!.fingerprint);setHubResult(null);
           const identity={productId,categoryId:categoryId!,fingerprint:preview!.fingerprint};
@@ -172,7 +176,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
         {hubResult.registration.scope==='visible-page'?<small>현재 페이지의 결과입니다. 다른 페이지의 옵션은 아직 대조되지 않았습니다.</small>:
           <small>{hubResult.registration.hasMore===true?'다음 페이지가 남아 있습니다. 결과를 계속 확인해주세요.':hubResult.registration.hasMore===null?'추가 페이지 유무를 확인하지 못했습니다. Supplier Hub 결과 표를 확인해주세요.':'마지막 페이지까지 조회했습니다.'} 상품 검수 완료 여부는 각 행의 상태를 확인하세요.</small>}
       </div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.26.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.26)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.27.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.27)</a>
     </>}
   </section>;
 }

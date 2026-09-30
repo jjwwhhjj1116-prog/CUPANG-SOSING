@@ -1,9 +1,9 @@
 export const HANDOFF_ORIGINS=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'];
 export function validateHandoff(message,sender){
   let origin;try{origin=new URL(sender?.url).origin;}catch{throw Error('앱 출처를 확인하지 못했습니다.');}
-  if(!sender?.tab||sender.frameId!==0||!HANDOFF_ORIGINS.includes(origin))throw Error('허용된 앱 탭에서만 전달할 수 있습니다.');
+  if(!Number.isSafeInteger(sender?.tab?.id)||sender.tab.id<0||!Number.isSafeInteger(sender.tab.windowId)||sender.tab.windowId<0||sender.frameId!==0||!HANDOFF_ORIGINS.includes(origin))throw Error('허용된 앱 탭에서만 전달할 수 있습니다.');
   if(message?.type!=='YOOFAM_PREPARE_PACKAGE'||!/^\w[\w-]{0,99}$/.test(message.productId)||!/^\d{1,20}$/.test(message.categoryId)||!/^[a-f0-9]{64}$/.test(message.fingerprint)||typeof message.base64!=='string'||message.base64.length>40*1024*1024||!message.base64.length||!/^[-a-zA-Z0-9+/]*={0,2}$/.test(message.base64))throw Error('견적서 전달 자료를 확인해주세요.');
-  return {productId:message.productId,categoryId:message.categoryId,fingerprint:message.fingerprint,base64:message.base64,createdAt:Date.now(),origin};
+  return {productId:message.productId,categoryId:message.categoryId,fingerprint:message.fingerprint,base64:message.base64,createdAt:Date.now(),origin,appTabId:sender.tab.id,windowId:sender.tab.windowId};
 }
 async function database(){return new Promise((resolve,reject)=>{const request=indexedDB.open('yoofam-quotation-handoff',1);request.onupgradeneeded=()=>request.result.createObjectStore('pending');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
 export function validateResultRequest(message,sender){

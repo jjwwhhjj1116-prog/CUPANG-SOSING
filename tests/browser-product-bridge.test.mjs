@@ -34,7 +34,7 @@ test('bridge timeout sends cancellation and accepts only its own same-window res
 test('content script forwards capture identity and cancellation without creating a stale response',async()=>{
  const handlers=[],messages=[],responses=[];
  const window={addEventListener:(_type,fn)=>handlers.push(fn),postMessage:message=>responses.push(message)};
- vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),{window,location:{origin:'http://localhost:3000'},chrome:{runtime:{sendMessage:async message=>{messages.push(message);return {ok:true};}}}});
+ vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),{window,location:{origin:'http://localhost:3000'},chrome:{runtime:{onMessage:{addListener(){}},sendMessage:async message=>{messages.push(message);return {ok:true};}}}});
  const event=type=>({source:window,origin:'http://localhost:3000',data:{channel:'YOOFAM_1688_CAPTURE',requestId,type,sourceUrl:url}});
  await handlers[1](event('CAPTURE'));await handlers[1](event('CANCEL'));
  assert.deepEqual(JSON.parse(JSON.stringify(messages)),[

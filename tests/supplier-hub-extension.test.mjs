@@ -95,8 +95,9 @@ test('extension limits access to the explicit product and Supplier Hub hosts and
 });
 test('web handoff accepts only top-frame app senders and bounded product-specific packages',()=>{
   const request={type:'YOOFAM_PREPARE_PACKAGE',productId:'product-1',categoryId:'80719',fingerprint:'a'.repeat(64),base64:'UEs='};
-  const sender={tab:{id:1},frameId:0,url:HANDOFF_ORIGINS[0]+'/products'};
+  const sender={tab:{id:1,windowId:17},frameId:0,url:HANDOFF_ORIGINS[0]+'/products'};
   assert.equal(validateHandoff(request,sender).fingerprint,request.fingerprint);
+  assert.equal(validateHandoff(request,sender).appTabId,1);assert.equal(validateHandoff(request,sender).windowId,17);
   for(const bad of [{...sender,url:'https://evil.example/'},{...sender,url:HANDOFF_ORIGINS[0]+'.evil.example/'},{...sender,frameId:1},{...sender,tab:null}])assert.throws(()=>validateHandoff(request,bad));
   for(const change of [{productId:'../other'},{fingerprint:'wrong'},{categoryId:''},{base64:'!'},{base64:'x'.repeat(40*1024*1024+1)}])assert.throws(()=>validateHandoff({...request,...change},sender));
 });

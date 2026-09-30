@@ -5,6 +5,7 @@ import {verifySupplierHubCompany} from './company.mjs';
 import {attachToSupplierHub} from './attach.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
 import {waitForSupplierHubPage,supplierHubUploadReady} from './hub-tab.mjs';
+import {verifyAppQuotationSource} from './source-check.mjs';
 
 const activeWindows=new Set();
 export async function transmitSupplierHubPackage(message,sender,api=chrome,store=transferRecord){
@@ -22,6 +23,8 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     const prepared=await prepareAttachments(Uint8Array.from(atob(packageValue.base64),c=>c.charCodeAt(0)));
     if(prepared.productId!==identity.productId||prepared.categoryId!==identity.categoryId
       ||prepared.quotation[0]?.name!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('검토한 상품·카테고리와 첨부 견적서가 다릅니다.');
+    const sourceCheck=()=>verifyAppQuotationSource(identity,prepared,{appTabId:sender.tab.id,windowId},api);
+    await sourceCheck();
     const key=`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
     if(await store('get',key))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
     const tabs=(await api.tabs.query({windowId})).filter(tab=>isHubRegistrationTab(tab,windowId));
@@ -55,6 +58,7 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     }
     if(preflight?.result?.state!=='ready'||preflight.result.registered!==false)throw Error('Supplier Hub 첨부 화면을 확인하지 못했습니다.');
     await current();
+    await sourceCheck();
     const record={...identity,company:prepared.company,includedOptions:prepared.includedOptions,tabId,windowId,startedAt:Date.now(),state:'started',registered:false};
     // Atomic persisted claim survives a closed app tab or a restarted worker.
     if(!await store('claim',key,record))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
@@ -76,6 +80,7 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
       const [ready]=await api.scripting.executeScript({target:{tabId},func:waitForSupplierHubAttachments,args:[names,prepared.company]});
       if(ready?.result!==true)throw Error('파일 업로드 완료를 확인하지 못했습니다. Supplier Hub 첨부 목록을 확인해주세요.');
       await companyCheck();
+      await sourceCheck();
       const [validation]=await api.scripting.executeScript({target:{tabId},func:requestSupplierHubValidation,args:[reviewed,true]});
       const outcome=validation?.result;
       if(outcome?.state!=='validation-requested'||outcome.validated!==false||outcome.registered!==false)throw Error('파일 검증 요청 결과를 확인하지 못했습니다. Supplier Hub 진행상태를 확인해주세요.');
