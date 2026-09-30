@@ -12,7 +12,8 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 /** Actual component, API, ZIP parser and source verifier. The final Hub transport
  * is captured locally: these tests never upload synthetic data to Supplier Hub. */
 export function submissionPackageUI({route,productId,profileId='cat',categoryId='80719'}){
- const slots=[],modules=new Map(),calls=[];let cursor=0;
+ const slots=[],modules=new Map(),calls=[],savedSubmissions=new Map();let cursor=0;
+ const submissionKey=identity=>JSON.stringify([identity.productId,identity.categoryId,identity.fingerprint]);
  const fetcher=async(path,init)=>{const body=JSON.parse(init.body);calls.push({action:body.action});return route(path,{method:init.method,body});};
  const content={window:{addEventListener(){}},location:{origin},chrome:{runtime:{id:'extension',onMessage:{addListener(){}}}},URL,Date,AbortController,setTimeout,clearTimeout,
   fetch:async(path,init)=>{const response=await fetcher(path,init);Object.defineProperty(response,'url',{value:origin+path});return response;}};
@@ -21,11 +22,12 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
  async function connect(action,blob,identity,agreements){
   const files=await prepareAttachments(new Uint8Array(await blob.arrayBuffer()));
   await verifyAppQuotationSource({...identity,origin},files,{appTabId:7,windowId:17},api);
+  if(action==='transmit')savedSubmissions.set(submissionKey(identity),{attempt:{state:'validation-requested',company:files.company,includedOptions:files.includedOptions,startedAt:Date.now(),registered:false},result:null});
   calls.push({action,files,agreements});return {state:'validation-requested',registered:false};
  }
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},
   useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
- const bridge={checkSupplierHubExtension:async()=>{},prepareSupplierHubHandoff:(blob,identity)=>connect('prepare',blob,identity),
+ const bridge={getSupplierHubSubmission:async identity=>savedSubmissions.get(submissionKey(identity))||{attempt:null,result:null},checkSupplierHubExtension:async()=>{},prepareSupplierHubHandoff:(blob,identity)=>connect('prepare',blob,identity),
   transmitSupplierHubPackage:(blob,identity,agreements)=>connect('transmit',blob,identity,agreements)};
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
@@ -44,6 +46,6 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
   const target=button(label);if(!target||target.props.disabled)throw Error('Button unavailable: '+label);target.props.onClick();
   const deadline=Date.now()+5000;while(render().props['aria-busy']){if(Date.now()>deadline)throw Error('UI request timeout');await new Promise(resolve=>setTimeout(resolve,1));}
  }
- return {calls,button,click,render,choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
+ return {calls,button,click,render,remount(){slots.length=0;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
   alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children)};
 }

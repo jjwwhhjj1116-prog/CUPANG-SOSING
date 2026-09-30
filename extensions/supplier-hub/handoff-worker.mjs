@@ -1,6 +1,6 @@
 import {dispatchSupplierHubValidation} from './validation-dispatch.mjs';
 import {observeSupplierHubResult} from './observe.mjs';
-import {validateHandoff,pendingPackage,validateResultRequest,resultKey,transferRecord} from './handoff-store.mjs';
+import {validateHandoff,pendingPackage,resultKey,transferRecord} from './handoff-store.mjs';
 import {dispatchPendingPackage} from './dispatch.mjs';
 import {capture1688Product,cancel1688Capture} from './capture-1688.mjs';
 import {transmitSupplierHubPackage} from './transmit.mjs';
@@ -47,9 +47,10 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       const result=await dispatchPendingPackage(message,sender);respond({ok:true,result});return;
     }
     if(message.type==='YOOFAM_GET_RESULT'){
-      const identity=validateResultRequest(message,sender);
+      const identity=validateAppHubRequest(message,sender,'YOOFAM_GET_RESULT');
       const record=await transferRecord('get',resultKey(identity));
-      respond({ok:true,fingerprint:identity.fingerprint,record:record||null,registered:false});return;
+      const attempt=await transferRecord('get',`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`);
+      respond({ok:true,fingerprint:identity.fingerprint,record:record||null,attempt:attempt||null,registered:false});return;
     }
     const value=validateHandoff(message,sender);await pendingPackage('put',value);
     respond({ok:true,fingerprint:value.fingerprint,registered:false});

@@ -27,6 +27,18 @@ export type SupplierHubRegistration={quotationId:string;registered:false;observe
   {scope:'visible-page';pagesRead?:never;hasMore?:never}|{scope:'queried-pages';pagesRead:number;hasMore:boolean|null}
 );
 export type SupplierHubResult={state:string;filename:string;company?:{code:string;name:string};submittedAt?:string;status?:string;detail?:string;quotationId?:string;includedOptions?:number;observedAt:number;registered:false;registration?:SupplierHubRegistration};
+export type SupplierHubSavedAttempt={state:'started'|'validation-requested'|'attached'|'partial'|'unconfirmed';company:{code:string;name:string};includedOptions:number;startedAt:number;registered:false;error?:string};
+export type SupplierHubSavedSubmission={attempt:SupplierHubSavedAttempt|null;result:SupplierHubResult|null};
+type ResultSource={filename:string;company:{code:string;name:string};includedOptions:number;quotationId?:string};
+/** A cached receipt and a live lookup must refer to the same reviewed company and rows. */
+export function validateSupplierHubResultForSource(result:SupplierHubResult,source:ResultSource):void{
+  if(result.registered!==false||result.filename!==source.filename||result.company?.code!==source.company.code||result.company?.name!==source.company.name)
+    throw new Error('현재 검토한 회사의 견적서 결과인지 확인하지 못했습니다.');
+  if(result.includedOptions!==source.includedOptions||result.registration&&(result.registration.includedOptions!==source.includedOptions||result.registration.rows.length>source.includedOptions))
+    throw new Error('검토한 견적서의 옵션 수와 Supplier Hub 결과가 다릅니다.');
+  if(source.quotationId!==undefined&&result.quotationId!==source.quotationId)
+    throw new Error('조회 중 견적서 ID가 변경되었습니다. 다시 결과를 확인해주세요.');
+}
 export function validateRegistrationResult(value:unknown,quotationId:unknown):SupplierHubRegistration{
   const result=value as SupplierHubRegistration;
   if(!result||typeof quotationId!=='string'||!quotationId.trim()||result.quotationId!==quotationId||!['visible-page','queried-pages'].includes(result.scope)||result.registered!==false||!Number.isFinite(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000||(result.includedOptions!==undefined&&(!Number.isSafeInteger(result.includedOptions)||result.includedOptions<1||result.includedOptions>200))||!Array.isArray(result.rows)||result.rows.length>1000||result.rows.some(row=>!row||['title','submittedAt','category','barcode','sourceQuotation','skuId','status','stage'].some(key=>typeof row[key as keyof SupplierHubRegistrationRow]!=='string'||row[key as keyof SupplierHubRegistrationRow].length>20000)))throw new Error('현재 견적서의 상품별 등록 결과인지 확인하지 못했습니다.');
@@ -35,6 +47,17 @@ export function validateRegistrationResult(value:unknown,quotationId:unknown):Su
     ||result.scope==='visible-page'&&(result.pagesRead!==undefined||result.hasMore!==undefined))throw new Error('상품별 조회 페이지의 범위와 옵션 수를 확인하지 못했습니다.');
   return result;
 }
+function readResultRecord(value:unknown,identity:PackageIdentity):SupplierHubResult|null{
+  if(value===null)return null;
+  const record=value as Record<string,unknown>;
+  if(!record||record.origin!==window.location.origin||record.productId!==identity.productId||record.categoryId!==identity.categoryId||record.fingerprint!==identity.fingerprint||record.filename!==`YOOFAM-${identity.fingerprint}.xlsx`||record.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(String(record.state))||typeof record.observedAt!=='number'||!Number.isFinite(record.observedAt)||record.observedAt<=0||record.observedAt>Date.now()+60000||(record.includedOptions!==undefined&&(typeof record.includedOptions!=='number'||!Number.isSafeInteger(record.includedOptions)||record.includedOptions<1||record.includedOptions>200))||['submittedAt','status','detail','quotationId'].some(key=>record[key]!==undefined&&(typeof record[key]!=='string'||String(record[key]).length>20000)))throw new Error('검토한 상품의 검증 결과인지 확인하지 못했습니다.');
+  if(record.registration!==undefined){
+    if(record.state!=='validation-complete')throw new Error('파일 검증 완료 결과가 필요합니다.');
+    const registration=validateRegistrationResult(record.registration,record.quotationId);
+    if(registration.includedOptions!==record.includedOptions)throw new Error('초안 옵션 수와 상품별 등록 결과의 연결을 확인하지 못했습니다.');
+  }
+  return record as SupplierHubResult;
+}
 export async function getSupplierHubResult(identity:PackageIdentity,signal:AbortSignal,refresh:boolean|'registration'=false):Promise<SupplierHubResult|null>{
   if(refresh==='registration'){
     const capability=await exchange('PING',null,signal);
@@ -42,16 +65,32 @@ export async function getSupplierHubResult(identity:PackageIdentity,signal:Abort
   }
   const response=await exchange(refresh==='registration'?'REGISTRATION':refresh?'REFRESH':'RESULT',identity,signal);
   if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new Error('견적서 결과의 식별값이 일치하지 않습니다.');
-  if(response.record===null){if(refresh==='registration')throw new Error('이 견적서의 상품별 등록 결과가 없습니다.');return null;}
-  const record=response.record as Record<string,unknown>;
-  if(!record||record.origin!==window.location.origin||record.productId!==identity.productId||record.categoryId!==identity.categoryId||record.fingerprint!==identity.fingerprint||record.filename!==`YOOFAM-${identity.fingerprint}.xlsx`||record.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(String(record.state))||typeof record.observedAt!=='number'||!Number.isFinite(record.observedAt)||record.observedAt<=0||record.observedAt>Date.now()+60000||(record.includedOptions!==undefined&&(typeof record.includedOptions!=='number'||!Number.isSafeInteger(record.includedOptions)||record.includedOptions<1||record.includedOptions>200))||['submittedAt','status','detail','quotationId'].some(key=>record[key]!==undefined&&(typeof record[key]!=='string'||String(record[key]).length>20000)))throw new Error('검토한 상품의 검증 결과인지 확인하지 못했습니다.');
-  if(record.registration!==undefined){
-    if(record.state!=='validation-complete')throw new Error('파일 검증 완료 결과가 필요합니다.');
-    const registration=validateRegistrationResult(record.registration,record.quotationId);
-    if(registration.includedOptions!==record.includedOptions)throw new Error('초안 옵션 수와 상품별 등록 결과의 연결을 확인하지 못했습니다.');
+  const record=readResultRecord(response.record,identity);
+  if(refresh==='registration'&&!record?.registration)throw new Error('현재 견적서의 상품별 등록 조회 결과가 없습니다.');
+  return record;
+}
+/** Reads this Chrome profile's persisted claim/results. Never navigates or uploads to Hub. */
+export async function getSupplierHubSubmission(identity:PackageIdentity,signal:AbortSignal):Promise<SupplierHubSavedSubmission>{
+  const capability=await exchange('PING',null,signal);
+  if(capability.savedSubmission!==true)throw new Error('전송 기록 복원을 지원하는 Chrome 확장 0.2.28 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  const response=await exchange('RESULT',identity,signal);
+  if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new Error('전송 기록의 식별값이 일치하지 않습니다.');
+  const result=readResultRecord(response.record,identity);
+  const value=response.attempt as Record<string,unknown>|null;
+  if(value!==null){
+    const company=value?.company as {code?:unknown;name?:unknown}|undefined;
+    const companies:Record<string,string>={A01526306:'유앤채',A01464742:'와이홉'};
+    if(!value||value.origin!==window.location.origin||value.productId!==identity.productId||value.categoryId!==identity.categoryId||value.fingerprint!==identity.fingerprint
+      ||value.registered!==false||!['started','validation-requested','attached','partial','unconfirmed'].includes(String(value.state))
+      ||typeof company?.code!=='string'||!Object.hasOwn(companies,company.code)||company.name!==companies[company.code]
+      ||typeof value.includedOptions!=='number'||!Number.isSafeInteger(value.includedOptions)||value.includedOptions<1||value.includedOptions>200
+      ||typeof value.startedAt!=='number'||!Number.isSafeInteger(value.startedAt)||value.startedAt<=0||value.startedAt>Date.now()+60000
+      ||!Number.isSafeInteger(value.tabId)||Number(value.tabId)<0||!Number.isSafeInteger(value.windowId)||Number(value.windowId)<0
+      ||value.error!==undefined&&(typeof value.error!=='string'||value.error.length>20000))throw new Error('검토한 견적서의 저장된 전송 기록인지 확인하지 못했습니다.');
   }
-  if(refresh==='registration'&&record.registration===undefined)throw new Error('현재 견적서의 상품별 등록 조회 결과가 없습니다.');
-  return record as SupplierHubResult;
+  const attempt=value as SupplierHubSavedAttempt|null;
+  if(result&&attempt)validateSupplierHubResultForSource(result,{filename:`YOOFAM-${identity.fingerprint}.xlsx`,company:attempt.company,includedOptions:attempt.includedOptions});
+  return {attempt,result};
 }
 export async function prepareSupplierHubHandoff(blob:Blob,identity:PackageIdentity,signal:AbortSignal){
   const result=await exchange('PREPARE',{...identity,base64:await packageBase64(blob)},signal);

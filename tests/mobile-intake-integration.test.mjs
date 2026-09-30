@@ -58,7 +58,13 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   }
   assert.deepEqual(JSON.parse(JSON.stringify(transfers[1].agreements)),{priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true});
   assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
-  assert.equal(ui.calls.filter(call=>call.action==='source').length,4,'app and extension each compare the real saved source before both transfers');
+  assert.equal(ui.calls.filter(call=>call.action==='source').length,6,'recovery compares source twice, and app/extension compare source before each transfer');
+  ui.remount();await ui.click('견적서 + 첨부 파일 준비');assert.deepEqual(ui.alerts(),[]);
+  assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+  assert.equal(ui.button('확장에 첨부 파일 준비').props.disabled,true);
+  assert.equal(ui.button('전송 결과 계속 확인').props.disabled,false);
+  assert.equal(ui.calls.filter(call=>['prepare','transmit'].includes(call.action)).length,2,'reopening never attaches another real reviewed ZIP');
+  assert.equal(ui.calls.filter(call=>call.action==='source').length,8,'reopening also brackets cache recovery with real API source checks');
   assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
   // Clearing a real mandatory input must block again, without hiding the
   // remaining image or form reviews. No test submits this synthetic category.

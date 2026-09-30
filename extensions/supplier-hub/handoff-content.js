@@ -6,7 +6,7 @@ window.addEventListener('message',async event=>{
   let result;
   try{
     const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION'};
-    result=type==='PING'?{ok:true,version:'0.2.27',companyBinding:true,directTransmission:true,latestSourceBinding:true,registrationLookup:true,registrationPages:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
+    result=type==='PING'?{ok:true,version:'0.2.28',companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,registrationLookup:true,registrationPages:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
   }catch{result={ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
   window.postMessage({channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId,result},location.origin);
 });

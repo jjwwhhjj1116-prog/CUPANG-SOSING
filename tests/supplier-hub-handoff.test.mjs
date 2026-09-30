@@ -120,3 +120,66 @@ test('app registration lookup needs its capability and returns only matching ref
   await assert.rejects(bad.api.getSupplierHubResult(identity,new AbortController().signal,'registration'));assert.equal(bad.sent.length,2);
  }
 });
+
+function savedFixture(company={code:'A01464742',name:'와이홉'}){
+ const attempt={...identity,origin:'https://sourceflow.jjwwhhjj1116.workers.dev',company,includedOptions:2,startedAt:Date.now(),tabId:123,windowId:17,state:'validation-requested',registered:false};
+ const record={...identity,origin:attempt.origin,filename:`YOOFAM-${identity.fingerprint}.xlsx`,company,includedOptions:2,state:'validation-complete',quotationId:'123',observedAt:Date.now(),registered:false};
+ return {attempt,record};
+}
+function savedReply(value,capability={savedSubmission:true}){
+ return harness((message,emit)=>emit(message,message.type==='PING'?{ok:true,...capability}:{ok:true,fingerprint:identity.fingerprint,registered:false,...value}));
+}
+test('cached claim recovery supports both companies and uses only PING plus a stored RESULT',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const value=savedFixture(company),h=savedReply(value);
+  const result=await h.api.getSupplierHubSubmission(identity,new AbortController().signal);
+  assert.equal(result.attempt.company.code,company.code);assert.equal(result.result.quotationId,'123');assert.equal(result.result.registered,false);
+  assert.deepEqual(h.sent.map(message=>message.type),['PING','RESULT']);assert.equal(h.sent[1].payload,identity);
+  assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+ }
+ const empty=savedReply({attempt:null,record:null});
+ const result=await empty.api.getSupplierHubSubmission(identity,new AbortController().signal);assert.equal(result.attempt,null);assert.equal(result.result,null);
+ const receipt=savedReply({...savedFixture(),attempt:null});assert.equal((await receipt.api.getSupplierHubSubmission(identity,new AbortController().signal)).result.quotationId,'123');
+});
+
+test('a claimed upload with no receipt remains an attempt, including uncertain and partial outcomes',async()=>{
+ for(const state of ['started','attached','partial','unconfirmed','validation-requested']){
+  const value=savedFixture(),h=savedReply({...value,attempt:{...value.attempt,state},record:null});
+  const result=await h.api.getSupplierHubSubmission(identity,new AbortController().signal);
+  assert.equal(result.attempt.state,state);assert.equal(result.attempt.registered,false);assert.equal(result.result,null);
+ }
+});
+
+test('old extension, missing claim field, forged identities and invalid claim shapes cannot authorize recovery',async()=>{
+ const old=savedReply({attempt:null,record:null},{});
+ await assert.rejects(old.api.getSupplierHubSubmission(identity,new AbortController().signal),/0.2.28/);assert.equal(old.sent.length,1);
+ const value=savedFixture();
+ for(const patch of [{origin:'http://localhost:3000'},{productId:'other'},{categoryId:'999'},{fingerprint:'b'.repeat(64)},{company:null},{company:{code:'__proto__',name:'bad'}},{company:{code:'A01464742',name:'유앤채'}},{includedOptions:0},{includedOptions:201},{includedOptions:1.5},{startedAt:Infinity},{startedAt:Date.now()+120000},{tabId:-1},{windowId:undefined},{registered:true},{state:'not-started'},{state:'registered'},{error:{}}]){
+  const h=savedReply({...value,attempt:{...value.attempt,...patch}});
+  await assert.rejects(h.api.getSupplierHubSubmission(identity,new AbortController().signal));
+  assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+ }
+ await assert.rejects(savedReply({record:null}).api.getSupplierHubSubmission(identity,new AbortController().signal));
+ await assert.rejects(savedReply({attempt:null}).api.getSupplierHubSubmission(identity,new AbortController().signal));
+});
+
+test('saved receipt cannot contradict the persisted claim company, count or exact filename',async()=>{
+ const value=savedFixture();
+ for(const patch of [{company:undefined},{company:{code:'A01526306',name:'유앤채'}},{includedOptions:1},{filename:'wrong.xlsx'},{productId:'other'},{registered:true}]){
+  await assert.rejects(savedReply({...value,record:{...value.record,...patch}}).api.getSupplierHubSubmission(identity,new AbortController().signal));
+ }
+});
+
+test('manual and recovered source binding also checks option coverage and pinned quotation ID',()=>{
+ const api=harness().api,value=savedFixture(),source={filename:value.record.filename,company:value.attempt.company,includedOptions:2,quotationId:'123'};
+ api.validateSupplierHubResultForSource(value.record,source);
+ for(const patch of [{filename:'wrong.xlsx'},{company:undefined},{company:{code:'A01464742',name:'유앤채'}},{includedOptions:3},{quotationId:'other'},{registered:true},{registration:{includedOptions:2,rows:[{},{},{}]}}])
+  assert.throws(()=>api.validateSupplierHubResultForSource({...value.record,...patch},source));
+});
+
+test('cancelling cache recovery releases all listeners and never sends a live Hub request',async()=>{
+ const h=harness((message,emit)=>{if(message.type==='PING')emit(message,{ok:true,savedSubmission:true});});
+ const controller=new AbortController(),pending=h.api.getSupplierHubSubmission(identity,controller.signal);
+ await new Promise(resolve=>setImmediate(resolve));controller.abort();await assert.rejects(pending,/취소/);
+ assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);assert.deepEqual(h.sent.map(message=>message.type),['PING','RESULT']);
+});
