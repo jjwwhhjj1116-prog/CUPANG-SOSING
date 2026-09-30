@@ -30,7 +30,11 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
   if (resolved.schema.status !== 'observed') general('SCHEMA_UNCONFIRMED', '선택한 카테고리의 공식 상품 속성이 아직 확인되지 않았습니다.');
   const rows = resolved.rows.filter(row => row.included);
   if (!rows.length) general('NO_INCLUDED_OPTIONS', '견적에 포함할 옵션을 선택해주세요.');
-  for (const message of new Set(resolved.issues)) general('QUOTATION_CONSTRAINT', message);
+  // Modern resolvers keep form evidence separate from blocking constraints.
+  // Legacy records without this distinction remain conservative.
+  for (const message of new Set(resolved.validationIssues ?? resolved.issues)) general('QUOTATION_CONSTRAINT', message);
+  for (const message of new Set(resolved.reviewMessages ?? [])) add({kind:'review', code:'QUOTATION_EVIDENCE',
+    message, optionId:null, optionLabel:'상품 공통', fieldId:null});
   const owned = new Set(ownedImageKeys);
   for (const row of rows) {
     const unsupportedMedia = unsupportedQuotationMedia(row.fields.detailHtml?.value ?? '');
@@ -81,5 +85,5 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
         ? '이 패키지에 포함한 이미지 바이트의 용량·형식·헤더 픽셀 크기를 검사했습니다. 전체 디코딩·번역 품질·Supplier Hub 업로드 성공은 미검증입니다.'
         : '이미지 소유권과 저장소 파일 존재·크기·형식검사 기록을 확인했습니다. 파일 내용 전체·번역 품질·Supplier Hub 업로드 성공은 미검증입니다.' : '이미지 연결 소유권을 검사하며 실제 파일 내용·Supplier Hub 업로드 성공은 검사하지 않습니다.',
       '공식 Excel·이미지·인증·물류 규격과 실제 접수는 미검증입니다. 오류가 없어도 등록 완료를 뜻하지 않습니다.',
-      'Supplier Hub 전송 연결이 아직 구현되지 않았습니다. 이 검사는 자료를 전송하거나 등록하지 않습니다.']};
+      '이 검사는 자료를 전송하거나 등록하지 않습니다. 검토 후 등록 전송을 누르면 같은 Chrome의 Supplier Hub에 첨부 파일을 전달합니다.']};
 }

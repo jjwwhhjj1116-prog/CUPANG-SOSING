@@ -78,6 +78,16 @@ function fixture(overrides = model.emptyQuotationOverrides(), brand = '기본 �
     categoryContext: { source: 'collection', profileId: null, categoryId: '80719', categoryPath: [] }, productVersion: '2026-09-24T00:00:00.000Z', contentRevision: 0, optionRevision: 1, updatedAt: null };
 }
 
+test('owned image references are reviewable attachments in both editor and resolver, unowned references still fail',()=>{
+ const view=fixture();const draft=[change('mainImage','owner/second.png','red')];
+ const cell=editor.resolveQuotationEditorCell(view,draft,'red','mainImage');
+ assert.equal(cell.validationIssues.length,0);assert.ok(cell.reviewMessages.some(message=>message.includes('첨부 이미지 파일명')));
+ const automatic=view.automatic.rows.find(row=>row.optionId==='red').fields.mainImage;
+ assert.equal(automatic.validationIssues.length,0);assert.ok(automatic.reviewMessages.some(message=>message.includes('첨부 이미지 파일명')));
+ const invalid=editor.resolveQuotationEditorCell(view,[change('mainImage','other/foreign.png','red')],'red','mainImage');
+ assert.ok(invalid.validationIssues.length>0);
+});
+
 test('price relationship responds to both unsaved price cells, option inheritance and resets', () => {
   const view = fixture({common: {supplyPrice: '4000', salePrice: '3000'}, options: {}});
   const issue = cell => cell.issues.some(text => text.includes('공급가보다'));
@@ -369,7 +379,8 @@ test('draft evidence metadata follows manual edits, blanks and resets instead of
  const reset=editor.resolveQuotationEditorCell(view,[change(key,null,'red')],'red',key);
  assert.deepEqual(clone(reset.reviewMessages),clone(original.reviewMessages));
  const image=editor.resolveQuotationEditorCell(view,[change('mainImage','owner/second.png','red')],'red','mainImage');
- assert.ok(image.validationIssues.some(m=>m.includes('공개 주소')));
+ assert.equal(image.validationIssues.length,0);
+ assert.ok(image.reviewMessages.some(m=>m.includes('첨부 이미지 파일명')));
  assert.equal(JSON.stringify(view),before);
 });
 
@@ -384,7 +395,8 @@ test('overview preserves automatic validation failures, clears replaced values a
  assert.ok(problems([]).some(p=>p.fieldKey==='supplyPrice'&&p.issues.includes(issue)));
  assert.equal(problems([change('supplyPrice','3000','red')]).some(p=>p.fieldKey==='supplyPrice'),false);
  assert.ok(problems([change('supplyPrice',null,'red')]).some(p=>p.issues.includes(issue)));
- assert.ok(problems([]).some(p=>p.fieldKey==='mainImage'&&p.issues.some(text=>text.includes('공개 주소'))));
+ assert.equal(problems([]).some(p=>p.fieldKey==='mainImage'),false);
+ assert.ok(problems([change('mainImage','other/unowned.png','red')]).some(p=>p.fieldKey==='mainImage'));
  assert.equal(problems([]).some(p=>p.issues.some(text=>text.includes('쿠플러스 참조 화면'))),false);
  assert.equal(JSON.stringify(view),before);
 });
@@ -402,7 +414,8 @@ test('section progress uses current dependent price validation and distinguishes
  assert.equal(good.complete,bad.complete+1);assert.equal(bad.invalid,good.invalid+1);
  assert.equal(bad.required,good.required);
  const image=progress(draft).find(s=>s.id==='image');
- assert.equal(image.required,0);assert.equal(image.complete,0);assert.equal(image.invalid,1);
+ assert.equal(image.required,0);assert.equal(image.complete,0);assert.equal(image.invalid,0);
+ assert.equal(progress([...draft,change('mainImage','other/unowned.png','red')]).find(s=>s.id==='image').invalid,1);
  assert.equal(progress([...draft,change('mainImage','','red')]).find(s=>s.id==='image').invalid,0);
  const cell=editor.resolveQuotationEditorCell(view,draft,'red','salePrice');
  const field=view.resolved.schema.fields.find(f=>f.id==='salePrice');

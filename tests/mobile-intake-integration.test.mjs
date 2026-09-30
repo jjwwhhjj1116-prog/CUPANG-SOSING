@@ -7,6 +7,53 @@ import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 const prices=[[4260,7100,9230],[4930,8220,10690]];
 
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`saved source, review and XLSX can reach zero blocking input errors (${company.companyCode})`,async()=>{
+ const h=mobileIntakeHarness(company);
+ try{
+  await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const source=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  const images=h.sqlite.prepare('SELECT object_key FROM collection_images ORDER BY image_index').all().map(row=>row.object_key);
+  await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:source.revision,patch:{
+   label:{model:'REVIEWED-MODEL'},assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]},
+  }}}));
+  let view=await json(await h.route(base+'/quotation-fields'));
+  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
+   {fieldKey:'handlingReason',optionId:null,value:'해당사항없음'},
+   {fieldKey:'packagedWeightG',optionId:null,value:'420'},
+   {fieldKey:'packagedDimensionsMm',optionId:null,value:'100*200*300'},
+  ]}}));
+  view=await json(await h.route(base+'/quotation-fields'));
+  const fields=view.resolved.schema.fields.map(field=>field.id),workbook=quotationWorkbook(fields);
+  const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
+  const storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,workbook);
+  await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'합성 제출 준비 연결',categoryId:'80719',categoryPath:h.context.category.categoryPath,
+   template:{name:'synthetic.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},
+   mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
+  const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
+  assert.equal(preview.rows.length,6);assert.deepEqual(preview.report.company,{code:company.companyCode,name:company.companyName});
+  assert.equal(preview.submissionReview.errorCount,0,JSON.stringify(preview.submissionReview.issues.filter(issue=>issue.kind==='error')));
+  assert.ok(preview.submissionReview.reviewCount>0);assert.ok(preview.submissionReview.issues.some(issue=>issue.code==='QUOTATION_EVIDENCE'));
+  assert.equal(preview.submissionReview.submissionReady,false);
+  const bundle=await h.route(base+'/quotation',{method:'POST',body:{action:'export',fingerprint:preview.fingerprint}});
+  assert.equal(bundle.status,200,await bundle.clone().text());
+  const files=await h.load('app/xlsx-template.ts').readXlsxArchive(await bundle.arrayBuffer());
+  const review=JSON.parse(new TextDecoder().decode(files.get('submission-review.json')));
+  assert.equal(review.errorCount,0);assert.equal(review.inputFingerprint,preview.fingerprint);
+  const plan=JSON.parse(new TextDecoder().decode(files.get('supplier-hub-upload-plan.json')));
+  assert.deepEqual(plan.company,preview.report.company);assert.ok(files.has(plan.quotation.file.filename));
+  assert.equal(plan.productImages.length,3);assert.equal(plan.labelImages.length,1);
+  assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
+  // Clearing a real mandatory input must block again, without hiding the
+  // remaining image or form reviews. No test submits this synthetic category.
+  view=await json(await h.route(base+'/quotation-fields'));
+  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'packagedWeightG',optionId:'collected-1',value:''}]}}));
+  const invalid=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
+  assert.equal(invalid.submissionReview.errorCount,1);
+  assert.equal(invalid.submissionReview.issues.find(issue=>issue.kind==='error').fieldId,'packagedWeightG');
+  assert.notEqual(invalid.fingerprint,preview.fingerprint);
+ }finally{h.close();}
+});
+
 for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`recorded mobile source reaches editable six-SKU draft, manual review and XLSX (${company.companyCode})`,async()=>{
  const h=mobileIntakeHarness(company);
  try{

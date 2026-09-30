@@ -132,6 +132,19 @@ test('unknown category, empty inclusion, constraints and large reports remain ex
   const report=inspectSubmission(many,['owner/main.png']);assert.equal(report.reviewCount,1100);assert.equal(report.issues.length,1000);assert.equal(report.omittedIssueCount,100);
 });
 
+test('form evidence cannot disable transmission while actual and legacy constraints still block',()=>{
+ const input=resolved();input.issues=['양식 관찰 근거','Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
+ input.validationIssues=[];input.reviewMessages=[...input.issues];
+ const report=inspectSubmission(input,['owner/main.png']);
+ assert.equal(report.errorCount,0);assert.equal(report.reviewCount,3);
+ assert.equal(report.issues.filter(issue=>issue.code==='QUOTATION_EVIDENCE').length,2);
+ assert.equal(report.submissionReady,false,'no input errors does not prove external registration');
+ input.validationIssues=['옵션 개수 한도를 초과했습니다.'];
+ assert.equal(inspectSubmission(input,['owner/main.png']).errorCount,1);
+ delete input.validationIssues;delete input.reviewMessages;
+ assert.equal(inspectSubmission(input,['owner/main.png']).errorCount,2,'untyped legacy constraints are not ignored');
+});
+
 function route({current=true,revision=2,verified=false,mode='development',missing=false}={}) {
   const calls=[];class QuotationExportError extends Error{constructor(message,status){super(message);this.status=status;}}
   const saved={product:{id:'p',title:'상품',source_url:'https://detail.1688.com/offer/123.html',image_keys:'["owner/main.png"]'},source:{},state:{revision:2}};

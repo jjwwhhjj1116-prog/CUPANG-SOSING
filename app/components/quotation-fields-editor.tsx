@@ -95,10 +95,10 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
     if (mode === 'existing' && !resolvedValue.trim()) validationIssues.push('실제 바코드 번호를 입력해주세요.');
     if (mode === 'request-coupang' && resolvedValue.trim()) validationIssues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.');
   }
-  if (definition?.type === 'images' && resolvedValue) validationIssues.push('비공개 이미지 참조입니다. 외부 접수용 공개 주소는 아직 생성되지 않았습니다.');
   const reviewMessages: string[] = [];
   if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
   if (definition?.reviewRequired && (resolvedValue.trim() || hasSelectedEmptyQuotationChoice(definition, { value: resolvedValue, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
+  if (definition?.type === 'images' && resolvedValue) reviewMessages.push('견적서에는 연결한 첨부 이미지 파일명이 기록됩니다. 실제 상품과 이미지 구성을 확인해주세요.');
   const errors = [...new Set(validationIssues)];
   const issues = [...new Set([...errors, ...reviewMessages,
     ...(fieldKey === 'detailImages' ? quotationImageRoleIssues(resolveQuotationEditorCell(view, changes, optionId, 'mainImage').value, resolvedValue) : []),

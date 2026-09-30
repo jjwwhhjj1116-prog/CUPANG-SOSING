@@ -45,7 +45,7 @@ export type QuotationChange = { fieldKey: string; optionId: string | null; value
 export type QuotationSource = 'manual-option' | 'manual-common' | 'schema' | 'content' | 'settings' | 'option' | 'pricing' | 'product' | 'empty' | 'couplus-default';
 export type ResolvedQuotationField = { value: string; source: QuotationSource; needsReview: boolean; issues: string[]; validationIssues?: string[]; reviewMessages?: string[] };
 export type ResolvedQuotationRow = { optionId: string | null; optionLabel: string; included: boolean; fields: Record<string, ResolvedQuotationField> };
-export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[]; customLabels?: CustomLabel[] };
+export type ResolvedQuotation = { schema: QuotationSchema; rows: ResolvedQuotationRow[]; issues: string[]; validationIssues?: string[]; reviewMessages?: string[]; customLabels?: CustomLabel[] };
 export type QuotationFieldsView = {
   revision: number; inputFingerprint: string; overrides: QuotationOverrides; legacyOverrides?: QuotationOverrides; resolved: ResolvedQuotation; automatic: ResolvedQuotation;
   categoryContext: { source: 'profile' | 'collection' | 'unknown'; profileId: string | null; categoryId: string | null; categoryPath: string[] };
@@ -309,17 +309,23 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   const includeCommonRow = options.length === 0 && untouchedOptions;
   const overrides = input.overrides ?? emptyQuotationOverrides();
   const schema = getQuotationSchema(input.categoryId, input.categoryPath);
-  let ownedKeys: string[] = []; const issues = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
-  if (!includeCommonRow && !options.some(option => option.included)) issues.unshift('견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션을 상품 대표 가격으로 대체하지 않습니다.');
+  let ownedKeys: string[] = [];
+  const reviewMessages = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
+  const issues = [...reviewMessages], validationIssues: string[] = [];
+  const constraint = (message: string, first = false) => {
+    validationIssues.push(message);
+    if (first) issues.unshift(message); else issues.push(message);
+  };
+  if (!includeCommonRow && !options.some(option => option.included)) constraint('견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션을 상품 대표 가격으로 대체하지 않습니다.', true);
   const optionLimitIssue = quotationOptionLimitIssue(schema, options.filter(option => option.included).length);
-  if (optionLimitIssue) issues.unshift(optionLimitIssue);
+  if (optionLimitIssue) constraint(optionLimitIssue, true);
   try { const keys: unknown = JSON.parse(product.image_keys); if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string')) throw new Error(); ownedKeys = keys; }
-  catch { issues.push('상품 이미지 목록을 읽지 못했습니다. 이미지 자동 연결을 확인해주세요.'); }
-  if (schema.status === 'unconfirmed') issues.push('선택한 카테고리의 상세 속성과 상품고시 스키마가 아직 확인되지 않았습니다.');
-  if (!schema.categoryId) issues.push('카테고리를 먼저 선택해주세요.');
+  catch { constraint('상품 이미지 목록을 읽지 못했습니다. 이미지 자동 연결을 확인해주세요.'); }
+  if (schema.status === 'unconfirmed') constraint('선택한 카테고리의 상세 속성과 상품고시 스키마가 아직 확인되지 않았습니다.');
+  if (!schema.categoryId) constraint('카테고리를 먼저 선택해주세요.');
   let prices: ReturnType<typeof calculateOptionPrices> = [];
   try { prices = calculateOptionPrices(options, resolveOptionPricePolicy(product, settings).policy); }
-  catch { issues.push('저장된 가격 설정을 확인해주세요. 옵션 가격을 자동 계산하지 않았습니다.'); }
+  catch { constraint('저장된 가격 설정을 확인해주세요. 옵션 가격을 자동 계산하지 않았습니다.'); }
   const contentValue = (field: ContentField<string>, fallback?: string): Automatic => field.provenance === 'manual'
     ? { value: field.value, source: 'content' }
     : literal(savedTextOrFallback(field, fallback), field.value ? 'content' : fallback ? 'settings' : 'empty');
@@ -486,7 +492,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       const reviewMessages: string[] = [];
       if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
       if (definition.reviewRequired && (value.trim() || hasSelectedEmptyQuotationChoice(definition, { value, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
-      if (definition.type === 'images' && value) validationIssues.push('비공개 이미지 참조입니다. 외부 접수용 공개 주소는 아직 생성되지 않았습니다.');
+      if (definition.type === 'images' && value) reviewMessages.push('견적서에는 연결한 첨부 이미지 파일명이 기록됩니다. 실제 상품과 이미지 구성을 확인해주세요.');
       const fieldIssues = [...validationIssues, ...reviewMessages];
       return [definition.id, { value, source, needsReview: Boolean(definition.reviewRequired) || fieldIssues.length > 0, issues: fieldIssues, validationIssues, reviewMessages } satisfies ResolvedQuotationField];
     }));
@@ -508,5 +514,5 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     if (imageIssues.length && fields.detailImages) { fields.detailImages.needsReview = true; fields.detailImages.issues.push(...imageIssues); }
     return { optionId, optionLabel: option ? option.translatedName || option.originalName || option.supplierSku || option.id : '상품 공통값', included: option ? option.included : includeCommonRow, fields };
   });
-  return { schema, rows, issues, customLabels: (content.customLabels ?? []).map(label => ({ ...label })) };
+  return { schema, rows, issues, validationIssues, reviewMessages, customLabels: (content.customLabels ?? []).map(label => ({ ...label })) };
 }

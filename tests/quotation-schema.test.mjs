@@ -906,7 +906,7 @@ test('64497 fields map into quotation exports and reject cross-category profiles
  assert.throws(()=>profileModel.validateCategoryProfile({...profile,categoryId:'80719'}),/다른 카테고리/);
 });
 
-test('resolved evidence warnings remain reviews while real validation and transport failures remain errors',()=>{
+test('resolved evidence and owned attachments remain reviews while real validation and missing files remain errors',()=>{
  const input=fixture();const review=load('app/submission-review.ts');
  input.content.assets.detail.value=['owner/option.png'];
  input.overrides={common:{barcodeMode:'existing',barcode:'',supplyPrice:'5000',salePrice:'4000'},options:{}};
@@ -916,7 +916,10 @@ test('resolved evidence warnings remain reviews while real validation and transp
  assert.ok(manufacturer.some(i=>i.kind==='review'));assert.equal(manufacturer.some(i=>i.kind==='error'),false);
  assert.ok(report.issues.some(i=>i.fieldId==='barcode'&&i.kind==='error'));
  assert.ok(report.issues.some(i=>i.fieldId==='salePrice'&&i.kind==='error'));
- assert.ok(report.issues.some(i=>i.fieldId==='mainImage'&&i.kind==='error'&&i.message.includes('공개 주소')));
+ assert.equal(report.issues.some(i=>i.fieldId==='mainImage'&&i.kind==='error'),false);
+ assert.ok(report.issues.some(i=>i.fieldId==='mainImage'&&i.kind==='review'&&i.message.includes('첨부 이미지 파일명')));
+ const missing=review.inspectSubmission(resolved,JSON.parse(input.product.image_keys),new Map([['owner/option.png',{kind:'error',message:'첨부 파일 누락'}]]),'attachment-bytes');
+ assert.ok(missing.issues.some(i=>i.fieldId==='mainImage'&&i.kind==='error'&&i.message.includes('파일 누락')));
  assert.equal(report.issues.filter(i=>i.code==='MAIN_DETAIL_DUPLICATE').length,1);
  assert.equal(report.issues.some(i=>i.kind==='error'&&i.message.includes('반려 가능성')),false);
  assert.equal(JSON.stringify(input),before);assert.equal(report.submissionReady,false);
@@ -931,6 +934,19 @@ test('Couplus defaults retain explicit review provenance without being reported 
   assert.ok(cell.reviewMessages.some(m=>m.includes('쿠플러스')));
   assert.ok(report.issues.some(i=>i.fieldId===id&&i.kind==='review'&&i.message.includes('쿠플러스')));
   if(!cell.validationIssues.length)assert.equal(report.issues.some(i=>i.fieldId===id&&i.kind==='error'),false);
+ }
+});
+
+test('all 28 observed category forms keep evidence separate from blocking quotation constraints',()=>{
+ const ids=[...new Set([...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas),'80719','81452','64497','103495','77442','81221'])];
+ assert.equal(ids.length,28);
+ for(const categoryId of ids){
+  const input=fixture();input.categoryId=categoryId;
+  const resolved=model.resolveQuotationFields(input),report=load('app/submission-review.ts').inspectSubmission(resolved,JSON.parse(input.product.image_keys));
+  assert.equal(resolved.validationIssues.length,0,categoryId);
+  assert.equal(report.issues.some(issue=>issue.code==='QUOTATION_CONSTRAINT'),false,categoryId);
+  assert.ok(report.issues.some(issue=>issue.kind==='review'&&issue.message===resolved.schema.evidence),categoryId);
+  assert.equal(report.submissionReady,false);
  }
 });
 
