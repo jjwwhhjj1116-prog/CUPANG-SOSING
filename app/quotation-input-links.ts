@@ -2,7 +2,7 @@ import type { QuotationField } from '@/app/quotation-schema';
 
 // Exact resolver bindings only. A category name is never an input mapping.
 const links: Readonly<Record<string, string>> = {
-  title: '1단계 SEO 상품명 → 수집 상품명', altText: '1단계 SEO 상품명 → 수집 상품명',
+  title: '1단계 SEO 상품명 → 수집 상품명', altText: '7단계 대체 텍스트 · 신규 초안은 공란',
   category: '상품추가에서 선택한 카테고리', searchTags: '1단계 SEO 검색어',
   supplyPrice: '2단계 옵션 공급가', salePrice: '2단계 옵션 판매가', msrp: '2단계 옵션 권장소비자가격',
   brand: '기본설정 브랜드', manufacturer: '6단계 제조사 → 기본설정 제조사',
@@ -13,7 +13,7 @@ const links: Readonly<Record<string, string>> = {
   size: '옵션 사이즈 · 카테고리가 허용하는 경우 상품 치수', marathon_noticeSize: '옵션 사이즈',
   weight: '80719 옵션 상품 중량 · 포장 무게와 별개',
   mainImage: '옵션 대표 이미지 → 3단계 공통 대표 이미지', additionalImages: '4단계 추가 이미지',
-  detailImages: '5단계 상세 이미지', detailHtml: '1단계 SEO 설명을 안전한 HTML 문단으로 변환',
+  detailImages: '5단계 상세 이미지', detailHtml: '5단계 상세 설명을 HTML 문단으로 반영',
   labelImages: '6단계 한글 표시사항 이미지', noticeNameModel: '6단계 제품명·모델명 → SEO 상품명',
   noticeMaterial: '6단계 재질', noticeDimensions: '옵션 상품 치수 → 6단계 크기',
   yoga_noticeSizeWeight: '6단계 크기·중량', brace_noticeSizeWeight: '6단계 크기·중량', noticeManufacturerImporter: '6단계 제조사·수입사 → 기본설정',

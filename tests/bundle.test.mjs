@@ -82,7 +82,8 @@ test('review archive opens with independent ZIP parser and retains binary assets
 
 test('HTML and label SVG escape user markup while CSV neutralizes spreadsheet formulas', () => {
   const content = model.applyContentPatch(model.emptyProductContent(product.id), {
-    seo: { title: '=HYPERLINK("evil")', description: '<script>alert("x")</script> & <img src=x onerror="bad">', keywords: ['<b>키워드</b>'] },
+    seo: { title: '=HYPERLINK("evil")', description: 'SEO 설명', keywords: ['<b>키워드</b>'] },
+    detail: { description: '<script>alert("x")</script> & <img src=x onerror="bad">' },
     label: { productName: '</text><script>x</script>', manufacturer: 'A&B "제조사"' },
   }, product.updated_at);
   const files = readArchive(bundle.createReviewBundle(product, content, []));
@@ -92,6 +93,16 @@ test('HTML and label SVG escape user markup while CSV neutralizes spreadsheet fo
   assert.ok(!svg.includes('<script>')); assert.ok(svg.includes('&lt;/text&gt;&lt;script&gt;'));
   assert.ok(svg.includes('A&amp;B &quot;제조사&quot;'));
   assert.ok(csv.includes('"\'=HYPERLINK(""evil"")"'));
+});
+
+test('snapshot detail preview uses stage-five text while preserving legacy outputs',()=>{
+ const initial=model.applyContentPatch(model.emptyProductContent(product.id),{seo:{description:'SEO 전용 설명'},detail:{description:'5단계 상세 설명'}},product.updated_at);
+ let files=readArchive(bundle.createReviewBundle(product,initial,[]));
+ assert.match(decode(files['detail-review.html']),/5단계 상세 설명/);assert.doesNotMatch(decode(files['detail-review.html']),/SEO 전용 설명/);
+ const legacy=structuredClone(initial);delete legacy.detail;
+ files=readArchive(bundle.createReviewBundle(product,legacy,[]));assert.match(decode(files['detail-review.html']),/SEO 전용 설명/);
+ const cleared=model.applyContentPatch(initial,{detail:{description:''}},product.updated_at);
+ files=readArchive(bundle.createReviewBundle(product,cleared,[]));assert.doesNotMatch(decode(files['detail-review.html']),/5단계 상세 설명|SEO 전용 설명/);
 });
 
 test('empty fields remain missing, unverified content stays unverified, and missing mapped assets fail', () => {

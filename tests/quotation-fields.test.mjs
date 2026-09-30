@@ -93,7 +93,7 @@ test('saved SEO, option pricing and stage image changes reach editor and export 
   await linkedFixture(h);let before=await get(h);
   const response=await put(h,before,[{fieldKey:'taxType',optionId:null,value:'면세'}]);assert.equal(response.status,200);
   const content=h.load('app/product-content.ts').emptyProductContent('product');content.revision=1;content.updatedAt=version;
-  content.seo.title.value='수정된 SEO 상품명';content.seo.keywords.value=['검색어'];content.seo.description.value='수정 상세 설명';
+  content.seo.title.value='수정된 SEO 상품명';content.seo.keywords.value=['검색어'];content.seo.description.value='SEO 설명';content.detail.description.value='수정 상세 설명';
   for(const role of ['main','additional','detail','label'])content.assets[role].value=['owner/image.png'];
   content.label.countryOfOrigin.value='확인 제조국';
   h.sqlite.prepare('INSERT INTO product_content VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(content),version);

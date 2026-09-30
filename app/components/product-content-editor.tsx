@@ -2,7 +2,7 @@
 
 import { QuotationKeywordReview } from '@/app/components/quotation-keyword-review';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { assetRoles, detailImageKeys, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
+import { assetRoles, currentDetailContent, detailImageKeys, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
 import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor-tools';
 import { imageStagePatch, imageStageRoles, mergeSavedImageStage } from '@/app/image-stage-save';
 import { fillLabelDraft } from '@/app/label-autofill';
@@ -19,15 +19,18 @@ type Props = {
 };
 type Draft = {
   seo: { title: string; keywords: string; description: string };
+  detail: { description: string; altText: string };
   label: Record<LabelField, string>;
   labelProductNameLinked: boolean;
   labelLayout: LabelLayout;
   customLabels: CustomLabel[];
   assets: Record<AssetRole, string[]>;
 };
-function draftFrom(content: ProductContent): Draft {
+function draftFrom(content: ProductContent, fallbackTitle = ''): Draft {
+  const detail = currentDetailContent(content, fallbackTitle);
   return {
     seo: { title: content.seo.title.value, keywords: content.seo.keywords.value.join('\n'), description: content.seo.description.value },
+    detail: { description: detail.description.value, altText: detail.altText.value },
     label: Object.fromEntries(Object.entries(content.label).map(([key, field]) => [key, field.value])) as Draft['label'],
     labelProductNameLinked: content.labelProductNameLinked === true,
     labelLayout: currentLabelLayout(content.labelLayout),
@@ -68,9 +71,11 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const setAssetFilter=(filter:AssetEditorFilter)=>setAssetFilterOverride({step:filterStep,filter});
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number } | null>>({});
+  const currentProductTitle = useRef(product.title);
+  useEffect(() => { currentProductTitle.current = product.title; }, [product.title]);
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/content`;
   const applyLoaded = useCallback((saved: ProductContent) => {
-    setContent(saved); setDraft(draftFrom(saved)); setLoaded(true); setConflict(false); setError(''); setMessage('');
+    setContent(saved); setDraft(draftFrom(saved, currentProductTitle.current)); setLoaded(true); setConflict(false); setError(''); setMessage('');
   }, []);
   const load = useCallback(async () => {
     if(activeRequest.current)return;
@@ -90,10 +95,11 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [endpoint, applyLoaded]);
-  const initial = draftFrom(content);
+  const initial = draftFrom(content, product.title);
   const draftKey = section === 'SEO' ? 'seo' : section === '표시사항' ? 'label' : 'assets';
   const editingDetail = section === '이미지' && focusedAssetRole === 'detail';
-  const dirty = (editingDetail && draft.seo.description !== initial.seo.description) || (section==='이미지'?imageStageRoles(focusedAssetRole).some(role=>JSON.stringify(draft.assets[role])!==JSON.stringify(initial.assets[role])):JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey])) || (section==='표시사항'&&(draft.labelProductNameLinked!==initial.labelProductNameLinked||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
+  const detailDirty = JSON.stringify(draft.detail) !== JSON.stringify(initial.detail);
+  const dirty = (editingDetail && detailDirty) || (section==='이미지'?imageStageRoles(focusedAssetRole).some(role=>JSON.stringify(draft.assets[role])!==JSON.stringify(initial.assets[role])):JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey])) || (section==='표시사항'&&(draft.labelProductNameLinked!==initial.labelProductNameLinked||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
   const anyDirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion);
   useEffect(() => {
@@ -147,7 +153,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
-      : section === '표시사항' ? { label: draft.label, labelProductNameLinked: draft.labelProductNameLinked, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(editingDetail ? { seo: { description: draft.seo.description } } : {}) };
+      : section === '표시사항' ? { label: draft.label, labelProductNameLinked: draft.labelProductNameLinked, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(editingDetail ? { detail: draft.detail } : {}) };
     try {
       const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent; error?: string };
@@ -155,8 +161,15 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       if (!response.ok || !body.content) { if (response.status === 409) setConflict(true); throw new Error(body.error || '저장하지 못했습니다.'); }
       const saved = body.content;
       setContent(saved);
+      const savedDraft = draftFrom(saved, product.title);
       // Preserve unsaved work in other tabs when this section is saved.
-      setDraft(previous => ({ ...previous, [draftKey]: section==='이미지'?mergeSavedImageStage(initial.assets,previous.assets,draftFrom(saved).assets,focusedAssetRole):draftFrom(saved)[draftKey], ...(editingDetail ? { seo: { ...previous.seo, description: saved.seo.description.value } } : {}), ...(section==='SEO' && previous.labelProductNameLinked === initial.labelProductNameLinked && previous.label.productName === initial.label.productName ? {label:{...previous.label,productName:saved.label.productName.value}}:{}), ...(section==='표시사항'?{labelProductNameLinked:saved.labelProductNameLinked===true,labelLayout:draftFrom(saved).labelLayout,customLabels:draftFrom(saved).customLabels}:{}) }));
+      setDraft(previous => ({
+        ...previous,
+        [draftKey]: section==='이미지' ? mergeSavedImageStage(initial.assets,previous.assets,savedDraft.assets,focusedAssetRole) : savedDraft[draftKey],
+        ...(editingDetail || (section==='SEO' && JSON.stringify(previous.detail)===JSON.stringify(initial.detail)) ? { detail: savedDraft.detail } : {}),
+        ...(section==='SEO' && previous.labelProductNameLinked === initial.labelProductNameLinked && previous.label.productName === initial.label.productName ? {label:{...previous.label,productName:saved.label.productName.value}}:{}),
+        ...(section==='표시사항'?{labelProductNameLinked:savedDraft.labelProductNameLinked,labelLayout:savedDraft.labelLayout,customLabels:savedDraft.customLabels}:{}),
+      }));
       setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '저장하지 못했습니다.'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
@@ -182,7 +195,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       ['SEO', JSON.stringify(draft.seo)!==JSON.stringify(initial.seo)],
       ['대표 이미지', JSON.stringify(draft.assets.main)!==JSON.stringify(initial.assets.main)],
       ['추가 이미지', JSON.stringify(draft.assets.additional)!==JSON.stringify(initial.assets.additional)],
-      ['상세 이미지', ['detailTop','detail','detailBottom'].some(key=>JSON.stringify(draft.assets[key as AssetRole])!==JSON.stringify(initial.assets[key as AssetRole]))],
+      ['상세 이미지', detailDirty || ['detailTop','detail','detailBottom'].some(key=>JSON.stringify(draft.assets[key as AssetRole])!==JSON.stringify(initial.assets[key as AssetRole]))],
       ['표시사항', draft.labelProductNameLinked!==initial.labelProductNameLinked||JSON.stringify(draft.label)!==JSON.stringify(initial.label)||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)],
       ['대표 이미지', JSON.stringify(draft.assets.size)!==JSON.stringify(initial.assets.size)||JSON.stringify(draft.assets.label)!==JSON.stringify(initial.assets.label)],
     ] as const).map(([step,changed],index)=><span hidden key={index} data-quotation-source-step={step} data-workspace-dirty={changed}/>)}
@@ -220,10 +233,10 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         {!imageKeys.length && <p>위 업로드 버튼으로 이미지 파일을 추가하면 역할을 지정할 수 있습니다.</p>}
         {imageKeys.length > 0 && <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}><button type="button" className={`btn ${assetFilter === 'all' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'all'} onClick={() => setAssetFilter('all')}>전체 {imageKeys.length}</button>{(Object.entries(assetRoles) as [AssetRole, string][]).map(([role, label]) => <button type="button" key={role} className={`btn ${assetFilter === role ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === role} onClick={() => setAssetFilter(role)}>{label} {draft.assets[role].filter(key => imageKeys.includes(key)).length}</button>)}<button type="button" className={`btn ${assetFilter === 'unassigned' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'unassigned'} onClick={() => setAssetFilter('unassigned')}>미지정 {orderedEditorImages(imageKeys, draft.assets, 'unassigned').length}</button></div><small style={{ color: '#64748b' }}>역할별 저장 순서로 표시합니다. ↑↓로 순서를 바꾸고 이미지를 누르면 크게 볼 수 있습니다.</small></>}
         {unavailableImages.length > 0 && <div className="panel-note"><div><p>현재 상품 이미지 목록에 없는 역할 참조가 {unavailableImages.length}개 있습니다.</p><button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, assets: Object.fromEntries(Object.entries(previous.assets).map(([role, keys]) => [role, keys.filter(key => imageKeys.includes(key))])) as Draft['assets'] }))}>연결이 없는 역할 참조 제외</button></div></div>}
-        {editingDetail && <label className="field"><span>상세 설명</span><textarea aria-label="상세페이지 설명" value={draft.seo.description} maxLength={20000} rows={6} onChange={event=>setDraft(previous=>({...previous,seo:{...previous.seo,description:event.target.value}}))}/><small>1단계 설명과 같은 내용입니다. 이미지와 함께 저장하면 7단계 자동 HTML과 상세페이지 검토 파일에 반영됩니다. 7단계에서 직접 수정한 HTML은 유지됩니다.</small></label>}
+        {editingDetail && <label className="field"><span>상세 설명</span><textarea aria-label="상세페이지 설명" value={draft.detail.description} maxLength={20000} rows={6} onChange={event=>setDraft(previous=>({...previous,detail:{...previous.detail,description:event.target.value}}))}/><small>저장하면 7단계 상세 HTML과 상세페이지 검토 파일에 반영됩니다. 7단계에서 직접 수정한 HTML은 유지됩니다.</small></label>}
         <div className="image-edit-workspace">
         <section className="image-edit-canvas" aria-label={focusedAssetRole==='detail'?'상세페이지 배치 미리보기':'선택 이미지 미리보기'}>
-          {editingDetail && draft.seo.description && <div aria-label="상세 설명 미리보기" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',padding:16}}>{draft.seo.description}</div>}
+          {editingDetail && draft.detail.description && <div aria-label="상세 설명 미리보기" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',padding:16}}>{draft.detail.description}</div>}
           {detailPreview.length>0 ? <div className="detail-image-strip">{detailPreview.map((key,index)=><figure key={key}><figcaption>{draft.assets.detailTop.includes(key)?'상단 이미지':draft.assets.detailBottom.includes(key)?'하단 이미지':`본문 이미지 ${draft.assets.detail.indexOf(key)+1}`}</figcaption>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`상세페이지 순서 ${index+1}`} loading="lazy"/>

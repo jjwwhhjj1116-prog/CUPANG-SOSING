@@ -34,6 +34,8 @@ export function savedTextOrFallback(field: ContentField<string>, fallback = ''):
 export type ProductContent = {
   schemaVersion: 1; productId: string; revision: number; updatedAt: string | null;
   seo: { title: ContentField<string>; keywords: ContentField<string[]>; description: ContentField<string> };
+  /** Stage-five content is independent of SEO. Absent only in legacy documents. */
+  detail?: { description?: ContentField<string>; altText?: ContentField<string> };
   label: Record<LabelField, ContentField<string>>;
   labelProductNameLinked?: boolean;
   labelLayout?: LabelLayout;
@@ -46,6 +48,7 @@ export type ProductContent = {
 export type ContentPatch = {
   labelProductNameLinked?: boolean;
   seo?: { title?: string; keywords?: string[]; description?: string };
+  detail?: { description?: string; altText?: string };
   label?: Partial<Record<LabelField, string>>;
   labelLayout?: LabelLayout;
   customLabels?: CustomLabel[];
@@ -57,6 +60,7 @@ export function emptyProductContent(productId: string): ProductContent {
   return {
     schemaVersion: 1, productId, revision: 0, updatedAt: null,
     seo: { title: fresh(''), keywords: fresh<string[]>([]), description: fresh('') },
+    detail: { description: fresh(''), altText: fresh('') },
     label: Object.fromEntries(Object.keys(labelFields).map(key => [key, fresh('')])) as ProductContent['label'],
     assets: Object.fromEntries(Object.keys(assetRoles).map(key => [key, fresh<string[]>([])])) as ProductContent['assets'],
   };
@@ -66,6 +70,14 @@ export function emptyProductContent(productId: string): ProductContent {
 export function withCurrentLabelFields(content: ProductContent): ProductContent {
   const defaults = emptyProductContent(content.productId);
   return { ...content, label: { ...defaults.label, ...content.label }, assets: { ...defaults.assets, ...content.assets } };
+}
+
+/** Preserve the former SEO binding for existing work until stage five is saved. */
+export function currentDetailContent(content: ProductContent, fallbackTitle = '') {
+  return {
+    description: content.detail?.description ?? content.seo.description,
+    altText: content.detail?.altText ?? { ...content.seo.title, value: savedTextOrFallback(content.seo.title, fallbackTitle) },
+  };
 }
 
 /** Shared ordering for previews and quotation attachments; legacy documents have no banners. */
@@ -91,7 +103,7 @@ function plainText(value: unknown, max: number, name: string) {
 export function validateContentInput(input: unknown, ownedKeys: readonly string[], ownerId: string): { expectedRevision: number; patch: ContentPatch } {
   const body = object(input, ['expectedRevision', 'patch'], '콘텐츠 요청');
   if (!Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0) throw new Error('저장 버전을 다시 불러와주세요.');
-  const raw = object(body.patch, ['seo', 'label', 'assets', 'labelLayout', 'customLabels', 'labelProductNameLinked'], '편집 내용');
+  const raw = object(body.patch, ['seo', 'detail', 'label', 'assets', 'labelLayout', 'customLabels', 'labelProductNameLinked'], '편집 내용');
   const patch: ContentPatch = {};
   if ('labelProductNameLinked' in raw) {
     if (typeof raw.labelProductNameLinked !== 'boolean') throw new Error('품명 연동은 켜짐/꺼짐 값이어야 합니다.');
@@ -128,6 +140,12 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
       patch.seo.keywords = [...new Set(seo.keywords.map(value => plainText(value, 100, '검색어')).filter(Boolean))];
     }
   }
+  if ('detail' in raw) {
+    const detail = object(raw.detail, ['description', 'altText'], '상세페이지');
+    patch.detail = {};
+    if ('description' in detail) patch.detail.description = plainText(detail.description, 20000, '상세 설명');
+    if ('altText' in detail) patch.detail.altText = plainText(detail.altText, 2000, '대체 텍스트');
+  }
   if ('label' in raw) {
     const label = object(raw.label, Object.keys(labelFields), '표시사항');
     patch.label = {};
@@ -161,6 +179,12 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
     if (patch.seo.title !== undefined) next.seo.title = edited(current.seo.title, patch.seo.title);
     if (patch.seo.description !== undefined) next.seo.description = edited(current.seo.description, patch.seo.description);
     if (patch.seo.keywords !== undefined) next.seo.keywords = edited(current.seo.keywords, patch.seo.keywords);
+  }
+  if (patch.detail) {
+    const previous = currentDetailContent(current);
+    next.detail = { ...next.detail };
+    if (patch.detail.description !== undefined) next.detail.description = edited(previous.description, patch.detail.description);
+    if (patch.detail.altText !== undefined) next.detail.altText = edited(previous.altText, patch.detail.altText);
   }
   for (const key of Object.keys(patch.label ?? {}) as LabelField[]) next.label[key] = edited(current.label[key], patch.label![key]!);
   if (patch.labelProductNameLinked !== undefined) next.labelProductNameLinked = patch.labelProductNameLinked;

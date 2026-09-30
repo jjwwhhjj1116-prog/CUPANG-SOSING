@@ -4,7 +4,7 @@ import { couplus64497Fields, couplus64497Path } from '@/app/couplus-toothbrush-s
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema';
 import { couplus103495Fields, couplus103495Path } from '@/app/couplus-marathon-schema';
-import { contentDetailImageKeys, savedTextOrFallback, type ContentField, type CustomLabel, type ProductContent } from '@/app/product-content';
+import { contentDetailImageKeys, currentDetailContent, savedTextOrFallback, type ContentField, type CustomLabel, type ProductContent } from '@/app/product-content';
 import type { ProductOption, ProductOptions } from '@/app/product-options';
 import { calculateOptionPrices, resolveOptionPricePolicy, quotationMainImageKeys } from '@/app/product-options';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
@@ -80,7 +80,7 @@ const commonFields: QuotationField[] = [
   field('additionalImages', 'image', '추가 이미지', { type: 'images', maxLength: 16000, maxItems: 30, help: imageHelp }),
   field('labelImages', 'image', '제품 한글 표시사항 라벨 또는 도안 이미지', { type: 'images', maxLength: 16000, maxItems: 30, help: imageHelp }),
   field('detailImages', 'image', '상세 이미지', { type: 'images', maxLength: 16000, maxItems: 30, help: imageHelp }),
-  field('detailHtml', 'image', 'HTML 상세 내용', { type: 'textarea', maxLength: 150000, help: '자동값은 설명을 HTML 이스케이프한 문단입니다. 입력한 HTML을 작업 화면에서 실행하지 않습니다.' }),
+  field('detailHtml', 'image', 'HTML 상세 내용', { type: 'textarea', maxLength: 150000, help: '5단계에서 저장한 상세 설명을 HTML 문단으로 반영합니다. 직접 입력한 HTML은 유지하며 작업 화면에서 실행하지 않습니다.' }),
   field('altText', 'image', '대체 텍스트', { maxLength: 2000 }),
   field('kcMarkType', 'legal', '전기용품 및 생활용품, 어린이 (KC) 인증 마크 타입', { type: 'select', required: true, reviewRequired: true, choices: choices('해당사항없음', 'KC인증마크_어린이제품 공급자적합성확인', 'KC인증마크_생활용품 공급자적합성확인', 'KC인증마크_전기용품 공급자적합성확인'), help: '인증 대상 여부와 유형을 확인해 입력합니다. 미확인을 해당사항없음으로 바꾸지 않습니다.' }),
   field('kcCertificationNumber', 'legal', '전기용품 및 생활용품, 어린이 (KC) 인증번호', { reviewRequired: true }),
@@ -407,8 +407,11 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'additionalImages': return images(content.assets.additional.value);
       case 'labelImages': return images(content.assets.label.value);
       case 'detailImages': return images(contentDetailImageKeys(content));
-      case 'detailHtml': return literal(content.seo.description.value ? `<p>${htmlEscape(content.seo.description.value).replace(/\r?\n/g, '<br>')}</p>` : '', 'content');
-      case 'altText': return { value: title, source: titleSource };
+      case 'detailHtml': {
+        const description = currentDetailContent(content).description.value;
+        return literal(description ? `<p>${htmlEscape(description).replace(/\r?\n/g, '<br>')}</p>` : '', 'content');
+      }
+      case 'altText': return content.detail?.altText ? contentValue(content.detail.altText) : { value: title, source: titleSource };
       case 'noticeNameModel': {
         const value = [...new Set([savedTextOrFallback(content.label.productName, title), content.label.model.value].filter(Boolean))].join(' / ');
         return content.label.productName.provenance === 'manual' || content.label.model.provenance === 'manual' ? { value, source: 'content' } : literal(value, 'content');

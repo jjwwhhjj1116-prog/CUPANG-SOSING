@@ -31,6 +31,7 @@ function fixture() {
   const content = contentModel.emptyProductContent('p1');
   content.seo.title.value = '번역된 가방'; content.seo.keywords.value = ['가방', '대용량'];
   content.seo.description.value = '<script>alert("x")</script>\n제품 설명';
+  content.detail.description.value = '<script>alert("x")</script>\n제품 설명';
   content.label.model.value = 'A-100'; content.label.manufacturer.value = '실제 제조사';
   content.label.material.value = '면'; content.label.dimensions.value = '20 × 30 × 40 cm';
   content.assets.main.value = ['owner/main.png']; content.assets.detail.value = ['owner/detail.png'];
@@ -55,13 +56,14 @@ test('completed translation flows through saved SEO, labels and options into the
  assert.equal(fields.title.value,'번역 수납바구니');assert.equal(fields.noticeNameModel.value,'번역 수납바구니');
  assert.equal(fields.noticeMaterial.value,'면');assert.equal(fields.color.value,'빨강');
  assert.equal(input.options.rows[0].translatedName,'빨강 세트');assert.equal(fields.supplyPrice.value,'2000');
- assert.match(fields.searchTags.value,/수납/);assert.match(fields.detailHtml.value,/한국어 상세 설명/);
+ assert.match(fields.searchTags.value,/수납/);assert.equal(input.content.seo.description.value,'한국어 상세 설명');
+ assert.equal(fields.detailHtml.value,'');assert.equal(fields.altText.value,'');
  assert.equal(fields.kcCertificationNumber.value,'해당사항없음');
  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
  const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0];
  assert.equal(exported.title,'번역 수납바구니');assert.equal(exported.skuName,'빨강 세트');
  assert.equal(exported.noticeMaterial,'면');assert.equal(exported.color,'빨강');assert.equal(exported.supplyPrice,2000);
- assert.match(exported.detailHtml,/한국어 상세 설명/);
+ assert.equal(exported.detailHtml,'');assert.equal(exported.altText,'');
  const label=load('app/quotation-label-plan.ts').quotationLabelPlan(resolved,'red');
  assert.equal(label.rows.find(row=>row[0]==='재질')[1],'면');
  assert.equal(label.rows.find(row=>row[0]==='색상')[1],'빨강');
@@ -1689,6 +1691,32 @@ test('detail fragments join final banner/image order with escaped saved descript
  const packaged=JSON.parse(files.find(file=>file.name==='quotation-detail-content.json').data);
  assert.equal(packaged.rows.find(row=>row.optionId==='red').html,row.html);
  assert.match(files.find(file=>file.name==='quotation-detail.html').data,/설명·상세 이미지 통합 HTML 원문/);
+});
+
+test('fresh SEO-only drafts have empty detail text; selected banners and stage-five text reach exports independently across defined categories',()=>{
+ const ids=[...new Set([...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas),'80719','81452','64497','103495','77442'])];
+ for(const categoryId of ids){
+  const input=fixture();input.categoryId=categoryId;input.content=contentModel.emptyProductContent('p1');
+  input.content=contentModel.applyContentPatch(input.content,{seo:{title:'SEO 상품명',description:'SEO 설명은 상세페이지에 넣지 않음'},assets:{detailTop:['owner/detail.png']}},'now');
+  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:key==='owner/detail.png'?'assets/banner.png':`assets/other-${index}.png`}));
+  let resolved=model.resolveQuotationFields(input),row=resolved.rows.find(row=>row.optionId==='red');
+  assert.equal(row.fields.detailHtml.value,'',categoryId);assert.equal(row.fields.altText.value,'',categoryId);assert.equal(row.fields.detailImages.value,'owner/detail.png',categoryId);
+  const saved=()=>({...input,state:{revision:0,overrides:input.overrides??{common:{},options:{}}},categoryContext:{categoryId}});
+  let files=load('app/exports/quotation-fields.ts').quotationFieldFiles(saved(),resolved,assets,'version').files;
+  const initial=JSON.parse(files.find(file=>file.name==='quotation-detail-content.json').data).rows[0];
+  assert.match(initial.html,/src="assets\/banner.png"/);assert.match(initial.html,/alt=""/);assert.doesNotMatch(initial.html,/SEO 설명/);
+  assert.doesNotMatch(files.find(file=>file.name==='quotation-detail.html').data,/SEO 설명/);
+  input.content=contentModel.applyContentPatch(input.content,{detail:{description:'5단계 <script>실행 금지</script>\n다음 줄',altText:'상세 설명 & 이미지'}},'later');
+  input.content=contentModel.applyContentPatch(input.content,{seo:{description:'새 SEO 설명'}},'latest');
+  resolved=model.resolveQuotationFields(input);row=resolved.rows.find(row=>row.optionId==='red');
+  assert.match(row.fields.detailHtml.value,/5단계 &lt;script&gt;/);assert.equal(row.fields.altText.value,'상세 설명 & 이미지');
+  files=load('app/exports/quotation-fields.ts').quotationFieldFiles(saved(),resolved,assets,'version').files;
+  const generated=JSON.parse(files.find(file=>file.name==='quotation-detail-content.json').data).rows[0];
+  assert.match(generated.html,/5단계 &lt;script&gt;/);assert.match(generated.html,/alt="상세 설명 &amp; 이미지 1"/);assert.doesNotMatch(generated.html,/SEO 설명|<script>/);
+  input.overrides={common:{detailHtml:'<p>7단계 직접 HTML</p>'},options:{}};
+  input.content=contentModel.applyContentPatch(input.content,{detail:{description:'5단계 재수정'}},'final');
+  row=model.resolveQuotationFields(input).rows.find(row=>row.optionId==='red');assert.equal(row.fields.detailHtml.value,'<p>7단계 직접 HTML</p>');
+ }
 });
 
 test('detail fragments preserve manual HTML and intentional blanks without appending images',()=>{

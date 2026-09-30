@@ -43,3 +43,9 @@ This covers only the fresh 80719 form. It does not establish all-category defaul
 ## Price-stage follow-up
 
 Read-only navigation of this new test draft to stage 2 confirmed FX350, supply margin50%, Coupang margin40%, nearest10KRW, minimum margin enabled3000, bundling disabled. For CNY5.23 the UI explicitly shows converted cost1830.5, supply4830, actual margin2999.5 and sale8050. Therefore nearest rounding is applied after the minimum target, without a second ceiling to restore3000. YOOFAM PLUS previously produced4840; corrected using this evidence. Explicit ceiling mode remains unchanged. No price inputs or save/recalculate buttons were changed.
+
+## Implementation follow-up — 2026-09-30 (step 509)
+
+New YOOFAM PLUS content now stores stage-five description separately from SEO. Source collection and SEO adoption do not fill this description or quotation alt text. Selected detail banners/images still produce the local combined detail preview; the quotation's image fields and escaped text paragraph remain separate. This is not evidence that the HTML/public-image-URL format matches Couplus's CloudFront output or that Supplier Hub accepted it.
+
+Existing content without the new detail fields retains its prior SEO description/title bindings until the owner explicitly saves those detail values. Stage-seven manual HTML/alt overrides stay authoritative, including deliberate blanks. No existing Couplus record was changed for this follow-up, and no further site observation was performed.

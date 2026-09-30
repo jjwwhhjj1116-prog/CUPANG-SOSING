@@ -30,7 +30,7 @@ const categoryPath = id => [...load('app/quotation-schema.ts').getQuotationSchem
 const policy = { exchangeRate: 100, supplyMargin: 0, coupangMargin: 0, minimumMargin: 0, msrpMultiple: 1, roundingUnit: 10 };
 const product = { id: 'test', owner_id: 'owner', title: '원문 상품', source_url: 'synthetic://test', source_price_cny: 999, supply_price: 99900, sale_price: 99900, msrp: 99900,
   pricing_policy: JSON.stringify(policy), exchange_rate: 190, supply_margin: 40, coupang_margin: 35, options_count: 2, image_keys: '["owner/option.png"]', updated_at: '2026-09-22T00:00:00.000Z' };
-const content = contentModel.applyContentPatch(contentModel.emptyProductContent('test'), { seo: { title: '=SUM(1,1)', description: '설명' } }, product.updated_at);
+const content = contentModel.applyContentPatch(contentModel.emptyProductContent('test'), { seo: { title: '=SUM(1,1)', description: 'SEO 설명' }, detail: { description: '설명', altText: '검토한 이미지 설명' } }, product.updated_at);
 const optionRows = [
   { ...optionsModel.emptyOptionInput('first'), originalName: '原文', translatedName: '첫 번째', supplierSku: 'SKU-1', unitCostCny: 0.001, unitsPerPack: 3, included: true, imageKey: 'owner/option.png' },
   { ...optionsModel.emptyOptionInput('second'), originalName: '第二', supplierSku: 'SKU-2', unitCostCny: 0.1, unitsPerPack: 3, included: true },

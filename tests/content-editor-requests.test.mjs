@@ -49,13 +49,34 @@ test('detail step saves explanation and image roles together while preserving an
  edit.props.onChange({target:{value:'번역 설명\n<script>실행 금지</script>'}});
  nodes(h.render()).find(n=>n.props?.['aria-label']==='이미지 1 역할').props.onChange({target:{value:'detail'}});
  const save=h.button('상세 설명·이미지 저장');assert.equal(save.props.disabled,false);save.props.onClick();await settle();
- assert.deepEqual(patch.seo,{description:'번역 설명\n<script>실행 금지</script>'});assert.deepEqual(patch.assets.detail,['owner/a.png']);
+ assert.equal(patch.seo,undefined);assert.deepEqual(patch.detail,{description:'번역 설명\n<script>실행 금지</script>',altText:''});assert.deepEqual(patch.assets.detail,['owner/a.png']);
+ assert.equal(saved.seo.description.value,'');assert.equal(saved.detail.description.provenance,'manual');
  assert.equal(nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.value,'미저장 상품명');
  assert.equal(h.button('상세 설명·이미지 저장').props.disabled,true);
  const resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:{id:'p',title:'상품',image_keys:'["owner/a.png"]',source_price_cny:1,supply_price:1,sale_price:2,msrp:3},content:saved,options:h.load('app/product-options.ts').emptyProductOptions('p'),settings:h.load('app/workspace-settings.ts').defaultSettings});
  assert.equal(resolved.rows[0].fields.detailImages.value,'owner/a.png');assert.equal(resolved.rows[0].fields.detailHtml.value,'<p>번역 설명<br>&lt;script&gt;실행 금지&lt;/script&gt;</p>');
  nodes(h.render()).find(n=>n.props?.['aria-label']==='상세페이지 설명').props.onChange({target:{value:''}});
- assert.equal(h.button('상세 설명·이미지 저장').props.disabled,false);h.button('상세 설명·이미지 저장').props.onClick();await settle();assert.equal(patch.seo.description,'');assert.equal(saved.seo.description.provenance,'manual');
+ assert.equal(h.button('상세 설명·이미지 저장').props.disabled,false);h.button('상세 설명·이미지 저장').props.onClick();await settle();assert.equal(patch.detail.description,'');assert.equal(saved.detail.description.provenance,'manual');
+});
+
+test('SEO and detail description edits save independently, retain unsaved work and cannot be lost on a failed write',async()=>{
+ let saved,fail=false;const calls=[];
+ const h=harness((_url,init,content)=>{if(init?.method!=='PATCH')return;const patch=JSON.parse(init.body).patch;calls.push(patch);if(fail)return Response.json({error:'일시적 오류'},{status:503});saved=h.model.applyContentPatch(saved??content,patch,'now');return Response.json({content:saved});},'detail');
+ await h.start();
+ const detailField=name=>nodes(h.render()).find(n=>n.props?.['aria-label']===name);
+ const seoField=()=>nodes(h.render('SEO')).find(n=>n.type==='textarea'&&n.props.maxLength===20000);
+ seoField().props.onChange({target:{value:'미저장 SEO 설명'}});
+ detailField('상세페이지 설명').props.onChange({target:{value:'상세페이지 설명'}});
+ assert.ok(nodes(h.render()).some(n=>n.props?.['data-quotation-source-step']==='상세 이미지'&&n.props['data-workspace-dirty']));
+ h.button('SEO 저장','SEO').props.onClick();await settle();
+ assert.equal(calls[0].detail,undefined);assert.equal(saved.detail.description.value,'');assert.equal(detailField('상세페이지 설명').props.value,'상세페이지 설명');
+ fail=true;h.button('상세 설명·이미지 저장').props.onClick();await settle();assert.equal(h.notices,1);assert.equal(saved.detail.description.value,'');assert.equal(detailField('상세페이지 설명').props.value,'상세페이지 설명');
+ fail=false;h.button('상세 설명·이미지 저장').props.onClick();await settle();
+ assert.equal(calls[2].seo,undefined);assert.equal(saved.seo.description.value,'미저장 SEO 설명');assert.equal(saved.detail.altText.value,'');
+ seoField().props.onChange({target:{value:'또 다른 미저장 SEO'}});
+ detailField('상세페이지 설명').props.onChange({target:{value:''}});
+ h.button('상세 설명·이미지 저장').props.onClick();await settle();
+ assert.equal(saved.detail.description.value,'');assert.equal(saved.detail.description.provenance,'manual');assert.equal(seoField().props.value,'또 다른 미저장 SEO');
 });
 
 test('entering labels prepares saved defaults once and preserves a later manual clear across steps',async()=>{

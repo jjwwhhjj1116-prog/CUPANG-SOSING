@@ -117,6 +117,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
    let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,expectedTitle);assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
    for(const field of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[field].value,'',`unselected originals stay out of quotation ${field}`);
+   assert.equal(row.fields.detailHtml.value,'','SEO description must not populate stage-five HTML');assert.equal(row.fields.altText.value,'','fresh alternate text stays blank');
    if(String(automatic).startsWith('hidden-off')){
     assert.equal(content.categoryAttributes.hiddenAttributes,false);
     assert.equal(row.fields.basketShape.value,'');assert.equal(row.fields.basketShape.source,'couplus-default');
@@ -127,7 +128,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     const keys=[...objects.keys()];assert.equal(keys.length,3);
     for(let i=0;i<4;i++){const key='owner/stage-image-'+i+'.png';objects.set(key,png);keys.push(key);}
     sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify(keys),latest.product_id);
-    const savedContent=await contentRoute.PATCH(new Request('https://app.test/api/products/'+latest.product_id+'/content',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:content.revision,patch:{seo:{title:'1단계 수정 상품명',keywords:['1단계 검색어'],description:'수정 설명 & 줄바꿈\n둘째 줄'},label:{material:'6단계 재질',countryOfOrigin:'중국'},assets:{main:[keys[0]],additional:[keys[2],keys[1]],detailTop:[keys[3]],detail:[keys[4]],detailBottom:[keys[5]],label:[keys[6]]}}})}),qc);
+    const savedContent=await contentRoute.PATCH(new Request('https://app.test/api/products/'+latest.product_id+'/content',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:content.revision,patch:{seo:{title:'1단계 수정 상품명',keywords:['1단계 검색어'],description:'SEO 설명은 상세페이지와 별개'},detail:{description:'수정 설명 & 줄바꿈\n둘째 줄',altText:'확인한 상세 이미지 설명'},label:{material:'6단계 재질',countryOfOrigin:'중국'},assets:{main:[keys[0]],additional:[keys[2],keys[1]],detailTop:[keys[3]],detail:[keys[4]],detailBottom:[keys[5]],label:[keys[6]]}}})}),qc);
     assert.equal(savedContent.status,200,await savedContent.clone().text());
     view=await (await qr.GET(new Request(qu),qc)).json();
     const stageRow=view.resolved.rows.find(r=>r.optionId==='collected-1');
@@ -138,7 +139,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    assert.ok(rows.every(r=>r.translatedName==='검정 옵션'&&r.color==='검정'));
    const after=await (await qr.GET(new Request(qu),qc)).json();assert.equal(after.resolved.rows.find(r=>r.optionId==='collected-1').fields.salePrice.value,'35000');
    if(automatic==='fresh'){
-    const expected={title:'검토 완료 상품명',searchTags:'검토 검색어',salePrice:'35000',additionalImages:'',detailHtml:'<p>직접 수정한 상세 설명</p>',noticeMaterial:'검토 재질',packagedWeightG:'420',packagedDimensionsMm:'100*200*300'};
+    const expected={title:'검토 완료 상품명',searchTags:'검토 검색어',salePrice:'35000',additionalImages:'',detailHtml:'<p>직접 수정한 상세 설명</p>',altText:'확인한 상세 이미지 설명',noticeMaterial:'검토 재질',packagedWeightG:'420',packagedDimensionsMm:'100*200*300'};
     const finalRow=after.resolved.rows.find(row=>row.optionId==='collected-1');
     for(const [field,value] of Object.entries(expected))assert.equal(finalRow.fields[field].value,value,`reviewed ${field} survives intake retry`);
     const sourceModule=load('app/exports/quotation-source.ts');
@@ -154,7 +155,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.ok(exportedSource.content.assets.additional.value.length>0,'excluding quotation images must not delete source images');
     // Carry the same reviewed draft through the real XLSX route, R2 reads,
     // ZIP manifest and stale-review guard. This workbook is deliberately synthetic.
-    const fields=['categoryId','category','title','searchTags','supplyPrice','salePrice','msrp','mainImage','additionalImages','detailHtml','noticeMaterial','packagedWeightG','packagedDimensionsMm','detailImages','labelImages','noticeCountryOfOrigin'];
+    const fields=['categoryId','category','title','searchTags','supplyPrice','salePrice','msrp','mainImage','additionalImages','detailHtml','altText','noticeMaterial','packagedWeightG','packagedDimensionsMm','detailImages','labelImages','noticeCountryOfOrigin'];
     const workbook=quotationWorkbook(fields);
     const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
     const storageKey=load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');

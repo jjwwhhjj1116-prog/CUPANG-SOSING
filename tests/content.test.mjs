@@ -141,6 +141,38 @@ function routeWith({ find = async () => product, read = async () => model.emptyP
   }, mode);
 }
 
+test('stage-five text round trips independently of SEO through API and SQLite with clears and stale-write protection',async()=>{
+ const {sqlite,queries}=sqliteDependencies();try{
+  const route=routeWith({read:queries.readProductContent,save:queries.saveProductContent});
+  const write=async(patch,revision)=>route.PATCH(request(input(patch,revision)),context);
+  assert.equal((await write({seo:{title:'SEO 상품명',description:'수집 SEO 설명'}},0)).status,200);
+  let saved=await queries.readProductContent('owner','test');assert.equal(saved.detail.description.value,'');assert.equal(saved.detail.altText.value,'');
+  assert.equal((await write({detail:{description:'상세 설명\n<img src=x onerror=bad()>',altText:'선택 이미지 설명'}},1)).status,200);
+  saved=await queries.readProductContent('owner','test');assert.equal(saved.seo.description.value,'수집 SEO 설명');assert.equal(saved.detail.description.provenance,'manual');
+  assert.equal((await write({seo:{title:'다음 SEO',description:'다음 SEO 설명'}},2)).status,200);
+  saved=await queries.readProductContent('owner','test');assert.equal(saved.detail.description.value,'상세 설명\n<img src=x onerror=bad()>');assert.equal(saved.detail.altText.value,'선택 이미지 설명');
+  assert.equal((await write({detail:{description:'오래된 편집'}},2)).status,409);
+  assert.equal((await write({detail:{description:'',altText:''}},3)).status,200);
+  saved=await queries.readProductContent('owner','test');assert.equal(saved.seo.description.value,'다음 SEO 설명');
+  for(const key of ['description','altText']){assert.equal(saved.detail[key].value,'');assert.equal(saved.detail[key].provenance,'manual');}
+  for(const detail of [null,{}, {unknown:'x'},{description:2},{altText:'x'.repeat(2001)},{description:'x'.repeat(20001)},{description:'a\u0000b'},{altText:{value:'강제',provenance:'collected'}}])assert.equal((await write({detail},4)).status,400);
+  assert.equal((await queries.readProductContent('owner','test')).revision,4);
+ }finally{sqlite.close();}
+});
+
+test('legacy details retain their existing SEO binding until each detail field is explicitly saved',()=>{
+ const legacy=model.emptyProductContent('test');delete legacy.detail;
+ legacy.seo.title={value:'',provenance:'unverified',updatedAt:null};legacy.seo.description={value:'기존 상세 설명',provenance:'manual',updatedAt:now};
+ const before=JSON.stringify(legacy),read=model.withCurrentLabelFields(legacy);
+ assert.equal(read.detail,undefined);assert.equal(model.currentDetailContent(read,'기존 원문 제목').altText.value,'기존 원문 제목');assert.equal(JSON.stringify(legacy),before);
+ const partial=model.applyContentPatch(read,{detail:{description:''}},now);
+ assert.equal(partial.seo.description.value,'기존 상세 설명');assert.equal(partial.detail.altText,undefined);assert.equal(model.currentDetailContent(partial,'기존 원문 제목').altText.value,'기존 원문 제목');
+ const next=model.applyContentPatch(partial,{seo:{title:'새 SEO',description:'수정 SEO'}},now);
+ assert.equal(model.currentDetailContent(next).description.value,'');assert.equal(model.currentDetailContent(next).altText.value,'새 SEO');
+ const cleared=model.applyContentPatch(next,{detail:{altText:''}},now);
+ assert.equal(model.currentDetailContent(cleared,'제목 복원 금지').altText.value,'');assert.equal(cleared.detail.altText.provenance,'manual');
+});
+
 test('custom labels round trip through content API and SQLite with revision protection and delete-all',async()=>{
  const {sqlite,queries}=sqliteDependencies();try{
   const route=routeWith({read:queries.readProductContent,save:queries.saveProductContent});

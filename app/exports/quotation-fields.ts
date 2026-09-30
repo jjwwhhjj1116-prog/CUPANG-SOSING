@@ -3,7 +3,7 @@ import { supplierHubUploadPage } from '@/app/exports/supplier-hub-upload-page';
 import { supplierHubUploadPlan, type QuotationAttachment } from '@/app/exports/supplier-hub-upload-plan';
 import { categoryFields, type CategoryField, type CategoryProfileInput } from '@/app/category-profiles';
 import { inspectSubmission, type SubmissionIssue } from '@/app/submission-review';
-import { productImageKeys, savedTextOrFallback } from '@/app/product-content';
+import { currentDetailContent, productImageKeys, savedTextOrFallback } from '@/app/product-content';
 import { quotationSections, type ResolvedQuotation } from '@/app/quotation-schema';
 import { quotationCsv } from '@/app/pricing';
 import { optionSourceCostCny, optionQuotationName } from '@/app/product-options';
@@ -143,8 +143,9 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
     warnings: [...new Set(warnings), 'Excel 이미지 셀은 압축 해제한 이미지 파일명과 일치시켰습니다. 실제 Hub 양식과 접수 조건은 별도 확인이 필요합니다.'] };
   const scopeArchive = JSON.stringify({ format: 'sourceflow-quotation-scopes-v1', categoryId: saved.categoryContext.categoryId, saved: saved.savedScopes ?? saved.state });
   const imageIndex = quotationImageIndex(resolved, assets);
-  const detailPage = quotationDetailPage(resolved, assets, saved.content.seo.description.value);
-  const detailContent = JSON.stringify(quotationDetailContent(resolved, assets, saved.content.seo.description.value));
+  const detailDescription = currentDetailContent(saved.content).description.value;
+  const detailPage = quotationDetailPage(resolved, assets, detailDescription);
+  const detailContent = JSON.stringify(quotationDetailContent(resolved, assets, detailDescription));
   const labelsPage = quotationLabelsPage(resolved);
   const review = { format: 'sourceflow-quotation-review-v1', productId: saved.product.id,
     sourceUrl: saved.product.source_url, inputFingerprint,
