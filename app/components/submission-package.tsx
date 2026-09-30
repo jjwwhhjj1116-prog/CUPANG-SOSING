@@ -106,7 +106,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       {hubResult&&<div role="status"><strong>{hubResult.state==='not-found'?'검증 목록에서 아직 찾지 못했습니다.':`견적서 검증: ${hubResult.status||'상태 미표시'}`}</strong><p>견적서 ID: {hubResult.quotationId||'미표시'} · 결과 확인 시각: {new Date(hubResult.observedAt).toLocaleString('ko-KR')}</p>{hubResult.detail&&<p>{hubResult.detail}</p>}<p>현재 검토한 견적서 파일의 결과입니다. 상품별 등록 완료는 아직 확인되지 않았습니다.</p></div>}
       {hubResult?.registration?.includedOptions!==undefined&&<p role="status">초안 포함 옵션 {hubResult.registration.includedOptions}개 · Supplier Hub 현재 페이지에서 조회한 행 {hubResult.registration.rows.length}개. 페이지에 보이지 않는 옵션은 아직 대조되지 않았습니다.</p>}
       {hubResult?.registration&&<div className="panel-stack"><strong>상품별 등록 상태 · 현재 페이지 {hubResult.registration.rows.length}개</strong><p>확인 시각: {new Date(hubResult.registration.observedAt).toLocaleString('ko-KR')} · 견적서 ID: {hubResult.registration.quotationId}</p>{hubResult.registration.rows.length?<div className="table-wrap"><table><thead><tr><th>상품명</th><th>SKU ID</th><th>상태</th><th>등록 진행 단계</th></tr></thead><tbody>{hubResult.registration.rows.map((row,index)=><tr key={index}><td>{row.title}</td><td>{row.skuId||'—'}</td><td>{row.status}</td><td>{row.stage}</td></tr>)}</tbody></table></div>:<p>현재 페이지에 이 견적서의 상품이 없습니다. Supplier Hub에서 견적서 ID로 검색한 뒤 다시 확인하세요.</p>}<small>현재 페이지에 표시된 상품만 확인한 결과입니다. 전체 옵션의 등록 완료 여부는 아직 확인되지 않았습니다.</small></div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.21.zip" download>첨부 확장 다운로드 (0.2.21)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.22.zip" download>Chrome 상품 수집·첨부 확장 다운로드 (0.2.22)</a>
     </>}
   </section>;
 }

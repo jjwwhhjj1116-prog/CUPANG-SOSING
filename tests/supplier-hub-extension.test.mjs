@@ -71,9 +71,9 @@ test('decode all files before upload and report a partial attempt without automa
   const pristine=dom();assert.throws(()=>pristine.run(bad));assert.deepEqual(pristine.events,[]);
   const h=dom({detach:true}),result=h.run(payload);assert.equal(result.state,'partial');assert.equal(result.registered,false);assert.deepEqual(h.events,[0]);assert.equal(result.dispatched.length,1);assert.throws(()=>h.run(payload));
 });
-test('extension limits permissions to explicit active-tab actions',()=>{
+test('extension limits access to the explicit 1688 product host and app origins',()=>{
   const manifest=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
-  assert.deepEqual(manifest.permissions,['activeTab','scripting']);assert.equal(manifest.host_permissions,undefined);
+  assert.deepEqual(manifest.permissions,['activeTab','scripting','tabs']);assert.deepEqual(manifest.host_permissions,['https://detail.1688.com/*']);
   assert.equal(manifest.background.service_worker,'handoff-worker.mjs');
   assert.deepEqual(manifest.content_scripts[0].matches,HANDOFF_ORIGINS.map(origin=>origin+'/*'));
 });

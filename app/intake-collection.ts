@@ -5,7 +5,7 @@ import type { CollectionImportOutcome } from '@/app/collection-import';
 import { prepareIntakeSeoOutcome } from '@/app/intake-seo';
 
 /** A user-initiated fetch produces an editable draft only, never a Hub submission. */
-export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void}) {
+export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<{sourceUrl:string;scripts:string[]}>}) {
  if(options.signal.aborted)return;
  if(job.status==='cancelled')throw Error('취소된 수집 요청입니다.');
  // A product can already exist even though image import failed. Resume from
@@ -14,8 +14,15 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  let received=job;
  if(!job.received_at){
   options.onProgress('상품 페이지에서 정보 가져오는 중');
-  const response=await options.fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/collect`,{method:'POST',signal:options.signal});
-  const body=await response.json() as {error?:string;receipt?:{receivedAt?:unknown}};
+  let response=await options.fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/collect`,{method:'POST',signal:options.signal});
+  let body=await response.json() as {error?:string;code?:string;receipt?:{receivedAt?:unknown}};
+  if(!response.ok&&body.code==='SOURCE_NOT_COLLECTED'&&options.captureFromBrowser&&!options.signal.aborted){
+   options.onProgress('현재 Chrome에서 1688 상품 원문 확인 중');
+   const captured=await options.captureFromBrowser(job.source_url,options.signal);
+   if(options.signal.aborted)return;
+   response=await options.fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/browser-capture`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(captured),signal:options.signal});
+   body=await response.json() as typeof body;
+  }
   if(options.signal.aborted)return;
   if(!response.ok)throw Error(body?.error||'상품 정보를 가져오지 못했습니다.');
   const result=validateCollectionReceiptResponse(body,job.id,job.offer_id);
