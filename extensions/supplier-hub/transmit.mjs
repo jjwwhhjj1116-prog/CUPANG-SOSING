@@ -4,6 +4,7 @@ import {prepareAttachments} from './package.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
 import {attachToSupplierHub} from './attach.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
+import {waitForSupplierHubPage,supplierHubUploadReady} from './hub-tab.mjs';
 
 const activeWindows=new Set();
 export async function transmitSupplierHubPackage(message,sender,api=chrome,store=transferRecord){
@@ -21,9 +22,17 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     const prepared=await prepareAttachments(Uint8Array.from(atob(packageValue.base64),c=>c.charCodeAt(0)));
     if(prepared.productId!==identity.productId||prepared.categoryId!==identity.categoryId
       ||prepared.quotation[0]?.name!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('검토한 상품·카테고리와 첨부 견적서가 다릅니다.');
+    const key=`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
+    if(await store('get',key))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
     const tabs=(await api.tabs.query({windowId})).filter(tab=>isHubRegistrationTab(tab,windowId));
-    if(tabs.length!==1)throw Error('앱과 같은 Chrome 창에 Supplier Hub 대량 상품 등록 탭이 하나 열려 있어야 합니다. 기존 탭을 확인해주세요.');
-    const tabId=tabs[0].id;
+    const unused=[],owned=[];
+    for(const tab of tabs){
+      const attempt=await store('get',`attempt:${tab.id}`);
+      if(!attempt)unused.push(tab);
+      else if(attempt.origin===identity.origin&&attempt.company?.code===prepared.company.code&&attempt.company?.name===prepared.company.name)owned.push(tab);
+    }
+    if(unused.length>1||(!unused.length&&!owned.length))throw Error('앱과 같은 Chrome 창의 Supplier Hub 대량 상품 등록 탭을 확인해주세요. 작업 중인 탭이 여러 개면 사용할 탭을 하나 남겨주세요.');
+    let tabId=(unused[0]||owned[0]).id;
     const current=async()=>{const tab=await api.tabs.get(tabId);if(!isHubRegistrationTab(tab,windowId))throw Error('Supplier Hub 탭이 이동되거나 등록 화면이 변경되었습니다.');};
     const companyCheck=async()=>{
       await current();
@@ -32,11 +41,21 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
       await current();
     };
     await companyCheck();
-    const [preflight]=await api.scripting.executeScript({target:{tabId},func:attachToSupplierHub,args:[prepared,true]});
+    let preflight;
+    if(unused.length)[preflight]=await api.scripting.executeScript({target:{tabId},func:attachToSupplierHub,args:[prepared,true]});
+    if(!unused.length||preflight?.result?.state==='occupied'){
+      // Preserve the original file inputs, agreements and validation history.
+      await companyCheck();
+      const fresh=await api.tabs.create({windowId,url:'https://supplier.coupang.com/qvt/registration',active:false});
+      if(!Number.isSafeInteger(fresh?.id)||fresh.id<0||fresh.windowId!==windowId)throw Error('같은 Chrome 창에 새 등록 탭을 준비하지 못했습니다.');
+      tabId=fresh.id;
+      await waitForSupplierHubPage(tabId,windowId,'/qvt/registration',supplierHubUploadReady,api);
+      await companyCheck();
+      [preflight]=await api.scripting.executeScript({target:{tabId},func:attachToSupplierHub,args:[prepared,true]});
+    }
     if(preflight?.result?.state!=='ready'||preflight.result.registered!==false)throw Error('Supplier Hub 첨부 화면을 확인하지 못했습니다.');
     await current();
     const record={...identity,company:prepared.company,includedOptions:prepared.includedOptions,tabId,windowId,startedAt:Date.now(),state:'started',registered:false};
-    const key=`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
     // Atomic persisted claim survives a closed app tab or a restarted worker.
     if(!await store('claim',key,record))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
     let attached=false;

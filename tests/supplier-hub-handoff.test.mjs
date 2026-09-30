@@ -91,3 +91,17 @@ test('live refresh uses the current identity rather than only previously stored 
  const h=harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,registered:false,record}));
  assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal,true)).state,'validation-pending');assert.equal(h.sent[0].type,'REFRESH');assert.equal(h.sent[0].payload.fingerprint,identity.fingerprint);
 });
+
+test('app registration lookup needs its capability and returns only matching refreshed rows',async()=>{
+ const record={...identity,origin:'https://sourceflow.jjwwhhjj1116.workers.dev',filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-complete',quotationId:'123',observedAt:Date.now(),registered:false,includedOptions:3,
+  registration:{quotationId:'123',scope:'visible-page',observedAt:Date.now(),registered:false,includedOptions:3,rows:[]}};
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true}:{ok:true,fingerprint:identity.fingerprint,record,registered:false}));
+ assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal,'registration')).registration.quotationId,'123');
+ assert.deepEqual(h.sent.map(message=>message.type),['PING','REGISTRATION']);assert.deepEqual(h.sent[1].payload,identity);
+ const old=harness((m,emit)=>emit(m,{ok:true,companyBinding:true,directTransmission:true}));
+ await assert.rejects(old.api.getSupplierHubResult(identity,new AbortController().signal,'registration'),/0.2.24/);assert.equal(old.sent.length,1);
+ for(const patch of [{registration:undefined},{registration:{...record.registration,quotationId:'other'}},{registration:{...record.registration,includedOptions:2}},{state:'validation-pending'}]){
+  const bad=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true}:{ok:true,fingerprint:identity.fingerprint,record:{...record,...patch},registered:false}));
+  await assert.rejects(bad.api.getSupplierHubResult(identity,new AbortController().signal,'registration'));assert.equal(bad.sent.length,2);
+ }
+});

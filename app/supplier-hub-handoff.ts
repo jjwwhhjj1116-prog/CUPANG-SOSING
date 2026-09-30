@@ -1,5 +1,5 @@
 type PackageIdentity={productId:string;categoryId:string;fingerprint:string};
-function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
+function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH'|'REGISTRATION',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
   return new Promise((resolve,reject)=>{
     if(signal.aborted){reject(new Error('작업을 취소했습니다.'));return;}
     const requestId=crypto.randomUUID();
@@ -11,7 +11,7 @@ function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH',payload:un
       if(!result||result.ok!==true)reject(new Error(typeof result?.error==='string'?result.error:'확장에 견적서를 전달하지 못했습니다.'));
       else resolve(result);
     };
-    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':type==='TRANSMIT'?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:type==='TRANSMIT'?55000:20000);
+    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':type==='TRANSMIT'?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='REGISTRATION'?'상품별 등록 상태 응답이 없습니다. 잠시 후 다시 조회해주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:type==='TRANSMIT'?55000:type==='REGISTRATION'?30000:20000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type,payload},window.location.origin);
   });
@@ -29,10 +29,14 @@ export function validateRegistrationResult(value:unknown,quotationId:unknown):Su
   if(!result||typeof quotationId!=='string'||!quotationId.trim()||result.quotationId!==quotationId||result.scope!=='visible-page'||result.registered!==false||!Number.isFinite(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000||(result.includedOptions!==undefined&&(!Number.isSafeInteger(result.includedOptions)||result.includedOptions<1||result.includedOptions>200))||!Array.isArray(result.rows)||result.rows.length>1000||result.rows.some(row=>!row||['title','submittedAt','category','barcode','sourceQuotation','skuId','status','stage'].some(key=>typeof row[key as keyof SupplierHubRegistrationRow]!=='string'||row[key as keyof SupplierHubRegistrationRow].length>20000)))throw new Error('현재 견적서의 상품별 등록 결과인지 확인하지 못했습니다.');
   return result;
 }
-export async function getSupplierHubResult(identity:PackageIdentity,signal:AbortSignal,refresh=false):Promise<SupplierHubResult|null>{
-  const response=await exchange(refresh?'REFRESH':'RESULT',identity,signal);
+export async function getSupplierHubResult(identity:PackageIdentity,signal:AbortSignal,refresh:boolean|'registration'=false):Promise<SupplierHubResult|null>{
+  if(refresh==='registration'){
+    const capability=await exchange('PING',null,signal);
+    if(capability.companyBinding!==true||capability.registrationLookup!==true)throw new Error('상품별 등록 조회를 지원하는 Chrome 확장 0.2.24 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  }
+  const response=await exchange(refresh==='registration'?'REGISTRATION':refresh?'REFRESH':'RESULT',identity,signal);
   if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new Error('견적서 결과의 식별값이 일치하지 않습니다.');
-  if(response.record===null)return null;
+  if(response.record===null){if(refresh==='registration')throw new Error('이 견적서의 상품별 등록 결과가 없습니다.');return null;}
   const record=response.record as Record<string,unknown>;
   if(!record||record.origin!==window.location.origin||record.productId!==identity.productId||record.categoryId!==identity.categoryId||record.fingerprint!==identity.fingerprint||record.filename!==`YOOFAM-${identity.fingerprint}.xlsx`||record.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(String(record.state))||typeof record.observedAt!=='number'||!Number.isFinite(record.observedAt)||record.observedAt<=0||record.observedAt>Date.now()+60000||(record.includedOptions!==undefined&&(typeof record.includedOptions!=='number'||!Number.isSafeInteger(record.includedOptions)||record.includedOptions<1||record.includedOptions>200))||['submittedAt','status','detail','quotationId'].some(key=>record[key]!==undefined&&(typeof record[key]!=='string'||String(record[key]).length>20000)))throw new Error('검토한 상품의 검증 결과인지 확인하지 못했습니다.');
   if(record.registration!==undefined){
@@ -40,6 +44,7 @@ export async function getSupplierHubResult(identity:PackageIdentity,signal:Abort
     const registration=validateRegistrationResult(record.registration,record.quotationId);
     if(registration.includedOptions!==record.includedOptions)throw new Error('초안 옵션 수와 상품별 등록 결과의 연결을 확인하지 못했습니다.');
   }
+  if(refresh==='registration'&&record.registration===undefined)throw new Error('현재 견적서의 상품별 등록 조회 결과가 없습니다.');
   return record as SupplierHubResult;
 }
 export async function prepareSupplierHubHandoff(blob:Blob,identity:PackageIdentity,signal:AbortSignal){
@@ -47,13 +52,13 @@ export async function prepareSupplierHubHandoff(blob:Blob,identity:PackageIdenti
   if(result.fingerprint!==identity.fingerprint||result.registered!==false)throw new Error('검토한 견적서와 확장 준비 결과가 다릅니다.');
 }
 export type SupplierHubAgreements={priceData:boolean;labelBusinessContact:boolean;legalDocumentsNotApplicable:boolean};
-export type SupplierHubTransmission={state:'validation-requested'|'attached'|'partial'|'unconfirmed';registered:false;error?:string};
+export type SupplierHubTransmission={state:'not-started'|'validation-requested'|'attached'|'partial'|'unconfirmed';registered:false;error?:string};
 export async function transmitSupplierHubPackage(blob:Blob,identity:PackageIdentity,reviewedAgreements:SupplierHubAgreements,signal:AbortSignal):Promise<SupplierHubTransmission>{
   if(!reviewedAgreements||!['priceData','labelBusinessContact','legalDocumentsNotApplicable'].every(key=>reviewedAgreements[key as keyof SupplierHubAgreements]===true))throw new Error('Supplier Hub 필수 동의와 법적 서류 선택을 확인해주세요.');
   const response=await exchange('TRANSMIT',{...identity,reviewedAgreements,base64:await packageBase64(blob)},signal);
   const result=response.result as SupplierHubTransmission;
   if(response.fingerprint!==identity.fingerprint||response.registered!==false||!result||result.registered!==false
-    ||!['validation-requested','attached','partial','unconfirmed'].includes(result.state)
+    ||!['not-started','validation-requested','attached','partial','unconfirmed'].includes(result.state)
     ||(result.error!==undefined&&(typeof result.error!=='string'||result.error.length>20000)))throw new Error('전송 결과를 확인하지 못했습니다. Supplier Hub 첨부 목록과 검증 상태를 확인해주세요.');
   return result;
 }

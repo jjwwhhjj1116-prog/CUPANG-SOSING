@@ -8,6 +8,7 @@ import {transmitSupplierHubPackage,waitForSupplierHubAttachments} from '../exten
 import {attachToSupplierHub} from '../extensions/supplier-hub/attach.mjs';
 import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
 import {requestSupplierHubValidation} from '../extensions/supplier-hub/validate.mjs';
+import {supplierHubUploadReady} from '../extensions/supplier-hub/hub-tab.mjs';
 
 const identity={productId:'product',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/'};
@@ -24,11 +25,14 @@ async function fixture(options={}){
  const calls=[],records=new Map();
  const tab={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',...options.tab};
  let checks=0;
- const api={tabs:{query:async query=>{calls.push(['query',query]);return options.tabs??[tab];},get:async()=>options.getTab??tab},scripting:{executeScript:async request=>{
-   assert.equal(request.target.tabId,123);calls.push([request.func.name,request.args]);
+ const tabs=options.tabs??[tab];let fresh;
+ if(options.previous)records.set('attempt:123',{origin:new URL(sender.url).origin,...identity,company:{code:'A01464742',name:'와이홉'},includedOptions:2});
+ const api={tabs:{query:async query=>{calls.push(['query',query]);return tabs;},get:async id=>options.getTab??(id===124?fresh:tab),create:async input=>{calls.push(['create',input]);fresh={id:124,status:'complete',...input,...options.created};tabs.push(fresh);return fresh;}},scripting:{executeScript:async request=>{
+   calls.push([request.func.name,request.args,request.target.tabId]);
+   if(request.func===supplierHubUploadReady)return [{result:true}];
    if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[checks++]??'A01464742'}}];
    if(request.func===attachToSupplierHub){
-     if(request.args[1]===true){if(options.preflightError)throw Error('existing files');return [{result:{state:'ready',registered:false}}];}
+     if(request.args[1]===true){if(options.preflightError)throw Error('changed upload sections');return [{result:{state:options.occupied&&request.target.tabId===123?'occupied':'ready',registered:false}}];}
      await options.onAttach?.();if(options.attachError)throw Error('lost response');return [{result:{state:options.outcome??'dispatched',registered:false}}];
    }
    if(request.func===waitForSupplierHubAttachments)return [{result:options.ready??true}];
@@ -46,12 +50,25 @@ async function fixture(options={}){
 
 test('app transmission uses its existing Chrome window and binds attachment/validation to the reviewed package',async()=>{
  const h=await fixture();const result=await h.run();assert.equal(result.state,'validation-requested');assert.equal(result.registered,false);
- assert.deepEqual(h.calls[0],['query',{windowId:17}]);
+ assert.deepEqual(h.calls.find(([name])=>name==='query'),['query',{windowId:17}]);
  const attempt=h.records.get('attempt:123');assert.equal(attempt.productId,identity.productId);assert.equal(attempt.company.code,'A01464742');assert.equal(attempt.includedOptions,2);
  const scripts=h.calls.filter(([name])=>['attachToSupplierHub','waitForSupplierHubAttachments','requestSupplierHubValidation'].includes(name));
  assert.deepEqual(scripts.map(([name])=>name),['attachToSupplierHub','attachToSupplierHub','waitForSupplierHubAttachments','requestSupplierHubValidation']);
  assert.deepEqual(scripts[2][1][0],[`YOOFAM-${identity.fingerprint}.xlsx`,'photo.png','label.png']);
  await assert.rejects(h.run(),/이미 전송/);assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
+});
+
+test('a second product or existing attachments get a fresh upload tab in the same window without replacing work',async()=>{
+ for(const options of [{previous:true},{occupied:true}]){
+  const h=await fixture(options);assert.equal((await h.run()).state,'validation-requested');
+  assert.deepEqual(h.calls.find(([name])=>name==='create'),['create',{windowId:17,url:'https://supplier.coupang.com/qvt/registration',active:false}]);
+  const uploads=h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true);assert.equal(uploads.length,1);assert.equal(uploads[0][2],124);
+  assert.equal(h.records.get('attempt:124').productId,identity.productId);
+  await assert.rejects(h.run(),/이미 전송/);assert.equal(h.calls.filter(([name])=>name==='create').length,1);
+ }
+ for(const options of [{previous:true,created:{windowId:18}},{occupied:true,created:{url:'https://supplier.coupang.com/login'}},{previous:true,companyCodes:['A01526306']}]){
+  const h=await fixture(options);await assert.rejects(h.run());assert.equal(h.calls.some(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true),false);
+ }
 });
 
 test('untrusted frames, missing agreements and mismatched products cannot reach Supplier Hub',async()=>{

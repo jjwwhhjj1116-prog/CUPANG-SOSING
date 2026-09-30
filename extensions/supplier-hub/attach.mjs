@@ -21,7 +21,10 @@ export function attachToSupplierHub(payload,checkOnly=false) {
     return {key,input};
   });
   // A pristine form only: avoid replacing files of a user's work in progress.
-  if(document.documentElement.dataset.yoofamAttachmentAttempt||all.some(input=>input.files?.length)||document.body.innerText.match(/[^\s<>]+\.(?:xlsx|xls|csv|tsv|jpe?g|png|webp|gif|avif|pdf)\b/i))throw Error('이미 파일이 있거나 전달을 시도한 등록 화면입니다. 기존 작업 보호를 위해 중단했습니다.');
+  if(document.documentElement.dataset.yoofamAttachmentAttempt||all.some(input=>input.files?.length)||document.body.innerText.match(/[^\s<>]+\.(?:xlsx|xls|csv|tsv|jpe?g|png|webp|gif|avif|pdf)\b/i)){
+    if(checkOnly===true)return {state:'occupied',registered:false};
+    throw Error('이미 파일이 있거나 전달을 시도한 등록 화면입니다. 기존 작업 보호를 위해 중단했습니다.');
+  }
   if(new Set(targets.map(t=>t.input)).size!==3)throw Error('업로드 구역이 중복됩니다.');
   // Decode every group before any change event can start a remote upload.
   const prepared=targets.map(({key,input})=>{

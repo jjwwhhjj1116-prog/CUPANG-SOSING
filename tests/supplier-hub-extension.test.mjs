@@ -69,6 +69,15 @@ test('attachment preflight validates the same pristine form without files, event
  assert.equal(h.inputs.every(input=>input.files.length===0),true);assert.deepEqual(h.events,[]);assert.deepEqual(h.dataset,{});
  assert.equal(h.run(payload).state,'dispatched');assert.deepEqual(h.events,[0,1,2]);
 });
+
+test('preflight reports occupied work without changing any existing file or attempt marker',async()=>{
+ const payload=await prepareAttachments(await fixture());
+ for(const options of [{existing:true},{visibleFilename:true}]){
+  const h=dom(options),before=h.inputs.map(input=>input.files);
+  assert.equal(h.run(payload,true).state,'occupied');assert.equal(h.run(payload,true).registered,false);
+  assert.deepEqual(h.events,[]);assert.deepEqual(h.dataset,{});h.inputs.forEach((input,index)=>assert.equal(input.files,before[index]));
+ }
+});
 test('existing files, ambiguous sections, disabled controls and wrong hosts never dispatch',async()=>{
   const payload=await prepareAttachments(await fixture());
   for(const options of [{existing:true},{visibleFilename:true},{duplicate:true},{disabled:true},{wrong:true}]){const h=dom(options);assert.throws(()=>h.run(payload));assert.deepEqual(h.events,[]);}

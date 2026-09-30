@@ -5,11 +5,24 @@ import {dispatchPendingPackage} from './dispatch.mjs';
 import {capture1688Product} from './capture-1688.mjs';
 import {transmitSupplierHubPackage} from './transmit.mjs';
 import {validateAppHubRequest} from './app-request.mjs';
+import {refreshSupplierHubRegistration} from './app-registration.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_REFRESH_RESULT'].includes(message?.type))return;
+  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION'].includes(message?.type))return;
   (async()=>{try{
+    if(message.type==='YOOFAM_REFRESH_REGISTRATION'){
+      const record=await refreshSupplierHubRegistration(message,sender);
+      respond({ok:true,fingerprint:message.fingerprint,record,registered:false});return;
+    }
     if(message.type==='YOOFAM_TRANSMIT_PACKAGE'){
-      const result=await transmitSupplierHubPackage(message,sender);
+      let result;
+      try{result=await transmitSupplierHubPackage(message,sender);}
+      catch(error){
+        const identity=validateAppHubRequest(message,sender,'YOOFAM_TRANSMIT_PACKAGE');
+        const attempt=await transferRecord('get',`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`);
+        if(attempt)throw error;
+        // Uploads start only after the persisted claim. Only a proven absent claim permits retry.
+        result={state:'not-started',registered:false,error:error.message};
+      }
       respond({ok:true,fingerprint:message.fingerprint,result,registered:false});return;
     }
     if(message.type==='YOOFAM_REFRESH_RESULT'){
