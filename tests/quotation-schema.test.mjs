@@ -114,7 +114,7 @@ test('quotation exports preserve manually cleared option names without restoring
 
 test('all recorded categories expose input links for automatic values and retain stage values and manual blanks',()=>{
  const {quotationInputLink}=load('app/quotation-input-links.ts');
- const categories=new Set(['80719','81452','64497','103495','77442',...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas)]);
+ const categories=new Set(['80719','81452','64497','103495','77442','81221',...Object.keys(load('app/hub-product-schemas.ts').hubProductSchemas)]);
  for(const categoryId of categories){
   const input=fixture();input.categoryId=categoryId;const before=JSON.stringify(input);
   const result=model.resolveQuotationFields(input),row=result.rows[1];
@@ -1946,4 +1946,58 @@ test('yoga length and width retain per-option values, clears and quotation edits
  assert.equal(exported[1][length.id],'190 cm');assert.equal(exported[1][width.id],'');
  assert.equal(resolved.rows[2].fields[width.id].source,'manual-option');
  assert.equal(load('app/quotation-input-links.ts').quotationInputLink(length),'옵션 상품 세로 · cm');
+});
+
+test('81221 saved stage-six notices and per-option color reach the quotation and exported cells',()=>{
+ const input=fixture();input.categoryId='81221';
+ input.content=contentModel.applyContentPatch(input.content,{label:{dimensions:'장갑 길이 23 cm, 중량 80 g',kcInformation:'검토한 KC 정보',specifications:'손바닥 미끄럼 방지'}},'reviewed');
+ input.options.rows[0].color='검정';input.options.rows[0].size='M';
+ const before=JSON.stringify(input),result=model.resolveQuotationFields(input),fields=result.rows[1].fields;
+ const expected={glove_noticeColor:'검정',glove_noticeSizeWeight:'장갑 길이 23 cm, 중량 80 g',glove_noticeKc:'검토한 KC 정보',glove_noticeSpecifications:'손바닥 미끄럼 방지'};
+ const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,result,JSON.parse(input.product.image_keys).map(key=>({key,name:key})))[0];
+ for(const [id,value] of Object.entries(expected)){
+  assert.equal(fields[id].value,value,id);assert.equal(exported[id],value,id);
+  assert.ok(load('app/quotation-input-links.ts').quotationInputLink(result.schema.fields.find(field=>field.id===id)),id);
+ }
+ assert.equal(fields.glove_noticeColor.source,'option');assert.equal(fields.glove_noticeSizeWeight.source,'content');
+ assert.equal(fields.glove_noticeKc.source,'content');assert.equal(fields.glove_noticeSpecifications.source,'content');
+ assert.equal(JSON.stringify(input),before);
+});
+
+test('81221 manual common and option notice edits and deliberate blanks keep precedence over saved stage values',()=>{
+ const input=fixture();input.categoryId='81221';
+ input.content=contentModel.applyContentPatch(input.content,{label:{dimensions:'23 cm / 80 g',kcInformation:'입력한 인증',specifications:'입력 사양'}},'reviewed');
+ input.options.rows[0].color='검정';input.options.rows[0].provenance.color='manual';
+ const ids=['glove_noticeColor','glove_noticeSizeWeight','glove_noticeKc','glove_noticeSpecifications'];
+ input.overrides={common:Object.fromEntries(ids.map(id=>[id,'공통 수정'])),options:{red:Object.fromEntries(ids.map(id=>[id,'']))}};
+ let result=model.resolveQuotationFields(input);
+ for(const id of ids){assert.equal(result.rows[0].fields[id].value,'공통 수정');assert.equal(result.rows[1].fields[id].value,'');assert.equal(result.rows[1].fields[id].source,'manual-option');}
+ delete input.overrides.options.red;result=model.resolveQuotationFields(input);
+ for(const id of ids)assert.equal(result.rows[1].fields[id].value,'공통 수정');
+ input.overrides={common:{},options:{}};
+ input.content=contentModel.applyContentPatch(input.content,{label:{dimensions:'',kcInformation:'',specifications:''}},'cleared');
+ input.options.rows[0].color='';result=model.resolveQuotationFields(input);
+ for(const id of ids){assert.equal(result.rows[1].fields[id].value,'');assert.ok(['content','option'].includes(result.rows[1].fields[id].source),id);}
+ delete input.content.label.kcInformation;delete input.content.label.specifications;
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_noticeKc.value,'');
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_noticeSpecifications.value,'');
+ input.categoryId='80719';assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_noticeKc,undefined);
+});
+
+test('81221 fashion size uses exact saved option choices without converting product dimensions or aliases',()=>{
+ const input=fixture();input.categoryId='81221';
+ for(const size of ['S','M','L','XL','Free Size','XXS','XS','XXL이상']){
+  input.options.rows[0].size=size;const fields=model.resolveQuotationFields(input).rows[1].fields;
+  assert.equal(fields.glove_fashionSize.value,size);assert.equal(fields.glove_fashionSize.source,'option');assert.equal(fields.size.value,size);
+ }
+ for(const size of ['Medium','Free','20 × 30 cm']){
+  input.options.rows[0].size=size;const fields=model.resolveQuotationFields(input).rows[1].fields;
+  assert.equal(fields.size.value,size);assert.equal(fields.glove_fashionSize.value,'');assert.ok(fields.glove_fashionSize.validationIssues.some(issue=>issue.includes('선택지')));
+ }
+ input.options.rows[0].size='';input.options.rows[0].provenance.size='unverified';
+ let fields=model.resolveQuotationFields(input).rows[1].fields;assert.equal(fields.size.value,'');assert.equal(fields.glove_fashionSize.value,'');
+ input.options.rows[0].provenance.size='manual';fields=model.resolveQuotationFields(input).rows[1].fields;
+ assert.equal(fields.size.source,'option');assert.equal(fields.glove_fashionSize.source,'option');
+ input.overrides={common:{glove_fashionSize:'S'},options:{red:{glove_fashionSize:'L'}}};assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_fashionSize.value,'L');
+ input.overrides.options.red.glove_fashionSize='';assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_fashionSize.source,'manual-option');
 });

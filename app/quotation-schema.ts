@@ -388,9 +388,9 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         if (option?.weightKg === null && option.provenance.weightKg === 'manual') return { value: '', source: 'option' };
         return literal(option?.weightKg == null ? '' : `${option.weightKg} kg`, 'option');
       }
-      case 'color': case 'yoga_noticeColor': case 'brace_noticeColor': case 'marathon_noticeColor': return option?.provenance.color === 'manual'
+      case 'color': case 'yoga_noticeColor': case 'brace_noticeColor': case 'marathon_noticeColor': case 'glove_noticeColor': return option?.provenance.color === 'manual'
         ? { value: option.color ?? '', source: 'option' } : literal(option?.color, 'option');
-      case 'brace_size': {
+      case 'brace_size': case 'glove_fashionSize': {
         // Link a saved purchasing size only when it is an exact observed choice.
         // Do not convert physical dimensions or infer size synonyms.
         if (!option) return literal('', 'empty');
@@ -402,8 +402,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'size': case 'marathon_noticeSize':
         if (option?.size || option?.provenance.size === 'manual') return { value: option.size ?? '', source: 'option' };
-        // 81452 expects a purchasing size (S/Medium/Free), not physical dimensions.
-        if (schema.categoryId === '81452' || schema.categoryId === '103495') return literal('', 'empty');
+        // These categories use purchasing sizes rather than physical measurements.
+        if (schema.categoryId === '81452' || schema.categoryId === '103495' || schema.categoryId === '81221') return literal('', 'empty');
         return dimensions(option);
       case 'noticeMaterial': return contentValue(content.label.material);
       case 'mainImage': {
@@ -424,8 +424,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'noticeDimensions': return dimensions(option);
       // This notice contains product size/weight, not the option's packaging dimensions.
-      case 'yoga_noticeSpecifications': case 'brace_noticeSpecifications': return contentValue(content.label.specifications ?? { value: '', provenance: 'unverified', updatedAt: null });
-      case 'yoga_noticeSizeWeight': case 'brace_noticeSizeWeight': return contentValue(content.label.dimensions);
+      case 'yoga_noticeSpecifications': case 'brace_noticeSpecifications': case 'glove_noticeSpecifications': return contentValue(content.label.specifications ?? { value: '', provenance: 'unverified', updatedAt: null });
+      case 'yoga_noticeSizeWeight': case 'brace_noticeSizeWeight': case 'glove_noticeSizeWeight': return contentValue(content.label.dimensions);
       case 'noticeManufacturerImporter': {
         const manufacturer = savedTextOrFallback(content.label.manufacturer, settings.manufacturer); const importer = savedTextOrFallback(content.label.importer, settings.importer);
         const value = [manufacturer && `제조자: ${manufacturer}`, importer && `수입자: ${importer}`].filter(Boolean).join(' / ');
@@ -436,7 +436,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'marathon_noticeKind': return contentValue(content.label.productType ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'marathon_noticeCaution': return contentValue(content.label.precautions);
       case 'noticePermission': return contentValue(content.label.certification);
-      case 'yoga_noticeKc': case 'brace_noticeKc': return contentValue(content.label.kcInformation ?? { value: '', provenance: 'unverified', updatedAt: null });
+      case 'yoga_noticeKc': case 'brace_noticeKc': case 'glove_noticeKc': return contentValue(content.label.kcInformation ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeComponents': return contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeReleaseDate': return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance);
