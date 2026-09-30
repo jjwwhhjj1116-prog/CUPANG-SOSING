@@ -8,21 +8,27 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let index=0;index<8;index++)await new Promise(resolve=>setImmediate(resolve));};
 const fingerprint='a'.repeat(64);
-function harness({conflict=false,uncertain=false,validationComplete=false,notStarted=false}={}){
- const slots=[],calls=[];let cursor=0,sourceChanged=false;
+function harness({conflict=false,uncertain=false,validationComplete=false,notStarted=false,manualWait=false,issued=false}={}){
+ const slots=[],calls=[],modules=new Map();let cursor=0,sourceChanged=false;
+ let clock=0;
  const preview={fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],report:{company:{code:'A01464742',name:'와이홉'},productId:'p',categoryId:'80719',profileId:'profile',rowCount:1,warnings:[],submissionReady:false},submissionReview:{productId:'p',categoryId:'80719',inputFingerprint:fingerprint,submissionReady:false,transport:'not-connected',errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]}};
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
- const bridge={checkSupplierHubExtension:async(_signal,direct)=>calls.push(['check',direct]),transmitSupplierHubPackage:async(blob,identity,reviewed)=>{calls.push(['transmit',identity,reviewed,await blob.text()]);if(uncertain)throw Error('응답 확인 불가');return {state:notStarted?'not-started':'validation-requested',registered:false};},getSupplierHubResult:async(identity,_signal,refresh)=>{calls.push(['result',identity,refresh]);return {state:validationComplete?'validation-complete':'validation-pending',filename:preview.filename,quotationId:validationComplete?'quote-123':undefined,observedAt:Date.now(),registered:false,...(refresh==='registration'?{registration:{quotationId:'quote-123',scope:'visible-page',rows:[],includedOptions:1,observedAt:Date.now(),registered:false}}:{})};}};
- function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,URL,setTimeout,fetch:async(url,init)=>{
+ const bridge={checkSupplierHubExtension:async(_signal,direct)=>calls.push(['check',direct]),transmitSupplierHubPackage:async(blob,identity,reviewed)=>{calls.push(['transmit',identity,reviewed,await blob.text()]);if(uncertain)throw Error('응답 확인 불가');return {state:notStarted?'not-started':'validation-requested',registered:false};},getSupplierHubResult:async(identity,_signal,refresh)=>{calls.push(['result',identity,refresh]);return {state:validationComplete?'validation-complete':'validation-pending',filename:preview.filename,company:preview.report.company,includedOptions:1,quotationId:validationComplete?'quote-123':undefined,observedAt:Date.now(),registered:false,...(refresh==='registration'?{registration:{quotationId:'quote-123',scope:'visible-page',rows:issued?[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:preview.filename,skuId:'sku-123',status:'상품 검수중',stage:'가격/정책'}]:[],includedOptions:1,observedAt:Date.now(),registered:false}}:{})};}};
+ function load(file){if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,setTimeout,fetch:async(url,init)=>{
    const body=JSON.parse(init.body);calls.push(['fetch',url,body]);
-   if(body.action==='preview')return Response.json({...preview,...(sourceChanged?{fingerprint:'b'.repeat(64)}:{})});
+   if(body.action==='preview'||body.action==='source')return Response.json({...preview,...(sourceChanged?{fingerprint:'b'.repeat(64)}:{})});
    if(conflict)return Response.json({error:'저장값이 변경되었습니다.'},{status:409});
    return new Response('ZIP bytes',{headers:{'content-type':'application/zip'}});
- },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
+ },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/supplier-hub-tracking')return trackingBridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
+ const tracker=load('app/supplier-hub-tracking.ts');
+ const trackingBridge={...tracker,followSupplierHubRegistration:(source,options)=>tracker.followSupplierHubRegistration(source,{...options,maxDurationMs:1000,now:()=>clock,wait:async(ms,signal)=>{
+  if(manualWait)return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('paused')),{once:true}));
+  clock+=ms;
+ }})};
  const Component=load('app/components/submission-package.tsx').SubmissionPackage;
  const render=()=>{cursor=0;return Component({productId:'p',profileId:'profile',categoryId:'80719',onInspect(){}});};
  const button=text=>nodes(render()).find(node=>node.type==='button'&&node.props.children===text);
- return {render,calls,button,changeSource(){sourceChanged=true;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
+ return {render,calls,button,changeSource(){sourceChanged=true;},complete(){validationComplete=true;issued=true;},hideSkus(){issued=false;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
 }
 
 test('reviewed registration sends the current export and choices, refreshes evidence and disables repeat transmission',async()=>{
@@ -40,11 +46,13 @@ test('registration status lookup requires completed validation and rechecks curr
  for(const validationComplete of [false,true]){
   const h=harness({validationComplete});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
   assert.equal(h.button('견적서 ID로 상품별 등록 상태 조회').props.disabled,!validationComplete);
-  if(validationComplete){h.button('견적서 ID로 상품별 등록 상태 조회').props.onClick();await settle();
+  if(validationComplete){const checks=h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='source').length;
+   assert.equal(h.calls.filter(([name,,mode])=>name==='result'&&mode==='registration').length,1,'transmission automatically reaches the SKU lookup');
+   h.button('견적서 ID로 상품별 등록 상태 조회').props.onClick();await settle();
    const call=h.calls.find(([name,,mode])=>name==='result'&&mode==='registration');assert.equal(call[1].fingerprint,fingerprint);
-   assert.equal(h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='preview').length,2);
+   assert.equal(h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='source').length,checks+1);
    h.changeSource();h.button('견적서 ID로 상품별 등록 상태 조회').props.onClick();await settle();
-   assert.equal(h.calls.filter(([name,,mode])=>name==='result'&&mode==='registration').length,1);assert.equal(h.button('견적서 ID로 상품별 등록 상태 조회'),undefined);
+   assert.equal(h.calls.filter(([name,,mode])=>name==='result'&&mode==='registration').length,2);assert.equal(h.button('견적서 ID로 상품별 등록 상태 조회'),undefined);
   }
  }
 });
@@ -61,4 +69,42 @@ test('proven preflight failure permits user retry while uncertain transmission s
  const h=harness({notStarted:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
  assert.equal(h.button('등록 전송').props.disabled,false);assert.equal(h.calls.some(([name])=>name==='result'),false);
  h.button('등록 전송').props.onClick();await settle();assert.equal(h.calls.filter(([name])=>name==='transmit').length,2,'retry is an explicit user click');
+});
+
+test('registration transmission continues into SKU lookup without another user click or another export',async()=>{
+ const h=harness({validationComplete:true,issued:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
+ assert.deepEqual(h.calls.filter(([name])=>name==='result').map(([, ,mode])=>mode),[true,'registration']);
+ assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+ assert.equal(h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='export').length,1);
+ assert.ok(nodes(h.render()).some(node=>node.props?.children==='전송한 옵션 수와 동일한 수의 고유 SKU ID가 조회됐습니다. 상품 검수 결과는 아래 상태를 기준으로 확인하세요.'));
+ assert.equal(h.button('결과 확인 일시정지'),undefined);
+});
+
+test('pausing and resuming checks preserves one transmission and requires no new agreements or ZIP',async()=>{
+ const h=harness({manualWait:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
+ assert.equal(h.button('등록 결과 확인 중…').props.disabled,true);
+ h.button('결과 확인 일시정지').props.onClick();await settle();
+ assert.equal(h.button('전송 결과 계속 확인').props.disabled,false);
+ assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+ h.complete();h.button('전송 결과 계속 확인').props.onClick();await settle();
+ assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+ assert.equal(h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='export').length,1);
+ assert.deepEqual(h.calls.filter(([name])=>name==='result').map(([, ,mode])=>mode),[true,true,'registration']);
+ assert.equal(h.button('결과 확인 일시정지'),undefined);
+});
+
+test('editing a quotation after pausing invalidates the old source before follow-up can reach Chrome',async()=>{
+ const h=harness({manualWait:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
+ h.button('결과 확인 일시정지').props.onClick();await settle();h.changeSource();h.button('전송 결과 계속 확인').props.onClick();await settle();
+ assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+ assert.equal(h.calls.filter(([name])=>name==='result').length,1);
+ assert.equal(h.button('전송 결과 계속 확인'),undefined);
+ assert.equal(h.button('견적서 + 첨부 파일 준비').props.disabled,false);
+});
+
+test('a later manual SKU refresh cannot retain an earlier issuance summary for missing rows',async()=>{
+ const h=harness({validationComplete:true,issued:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
+ const issuance=node=>node.props?.children==='전송한 옵션 수와 동일한 수의 고유 SKU ID가 조회됐습니다. 상품 검수 결과는 아래 상태를 기준으로 확인하세요.';
+ assert.ok(nodes(h.render()).some(issuance));h.hideSkus();h.button('견적서 ID로 상품별 등록 상태 조회').props.onClick();await settle();
+ assert.equal(nodes(h.render()).some(issuance),false);assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
 });

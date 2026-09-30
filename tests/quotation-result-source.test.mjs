@@ -7,11 +7,11 @@ const code=ts.transpileModule(fs.readFileSync(new URL('../app/quotation-result-s
 const prepared={productId:'p',profileId:'profile-1',categoryId:'80719',fingerprint:'a'.repeat(64),filename:'YOOFAM-'+ 'a'.repeat(64)+'.xlsx'};
 const body=()=>({fingerprint:prepared.fingerprint,filename:prepared.filename,report:{productId:'p',profileId:'profile-1',categoryId:'80719',submissionReady:false}});
 function setup(reply){const exports={},calls=[];vm.runInNewContext(code,{exports,Error,fetch:async(url,init)=>{calls.push({url,init});return reply();}});return {api:exports,calls};}
-test('checks saved quotation identity through the read-only preview action before result lookup',async()=>{
+test('checks saved quotation identity through the lightweight read-only source action before result lookup',async()=>{
  const h=setup(()=>Response.json(body())),controller=new AbortController();
  await h.api.verifyQuotationResultSource(prepared,controller.signal);
  assert.equal(h.calls[0].url,'/api/products/p/quotation');
- assert.deepEqual(JSON.parse(h.calls[0].init.body),{action:'preview',profileId:'profile-1'});
+ assert.deepEqual(JSON.parse(h.calls[0].init.body),{action:'source',profileId:'profile-1'});
  assert.equal(h.calls[0].init.signal,controller.signal);
 });
 test('changed fingerprint, filename, product, category or profile invalidates prepared result source',async()=>{

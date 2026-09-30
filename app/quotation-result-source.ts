@@ -7,7 +7,7 @@ export async function verifyQuotationResultSource(
 ) {
   const response = await fetch(`/api/products/${encodeURIComponent(prepared.productId)}/quotation`, {
     method: 'POST', signal, headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action: 'preview', ...(prepared.profileId ? { profileId: prepared.profileId } : {}) }),
+    body: JSON.stringify({ action: 'source', ...(prepared.profileId ? { profileId: prepared.profileId } : {}) }),
   });
   const body = await response.json() as { error?: unknown; fingerprint?: unknown; filename?: unknown; report?: { productId?: unknown; categoryId?: unknown; profileId?: unknown; submissionReady?: unknown } } | null;
   if (signal.aborted) throw new Error('작업을 취소했습니다.');

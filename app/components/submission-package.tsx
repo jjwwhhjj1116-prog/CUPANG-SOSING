@@ -7,6 +7,7 @@ import { validatePackageReview, type PackageReview } from '@/app/submission-revi
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 import { checkSupplierHubExtension, prepareSupplierHubHandoff, transmitSupplierHubPackage, getSupplierHubResult, type SupplierHubResult, type SupplierHubAgreements } from '@/app/supplier-hub-handoff';
+import { followSupplierHubRegistration, type SupplierHubTrackingProgress } from '@/app/supplier-hub-tracking';
 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
@@ -23,16 +24,42 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
   const [hubResult,setHubResult]=useState<SupplierHubResult|null>(null);
   const [agreements,setAgreements]=useState<SupplierHubAgreements>({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});
   const [attemptedFingerprint,setAttemptedFingerprint]=useState('');
+  const [tracking,setTracking]=useState(false);
+  const [trackingProgress,setTrackingProgress]=useState<SupplierHubTrackingProgress|null>(null);
   const transferAttempted=Boolean(preview&&preview.fingerprint===attemptedFingerprint);
   const active=useRef<AbortController|null>(null);
   useEffect(()=>()=>active.current?.abort(),[]);
-  async function run(action:'preview'|'export'|'download'|'handoff'|'transmit'|'result'|'registration') {
+  function pauseTracking(){
+    active.current?.abort();active.current=null;setBusy(false);setTracking(false);
+    setMessage('결과 확인을 일시정지했습니다. 전달한 파일은 유지됩니다.');
+  }
+  async function followResults(controller:AbortController){
+    if(!preview?.report.company||!categoryId)throw new Error('등록할 회사와 카테고리를 확인해주세요.');
+    setTracking(true);setTrackingProgress(null);
+    try{
+      const outcome=await followSupplierHubRegistration({productId,categoryId,profileId:preview.report.profileId,
+        fingerprint:preview.fingerprint,filename:preview.filename,includedOptions:preview.report.rowCount,company:preview.report.company},
+      {signal:controller.signal,onProgress:progress=>{
+        if(controller.signal.aborted)return;
+        setTrackingProgress(progress);setHubResult(progress.result);
+        setMessage(progress.phase==='validation-pending'?'Supplier Hub에서 견적서 파일을 검증하고 있습니다.':
+          progress.phase==='registration-pending'?`견적서 ID를 확인했습니다. 상품별 SKU를 확인하고 있습니다 (${progress.issuedSkus}/${progress.includedOptions}개).`:
+          progress.phase==='sku-issued'?`전송한 옵션 수와 같은 ${progress.issuedSkus}개의 SKU ID를 확인했습니다. 아래에서 Supplier Hub 검수 상태를 확인하세요.`:'');
+      }});
+      if(controller.signal.aborted)return;
+      if(outcome.phase==='validation-rejected'||outcome.phase==='registration-rejected')setError(outcome.result?.detail||'Supplier Hub 반려 결과를 확인하고 견적서를 수정해주세요.');
+      else if(outcome.timedOut)setMessage('Supplier Hub 처리가 아직 진행 중입니다. 전송 결과 계속 확인으로 조회를 이어갈 수 있습니다.');
+    }finally{if(!controller.signal.aborted)setTracking(false);}
+  }
+  async function run(action:'preview'|'export'|'download'|'handoff'|'transmit'|'result'|'registration'|'track') {
     if(active.current || (action!=='preview'&&!preview))return;
     const controller=new AbortController();active.current=controller;
     setBusy(true);setError('');setMessage('');
-    if(action==='preview'){setPreview(null);setHubResult(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});}
+    if(action==='preview'){setPreview(null);setHubResult(null);setTrackingProgress(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});}
     try {
+      if(action==='track'){await followResults(controller);return;}
       if(action==='result'||action==='registration'){
+        setTrackingProgress(null);
         if(!categoryId)throw new Error('카테고리를 먼저 확인해주세요.');
         if(action==='registration'&&(hubResult?.state!=='validation-complete'||!hubResult.quotationId))throw new Error('견적서 파일 검증 완료 결과와 견적서 ID를 먼저 확인해주세요.');
         if(action==='result')setHubResult(null);
@@ -91,8 +118,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
             setMessage('같은 견적서를 다시 첨부하지 않습니다. 전달된 파일과 검증 상태를 확인해주세요.');return;
           }
           setMessage('견적서·상품 이미지·라벨을 전달하고 파일 검증을 요청했습니다.');
-          try{const result=await getSupplierHubResult(identity,controller.signal,true);if(!controller.signal.aborted)setHubResult(result);}
-          catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'검증 상태를 다시 확인해주세요.');}
+          await followResults(controller);
           return;
         }
         if(action==='handoff'){
@@ -109,7 +135,8 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
     finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
   }
   return <section className="panel-stack" aria-label="견적서와 첨부 파일 준비" aria-busy={busy}>
-    <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('preview')}>{busy?'견적서 준비 중…':'견적서 + 첨부 파일 준비'}</button>
+    <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('preview')}>{tracking?'등록 결과 확인 중…':busy?'견적서 준비 중…':'견적서 + 첨부 파일 준비'}</button>
+    {tracking&&<button type="button" className="btn ghost" onClick={pauseTracking}>결과 확인 일시정지</button>}
     {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
       {preview.report.company&&<p>등록 회사: {preview.report.company.name} · {preview.report.company.code}</p>}
@@ -133,8 +160,9 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
       <button type="button" className="btn ghost" disabled={busy||transferAttempted||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>확장에 첨부 파일 준비</button>
       <button type="button" className="btn ghost" disabled={busy||preview.report.company===null||!categoryId||!preview.filename.endsWith('.xlsx')} onClick={()=>void run('result')}>Supplier Hub 검증 결과 불러오기</button>
+      {(transferAttempted||hubResult)&&<button type="button" className="btn primary" disabled={busy||!preview.report.company||!categoryId||!preview.filename.endsWith('.xlsx')} onClick={()=>void run('track')}>전송 결과 계속 확인</button>}
       <button type="button" className="btn primary" disabled={busy||!categoryId||hubResult?.state!=='validation-complete'||!hubResult.quotationId} onClick={()=>void run('registration')}>견적서 ID로 상품별 등록 상태 조회</button>
-      {hubResult&&<div role="status"><strong>{hubResult.state==='not-found'?'검증 목록에서 아직 찾지 못했습니다.':`견적서 검증: ${hubResult.status||'상태 미표시'}`}</strong><p>견적서 ID: {hubResult.quotationId||'미표시'} · 결과 확인 시각: {new Date(hubResult.observedAt).toLocaleString('ko-KR')}</p>{hubResult.detail&&<p>{hubResult.detail}</p>}<p>현재 검토한 견적서 파일의 결과입니다. 상품별 등록 완료는 아직 확인되지 않았습니다.</p></div>}
+      {hubResult&&<div role="status"><strong>{hubResult.state==='not-found'?'검증 목록에서 아직 찾지 못했습니다.':`견적서 검증: ${hubResult.status||'상태 미표시'}`}</strong><p>견적서 ID: {hubResult.quotationId||'미표시'} · 결과 확인 시각: {new Date(hubResult.observedAt).toLocaleString('ko-KR')}</p>{hubResult.detail&&<p>{hubResult.detail}</p>}<p>{trackingProgress?.phase==='sku-issued'?'전송한 옵션 수와 동일한 수의 고유 SKU ID가 조회됐습니다. 상품 검수 결과는 아래 상태를 기준으로 확인하세요.':'현재 검토한 견적서 파일의 결과입니다. 상품별 등록 완료는 아직 확인되지 않았습니다.'}</p></div>}
       {hubResult?.registration?.includedOptions!==undefined&&<p role="status">초안 포함 옵션 {hubResult.registration.includedOptions}개 · Supplier Hub 현재 페이지에서 조회한 행 {hubResult.registration.rows.length}개. 페이지에 보이지 않는 옵션은 아직 대조되지 않았습니다.</p>}
       {hubResult?.registration&&<div className="panel-stack"><strong>상품별 등록 상태 · 현재 페이지 {hubResult.registration.rows.length}개</strong><p>확인 시각: {new Date(hubResult.registration.observedAt).toLocaleString('ko-KR')} · 견적서 ID: {hubResult.registration.quotationId}</p>{hubResult.registration.rows.length?<div className="table-wrap"><table><thead><tr><th>상품명</th><th>SKU ID</th><th>상태</th><th>등록 진행 단계</th></tr></thead><tbody>{hubResult.registration.rows.map((row,index)=><tr key={index}><td>{row.title}</td><td>{row.skuId||'—'}</td><td>{row.status}</td><td>{row.stage}</td></tr>)}</tbody></table></div>:<p>이 견적서 ID로 조회한 현재 페이지에 상품이 없습니다. 처리 중이면 잠시 후 다시 조회해주세요.</p>}<small>현재 페이지에 표시된 상품만 확인한 결과입니다. 전체 옵션의 등록 완료 여부는 아직 확인되지 않았습니다.</small></div>}
       <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.25.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.25)</a>

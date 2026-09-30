@@ -17,11 +17,11 @@ import { quotationFilename } from '@/app/exports/quotation-filename';
 const json = (body: unknown, status = 200) => NextResponse.json(body, {status, headers:{'cache-control':'no-store'}});
 export async function POST(request: Request, context: {params: Promise<{id: string}>}) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({error:'운영 인증 연결 후 견적서 생성 기능을 사용할 수 있습니다.'},503);
-  let input: {action:'preview'|'export'|'download'; profileId?:string; dataStartRow?:number; fingerprint?:string};
+  let input: {action:'preview'|'source'|'export'|'download'; profileId?:string; dataStartRow?:number; fingerprint?:string};
   try {
     input = await readBoundedJson(request,4096) as typeof input;
-    if(!input || !['preview','export','download'].includes(input.action) || (input.profileId !== undefined && (typeof input.profileId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.profileId))) || (input.dataStartRow !== undefined && (!Number.isInteger(input.dataStartRow) || input.dataStartRow < 2 || input.dataStartRow > 10000))) throw new Error('카테고리 연결과 입력 시작 행을 확인해주세요.');
-    if(input.action !== 'preview' && (typeof input.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint))) throw new Error('자료 검토를 먼저 실행해주세요.');
+    if(!input || !['preview','source','export','download'].includes(input.action) || (input.profileId !== undefined && (typeof input.profileId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.profileId))) || (input.dataStartRow !== undefined && (!Number.isInteger(input.dataStartRow) || input.dataStartRow < 2 || input.dataStartRow > 10000))) throw new Error('카테고리 연결과 입력 시작 행을 확인해주세요.');
+    if(!['preview','source'].includes(input.action) && (typeof input.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint))) throw new Error('자료 검토를 먼저 실행해주세요.');
   } catch(error) {return json({error:error instanceof Error ? error.message : '입력을 확인해주세요.'},error instanceof RequestBodyError?error.status:400);}
   try {
     const owner = await getWorkspaceOwnerId(); const {id} = await context.params;
@@ -33,6 +33,15 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     const dataStartRow = input.dataStartRow ?? quotationStartRow(template);
     const revision = await quotationExportFingerprint(saved,dataStartRow);
     const filename = quotationFilename(revision,template.format);
+    if(input.action === 'source'){
+      // Polling compares saved inputs without rebuilding XLSX or downloading R2 assets.
+      let current;
+      try { current = await readMappedQuotationSource(owner,id,input.profileId ?? null); }
+      catch(error) { if(error instanceof QuotationExportError && error.status === 404) return json({error:'자료 확인 중 상품 또는 카테고리가 변경됐습니다.'},409); throw error; }
+      if(await quotationExportFingerprint(current,input.dataStartRow ?? quotationStartRow(current.profile?.template)) !== revision)
+        return json({error:'자료 확인 중 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.'},409);
+      return json({fingerprint:revision,filename,report:{productId:id,categoryId:saved.categoryContext.categoryId,profileId:profile.id,company:saved.company,submissionReady:false}});
+    }
     if(input.action !== 'preview' && input.fingerprint !== revision) return json({error:'검토 후 상품·옵션·설정·카테고리 또는 견적 수정값이 변경됐습니다. 자료 검토를 다시 실행해주세요.'},409);
     const resolved = resolveQuotationExport(saved);
     if(!resolved.rows.some(row => row.included)) return json({error:'견적서에 포함할 옵션을 한 개 이상 선택해주세요. 삭제·제외된 옵션은 출력하지 않습니다.'},400);

@@ -81,6 +81,43 @@ function routeWith({ find = async () => product, readOptions = async () => optio
 const request = body => new Request('http://localhost', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const context = { params: Promise.resolve({ id: 'test' }) }; const preview = { action: 'preview', profileId: profile.id, dataStartRow: 2 };
 
+test('lightweight source checks match the reviewed fingerprint and file without downloading R2 or generating a workbook',async()=>{
+ const full=await (await routeWith().POST(request(preview),context)).json();
+ let fileReads=0;
+ const route=routeWith({get:async()=>{fileReads++;throw Error('polling must not download files');}});
+ for(let i=0;i<8;i++){
+  const response=await route.POST(request({...preview,action:'source'}),context);assert.equal(response.status,200);
+  assert.equal(response.headers.get('cache-control'),'no-store');
+  const body=await response.json();assert.equal(body.fingerprint,full.fingerprint);assert.equal(body.filename,full.filename);
+  assert.equal(body.report.productId,'test');assert.equal(body.report.profileId,profile.id);assert.equal(body.report.categoryId,profile.categoryId);assert.equal(body.report.submissionReady,false);
+  assert.deepEqual(Object.keys(body).sort(),['filename','fingerprint','report']);assert.equal(body.rows,undefined);
+ }
+ assert.equal(fileReads,0);
+});
+
+test('source checks preserve production auth, owner, profile and source guards before any file read',async()=>{
+ const input={...preview,action:'source'};
+ const authenticated=routeWith({mode:'production',get:async()=>{throw Error('must not read');}});
+ assert.equal((await authenticated.POST(request(input),context)).status,503);
+ for(const [options,status] of [[{find:async(owner,id)=>{assert.equal(owner,'owner');assert.equal(id,'test');return null;}},404],
+  [{readProfile:async()=>null},404],[{sourcesCurrent:async()=>false},409],
+  [{readProfile:async()=>({...profile,template:{...profile.template,storageKey:'other/category-templates/source.csv'}})},409]]){
+  let reads=0;const route=routeWith({...options,get:async()=>{reads++;throw Error('must not read');}});
+  assert.equal((await route.POST(request(input),context)).status,status);assert.equal(reads,0);
+ }
+});
+
+test('a changing or deleted stored source cannot acknowledge a stable quotation fingerprint',async()=>{
+ for(const deleted of [false,true]){
+  let reads=0;
+  const route=routeWith({find:async()=>++reads<=2?product:deleted?null:{...product,updated_at:'2026-09-30T01:00:00.000Z'},get:async()=>{throw Error('must not download');}});
+  const response=await route.POST(request({...preview,action:'source'}),context);assert.equal(response.status,409);assert.match((await response.json()).error,/변경/);
+ }
+ const full=await (await routeWith().POST(request(preview),context)).json();
+ const changed=await (await routeWith({readOptions:async()=>({...options,revision:2})}).POST(request({...preview,action:'source'}),context)).json();
+ assert.notEqual(changed.fingerprint,full.fingerprint);assert.notEqual(changed.filename,full.filename);
+});
+
 test('saved label product type reaches category preview, CSV and review JSON with per-option override precedence',async()=>{
  const bytes=new TextEncoder().encode('종류\r\n');const digest=createHash('sha256').update(bytes).digest('hex');const key=`owner/category-templates/${digest}.csv`;
  const selected={...profile,categoryId:'103495',categoryPath:categoryPath('103495'),template:{...profile.template,headers:['종류'],sha256:digest,storageKey:key},mappings:[{column:0,field:'marathon_noticeKind',required:false}]};
