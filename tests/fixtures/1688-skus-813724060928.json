@@ -1,0 +1,146 @@
+{
+  "ret": [
+    "SUCCESS::调用成功"
+  ],
+  "data": {
+    "result": {
+      "data": {
+        "offerBaseInfo": {
+          "offerId": 813724060928,
+          "title": "太阳眼镜木纹腿男女复古墨镜高级感潮遮阳防紫外线太阳镜复古墨镜",
+          "offerUnit": "副"
+        },
+        "skuModel": {
+          "skuInfoMap": {
+            "砂灰&gt;太阳镜 加005 盒子": {
+              "skuId": 5627721589408,
+              "specId": "0fc82e459658978164149daa976efe2e",
+              "specAttrs": "砂灰&gt;太阳镜 加005 盒子",
+              "price": "5.5",
+              "discountPrice": "5.5",
+              "canBookCount": 6360,
+              "promotionSku": false
+            },
+            "亮黑&gt;太阳镜": {
+              "skuId": 5627721589405,
+              "specId": "cd192433c01ff37bf63107ead4592b6e",
+              "specAttrs": "亮黑&gt;太阳镜",
+              "price": "3.6",
+              "discountPrice": "3.6",
+              "canBookCount": 5623,
+              "promotionSku": false
+            },
+            "砂灰&gt;太阳镜": {
+              "skuId": 5627721589407,
+              "specId": "89ea5b4c5b44e81ba58d97c02b1a7217",
+              "specAttrs": "砂灰&gt;太阳镜",
+              "price": "3.6",
+              "discountPrice": "3.6",
+              "canBookCount": 5472,
+              "promotionSku": false
+            },
+            "砂黑&gt;太阳镜": {
+              "skuId": 5627721589409,
+              "specId": "457888d1bf212cd71ab2c508c5de8f97",
+              "specAttrs": "砂黑&gt;太阳镜",
+              "price": "3.6",
+              "discountPrice": "3.6",
+              "canBookCount": 5697,
+              "promotionSku": false
+            },
+            "砂黑&gt;太阳镜 加005 盒子": {
+              "skuId": 5627721589410,
+              "specId": "db4496e23795340c14a46bd6b8e1580f",
+              "specAttrs": "砂黑&gt;太阳镜 加005 盒子",
+              "price": "5.5",
+              "discountPrice": "5.5",
+              "canBookCount": 6605,
+              "promotionSku": false
+            },
+            "亮黑&gt;太阳镜 加005 盒子": {
+              "skuId": 5627721589406,
+              "specId": "627ef33233d0264a01d55681868c0435",
+              "specAttrs": "亮黑&gt;太阳镜 加005 盒子",
+              "price": "5.5",
+              "discountPrice": "5.5",
+              "canBookCount": 6621,
+              "promotionSku": false
+            }
+          },
+          "skuProps": [
+            {
+              "value": [
+                {
+                  "name": "亮黑",
+                  "imageUrl": "https://cbu01.alicdn.com/img/ibank/O1CN016DMZ9b1zwNVJYua4q_!!2207622276778-0-cib.jpg"
+                },
+                {
+                  "name": "砂黑",
+                  "imageUrl": "https://cbu01.alicdn.com/img/ibank/O1CN01TtNmQm1zwNVImXkd9_!!2207622276778-0-cib.jpg"
+                },
+                {
+                  "name": "砂灰",
+                  "imageUrl": "https://cbu01.alicdn.com/img/ibank/O1CN01rH4Cux1zwNVImYxTR_!!2207622276778-0-cib.jpg"
+                }
+              ],
+              "prop": "颜色",
+              "fid": 0
+            },
+            {
+              "value": [
+                {
+                  "name": "太阳镜"
+                },
+                {
+                  "name": "太阳镜 加005 盒子"
+                }
+              ],
+              "prop": "尺码",
+              "fid": 0
+            }
+          ]
+        },
+        "orderParamModel": {
+          "orderParam": {
+            "canBookedAmount": 36378,
+            "skuParam": {
+              "skuPriceType": "skuPrice",
+              "skuRangePrices": [
+                {
+                  "price": "3.6",
+                  "beginAmount": 1
+                },
+                {
+                  "price": "5.5",
+                  "beginAmount": 1
+                }
+              ]
+            },
+            "beginNum": 1,
+            "saledCount": 95,
+            "flow": "general",
+            "unit": "副"
+          },
+          "mixParam": {
+            "isSupportMix": true,
+            "mixAmount": 1,
+            "mixNumber": 1
+          },
+          "skuParam": {
+            "priceDisplayType": "skuPrice",
+            "currentPrices": [
+              {
+                "price": "3.6",
+                "beginAmount": 1
+              },
+              {
+                "price": "5.5",
+                "beginAmount": 1
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

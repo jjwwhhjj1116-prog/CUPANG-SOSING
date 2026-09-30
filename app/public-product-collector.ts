@@ -43,7 +43,7 @@ export async function collectPublicProduct(sourceUrl:string, options:{fetcher?:t
  const source=parseCollectionRequest({urls:[sourceUrl]})[0];
  const controller=new AbortController();const stop=()=>controller.abort();
  options.signal?.addEventListener('abort',stop,{once:true});
- const timeout=setTimeout(stop,15000);
+ const timeout=setTimeout(stop,30000);
  try{
   if(options.signal?.aborted)controller.abort();
   const response=await (options.fetcher??fetch)(source.sourceUrl,{redirect:'manual',credentials:'omit',signal:controller.signal,headers:{accept:'text/html'},cache:'no-store'});
@@ -53,6 +53,13 @@ export async function collectPublicProduct(sourceUrl:string, options:{fetcher?:t
   const charset=response.headers.get('content-type')?.match(/charset\s*=\s*["']?([\w-]+)/i)?.[1]??'utf-8';
   const decoder=new TextDecoder(charset,{fatal:true});let html='',size=0;
   try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>MAX_HTML){await reader.cancel();throw Error('상품 페이지 크기가 수집 한도를 초과했습니다.');}html+=decoder.decode(value,{stream:true});}html+=decoder.decode();}finally{reader.releaseLock();}
-  return parsePublicProduct(html,source.sourceUrl);
+  try { return parsePublicProduct(html,source.sourceUrl); }
+  catch {
+   if(controller.signal.aborted)throw Error('상품 수집을 취소했거나 응답 시간이 초과되었습니다.');
+   // 1688's PC response may have no public JSON-LD. Its official mobile page
+   // and anonymous SKU service provide the actual source, not guessed offers.
+   const {collectAlibabaMobileProduct}=await import('@/app/alibaba-mobile-collector');
+   return await collectAlibabaMobileProduct(source.sourceUrl,{fetcher:options.fetcher,signal:controller.signal});
+  }
  }finally{controller.abort();clearTimeout(timeout);options.signal?.removeEventListener('abort',stop);}
 }

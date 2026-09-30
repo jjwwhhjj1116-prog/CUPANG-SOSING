@@ -1,0 +1,161 @@
+{
+  "globalData": {
+    "tempModel": {
+      "offerId": "813724060928",
+      "offerTitle": "太阳眼镜木纹腿男女复古墨镜高级感潮遮阳防紫外线太阳镜复古墨镜",
+      "offerUnit": "副"
+    },
+    "offerBaseInfo": {
+      "offerId": 813724060928
+    },
+    "isPicPrivate": false,
+    "isPricePrivate": false,
+    "offerSigns": {
+      "isSkuOffer": true
+    },
+    "detailModel": {
+      "offerId": "813724060928",
+      "detailUrl": "https://air.1688.com/pages/od/app-desc/d7p56fw2w/index.html?url=https://itemcdn.tmall.com/1688offer/icoss408069340609b43d7bb2518916&offerId=813724060928"
+    }
+  },
+  "data": {
+    "5908930030308": {
+      "data": {
+        "offerId": "813724060928",
+        "offerImgList": [
+          "https://cbu01.alicdn.com/img/ibank/O1CN01koPXJ91zwNVJZ3ypz_!!2207622276778-0-cib.jpg",
+          "https://cbu01.alicdn.com/img/ibank/O1CN01YIW9mL1zwNVH29BPt_!!2207622276778-0-cib.jpg",
+          "https://cbu01.alicdn.com/img/ibank/O1CN01lrA1gv1zwNVJCmTkZ_!!2207622276778-0-cib.jpg",
+          "https://cbu01.alicdn.com/img/ibank/O1CN01iqDtWM1zwNVImjMa2_!!2207622276778-0-cib.jpg",
+          "https://cbu01.alicdn.com/img/ibank/O1CN01yOJFXn1zwNVBekdXL_!!2207622276778-0-cib.jpg"
+        ]
+      }
+    },
+    "590893002003": {
+      "data": {
+        "propsList": [
+          {
+            "name": "是否偏光",
+            "value": "否",
+            "show": false
+          },
+          {
+            "name": "抗UV等级",
+            "value": "UV380",
+            "show": false
+          },
+          {
+            "name": "镜片材质",
+            "value": "PC",
+            "show": false
+          },
+          {
+            "name": "品牌",
+            "value": "利翔",
+            "show": false
+          },
+          {
+            "name": "眼镜款式",
+            "value": "圆框",
+            "show": false
+          },
+          {
+            "name": "镜框材质",
+            "value": "PC",
+            "show": false
+          },
+          {
+            "name": "镜架材质",
+            "value": "PC",
+            "show": false
+          },
+          {
+            "name": "是否支持近视镜",
+            "value": "不支持近视镜",
+            "show": false
+          },
+          {
+            "name": "货号",
+            "value": "15995",
+            "show": false
+          },
+          {
+            "name": "镜片颜色",
+            "value": "黑色",
+            "show": false
+          },
+          {
+            "name": "镜架颜色",
+            "value": "黑色",
+            "show": false
+          },
+          {
+            "name": "透射比分类",
+            "value": "2类/遮阳镜",
+            "show": false
+          },
+          {
+            "name": "眼镜结构",
+            "value": "全框",
+            "show": false
+          },
+          {
+            "name": "适用场景",
+            "value": "防晒,出游,骑行,驾驶,派对聚会",
+            "show": false
+          },
+          {
+            "name": "上市年份/季节",
+            "value": "2024年夏季",
+            "show": false
+          },
+          {
+            "name": "是否跨境出口专供货源",
+            "value": "是",
+            "show": false
+          },
+          {
+            "name": "颜色",
+            "value": "亮黑,砂黑,砂灰",
+            "show": false
+          },
+          {
+            "name": "尺码",
+            "value": "太阳镜,太阳镜 加005 盒子",
+            "show": false
+          },
+          {
+            "name": "产地",
+            "value": "台州",
+            "show": false
+          },
+          {
+            "name": "风格",
+            "value": "可爱风,日韩风,甜美风,小清新",
+            "show": false
+          },
+          {
+            "name": "适用性别",
+            "value": "通用",
+            "show": false
+          },
+          {
+            "name": "风格分类",
+            "value": "清新甜美",
+            "show": false
+          },
+          {
+            "name": "主要销售地区",
+            "value": "非洲,欧洲,南美,东南亚,北美,东北亚,中东,其他",
+            "show": false
+          },
+          {
+            "name": "流行元素分类",
+            "value": "生活用品",
+            "show": false
+          }
+        ]
+      }
+    }
+  }
+}
