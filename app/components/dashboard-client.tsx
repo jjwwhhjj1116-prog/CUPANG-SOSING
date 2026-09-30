@@ -39,6 +39,7 @@ type Product = {
   registration_status: string; supplier_hub_status: string; image_keys: string; goal_stage: string;
   created_at: string; updated_at: string;
   pricing_policy?: string | null;
+  source_image_key?: string | null;
 };
 
 type IntegrationStatus = {

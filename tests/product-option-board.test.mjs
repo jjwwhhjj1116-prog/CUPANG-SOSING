@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-import React from 'react';
 import {createRequire} from 'node:module';
 import {renderToStaticMarkup} from 'react-dom/server';
 const native=createRequire(import.meta.url);
@@ -18,8 +17,8 @@ test('option board fetch checks product identity and propagates abort signal',as
  for(const bad of [null,{}, {...data,options:{...data.options,productId:'p2'}}])await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:true,json:async()=>bad})),/응답/);
  await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:false,json:async()=>({error:'인증 필요'})})),/인증 필요/);
 });
-function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html',boardData=data,owned=['owner/red.png']){
- let slot=0;const selected=[];const edited=[];const images=[];const contentSteps=[];const states=[boardData,'',0,query];
+function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html',boardData=data,owned=['owner/red.png'],loadedIdentity={productId:'p1',attempt:0},attempt=0){
+ let slot=0;const selected=[];const edited=[];const images=[];const contentSteps=[];const states=[{...loadedIdentity,data:boardData,error:''},attempt,query];
  const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,()=>{}];},useEffect(){}};
  const {ProductOptionBoard}=load('app/components/product-option-board.tsx',{react:hooks});
  return {selected,edited,images,contentSteps,tree:ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(owned),onQuotation:id=>selected.push(id),onContent:step=>contentSteps.push(step),onImage:id=>images.push(id),onEdit:id=>edited.push(id)})};
@@ -96,4 +95,50 @@ test('option board verifies quotation snapshot revisions and propagates errors i
  const result=await model.readOptionBoard('p1',signal,async(url,init)=>{if(url.endsWith('/quotation-fields'))quoteSignal=init.signal;return {ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:quotation(2)};});
  assert.equal(quoteSignal,signal);assert.equal(result.quotationPrices.red.supplyPrice,'4100');
  await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:!url.endsWith('/quotation-fields'),json:async()=>url.endsWith('/options')?data:url.endsWith('/content')?{content}:{error:'견적 조회 실패'}})),/견적 조회 실패/);
+});
+
+test('unchosen option previews show their source image without turning it into a quotation main image',()=>{
+ const unchosen={...data,commonImageKeys:[],sourceImageKeys:{red:'owner/source-red.png',blue:'owner/source-blue.png'},options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:null}))}};
+ const before=JSON.stringify(unchosen);
+ const html=renderToStaticMarkup(tree('sku-red',undefined,unchosen,['owner/source-red.png','owner/shared.png','owner/chosen.png']).tree);
+ assert.match(html,/src="\/api\/files\/owner\/source-red.png"/);assert.match(html,/수집 원본 · 대표 이미지 미설정/);assert.equal(JSON.stringify(unchosen),before);
+ unchosen.commonImageKeys=['owner/shared.png'];const common=renderToStaticMarkup(tree('sku-red',undefined,unchosen,['owner/source-red.png','owner/shared.png']).tree);
+ assert.match(common,/src="\/api\/files\/owner\/shared.png"/);assert.doesNotMatch(common,/수집 원본/);
+ unchosen.options.rows[0].imageKey='owner/chosen.png';const individual=renderToStaticMarkup(tree('sku-red',undefined,unchosen,['owner/source-red.png','owner/shared.png','owner/chosen.png']).tree);
+ assert.match(individual,/src="\/api\/files\/owner\/chosen.png"/);assert.match(individual,/개별 이미지/);
+ unchosen.options.rows[0].imageKey='missing.png';const disconnected=renderToStaticMarkup(tree('sku-red',undefined,unchosen,['owner/source-red.png','owner/shared.png']).tree);
+ assert.match(disconnected,/이미지 연결 확인 필요/);assert.doesNotMatch(disconnected,/src=/);
+ unchosen.options.rows[0].imageKey=null;unchosen.commonImageKeys=[];
+ assert.doesNotMatch(renderToStaticMarkup(tree('sku-red',undefined,unchosen,[]).tree),/src=/);
+});
+
+test('option fetch validates source preview shape and ties every preview to a returned option',async()=>{
+ const content={productId:'p1',schemaVersion:1,assets:{main:{value:[]}}};
+ const signal=new AbortController().signal;
+ for(const bad of [null,[],{red:1},{red:''},{foreign:'owner/source.png'}])await assert.rejects(model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?{...data,sourceImageKeys:bad}:url.endsWith('/quotation-fields')?quotation():{content}})),/원본 이미지 응답/);
+ const result=await model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?{...data,sourceImageKeys:{red:'owner/source.png'}}:url.endsWith('/quotation-fields')?quotation():{content}}));
+ assert.equal(result.sourceImageKeys.red,'owner/source.png');assert.equal(result.options.rows[0].imageKey,'owner/red.png');
+});
+
+test('product changes and refresh attempts hide a stale option snapshot immediately',()=>{
+ for(const [identity,attempt] of [[{productId:'other',attempt:0},0],[{productId:'p1',attempt:0},1]]){
+  const html=renderToStaticMarkup(tree('',undefined,data,['owner/red.png'],identity,attempt).tree);
+  assert.match(html,/불러오는 중/);assert.doesNotMatch(html,/src=|sku-red|4,000원/);
+ }
+ assert.match(renderToStaticMarkup(tree().tree),/sku-red/);
+});
+
+test('recorded six SKU draft renders source previews through the real options, content and quotation APIs',async()=>{
+ const {mobileIntakeHarness}=await import('./helpers/mobile-intake.mjs');const h=mobileIntakeHarness();
+ try{
+  await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get();
+  const before=h.sqlite.prepare('SELECT payload FROM product_options').get().payload;
+  const view=await model.readOptionBoard(product.id,new AbortController().signal,(path,init)=>h.route(path,{method:init?.method??'GET'}));
+  const html=renderToStaticMarkup(tree('',h.sourceUrl,view,JSON.parse(product.image_keys)).tree);
+  assert.equal((html.match(/<img /g)||[]).length,6);
+  assert.equal((html.match(/수집 원본 · 대표 이미지 미설정/g)||[]).length,6);
+  for(const key of Object.values(view.sourceImageKeys))assert.ok(html.includes(`/api/files/${key}`));
+  assert.equal(h.sqlite.prepare('SELECT payload FROM product_options').get().payload,before);
+  assert.ok(view.options.rows.every(option=>option.imageKey===null));assert.deepEqual(Array.from(view.commonImageKeys),[]);
+ }finally{h.close();}
 });

@@ -12,6 +12,7 @@ function load(file, overrides = {}, mode = 'development') {
     if (name in overrides) return overrides[name];
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
+    if (name === '@/db/collection-images') return {readOptionSourceImages:async()=>({})};
     const modules = { '@/app/product-options': 'app/product-options.ts', '@/app/product-content': 'app/product-content.ts', '@/app/pricing': 'app/pricing.ts', '@/app/workspace-settings': 'app/workspace-settings.ts' };
     if (modules[name]) return load(modules[name], overrides, mode);
     throw Error(name);

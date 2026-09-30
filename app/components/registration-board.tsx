@@ -5,7 +5,7 @@ import type { RegistrationContentSummary } from '@/app/registration-content-summ
 import { useState } from 'react';
 import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
 
-type BoardProduct = {content_summary?:RegistrationContentSummary|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
+type BoardProduct = {content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
 export function filterRegistrationProducts<T extends BoardProduct>(products:T[],query:string,from:string|null,to:string|null) {
   return products.filter(product=>{
     const time=Date.parse(product.created_at);
@@ -23,9 +23,12 @@ export function registrationStepLabel(product: BoardProduct, step: string) {
 const steps=[['SEO','SEO 설정'],['가격','가격 설정'],['대표 이미지','대표 이미지'],['추가 이미지','추가 이미지'],['상세 이미지','상세 이미지'],['옵션','옵션 / 사이즈표'],['표시사항','한글 표시사항'],['견적서','견적서']];
 const dateTime=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'});
 export function registrationThumbnail(product:BoardProduct) {
-  const key=product.content_summary?.mainImageKey;
-  if(!key)return null;
-  try{const keys=JSON.parse(product.image_keys);return Array.isArray(keys)&&keys.includes(key)?`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`:null;}catch{return null;}
+  try{
+    const keys:unknown=JSON.parse(product.image_keys);
+    if(!Array.isArray(keys))return null;
+    const key=[product.content_summary?.mainImageKey,product.source_image_key].find(value=>typeof value==='string'&&value.length>0&&keys.includes(value));
+    return key?`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`:null;
+  }catch{return null;}
 }
 export function registrationTitle(product:BoardProduct) {return (product.content_summary?.seoTitle??product.title)||'상품명 미입력';}
 

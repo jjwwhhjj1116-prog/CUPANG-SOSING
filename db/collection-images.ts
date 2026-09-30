@@ -3,6 +3,10 @@ import type {ProductRecord} from '@/db/queries';
 import type {ProductContent} from '@/app/product-content';
 import {attachCollectedImage,attachCollectedOptionImage} from '@/app/collection-image';
 import {readProductOptions} from '@/db/product-options';
+import {collectionProductSchema} from '@/db/collection-jobs';
+import {isOwnedImageKey} from '@/app/image-files';
+import {collectionResultSchema} from '@/db/collection-results';
+import type {ProductOptions} from '@/app/product-options';
 export class CollectionImageCancelledError extends Error {
  constructor(){super('취소된 수집 요청입니다. 이미지를 상품에 반영하지 않았습니다.');}
 }
@@ -14,6 +18,85 @@ export const collectionImagesSchema=`CREATE TABLE IF NOT EXISTS collection_image
 )`;
 async function database(){if(!env.DB)throw new Error('D1 unavailable');await env.DB.prepare(collectionImagesSchema).run();return env.DB;}
 export async function readCollectionImage(owner:string,jobId:string,index:number){const db=await database();return db.prepare('SELECT object_key,product_id FROM collection_images WHERE owner_id=? AND job_id=? AND image_index=?').bind(owner,jobId,index).first<{object_key:string;product_id:string}>();}
+
+/** The list preview comes from this product's persisted intake, never a banner
+ * or another receipt with the same URL. Reading it does not choose stage assets. */
+export async function readRegistrationSourceImages(owner:string,products:readonly Pick<ProductRecord,'id'|'image_keys'>[]):Promise<Record<string,string>> {
+ const snapshots=new Map<string,Set<string>>();
+ for(const product of products){
+  try{
+   const keys:unknown=JSON.parse(product.image_keys);
+   if(Array.isArray(keys))snapshots.set(product.id,new Set(keys.filter((key):key is string=>isOwnedImageKey(owner,key))));
+  }catch{/* A damaged product must not hide previews for other products. */}
+ }
+ const ids=[...snapshots].filter(([,keys])=>keys.size>0).map(([id])=>id);
+ if(!ids.length)return {};
+ const db=await database();await db.prepare(collectionProductSchema).run();
+ const images:Record<string,string>={};
+ // D1's 100-binding limit includes the owner. Rank in SQL to return at most
+ // one source image per product, even when its library has many originals.
+ for(let offset=0;offset<ids.length;offset+=80){
+  const chunk=ids.slice(offset,offset+80);
+  const rows=await db.prepare(`WITH ranked AS (
+   SELECT ci.product_id,ci.object_key,ROW_NUMBER() OVER (
+    PARTITION BY ci.product_id ORDER BY ci.image_index,ci.created_at,ci.object_key
+   ) AS position
+   FROM collection_products cp
+   JOIN products p ON p.id=cp.product_id AND p.owner_id=cp.owner_id
+   JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=cp.owner_id
+   JOIN collection_images ci ON ci.job_id=cp.job_id AND ci.product_id=p.id AND ci.owner_id=p.owner_id
+   WHERE cp.owner_id=? AND cp.product_id IN (${chunk.map(()=>'?').join(',')})
+   AND ci.image_index>=0 AND ci.object_key<>''
+   AND EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(p.image_keys) THEN p.image_keys ELSE '[]' END) WHERE value=ci.object_key)
+  ) SELECT product_id,object_key FROM ranked WHERE position=1`).bind(owner,...chunk).all<{product_id:string;object_key:string}>();
+  for(const row of rows.results){
+   // The list and this query can straddle an edit; never expose a key missing
+   // from the product snapshot actually returned to the client.
+   if(snapshots.get(row.product_id)?.has(row.object_key))images[row.product_id]=row.object_key;
+  }
+ }
+ return images;
+}
+
+/** SKU source previews stay separate from options.rows[].imageKey. */
+export async function readOptionSourceImages(owner:string,product:Pick<ProductRecord,'id'|'image_keys'>,options:ProductOptions):Promise<Record<string,string>> {
+ if(options.productId!==product.id||!options.rows.length)return {};
+ let keys:unknown;try{keys=JSON.parse(product.image_keys);}catch{return {};}
+ if(!Array.isArray(keys))return {};
+ const owned=new Set(keys.filter((key):key is string=>isOwnedImageKey(owner,key)));
+ if(!owned.size)return {};
+ const db=await database();await db.batch([db.prepare(collectionProductSchema),db.prepare(collectionResultSchema)]);
+ const rows=await db.prepare(`SELECT json_extract(CASE WHEN original.type='object' THEN original.value ELSE '{}' END,'$.sku') AS sku,ci.object_key
+  FROM collection_products cp
+  JOIN products p ON p.id=cp.product_id AND p.owner_id=cp.owner_id
+  JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=cp.owner_id
+  JOIN collection_results cr ON cr.job_id=cp.job_id AND cr.owner_id=cp.owner_id
+  JOIN json_each(CASE WHEN json_valid(cr.payload) THEN json_extract(cr.payload,'$.options') ELSE '[]' END) original
+  JOIN collection_images ci ON ci.job_id=cp.job_id AND ci.product_id=p.id AND ci.owner_id=p.owner_id
+   AND ci.image_index=json_extract(CASE WHEN original.type='object' THEN original.value ELSE '{}' END,'$.imageIndex')
+  WHERE cp.owner_id=? AND cp.product_id=?
+  AND json_extract(CASE WHEN json_valid(cr.payload) THEN cr.payload ELSE '{}' END,'$.schemaVersion')=1
+  AND json_extract(CASE WHEN json_valid(cr.payload) THEN cr.payload ELSE '{}' END,'$.offerId')=j.offer_id
+  AND json_type(CASE WHEN json_valid(cr.payload) THEN cr.payload ELSE '{}' END,'$.options')='array'
+  AND json_array_length(CASE WHEN json_valid(cr.payload) THEN cr.payload ELSE '{}' END,'$.options') BETWEEN 1 AND 200
+  AND json_type(CASE WHEN json_valid(cr.payload) THEN cr.payload ELSE '{}' END,'$.images')='array'
+  AND json_type(CASE WHEN original.type='object' THEN original.value ELSE '{}' END,'$.imageIndex')='integer' AND ci.image_index>=0
+  AND ci.image_index<json_array_length(CASE WHEN json_valid(cr.payload) THEN cr.payload ELSE '{}' END,'$.images')
+  AND EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(p.image_keys) THEN p.image_keys ELSE '[]' END) WHERE value=ci.object_key)
+  LIMIT 201`)
+  .bind(owner,product.id).all<{sku:unknown;object_key:string}>();
+ if(rows.results.length>200)return {};
+ const sources=new Map<string,string|null>();
+ for(const row of rows.results){
+  if(typeof row.sku!=='string'||!row.sku||!owned.has(row.object_key))continue;
+  // Duplicate captured SKUs are ambiguous, including repeats of one image.
+  sources.set(row.sku,sources.has(row.sku)?null:row.object_key);
+ }
+ const images:Record<string,string>={};
+ const counts=new Map<string,number>();for(const option of options.rows)counts.set(option.supplierSku,(counts.get(option.supplierSku)??0)+1);
+ for(const option of options.rows){const key=sources.get(option.supplierSku);if(key&&counts.get(option.supplierSku)===1)images[option.id]=key;}
+ return images;
+}
 export async function saveCollectionImage(owner:string,jobId:string,index:number,key:string,role:'main'|'additional'|'detail',product:ProductRecord,current:ProductContent,skus:readonly string[]=[],assignToStage = true){
  const db=await database();const operation=crypto.randomUUID();const now=new Date(Math.max(Date.now(),Date.parse(product.updated_at)+1)).toISOString();
  const next=attachCollectedImage(current,JSON.parse(product.image_keys),key,role,now,assignToStage);

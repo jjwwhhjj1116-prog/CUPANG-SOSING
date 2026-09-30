@@ -4,6 +4,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct, getSettings, type ProductRecord } from '@/db/queries';
 import { productImageKeys } from '@/app/product-content';
 import { readProductOptions, saveProductOptions } from '@/db/product-options';
+import { readOptionSourceImages } from '@/db/collection-images';
 import { OPTIONS_BODY_LIMIT, applyOptionRows, calculateOptionPrices, resolveOptionPricePolicy, validateOptionsInput, type ProductOptions } from '@/app/product-options';
 
 type Context = { params: Promise<{ id: string }> };
@@ -21,7 +22,8 @@ export async function GET(_: Request, context: Context) {
     const product = await findProduct(owner, id);
     if (!product) return response({ error: '상품을 찾을 수 없습니다.' }, 404);
     const options = await readProductOptions(owner, id);
-    return response({ options, pricing: await pricing(owner, product, options), productVersion: product.updated_at });
+    const [prices,sourceImageKeys]=await Promise.all([pricing(owner,product,options),readOptionSourceImages(owner,product,options).catch(()=>({}))]);
+    return response({ options, pricing: prices, sourceImageKeys, productVersion: product.updated_at });
   } catch { return response({ error: '옵션과 가격 설정을 불러오지 못했습니다.' }, 503); }
 }
 async function input(request: Request) {

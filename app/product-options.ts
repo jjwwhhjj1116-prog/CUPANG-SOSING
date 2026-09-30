@@ -28,7 +28,7 @@ export type ProductOption = OptionInput & {
 export type ProductOptions = { schemaVersion: 1; productId: string; revision: number; updatedAt: string | null; rows: ProductOption[] };
 export type OptionCalculation = { optionId: string; included: boolean; sourceCostCny: number | null; calculation: ReturnType<typeof calculatePrice> | null; error: string | null };
 export type OptionPricing = { policy: PricePolicy; policySource: 'saved-product' | 'product-and-workspace'; rows: OptionCalculation[] };
-export type ProductOptionsResponse = { options: ProductOptions; pricing: OptionPricing; productVersion: string };
+export type ProductOptionsResponse = { options: ProductOptions; pricing: OptionPricing; productVersion: string; sourceImageKeys?:Record<string,string> };
 
 /** Export values preserve deliberately cleared names; display labels may use IDs. */
 export function optionQuotationName(option: Pick<OptionValues, 'translatedName' | 'originalName'> & {

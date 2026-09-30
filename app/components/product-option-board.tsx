@@ -13,6 +13,7 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   const body=await response.json() as ProductOptionsResponse & {error?:string};
   if(!response.ok)throw Error(body?.error||'옵션을 불러오지 못했습니다.');
   if(!body||body.options?.productId!==productId||body.options.schemaVersion!==1||!Array.isArray(body.options.rows)||!Array.isArray(body.pricing?.rows))throw Error('상품의 옵션 응답을 확인하지 못했습니다.');
+  if(body.sourceImageKeys!==undefined&&(!body.sourceImageKeys||typeof body.sourceImageKeys!=='object'||Array.isArray(body.sourceImageKeys)||Object.entries(body.sourceImageKeys).some(([id,key])=>typeof key!=='string'||!key||!body.options.rows.some(row=>row.id===id))))throw Error('상품의 원본 이미지 응답을 확인하지 못했습니다.');
   const contentResponse=await fetcher(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store',signal});
   const saved=await contentResponse.json() as {content?:ProductContent;error?:string};
   if(!contentResponse.ok)throw Error(saved?.error||'공통 대표 이미지를 불러오지 못했습니다.');
@@ -36,10 +37,12 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   return {...body,quotationPrices,commonImageKeys:content.assets.main.value,commonAssets:{additional:readKeys('additional'),detail:[...readKeys('detailTop'),...readKeys('detail'),...readKeys('detailBottom')],label:readKeys('label')}};
 }
 export function ProductOptionBoard({productId,sourceUrl,imageKeys,onQuotation,onEdit,onImage,onContent}:Props){
-  const [data,setData]=useState<OptionBoardData|null>(null);
-  const [error,setError]=useState('');const [attempt,setAttempt]=useState(0);const [query,setQuery]=useState('');
-  useEffect(()=>{const controller=new AbortController();setData(null);setError('');
-    readOptionBoard(productId,controller.signal).then(value=>{if(!controller.signal.aborted)setData(value);}).catch(cause=>{if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'옵션 조회 실패');});
+  const [loaded,setLoaded]=useState<{productId:string;attempt:number;data:OptionBoardData|null;error:string}|null>(null);
+  const [attempt,setAttempt]=useState(0);const [query,setQuery]=useState('');
+  const current=loaded?.productId===productId&&loaded.attempt===attempt?loaded:null;
+  const data=current?.data??null,error=current?.error??'';
+  useEffect(()=>{const controller=new AbortController();
+    readOptionBoard(productId,controller.signal).then(value=>{if(!controller.signal.aborted)setLoaded({productId,attempt,data:value,error:''});}).catch(cause=>{if(!controller.signal.aborted)setLoaded({productId,attempt,data:null,error:cause instanceof Error?cause.message:'옵션 조회 실패'});});
     return()=>controller.abort();
   },[productId,attempt]);
   let keys:string[]=[];try{const parsed:unknown=JSON.parse(imageKeys);if(Array.isArray(parsed))keys=parsed.filter((key):key is string=>typeof key==='string');}catch{/* No unverified image references. */}
@@ -52,8 +55,10 @@ export function ProductOptionBoard({productId,sourceUrl,imageKeys,onQuotation,on
       const prices=data.quotationPrices?.[row.id];
       const priceText=(value:string)=>value.trim()===''?'미입력':/^\d+(?:\.\d+)?$/.test(value)&&Number.isFinite(Number(value))?Number(value).toLocaleString('ko-KR')+'원':value;
       const calculation=data.pricing.rows.find(item=>item.optionId===row.id);
-      const imageKey=quotationMainImageKeys(row,data.commonImageKeys??[]).find(key=>keys.includes(key));
-      return <tr key={row.id}><td>{row.id}<small>{row.supplierSku||'SKU 미입력'}</small></td><td><strong>{optionQuotationName(row)||'(옵션명 공란)'}</strong><small>{row.originalName}</small></td><td>{imageKey?<img src={`/api/files/${imageKey.split('/').map(encodeURIComponent).join('/')}`} alt={optionQuotationName(row)||'옵션 이미지'} width={64} height={64}/>:<small>{row.imageKey?'이미지 연결 확인 필요':'대표 이미지 미설정'}</small>}{imageKey&&<small>{row.imageKey?'개별 이미지':'공통 대표 이미지'}</small>}{onImage&&<button type="button" className="btn ghost" onClick={()=>onImage(row.id)}>이미지 편집</button>}</td>{commonStages.map(([role,step])=>{const saved=data.commonAssets?.[role]??[];const count=saved.filter(key=>keys.includes(key)).length;return <td key={role}><small>{count}장{saved.length!==count?' · 연결 확인 필요':''}</small>{onContent&&<button type="button" className="btn ghost" onClick={()=>onContent(step)}>{step} 편집</button>}</td>;})}<td>{row.unitsPerPack}개</td><td>{row.stock==null?'재고 미확인':`재고 ${row.stock.toLocaleString('ko-KR')}개`}<small>{row.unitCostCny===null?'원가 미입력':`¥${row.unitCostCny} / 개`}</small>{prices?<><small>{priceText(prices.supplyPrice)} (견적 공급가)</small><small>{priceText(prices.salePrice)} (견적 판매가)</small></>:calculation?.calculation?<><small>{calculation.calculation.supplyPrice.toLocaleString('ko-KR')}원 (공급가)</small><small>{calculation.calculation.salePrice.toLocaleString('ko-KR')}원 (판매가)</small></>:<small>{calculation?.error||'가격 미계산'}</small>}</td><td>{row.included?'포함':'제외'}</td><td><button type="button" className="btn ghost" onClick={()=>onEdit(row.id)}>가격 편집</button></td><td><button type="button" className="btn ghost" onClick={()=>onQuotation(row.id)}>견적서 열기</button></td></tr>;
+      const selectedImages=quotationMainImageKeys(row,data.commonImageKeys??[]);
+      const original=!selectedImages.length?data.sourceImageKeys?.[row.id]:undefined;
+      const imageKey=selectedImages.find(key=>keys.includes(key))??(original&&keys.includes(original)?original:undefined);
+      return <tr key={row.id}><td>{row.id}<small>{row.supplierSku||'SKU 미입력'}</small></td><td><strong>{optionQuotationName(row)||'(옵션명 공란)'}</strong><small>{row.originalName}</small></td><td>{imageKey?<img src={`/api/files/${imageKey.split('/').map(encodeURIComponent).join('/')}`} alt={optionQuotationName(row)||'옵션 이미지'} width={64} height={64}/>:<small>{row.imageKey?'이미지 연결 확인 필요':'대표 이미지 미설정'}</small>}{imageKey&&<small>{original?'수집 원본 · 대표 이미지 미설정':row.imageKey?'개별 이미지':'공통 대표 이미지'}</small>}{onImage&&<button type="button" className="btn ghost" onClick={()=>onImage(row.id)}>이미지 편집</button>}</td>{commonStages.map(([role,step])=>{const saved=data.commonAssets?.[role]??[];const count=saved.filter(key=>keys.includes(key)).length;return <td key={role}><small>{count}장{saved.length!==count?' · 연결 확인 필요':''}</small>{onContent&&<button type="button" className="btn ghost" onClick={()=>onContent(step)}>{step} 편집</button>}</td>;})}<td>{row.unitsPerPack}개</td><td>{row.stock==null?'재고 미확인':`재고 ${row.stock.toLocaleString('ko-KR')}개`}<small>{row.unitCostCny===null?'원가 미입력':`¥${row.unitCostCny} / 개`}</small>{prices?<><small>{priceText(prices.supplyPrice)} (견적 공급가)</small><small>{priceText(prices.salePrice)} (견적 판매가)</small></>:calculation?.calculation?<><small>{calculation.calculation.supplyPrice.toLocaleString('ko-KR')}원 (공급가)</small><small>{calculation.calculation.salePrice.toLocaleString('ko-KR')}원 (판매가)</small></>:<small>{calculation?.error||'가격 미계산'}</small>}</td><td>{row.included?'포함':'제외'}</td><td><button type="button" className="btn ghost" onClick={()=>onEdit(row.id)}>가격 편집</button></td><td><button type="button" className="btn ghost" onClick={()=>onQuotation(row.id)}>견적서 열기</button></td></tr>;
     })}</tbody></table>{!rows.length&&<p className="collection-empty">{data.options.rows.length?'검색 결과가 없습니다.':'저장된 옵션이 없습니다.'}</p>}</div>}
   </section>;
 }
