@@ -66,6 +66,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
         await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
         if(controller.signal.aborted)return;
         const result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal,action==='registration'?'registration':true);
+        await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
         if(!controller.signal.aborted){setHubResult(result);if(!result)setMessage('이 견적서의 검증 결과가 아직 표시되지 않았습니다. 잠시 후 다시 확인해주세요.');}
         return;
       }
@@ -163,9 +164,15 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       {(transferAttempted||hubResult)&&<button type="button" className="btn primary" disabled={busy||!preview.report.company||!categoryId||!preview.filename.endsWith('.xlsx')} onClick={()=>void run('track')}>전송 결과 계속 확인</button>}
       <button type="button" className="btn primary" disabled={busy||!categoryId||hubResult?.state!=='validation-complete'||!hubResult.quotationId} onClick={()=>void run('registration')}>견적서 ID로 상품별 등록 상태 조회</button>
       {hubResult&&<div role="status"><strong>{hubResult.state==='not-found'?'검증 목록에서 아직 찾지 못했습니다.':`견적서 검증: ${hubResult.status||'상태 미표시'}`}</strong><p>견적서 ID: {hubResult.quotationId||'미표시'} · 결과 확인 시각: {new Date(hubResult.observedAt).toLocaleString('ko-KR')}</p>{hubResult.detail&&<p>{hubResult.detail}</p>}<p>{trackingProgress?.phase==='sku-issued'?'전송한 옵션 수와 동일한 수의 고유 SKU ID가 조회됐습니다. 상품 검수 결과는 아래 상태를 기준으로 확인하세요.':'현재 검토한 견적서 파일의 결과입니다. 상품별 등록 완료는 아직 확인되지 않았습니다.'}</p></div>}
-      {hubResult?.registration?.includedOptions!==undefined&&<p role="status">초안 포함 옵션 {hubResult.registration.includedOptions}개 · Supplier Hub 현재 페이지에서 조회한 행 {hubResult.registration.rows.length}개. 페이지에 보이지 않는 옵션은 아직 대조되지 않았습니다.</p>}
-      {hubResult?.registration&&<div className="panel-stack"><strong>상품별 등록 상태 · 현재 페이지 {hubResult.registration.rows.length}개</strong><p>확인 시각: {new Date(hubResult.registration.observedAt).toLocaleString('ko-KR')} · 견적서 ID: {hubResult.registration.quotationId}</p>{hubResult.registration.rows.length?<div className="table-wrap"><table><thead><tr><th>상품명</th><th>SKU ID</th><th>상태</th><th>등록 진행 단계</th></tr></thead><tbody>{hubResult.registration.rows.map((row,index)=><tr key={index}><td>{row.title}</td><td>{row.skuId||'—'}</td><td>{row.status}</td><td>{row.stage}</td></tr>)}</tbody></table></div>:<p>이 견적서 ID로 조회한 현재 페이지에 상품이 없습니다. 처리 중이면 잠시 후 다시 조회해주세요.</p>}<small>현재 페이지에 표시된 상품만 확인한 결과입니다. 전체 옵션의 등록 완료 여부는 아직 확인되지 않았습니다.</small></div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.25.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.25)</a>
+      {hubResult?.registration?.includedOptions!==undefined&&<p role="status">초안 포함 옵션 {hubResult.registration.includedOptions}개 · Supplier Hub 조회 {hubResult.registration.rows.length}개{hubResult.registration.scope==='queried-pages'?` · ${hubResult.registration.pagesRead}페이지 대조`: ' · 현재 페이지'}.</p>}
+      {hubResult?.registration&&<div className="panel-stack">
+        <strong>상품별 등록 상태 · 조회 {hubResult.registration.rows.length}개</strong>
+        <p>확인 시각: {new Date(hubResult.registration.observedAt).toLocaleString('ko-KR')} · 견적서 ID: {hubResult.registration.quotationId}</p>
+        {hubResult.registration.rows.length?<div className="table-wrap"><table><thead><tr><th>상품명</th><th>SKU ID</th><th>상태</th><th>등록 진행 단계</th></tr></thead><tbody>{hubResult.registration.rows.map((row,index)=><tr key={index}><td>{row.title}</td><td>{row.skuId||'—'}</td><td>{row.status}</td><td>{row.stage}</td></tr>)}</tbody></table></div>:<p>이 견적서 ID로 조회된 상품이 없습니다. 처리 중이면 잠시 후 다시 조회해주세요.</p>}
+        {hubResult.registration.scope==='visible-page'?<small>현재 페이지의 결과입니다. 다른 페이지의 옵션은 아직 대조되지 않았습니다.</small>:
+          <small>{hubResult.registration.hasMore===true?'다음 페이지가 남아 있습니다. 결과를 계속 확인해주세요.':hubResult.registration.hasMore===null?'추가 페이지 유무를 확인하지 못했습니다. Supplier Hub 결과 표를 확인해주세요.':'마지막 페이지까지 조회했습니다.'} 상품 검수 완료 여부는 각 행의 상태를 확인하세요.</small>}
+      </div>}
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.26.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.26)</a>
     </>}
   </section>;
 }

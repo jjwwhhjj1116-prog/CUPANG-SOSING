@@ -58,7 +58,7 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
       if(mode==='registration'){
         const registration=result.registration;
         if(!registration||registration.quotationId!==quotationId||registration.includedOptions!==prepared.includedOptions
-          ||registration.scope!=='visible-page'||registration.registered!==false)throw new Error('이 견적서의 상품별 조회 결과를 확인하지 못했습니다.');
+          ||!['visible-page','queried-pages'].includes(registration.scope)||registration.registered!==false)throw new Error('이 견적서의 상품별 조회 결과를 확인하지 못했습니다.');
         const rows=registration.rows;
         if(rows.length>prepared.includedOptions)throw new Error('조회된 상품 수가 전송한 옵션 수보다 많습니다.');
         const issued=rows.map(row=>row.skuId.trim()).filter(value=>value&&!/\.\.\.|…/.test(value)
@@ -69,7 +69,8 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
           progress.phase='registration-rejected';publish();return outcome();
         }
         // SKU issuance is a receipt observation, not approval or final registration.
-        if(rows.length===prepared.includedOptions&&issued.length===prepared.includedOptions){
+        if(rows.length===prepared.includedOptions&&issued.length===prepared.includedOptions
+          &&!(registration.scope==='queried-pages'&&registration.hasMore===true)){
           progress.phase='sku-issued';publish();return outcome();
         }
       }

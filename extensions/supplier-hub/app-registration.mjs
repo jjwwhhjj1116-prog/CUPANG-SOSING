@@ -4,6 +4,7 @@ import {transferRecord,resultKey} from './handoff-store.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
 import {searchSupplierHubRegistration} from './registration-search.mjs';
 import {readSupplierHubRegistration} from './registration-result.mjs';
+import {collectSupplierHubRegistrationPages} from './registration-pages.mjs';
 
 const activeWindows=new Set();
 export async function refreshSupplierHubRegistration(message,sender,api=chrome,store=transferRecord){
@@ -46,16 +47,18 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
     await checkCompany('/qvt/wims');
     const [searched]=await api.scripting.executeScript({target:{tabId},func:searchSupplierHubRegistration,args:[saved.quotationId,true]});
     if(searched?.result?.state!=='search-complete'||searched.result.quotationId!==saved.quotationId||searched.result.registered!==false)throw Error('견적서 ID 검색 결과를 확인하지 못했습니다.');
-    await checkCompany('/qvt/wims');
-    const [execution]=await api.scripting.executeScript({target:{tabId},func:readSupplierHubRegistration,args:[saved.quotationId]});
-    const result=execution?.result;
-    const fields=['title','submittedAt','category','barcode','sourceQuotation','skuId','status','stage'];
-    if(!result||result.quotationId!==saved.quotationId||result.scope!=='visible-page'||result.registered!==false||!Array.isArray(result.rows)||result.rows.length>1000
-      ||result.rows.some(row=>!row||fields.some(field=>typeof row[field]!=='string'||row[field].length>20000)))throw Error('견적서 ID에 해당하는 상품별 결과를 확인하지 못했습니다.');
-    await checkCompany('/qvt/wims');
-    const latest=await store('get',key);
-    if(!latest||latest.state!=='validation-complete'||latest.quotationId!==saved.quotationId||latest.filename!==saved.filename||latest.company?.code!==saved.company?.code||latest.company?.name!==saved.company?.name
-      ||latest.includedOptions!==saved.includedOptions||!['origin','productId','categoryId','fingerprint'].every(field=>latest[field]===identity[field]))throw Error('조회 중 견적서 검증 결과가 변경되었습니다. 결과를 저장하지 않았습니다.');
+    const checkCurrent=async()=>{
+      await checkCompany('/qvt/wims');
+      const current=await store('get',key);
+      if(!current||current.state!=='validation-complete'||current.quotationId!==saved.quotationId||current.filename!==saved.filename||current.company?.code!==saved.company?.code||current.company?.name!==saved.company?.name
+        ||current.includedOptions!==saved.includedOptions||!['origin','productId','categoryId','fingerprint'].every(field=>current[field]===identity[field]))throw Error('조회 중 견적서 검증 결과가 변경되었습니다. 결과를 저장하지 않았습니다.');
+    };
+    const readPage=async(advanceFrom)=>{
+      const [execution]=await api.scripting.executeScript({target:{tabId},func:readSupplierHubRegistration,args:[saved.quotationId,{company:saved.company,...(advanceFrom?{advanceFrom}:{})}]});
+      return execution?.result;
+    };
+    const result=await collectSupplierHubRegistrationPages(saved.quotationId,saved.includedOptions,{check:checkCurrent,read:()=>readPage(),advance:readPage});
+    await checkCurrent();const latest=await store('get',key);
     const registration={...result,includedOptions:saved.includedOptions,observedAt:Date.now()};
     const record={...latest,registration};await store('put',key,record);return record;
   }finally{activeWindows.delete(windowId);}

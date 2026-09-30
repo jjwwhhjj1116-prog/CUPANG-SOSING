@@ -100,3 +100,11 @@ test('real wait removes its timer and abort listener on completion and cancellat
  for(const callback of [...timers.keys()]){timers.delete(callback);callback();}await done;next.abort();assert.equal(timers.size,0);
  const aborted=new AbortController();aborted.abort();await assert.rejects(clock.waitForNextLookup(3000,aborted.signal));assert.equal(timers.size,0);
 });
+
+test('multi-page results reach SKU issuance only after any known remaining page is checked',async()=>{
+ const paged=hasMore=>registered([row('sku-1'),row('sku-2')],{registration:{...registered([]).registration,scope:'queried-pages',pagesRead:2,hasMore,rows:[row('sku-1'),row('sku-2')]}});
+ const h=fixture([record('validation-complete'),paged(true),paged(false)]),outcome=await h.run();
+ assert.equal(outcome.phase,'sku-issued');assert.equal(outcome.result.registration.pagesRead,2);assert.equal(outcome.registered,false);
+ assert.equal(h.progress[1].phase,'registration-pending');assert.equal(h.progress[1].issuedSkus,2);
+ const partial=fixture([record('validation-complete'),paged(true)],{maxDurationMs:3000});assert.equal((await partial.run()).timedOut,true);
+});

@@ -11,7 +11,7 @@ function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH'|'REGISTRAT
       if(!result||result.ok!==true)reject(new Error(typeof result?.error==='string'?result.error:'확장에 견적서를 전달하지 못했습니다.'));
       else resolve(result);
     };
-    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':type==='TRANSMIT'?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='REGISTRATION'?'상품별 등록 상태 응답이 없습니다. 잠시 후 다시 조회해주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:type==='TRANSMIT'?55000:type==='REGISTRATION'?30000:20000);
+    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':type==='TRANSMIT'?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='REGISTRATION'?'상품별 등록 상태 응답이 없습니다. 잠시 후 다시 조회해주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:type==='TRANSMIT'?55000:type==='REGISTRATION'?120000:20000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type,payload},window.location.origin);
   });
@@ -22,17 +22,22 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(direct&&result.directTransmission!==true)throw new Error('등록 전송을 지원하는 Chrome 확장 0.2.23 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
 }
 export type SupplierHubRegistrationRow={title:string;submittedAt:string;category:string;barcode:string;sourceQuotation:string;skuId:string;status:string;stage:string};
-export type SupplierHubRegistration={quotationId:string;scope:'visible-page';registered:false;observedAt:number;includedOptions?:number;rows:SupplierHubRegistrationRow[]};
+export type SupplierHubRegistration={quotationId:string;registered:false;observedAt:number;includedOptions?:number;rows:SupplierHubRegistrationRow[]}&(
+  {scope:'visible-page';pagesRead?:never;hasMore?:never}|{scope:'queried-pages';pagesRead:number;hasMore:boolean|null}
+);
 export type SupplierHubResult={state:string;filename:string;company?:{code:string;name:string};submittedAt?:string;status?:string;detail?:string;quotationId?:string;includedOptions?:number;observedAt:number;registered:false;registration?:SupplierHubRegistration};
 export function validateRegistrationResult(value:unknown,quotationId:unknown):SupplierHubRegistration{
   const result=value as SupplierHubRegistration;
-  if(!result||typeof quotationId!=='string'||!quotationId.trim()||result.quotationId!==quotationId||result.scope!=='visible-page'||result.registered!==false||!Number.isFinite(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000||(result.includedOptions!==undefined&&(!Number.isSafeInteger(result.includedOptions)||result.includedOptions<1||result.includedOptions>200))||!Array.isArray(result.rows)||result.rows.length>1000||result.rows.some(row=>!row||['title','submittedAt','category','barcode','sourceQuotation','skuId','status','stage'].some(key=>typeof row[key as keyof SupplierHubRegistrationRow]!=='string'||row[key as keyof SupplierHubRegistrationRow].length>20000)))throw new Error('현재 견적서의 상품별 등록 결과인지 확인하지 못했습니다.');
+  if(!result||typeof quotationId!=='string'||!quotationId.trim()||result.quotationId!==quotationId||!['visible-page','queried-pages'].includes(result.scope)||result.registered!==false||!Number.isFinite(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000||(result.includedOptions!==undefined&&(!Number.isSafeInteger(result.includedOptions)||result.includedOptions<1||result.includedOptions>200))||!Array.isArray(result.rows)||result.rows.length>1000||result.rows.some(row=>!row||['title','submittedAt','category','barcode','sourceQuotation','skuId','status','stage'].some(key=>typeof row[key as keyof SupplierHubRegistrationRow]!=='string'||row[key as keyof SupplierHubRegistrationRow].length>20000)))throw new Error('현재 견적서의 상품별 등록 결과인지 확인하지 못했습니다.');
+  if(result.scope==='queried-pages'&&(!Number.isSafeInteger(result.pagesRead)||result.pagesRead<1||result.pagesRead>200||![true,false,null].includes(result.hasMore)
+    ||result.includedOptions===undefined||result.rows.length>result.includedOptions)
+    ||result.scope==='visible-page'&&(result.pagesRead!==undefined||result.hasMore!==undefined))throw new Error('상품별 조회 페이지의 범위와 옵션 수를 확인하지 못했습니다.');
   return result;
 }
 export async function getSupplierHubResult(identity:PackageIdentity,signal:AbortSignal,refresh:boolean|'registration'=false):Promise<SupplierHubResult|null>{
   if(refresh==='registration'){
     const capability=await exchange('PING',null,signal);
-    if(capability.companyBinding!==true||capability.registrationLookup!==true)throw new Error('상품별 등록 조회를 지원하는 Chrome 확장 0.2.24 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+    if(capability.companyBinding!==true||capability.registrationLookup!==true||capability.registrationPages!==true)throw new Error('상품별 등록 조회를 지원하는 Chrome 확장 0.2.26 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   }
   const response=await exchange(refresh==='registration'?'REGISTRATION':refresh?'REFRESH':'RESULT',identity,signal);
   if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new Error('견적서 결과의 식별값이 일치하지 않습니다.');

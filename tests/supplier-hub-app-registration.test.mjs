@@ -11,7 +11,7 @@ const company={code:'A01464742',name:'와이홉'};
 const message={...identity,type:'YOOFAM_REFRESH_REGISTRATION'};
 const sender={frameId:0,url:'http://localhost:3000/',tab:{id:7,windowId:17}};
 function fixture(options={}){
- const calls=[],records=new Map();let companyChecks=0;
+ const calls=[],records=new Map();let companyChecks=0,resultReads=0;
  const source={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete',...options.source};
  const tabs=[source,...(options.tabs||[])];
  records.set('attempt:123',{...identity,company,includedOptions:3,...options.attempt});
@@ -25,7 +25,7 @@ function fixture(options={}){
   if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[companyChecks++]??company.code}}];
   if(request.func===supplierHubStatusReady)return [{result:true}];
   if(request.func===searchSupplierHubRegistration){await options.onSearch?.();return [{result:{state:'search-complete',quotationId:'quote-123',registered:false,...options.search}}];}
-  if(request.func===readSupplierHubRegistration){if(options.changeSaved)records.set(key,{...records.get(key),...options.changeSaved});return [{result:{quotationId:'quote-123',scope:'visible-page',registered:false,rows:[row],...options.result}}];}
+  if(request.func===readSupplierHubRegistration){resultReads++;if(options.changeSaved&&(!options.changeAfter||resultReads>=options.changeAfter))records.set(key,{...records.get(key),...options.changeSaved});return [{result:{quotationId:'quote-123',scope:'visible-page',registered:false,rows:[row],page:{current:null,hasNext:null,signature:JSON.stringify([row])},...options.result,...options.pages?.[resultReads-1]}}];}
   throw Error('unexpected script');
  }}};
  const store=async(action,key,value)=>{calls.push(['store',action,key]);if(action==='put')records.set(key,value);return records.get(key);};
@@ -60,11 +60,22 @@ test('unsettled search, wrong IDs and changed validation cannot be saved as fres
  for(const config of [{search:{state:'search-requested'}},{search:{quotationId:'other'}},{search:{registered:true}},{result:{quotationId:'other'}},{result:{scope:'all'}},{result:{registered:true}},{result:{rows:[{}]}},{changeSaved:{quotationId:'other'}},{changeSaved:{state:'validation-rejected'}},{changeSaved:{company:{code:'A01526306',name:'유앤채'}}},{changeSaved:{includedOptions:2}}]){
   const h=fixture(config);await assert.rejects(h.run());assert.equal(h.records.get(h.key).registration,undefined);
  }
- const empty=fixture({result:{rows:[]}});assert.equal((await empty.run()).registration.rows.length,0);
+ const empty=fixture({result:{rows:[],page:{current:null,hasNext:null,signature:'[]'}}});assert.equal((await empty.run()).registration.rows.length,0);
 });
 test('app cannot start a second concurrent lookup or touch a different manually opened status search',async()=>{
  let finish;const pending=new Promise(resolve=>{finish=resolve;});const h=fixture({onSearch:()=>pending,tabs:[{id:999,windowId:17,url:'https://supplier.coupang.com/qvt/wims'}]});
  const first=h.run();for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
  await assert.rejects(h.run(),/조회 중/);finish();await first;
  assert.equal(h.calls.some(([name,tabId])=>name==='searchSupplierHubRegistration'&&tabId===999),false);
+});
+
+test('app aggregates later pages only in its owned tab and discards results changed during the last page',async()=>{
+ const row=skuId=>({title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId,status:'검수중',stage:'확인중'});
+ const pages=[['sku-1','sku-2'],['sku-3']].map((skus,index)=>{const rows=skus.map(row);return {rows,page:{current:index+1,hasNext:index===0,signature:JSON.stringify(rows)}};});
+ const h=fixture({pages}),record=await h.run();assert.equal(record.registration.scope,'queried-pages');assert.equal(record.registration.pagesRead,2);
+ assert.equal(record.registration.hasMore,false);assert.deepEqual(record.registration.rows.map(row=>row.skuId),['sku-1','sku-2','sku-3']);
+ const reads=h.calls.filter(([name])=>name==='readSupplierHubRegistration');assert.equal(reads.length,2);assert.equal(reads[1][1],124);
+ assert.deepEqual(reads[1][2],['quote-123',{company,advanceFrom:pages[0].page}]);
+ const changed=fixture({pages,changeAfter:2,changeSaved:{quotationId:'other'}});await assert.rejects(changed.run(),/검증 결과가 변경/);
+ assert.equal(changed.records.get(changed.key).registration,undefined);
 });

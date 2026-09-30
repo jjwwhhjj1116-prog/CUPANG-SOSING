@@ -19,6 +19,14 @@ test('registration evidence stays bound to quotation ID and a bounded visible pa
  assert.equal(api.validateRegistrationResult(value,'123').registered,false);
  for(const patch of [{quotationId:'other'},{scope:'all'},{registered:true},{observedAt:Infinity},{includedOptions:0},{includedOptions:201},{rows:[{}]},{rows:Array(1001).fill(value.rows[0])}])assert.throws(()=>api.validateRegistrationResult({...value,...patch},'123'));
 });
+
+test('multi-page evidence validates actual coverage without treating it as registered',()=>{
+ const api=harness().api;
+ const value={quotationId:'123',scope:'queried-pages',registered:false,observedAt:Date.now(),includedOptions:2,pagesRead:2,hasMore:false,rows:[]};
+ assert.equal(api.validateRegistrationResult(value,'123').pagesRead,2);
+ for(const patch of [{pagesRead:0},{pagesRead:201},{pagesRead:1.5},{hasMore:undefined},{hasMore:'false'},{includedOptions:undefined},{scope:'visible-page'}])assert.throws(()=>api.validateRegistrationResult({...value,...patch},'123'));
+ for(const hasMore of [true,null])assert.equal(api.validateRegistrationResult({...value,hasMore},'123').hasMore,hasMore);
+});
 test('web package handoff sends exact reviewed identity and bytes, cleans listeners',async()=>{
   const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
   await h.api.checkSupplierHubExtension(new AbortController().signal);
@@ -95,13 +103,13 @@ test('live refresh uses the current identity rather than only previously stored 
 test('app registration lookup needs its capability and returns only matching refreshed rows',async()=>{
  const record={...identity,origin:'https://sourceflow.jjwwhhjj1116.workers.dev',filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-complete',quotationId:'123',observedAt:Date.now(),registered:false,includedOptions:3,
   registration:{quotationId:'123',scope:'visible-page',observedAt:Date.now(),registered:false,includedOptions:3,rows:[]}};
- const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true}:{ok:true,fingerprint:identity.fingerprint,record,registered:false}));
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true,registrationPages:true}:{ok:true,fingerprint:identity.fingerprint,record,registered:false}));
  assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal,'registration')).registration.quotationId,'123');
  assert.deepEqual(h.sent.map(message=>message.type),['PING','REGISTRATION']);assert.deepEqual(h.sent[1].payload,identity);
  const old=harness((m,emit)=>emit(m,{ok:true,companyBinding:true,directTransmission:true}));
- await assert.rejects(old.api.getSupplierHubResult(identity,new AbortController().signal,'registration'),/0.2.24/);assert.equal(old.sent.length,1);
+ await assert.rejects(old.api.getSupplierHubResult(identity,new AbortController().signal,'registration'),/0.2.26/);assert.equal(old.sent.length,1);
  for(const patch of [{registration:undefined},{registration:{...record.registration,quotationId:'other'}},{registration:{...record.registration,includedOptions:2}},{state:'validation-pending'}]){
-  const bad=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true}:{ok:true,fingerprint:identity.fingerprint,record:{...record,...patch},registered:false}));
+  const bad=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true,registrationPages:true}:{ok:true,fingerprint:identity.fingerprint,record:{...record,...patch},registered:false}));
   await assert.rejects(bad.api.getSupplierHubResult(identity,new AbortController().signal,'registration'));assert.equal(bad.sent.length,2);
  }
 });

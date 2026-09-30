@@ -38,3 +38,10 @@ test('empty page stays empty; malformed identity, wrong page and ambiguous table
  assert.equal(run([['데이터가 없습니다']]).rows.length,0);
  for(const options of [{id:''},{id:' 123'},{id:{}},{path:'/qvt/registration'},{ambiguous:true}])assert.throws(()=>run([],options));
 });
+
+test('abbreviated SKU copy controls expose the full exact ID without clipboard access or success promotion',()=>{
+ const id='1234567890123456',row=sku=>['상품','date','cat','','','123',sku,'상품 검수중','가격/정책'];
+ const value=run([row({text:'12345678...',copies:[{id}]})]);assert.equal(value.rows[0].skuId,id);assert.equal(value.registered,false);
+ for(const sku of [{text:'different...',copies:[{id}]},{text:'12345678...',copies:[{id:` ${id}`}]},{text:id,copies:[{id},{id}]}])assert.throws(()=>run([row(sku)]),/SKU ID/);
+ const hidden=run([row({text:'12345678...',copies:[{id,hidden:true}]})]);assert.equal(hidden.rows[0].skuId,'12345678...');
+});
