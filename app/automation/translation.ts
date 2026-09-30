@@ -7,6 +7,7 @@ export type TranslationReview = {
   model: string; maxOutputTokens: number; source: TranslationSource; inputCharacters: number;
   instructionsVersion: 'sourceflow-translation-v1' | 'sourceflow-translation-v2' | 'sourceflow-translation-v3' | 'sourceflow-translation-v4' | 'sourceflow-translation-v5'; destination: 'OpenAI Responses API' | 'Cloudflare Workers AI';
   paidNotice: string; pricingUrl: string; expiresAt: string; fingerprint: string;
+  reviewId?: string; // Older persisted reviews remain valid without this field.
 };
 export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false };
 export type TranslationJob = {
@@ -86,7 +87,9 @@ export function validateTranslationSource(input: unknown): TranslationSource {
 }
 
 export async function prepareTranslationReview(source: TranslationSource, config: TranslationConfig, now = new Date()) {
-  const details = { model: config.model, maxOutputTokens: config.maxOutputTokens, source,
+  // Independent approvals must not collide when preparation shares the same
+  // source/config and millisecond. Request idempotency is stored separately.
+  const details = { reviewId:crypto.randomUUID(),model: config.model, maxOutputTokens: config.maxOutputTokens, source,
     instructionsVersion: 'sourceflow-translation-v5' as const, destination: translationDestination(config),
     inputCharacters: JSON.stringify(source).length,
     paidNotice: '승인 후 실행 버튼을 누르면 이 원문을 OpenAI에 보내는 유료 API 요청 1회가 발생합니다. 입력 및 출력 토큰 사용량에 따라 청구되며 정확한 금액은 현재 확정하지 않았습니다. 실패·시간초과도 비용이 발생했을 수 있으며 자동 재시도하지 않습니다.',

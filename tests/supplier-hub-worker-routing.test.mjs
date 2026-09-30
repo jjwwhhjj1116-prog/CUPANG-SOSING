@@ -10,11 +10,18 @@ function fixture({claimed=false,storeFails=false,transmitError=false}={}){
  let handler;const calls=[];
  vm.runInNewContext(code,{validateAppHubRequest,URL,chrome:{runtime:{onMessage:{addListener(callback){handler=callback;}}}},
   refreshSupplierHubRegistration:async(message,who)=>{calls.push(['registration',message,who]);return {quotationId:'quote-123'};},
+  capture1688Product:async(message,who)=>{calls.push(['capture',message,who]);return {ok:true};},
+  cancel1688Capture:(message,who)=>{calls.push(['cancel-capture',message,who]);return {ok:true,cancelled:true};},
   transmitSupplierHubPackage:async()=>{if(transmitError)throw Error('회사코드 불일치');return {state:'validation-requested',registered:false};},
   transferRecord:async(action,key)=>{calls.push(['store',action,key]);if(storeFails)throw Error('record read failure');return claimed?{state:'started'}:undefined;}
  });
  return {calls,run(type,who=sender){return new Promise(resolve=>assert.equal(handler({...identity,type},who,resolve),true));}};
 }
+
+test('worker routes collection cancellation to its initiating app identity',async()=>{
+ const h=fixture();const result=await h.run('YOOFAM_CANCEL_1688');
+ assert.equal(result.cancelled,true);assert.equal(h.calls[0][0],'cancel-capture');assert.equal(h.calls[0][2],sender);
+});
 test('worker routes app registration lookup and returns its record without requiring the popup',async()=>{
  const h=fixture();const result=await h.run('YOOFAM_REFRESH_REGISTRATION');
  assert.equal(h.calls[0][0],'registration');assert.equal(result.record.quotationId,'quote-123');assert.equal(result.fingerprint,identity.fingerprint);assert.equal(result.registered,false);

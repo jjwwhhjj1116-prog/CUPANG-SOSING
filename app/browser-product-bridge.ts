@@ -7,7 +7,8 @@ export function capture1688FromChrome(sourceUrl:string,signal:AbortSignal):Promi
   if(signal.aborted){reject(Error('작업을 취소했습니다.'));return;}
   const requestId=crypto.randomUUID();
   const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);};
-  const abort=()=>{cleanup();reject(Error('작업을 취소했습니다.'));};
+  const cancel=()=>window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:'CANCEL',sourceUrl},location.origin);
+  const abort=()=>{cancel();cleanup();reject(Error('작업을 취소했습니다.'));};
   const receive=(event:MessageEvent)=>{
    if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_1688_CAPTURE_RESULT'||event.data.requestId!==requestId)return;
    cleanup();const result=event.data.result;
@@ -15,7 +16,7 @@ export function capture1688FromChrome(sourceUrl:string,signal:AbortSignal):Promi
    if(result.sourceUrl!==sourceUrl||!Array.isArray(result.scripts)||!result.scripts.length||result.scripts.some((value:unknown)=>typeof value!=='string')){reject(Error('1688 상품 페이지의 응답이 요청 URL과 일치하지 않습니다.'));return;}
    resolve({sourceUrl,scripts:result.scripts});
   };
-  const timer=setTimeout(()=>{cleanup();reject(Error('상품 수집 확장 0.2.22 이상을 설치·새로고침한 뒤 다시 시도해주세요.'));},30000);
+  const timer=setTimeout(()=>{cancel();cleanup();reject(Error('상품 수집 응답을 확인하지 못했습니다. 상품 수집 확장 0.2.25를 갱신하고 앱 페이지를 새로고침해주세요.'));},45000);
   window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
   window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:'CAPTURE',sourceUrl},location.origin);
  });

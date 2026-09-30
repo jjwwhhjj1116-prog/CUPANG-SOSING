@@ -417,18 +417,23 @@ test('option batch version refresh keeps its ID and never reopens an executed ge
   const {sqlite,store,product}=harness();
   try{
    const key='intake-options-'+'a'.repeat(64);
-   const review=await model.prepareTranslationReview(source,config);
+   const reviewClock=new Date();
+   const review=await model.prepareTranslationReview(source,config,reviewClock);
    const old={id:crypto.randomUUID(),productId:'product',productVersion:product.updated_at,contentRevision:2,status:'prepared',review,createdAt:new Date().toISOString()};
    await store.createTranslationJob('owner',old,key,'before-images');
    const version='2026-09-28T00:00:00.000Z';sqlite.prepare('UPDATE products SET updated_at=?').run(version);
    if(['approved','running','completed','failed','uncertain'].includes(state))sqlite.prepare('UPDATE translation_jobs SET status=?,approved_at=?').run(state,old.createdAt);
    if(state==='claimed')sqlite.exec("UPDATE translation_jobs SET claim_token='worker'");
-   const fresh={...old,id:crypto.randomUUID(),productVersion:version,review:await model.prepareTranslationReview(source,config)};
+   const fresh={...old,id:crypto.randomUUID(),productVersion:version,review:await model.prepareTranslationReview(source,config,reviewClock)};
+   assert.equal(fresh.review.expiresAt,review.expiresAt);
+   assert.notEqual(fresh.review.fingerprint,review.fingerprint);
+   assert.deepEqual(model.buildTranslationRequest(fresh.review),model.buildTranslationRequest(review));
    if(state==='race')sqlite.exec("UPDATE products SET updated_at='newer'");
    const result=await store.createTranslationJob('owner',fresh,key,'after-images');
    if(['prepared','approved'].includes(state)){
     assert.equal(result.conflict,false);assert.equal(result.job.id,old.id);assert.equal(result.job.status,'prepared');assert.equal(result.job.approvedAt,null);assert.equal(result.job.productVersion,version);
     assert.equal(await store.approveTranslationJob('owner','product',old.id,review.fingerprint,new Date().toISOString()),null);
+    assert.ok(await store.approveTranslationJob('owner','product',old.id,fresh.review.fingerprint,new Date().toISOString()));
    }else{
     assert.ok(result===null||result.conflict);assert.equal(sqlite.prepare('SELECT product_version FROM translation_jobs').get().product_version,old.productVersion);
    }

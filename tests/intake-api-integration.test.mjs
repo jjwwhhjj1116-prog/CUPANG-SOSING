@@ -1,3 +1,5 @@
+import {parseProductJsonLd} from '../extensions/supplier-hub/product-jsonld.mjs';
+import {capture1688Product} from '../extensions/supplier-hub/capture-1688.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +12,7 @@ import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 
 // Real route handlers and persistence; only auth, Alibaba and R2 are fixtures.
 // This is not evidence of a live Alibaba or Supplier Hub transaction.
-for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many','maximum','resume-options','resume-completed-options','stale','completed','fresh'])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
+for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many','maximum','resume-options','resume-completed-options','stale','completed','fresh','browser-source'])test(`URL intake persists a category-scoped editable quotation (automatic=${automatic})`,async()=>{
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...v){args=v;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const result=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
  const objects=new Map(),network=[],calls=[],cache=new Map();
@@ -22,22 +24,33 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
   const original=payload.result.result.productSkuInfos[0];payload.result.result.productSkuInfos=Array.from({length:automatic==='maximum'?200:60},(_,i)=>({...structuredClone(original),skuId:String(5627721589407+i),...(automatic==='maximum'?{skuAttributes:[...original.skuAttributes,{attributeName:'尺码',value:'大号'}]}:{})}));
   payload.result.result.productAttribute=Array.from({length:50},(_,i)=>({attributeName:'属性'+i,value:'原文'}));
  }
- const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length,httpMetadata:{contentType:'image/png'}}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',status:'approved',companyCode:'A01464742',companyName:'와이홉'}}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,Blob,CompressionStream,DecompressionStream,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async (target,init)=>{const host=new URL(target).hostname;network.push(host);if(host==='gw.open.1688.com')return Response.json(payload);if(host==='api.openai.com'){
+ const deps={'cloudflare:workers':{env:{DB:db,FILES:{head:async key=>objects.has(key)?{size:objects.get(key).length,httpMetadata:{contentType:'image/png'}}:null,put:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));return {};}},OPENAI_API_KEY:'fixture-key',SOURCEFLOW_TEXT_MODEL:'fixture-model',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'2000',ALIBABA_PRODUCT_API_ENABLED:'true',ALIBABA_APP_KEY:'12345',ALIBABA_APP_SECRET:'fixture-secret',ALIBABA_ACCESS_TOKEN:'fixture-token'}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',status:'approved',companyCode:'A01464742',companyName:'와이홉'}}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5,'@/extensions/supplier-hub/product-jsonld.mjs':{parseProductJsonLd}};
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Response,Request,Blob,CompressionStream,DecompressionStream,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:webcrypto,process:{env:{NODE_ENV:'production'}},fetch:async (target,init)=>{const host=new URL(target).hostname;network.push(host);if(host==='detail.1688.com')return new Response('<html>fixture: metadata not available on the public server page</html>',{headers:{'content-type':'text/html'}});if(host==='gw.open.1688.com')return Response.json(payload);if(host==='api.openai.com'){
  const request=JSON.parse(init.body);assert.equal(request.model,'fixture-model');assert.equal(request.store,false);
  const source=JSON.parse(request.input[0].content[0].text);assert.equal(source.category.id,'80719');assert.equal(source.title,'原文商品');
  const draft={title:'한국어 수납 상품',description:'검토한 한국어 설명',keywords:['추천 검색어'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('option-color:')?'색상':'옵션명',value:pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))};
  return Response.json({id:'fixture-response',status:'completed',model:'fixture-model',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(draft)}]}],usage:{input_tokens:100,output_tokens:50,total_tokens:150}});
  }assert.equal(host,'cbu01.alicdn.com');return new Response(png);},require(name){if(name in deps)return deps[name];assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');}});return exports;}
  try{
+  if(automatic==='browser-source')deps['cloudflare:workers'].env.ALIBABA_PRODUCT_API_ENABLED='false';
   const now=new Date().toISOString();
   const settings=load('app/observed-price-preset.ts').applyObservedPricePreset({...load('app/workspace-settings.ts').defaultSettings,brand:'저장 브랜드',hiddenAttributes:automatic===true});
   const context={category:{id:'cat',name:'바스켓',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],mappings:[],template:null},settings,features:'',keywords:'수납,바스켓',capturedAt:now};
   sqlite.prepare('INSERT INTO collection_jobs VALUES (?,?,?,?,?,?,?,?)').run('job','owner','813724060928',sourceUrl,'price','awaiting_connector',now,now);
   sqlite.prepare('INSERT INTO collection_context VALUES (?,?)').run('job',JSON.stringify(context));
   let interruptOptions=false;
-  const fetcher=async(path,init)=>{calls.push(path);if(interruptOptions&&((automatic==='resume-options'&&path.endsWith('/translation')&&JSON.parse(init.body).action==='approve')||(automatic==='resume-completed-options'&&path.endsWith('/translation-apply')&&JSON.parse(init.body).scope==='options'))){const pending=sqlite.prepare('SELECT id FROM translation_jobs WHERE id=? AND idempotency_key LIKE ?').get(JSON.parse(init.body).jobId,'intake-options-%');if(pending){interruptOptions=false;throw Error('fixture connection interrupted before option approval');}}if(path.endsWith('/translation-apply'))return load('app/api/products/[id]/translation-apply/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});if(path.endsWith('/translation'))return load('app/api/products/[id]/translation/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});const match=/^\/api\/collection-jobs\/job\/(collect|result|capacity|product|images)$/.exec(path);assert.ok(match,`unexpected request ${path}`);const response=await load(`app/api/collection-jobs/[id]/${match[1]}/route.ts`)[init?.method??'GET'](new Request('https://app.test'+path,init),{params:Promise.resolve({id:'job'})});if(!response.ok)assert.fail(`${path}: ${response.status} ${await response.text()}`);return response;};
-  let latest;const run=async()=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner','job'),{signal:new AbortController().signal,fetcher,onJob:job=>{latest=job;},onProgress:()=>{}});
+  const fetcher=async(path,init)=>{calls.push(path);if(interruptOptions&&((automatic==='resume-options'&&path.endsWith('/translation')&&JSON.parse(init.body).action==='approve')||(automatic==='resume-completed-options'&&path.endsWith('/translation-apply')&&JSON.parse(init.body).scope==='options'))){const pending=sqlite.prepare('SELECT id FROM translation_jobs WHERE id=? AND idempotency_key LIKE ?').get(JSON.parse(init.body).jobId,'intake-options-%');if(pending){interruptOptions=false;throw Error('fixture connection interrupted before option approval');}}if(path.endsWith('/translation-apply'))return load('app/api/products/[id]/translation-apply/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});if(path.endsWith('/translation'))return load('app/api/products/[id]/translation/route.ts').POST(new Request('https://app.test'+path,init),{params:Promise.resolve({id:path.split('/')[3]})});const match=/^\/api\/collection-jobs\/job\/(collect|browser-capture|result|capacity|product|images)$/.exec(path);assert.ok(match,`unexpected request ${path}`);const response=await load(`app/api/collection-jobs/[id]/${match[1]}/route.ts`)[init?.method??'GET'](new Request('https://app.test'+path,init),{params:Promise.resolve({id:'job'})});if(!response.ok&&!(automatic==='browser-source'&&match[1]==='collect'&&response.status===422))assert.fail(`${path}: ${response.status} ${await response.text()}`);return response;};
+  let browserReads=0;
+  const captureFromBrowser=async value=>{
+   assert.equal(value,sourceUrl);
+   const product=payload.result.result;
+   const metadata={'@type':'ProductGroup',url:value,name:product.subject,image:product.productImage.images,description:product.description,
+    hasVariant:product.productSkuInfos.map(sku=>({'@type':'Product',sku:sku.skuId,name:sku.skuAttributes[0].value,color:sku.skuAttributes[0].value,image:sku.skuAttributes[0].skuImageUrl,offers:{'@type':'Offer',price:sku.price,priceCurrency:'CNY',eligibleQuantity:{minValue:product.minOrderQuantity},inventoryLevel:{'@type':'QuantitativeValue',value:Number(sku.amountOnSale)}}}))};
+   const tabs=new Map([[7,{id:7,windowId:17,url:'http://localhost:3000/'}],[9,{id:9,windowId:17,url:value,status:'complete',active:false}]]);
+   const api={tabs:{get:async id=>tabs.get(id),query:async()=>[],create:async()=>tabs.get(9),remove:async id=>tabs.delete(id)},scripting:{executeScript:async()=>{browserReads++;return [{frameId:0,result:{pageUrl:value,scripts:browserReads<2?[]:[JSON.stringify(metadata)]}}];}}};
+   return capture1688Product({type:'YOOFAM_CAPTURE_1688',requestId:'00000000-0000-4000-8000-000000000003',sourceUrl:value},{tab:tabs.get(7),frameId:0,url:tabs.get(7).url},api,{wait:async()=>{}});
+  };
+  let latest;const run=async()=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner','job'),{signal:new AbortController().signal,fetcher,...(automatic==='browser-source'?{captureFromBrowser}:{}),onJob:job=>{latest=job;},onProgress:()=>{}});
   // The add-only goal must work with no model credentials and leave no AI job.
   if(automatic!=='fresh'&&automatic!=='resume-options'&&automatic!=='resume-completed-options'){
   sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run('collect','job');
@@ -239,7 +252,15 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.match(await emptyExport.text(),/옵션/);
     assert.equal((await exportRequest({action:'export',fingerprint:packPreview.fingerprint})).status,409);
    }
-   assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');return;
+   assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
+   if(automatic==='browser-source'){
+    assert.equal(browserReads,4);assert.equal(calls.filter(path=>path.endsWith('/collect')).length,1);
+    assert.equal(calls.filter(path=>path.endsWith('/browser-capture')).length,1);
+    assert.equal(network.filter(host=>host==='gw.open.1688.com').length,0);
+    assert.equal(network.filter(host=>host==='detail.1688.com').length,1);
+    const receipt=await load('db/collection-results.ts').readCollectionResult('owner','job');assert.equal(receipt.result.provider,'chrome-product-jsonld-v1');
+   }
+   return;
   }
   await assert.rejects(run(),/SEO 요청을 준비/);assert.ok(latest.product_id);const seo=sqlite.prepare('SELECT * FROM translation_jobs').get();assert.equal(seo.status,'prepared');const review=JSON.parse(seo.review);assert.equal(review.source.category.id,'80719');assert.equal(review.source.title,'原文商品');assert.equal(review.source.guidance.keywords,'수납,바스켓');assert.ok(review.source.attributes.some(pair=>pair.name==='option:collected-1'));assert.equal(seo.result,null);
   await assert.rejects(run());assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
