@@ -16,6 +16,8 @@ import { isOwnedImageKey } from '@/app/image-files';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
+import { env } from 'cloudflare:workers';
+import { publicDetailConfig, publicDetailVersion, resolvePublicDetail, PublicDetailError } from '@/app/quotation-public-detail';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -68,11 +70,13 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     contentRevision: content.revision, optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings };
-  const automatic = resolveQuotationFields(inputs);
+  const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
+  const automatic = (await resolvePublicDetail(resolveQuotationFields(inputs),content,owner,imageKeys,detailConfig)).resolved;
   const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);
-  const resolved = resolveQuotationFields({ ...inputs, overrides });
+  const resolved = (await resolvePublicDetail(resolveQuotationFields({ ...inputs, overrides }),content,owner,imageKeys,detailConfig)).resolved;
   if (categoryContext.categoryId && hasLegacyQuotationOverrides(state)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
-  const inputFingerprint = await fingerprint({ inputs, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection });
+  const inputFingerprint = await fingerprint({ inputs, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection,
+    ...(detailConfig ? { detailHtml: await publicDetailVersion(detailConfig) } : {}) });
   const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, overrides, legacyOverrides: categoryContext.categoryId ? state.overrides : undefined, resolved, automatic, categoryContext,
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };
   return { view, source, options };
@@ -83,6 +87,7 @@ async function stableView(owner: string, id: string, profileId: string | null) {
   return saved;
 }
 function failure(error: unknown) {
+  if (error instanceof PublicDetailError) return json({ error: error.message }, error.status);
   if (error instanceof FieldsError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof RequestBodyError) return json({ error: error.message }, error.status);
   return json({ error: '견적서 자동 입력 자료와 수정값을 읽거나 저장하지 못했습니다.' }, 503);

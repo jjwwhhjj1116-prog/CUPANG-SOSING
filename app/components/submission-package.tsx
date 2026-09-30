@@ -12,7 +12,7 @@ import { followSupplierHubRegistration, type SupplierHubTrackingProgress } from 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
   submissionReview:PackageReview;
-  report:{company?:{code:string;name:string}|null;productId:string;categoryId:string|null;profileId:string;rowCount:number;warnings:string[];submissionReady:false};
+  report:{company?:{code:string;name:string}|null;productId:string;categoryId:string|null;profileId:string;rowCount:number;warnings:string[];publicDetailImages?:{count:number;publishedByThisRequest:false};submissionReady:false};
 };
 
 /** Reuses the reviewed XLSX exporter. Preparing or downloading never marks a product submitted. */
@@ -187,6 +187,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <button type="button" className="btn rose" disabled={busy||transferAttempted||!submissionChecked||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0||!Object.values(agreements).every(value=>value)} onClick={()=>void run('transmit')}>{transferAttempted?'전송 시도됨 · 검증 결과 확인':'등록 전송'}</button>
       {!submissionChecked&&preview.report.company&&categoryId&&preview.filename.endsWith('.xlsx')&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>void run('recover')}>전송 기록 다시 확인</button>}
       <p>이 앱과 같은 Chrome 창에서 회사코드가 일치하는 Supplier Hub 대량 상품 등록 탭을 사용합니다.</p>
+      {!!preview.report.publicDetailImages?.count && <p>견적서 다운로드·첨부 준비·등록전송 시 상세 이미지 {preview.report.publicDetailImages.count}장의 공개 주소를 만듭니다. 해당 주소를 가진 사람은 이미지를 볼 수 있습니다.</p>}
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('download')}>견적서 파일 다운로드</button>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
       <button type="button" className="btn ghost" disabled={busy||transferAttempted||!submissionChecked||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>확장에 첨부 파일 준비</button>

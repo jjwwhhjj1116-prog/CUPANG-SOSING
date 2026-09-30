@@ -13,6 +13,7 @@ import { fingerprint } from '@/app/automation/model';
 import { validateCategoryIdentity } from '@/app/category-identity';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
+import { publicDetailVersion, type PublicDetailConfig } from '@/app/quotation-public-detail';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -90,9 +91,10 @@ export function resolveQuotationExport(saved: QuotationExportSource) {
   if (saved.categoryContext.categoryId && saved.savedScopes && hasLegacyQuotationOverrides(saved.savedScopes)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   return resolved;
 }
-export async function quotationExportFingerprint(saved: QuotationExportSource, dataStartRow: number | null) {
+export async function quotationExportFingerprint(saved: QuotationExportSource, dataStartRow: number | null, detailConfig: PublicDetailConfig | null = null) {
   // Raw source/state payloads matter: an override reset and an equal-valued manual
   // override have different provenance, even when the visible cell is unchanged.
   return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved, dataStartRow,
-    schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath) });
+    schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath),
+    ...(detailConfig ? { detailHtml: await publicDetailVersion(detailConfig) } : {}) });
 }

@@ -7,6 +7,7 @@ import { readQuotationFields, quotationSourcesCurrent } from '@/db/quotation-fie
 import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
 import { inspectSubmission } from '@/app/submission-review';
+import { publicDetailConfig, resolvePublicDetail, PublicDetailError } from '@/app/quotation-public-detail';
 
 const json = (body: unknown, status=200) => NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function GET(request: Request, context: {params:Promise<{id:string}>}) {
@@ -16,16 +17,18 @@ export async function GET(request: Request, context: {params:Promise<{id:string}
     if (profileId !== null && !/^[a-zA-Z0-9_-]{1,100}$/.test(profileId)) return json({error:'카테고리 설정을 확인해주세요.'},400);
     const owner = await getWorkspaceOwnerId(); const {id} = await context.params;
     const saved = await readQuotationExportSource(owner,id,profileId);
-    const resolved = resolveQuotationExport(saved);
+    const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
+    const resolved = (await resolvePublicDetail(resolveQuotationExport(saved),saved.content,owner,productImageKeys(saved.product.image_keys),detailConfig)).resolved;
     const keys = productImageKeys(saved.product.image_keys).filter(key=>isOwnedImageKey(owner,key));
     const checks = await inspectQuotationImages(resolved,keys,env.FILES ? key=>env.FILES.head(key) : undefined);
     const report = inspectSubmission(resolved,keys,checks);
-    const fingerprint = await quotationExportFingerprint(saved,null);
+    const fingerprint = await quotationExportFingerprint(saved,null,detailConfig);
     if (!await quotationSourcesCurrent(owner,id,saved.source) || (await readQuotationFields(owner,id)).revision !== saved.state.revision) {
       return json({error:'검사 중 자료가 변경되었습니다. 저장을 마친 뒤 다시 검사해주세요.'},409);
     }
     return json({...report,productId:id,requestedProfileId:profileId,title:saved.product.title,sourceUrl:saved.product.source_url,checkedAt:new Date().toISOString(),fingerprint});
   } catch (error) {
+    if (error instanceof PublicDetailError) return json({error:error.message},error.status);
     if (error instanceof QuotationExportError) return json({error:error.message},error.status);
     return json({error:'등록 자료를 읽지 못했습니다. 잠시 후 다시 검사해주세요.'},503);
   }

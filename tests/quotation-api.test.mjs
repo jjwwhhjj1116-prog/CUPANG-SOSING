@@ -11,7 +11,7 @@ function load(file, overrides = {}, mode = 'development', cache = new Map()) {
   if (cache.has(file)) return cache.get(file);
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {}; cache.set(file, exports);
-  vm.runInNewContext(output, { exports, Error, Response, URL, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, structuredClone, Blob, CompressionStream, DecompressionStream, crypto: webcrypto,
+  vm.runInNewContext(output, { exports, Error, Response, URL, Headers, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, structuredClone, Blob, CompressionStream, DecompressionStream, crypto: webcrypto,
     process: { env: { NODE_ENV: mode } }, require(name) {
     if (name === 'parse5') return parse5;
       if (name in overrides) return overrides[name];
@@ -69,17 +69,84 @@ function routeWith({ find = async () => product, readOptions = async () => optio
   readFields = async () => ({ schemaVersion: 1, productId: 'test', revision: 0, overrides: { common: {}, options: {} }, updatedAt: null }),
   readSettings = async () => null, sourcesCurrent = async () => true, readCollection = async () => null,
   get = async key => key === templateKey ? { size: templateBytes.length, arrayBuffer: async () => templateBytes.slice().buffer } : { size: png.length, arrayBuffer: async () => png.slice().buffer },
-  mode,
+  mode, bindings = {}, put, head,
 } = {}) {
   return load('app/api/products/[id]/quotation/route.ts', {
     '@/db/queries': { findProduct: find, getSettings: readSettings }, '@/db/product-options': { readProductOptions: readOptions },
     '@/db/product-content': { readProductContent: readContent }, '@/db/category-profiles': { getCategoryProfile: readProfile },
     '@/db/quotation-fields': { readQuotationFields: async (...args) => { const state=await readFields(...args); const selected=await readProfile(); if (!selected) return state; return { ...state, overrides:{common:{},options:{}}, categoryOverrides:{['category:'+selected.categoryId]:state.overrides} }; }, readQuotationCollectionSource: readCollection, quotationSourcesCurrent: sourcesCurrent },
-    'cloudflare:workers': { env: { FILES: { get } } },
+    'cloudflare:workers': { env: { ...bindings, FILES: { get, put, head } } },
   }, mode);
 }
 const request = body => new Request('http://localhost', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const context = { params: Promise.resolve({ id: 'test' }) }; const preview = { action: 'preview', profileId: profile.id, dataStartRow: 2 };
+
+test('stage-five selections reach final HTML cells and public copies only after an explicit quotation export', async () => {
+  const bindings = { YOOFAM_DETAIL_IMAGE_SECRET: 'a1'.repeat(32), YOOFAM_DETAIL_IMAGE_ORIGIN: 'https://example.com' };
+  const bytes = new TextEncoder().encode('HTML 상품 상세 컨텐츠,상세이미지 파일명\r\n');
+  const digest = createHash('sha256').update(bytes).digest('hex'), key = `owner/category-templates/${digest}.csv`;
+  const selected = { ...profile, template: { ...profile.template, headers: ['HTML 상품 상세 컨텐츠','상세이미지 파일명'], sha256: digest, storageKey: key },
+    mappings: [{ column: 0, field: 'detailHtml', required: false }, { column: 1, field: 'detailImages', required: false }] };
+  const selectedProduct = { ...product, image_keys: '["owner/option.png","owner/bottom.png"]' };
+  const selectedContent = contentModel.applyContentPatch(content, { assets: { detailTop: ['owner/option.png'], detailBottom: ['owner/bottom.png'] } }, product.updated_at);
+  const objects = new Map(), published = [];
+  const route = routeWith({ bindings, find: async () => selectedProduct, readContent: async () => selectedContent, readProfile: async () => selected,
+    get: async path => { const data = path === key ? bytes : png; return { size: data.length, arrayBuffer: async () => data.slice().buffer }; },
+    put: async (path, data, settings) => { published.push(path); assert.equal(settings.onlyIf.get('if-none-match'), '*'); if (objects.has(path)) return null;
+      const object = { size: data.length, customMetadata: settings.customMetadata }; objects.set(path, object); return object; }, head: async path => objects.get(path) ?? null });
+  const response = await route.POST(request(preview), context); assert.equal(response.status, 200); const reviewed = await response.json();
+  assert.equal(published.length, 0); assert.equal(reviewed.report.publicDetailImages.count, 2);
+  assert.equal(reviewed.report.publicDetailImages.publishedByThisRequest, false);
+  const html = reviewed.rows[0][0], urls = [...html.matchAll(/src="(https:\/\/example.com\/media\/quotation\/[a-f0-9]{64})"/g)].map(match => match[1]);
+  assert.equal(urls.length, 2); assert.match(html, /<p>설명<\/p>/); assert.match(html, /검토한 이미지 설명 1/);
+  const source = await (await route.POST(request({ ...preview, action: 'source' }), context)).json();
+  assert.equal(source.fingerprint, reviewed.fingerprint); assert.equal(published.length, 0);
+  const output = await route.POST(request({ ...preview, action: 'export', fingerprint: reviewed.fingerprint }), context); assert.equal(output.status, 200);
+  assert.equal(objects.size, 2); assert.equal(published.length, 2);
+  const files = unzipSync(new Uint8Array(await output.arrayBuffer()));
+  assert.equal(JSON.parse(new TextDecoder().decode(files['quotation-report.json'])).publicDetailImages.publishedByThisRequest, true);
+  const doc = JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));
+  assert.equal(doc.rows[0].fields.detailHtml.value, html); assert.equal(doc.rows[1].fields.detailHtml.value, html);
+  const exported = new TextDecoder().decode(files[quotationName(files, 'csv')]);
+  assert.ok(urls.every(url => exported.includes(url))); assert.match(exported, /image-001\.png/); assert.match(exported, /image-002\.png/);
+  const download = await route.POST(request({ ...preview, action: 'download', fingerprint: reviewed.fingerprint }), context);
+  assert.equal(download.status, 200); assert.equal(objects.size, 2); assert.equal(new TextDecoder().decode(await download.arrayBuffer()), exported);
+  const changedConfig = routeWith({ bindings: { ...bindings, YOOFAM_DETAIL_IMAGE_SECRET: 'b2'.repeat(32) }, find: async () => selectedProduct, readContent: async () => selectedContent, readProfile: async () => selected,
+    get: async () => { throw Error('stale export must not read R2'); } });
+  assert.equal((await changedConfig.POST(request({ ...preview, action: 'export', fingerprint: reviewed.fingerprint }), context)).status, 409);
+  assert.equal(selectedContent.assets.detailTop.value[0], 'owner/option.png');
+});
+
+test('manual HTML blanks do not publish private detail files', async () => {
+  const bindings = { YOOFAM_DETAIL_IMAGE_SECRET: 'a1'.repeat(32), YOOFAM_DETAIL_IMAGE_ORIGIN: 'https://example.com' };
+  const bytes = new TextEncoder().encode('HTML 상품 상세 컨텐츠\r\n');
+  const digest = createHash('sha256').update(bytes).digest('hex'), key = `owner/category-templates/${digest}.csv`;
+  const selected = { ...profile, template: { ...profile.template, headers: ['HTML 상품 상세 컨텐츠'], sha256: digest, storageKey: key }, mappings: [{ column: 0, field: 'detailHtml', required: false }] };
+  const selectedContent = contentModel.applyContentPatch(content, { assets: { detail: ['owner/option.png'] } }, product.updated_at);
+  let publications = 0;
+  const route = routeWith({ bindings, readContent: async () => selectedContent, readProfile: async () => selected,
+    readFields: async () => ({ schemaVersion: 1, productId: 'test', revision: 1, overrides: { common: { detailHtml: '' }, options: {} } }),
+    get: async path => { const data = path === key ? bytes : png; return { size: data.length, arrayBuffer: async () => data.slice().buffer }; }, put: async () => { publications++; throw Error('must not publish'); } });
+  const reviewed = await (await route.POST(request(preview), context)).json(); assert.deepEqual(reviewed.rows, [[''],['']]);
+  const response = await route.POST(request({ ...preview, action: 'export', fingerprint: reviewed.fingerprint }), context);
+  assert.equal(response.status, 200); assert.equal(publications, 0);
+});
+
+test('preview reports unsupported generated GIF HTML and an export never publishes the rejected files', async () => {
+  const bindings = { YOOFAM_DETAIL_IMAGE_SECRET: 'a1'.repeat(32), YOOFAM_DETAIL_IMAGE_ORIGIN: 'https://example.com' };
+  const bytes = new TextEncoder().encode('HTML 상품 상세 컨텐츠\r\n');
+  const digest = createHash('sha256').update(bytes).digest('hex'), key = `owner/category-templates/${digest}.csv`;
+  const selected = { ...profile, template: { ...profile.template, headers: ['HTML 상품 상세 컨텐츠'], sha256: digest, storageKey: key }, mappings: [{ column: 0, field: 'detailHtml', required: false }] };
+  const selectedContent = contentModel.applyContentPatch(content, { assets: { detail: ['owner/option.png'] } }, product.updated_at);
+  let publications = 0;
+  const route = routeWith({ bindings, readContent: async () => selectedContent, readProfile: async () => selected,
+    get: async path => { const data = path === key ? bytes : new Uint8Array(Buffer.from('GIF89a')); return { size: data.length, arrayBuffer: async () => data.slice().buffer }; },
+    put: async () => { publications++; throw Error('must not publish'); } });
+  const response = await route.POST(request(preview), context); assert.equal(response.status, 200); const reviewed = await response.json();
+  assert.equal(reviewed.submissionReview.issues.filter(issue => issue.code === 'HTML_MEDIA_UNSUPPORTED').length, 2);
+  const output = await route.POST(request({ ...preview, action: 'export', fingerprint: reviewed.fingerprint }), context);
+  assert.equal(output.status, 409); assert.match((await output.json()).error, /GIF/); assert.equal(publications, 0);
+});
 
 test('lightweight source checks match the reviewed fingerprint and file without downloading R2 or generating a workbook',async()=>{
  const full=await (await routeWith().POST(request(preview),context)).json();

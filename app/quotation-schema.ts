@@ -80,7 +80,7 @@ const commonFields: QuotationField[] = [
   field('additionalImages', 'image', '추가 이미지', { type: 'images', maxLength: 16000, maxItems: 30, help: imageHelp }),
   field('labelImages', 'image', '제품 한글 표시사항 라벨 또는 도안 이미지', { type: 'images', maxLength: 16000, maxItems: 30, help: imageHelp }),
   field('detailImages', 'image', '상세 이미지', { type: 'images', maxLength: 16000, maxItems: 30, help: imageHelp }),
-  field('detailHtml', 'image', 'HTML 상세 내용', { type: 'textarea', maxLength: 150000, help: '5단계에서 저장한 상세 설명을 HTML 문단으로 반영합니다. 직접 입력한 HTML은 유지하며 작업 화면에서 실행하지 않습니다.' }),
+  field('detailHtml', 'image', 'HTML 상세 내용', { type: 'textarea', maxLength: 150000, help: '5단계 상세 설명과 선택 이미지 순서를 반영합니다. 견적 파일을 준비하면 선택한 상세 이미지의 공개 주소가 만들어집니다. 직접 입력한 HTML과 공란은 유지하며 작업 화면에서 실행하지 않습니다.' }),
   field('altText', 'image', '대체 텍스트', { maxLength: 2000 }),
   field('kcMarkType', 'legal', '전기용품 및 생활용품, 어린이 (KC) 인증 마크 타입', { type: 'select', required: true, reviewRequired: true, choices: choices('해당사항없음', 'KC인증마크_어린이제품 공급자적합성확인', 'KC인증마크_생활용품 공급자적합성확인', 'KC인증마크_전기용품 공급자적합성확인'), help: '인증 대상 여부와 유형을 확인해 입력합니다. 미확인을 해당사항없음으로 바꾸지 않습니다.' }),
   field('kcCertificationNumber', 'legal', '전기용품 및 생활용품, 어린이 (KC) 인증번호', { reviewRequired: true }),

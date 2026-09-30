@@ -41,6 +41,25 @@ function put(h,view,changes,profileId){return h.route.PUT(request({expectedRevis
 async function profile(h,id='80719'){return h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'LOCAL TEST category',categoryId:id,categoryPath:h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath.length?[...h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath]:['미확인 카테고리'],template:null,mappings:[]});}
 const baseGuard=()=>({productVersion:version,imageKeys:product.image_keys,pricingPolicy:null,contentRevision:0,optionRevision:0,settingsPayload:null,profile:null,collection:null});
 
+test('stage-seven GET and saves share automatic public detail HTML without publishing or erasing a direct blank', async()=>{
+ const h=await harness();try{
+  h.env.YOOFAM_DETAIL_IMAGE_SECRET='a1'.repeat(32);h.env.YOOFAM_DETAIL_IMAGE_ORIGIN='https://example.com';
+  h.env.FILES={put:async()=>{throw Error('editor must not publish');}};
+  const model=h.load('app/product-content.ts');
+  const content=model.applyContentPatch(model.emptyProductContent('product'),{detail:{description:'확인한 설명',altText:'확인한 이미지'},assets:{detail:['owner/image.png']}},version);
+  h.sqlite.prepare('INSERT INTO product_content VALUES(?,?,?,?,?)').run('product','owner',1,JSON.stringify(content),version);
+  const view=await get(h);
+  assert.match(view.automatic.rows[0].fields.detailHtml.value,/<p>확인한 설명<\/p>/);
+  assert.match(view.resolved.rows[0].fields.detailHtml.value,/https:\/\/example.com\/media\/quotation\/[a-f0-9]{64}/);
+  const changed=await put(h,view,[{fieldKey:'detailHtml',optionId:null,value:''}]);assert.equal(changed.status,200);
+  const saved=await changed.json();assert.equal(saved.resolved.rows[0].fields.detailHtml.value,'');
+  assert.match(saved.automatic.rows[0].fields.detailHtml.value,/<img /);
+  const before=saved.inputFingerprint;h.env.YOOFAM_DETAIL_IMAGE_SECRET='b2'.repeat(32);
+  assert.notEqual((await get(h)).inputFingerprint,before);
+  assert.equal((await put(h,saved,[{fieldKey:'detailHtml',optionId:null,value:null}])).status,409);
+ }finally{h.sqlite.close();}
+});
+
 async function linkedFixture(h) {
  const selected=await profile(h);const settings=h.load('app/workspace-settings.ts').defaultSettings;
  const jobs=await h.load('db/collection-jobs.ts').enqueueCollection('owner',[{offerId:'123456789',sourceUrl:product.source_url,goal:'work'}],{category:selected,settings,features:'',keywords:'',capturedAt:version});
