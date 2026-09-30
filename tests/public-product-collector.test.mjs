@@ -13,6 +13,18 @@ test('explicit public data produces original SKU, image relation and price witho
  const r=parsePublicProduct(html(product()),url);assert.equal(r.options[0].sku,'real-sku');assert.equal(r.options[0].unitPriceCny,25.6);assert.equal(r.options[0].minimumOrder,2);assert.equal(r.options[0].stock,null);assert.equal(r.options[0].imageIndex,1);assert.equal(r.images[0].role,'main');assert.equal(r.title,'原文商品');
  assert.equal(parsePublicProduct(html({'@graph':[product()]}),url).offerId,'813724060928');
 });
+test('protocol-relative Alibaba gallery and SKU images retain one canonical index',()=>{
+ const p=product();p.image=['//cbu01.alicdn.com/a.jpg'];
+ p.hasVariant[0].image=['https://cbu01.alicdn.com/a.jpg','//cbu01.alicdn.com/b.jpg'];
+ const result=parsePublicProduct(html(p),url);
+ assert.deepEqual(JSON.parse(JSON.stringify(result.images)),[
+  {url:'https://cbu01.alicdn.com/a.jpg',role:'main'},
+  {url:'https://cbu01.alicdn.com/b.jpg',role:'additional'},
+ ]);
+ assert.equal(result.options[0].imageIndex,0);
+ p.hasVariant[0].image='//other.example/b.jpg';
+ assert.throws(()=>parsePublicProduct(html(p),url),/Alibaba CDN/);
+});
 test('public product page can identify the exact offer by JSON-LD id or main entity',()=>{
  const byId=product();delete byId.url;byId['@id']=url+'?from=structured-data';
  assert.equal(parsePublicProduct(html(byId),url).options[0].sku,'real-sku');

@@ -100,7 +100,10 @@ export function parsePublicProduct(html: string, sourceUrl: string, now = Date.n
  const images: {url:string;role:'main'|'additional'|'detail'}[]=[];
  const addImages=(value:unknown)=>list(value).map(item=>{
   const image=typeof item==='string'?null:resolve(item);
-  const url=required(typeof item==='string'?item:image?.contentUrl??image?.url,'이미지 주소');
+  const sourceUrl=required(typeof item==='string'?item:image?.contentUrl??image?.url,'이미지 주소');
+  // 1688 commonly publishes the same Alibaba CDN asset with both absolute
+  // and protocol-relative URLs. Normalize before deduplication and validation.
+  const url=sourceUrl.startsWith('//')?`https:${sourceUrl}`:sourceUrl;
   let index=images.findIndex(image=>image.url===url);
   if(index<0){index=images.length;images.push({url,role:index===0?'main':'additional'});}
   return index;
