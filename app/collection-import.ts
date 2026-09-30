@@ -1,5 +1,6 @@
 import { collectionRequestWithRetry } from '@/app/collection-retry';
 import { validateCollectionCapacity, collectionSelectionFits } from '@/app/collection-capacity';
+import { importCollectionImageBatches } from '@/app/collection-import-batch';
 export type CollectionImportProgress = {stage:'product'|'images';completedImages:number;totalImages:number};
 export type CollectionImportOutcome = {status:'completed'|'stopped'|'failed';productId:string|null;completedImages:number;error?:string;warnings?:string[];failedImageIndices?:number[];capacityUnavailable?:boolean};
 export function collectionImageSelection(totalImages:number,imageIndices?:readonly number[]):number[]{
@@ -9,11 +10,12 @@ export function collectionImageSelection(totalImages:number,imageIndices?:readon
  return indices.sort((a,b)=>a-b);
 }
 /** Uses retry-safe server endpoints. Stop is cooperative: finish an in-flight write before stopping. */
-export async function runCollectionImport(jobId:string,totalImages:number,options:{assignToStage?:boolean;onProductSaved?:(productId:string)=>Promise<void>;continueOnImageError?:boolean;retryAttempts?:number;retryWait?:(milliseconds:number)=>Promise<void>;onRetry?:(attempt:number)=>void;imageIndices?:readonly number[];fetcher?:typeof fetch;shouldStop?:()=>boolean;onProgress?:(progress:CollectionImportProgress)=>void}={}):Promise<CollectionImportOutcome>{
+export async function runCollectionImport(jobId:string,totalImages:number,options:{imageBatchSize?:3;assignToStage?:boolean;onProductSaved?:(productId:string)=>Promise<void>;continueOnImageError?:boolean;retryAttempts?:number;retryWait?:(milliseconds:number)=>Promise<void>;onRetry?:(attempt:number)=>void;imageIndices?:readonly number[];fetcher?:typeof fetch;shouldStop?:()=>boolean;onProgress?:(progress:CollectionImportProgress)=>void}={}):Promise<CollectionImportOutcome>{
  if(!jobId||!Number.isInteger(totalImages)||totalImages<0||totalImages>200)throw new Error('수집 요청과 이미지 수를 확인해주세요.');
  const indices=collectionImageSelection(totalImages,options.imageIndices);
  const selectedTotal=indices.length;
  const fetcher=options.fetcher??fetch;
+ if(options.imageBatchSize!==undefined&&(options.imageBatchSize!==3||options.assignToStage!==false))throw new Error('묶음 저장은 원본 이미지 자료함에만 사용할 수 있습니다.');
  if(options.retryAttempts!==undefined&&(!Number.isInteger(options.retryAttempts)||options.retryAttempts<1||options.retryAttempts>3))throw new Error('재시도 횟수는 1~3회여야 합니다.');
  const request=(url:string,init:RequestInit)=>collectionRequestWithRetry(url,init,{fetcher,attempts:options.retryAttempts,wait:options.retryWait,shouldStop:options.shouldStop,onRetry:options.onRetry});
  const base=`/api/collection-jobs/${encodeURIComponent(jobId)}`;
@@ -52,6 +54,7 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
   if(!body.productId)throw new Error('상품 반영 결과를 확인하지 못했습니다. 다시 실행해주세요.');
   productId=body.productId;
   await options.onProductSaved?.(productId);
+  if(options.imageBatchSize===3)return importCollectionImageBatches(base,productId,indices,{request,shouldStop:stopped,continueOnImageError:options.continueOnImageError,onProgress:options.onProgress});
   for(const index of indices){
    if(stopped())return {status:'stopped',productId,completedImages,...(failedImageIndices.length?{failedImageIndices}:{}),...(warnings.length?{warnings}: {})};
    activeImageIndex=index;

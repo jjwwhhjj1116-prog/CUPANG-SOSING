@@ -33,3 +33,20 @@ The existing URL collection route now tries the official mobile source if a vali
 Product-only recorded fixtures omit seller/tracking identities and anonymous transport values. Tests cover the six SKU costs/image associations, actual placeholder shape, strict product identity, quantity-tier selection, transient handshake, cancellation, verification/access failures, and category quotation price linkage. The form linkage test uses captured category 80719 only as a synthetic resolver contract, consistent with the earlier isolated sunglasses/basket comparison; it is not a valid commercial category assignment and must never be transmitted.
 
 The earlier Couplus observation on 2026-09-27 reported **3.42 / 5.23 CNY**, while this public source returns **3.6 / 5.5 CNY**. Do not invent a 5% discount to force parity. The cause (channel, promotion, date or collection provider) has not been confirmed. All-category defaults/official templates, SEO/image translation with live production responses, public detail HTML format and final Supplier Hub registration are separate outstanding verification items. This observation does not establish complete Couplus parity or a registered Hub quotation.
+
+## Step 511: live API persistence and bounded image import
+
+A second live check invoked the actual `collect`, `product`, `options` and `quotation-fields` route handlers against isolated SQLite. The source transport received five actual public HTTP responses, with no recorded supplier response injected. It completed in **5,043 ms**, storing six SKUs, 19 original image references and 24 attributes. Local anonymous SKU transport used the same Windows HTTP helper as step 510. Authentication, saved workspace settings and category 80719 were isolated test inputs. This check did not generate SEO, download images, touch a production DB or contact Supplier Hub.
+
+With the observed price policy (FX 350, supply margin 50%, Coupang margin 40%, minimum supply margin 3,000 KRW, nearest 10 KRW, MSRP multiple 1.3), the real persisted option records resolved to:
+
+| Actual unit cost | Supply KRW | Sale KRW | MSRP draft KRW |
+|---:|---:|---:|---:|
+| 3.6 CNY | 4,260 | 7,100 | 9,230 |
+| 5.5 CNY | 4,930 | 8,220 | 10,690 |
+
+These are calculated draft prices under captured test settings, not independently verified retail prices or proof of current Couplus collection-price parity. Every SKU retains its own cost, stock, color/size property and source-image reference.
+
+Mobile-source intake now sends up to three library-image indices per request. The server validates owner/job/receipt, downloads at most three bounded CDN files concurrently, then re-reads and commits each product/content revision in source order through the shared guarded image store. A 19-image source uses **seven batch API calls** rather than 19 serial calls. Download buffers are bounded to three files; each still has the 10 MB and 15 second limits. Existing single-image operations and stage-image selection retain their prior contract. Intake originals do not automatically become selected stage 3–5 or option representative images.
+
+Recorded-source integration tests use the real handlers and SQLite with fixture auth, AI output, image bytes and a synthetic workbook. They check six-SKU translation input (24 source attributes plus 18 option properties), per-option prices, manual stage edits, quotation overrides, one excluded option, five exported rows, filenames/attachment manifests and both `A01464742`/`A01526306` company identities. They also exercise a failed image followed by missing-file-only retry, lost batch acknowledgements, cancellation, source-index/ownership bounds, manual edits while downloads are pending, receipt replay and no premature registered status. These tests establish plumbing and preservation, not live model quality, an official sunglass category/template or a successful Hub transaction.
