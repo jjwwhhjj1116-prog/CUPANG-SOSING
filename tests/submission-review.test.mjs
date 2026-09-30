@@ -37,7 +37,7 @@ test('package preview displays byte errors and editing uses its resolved categor
  const preview={fingerprint:review.inputFingerprint,filename:`YOOFAM-${review.inputFingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],submissionReview:review,report:{profileId:'resolved-profile',rowCount:1,warnings:[]}};
  let index=0,inspectProps;const states=[preview,false,'',''];
  const {SubmissionPackage}=load('app/components/submission-package.tsx',{
-  react:{useState:()=>[states[index++],()=>{}],useEffect:()=>{},useRef:()=>({current:null})},
+  react:{useState:initial=>[index<states.length?states[index++]:initial,()=>{}],useEffect:()=>{},useRef:()=>({current:null})},
   '@/app/components/quotation-review-issues':{QuotationReviewIssues:props=>{inspectProps=props;return createElement('p',null,props.issues.map(issue=>issue.message).join(' / '));}},
  });
  const calls=[];

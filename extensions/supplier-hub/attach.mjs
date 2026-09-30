@@ -1,6 +1,6 @@
 // Serialized by chrome.scripting; keep this function self-contained.
 // Select by observed visible section wording, never private application state.
-export function attachToSupplierHub(payload) {
+export function attachToSupplierHub(payload,checkOnly=false) {
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration')throw Error('현재 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
   const company=payload?.company;
   const companyCodes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
@@ -36,6 +36,7 @@ export function attachToSupplierHub(payload) {
     return {key,input,transfer};
   });
   const dispatched=[];
+  if(checkOnly===true)return {state:'ready',registered:false};
   document.documentElement.dataset.yoofamAttachmentAttempt='started';
   try{
     for(const {key,input,transfer} of prepared){

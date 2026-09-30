@@ -54,13 +54,20 @@ function dom({duplicate=false,existing=false,visibleFilename=false,disabled=fals
   class Transfer{constructor(){this.files=[];this.items={add:file=>this.files.push(file)};}}
   const document={body:{innerText:visibleFilename?'Company Code: A01464742 상품이미지 existing.png':'Company Code: A01464742'},documentElement:{dataset:{}},querySelectorAll:()=>inputs};
   const context={document,location:{origin:wrong?'https://example.com':'https://supplier.coupang.com',pathname:'/qvt/registration'},DataTransfer:Transfer,File,Event,Uint8Array,atob};
-  return {run:payload=>vm.runInNewContext(`(${attachToSupplierHub.toString()})(payload)`,{...context,payload}),inputs,events};
+  return {run:(payload,checkOnly=false)=>vm.runInNewContext(`(${attachToSupplierHub.toString()})(payload,checkOnly)`,{...context,payload,checkOnly}),inputs,events,dataset:document.documentElement.dataset};
 }
 test('observed UI sections receive named files and change events with no registration claim',async()=>{
   const h=dom(),payload=await prepareAttachments(await fixture()),result=h.run(payload);
   assert.equal(result.state,'dispatched');assert.equal(result.registered,false);assert.deepEqual(h.events,[0,1,2]);
   assert.equal(h.inputs[0].files[0].name,title);assert.equal(h.inputs[1].files[0].type,'image/png');assert.equal(h.inputs[3].files.length,0);
   assert.throws(()=>h.run(payload),/이미 파일/);assert.deepEqual(h.events,[0,1,2]);
+});
+
+test('attachment preflight validates the same pristine form without files, events or attempt markers',async()=>{
+ const h=dom(),payload=await prepareAttachments(await fixture());
+ assert.equal(h.run(payload,true).state,'ready');
+ assert.equal(h.inputs.every(input=>input.files.length===0),true);assert.deepEqual(h.events,[]);assert.deepEqual(h.dataset,{});
+ assert.equal(h.run(payload).state,'dispatched');assert.deepEqual(h.events,[0,1,2]);
 });
 test('existing files, ambiguous sections, disabled controls and wrong hosts never dispatch',async()=>{
   const payload=await prepareAttachments(await fixture());
@@ -71,9 +78,9 @@ test('decode all files before upload and report a partial attempt without automa
   const pristine=dom();assert.throws(()=>pristine.run(bad));assert.deepEqual(pristine.events,[]);
   const h=dom({detach:true}),result=h.run(payload);assert.equal(result.state,'partial');assert.equal(result.registered,false);assert.deepEqual(h.events,[0]);assert.equal(result.dispatched.length,1);assert.throws(()=>h.run(payload));
 });
-test('extension limits access to the explicit 1688 product host and app origins',()=>{
+test('extension limits access to the explicit product and Supplier Hub hosts and app origins',()=>{
   const manifest=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
-  assert.deepEqual(manifest.permissions,['activeTab','scripting','tabs']);assert.deepEqual(manifest.host_permissions,['https://detail.1688.com/*']);
+  assert.deepEqual(manifest.permissions,['activeTab','scripting','tabs']);assert.deepEqual(manifest.host_permissions,['https://detail.1688.com/*','https://supplier.coupang.com/*']);
   assert.equal(manifest.background.service_worker,'handoff-worker.mjs');
   assert.deepEqual(manifest.content_scripts[0].matches,HANDOFF_ORIGINS.map(origin=>origin+'/*'));
 });

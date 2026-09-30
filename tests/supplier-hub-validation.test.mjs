@@ -63,3 +63,14 @@ test('validation rejects a company switch after attachment without clicking',()=
  attempt.company={code:'A01526306',name:'유앤채'};f.dataset.yoofamAttachmentAttempt=JSON.stringify(attempt);
  assert.throws(()=>f.run(),/회사/);assert.equal(f.clicks,0);
 });
+
+test('app validation waits for an asynchronously enabled button and rechecks identity before clicking once',async()=>{
+ for(const mode of ['success','company-switch','other-validation','timeout']){
+   let clicks=0,waits=0;
+   const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company:{code:'A01464742',name:'와이홉'},files:['a.xlsx']})};
+   const button={innerText:'파일 검증하기',disabled:true,getClientRects:()=>[{}],getAttribute:()=>null,click(){clicks++;}};
+   const document={documentElement:{dataset},body:{innerText:'Company Code: A01464742 a.xlsx'},querySelectorAll(selector){return selector==='button'?[button]:[{checked:true,disabled:false}];}};
+   const result=vm.runInNewContext(`(${requestSupplierHubValidation.toString()})({},true)`,{document,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},setTimeout(callback){waits++;if(mode!=='timeout')button.disabled=false;if(mode==='company-switch')document.body.innerText='Company Code: A01526306 a.xlsx';if(mode==='other-validation')dataset.yoofamAttachmentAttempt='already requested';queueMicrotask(callback);}});
+   if(mode==='success'){assert.equal((await result).state,'validation-requested');assert.equal(clicks,1);assert.equal(waits,1);}else {await assert.rejects(result);assert.equal(clicks,0);}
+ }
+});

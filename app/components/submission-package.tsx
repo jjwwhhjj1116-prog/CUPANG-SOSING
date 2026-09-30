@@ -6,7 +6,7 @@ import { isQuotationFilename } from '@/app/exports/quotation-filename';
 import { validatePackageReview, type PackageReview } from '@/app/submission-review-response';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
-import { checkSupplierHubExtension, prepareSupplierHubHandoff, getSupplierHubResult, type SupplierHubResult } from '@/app/supplier-hub-handoff';
+import { checkSupplierHubExtension, prepareSupplierHubHandoff, transmitSupplierHubPackage, getSupplierHubResult, type SupplierHubResult, type SupplierHubAgreements } from '@/app/supplier-hub-handoff';
 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
@@ -21,30 +21,34 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
   const [error,setError]=useState('');
   const [message,setMessage]=useState('');
   const [hubResult,setHubResult]=useState<SupplierHubResult|null>(null);
+  const [agreements,setAgreements]=useState<SupplierHubAgreements>({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});
+  const [attemptedFingerprint,setAttemptedFingerprint]=useState('');
+  const transferAttempted=Boolean(preview&&preview.fingerprint===attemptedFingerprint);
   const active=useRef<AbortController|null>(null);
   useEffect(()=>()=>active.current?.abort(),[]);
-  async function run(action:'preview'|'export'|'download'|'handoff'|'result') {
+  async function run(action:'preview'|'export'|'download'|'handoff'|'transmit'|'result') {
     if(active.current || (action!=='preview'&&!preview))return;
     const controller=new AbortController();active.current=controller;
     setBusy(true);setError('');setMessage('');
-    if(action==='preview'){setPreview(null);setHubResult(null);}
+    if(action==='preview'){setPreview(null);setHubResult(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});}
     try {
       if(action==='result'){
         if(!categoryId)throw new Error('카테고리를 먼저 확인해주세요.');
         setHubResult(null);
         await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
         if(controller.signal.aborted)return;
-        const result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal);
-        if(!controller.signal.aborted){setHubResult(result);if(!result)setMessage('아직 가져온 결과가 없습니다. Supplier Hub 탭의 확장에서 검증 결과 확인을 실행한 뒤 다시 불러오세요.');}
+        const result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal,true);
+        if(!controller.signal.aborted){setHubResult(result);if(!result)setMessage('이 견적서의 검증 결과가 아직 표시되지 않았습니다. 잠시 후 다시 확인해주세요.');}
         return;
       }
-      if(action==='handoff'){
+      if(action==='handoff'||action==='transmit'){
         if(!categoryId||!preview?.filename.endsWith('.xlsx'))throw new Error('선택한 카테고리의 Excel 양식으로 견적서를 준비해주세요.');
-        await checkSupplierHubExtension(controller.signal);
+        if(action==='transmit'&&(transferAttempted||!Object.values(agreements).every(value=>value)))throw new Error('전송 시도와 필수 선택값을 확인해주세요.');
+        await checkSupplierHubExtension(controller.signal,action==='transmit');
       }
       const response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation`,{
         method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},
-        body:JSON.stringify({action:action==='handoff'?'export':action,...(profileId?{profileId}:{}),...(action!=='preview'?{fingerprint:preview!.fingerprint}:{})}),
+        body:JSON.stringify({action:action==='handoff'||action==='transmit'?'export':action,...(profileId?{profileId}:{}),...(action!=='preview'?{fingerprint:preview!.fingerprint}:{})}),
       });
       if(!response.ok){
         const body=await response.json() as {error?:string};
@@ -73,6 +77,20 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
             || response.headers.get('content-disposition')!==`attachment; filename="${preview!.filename}"`)throw new Error('검토한 견적서와 다운로드 파일이 일치하지 않습니다. 다시 준비해주세요.');
         }else if(!response.headers.get('content-type')?.startsWith('application/zip'))throw new Error('견적서 ZIP 응답을 확인하지 못했습니다.');
         const blob=await response.blob();if(controller.signal.aborted)return;
+        if(action==='transmit'){
+          setAttemptedFingerprint(preview!.fingerprint);setHubResult(null);
+          const identity={productId,categoryId:categoryId!,fingerprint:preview!.fingerprint};
+          const outcome=await transmitSupplierHubPackage(blob,identity,agreements,controller.signal);
+          if(controller.signal.aborted)return;
+          if(outcome.state!=='validation-requested'){
+            setError(outcome.error||'전송 일부만 확인했습니다. Supplier Hub 첨부 목록을 확인해주세요.');
+            setMessage('같은 견적서를 다시 첨부하지 않습니다. 전달된 파일과 검증 상태를 확인해주세요.');return;
+          }
+          setMessage('견적서·상품 이미지·라벨을 전달하고 파일 검증을 요청했습니다.');
+          try{const result=await getSupplierHubResult(identity,controller.signal,true);if(!controller.signal.aborted)setHubResult(result);}
+          catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'검증 상태를 다시 확인해주세요.');}
+          return;
+        }
         if(action==='handoff'){
           await prepareSupplierHubHandoff(blob,{productId,categoryId:categoryId!,fingerprint:preview!.fingerprint},controller.signal);
           if(!controller.signal.aborted)setMessage('확장에 견적서와 첨부 파일을 준비했습니다. 같은 Chrome의 Supplier Hub 대량 등록 탭에서 확장을 눌러 파일을 전달하세요. 아직 등록되지 않았습니다.');
@@ -99,14 +117,22 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
       <details><summary>Excel 입력값 확인</summary><div className="table-wrap"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{String(cell)||'—'}</td>)}</tr>)}</tbody></table></div></details>
       <details><summary>양식·첨부 확인 항목 ({preview.report.warnings.length})</summary><ul>{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>
       <p>ZIP에는 작성된 Excel/CSV, 상품 이미지, 라벨과 업로드 준비 목록이 포함됩니다. 검토 후 저장값이 바뀌면 다시 준비해야 합니다.</p>
+      <fieldset disabled={busy||transferAttempted} className="panel-stack"><legend>Supplier Hub 필수 선택</legend>
+        <label><input type="checkbox" checked={agreements.priceData} onChange={event=>setAgreements(value=>({...value,priceData:event.target.checked}))}/> 제공된 권장소비자가격 또는 공식 판매처 가격 데이터에 대한 쿠팡 약관에 동의합니다.</label>
+        <label><input type="checkbox" checked={agreements.labelBusinessContact} onChange={event=>setAgreements(value=>({...value,labelBusinessContact:event.target.checked}))}/> 상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.</label>
+        <label><input type="checkbox" checked={agreements.legalDocumentsNotApplicable} onChange={event=>setAgreements(value=>({...value,legalDocumentsNotApplicable:event.target.checked}))}/> 상품 개별법령에 따른 필수 서류: 해당없음</label>
+        <small>법적 서류가 필요한 상품은 Supplier Hub에 해당 서류를 함께 첨부해야 합니다.</small>
+      </fieldset>
+      <button type="button" className="btn rose" disabled={busy||transferAttempted||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0||!Object.values(agreements).every(value=>value)} onClick={()=>void run('transmit')}>{transferAttempted?'전송 시도됨 · 검증 결과 확인':'등록 전송'}</button>
+      <p>이 앱과 같은 Chrome 창에서 회사코드가 일치하는 Supplier Hub 대량 상품 등록 탭을 사용합니다.</p>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('download')}>견적서 파일 다운로드</button>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
-      <button type="button" className="btn primary" disabled={busy||preview.report.company===null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>Supplier Hub 확장으로 파일 준비</button>
+      <button type="button" className="btn ghost" disabled={busy||transferAttempted||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0} onClick={()=>void run('handoff')}>확장에 첨부 파일 준비</button>
       <button type="button" className="btn ghost" disabled={busy||preview.report.company===null||!categoryId||!preview.filename.endsWith('.xlsx')} onClick={()=>void run('result')}>Supplier Hub 검증 결과 불러오기</button>
       {hubResult&&<div role="status"><strong>{hubResult.state==='not-found'?'검증 목록에서 아직 찾지 못했습니다.':`견적서 검증: ${hubResult.status||'상태 미표시'}`}</strong><p>견적서 ID: {hubResult.quotationId||'미표시'} · 결과 확인 시각: {new Date(hubResult.observedAt).toLocaleString('ko-KR')}</p>{hubResult.detail&&<p>{hubResult.detail}</p>}<p>현재 검토한 견적서 파일의 결과입니다. 상품별 등록 완료는 아직 확인되지 않았습니다.</p></div>}
       {hubResult?.registration?.includedOptions!==undefined&&<p role="status">초안 포함 옵션 {hubResult.registration.includedOptions}개 · Supplier Hub 현재 페이지에서 조회한 행 {hubResult.registration.rows.length}개. 페이지에 보이지 않는 옵션은 아직 대조되지 않았습니다.</p>}
       {hubResult?.registration&&<div className="panel-stack"><strong>상품별 등록 상태 · 현재 페이지 {hubResult.registration.rows.length}개</strong><p>확인 시각: {new Date(hubResult.registration.observedAt).toLocaleString('ko-KR')} · 견적서 ID: {hubResult.registration.quotationId}</p>{hubResult.registration.rows.length?<div className="table-wrap"><table><thead><tr><th>상품명</th><th>SKU ID</th><th>상태</th><th>등록 진행 단계</th></tr></thead><tbody>{hubResult.registration.rows.map((row,index)=><tr key={index}><td>{row.title}</td><td>{row.skuId||'—'}</td><td>{row.status}</td><td>{row.stage}</td></tr>)}</tbody></table></div>:<p>현재 페이지에 이 견적서의 상품이 없습니다. Supplier Hub에서 견적서 ID로 검색한 뒤 다시 확인하세요.</p>}<small>현재 페이지에 표시된 상품만 확인한 결과입니다. 전체 옵션의 등록 완료 여부는 아직 확인되지 않았습니다.</small></div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.22.zip" download>Chrome 상품 수집·첨부 확장 다운로드 (0.2.22)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.23.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.23)</a>
     </>}
   </section>;
 }

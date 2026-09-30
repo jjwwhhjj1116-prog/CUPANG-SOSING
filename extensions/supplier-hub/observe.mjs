@@ -4,23 +4,39 @@ import {transferRecord,resultKey} from './handoff-store.mjs';
 import {readSupplierHubValidation} from './result.mjs';
 import {readSupplierHubRegistration} from './registration-result.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
+import {validateAppHubRequest,isHubRegistrationTab} from './app-request.mjs';
 
 const activeTabs=new Set();
 export async function observeSupplierHubResult(message,sender){
-  if(sender?.id!==chrome.runtime.id||sender?.url!==chrome.runtime.getURL('popup.html')||sender.tab)throw Error('확장 화면에서 결과를 확인해주세요.');
+  const appRequest=message?.type==='YOOFAM_REFRESH_RESULT';
+  let expected;
+  if(appRequest){
+    expected=validateAppHubRequest(message,sender,'YOOFAM_REFRESH_RESULT');
+    if(message.kind!=='validation')throw Error('앱에서는 현재 견적서의 검증 결과만 조회할 수 있습니다.');
+    const tabs=(await chrome.tabs.query({windowId:sender.tab.windowId})).filter(tab=>isHubRegistrationTab(tab,sender.tab.windowId));
+    const matching=[];
+    for(const tab of tabs){
+      const saved=await transferRecord('get',`attempt:${tab.id}`);
+      if(saved&&['origin','productId','categoryId','fingerprint'].every(key=>saved[key]===expected[key]))matching.push(tab);
+    }
+    if(matching.length!==1)throw Error('같은 Chrome 창에서 이 견적서를 전달한 Supplier Hub 등록 탭을 확인하지 못했습니다.');
+    message={...message,tabId:matching[0].id};
+  }else if(sender?.id!==chrome.runtime.id||sender?.url!==chrome.runtime.getURL('popup.html')||sender.tab)throw Error('확장 화면에서 결과를 확인해주세요.');
   if(!['validation','registration','registration-search'].includes(message.kind)||!Number.isSafeInteger(message.tabId)||message.tabId<0)throw Error('결과 조회 요청을 확인해주세요.');
   if(activeTabs.has(message.tabId))throw Error('이 탭의 결과를 확인 중입니다. 잠시 후 다시 확인해주세요.');
   activeTabs.add(message.tabId);
   try{
-    const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+    const tab=appRequest?await chrome.tabs.get(message.tabId):(await chrome.tabs.query({active:true,currentWindow:true}))[0];
     const path=message.kind!=='validation'?'/qvt/wims':'/qvt/registration';
     const allowedPaths=message.kind==='registration-search'?['/qvt/registration','/qvt/wims']:[path];
     if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||!allowedPaths.includes(new URL(tab.url).pathname))throw Error('현재 창의 해당 Supplier Hub 결과 화면에서 실행해주세요.');
     const identity=await transferRecord('get',`attempt:${tab.id}`);
+    if(appRequest&&(!isHubRegistrationTab(tab,sender.tab.windowId)||!identity||!['origin','productId','categoryId','fingerprint'].every(key=>identity[key]===expected[key])))throw Error('전송한 견적서 또는 Chrome 창이 변경되었습니다.');
     // Legacy app attempts cannot infer their company from the current login.
     if(identity&&!identity.company)throw Error('전송 기록에 회사정보가 없습니다. 기존 견적서는 Supplier Hub에서 직접 확인해주세요.');
     if(identity?.includedOptions!==undefined&&(!Number.isSafeInteger(identity.includedOptions)||identity.includedOptions<1||identity.includedOptions>200))throw Error('전송한 견적서의 옵션 수를 확인하지 못했습니다.');
     const checkCompany=async()=>{
+      if(appRequest&&!isHubRegistrationTab(await chrome.tabs.get(tab.id),sender.tab.windowId))throw Error('Supplier Hub 등록 탭이 다른 창으로 이동되었습니다.');
       const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:identity?[identity.company]:[]});
       const code=execution?.result?.code;
       if(!code||(identity&&code!==identity.company.code))throw Error('전송한 회사와 현재 Supplier Hub 회사코드가 일치하지 않습니다.');
@@ -54,6 +70,7 @@ export async function observeSupplierHubResult(message,sender){
     const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation,args:expectedFilename?[expectedFilename]:[]});
     const result=execution?.result;
     if(!result||result.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(result.state))throw Error('검증 결과를 확인하지 못했습니다.');
+    if(appRequest&&result.filename!==expectedFilename)throw Error('현재 견적서 파일의 검증 결과인지 확인하지 못했습니다.');
     if(await checkCompany()!==companyCode)throw Error('조회 중 Supplier Hub 회사가 변경되었습니다. 결과를 저장하지 않았습니다.');
     if(identity&&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`){
       const key=resultKey(identity),previous=await transferRecord('get',key);

@@ -2,7 +2,34 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {validateAppHubRequest,isHubRegistrationTab} from '../extensions/supplier-hub/app-request.mjs';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/observe.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
+
+async function appObservation(changes={}){
+ const identity={company:{code:'A01464742',name:'와이홉'},origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64),includedOptions:3};
+ const tabs=[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration'},...(changes.extraTab?[{id:124,windowId:17,url:'https://supplier.coupang.com/qvt/registration'}]:[])];
+ const reads=[],puts=[],scripts=[];let gets=0;
+ const context=vm.createContext({Date,URL,validateAppHubRequest,isHubRegistrationTab,verifySupplierHubCompany(){},readSupplierHubValidation(){},resultKey:()=> 'result:key',
+   transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key.startsWith('attempt:')?{...identity,...changes.identity}:null;},
+   chrome:{tabs:{query:async args=>{reads.push(args);return tabs;},get:async()=>{gets++;return {...tabs[0],...(changes.move&&gets>1?{windowId:18}:{})};}},scripting:{executeScript:async input=>{scripts.push(input);return [{result:input.func===context.verifySupplierHubCompany?{code:'A01464742'}:{filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-pending',registered:false,...changes.result}}];}}}
+ });vm.runInContext(source,context);
+ const message={type:'YOOFAM_REFRESH_RESULT',kind:'validation',productId:'p',categoryId:'80719',fingerprint:identity.fingerprint};
+ const sender={frameId:0,url:'http://localhost:3000/',tab:{id:7,windowId:17},...changes.sender};
+ return {reads,puts,scripts,run:()=>context.observeSupplierHubResult(message,sender)};
+}
+
+test('app refresh observes only its exact previously transmitted quotation in the same Chrome window',async()=>{
+ const h=await appObservation();assert.equal((await h.run()).state,'validation-pending');
+ assert.deepEqual(JSON.parse(JSON.stringify(h.reads)),[{windowId:17}]);assert.equal(h.puts.length,1);assert.equal(h.puts[0].fingerprint,'a'.repeat(64));
+ const read=h.scripts.find(script=>script.func.name==='readSupplierHubValidation');assert.equal(read.target.tabId,123);assert.equal(read.args[0],`YOOFAM-${'a'.repeat(64)}.xlsx`);
+});
+
+test('app refresh cannot read another identity or save a result from a moved tab or different file',async()=>{
+ for(const changes of [{identity:{productId:'other'}},{identity:{origin:'http://127.0.0.1:3000'}},{sender:{frameId:1}},{extraTab:true},{move:true},{result:{filename:'other.xlsx'}}]){
+   const h=await appObservation(changes);await assert.rejects(h.run());assert.equal(h.puts.length,0);
+   if(changes.identity||changes.sender||changes.extraTab)assert.equal(h.scripts.length,0);
+ }
+});
 function setup({kind='validation',senderChanges={},tabChanges={},resultChanges={},onExecute,missing=false,savedChanges={},identityChanges={},companyCodes,legacy=false}={}){
  const identity={company:{code:'A01464742',name:'와이홉'},origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64),includedOptions:3,...identityChanges};
  const saved={...identity,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-1',state:'validation-complete',registered:false,...savedChanges};

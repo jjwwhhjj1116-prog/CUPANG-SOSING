@@ -3,9 +3,21 @@ import {observeSupplierHubResult} from './observe.mjs';
 import {validateHandoff,pendingPackage,validateResultRequest,resultKey,transferRecord} from './handoff-store.mjs';
 import {dispatchPendingPackage} from './dispatch.mjs';
 import {capture1688Product} from './capture-1688.mjs';
+import {transmitSupplierHubPackage} from './transmit.mjs';
+import {validateAppHubRequest} from './app-request.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688'].includes(message?.type))return;
+  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_REFRESH_RESULT'].includes(message?.type))return;
   (async()=>{try{
+    if(message.type==='YOOFAM_TRANSMIT_PACKAGE'){
+      const result=await transmitSupplierHubPackage(message,sender);
+      respond({ok:true,fingerprint:message.fingerprint,result,registered:false});return;
+    }
+    if(message.type==='YOOFAM_REFRESH_RESULT'){
+      const identity=validateAppHubRequest(message,sender,'YOOFAM_REFRESH_RESULT');
+      await observeSupplierHubResult({...message,kind:'validation'},sender);
+      const record=await transferRecord('get',resultKey(identity));
+      respond({ok:true,fingerprint:identity.fingerprint,record:record||null,registered:false});return;
+    }
     if(message.type==='YOOFAM_CAPTURE_1688'){
       respond(await capture1688Product(message,sender));return;
     }

@@ -65,3 +65,29 @@ test('old extension without company binding cannot prepare a new handoff',async(
  await assert.rejects(h.api.checkSupplierHubExtension(new AbortController().signal),/0.2.18/);
  assert.equal(h.sent.length,1);
 });
+
+test('direct transmission requires the new capability and sends the current reviewed choices once',async()=>{
+ const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,directTransmission:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',validated:false,registered:false}}));
+ await h.api.checkSupplierHubExtension(new AbortController().signal,true);
+ assert.equal((await h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,reviewed,new AbortController().signal)).state,'validation-requested');
+ assert.equal(h.sent[1].type,'TRANSMIT');assert.equal(h.sent[1].payload.productId,identity.productId);assert.equal(h.sent[1].payload.reviewedAgreements,reviewed);
+ assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+ const old=harness((m,emit)=>emit(m,{ok:true,companyBinding:true}));await assert.rejects(old.api.checkSupplierHubExtension(new AbortController().signal,true),/0.2.23/);
+ await assert.rejects(h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,{...reviewed,priceData:false},new AbortController().signal),/필수/);assert.equal(h.sent.length,2);
+});
+
+test('direct transmission rejects unrelated acknowledgements and never retries an uncertain remote request',async()=>{
+ const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
+ for(const response of [{fingerprint:'b'.repeat(64),registered:false,result:{state:'validation-requested',registered:false}},{fingerprint:identity.fingerprint,registered:false,result:{state:'registered',registered:true}}]){
+   const h=harness((m,emit)=>emit(m,{ok:true,...response}));await assert.rejects(h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,reviewed,new AbortController().signal));assert.equal(h.sent.length,1);
+ }
+ const h=harness();const pending=h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,reviewed,new AbortController().signal);
+ await new Promise(resolve=>setImmediate(resolve));h.expire();await assert.rejects(pending,/다시 전송하지/);assert.equal(h.sent.length,1);assert.equal(h.listeners.size,0);
+});
+
+test('live refresh uses the current identity rather than only previously stored validation',async()=>{
+ const record={...identity,origin:'https://sourceflow.jjwwhhjj1116.workers.dev',filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-pending',observedAt:Date.now(),registered:false};
+ const h=harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,registered:false,record}));
+ assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal,true)).state,'validation-pending');assert.equal(h.sent[0].type,'REFRESH');assert.equal(h.sent[0].payload.fingerprint,identity.fingerprint);
+});

@@ -15,11 +15,12 @@ export function resultKey(identity){
   return `result:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
 }
 export async function transferRecord(action,key,value){
-  if(!['get','put'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+|result:https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  if(!['get','put','claim'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  if(action==='claim'&&!key.startsWith('transmission:'))throw Error('전송 시도 기록을 확인해주세요.');
   const db=await database();try{return await new Promise((resolve,reject)=>{
     const transaction=db.transaction('pending',action==='get'?'readonly':'readwrite'),store=transaction.objectStore('pending');let result;
-    const request=action==='get'?store.get(key):store.put(value,key);
-    request.onsuccess=()=>{result=request.result;};transaction.oncomplete=()=>resolve(result);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||Error('전송 기록 저장 실패'));
+    const request=action==='put'?store.put(value,key):store.get(key);
+    request.onsuccess=()=>{result=request.result;if(action==='claim'){if(result!==undefined){result=false;}else{store.put(value,key);result=true;}}};transaction.oncomplete=()=>resolve(result);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||Error('전송 기록 저장 실패'));
   });}finally{db.close();}
 }
 export async function pendingPackage(action,value){

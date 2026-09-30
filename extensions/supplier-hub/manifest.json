@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "YOOFAM PLUS 견적서 첨부",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "description": "현재 Chrome에서 1688 상품정보를 확인하고, 검토한 견적서 첨부를 Supplier Hub 등록 탭에 전달합니다.",
   "permissions": ["activeTab", "scripting", "tabs"],
-  "host_permissions": ["https://detail.1688.com/*"],
+  "host_permissions": ["https://detail.1688.com/*", "https://supplier.coupang.com/*"],
   "background": { "service_worker": "handoff-worker.mjs", "type": "module" },
   "content_scripts": [{
     "matches": ["https://sourceflow.jjwwhhjj1116.workers.dev/*", "http://localhost:3000/*", "http://127.0.0.1:3000/*"],

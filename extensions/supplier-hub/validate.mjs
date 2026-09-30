@@ -1,7 +1,8 @@
-// Runs only through an explicit active-tab extension action.
-export function requestSupplierHubValidation(reviewedAgreements = {}) {
+// Runs only for a user-requested extension or app transmission.
+export function requestSupplierHubValidation(reviewedAgreements = {}, waitForButton = false) {
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration')throw Error('현재 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
   const data=document.documentElement.dataset;
+  const attemptMarker=data.yoofamAttachmentAttempt;
   let attempt;
   try{attempt=JSON.parse(data.yoofamAttachmentAttempt||'');}catch{throw Error('이 화면에서 확장으로 전달한 파일이 없습니다.');}
   if(attempt.state!=='dispatched'||!Array.isArray(attempt.files)||!attempt.files.length)throw Error('파일 전달이 완료되지 않았거나 검증을 이미 요청했습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
@@ -27,7 +28,7 @@ export function requestSupplierHubValidation(reviewedAgreements = {}) {
     return input;
   };
   // Check every required choice before changing any checkbox. Values are only
-  // supplied by the user's current popup selections, never by package content.
+  // supplied by the user's current form selections, never by package content.
   const legalChoice=()=>{
     const candidates=Array.from(document.querySelectorAll('input[type="radio"][id="undefined-N"]')).filter(input=>{
       if(!Array.from(input.labels||[]).some(label=>(label.innerText||'').trim()==='해당없음'))return false;
@@ -58,10 +59,28 @@ export function requestSupplierHubValidation(reviewedAgreements = {}) {
   }
   for(const args of definitions){const input=agreement(...args);if(!input.checked)input.click();}
   if(definitions.some(args=>!agreement(...args).checked))throw Error('동의 선택이 화면에 반영되지 않았습니다. Supplier Hub에서 확인해주세요.');
-  const button=validationButton();
-  if(button.disabled||button.getAttribute('aria-disabled')==='true')throw Error('파일 업로드와 필수 항목을 확인해주세요. 파일 검증 버튼이 아직 활성화되지 않았습니다.');
-  // Mark before clicking: losing the popup must not repeat a server-side request.
-  data.yoofamAttachmentAttempt=JSON.stringify({...attempt,state:'validation-requested'});
-  button.click();
-  return {state:'validation-requested',validated:false,registered:false};
+  const clickOnce=()=>{
+    if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration'
+      ||data.yoofamAttachmentAttempt!==attemptMarker)throw Error('첨부 화면이 변경되었거나 검증을 이미 요청했습니다.');
+    const current=document.body.innerText||'';
+    const codes=Array.from(current.matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
+    if(codes.length!==1||codes[0]!==attempt.company.code||attempt.files.some(name=>!current.split(/[\s<>"'(),;]+/).includes(name)))throw Error('검증 요청 전 회사와 첨부 파일을 확인하지 못했습니다.');
+    if(definitions.some(args=>!agreement(...args).checked)||(reviewedAgreements.legalDocumentsNotApplicable===true&&!legalChoice().checked))throw Error('필수 선택값이 변경되었습니다.');
+    const button=validationButton();
+    if(button.disabled||button.getAttribute('aria-disabled')==='true')throw Error('파일 업로드와 필수 항목을 확인해주세요. 파일 검증 버튼이 아직 활성화되지 않았습니다.');
+    // Mark before clicking: losing the caller must not repeat a remote request.
+    data.yoofamAttachmentAttempt=JSON.stringify({...attempt,state:'validation-requested'});
+    button.click();
+    return {state:'validation-requested',validated:false,registered:false};
+  };
+  if(waitForButton)return (async()=>{
+    for(let index=0;index<40;index++){
+      if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration')throw Error('Supplier Hub 등록 화면이 변경되었습니다.');
+      const button=validationButton();
+      if(!button.disabled&&button.getAttribute('aria-disabled')!=='true')return clickOnce();
+      await new Promise(resolve=>setTimeout(resolve,250));
+    }
+    throw Error('검증 버튼이 아직 활성화되지 않았습니다. Supplier Hub 업로드 및 필수 서류를 확인해주세요.');
+  })();
+  return clickOnce();
 }
