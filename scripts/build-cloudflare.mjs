@@ -10,6 +10,11 @@ try {
   if (process.argv.length !== 2) throw new Error('Usage: node --env-file=.env.production.local scripts/build-cloudflare.mjs');
   const hosting = JSON.parse(fs.readFileSync(path.join(repositoryRoot, '.openai/hosting.json'), 'utf8'));
   productionConfig(process.env, hosting); // Fail before replacing dist when required settings are missing.
+  for(const [script,args]of [['build-extension-mobile.mjs',['--check']],['package-supplier-hub-extension.mjs',['--check']]]){
+    const extension=spawnSync(process.execPath,[path.join(repositoryRoot,'scripts',script),...args],{cwd:repositoryRoot,stdio:'inherit'});
+    if(extension.error)throw extension.error;
+    if(extension.status!==0)throw Error('Chrome 확장 원본과 다운로드 ZIP을 먼저 맞춰주세요. npm run build:extension');
+  }
   const build = spawnSync(process.execPath, [path.join(repositoryRoot, 'node_modules/vinext/dist/cli.js'), 'build'], {
     cwd: repositoryRoot, stdio: 'inherit', env: { ...process.env, SOURCEFLOW_DEPLOY_TARGET: 'cloudflare' },
   });

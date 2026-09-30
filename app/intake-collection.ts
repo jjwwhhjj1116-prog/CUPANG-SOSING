@@ -3,9 +3,10 @@ import { validateCollectionReceiptResponse } from '@/app/collection-receipt-resp
 import { importReceivedJobs } from '@/app/collection-batch';
 import type { CollectionImportOutcome } from '@/app/collection-import';
 import { prepareIntakeSeoOutcome } from '@/app/intake-seo';
+import type { BrowserProductCapture } from '@/app/browser-product-bridge';
 
 /** A user-initiated fetch produces an editable draft only, never a Hub submission. */
-export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<{sourceUrl:string;scripts:string[]}>}) {
+export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>}) {
  if(options.signal.aborted)return;
  if(job.status==='cancelled')throw Error('취소된 수집 요청입니다.');
  // A product can already exist even though image import failed. Resume from

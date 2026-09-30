@@ -1,5 +1,7 @@
 import {HANDOFF_ORIGINS} from './handoff-store.mjs';
 import {parseProductJsonLd} from './product-jsonld.mjs';
+import {collectAlibabaMobileCapture} from './mobile-public.mjs';
+import {createMobileTransport,supportsMobileTransport} from './mobile-transport.mjs';
 
 const captures=new Map();
 const validId=value=>Number.isSafeInteger(value)&&value>=0;
@@ -103,6 +105,19 @@ export async function capture1688Product(message,sender,api=chrome,options={}){
   let existing,tab,captured=false;
   try{
     await checkApp(api,identity,signal);
+    if(supportsMobileTransport(api)){
+      const mobileController=new AbortController(),abort=()=>mobileController.abort();
+      signal.addEventListener('abort',abort,{once:true});
+      const timeout=setTimeout(abort,12000);
+      const fetcher=createMobileTransport(api,identity.sourceUrl,()=>checkApp(api,identity,signal),options.fetcher??fetch);
+      try{
+        const source=await collectAlibabaMobileCapture(identity.sourceUrl,{fetcher,signal:mobileController.signal});
+        await checkApp(api,identity,signal);stopped(signal);
+        return {ok:true,...source};
+      }catch{
+        stopped(signal);await checkApp(api,identity,signal);
+      }finally{clearTimeout(timeout);signal.removeEventListener('abort',abort);mobileController.abort();await fetcher.dispose();}
+    }
     existing=(await api.tabs.query({windowId:identity.windowId})).find(tab=>validId(tab.id)&&tab.windowId===identity.windowId&&sameProductUrl(tab.url,identity.sourceUrl)&&(!tab.pendingUrl||sameProductUrl(tab.pendingUrl,identity.sourceUrl)));
     await checkApp(api,identity,signal);
     tab=existing??await api.tabs.create({windowId:identity.windowId,url:identity.sourceUrl,active:false});

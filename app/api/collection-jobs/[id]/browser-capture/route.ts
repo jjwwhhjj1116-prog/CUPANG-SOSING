@@ -16,7 +16,7 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   const existing=await readCollectionResult(owner,id);
   if(existing)return reply({jobId:id,offerId:job.offer_id,receipt:existing});
   let input:unknown;
-  try{input=await readBoundedJson(request,1600000);}catch(error){return reply({error:error instanceof RequestBodyError?error.message:'수집 원문을 읽지 못했습니다.'},error instanceof RequestBodyError?error.status:400);}
+  try{input=await readBoundedJson(request,8*1024*1024);}catch(error){return reply({error:error instanceof RequestBodyError?error.message:'수집 원문을 읽지 못했습니다.'},error instanceof RequestBodyError?error.status:400);}
   let result;
   try{result=parseBrowserProductCapture(input,job.source_url);}catch(error){return reply({error:error instanceof Error?error.message:'상품 원문을 확인하지 못했습니다.',code:'SOURCE_NOT_COLLECTED'},422);}
   if(result.offerId!==job.offer_id)return reply({error:'요청 상품번호가 일치하지 않습니다.'},409);

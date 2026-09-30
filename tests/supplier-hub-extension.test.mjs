@@ -89,7 +89,7 @@ test('decode all files before upload and report a partial attempt without automa
 });
 test('extension limits access to the explicit product and Supplier Hub hosts and app origins',()=>{
   const manifest=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
-  assert.deepEqual(manifest.permissions,['activeTab','scripting','tabs']);assert.deepEqual(manifest.host_permissions,['https://detail.1688.com/*','https://supplier.coupang.com/*']);
+  assert.deepEqual(manifest.permissions,['activeTab','scripting','tabs','webRequest','declarativeNetRequestWithHostAccess']);assert.deepEqual(manifest.host_permissions,['https://detail.1688.com/*','https://m.1688.com/*','https://h5api.m.1688.com/*','https://itemcdn.tmall.com/1688offer/*','https://supplier.coupang.com/*']);
   assert.equal(manifest.background.service_worker,'handoff-worker.mjs');
   assert.deepEqual(manifest.content_scripts[0].matches,HANDOFF_ORIGINS.map(origin=>origin+'/*'));
 });

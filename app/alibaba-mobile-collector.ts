@@ -1,5 +1,6 @@
 import { parseCollectionRequest } from '@/app/sourcing';
 import { parseAlibabaMobilePage, parseAlibabaMobileDescription, parseAlibabaMobileProduct } from '@/app/alibaba-mobile-product';
+import { publicMtopMd5 } from '@/app/public-mtop-md5';
 
 const SKU_ENDPOINT = 'https://h5api.m.1688.com/h5/mtop.mbox.fc.common.gateway/1.0/';
 const PUBLIC_APP_KEY = '12574478'; // Alibaba's public lib-mtop 2.7.4 client ID, not an owned OpenAPI key.
@@ -43,12 +44,11 @@ function anonymousTransport(headers: Headers) {
  * Login, verification and access errors terminate; no challenge is solved. */
 export async function queryAlibabaMobileSkus(offerId: string, options: {fetcher?: typeof fetch; signal: AbortSignal}) {
   if (!/^[1-9]\d{0,29}$/.test(offerId)) throw Error('1688 상품번호를 확인해주세요.');
-  const {createHash} = await import('node:crypto');
   const data = JSON.stringify({params: JSON.stringify({offerId}), fcName: 'mini-od-cse', fcGroup: 'cbu-offer', serviceName: 'wirelessCoreOdService'});
   let token = 'undefined', cookie: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
-    const timestamp = String(Date.now()), sign = createHash('md5').update(`${token}&${timestamp}&${PUBLIC_APP_KEY}&${data}`).digest('hex');
+    const timestamp = String(Date.now()), sign = publicMtopMd5(`${token}&${timestamp}&${PUBLIC_APP_KEY}&${data}`);
     const params = new URLSearchParams({jsv: '2.7.4', appKey: PUBLIC_APP_KEY, t: timestamp, sign, api: 'mtop.mbox.fc.common.gateway', v: '1.0', type: 'originaljson', dataType: 'json', data});
     let response: Response;
     try {
@@ -68,7 +68,9 @@ export async function queryAlibabaMobileSkus(offerId: string, options: {fetcher?
   throw Error('1688 옵션 조회를 완료하지 못했습니다.');
 }
 
-export async function collectAlibabaMobileProduct(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal}) {
+/** Return bounded, inert public sources, so a Chrome transport can send them
+ * to the server for the same identity/SKU/price checks rather than a trusted receipt. */
+export async function collectAlibabaMobileCapture(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal}) {
   const source = parseCollectionRequest({urls: [sourceUrl]})[0];
   const request = async (url: string, accept: string) => {
     if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
@@ -79,12 +81,20 @@ export async function collectAlibabaMobileProduct(sourceUrl: string, options: {f
   };
   const response = await request(`https://m.1688.com/offer/${source.offerId}.html`, 'text/html');
   if (!response.headers.get('content-type')?.toLowerCase().includes('text/html')) throw Error('1688 모바일 상품 페이지가 HTML이 아닙니다.');
-  const page = parseAlibabaMobilePage(await readBody(response, 2 * 1024 * 1024), source.sourceUrl);
+  const mobileHtml = await readBody(response, 2 * 1024 * 1024);
+  const page = parseAlibabaMobilePage(mobileHtml, source.sourceUrl);
   const payload = await queryAlibabaMobileSkus(source.offerId, options);
   // Validate identity/SKUs/prices before following the page's bounded detail
   // reference. A response for another offer cannot authorize a detail read.
   parseAlibabaMobileProduct(page, payload);
-  const description = page.detailUrl ? parseAlibabaMobileDescription(await readBody(await request(page.detailUrl, 'text/plain'), 2 * 1024 * 1024)) : '';
+  const detailSource = page.detailUrl ? await readBody(await request(page.detailUrl, 'text/plain'), 2 * 1024 * 1024) : '';
   if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
-  return parseAlibabaMobileProduct(page, payload, description);
+  parseAlibabaMobileProduct(page, payload, detailSource ? parseAlibabaMobileDescription(detailSource) : '');
+  return {format:'1688-public-mobile-capture-v1' as const, sourceUrl:source.sourceUrl, mobileHtml, skuPayload:payload, detailSource};
+}
+
+export async function collectAlibabaMobileProduct(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal}) {
+  const capture = await collectAlibabaMobileCapture(sourceUrl, options);
+  return parseAlibabaMobileProduct(parseAlibabaMobilePage(capture.mobileHtml,capture.sourceUrl), capture.skuPayload,
+    capture.detailSource ? parseAlibabaMobileDescription(capture.detailSource) : '');
 }
