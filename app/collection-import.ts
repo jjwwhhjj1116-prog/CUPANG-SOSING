@@ -9,7 +9,7 @@ export function collectionImageSelection(totalImages:number,imageIndices?:readon
  return indices.sort((a,b)=>a-b);
 }
 /** Uses retry-safe server endpoints. Stop is cooperative: finish an in-flight write before stopping. */
-export async function runCollectionImport(jobId:string,totalImages:number,options:{onProductSaved?:(productId:string)=>Promise<void>;continueOnImageError?:boolean;retryAttempts?:number;retryWait?:(milliseconds:number)=>Promise<void>;onRetry?:(attempt:number)=>void;imageIndices?:readonly number[];fetcher?:typeof fetch;shouldStop?:()=>boolean;onProgress?:(progress:CollectionImportProgress)=>void}={}):Promise<CollectionImportOutcome>{
+export async function runCollectionImport(jobId:string,totalImages:number,options:{assignToStage?:boolean;onProductSaved?:(productId:string)=>Promise<void>;continueOnImageError?:boolean;retryAttempts?:number;retryWait?:(milliseconds:number)=>Promise<void>;onRetry?:(attempt:number)=>void;imageIndices?:readonly number[];fetcher?:typeof fetch;shouldStop?:()=>boolean;onProgress?:(progress:CollectionImportProgress)=>void}={}):Promise<CollectionImportOutcome>{
  if(!jobId||!Number.isInteger(totalImages)||totalImages<0||totalImages>200)throw new Error('수집 요청과 이미지 수를 확인해주세요.');
  const indices=collectionImageSelection(totalImages,options.imageIndices);
  const selectedTotal=indices.length;
@@ -58,7 +58,7 @@ export async function runCollectionImport(jobId:string,totalImages:number,option
    options.onProgress?.({stage:'images',completedImages,totalImages:selectedTotal});
    let imageResponse: Response;
    try {
-    imageResponse=await request(`${base}/images`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({index})});
+    imageResponse=await request(`${base}/images`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({index,...(options.assignToStage===false?{assignToStage:false}:{})})});
    } catch (error) {
     // A lost acknowledgement may follow a successful write. Keep this index
     // unconfirmed, but let independent images finish in batch mode. A retry

@@ -21,6 +21,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
   retryWait?: (milliseconds: number) => Promise<void>;
   onProductSaved?: (jobId: string, productId: string) => Promise<void>;
   reservedImageSlots?: number;
+  assignToStage?: boolean;
 }) {
   for (const job of jobs) {
     if (options.shouldStop()) break;
@@ -75,6 +76,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       }
       if (options.shouldStop()) break;
       let result = await runCollectionImport(job.id, source.images.length, {
+        assignToStage: options.assignToStage,
         continueOnImageError: true, onProductSaved: productId => options.onProductSaved?.(job.id, productId) ?? Promise.resolve(), fetcher: options.fetcher, imageIndices: indices, shouldStop: options.shouldStop,
         retryAttempts: 3, retryWait: options.retryWait, onRetry,
         onProgress: progress => options.onProgress(job.id, progress.stage === 'product' ? '상품·옵션 반영 중' : `원본 이미지 ${progress.completedImages}/${progress.totalImages}개 저장 중`),

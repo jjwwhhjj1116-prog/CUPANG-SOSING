@@ -236,3 +236,38 @@ test('API reports preserved manual assignments on initial storage and retry with
   assert.equal(JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload).rows[0].imageKey,null);
  }finally{h.sqlite.close();}
 });
+
+test('intake source-only API storage keeps every image and SKU selection pending through retries',async()=>{
+ const h=storage();try{
+  const options=collectedOptions();
+  h.sqlite.prepare('INSERT INTO product_options VALUES(?,?,?,?,?)').run('p','owner',1,JSON.stringify(options),'before');
+  const roles=['main','additional','detail'];
+  h.sqlite.prepare('INSERT INTO collection_results VALUES(?,?,?,?)').run('job','owner',JSON.stringify({options:[{sku:'a',imageIndex:1}],images:roles.map(role=>({url:'https://cbu01.alicdn.com/test.png',role}))}),'now');
+  let downloads=0,writes=0;
+  const api=load('app/api/collection-jobs/[id]/images/route.ts',{'cloudflare:workers':{env:{DB:h.db,FILES:{head:async()=>({size:png.length}),put:async()=>{writes++;return {};}}}},'@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},fetch:async()=>{downloads++;return new Response(png);}});
+  const post=body=>api.POST(new Request('http://localhost/api/collection-jobs/job/images',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),{params:Promise.resolve({id:'job'})});
+  for(const assignToStage of [null,'false',0,{},[]])assert.equal((await post({index:0,assignToStage})).status,400);
+  assert.equal(downloads,0);
+  for(let repeat=0;repeat<2;repeat++)for(let index=0;index<3;index++){
+   const response=await post({index,assignToStage:false});
+   assert.equal(response.status,200,await response.clone().text());
+   const body=await response.json();assert.deepEqual(body.warnings,[]);assert.equal(body.reused,repeat===1?true:undefined);
+  }
+  assert.equal(downloads,3);assert.equal(writes,3);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,3);
+  assert.equal(JSON.parse(h.sqlite.prepare('SELECT image_keys FROM products').get().image_keys).length,3);
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  for(const role of roles)assert.deepEqual(content.assets[role].value,[]);
+  const savedOptions=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  assert.equal(savedOptions.revision,1);assert.ok(savedOptions.rows.every(option=>option.imageKey===null));
+  // A later source import preserves the user's selected image and banner;
+  // it never clears them while keeping the next original available to edit.
+  content.assets.main={value:['owner/manual.png'],provenance:'manual',updatedAt:'manual'};
+  content.assets.detailTop={value:['owner/banner.png'],provenance:'manual',updatedAt:'manual'};
+  h.sqlite.prepare('UPDATE product_content SET payload=?').run(JSON.stringify(content));
+  await h.store.saveCollectionImage('owner','job',3,'owner/new.png','main',h.sqlite.prepare('SELECT * FROM products').get(),content,['a'],false);
+  const after=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  assert.deepEqual(after.assets.main,content.assets.main);assert.deepEqual(after.assets.detailTop,content.assets.detailTop);
+  assert.ok(JSON.parse(h.sqlite.prepare('SELECT image_keys FROM products').get().image_keys).includes('owner/new.png'));
+ }finally{h.sqlite.close();}
+});

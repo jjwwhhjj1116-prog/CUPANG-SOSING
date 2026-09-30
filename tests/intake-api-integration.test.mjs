@@ -112,8 +112,11 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    const rows=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload).rows;
    if(automatic==='maximum'){assert.equal(rows.length,200);assert.ok(rows.every(row=>row.size==='검정 옵션'&&row.provenance.size==='translated'));}
    assert.equal(rows[0].translatedName,'검정 옵션');assert.equal(rows[0].color,'검정');assert.equal(rows[0].unitCostCny,25.6);
+   assert.ok(rows.every(option=>option.imageKey===null),'intake source images are not selected option representatives');
+   for(const role of ['main','additional','detail'])assert.deepEqual(content.assets[role].value,[],`intake keeps stage ${role} pending`);
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
    let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,expectedTitle);assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
+   for(const field of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[field].value,'',`unselected originals stay out of quotation ${field}`);
    if(String(automatic).startsWith('hidden-off')){
     assert.equal(content.categoryAttributes.hiddenAttributes,false);
     assert.equal(row.fields.basketShape.value,'');assert.equal(row.fields.basketShape.source,'couplus-default');
@@ -275,8 +278,9 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
   assert.equal(objects.size,3);assert.equal(view.submissionReady,false);
   const content=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload);
   assert.equal(content.seo.title.value,'原文商品');assert.deepEqual(content.seo.keywords.value,['수납','바스켓']);
-  const options=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload);assert.equal(options.rows[0].supplierSku,'5627721589407');assert.equal(options.rows[0].stock,12);assert.ok(options.rows[0].imageKey);
-  assert.equal(row.fields.mainImage.value,options.rows[0].imageKey);assert.ok(row.fields.additionalImages.value);assert.ok(row.fields.detailImages.value);
+  const options=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload);assert.equal(options.rows[0].supplierSku,'5627721589407');assert.equal(options.rows[0].stock,12);assert.equal(options.rows[0].imageKey,null);
+  for(const field of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[field].value,'');
+  assert.equal(JSON.parse(sqlite.prepare('SELECT image_keys FROM products').get().image_keys).length,3,'original files remain available for image editing');
   const edit={expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:options.rows[0].id,value:'35000'}]};
   const save=await quoteRoute.PUT(new Request(quoteUrl,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(edit)}),quoteContext);
   const saved=await save.json();assert.equal(save.status,200,JSON.stringify(saved));assert.equal(optionRow(saved).fields.salePrice.value,'35000');
@@ -311,7 +315,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
   const afterContent=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload),afterOptions=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload);
   assert.equal(afterContent.seo.title.value,'한국어 수납 상품');assert.equal(afterContent.label.productName.value,'한국어 수납 상품');assert.equal(afterContent.labelProductNameLinked,true);
   assert.deepEqual(afterContent.seo.keywords.value,['수납','바스켓']);assert.equal(afterOptions.rows[0].translatedName,'검정 옵션');assert.equal(afterOptions.rows[0].color,'검정');
-  const afterQuote=await (await quoteRoute.GET(new Request(quoteUrl),quoteContext)).json();assert.equal(optionRow(afterQuote).fields.title.value,'한국어 수납 상품');assert.equal(optionRow(afterQuote).fields.salePrice.value,'35000');assert.equal(optionRow(afterQuote).fields.mainImage.value,options.rows[0].imageKey);
+  const afterQuote=await (await quoteRoute.GET(new Request(quoteUrl),quoteContext)).json();assert.equal(optionRow(afterQuote).fields.title.value,'한국어 수납 상품');assert.equal(optionRow(afterQuote).fields.salePrice.value,'35000');assert.equal(optionRow(afterQuote).fields.mainImage.value,'');
   assert.equal((await apply({action:'apply',fingerprint:preview.fingerprint})).status,409);assert.equal(network.length,before+1);
  }finally{sqlite.close();}
 });

@@ -14,11 +14,13 @@ export const collectionImagesSchema=`CREATE TABLE IF NOT EXISTS collection_image
 )`;
 async function database(){if(!env.DB)throw new Error('D1 unavailable');await env.DB.prepare(collectionImagesSchema).run();return env.DB;}
 export async function readCollectionImage(owner:string,jobId:string,index:number){const db=await database();return db.prepare('SELECT object_key,product_id FROM collection_images WHERE owner_id=? AND job_id=? AND image_index=?').bind(owner,jobId,index).first<{object_key:string;product_id:string}>();}
-export async function saveCollectionImage(owner:string,jobId:string,index:number,key:string,role:'main'|'additional'|'detail',product:ProductRecord,current:ProductContent,skus:readonly string[]=[]){
+export async function saveCollectionImage(owner:string,jobId:string,index:number,key:string,role:'main'|'additional'|'detail',product:ProductRecord,current:ProductContent,skus:readonly string[]=[],assignToStage = true){
  const db=await database();const operation=crypto.randomUUID();const now=new Date(Math.max(Date.now(),Date.parse(product.updated_at)+1)).toISOString();
- const next=attachCollectedImage(current,JSON.parse(product.image_keys),key,role,now);
+ const next=attachCollectedImage(current,JSON.parse(product.image_keys),key,role,now,assignToStage);
  const options=await readProductOptions(owner,product.id);
- const nextOptions=attachCollectedOptionImage(options,skus,key,now);
+ // Intake originals belong to the image library. Choosing a source file is a
+ // separate step-three action, not evidence of a finished quotation image.
+ const nextOptions=assignToStage?attachCollectedOptionImage(options,skus,key,now):options;
  const guard='EXISTS(SELECT 1 FROM collection_images WHERE operation_id=? AND owner_id=? AND product_id=?)';
  await db.batch([
   db.prepare(`INSERT INTO collection_images(job_id,image_index,owner_id,product_id,object_key,operation_id,created_at)

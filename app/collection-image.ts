@@ -4,7 +4,8 @@ import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 
 /** Report current saved assignments, including retry results, without replacing manual work. */
-export function collectedImageWarnings(content: ProductContent, options: ProductOptions, skus: readonly string[], key: string, role: 'main'|'additional'|'detail'): string[] {
+export function collectedImageWarnings(content: ProductContent, options: ProductOptions, skus: readonly string[], key: string, role: 'main'|'additional'|'detail', assignToStage = true): string[] {
+ if (!assignToStage) return [];
  const warnings: string[] = [];
  if (!content.assets[role].value.includes(key)) warnings.push(`${{main:'대표',additional:'추가',detail:'상세'}[role]} 이미지 배치에 연결되지 않았습니다. 기존 편집·다른 배치·개수 제한을 확인해주세요. 원본 파일은 저장되어 있습니다.`);
  const missing = [...new Set(skus)].filter(sku => !options.rows.some(row => row.supplierSku === sku && row.provenance.supplierSku === 'collected' && row.imageKey === key));
@@ -42,13 +43,13 @@ export async function downloadCollectionImage(source:string,owner:string,fetcher
  }finally{clearTimeout(timer);}
 }
 
-export function attachCollectedImage(current:ProductContent,keys:string[],key:string,role:'main'|'additional'|'detail',now:string){
+export function attachCollectedImage(current:ProductContent,keys:string[],key:string,role:'main'|'additional'|'detail',now:string,assignToStage = true){
  if(!keys.includes(key)&&keys.length>=50)throw new Error('상품 이미지 50개 제한입니다. 이미지를 정리해주세요.');
  const next=structuredClone(current);const target=next.assets[role];
  // Manual selections (including deliberately empty ones) and translated/generated work survive imports.
  const usedElsewhere=Object.entries(next.assets).some(([name,field])=>name!==role&&field.value.includes(key));
  const editable=target.provenance==='unverified'||target.provenance==='collected';
- if(editable&&!usedElsewhere&&!target.value.includes(key)&&target.value.length<(role==='main'?1:30)){
+ if(assignToStage&&editable&&!usedElsewhere&&!target.value.includes(key)&&target.value.length<(role==='main'?1:30)){
   next.assets[role]={value:[...target.value,key],provenance:'collected',updatedAt:now};
  }
  next.revision=current.revision+1;next.updatedAt=now;

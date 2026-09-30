@@ -18,8 +18,9 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
  try{
   if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return reply({error:'운영 인증이 필요합니다.'},503);
   if(request.headers.get('origin')&&request.headers.get('origin')!==new URL(request.url).origin)return reply({error:'같은 사이트에서 요청해주세요.'},400);
-  const body=await readBoundedJson(request,1024) as {index:number};
-  if(!body||typeof body!=='object'||Object.keys(body).some(k=>k!=='index')||!Number.isInteger(body.index)||body.index<0||body.index>=200)return reply({error:'이미지 번호를 확인해주세요.'},400);
+  const body=await readBoundedJson(request,1024) as {index:number;assignToStage?:boolean};
+  if(!body||typeof body!=='object'||Object.keys(body).some(k=>!['index','assignToStage'].includes(k))||!Number.isInteger(body.index)||body.index<0||body.index>=200||body.assignToStage!==undefined&&typeof body.assignToStage!=='boolean')return reply({error:'이미지 번호와 선택 방식을 확인해주세요.'},400);
+  const assignToStage=body.assignToStage!==false;
   const owner=await getWorkspaceOwnerId();const {id}=await context.params;const job=await findCollectionJob(owner,id);
   if(!job)return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
   const link=await findCollectionProduct(owner,id);if(!link||job.status==='cancelled')return reply({error:'상품 반영을 먼저 완료해주세요.'},409);
@@ -27,7 +28,7 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   const previous=await readCollectionImage(owner,id,body.index);
   const product=await findProduct(owner,link.product_id);if(!product)return reply({error:'상품을 찾을 수 없습니다.'},404);
   const skus=(receipt?.result.options??[]).filter(option=>option.imageIndex===body.index).map(option=>option.sku);
-  const warnings=async(key:string)=>collectedImageWarnings(await readProductContent(owner,product.id),await readProductOptions(owner,product.id),skus,key,image.role);
+  const warnings=async(key:string)=>collectedImageWarnings(await readProductContent(owner,product.id),await readProductOptions(owner,product.id),skus,key,image.role,assignToStage);
   if(previous){
    if(previous.product_id!==product.id||!productImageKeys(product.image_keys).includes(previous.object_key))return reply({error:'이 원본은 상품 이미지에서 제외되었습니다. 기존 편집을 보존하기 위해 자동 복원하지 않습니다. 선택을 해제해주세요.',code:'IMAGE_DETACHED'},409);
    if(!env.FILES)return reply({error:'이미지 저장소 연결이 필요합니다.'},503);
@@ -45,7 +46,7 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   if(!latestJob || latestJob.status==='cancelled')return reply({code:'COLLECTION_CANCELLED',error:'취소된 수집 요청입니다. 내려받은 이미지를 상품에 반영하지 않았습니다.'},409);
   const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected',...imageDimensionMetadata(downloaded.bytes)}});
   if(!stored)throw new Error('이미지 저장 확인 실패');
-  const saved=await saveCollectionImage(owner,id,body.index,downloaded.key,image.role,product,current,skus);
+  const saved=await saveCollectionImage(owner,id,body.index,downloaded.key,image.role,product,current,skus,assignToStage);
   return reply({key:saved.object_key,warnings:await warnings(saved.object_key),message:'원본 이미지를 저장했습니다. 번역·가공은 실행하지 않았습니다.'});
  }catch(error){
   if(error instanceof CollectionImageCancelledError)return reply({code:'COLLECTION_CANCELLED',error:error.message},409);
