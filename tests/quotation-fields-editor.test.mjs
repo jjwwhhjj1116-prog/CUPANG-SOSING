@@ -722,7 +722,18 @@ test('closed attribute panels ignore late local rule files and file reads block 
  h.unmount();pending.resolve('{}');await settleAttributes();assert.equal(h.lateUpdates,0);
 });
 
-test('category selection preview uses actual quotation schema and defaults without leaking defaults between categories',()=>{
+test('hidden text drafts display Couplus N/A without storing placeholder text or restoring a user-cleared value',()=>{
+ const view=fixture(),field=view.resolved.schema.fields.find(field=>field.visibility==='hidden'&&field.type==='text');
+ const cell=view.resolved.rows[0].fields[field.id];assert.equal(cell.value,'');assert.equal(cell.source,'couplus-default');
+ const input=changes=>renderEditor(view,'product',changes).match(new RegExp(`<input[^>]*id="editor-test-${field.id}"[^>]*>`))[0];
+ assert.match(input([]),/placeholder="해당사항없음"/);assert.match(input([]),/value=""/);
+ assert.match(input([change(field.id,'')]),/placeholder="확인한 내용을 입력하세요\."/);
+ assert.match(input([change(field.id,'직접 확인')]),/value="직접 확인"/);
+ const display=load('app/quotation-field-display.ts').quotationFieldDisplay;
+ assert.equal(display(field,cell),'해당사항없음');assert.equal(display(field,{value:'',source:'manual-common'}),'[공란]');
+});
+
+test('category selection preview uses recorded category arrays and Couplus defaults without inventing missing scalar defaults',()=>{
  const {CategoryQuotationPreview}=load('app/components/category-quotation-preview.tsx');
  const {couplusQuotationDefault}=load('app/couplus-quotation-defaults.ts');
  const render=schema=>renderToStaticMarkup(React.createElement(CategoryQuotationPreview,{schema}));
@@ -733,8 +744,8 @@ test('category selection preview uses actual quotation schema and defaults witho
   const count=schema.fields.filter(field=>couplusQuotationDefault(category,field)!==undefined).length;
   assert.ok(html.includes(`쿠플러스 기본값 확인 ${count}개`));
   assert.equal(JSON.stringify(schema),before);
-  if(category==='80719'){assert.match(html,/쿠플러스 화면 관찰값/);assert.match(html,/해당사항없음.*저장값: 공란/);assert.match(html,/허용 선택지/);}
-  else{assert.doesNotMatch(html,/쿠플러스 화면 관찰값/);assert.match(html,/미확인 · 임의 기본값 없음/);}
+  if(category!=='unknown'){assert.match(html,/쿠플러스 초안 기본값/);assert.match(html,/해당사항없음.*저장값: 공란/);assert.match(html,/허용 선택지/);}
+  else{assert.doesNotMatch(html,/쿠플러스 초안 기본값/);assert.match(html,/미확인 · 임의 기본값 없음/);}
  }
 });
 

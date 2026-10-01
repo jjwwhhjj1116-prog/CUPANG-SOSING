@@ -168,7 +168,7 @@ test('explicit KC information reaches the brace notice and export without inferr
  assert.equal(load('app/quotation-label-plan.ts').quotationLabelPlan(resolved,'red').rows.find(row=>row[0]==='KC 인증정보')[1],'확인한 KC 표시 내용');assert.equal(JSON.stringify(input),before);
  input.overrides={common:{brace_noticeKc:'공통값'},options:{red:{brace_noticeKc:''}}};resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[0].fields.brace_noticeKc.value,'공통값');assert.equal(resolved.rows[1].fields.brace_noticeKc.value,'');assert.equal(resolved.rows[1].fields.brace_noticeKc.source,'manual-option');
  input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{kcInformation:''}},'later');resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[1].fields.brace_noticeKc.value,'');assert.equal(resolved.rows[1].fields.brace_noticeKc.source,'content');
- delete input.content.label.kcInformation;assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeKc.value,'');
+ delete input.content.label.kcInformation;assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeKc.value,'해당사항없음');
  input.categoryId='77442';assert.equal(model.resolveQuotationFields(input).rows[1].fields.noticePermission.value,'일반 허가 문구');
 });
 
@@ -183,7 +183,7 @@ test('saved product type reaches category kind and label image, preserves quotat
  input.overrides.options.red.marathon_noticeKind='';assert.equal(model.resolveQuotationFields(input).rows[1].fields.marathon_noticeKind.value,'');
  input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{productType:''}},'2026-09-24T01:00:00Z');
  row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.marathon_noticeKind.value,'');assert.equal(row.fields.marathon_noticeKind.source,'content');
- delete input.content.label.productType;assert.equal(model.resolveQuotationFields(input).rows[1].fields.marathon_noticeKind.value,'');
+ delete input.content.label.productType;assert.equal(model.resolveQuotationFields(input).rows[1].fields.marathon_noticeKind.value,'해당사항없음');
 });
 
 test('77442 official choices, required model, option rules and dimension bindings preserve manual edits', () => {
@@ -248,7 +248,7 @@ test('103495 preserves observed marathon form while deriving notices from each o
   assert.equal(row.marathon_noticeSize.value, 'Free');
   assert.equal(row.noticeMaterial.value, '면');
   assert.equal(row.marathon_noticeCaution.value, '실제 취급 주의사항');
-  assert.equal(row.marathon_noticeKind.value, '');
+  assert.equal(row.marathon_noticeKind.value, '해당사항없음');
   assert.equal(row.marathon_waterproof.value, '');
   input.options.rows[0].size = ''; input.options.rows[0].color = '';
   input.options.rows[0].provenance.size = 'manual'; input.options.rows[0].provenance.color = 'manual';
@@ -294,7 +294,7 @@ test('observed brace quotation exposes its own attributes and notices without ce
   assert.equal(schema.fields.filter(field => field.section === 'legal' && (field.id.startsWith('notice') || field.id.startsWith('brace_notice'))).length, 12);
   assert.deepEqual(clone(schema.fields.find(field => field.id === 'brace_direction').choices.map(choice => choice.label)), ['좌우겸용', '오른쪽', '왼쪽', '좌우세트', '해당사항없음']);
   assert.equal(resolved.rows[1].fields.brace_purpose.value, '');
-  assert.equal(resolved.rows[1].fields.brace_noticeKc.value, '');
+  assert.equal(resolved.rows[1].fields.brace_noticeKc.value, '해당사항없음');
   assert.equal(resolved.rows[1].fields.noticeMaterial.value, '면');
   assert.equal(resolved.rows[1].fields.quantity.value, '1');
   assert.equal(schema.fields.some(field => field.id === 'kcsCertificationNumber'), false);
@@ -317,7 +317,7 @@ test('brace size and weight notice follows label edits through export while pres
   input.content.label.dimensions = { value: '허리둘레 70~85 cm / 180 g', provenance: 'manual', updatedAt: 'now' };
   const original = clone(input);
   const resolve = () => model.resolveQuotationFields(input);
-  assert.equal(resolve().rows[1].fields.size.value, '');
+  assert.equal(resolve().rows[1].fields.size.value, '해당사항없음');
   assert.ok(resolve().rows[1].fields.size.issues.length > 0);
   assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.value, '허리둘레 70~85 cm / 180 g');
   assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.source, 'content');
@@ -333,7 +333,7 @@ test('brace size and weight notice follows label edits through export while pres
   assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.source, 'manual-option');
   assert.equal(resolve().rows[1].fields.brace_noticeSizeWeight.value, '');
   input.content.label.certification.value = '일반 허가사항';
-  assert.equal(resolve().rows[1].fields.brace_noticeKc.value, '');
+  assert.equal(resolve().rows[1].fields.brace_noticeKc.value, '해당사항없음');
   input.overrides.options.red.size = 'S';
   assert.equal(resolve().rows[1].fields.size.value, 'S');
   assert.equal(resolve().rows[1].fields.size.source, 'manual-option');
@@ -703,7 +703,8 @@ test('77442 uses officially cross-checked board fields without copying saved pro
  assert.equal(schema.fields.filter(f=>f.id.startsWith('notice')).length,5);
  assert.equal(schema.fields.some(f=>f.id==='kcsCertificationNumber'),false);
  const row=model.resolveQuotationFields(input).rows[1];
- for(const id of ['board_magnetic','noticePermission','packagedWeightG','packagedDimensionsMm','taxType'])assert.equal(row.fields[id].value,'');
+ for(const id of ['board_magnetic','packagedWeightG','packagedDimensionsMm','taxType'])assert.equal(row.fields[id].value,'');
+ assert.equal(row.fields.noticePermission.value,'해당사항없음');assert.equal(row.fields.noticePermission.source,'couplus-default');
  assert.equal(row.fields.title.value,'번역된 가방');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
  input.overrides={common:{board_magnetic:'자석부착가능',noticePermission:'확인된 증빙'},options:{}};
  assert.equal(model.resolveQuotationFields(input).rows[1].fields.board_magnetic.value,'자석부착가능');
@@ -882,7 +883,7 @@ test('calculated and overridden MSRP reach submission evidence review without tu
 test('64497 links saved content and preserves blanks without copying another seller product',()=>{
  const input=fixture();input.categoryId='64497';
  let row=model.resolveQuotationFields(input).rows[1];
- assert.equal(row.fields.noticePermission.value,'');assert.ok(row.fields.noticePermission.issues.some(i=>i.includes('필수')));
+ assert.equal(row.fields.noticePermission.value,'해당사항없음');assert.equal(row.fields.noticePermission.source,'couplus-default');assert.ok(row.fields.noticePermission.reviewMessages.some(i=>i.includes('실제 상품')));
  for(const id of ['tooth_cupMaterial','kcMarkType','packagedWeightG','packagedDimensionsMm','shelfLifeDays'])assert.equal(row.fields[id].value,'');
  assert.equal(row.fields.title.value,'번역된 가방');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
  input.content=contentModel.applyContentPatch(input.content,{label:{certification:'확인된 허가 자료'}},'now');
@@ -1580,7 +1581,7 @@ test('all observed categories carry saved stages into quotation without leaking 
   if(row.fields.noticeServiceContact)assert.equal(row.fields.noticeServiceContact.value,'고객지원 02-123-4567',categoryId);
   assert.equal(resolved.schema.categoryId,categoryId);assert.equal(resolved.schema.submissionReady,false);
   assert.equal(new Set(resolved.schema.fields.map(f=>f.id)).size,resolved.schema.fields.length,`${categoryId}:duplicate fields`);
-  if(categoryId!=='80719')assert.ok(Object.values(row.fields).every(f=>f.source!=='couplus-default'),categoryId);
+  if(categoryId!=='80719')for(const id of ['kcMarkType','barcodeMode','shelfLifeDays'])assert.equal(row.fields[id].source,'empty',`${categoryId}:${id}`);
   assert.equal(JSON.stringify(input),before);
   input.overrides={common:{title:'공통 수정',labelImages:'owner/label.png'},options:{red:{title:'',labelImages:'',detailHtml:''}}};
   const changedResolved=model.resolveQuotationFields(input),changed=changedResolved.rows.find(r=>r.optionId==='red');
@@ -1791,7 +1792,7 @@ test('brace specifications follow saved step-six content and preserve quotation 
  resolved=model.resolveQuotationFields(input);assert.equal(resolved.rows[0].fields.brace_noticeSpecifications.value,'견적 공통 수정');assert.equal(resolved.rows[1].fields.brace_noticeSpecifications.value,'');
  input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{specifications:''}},'later');
  assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications.value,'');
- delete input.content.label.specifications;assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications.value,'');
+ delete input.content.label.specifications;assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications.value,'해당사항없음');
  input.categoryId='80719';assert.equal(model.resolveQuotationFields(input).rows[1].fields.brace_noticeSpecifications,undefined);
 });
 
@@ -1979,8 +1980,8 @@ test('81221 manual common and option notice edits and deliberate blanks keep pre
  input.options.rows[0].color='';result=model.resolveQuotationFields(input);
  for(const id of ids){assert.equal(result.rows[1].fields[id].value,'');assert.ok(['content','option'].includes(result.rows[1].fields[id].source),id);}
  delete input.content.label.kcInformation;delete input.content.label.specifications;
- assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_noticeKc.value,'');
- assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_noticeSpecifications.value,'');
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_noticeKc.value,'해당사항없음');
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_noticeSpecifications.value,'해당사항없음');
  input.categoryId='80719';assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_noticeKc,undefined);
 });
 
@@ -1995,7 +1996,7 @@ test('81221 fashion size uses exact saved option choices without converting prod
   assert.equal(fields.size.value,size);assert.equal(fields.glove_fashionSize.value,'');assert.ok(fields.glove_fashionSize.validationIssues.some(issue=>issue.includes('선택지')));
  }
  input.options.rows[0].size='';input.options.rows[0].provenance.size='unverified';
- let fields=model.resolveQuotationFields(input).rows[1].fields;assert.equal(fields.size.value,'');assert.equal(fields.glove_fashionSize.value,'');
+ let fields=model.resolveQuotationFields(input).rows[1].fields;assert.equal(fields.size.value,'해당사항없음');assert.equal(fields.glove_fashionSize.value,'');
  input.options.rows[0].provenance.size='manual';fields=model.resolveQuotationFields(input).rows[1].fields;
  assert.equal(fields.size.source,'option');assert.equal(fields.glove_fashionSize.source,'option');
  input.overrides={common:{glove_fashionSize:'S'},options:{red:{glove_fashionSize:'L'}}};assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_fashionSize.value,'L');

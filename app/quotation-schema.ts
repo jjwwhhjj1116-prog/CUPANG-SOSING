@@ -450,8 +450,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { value: '', source: entered || cleared ? 'option' : 'empty', issues: entered ? ['포장 가로·세로·높이를 모두 입력해주세요(mm).'] : [] };
       }
       case 'boxSkuQuantity': return literal(settings.boxSkuQuantity, 'settings');
-      // Certification applicability, country, packaging measurements, barcode,
-      // and attribute values never come from category names or blanket defaults.
+      // Product facts never come from category names. The subsequent draft
+      // initializer can supply recorded form defaults with separate provenance.
       default: return literal('', 'empty');
     }
   }
