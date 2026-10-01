@@ -15,6 +15,7 @@ import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
 import {supplierHubStatusReady} from '../extensions/supplier-hub/hub-tab.mjs';
 import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
+import {assertAppSupplierHubNotSubmitted} from '../extensions/supplier-hub/receipt-recovery.mjs';
 
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 const companies=[{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}];
@@ -49,6 +50,39 @@ function renderBoard(products){
  Object.assign(exports,load('app/components/registration-board.tsx'));
  return renderToStaticMarkup(createElement(exports.RegistrationBoard,{products,selected:new Set(),onSelected(){},onOpen(){},loading:false,error:'',onArchive(){}}));
 }
+for(const company of companies)test(`actual owner-scoped API blocks server-only receipt replay for complete, pending and rejected states (${company.companyCode})`,async()=>{
+ const h=await setup(company);try{
+  const origin='http://localhost:3000',identity={origin,productId:h.product.id,categoryId:'80719',fingerprint:h.preview.fingerprint};
+  const prepared={profileId:'cat',company:h.result.company,includedOptions:6},binding={appTabId:7,windowId:17},before=h.sqlite.prepare('SELECT * FROM products').get();
+  const records=new Map(),calls=[];let listener,unavailable=false;
+  const content={URL,Date,AbortController,setTimeout,clearTimeout,location:{origin},window:{addEventListener(){},postMessage(){}},
+   chrome:{runtime:{id:'extension',onMessage:{addListener(value){listener=value;}}}},fetch:async(path,init)=>{
+    calls.push([path,init.method]);const response=unavailable?Response.json({error:'시험 조회 실패'},{status:503}):await h.route(path,{method:init.method,...(init.body?{body:JSON.parse(init.body)}:{})});
+    Object.defineProperty(response,'url',{value:origin+path});return response;
+   }};
+  vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),content);
+  const api={tabs:{get:async id=>{assert.equal(id,7);return {id,windowId:17,url:origin+'/'};},sendMessage:async(id,message,frame)=>{
+   assert.equal(id,7);assert.deepEqual(frame,{frameId:0});return new Promise(resolve=>assert.equal(listener(message,{id:'extension'},resolve),true));
+  }}};
+  const store=async(action,key,value)=>{assert.equal(action,'claim');assert.ok(key.startsWith('result:'));if(records.has(key))return false;records.set(key,value);return true;};
+  const preflight=()=>assertAppSupplierHubNotSubmitted(identity,prepared,binding,api,store);
+  assert.equal(await preflight(),true);assert.equal(records.size,0);
+  unavailable=true;await assert.rejects(preflight(),error=>error.code==='SUPPLIER_HUB_RECEIPT_UNCONFIRMED');assert.equal(records.size,0);unavailable=false;
+  for(const [index,state] of ['validation-pending','validation-rejected','validation-complete'].entries()){
+   // Independent stored states: the receipt merger intentionally preserves a
+   // rejection over later complete observations. Reset only this temporary DB.
+   h.sqlite.prepare('DELETE FROM supplier_hub_receipts WHERE product_id=?').run(h.product.id);
+   const result={...h.result,state,observedAt:h.result.observedAt+index,...(state!=='validation-complete'?{quotationId:undefined}:{})};
+   await json(await h.write(result));records.clear();
+   await assert.rejects(preflight(),error=>error.code==='SUPPLIER_HUB_ALREADY_SUBMITTED');assert.equal(records.size,1);
+   const restored=[...records.values()][0];assert.equal(restored.state,state);assert.equal(restored.company.code,company.companyCode);assert.equal(restored.includedOptions,6);
+   assert.equal(restored.quotationId,result.quotationId);assert.equal(restored.registered,false);assert.equal(restored.registration,undefined);
+   assert.equal([...records.keys()].some(key=>/^(attempt|transmission):/.test(key)),false);
+  }
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM products').get(),before);
+  assert.ok(calls.every(([path])=>/\/supplier-hub-receipt\?|\/quotation$/.test(path)));
+ }finally{h.close();}
+});
 for(const company of companies)test(`actual receipt/source APIs recover a closed-tab six-SKU lookup with the original draft untouched (${company.companyCode})`,async()=>{
  const h=await setup(company);try{
   await json(await h.write(h.result));const before=h.sqlite.prepare('SELECT * FROM products').get();

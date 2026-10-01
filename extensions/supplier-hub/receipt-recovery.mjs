@@ -1,9 +1,15 @@
-import {HANDOFF_ORIGINS,isAcceptedResult} from './handoff-store.mjs';
+import {HANDOFF_ORIGINS,isAcceptedResult,isStoredReceiptResult,resultKey,transferRecord} from './handoff-store.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
 
-// Recover only the authenticated app's accepted receipt. Old SKU rows are not
+// Read only the authenticated app's matching receipt. Old SKU rows are not
 // fresh Hub evidence and must never be copied into a new lookup result.
 export async function readAppSupplierHubReceipt(identity,binding,api=chrome){
+  return readReceipt(identity,binding,api,true);
+}
+export async function readAppSupplierHubStoredReceipt(identity,binding,api=chrome){
+  return readReceipt(identity,binding,api,false);
+}
+async function readReceipt(identity,binding,api,acceptedOnly){
   if(!HANDOFF_ORIGINS.includes(identity?.origin)||!/^\w[\w-]{0,99}$/.test(identity.productId||'')
     ||!/^\d{1,20}$/.test(identity.categoryId||'')||!/^[a-f0-9]{64}$/.test(identity.fingerprint||'')
     ||!Number.isSafeInteger(binding?.appTabId)||binding.appTabId<0||!Number.isSafeInteger(binding.windowId)||binding.windowId<0)
@@ -16,7 +22,7 @@ export async function readAppSupplierHubReceipt(identity,binding,api=chrome){
   };
   await current();
   const expected={origin:identity.origin,productId:identity.productId,categoryId:identity.categoryId,fingerprint:identity.fingerprint};
-  const reply=await api.tabs.sendMessage(binding.appTabId,{type:'YOOFAM_READ_QUOTATION_RECEIPT',expected},{frameId:0});
+  const reply=await api.tabs.sendMessage(binding.appTabId,{type:acceptedOnly?'YOOFAM_READ_QUOTATION_RECEIPT':'YOOFAM_READ_TRANSMISSION_RECEIPT',expected},{frameId:0});
   await current();
   if(reply?.ok!==true||!Object.keys(expected).every(field=>reply[field]===expected[field])
     ||!Number.isFinite(reply.checkedAt)||reply.checkedAt<=0||Math.abs(Date.now()-reply.checkedAt)>60000)
@@ -24,12 +30,29 @@ export async function readAppSupplierHubReceipt(identity,binding,api=chrome){
   if(reply.receipt===null)return null;
   const receipt=reply.receipt,result={...receipt?.result,...identity};
   if(receipt?.schemaVersion!==1||receipt.evidence!=='chrome-observation'||!/^\w[\w-]{0,99}$/.test(receipt.profileId||'')
-    ||receipt.categoryId!==identity.categoryId||receipt.fingerprint!==identity.fingerprint||!isAcceptedResult(identity,result)
-    ||!Number.isSafeInteger(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000)
+    ||receipt.categoryId!==identity.categoryId||receipt.fingerprint!==identity.fingerprint||!isStoredReceiptResult(identity,result)
+    ||(acceptedOnly&&!isAcceptedResult(identity,result)))
     throw Error('완료된 파일 검증 결과와 접수 ID를 확인하지 못했습니다.');
   const saved={...identity,profileId:receipt.profileId,company:{code:result.company.code,name:result.company.name},
-    includedOptions:result.includedOptions,filename:result.filename,quotationId:result.quotationId,state:'validation-complete',
-    registered:false,observedAt:result.observedAt,receiptRecovered:true};
+    includedOptions:result.includedOptions,filename:result.filename,state:result.state,registered:false,observedAt:result.observedAt,receiptRecovered:true,
+    ...Object.fromEntries(['submittedAt','status','detail','quotationId'].filter(field=>result[field]!==undefined).map(field=>[field,result[field]]))};
   await verifyAppQuotationSource(identity,saved,binding,api);
   return saved;
+}
+
+// A missing local claim is not proof that another Chrome profile has never
+// submitted this draft. Check the app before touching or consuming Hub inputs.
+export async function assertAppSupplierHubNotSubmitted(identity,prepared,binding,api=chrome,store=transferRecord){
+  let saved;
+  try{
+    saved=await readAppSupplierHubStoredReceipt(identity,binding,api);
+    if(saved&&(!['profileId','includedOptions'].every(field=>saved[field]===prepared[field])
+      ||saved.company.code!==prepared.company?.code||saved.company.name!==prepared.company?.name))throw Error('준비한 견적서와 보관된 전송 기록이 다릅니다.');
+    if(saved)await store('claim',resultKey(identity),saved);
+  }catch(cause){
+    const error=new Error('서버 전송 기록을 확인하지 못해 파일을 첨부하지 않았습니다. 접수 결과를 다시 확인해주세요.',{cause});
+    error.code='SUPPLIER_HUB_RECEIPT_UNCONFIRMED';throw error;
+  }
+  if(saved){const error=new Error('이 견적서는 서버에 전송 기록이 있습니다. 검증 결과를 조회해주세요. 다시 첨부하지 않습니다.');error.code='SUPPLIER_HUB_ALREADY_SUBMITTED';throw error;}
+  return true;
 }

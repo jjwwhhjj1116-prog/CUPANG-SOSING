@@ -5,13 +5,14 @@ import vm from 'node:vm';
 import {claimSupplierHubTransmissionWindow} from '../extensions/supplier-hub/transmission-window.mjs';
 import {resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
-function setup({outcome='dispatched',savedChanges={},senderChanges={},consume=true,tabChanges={},onExecute,sourceChangedAt,company={code:'A01464742',name:'와이홉'},occupied=false,bindingError=false}={}){
+function setup({outcome='dispatched',savedChanges={},senderChanges={},consume=true,tabChanges={},onExecute,sourceChangedAt,company={code:'A01464742',name:'와이홉'},occupied=false,bindingError=false,serverReceiptAt}={}){
   const fingerprint='a'.repeat(64),calls=[],puts=[],records=new Map();
-  const saved={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint,createdAt:Date.now(),base64:'UEs=',appTabId:7,windowId:17,...savedChanges};let sourceChecks=0;
+  const saved={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint,createdAt:Date.now(),base64:'UEs=',appTabId:7,windowId:17,...savedChanges};let sourceChecks=0,receiptChecks=0;
   const sender={id:'extension',url:'chrome-extension://extension/popup.html',...senderChanges};
   const context=vm.createContext({Date,URL,Uint8Array,atob,claimSupplierHubTransmissionWindow,resultKey,
     verifySupplierHubCompany(){},prepareAttachments:async()=>({company,productId:'p',categoryId:'80719',includedOptions:3,quotation:[{name:`YOOFAM-${fingerprint}.xlsx`}]}),attachToSupplierHub(){},
     verifyAppQuotationSource:async()=>{calls.push('verify-source');if(++sourceChecks===sourceChangedAt)throw Error('최신 저장본 변경');},
+    assertAppSupplierHubNotSubmitted:async()=>{if(++receiptChecks===serverReceiptAt)throw Error('서버 전송 기록 확인');},
     pendingPackage:async action=>{calls.push(action);return action==='get'?saved:consume;},
     transferRecord:async(action,key,value)=>{
       if(action==='get')return records.get(key);
@@ -98,4 +99,11 @@ test('a recovered accepted receipt blocks popup attachment before preflight or p
  const h=setup(),key=resultKey(h.saved),receipt={state:'validation-complete',quotationId:'quote-123',receiptRecovered:true};h.records.set(key,receipt);
  await assert.rejects(h.run(),/이미 접수/);assert.equal(h.records.get(key),receipt);assert.equal(h.puts.length,0);
  for(const action of ['preflight','delete','execute'])assert.equal(h.calls.includes(action),false);
+});
+test('server receipt checks happen before popup preflight and again before package consumption',async()=>{
+ for(const serverReceiptAt of [1,2]){
+  const h=setup({serverReceiptAt});await assert.rejects(h.run(),/서버 전송 기록/);
+  assert.equal(h.calls.includes('delete'),false);assert.equal(h.calls.includes('execute'),false);assert.equal(h.puts.length,0);
+  assert.equal(h.calls.includes('preflight'),serverReceiptAt===2);
+ }
 });

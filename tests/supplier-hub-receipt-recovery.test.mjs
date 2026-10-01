@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import {readAppSupplierHubReceipt} from '../extensions/supplier-hub/receipt-recovery.mjs';
+import {readAppSupplierHubReceipt,readAppSupplierHubStoredReceipt,assertAppSupplierHubNotSubmitted} from '../extensions/supplier-hub/receipt-recovery.mjs';
 
 const identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const binding={appTabId:7,windowId:17},company={code:'A01464742',name:'와이홉'};
@@ -21,7 +21,7 @@ function content(options={}){
    Object.defineProperty(response,'url',{value:options.url??identity.origin+path});Object.defineProperty(response,'redirected',{value:options.redirected??false});return response;
   }};
  vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),context);
- return {calls,run:expected=>context.readCurrentQuotationReceipt(expected??identity),listener:listeners[0],expire:()=>expire()};
+ return {calls,run:expected=>context.readCurrentQuotationReceipt(expected??identity),stored:()=>context.readCurrentQuotationReceipt(identity,false),listener:listeners[0],expire:()=>expire()};
 }
 
 test('content reads only its owner-scoped receipt then verifies the same saved form and six options without exporting files',async()=>{
@@ -64,8 +64,8 @@ function worker(options={}){
  const calls=[];let gets=0;
  const api={tabs:{get:async()=>{calls.push('get');return {id:7,windowId:17,url:identity.origin+'/',...(options.moved&&++gets===2?{windowId:18}:{}),...options.tab};},
   sendMessage:async(id,message,frame)=>{calls.push({id,message,frame});return {ok:true,...message.expected,checkedAt:Date.now(),
-    ...(message.type==='YOOFAM_READ_QUOTATION_RECEIPT'?{receipt:options.receipt===null?null:receipt(options.receipt)}:{}),...options.reply};}}};
- return {api,calls,run:()=>readAppSupplierHubReceipt(identity,binding,api)};
+    ...(['YOOFAM_READ_QUOTATION_RECEIPT','YOOFAM_READ_TRANSMISSION_RECEIPT'].includes(message.type)?{receipt:options.receipt===null?null:receipt(options.receipt)}:{}),...options.reply};}}};
+ return {api,calls,run:()=>readAppSupplierHubReceipt(identity,binding,api),stored:()=>readAppSupplierHubStoredReceipt(identity,binding,api)};
 }
 test('worker restores only the accepted ID contract and discards old rows and arbitrary receipt fields',async()=>{
  const h=worker(),saved=await h.run();assert.equal(saved.receiptRecovered,true);assert.equal(saved.profileId,'profile');assert.equal(saved.quotationId,'quote-123');assert.equal(saved.registration,undefined);
@@ -76,4 +76,38 @@ test('worker restores only the accepted ID contract and discards old rows and ar
 test('worker rejects moved app tabs, old verification clocks and mismatched reply identities',async()=>{
  for(const options of [{moved:true},{tab:{url:'https://other.test/'}},{reply:{ok:false}},{reply:{categoryId:'999'}},{reply:{productId:'other'}},
   {reply:{checkedAt:Date.now()-61000}},{receipt:{profileId:'../profile'}},{receipt:{fingerprint:'b'.repeat(64)}}])await assert.rejects(worker(options).run());
+});
+
+test('preflight reads preserve pending and rejected states while accepted-ID lookup remains strict',async()=>{
+ for(const state of ['validation-pending','validation-rejected']){
+  const value=receipt();value.result={...value.result,state,quotationId:undefined,status:'확인 중',detail:'원래 응답'};
+  const h=content({receipt:value});const reply=await new Promise(resolve=>assert.equal(h.listener({type:'YOOFAM_READ_TRANSMISSION_RECEIPT',expected:identity},{id:'extension'},resolve),true));
+  assert.equal(reply.ok,true);assert.equal(reply.receipt.result.state,state);assert.equal(reply.receipt.result.quotationId,undefined);assert.equal(reply.receipt.result.detail,'원래 응답');
+  assert.equal(reply.receipt.result.registration,undefined);assert.equal(h.calls.length,2);
+  await assert.rejects(content({receipt:value}).run());await assert.rejects(worker({receipt:value}).run());
+  const native=worker({receipt:value}),saved=await native.stored();assert.equal(saved.state,state);assert.equal(saved.receiptRecovered,true);
+  assert.deepEqual(native.calls.filter(v=>typeof v==='object').map(v=>v.message.type),['YOOFAM_READ_TRANSMISSION_RECEIPT','YOOFAM_VERIFY_QUOTATION_SOURCE']);
+ }
+});
+
+test('preflight never interprets unreadable or mismatched server receipts as permission to attach',async()=>{
+ const prepared={profileId:'profile',company,includedOptions:6};
+ for(const options of [{reply:{ok:false}},{reply:{receipt:undefined}},{reply:{checkedAt:Date.now()-61000}},
+  {receipt:{result:{...receipt().result,state:'unknown'}}},{receipt:{result:{...receipt().result,detail:'x'.repeat(20001)}}}]){
+  const h=worker(options);let writes=0;
+  await assert.rejects(assertAppSupplierHubNotSubmitted(identity,prepared,binding,h.api,async()=>{writes++;}),error=>error.code==='SUPPLIER_HUB_RECEIPT_UNCONFIRMED');assert.equal(writes,0);
+ }
+ for(const options of [{receipt:{result:{...receipt().result,includedOptions:5}}},{receipt:{profileId:'other'}}]){
+  const h=worker(options);let writes=0;await assert.rejects(assertAppSupplierHubNotSubmitted(identity,prepared,binding,h.api,async()=>{writes++;}),error=>error.code==='SUPPLIER_HUB_RECEIPT_UNCONFIRMED');assert.equal(writes,0);
+ }
+ assert.equal(await assertAppSupplierHubNotSubmitted(identity,prepared,binding,worker({receipt:null}).api,async()=>{throw Error('must not claim');}),true);
+ const h=worker();let claims=0;await assert.rejects(assertAppSupplierHubNotSubmitted(identity,prepared,binding,h.api,async(action,key,value)=>{
+  claims++;assert.equal(action,'claim');assert.ok(key.startsWith('result:'));assert.equal(value.quotationId,'quote-123');return false;
+ }),error=>error.code==='SUPPLIER_HUB_ALREADY_SUBMITTED');assert.equal(claims,1);
+});
+
+test('stored receipt content rejects invalid bodies and untrusted runtime callers',async()=>{
+ for(const options of [{status:503},{redirected:true},{receipt:{result:{...receipt().result,state:'unknown'}}},
+  {source:{rowCount:5}},{text:'not json'},{text:'x'.repeat(1024*1024+1)}])await assert.rejects(content(options).stored());
+ const h=content();assert.equal(h.listener({type:'YOOFAM_READ_TRANSMISSION_RECEIPT',expected:identity},{id:'foreign'},()=>assert.fail('foreign reply')),undefined);assert.equal(h.calls.length,0);
 });

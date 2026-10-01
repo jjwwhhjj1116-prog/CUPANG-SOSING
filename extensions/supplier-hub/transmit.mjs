@@ -7,6 +7,7 @@ import {requestSupplierHubValidation} from './validate.mjs';
 import {waitForSupplierHubPage,supplierHubUploadReady} from './hub-tab.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
 import {claimSupplierHubTransmissionWindow} from './transmission-window.mjs';
+import {assertAppSupplierHubNotSubmitted} from './receipt-recovery.mjs';
 
 export async function transmitSupplierHubPackage(message,sender,api=chrome,store=transferRecord){
   const identity=validateAppHubRequest(message,sender,'YOOFAM_TRANSMIT_PACKAGE');
@@ -27,7 +28,9 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     const key=`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
     if(await store('get',key))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
     if(await store('get',resultKey(identity)))throw Error('이 견적서는 이미 접수 결과가 있습니다. 상품별 상태를 조회해주세요. 다시 첨부하지 않습니다.');
-    const tabs=(await api.tabs.query({windowId})).filter(tab=>isHubRegistrationTab(tab,windowId));
+    const receiptCheck=()=>assertAppSupplierHubNotSubmitted(identity,prepared,{appTabId:sender.tab.id,windowId},api,store);
+    await receiptCheck();
+    const tabs=(await api.tabs.query({windowId,url:'https://supplier.coupang.com/qvt/registration*'})).filter(tab=>isHubRegistrationTab(tab,windowId));
     const unused=[],owned=[];
     for(const tab of tabs){
       const attempt=await store('get',`attempt:${tab.id}`);
@@ -59,6 +62,7 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     if(preflight?.result?.state!=='ready'||preflight.result.registered!==false)throw Error('Supplier Hub 첨부 화면을 확인하지 못했습니다.');
     await current();
     await sourceCheck();
+    await receiptCheck();
     const record={...identity,company:prepared.company,includedOptions:prepared.includedOptions,tabId,windowId,startedAt:Date.now(),state:'started',registered:false};
     // Atomic persisted claim survives a closed app tab or a restarted worker.
     if(!await store('claim',key,record))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');

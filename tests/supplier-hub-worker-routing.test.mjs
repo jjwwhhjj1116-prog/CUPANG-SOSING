@@ -7,13 +7,13 @@ import {resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
 const code=fs.readFileSync(new URL('../extensions/supplier-hub/handoff-worker.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
 const identity={productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const sender={frameId:0,url:'http://localhost:3000/',tab:{id:7,windowId:17}};
-function fixture({claimed=false,storeFails=false,transmitError=false,records=new Map()}={}){
+function fixture({claimed=false,storeFails=false,transmitError=false,transmitErrorCode,records=new Map()}={}){
  let handler;const calls=[];
  vm.runInNewContext(code,{validateAppHubRequest,resultKey,URL,chrome:{runtime:{onMessage:{addListener(callback){handler=callback;}}}},
   refreshSupplierHubRegistration:async(message,who)=>{calls.push(['registration',message,who]);return {quotationId:'quote-123'};},
   capture1688Product:async(message,who)=>{calls.push(['capture',message,who]);return {ok:true};},
   cancel1688Capture:(message,who)=>{calls.push(['cancel-capture',message,who]);return {ok:true,cancelled:true};},
-  transmitSupplierHubPackage:async()=>{if(transmitError)throw Error('회사코드 불일치');return {state:'validation-requested',registered:false};},
+  transmitSupplierHubPackage:async()=>{if(transmitError){const error=Error('회사코드 불일치');error.code=transmitErrorCode;throw error;}return {state:'validation-requested',registered:false};},
   transferRecord:async(action,key)=>{calls.push(['store',action,key]);if(storeFails)throw Error('record read failure');return claimed?{state:'started'}:records.get(key);}
  });
  return {calls,run(type,who=sender){return new Promise(resolve=>assert.equal(handler({...identity,type},who,resolve),true));}};
@@ -40,6 +40,11 @@ test('a server-restored receipt cannot be advertised as an upload that never sta
  const h=fixture({transmitError:true,records}),result=await h.run('YOOFAM_TRANSMIT_PACKAGE');
  assert.equal(result.ok,false);assert.equal(result.result,undefined);assert.equal(records.size,1);
  assert.equal(h.calls.at(-1)[2],key);
+});
+test('an unavailable server receipt check cannot become permission to retry an upload',async()=>{
+ for(const transmitErrorCode of ['SUPPLIER_HUB_RECEIPT_UNCONFIRMED','SUPPLIER_HUB_ALREADY_SUBMITTED']){
+  const h=fixture({transmitError:true,transmitErrorCode}),result=await h.run('YOOFAM_TRANSMIT_PACKAGE');assert.equal(result.ok,false);assert.equal(result.result,undefined);
+ }
 });
 
 test('cache recovery reads only the exact origin/product/category/fingerprint records across worker restarts',async()=>{

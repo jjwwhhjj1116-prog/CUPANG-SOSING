@@ -50,9 +50,18 @@ test('atomic claims cannot target malformed result records or malformed tab keys
 test('concurrent accepted receipt restoration never overwrites the first saved identity',async()=>{
  const h=fixture(),identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
  const key=`result:${identity.origin}:p:80719:${identity.fingerprint}`;
- const values=Array.from({length:8},(_,index)=>({...identity,company:{code:'A01464742',name:'와이홉'},includedOptions:6,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:`quote-${index}`,state:'validation-complete',registered:false}));
+ const values=Array.from({length:8},(_,index)=>({...identity,company:{code:'A01464742',name:'와이홉'},includedOptions:6,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:`quote-${index}`,state:'validation-complete',observedAt:Date.now(),registered:false}));
  const results=await Promise.all(values.map(value=>h.record('claim',key,value)));assert.equal(results.filter(Boolean).length,1);
  assert.deepEqual(await h.record('get',key),values[results.indexOf(true)]);
- for(const patch of [{company:{code:'A01464742',name:'유앤채'}},{includedOptions:0},{state:'validation-pending'},{fingerprint:'b'.repeat(64)},{origin:'https://other.test'},{quotationId:' quote'},{registered:true}])await assert.rejects(h.record('claim',key,{...values[0],...patch}));
+ for(const patch of [{company:{code:'A01464742',name:'유앤채'}},{includedOptions:0},{state:'not-found'},{fingerprint:'b'.repeat(64)},{origin:'https://other.test'},{quotationId:' quote'},{registered:true}])await assert.rejects(h.record('claim',key,{...values[0],...patch}));
  assert.equal(h.rows.size,1);
+});
+test('pending and rejected server receipts can be restored atomically without creating upload attempts',async()=>{
+ for(const state of ['validation-pending','validation-rejected']){
+  const h=fixture(),value={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64),company:{code:'A01464742',name:'와이홉'},includedOptions:6,
+   filename:`YOOFAM-${'a'.repeat(64)}.xlsx`,state,observedAt:Date.now(),registered:false},key=`result:${value.origin}:p:80719:${value.fingerprint}`;
+  assert.equal(await h.record('claim',key,value),true);assert.equal(await h.record('claim',key,{...value,state:'validation-complete',quotationId:'quote'}),false);
+  assert.deepEqual(await h.record('get',key),value);assert.equal(h.rows.size,1);
+  for(const patch of [{observedAt:0},{state:'not-found'},{includedOptions:201},{detail:'x'.repeat(20001)}])await assert.rejects(h.record('claim',key,{...value,...patch}));
+ }
 });

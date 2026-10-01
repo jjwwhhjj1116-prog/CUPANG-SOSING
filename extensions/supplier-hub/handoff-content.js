@@ -6,7 +6,7 @@ window.addEventListener('message',async event=>{
   let result;
   try{
     const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION'};
-    result=type==='PING'?{ok:true,version:'0.2.33',publicMobileCapture:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
+    result=type==='PING'?{ok:true,version:'0.2.34',publicMobileCapture:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
   }catch{result={ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
   window.postMessage({channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId,result},location.origin);
 });
@@ -43,7 +43,7 @@ async function verifyCurrentQuotationSource(expected){
       ...(expected.includedOptions!==undefined?{includedOptions:body.report.rowCount}:{}),checkedAt:Date.now()};
   }finally{clearTimeout(timer);}
 }
-async function readCurrentQuotationReceipt(expected){
+async function readCurrentQuotationReceipt(expected,acceptedOnly=true){
   const allowed=['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'];
   if(!allowed.includes(location.origin)||expected?.origin!==location.origin||!/^\w[\w-]{0,99}$/.test(expected.productId||'')
     ||!/^\d{1,20}$/.test(expected.categoryId||'')||!/^[a-f0-9]{64}$/.test(expected.fingerprint||''))
@@ -65,8 +65,10 @@ async function readCurrentQuotationReceipt(expected){
   const result=receipt?.result;
   if(receipt?.schemaVersion!==1||receipt.evidence!=='chrome-observation'||!/^\w[\w-]{0,99}$/.test(receipt.profileId||'')
     ||receipt.categoryId!==expected.categoryId||receipt.fingerprint!==expected.fingerprint
-    ||result?.filename!==`YOOFAM-${expected.fingerprint}.xlsx`||result.state!=='validation-complete'||result.registered!==false
-    ||typeof result.quotationId!=='string'||!result.quotationId.trim()||result.quotationId!==result.quotationId.trim()||result.quotationId.length>200
+    ||result?.filename!==`YOOFAM-${expected.fingerprint}.xlsx`||!['validation-complete','validation-pending','validation-rejected'].includes(result.state)||result.registered!==false
+    ||(acceptedOnly&&result.state!=='validation-complete')
+    ||(result.state==='validation-complete'&&(typeof result.quotationId!=='string'||!result.quotationId.trim()||result.quotationId!==result.quotationId.trim()||result.quotationId.length>200))
+    ||['submittedAt','status','detail','quotationId'].some(field=>result[field]!==undefined&&(typeof result[field]!=='string'||result[field].length>20000))
     ||!Number.isSafeInteger(result.includedOptions)||result.includedOptions<1||result.includedOptions>200
     ||!Number.isSafeInteger(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000
     ||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},result.company?.code)
@@ -76,11 +78,13 @@ async function readCurrentQuotationReceipt(expected){
   await verifyCurrentQuotationSource({...identity,profileId:receipt.profileId,filename:result.filename,company,includedOptions:result.includedOptions});
   return {ok:true,...identity,checkedAt:Date.now(),receipt:{schemaVersion:1,evidence:'chrome-observation',profileId:receipt.profileId,
     categoryId:receipt.categoryId,fingerprint:receipt.fingerprint,result:{company,includedOptions:result.includedOptions,filename:result.filename,
-      quotationId:result.quotationId,state:'validation-complete',registered:false,observedAt:result.observedAt}}};
+      state:result.state,registered:false,observedAt:result.observedAt,
+      ...Object.fromEntries(['submittedAt','status','detail','quotationId'].filter(field=>result[field]!==undefined).map(field=>[field,result[field]]))}}};
 }
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(!['YOOFAM_VERIFY_QUOTATION_SOURCE','YOOFAM_READ_QUOTATION_RECEIPT'].includes(message?.type)||sender?.id!==chrome.runtime.id)return;
-  const read=message.type==='YOOFAM_READ_QUOTATION_RECEIPT'?readCurrentQuotationReceipt:verifyCurrentQuotationSource;
+  if(!['YOOFAM_VERIFY_QUOTATION_SOURCE','YOOFAM_READ_QUOTATION_RECEIPT','YOOFAM_READ_TRANSMISSION_RECEIPT'].includes(message?.type)||sender?.id!==chrome.runtime.id)return;
+  const read=message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'?expected=>readCurrentQuotationReceipt(expected,false)
+    :message.type==='YOOFAM_READ_QUOTATION_RECEIPT'?readCurrentQuotationReceipt:verifyCurrentQuotationSource;
   void read(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'견적서 저장본 확인 실패'}));
   return true;
 });

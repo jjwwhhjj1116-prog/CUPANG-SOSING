@@ -22,7 +22,8 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       catch(error){
         const identity=validateAppHubRequest(message,sender,'YOOFAM_TRANSMIT_PACKAGE');
         const attempt=await transferRecord('get',`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`);
-        if(attempt||await transferRecord('get',resultKey(identity)))throw error;
+        if(attempt||await transferRecord('get',resultKey(identity))
+          ||['SUPPLIER_HUB_RECEIPT_UNCONFIRMED','SUPPLIER_HUB_ALREADY_SUBMITTED'].includes(error.code))throw error;
         // A restored receipt also proves a prior upload; never treat it as a fresh retry.
         result={state:'not-started',registered:false,error:error.message};
       }

@@ -22,11 +22,21 @@ export function isAcceptedResult(identity,result){
     &&Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},result.company?.code)
     &&({A01526306:'유앤채',A01464742:'와이홉'})[result.company.code]===result.company.name);
 }
+export function isStoredReceiptResult(identity,result){
+  return Boolean(result&&['origin','productId','categoryId','fingerprint'].every(field=>result[field]===identity[field])
+    &&['validation-complete','validation-pending','validation-rejected'].includes(result.state)&&result.registered===false
+    &&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`&&Number.isSafeInteger(result.includedOptions)&&result.includedOptions>=1&&result.includedOptions<=200
+    &&Number.isSafeInteger(result.observedAt)&&result.observedAt>0&&result.observedAt<=Date.now()+60000
+    &&Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},result.company?.code)
+    &&({A01526306:'유앤채',A01464742:'와이홉'})[result.company.code]===result.company.name
+    &&['submittedAt','status','detail','quotationId'].every(field=>result[field]===undefined||(typeof result[field]==='string'&&result[field].length<=20000))
+    &&(result.state!=='validation-complete'||isAcceptedResult(identity,result)));
+}
 export async function transferRecord(action,key,value){
   if(!['get','put','claim'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
   if(action==='claim'&&!key.startsWith('transmission:')&&!/^attempt:\d+$/.test(key)
     &&!(HANDOFF_ORIGINS.includes(value?.origin)&&/^\w[\w-]{0,99}$/.test(value.productId||'')&&/^\d{1,20}$/.test(value.categoryId||'')
-      &&/^[a-f0-9]{64}$/.test(value.fingerprint||'')&&key===resultKey(value)&&isAcceptedResult(value,value)))throw Error('전송 시도 기록을 확인해주세요.');
+      &&/^[a-f0-9]{64}$/.test(value.fingerprint||'')&&key===resultKey(value)&&isStoredReceiptResult(value,value)))throw Error('전송 시도 기록을 확인해주세요.');
   const db=await database();try{return await new Promise((resolve,reject)=>{
     const transaction=db.transaction('pending',action==='get'?'readonly':'readwrite'),store=transaction.objectStore('pending');let result;
     const request=action==='put'?store.put(value,key):store.get(key);

@@ -18,6 +18,7 @@ import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
 import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-registration.mjs';
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
 import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
+import {assertAppSupplierHubNotSubmitted} from '../extensions/supplier-hub/receipt-recovery.mjs';
 
 const identity={productId:'product',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/'};
@@ -37,15 +38,24 @@ async function packageBytes(changes={},patchFiles=()=>{}){
 async function fixture(options={}){
  const calls=[],records=new Map();
  const tab={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',...options.tab};
- let checks=0,sourceChecks=0;
+ let checks=0,sourceChecks=0,preflightChecked=false;
  const tabs=options.tabs??[tab];let fresh;
  if(options.previous)records.set('attempt:123',{origin:new URL(sender.url).origin,...identity,company:{code:'A01464742',name:'와이홉'},includedOptions:2});
- const api={tabs:{query:async query=>{calls.push(['query',query]);return tabs;},get:async id=>id===7?{id:7,windowId:17,url:sender.url}:options.getTab??(id===124?fresh:tab),sendMessage:async(id,message,frame)=>{calls.push(['source',id,frame]);sourceChecks++;return {ok:true,...message.expected,checkedAt:Date.now(),...(options.sourceChangedAt===sourceChecks?{fingerprint:'b'.repeat(64)}:{})};},create:async input=>{calls.push(['create',input]);fresh={id:124,status:'complete',...input,...options.created};tabs.push(fresh);return fresh;}},scripting:{executeScript:async request=>{
+ const api={tabs:{query:async query=>{calls.push(['query',query]);return tabs;},get:async id=>id===7?{id:7,windowId:17,url:sender.url}:options.getTab??(id===124?fresh:tab),sendMessage:async(id,message,frame)=>{
+   if(message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'){
+    calls.push(['receipt',id,frame]);if(options.receiptError)throw Error('receipt response lost');
+    const present=options.serverReceipt&&(!options.receiptAfterPreflight||preflightChecked);
+    const receipt=present?{schemaVersion:1,evidence:'chrome-observation',profileId:'profile',categoryId:identity.categoryId,fingerprint:identity.fingerprint,
+     result:{filename:`YOOFAM-${identity.fingerprint}.xlsx`,company:options.plan?.company??{code:'A01464742',name:'와이홉'},includedOptions:2,observedAt:Date.now(),registered:false,state:'validation-complete',quotationId:'quote-existing',...options.serverReceipt}}:null;
+    return {ok:true,...message.expected,receipt,checkedAt:Date.now()};
+   }
+   calls.push(['source',id,frame]);sourceChecks++;return {ok:true,...message.expected,checkedAt:Date.now(),...(options.sourceChangedAt===sourceChecks?{fingerprint:'b'.repeat(64)}:{})};
+  },create:async input=>{calls.push(['create',input]);fresh={id:124,status:'complete',...input,...options.created};tabs.push(fresh);return fresh;}},scripting:{executeScript:async request=>{
    calls.push([request.func.name,request.args,request.target.tabId]);
    if(request.func===supplierHubUploadReady||request.func===supplierHubStatusReady)return [{result:true}];
-   if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[checks++]??'A01464742'}}];
+   if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[checks++]??options.plan?.company?.code??'A01464742'}}];
    if(request.func===attachToSupplierHub){
-     if(request.args[1]===true){if(options.preflightError)throw Error('changed upload sections');return [{result:{state:options.occupied&&request.target.tabId===123?'occupied':'ready',registered:false}}];}
+     if(request.args[1]===true){preflightChecked=true;if(options.preflightError)throw Error('changed upload sections');return [{result:{state:options.occupied&&request.target.tabId===123?'occupied':'ready',registered:false}}];}
      await options.onAttach?.();if(options.attachError)throw Error('lost response');return [{result:{state:options.outcome??'dispatched',registered:false}}];
    }
    if(request.func===waitForSupplierHubAttachments)return [{result:options.ready??true}];
@@ -72,7 +82,7 @@ function popup(h){
  let consumed=false;
  const saved={origin:new URL(sender.url).origin,...identity,createdAt:Date.now(),base64:h.message.base64,appTabId:7,windowId:17};
  const source=fs.readFileSync(new URL('../extensions/supplier-hub/dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
- const context=vm.createContext({Date,URL,Uint8Array,atob,prepareAttachments,attachToSupplierHub,verifySupplierHubCompany,verifyAppQuotationSource:(...args)=>verifyAppQuotationSource(...args,h.api),claimSupplierHubTransmissionWindow,resultKey,
+ const context=vm.createContext({Date,URL,Uint8Array,atob,prepareAttachments,attachToSupplierHub,verifySupplierHubCompany,verifyAppQuotationSource:(...args)=>verifyAppQuotationSource(...args,h.api),assertAppSupplierHubNotSubmitted:(...args)=>assertAppSupplierHubNotSubmitted(...args,h.api,h.store),claimSupplierHubTransmissionWindow,resultKey,
   pendingPackage:async action=>{if(action==='get')return consumed?null:saved;if(action==='delete'){if(consumed)return false;consumed=true;return true;}throw Error('Unexpected package operation');},
   transferRecord:h.store,chrome:{...h.api,runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`}}});
  vm.runInContext(source,context);
@@ -96,7 +106,7 @@ for(const filename of ['photo.png','label.png'])for(const path of ['app','popup'
 
 test('app transmission uses its existing Chrome window and binds attachment/validation to the reviewed package',async()=>{
  const h=await fixture();const result=await h.run();assert.equal(result.state,'validation-requested');assert.equal(result.registered,false);
- assert.deepEqual(h.calls.find(([name])=>name==='query'),['query',{windowId:17}]);
+ assert.deepEqual(h.calls.find(([name])=>name==='query'),['query',{windowId:17,url:'https://supplier.coupang.com/qvt/registration*'}]);
  const attempt=h.records.get('attempt:123');assert.equal(attempt.productId,identity.productId);assert.equal(attempt.company.code,'A01464742');assert.equal(attempt.includedOptions,2);
  const scripts=h.calls.filter(([name])=>['attachToSupplierHub','waitForSupplierHubAttachments','requestSupplierHubValidation'].includes(name));
  assert.deepEqual(scripts.map(([name])=>name),['attachToSupplierHub','attachToSupplierHub','waitForSupplierHubAttachments','requestSupplierHubValidation']);
@@ -109,6 +119,23 @@ test('restored accepted receipts stop both direct and popup upload paths without
   await assert.rejects(delivery==='app'?h.run():popup(h)(),/이미 접수/);assert.equal(h.records.get(key),receipt);
   assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
   assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'||name==='create'),false);
+ }
+});
+for(const delivery of ['app','popup'])test(`server-only receipts block ${delivery} before touching Hub files or consuming the package`,async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])for(const state of ['validation-complete','validation-pending','validation-rejected']){
+  const h=await fixture({plan:{company},serverReceipt:{state,...(state!=='validation-complete'?{quotationId:undefined}:{})}});
+  await assert.rejects(delivery==='app'?h.run():popup(h)(),/접수|전송 기록/);
+  const saved=h.records.get(resultKey({origin:new URL(sender.url).origin,...identity}));assert.equal(saved.state,state);assert.deepEqual(saved.company,company);
+  assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
+  assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'||name==='create'),false);
+ }
+});
+test('a receipt saved during preflight blocks the final claim and attachment',async()=>{
+ for(const delivery of ['app','popup']){
+  const h=await fixture({serverReceipt:{},receiptAfterPreflight:true});
+  await assert.rejects(delivery==='app'?h.run():popup(h)(),/접수|전송 기록/);
+  assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,0);
+  assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
  }
 });
 
