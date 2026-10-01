@@ -10,6 +10,11 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 import {submissionPackageUI} from './helpers/submission-package-ui.mjs';
+import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-registration.mjs';
+import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
+import {supplierHubStatusReady} from '../extensions/supplier-hub/hub-tab.mjs';
+import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
+import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
 
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 const companies=[{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}];
@@ -44,6 +49,40 @@ function renderBoard(products){
  Object.assign(exports,load('app/components/registration-board.tsx'));
  return renderToStaticMarkup(createElement(exports.RegistrationBoard,{products,selected:new Set(),onSelected(){},onOpen(){},loading:false,error:'',onArchive(){}}));
 }
+for(const company of companies)test(`actual receipt/source APIs recover a closed-tab six-SKU lookup with the original draft untouched (${company.companyCode})`,async()=>{
+ const h=await setup(company);try{
+  await json(await h.write(h.result));const before=h.sqlite.prepare('SELECT * FROM products').get();
+  const origin='http://localhost:3000',identity={origin,productId:h.product.id,categoryId:'80719',fingerprint:h.preview.fingerprint};
+  const calls=[],records=new Map(),tabs=[{id:999,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete'}];let listener;
+  const content={URL,Date,AbortController,setTimeout,clearTimeout,location:{origin},window:{addEventListener(){},postMessage(){}},
+   chrome:{runtime:{id:'extension',onMessage:{addListener(value){listener=value;}}}},fetch:async(path,init)=>{
+    calls.push(['api',path,init.method]);const response=await h.route(path,{method:init.method,...(init.body?{body:JSON.parse(init.body)}:{})});
+    Object.defineProperty(response,'url',{value:origin+path});return response;
+   }};
+  vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),content);
+  const api={tabs:{query:async query=>{assert.deepEqual(query,{windowId:17,url:['https://supplier.coupang.com/qvt/registration*','https://supplier.coupang.com/qvt/wims*']});return tabs;},
+   get:async id=>id===7?{id:7,windowId:17,url:origin+'/'}:tabs.find(tab=>tab.id===id),
+   sendMessage:async(id,message,frame)=>{assert.equal(id,7);assert.deepEqual(frame,{frameId:0});return new Promise(resolve=>assert.equal(listener(message,{id:'extension'},resolve),true));},
+   create:async value=>{calls.push(['create',value]);const tab={id:124,status:'complete',...value};tabs.push(tab);return tab;}},
+   scripting:{executeScript:async request=>{
+    calls.push(['script',request.func.name,request.target.tabId]);
+    if(request.func===verifySupplierHubCompany)return [{result:{code:company.companyCode}}];
+    if(request.func===supplierHubStatusReady)return [{result:true}];
+    if(request.func===searchSupplierHubRegistration){assert.equal(request.target.tabId,124);assert.deepEqual(request.args,[h.result.quotationId,true]);return [{result:{state:'search-complete',quotationId:h.result.quotationId,registered:false}}];}
+    if(request.func===readSupplierHubRegistration)return [{result:{quotationId:h.result.quotationId,scope:'visible-page',registered:false,rows:h.registration.rows,page:{current:1,hasNext:false,signature:JSON.stringify(h.registration.rows)}}}];
+    throw Error('unexpected write to Supplier Hub');
+   }}};
+  const store=async(action,key,value)=>{if(action==='get')return records.get(key);if(action==='claim'){if(records.has(key))return false;records.set(key,value);return true;}records.set(key,value);};
+  const record=await refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},{frameId:0,url:origin+'/',tab:{id:7,windowId:17}},api,store);
+  assert.equal(record.registration.rows.length,6);assert.equal(record.quotationId,h.result.quotationId);assert.equal(record.company.code,company.companyCode);assert.equal(record.receiptRecovered,true);
+  assert.equal(records.has('attempt:999'),false);assert.equal([...records.keys()].some(key=>key.startsWith('transmission:')),false);
+  const current=await json(await h.route(h.base+'/quotation',{method:'POST',body:{action:'source',profileId:'cat'}}));assert.equal(current.report.rowCount,6);assert.equal(current.fingerprint,h.preview.fingerprint);
+  await json(await h.write(record));const saved=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+h.preview.fingerprint));
+  assert.equal(saved.receipt.result.registration.rows.length,6);assert.equal(saved.receipt.result.registered,false);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM products').get(),before);
+  assert.equal(calls.filter(([name])=>name==='create').length,1);assert.equal(calls.some(([name,path])=>name==='api'&&/export|content|collection/.test(path)),false);
+ }finally{h.close();}
+});
 for(const company of companies)test(`reviewed URL draft → transmission → persisted receipt → refresh preserves all six SKU results (${company.companyCode})`,async()=>{
  const h=await setup(company);
  try{

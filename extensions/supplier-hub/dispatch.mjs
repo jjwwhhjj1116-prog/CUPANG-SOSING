@@ -1,6 +1,6 @@
 import {prepareAttachments} from './package.mjs';
 import {attachToSupplierHub} from './attach.mjs';
-import {pendingPackage,transferRecord} from './handoff-store.mjs';
+import {pendingPackage,transferRecord,resultKey} from './handoff-store.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
 import {claimSupplierHubTransmissionWindow} from './transmission-window.mjs';
@@ -32,6 +32,7 @@ export async function dispatchPendingPackage(message,sender){
     const identity={origin,productId,categoryId,fingerprint,company:prepared.company,includedOptions:prepared.includedOptions};
     const key=`transmission:${origin}:${productId}:${categoryId}:${fingerprint}`;
     if(await transferRecord('get',key))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
+    if(await transferRecord('get',resultKey(identity)))throw Error('이 견적서는 이미 접수 결과가 있습니다. 상품별 상태를 조회해주세요. 다시 첨부하지 않습니다.');
     const [preflight]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:attachToSupplierHub,args:[prepared,true]});
     if(preflight?.result?.state!=='ready'||preflight.result.registered!==false)
       throw Error('기존 작업 보호를 위해 전달하지 않았습니다. 첨부가 없는 Supplier Hub 등록 화면을 확인해주세요.');

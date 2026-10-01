@@ -22,8 +22,8 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       catch(error){
         const identity=validateAppHubRequest(message,sender,'YOOFAM_TRANSMIT_PACKAGE');
         const attempt=await transferRecord('get',`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`);
-        if(attempt)throw error;
-        // Uploads start only after the persisted claim. Only a proven absent claim permits retry.
+        if(attempt||await transferRecord('get',resultKey(identity)))throw error;
+        // A restored receipt also proves a prior upload; never treat it as a fresh retry.
         result={state:'not-started',registered:false,error:error.message};
       }
       respond({ok:true,fingerprint:message.fingerprint,result,registered:false});return;

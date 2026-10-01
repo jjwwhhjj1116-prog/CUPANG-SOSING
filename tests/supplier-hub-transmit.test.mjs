@@ -72,7 +72,7 @@ function popup(h){
  let consumed=false;
  const saved={origin:new URL(sender.url).origin,...identity,createdAt:Date.now(),base64:h.message.base64,appTabId:7,windowId:17};
  const source=fs.readFileSync(new URL('../extensions/supplier-hub/dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
- const context=vm.createContext({Date,URL,Uint8Array,atob,prepareAttachments,attachToSupplierHub,verifySupplierHubCompany,verifyAppQuotationSource:(...args)=>verifyAppQuotationSource(...args,h.api),claimSupplierHubTransmissionWindow,
+ const context=vm.createContext({Date,URL,Uint8Array,atob,prepareAttachments,attachToSupplierHub,verifySupplierHubCompany,verifyAppQuotationSource:(...args)=>verifyAppQuotationSource(...args,h.api),claimSupplierHubTransmissionWindow,resultKey,
   pendingPackage:async action=>{if(action==='get')return consumed?null:saved;if(action==='delete'){if(consumed)return false;consumed=true;return true;}throw Error('Unexpected package operation');},
   transferRecord:h.store,chrome:{...h.api,runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`}}});
  vm.runInContext(source,context);
@@ -102,6 +102,14 @@ test('app transmission uses its existing Chrome window and binds attachment/vali
  assert.deepEqual(scripts.map(([name])=>name),['attachToSupplierHub','attachToSupplierHub','waitForSupplierHubAttachments','requestSupplierHubValidation']);
  assert.deepEqual(scripts[2][1][0],[`YOOFAM-${identity.fingerprint}.xlsx`,'photo.png','label.png']);
  await assert.rejects(h.run(),/이미 전송/);assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
+});
+test('restored accepted receipts stop both direct and popup upload paths without a fabricated upload claim',async()=>{
+ for(const delivery of ['app','popup']){
+  const h=await fixture(),key=resultKey({origin:new URL(sender.url).origin,...identity}),receipt={state:'validation-complete',quotationId:'quote-123',receiptRecovered:true};h.records.set(key,receipt);
+  await assert.rejects(delivery==='app'?h.run():popup(h)(),/이미 접수/);assert.equal(h.records.get(key),receipt);
+  assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
+  assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'||name==='create'),false);
+ }
 });
 
 test('changed source before claim blocks upload; edits during upload block validation without repeating files',async()=>{

@@ -42,8 +42,17 @@ test('a newer existing tab assignment and persisted upload claims are preserved 
  assert.equal(await h.record('claim','attempt:124',{productId:'other'}),true);assert.deepEqual(await h.record('get','attempt:123'),current);
 });
 
-test('atomic claims cannot target result records or malformed tab keys',async()=>{
+test('atomic claims cannot target malformed result records or malformed tab keys',async()=>{
  const h=fixture();
  for(const key of ['result:http://localhost:3000:p:80719:a','attempt:abc','attempt:-1','unrelated'])await assert.rejects(h.record('claim',key,{}));
  assert.equal(h.rows.size,0);assert.equal(h.modes.length,0);
+});
+test('concurrent accepted receipt restoration never overwrites the first saved identity',async()=>{
+ const h=fixture(),identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+ const key=`result:${identity.origin}:p:80719:${identity.fingerprint}`;
+ const values=Array.from({length:8},(_,index)=>({...identity,company:{code:'A01464742',name:'와이홉'},includedOptions:6,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:`quote-${index}`,state:'validation-complete',registered:false}));
+ const results=await Promise.all(values.map(value=>h.record('claim',key,value)));assert.equal(results.filter(Boolean).length,1);
+ assert.deepEqual(await h.record('get',key),values[results.indexOf(true)]);
+ for(const patch of [{company:{code:'A01464742',name:'유앤채'}},{includedOptions:0},{state:'validation-pending'},{fingerprint:'b'.repeat(64)},{origin:'https://other.test'},{quotationId:' quote'},{registered:true}])await assert.rejects(h.record('claim',key,{...values[0],...patch}));
+ assert.equal(h.rows.size,1);
 });

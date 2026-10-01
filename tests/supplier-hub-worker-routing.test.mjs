@@ -35,6 +35,12 @@ test('worker only permits transmission retry when it proves there is no persiste
  }
  const untrusted=fixture({transmitError:true});const result=await untrusted.run('YOOFAM_TRANSMIT_PACKAGE',{...sender,frameId:1});assert.equal(result.ok,false);assert.equal(untrusted.calls.length,0);
 });
+test('a server-restored receipt cannot be advertised as an upload that never started',async()=>{
+ const key=resultKey({origin:new URL(sender.url).origin,...identity}),records=new Map([[key,{state:'validation-complete',quotationId:'quote-123',receiptRecovered:true}]]);
+ const h=fixture({transmitError:true,records}),result=await h.run('YOOFAM_TRANSMIT_PACKAGE');
+ assert.equal(result.ok,false);assert.equal(result.result,undefined);assert.equal(records.size,1);
+ assert.equal(h.calls.at(-1)[2],key);
+});
 
 test('cache recovery reads only the exact origin/product/category/fingerprint records across worker restarts',async()=>{
  const key=`${new URL(sender.url).origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;

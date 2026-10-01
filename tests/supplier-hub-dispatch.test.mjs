@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {claimSupplierHubTransmissionWindow} from '../extensions/supplier-hub/transmission-window.mjs';
+import {resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
 function setup({outcome='dispatched',savedChanges={},senderChanges={},consume=true,tabChanges={},onExecute,sourceChangedAt,company={code:'A01464742',name:'와이홉'},occupied=false,bindingError=false}={}){
   const fingerprint='a'.repeat(64),calls=[],puts=[],records=new Map();
   const saved={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint,createdAt:Date.now(),base64:'UEs=',appTabId:7,windowId:17,...savedChanges};let sourceChecks=0;
   const sender={id:'extension',url:'chrome-extension://extension/popup.html',...senderChanges};
-  const context=vm.createContext({Date,URL,Uint8Array,atob,claimSupplierHubTransmissionWindow,
+  const context=vm.createContext({Date,URL,Uint8Array,atob,claimSupplierHubTransmissionWindow,resultKey,
     verifySupplierHubCompany(){},prepareAttachments:async()=>({company,productId:'p',categoryId:'80719',includedOptions:3,quotation:[{name:`YOOFAM-${fingerprint}.xlsx`}]}),attachToSupplierHub(){},
     verifyAppQuotationSource:async()=>{calls.push('verify-source');if(++sourceChecks===sourceChangedAt)throw Error('최신 저장본 변경');},
     pendingPackage:async action=>{calls.push(action);return action==='get'?saved:consume;},
@@ -92,4 +93,9 @@ test('popup preflight protects work in progress and failed binding never starts 
  const failed=setup({bindingError:true});await assert.rejects(failed.run(),/binding storage/);
  assert.equal(failed.calls.includes('execute'),false);
  await assert.rejects(failed.run(),/이미 전송/);
+});
+test('a recovered accepted receipt blocks popup attachment before preflight or package consumption',async()=>{
+ const h=setup(),key=resultKey(h.saved),receipt={state:'validation-complete',quotationId:'quote-123',receiptRecovered:true};h.records.set(key,receipt);
+ await assert.rejects(h.run(),/이미 접수/);assert.equal(h.records.get(key),receipt);assert.equal(h.puts.length,0);
+ for(const action of ['preflight','delete','execute'])assert.equal(h.calls.includes(action),false);
 });

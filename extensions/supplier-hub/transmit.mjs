@@ -1,4 +1,4 @@
-import {validateHandoff,transferRecord} from './handoff-store.mjs';
+import {validateHandoff,transferRecord,resultKey} from './handoff-store.mjs';
 import {validateAppHubRequest,isHubRegistrationTab} from './app-request.mjs';
 import {prepareAttachments} from './package.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
@@ -26,6 +26,7 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     await sourceCheck();
     const key=`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
     if(await store('get',key))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
+    if(await store('get',resultKey(identity)))throw Error('이 견적서는 이미 접수 결과가 있습니다. 상품별 상태를 조회해주세요. 다시 첨부하지 않습니다.');
     const tabs=(await api.tabs.query({windowId})).filter(tab=>isHubRegistrationTab(tab,windowId));
     const unused=[],owned=[];
     for(const tab of tabs){

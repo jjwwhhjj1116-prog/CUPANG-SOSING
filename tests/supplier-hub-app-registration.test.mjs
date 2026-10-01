@@ -11,30 +11,38 @@ const company={code:'A01464742',name:'와이홉'};
 const message={...identity,type:'YOOFAM_REFRESH_REGISTRATION'};
 const sender={frameId:0,url:'http://localhost:3000/',tab:{id:7,windowId:17}};
 function fixture(options={}){
- const calls=[],records=new Map();let companyChecks=0,resultReads=0;
+ const calls=[],records=new Map();let companyChecks=0,resultReads=0,sourceChecks=0,searched=false;
+ const currentCompany=options.company??company;
  const source={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete',...options.source};
- const tabs=[source,...(options.tabs||[])];
- records.set('attempt:123',{...identity,company,includedOptions:3,...options.attempt});
+ const tabs=[...(options.closedSource?[]:[source]),...(options.tabs||[])];
+ if(!options.noAttempt)records.set('attempt:123',{...identity,company:currentCompany,includedOptions:3,...options.attempt});
  const key=`result:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
- records.set(key,{...identity,company,includedOptions:3,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-123',state:'validation-complete',observedAt:Date.now(),registered:false,...options.saved});
+ const saved={...identity,company:currentCompany,includedOptions:3,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-123',state:'validation-complete',observedAt:Date.now(),registered:false,...options.saved};
+ if(!options.missingLocal)records.set(key,saved);
+ const receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'profile',categoryId:identity.categoryId,fingerprint:identity.fingerprint,result:saved,...options.receipt};
  const row={title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId:'sku',status:'검수중',stage:'확인중'};
  const api={tabs:{query:async query=>{calls.push(['query',query]);return tabs;},get:async id=>{
+  if(id===7)return {id:7,windowId:17,url:identity.origin+'/',...options.appTab};
   const tab=tabs.find(tab=>tab.id===id);return options.moved&&id===124?{...tab,windowId:18}:tab;
+ },sendMessage:async(id,message,frame)=>{
+  calls.push(['app-message',id,message,frame]);
+  if(message.type==='YOOFAM_READ_QUOTATION_RECEIPT')return {ok:true,...message.expected,receipt:options.recover?receipt:null,checkedAt:Date.now(),...options.reply};
+  sourceChecks++;return {ok:true,...message.expected,checkedAt:Date.now(),...((options.sourceChangedAt===sourceChecks||(searched&&options.sourceChangeAfterSearch))?{fingerprint:'b'.repeat(64)}:{})};
  },create:async value=>{calls.push(['create',value]);const tab={id:124,status:'complete',...value,...options.created};tabs.push(tab);return tab;}},scripting:{executeScript:async request=>{
   calls.push([request.func.name,request.target.tabId,request.args]);
-  if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[companyChecks++]??company.code}}];
+  if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[companyChecks++]??currentCompany.code}}];
   if(request.func===supplierHubStatusReady)return [{result:true}];
-  if(request.func===searchSupplierHubRegistration){await options.onSearch?.();return [{result:{state:'search-complete',quotationId:'quote-123',registered:false,...options.search}}];}
+  if(request.func===searchSupplierHubRegistration){searched=true;await options.onSearch?.();return [{result:{state:'search-complete',quotationId:'quote-123',registered:false,...options.search}}];}
   if(request.func===readSupplierHubRegistration){resultReads++;if(options.changeSaved&&(!options.changeAfter||resultReads>=options.changeAfter))records.set(key,{...records.get(key),...options.changeSaved});return [{result:{quotationId:'quote-123',scope:'visible-page',registered:false,rows:[row],page:{current:null,hasNext:null,signature:JSON.stringify([row])},...options.result,...options.pages?.[resultReads-1]}}];}
   throw Error('unexpected script');
  }}};
- const store=async(action,key,value)=>{calls.push(['store',action,key]);if(action==='put')records.set(key,value);return records.get(key);};
+ const store=async(action,key,value)=>{calls.push(['store',action,key]);if(action==='claim'){if(options.concurrent)records.set(key,{...value,...options.concurrent});if(records.has(key))return false;records.set(key,value);return true;}if(action==='put')records.set(key,value);return records.get(key);};
  return {calls,records,key,tabs,run:(who=sender,patch={})=>refreshSupplierHubRegistration({...message,...patch},who,api,store)};
 }
 test('app searches the saved exact quotation ID in an inactive tab in its existing Chrome window and reuses it',async()=>{
  const h=fixture();const first=await h.run();
  assert.equal(first.registration.quotationId,'quote-123');assert.equal(first.registration.includedOptions,3);assert.equal(first.registration.rows[0].skuId,'sku');assert.equal(first.registered,false);
- assert.deepEqual(h.calls.find(([name])=>name==='query'),['query',{windowId:17}]);
+ assert.deepEqual(h.calls.find(([name])=>name==='query'),['query',{windowId:17,url:['https://supplier.coupang.com/qvt/registration*','https://supplier.coupang.com/qvt/wims*']}]);
  assert.deepEqual(h.calls.find(([name])=>name==='create'),['create',{windowId:17,url:'https://supplier.coupang.com/qvt/wims',active:false}]);
  assert.deepEqual(h.calls.find(([name])=>name==='searchSupplierHubRegistration'),['searchSupplierHubRegistration',124,['quote-123',true]]);
  assert.equal(h.tabs[0].url,'https://supplier.coupang.com/qvt/registration','original upload tab untouched');
@@ -78,4 +86,44 @@ test('app aggregates later pages only in its owned tab and discards results chan
  assert.deepEqual(reads[1][2],['quote-123',{company,advanceFrom:pages[0].page}]);
  const changed=fixture({pages,changeAfter:2,changeSaved:{quotationId:'other'}});await assert.rejects(changed.run(),/검증 결과가 변경/);
  assert.equal(changed.records.get(changed.key).registration,undefined);
+});
+
+test('both companies recover six fresh SKUs from the app receipt without an old upload tab or replaying files',async()=>{
+ for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}]){
+  const rows=Array.from({length:6},(_,index)=>({title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId:`sku-${index+1}`,status:'검수중',stage:'확인중'}));
+  const manual={id:999,windowId:17,url:'https://supplier.coupang.com/qvt/wims',manualSearch:'do-not-change'};
+  const h=fixture({company:currentCompany,recover:true,missingLocal:true,closedSource:true,noAttempt:true,tabs:[manual],saved:{includedOptions:6,registration:{rows:[{skuId:'old'}]}},result:{rows,page:{current:1,hasNext:false,signature:JSON.stringify(rows)}}});
+  const record=await h.run();assert.deepEqual(record.registration.rows.map(row=>row.skuId),rows.map(row=>row.skuId));
+  assert.equal(record.quotationId,'quote-123');assert.deepEqual(record.company,currentCompany);assert.equal(record.receiptRecovered,true);assert.equal(record.profileId,'profile');
+  assert.equal(h.records.has('attempt:123'),false);assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')),false);
+  assert.equal(h.calls.some(([name,id])=>name==='searchSupplierHubRegistration'&&id===999),false);assert.equal(manual.manualSearch,'do-not-change');
+  const request=h.calls.find(([name])=>name==='app-message');assert.equal(request[1],7);assert.deepEqual(request[3],{frameId:0});
+  await h.run();assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+ }
+});
+
+test('an accepted local receipt with closed bindings resumes only when the authenticated app confirms the same ID',async()=>{
+ const h=fixture({closedSource:true,recover:true,tabs:[{id:999,windowId:17,url:'https://supplier.coupang.com/qvt/registration'}]});
+ assert.equal((await h.run()).registration.quotationId,'quote-123');assert.equal(h.records.get('attempt:123').purpose,undefined);
+ const conflict=fixture({closedSource:true,recover:true,tabs:[{id:999,windowId:17,url:'https://supplier.coupang.com/qvt/wims'}],receipt:{result:{...h.records.get(h.key),quotationId:'other'}}});
+ await assert.rejects(conflict.run(),/접수 결과가 다릅니다/);assert.equal(conflict.calls.some(([name])=>name==='create'||name==='searchSupplierHubRegistration'),false);
+});
+
+test('invalid, stale, foreign or changed app receipts never query Hub tabs or claim a result',async()=>{
+ for(const patch of [{recover:false},{receipt:{categoryId:'999'}},{receipt:{profileId:'../profile'}},{reply:{categoryId:'999'}},{reply:{checkedAt:0}},
+  {saved:{state:'validation-pending'}},{saved:{quotationId:' other'}},{saved:{includedOptions:201}},{saved:{company:{code:company.code,name:'유앤채'}}},
+  {saved:{observedAt:Date.now()+61000}},{appTab:{windowId:18}},{appTab:{url:'https://other.test/'}},{sourceChangedAt:1}]){
+  const h=fixture({recover:true,missingLocal:true,...patch});await assert.rejects(h.run());
+  assert.equal(h.calls.some(([name])=>['query','create','searchSupplierHubRegistration'].includes(name)),false);
+  assert.equal(h.records.has(h.key),false);
+ }
+ const invalid=fixture({recover:true,saved:{state:'validation-rejected'}});await assert.rejects(invalid.run());assert.equal(invalid.calls.some(([name])=>name==='app-message'),false);
+});
+
+test('receipt recovery rejects wrong Hub companies, source changes during search and competing IDs without uploading',async()=>{
+ for(const patch of [{companyCodes:['A01526306']},{sourceChangedAt:2},{sourceChangeAfterSearch:true},{concurrent:{quotationId:'other'}}]){
+  const h=fixture({recover:true,missingLocal:true,noAttempt:true,...patch});await assert.rejects(h.run());
+  assert.equal(h.records.get(h.key)?.registration,undefined);assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+  if(patch.companyCodes||patch.sourceChangedAt||patch.concurrent)assert.equal(h.calls.some(([name])=>name==='create'||name==='searchSupplierHubRegistration'),false);
+ }
 });

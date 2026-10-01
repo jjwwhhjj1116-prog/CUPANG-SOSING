@@ -43,7 +43,8 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
       catch(error) { if(error instanceof QuotationExportError && error.status === 404) return json({error:'자료 확인 중 상품 또는 카테고리가 변경됐습니다.'},409); throw error; }
       if(await quotationExportFingerprint(current,input.dataStartRow ?? quotationStartRow(current.profile?.template),detailConfig) !== revision)
         return json({error:'자료 확인 중 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.'},409);
-      return json({fingerprint:revision,filename,report:{productId:id,categoryId:saved.categoryContext.categoryId,profileId:profile.id,company:saved.company,submissionReady:false}});
+      return json({fingerprint:revision,filename,report:{productId:id,categoryId:saved.categoryContext.categoryId,profileId:profile.id,company:saved.company,
+        rowCount:resolveQuotationExport(saved).rows.filter(row=>row.included).length,submissionReady:false}});
     }
     if(input.action !== 'preview' && input.fingerprint !== revision) return json({error:'검토 후 상품·옵션·설정·카테고리 또는 견적 수정값이 변경됐습니다. 자료 검토를 다시 실행해주세요.'},409);
     const detail = await resolvePublicDetail(resolveQuotationExport(saved),content,owner,productImageKeys(product.image_keys),detailConfig);

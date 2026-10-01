@@ -98,5 +98,13 @@ test('content runtime listener ignores other extensions and expires a hung API r
 test('bridge advertises current-source binding together with direct transmission capability',async()=>{
  const h=content();
  await h.windows[0]({source:h.context.window,origin,data:{channel:'YOOFAM_HUB_HANDOFF',type:'PING',requestId:'a'.repeat(36)}});
- const reply=h.calls.find(([name])=>name==='post');assert.equal(reply[1].result.version,'0.2.31');assert.equal(reply[1].result.publicMobileCapture,true);assert.equal(reply[1].result.latestSourceBinding,true);assert.equal(reply[1].result.directTransmission,true);assert.equal(reply[1].result.savedSubmission,true);assert.equal(reply[1].result.durableAttachmentRecovery,true);assert.equal(reply[1].result.imageIntegrityBinding,true);
+ const reply=h.calls.find(([name])=>name==='post');assert.equal(reply[1].result.version,'0.2.33');assert.equal(reply[1].result.serverReceiptRecovery,true);assert.equal(reply[1].result.publicMobileCapture,true);assert.equal(reply[1].result.latestSourceBinding,true);assert.equal(reply[1].result.directTransmission,true);assert.equal(reply[1].result.savedSubmission,true);assert.equal(reply[1].result.durableAttachmentRecovery,true);assert.equal(reply[1].result.imageIntegrityBinding,true);
+});
+test('prepared option counts are checked against the current source in worker and content',async()=>{
+ const company=companies[0],files={...prepared(company),includedOptions:6};
+ assert.equal(await verifyAppQuotationSource(identity,files,binding,worker().api),true);
+ for(const count of [undefined,5,201])await assert.rejects(verifyAppQuotationSource(identity,files,binding,worker({resultPatch:{includedOptions:count}}).api));
+ for(const count of [0,201,1.5])await assert.rejects(verifyAppQuotationSource(identity,{...files,includedOptions:count},binding,worker().api));
+ const h=content({reportPatch:{rowCount:6}});assert.equal((await h.run({...h.requested,includedOptions:6})).includedOptions,6);
+ for(const count of [undefined,5]){const h=content({reportPatch:{rowCount:count}});await assert.rejects(h.run({...h.requested,includedOptions:6}));}
 });
