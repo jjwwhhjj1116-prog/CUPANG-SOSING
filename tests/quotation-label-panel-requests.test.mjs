@@ -14,7 +14,7 @@ function harness(handlers={},batchCache={current:{signature:null,uploaded:new Ma
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  const view={resolved:{rows:[{optionId:'one',included:true}]}};
  const exports={};const file='app/components/quotation-label-panel.tsx';
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL:{createObjectURL:()=> 'blob:preview',revokeObjectURL(){}},require(name){
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL:{createObjectURL:()=> 'blob:preview',revokeObjectURL(){}},require(name){
   if(name==='react')return hooks;
   if(name==='@/app/quotation-label-plan')return{quotationLabelPlan:resolved=>({value:resolved.savedValue})};
   if(name==='@/app/document-image-render')return{renderDocument:async()=>{calls.render++;return handlers.render?handlers.render():{blob:new Blob(['png']),width:100,height:100};}};
@@ -22,7 +22,7 @@ function harness(handlers={},batchCache={current:{signature:null,uploaded:new Ma
   if(name==='@/app/quotation-label-batch')return{attachQuotationLabels:async input=>{calls.batch++;return handlers.batch?handlers.batch(input):{view};}};
   return native(name);
  }});
- const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,productId:'p',endpoint:'/quotation',optionId:'one',disabled:false,batchCache,onBusyChange:value=>calls.busy.push(value),onAttached:(saved,progress)=>{calls.attached++;calls.snapshots.push({saved,progress});}});first=false;return tree;};
+ const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,productId:'p',endpoint:'/quotation',optionId:'one',disabled:false,batchCache,onBusyChange:value=>calls.busy.push(value),onBatchFailed:handlers.onBatchFailed,onAttached:(saved,progress)=>{calls.attached++;calls.snapshots.push({saved,progress});}});first=false;return tree;};
  const buttons=()=>Object.fromEntries(nodes(render()).filter(n=>n.type==='button').map(n=>[text(n.props.children),n.props.onClick]));
  render();effects.forEach(fn=>cleanups.push(fn()));
  return{calls,view,batchCache,render,buttons,unmount(){cleanups.forEach(fn=>fn?.());}};
@@ -91,4 +91,21 @@ test('a stopped label batch reuses its files after the quotation panel remounts 
  const changed=harness({batch:async input=>{seen.push(input.uploaded.get('one'));return{view:input.view,completed:1,total:1,stopped:false};}},cache);
  changed.view.resolved.savedValue='changed model';changed.buttons()[batch]();await settle();
  assert.equal(seen[2],undefined,'changed label contents must not reuse the old PNG');
+});
+
+
+test('failed batch keeps the shared lock until saved-view recovery settles',async()=>{
+ const recovery=deferred(),messages=[];
+ const h=harness({batch:()=>{throw Error('batch response lost');},onBatchFailed:message=>{messages.push(message);return recovery.promise;}});
+ h.buttons()[batch]();await settle();assert.equal(messages.length,1);assert.match(messages[0],/batch response lost/);
+ assert.deepEqual(h.calls.busy,[true]);h.buttons()[batch]();assert.equal(h.calls.batch,1);
+ recovery.resolve();await settle();assert.deepEqual(h.calls.busy,[true,false]);
+ h.buttons()[batch]();await settle();assert.equal(h.calls.batch,2);
+});
+
+test('a failed batch cannot start saved-view recovery after its panel closes',async()=>{
+ const pending=deferred(),messages=[];
+ const h=harness({batch:()=>pending.promise,onBatchFailed:async message=>{messages.push(message);}});
+ h.buttons()[batch]();h.unmount();pending.reject(Error('late response lost'));await settle();
+ assert.deepEqual(messages,[]);assert.equal(h.calls.attached,0);assert.deepEqual(h.calls.busy,[true,false]);
 });

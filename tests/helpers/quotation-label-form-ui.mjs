@@ -11,7 +11,7 @@ const same=(before,after)=>before&&after&&before.length===after.length&&before.e
 /** Execute both real React components, including child keys and effect cleanup.
  * Rendering PNG pixels is a fixture; all saves use the supplied real API. */
 export function quotationLabelFormUI({productId,load,request,renderDocument}){
- const modules=new Map(),form={slots:[],pending:[],cursor:0};let current=form,child=null,childKey=null,remounts=0;
+ const modules=new Map(),form={slots:[],pending:[],cursor:0};let current=form,child=null,childKey=null,remounts=0,savedNotifications=0;
  const hooks={
   useState(initial){const target=current,i=target.cursor++;if(!(i in target.slots))target.slots[i]=typeof initial==='function'?initial():initial;return[target.slots[i],value=>target.slots[i]=typeof value==='function'?value(target.slots[i]):value];},
   useRef(initial){const target=current,i=target.cursor++;return target.slots[i]??(target.slots[i]={current:initial});},
@@ -33,7 +33,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
  }
  const Form=component('app/components/quotation-fields-editor.tsx').QuotationFieldsEditor;
  const Panel=component('app/components/quotation-label-panel.tsx').QuotationLabelPanel;
- const props={productId,navigationTarget:{optionId:'collected-1',fieldId:'salePrice',categoryId:'80719'},onSaved(){}};
+ const props={productId,navigationTarget:{optionId:'collected-1',fieldId:'salePrice',categoryId:'80719'},onSaved(){savedNotifications++;}};
  const finish=instance=>{const effects=instance.pending.splice(0);effects.forEach(fn=>fn());};
  const cleanup=instance=>instance?.slots.forEach(value=>value?.cleanup?.());
  function render(){
@@ -55,8 +55,9 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
  }
  function start(label){const node=button(label);if(!node||node.props.disabled)throw Error('Button unavailable: '+label);node.props.onClick();}
  return{render,idle,start,button,async click(label){start(label);await idle();},stop(){start('일괄 작업 중지');},
-  get view(){return render().boundary?.props.view;},get remounts(){return remounts;},
+  get view(){return render().boundary?.props.view;},get remounts(){return remounts;},get savedNotifications(){return savedNotifications;},
   field(id){return all().find(node=>['input','textarea'].includes(node.type)&&node.props.id?.endsWith('-'+id));},
+  fieldDisabled(id){return all().some(node=>node.type==='fieldset'&&node.props.disabled&&nodes(node).some(field=>field.props?.id?.endsWith('-'+id)));},
   section(title){const node=all().find(node=>node.type==='button'&&nodes(node.props.children).some(item=>item.type==='span'&&item.props.children===title));if(!node||node.props.disabled)throw Error('Section unavailable');node.props.onClick();},
   alerts:()=>all().filter(node=>node.props?.role==='alert').map(node=>text(node.props.children)),
   close(){cleanup(child);cleanup(form);},

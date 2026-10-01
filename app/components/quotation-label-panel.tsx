@@ -7,7 +7,7 @@ import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { attachQuotationLabel } from '@/app/quotation-label-attachment';
 import { attachQuotationLabels, type LabelBatchCache, type LabelBatchProgress, type LabelBatchResult } from '@/app/quotation-label-batch';
 
-export function QuotationLabelPanel({ view, productId, endpoint, optionId, disabled, batchCache, onBusyChange, onAttached }: { view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; batchCache?: RefObject<LabelBatchCache>; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView, batch?: Omit<LabelBatchResult, 'view'>) => void }) {
+export function QuotationLabelPanel({ view, productId, endpoint, optionId, disabled, batchCache, onBusyChange, onAttached, onBatchFailed }: { view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; batchCache?: RefObject<LabelBatchCache>; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView, batch?: Omit<LabelBatchResult, 'view'>) => void; onBatchFailed?: (message: string) => Promise<void> }) {
   const resolved = view.resolved;
   const [preview, setPreview] = useState<{ url: string; width: number; height: number; blob: Blob; view: QuotationFieldsView } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -67,7 +67,13 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
         if (!result.stopped || result.completed > 0) onAttached(result.view, { completed: result.completed, total: result.total, stopped: result.stopped });
       }
     } catch (cause) {
-      if (alive.current) setError(`${cause instanceof Error ? cause.message : '일괄 라벨 연결 실패'} 완료된 연결과 업로드 파일은 보존됩니다. 다시 실행할 때 내용이 같으면 기존 파일을 재사용하고, 바뀌었으면 새로 생성합니다.`);
+      if (alive.current) {
+        const message = `${cause instanceof Error ? cause.message : '일괄 라벨 연결 실패'} 완료된 연결과 업로드 파일은 보존됩니다. 다시 실행할 때 내용이 같으면 기존 파일을 재사용하고, 바뀌었으면 새로 생성합니다.`;
+        // The server may have committed even if its response was lost. Keep
+        // the shared lock until the editor has read its actual saved view.
+        if (onBatchFailed) await onBatchFailed(message);
+        else setError(message);
+      }
     } finally { running.current = false; onBusyChange(false); if (alive.current) { setBusy(false); setBatchRunning(false); setStopping(false); } }
   }
   const included = resolved.rows.some(row => row.optionId === optionId && row.included);
