@@ -97,7 +97,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(h.calls.filter(path=>path.endsWith('/images')).length,0);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,19);
   const base='/api/products/'+product.id,content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
-  assert.equal(content.seo.title.value,'우드 패턴 다리 선글라스');
+  assert.equal(content.seo.title.value,'검토 브랜드 우드 패턴 다리 선글라스');
   for(const role of ['main','additional','detail'])assert.deepEqual(content.assets[role].value,[]);
   const optionView=await json(await h.route(base+'/options'));
   assert.equal(optionView.options.rows.length,6);

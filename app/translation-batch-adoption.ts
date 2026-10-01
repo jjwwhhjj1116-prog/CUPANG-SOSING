@@ -7,6 +7,15 @@ import { collectionKeywords } from '@/app/sourcing';
 const names = { title: '상품명', keywords: '검색어', description: '상품 설명' };
 const display = (value: string | string[]) => Array.isArray(value) ? value.join(', ') : value;
 
+/** Couplus's observed intake title starts with the explicitly captured brand.
+ * Keep this separate from supplier facts and never infer a brand from a company. */
+function brandedIntakeTitle(title: string, brand = ''): string {
+  const name = title.trim(), prefix = brand.trim();
+  if (!name || !prefix || name === prefix ||
+    (name.startsWith(prefix) && /^\s/u.test(name.slice(prefix.length)))) return name;
+  return `${prefix} ${name}`;
+}
+
 function untouchedIntakeKeywords(content: ProductContent, job: TranslationJob): boolean {
   const seed = content.intakeKeywordSeed;
   const current = content.seo.keywords;
@@ -21,7 +30,7 @@ function untouchedIntakeKeywords(content: ProductContent, job: TranslationJob): 
 
 /** A reviewed, single-revision save. Only untouched intake guidance can replace
  * a manual keyword field; actual edits and all legacy values stay protected. */
-export function translationBatchAdoption(content: ProductContent, job: TranslationJob, version: string) {
+export function translationBatchAdoption(content: ProductContent, job: TranslationJob, version: string, intakeBrand?: string) {
   if (job.productId !== content.productId || job.productVersion !== version || job.status !== 'completed' || !job.result) {
     throw Error('현재 상품의 완료된 번역 결과를 선택해주세요.');
   }
@@ -30,8 +39,8 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   const skipped: string[] = [];
   for (const field of translationSeoFields) {
     const current = content.seo[field];
-    const next = job.result.draft[field];
     if (current.provenance === 'manual' && !(field === 'keywords' && untouchedIntakeKeywords(content, job))) { skipped.push(`${names[field]}: 직접 수정한 값을 유지합니다.`); continue; }
+    const next = field === 'title' ? brandedIntakeTitle(job.result.draft.title, intakeBrand) : job.result.draft[field];
     if (!display(next).trim() || JSON.stringify(current.value) === JSON.stringify(next)) continue;
     const validated = validateContentInput({ expectedRevision: content.revision, patch: { seo: { [field]: next } } }, [], '');
     patch.seo = { ...patch.seo, ...validated.patch.seo };
