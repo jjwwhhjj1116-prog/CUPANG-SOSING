@@ -4,6 +4,7 @@ import { COLLECTION_RESULT_LIMIT, validateCollectionResult } from '@/app/collect
 import { parseAlibabaDescription } from '@/app/alibaba-description';
 
 type Row = Record<string, unknown>;
+export class AlibabaMobileInitialDataUnavailableError extends Error {}
 const row = (value: unknown): Row => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('1688 모바일 상품 응답 구조를 확인해주세요.');
   return value as Row;
@@ -89,7 +90,8 @@ export function parseAlibabaMobilePage(html: string, sourceUrl: string) {
     if (type && !['text/javascript', 'application/javascript'].includes(type)) continue;
     candidates.push(...pageAssignments(node.childNodes.map(child => 'value' in child ? child.value : '').join('')));
   }
-  if (!candidates.length || candidates.some(value => JSON.stringify(value) !== JSON.stringify(candidates[0]))) throw Error('1688 모바일 상품 초기 데이터를 명확히 확인하지 못했습니다.');
+  if (!candidates.length) throw new AlibabaMobileInitialDataUnavailableError('1688 모바일 상품 초기 데이터를 명확히 확인하지 못했습니다.');
+  if (candidates.some(value => JSON.stringify(value) !== JSON.stringify(candidates[0]))) throw Error('1688 모바일 상품 초기 데이터를 명확히 확인하지 못했습니다.');
   const init = candidates[0], global = row(init.globalData), base = row(global.offerBaseInfo), summary = row(global.tempModel);
   if (identity(base.offerId) !== source.offerId || identity(summary.offerId) !== source.offerId) throw Error('1688 모바일 페이지의 상품번호가 요청과 다릅니다.');
   if (global.isPicPrivate === true || global.isPricePrivate === true || row(global.offerSigns).isDetailForbidden === true) throw Error('이 상품 원문은 별도 접근 확인이 필요합니다.');
@@ -132,10 +134,25 @@ export function parseAlibabaMobileDescription(body: string): string {
 /** This contract was observed on the user-selected offer and Alibaba's own
  * rox-sku-core normalizer. No headline/retail price becomes a SKU cost. */
 export function parseAlibabaMobileProduct(page: ReturnType<typeof parseAlibabaMobilePage>, payload: unknown, description = '', now = Date.now()) {
+  return parseAlibabaSkuProduct(page, payload, description, now, '1688-public-mobile-v1');
+}
+
+/** Product-only public SKU response observed for the requested offer. It does
+ * not contain general attributes, a description or the full gallery. */
+export function parseAlibabaPublicSkuProduct(payload: unknown, sourceUrl: string, now = Date.now()) {
+  const source = parseCollectionRequest({urls: [sourceUrl]})[0];
+  if (new TextEncoder().encode(JSON.stringify(payload)).byteLength > 2 * 1024 * 1024) throw Error('1688 옵션 원문이 수집 한도를 초과했습니다.');
+  const base = row(row(row(row(row(payload).data).result).data).offerBaseInfo);
+  if (identity(base.offerId) !== source.offerId) throw Error('1688 옵션 조회의 상품번호가 요청과 다릅니다.');
+  return parseAlibabaSkuProduct({...source, title: text(base.title), gallery: [text(base.picUrl)]}, payload, '', now, '1688-public-sku-v1');
+}
+
+function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; title: string; gallery: unknown[]; attributes?: {name: string; value: string}[]}, payload: unknown, description: string, now: number, provider: string) {
   const envelope = row(payload);
   if (!Array.isArray(envelope.ret) || !envelope.ret.some(value => typeof value === 'string' && /^SUCCESS(?:::|$)/.test(value))) throw Error('1688 공개 옵션 조회가 성공하지 않았습니다.');
   const data = row(row(row(row(payload).data).result).data), base = row(data.offerBaseInfo);
-  if (identity(base.offerId) !== page.offerId || text(base.title) !== page.title) throw Error('상품 페이지와 옵션 조회의 상품이 다릅니다.');
+  if (identity(base.offerId) !== source.offerId || text(base.title) !== source.title) throw Error('상품 페이지와 옵션 조회의 상품이 다릅니다.');
+  if ([data, base, row(data.skuModel)].some(value => value.isPricePrivate === true || value.isPicPrivate === true || value.isDetailForbidden === true)) throw Error('이 상품 원문은 별도 접근 확인이 필요합니다.');
   const order = row(row(data.orderParamModel).orderParam), sku = row(data.skuModel), skuParam = row(order.skuParam);
   const minimumOrder = numeric(order.beginNum);
   if (!Number.isSafeInteger(minimumOrder) || minimumOrder < 1) throw Error('최소 주문 수량을 확인하지 못했습니다.');
@@ -169,7 +186,7 @@ export function parseAlibabaMobileProduct(page: ReturnType<typeof parseAlibabaMo
     if (index < 0) { index = images.length; images.push({url: url.href, role}); }
     return index;
   };
-  page.gallery.forEach((value, index) => image(value, index === 0 ? 'main' : 'additional'));
+  source.gallery.forEach((value, index) => image(value, index === 0 ? 'main' : 'additional'));
   const combinations = new Set<string>();
   const options = entries.map(([key, value]) => {
     const item = row(value), parts = entities(text(item.specAttrs)).split('>');
@@ -189,8 +206,8 @@ export function parseAlibabaMobileProduct(page: ReturnType<typeof parseAlibabaMo
   }).sort((left, right) => { for (let index = 0; index < props.length; index++) { const difference = left.positions[index] - right.positions[index]; if (difference) return difference; } return 0; });
   const details = parseAlibabaDescription(description);
   details.images.forEach(url => image(url, 'detail'));
-  const result = validateCollectionResult({schemaVersion: 1, sourceUrl: page.sourceUrl, provider: '1688-public-mobile-v1', collectedAt: new Date(now).toISOString(),
-    title: page.title, description: details.text, attributes: page.attributes, options: options.map(value => value.option), images}, page.offerId, now);
+  const result = validateCollectionResult({schemaVersion: 1, sourceUrl: source.sourceUrl, provider, collectedAt: new Date(now).toISOString(),
+    title: source.title, description: details.text, ...(source.attributes !== undefined ? {attributes: source.attributes} : {}), options: options.map(value => value.option), images}, source.offerId, now);
   if (new TextEncoder().encode(JSON.stringify(result)).byteLength > COLLECTION_RESULT_LIMIT) throw Error('수집 결과 크기가 한도를 초과했습니다.');
   return result;
 }

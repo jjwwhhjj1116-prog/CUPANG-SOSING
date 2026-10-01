@@ -19,11 +19,80 @@ const read = name => fs.readFileSync(new URL('fixtures/' + name, import.meta.url
 // seller identities and transport tokens are excluded from these fixtures.
 const mobile = JSON.parse(read('1688-mobile-813724060928.json'));
 const skus = JSON.parse(read('1688-skus-813724060928.json'));
+// Product-only public SKU service response observed on 2026-10-01.
+const publicSkus = JSON.parse(read('1688-public-sku-813724060928.json'));
 const detail = read('1688-description-813724060928.txt');
 const sourceUrl = 'https://detail.1688.com/offer/813724060928.html';
 const pageHtml = data => '<script>window.__GLOBAL_DADA={"isLogin":false};window.__INIT_DATA=' + JSON.stringify(data) + ';</script>';
 const parser = load('app/alibaba-mobile-product.ts');
 const receipt = () => parser.parseAlibabaMobileProduct(parser.parseAlibabaMobilePage(pageHtml(mobile), sourceUrl), skus, parser.parseAlibabaMobileDescription(detail));
+
+test('observed public SKU-only response yields exact six options and four images without inventing missing description or attributes', () => {
+  const result = parser.parseAlibabaPublicSkuProduct(publicSkus, sourceUrl);
+  assert.equal(result.provider, '1688-public-sku-v1'); assert.equal(result.offerId, '813724060928');
+  assert.equal(result.title, publicSkus.data.result.data.offerBaseInfo.title);
+  assert.deepEqual(Array.from(result.options, value => [value.sku, value.unitPriceCny, value.minimumOrder, value.stock]), [
+    ['5627721589405',3.6,1,5623],['5627721589406',5.5,1,6621],['5627721589409',3.6,1,5697],
+    ['5627721589410',5.5,1,6605],['5627721589407',3.6,1,5472],['5627721589408',5.5,1,6359],
+  ]);
+  assert.equal(result.images.length, 4); assert.equal(result.images[0].url, publicSkus.data.result.data.offerBaseInfo.picUrl);
+  assert.equal(result.images[0].role, 'main'); assert.ok(result.images.slice(1).every(value => value.role === 'additional'));
+  for(const option of result.options){
+    const expected=publicSkus.data.result.data.skuModel.skuProps[0].value.find(value=>value.name===option.color).imageUrl;
+    assert.equal(result.images[option.imageIndex].url,expected);
+  }
+  for(let index=0;index<6;index+=2)assert.equal(result.options[index].imageIndex,result.options[index+1].imageIndex);
+  assert.equal(result.description, ''); assert.equal('attributes' in result, false);
+  assert.match(load('app/collection-result.ts').collectionSourceWarnings(result).join(' '), /상세 설명·상세 이미지·일반 상품 속성/);
+  assert.deepEqual(Array.from(load('app/collection-result.ts').collectionSourceWarnings(receipt())), []);
+});
+
+test('public SKU-only parser rejects wrong offer, private facts, missing main image, invalid cost and invented SKU combinations', () => {
+  for (const mutate of [d=>d.offerBaseInfo.offerId=999, d=>d.offerBaseInfo.picUrl='',d=>d.offerBaseInfo.picUrl='https://evil.test/image.jpg',
+    d=>d.offerBaseInfo.title='',d=>d.isPricePrivate=true,d=>d.skuModel.isPicPrivate=true,d=>d.offerBaseInfo.isDetailForbidden=true,
+    d=>delete Object.values(d.skuModel.skuInfoMap)[0].price,d=>Object.values(d.skuModel.skuInfoMap)[0].price='3.6-5.5',
+    d=>Object.values(d.skuModel.skuInfoMap)[0].canBookCount=-1,d=>Object.values(d.skuModel.skuInfoMap)[0].specAttrs='fake']) {
+    const changed=structuredClone(publicSkus);mutate(changed.data.result.data);assert.throws(()=>parser.parseAlibabaPublicSkuProduct(changed,sourceUrl));
+  }
+  const denied=structuredClone(publicSkus);denied.ret=['FAIL_SYS_USER_VALIDATE'];assert.throws(()=>parser.parseAlibabaPublicSkuProduct(denied,sourceUrl),/成功|성공/);
+  const unknown=structuredClone(publicSkus);delete Object.values(unknown.data.result.data.skuModel.skuInfoMap)[0].canBookCount;
+  assert.equal(parser.parseAlibabaPublicSkuProduct(unknown,sourceUrl).options.at(-1).stock,null);
+  assert.throws(()=>parser.parseAlibabaPublicSkuProduct({...publicSkus,padding:'가'.repeat(700000)},sourceUrl),/한도/);
+});
+
+test('missing mobile initial data uses independently validated public SKU facts and performs no detail request', async () => {
+  const h=transportFixture({wrappedSignal:true,skuPayload:publicSkus,mobileResponse:()=>new Response('<html>No initial product JSON</html>',{headers:{'content-type':'text/html'}})});
+  const result=await load('app/public-product-collector.ts').collectPublicProduct(sourceUrl,{fetcher:h.fetcher,signal:h.signal});
+  assert.equal(result.provider,'1688-public-sku-v1');assert.equal(result.options.length,6);assert.equal(result.images.length,4);
+  assert.deepEqual(h.calls.map(call=>call.url.hostname),['detail.1688.com','m.1688.com','h5api.m.1688.com','h5api.m.1688.com']);
+  assert.equal(result.description,'');assert.equal(result.attributes,undefined);
+  assert.ok(!JSON.stringify(result).includes('anonymousOnly'));
+});
+
+test('malformed, private or contradictory mobile data never switches to a SKU-only draft', async () => {
+  const privatePage=structuredClone(mobile);privatePage.globalData.isPricePrivate=true;
+  const foreignPage=structuredClone(mobile);foreignPage.globalData.tempModel.offerId=999;
+  for(const body of [pageHtml(privatePage),pageHtml(foreignPage),'<script>window.__INIT_DATA={"broken":</script>',pageHtml(mobile)+pageHtml(privatePage)]) {
+    const h=transportFixture({skuPayload:publicSkus,mobileResponse:()=>new Response(body,{headers:{'content-type':'text/html'}})});
+    await assert.rejects(load('app/alibaba-mobile-collector.ts').collectAlibabaMobileProduct(sourceUrl,h));assert.equal(h.calls.length,1);
+  }
+  for(const status of [401,403,302]){
+    const h=transportFixture({mobileResponse:()=>new Response('',{status,headers:{'content-type':'text/html'}})});
+    await assert.rejects(load('app/alibaba-mobile-collector.ts').collectAlibabaMobileProduct(sourceUrl,h));assert.equal(h.calls.length,1);
+  }
+});
+
+test('SKU-only fallback still terminates on access requirements, wrong offer or cancellation without producing a receipt', async () => {
+  const absent=()=>new Response('<html>No init data</html>',{headers:{'content-type':'text/html'}});
+  for(const failure of ['FAIL_SYS_USER_VALIDATE','FAIL_SYS_SESSION_EXPIRED','FAIL_SYS_ILLEGAL_ACCESS']){
+    const h=transportFixture({failure,skuPayload:publicSkus,mobileResponse:absent});
+    await assert.rejects(load('app/alibaba-mobile-collector.ts').collectAlibabaMobileProduct(sourceUrl,h),/상품 데이터를 반환/);assert.equal(h.calls.length,2);
+  }
+  const h=transportFixture({skuPayload:publicSkus,mobileResponse:absent,changeSku:value=>value.data.result.data.offerBaseInfo.offerId=999});
+  await assert.rejects(load('app/alibaba-mobile-collector.ts').collectAlibabaMobileProduct(sourceUrl,h),/상품번호/);assert.equal(h.calls.length,3);
+  const controller=new AbortController(),cancelled=transportFixture({signal:controller.signal,mobileResponse:()=>{controller.abort();return absent();}});
+  await assert.rejects(load('app/alibaba-mobile-collector.ts').collectAlibabaMobileProduct(sourceUrl,cancelled),/취소/);assert.equal(cancelled.calls.length,1);
+});
 
 test('observed live product retains all six actual SKUs, prices, stock and original image relations', () => {
   const result = receipt();
@@ -98,17 +167,18 @@ test('explicit common range-price model applies the tier at MOQ rather than the 
   assert.throws(() => parser.parseAlibabaMobileProduct(page, changed));
 });
 
-function transportFixture({failure, changeSku, desktopResponse, signal = new AbortController().signal, wrappedSignal = false} = {}) {
+function transportFixture({failure, changeSku, desktopResponse, mobileResponse, skuPayload=skus, signal = new AbortController().signal, wrappedSignal = false} = {}) {
   const calls = [], transientToken = 'anonymousOnly_1700000000000';
-  let skuRequests = 0, requestSignal;
+  let skuRequests = 0;const requestSignals=new Map();
   const fetcher = async (target, init) => {
     const url = new URL(target); calls.push({url, init});
     assert.equal(init.redirect, 'manual'); assert.equal(init.credentials, 'omit');
-    requestSignal ??= init.signal;
-    assert.equal(init.signal, requestSignal);
+    const branch=url.hostname==='detail.1688.com'?'pc':'mobile';
+    if(!requestSignals.has(branch))requestSignals.set(branch,init.signal);
+    assert.equal(init.signal, requestSignals.get(branch));
     if (!wrappedSignal) assert.equal(init.signal, signal);
     if (url.hostname === 'detail.1688.com') return desktopResponse ? desktopResponse() : new Response('<script>window._config_={"action":"noop"};</script>', {headers: {'content-type': 'text/html'}});
-    if (url.hostname === 'm.1688.com') return new Response(pageHtml(mobile), {headers: {'content-type': 'text/html'}});
+    if (url.hostname === 'm.1688.com') return mobileResponse ? mobileResponse() : new Response(pageHtml(mobile), {headers: {'content-type': 'text/html'}});
     if (url.hostname === 'itemcdn.tmall.com') return new Response(detail, {headers: {'content-type': 'text/plain'}});
     assert.equal(url.origin + url.pathname, 'https://h5api.m.1688.com/h5/mtop.mbox.fc.common.gateway/1.0/');
     const params = Object.fromEntries(url.searchParams), token = skuRequests++ ? 'anonymousOnly' : 'undefined';
@@ -124,7 +194,7 @@ function transportFixture({failure, changeSku, desktopResponse, signal = new Abo
       return response;
     }
     assert.equal(init.headers.cookie, '_m_h5_tk=' + transientToken + '; _m_h5_tk_enc=anonymousEncrypted');
-    const payload = structuredClone(skus); changeSku?.(payload); return Response.json(payload);
+    const payload = structuredClone(skuPayload); changeSku?.(payload); return Response.json(payload);
   };
   return {calls, fetcher, signal};
 }

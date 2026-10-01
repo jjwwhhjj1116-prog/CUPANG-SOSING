@@ -3,6 +3,7 @@ import { validateCollectionReceiptResponse } from '@/app/collection-receipt-resp
 import { recommendCollectionImages, validateCollectionCapacity } from '@/app/collection-capacity';
 import { runCollectionImport, type CollectionImportOutcome } from '@/app/collection-import';
 import { collectionRequestWithRetry } from '@/app/collection-retry';
+import { collectionSourceWarnings } from '@/app/collection-result';
 
 export function pendingReceivedJobs(jobs: readonly CollectionJob[]) {
   return jobs.filter(job => job.status !== 'cancelled' && !!job.received_at && !job.product_id);
@@ -38,6 +39,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       if (!response.ok) throw Error(body?.error || '수신 원문 조회 실패');
       const source = validateCollectionReceiptResponse(body, job.id, job.offer_id);
       if (!source) throw Error('수집 원문이 아직 도착하지 않았습니다.');
+      const sourceWarnings = collectionSourceWarnings(source);
       if (options.shouldStop()) break;
       let indices: number[] = [];
       if (source.images.length) {
@@ -60,8 +62,8 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
             });
             options.onResult(job.id, draft.status === 'completed' ? {
               ...draft, status: 'failed', error: '상품·옵션 초안은 저장했습니다. 이미지 저장 상태를 확인하지 못해 이미지 반영은 재시도가 필요합니다.',
-              warnings: ['원본 이미지 주소는 보존되어 있습니다. 저장된 상품을 열어 내용을 수정할 수 있습니다.'],
-            } : draft);
+              warnings: [...sourceWarnings, '원본 이미지 주소는 보존되어 있습니다. 저장된 상품을 열어 내용을 수정할 수 있습니다.'],
+            } : {...draft, warnings: [...sourceWarnings, ...(draft.warnings ?? [])]});
             if (draft.status === 'stopped') break;
             continue;
           }
@@ -101,7 +103,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
         } : draft;
       }
       const omitted = source.images.length - indices.length;
-      options.onResult(job.id, { ...result, warnings: [...(result.warnings ?? []), ...(omitted ? [`이미지 ${omitted}개는 저장 여유·제외 설정에 따라 건너뛰었습니다. 원본 주소는 보존됩니다.`] : [])] });
+      options.onResult(job.id, { ...result, warnings: [...sourceWarnings, ...(result.warnings ?? []), ...(omitted ? [`이미지 ${omitted}개는 저장 여유·제외 설정에 따라 건너뛰었습니다. 원본 주소는 보존됩니다.`] : [])] });
       if (result.status === 'stopped') break;
     } catch (cause) {
       if (options.shouldStop()) break;

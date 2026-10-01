@@ -10,6 +10,15 @@ function nodes(tree){if(Array.isArray(tree))return tree.flatMap(nodes);if(!tree|
 const result={schemaVersion:1,offerId:'123',title:'수집 상품 원문',provider:'synthetic',collectedAt:'2026-01-01T00:00:00Z',sourceUrl:'https://detail.1688.com/offer/123.html',description:'판매자 설명',options:[{sku:'a',name:'옵션 A',unitPriceCny:2,minimumOrder:1,stock:1}],images:[{url:'https://cbu01.alicdn.com/a.png',role:'main'},{url:'https://cbu01.alicdn.com/b.png',role:'detail'}]};
 const capacity={usedSlots:0,totalImages:2,reusableIndices:[]};
 
+test('SKU-only receipts show missing detail and attribute facts after reload without claiming all data was collected',async()=>{
+ for(const provider of ['1688-public-sku-v1','chrome-public-sku-v1']){
+  const source={...result,provider,description:''};
+  const h=harness(async url=>Response.json(url.endsWith('/result')?{jobId:'job',offerId:'123',receipt:{result:source},message:'수신됨'}:{capacity}));
+  await h.click('수신 결과 조회');assert.match(JSON.stringify(h.render()),/상세 설명·상세 이미지·일반 상품 속성/);
+  await h.click('수신 결과 조회');assert.match(JSON.stringify(h.render()),/직접 확인·입력/);assert.equal(h.saved,0);
+ }
+});
+
 test('all seven stages open the same saved product without collecting or executing providers',async()=>{
  const opened=[];
  const h=harness(async()=>{throw Error('navigation must not collect');},null,{productId:'saved-product',onOpenProduct:async(id,tab)=>{opened.push([id,tab]);}});

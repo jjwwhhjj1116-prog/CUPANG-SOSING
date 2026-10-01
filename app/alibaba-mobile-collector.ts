@@ -1,5 +1,5 @@
 import { parseCollectionRequest } from '@/app/sourcing';
-import { parseAlibabaMobilePage, parseAlibabaMobileDescription, parseAlibabaMobileProduct } from '@/app/alibaba-mobile-product';
+import { AlibabaMobileInitialDataUnavailableError, parseAlibabaMobilePage, parseAlibabaMobileDescription, parseAlibabaMobileProduct, parseAlibabaPublicSkuProduct } from '@/app/alibaba-mobile-product';
 import { publicMtopMd5 } from '@/app/public-mtop-md5';
 
 const SKU_ENDPOINT = 'https://h5api.m.1688.com/h5/mtop.mbox.fc.common.gateway/1.0/';
@@ -82,7 +82,17 @@ export async function collectAlibabaMobileCapture(sourceUrl: string, options: {f
   const response = await request(`https://m.1688.com/offer/${source.offerId}.html`, 'text/html');
   if (!response.headers.get('content-type')?.toLowerCase().includes('text/html')) throw Error('1688 모바일 상품 페이지가 HTML이 아닙니다.');
   const mobileHtml = await readBody(response, 2 * 1024 * 1024);
-  const page = parseAlibabaMobilePage(mobileHtml, source.sourceUrl);
+  let page: ReturnType<typeof parseAlibabaMobilePage>;
+  try { page = parseAlibabaMobilePage(mobileHtml, source.sourceUrl); }
+  catch (error) {
+    // Missing page initial data alone can use independently returned public SKU
+    // facts. Mismatched/private/malformed page evidence remains a hard failure.
+    if (!(error instanceof AlibabaMobileInitialDataUnavailableError)) throw error;
+    const skuPayload = await queryAlibabaMobileSkus(source.offerId, options);
+    if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
+    parseAlibabaPublicSkuProduct(skuPayload, source.sourceUrl);
+    return {format: '1688-public-sku-capture-v1' as const, sourceUrl: source.sourceUrl, skuPayload};
+  }
   const payload = await queryAlibabaMobileSkus(source.offerId, options);
   // Validate identity/SKUs/prices before following the page's bounded detail
   // reference. A response for another offer cannot authorize a detail read.
@@ -95,6 +105,7 @@ export async function collectAlibabaMobileCapture(sourceUrl: string, options: {f
 
 export async function collectAlibabaMobileProduct(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal}) {
   const capture = await collectAlibabaMobileCapture(sourceUrl, options);
+  if (capture.format === '1688-public-sku-capture-v1') return parseAlibabaPublicSkuProduct(capture.skuPayload, capture.sourceUrl);
   return parseAlibabaMobileProduct(parseAlibabaMobilePage(capture.mobileHtml,capture.sourceUrl), capture.skuPayload,
     capture.detailSource ? parseAlibabaMobileDescription(capture.detailSource) : '');
 }

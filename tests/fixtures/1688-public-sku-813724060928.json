@@ -1,0 +1,105 @@
+{
+  "ret": [
+    "SUCCESS::调用成功"
+  ],
+  "data": {
+    "result": {
+      "data": {
+        "offerBaseInfo": {
+          "offerId": 813724060928,
+          "title": "太阳眼镜木纹腿男女复古墨镜高级感潮遮阳防紫外线太阳镜复古墨镜",
+          "offerUnit": "副",
+          "picUrl": "https://cbu01.alicdn.com/img/ibank/O1CN01koPXJ91zwNVJZ3ypz_!!2207622276778-0-cib.jpg"
+        },
+        "skuModel": {
+          "skuProps": [
+            {
+              "prop": "颜色",
+              "value": [
+                {
+                  "name": "亮黑",
+                  "imageUrl": "https://cbu01.alicdn.com/img/ibank/O1CN016DMZ9b1zwNVJYua4q_!!2207622276778-0-cib.jpg"
+                },
+                {
+                  "name": "砂黑",
+                  "imageUrl": "https://cbu01.alicdn.com/img/ibank/O1CN01TtNmQm1zwNVImXkd9_!!2207622276778-0-cib.jpg"
+                },
+                {
+                  "name": "砂灰",
+                  "imageUrl": "https://cbu01.alicdn.com/img/ibank/O1CN01rH4Cux1zwNVImYxTR_!!2207622276778-0-cib.jpg"
+                }
+              ]
+            },
+            {
+              "prop": "尺码",
+              "value": [
+                {
+                  "name": "太阳镜"
+                },
+                {
+                  "name": "太阳镜 加005 盒子"
+                }
+              ]
+            }
+          ],
+          "skuInfoMap": {
+            "砂灰&gt;太阳镜 加005 盒子": {
+              "skuId": 5627721589408,
+              "price": "5.5",
+              "canBookCount": 6359,
+              "specAttrs": "砂灰&gt;太阳镜 加005 盒子"
+            },
+            "亮黑&gt;太阳镜": {
+              "skuId": 5627721589405,
+              "price": "3.6",
+              "canBookCount": 5623,
+              "specAttrs": "亮黑&gt;太阳镜"
+            },
+            "砂灰&gt;太阳镜": {
+              "skuId": 5627721589407,
+              "price": "3.6",
+              "canBookCount": 5472,
+              "specAttrs": "砂灰&gt;太阳镜"
+            },
+            "砂黑&gt;太阳镜": {
+              "skuId": 5627721589409,
+              "price": "3.6",
+              "canBookCount": 5697,
+              "specAttrs": "砂黑&gt;太阳镜"
+            },
+            "砂黑&gt;太阳镜 加005 盒子": {
+              "skuId": 5627721589410,
+              "price": "5.5",
+              "canBookCount": 6605,
+              "specAttrs": "砂黑&gt;太阳镜 加005 盒子"
+            },
+            "亮黑&gt;太阳镜 加005 盒子": {
+              "skuId": 5627721589406,
+              "price": "5.5",
+              "canBookCount": 6621,
+              "specAttrs": "亮黑&gt;太阳镜 加005 盒子"
+            }
+          }
+        },
+        "orderParamModel": {
+          "orderParam": {
+            "beginNum": 1,
+            "skuParam": {
+              "skuPriceType": "skuPrice",
+              "skuRangePrices": [
+                {
+                  "price": "3.6",
+                  "beginAmount": 1
+                },
+                {
+                  "price": "5.5",
+                  "beginAmount": 1
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

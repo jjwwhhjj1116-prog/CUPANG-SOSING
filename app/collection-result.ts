@@ -1,6 +1,11 @@
 import { parseCollectionRequest } from '@/app/sourcing';
 
 export const COLLECTION_RESULT_LIMIT = 512 * 1024;
+/** Derived from the server-validated source contract; persists with receipts. */
+export function collectionSourceWarnings(result: Pick<CollectionResult, 'provider'>): string[] {
+  return ['1688-public-sku-v1', 'chrome-public-sku-v1'].includes(result.provider)
+    ? ['상품명·옵션·가격·대표 및 옵션 이미지를 가져왔습니다. 상세 설명·상세 이미지·일반 상품 속성은 수집되지 않아 직접 확인·입력해야 합니다.'] : [];
+}
 export type CollectionResult = {
   schemaVersion: 1; sourceUrl: string; offerId: string; provider: string; collectedAt: string;
   title: string; description: string;

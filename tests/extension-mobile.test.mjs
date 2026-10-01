@@ -17,7 +17,7 @@ const request={type:'YOOFAM_CAPTURE_1688',requestId:'00000000-0000-4000-8000-000
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/products'};
 const raw=()=>({format:'1688-public-mobile-capture-v1',sourceUrl,mobileHtml:html,skuPayload:structuredClone(skus),detailSource:detail});
 
-function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false}={}){
+function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false,mobileBody=html,skuPayload=skus}={}){
  const listeners=new Set(),rules=new Map(),calls=[],app={id:7,windowId:17,url:sender.url},id='a'.repeat(32);
  let skuRequests=0;
  const api={runtime:{id},tabs:{get:async()=>({...app}),query:async()=>{calls.push('tab-query');throw Error('unexpected product tab');}},
@@ -26,7 +26,7 @@ function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false}={})
  const fetcher=async(target,init)=>{
   const url=new URL(target);calls.push(url.hostname);await onFetch({url,init,app,rules,listeners});
   assert.equal(init.credentials,'omit');assert.equal(init.redirect,'manual');assert.equal(init.headers.get('cookie'),null);
-  if(url.hostname==='m.1688.com')return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}});
+  if(url.hostname==='m.1688.com')return new Response(mobileBody,{headers:{'content-type':'text/html;charset=utf-8'}});
   if(url.hostname==='itemcdn.tmall.com')return new Response(detail);
   assert.equal(url.hostname,'h5api.m.1688.com');
   const rule=[...rules.values()].find(value=>value.condition.urlFilter==='|'+url.href+'|');
@@ -43,7 +43,7 @@ function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false}={})
   assert.ok(rule);assert.equal(rule.action.requestHeaders[0].value,'_m_h5_tk=anonymousOnly_1700000000000; _m_h5_tk_enc=anonymousEncrypted');
   assert.deepEqual(rule.condition.initiatorDomains,[id]);assert.equal(rule.condition.isUrlFilterCaseSensitive,true);
   if(failSigned)throw Error('network unavailable');
-  return Response.json(skus);
+  return Response.json(skuPayload);
  };
  return {api,app,rules,listeners,calls,fetcher,run:()=>capture1688Product(request,sender,api,{fetcher}),transport:()=>createMobileTransport(api,sourceUrl,async()=>{},fetcher)};
 }
@@ -63,6 +63,31 @@ test('Chrome anonymous public transport collects six real SKUs without creating 
   assert.equal(parsed.provider,'chrome-public-mobile-v1');assert.deepEqual(Array.from(parsed.options,row=>row.unitPriceCny),[3.6,5.5,3.6,5.5,3.6,5.5]);
   assert.equal(parsed.images.length,19);assert.equal(parsed.attributes.length,24);
  }finally{server.close();}
+});
+
+test('bundled Chrome collector sends raw SKU-only evidence through server validation into one editable draft',async()=>{
+ const skuPayload=JSON.parse(read('1688-public-sku-813724060928.json'));
+ const chrome=fixture({mobileBody:'<html>No initial product data</html>',skuPayload}),capture=await chrome.run();
+ assert.equal(capture.format,'1688-public-sku-capture-v1');assert.deepEqual(Object.keys(capture).sort(),['ok','sourceUrl','format','skuPayload'].sort());
+ assert.deepEqual(chrome.calls.filter(value=>typeof value==='string'),['m.1688.com','h5api.m.1688.com','h5api.m.1688.com']);
+ assert.equal(chrome.rules.size,0);assert.equal(chrome.listeners.size,0);assert.ok(!JSON.stringify(capture).includes('anonymousOnly'));
+ const h=mobileIntakeHarness({sourceFetcher:async()=>{throw Error('stored receipt must not recollect');}});
+ try{
+  const parse=h.load('app/browser-product-capture.ts').parseBrowserProductCapture;
+  const result=parse(capture,sourceUrl);assert.equal(result.provider,'chrome-public-sku-v1');assert.equal(result.description,'');assert.equal(result.attributes,undefined);
+  for(const mutate of [body=>body.sourceUrl=sourceUrl.replace('813724060928','999'),body=>body.skuPayload.data.result.data.offerBaseInfo.offerId=999,
+    body=>body.skuPayload.data.result.data.offerBaseInfo.isPicPrivate=true,body=>body.receipt={title:'invented'},
+    body=>body.mobileHtml='<html>invented</html>',body=>body.skuPayload.padding='가'.repeat(700000)]){
+   const value=structuredClone(capture);mutate(value);assert.throws(()=>parse(value,sourceUrl));
+   assert.equal((await h.route('/api/collection-jobs/job/browser-capture',{method:'POST',body:value})).status,422);
+  }
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_results').get().n,0);
+  const saved=await h.route('/api/collection-jobs/job/browser-capture',{method:'POST',body:capture});assert.equal(saved.status,200,await saved.clone().text());
+  assert.match(await h.intake(),/상품 초안 저장됨.*상세 설명·상세 이미지·일반 상품 속성/);
+  assert.equal(h.stats.downloads,4);assert.equal(h.aiSources.length,1);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
+  assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
+  assert.equal(h.network.some(host=>host==='supplier.coupang.com'),false);
+ }finally{h.close();}
 });
 
 test('only the exact anonymous worker response supplies transport values; user tabs and other initiators cannot',async()=>{

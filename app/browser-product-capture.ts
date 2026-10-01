@@ -1,10 +1,14 @@
 import { parsePublicProduct } from '@/app/public-product-collector';
-import { parseAlibabaMobilePage, parseAlibabaMobileDescription, parseAlibabaMobileProduct } from '@/app/alibaba-mobile-product';
+import { parseAlibabaMobilePage, parseAlibabaMobileDescription, parseAlibabaMobileProduct, parseAlibabaPublicSkuProduct } from '@/app/alibaba-mobile-product';
 
 /** The extension supplies inert JSON-LD from the user's current Chrome
  * profile. All product facts still pass the same strict public parser. */
 export function parseBrowserProductCapture(input:unknown,sourceUrl:string){
  const body=input&&typeof input==='object'&&!Array.isArray(input)?input as Record<string,unknown>:{};
+ if(body.format==='1688-public-sku-capture-v1'){
+  if(body.sourceUrl!==sourceUrl||Object.keys(body).some(key=>!['format','sourceUrl','skuPayload','ok'].includes(key)))throw Error('1688 옵션 원문과 요청 URL이 일치하지 않습니다.');
+  return {...parseAlibabaPublicSkuProduct(body.skuPayload,sourceUrl),provider:'chrome-public-sku-v1'};
+ }
  if(body.format==='1688-public-mobile-capture-v1'){
   if(body.sourceUrl!==sourceUrl||Object.keys(body).some(key=>!['format','sourceUrl','mobileHtml','skuPayload','detailSource','ok'].includes(key)))throw Error('1688 모바일 원문과 요청 URL이 일치하지 않습니다.');
   if(typeof body.mobileHtml!=='string'||!body.mobileHtml.trim()||typeof body.detailSource!=='string'||!body.skuPayload||typeof body.skuPayload!=='object'||Array.isArray(body.skuPayload))throw Error('1688 모바일 상품 원문 형식을 확인하지 못했습니다.');

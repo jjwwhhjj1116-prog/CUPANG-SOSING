@@ -13,6 +13,17 @@ function fixture(){
  });
  return {exports,sent,timers,events,receive(data,origin='https://sourceflow.jjwwhhjj1116.workers.dev',source=window){events.get('message')?.({source,origin,data});}};
 }
+test('bridge accepts bounded SKU-only raw evidence and rejects malformed, oversized or invented receipt fields',async()=>{
+ const source={ok:true,sourceUrl:url,format:'1688-public-sku-capture-v1',skuPayload:JSON.parse(fs.readFileSync(new URL('fixtures/1688-public-sku-813724060928.json',import.meta.url),'utf8'))};
+ const h=fixture(),pending=h.exports.capture1688FromChrome(url,new AbortController().signal);
+ h.receive({channel:'YOOFAM_1688_CAPTURE_RESULT',requestId,result:source});
+ assert.deepEqual(Object.keys(await pending).sort(),['sourceUrl','format','skuPayload'].sort());assert.equal(h.events.size,0);assert.equal(h.timers.size,0);
+ for(const mutate of [value=>value.skuPayload=null,value=>value.skuPayload=[],value=>value.skuPayload.self=value.skuPayload,
+  value=>value.skuPayload.padding='가'.repeat(700000),value=>value.receipt={title:'invented'},value=>value.sourceUrl=url.replace('813724060928','999')]){
+  const h=fixture(),pending=h.exports.capture1688FromChrome(url,new AbortController().signal),value=structuredClone(source);mutate(value);
+  h.receive({channel:'YOOFAM_1688_CAPTURE_RESULT',requestId,result:value});await assert.rejects(pending,/1688/);assert.equal(h.events.size,0);assert.equal(h.timers.size,0);
+ }
+});
 test('bridge cancellation stops exactly its capture and removes listeners before a late result',async()=>{
  const h=fixture(),controller=new AbortController();const pending=h.exports.capture1688FromChrome(url,controller.signal);
  assert.equal(h.sent.length,1);assert.equal(h.sent[0].value.type,'CAPTURE');assert.equal([...h.timers.values()][0].delay,45000);
@@ -26,7 +37,7 @@ test('bridge timeout sends cancellation and accepts only its own same-window res
  const h=fixture(),controller=new AbortController();const pending=h.exports.capture1688FromChrome(url,controller.signal);
  const data={channel:'YOOFAM_1688_CAPTURE_RESULT',requestId,result:{ok:true,sourceUrl:url,scripts:['{}']}};
  h.receive(data,'https://other.example');h.receive(data,undefined,{});h.receive({...data,requestId:'unrelated'});assert.equal(h.events.size,1);
- [...h.timers.values()][0].callback();await assert.rejects(pending,/0.2.29/);
+ [...h.timers.values()][0].callback();await assert.rejects(pending,/0.2.32/);
  assert.equal(h.sent.at(-1).value.type,'CANCEL');assert.equal(h.events.size,0);assert.equal(h.timers.size,0);
  const done=fixture(),other=new AbortController(),success=done.exports.capture1688FromChrome(url,other.signal);done.receive(data);
  assert.equal((await success).sourceUrl,url);other.abort();assert.equal(done.sent.length,1);assert.equal(done.events.size,0);
