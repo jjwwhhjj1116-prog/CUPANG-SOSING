@@ -36,13 +36,27 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   if(edit?.value===null){const common=optionId===null?undefined:view?.overrides.common[fieldKey];return common??view?.automatic.rows.find(row=>row.optionId===optionId)?.fields[fieldKey]?.value??'';}
   return edit?.value??view?.resolved.rows.find(row=>row.optionId===optionId)?.fields[fieldKey]?.value??'';
  }
+ function sourceIssues(optionId:string|null,fieldKey:string){
+  const manual=(id:string|null)=>{
+   const edit=edits.find(change=>change.optionId===id&&change.fieldKey===fieldKey);
+   return edit?edit.value:(id===null?view?.overrides.common[fieldKey]:view?.overrides.options[id]?.[fieldKey])??null;
+  };
+  const reviewed=(optionId===null?null:manual(optionId))??manual(null);
+  const automatic=view?.automatic.rows.find(row=>row.optionId===optionId)?.fields[fieldKey]
+   ??view?.resolved.rows.find(row=>row.optionId===optionId)?.fields[fieldKey];
+  // Restoration uses the same source diagnostics as stage seven. An optional
+  // blank produced by a calculation failure is not a reviewed empty price.
+  return reviewed!==null?[]:(automatic?.validationIssues??automatic?.issues??[])
+   .filter(issue=>issue!=='판매가는 공급가보다 작을 수 없습니다.');
+ }
  function change(optionId:string|null,fieldKey:string,value:string|null){
   if(request.current)return;
   setEdits(previous=>[...previous.filter(item=>item.optionId!==optionId||item.fieldKey!==fieldKey),{optionId,fieldKey,value}]);setMessage('');
  }
  const issues=view?rows.flatMap(row=>[
-  ...prices.flatMap(([key])=>{const field=view.resolved.schema.fields.find(field=>field.id===key);return field?quotationValueIssues(field,value(row.optionId,key),view.imageKeys):[];}),
-  ...quotationPriceIssues(view.resolved.schema,value(row.optionId,'supplyPrice'),value(row.optionId,'salePrice')),
+  ...prices.flatMap(([key,label])=>{const field=view.resolved.schema.fields.find(field=>field.id===key);
+   return [...new Set([...sourceIssues(row.optionId,key),...(field?quotationValueIssues(field,value(row.optionId,key),view.imageKeys):[])])].map(issue=>`${row.optionLabel||'상품 공통'} · ${label}: ${issue}`);}),
+  ...quotationPriceIssues(view.resolved.schema,value(row.optionId,'supplyPrice'),value(row.optionId,'salePrice')).map(issue=>`${row.optionLabel||'상품 공통'} · 판매가: ${issue}`),
  ]):[];
  async function save(){
   if(!view||!edits.length||issues.length||request.current)return;
