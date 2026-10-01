@@ -13,7 +13,7 @@ import { validateSupplierHubReceiptResult, type SupplierHubReceipt } from '@/app
 type Context={params:Promise<{id:string}>};
 const json=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function GET(request:Request,context:Context){
-  if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return json({error:'로그인을 확인해주세요.'},503);
+  if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return json({error:'로그인을 확인해주세요.',code:'AUTH_REQUIRED'},503);
   const fingerprint=new URL(request.url).searchParams.get('fingerprint');
   if(!fingerprint||!/^[a-f0-9]{64}$/.test(fingerprint))return json({error:'견적서 확인값을 확인해주세요.'},400);
   try{
@@ -24,7 +24,7 @@ export async function GET(request:Request,context:Context){
   }catch{return json({error:'보관된 전송 결과를 읽지 못했습니다.'},503);}
 }
 export async function POST(request:Request,context:Context){
-  if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return json({error:'로그인을 확인해주세요.'},503);
+  if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return json({error:'로그인을 확인해주세요.',code:'AUTH_REQUIRED'},503);
   try{
     const body=await readBoundedJson(request,1024*1024) as {profileId:string;categoryId:string;fingerprint:string;result:unknown};
     if(!body||typeof body.profileId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(body.profileId)

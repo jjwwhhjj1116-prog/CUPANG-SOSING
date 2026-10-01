@@ -6,9 +6,9 @@ import { isQuotationFilename } from '@/app/exports/quotation-filename';
 import { validatePackageReview, type PackageReview } from '@/app/submission-review-response';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
-import { checkSupplierHubExtension, prepareSupplierHubHandoff, transmitSupplierHubPackage, getSupplierHubResult, getSupplierHubSubmission, validateSupplierHubResultForSource, type SupplierHubResult, type SupplierHubAgreements } from '@/app/supplier-hub-handoff';
+import { checkSupplierHubExtension, prepareSupplierHubHandoff, transmitSupplierHubPackage, getSupplierHubResult, getSupplierHubSubmission, validateSupplierHubResultForSource, SupplierHubResultInvalid, type SupplierHubResult, type SupplierHubAgreements } from '@/app/supplier-hub-handoff';
 import { followSupplierHubRegistration, type SupplierHubTrackingProgress } from '@/app/supplier-hub-tracking';
-import { readStoredSupplierHubResult, storeSupplierHubReceipt } from '@/app/supplier-hub-receipt-client';
+import { readStoredSupplierHubResult, storeSupplierHubReceipt, SupplierHubReceiptUnavailable } from '@/app/supplier-hub-receipt-client';
 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
@@ -43,7 +43,13 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     const source={productId,categoryId,profileId:value.report.profileId,fingerprint:value.fingerprint,filename:value.filename};
     await verifyQuotationResultSource(source,controller.signal);
     if(controller.signal.aborted)return;
-    const stored=await readStoredSupplierHubResult({...source,company:value.report.company,includedOptions:value.report.rowCount},controller.signal);
+    let stored:SupplierHubResult|null=null,unavailable:SupplierHubReceiptUnavailable|null=null;
+    try{
+      stored=await readStoredSupplierHubResult({...source,company:value.report.company,includedOptions:value.report.rowCount},controller.signal);
+    }catch(cause){
+      if(!(cause instanceof SupplierHubReceiptUnavailable))throw cause;
+      unavailable=cause;
+    }
     await verifyQuotationResultSource(source,controller.signal);
     if(controller.signal.aborted)return;
     if(stored){
@@ -56,10 +62,14 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     if(saved.attempt&&(saved.attempt.company.code!==value.report.company.code||saved.attempt.company.name!==value.report.company.name||saved.attempt.includedOptions!==value.report.rowCount))
       throw new Error('저장된 전송 기록의 회사와 옵션 수가 현재 견적서와 다릅니다.');
     if(saved.result)validateSupplierHubResultForSource(saved.result,{filename:value.filename,company:value.report.company,includedOptions:value.report.rowCount});
+    // An unavailable server never proves that this quotation has not been sent.
+    if(unavailable){setReceiptError(unavailable.message);if(!saved.attempt&&!saved.result)throw unavailable;}
     if(saved.attempt||saved.result){
       setAttemptedFingerprint(value.fingerprint);setHubResult(saved.result);
       setMessage(saved.attempt?.error||'이 견적서의 이전 전송 기록을 불러왔습니다. 재전송 없이 결과 확인을 이어갈 수 있습니다.');
+      if(unavailable&&saved.result)await retainResult(value,saved.result,controller);
     }
+    if(controller.signal.aborted)return;
     setCheckedFingerprint(value.fingerprint);
   }
   async function retainResult(value:Preview,result:SupplierHubResult|null,controller:AbortController){
@@ -102,20 +112,19 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     setBusy(true);setError('');setReceiptError('');setMessage('');
     if(action==='preview'){setPreview(null);setCheckedFingerprint('');setHubResult(null);setTrackingProgress(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});}
     try {
-      if(action==='recover'){setCheckedFingerprint('');setHubResult(null);setTrackingProgress(null);await restoreSubmission(preview!,controller);return;}
+      if(action==='recover'){setCheckedFingerprint('');setTrackingProgress(null);await restoreSubmission(preview!,controller);return;}
       if(action==='track'){await followResults(controller);return;}
       if(action==='result'||action==='registration'){
-        setTrackingProgress(null);
         if(!categoryId||!preview!.report.company)throw new Error('등록할 회사와 카테고리를 먼저 확인해주세요.');
         if(action==='registration'&&(hubResult?.state!=='validation-complete'||!hubResult.quotationId))throw new Error('견적서 파일 검증 완료 결과와 견적서 ID를 먼저 확인해주세요.');
         const quotationId=action==='registration'?hubResult!.quotationId:undefined;
-        setHubResult(null);
         await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
         if(controller.signal.aborted)return;
         const result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal,action==='registration'?'registration':true);
         await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
         if(!controller.signal.aborted){
           if(result){validateSupplierHubResultForSource(result,{filename:preview!.filename,company:preview!.report.company,includedOptions:preview!.report.rowCount,quotationId});setAttemptedFingerprint(preview!.fingerprint);}
+          setTrackingProgress(null);
           setHubResult(result);if(!result)setMessage('이 견적서의 검증 결과가 아직 표시되지 않았습니다. 잠시 후 다시 확인해주세요.');
           await retainResult(preview!,result,controller);
         }
@@ -188,7 +197,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         setTimeout(()=>URL.revokeObjectURL(url),1000);
         setMessage(action==='download'?'검토한 견적서 파일을 내려받았습니다.':'작성된 견적서와 첨부 파일을 내려받았습니다. Supplier Hub 등록은 아직 실행되지 않았습니다.');
       }
-    }catch(cause){if(!controller.signal.aborted){if(cause instanceof QuotationResultSourceChanged){setPreview(null);setCheckedFingerprint('');setHubResult(null);}setError(cause instanceof Error?cause.message:'견적서 준비 실패');}}
+    }catch(cause){if(!controller.signal.aborted){if(cause instanceof QuotationResultSourceChanged){setPreview(null);setCheckedFingerprint('');setHubResult(null);setTrackingProgress(null);}else if(cause instanceof SupplierHubResultInvalid){setHubResult(null);setTrackingProgress(null);}setError(cause instanceof Error?cause.message:'견적서 준비 실패');}}
     finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
   }
   return <section className="panel-stack" aria-label="견적서와 첨부 파일 준비" aria-busy={busy}>

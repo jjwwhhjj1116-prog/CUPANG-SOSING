@@ -27,7 +27,10 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
  }
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},
   useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
- const bridge={getSupplierHubSubmission:async identity=>savedSubmissions.get(submissionKey(identity))||{attempt:null,result:null},checkSupplierHubExtension:async()=>{},prepareSupplierHubHandoff:(blob,identity)=>connect('prepare',blob,identity),
+ let lookupError=false;
+ const bridge={getSupplierHubSubmission:async identity=>{calls.push({action:'chrome-recover'});return savedSubmissions.get(submissionKey(identity))||{attempt:null,result:null};},
+  getSupplierHubResult:async(identity,_signal,mode)=>{calls.push({action:'lookup',mode});if(lookupError)throw Error('SKU 조회 응답 유실');return savedSubmissions.get(submissionKey(identity))?.result??null;},
+  checkSupplierHubExtension:async()=>{},prepareSupplierHubHandoff:(blob,identity)=>connect('prepare',blob,identity),
   transmitSupplierHubPackage:(blob,identity,agreements)=>connect('transmit',blob,identity,agreements)};
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
@@ -40,9 +43,10 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
    }});return exports;
  }
  bridge.validateSupplierHubResultForSource=load('app/supplier-hub-handoff.ts').validateSupplierHubResultForSource;
+ bridge.SupplierHubResultInvalid=load('app/supplier-hub-handoff.ts').SupplierHubResultInvalid;
  const tracker=load('app/supplier-hub-tracking.ts');let observationIndex=0;
  const trackingBridge={...tracker,followSupplierHubRegistration:(source,options)=>tracker.followSupplierHubRegistration(source,{...options,
-  read:async()=>observations[Math.min(observationIndex++,observations.length-1)],maxDurationMs:1000,wait:async()=>{}})};
+  read:async identity=>{const result=observations[Math.min(observationIndex++,observations.length-1)];const saved=savedSubmissions.get(submissionKey(identity));if(saved)savedSubmissions.set(submissionKey(identity),{...saved,result});return result;},maxDurationMs:1000,wait:async()=>{}})};
  const Component=load('app/components/submission-package.tsx').SubmissionPackage;
  const render=()=>{cursor=0;return Component({productId,profileId,categoryId,onInspect(){}});};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
@@ -50,6 +54,6 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
   const target=button(label);if(!target||target.props.disabled)throw Error('Button unavailable: '+label);target.props.onClick();
   const deadline=Date.now()+5000;while(render().props['aria-busy']){if(Date.now()>deadline)throw Error('UI request timeout');await new Promise(resolve=>setTimeout(resolve,1));}
  }
- return {calls,button,click,render,remount(){slots.length=0;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
+ return {calls,button,click,render,remount(){slots.length=0;},setLookupError(value){lookupError=value;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
   alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children)};
 }

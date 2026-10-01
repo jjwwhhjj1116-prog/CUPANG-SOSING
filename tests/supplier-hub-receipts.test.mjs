@@ -62,6 +62,31 @@ for(const company of companies)test(`reviewed URL draft → transmission → per
   const detail=await json(await h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test'+h.base),{params:Promise.resolve({id:h.product.id})}));assert.deepEqual(detail.product.hub_receipt,summary);
  }finally{h.close();}
 });
+for(const company of companies)test(`server outage and failed refresh preserve the six-SKU receipt without another upload (${company.companyCode})`,async()=>{
+ const h=await setup(company);try{
+  let unavailable=false;
+  const route=async(path,init)=>unavailable&&path.includes('/supplier-hub-receipt')?Response.json({error:'시험 서버 일시 저장 실패'},{status:503}):h.route(path,init);
+  const ui=submissionPackageUI({route,productId:h.product.id,observations:[h.result,{...h.result,registration:h.registration}]});
+  await ui.click('견적서 + 첨부 파일 준비');ui.choose();await ui.click('등록 전송');
+  const before=h.sqlite.prepare('SELECT * FROM products').get(),payload=h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts').get().payload;
+  unavailable=true;ui.remount();await ui.click('견적서 + 첨부 파일 준비');
+  assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+  assert.equal(ui.button('견적서 ID로 상품별 등록 상태 조회').props.disabled,false);
+  assert.ok(JSON.stringify(ui.render()).includes('sku-5'));
+  ui.setLookupError(true);await ui.click('견적서 ID로 상품별 등록 상태 조회');
+  assert.ok(JSON.stringify(ui.render()).includes('sku-5'));assert.ok(ui.alerts().includes('SKU 조회 응답 유실'));
+  assert.equal(ui.button('견적서 ID로 상품별 등록 상태 조회').props.disabled,false);
+  unavailable=false;ui.setLookupError(false);await ui.click('견적서 ID로 상품별 등록 상태 조회');assert.deepEqual(ui.alerts(),[]);
+  const stored=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+h.preview.fingerprint));
+  assert.equal(stored.receipt.result.registration.rows.length,6);assert.equal(stored.receipt.result.registered,false);
+  assert.equal(h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts').get().payload,payload);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM products').get(),before);
+  assert.equal(ui.calls.filter(call=>call.action==='transmit').length,1);
+  assert.equal(ui.calls.filter(call=>call.action==='export').length,1);
+  assert.equal(ui.calls.filter(call=>call.action==='prepare').length,0);
+ }finally{h.close();}
+});
+
 test('older responses and equal-clock partial rows cannot erase issued SKUs, rejection or the quotation identity',async()=>{
  const h=await setup();try{
   await json(await h.write(h.result));await json(await h.write({...h.result,registration:h.registration}));
@@ -117,7 +142,7 @@ test('unauthenticated receipt readers and writers stop before any database or re
   if(name==='@/app/chatgpt-auth')return {getChatGPTUser:async()=>null,getWorkspaceOwnerId:async()=>{touched++;throw Error('auth gate bypassed');}};
   return new Proxy({},{get(){return ()=>{touched++;throw Error('storage/body gate bypassed');};}});
  }});
- const context={params:Promise.resolve({id:'p'})};for(const method of ['GET','POST'])assert.equal((await exports[method]({},context)).status,503);assert.equal(touched,0);
+ const context={params:Promise.resolve({id:'p'})};for(const method of ['GET','POST']){const response=await exports[method]({},context);assert.equal(response.status,503);assert.equal((await response.json()).code,'AUTH_REQUIRED');}assert.equal(touched,0);
 });
 test('corrupted stored receipts fail closed per product instead of breaking the registration board',async()=>{
  const h=await setup();try{

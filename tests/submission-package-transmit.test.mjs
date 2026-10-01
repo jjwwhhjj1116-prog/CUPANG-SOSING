@@ -8,12 +8,12 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let index=0;index<8;index++)await new Promise(resolve=>setImmediate(resolve));};
 const fingerprint='a'.repeat(64);
-function harness({receiptStoreError=false,conflict=false,uncertain=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false}={}){
+function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false}={}){
  const slots=[],calls=[],modules=new Map();let cursor=0,sourceChanged=false;
  let clock=0,editNext=false;
  const preview={fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],report:{company,productId:'p',categoryId:'80719',profileId:'profile',rowCount:1,warnings:[],submissionReady:false},submissionReview:{productId:'p',categoryId:'80719',inputFingerprint:fingerprint,submissionReady:false,transport:'not-connected',errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]}};
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
- let editRecovery=false;
+ let editRecovery=false,lookupError=false,holdLookup=false,resumeLookup;
  const bridge={checkSupplierHubExtension:async(_signal,direct)=>calls.push(['check',direct]),prepareSupplierHubHandoff:async()=>calls.push(['prepare']),
   getSupplierHubSubmission:async identity=>{calls.push(['recover',identity]);if(recoveryError)throw Error('전송 기록 읽기 실패');if(editRecovery)sourceChanged=true;return savedSubmission||{attempt:null,result:null};},
   transmitSupplierHubPackage:async(blob,identity,reviewed)=>{
@@ -22,11 +22,17 @@ function harness({receiptStoreError=false,conflict=false,uncertain=false,validat
    if(uncertain)throw Error('응답 확인 불가');return {state:notStarted?'not-started':'validation-requested',registered:false};
   },getSupplierHubResult:async(identity,_signal,refresh)=>{
    calls.push(['result',identity,refresh]);if(refresh==='registration'&&editNext)sourceChanged=true;
+   if(holdLookup)await new Promise(resolve=>{resumeLookup=resolve;});
+   if(lookupError)throw Error('상품별 결과 응답 시간 초과');
    const result={state:validationComplete?'validation-complete':'validation-pending',filename:preview.filename,company:preview.report.company,includedOptions:1,quotationId:validationComplete?'quote-123':undefined,observedAt:Date.now(),registered:false,...(refresh==='registration'?{registration:{quotationId:'quote-123',scope:'visible-page',rows:issued?[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:preview.filename,skuId:'sku-123',status:'상품 검수중',stage:'가격/정책'}]:[],includedOptions:1,observedAt:Date.now(),registered:false,...registrationPatch}}:{}),...resultPatch};
    if(savedSubmission)savedSubmission={...savedSubmission,result};return result;
   }};
  function load(file){if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,setTimeout,fetch:async(url,init)=>{
-   if(url.includes('supplier-hub-receipt'))return receiptStoreError&&init?.method==='POST'?Response.json({error:'결과 보관 일시 실패'},{status:503}):Response.json(init?.method==='POST'?{saved:true,fingerprint,registered:false}:{receipt:null});
+   if(url.includes('supplier-hub-receipt')){
+    if(init?.method!=='POST'&&receiptReadNetworkError)throw Error('network disconnected');
+    if(init?.method!=='POST'&&receiptReadStatus!==200)return Response.json({error:'결과 조회 실패',code:receiptReadCode},{status:receiptReadStatus});
+    return receiptStoreError&&init?.method==='POST'?Response.json({error:'결과 보관 일시 실패'},{status:503}):Response.json(init?.method==='POST'?{saved:true,fingerprint,registered:false}:{receipt:null});
+   }
    const body=JSON.parse(init.body);calls.push(['fetch',url,body]);
    if(body.action==='preview'||body.action==='source')return Response.json({...preview,...(sourceChanged?{fingerprint:'b'.repeat(64)}:{})});
    if(conflict)return Response.json({error:'저장값이 변경되었습니다.'},{status:409});
@@ -34,6 +40,7 @@ function harness({receiptStoreError=false,conflict=false,uncertain=false,validat
    return new Response('ZIP bytes',{headers:{'content-type':'application/zip'}});
  },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/supplier-hub-tracking')return trackingBridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  bridge.validateSupplierHubResultForSource=load('app/supplier-hub-handoff.ts').validateSupplierHubResultForSource;
+ bridge.SupplierHubResultInvalid=load('app/supplier-hub-handoff.ts').SupplierHubResultInvalid;
  const tracker=load('app/supplier-hub-tracking.ts');
  const trackingBridge={...tracker,followSupplierHubRegistration:(source,options)=>tracker.followSupplierHubRegistration(source,{...options,maxDurationMs:1000,now:()=>clock,wait:async(ms,signal)=>{
   if(manualWait)return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('paused')),{once:true}));
@@ -42,8 +49,74 @@ function harness({receiptStoreError=false,conflict=false,uncertain=false,validat
  const Component=load('app/components/submission-package.tsx').SubmissionPackage;
  const render=()=>{cursor=0;return Component({productId:'p',profileId:'profile',categoryId:'80719',onInspect(){}});};
  const button=text=>nodes(render()).find(node=>node.type==='button'&&node.props.children===text);
- return {render,calls,button,remount(){slots.length=0;},changeSource(){sourceChanged=true;},editDuringNextLookup(){editNext=true;},editDuringRecovery(){editRecovery=true;},recover(){recoveryError=false;},setResultPatch(value){resultPatch=value;},complete(){validationComplete=true;issued=true;},hideSkus(){issued=false;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
+ return {render,calls,button,remount(){slots.length=0;},changeSource(){sourceChanged=true;},editDuringNextLookup(){editNext=true;},editDuringRecovery(){editRecovery=true;},recover(){recoveryError=false;receiptReadStatus=200;receiptReadNetworkError=false;},failLookup(){lookupError=true;},holdLookup(){holdLookup=true;},resumeLookup(){holdLookup=false;resumeLookup?.();},setResultPatch(value){resultPatch=value;},complete(){validationComplete=true;issued=true;},hideSkus(){issued=false;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
 }
+
+test('a slow or failed manual lookup preserves the previously verified SKU receipt and never repeats delivery',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const h=harness({company,validationComplete:true,issued:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
+  h.holdLookup();h.button('견적서 ID로 상품별 등록 상태 조회').props.onClick();await settle();
+  assert.ok(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'),'receipt stays visible while lookup is pending');
+  h.failLookup();h.resumeLookup();await settle();
+  assert.ok(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'),'a transport error cannot erase verified evidence');
+  assert.ok(nodes(h.render()).some(node=>node.props?.children==='전송한 옵션 수와 동일한 수의 고유 SKU ID가 조회됐습니다. 상품 검수 결과는 아래 상태를 기준으로 확인하세요.'));
+  assert.ok(nodes(h.render()).some(node=>node.props?.children==='상품별 결과 응답 시간 초과'));
+  assert.equal(h.button('견적서 ID로 상품별 등록 상태 조회').props.disabled,false);
+  assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+  assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+ }
+});
+
+test('temporary receipt read outages restore only existing Chrome attempts and block a new upload when absence is unknown',async()=>{
+ for(const receiptReadStatus of [408,429,500,502,503,504]){
+  const company={code:'A01464742',name:'와이홉'},result={state:'validation-complete',filename:`YOOFAM-${fingerprint}.xlsx`,company,includedOptions:1,quotationId:'quote-123',observedAt:Date.now(),registered:false};
+  const h=harness({receiptReadStatus,savedSubmission:{attempt:null,result}});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+  assert.equal(h.button('전송 시도됨 · 검증 결과 확인')?.props.disabled,true);
+  assert.equal(h.button('견적서 ID로 상품별 등록 상태 조회').props.disabled,false);
+  assert.equal(h.calls.filter(([name])=>name==='recover').length,1);
+  assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'||name==='result'),false);
+ }
+ for(const outage of [{receiptReadStatus:503},{receiptReadNetworkError:true}]){
+  const h=harness(outage);h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();
+  assert.equal(h.button('등록 전송').props.disabled,true);assert.equal(h.button('확장에 첨부 파일 준비').props.disabled,true);
+  assert.equal(h.calls.filter(([name])=>name==='recover').length,1);
+  h.recover();h.button('전송 기록 다시 확인').props.onClick();await settle();
+  assert.equal(h.button('등록 전송').props.disabled,false);
+  assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'),false);
+ }
+});
+
+test('authorization and source errors do not fall back to a different receipt store',async()=>{
+ for(const settings of [400,401,403,404,409,422].map(receiptReadStatus=>({receiptReadStatus})).concat({receiptReadStatus:503,receiptReadCode:'AUTH_REQUIRED'})){
+  const h=harness(settings);h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+  assert.equal(h.calls.some(([name])=>name==='recover'),false);
+  assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'),false);
+  assert.equal(h.button('등록 전송')?.props.disabled??true,true);
+ }
+});
+
+test('outage recovery still checks the saved draft, company and option count before exposing cached results',async()=>{
+ const company={code:'A01464742',name:'와이홉'},result={state:'validation-complete',filename:`YOOFAM-${fingerprint}.xlsx`,company,includedOptions:1,quotationId:'quote-123',observedAt:Date.now(),registered:false};
+ for(const patch of [{company:{code:'A01526306',name:'유앤채'}},{includedOptions:2}]){
+  const h=harness({receiptReadStatus:503,savedSubmission:{attempt:null,result:{...result,...patch}}});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+  assert.equal(h.button('등록 전송').props.disabled,true);assert.equal(h.button('견적서 ID로 상품별 등록 상태 조회').props.disabled,true);
+  assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'||name==='result'),false);
+ }
+ const h=harness({receiptReadNetworkError:true,savedSubmission:{attempt:null,result}});h.editDuringRecovery();h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+ assert.equal(h.button('등록 전송'),undefined);assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'||name==='result'),false);
+});
+
+test('an uncertain cached attempt resumes read-only lookup through a server outage without another attachment',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const h=harness({company,receiptReadStatus:503,receiptStoreError:true,validationComplete:true,issued:true,savedSubmission:{attempt:{state:'unconfirmed',company,includedOptions:1,startedAt:Date.now(),registered:false},result:null}});
+  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+  assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+  h.button('전송 결과 계속 확인').props.onClick();await settle();
+  assert.ok(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'));
+  assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'),false);
+  assert.equal(h.calls.some(([name,,body])=>name==='fetch'&&body.action==='export'),false);
+ }
+});
 
 test('editing while the ZIP is being returned blocks both direct transmission and pending preparation',async()=>{
  for(const action of ['등록 전송','확장에 첨부 파일 준비']){
