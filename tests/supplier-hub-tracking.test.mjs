@@ -6,22 +6,43 @@ import ts from 'typescript';
 
 const code=ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-tracking.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 function api(timers={setTimeout,clearTimeout}){
- const exports={};vm.runInNewContext(code,{exports,Error,Date,Set,...timers,require(){return {};}});return exports;
+ const handoff={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-handoff.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:handoff,Error,Date,Set});
+ const exports={};vm.runInNewContext(code,{exports,Error,Date,Set,...timers,require(name){return name==='@/app/supplier-hub-handoff'?handoff:{};}});return exports;
 }
 const tracking=api();
 const source={productId:'p',categoryId:'80719',profileId:'profile',fingerprint:'a'.repeat(64),filename:`YOOFAM-${'a'.repeat(64)}.xlsx`,includedOptions:2,company:{code:'A01464742',name:'와이홉'}};
 const row=(skuId,patch={})=>({title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:source.filename,skuId,status:'상품 검수중',stage:'가격/정책',...patch});
 const record=(state='validation-pending',patch={})=>({state,filename:source.filename,company:source.company,includedOptions:2,quotationId:state==='validation-complete'?'quote-123':undefined,observedAt:Date.now(),registered:false,...patch});
 const registered=(rows,patch={})=>record('validation-complete',{registration:{quotationId:'quote-123',scope:'visible-page',includedOptions:2,observedAt:Date.now(),registered:false,rows},...patch});
-function fixture(replies,{prepared=source,verify,read,wait,maxDurationMs=180000}={}){
+function fixture(replies,{prepared=source,verify,read,wait,maxDurationMs=180000,initialResult}={}){
  let index=0,time=0;const calls=[],progress=[],controller=new AbortController();
- const options={signal:controller.signal,maxDurationMs,now:()=>time,
+ const options={signal:controller.signal,maxDurationMs,initialResult,now:()=>time,
   verify:async(...args)=>{calls.push(['verify',...args]);await verify?.(...args);},
   read:async(...args)=>{calls.push(['read',...args]);await read?.(...args);return replies[Math.min(index++,replies.length-1)];},
   wait:async(ms,signal)=>{calls.push(['wait',ms]);time+=ms;await wait?.(ms,signal);},
   onProgress:value=>progress.push(value)};
  return {calls,progress,controller,options,run:()=>tracking.followSupplierHubRegistration(prepared,options)};
 }
+
+test('continuing an accepted receipt queries its known quotation ID directly and never accepts a replacement',async()=>{
+ for(const company of [source.company,{code:'A01526306',name:'유앤채'}]){
+  const initialResult={...registered([row('sku-1'),row('sku-2')]),company};
+  const h=fixture([{...registered([row('sku-1'),row('sku-2')]),company}],{prepared:{...source,company},initialResult});
+  assert.equal((await h.run()).phase,'sku-issued');
+  assert.deepEqual(h.calls.filter(([kind])=>kind==='read').map(([, , ,mode])=>mode),['registration']);
+  const changed=fixture([{...registered([row('sku-1'),row('sku-2')]),company,quotationId:'other-quote'}],{prepared:{...source,company},initialResult});
+  await assert.rejects(changed.run(),/견적서 ID가 변경/);assert.equal(changed.progress.length,0);
+ }
+});
+
+test('automatic tracking rejects a different filename or false registration claim before publishing it',async()=>{
+ for(const patch of [{filename:'other.xlsx'},{registered:true},{state:'unknown'},{observedAt:0}]){
+  const h=fixture([record('validation-complete',patch)]);
+  await assert.rejects(h.run());assert.equal(h.progress.length,0);
+ }
+ const wrong=fixture([],{initialResult:record('validation-complete',{filename:'other.xlsx'})});
+ await assert.rejects(wrong.run());assert.equal(wrong.calls.length,0);
+});
 
 test('both companies follow pending file validation into fresh per-SKU lookup without another upload',async()=>{
  for(const company of [source.company,{code:'A01526306',name:'유앤채'}]){

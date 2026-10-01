@@ -1,4 +1,4 @@
-import { validateRegistrationResult, validateSupplierHubResultForSource, type SupplierHubResult, type SupplierHubRegistrationRow, type SupplierHubRegistration } from '@/app/supplier-hub-handoff';
+import { validateRegistrationResult, validateSupplierHubResultForSource, supplierHubRegistrationEvidence, type SupplierHubResult, type SupplierHubRegistrationRow, type SupplierHubRegistration } from '@/app/supplier-hub-handoff';
 
 export type SupplierHubReceipt = {
   schemaVersion:1; evidence:'chrome-observation'; profileId:string; categoryId:string;
@@ -26,8 +26,7 @@ export function validateSupplierHubReceiptResult(value:unknown, source:ReceiptSo
     if(result.state!=='validation-complete')throw new Error('상품별 결과에는 견적서 파일 검증 완료가 필요합니다.');
     validateRegistrationResult(result.registration,result.quotationId);
     if(!Number.isSafeInteger(result.registration.observedAt))throw new Error('상품별 조회 시각을 확인해주세요.');
-    const skus=issuedSkuIds(result);
-    if(new Set(skus).size!==skus.length)throw new Error('같은 SKU ID가 중복된 결과는 보관할 수 없습니다.');
+    if(supplierHubRegistrationEvidence(result).duplicateSkus)throw new Error('같은 SKU ID가 중복된 결과는 보관할 수 없습니다.');
   }
   let registration:SupplierHubRegistration|undefined;
   if(result.registration){
@@ -65,14 +64,8 @@ export function supplierHubReceiptOrder(result:SupplierHubResult){
   const summary=receiptStatus(result);
   return summary.label.includes('반려')?1000:summary.label==='SKU ID 확인'?500:result.registration?10+summary.issuedSkus:result.state==='validation-complete'?1:0;
 }
-function issuedSkuIds(result:SupplierHubResult) {
-  return (result.registration?.rows??[]).map(row=>row.skuId.trim()).filter(value=>value&&!/\.\.\.|…/.test(value)&&!/^(?:-|—|n\/a|미표시|해당사항없음)$/i.test(value));
-}
 function receiptStatus(result:SupplierHubResult){
-  const rows=result.registration?.rows??[],issuedSkus=issuedSkuIds(result).length;
-  const rejected=rows.some(row=>/반려|거절|실패/.test(row.status+' '+row.stage));
-  const allSkus=rows.length===result.includedOptions&&issuedSkus===result.includedOptions
-    &&!(result.registration?.scope==='queried-pages'&&result.registration.hasMore===true);
+  const {issuedSkus,rejected,allSkus}=supplierHubRegistrationEvidence(result);
   return {label:result.state==='validation-rejected'?'파일 반려':rejected?'상품 반려':allSkus?'SKU ID 확인':result.state==='validation-complete'?'견적서 접수':'파일 검증 중',issuedSkus};
 }
 export function supplierHubReceiptSummary(receipt:SupplierHubReceipt):SupplierHubReceiptSummary {

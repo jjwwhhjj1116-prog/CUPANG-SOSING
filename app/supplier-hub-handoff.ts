@@ -33,6 +33,21 @@ export type SupplierHubSavedAttempt={state:'started'|'validation-requested'|'att
 export type SupplierHubSavedSubmission={attempt:SupplierHubSavedAttempt|null;result:SupplierHubResult|null};
 type ResultSource={filename:string;company:{code:string;name:string};includedOptions:number;quotationId?:string};
 export class SupplierHubResultInvalid extends Error {}
+/** Shared evidence for restored receipts and fresh lookups; SKU issuance is not approval. */
+export function supplierHubRegistrationEvidence(result:SupplierHubResult|null){
+  const registration=result?.registration,rows=registration?.rows??[],includedOptions=result?.includedOptions;
+  const skus=rows.map(row=>row.skuId.trim()).filter(value=>value&&!/\.\.\.|…/.test(value)
+    &&!/^(?:-|—|n\/a|미표시|해당사항없음)$/i.test(value));
+  const duplicateSkus=new Set(skus).size!==skus.length;
+  const rejected=rows.some(row=>/반려|거절|실패/.test(row.status+' '+row.stage));
+  const allSkus=Boolean(result?.state==='validation-complete'&&result.registered===false&&registration?.registered===false
+    &&registration.quotationId===result.quotationId&&registration.includedOptions===includedOptions
+    &&typeof includedOptions==='number'&&Number.isSafeInteger(includedOptions)&&includedOptions>=1&&includedOptions<=200
+    &&['visible-page','queried-pages'].includes(registration.scope)
+    &&rows.length===includedOptions&&skus.length===includedOptions&&!duplicateSkus&&!rejected
+    &&!(registration.scope==='queried-pages'&&registration.hasMore===true));
+  return {observedRows:rows.length,issuedSkus:skus.length,duplicateSkus,rejected,allSkus};
+}
 /** A cached receipt and a live lookup must refer to the same reviewed company and rows. */
 export function validateSupplierHubResultForSource(result:SupplierHubResult,source:ResultSource):void{
   if(result.registered!==false||result.filename!==source.filename||result.company?.code!==source.company.code||result.company?.name!==source.company.name)

@@ -41,6 +41,8 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
  },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/supplier-hub-tracking')return trackingBridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  bridge.validateSupplierHubResultForSource=load('app/supplier-hub-handoff.ts').validateSupplierHubResultForSource;
  bridge.SupplierHubResultInvalid=load('app/supplier-hub-handoff.ts').SupplierHubResultInvalid;
+ bridge.supplierHubRegistrationEvidence=load('app/supplier-hub-handoff.ts').supplierHubRegistrationEvidence;
+ bridge.validateRegistrationResult=load('app/supplier-hub-handoff.ts').validateRegistrationResult;
  const tracker=load('app/supplier-hub-tracking.ts');
  const trackingBridge={...tracker,followSupplierHubRegistration:(source,options)=>tracker.followSupplierHubRegistration(source,{...options,maxDurationMs:1000,now:()=>clock,wait:async(ms,signal)=>{
   if(manualWait)return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('paused')),{once:true}));
@@ -253,6 +255,34 @@ test('both companies recover a prior receipt on remount without another ZIP, upl
   assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
   assert.equal(h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='export').length,1);
   assert.ok(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'));
+ }
+});
+
+test('a restored SKU receipt retains its confirmed summary when continuation fails before a fresh lookup',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const h=harness({company,validationComplete:true,issued:true});
+  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
+  h.remount();h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+  const issuance=node=>node.props?.children==='전송한 옵션 수와 동일한 수의 고유 SKU ID가 조회됐습니다. 상품 검수 결과는 아래 상태를 기준으로 확인하세요.';
+  assert.ok(nodes(h.render()).some(issuance),'stored evidence is summarized without a fresh lookup');
+  const before=h.calls.filter(([name])=>name==='result').length;
+  h.failLookup();h.button('전송 결과 계속 확인').props.onClick();await settle();
+  assert.ok(nodes(h.render()).some(issuance));
+  assert.ok(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'));
+  assert.deepEqual(h.calls.filter(([name])=>name==='result').slice(before).map(([, ,mode])=>mode),['registration']);
+  assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+  assert.equal(h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='export').length,1);
+ }
+});
+
+test('continuation and file refresh cannot switch a receipt to a different quotation ID',async()=>{
+ for(const action of ['전송 결과 계속 확인','Supplier Hub 검증 결과 불러오기']){
+  const h=harness({validationComplete:true,issued:true});
+  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
+  h.setResultPatch({quotationId:'other-quote'});h.button(action).props.onClick();await settle();
+  assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));
+  assert.equal(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'),false);
+  assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
  }
 });
 

@@ -1,4 +1,4 @@
-import { getSupplierHubResult, type SupplierHubResult } from '@/app/supplier-hub-handoff';
+import { getSupplierHubResult, validateSupplierHubResultForSource, validateRegistrationResult, supplierHubRegistrationEvidence, SupplierHubResultInvalid, type SupplierHubResult } from '@/app/supplier-hub-handoff';
 import { verifyQuotationResultSource } from '@/app/quotation-result-source';
 
 export type SupplierHubTrackingSource = {
@@ -15,6 +15,7 @@ export type SupplierHubTrackingOutcome = SupplierHubTrackingProgress & { timedOu
 /** Read-only follow-up to one accepted upload. This never attaches or resubmits files. */
 export async function followSupplierHubRegistration(prepared:SupplierHubTrackingSource,options:{
   signal:AbortSignal; onProgress?:(progress:SupplierHubTrackingProgress)=>void|Promise<void>;
+  initialResult?:SupplierHubResult|null;
   read?:typeof getSupplierHubResult; verify?:typeof verifyQuotationResultSource;
   wait?:(ms:number,signal:AbortSignal)=>Promise<void>; now?:()=>number;
   maxDurationMs?:number;
@@ -29,7 +30,28 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
   const read=options.read??getSupplierHubResult,verify=options.verify??verifyQuotationResultSource;
   const now=options.now??Date.now,wait=options.wait??waitForNextLookup,start=now();
   const identity={productId:prepared.productId,categoryId:prepared.categoryId,fingerprint:prepared.fingerprint};
-  let quotationId='',mode:boolean|'registration'=true;
+  const validateResult=(result:SupplierHubResult,quotationId?:string)=>{
+    if(result.company?.code!==prepared.company.code||result.company?.name!==prepared.company.name
+      ||result.includedOptions!==prepared.includedOptions)throw new SupplierHubResultInvalid('전송한 견적서의 회사 또는 옵션 수가 조회 결과와 다릅니다.');
+    if(!['not-found','validation-pending','validation-complete','validation-rejected'].includes(result.state)
+      ||!Number.isSafeInteger(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000)
+      throw new SupplierHubResultInvalid('현재 견적서의 검증 결과와 조회 시각을 확인하지 못했습니다.');
+    if(quotationId&&result.state!=='validation-complete')throw new SupplierHubResultInvalid('상품별 조회 중 파일 검증 상태가 변경되었습니다.');
+    if(Array.isArray(result.registration?.rows)&&result.registration.rows.length>prepared.includedOptions)
+      throw new SupplierHubResultInvalid('조회된 상품 수가 전송한 옵션 수보다 많습니다.');
+    validateSupplierHubResultForSource(result,{...prepared,...(quotationId?{quotationId}:{})});
+    if(result.state==='validation-complete'&&(typeof result.quotationId!=='string'||!result.quotationId.trim()
+      ||result.quotationId!==result.quotationId.trim()||result.quotationId.length>200))
+      throw new SupplierHubResultInvalid('파일 검증 완료 결과에 견적서 ID가 없습니다.');
+    if(result.registration){
+      if(result.state!=='validation-complete')throw new SupplierHubResultInvalid('상품별 조회 중 파일 검증 상태가 변경되었습니다.');
+      validateRegistrationResult(result.registration,result.quotationId);
+    }
+  };
+  if(options.initialResult)validateResult(options.initialResult);
+  // A restored receipt anchors the next fresh lookup, but its rows never count as a new observation.
+  let quotationId=options.initialResult?.state==='validation-complete'?options.initialResult.quotationId!:'',
+    mode:boolean|'registration'=quotationId?'registration':true;
   let progress:SupplierHubTrackingProgress={phase:'validation-pending',result:null,includedOptions:prepared.includedOptions,observedRows:0,issuedSkus:0};
   const checkCancelled=()=>{if(options.signal.aborted)throw new Error('등록 결과 확인을 중단했습니다.');};
   const publish=async()=>{checkCancelled();await options.onProgress?.(progress);checkCancelled();};
@@ -43,8 +65,7 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
     const result=await read(identity,options.signal,mode);checkCancelled();
     // Editing while Chrome is reading must not publish evidence for the old draft.
     await verify(prepared,options.signal);checkCancelled();
-    if(result&&(result.company?.code!==prepared.company.code||result.company?.name!==prepared.company.name
-      ||result.includedOptions!==prepared.includedOptions))throw new Error('전송한 견적서의 회사 또는 옵션 수가 조회 결과와 다릅니다.');
+    if(result)validateResult(result,quotationId||undefined);
     // A file-only refresh cannot promote an older cached per-SKU lookup.
     const observation=mode==='registration'||!result?result:{...result,registration:undefined};
     progress={phase:'validation-pending',result:observation,includedOptions:prepared.includedOptions,observedRows:0,issuedSkus:0};
@@ -52,27 +73,20 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
       progress.phase='validation-rejected';await publish();return outcome();
     }
     if(result?.state==='validation-complete'){
-      if(typeof result.quotationId!=='string'||!result.quotationId.trim()||result.quotationId!==result.quotationId.trim()||result.quotationId.length>200)
-        throw new Error('파일 검증 완료 결과에 견적서 ID가 없습니다.');
-      if(quotationId&&quotationId!==result.quotationId)throw new Error('조회 중 견적서 ID가 변경되었습니다.');
-      quotationId=result.quotationId;
+      quotationId=result.quotationId!;
       progress.phase='registration-pending';
       if(mode==='registration'){
         const registration=result.registration;
         if(!registration||registration.quotationId!==quotationId||registration.includedOptions!==prepared.includedOptions
           ||!['visible-page','queried-pages'].includes(registration.scope)||registration.registered!==false)throw new Error('이 견적서의 상품별 조회 결과를 확인하지 못했습니다.');
-        const rows=registration.rows;
-        if(rows.length>prepared.includedOptions)throw new Error('조회된 상품 수가 전송한 옵션 수보다 많습니다.');
-        const issued=rows.map(row=>row.skuId.trim()).filter(value=>value&&!/\.\.\.|…/.test(value)
-          &&!/^(?:-|—|n\/a|미표시|해당사항없음)$/i.test(value));
-        if(new Set(issued).size!==issued.length)throw new Error('같은 SKU ID가 중복되어 옵션별 결과를 확인하지 못했습니다.');
-        progress.observedRows=rows.length;progress.issuedSkus=issued.length;
-        if(rows.some(row=>/반려|거절|실패/.test(row.status+' '+row.stage))){
+        const evidence=supplierHubRegistrationEvidence(result);
+        if(evidence.duplicateSkus)throw new SupplierHubResultInvalid('같은 SKU ID가 중복되어 옵션별 결과를 확인하지 못했습니다.');
+        progress.observedRows=evidence.observedRows;progress.issuedSkus=evidence.issuedSkus;
+        if(evidence.rejected){
           progress.phase='registration-rejected';await publish();return outcome();
         }
         // SKU issuance is a receipt observation, not approval or final registration.
-        if(rows.length===prepared.includedOptions&&issued.length===prepared.includedOptions
-          &&!(registration.scope==='queried-pages'&&registration.hasMore===true)){
+        if(evidence.allSkus){
           progress.phase='sku-issued';await publish();return outcome();
         }
       }

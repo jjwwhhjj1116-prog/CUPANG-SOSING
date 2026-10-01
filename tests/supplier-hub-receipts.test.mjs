@@ -59,6 +59,16 @@ for(const company of companies)test(`reviewed URL draft → transmission → per
   assert.equal(summary.label,'SKU ID 확인');assert.equal(summary.issuedSkus,6);assert.equal(summary.company.code,company.companyCode);assert.equal(summary.quotationId,h.result.quotationId);
   const html=renderBoard(listed.products);assert.match(html,/최근 전송한 견적서 기준/);assert.match(html,/SKU ID 확인/);assert.match(html,/SKU 6\/6개/);assert.ok(html.includes(h.result.quotationId));assert.ok(!html.includes('등록완료'));
   ui.remount();await ui.click('견적서 + 첨부 파일 준비');assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);assert.equal(ui.calls.filter(call=>call.action==='transmit').length,1);
+  const confirmed='전송한 옵션 수와 동일한 수의 고유 SKU ID가 조회됐습니다. 상품 검수 결과는 아래 상태를 기준으로 확인하세요.';
+  assert.ok(JSON.stringify(ui.render()).includes(confirmed),'server receipt restores the same SKU summary as a fresh lookup');
+  const lookups=ui.calls.filter(call=>call.action==='lookup').length;
+  ui.setLookupError(true);await ui.click('전송 결과 계속 확인');
+  assert.ok(JSON.stringify(ui.render()).includes(confirmed));assert.ok(JSON.stringify(ui.render()).includes('sku-5'));
+  assert.deepEqual(ui.alerts(),['SKU 조회 응답 유실']);
+  ui.setLookupError(false);await ui.click('전송 결과 계속 확인');assert.deepEqual(ui.alerts(),[]);
+  assert.deepEqual(ui.calls.filter(call=>call.action==='lookup').slice(lookups).map(call=>call.mode),['registration','registration']);
+  assert.equal(ui.calls.filter(call=>call.action==='export').length,1);assert.equal(ui.calls.filter(call=>call.action==='transmit').length,1);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM products').get(),before);
   const detail=await json(await h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test'+h.base),{params:Promise.resolve({id:h.product.id})}));assert.deepEqual(detail.product.hub_receipt,summary);
  }finally{h.close();}
 });

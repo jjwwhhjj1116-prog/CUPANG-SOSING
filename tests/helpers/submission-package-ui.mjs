@@ -44,9 +44,11 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
  }
  bridge.validateSupplierHubResultForSource=load('app/supplier-hub-handoff.ts').validateSupplierHubResultForSource;
  bridge.SupplierHubResultInvalid=load('app/supplier-hub-handoff.ts').SupplierHubResultInvalid;
+ bridge.supplierHubRegistrationEvidence=load('app/supplier-hub-handoff.ts').supplierHubRegistrationEvidence;
+ bridge.validateRegistrationResult=load('app/supplier-hub-handoff.ts').validateRegistrationResult;
  const tracker=load('app/supplier-hub-tracking.ts');let observationIndex=0;
  const trackingBridge={...tracker,followSupplierHubRegistration:(source,options)=>tracker.followSupplierHubRegistration(source,{...options,
-  read:async identity=>{const result=observations[Math.min(observationIndex++,observations.length-1)];const saved=savedSubmissions.get(submissionKey(identity));if(saved)savedSubmissions.set(submissionKey(identity),{...saved,result});return result;},maxDurationMs:1000,wait:async()=>{}})};
+  read:async(identity,_signal,mode)=>{calls.push({action:'lookup',mode});if(lookupError)throw Error('SKU 조회 응답 유실');const result=observations[Math.min(observationIndex++,observations.length-1)];const saved=savedSubmissions.get(submissionKey(identity));if(saved)savedSubmissions.set(submissionKey(identity),{...saved,result});return result;},maxDurationMs:1000,wait:async()=>{}})};
  const Component=load('app/components/submission-package.tsx').SubmissionPackage;
  const render=()=>{cursor=0;return Component({productId,profileId,categoryId,onInspect(){}});};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
