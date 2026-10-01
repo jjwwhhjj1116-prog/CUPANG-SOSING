@@ -6,6 +6,10 @@ import { createRequire } from 'node:module';
 import ts from 'typescript';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { webcrypto } from 'node:crypto';
+import { mobileIntakeHarness } from './helpers/mobile-intake.mjs';
+import { quotationWorkbook } from './helpers/quotation-workbook.mjs';
+import { submissionPackageUI } from './helpers/submission-package-ui.mjs';
 
 const requireNative = createRequire(import.meta.url);
 const cache = new Map();
@@ -67,13 +71,14 @@ test('choice input keeps out-of-list saved values and ordinary clear choices int
  element.props.onChange({target:{value:'unset'}});assert.deepEqual(written,['']);
 });
 
-function fixture(overrides = model.emptyQuotationOverrides(), brand = '기본 브랜드') {
+function fixture(overrides = model.emptyQuotationOverrides(), brand = '기본 브랜드', updateSource = () => {}) {
   const content = contentModel.emptyProductContent('p1');
   content.seo.title.value = '상품 제목'; content.seo.keywords.value = ['확인한 태그'];
   content.assets.main.value = ['owner/main.png'];
   const rows = ['red', 'blue', 'excluded'].map((id, index) => ({ ...optionsModel.emptyOptionInput(id), originalName: id, unitCostCny: 4.5, included: index < 2 }));
   const source = { categoryId: '80719', product: { id: 'p1', title: '원문 제목', supply_price: 2000, sale_price: 3000, msrp: 4000, exchange_rate: 200, supply_margin: 0, coupang_margin: 0, image_keys: JSON.stringify(['owner/main.png', 'owner/second.png']) },
     content, settings: { ...settingsModel.defaultSettings, brand }, options: optionsModel.applyOptionRows(optionsModel.emptyProductOptions('p1'), rows, '2026-09-24T00:00:00.000Z') };
+  updateSource(source);
   return { revision: 1, inputFingerprint: 'fingerprint-1', overrides, resolved: model.resolveQuotationFields({ ...source, overrides }), automatic: model.resolveQuotationFields(source), imageKeys: JSON.parse(source.product.image_keys), submissionReady: false,
     categoryContext: { source: 'collection', profileId: null, categoryId: '80719', categoryPath: [] }, productVersion: '2026-09-24T00:00:00.000Z', contentRevision: 0, optionRevision: 1, updatedAt: null };
 }
@@ -952,4 +957,133 @@ test('skipped explicit rule sources and destinations remain reserved when adding
  second.result.draft.attributes[0].name='사이즈';
  const skipped=await fetchAttributeSuggestions('p1',manual,second,'red',async()=>Response.json({rules:explicit,revision:1}));
  assert.deepEqual(clone(skipped.mapping),{});assert.ok(skipped.skipped.length);
+});
+
+test('bulk keeps valid target measurements and images when source derivation is incomplete',()=>{
+ const view=fixture({common:{},options:{blue:{size:'검토한 구매 크기',noticeDimensions:'검토한 고시 크기'}}},'기본 브랜드',source=>{
+  source.options.rows[0].widthCm=12;
+  source.options.rows[1].widthCm=20;source.options.rows[1].lengthCm=30;source.options.rows[1].heightCm=40;
+  source.options.rows[1].imageKey='owner/second.png';
+  source.content.assets.main.value=['owner/main.png','owner/missing.png'];
+ });
+ const original=JSON.stringify(view);
+ const plan=editor.previewQuotationEditorBulk(view,[],'red',['size','noticeDimensions','mainImage','brand'],true);
+ assert.equal(plan.skipped.length,3);assert.ok(plan.skipped.every(message=>message.includes('확인')));
+ assert.deepEqual(Array.from(plan.rows,row=>row.fieldKey),['brand']);
+ const next=editor.applyQuotationEditorBulk(view,[],plan);
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'blue','size').value,'검토한 구매 크기');
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'blue','noticeDimensions').value,'검토한 고시 크기');
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'blue','mainImage').value,'owner/second.png');
+ assert.ok(editor.resolveQuotationEditorCell(view,next,'red','size').validationIssues.length);
+ assert.ok(editor.resolveQuotationEditorCell(view,next,'red','mainImage').validationIssues.length);
+ assert.equal(JSON.stringify(view),original);
+ const reviewed=[change('size','12 × 23 × 34 cm','red'),change('noticeDimensions','12 × 23 × 34 cm','red'),change('mainImage','owner/main.png','red')];
+ const fixed=editor.previewQuotationEditorBulk(view,reviewed,'red',['size','noticeDimensions','mainImage'],true);
+ assert.equal(fixed.skipped.length,0);assert.equal(fixed.rows.length,3);
+ const applied=editor.applyQuotationEditorBulk(view,reviewed,fixed);
+ for(const key of ['size','noticeDimensions','mainImage'])assert.equal(editor.resolveQuotationEditorCell(view,applied,'blue',key).validationIssues.length,0);
+});
+
+test('bulk does not turn outdated pack measurements into reviewed target overrides',()=>{
+ const view=fixture(model.emptyQuotationOverrides(),'기본 브랜드',source=>{
+  for(const [index,row] of source.options.rows.entries()){
+   row.packagedWeightG=index===0?420:500;row.packagedWidthMm=100;row.packagedLengthMm=200;row.packagedHeightMm=300;row.packagingUnitsPerPack=1;
+  }
+  source.options.rows[0].unitsPerPack=2;
+ });
+ const before=JSON.stringify(view);
+ const plan=editor.previewQuotationEditorBulk(view,[],'red',['packagedWeightG','packagedDimensionsMm','brand'],true);
+ assert.equal(plan.skipped.length,2);assert.ok(plan.skipped.every(message=>message.includes('1개입')&&message.includes('2개입')));
+ assert.deepEqual(Array.from(plan.rows,row=>row.fieldKey),['brand']);
+ const next=editor.applyQuotationEditorBulk(view,[],plan);
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'blue','packagedWeightG').value,'500');
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'blue','packagedWeightG').source,'option');
+ assert.equal(editor.resolveQuotationEditorCell(view,next,'blue','packagedDimensionsMm').value,'100*200*300');
+ assert.ok(editor.resolveQuotationEditorCell(view,next,'red','packagedWeightG').validationIssues.length);
+ const reviewed=[change('packagedWeightG','840','red'),change('packagedDimensionsMm','200*400*600','red')];
+ const fixed=editor.previewQuotationEditorBulk(view,reviewed,'red',['packagedWeightG','packagedDimensionsMm'],true);
+ assert.equal(fixed.skipped.length,0);assert.equal(fixed.rows.length,2);
+ assert.equal(JSON.stringify(view),before);
+});
+
+// Recorded sunglasses source and synthetic form/assets/AI; final Hub transport
+// is captured locally. 80719 is an observed form contract, not its sales category.
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`bulk source errors stay local through intake, review, workbook and handoff (${company.companyCode})`,async()=>{
+ const h=mobileIntakeHarness(company),json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+ try{
+  await h.intake();
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const current=await json(await h.route(base+'/options')),rows=h.load('app/product-options.ts').optionInputs(current.options);
+  rows.forEach((row,index)=>{
+   row.widthCm=index===0?12:20;row.lengthCm=index===0?null:30;row.heightCm=index===0?null:40;
+   row.packagedWeightG=index===1?500:420;row.packagedWidthMm=100;row.packagedLengthMm=200;row.packagedHeightMm=300;
+   row.packagingConfirmed=true;
+  });rows[5].included=false;
+  const first=await json(await h.route(base+'/options',{method:'PATCH',body:{expectedRevision:current.options.revision,expectedProductVersion:current.productVersion,rows}}));
+  const changed=h.load('app/product-options.ts').optionInputs(first.options);changed[0].unitsPerPack=2;
+  await json(await h.route(base+'/options',{method:'PATCH',body:{expectedRevision:first.options.revision,expectedProductVersion:first.productVersion,rows:changed}}));
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  const images=h.sqlite.prepare('SELECT object_key FROM collection_images ORDER BY image_index').all().map(row=>row.object_key);
+  await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{
+   label:{model:'REVIEWED-MODEL'},assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]},
+  }}}));
+  const fields=['skuId','categoryId',...h.load('app/quotation-schema.ts').getQuotationSchema('80719').fields.map(field=>field.id)],workbook=quotationWorkbook(fields);
+  const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
+  const storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,workbook);
+  await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'합성 전체 적용 오류 시험',categoryId:'80719',categoryPath:h.context.category.categoryPath,
+   template:{name:'synthetic.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},
+   mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
+  let view=await json(await h.route(base+'/quotation-fields'));
+  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
+   {fieldKey:'taxType',optionId:null,value:'과세'},{fieldKey:'handlingReason',optionId:null,value:'해당사항없음'},
+   {fieldKey:'size',optionId:'collected-2',value:'검토한 구매 크기'},{fieldKey:'noticeDimensions',optionId:'collected-2',value:'검토한 고시 크기'},
+  ]}}));
+  view=await json(await h.route(base+'/quotation-fields'));
+  const originalView=JSON.stringify(view),excluded=JSON.stringify(view.resolved.rows.find(row=>row.optionId==='collected-6'));
+  const plan=editor.previewQuotationEditorBulk(view,[],'collected-1',['noticeDimensions','packagedWeightG','packagedDimensionsMm','brand'],true);
+  assert.equal(plan.skipped.length,3);assert.equal(plan.rows.length,4);assert.ok(plan.rows.every(row=>row.fieldKey==='brand'));
+  const draft=editor.applyQuotationEditorBulk(view,[],plan);assert.equal(JSON.stringify(view),originalView);
+  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:draft}}));
+  view=await json(await h.route(base+'/quotation-fields'));
+  const source=view.resolved.rows.find(row=>row.optionId==='collected-1').fields,target=view.resolved.rows.find(row=>row.optionId==='collected-2').fields;
+  for(const key of ['noticeDimensions','packagedWeightG','packagedDimensionsMm'])assert.ok(source[key].validationIssues.length,key);
+  assert.equal(target.size.value,'검토한 구매 크기');assert.equal(target.noticeDimensions.value,'검토한 고시 크기');
+  assert.equal(target.packagedWeightG.value,'500');assert.equal(target.packagedWeightG.source,'option');
+  assert.equal(target.packagedDimensionsMm.value,'100*200*300');assert.equal(target.packagedDimensionsMm.source,'option');
+  assert.equal(JSON.stringify(view.resolved.rows.find(row=>row.optionId==='collected-6')),excluded);
+  assert.equal(source.quantity.value,'2');assert.equal(source.supplyPrice.value,'5520');assert.equal(source.salePrice.value,'9200');assert.equal(source.msrp.value,'11960');
+  const invalid=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
+  const errors=invalid.submissionReview.issues.filter(issue=>issue.kind==='error');assert.equal(errors.length,3,JSON.stringify(errors));assert.ok(errors.every(issue=>issue.optionId==='collected-1'));
+  const ui=submissionPackageUI({route:h.route,productId:product.id});
+  await ui.click('견적서 + 첨부 파일 준비');ui.choose();assert.equal(ui.button('등록 전송').props.disabled,true);
+  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
+   {fieldKey:'size',optionId:'collected-1',value:'12 × 23 × 34 cm'},
+   {fieldKey:'noticeDimensions',optionId:'collected-1',value:'12 × 23 × 34 cm'},
+   {fieldKey:'packagedWeightG',optionId:'collected-1',value:'840'},
+   {fieldKey:'packagedDimensionsMm',optionId:'collected-1',value:'200*400*600'},
+  ]}}));
+  const beforeRetry=await json(await h.route(base+'/quotation-fields')),requests=h.network.length;
+  assert.match(await h.intake(),/저장된 SEO·옵션값/);assert.equal(h.network.length,requests);assert.equal(h.aiSources.length,1);
+  const afterRetry=await json(await h.route(base+'/quotation-fields'));
+  assert.deepEqual(afterRetry.overrides,beforeRetry.overrides);assert.equal(afterRetry.revision,beforeRetry.revision);assert.equal(afterRetry.inputFingerprint,beforeRetry.inputFingerprint);
+  const good=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
+  assert.equal(good.submissionReview.errorCount,0,JSON.stringify(good.submissionReview.issues.filter(issue=>issue.kind==='error')));assert.equal(good.rows.length,5);
+  const exported=await h.route(base+'/quotation',{method:'POST',body:{action:'export',fingerprint:good.fingerprint}});assert.equal(exported.status,200,await exported.clone().text());
+  const reader=h.load('app/xlsx-template.ts'),files=await reader.readXlsxArchive(await exported.arrayBuffer());
+  const upload=JSON.parse(new TextDecoder().decode(files.get('supplier-hub-upload-plan.json'))),sheet=reader.inspectXlsxArchive(await reader.readXlsxArchive(files.get(upload.quotation.file.filename)));
+  assert.deepEqual(upload.company,{code:company.companyCode,name:company.companyName});assert.equal(upload.categoryId,'80719');
+  for(let index=0;index<5;index++){
+   const cells=reader.xlsxHeaders(sheet,'견적서',index+2),row=Object.fromEntries(fields.map((field,column)=>[field,cells[column]]));
+   assert.equal(row.size,index===0?'12 × 23 × 34 cm':index===1?'검토한 구매 크기':rows[index].size);
+   assert.equal(row.noticeDimensions,index===0?'12 × 23 × 34 cm':index===1?'검토한 고시 크기':'20 × 30 × 40 cm');
+   assert.equal(row.packagedWeightG,index===0?'840':index===1?'500':'420');
+   assert.equal(row.packagedDimensionsMm,index===0?'200*400*600':'100*200*300');
+   assert.equal(row.quantity,index===0?'2':'1');assert.equal(row.categoryId,'80719');
+   if(index===0){assert.equal(row.supplyPrice,'5520');assert.equal(row.salePrice,'9200');assert.equal(row.msrp,'11960');}
+  }
+  ui.remount();await ui.click('견적서 + 첨부 파일 준비');await ui.click('확장에 첨부 파일 준비');ui.choose();await ui.click('등록 전송');
+  const handoff=ui.calls.find(call=>call.action==='transmit');assert.ok(handoff);assert.equal(handoff.files.includedOptions,5);
+  assert.deepEqual(handoff.files.company,{code:company.companyCode,name:company.companyName});assert.deepEqual(ui.alerts(),[]);
+  assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
+ }finally{h.close();}
 });

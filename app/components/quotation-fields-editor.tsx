@@ -131,6 +131,16 @@ export function previewQuotationEditorBulk(view: QuotationFieldsView, changes: r
   const skipped: string[] = [];
   const copyable = (fields as QuotationField[]).filter(field => {
     const cell = resolveQuotationEditorCell(view, changes, sourceOptionId, field.id);
+    // A failed source derivation is not a reviewed value. Copying it as an
+    // override would erase its diagnostics and overwrite another SKU's facts.
+    // Ordinary value validation (including deliberate required-field blanks)
+    // still belongs to the editor/save path, preserving explicit clearing.
+    const valueIssues = new Set(quotationValueIssues(field, cell.value, view.imageKeys));
+    const sourceIssues = quotationEditorValidation(field, cell, view.imageKeys).filter(issue => !valueIssues.has(issue));
+    if (sourceIssues.length) {
+      skipped.push(`${field.label}: 원본을 확인한 뒤 적용해주세요. ${sourceIssues.join(' ')}`);
+      return false;
+    }
     if (cell.source !== 'empty') return true;
     skipped.push(`${field.label}: 원본이 미입력이므로 다른 옵션의 값과 자동 연동을 유지합니다.`);
     return false;
