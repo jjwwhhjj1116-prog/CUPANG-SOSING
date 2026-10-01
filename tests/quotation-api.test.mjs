@@ -67,7 +67,7 @@ test('quotation data keeps representative product price separate and does not cr
 
 function routeWith({ find = async () => product, readOptions = async () => options, readContent = async () => content, readProfile = async () => profile,
   readFields = async () => ({ schemaVersion: 1, productId: 'test', revision: 0, overrides: { common: {}, options: {} }, updatedAt: null }),
-  readSettings = async () => null, sourcesCurrent = async () => true, readCollection = async () => null,
+  readSettings = async () => null, sourcesCurrent = async () => true, readCollection = async () => null, readReceipt = async () => null,
   get = async key => key === templateKey ? { size: templateBytes.length, arrayBuffer: async () => templateBytes.slice().buffer } : { size: png.length, arrayBuffer: async () => png.slice().buffer },
   mode, bindings = {}, put, head,
 } = {}) {
@@ -75,6 +75,7 @@ function routeWith({ find = async () => product, readOptions = async () => optio
     '@/db/queries': { findProduct: find, getSettings: readSettings }, '@/db/product-options': { readProductOptions: readOptions },
     '@/db/product-content': { readProductContent: readContent }, '@/db/category-profiles': { getCategoryProfile: readProfile },
     '@/db/quotation-fields': { readQuotationFields: async (...args) => { const state=await readFields(...args); const selected=await readProfile(); if (!selected) return state; return { ...state, overrides:{common:{},options:{}}, categoryOverrides:{['category:'+selected.categoryId]:state.overrides} }; }, readQuotationCollectionSource: readCollection, quotationSourcesCurrent: sourcesCurrent },
+    '@/db/collection-results': { readCollectionResult: readReceipt },
     'cloudflare:workers': { env: { ...bindings, FILES: { get, put, head } } },
   }, mode);
 }

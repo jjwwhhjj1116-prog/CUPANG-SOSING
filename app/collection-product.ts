@@ -32,6 +32,7 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   const options={...emptyProductOptions(id),revision:1,updatedAt:now,rows:rows.map(row=>({...row,updatedAt:now,provenance:Object.fromEntries(Object.keys(optionFieldNames).map(key=>[key,['originalName','supplierSku','unitCostCny','minimumOrderQuantity'].includes(key)||key==='stock'&&row.stock!==null||key==='color'&&row.color||key==='size'&&row.size?'collected':['unitsPerPack','included'].includes(key)?'manual':'unverified']))} as ProductOption))};
   const content=emptyProductContent(id);content.revision=1;content.updatedAt=now;
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
+  content.detailDescriptionLinked = true;
   const keywords=collectionKeywords(job.context.keywords);
   if (keywords.length) {
     content.seo.keywords={value:keywords,provenance:'manual',updatedAt:now};

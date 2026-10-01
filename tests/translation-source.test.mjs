@@ -4,14 +4,15 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 const code=ts.transpileModule(fs.readFileSync(new URL('../app/api/products/[id]/translation-source/route.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-function route({mode='development',verified=false,product=true,link=true,receipt=true,offer='123',attributes=undefined,context=null,jobOffer='123',jobExists=true}={}){
+function route({mode='development',verified=false,product=true,link=true,receipt=true,offer='123',attributes=undefined,context=null,jobOffer='123',jobExists=true,provider='test'}={}){
  const calls=[];const exports={};
  const deps={
   'next/server':{NextResponse:Response},
   '@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:verified}),getWorkspaceOwnerId:async()=>'owner'},
   '@/db/queries':{findProduct:async(...args)=>{calls.push(['product',...args]);return product?{source_url:'https://detail.1688.com/offer/123.html',updated_at:'version'}:null;}},
   '@/db/collection-products':{findProductCollection:async(...args)=>{calls.push(['link',...args]);return link?{job_id:'exact-job'}:null;}},
-  '@/db/collection-results':{readCollectionResult:async(...args)=>{calls.push(['receipt',...args]);return receipt?{result:{attributes,offerId:offer,title:'中文商品',description:'原文说明',provider:'test',sourceUrl:'https://detail.1688.com/offer/123.html',collectedAt:'2026-09-23'}}:null;}},
+  '@/db/collection-results':{readCollectionResult:async(...args)=>{calls.push(['receipt',...args]);return receipt?{result:{attributes,offerId:offer,title:'中文商品',description:'原文说明',provider,sourceUrl:'https://detail.1688.com/offer/123.html',collectedAt:'2026-09-23'}}:null;}},
+  '@/app/collection-source-gaps':{collectionSourceGaps(value){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/collection-source-gaps.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports});return exports.collectionSourceGaps(value);}},
   '@/db/collection-jobs':{findCollectionJob:async(...args)=>{calls.push(['job',...args]);return jobExists?{offer_id:jobOffer,context}:null;}},
   '@/app/sourcing':{parseCollectionRequest:()=>[{offerId:'123'}]},
  };
@@ -37,6 +38,18 @@ test('translation source includes structured seller attributes without flattenin
  const response=await route({attributes}).get();assert.equal(response.status,200);
  assert.deepEqual((await response.json()).attributes,attributes);
  assert.deepEqual((await (await route().get()).json()).attributes,[]);
+});
+
+test('SKU-only source gaps survive reload and expose only the exact product category, not credentials',async()=>{
+ for(const provider of ['1688-public-sku-v1','chrome-public-sku-v1']){
+  const r=route({provider,context:{category:{categoryId:'80719',categoryPath:['주방용품','바스켓']},features:'',keywords:'',capturedAt:'2026-10-01'}});
+  const first=await (await r.get()).json(),second=await (await r.get()).json();
+  assert.equal(first.productId,'product');assert.deepEqual(first.sourceGaps,second.sourceGaps);
+  assert.deepEqual(first.sourceGaps.map(gap=>gap.fieldId),['detailHtml','detailImages','noticeMaterial']);
+  assert.equal(first.requestContext.categoryId,'80719');assert.equal(first.sourceGaps[0].step,'상세 이미지');
+  assert.ok(r.calls.filter(call=>call[0]==='receipt').every(call=>call[1]==='owner'&&call[2]==='exact-job'));
+ }
+ assert.deepEqual((await (await route().get()).json()).sourceGaps,[]);
 });
 
 test('collected attributes preserve line breaks and cannot bind to editable option fields',()=>{

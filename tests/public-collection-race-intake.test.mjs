@@ -51,6 +51,10 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.deepEqual(Array.from(receipt.result.options,row=>row.unitPriceCny),[3.6,5.5,3.6,5.5,3.6,5.5]);
   assert.equal(receipt.result.images.length,mode==='sku'?4:19);assert.equal(receipt.result.attributes?.length,mode==='sku'?undefined:24);
   const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const sourceView=await json(await h.route(base+'/translation-source'));
+  assert.equal(sourceView.productId,product.id);assert.equal(sourceView.requestContext.categoryId,'80719');
+  assert.deepEqual(sourceView.requestContext.categoryPath,h.context.category.categoryPath);
+  assert.equal(sourceView.sourceGaps.length,mode==='sku'?3:0);
   assert.equal(product.supplier_hub_status,'미전송');assert.equal(h.aiSources.length,1);
   assert.equal(h.aiSources[0].category.id,'80719');assert.equal(h.stats.downloads,mode==='sku'?4:19);
   const content=(await json(await h.route(base+'/content'))).content;
@@ -85,6 +89,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(first.title.value,'사용자가 검토한 선글라스');assert.equal(first.additionalImages.value,'');
   assert.equal(first.supplyPrice.value,'4260');assert.equal(first.salePrice.value,'7100');assert.equal(second.salePrice.value,'10000');
   assert.equal(first.noticeMaterial.value,'검토한 재질');assert.equal(first.kcMarkType.value,'해당사항없음');
+  assert.match(first.detailHtml.value,/직접 확인한 설명/);
   const fields=[...new Set([...view.resolved.schema.fields.map(field=>field.id),'skuId','sourcePriceCny','sourceUrl','categoryId'])],workbook=quotationWorkbook(fields);
   const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
   const storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,workbook);
@@ -92,6 +97,24 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    template:{name:'synthetic.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},
    mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
+  const sourceIssues=preview.submissionReview.issues.filter(issue=>issue.code==='COLLECTION_SOURCE_GAP');
+  assert.equal(sourceIssues.length,mode==='sku'?3:0);
+  assert.ok(sourceIssues.every(issue=>issue.kind==='review'&&issue.optionId===null));
+  const review=await json(await h.route(base+'/submission-review'));
+  assert.equal(review.issues.filter(issue=>issue.code==='COLLECTION_SOURCE_GAP').length,sourceIssues.length);
+  if(mode==='sku'){
+   const bundle=await h.route(base+'/quotation',{method:'POST',body:{action:'export',fingerprint:preview.fingerprint}});
+   assert.equal(bundle.status,200,await bundle.clone().text());
+   const files=await h.load('app/xlsx-template.ts').readXlsxArchive(await bundle.arrayBuffer());
+   const document=JSON.parse(new TextDecoder().decode(files.get('quotation-fields.json')));
+   const report=JSON.parse(new TextDecoder().decode(files.get('submission-review.json')));
+   assert.deepEqual(document.sourceGaps,sourceView.sourceGaps);
+   assert.equal(report.issues.filter(issue=>issue.code==='COLLECTION_SOURCE_GAP').length,3);
+   assert.equal(document.rows[0].fields.noticeMaterial.value,'검토한 재질');
+   assert.equal(document.rows[0].fields.additionalImages.value,'');
+   assert.match(document.rows[0].fields.detailHtml.value,/직접 확인한 설명/);
+   assert.equal(document.warnings.filter(message=>message.includes('1688 옵션 조회 원문')).length,3);
+  }
   assert.equal(preview.rows.length,5);assert.equal(preview.submissionReview.errorCount,0,JSON.stringify(preview.submissionReview.issues.filter(issue=>issue.kind==='error')));
   assert.deepEqual(preview.report.company,{code:company.companyCode,name:company.companyName});
   const exported=await h.route(base+'/quotation',{method:'POST',body:{action:'download',fingerprint:preview.fingerprint}});
@@ -102,6 +125,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    assert.equal(row.skuId,receipt.result.options[index].sku);assert.equal(row.title,'사용자가 검토한 선글라스');assert.equal(row.sourceUrl,sourceUrl);
    assert.equal(row.categoryId,'80719');assert.equal(row.sourcePriceCny,String(receipt.result.options[index].unitPriceCny));
    assert.equal(row.salePrice,index===1?'10000':index%2?'8220':'7100');if(index===0)assert.equal(row.additionalImages,'');
+   assert.match(row.detailHtml,/직접 확인한 설명/);
   }
   const ui=submissionPackageUI({route:h.route,productId:product.id});
   await ui.click('견적서 + 첨부 파일 준비');assert.deepEqual(ui.alerts(),[]);

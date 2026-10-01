@@ -7,6 +7,7 @@ import { readQuotationFields, quotationSourcesCurrent } from '@/db/quotation-fie
 import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
 import { inspectSubmission } from '@/app/submission-review';
+import { collectionSourceReview } from '@/app/collection-source-review';
 import { publicDetailConfig, resolvePublicDetail, PublicDetailError } from '@/app/quotation-public-detail';
 
 const json = (body: unknown, status=200) => NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
@@ -21,7 +22,7 @@ export async function GET(request: Request, context: {params:Promise<{id:string}
     const resolved = (await resolvePublicDetail(resolveQuotationExport(saved),saved.content,owner,productImageKeys(saved.product.image_keys),detailConfig)).resolved;
     const keys = productImageKeys(saved.product.image_keys).filter(key=>isOwnedImageKey(owner,key));
     const checks = await inspectQuotationImages(resolved,keys,env.FILES ? key=>env.FILES.head(key) : undefined);
-    const report = inspectSubmission(resolved,keys,checks);
+    const report = inspectSubmission(resolved,keys,checks,'storage-metadata',undefined,collectionSourceReview(saved.sourceGaps));
     const fingerprint = await quotationExportFingerprint(saved,null,detailConfig);
     if (!await quotationSourcesCurrent(owner,id,saved.source) || (await readQuotationFields(owner,id)).revision !== saved.state.revision) {
       return json({error:'검사 중 자료가 변경되었습니다. 저장을 마친 뒤 다시 검사해주세요.'},409);

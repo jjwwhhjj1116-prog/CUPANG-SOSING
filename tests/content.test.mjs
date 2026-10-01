@@ -315,6 +315,17 @@ test('explicit SEO-label binding survives saves while manual names and legacy do
 });
 
 
+test('only new server-linked detail drafts follow SEO and public edits cannot restore linkage',()=>{
+ const existing=model.emptyProductContent('test');existing.seo.description={value:'기존 SEO',provenance:'manual',updatedAt:now};
+ const before=JSON.stringify(existing);
+ assert.equal(model.currentDetailContent(existing).description.value,'');
+ assert.equal(model.currentDetailContent(model.applyContentPatch(existing,{seo:{description:'변경 SEO'}},now)).description.value,'');
+ existing.detail.description={value:'기존 상세',provenance:'manual',updatedAt:now};
+ assert.equal(model.currentDetailContent(model.applyContentPatch(existing,{seo:{description:'변경 SEO'}},now)).description.value,'기존 상세');
+ for(const value of [true,false,null])assert.throws(()=>model.validateContentInput(input({detailDescriptionLinked:value,seo:{description:'변경'}}),[],'owner'),/지원하지 않는/);
+ assert.equal(JSON.parse(before).detail.description.value,'');
+});
+
 test('explicit blank label requests preserve removals without changing untouched fields or accepting inconsistent metadata',()=>{
  const original=model.emptyProductContent('test');original.labelProductNameLinked=true;const before=JSON.stringify(original);
  const patch=model.validateContentInput(input({label:{manufacturer:'  ',countryOfOrigin:'',productName:''},labelClears:['manufacturer','countryOfOrigin','productName']}),[],'owner').patch;

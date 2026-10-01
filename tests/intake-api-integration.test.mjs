@@ -117,7 +117,8 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
    let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,expectedTitle);assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
    for(const field of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[field].value,'',`unselected originals stay out of quotation ${field}`);
-   assert.equal(row.fields.detailHtml.value,'','SEO description must not populate stage-five HTML');assert.equal(row.fields.altText.value,'','fresh alternate text stays blank');
+   assert.equal(content.detailDescriptionLinked,true);
+   assert.equal(row.fields.detailHtml.value,'<p>검토용 설명</p>','new URL draft follows its saved SEO explanation until stage five is saved');assert.equal(row.fields.altText.value,'','fresh alternate text stays blank');
    if(String(automatic).startsWith('hidden-off')){
     assert.equal(content.categoryAttributes.hiddenAttributes,false);
     assert.equal(row.fields.basketShape.value,'');assert.equal(row.fields.basketShape.source,'couplus-default');

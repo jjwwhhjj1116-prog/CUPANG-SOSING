@@ -15,6 +15,8 @@ import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { publicDetailVersion, type PublicDetailConfig } from '@/app/quotation-public-detail';
 import { optionPriceCalculationRevision } from '@/app/product-options';
+import { readCollectionResult } from '@/db/collection-results';
+import { collectionSourceGaps, type CollectionSourceGap } from '@/app/collection-source-gaps';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -34,6 +36,7 @@ export async function readQuotationExportSource(owner: string, productId: string
   let settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
+  let sourceGaps: CollectionSourceGap[] = [];
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
   {
     let offerId: string | null = null;
@@ -41,6 +44,11 @@ export async function readQuotationExportSource(owner: string, productId: string
     if (offerId) {
       const captured = await readQuotationCollectionSource(owner, offerId, productId); collection = { offerId, snapshot: captured };
       const payload = captured ? JSON.parse(captured.payload) : null;
+      if (captured?.linked) {
+        const receipt = await readCollectionResult(owner, captured.id);
+        if (receipt && receipt.result.offerId !== offerId) throw new QuotationExportError('상품에 연결된 수집 원문의 상품번호가 다릅니다. 수집 기록을 확인해주세요.', 409);
+        if (receipt) sourceGaps = collectionSourceGaps(receipt.result);
+      }
       if (captured?.linked) settings = collectionRegistrationSettings(settings, payload?.settings);
       if (captured?.linked && profile) {
         const selected = payload?.category ? validateCategoryProfile(payload.category) : null;
@@ -65,7 +73,8 @@ export async function readQuotationExportSource(owner: string, productId: string
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   // This also detects changes during the independent source reads before any R2 work starts.
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
-  return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company };
+  return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company,
+    ...(sourceGaps.length ? { sourceGaps } : {}) };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
 /** Resolve only the profile captured when this product was collected; never guess by label. */

@@ -120,7 +120,7 @@ test('restored pending intake recovers an editor only from the same captured cat
  for(const altered of [
   {...job,status:'cancelled'}, {...job,product_id:null}, {...job,source_url:'https://detail.1688.com/offer/2.html'},
   {...job,context:null}, {...job,context:{...job.context,features:'changed'}}, {...job,context:{...job.context,keywords:'changed'}},
-  ...[{id:profile(2).id},{revision:2},{categoryId:'different'}].map(patch=>({...job,context:{...job.context,category:{...item.profile,...patch}}})),
+  ...[{id:profile(2).id},{revision:2},{categoryId:'different'},{categoryPath:['다른 대분류','다른 최종 분류']}].map(patch=>({...job,context:{...job.context,category:{...item.profile,...patch}}})),
  ])for(const status of ['draft','error','saved'])assert.equal(intakeProductId({...item,status},[altered]),null);
  const wrongCategory={...job,product_id:'wrong-category-product',context:{...job.context,category:profile(2)}};
  assert.equal(intakeProductId({...item,status:'saved'},[wrongCategory,job]),'partial');

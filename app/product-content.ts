@@ -37,8 +37,11 @@ export type ProductContent = {
   /** Server-created intake guidance, consumed by any explicit keyword save.
    * Absence (including legacy documents) means manual keywords stay protected. */
   intakeKeywordSeed?: { value: string[]; updatedAt: string; sourceReference: string };
-  /** Stage-five content is independent of SEO. Absent only in legacy documents. */
+  /** Stage-five content becomes independent when the owner saves it. */
   detail?: { description?: ContentField<string>; altText?: ContentField<string> };
+  /** New URL drafts follow the SEO description until an explicit stage-five save.
+   * Absent on existing products, so their independent descriptions stay intact. */
+  detailDescriptionLinked?: boolean;
   label: Record<LabelField, ContentField<string>>;
   labelProductNameLinked?: boolean;
   labelLayout?: LabelLayout;
@@ -77,10 +80,10 @@ export function withCurrentLabelFields(content: ProductContent): ProductContent 
   return { ...content, label: { ...defaults.label, ...content.label }, assets: { ...defaults.assets, ...content.assets } };
 }
 
-/** Preserve the former SEO binding for existing work until stage five is saved. */
+/** Resolve new draft linkage and preserve the former fallback for legacy work. */
 export function currentDetailContent(content: ProductContent, fallbackTitle = '') {
   return {
-    description: content.detail?.description ?? content.seo.description,
+    description: content.detailDescriptionLinked === true ? content.seo.description : content.detail?.description ?? content.seo.description,
     altText: content.detail?.altText ?? { ...content.seo.title, value: savedTextOrFallback(content.seo.title, fallbackTitle) },
   };
 }
@@ -201,7 +204,12 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
   if (patch.detail) {
     const previous = currentDetailContent(current);
     next.detail = { ...next.detail };
-    if (patch.detail.description !== undefined) next.detail.description = edited(previous.description, patch.detail.description);
+    if (patch.detail.description !== undefined) {
+      next.detail.description = current.detailDescriptionLinked === true
+        ? { value: patch.detail.description, provenance: 'manual', updatedAt: now }
+        : edited(previous.description, patch.detail.description);
+      if (current.detailDescriptionLinked === true) next.detailDescriptionLinked = false;
+    }
     if (patch.detail.altText !== undefined) next.detail.altText = edited(previous.altText, patch.detail.altText);
   }
   for (const key of Object.keys(patch.label ?? {}) as LabelField[]) next.label[key] = edited(current.label[key], patch.label![key]!);

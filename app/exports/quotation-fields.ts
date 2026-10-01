@@ -16,6 +16,7 @@ import { quotationDetailContent } from '@/app/exports/quotation-detail-content';
 import { quotationImageIndex } from '@/app/exports/quotation-image-index';
 import { inspectQuotationAssets } from '@/app/exports/quotation-image-checks';
 import { quotationLabelsPage } from '@/app/exports/quotation-labels';
+import { collectionSourceReview } from '@/app/collection-source-review';
 
 const MAX_QUOTATION_TEXT_BYTES = 6 * 1024 * 1024;
 function ensureFieldBudget(document: { rows: unknown[] }, tables: (string | number)[][][], additionalBytes = 0) {
@@ -112,7 +113,8 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const fileByKey = new Map(assets.map(asset => [asset.key, asset.name]));
   const fields = new Map(resolved.schema.fields.map(field => [field.id, field]));
   const mapped = new Set(saved.profile?.mappings.filter(mapping => mapping.field !== 'constant').map(mapping => aliases[mapping.field] ?? mapping.field) ?? []);
-  const warnings: string[] = [...resolved.issues];
+  const sourceIssues = collectionSourceReview(saved.sourceGaps);
+  const warnings: string[] = [...resolved.issues, ...sourceIssues.map(issue => issue.message)];
   const overrides: (string | number)[][] = [['범위', '옵션 ID', '현재 옵션명', '견적 포함', '구역 ID', '구역', '필드 ID', '필드명', '수동 수정값', '현재 스키마', 'Excel 열 연결']];
   for (const [optionId, values] of [[null, saved.state.overrides.common], ...Object.entries(saved.state.overrides.options)] as [string | null, Record<string, string>][]) {
     const option = optionId === null ? null : saved.options.rows.find(option => option.id === optionId);
@@ -136,6 +138,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const document = { format: 'sourceflow-quotation-fields-v1', productId: saved.product.id, productVersion: saved.product.updated_at,
     contentRevision: saved.content.revision, optionRevision: saved.options.revision, quotationRevision: saved.state.revision,
     profileRevision: saved.profile?.revision ?? null, categoryContext: saved.categoryContext, inputFingerprint, submissionReady: false,
+    ...(saved.sourceGaps?.length ? { sourceGaps: saved.sourceGaps } : {}),
     schema: resolved.schema, rows: resolved.rows.filter(row => row.included),
     excludedOptions: resolved.rows.filter(row => row.optionId !== null && !row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel })),
     overrides: saved.state.overrides, assets: Object.fromEntries(fileByKey),
@@ -150,7 +153,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const review = { format: 'sourceflow-quotation-review-v1', productId: saved.product.id,
     sourceUrl: saved.product.source_url, inputFingerprint,
     quotationRevision: saved.state.revision, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
-    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys), inspectQuotationAssets(resolved, assets), 'attachment-bytes', quotationAssetIdentities(assets), [...(saved.profile ? quotationMappingIssues(resolved, saved.profile) : []),...workbookIssues]),
+    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys), inspectQuotationAssets(resolved, assets), 'attachment-bytes', quotationAssetIdentities(assets), [...sourceIssues,...(saved.profile ? quotationMappingIssues(resolved, saved.profile) : []),...workbookIssues]),
   };
   const reviewRows: (string | number)[][] = [['구분', '코드', '옵션 ID', '옵션명', '필드 ID', '확인 사항'],
     ...review.issues.map(issue => [issue.kind === 'error' ? '오류' : '검토', issue.code, issue.optionId ?? '', issue.optionLabel, issue.fieldId ?? '', issue.message])];

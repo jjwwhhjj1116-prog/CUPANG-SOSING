@@ -5,6 +5,7 @@ import { findProductCollection } from '@/db/collection-products';
 import { readCollectionResult } from '@/db/collection-results';
 import { findCollectionJob } from '@/db/collection-jobs';
 import { parseCollectionRequest } from '@/app/sourcing';
+import { collectionSourceGaps } from '@/app/collection-source-gaps';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function GET(_:Request,context:{params:Promise<{id:string}>}){
  if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return reply({error:'운영 인증이 필요합니다.'},503);
@@ -22,7 +23,7 @@ export async function GET(_:Request,context:{params:Promise<{id:string}>}){
   const captured=job.context;
   const requestContext=captured?{categoryId:captured.category.categoryId,categoryPath:captured.category.categoryPath,
    features:captured.features,keywords:captured.keywords,capturedAt:captured.capturedAt}:null;
-  return reply({title:receipt.result.title,description:receipt.result.description,jobId:link.job_id,sourceUrl:receipt.result.sourceUrl,provider:receipt.result.provider,collectedAt:receipt.result.collectedAt,
+  return reply({productId:id,sourceGaps:collectionSourceGaps(receipt.result),title:receipt.result.title,description:receipt.result.description,jobId:link.job_id,sourceUrl:receipt.result.sourceUrl,provider:receipt.result.provider,collectedAt:receipt.result.collectedAt,
    requestContext,attributes:receipt.result.attributes ?? [],productVersion:product.updated_at,scope:'title-description-attributes',message:'상품명·설명·상품 속성의 수집 원문입니다. 판매자 기재값이며 인증·사실 검증 결과가 아닙니다. 옵션별 번역과 이미지 번역은 별도입니다.'});
  }catch{return reply({error:'수집 원문을 읽지 못했습니다. 다시 시도해주세요.'},503);}
 }

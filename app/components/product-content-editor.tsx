@@ -169,7 +169,10 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       setDraft(previous => ({
         ...previous,
         [draftKey]: section==='이미지' ? mergeSavedImageStage(initial.assets,previous.assets,savedDraft.assets,focusedAssetRole) : savedDraft[draftKey],
-        ...(editingDetail || (section==='SEO' && JSON.stringify(previous.detail)===JSON.stringify(initial.detail)) ? { detail: savedDraft.detail } : {}),
+        ...(editingDetail ? { detail: savedDraft.detail } : section==='SEO' ? { detail: {
+          description: previous.detail.description === initial.detail.description ? savedDraft.detail.description : previous.detail.description,
+          altText: previous.detail.altText === initial.detail.altText ? savedDraft.detail.altText : previous.detail.altText,
+        } } : {}),
         ...(section==='SEO' && previous.labelProductNameLinked === initial.labelProductNameLinked && previous.label.productName === initial.label.productName ? {label:{...previous.label,productName:saved.label.productName.value}}:{}),
         ...(section==='표시사항'?{labelClears:savedDraft.labelClears,labelProductNameLinked:savedDraft.labelProductNameLinked,labelLayout:savedDraft.labelLayout,customLabels:savedDraft.customLabels}:{}),
       }));

@@ -116,7 +116,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    assert.equal(fields.barcodeMode.value,'request-coupang');assert.equal(fields.taxType.value,'과세');
    assert.equal(fields.kcMarkType.value,'해당사항없음');assert.equal(fields.shelfLifeDays.value,'0');
    assert.equal(fields.boxSkuQuantity.value,'50');assert.equal(fields.noticeServiceContact.value,'쿠팡 고객센터 1577-7011');
-   for(const field of ['mainImage','additionalImages','detailImages','detailHtml','altText'])assert.equal(fields[field].value,'');
+   for(const field of ['mainImage','additionalImages','detailImages','altText'])assert.equal(fields[field].value,'');
+   assert.equal(fields.detailHtml.value,'<p>상품 원문에 따른 검토용 설명</p>');
   }
   // Review stage inputs using actual API saves. Image bytes/labels and the
   // classification/template remain synthetic, so no Hub request follows.

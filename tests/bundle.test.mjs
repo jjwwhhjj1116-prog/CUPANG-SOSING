@@ -140,12 +140,13 @@ test('image export recognizes supported signatures including bounded AVIF brands
 function routeWith({ find = async () => product, read = async () => contentWithAssets(), get = async () => ({ size: png.length, arrayBuffer: async () => png.slice().buffer }), mode,
   readFields = async () => ({ schemaVersion: 1, productId: product.id, revision: 0, overrides: { common: {}, options: {} }, updatedAt: null }),
   readOptions = async () => ({ schemaVersion: 1, productId: product.id, revision: 0, rows: [], updatedAt: null }), readSettings = async () => null,
-  readProfile = async () => null, readCollection = async () => null, sourcesCurrent = async () => true,
+  readProfile = async () => null, readCollection = async () => null, readReceipt = async () => null, sourcesCurrent = async () => true,
 } = {}) {
   return load('app/api/products/[id]/bundle/route.ts', {
     '@/db/queries': { findProduct: find, getSettings: readSettings }, '@/db/product-content': { readProductContent: read },
     '@/db/product-options': { readProductOptions: readOptions }, '@/db/category-profiles': { getCategoryProfile: readProfile },
     '@/db/quotation-fields': { readQuotationFields: readFields, readQuotationCollectionSource: readCollection, quotationSourcesCurrent: sourcesCurrent },
+    '@/db/collection-results': { readCollectionResult: readReceipt },
     'cloudflare:workers': { env: { FILES: { get } } },
   }, mode);
 }
@@ -251,6 +252,25 @@ test('bundle uses only the owned selected or captured category and tracks collec
   const changed=routeWith({find:async()=>sourceProduct,readCollection:async()=>downloaded?{...captured,payload:JSON.stringify({category:{...profile,categoryId:'unknown-new'}})}:captured,
     get:async()=>{downloaded=true;return{size:png.length,arrayBuffer:async()=>png.slice().buffer};}});
   assert.equal((await changed.GET(getRequest(),context)).status,409);
+});
+
+test('review bundle retains only the linked receipt source gaps and rejects another offer before asset reads',async()=>{
+ const profile={id:'chosen',revision:1,name:'관찰 폼 계약',categoryId:'80719',categoryPath:[...load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath],template:null,mappings:[]};
+ const sourceProduct={...product,source_url:'https://detail.1688.com/offer/100001.html'};
+ const captured={id:'exact-job',payload:JSON.stringify({category:profile}),updatedAt:product.updated_at,linked:true};
+ const reads=[];
+ const route=routeWith({find:async()=>sourceProduct,readCollection:async()=>captured,readReceipt:async(...args)=>{
+  reads.push(args);return{result:{offerId:'100001',provider:'1688-public-sku-v1'}};
+ }});
+ const response=await route.GET(getRequest(),context);assert.equal(response.status,200,await response.clone().text());
+ const files=readArchive(new Uint8Array(await response.arrayBuffer()));
+ const fields=JSON.parse(decode(files['quotation-fields.json'])),review=JSON.parse(decode(files['submission-review.json']));
+ assert.deepEqual(reads,[['owner','exact-job'],['owner','exact-job']]);assert.equal(fields.sourceGaps.length,3);
+ assert.equal(review.issues.filter(issue=>issue.code==='COLLECTION_SOURCE_GAP').length,3);
+ assert.ok(review.issues.filter(issue=>issue.code==='COLLECTION_SOURCE_GAP').every(issue=>issue.kind==='review'));
+ let assets=0;
+ const wrong=routeWith({find:async()=>sourceProduct,readCollection:async()=>captured,readReceipt:async()=>({result:{offerId:'other',provider:'1688-public-sku-v1'}}),get:async()=>{assets++;throw Error('must not export');}});
+ assert.equal((await wrong.GET(getRequest(),context)).status,409);assert.equal(assets,0);
 });
 
 test('ZIP preflight covers central-directory bytes and UTF-8 text without mutating binary inputs',()=>{

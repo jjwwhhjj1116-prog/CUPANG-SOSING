@@ -63,6 +63,43 @@ const now='2026-01-01T00:00:00.000Z';
 const job={id:'job',offer_id:'123',source_url:'https://detail.1688.com/offer/123.html',goal:'transmit',status:'awaiting_connector',created_at:now,updated_at:now,context:{category:{id:'cat',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings,features:'feature',keywords:'',capturedAt:now}};
 const result={schemaVersion:1,offerId:'123',sourceUrl:job.source_url,provider:'fixture',collectedAt:now,title:'原文商品',description:'原文説明',images:[],options:[{sku:'a',name:'黑',unitPriceCny:3.25,minimumOrder:2,stock:null},{sku:'b',name:'白',unitPriceCny:5,minimumOrder:1,stock:0}]};
 
+test('new URL description reaches stage five and quotation until explicitly reviewed there',()=>{
+ const prepared=prepare('owner',job,result,'p',now),before=JSON.stringify(prepared);
+ const {applyContentPatch,currentDetailContent}=load('app/product-content.ts');
+ const resolve=load('app/quotation-schema.ts').resolveQuotationFields;
+ const html=content=>resolve({categoryId:'80719',product:prepared.product,content,options:prepared.options,settings}).rows[0].fields.detailHtml.value;
+ assert.equal(prepared.content.detailDescriptionLinked,true);
+ assert.equal(currentDetailContent(prepared.content).description.value,result.description);
+ assert.equal(currentDetailContent(prepared.content).description.provenance,'collected');
+ assert.equal(html(prepared.content),'<p>原文説明</p>');
+ const edited=applyContentPatch(prepared.content,{seo:{description:'검토 설명\n<script>텍스트</script>'}},'seo');
+ assert.equal(currentDetailContent(edited).description.value,edited.seo.description.value);
+ assert.equal(html(edited),'<p>검토 설명<br>&lt;script&gt;텍스트&lt;/script&gt;</p>');
+ for(const value of ['직접 작성한 상세 설명','',edited.seo.description.value]){
+  const reviewed=applyContentPatch(edited,{detail:{description:value}},'detail');
+  assert.equal(reviewed.detailDescriptionLinked,false);assert.equal(reviewed.detail.description.provenance,'manual');
+  const changed=applyContentPatch(reviewed,{seo:{description:'나중 SEO 설명'}},'later');
+  assert.equal(currentDetailContent(changed).description.value,value);
+  assert.equal(html(changed),value?html(reviewed):'');
+ }
+ const simultaneous=applyContentPatch(edited,{seo:{description:'새 SEO'},detail:{description:'직접 상세'}},'both');
+ assert.equal(html(simultaneous),'<p>직접 상세</p>');
+ assert.equal(JSON.stringify(prepared),before);
+});
+
+test('new sparse URL keeps generated SEO description linked but confirms an explicit empty detail save',()=>{
+ const prepared=prepare('owner',job,{...result,description:''},'p',now);
+ const {applyContentPatch,currentDetailContent}=load('app/product-content.ts');
+ const generated=structuredClone(prepared.content);
+ generated.seo.description={value:'생성 후 검토할 설명',provenance:'generated',updatedAt:'ai'};
+ assert.equal(currentDetailContent(generated).description.value,'생성 후 검토할 설명');
+ assert.equal(currentDetailContent(generated).description.provenance,'generated');
+ const cleared=applyContentPatch(prepared.content,{detail:{description:''}},'confirmed-empty');
+ assert.equal(cleared.detailDescriptionLinked,false);assert.equal(cleared.detail.description.provenance,'manual');
+ cleared.seo.description=generated.seo.description;
+ assert.equal(currentDetailContent(cleared).description.value,'');
+});
+
 test('observed pricing survives SQLite promotion, workspace changes and category quotation resolution',async()=>{
  const capturedSettings=load('app/observed-price-preset.ts').applyObservedPricePreset({...settings,brand:'저장 브랜드'});
  const capturedJob={...job,context:{...job.context,settings:capturedSettings}};

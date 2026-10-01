@@ -104,6 +104,7 @@ export function intakeProductId(row: IntakeRow, jobs: readonly CollectionJob[]):
     return context?.category.id === row.profile.id
       && context.category.revision === row.profile.revision
       && context.category.categoryId === row.profile.categoryId
+      && JSON.stringify(context.category.categoryPath) === JSON.stringify(row.profile.categoryPath)
       && context.features === row.features && context.keywords === row.keywords;
   }).map(job => job.product_id!))];
   return ids.length === 1 ? ids[0] : null;

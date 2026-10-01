@@ -7,11 +7,12 @@ import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
-function harness(handle, focusedAssetRole, lifecycle=false){
+function harness(handle, focusedAssetRole, lifecycle=false, initialize=()=>{}){
  const slots=[],effects=[],cleanups=[],cache=new Map(), dependencies=[],callbacks=[];let ei=0,ci=0;let index=0,first=true,notices=0,content;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useCallback(fn,deps){if(!lifecycle)return fn;const i=ci++;if(!callbacks[i]||deps.some((v,j)=>!Object.is(v,callbacks[i].deps[j])))callbacks[i]={fn,deps};return callbacks[i].fn;},useEffect(fn,deps){const i=ei++;if(lifecycle){if(!dependencies[i]||deps.some((v,j)=>!Object.is(v,dependencies[i][j]))){dependencies[i]=deps;effects.push(()=>{cleanups[i]?.();cleanups[i]=fn();});}}else if(first)effects.push(fn);}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>handle(url,init,content)??Response.json({content}),require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-content.ts');content=model.emptyProductContent('p');
+ initialize(content);
  const component=load('app/components/product-content-editor.tsx').ProductContentEditor;
  const render=(section='이미지')=>{index=0;ei=0;ci=0;const root=component({product:{id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png","owner/c.png"]'},section,focusedAssetRole,onSaved(){notices++;}});const tree=root.type(root.props);first=false;return tree;};
  const button=(name,section)=>nodes(render(section)).find(n=>n.type==='button'&&n.props.children===name);
@@ -57,6 +58,31 @@ test('detail step saves explanation and image roles together while preserving an
  assert.equal(resolved.rows[0].fields.detailImages.value,'owner/a.png');assert.equal(resolved.rows[0].fields.detailHtml.value,'<p>번역 설명<br>&lt;script&gt;실행 금지&lt;/script&gt;</p>');
  nodes(h.render()).find(n=>n.props?.['aria-label']==='상세페이지 설명').props.onChange({target:{value:''}});
  assert.equal(h.button('상세 설명·이미지 저장').props.disabled,false);h.button('상세 설명·이미지 저장').props.onClick();await settle();assert.equal(patch.detail.description,'');assert.equal(saved.detail.description.provenance,'manual');
+});
+
+test('new URL editor follows saved SEO description, preserves unsaved detail and detaches after explicit detail save',async()=>{
+ let saved;
+ const h=harness((_url,init,content)=>{
+  if(init?.method!=='PATCH')return;
+  saved=h.model.applyContentPatch(saved??content,JSON.parse(init.body).patch,'now');return Response.json({content:saved});
+ },'detail',false,content=>{
+  content.detailDescriptionLinked=true;content.seo.description={value:'원문 초안',provenance:'collected',updatedAt:'source'};
+ });
+ await h.start();
+ const detail=()=>nodes(h.render()).find(n=>n.props?.['aria-label']==='상세페이지 설명');
+ const seo=()=>nodes(h.render('SEO')).find(n=>n.type==='textarea'&&n.props.maxLength===20000);
+ const saveSEO=async value=>{seo().props.onChange({target:{value}});h.button('SEO 저장','SEO').props.onClick();await settle();};
+ assert.equal(detail().props.value,'원문 초안');
+ await saveSEO('검토한 SEO 설명');assert.equal(detail().props.value,'검토한 SEO 설명');
+ assert.equal(h.model.currentDetailContent(saved).description.value,'검토한 SEO 설명');
+ detail().props.onChange({target:{value:'직접 상세 작성 중'}});
+ await saveSEO('다음 SEO 설명');assert.equal(detail().props.value,'직접 상세 작성 중');
+ h.button('상세 설명·이미지 저장').props.onClick();await settle();
+ assert.equal(saved.detailDescriptionLinked,false);assert.equal(saved.detail.description.provenance,'manual');
+ await saveSEO('최종 SEO 설명');assert.equal(detail().props.value,'직접 상세 작성 중');
+ detail().props.onChange({target:{value:''}});h.button('상세 설명·이미지 저장').props.onClick();await settle();
+ await saveSEO('공란 복원 금지');assert.equal(detail().props.value,'');assert.equal(h.model.currentDetailContent(saved).description.value,'');
+ h.unmount();
 });
 
 test('SEO and detail description edits save independently, retain unsaved work and cannot be lost on a failed write',async()=>{
