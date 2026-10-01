@@ -5,7 +5,7 @@ import { isQuotationFilename } from '@/app/exports/quotation-filename';
 export type QuotationAttachment = { filename: string; byteLength: number; sha256: string };
 
 type Reference = { optionId: string | null; optionLabel: string; fieldId: string; position: number };
-type Attachment = { key: string; archivePath: string; filename: string; references: Reference[] };
+type Attachment = { key: string; archivePath: string; filename: string; byteLength?: number; sha256?: string; references: Reference[] };
 
 /** A local manifest, not an upload command or a record of external consent. */
 export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: readonly BundleAsset[], quotation?: QuotationAttachment) {
@@ -31,7 +31,12 @@ export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: reado
         if (!asset) throw new Error('업로드 계획에 연결한 이미지 파일이 누락되었습니다.');
         let attachment = group.get(key);
         if (!attachment) {
-          attachment = { key, archivePath: asset.name, filename: asset.name.split('/').at(-1)!, references: [] };
+          // Offline field guides may have no workbook. A transmittable package must
+          // bind each referenced image to the exact bytes read from storage.
+          const verified = asset.data?.byteLength > 0 && /^[a-f0-9]{64}$/.test(asset.sha256 ?? '');
+          if (quotation && !verified) throw new Error('전송할 이미지의 파일 내용 확인값이 없습니다. 견적서를 다시 준비해주세요.');
+          attachment = { key, archivePath: asset.name, filename: asset.name.split('/').at(-1)!,
+            ...(verified ? {byteLength: asset.data.byteLength, sha256: asset.sha256} : {}), references: [] };
           group.set(key, attachment);
         }
         attachment.references.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldId: field.id, position: index + 1 });

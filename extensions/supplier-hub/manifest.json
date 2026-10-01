@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YOOFAM PLUS 견적서 첨부",
-  "version": "0.2.30",
+  "version": "0.2.31",
   "minimum_chrome_version": "120",
   "description": "현재 Chrome에서 1688 상품정보를 확인하고, 검토한 견적서 첨부를 Supplier Hub 등록 탭에 전달합니다.",
   "permissions": ["activeTab", "scripting", "tabs", "webRequest", "declarativeNetRequestWithHostAccess"],

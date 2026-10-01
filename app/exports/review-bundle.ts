@@ -3,7 +3,7 @@ import type { ProductRecord } from '@/db/queries';
 import { quotationCsv } from '@/app/pricing';
 import { zipFiles } from '@/app/exports/zip';
 
-export type BundleAsset = { key: string; name: string; data: Uint8Array };
+export type BundleAsset = { key: string; name: string; data: Uint8Array; sha256?: string };
 const escape = (value: string) => value.replace(/[&<>"']/g, character=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]!));
 export function imageExtension(bytes: Uint8Array) {
   if(bytes.length>=8 && [137,80,78,71,13,10,26,10].every((value,index)=>bytes[index]===value))return 'png';

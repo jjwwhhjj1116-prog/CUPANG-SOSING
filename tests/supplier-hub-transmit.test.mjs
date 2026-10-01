@@ -22,13 +22,17 @@ import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registra
 const identity={productId:'product',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/'};
 const agreements={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
-async function packageBytes(changes={}){
+async function packageBytes(changes={},patchFiles=()=>{}){
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/exports/zip.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,Uint8Array,Uint32Array,DataView});
  const workbook=new Uint8Array([80,75,3,4,0,1]),filename=`YOOFAM-${identity.fingerprint}.xlsx`;
  const digest=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
  const plan={format:'sourceflow-supplier-hub-upload-plan-v1',destination:'https://supplier.coupang.com/qvt/registration',profileId:'profile',company:{code:'A01464742',name:'와이홉'},productId:identity.productId,categoryId:identity.categoryId,inputFingerprint:identity.fingerprint,quotation:{file:{filename,byteLength:workbook.length,sha256:digest}},productImages:[{archivePath:'assets/photo.png',filename:'photo.png'}],labelImages:[{archivePath:'assets/label.png',filename:'label.png'}],missingLabels:[],...changes};
+ const image=new Uint8Array([137,80,78,71]),imageDigest=Buffer.from(await webcrypto.subtle.digest('SHA-256',image)).toString('hex');
+ for(const entry of [...plan.productImages,...plan.labelImages])Object.assign(entry,{byteLength:image.length,sha256:imageDigest});
  const review={format:'sourceflow-quotation-review-v1',...identity,inputFingerprint:identity.fingerprint,submissionReady:false,transport:'not-connected',includedOptions:2,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]};
- return Buffer.from(exports.zipFiles([{name:filename,data:workbook},{name:'assets/photo.png',data:new Uint8Array([137,80,78,71])},{name:'assets/label.png',data:new Uint8Array([137,80,78,71])},{name:'submission-review.json',data:JSON.stringify(review)},{name:'supplier-hub-upload-plan.json',data:JSON.stringify(plan)}])).toString('base64');
+ const files=[{name:filename,data:workbook},{name:'assets/photo.png',data:image},{name:'assets/label.png',data:image},{name:'submission-review.json',data:JSON.stringify(review)},{name:'supplier-hub-upload-plan.json',data:JSON.stringify(plan)}];
+ patchFiles(files);
+ return Buffer.from(exports.zipFiles(files)).toString('base64');
 }
 async function fixture(options={}){
  const calls=[],records=new Map();
@@ -60,7 +64,7 @@ async function fixture(options={}){
    if(action==='put'&&key.startsWith('attempt:')&&options.bindingError)throw Error('tab binding storage unavailable');
    if(action==='put')records.set(key,value);else return records.get(key);
  };
- const message={...identity,type:'YOOFAM_TRANSMIT_PACKAGE',reviewedAgreements:agreements,base64:await packageBytes(options.plan)};
+ const message={...identity,type:'YOOFAM_TRANSMIT_PACKAGE',reviewedAgreements:agreements,base64:await packageBytes(options.plan,options.patchFiles)};
  return {calls,records,api,store,message,run:(patch={},who=sender)=>transmitSupplierHubPackage({...message,...patch},who,api,store)};
 }
 
@@ -81,6 +85,14 @@ function observe(h){
  vm.runInContext(source,context);
  return ()=>context.observeSupplierHubResult({...identity,type:'YOOFAM_REFRESH_RESULT',kind:'validation'},sender);
 }
+
+for(const filename of ['photo.png','label.png'])for(const path of ['app','popup'])test(`${path} blocks substituted ${filename} before any Hub script, claim or attachment`,async()=>{
+ const h=await fixture({patchFiles:files=>{files.find(file=>file.name==='assets/'+filename).data=new Uint8Array([137,80,78,70]);}});
+ await assert.rejects(path==='app'?h.run():popup(h)(),/이미지.*변경/);
+ assert.equal(h.records.size,0);
+ assert.equal(h.calls.some(([name])=>name!=='query'),false,'popup may inspect its active tab but must not touch Hub inputs or claim a delivery');
+ assert.equal(h.calls.length,path==='app'?0:1);
+});
 
 test('app transmission uses its existing Chrome window and binds attachment/validation to the reviewed package',async()=>{
  const h=await fixture();const result=await h.run();assert.equal(result.state,'validation-requested');assert.equal(result.registered,false);
@@ -196,14 +208,16 @@ test('both delivery paths recover failed acknowledgements into exact-company val
 
 test('app and popup share the existing-window lock until the pending attachment settles',async()=>{
  for(const firstPath of ['app','popup']){
-  let finish;const held=new Promise(resolve=>{finish=resolve;});
-  const h=await fixture({onAttach:()=>held}),fromPopup=popup(h);
+  let finish,entered;const held=new Promise(resolve=>{finish=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  const h=await fixture({onAttach:()=>{entered();return held;}}),fromPopup=popup(h);
   const first=firstPath==='app'?h.run():fromPopup();
-  for(let i=0;i<20&&!h.calls.some(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true);i++)await new Promise(resolve=>setImmediate(resolve));
-  const binding=h.records.get('attempt:123');assert.ok(binding);
-  try{await assert.rejects(firstPath==='app'?fromPopup():h.run(),/전송 중/);}
-  finally{finish();}
-  await first;assert.equal(h.records.get('attempt:123'),binding);
+  let binding;
+  try{
+   await Promise.race([started,first.then(()=>assert.fail('delivery ended before the held attachment'))]);
+   binding=h.records.get('attempt:123');assert.ok(binding);
+   await assert.rejects(firstPath==='app'?fromPopup():h.run(),/전송 중/);
+  }finally{finish();await first;}
+  assert.equal(h.records.get('attempt:123'),binding);
   assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
   const other=await fixture();assert.equal((await other.run()).state,'validation-requested','the window lock must release after either path');
  }
@@ -258,9 +272,13 @@ test('atomic legacy tab recovery loses to a newer assignment without overwriting
 });
 
 test('closing the caller cannot permit a second transmission while worker attachment is pending',async()=>{
- let finish;const held=new Promise(resolve=>{finish=resolve;});const h=await fixture({onAttach:()=>held});
- const first=h.run();await new Promise(resolve=>setImmediate(resolve));
- await assert.rejects(h.run(),/전송 중/);finish();assert.equal((await first).state,'validation-requested');
+ let finish,entered;const held=new Promise(resolve=>{finish=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+ const h=await fixture({onAttach:()=>{entered();return held;}}),first=h.run();
+ try{
+  await Promise.race([started,first.then(()=>assert.fail('delivery ended before the held attachment'))]);
+  await assert.rejects(h.run(),/전송 중/);
+ }finally{finish();await first;}
+ assert.equal((await first).state,'validation-requested');
  assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
 });
 

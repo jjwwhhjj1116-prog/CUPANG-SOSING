@@ -55,15 +55,22 @@ export async function prepareAttachments(bytes) {
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),b=>b.toString(16).padStart(2,'0')).join('');
   if(digest!==quote.sha256)throw Error('견적서 파일이 검사 이후 변경되었습니다.');
   const file=(name,bytes)=>({name,base64:encodeBase64(bytes)});
-  const group=items=>{
+  const imageDigests=new Map();
+  const group=async items=>{
     if(!Array.isArray(items)||items.length>200)throw Error('이미지 첨부 목록을 확인해주세요.');
-    const seen=new Set();return items.map(item=>{
+    const seen=new Set(),result=[];
+    for(const item of items){
       if(!item||!/^assets\/[A-Za-z0-9_-][A-Za-z0-9._-]*\.(png|jpg|jpeg|webp|gif|avif)$/i.test(item.archivePath)||item.filename!==item.archivePath.split('/').at(-1)||seen.has(item.filename))throw Error('이미지 파일명과 첨부 목록이 일치하지 않습니다.');
       seen.add(item.filename);const data=files.get(item.archivePath);if(!data?.length)throw Error('이미지 첨부가 누락되었습니다.');
-      return file(item.filename,data);
-    });
+      if(!Number.isSafeInteger(item.byteLength)||item.byteLength<=0||item.byteLength>20*1024*1024||data.length!==item.byteLength||typeof item.sha256!=='string'||!/^[a-f0-9]{64}$/.test(item.sha256))throw Error('이미지 첨부 정보가 일치하지 않습니다. 앱에서 견적서 ZIP을 다시 준비해주세요.');
+      let digest=imageDigests.get(item.archivePath);
+      if(!digest){digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),b=>b.toString(16).padStart(2,'0')).join('');imageDigests.set(item.archivePath,digest);}
+      if(digest!==item.sha256)throw Error('이미지 파일이 견적서 준비 이후 변경되었습니다. 앱에서 다시 준비해주세요.');
+      result.push(file(item.filename,data));
+    }
+    return result;
   };
-  const productImages=group(plan.productImages),labelImages=group(plan.labelImages);
+  const productImages=await group(plan.productImages),labelImages=await group(plan.labelImages);
   if(!labelImages.length||!Array.isArray(plan.missingLabels)||plan.missingLabels.length)throw Error('모든 포함 옵션의 표시사항 라벨을 연결해주세요.');
   const company=plan.company;
   if(!company||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},company.code)||({A01526306:'유앤채',A01464742:'와이홉'})[company.code]!==company.name)throw Error('승인된 회원 회사정보가 없는 견적서입니다. 회사정보를 확인하고 앱에서 다시 준비해주세요.');

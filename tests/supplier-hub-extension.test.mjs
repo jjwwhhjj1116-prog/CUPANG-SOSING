@@ -17,6 +17,8 @@ const image=new Uint8Array([137,80,78,71]);
 async function fixture(change=()=>{}){
   const digest=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
   const plan={format:'sourceflow-supplier-hub-upload-plan-v1',destination:'https://supplier.coupang.com/qvt/registration',categoryId:'80719',quotation:{file:{filename:title,byteLength:workbook.length,sha256:digest}},productImages:[{archivePath:'assets/photo.png',filename:'photo.png'}],labelImages:[{archivePath:'assets/label.png',filename:'label.png'}],missingLabels:[]};
+  const imageDigest=Buffer.from(await webcrypto.subtle.digest('SHA-256',image)).toString('hex');
+  for(const entry of [...plan.productImages,...plan.labelImages])Object.assign(entry,{byteLength:image.length,sha256:imageDigest});
   plan.company={code:'A01464742',name:'와이홉'};plan.productId='product';plan.inputFingerprint='a'.repeat(64);
   const review={format:'sourceflow-quotation-review-v1',productId:'product',categoryId:'80719',inputFingerprint:plan.inputFingerprint,submissionReady:false,transport:'not-connected',includedOptions:1,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]};
   const files=[{name:title,data:workbook},{name:'assets/photo.png',data:image},{name:'assets/label.png',data:image},{name:'assets/unused.png',data:image},{name:'submission-review.json',data:JSON.stringify(review)}];change(plan,files);
@@ -26,6 +28,25 @@ test('app-produced ZIP resolves exact workbook and only manifest-referenced atta
   const result=await prepareAttachments(await fixture());
   assert.equal(result.categoryId,'80719');assert.equal(result.includedOptions,1);assert.deepEqual(result.quotation,[{name:title,base64:Buffer.from(workbook).toString('base64')}]);
   assert.deepEqual(result.productImages.map(f=>f.name),['photo.png']);assert.deepEqual(result.labelImages.map(f=>f.name),['label.png']);
+});
+
+for(const role of ['productImages','labelImages'])test(`${role}: repacked ZIP with a substituted image fails even when CRC and filename remain valid`,async()=>{
+ const bytes=await fixture((plan,files)=>{const entry=files.find(file=>file.name===plan[role][0].archivePath);entry.data=Uint8Array.from(image,byte=>byte^1);});
+ assert.ok(readPackageZip(bytes)); // Repacking updates CRC; archive corruption checks alone cannot detect this change.
+ await assert.rejects(prepareAttachments(bytes),/이미지.*변경/);
+});
+
+test('every referenced image needs a bounded byte count and lowercase SHA-256',async()=>{
+ for(const role of ['productImages','labelImages'])for(const patch of [{byteLength:undefined},{byteLength:0},{byteLength:1.5},{byteLength:5},{sha256:undefined},{sha256:'A'.repeat(64)},{sha256:'z'.repeat(64)}]){
+  await assert.rejects(fixture(plan=>Object.assign(plan[role][0],patch)).then(prepareAttachments),/이미지/);
+ }
+});
+
+test('one file shared across product and label roles must match both content descriptors',async()=>{
+ const share=plan=>{plan.labelImages[0]={...plan.productImages[0]};};
+ const result=await prepareAttachments(await fixture(share));
+ assert.equal(result.productImages[0].base64,result.labelImages[0].base64);
+ await assert.rejects(fixture(plan=>{share(plan);plan.labelImages[0].sha256='b'.repeat(64);}).then(prepareAttachments),/이미지.*변경/);
 });
 test('corrupted, truncated and inconsistent ZIP entries are rejected',async()=>{
   const original=await fixture();
@@ -49,7 +70,7 @@ test('manual ZIP cannot bypass review errors or mix another product/category/fin
 function dom({duplicate=false,existing=false,visibleFilename=false,disabled=false,detach=false,wrong=false}={}){
   const titles=['작성이 완료된 견적서 Excel 파일을 업로드하십시오.','상품 이미지를 업로드하십시오.','제품 필수 표시사항을 업로드하십시오.','법적 필수서류를 업로드하십시오.'];
   const events=[];
-  const inputs=titles.map((text,index)=>({files:existing&&index===3?[{}]:[],disabled:disabled&&index===2,isConnected:true,closest:()=>null,parentElement:{innerText:text,querySelectorAll:()=>[{}]},dispatchEvent(e){events.push(index);if(detach&&index===0)inputs[1].isConnected=false;}}));
+  const inputs=titles.map((text,index)=>({files:existing&&index===3?[{}]:[],disabled:disabled&&index===2,isConnected:true,closest:()=>null,parentElement:{innerText:text,querySelectorAll:()=>[{}]},dispatchEvent(){events.push(index);if(detach&&index===0)inputs[1].isConnected=false;}}));
   if(duplicate)inputs.push({...inputs[1]});
   class Transfer{constructor(){this.files=[];this.items={add:file=>this.files.push(file)};}}
   const document={body:{innerText:visibleFilename?'Company Code: A01464742 상품이미지 existing.png':'Company Code: A01464742'},documentElement:{dataset:{}},querySelectorAll:()=>inputs};

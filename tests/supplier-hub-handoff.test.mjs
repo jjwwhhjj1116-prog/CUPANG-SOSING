@@ -28,7 +28,7 @@ test('multi-page evidence validates actual coverage without treating it as regis
  for(const hasMore of [true,null])assert.equal(api.validateRegistrationResult({...value,hasMore},'123').hasMore,hasMore);
 });
 test('web package handoff sends exact reviewed identity and bytes, cleans listeners',async()=>{
-  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,latestSourceBinding:true,durableAttachmentRecovery:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
+  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
   await h.api.checkSupplierHubExtension(new AbortController().signal);
   await h.api.prepareSupplierHubHandoff(new Blob(['ZIP fixture']),identity,new AbortController().signal);
   assert.equal(h.sent[0].type,'PING');assert.equal(h.sent[1].payload.fingerprint,identity.fingerprint);
@@ -76,7 +76,7 @@ test('old extension without company binding cannot prepare a new handoff',async(
 
 test('direct transmission requires the new capability and sends the current reviewed choices once',async()=>{
  const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
- const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',validated:false,registered:false}}));
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',validated:false,registered:false}}));
  await h.api.checkSupplierHubExtension(new AbortController().signal,true);
  assert.equal((await h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,reviewed,new AbortController().signal)).state,'validation-requested');
  assert.equal(h.sent[1].type,'TRANSMIT');assert.equal(h.sent[1].payload.productId,identity.productId);assert.equal(h.sent[1].payload.reviewedAgreements,reviewed);
@@ -100,6 +100,14 @@ test('new deliveries require durable recovery while existing claims remain reada
  }
  const previous=savedReply(savedFixture());
  assert.equal((await previous.api.getSupplierHubSubmission(identity,new AbortController().signal)).attempt.state,'validation-requested');
+});
+
+test('new app deliveries require image integrity capability before creating or sending a package',async()=>{
+ for(const direct of [false,true]){
+  const old=harness((m,emit)=>emit(m,{ok:true,version:'0.2.30',companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true}));
+  await assert.rejects(old.api.checkSupplierHubExtension(new AbortController().signal,direct),/0.2.31/);
+  assert.equal(old.sent.length,1);assert.equal(old.sent[0].type,'PING');
+ }
 });
 
 test('direct transmission rejects unrelated acknowledgements and never retries an uncertain remote request',async()=>{

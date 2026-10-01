@@ -18,7 +18,9 @@ export async function loadAttachments(ownerId: string, productKeysJson: string, 
     const data = new Uint8Array(await object.arrayBuffer());
     let extension: string;
     try { extension = imageExtension(data); } catch { throw new AttachmentError('지원하지 않는 이미지 형식이 포함되어 있습니다.', 400); }
-    assets.push({ key, name: `assets/image-${String(index + 1).padStart(3, '0')}.${extension}`, data });
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    assets.push({ key, name: `assets/image-${String(index + 1).padStart(3, '0')}.${extension}`, data, sha256 });
   }
   return assets;
 }
