@@ -22,7 +22,7 @@ function harness(handlers={},batchCache={current:{signature:null,uploaded:new Ma
   if(name==='@/app/quotation-label-batch')return{attachQuotationLabels:async input=>{calls.batch++;return handlers.batch?handlers.batch(input):{view};}};
   return native(name);
  }});
- const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,productId:'p',endpoint:'/quotation',optionId:'one',disabled:false,batchCache,onBusyChange:value=>calls.busy.push(value),onBatchFailed:handlers.onBatchFailed,onAttached:(saved,progress)=>{calls.attached++;calls.snapshots.push({saved,progress});}});first=false;return tree;};
+ const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,productId:'p',endpoint:'/quotation',optionId:'one',disabled:false,batchCache,onBusyChange:value=>calls.busy.push(value),onFailed:handlers.onFailed,onAttached:(saved,progress)=>{calls.attached++;calls.snapshots.push({saved,progress});}});first=false;return tree;};
  const buttons=()=>Object.fromEntries(nodes(render()).filter(n=>n.type==='button').map(n=>[text(n.props.children),n.props.onClick]));
  render();effects.forEach(fn=>cleanups.push(fn()));
  return{calls,view,batchCache,render,buttons,unmount(){cleanups.forEach(fn=>fn?.());}};
@@ -96,7 +96,7 @@ test('a stopped label batch reuses its files after the quotation panel remounts 
 
 test('failed batch keeps the shared lock until saved-view recovery settles',async()=>{
  const recovery=deferred(),messages=[];
- const h=harness({batch:()=>{throw Error('batch response lost');},onBatchFailed:message=>{messages.push(message);return recovery.promise;}});
+ const h=harness({batch:()=>{throw Error('batch response lost');},onFailed:message=>{messages.push(message);return recovery.promise;}});
  h.buttons()[batch]();await settle();assert.equal(messages.length,1);assert.match(messages[0],/batch response lost/);
  assert.deepEqual(h.calls.busy,[true]);h.buttons()[batch]();assert.equal(h.calls.batch,1);
  recovery.resolve();await settle();assert.deepEqual(h.calls.busy,[true,false]);
@@ -105,7 +105,7 @@ test('failed batch keeps the shared lock until saved-view recovery settles',asyn
 
 test('a failed batch cannot start saved-view recovery after its panel closes',async()=>{
  const pending=deferred(),messages=[];
- const h=harness({batch:()=>pending.promise,onBatchFailed:async message=>{messages.push(message);}});
+ const h=harness({batch:()=>pending.promise,onFailed:async message=>{messages.push(message);}});
  h.buttons()[batch]();h.unmount();pending.reject(Error('late response lost'));await settle();
  assert.deepEqual(messages,[]);assert.equal(h.calls.attached,0);assert.deepEqual(h.calls.busy,[true,false]);
 });

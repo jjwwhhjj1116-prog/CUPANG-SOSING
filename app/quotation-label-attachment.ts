@@ -1,6 +1,9 @@
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
 
+/** One reviewed PNG retained by the form across saved-view panel remounts. */
+export type QuotationLabelUploadCache = { signature: string | null; uploadedKey: string | null; rendered: { blob: Blob; width: number; height: number } | null };
+
 type Input = {
   productId: string; endpoint: string; renderedView: QuotationFieldsView; optionId: string | null;
   blob: Blob | null; uploadedKey: string | null; onUploaded: (key: string) => void;

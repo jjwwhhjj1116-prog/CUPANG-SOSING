@@ -4,16 +4,17 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
 import { renderDocument } from '@/app/document-image-render';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
-import { attachQuotationLabel } from '@/app/quotation-label-attachment';
+import { attachQuotationLabel, type QuotationLabelUploadCache } from '@/app/quotation-label-attachment';
 import { attachQuotationLabels, type LabelBatchCache, type LabelBatchProgress, type LabelBatchResult } from '@/app/quotation-label-batch';
 
-export function QuotationLabelPanel({ view, productId, endpoint, optionId, disabled, batchCache, onBusyChange, onAttached, onBatchFailed }: { view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; batchCache?: RefObject<LabelBatchCache>; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView, batch?: Omit<LabelBatchResult, 'view'>) => void; onBatchFailed?: (message: string) => Promise<void> }) {
+export function QuotationLabelPanel({ view, productId, endpoint, optionId, disabled, batchCache, uploadCache, onBusyChange, onAttached, onFailed }: { view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; batchCache?: RefObject<LabelBatchCache>; uploadCache?: RefObject<QuotationLabelUploadCache>; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView, batch?: Omit<LabelBatchResult, 'view'>) => void; onFailed?: (message: string) => Promise<void> }) {
   const resolved = view.resolved;
-  const [preview, setPreview] = useState<{ url: string; width: number; height: number; blob: Blob; view: QuotationFieldsView } | null>(null);
+  const [preview, setPreview] = useState<{ url: string; width: number; height: number; blob: Blob; view: QuotationFieldsView; signature: string } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const alive = useRef(true);
   const running = useRef(false);
-  const uploadedKey = useRef<string | null>(null);
+  const localUploadCache = useRef<QuotationLabelUploadCache>({ signature: null, uploadedKey: null, rendered: null });
+  const uploadCacheRef = uploadCache ?? localUploadCache;
   const localBatchCache = useRef<LabelBatchCache>({ signature: null, uploaded: new Map() });
   const cacheRef = batchCache ?? localBatchCache;
   const [progress, setProgress] = useState<LabelBatchProgress | null>(null);
@@ -28,8 +29,15 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
     running.current = true;
     setBusy(true); setError('');
     try {
-      const result = await renderDocument(quotationLabelPlan(resolved, optionId));
-      if (alive.current) { uploadedKey.current = null; setPreview({ url: URL.createObjectURL(result.blob), width: result.width, height: result.height, blob: result.blob, view }); }
+      const plan = quotationLabelPlan(resolved, optionId);
+      const signature = JSON.stringify({ productId, endpoint, category: view.categoryContext, optionId, plan });
+      const cache = uploadCacheRef.current;
+      const result = cache.signature === signature && cache.rendered ? cache.rendered : await renderDocument(plan);
+      if (alive.current) {
+        if (cache.signature !== signature) { cache.signature = signature; cache.uploadedKey = null; }
+        cache.rendered = result;
+        setPreview({ url: URL.createObjectURL(result.blob), width: result.width, height: result.height, blob: result.blob, view, signature });
+      }
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : '표시사항 PNG 생성 실패'); }
     finally { running.current = false; if (alive.current) setBusy(false); }
   }
@@ -38,10 +46,20 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
     running.current = true;
     setBusy(true); setError(''); onBusyChange(true);
     try {
+      const cache = uploadCacheRef.current;
       const saved = await attachQuotationLabel({ productId, endpoint, renderedView: preview.view, optionId, blob: preview.blob,
-        uploadedKey: uploadedKey.current, onUploaded: key => { uploadedKey.current = key; } });
+        uploadedKey: cache.signature === preview.signature ? cache.uploadedKey : null,
+        onUploaded: key => { if (cache.signature === preview.signature) cache.uploadedKey = key; } });
       if (alive.current) onAttached(saved);
-    } catch (cause) { if (alive.current) setError(`${cause instanceof Error ? cause.message : 'PNG 연결 실패'}${uploadedKey.current ? ' 업로드한 파일은 보존됩니다. 다시 연결할 때 같은 파일을 사용합니다.' : ''}`); }
+    } catch (cause) {
+      if (alive.current) {
+        const cache = uploadCacheRef.current;
+        const uploaded = cache.signature === preview.signature && cache.uploadedKey;
+        const message = `${cause instanceof Error ? cause.message : 'PNG 연결 실패'}${uploaded ? ' 업로드한 파일은 보존됩니다. 같은 견적 내용으로 미리보기를 다시 열어 연결하면 기존 파일을 사용합니다.' : ''}`;
+        if (onFailed) await onFailed(message);
+        else setError(message);
+      }
+    }
     finally { running.current = false; onBusyChange(false); if (alive.current) setBusy(false); }
   }
   async function attachAll() {
@@ -71,7 +89,7 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
         const message = `${cause instanceof Error ? cause.message : '일괄 라벨 연결 실패'} 완료된 연결과 업로드 파일은 보존됩니다. 다시 실행할 때 내용이 같으면 기존 파일을 재사용하고, 바뀌었으면 새로 생성합니다.`;
         // The server may have committed even if its response was lost. Keep
         // the shared lock until the editor has read its actual saved view.
-        if (onBatchFailed) await onBatchFailed(message);
+        if (onFailed) await onFailed(message);
         else setError(message);
       }
     } finally { running.current = false; onBusyChange(false); if (alive.current) { setBusy(false); setBatchRunning(false); setStopping(false); } }

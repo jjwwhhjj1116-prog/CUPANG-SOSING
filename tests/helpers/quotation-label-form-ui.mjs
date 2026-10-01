@@ -25,6 +25,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
    {exports,Error,AbortController,URL,window:{addEventListener(){},removeEventListener(){}},document:{getElementById:()=>null},fetch:request,require(name){
     if(name==='react')return hooks;if(name.endsWith('.css'))return{};
     if(name==='@/app/document-image-render')return{renderDocument};
+    if(name==='@/app/quotation-label-attachment')return{...load('app/quotation-label-attachment.ts'),attachQuotationLabel:input=>load('app/quotation-label-attachment.ts').attachQuotationLabel(input,request)};
     if(name==='@/app/quotation-label-batch')return{...load('app/quotation-label-batch.ts'),attachQuotationLabels:input=>load('app/quotation-label-batch.ts').attachQuotationLabels(input,request)};
     if(name==='@/app/components/quotation-label-panel')return component('app/components/quotation-label-panel.tsx');
     if(name.startsWith('@/app/components/'))return{[{'quotation-translated-attributes':'QuotationTranslatedAttributes','quotation-choice-input':'QuotationChoiceInput'}[name.split('/').at(-1)]]:name};
@@ -50,7 +51,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
  const button=label=>all().find(node=>node.type==='button'&&text(node.props.children).startsWith(label));
  async function idle(){
   const deadline=Date.now()+20000;
-  while(render().tree.props['aria-busy']){if(Date.now()>deadline)throw Error('Quotation label UI timeout');await new Promise(resolve=>setTimeout(resolve,1));}
+  for(;;){const value=render();if(!value.tree.props['aria-busy']&&!value.panel?.props['aria-busy'])break;if(Date.now()>deadline)throw Error('Quotation label UI timeout');await new Promise(resolve=>setTimeout(resolve,1));}
   await new Promise(resolve=>setImmediate(resolve));render();
  }
  function start(label){const node=button(label);if(!node||node.props.disabled)throw Error('Button unavailable: '+label);node.props.onClick();}

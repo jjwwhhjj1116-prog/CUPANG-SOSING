@@ -7,6 +7,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { duplicateQuotationImageIssue, quotationImageRoleIssues, quotationBarcodeIssues, quotationOptionLimitIssue, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationField, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import './quotation-fields-editor.css';
 import { QuotationLabelPanel } from '@/app/components/quotation-label-panel';
+import type { QuotationLabelUploadCache } from '@/app/quotation-label-attachment';
 import type { LabelBatchCache } from '@/app/quotation-label-batch';
 import { QuotationChoiceInput } from '@/app/components/quotation-choice-input';
 import { quotationFieldGroup } from '@/app/quotation-field-groups';
@@ -300,6 +301,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const requests = useRef(0); const observedRefresh = useRef(refreshToken); const prefix = useId();
   const activeWrite = useRef<AbortController | null>(null);
   const labelBatchCache = useRef<LabelBatchCache>({ signature: null, uploaded: new Map() });
+  const labelUploadCache = useRef<QuotationLabelUploadCache>({ signature: null, uploadedKey: null, rendered: null });
   const invalidateRequests = useCallback(() => { requests.current++; activeWrite.current?.abort(); activeWrite.current=null; }, []);
   const dirty = changes.length > 0;
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
@@ -322,18 +324,18 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     const element = document.getElementById(`${prefix}-${pendingFocus.current}`);
     if (element) { element.scrollIntoView({ block: 'center' }); element.focus({ preventScroll: true }); pendingFocus.current = null; }
   }, [loading, view, active, selectedOption, prefix]);
-  const refresh = useCallback(async (discard = false, afterConflict = false, batchFailure?: string) => {
+  const refresh = useCallback(async (discard = false, afterConflict = false, labelFailure?: string) => {
     if (activeWrite.current && !afterConflict) return;
-    const failureMessage = batchFailure ?? labelRecovery;
+    const failureMessage = labelFailure ?? labelRecovery;
     const id = ++requests.current; setLoading(true); setError(''); setBulk(null);
     try {
       const saved = await fetchView(endpoint);
       if (id !== requests.current) return;
       const reconciled = view && !discard ? reconcileQuotationEditorDraft(view, saved, changes, conflicts) : { changes: [], conflicts: [] };
       setView(saved); setChanges(reconciled.changes); setConflicts(reconciled.conflicts); setLabelRecovery('');
-      if (batchFailure) setError(batchFailure);
+      if (labelFailure) setError(labelFailure);
       if (!saved.resolved.rows.some(row => row.optionId === selectedOption)) setApplyAll(false);
-      setMessage(batchFailure ? '현재 저장된 견적을 다시 불러왔습니다. 오류를 확인한 뒤 라벨 연결을 다시 실행해주세요.' : discard ? '현재 입력을 버리고 저장본을 불러왔습니다.' : reconciled.conflicts.length ? '저장값 또는 카테고리·항목 규격이 바뀌었습니다. 입력을 검토하고 사용할 값을 선택해주세요.' : '최신 상품·옵션·기본값을 반영했습니다. 직접 입력한 내용은 유지했습니다.');
+      setMessage(labelFailure ? '현재 저장된 견적을 다시 불러왔습니다. 오류를 확인한 뒤 라벨 연결을 다시 실행해주세요.' : discard ? '현재 입력을 버리고 저장본을 불러왔습니다.' : reconciled.conflicts.length ? '저장값 또는 카테고리·항목 규격이 바뀌었습니다. 입력을 검토하고 사용할 값을 선택해주세요.' : '최신 상품·옵션·기본값을 반영했습니다. 직접 입력한 내용은 유지했습니다.');
     } catch (cause) {
       if (id === requests.current) {
         const reason = cause instanceof Error ? cause.message : '최신 자료 확인 실패';
@@ -442,7 +444,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       {(view.resolved.issues.length > 0 || allIssues.length > 0) && <details className="quotation-fields-notice"><summary>입력·검토 안내 {view.resolved.issues.length + allIssues.length}건</summary><ul>{view.resolved.issues.map((issue, index) => <li key={`global-${index}`}>{issue}</li>)}{allIssues.map(({ field, issue }, index) => <li key={`${field.id}-${index}`}><button type="button" className="quotation-field-text-button" disabled={busy || loading} onClick={() => openSection(field.section, field.id)}>{field.label}</button>: {issue}</li>)}</ul></details>}
       {hasInvalidDraft && <p className="quotation-field-issue" role="status">{invalidDraftMessage} 필수 항목의 공란은 작성 중 상태로 저장할 수 있습니다.</p>}
       {row && <QuotationTranslatedAttributes key={`translation:${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} productId={productId} view={view} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} onApply={items=>items.forEach(item=>edit(item.fieldKey,item.value,item.optionId))} />}
-      {row && <QuotationLabelPanel key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} view={view} productId={productId} endpoint={endpoint} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} batchCache={labelBatchCache} onBusyChange={setBusy} onBatchFailed={async message=>{setLabelRecovery(message);setMessage('');onSaved?.();await refresh(false,false,message);}} onAttached={(saved,batch)=>{setView(saved);setMessage(batch?.stopped ? `라벨 ${batch.completed}/${batch.total}건을 저장하고 중지했습니다. 저장 결과를 반영했으며 전체 생성·연결을 다시 누르면 이어서 진행합니다.` : '표시사항 PNG를 처리한 옵션의 라벨 이미지에 추가했습니다. 기존 첨부는 유지했습니다.');onSaved?.();}} />}
+      {row && <QuotationLabelPanel key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} view={view} productId={productId} endpoint={endpoint} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} batchCache={labelBatchCache} uploadCache={labelUploadCache} onBusyChange={setBusy} onFailed={async message=>{setLabelRecovery(message);setMessage('');onSaved?.();await refresh(false,false,message);}} onAttached={(saved,batch)=>{setView(saved);setMessage(batch?.stopped ? `라벨 ${batch.completed}/${batch.total}건을 저장하고 중지했습니다. 저장 결과를 반영했으며 전체 생성·연결을 다시 누르면 이어서 진행합니다.` : '표시사항 PNG를 처리한 옵션의 라벨 이미지에 추가했습니다. 기존 첨부는 유지했습니다.');onSaved?.();}} />}
     </>}
   </section>;
 }
