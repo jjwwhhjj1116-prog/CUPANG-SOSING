@@ -16,6 +16,7 @@ function load(relative, overrides = {}) {
       if (name in overrides) return overrides[name];
       if (name === '@/db/product-content') return {readRegistrationSummaries: async()=>({})};
       if (name === '@/db/collection-images') return {readRegistrationSourceImages: async()=>({})};
+      if (name === '@/db/supplier-hub-receipts') return {readSupplierHubReceiptSummaries: async()=>({})};
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'test-owner' }), getWorkspaceOwnerId: async () => 'test-owner' };
       if (name === '@/db/workspace-banners' || name === '@/app/workspace-banners') return load(name.slice(2)+'.ts');

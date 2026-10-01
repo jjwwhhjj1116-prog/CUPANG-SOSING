@@ -7,6 +7,7 @@ import { imageFileType, isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-fil
 import { readBoundedJson, readBoundedStream, RequestBodyError } from '@/app/request-body';
 import { readRegistrationSummaries } from '@/db/product-content';
 import { readRegistrationSourceImages } from '@/db/collection-images';
+import { readSupplierHubReceiptSummaries } from '@/db/supplier-hub-receipts';
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   if(process.env.NODE_ENV==='production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({error:'운영 인증 연결 후 사용할 수 있습니다.'},{status:503});
@@ -14,11 +15,12 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     const ownerId=await getWorkspaceOwnerId();const {id}=await context.params;
     const product=await findProduct(ownerId,id);
     if (!product) return NextResponse.json({error:'상품을 찾을 수 없습니다.'},{status:404});
-    const [summaries,sourceImages]=await Promise.all([
+    const [summaries,sourceImages,receipts]=await Promise.all([
       readRegistrationSummaries(ownerId,[product]).catch(()=>null),
       readRegistrationSourceImages(ownerId,[product]).catch(()=>null),
+      readSupplierHubReceiptSummaries(ownerId,[product]).catch(()=>null),
     ]);
-    return NextResponse.json({product:{...product,content_summary:summaries?.[id]??null,source_image_key:sourceImages?.[id]??null}},{headers:{'cache-control':'no-store'}});
+    return NextResponse.json({product:{...product,content_summary:summaries?.[id]??null,source_image_key:sourceImages?.[id]??null,hub_receipt:receipts?.[id]??null}},{headers:{'cache-control':'no-store'}});
   } catch {return NextResponse.json({error:'상품을 읽지 못했습니다.'},{status:503});}
 }
 

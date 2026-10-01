@@ -8,6 +8,7 @@ import { QuotationReviewIssues } from '@/app/components/quotation-review-issues'
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 import { checkSupplierHubExtension, prepareSupplierHubHandoff, transmitSupplierHubPackage, getSupplierHubResult, getSupplierHubSubmission, validateSupplierHubResultForSource, type SupplierHubResult, type SupplierHubAgreements } from '@/app/supplier-hub-handoff';
 import { followSupplierHubRegistration, type SupplierHubTrackingProgress } from '@/app/supplier-hub-tracking';
+import { readStoredSupplierHubResult, storeSupplierHubReceipt } from '@/app/supplier-hub-receipt-client';
 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
@@ -16,10 +17,11 @@ type Preview = {
 };
 
 /** Reuses the reviewed XLSX exporter. Preparing or downloading never marks a product submitted. */
-export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{productId:string;profileId:string;categoryId:string|null;onInspect:(profileId:string,target:QuotationNavigationTarget)=>void}) {
+export function SubmissionPackage({productId,profileId,categoryId,onInspect,onReceiptSaved}:{productId:string;profileId:string;categoryId:string|null;onInspect:(profileId:string,target:QuotationNavigationTarget)=>void;onReceiptSaved?:()=>void}) {
   const [preview,setPreview]=useState<Preview|null>(null);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
+  const [receiptError,setReceiptError]=useState('');
   const [message,setMessage]=useState('');
   const [hubResult,setHubResult]=useState<SupplierHubResult|null>(null);
   const [agreements,setAgreements]=useState<SupplierHubAgreements>({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});
@@ -30,6 +32,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
   const transferAttempted=Boolean(preview&&preview.fingerprint===attemptedFingerprint);
   const submissionChecked=Boolean(preview&&preview.fingerprint===checkedFingerprint);
   const active=useRef<AbortController|null>(null);
+  const receiptNotice=useRef('');
   useEffect(()=>()=>active.current?.abort(),[]);
   function pauseTracking(){
     active.current?.abort();active.current=null;setBusy(false);setTracking(false);
@@ -40,6 +43,13 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
     const source={productId,categoryId,profileId:value.report.profileId,fingerprint:value.fingerprint,filename:value.filename};
     await verifyQuotationResultSource(source,controller.signal);
     if(controller.signal.aborted)return;
+    const stored=await readStoredSupplierHubResult({...source,company:value.report.company,includedOptions:value.report.rowCount},controller.signal);
+    await verifyQuotationResultSource(source,controller.signal);
+    if(controller.signal.aborted)return;
+    if(stored){
+      setAttemptedFingerprint(value.fingerprint);setHubResult(stored);setCheckedFingerprint(value.fingerprint);
+      setMessage('보관된 전송 결과를 불러왔습니다. 재전송 없이 결과 확인을 이어갈 수 있습니다.');return;
+    }
     const saved=await getSupplierHubSubmission({productId,categoryId,fingerprint:value.fingerprint},controller.signal);
     await verifyQuotationResultSource(source,controller.signal);
     if(controller.signal.aborted)return;
@@ -52,18 +62,34 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
     }
     setCheckedFingerprint(value.fingerprint);
   }
+  async function retainResult(value:Preview,result:SupplierHubResult|null,controller:AbortController){
+    if(!result||result.state==='not-found'||!categoryId||!value.report.company)return;
+    try{
+      await storeSupplierHubReceipt({productId,profileId:value.report.profileId,categoryId,fingerprint:value.fingerprint,
+        filename:value.filename,company:value.report.company,includedOptions:value.report.rowCount},result,controller.signal);
+      setReceiptError('');
+      const notice=JSON.stringify([value.fingerprint,result.state,result.quotationId,result.registration?.rows.map(row=>[row.skuId,row.status,row.stage])]);
+      if(!controller.signal.aborted&&receiptNotice.current!==notice){receiptNotice.current=notice;onReceiptSaved?.();}
+    }catch(cause){
+      if(controller.signal.aborted)return;
+      // Keep the Chrome result and duplicate-upload guard even if D1 is temporarily unavailable.
+      if(cause instanceof QuotationResultSourceChanged)throw cause;
+      setReceiptError(cause instanceof Error?cause.message:'전송 결과 보관에 실패했습니다. 파일 재전송 없이 결과 조회를 다시 실행해주세요.');
+    }
+  }
   async function followResults(controller:AbortController){
     if(!preview?.report.company||!categoryId)throw new Error('등록할 회사와 카테고리를 확인해주세요.');
     setTracking(true);setTrackingProgress(null);
     try{
       const outcome=await followSupplierHubRegistration({productId,categoryId,profileId:preview.report.profileId,
         fingerprint:preview.fingerprint,filename:preview.filename,includedOptions:preview.report.rowCount,company:preview.report.company},
-      {signal:controller.signal,onProgress:progress=>{
+      {signal:controller.signal,onProgress:async progress=>{
         if(controller.signal.aborted)return;
         setTrackingProgress(progress);setHubResult(progress.result);
         setMessage(progress.phase==='validation-pending'?'Supplier Hub에서 견적서 파일을 검증하고 있습니다.':
           progress.phase==='registration-pending'?`견적서 ID를 확인했습니다. 상품별 SKU를 확인하고 있습니다 (${progress.issuedSkus}/${progress.includedOptions}개).`:
           progress.phase==='sku-issued'?`전송한 옵션 수와 같은 ${progress.issuedSkus}개의 SKU ID를 확인했습니다. 아래에서 Supplier Hub 검수 상태를 확인하세요.`:'');
+        await retainResult(preview,progress.result,controller);
       }});
       if(controller.signal.aborted)return;
       if(outcome.phase==='validation-rejected'||outcome.phase==='registration-rejected')setError(outcome.result?.detail||'Supplier Hub 반려 결과를 확인하고 견적서를 수정해주세요.');
@@ -73,7 +99,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
   async function run(action:'preview'|'export'|'download'|'handoff'|'transmit'|'result'|'registration'|'track'|'recover') {
     if(active.current || (action!=='preview'&&!preview))return;
     const controller=new AbortController();active.current=controller;
-    setBusy(true);setError('');setMessage('');
+    setBusy(true);setError('');setReceiptError('');setMessage('');
     if(action==='preview'){setPreview(null);setCheckedFingerprint('');setHubResult(null);setTrackingProgress(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});}
     try {
       if(action==='recover'){setCheckedFingerprint('');setHubResult(null);setTrackingProgress(null);await restoreSubmission(preview!,controller);return;}
@@ -91,6 +117,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
         if(!controller.signal.aborted){
           if(result){validateSupplierHubResultForSource(result,{filename:preview!.filename,company:preview!.report.company,includedOptions:preview!.report.rowCount,quotationId});setAttemptedFingerprint(preview!.fingerprint);}
           setHubResult(result);if(!result)setMessage('이 견적서의 검증 결과가 아직 표시되지 않았습니다. 잠시 후 다시 확인해주세요.');
+          await retainResult(preview!,result,controller);
         }
         return;
       }
@@ -167,7 +194,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect}:{pr
   return <section className="panel-stack" aria-label="견적서와 첨부 파일 준비" aria-busy={busy}>
     <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('preview')}>{tracking?'등록 결과 확인 중…':busy?'견적서 준비 중…':'견적서 + 첨부 파일 준비'}</button>
     {tracking&&<button type="button" className="btn ghost" onClick={pauseTracking}>결과 확인 일시정지</button>}
-    {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
+    {error&&<p role="alert">{error}</p>}{receiptError&&<p role="alert">{receiptError}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
       {preview.report.company&&<p>등록 회사: {preview.report.company.name} · {preview.report.company.code}</p>}
       {preview.report.company===null&&<p role="alert">계정 관리에서 승인된 회사정보를 확인한 뒤 견적서를 다시 준비해주세요.</p>}

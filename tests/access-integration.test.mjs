@@ -13,6 +13,7 @@ function load(file, dependencies = {}, mode = 'production') {
     if (name === '@/db/workspace-banners') return load('db/workspace-banners.ts', dependencies, mode);
     if (name === '@/db/product-content') return {readRegistrationSummaries: async()=>({})};
     if (name === '@/db/collection-images') return {readRegistrationSourceImages: async()=>({})};
+    if (name === '@/db/supplier-hub-receipts') return {readSupplierHubReceiptSummaries: async()=>({})};
     if (name === 'next/server') return { NextResponse: Response };
     if (name === 'next/navigation') return { redirect: () => { throw Error('Redirect not expected'); } };
     if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts', {}, mode);

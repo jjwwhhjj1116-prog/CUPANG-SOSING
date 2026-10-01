@@ -43,7 +43,7 @@ export async function readQuotationCollectionSource(owner: string, offerId: stri
   }
   return null;
 }
-function sourceGuard(owner: string, productId: string, source: QuotationSourceGuard) {
+export function sourceGuard(owner: string, productId: string, source: QuotationSourceGuard) {
   const conditions = [
     'p.id=? AND p.owner_id=? AND p.updated_at=? AND p.image_keys=?',
     '(SELECT payload FROM product_price_policy WHERE product_id=p.id) IS ?',

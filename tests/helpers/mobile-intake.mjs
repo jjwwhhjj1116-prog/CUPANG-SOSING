@@ -65,7 +65,7 @@ export function mobileIntakeHarness({companyCode='A01464742',companyName='와이
   calls.push(path);let file,params;
   if(path.startsWith('/api/files?'))return load('app/api/files/route.ts')[method](new Request('https://app.test'+path,{method}));
   if(path.startsWith('/api/collection-jobs/job/')){file='app/api/collection-jobs/[id]/'+path.split('/').at(-1)+'/route.ts';params={id:'job'};}
-  else{const parts=path.split('/');file='app/api/products/[id]/'+parts.at(-1)+'/route.ts';params={id:parts[3]};}
+  else{const parts=path.split('?')[0].split('/');file='app/api/products/[id]/'+parts.at(-1)+'/route.ts';params={id:parts[3]};}
   return load(file)[method](new Request('https://app.test'+path,{method,headers:{'content-type':'application/json'},...(body!==undefined?{body:typeof body==='string'?body:JSON.stringify(body)}:{})}),{params:Promise.resolve(params)});
  };
  let latest;

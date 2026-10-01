@@ -14,7 +14,7 @@ export type SupplierHubTrackingOutcome = SupplierHubTrackingProgress & { timedOu
 
 /** Read-only follow-up to one accepted upload. This never attaches or resubmits files. */
 export async function followSupplierHubRegistration(prepared:SupplierHubTrackingSource,options:{
-  signal:AbortSignal; onProgress?:(progress:SupplierHubTrackingProgress)=>void;
+  signal:AbortSignal; onProgress?:(progress:SupplierHubTrackingProgress)=>void|Promise<void>;
   read?:typeof getSupplierHubResult; verify?:typeof verifyQuotationResultSource;
   wait?:(ms:number,signal:AbortSignal)=>Promise<void>; now?:()=>number;
   maxDurationMs?:number;
@@ -32,7 +32,7 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
   let quotationId='',mode:boolean|'registration'=true;
   let progress:SupplierHubTrackingProgress={phase:'validation-pending',result:null,includedOptions:prepared.includedOptions,observedRows:0,issuedSkus:0};
   const checkCancelled=()=>{if(options.signal.aborted)throw new Error('등록 결과 확인을 중단했습니다.');};
-  const publish=()=>{checkCancelled();options.onProgress?.(progress);};
+  const publish=async()=>{checkCancelled();await options.onProgress?.(progress);checkCancelled();};
   const outcome=(timedOut=false):SupplierHubTrackingOutcome=>({...progress,timedOut,registered:false});
   const delays=[3000,5000,10000,15000,30000];
   // Time and request limits also bound unexpectedly immediate or changing replies.
@@ -45,9 +45,11 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
     await verify(prepared,options.signal);checkCancelled();
     if(result&&(result.company?.code!==prepared.company.code||result.company?.name!==prepared.company.name
       ||result.includedOptions!==prepared.includedOptions))throw new Error('전송한 견적서의 회사 또는 옵션 수가 조회 결과와 다릅니다.');
-    progress={phase:'validation-pending',result,includedOptions:prepared.includedOptions,observedRows:0,issuedSkus:0};
+    // A file-only refresh cannot promote an older cached per-SKU lookup.
+    const observation=mode==='registration'||!result?result:{...result,registration:undefined};
+    progress={phase:'validation-pending',result:observation,includedOptions:prepared.includedOptions,observedRows:0,issuedSkus:0};
     if(result?.state==='validation-rejected'){
-      progress.phase='validation-rejected';publish();return outcome();
+      progress.phase='validation-rejected';await publish();return outcome();
     }
     if(result?.state==='validation-complete'){
       if(typeof result.quotationId!=='string'||!result.quotationId.trim()||result.quotationId!==result.quotationId.trim()||result.quotationId.length>200)
@@ -66,19 +68,19 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
         if(new Set(issued).size!==issued.length)throw new Error('같은 SKU ID가 중복되어 옵션별 결과를 확인하지 못했습니다.');
         progress.observedRows=rows.length;progress.issuedSkus=issued.length;
         if(rows.some(row=>/반려|거절|실패/.test(row.status+' '+row.stage))){
-          progress.phase='registration-rejected';publish();return outcome();
+          progress.phase='registration-rejected';await publish();return outcome();
         }
         // SKU issuance is a receipt observation, not approval or final registration.
         if(rows.length===prepared.includedOptions&&issued.length===prepared.includedOptions
           &&!(registration.scope==='queried-pages'&&registration.hasMore===true)){
-          progress.phase='sku-issued';publish();return outcome();
+          progress.phase='sku-issued';await publish();return outcome();
         }
       }
-      publish();
+      await publish();
       if(mode!== 'registration'){mode='registration';continue;}
     }else{
       if(mode==='registration')throw new Error('상품별 조회 중 파일 검증 상태가 변경되었습니다.');
-      publish();
+      await publish();
     }
     const remaining=duration-(now()-start);
     if(remaining<=0)return outcome(true);
