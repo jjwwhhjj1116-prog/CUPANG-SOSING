@@ -24,17 +24,20 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
   const [stopped, setStopped] = useState(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+  const planSignature = (id: string | null, plan: ReturnType<typeof quotationLabelPlan>) => JSON.stringify({ productId, endpoint, category: view.categoryContext, optionId: id, plan });
   async function generate() {
     if (disabled || busy || running.current) return;
     running.current = true;
     setBusy(true); setError('');
     try {
       const plan = quotationLabelPlan(resolved, optionId);
-      const signature = JSON.stringify({ productId, endpoint, category: view.categoryContext, optionId, plan });
+      const signature = planSignature(optionId, plan);
       const cache = uploadCacheRef.current;
       const result = cache.signature === signature && cache.rendered ? cache.rendered : await renderDocument(plan);
       if (alive.current) {
         if (cache.signature !== signature) { cache.signature = signature; cache.uploadedKey = null; }
+        const batch = cacheRef.current;
+        if (!cache.uploadedKey && batch.optionSignatures?.get(optionId) === signature) cache.uploadedKey = batch.uploaded.get(optionId) ?? null;
         cache.rendered = result;
         setPreview({ url: URL.createObjectURL(result.blob), width: result.width, height: result.height, blob: result.blob, view, signature });
       }
@@ -47,9 +50,19 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
     setBusy(true); setError(''); onBusyChange(true);
     try {
       const cache = uploadCacheRef.current;
+      const batch = cacheRef.current;
+      const previousSignature = batch.optionSignatures?.get(optionId);
       const saved = await attachQuotationLabel({ productId, endpoint, renderedView: preview.view, optionId, blob: preview.blob,
-        uploadedKey: cache.signature === preview.signature ? cache.uploadedKey : null,
-        onUploaded: key => { if (cache.signature === preview.signature) cache.uploadedKey = key; } });
+        uploadedKey: (cache.signature === preview.signature ? cache.uploadedKey : null) ?? (previousSignature === preview.signature ? batch.uploaded.get(optionId) ?? null : null),
+        onUploaded: key => {
+          if (cache.signature === preview.signature) cache.uploadedKey = key;
+          // A late response must not replace another reviewed plan's file.
+          const currentSignature = batch.optionSignatures?.get(optionId);
+          if (currentSignature === previousSignature || currentSignature === preview.signature) {
+            batch.optionSignatures ??= new Map();
+            batch.optionSignatures.set(optionId, preview.signature); batch.uploaded.set(optionId, key);
+          }
+        } });
       if (alive.current) onAttached(saved);
     } catch (cause) {
       if (alive.current) {
@@ -69,15 +82,27 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
     setBusy(true); setError(''); onBusyChange(true);
     try {
       const cache = cacheRef.current;
+      const plans = resolved.rows.filter(row => row.included).map(row => ({ optionId: row.optionId, plan: quotationLabelPlan(resolved, row.optionId) }));
       const signature = JSON.stringify({ productId, endpoint, category: view.categoryContext,
-        plans: resolved.rows.filter(row => row.included).map(row => [row.optionId, quotationLabelPlan(resolved, row.optionId)]) });
-      if (cache.signature !== signature) {
-        cache.uploaded = new Map();
-        cache.signature = signature;
+        plans: plans.map(row => [row.optionId, row.plan]) });
+      const optionSignatures = new Map(plans.map(row => [row.optionId, planSignature(row.optionId, row.plan)]));
+      // Keep unchanged options when a different option's label changes. Old
+      // caches without per-option evidence only match the exact whole batch.
+      for (const id of cache.uploaded.keys()) {
+        const currentSignature = optionSignatures.get(id);
+        const previousSignature = cache.optionSignatures?.get(id);
+        if (currentSignature ? (previousSignature ? previousSignature !== currentSignature : cache.signature !== signature) : !previousSignature) cache.uploaded.delete(id);
       }
+      cache.optionSignatures ??= new Map();
+      for (const [id, value] of optionSignatures) cache.optionSignatures.set(id, value);
+      cache.signature = signature;
+      const reviewed = uploadCacheRef.current;
+      for (const [id, value] of optionSignatures) if (reviewed.signature === value && reviewed.uploadedKey && !cache.uploaded.has(id)) cache.uploaded.set(id, reviewed.uploadedKey);
+      const reviewedSignature = reviewed.signature, reviewedRendered = reviewed.rendered;
       const result = await attachQuotationLabels({ productId, endpoint, view, uploaded: cache.uploaded,
         shouldStop: () => stopRequested.current || !alive.current,
-        render: renderDocument, onProgress: value => { if (alive.current) setProgress(value); } });
+        render: (plan, id) => reviewedSignature === optionSignatures.get(id) && reviewedRendered ? Promise.resolve(reviewedRendered) : renderDocument(plan),
+        onProgress: value => { if (alive.current) setProgress(value); } });
       if (alive.current) {
         if (result.stopped) setStopped(true);
         // A stop still saved completed options. Publish their revision before

@@ -57,6 +57,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
  function start(label){const node=button(label);if(!node||node.props.disabled)throw Error('Button unavailable: '+label);node.props.onClick();}
  return{render,idle,start,button,async click(label){start(label);await idle();},stop(){start('일괄 작업 중지');},
   get view(){return render().boundary?.props.view;},get remounts(){return remounts;},get savedNotifications(){return savedNotifications;},
+  selectOption(optionId){const node=all().find(node=>node.type==='select'&&nodes(node.props.children).some(item=>item.type==='option'&&item.props.value===optionId));if(!node||node.props.disabled)throw Error('Option unavailable: '+optionId);node.props.onChange({target:{value:optionId}});render();},
   field(id){return all().find(node=>['input','textarea'].includes(node.type)&&node.props.id?.endsWith('-'+id));},
   fieldDisabled(id){return all().some(node=>node.type==='fieldset'&&node.props.disabled&&nodes(node).some(field=>field.props?.id?.endsWith('-'+id)));},
   section(title){const node=all().find(node=>node.type==='button'&&nodes(node.props.children).some(item=>item.type==='span'&&item.props.children===title));if(!node||node.props.disabled)throw Error('Section unavailable');node.props.onClick();},

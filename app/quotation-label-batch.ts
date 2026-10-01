@@ -6,12 +6,12 @@ import { attachQuotationLabel } from '@/app/quotation-label-attachment';
 export type LabelBatchProgress = { completed: number; total: number; optionLabel: string };
 export type LabelBatchResult = { view: QuotationFieldsView; completed: number; total: number; stopped: boolean };
 /** Kept by the quotation form so saved-view remounts can resume the same plans. */
-export type LabelBatchCache = { signature: string | null; uploaded: Map<string | null, string> };
+export type LabelBatchCache = { signature: string | null; uploaded: Map<string | null, string>; optionSignatures?: Map<string | null, string> };
 /** Sequential uploads keep memory bounded. The caller retains uploaded keys on failure. */
 export async function attachQuotationLabels(input: {
   productId: string; endpoint: string; view: QuotationFieldsView;
   uploaded: Map<string | null, string>;
-  render: (plan: DocumentImagePlan) => Promise<{ blob: Blob }>;
+  render: (plan: DocumentImagePlan, optionId: string | null) => Promise<{ blob: Blob }>;
   onProgress: (progress: LabelBatchProgress) => void;
   shouldStop?: () => boolean;
 }, request: typeof fetch = fetch): Promise<LabelBatchResult> {
@@ -46,7 +46,7 @@ export async function attachQuotationLabels(input: {
     if (input.shouldStop?.()) return result(index, true);
     input.onProgress({ completed: index, total: rows.length, optionLabel: row.optionLabel });
     const key = input.uploaded.get(row.optionId) ?? null;
-    const blob = key ? null : (await input.render(plans[index])).blob;
+    const blob = key ? null : (await input.render(plans[index], row.optionId)).blob;
     if (input.shouldStop?.()) return result(index, true);
     latest = await attachQuotationLabel({ productId: input.productId, endpoint: input.endpoint,
       renderedView: input.view, optionId: row.optionId, blob, uploadedKey: key,

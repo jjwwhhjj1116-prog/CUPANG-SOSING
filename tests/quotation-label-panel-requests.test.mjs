@@ -9,23 +9,24 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 const text=value=>Array.isArray(value)?value.map(text).join(''):typeof value==='string'||typeof value==='number'?String(value):'';
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
-function harness(handlers={},batchCache={current:{signature:null,uploaded:new Map()}}){
+function harness(handlers={},batchCache={current:{signature:null,uploaded:new Map()}},uploadCache={current:{signature:null,uploadedKey:null,rendered:null}}){
  const slots=[],effects=[],cleanups=[],calls={render:0,attach:0,batch:0,attached:0,snapshots:[],busy:[]};let index=0,first=true;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  const view={resolved:{rows:[{optionId:'one',included:true}]}};
+ const props={productId:'p',endpoint:'/quotation',optionId:'one'};
  const exports={};const file='app/components/quotation-label-panel.tsx';
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL:{createObjectURL:()=> 'blob:preview',revokeObjectURL(){}},require(name){
   if(name==='react')return hooks;
   if(name==='@/app/quotation-label-plan')return{quotationLabelPlan:resolved=>({value:resolved.savedValue})};
-  if(name==='@/app/document-image-render')return{renderDocument:async()=>{calls.render++;return handlers.render?handlers.render():{blob:new Blob(['png']),width:100,height:100};}};
-  if(name==='@/app/quotation-label-attachment')return{attachQuotationLabel:async()=>{calls.attach++;return handlers.attach?handlers.attach():view;}};
+  if(name==='@/app/document-image-render')return{renderDocument:async plan=>{calls.render++;return handlers.render?handlers.render(plan):{blob:new Blob(['png']),width:100,height:100};}};
+  if(name==='@/app/quotation-label-attachment')return{attachQuotationLabel:async input=>{calls.attach++;return handlers.attach?handlers.attach(input):view;}};
   if(name==='@/app/quotation-label-batch')return{attachQuotationLabels:async input=>{calls.batch++;return handlers.batch?handlers.batch(input):{view};}};
   return native(name);
  }});
- const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,productId:'p',endpoint:'/quotation',optionId:'one',disabled:false,batchCache,onBusyChange:value=>calls.busy.push(value),onFailed:handlers.onFailed,onAttached:(saved,progress)=>{calls.attached++;calls.snapshots.push({saved,progress});}});first=false;return tree;};
+ const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,...props,disabled:false,batchCache,uploadCache,onBusyChange:value=>calls.busy.push(value),onFailed:handlers.onFailed,onAttached:(saved,progress)=>{calls.attached++;calls.snapshots.push({saved,progress});}});first=false;return tree;};
  const buttons=()=>Object.fromEntries(nodes(render()).filter(n=>n.type==='button').map(n=>[text(n.props.children),n.props.onClick]));
  render();effects.forEach(fn=>cleanups.push(fn()));
- return{calls,view,batchCache,render,buttons,unmount(){cleanups.forEach(fn=>fn?.());}};
+ return{calls,view,props,batchCache,uploadCache,render,buttons,unmount(){cleanups.forEach(fn=>fn?.());}};
 }
 const preview='저장된 견적 값으로 PNG 미리보기';
 const attach='PNG 업로드·선택 옵션 견적에 연결';
@@ -108,4 +109,47 @@ test('a failed batch cannot start saved-view recovery after its panel closes',as
  const h=harness({batch:()=>pending.promise,onFailed:async message=>{messages.push(message);}});
  h.buttons()[batch]();h.unmount();pending.reject(Error('late response lost'));await settle();
  assert.deepEqual(messages,[]);assert.equal(h.calls.attached,0);assert.deepEqual(h.calls.busy,[true,false]);
+});
+
+
+for(const scope of ['productId','endpoint','category'])test('single label reuse rejects a different '+scope,async()=>{
+ const seen=[];const h=harness({attach:input=>{input.onUploaded('single.png');throw Error('response lost');},batch:input=>{seen.push(input.uploaded.get('one'));return{view:input.view};}});
+ h.buttons()[preview]();await settle();h.buttons()[attach]();await settle();
+ if(scope==='category')h.view.categoryContext={categoryId:'another'};else h.props[scope]='another';
+ h.buttons()[batch]();await settle();assert.deepEqual(seen,[undefined]);
+});
+
+test('an uploaded batch option can be reviewed singly without crossing option identities',async()=>{
+ const seen=[];const h=harness({batch:input=>{input.uploaded.set('one','one.png');input.uploaded.set('two','two.png');return{view:input.view};},attach:input=>{seen.push(input.uploadedKey);return input.renderedView;}});
+ h.view.resolved.rows.push({optionId:'two',included:true});
+ h.buttons()['전체 포함 옵션 라벨 생성·연결 (2건)']();await settle();
+ for(const optionId of ['one','two']){h.props.optionId=optionId;h.buttons()[preview]();await settle();h.buttons()[attach]();await settle();}
+ assert.deepEqual(seen,['one.png','two.png']);
+});
+
+test('a preview-only batch reuses its Blob only for the reviewed option, even with identical plans',async()=>{
+ const seen=[];const h=harness({batch:async input=>{seen.push((await input.render({value:undefined},'one')).blob);seen.push((await input.render({value:undefined},'two')).blob);return{view:input.view};}});
+ h.view.resolved.rows.push({optionId:'two',included:true});
+ h.buttons()[preview]();await settle();const reviewed=h.uploadCache.current.rendered.blob;
+ h.buttons()['전체 포함 옵션 라벨 생성·연결 (2건)']();await settle();
+ assert.equal(h.calls.render,2);assert.equal(seen[0],reviewed);assert.notEqual(seen[1],reviewed);
+});
+
+test('a late single upload cannot replace a newer option plan in either cache',async()=>{
+ const pending=deferred();let upload;
+ const h=harness({attach:input=>{upload=input.onUploaded;return pending.promise;}});
+ h.buttons()[preview]();await settle();h.buttons()[attach]();
+ h.uploadCache.current.signature='newer';h.uploadCache.current.uploadedKey='newer.png';
+ h.batchCache.current.optionSignatures=new Map([['one','newer']]);h.batchCache.current.uploaded.set('one','newer.png');
+ upload('old.png');pending.resolve(h.view);await settle();
+ assert.equal(h.uploadCache.current.uploadedKey,'newer.png');assert.equal(h.batchCache.current.uploaded.get('one'),'newer.png');
+});
+
+
+test('restoring an earlier batch plan does not reuse a later single-option PNG',async()=>{
+ const seen=[];const h=harness({batch:input=>{seen.push(input.uploaded.get('one'));input.uploaded.set('one','original.png');return{view:input.view};},attach:input=>{input.onUploaded('changed.png');return input.renderedView;}});
+ h.buttons()[batch]();await settle();
+ h.view.resolved.savedValue='changed';h.buttons()[preview]();await settle();h.buttons()[attach]();await settle();
+ h.view.resolved.savedValue=undefined;h.buttons()[batch]();await settle();
+ assert.deepEqual(seen,[undefined,undefined],'per-option evidence wins over an old matching batch signature');
 });
