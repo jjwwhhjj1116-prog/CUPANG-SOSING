@@ -5,6 +5,8 @@ import { attachQuotationLabel } from '@/app/quotation-label-attachment';
 
 export type LabelBatchProgress = { completed: number; total: number; optionLabel: string };
 export type LabelBatchResult = { view: QuotationFieldsView; completed: number; total: number; stopped: boolean };
+/** Kept by the quotation form so saved-view remounts can resume the same plans. */
+export type LabelBatchCache = { signature: string | null; uploaded: Map<string | null, string> };
 /** Sequential uploads keep memory bounded. The caller retains uploaded keys on failure. */
 export async function attachQuotationLabels(input: {
   productId: string; endpoint: string; view: QuotationFieldsView;

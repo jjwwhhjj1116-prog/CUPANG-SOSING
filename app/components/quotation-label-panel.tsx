@@ -1,21 +1,21 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
 import { renderDocument } from '@/app/document-image-render';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { attachQuotationLabel } from '@/app/quotation-label-attachment';
-import { attachQuotationLabels, type LabelBatchProgress } from '@/app/quotation-label-batch';
+import { attachQuotationLabels, type LabelBatchCache, type LabelBatchProgress, type LabelBatchResult } from '@/app/quotation-label-batch';
 
-export function QuotationLabelPanel({ view, productId, endpoint, optionId, disabled, onBusyChange, onAttached }: { view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView) => void }) {
+export function QuotationLabelPanel({ view, productId, endpoint, optionId, disabled, batchCache, onBusyChange, onAttached }: { view: QuotationFieldsView; productId: string; endpoint: string; optionId: string | null; disabled: boolean; batchCache?: RefObject<LabelBatchCache>; onBusyChange: (busy: boolean) => void; onAttached: (view: QuotationFieldsView, batch?: Omit<LabelBatchResult, 'view'>) => void }) {
   const resolved = view.resolved;
   const [preview, setPreview] = useState<{ url: string; width: number; height: number; blob: Blob; view: QuotationFieldsView } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const alive = useRef(true);
   const running = useRef(false);
   const uploadedKey = useRef<string | null>(null);
-  const batchKeys = useRef(new Map<string | null, string>());
-  const batchSignature = useRef<string | null>(null);
+  const localBatchCache = useRef<LabelBatchCache>({ signature: null, uploaded: new Map() });
+  const cacheRef = batchCache ?? localBatchCache;
   const [progress, setProgress] = useState<LabelBatchProgress | null>(null);
   const stopRequested = useRef(false);
   const [batchRunning, setBatchRunning] = useState(false);
@@ -50,18 +50,21 @@ export function QuotationLabelPanel({ view, productId, endpoint, optionId, disab
     stopRequested.current = false; setStopping(false); setStopped(false); setBatchRunning(true);
     setBusy(true); setError(''); onBusyChange(true);
     try {
+      const cache = cacheRef.current;
       const signature = JSON.stringify({ productId, endpoint, category: view.categoryContext,
         plans: resolved.rows.filter(row => row.included).map(row => [row.optionId, quotationLabelPlan(resolved, row.optionId)]) });
-      if (batchSignature.current !== signature) {
-        batchKeys.current = new Map();
-        batchSignature.current = signature;
+      if (cache.signature !== signature) {
+        cache.uploaded = new Map();
+        cache.signature = signature;
       }
-      const result = await attachQuotationLabels({ productId, endpoint, view, uploaded: batchKeys.current,
+      const result = await attachQuotationLabels({ productId, endpoint, view, uploaded: cache.uploaded,
         shouldStop: () => stopRequested.current || !alive.current,
         render: renderDocument, onProgress: value => { if (alive.current) setProgress(value); } });
       if (alive.current) {
         if (result.stopped) setStopped(true);
-        else onAttached(result.view);
+        // A stop still saved completed options. Publish their revision before
+        // allowing edits, retaining upload keys outside the remounted panel.
+        if (!result.stopped || result.completed > 0) onAttached(result.view, { completed: result.completed, total: result.total, stopped: result.stopped });
       }
     } catch (cause) {
       if (alive.current) setError(`${cause instanceof Error ? cause.message : '일괄 라벨 연결 실패'} 완료된 연결과 업로드 파일은 보존됩니다. 다시 실행할 때 내용이 같으면 기존 파일을 재사용하고, 바뀌었으면 새로 생성합니다.`);

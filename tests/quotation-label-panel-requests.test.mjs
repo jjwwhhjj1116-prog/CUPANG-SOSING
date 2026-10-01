@@ -9,8 +9,8 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 const text=value=>Array.isArray(value)?value.map(text).join(''):typeof value==='string'||typeof value==='number'?String(value):'';
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
-function harness(handlers={}){
- const slots=[],effects=[],cleanups=[],calls={render:0,attach:0,batch:0,attached:0,busy:[]};let index=0,first=true;
+function harness(handlers={},batchCache={current:{signature:null,uploaded:new Map()}}){
+ const slots=[],effects=[],cleanups=[],calls={render:0,attach:0,batch:0,attached:0,snapshots:[],busy:[]};let index=0,first=true;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  const view={resolved:{rows:[{optionId:'one',included:true}]}};
  const exports={};const file='app/components/quotation-label-panel.tsx';
@@ -22,10 +22,10 @@ function harness(handlers={}){
   if(name==='@/app/quotation-label-batch')return{attachQuotationLabels:async input=>{calls.batch++;return handlers.batch?handlers.batch(input):{view};}};
   return native(name);
  }});
- const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,productId:'p',endpoint:'/quotation',optionId:'one',disabled:false,onBusyChange:value=>calls.busy.push(value),onAttached:()=>calls.attached++});first=false;return tree;};
+ const render=()=>{index=0;const tree=exports.QuotationLabelPanel({view,productId:'p',endpoint:'/quotation',optionId:'one',disabled:false,batchCache,onBusyChange:value=>calls.busy.push(value),onAttached:(saved,progress)=>{calls.attached++;calls.snapshots.push({saved,progress});}});first=false;return tree;};
  const buttons=()=>Object.fromEntries(nodes(render()).filter(n=>n.type==='button').map(n=>[text(n.props.children),n.props.onClick]));
  render();effects.forEach(fn=>cleanups.push(fn()));
- return{calls,view,render,buttons,unmount(){cleanups.forEach(fn=>fn?.());}};
+ return{calls,view,batchCache,render,buttons,unmount(){cleanups.forEach(fn=>fn?.());}};
 }
 const preview='저장된 견적 값으로 PNG 미리보기';
 const attach='PNG 업로드·선택 옵션 견적에 연결';
@@ -64,4 +64,31 @@ test('option label retry invalidates uploaded images when saved quotation or cat
  h.view.categoryContext={categoryId:'new'};h.buttons()[batch]();await settle();
  assert.equal(seen[3],undefined);
  h.buttons()[batch]();await settle();assert.equal(seen[4],'uploaded.png');
+});
+
+
+test('stopping after a saved option publishes the latest quotation for continued editing',async()=>{
+ const current={resolved:{rows:[{optionId:'one',included:true}]},revision:3,inputFingerprint:'saved-label'};
+ const h=harness({batch:async input=>{input.uploaded.set('one','saved.png');return{view:current,completed:1,total:2,stopped:true};}});
+ h.buttons()[batch]();await settle();
+ assert.equal(h.calls.attached,1,'the saved revision must reach the quotation editor after a stop');
+ assert.equal(h.calls.snapshots[0].saved,current);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.calls.snapshots[0].progress)),{completed:1,total:2,stopped:true});
+ assert.deepEqual(h.calls.busy,[true,false]);
+ const empty=harness({batch:async input=>({view:input.view,completed:0,total:1,stopped:true})});
+ empty.buttons()[batch]();await settle();assert.equal(empty.calls.attached,0);
+});
+
+test('a stopped label batch reuses its files after the quotation panel remounts with the saved revision',async()=>{
+ const cache={current:{signature:null,uploaded:new Map()}},seen=[];
+ const first=harness({batch:async input=>{seen.push(input.uploaded.get('one'));input.uploaded.set('one','saved.png');return{view:input.view,completed:1,total:2,stopped:true};}},cache);
+ first.buttons()[batch]();await settle();first.unmount();
+ const second=harness({batch:async input=>{seen.push(input.uploaded.get('one'));return{view:input.view,completed:1,total:1,stopped:false};}},cache);
+ second.view.revision=3;second.view.inputFingerprint='saved-label';second.buttons()[batch]();await settle();
+ assert.deepEqual(seen,[undefined,'saved.png'],'a view refresh must not regenerate completed PNGs');
+ assert.equal(second.calls.attached,1);
+ second.unmount();
+ const changed=harness({batch:async input=>{seen.push(input.uploaded.get('one'));return{view:input.view,completed:1,total:1,stopped:false};}},cache);
+ changed.view.resolved.savedValue='changed model';changed.buttons()[batch]();await settle();
+ assert.equal(seen[2],undefined,'changed label contents must not reuse the old PNG');
 });
