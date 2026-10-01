@@ -18,6 +18,7 @@ import { fingerprint } from '@/app/automation/model';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { env } from 'cloudflare:workers';
 import { publicDetailConfig, publicDetailVersion, resolvePublicDetail, PublicDetailError } from '@/app/quotation-public-detail';
+import { optionPriceCalculationRevision } from '@/app/product-options';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -76,6 +77,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const resolved = (await resolvePublicDetail(resolveQuotationFields({ ...inputs, overrides }),content,owner,imageKeys,detailConfig)).resolved;
   if (categoryContext.categoryId && hasLegacyQuotationOverrides(state)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   const inputFingerprint = await fingerprint({ inputs, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection,
+    ...optionPriceCalculationRevision(product, options.rows, settings),
     ...(detailConfig ? { detailHtml: await publicDetailVersion(detailConfig) } : {}) });
   const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, overrides, legacyOverrides: categoryContext.categoryId ? state.overrides : undefined, resolved, automatic, categoryContext,
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };

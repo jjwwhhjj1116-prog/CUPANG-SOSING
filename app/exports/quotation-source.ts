@@ -14,6 +14,7 @@ import { validateCategoryIdentity } from '@/app/category-identity';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { publicDetailVersion, type PublicDetailConfig } from '@/app/quotation-public-detail';
+import { optionPriceCalculationRevision } from '@/app/product-options';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -96,5 +97,6 @@ export async function quotationExportFingerprint(saved: QuotationExportSource, d
   // override have different provenance, even when the visible cell is unchanged.
   return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved, dataStartRow,
     schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath),
+    ...optionPriceCalculationRevision(saved.product, saved.options.rows, saved.settings, saved.state.overrides),
     ...(detailConfig ? { detailHtml: await publicDetailVersion(detailConfig) } : {}) });
 }

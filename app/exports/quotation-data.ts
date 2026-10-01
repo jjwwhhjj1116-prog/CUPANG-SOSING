@@ -38,7 +38,7 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
   return included.map(option => {
     if (option.unitCostCny === null) throw new Error('포함 옵션의 원가와 구성 수량을 확인해주세요.');
     const sourcePriceCny = optionSourceCostCny(option.unitCostCny, option.unitsPerPack);
-    const price = calculatePrice(sourcePriceCny, policy);
+    const price = calculatePrice(option.unitCostCny, policy, option.unitsPerPack);
     return { ...base, skuName: optionQuotationName(option), skuId: option.supplierSku,
       sourcePriceCny, supplyPrice: price.supplyPrice, salePrice: price.salePrice, msrp: price.msrp,
       mainImage: filename(quotationMainImageKeys(option, content.assets.main.value)[0]),

@@ -25,11 +25,95 @@ function harness(fetcher,initial={}){
 }
 
 test('stage-two direct price saves only the changed option field using the same quotation version',async()=>{
- const h=harness(async(url,init)=>Response.json(view()));await settle();
+ const h=harness(async()=>Response.json(view()));await settle();
  h.input('빨강 공급가').props.onChange({target:{value:'150'}});
  const click=h.button('옵션 가격 저장').props.onClick;click();click();await settle();
  const writes=h.calls.filter(c=>c.init.method==='PUT');assert.equal(writes.length,1);
  const body=JSON.parse(writes[0].init.body);assert.deepEqual(body.changes,[{optionId:'red',fieldKey:'supplyPrice',value:'150'}]);assert.equal(body.expectedRevision,1);assert.equal(body.expectedInputFingerprint,'a'.repeat(64));assert.match(writes[0].url,/profileId=profile/);assert.equal(h.saved,1);
+});
+
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])
+for(const scenario of [
+ {name:'nearest',unitCostCny:0.6833333333333333,exchangeRate:100,roundingMode:'nearest',minimumMargin:0,expected:[200,330,430]},
+ {name:'ceiling',unitCostCny:0.33333333333333337,exchangeRate:350,roundingMode:'up',minimumMargin:0,expected:[360,600,780]},
+ {name:'minimum',unitCostCny:0.35000000000000003,exchangeRate:100,roundingMode:'up',minimumMargin:5,expected:[120,200,260]},
+])test(`exact pack prices reach both stages, workbook and handoff (${company.companyCode}, ${scenario.name})`,async()=>{
+ const h=mobileIntakeHarness(company),json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+ let prices;
+ try{
+  const schema=h.load('app/quotation-schema.ts'),fields=['skuId','categoryId',...schema.getQuotationSchema('80719').fields.map(field=>field.id)];
+  const workbook=quotationWorkbook(fields),sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
+  const storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,workbook);
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'묶음 원가 경계 시험',categoryId:'80719',categoryPath:h.context.category.categoryPath,
+   template:{name:'synthetic-pack-prices.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},
+   mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
+  h.context.category=profile;h.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(h.context));
+  await h.intake();
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const options=await json(await h.route(base+'/options')),rows=h.load('app/product-options.ts').optionInputs(options.options);
+  rows[0].unitCostCny=scenario.unitCostCny;rows[0].unitsPerPack=3;rows[5].included=false;
+  await json(await h.route(base+'/options',{method:'PATCH',body:{expectedRevision:options.options.revision,expectedProductVersion:options.productVersion,rows}}));
+  const policy={exchangeRate:scenario.exchangeRate,supplyMargin:0,coupangMargin:40,minimumMargin:scenario.minimumMargin,msrpMultiple:1.3,roundingUnit:10,roundingMode:scenario.roundingMode};
+  const latest=h.sqlite.prepare('SELECT * FROM products').get();
+  await json(await h.route(base+'/pricing',{method:'POST',body:{expectedVersion:latest.updated_at,policy}}));
+  // The older generic export route must use the same engine, not a rounded pack total.
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  const saved=h.sqlite.prepare('SELECT * FROM products').get();saved.pricing_policy=JSON.stringify(policy);
+  const legacy=h.load('app/exports/quotation-data.ts').quotationData(saved,content,h.settings,rows,[]);
+  assert.deepEqual(['supplyPrice','salePrice','msrp'].map(key=>legacy[0][key]),scenario.expected);
+  const images=h.sqlite.prepare('SELECT object_key FROM collection_images ORDER BY image_index').all().map(row=>row.object_key);
+  await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{label:{model:'PACK-REVIEWED',material:'검토 재질'},
+   assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]}}}}));
+  const read=()=>h.route(base+'/quotation-fields').then(json);
+  let current=await read();
+  current=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:current.revision,expectedInputFingerprint:current.inputFingerprint,changes:[
+   {fieldKey:'taxType',optionId:null,value:'과세'},{fieldKey:'handlingReason',optionId:null,value:'해당사항없음'},
+   {fieldKey:'packagedWeightG',optionId:null,value:'420'},{fieldKey:'packagedDimensionsMm',optionId:null,value:'100*200*300'},
+   {fieldKey:'storageMaterial',optionId:null,value:''},
+   {fieldKey:'supplyPrice',optionId:'collected-2',value:'990'},{fieldKey:'salePrice',optionId:'collected-2',value:'1990'},
+   {fieldKey:'msrp',optionId:'collected-2',value:''},
+  ]}}));
+  prices=harness((path,init)=>h.route(path,{method:init?.method??'GET',...(init?.body?{body:JSON.parse(init.body)}:{})}),{productId:product.id,profileId:undefined,version:current.productVersion});
+  await prices.idle();
+  const target=current.resolved.rows.find(row=>row.optionId==='collected-1');
+  for(const [index,[key,label]] of [['supplyPrice','공급가'],['salePrice','판매가'],['msrp','권장소비자가']].entries()){
+   assert.equal(target.fields[key].value,String(scenario.expected[index]));assert.equal(target.fields[key].source,'pricing');
+   assert.equal(prices.input(target.optionLabel+' '+label).props.value,String(scenario.expected[index]));
+  }
+  const requests=h.network.length;await h.intake();assert.equal(h.network.length,requests);assert.equal(h.aiSources.length,1);
+  current=await read();assert.equal(current.resolved.rows.find(row=>row.optionId==='collected-2').fields.msrp.value,'');
+  const source=h.load('app/exports/quotation-source.ts'),fingerprint=h.load('app/automation/model.ts').fingerprint;
+  const editing=await source.readQuotationExportSource('owner',product.id,null);
+  const oldInput=await fingerprint({inputs:{categoryId:editing.categoryContext.categoryId,categoryPath:editing.categoryContext.categoryPath,
+   product:editing.product,content:editing.content,options:editing.options,settings:editing.settings},schema:current.automatic.schema,
+   categoryContext:editing.categoryContext,profileRevision:null,settingsPayload:editing.source.settingsPayload,collection:editing.source.collection});
+  assert.notEqual(current.inputFingerprint,oldInput);
+  assert.equal((await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:current.revision,expectedInputFingerprint:oldInput,
+   changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'9999'}]}})).status,409);
+  const mapped=await source.readMappedQuotationSource('owner',product.id,null),dataStartRow=h.load('app/category-profiles.ts').quotationStartRow(mapped.profile.template);
+  const oldExport=await fingerprint({format:'sourceflow-quotation-fields-v1',saved:mapped,dataStartRow,
+   schema:schema.getQuotationSchema(mapped.categoryContext.categoryId,mapped.categoryContext.categoryPath)});
+  const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
+  assert.notEqual(preview.fingerprint,oldExport);
+  for(const action of ['export','download'])assert.equal((await h.route(base+'/quotation',{method:'POST',body:{action,fingerprint:oldExport}})).status,409);
+  assert.equal(preview.submissionReview.errorCount,0,JSON.stringify(preview.submissionReview.issues.filter(issue=>issue.kind==='error')));
+  const bundle=await h.route(base+'/quotation',{method:'POST',body:{action:'export',fingerprint:preview.fingerprint}});assert.equal(bundle.status,200);
+  const reader=h.load('app/xlsx-template.ts'),files=await reader.readXlsxArchive(await bundle.arrayBuffer());
+  const plan=JSON.parse(new TextDecoder().decode(files.get('supplier-hub-upload-plan.json'))),fieldFile=JSON.parse(new TextDecoder().decode(files.get('quotation-fields.json')));
+  const sheet=reader.inspectXlsxArchive(await reader.readXlsxArchive(files.get(plan.quotation.file.filename)));
+  const exported=index=>{const cells=reader.xlsxHeaders(sheet,'견적서',index+2);return Object.fromEntries(fields.map((field,column)=>[field,cells[column]]));};
+  const first=exported(0);assert.equal(first.quantity,'3');assert.equal(first.categoryId,'80719');
+  assert.deepEqual(['supplyPrice','salePrice','msrp'].map(key=>Number(first[key])),scenario.expected);
+  assert.deepEqual(['supplyPrice','salePrice','msrp'].map(key=>fieldFile.rows[0].fields[key].value),scenario.expected.map(String));
+  const manual=exported(1);assert.equal(manual.supplyPrice,'990');assert.equal(manual.salePrice,'1990');assert.equal(manual.msrp,'');
+  assert.deepEqual(fieldFile.excludedOptions.map(row=>row.optionId),['collected-6']);
+  const ui=submissionPackageUI({route:h.route,productId:product.id});await ui.click('견적서 + 첨부 파일 준비');
+  await ui.click('확장에 첨부 파일 준비');ui.choose();await ui.click('등록 전송');
+  const handoff=ui.calls.find(call=>call.action==='transmit');assert.ok(handoff);assert.equal(handoff.files.includedOptions,5);
+  assert.deepEqual(handoff.files.company,plan.company);
+  assert.deepEqual(Buffer.from(handoff.files.quotation[0].base64,'base64'),Buffer.from(files.get(plan.quotation.file.filename)));
+  assert.deepEqual(ui.alerts(),[]);assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
+ }finally{prices?.close();h.close();}
 });
 
 function failedAutomaticPrices(common={}){

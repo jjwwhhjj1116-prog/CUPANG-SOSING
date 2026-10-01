@@ -135,8 +135,8 @@ export function optionInputs(options: ProductOptions): OptionInput[] {
 }
 export function optionSourceCostCny(unitCostCny: number, unitsPerPack: number) {
   if (!Number.isFinite(unitCostCny) || unitCostCny <= 0 || !Number.isSafeInteger(unitsPerPack) || unitsPerPack < 1) throw new Error('원가와 구성 수량을 입력해주세요.');
-  // Multiply the entered decimal by the integer quantity before returning to a
-  // JS number: 0.1 × 3 must not round a 30 KRW cost up to 40 KRW accidentally.
+  // Display-only pack total. Monetary calculations pass the original unit cost
+  // and quantity to calculatePrice so this Number conversion cannot affect them.
   const [decimal, exponent = '0'] = unitCostCny.toString().toLowerCase().split('e');
   const [integer, fraction = ''] = decimal.split('.');
   const coefficient = BigInt(integer + fraction) * BigInt(unitsPerPack);
@@ -148,7 +148,7 @@ export function calculateOptionPrices(rows: readonly OptionInput[], policy: Pric
     try {
       if (row.unitCostCny === null || !Number.isInteger(row.unitsPerPack) || row.unitsPerPack <= 0) throw new Error('원가와 구성 수량을 입력해주세요.');
       const sourceCostCny = optionSourceCostCny(row.unitCostCny, row.unitsPerPack);
-      return { optionId: row.id, included: true, sourceCostCny, calculation: calculatePrice(sourceCostCny, policy), error: null };
+      return { optionId: row.id, included: true, sourceCostCny, calculation: calculatePrice(row.unitCostCny, policy, row.unitsPerPack), error: null };
     } catch (error) { return { optionId: row.id, included: true, sourceCostCny: null, calculation: null, error: error instanceof Error ? error.message : '옵션 가격을 계산하지 못했습니다.' }; }
   });
 }
@@ -160,4 +160,24 @@ export function resolveOptionPricePolicy(product: { pricing_policy?: string | nu
   pricePolicy(settings);
   if (typeof settings.minimumMarginEnabled !== 'boolean') throw new Error('최소 마진 적용 여부를 확인해주세요.');
   return { policy: pricePolicy({ ...settings, exchangeRate: product.exchange_rate, supplyMargin: product.supply_margin, coupangMargin: product.coupang_margin, minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0 }), policySource: 'product-and-workspace' };
+}
+
+/** Preserve existing review/receipt identities unless this upgrade changes a cell. */
+export function optionPriceCalculationRevision(product: Parameters<typeof resolveOptionPricePolicy>[0], rows: readonly OptionInput[], workspaceInput: unknown,
+  overrides?: { common: Record<string, string>; options: Record<string, Record<string, string>> }) {
+  const packs = rows.filter(row => row.included && row.unitsPerPack !== 1);
+  if (!packs.length) return {};
+  let policy: PricePolicy;
+  try { policy = resolveOptionPricePolicy(product, workspaceInput).policy; }
+  catch { return {}; } // Existing resolution keeps the invalid-policy diagnostics.
+  const changed = packs.flatMap(row => {
+    const current = calculateOptionPrices([row], policy)[0].calculation;
+    let previous: typeof current = null;
+    try { if (row.unitCostCny !== null) previous = calculatePrice(optionSourceCostCny(row.unitCostCny, row.unitsPerPack), policy); }
+    catch { /* A previously failed calculation also needs a fresh review if fixed. */ }
+    const fields = (['supplyPrice', 'salePrice', 'msrp'] as const).filter(field =>
+      current?.[field] !== previous?.[field] && (overrides?.options[row.id]?.[field] ?? overrides?.common[field]) === undefined);
+    return fields.length ? [{ optionId: row.id, fields }] : [];
+  });
+  return changed.length ? { packPricingVersion: 1, packPricingChanges: changed } : {};
 }

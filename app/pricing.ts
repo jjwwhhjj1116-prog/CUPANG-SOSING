@@ -9,13 +9,16 @@ export function pricePolicy(input: unknown): PricePolicy {
   if (record.roundingMode !== undefined && record.roundingMode !== 'up' && record.roundingMode !== 'nearest') throw new Error('가격 처리 방식을 확인해주세요.');
   return { ...Object.fromEntries(keys.map(key => [key, p[key]])), ...(record.roundingMode === 'nearest' ? { roundingMode: 'nearest' as const } : {}) } as PricePolicy;
 }
-export function calculatePrice(sourcePriceCny: number, input: PricePolicy) {
+export function calculatePrice(sourcePriceCny: number, input: PricePolicy, unitsPerPack = 1) {
   const p = pricePolicy(input);
   if (!Number.isFinite(sourcePriceCny) || sourcePriceCny <= 0) throw new Error('저장된 상품 원가가 올바르지 않습니다.');
+  if (!Number.isSafeInteger(unitsPerPack) || unitsPerPack < 1) throw new Error('판매 단위당 구성 수량은 1 이상 안전한 정수로 입력해주세요.');
   // Use the finite input number's decimal spelling, rather than intermediate
   // IEEE-754 arithmetic. Every comparison and currency ceiling stays exact.
   const hundred = decimal(100);
-  const cost = multiply(decimal(sourcePriceCny), decimal(p.exchangeRate));
+  // The pack total must also remain rational. Converting it to a display number
+  // first can move the target across a rounding step before applying the rate.
+  const cost = multiply(multiply(decimal(sourcePriceCny), rational(BigInt(unitsPerPack))), decimal(p.exchangeRate));
   const supplyTarget = divide(multiply(cost, hundred), subtract(hundred, decimal(p.supplyMargin)));
   const minimumTarget = add(cost, decimal(p.minimumMargin));
   // Apply the selected rounding once, after selecting the margin target.

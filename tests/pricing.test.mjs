@@ -123,6 +123,46 @@ test('option pack cost integration uses the same exact decimal price boundaries'
   assert.equal(cents.sourceCostCny,0.07);assert.equal(cents.calculation.costKrw,7);assert.equal(cents.calculation.supplyPrice,7);
 });
 
+test('pack multiplication keeps decimal precision until the final currency rounding',()=>{
+  const {emptyOptionInput,calculateOptionPrices}=load('app/product-options.ts');
+  for(const [unitCostCny,exchangeRate,roundingMode,minimumMargin,expected] of [
+    // 0.6833333333333333 * 3 * 100 = 204.99999999999999, below the 205 half-step.
+    [0.6833333333333333,100,'nearest',0,[200,330,430]],
+    // 0.33333333333333337 * 3 * 350 = 350.0000000000000385, above 350.
+    [0.33333333333333337,350,'up',0,[360,600,780]],
+    // The minimum target is 110.000000000000009, above the 110 ceiling step.
+    [0.35000000000000003,100,'up',5,[120,200,260]],
+  ]){
+    const result=calculateOptionPrices([{...emptyOptionInput('pack'),unitCostCny,unitsPerPack:3,included:true}],
+      {...policy,exchangeRate,roundingMode,minimumMargin,coupangMargin:40,msrpMultiple:1.3})[0];
+    assert.equal(result.error,null);
+    assert.deepEqual(['supplyPrice','salePrice','msrp'].map(key=>result.calculation[key]),expected);
+  }
+});
+
+test('quantity-aware price calculation validates quantity and leaves single-unit pricing unchanged',()=>{
+  const configured={...policy,coupangMargin:40,msrpMultiple:1.3,roundingMode:'nearest'};
+  assert.equal(pricing.calculatePrice(0.6833333333333333,configured,3).supplyPrice,200);
+  assert.deepEqual(pricing.calculatePrice(5.23,configured,1),pricing.calculatePrice(5.23,configured));
+  for(const quantity of [0,-1,1.5,Infinity,NaN,Number.MAX_SAFE_INTEGER+1,'3',null])
+    assert.throws(()=>pricing.calculatePrice(1,configured,quantity),/구성 수량/);
+});
+
+test('pricing upgrade invalidates only changed automatic pack amounts, preserving other reviewed fingerprints',()=>{
+ const options=load('app/product-options.ts'),configured={...policy,coupangMargin:40,msrpMultiple:1.3,roundingMode:'nearest'};
+ const product={pricing_policy:JSON.stringify(configured)};
+ const row={...options.emptyOptionInput('pack'),unitCostCny:0.6833333333333333,unitsPerPack:3,included:true};
+ const revision=(rows=[row],overrides)=>JSON.parse(JSON.stringify(options.optionPriceCalculationRevision(product,rows,{},overrides)));
+ assert.deepEqual(revision(),{packPricingVersion:1,packPricingChanges:[{optionId:'pack',fields:['supplyPrice','salePrice','msrp']}]});
+ assert.deepEqual(revision([{...row,unitCostCny:0.1}]),{});
+ assert.deepEqual(revision([{...row,unitsPerPack:1}]),{});
+ assert.deepEqual(revision([{...row,included:false}]),{});
+ assert.deepEqual(revision(undefined,{common:{supplyPrice:'',salePrice:'1990',msrp:''},options:{}}),{});
+ assert.deepEqual(revision(undefined,{common:{supplyPrice:'990'},options:{pack:{salePrice:'1990',msrp:''}}}),{});
+ assert.deepEqual(revision(undefined,{common:{supplyPrice:'990'},options:{pack:{salePrice:'1990'}}}),
+  {packPricingVersion:1,packPricingChanges:[{optionId:'pack',fields:['msrp']}]});
+});
+
 test('settings preserve zero values, validate reference controls, and migrate older saved settings',()=>{
   const {validateSettings}=load('app/workspace-settings.ts');
   const value=validateSettings({brand:'Test',supplyMargin:0,minimumMargin:0,minimumMarginEnabled:false,roundingUnit:10});
