@@ -86,6 +86,11 @@ export function categoryChoices(profiles: CategoryProfile[]): CategoryChoice[] {
     && (profile.categoryId === choice.categoryId || (!choice.categoryId && choice.isLeaf && profile.categoryId.trim()))))];
 }
 export function canConfirmCategory(choice: CategoryChoice | undefined): boolean { return Boolean(choice?.isLeaf && usableCategoryCode(choice.categoryId)); }
+/** Reuse only the complete selected identity; never choose a template by leaf name. */
+export function categoryProfilesForChoice(profiles: readonly CategoryProfile[], choice: CategoryChoice): CategoryProfile[] {
+  if (!canConfirmCategory(choice)) return [];
+  return profiles.filter(profile => profile.categoryId === choice.categoryId && samePath(profile.categoryPath, choice.path));
+}
 export function categoryProfileForChoice(choice: CategoryChoice): CategoryProfileInput {
   if (!canConfirmCategory(choice)) throw new Error('분류 코드가 확인되지 않았습니다. 실제 코드와 견적서 양식을 먼저 연결해주세요.');
   return { name: choice.path.at(-1) ?? choice.categoryId, categoryId: choice.categoryId, categoryPath: [...choice.path], template: null, mappings: [] };

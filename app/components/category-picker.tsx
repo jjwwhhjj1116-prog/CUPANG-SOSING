@@ -3,7 +3,7 @@ import { loadCategoryProfiles } from '@/app/load-category-profiles';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { usableCategoryCode, type CategoryProfile } from '@/app/category-profiles';
-import { canConfirmCategory, categoryAdvancedSeed, categoryChoices, categoryChoicesAtPath, categoryLevel, categoryObservationScope, categoryProfileForChoice, searchCategoryChoices, type CategoryAdvancedSeed, type CategoryChoice } from '@/app/category-catalog';
+import { canConfirmCategory, categoryAdvancedSeed, categoryChoices, categoryChoicesAtPath, categoryLevel, categoryObservationScope, categoryProfileForChoice, categoryProfilesForChoice, searchCategoryChoices, type CategoryAdvancedSeed, type CategoryChoice } from '@/app/category-catalog';
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { CategoryQuotationPreview } from '@/app/components/category-quotation-preview';
 import './category-picker.css';
@@ -65,6 +65,21 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
         if (latest.revision !== existing.revision) {
           throw new Error('선택한 카테고리의 견적 설정이 변경되었습니다. 아래 갱신된 양식과 열 연결을 확인한 뒤 선택 완료를 눌러주세요.');
         }
+        completed.current = true; onSelected(latest); return;
+      }
+      // The picker may have been opened before this category's template was saved.
+      // Read every current page before creating another empty configuration.
+      const latestProfiles = await loadCategoryProfiles(controller.signal);
+      if (controller.signal.aborted) return;
+      setRefreshedProfiles(latestProfiles);
+      const matching = categoryProfilesForChoice(latestProfiles, target);
+      if (matching.length > 1) {
+        setSelectedKey('');
+        throw new Error('같은 카테고리의 견적서 설정이 여러 개입니다. 갱신된 목록에서 사용할 설정을 선택해주세요.');
+      }
+      if (matching.length === 1) {
+        const latest = matching[0];
+        if (!Number.isSafeInteger(latest.revision) || latest.revision < 1) throw new Error('카테고리 설정 응답이 올바르지 않습니다. 다시 시도해주세요.');
         completed.current = true; onSelected(latest); return;
       }
       const body = JSON.stringify(categoryProfileForChoice(target));

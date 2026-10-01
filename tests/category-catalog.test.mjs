@@ -26,6 +26,23 @@ const knownPath = ['주방용품', '주방수납/정리', '주방수납바구니
 const profile = (id, categoryId, categoryPath, extra = {}) => ({ id, name: `설정 ${id}`, categoryId, categoryPath,
   revision: 1, verification: 'draft', template: null, mappings: [], createdAt: '2026-09-22', updatedAt: '2026-09-22', ...extra });
 
+test('latest saved quotation lookup matches both the category code and complete path without merging configurations',()=>{
+ const choice=model.observedCategories.find(choice=>choice.categoryId==='80719');
+ const profiles=[profile('first','80719',knownPath,{template:{name:'first.xlsx'}}),profile('second','80719',knownPath,{template:{name:'second.xlsx'}}),
+  profile('other-code','80720',knownPath),profile('other-path','80719',['another root',...knownPath.slice(1)])];
+ const before=JSON.stringify(profiles),matches=model.categoryProfilesForChoice(profiles,choice);
+ assert.deepEqual(plain(matches.map(profile=>profile.id)),['first','second']);assert.equal(matches[0],profiles[0]);assert.equal(matches[1],profiles[1]);
+ assert.equal(JSON.stringify(profiles),before);
+});
+
+test('unknown codes and category branches never claim an existing quotation by their last path label',()=>{
+ const saved=[profile('ready','80719',knownPath)];
+ const branch={categoryId:'80719',path:knownPath,isLeaf:false};
+ const unknown={categoryId:'',path:knownPath,isLeaf:true};
+ assert.deepEqual(plain(model.categoryProfilesForChoice(saved,branch)),[]);assert.deepEqual(plain(model.categoryProfilesForChoice(saved,unknown)),[]);
+ assert.deepEqual(plain(model.categoryProfilesForChoice(saved,{categoryId:'80719',path:['another root',knownPath.at(-1)],isLeaf:true})),[]);
+});
+
 test('hierarchy imports only observed root/child paths with exact order and all 22 observed leaves', () => {
   const choices = model.categoryChoices([]);
   assert.deepEqual(plain(model.categoryLevel(choices, [], 0)), observation.rootLabels);
