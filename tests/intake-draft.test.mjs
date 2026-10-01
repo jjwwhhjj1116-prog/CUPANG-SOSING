@@ -51,3 +51,20 @@ test('persisted draft omits successfully queued rows and does not accept client 
  assert.equal(body.rows.length,1);assert.equal(body.rows[0].profile,undefined);assert.equal(body.rows[0].url,'');
  }finally{f.sqlite.close();}
 });
+
+test('save confirmation requires every input row, category revision and exact next revision',()=>{
+ const f=fixture();try{
+ const model=f.load('app/intake-draft');
+ const savedRow={id:row.id,profile:{id:profileId,revision:row.profileRevision},url:row.url,features:row.features,keywords:row.keywords,status:'draft',message:''};
+ const requested=model.intakeDraftBody([savedRow],'price',2);
+ const draft={revision:3,rows:[savedRow],goal:'price',updatedAt:'2026-10-01T00:00:00.000Z'};
+ assert.equal(model.confirmIntakeDraftSave({draft},requested).revision,3);
+ for(const mismatch of [
+  {...draft,revision:2},{...draft,revision:4},{...draft,rows:[]},{...draft,goal:'work'},
+  ...['id','url','features','keywords'].map(key=>({...draft,rows:[{...savedRow,[key]:savedRow[key]+'changed'}]})),
+  {...draft,rows:[{...savedRow,profile:{id:'00000000-0000-0000-0000-000000000002',revision:2}}]},
+  {...draft,rows:[{...savedRow,profile:{id:profileId,revision:3}}]},
+  {...draft,rows:[{...savedRow,status:'saved'}]},
+ ])assert.throws(()=>model.confirmIntakeDraftSave({draft:mismatch},requested));
+ }finally{f.sqlite.close();}
+});

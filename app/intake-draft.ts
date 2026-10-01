@@ -21,3 +21,24 @@ export function validateIntakeDraft(input: unknown) {
 export function intakeDraftBody(rows: readonly IntakeRow[], goal: string, expectedRevision: number) {
   return validateIntakeDraft({ expectedRevision, goal, rows: rows.filter(row => row.status !== 'saved').map(row => ({ id: row.id, profileId: row.profile.id, profileRevision: row.profile.revision, url: row.url, features: row.features, keywords: row.keywords })) });
 }
+
+/** Saved input is confirmed by its contents, not an HTTP status or revision alone. */
+export function readIntakeDraftResponse(input: unknown): IntakeDraft {
+  const draft = (input as { draft?: IntakeDraft } | null)?.draft;
+  if (!draft || !Number.isSafeInteger(draft.revision) || draft.revision < 0 || !Array.isArray(draft.rows)
+    || draft.rows.some(row => !row || row.status !== 'draft' || !row.profile)
+    || (draft.updatedAt !== null && (typeof draft.updatedAt !== 'string' || !Number.isFinite(Date.parse(draft.updatedAt))))) {
+    throw Error('임시저장 응답의 입력 내용과 버전을 확인하지 못했습니다.');
+  }
+  intakeDraftBody(draft.rows, draft.goal, draft.revision);
+  return draft;
+}
+
+export function confirmIntakeDraftSave(input: unknown, requested: ReturnType<typeof intakeDraftBody>): IntakeDraft {
+  const draft = readIntakeDraftResponse(input);
+  const saved = intakeDraftBody(draft.rows, draft.goal, requested.expectedRevision);
+  if (draft.revision !== requested.expectedRevision + 1 || JSON.stringify(saved) !== JSON.stringify(requested)) {
+    throw Error('서버 초안이 저장 요청과 다릅니다. 현재 입력은 유지됩니다. 서버 초안을 확인해주세요.');
+  }
+  return draft;
+}
