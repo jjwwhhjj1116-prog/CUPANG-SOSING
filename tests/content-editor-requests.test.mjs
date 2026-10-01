@@ -189,3 +189,44 @@ test('selected image strip reorders and removes additional images before saving 
  assert.equal(resolved.rows[0].fields.additionalImages.value,'owner/c.png\nowner/b.png');
  assert.ok(find('이미지 1 역할'),'removing selection does not delete source file');
 });
+
+
+test('clearing a first-entry label default stays blank through refilling and saved quotation cells',async()=>{
+ let saved,patch;
+ const h=harness((url,init,content)=>{
+  if(url.endsWith('/registration-settings'))return Response.json({settings:{manufacturer:'검토 제조사',importer:'와이홉',serviceContact:'검토 연락처'},categoryId:'80719'});
+  if(init?.method==='PATCH'){patch=JSON.parse(init.body).patch;saved=h.model.applyContentPatch(saved??content,patch,'2026-10-01T01:00:00Z');return Response.json({content:saved});}
+ },undefined,true);
+ await h.start();h.render('표시사항');await h.flush();
+ const field=(key)=>nodes(h.render('표시사항')).find(n=>n.type==='textarea'&&n.props.maxLength===2000&&n.props.value===key);
+ for(const value of ['검토 제조사','와이홉','검토 연락처','중국'])field(value).props.onChange({target:{value:''}});
+ h.button('상품명·저장 기본설정으로 빈 표시사항 채우기','표시사항').props.onClick();await settle();
+ assert.equal(field('검토 제조사'),undefined,'an explicitly removed first-entry default must not refill');
+ assert.equal(field('중국'),undefined);
+ h.button('표시사항 저장','표시사항').props.onClick();await settle();
+ for(const key of ['manufacturer','importer','contact','countryOfOrigin']){assert.equal(saved.label[key].value,'');assert.equal(saved.label[key].provenance,'manual');}
+ const resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:{id:'p',title:'상품',image_keys:'[]',source_price_cny:1,supply_price:1,sale_price:2,msrp:3},content:saved,options:h.load('app/product-options.ts').emptyProductOptions('p'),settings:{...h.load('app/workspace-settings.ts').defaultSettings,manufacturer:'검토 제조사',importer:'와이홉',serviceContact:'검토 연락처'}});
+ for(const id of ['manufacturer','noticeManufacturerImporter','noticeCountryOfOrigin','noticeServiceContact'])assert.equal(resolved.rows[0].fields[id].value,'',id);
+ assert.equal(h.button('표시사항 저장','표시사항').props.disabled,true);h.unmount();
+});
+
+
+test('clearing every first-entry label default is saveable and a failed save preserves clear intent',async()=>{
+ let saved,fail=true;const requests=[];
+ const h=harness((url,init,content)=>{
+  if(url.endsWith('/registration-settings'))return Response.json({settings:{manufacturer:'검토 제조사',importer:'와이홉',serviceContact:'검토 연락처'},categoryId:'80719'});
+  if(init?.method==='PATCH'){requests.push(JSON.parse(init.body));if(fail)return Response.json({error:'fixture write failure'},{status:503});saved=h.model.applyContentPatch(saved??content,requests.at(-1).patch,'2026-10-01T01:00:00Z');return Response.json({content:saved});}
+ },undefined,true);
+ await h.start();h.render('표시사항');await h.flush();
+ const fields=()=>nodes(h.render('표시사항')).filter(n=>n.type==='textarea'&&n.props.maxLength===2000);
+ for(const field of fields().filter(n=>n.props.value))field.props.onChange({target:{value:''}});
+ assert.ok(fields().every(n=>n.props.value===''));assert.equal(h.button('표시사항 저장','표시사항').props.disabled,false);
+ assert.equal(nodes(h.render('표시사항')).find(n=>n.props?.['data-quotation-source-step']==='표시사항').props['data-workspace-dirty'],true);
+ h.button('표시사항 저장','표시사항').props.onClick();await settle();assert.match(JSON.stringify(h.render('표시사항')),/fixture write failure/);
+ h.button('상품명·저장 기본설정으로 빈 표시사항 채우기','표시사항').props.onClick();await settle();assert.ok(fields().every(n=>n.props.value===''));
+ fail=false;h.button('표시사항 저장','표시사항').props.onClick();await settle();
+ assert.deepEqual(requests[0].patch.labelClears,requests[1].patch.labelClears);assert.equal(requests[1].patch.labelClears.length,7);
+ assert.equal(saved.label.material.provenance,'unverified');for(const key of requests[1].patch.labelClears)assert.equal(saved.label[key].provenance,'manual');
+ assert.equal(h.button('표시사항 저장','표시사항').props.disabled,true);
+ h.button('상품명·저장 기본설정으로 빈 표시사항 채우기','표시사항').props.onClick();await settle();assert.ok(fields().every(n=>n.props.value===''));h.unmount();
+});

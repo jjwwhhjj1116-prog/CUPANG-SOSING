@@ -313,3 +313,17 @@ test('explicit SEO-label binding survives saves while manual names and legacy do
  for(const invalid of ['true',1,null])assert.throws(()=>model.validateContentInput(input({labelProductNameLinked:invalid}),[],'owner'));
  assert.throws(()=>model.applyContentPatch(current,{labelProductNameLinked:true,label:{productName:'다른 이름'}},now),/연동 품명/);
 });
+
+
+test('explicit blank label requests preserve removals without changing untouched fields or accepting inconsistent metadata',()=>{
+ const original=model.emptyProductContent('test');original.labelProductNameLinked=true;const before=JSON.stringify(original);
+ const patch=model.validateContentInput(input({label:{manufacturer:'  ',countryOfOrigin:'',productName:''},labelClears:['manufacturer','countryOfOrigin','productName']}),[],'owner').patch;
+ const saved=model.applyContentPatch(original,patch,now);
+ for(const key of patch.labelClears){assert.equal(saved.label[key].value,'');assert.equal(saved.label[key].provenance,'manual');}
+ assert.equal(saved.labelProductNameLinked,false);assert.equal(saved.label.material.provenance,'unverified');assert.equal(JSON.stringify(original),before);
+ const unchanged=model.applyContentPatch(original,{label:{manufacturer:'',countryOfOrigin:''}},now);assert.equal(unchanged.label.manufacturer.provenance,'unverified');
+ for(const labelClears of [null,'manufacturer',['manufacturer','manufacturer'],['__proto__'],['model']])assert.throws(()=>model.validateContentInput(input({label:{manufacturer:''},labelClears}),[],'owner'));
+ assert.throws(()=>model.validateContentInput(input({label:{manufacturer:'value'},labelClears:['manufacturer']}),[],'owner'));
+ assert.throws(()=>model.validateContentInput(input({labelClears:['manufacturer']}),[],'owner'));
+ assert.throws(()=>model.validateContentInput(input({label:{productName:''},labelClears:['productName'],labelProductNameLinked:true}),[],'owner'));
+});

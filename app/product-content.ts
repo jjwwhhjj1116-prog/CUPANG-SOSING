@@ -47,6 +47,8 @@ export type ProductContent = {
 };
 export type ContentPatch = {
   labelProductNameLinked?: boolean;
+  /** Explicit removals of a draft default, even when the stored field was empty. */
+  labelClears?: LabelField[];
   seo?: { title?: string; keywords?: string[]; description?: string };
   detail?: { description?: string; altText?: string };
   label?: Partial<Record<LabelField, string>>;
@@ -103,7 +105,7 @@ function plainText(value: unknown, max: number, name: string) {
 export function validateContentInput(input: unknown, ownedKeys: readonly string[], ownerId: string): { expectedRevision: number; patch: ContentPatch } {
   const body = object(input, ['expectedRevision', 'patch'], '콘텐츠 요청');
   if (!Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0) throw new Error('저장 버전을 다시 불러와주세요.');
-  const raw = object(body.patch, ['seo', 'detail', 'label', 'assets', 'labelLayout', 'customLabels', 'labelProductNameLinked'], '편집 내용');
+  const raw = object(body.patch, ['seo', 'detail', 'label', 'assets', 'labelLayout', 'customLabels', 'labelProductNameLinked', 'labelClears'], '편집 내용');
   const patch: ContentPatch = {};
   if ('labelProductNameLinked' in raw) {
     if (typeof raw.labelProductNameLinked !== 'boolean') throw new Error('품명 연동은 켜짐/꺼짐 값이어야 합니다.');
@@ -151,6 +153,15 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
     patch.label = {};
     for (const key of Object.keys(label) as LabelField[]) patch.label[key] = plainText(label[key], 2000, labelFields[key]);
   }
+  if ('labelClears' in raw) {
+    const keys = raw.labelClears;
+    if (!Array.isArray(keys) || keys.length > Object.keys(labelFields).length || new Set(keys).size !== keys.length
+      || keys.some(key => typeof key !== 'string' || !Object.hasOwn(labelFields, key) || !Object.hasOwn(patch.label ?? {}, key) || patch.label![key as LabelField] !== '')) {
+      throw new Error('직접 비운 표시사항은 함께 저장하는 빈 항목만 지정할 수 있습니다.');
+    }
+    patch.labelClears = [...keys] as LabelField[];
+    if (patch.labelClears.includes('productName') && patch.labelProductNameLinked === true) throw new Error('직접 비운 품명의 SEO 연동을 해제해주세요.');
+  }
   if ('assets' in raw) {
     const assets = object(raw.assets, Object.keys(assetRoles), '이미지 역할');
     patch.assets = {};
@@ -187,8 +198,13 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
     if (patch.detail.altText !== undefined) next.detail.altText = edited(previous.altText, patch.detail.altText);
   }
   for (const key of Object.keys(patch.label ?? {}) as LabelField[]) next.label[key] = edited(current.label[key], patch.label![key]!);
+  for (const key of patch.labelClears ?? []) {
+    if (!Object.hasOwn(patch.label ?? {}, key) || patch.label![key] !== '') throw new Error('직접 비운 표시사항의 저장값이 공란이 아닙니다.');
+    if (key === 'productName' && patch.labelProductNameLinked === true) throw new Error('직접 비운 품명의 SEO 연동을 해제해주세요.');
+    next.label[key] = { value: '', provenance: 'manual', updatedAt: now };
+  }
   if (patch.labelProductNameLinked !== undefined) next.labelProductNameLinked = patch.labelProductNameLinked;
-  else if (patch.label?.productName !== undefined && patch.label.productName !== current.label.productName.value) next.labelProductNameLinked = false;
+  else if (patch.label?.productName !== undefined && (patch.label.productName !== current.label.productName.value || patch.labelClears?.includes('productName'))) next.labelProductNameLinked = false;
   if (next.labelProductNameLinked) {
     if (patch.label?.productName !== undefined && patch.label.productName !== next.seo.title.value) throw new Error('연동 품명이 저장된 SEO 상품명과 다릅니다. 직접 수정한 품명은 연동을 해제해주세요.');
     next.label.productName = { value: next.seo.title.value, provenance: 'generated', updatedAt: current.label.productName.value !== next.seo.title.value || !current.labelProductNameLinked ? now : current.label.productName.updatedAt };
