@@ -34,6 +34,9 @@ export function savedTextOrFallback(field: ContentField<string>, fallback = ''):
 export type ProductContent = {
   schemaVersion: 1; productId: string; revision: number; updatedAt: string | null;
   seo: { title: ContentField<string>; keywords: ContentField<string[]>; description: ContentField<string> };
+  /** Server-created intake guidance, consumed by any explicit keyword save.
+   * Absence (including legacy documents) means manual keywords stay protected. */
+  intakeKeywordSeed?: { value: string[]; updatedAt: string; sourceReference: string };
   /** Stage-five content is independent of SEO. Absent only in legacy documents. */
   detail?: { description?: ContentField<string>; altText?: ContentField<string> };
   label: Record<LabelField, ContentField<string>>;
@@ -189,7 +192,11 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
   if (patch.seo) {
     if (patch.seo.title !== undefined) next.seo.title = edited(current.seo.title, patch.seo.title);
     if (patch.seo.description !== undefined) next.seo.description = edited(current.seo.description, patch.seo.description);
-    if (patch.seo.keywords !== undefined) next.seo.keywords = edited(current.seo.keywords, patch.seo.keywords);
+    if (patch.seo.keywords !== undefined) {
+      next.seo.keywords = edited(current.seo.keywords, patch.seo.keywords);
+      // Saving the same text or an empty list still confirms a user's choice.
+      delete next.intakeKeywordSeed;
+    }
   }
   if (patch.detail) {
     const previous = currentDetailContent(current);

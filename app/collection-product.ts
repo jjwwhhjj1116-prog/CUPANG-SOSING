@@ -9,7 +9,7 @@ import { fillLabelDraft } from '@/app/label-autofill';
 import { collectionLabelAttributes } from '@/app/collection-label-attributes';
 import { emptyProductContent, type LabelField } from '@/app/product-content';
 import { initialStatuses } from '@/app/workflow';
-import { collectionKeywords, type CollectionJob } from '@/app/sourcing';
+import { collectionKeywords, collectionSourceReference, type CollectionJob } from '@/app/sourcing';
 import type { ProductRecord } from '@/db/queries';
 
 export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:CollectionResult,id:string,now:string){
@@ -33,7 +33,10 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   const content=emptyProductContent(id);content.revision=1;content.updatedAt=now;
   content.seo.title={value:result.title,provenance:'collected',updatedAt:now};content.seo.description={value:result.description,provenance:'collected',updatedAt:now};
   const keywords=collectionKeywords(job.context.keywords);
-  if (keywords.length) content.seo.keywords={value:keywords,provenance:'manual',updatedAt:now};
+  if (keywords.length) {
+    content.seo.keywords={value:keywords,provenance:'manual',updatedAt:now};
+    content.intakeKeywordSeed={value:[...keywords],updatedAt:now,sourceReference:collectionSourceReference(job.id,result.sourceUrl)};
+  }
   for (const [field, value] of Object.entries(collectionLabelAttributes(result.attributes))) {
     content.label[field as LabelField] = { value, provenance: 'collected', updatedAt: now };
   }

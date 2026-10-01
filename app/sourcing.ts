@@ -60,7 +60,11 @@ export function parseCollectionRequest(input: unknown): CollectionRequest[] {
   return [...unique.values()];
 }
 
-/** Owner-supplied target keywords become editable SEO input, never AI output. */
+export function collectionSourceReference(jobId: string, sourceUrl: string): string {
+  return `수집 요청 ${jobId} (${sourceUrl})의 저장 원문`;
+}
+
+/** Owner-supplied target guidance is editable input for the first SEO draft. */
 export function collectionKeywords(value: unknown): string[] {
   if (value === undefined) return [];
   if (typeof value !== 'string' || value.length > 2000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value)) throw new Error('타겟 키워드는 제어문자 없이 2,000자 이내로 입력해주세요.');

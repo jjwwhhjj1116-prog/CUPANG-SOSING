@@ -2,11 +2,25 @@ import { validateContentInput, type ProductContent, type ContentPatch } from '@/
 import { translationSeoFields } from '@/app/translation-adoption';
 import { suggestTranslationLabels, translationLabelAdoption } from '@/app/translation-label-adoption';
 import type { TranslationJob } from '@/app/automation/translation';
+import { collectionKeywords } from '@/app/sourcing';
 
 const names = { title: '상품명', keywords: '검색어', description: '상품 설명' };
 const display = (value: string | string[]) => Array.isArray(value) ? value.join(', ') : value;
 
-/** A reviewed, single-revision content save. Never replace manually saved values. */
+function untouchedIntakeKeywords(content: ProductContent, job: TranslationJob): boolean {
+  const seed = content.intakeKeywordSeed;
+  const current = content.seo.keywords;
+  if (!seed || !Array.isArray(seed.value) || !seed.value.length || !seed.updatedAt ||
+    seed.updatedAt !== current.updatedAt || !seed.sourceReference ||
+    seed.sourceReference !== job.review.source.reference || !job.review.source.guidance) return false;
+  try {
+    return JSON.stringify(seed.value) === JSON.stringify(current.value) &&
+      JSON.stringify(seed.value) === JSON.stringify(collectionKeywords(job.review.source.guidance.keywords));
+  } catch { return false; }
+}
+
+/** A reviewed, single-revision save. Only untouched intake guidance can replace
+ * a manual keyword field; actual edits and all legacy values stay protected. */
 export function translationBatchAdoption(content: ProductContent, job: TranslationJob, version: string) {
   if (job.productId !== content.productId || job.productVersion !== version || job.status !== 'completed' || !job.result) {
     throw Error('현재 상품의 완료된 번역 결과를 선택해주세요.');
@@ -17,7 +31,7 @@ export function translationBatchAdoption(content: ProductContent, job: Translati
   for (const field of translationSeoFields) {
     const current = content.seo[field];
     const next = job.result.draft[field];
-    if (current.provenance === 'manual') { skipped.push(`${names[field]}: 직접 수정한 값을 유지합니다.`); continue; }
+    if (current.provenance === 'manual' && !(field === 'keywords' && untouchedIntakeKeywords(content, job))) { skipped.push(`${names[field]}: 직접 수정한 값을 유지합니다.`); continue; }
     if (!display(next).trim() || JSON.stringify(current.value) === JSON.stringify(next)) continue;
     const validated = validateContentInput({ expectedRevision: content.revision, patch: { seo: { [field]: next } } }, [], '');
     patch.seo = { ...patch.seo, ...validated.patch.seo };
