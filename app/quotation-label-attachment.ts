@@ -1,5 +1,6 @@
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
+import { findQuotationLabelUpload } from '@/app/quotation-label-upload';
 
 /** One reviewed PNG retained by the form across saved-view panel remounts. */
 export type QuotationLabelUploadCache = { signature: string | null; uploadedKey: string | null; rendered: { blob: Blob; width: number; height: number } | null };
@@ -30,11 +31,18 @@ export async function attachQuotationLabel(input: Input, request: typeof fetch =
   let view = await read<QuotationFieldsView>(input.endpoint);
   let key = input.uploadedKey;
   const current = labels(view);
+  let uploadId: string | null = null;
+  if (!key) {
+    const stored = await findQuotationLabelUpload({ productId: input.productId, endpoint: input.endpoint, view: input.renderedView, optionId: input.optionId }, request);
+    uploadId = stored.uploadId; key = stored.key;
+    if (key) input.onUploaded(key);
+  }
   if (key && view.imageKeys.includes(key) && current.includes(key)) return view;
   if (current.length >= 30 || (view.imageKeys.length >= 50 && (!key || !view.imageKeys.includes(key)))) throw new Error('라벨 최대 30개 또는 상품 이미지 최대 50개 한도입니다. 기존 첨부를 확인해주세요.');
   if (!key) {
     if (!input.blob) throw new Error('연결할 PNG를 먼저 생성해주세요.');
     const form = new FormData(); form.set('file', new File([input.blob], 'sourceflow-quotation-label.png', { type: 'image/png' }));
+    form.set('labelUploadId', uploadId!);
     const uploaded = await read<{ key?: string }>('/api/files', { method: 'POST', body: form });
     if (!uploaded.key) throw new Error('PNG 업로드 결과를 확인하지 못했습니다.');
     key = uploaded.key; input.onUploaded(key);

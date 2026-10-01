@@ -62,7 +62,13 @@ for(const failure of ['render','saved-response','attached-response','read-recove
   assert.equal(ui.view.revision,before.revision+(failure==='attached-response'?0:1));
   assert.notEqual(ui.view.inputFingerprint,before.inputFingerprint);
   if(failure==='attached-response')assert.equal(ui.view.resolved.rows.find(row=>row.optionId==='collected-1').fields.labelImages.value,images[3]);
-  else assert.match(ui.view.resolved.rows.find(row=>row.optionId==='collected-1').fields.labelImages.value,/sourceflow-quotation-label\.png/);
+  else {
+   const key=ui.view.resolved.rows.find(row=>row.optionId==='collected-1').fields.labelImages.value.split('\n')[1];
+   assert.match(key,/^owner\/quotation-label-[a-f0-9]{64}\.png$/);
+   const stored=await h.bindings.FILES.head(key);
+   assert.equal(stored.customMetadata.labelUploadId,key.slice('owner/quotation-label-'.length,-4));
+   assert.match(stored.customMetadata.labelBlobSha256,/^[a-f0-9]{64}$/);
+  }
   assert.ok(ui.remounts>=2,'the real editor remounts the panel with the saved fingerprint');
   // The reloaded editor retains the original failure until the next action.
   // A price edit does not change the label plan. It must use the new revision

@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {webcrypto} from 'node:crypto';
 function load(file) {
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-    { exports, File, Blob, FormData, Error, require(name) { return load(`${name.slice(2)}.ts`); } });
+    { exports, File, Blob, FormData, Error, TextEncoder, Uint8Array, crypto:webcrypto, require(name) { return load(`${name.slice(2)}.ts`); } });
   return exports;
 }
 const { attachQuotationLabel: attach } = load('app/quotation-label-attachment.ts');
@@ -24,6 +25,7 @@ function harness(uniqueUploads = false) {
   const calls = []; let failAttachment = false; let conflictPut = false; let changeAfterAttach = false;
   const fetcher = async (url, init = {}) => {
     calls.push({ url, method: init.method ?? 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body });
+    if(url.startsWith('/api/files?labelUploadId='))return Response.json({key:null});
     if (url === '/api/files') return Response.json({ key: uniqueUploads ? `owner/new-${calls.filter(call => call.url === '/api/files').length}.png` : 'owner/new.png' });
     if (url.endsWith('/attachments')) {
       if (failAttachment) { failAttachment = false; return Response.json({ error: '연결 충돌' }, { status: 409 }); }
@@ -75,10 +77,47 @@ test('changed label values, category or excluded option prevent stale PNG connec
 });
 test('limits are checked before uploading and latest existing labels are retained', async () => {
   const full = harness(); full.view.imageKeys = Array.from({ length: 50 }, (_, i) => `owner/${i}.png`); await assert.rejects(full.run(), /한도/);
-  assert.equal(full.calls.length, 1);
+  assert.equal(full.calls.filter(call=>call.method!=='GET').length, 0);
   const labels = harness(); labels.view.resolved.rows[0].fields.labelImages.value = Array.from({ length: 30 }, (_, i) => `owner/${i}.png`).join('\n'); await assert.rejects(labels.run(), /한도/);
   const h = harness(); h.view.resolved.rows[0].fields.labelImages.value += '\nowner/another.png'; h.view.imageKeys.push('owner/another.png');
   const saved = await h.run(); assert.equal(saved.resolved.rows[0].fields.labelImages.value, 'owner/old.png\nowner/another.png\nowner/new.png');
+});
+
+test('server-recovered keys finish single and batch retries even at full image and label capacity', async () => {
+  for (const method of ['single', 'batch']) {
+    const h = harness(true); let renders = 0;
+    const rows = method === 'single' ? [h.view.resolved.rows[0]] : h.view.resolved.rows;
+    h.view.imageKeys = Array.from({ length: 50 }, (_, i) => `owner/${i}.png`);
+    for (const [index, row] of rows.entries()) row.fields.labelImages.value = Array.from({ length: 30 }, (_, i) => `owner/${(i + index) % 50}.png`).join('\n');
+    const identity = load('app/quotation-label-upload.ts').quotationLabelUploadId;
+    const keys = new Map(await Promise.all(rows.map(async (row, index) => [await identity({ productId: 'p1', endpoint: '/fields', view: h.initial, optionId: row.optionId }), `owner/${index}.png`])));
+    const request = async (url, init) => {
+      if (url.startsWith('/api/files?labelUploadId=')) return Response.json({ key: keys.get(url.split('=')[1]) });
+      return h.fetcher(url, init);
+    };
+    if (method === 'single') {
+      const saved = await attach({ productId: 'p1', endpoint: '/fields', renderedView: h.initial, optionId: 'red', blob: null, uploadedKey: null, onUploaded() {} }, request);
+      assert.equal(saved.imageKeys.length, 50);
+    } else {
+      const result = await batch({ productId: 'p1', endpoint: '/fields', view: h.initial, uploaded: new Map(), render: async () => { renders++; return { blob: new Blob(['png']) }; }, onProgress() {} }, request);
+      assert.equal(result.completed, 2); assert.equal(result.stopped, false);
+    }
+    assert.equal(renders, 0); assert.equal(h.calls.filter(call => call.method !== 'GET').length, 0);
+    for (const row of rows) assert.equal(row.fields.labelImages.value.split('\n').length, 30);
+  }
+});
+
+test('an unavailable saved-label lookup stops single and batch recovery without a new file or mutation', async () => {
+  for (const method of ['single', 'batch']) {
+    const h = harness(true); let renders = 0;
+    const request = async (url, init) => url.startsWith('/api/files?labelUploadId=') ? Response.json({ error: '라벨 조회 실패' }, { status: 503 }) : h.fetcher(url, init);
+    const run = method === 'single'
+      ? attach({ productId: 'p1', endpoint: '/fields', renderedView: h.initial, optionId: 'red', blob: new Blob(['png']), uploadedKey: null, onUploaded() {} }, request)
+      : batch({ productId: 'p1', endpoint: '/fields', view: h.initial, uploaded: new Map(), render: async () => { renders++; return { blob: new Blob(['png']) }; }, onProgress() {} }, request);
+    await assert.rejects(run, /라벨 조회 실패/);
+    assert.equal(renders, 0); assert.equal(h.calls.filter(call => call.method !== 'GET').length, 0);
+    assert.deepEqual(h.view, h.initial);
+  }
 });
 
 test('batch renders included option-specific values and preserves all prior labels', async () => {

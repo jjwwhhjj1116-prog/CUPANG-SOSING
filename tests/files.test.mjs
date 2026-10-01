@@ -5,14 +5,14 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { webcrypto } from 'node:crypto';
 
-function load(file, overrides = {}) {
+function load(file, overrides = {}, mode = 'development') {
   const source = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(source, { exports, Request, Response, File, FormData, ReadableStream, TextEncoder, TextDecoder, Uint8Array, DataView, crypto: webcrypto, process: { env: { NODE_ENV: 'development' } }, require(name) {
+  vm.runInNewContext(source, { exports, URL, Headers, Request, Response, File, FormData, ReadableStream, TextEncoder, TextDecoder, Uint8Array, DataView, crypto: webcrypto, process: { env: { NODE_ENV: mode } }, require(name) {
     if (name in overrides) return overrides[name];
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
-    if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides);
+    if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode);
     throw Error(name);
   } });
   return exports;
@@ -28,7 +28,8 @@ function multipart(bytes = png, name = 'picture.png', type = 'image/png') {
 function bucket() {
   const saved = new Map();
   return { saved,
-    async put(key, bytes, options) { saved.set(key, { bytes: new Uint8Array(bytes), ...options }); return { key, size: bytes.byteLength }; },
+    async head(key){const value=saved.get(key);return value?{size:value.bytes.byteLength,httpMetadata:value.httpMetadata,customMetadata:value.customMetadata}:null;},
+    async put(key, bytes, options) { if(options?.onlyIf?.get('if-none-match')==='*'&&saved.has(key))return null;saved.set(key, { bytes: new Uint8Array(bytes), ...options }); return { key, size: bytes.byteLength }; },
     async get(key, options) {
       const value = saved.get(key); if (!value) return null;
       const bytes = options?.range ? value.bytes.slice(options.range.offset, options.range.offset + options.range.length) : value.bytes;
@@ -120,4 +121,116 @@ test('generic product PATCH verifies new R2 image links and preserves legacy ref
   assert.equal((await route.PATCH(patch(['owner/legacy.svg', 'owner/image.png']), ctx)).status, 200); assert.equal(writes, 1);
   const missing = load('app/api/products/[id]/route.ts', { ...overrides, '@/db/queries': { findProduct: async () => null } });
   assert.equal((await missing.PATCH(patch(['owner/image.png']), ctx)).status, 404);
+});
+
+const labelId = 'a'.repeat(64);
+const labelRequest = (id = labelId, bytes = png, modify = () => {}) => {
+  const form = new FormData();
+  form.set('file', new File([bytes], 'sourceflow-quotation-label.png', { type: 'image/png' }));
+  form.set('labelUploadId', id); modify(form);
+  return new Request('http://localhost/api/files', { method: 'POST', body: form });
+};
+const labelLookup = (query = `labelUploadId=${labelId}`) => new Request(`http://localhost/api/files?${query}`);
+
+test('saved label lookup and repeated uploads reuse only identical PNG bytes', async () => {
+  const storage = bucket(), { upload } = routes(storage);
+  const missing = await upload.GET(labelLookup());
+  assert.deepEqual(await missing.json(), { key: null });
+  assert.equal(missing.headers.get('cache-control'), 'no-store');
+  const first = await upload.POST(labelRequest()); assert.equal(first.status, 201);
+  const created = await first.json(); assert.equal(created.key, `owner/quotation-label-${labelId}.png`);
+  const reused = await upload.POST(labelRequest()); assert.equal(reused.status, 200);
+  const again = await reused.json(); assert.equal(again.key, created.key); assert.equal(again.reused, true);
+  const found = await upload.GET(labelLookup()); assert.equal(found.status, 200);
+  assert.equal(found.headers.get('cache-control'), 'no-store');
+  const saved = await found.json(); assert.equal(saved.key, created.key); assert.match(saved.sha256, /^[a-f0-9]{64}$/);
+  const changed = await upload.POST(labelRequest(labelId, new Uint8Array([...png, 1])));
+  assert.equal(changed.status, 409); assert.equal(changed.headers.get('cache-control'), 'no-store');
+  assert.equal(storage.saved.size, 1); assert.deepEqual(storage.saved.get(created.key).bytes, png);
+  assert.equal(storage.saved.get(created.key).customMetadata.labelBlobSha256, saved.sha256);
+});
+
+for (const different of [false, true]) test(`simultaneous label uploads ${different ? 'reject changed bytes' : 'reuse identical bytes'} without replacing the first file`, async () => {
+  const storage = bucket(), normalHead = storage.head.bind(storage); let heads = 0, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  storage.head = async key => {
+    const original = await normalHead(key);
+    if (++heads <= 2) { if (heads === 2) release(); await gate; }
+    return original;
+  };
+  const { upload } = routes(storage);
+  const results = await Promise.all([upload.POST(labelRequest()), upload.POST(labelRequest(labelId, different ? new Uint8Array([...png, 1]) : png))]);
+  assert.deepEqual(results.map(response => response.status).sort(), different ? [201, 409] : [200, 201]);
+  const created = await results.find(response => response.status === 201).json();
+  assert.equal(storage.saved.size, 1);
+  assert.equal(storage.saved.get(created.key).onlyIf.get('if-none-match'), '*');
+  const winningBytes = results[0].status === 201 ? png : (different ? new Uint8Array([...png, 1]) : png);
+  assert.deepEqual(storage.saved.get(created.key).bytes, winningBytes);
+  if (!different) assert.equal((await results.find(response => response.status === 200).json()).reused, true);
+});
+
+test('an upload acknowledgement loss is recovered by owner lookup without another R2 write', async () => {
+  const storage = bucket(), normalPut = storage.put.bind(storage); let writes = 0;
+  storage.put = async (...args) => { writes++; await normalPut(...args); throw Error('private storage response lost'); };
+  const { upload } = routes(storage);
+  const lost = await upload.POST(labelRequest()); assert.equal(lost.status, 503);
+  assert.ok(!(await lost.text()).includes('private storage'));
+  const found = await upload.GET(labelLookup()); assert.equal(found.status, 200);
+  const stored = await found.json(); assert.equal(stored.key, `owner/quotation-label-${labelId}.png`);
+  const retry = await upload.POST(labelRequest()); assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).key, stored.key); assert.equal(writes, 1);
+});
+
+test('label upload identifiers, multipart fields and origin are checked before storage access', async () => {
+  let accesses = 0;
+  const { upload } = routes({ head: async () => { accesses++; return null; }, put: async () => { accesses++; return {}; } });
+  for (const id of ['', 'A'.repeat(64), 'g'.repeat(64), 'a'.repeat(63), '../other/file', new File([png], 'id.png')]) {
+    assert.equal((await upload.POST(labelRequest(id))).status, 400);
+  }
+  const invalid = [
+    form => form.append('labelUploadId', labelId),
+    form => form.set('ownerId', 'other'),
+    form => form.set('file', new File([png], 'other.png', { type: 'image/png' })),
+    form => form.set('file', new File([new Uint8Array(Buffer.from('GIF89a\x01\x00\x01\x00', 'binary'))], 'sourceflow-quotation-label.png', { type: 'image/gif' })),
+  ];
+  for (const change of invalid) assert.equal((await upload.POST(labelRequest(labelId, png, change))).status, 400);
+  const crossOrigin = labelRequest(); crossOrigin.headers.set('origin', 'https://other.test');
+  assert.equal((await upload.POST(crossOrigin)).status, 400);
+  assert.equal(accesses, 0);
+});
+
+test('label lookup ignores no ownership override and production requires verified access', async () => {
+  const storage = bucket(), { upload } = routes(storage);
+  await upload.POST(labelRequest()); let reads = 0;
+  const normalHead = storage.head.bind(storage);
+  storage.head = async key => { reads++; return normalHead(key); };
+  for (const query of ['', 'labelUploadId=', `labelUploadId=${labelId}&labelUploadId=${labelId}`, `labelUploadId=${labelId}&ownerId=owner`, `labelUploadId=${labelId}&key=owner/file.png`, `labelUploadId=${'A'.repeat(64)}`]) {
+    const invalid = await upload.GET(labelLookup(query)); assert.equal(invalid.status, 400);
+    assert.equal(invalid.headers.get('cache-control'), 'no-store');
+  }
+  assert.equal(reads, 0);
+  const ownOnly = load('app/api/files/route.ts', { 'cloudflare:workers': { env: { FILES: storage } },
+    '@/app/chatgpt-auth': { getChatGPTUser: async () => ({ verifiedAccess: true }), getWorkspaceOwnerId: async () => 'other' } }, 'production');
+  assert.deepEqual(await (await ownOnly.GET(labelLookup())).json(), { key: null });
+  assert.equal(storage.saved.size, 1); assert.equal(reads, 1);
+  const denied = load('app/api/files/route.ts', { 'cloudflare:workers': { env: { FILES: storage } },
+    '@/app/chatgpt-auth': { getChatGPTUser: async () => ({ verifiedAccess: false }), getWorkspaceOwnerId: async () => { throw Error('must not resolve owner'); } } }, 'production');
+  for (const response of [await denied.GET(labelLookup()), await denied.POST(labelRequest())]) {
+    assert.equal(response.status, 503); assert.equal(response.headers.get('cache-control'), 'no-store');
+  }
+  assert.equal(reads, 1);
+});
+
+test('saved label metadata or failed lookup cannot be replaced by a fresh upload', async () => {
+  for (const change of [value => { value.customMetadata.labelUploadId = 'b'.repeat(64); }, value => { value.customMetadata.labelBlobSha256 = 'invalid'; }, value => { value.httpMetadata.contentType = 'image/jpeg'; }, value => { value.bytes = new Uint8Array(0); }]) {
+    const storage = bucket(), { upload } = routes(storage); await upload.POST(labelRequest());
+    const key = `owner/quotation-label-${labelId}.png`, value = storage.saved.get(key); change(value);
+    let writes = 0; storage.put = async () => { writes++; return {}; };
+    const unavailable = await upload.GET(labelLookup()); assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.headers.get('cache-control'), 'no-store');
+    assert.ok(!(await unavailable.text()).includes('Invalid saved label'));
+    assert.equal((await upload.POST(labelRequest())).status, 503); assert.equal(writes, 0);
+  }
+  const failure = await routes({ head: async () => { throw Error('private R2 connection'); } }).upload.GET(labelLookup());
+  assert.equal(failure.status, 503); assert.ok(!(await failure.text()).includes('private R2'));
 });

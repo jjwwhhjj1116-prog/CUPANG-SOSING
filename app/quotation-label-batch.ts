@@ -2,6 +2,7 @@ import type { QuotationFieldsView } from '@/app/quotation-schema';
 import type { DocumentImagePlan } from '@/app/document-image';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
 import { attachQuotationLabel } from '@/app/quotation-label-attachment';
+import { findQuotationLabelUpload } from '@/app/quotation-label-upload';
 
 export type LabelBatchProgress = { completed: number; total: number; optionLabel: string };
 export type LabelBatchResult = { view: QuotationFieldsView; completed: number; total: number; stopped: boolean };
@@ -33,6 +34,11 @@ export async function attachQuotationLabels(input: {
   const pendingKeys = new Set<string>();
   for (const [index, row] of rows.entries()) {
     if (JSON.stringify(quotationLabelPlan(latest.resolved, row.optionId)) !== JSON.stringify(plans[index])) throw new Error('표시사항 값이 변경되었습니다. 최신 견적을 불러와주세요.');
+    if (!input.uploaded.has(row.optionId)) {
+      if (input.shouldStop?.()) return result(0, true);
+      const stored = await findQuotationLabelUpload({ productId: input.productId, endpoint: input.endpoint, view: input.view, optionId: row.optionId }, request);
+      if (stored.key) input.uploaded.set(row.optionId, stored.key);
+    }
     const key = input.uploaded.get(row.optionId);
     const target = latest.resolved.rows.find(item => item.optionId === row.optionId)!;
     const labels = (target.fields.labelImages?.value ?? '').split('\n').map(value => value.trim()).filter(Boolean);
