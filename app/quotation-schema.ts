@@ -462,7 +462,9 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       let automatic = auto(definition, option);
       // Only fill an absent category product attribute; explicit content/option
       // values and manual overrides keep priority. Never infer legal defaults.
-      if (automatic.source === 'empty' && content.categoryAttributes?.categoryId === schema.categoryId
+      // Invalid input is unresolved, not absent. Do not erase its diagnostics
+      // by substituting a shared attribute or a reference default.
+      if (automatic.source === 'empty' && !automatic.issues?.length && content.categoryAttributes?.categoryId === schema.categoryId
         && !(definition.visibility === 'hidden' && content.categoryAttributes.hiddenAttributes === false)
         && definition.section === 'product' && definition.visibility !== 'common' && !definition.readOnly
         && ['text', 'textarea', 'select'].includes(definition.type)) {
@@ -480,7 +482,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         }
       }
       const preset = couplusQuotationDefault(schema.categoryId, definition);
-      if (automatic.source === 'empty' && preset !== undefined) automatic = {
+      if (automatic.source === 'empty' && !automatic.issues?.length && preset !== undefined) automatic = {
         value: preset, source: 'couplus-default',
         issues: [],
       };

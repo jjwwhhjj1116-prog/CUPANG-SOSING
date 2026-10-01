@@ -2001,3 +2001,35 @@ test('81221 fashion size uses exact saved option choices without converting prod
  input.overrides={common:{glove_fashionSize:'S'},options:{red:{glove_fashionSize:'L'}}};assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_fashionSize.value,'L');
  input.overrides.options.red.glove_fashionSize='';assert.equal(model.resolveQuotationFields(input).rows[1].fields.glove_fashionSize.source,'manual-option');
 });
+
+for(const [categoryId,fieldId] of [['81452','brace_size'],['81221','glove_fashionSize']]){
+ test(`${categoryId} invalid option fashion size cannot be hidden by shared translated attributes or field bindings`,()=>{
+  const input=fixture();input.categoryId=categoryId;
+  const definition=model.getQuotationSchema(categoryId).fields.find(field=>field.id===fieldId);
+  for(const mode of ['heading','binding']){
+   input.content.categoryAttributes={categoryId,jobId:'translated-draft',hiddenAttributes:true,values:[{name:'패션잡화 사이즈',value:'M'}],
+    ...(mode==='binding'?{bindings:[{fieldId,fieldSignature:JSON.stringify(definition),value:'M'}]}:{})};
+   for(const size of ['Medium','Free','20 × 30 cm']){
+    input.options.rows[0].size=size;const before=JSON.stringify(input),resolved=model.resolveQuotationFields(input);
+    const fields=resolved.rows[1].fields;
+    assert.equal(fields.size.value,size);assert.equal(fields[fieldId].value,'');assert.equal(fields[fieldId].source,'empty');
+    assert.ok(fields[fieldId].validationIssues.some(issue=>issue.includes('선택지')));
+    assert.equal(load('app/quotation-choice-state.ts').hasSelectedEmptyQuotationChoice(definition,fields[fieldId]),false);
+    assert.equal(load('app/quotation-field-display.ts').quotationFieldDisplay(definition,fields[fieldId]),'[공란]');
+    const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,JSON.parse(input.product.image_keys).map(key=>({key,name:key})))[0];
+    assert.equal(exported[fieldId],'');assert.equal(exported.size,size);assert.ok(!exported.selectedEmptyChoices.includes(fieldId));assert.equal(JSON.stringify(input),before);
+   }
+  }
+ });
+ test(`${categoryId} reviewed quotation size can resolve the option conflict while valid sizes and explicit clears keep priority`,()=>{
+  const input=fixture();input.categoryId=categoryId;
+  input.content.categoryAttributes={categoryId,jobId:'translated-draft',hiddenAttributes:true,values:[{name:'패션잡화 사이즈',value:'M'}]};
+  input.options.rows[0].size='S';let fields=model.resolveQuotationFields(input).rows[1].fields;
+  assert.equal(fields[fieldId].value,'S');assert.equal(fields[fieldId].source,'option');
+  input.options.rows[0].size='';input.options.rows[0].provenance.size='manual';fields=model.resolveQuotationFields(input).rows[1].fields;
+  assert.equal(fields[fieldId].value,'');assert.equal(fields[fieldId].source,'option');
+  input.options.rows[0].size='Medium';input.overrides={common:{[fieldId]:'M'},options:{red:{[fieldId]:'L'}}};
+  fields=model.resolveQuotationFields(input).rows[1].fields;assert.equal(fields[fieldId].value,'L');assert.equal(fields[fieldId].source,'manual-option');
+  assert.equal(fields[fieldId].validationIssues.length,0);assert.equal(fields.size.value,'Medium');
+ });
+}
