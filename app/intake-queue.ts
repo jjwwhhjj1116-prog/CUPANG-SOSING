@@ -76,7 +76,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
       options.onJobs(result.jobs);
       const differences = result.preservedRequests?.flatMap(item => item.differences) ?? [];
       if(!differences.length&&options.collect) {
-        const message=await options.collect(result.jobs[0],message=>options.onRow(request.id,{status:'draft',message}),id=>{if(!options.signal.aborted&&id){savedProductId=id;options.onRow(request.id,{status:'draft',message:'상품 초안 저장됨 · 이미지 반영 중',productId:id});}});
+        const message=await options.collect(result.jobs[0],message=>{if(!options.signal.aborted)options.onRow(request.id,{status:'draft',message});},id=>{if(!options.signal.aborted&&id){savedProductId=id;options.onRow(request.id,{status:'draft',message:'상품 초안 저장됨 · 이미지 반영 중',productId:id});}});
         if(options.signal.aborted)break;
         if(!message)throw Error('상품 반영 결과를 확인하지 못했습니다.');
         options.onRow(request.id,{status:'saved',message});continue;

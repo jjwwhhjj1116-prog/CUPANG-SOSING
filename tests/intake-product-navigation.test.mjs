@@ -28,16 +28,26 @@ test('single completed URL draft opens editing after collection; failures and ba
  }
 });
 function harness(open, collect){
- const slots=[],cleanups=[],calls=[],changes=[],busy=[];let index=0,first=true,settings,rows,jobContext;
+ const slots=[],cleanups=[],calls=[],changes=[],busy=[],jobs=[];let index=0,first=true,settings,rows,jobContext;
  const hooks={useState(v){const i=index++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return[slots[i],v=>slots[i]=typeof v==='function'?v(slots[i]):v];},useRef(v){const i=index++;return slots[i]??(slots[i]={current:v});},useEffect(fn){if(first){const cleanup=fn();if(cleanup)cleanups.push(cleanup);}}};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,crypto,fetch:async(url,init)=>{calls.push({url,init});if(collect){const body=JSON.parse(init.body);return Response.json({jobs:[{id:'job-'+body.urls[0],source_url:body.urls[0],offer_id:body.urls[0].match(/offer\/(\d+)/)[1],status:'awaiting_connector'}],preservedRequests:[]});}return url==='/api/settings'?Promise.reject(Error('unexpected request')):Response.json({code:'REGISTRATION_SETTINGS_CHANGED',error:'기본설정 변경'},{status:409});},require(name){if(name==='react')return hooks;if(name==='@/app/components/category-picker')return{CategoryPicker:()=>null};if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};if(name==='@/app/intake-collection')return{collectIntakeProduct:collect??(async()=>{throw Error('must not collect');})};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  settings=load('app/workspace-settings.ts').savedRegistrationSettings({brand:'이전',exchangeRate:190});
  rows=[1,2].map(n=>({id:String(n),profile:{id:'00000000-0000-0000-0000-000000000001',revision:1,categoryId:'80719',categoryPath:['주방','바스켓']},url:`https://detail.1688.com/offer/${n}.html`,features:'입력 특징',keywords:'입력 키워드',status:n===1?'saved':'draft',productId:n===1?'p1':undefined,message:''}));
  const Component=load('app/components/intake-queue-panel.tsx').IntakeQueuePanel;
- const render=()=>{index=0;const tree=Component({rows,settings,profiles:[],jobs:[{source_url:rows[0].url,product_id:'p1',status:'awaiting_connector',context:jobContext}],onOpenProduct:open,onRows:update=>rows=update(rows),onProfile(){},onAdvanced(){},onJobs(){},onBusy:value=>busy.push(value),goal:'price',onGoal(){},onSettingsReloaded:value=>{settings=value;changes.push(value);}});first=false;return tree;};
+ const render=()=>{index=0;const tree=Component({rows,settings,profiles:[],jobs:[{source_url:rows[0].url,product_id:'p1',status:'awaiting_connector',context:jobContext}],onOpenProduct:open,onRows:update=>rows=update(rows),onProfile(){},onAdvanced(){},onJobs:values=>jobs.push(...values),onBusy:value=>busy.push(value),goal:'price',onGoal(){},onSettingsReloaded:value=>{settings=value;changes.push(value);}});first=false;return tree;};
  const button=text=>nodes(render()).find(n=>n.type==='button'&&String(n.props.children).includes(text));
- return{render,button,calls,changes,busy,setJobContext(value){jobContext=value;},get rows(){return rows;},get settings(){return settings;},close(){cleanups.forEach(fn=>fn());}};
+ return{render,button,calls,changes,busy,jobs,setJobContext(value){jobContext=value;},get rows(){return rows;},get settings(){return settings;},close(){cleanups.forEach(fn=>fn());}};
 }
+
+test('closing intake blocks late collection updates and editor navigation after the row changes',async()=>{
+ let callbacks,finish,originalJob;const held=new Promise(resolve=>{finish=resolve;}),opened=[];
+ const h=harness(async id=>opened.push(id),async(job,options)=>{callbacks=options;originalJob=job;return held;});
+ h.button('시작 (').props.onClick();await settle();assert.ok(callbacks);h.close();assert.equal(callbacks.signal.aborted,true);
+ h.rows[1].url='https://detail.1688.com/offer/999.html';h.rows[1].profile={...h.rows[1].profile,categoryId:'81221',categoryPath:['스포츠/레져','스포츠 잡화','스포츠 장갑']};h.rows[1].message='새 상품 입력';
+ const before=JSON.stringify(h.rows),jobCount=h.jobs.length;
+ callbacks.onProgress('이전 상품 이미지 저장 중');callbacks.onJob({...originalJob,product_id:'previous-product'});finish('이전 상품 초안 저장됨');await settle();
+ assert.equal(JSON.stringify(h.rows),before);assert.equal(h.jobs.length,jobCount);assert.deepEqual(opened,[]);assert.deepEqual(h.busy,[true,false]);
+});
 
 test('saved row opens its existing editor only on click; double click is coalesced and other inputs survive',async()=>{
  let finish;const waiting=new Promise(resolve=>finish=resolve),calls=[];

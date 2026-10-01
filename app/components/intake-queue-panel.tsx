@@ -89,15 +89,17 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
     const productIds = new Map<string,string>();
     const completed = new Set<string>();
+    const active=()=>running.current===controller&&!controller.signal.aborted;
+    const publishJobs=(values:CollectionJob[])=>{if(active())onJobs(values);};
     try {
-      await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{setSettingsChanged(true);setSettingsMessage('');}, selectedIds: new Set(selected.map(row => row.id)),
-        collect: (job,onProgress,onProduct) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,captureFromBrowser:capture1688FromChrome,onJob:updated=>{onJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress}),
-        onRow: (id, patch) => {if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row));}, onJobs });
+      await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{if(active()){setSettingsChanged(true);setSettingsMessage('');}}, selectedIds: new Set(selected.map(row => row.id)),
+        collect: (job,onProgress,onProduct) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,captureFromBrowser:capture1688FromChrome,onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress}),
+        onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row));}, onJobs:publishJobs });
       // Open only a confirmed single draft after import and SEO finish. Batch
       // processing and partially failed drafts stay in the editable queue.
       const single=selected.length===1?selected[0]:undefined;
       const productId=single&&completed.has(single.id)?productIds.get(single.id):undefined;
-      if(productId&&onOpenProduct&&!controller.signal.aborted)await onOpenProduct(productId,controller.signal);
+      if(productId&&onOpenProduct&&active())await onOpenProduct(productId,controller.signal);
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { finish(controller); }
   }

@@ -8,17 +8,21 @@ import type { BrowserProductCapture } from '@/app/browser-product-bridge';
 /** A user-initiated fetch produces an editable draft only, never a Hub submission. */
 export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>}) {
  if(options.signal.aborted)return;
+ // A durable server write can finish after its view closes. It remains
+ // recoverable, but must not publish into a reopened or newly edited queue.
+ const reportJob=(value:CollectionJob)=>{if(!options.signal.aborted)options.onJob(value);};
+ const reportProgress=(message:string)=>{if(!options.signal.aborted)options.onProgress(message);};
  if(job.status==='cancelled')throw Error('취소된 수집 요청입니다.');
  // A product can already exist even though image import failed. Resume from
  // the immutable receipt; never treat a product ID alone as completed import.
- if(job.product_id&&!job.received_at){options.onJob(job);return '기존 상품 열기 · 저장된 수정값 유지';}
+ if(job.product_id&&!job.received_at){reportJob(job);return '기존 상품 열기 · 저장된 수정값 유지';}
  let received=job;
  if(!job.received_at){
-  options.onProgress('상품 페이지에서 정보 가져오는 중');
+  reportProgress('상품 페이지에서 정보 가져오는 중');
   let response=await options.fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/collect`,{method:'POST',signal:options.signal});
   let body=await response.json() as {error?:string;code?:string;receipt?:{receivedAt?:unknown}};
   if(!response.ok&&body.code==='SOURCE_NOT_COLLECTED'&&options.captureFromBrowser&&!options.signal.aborted){
-   options.onProgress('현재 Chrome에서 1688 상품 원문 확인 중');
+   reportProgress('현재 Chrome에서 1688 상품 원문 확인 중');
    const captured=await options.captureFromBrowser(job.source_url,options.signal);
    if(options.signal.aborted)return;
    response=await options.fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/browser-capture`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(captured),signal:options.signal});
@@ -33,17 +37,18 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   received={...job,received_at:receivedAt};
  } else if(!Number.isFinite(Date.parse(job.received_at)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
  if(options.signal.aborted)return;
- options.onJob(received);
+ reportJob(received);
  const outcomes:CollectionImportOutcome[]=[];
  let seo:Awaited<ReturnType<typeof prepareIntakeSeoOutcome>>|undefined;
  const prepareDraft=async(productId:string)=>{
-  options.onJob({...received,product_id:productId});
-  if(job.goal==='collect'||options.signal.aborted||seo)return;
-  options.onProgress('저장 원문으로 SEO·옵션 초안 작성 중');
+  if(options.signal.aborted)return;
+  reportJob({...received,product_id:productId});
+  if(job.goal==='collect'||seo)return;
+  reportProgress('저장 원문으로 SEO·옵션 초안 작성 중');
   seo=await prepareIntakeSeoOutcome(productId,options.fetcher,options.signal);
  };
  await importReceivedJobs([received],{assignToStage:false,reservedImageSlots:1,onProductSaved:(_id,productId)=>prepareDraft(productId),fetcher:(url,init)=>options.fetcher(url,{...init,signal:options.signal}),shouldStop:()=>options.signal.aborted,
-  onProgress:(_id,message)=>options.onProgress(message),onResult:(_id,outcome)=>{outcomes.push(outcome);if(outcome.productId)options.onJob({...received,product_id:outcome.productId});}});
+  onProgress:(_id,message)=>reportProgress(message),onResult:(_id,outcome)=>{outcomes.push(outcome);if(outcome.productId)reportJob({...received,product_id:outcome.productId});}});
  if(options.signal.aborted)return;
  const outcome=outcomes[0];
  if(!outcome||!outcome.productId)throw Error(outcome?.error||'상품 반영을 완료하지 못했습니다. 원문은 보존됩니다.');

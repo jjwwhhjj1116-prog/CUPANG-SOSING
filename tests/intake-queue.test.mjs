@@ -7,6 +7,16 @@ function load(file) {
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URL,require:name=>load(name.slice(2)+'.ts')});return exports;
 }
 const {intakeRow,intakeQueueRequests,submitIntakeQueue}=load('app/intake-queue.ts');
+test('cancelled collection callbacks cannot overwrite a revised URL row or complete it',async()=>{
+ const controller=new AbortController(),states=[];let callbacks,finish,entered;
+ const held=new Promise(resolve=>{finish=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+ const pending=submitIntakeQueue([row(1)],'price',{signal:controller.signal,fetcher:async(_url,init)=>response(saved(JSON.parse(init.body))),onJobs(){},onRow:(id,state)=>states.push({id,...state}),
+  collect:async(_job,progress,product)=>{callbacks={progress,product};entered();return held;}});
+ await Promise.race([started,pending.then(()=>assert.fail('collection ended before the callback boundary'))]);
+ controller.abort();const before=states.length;
+ callbacks.progress('이전 상품 이미지 반영 중');callbacks.product('previous-product');finish('이전 상품 초안 저장됨');await pending;
+ assert.equal(states.length,before);assert.equal(states.some(state=>state.status==='saved'||state.productId==='previous-product'),false);
+});
 const profile=(n)=>({id:`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`,revision:n,categoryId:String(n),categoryPath:['주방용품',String(n)]});
 const row=(n)=>({...intakeRow(profile(n),String(n)),url:`https://detail.1688.com/offer/${n}.html?spm=test`,features:`특징${n}`,keywords:`키워드${n}`});
 const response=(body,status=200)=>Response.json(body,{status});
