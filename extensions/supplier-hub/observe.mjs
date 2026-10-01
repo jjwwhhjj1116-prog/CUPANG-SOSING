@@ -9,15 +9,26 @@ import {validateAppHubRequest,isHubRegistrationTab} from './app-request.mjs';
 const activeTabs=new Set();
 export async function observeSupplierHubResult(message,sender){
   const appRequest=message?.type==='YOOFAM_REFRESH_RESULT';
-  let expected;
+  let expected,recovered;
   if(appRequest){
     expected=validateAppHubRequest(message,sender,'YOOFAM_REFRESH_RESULT');
     if(message.kind!=='validation')throw Error('앱에서는 현재 견적서의 검증 결과만 조회할 수 있습니다.');
     const tabs=(await chrome.tabs.query({windowId:sender.tab.windowId})).filter(tab=>isHubRegistrationTab(tab,sender.tab.windowId));
+    const claim=await transferRecord('get',`transmission:${expected.origin}:${expected.productId}:${expected.categoryId}:${expected.fingerprint}`);
+    const matches=value=>value&&['origin','productId','categoryId','fingerprint'].every(key=>value[key]===expected[key]);
     const matching=[];
     for(const tab of tabs){
       const saved=await transferRecord('get',`attempt:${tab.id}`);
-      if(saved&&['origin','productId','categoryId','fingerprint'].every(key=>saved[key]===expected[key]))matching.push(tab);
+      if(matches(saved))matching.push(tab);
+      // Older partial/lost replies have a durable claim but no tab binding.
+      // Recover only that exact live tab, never replace a newer tab assignment.
+      else if(!saved&&matches(claim)&&claim.tabId===tab.id&&claim.windowId===sender.tab.windowId&&claim.registered===false
+        &&['started','validation-requested','attached','partial','unconfirmed'].includes(claim.state)
+        &&['A01526306','A01464742'].includes(claim.company?.code)&&({A01526306:'유앤채',A01464742:'와이홉'})[claim.company.code]===claim.company.name
+        &&Number.isSafeInteger(claim.includedOptions)&&claim.includedOptions>=1&&claim.includedOptions<=200
+        &&Number.isSafeInteger(claim.startedAt)&&claim.startedAt>0&&claim.startedAt<=Date.now()+60000){
+        recovered={...expected,company:claim.company,includedOptions:claim.includedOptions};matching.push(tab);
+      }
     }
     if(matching.length!==1)throw Error('같은 Chrome 창에서 이 견적서를 전달한 Supplier Hub 등록 탭을 확인하지 못했습니다.');
     message={...message,tabId:matching[0].id};
@@ -30,7 +41,7 @@ export async function observeSupplierHubResult(message,sender){
     const path=message.kind!=='validation'?'/qvt/wims':'/qvt/registration';
     const allowedPaths=message.kind==='registration-search'?['/qvt/registration','/qvt/wims']:[path];
     if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||!allowedPaths.includes(new URL(tab.url).pathname))throw Error('현재 창의 해당 Supplier Hub 결과 화면에서 실행해주세요.');
-    const identity=await transferRecord('get',`attempt:${tab.id}`);
+    const identity=await transferRecord('get',`attempt:${tab.id}`)||recovered;
     if(appRequest&&(!isHubRegistrationTab(tab,sender.tab.windowId)||!identity||!['origin','productId','categoryId','fingerprint'].every(key=>identity[key]===expected[key])))throw Error('전송한 견적서 또는 Chrome 창이 변경되었습니다.');
     // Legacy app attempts cannot infer their company from the current login.
     if(identity&&!identity.company)throw Error('전송 기록에 회사정보가 없습니다. 기존 견적서는 Supplier Hub에서 직접 확인해주세요.');
@@ -73,6 +84,14 @@ export async function observeSupplierHubResult(message,sender){
     if(appRequest&&result.filename!==expectedFilename)throw Error('현재 견적서 파일의 검증 결과인지 확인하지 못했습니다.');
     if(await checkCompany()!==companyCode)throw Error('조회 중 Supplier Hub 회사가 변경되었습니다. 결과를 저장하지 않았습니다.');
     if(identity&&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`){
+      if(appRequest){
+        const current=await transferRecord('get',`attempt:${tab.id}`);
+        if(current&&(!['origin','productId','categoryId','fingerprint'].every(field=>current[field]===identity[field])
+          ||current.company?.code!==identity.company.code||current.company?.name!==identity.company.name||current.includedOptions!==identity.includedOptions))
+          throw Error('조회 중 전송한 견적서가 변경되었습니다. 결과를 저장하지 않았습니다.');
+        if(recovered&&!current&&!await transferRecord('claim',`attempt:${tab.id}`,identity))
+          throw Error('조회 중 전송한 견적서가 변경되었습니다. 결과를 저장하지 않았습니다.');
+      }
       const key=resultKey(identity),previous=await transferRecord('get',key);
       // Refreshing file validation does not refresh or erase a matching SKU observation.
       // A different quotation or a non-complete validation must not inherit old rows.

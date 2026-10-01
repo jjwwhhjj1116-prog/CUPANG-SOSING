@@ -6,8 +6,8 @@ import {attachToSupplierHub} from './attach.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
 import {waitForSupplierHubPage,supplierHubUploadReady} from './hub-tab.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
+import {claimSupplierHubTransmissionWindow} from './transmission-window.mjs';
 
-const activeWindows=new Set();
 export async function transmitSupplierHubPackage(message,sender,api=chrome,store=transferRecord){
   const identity=validateAppHubRequest(message,sender,'YOOFAM_TRANSMIT_PACKAGE');
   const reviewed=message.reviewedAgreements;
@@ -17,8 +17,7 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     throw Error('가격 정보·라벨 연락처 동의와 법적 서류 해당없음 선택을 확인해주세요. 법적 서류가 필요한 상품은 Supplier Hub에서 서류를 함께 첨부해야 합니다.');
   const packageValue=validateHandoff({...message,type:'YOOFAM_PREPARE_PACKAGE'},sender);
   const windowId=sender.tab.windowId;
-  if(activeWindows.has(windowId))throw Error('이 Chrome 창에서 다른 견적서를 전송 중입니다.');
-  activeWindows.add(windowId);
+  const release=claimSupplierHubTransmissionWindow(windowId);
   try{
     const prepared=await prepareAttachments(Uint8Array.from(atob(packageValue.base64),c=>c.charCodeAt(0)));
     if(prepared.productId!==identity.productId||prepared.categoryId!==identity.categoryId
@@ -65,6 +64,9 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     let attached=false;
     try{
       await current();
+      // Bind the lookup before a change event can start an upload. A partial
+      // attachment or lost script reply must still be readable without replay.
+      await store('put',`attempt:${tabId}`,{...identity,company:prepared.company,includedOptions:prepared.includedOptions});
       const [execution]=await api.scripting.executeScript({target:{tabId},func:attachToSupplierHub,args:[prepared]});
       const result=execution?.result;
       if(!result||!['dispatched','partial'].includes(result.state)||result.registered!==false)throw Error('파일 전달 결과를 확인하지 못했습니다. Supplier Hub 첨부 목록을 확인해주세요.');
@@ -73,7 +75,6 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
         await store('put',key,{...record,...outcome});return outcome;
       }
       attached=true;
-      await store('put',`attempt:${tabId}`,{...identity,company:prepared.company,includedOptions:prepared.includedOptions});
       await store('put',key,{...record,state:'attached'});
       await companyCheck();
       const names=[...prepared.quotation,...prepared.productImages,...prepared.labelImages].map(file=>file.name);
@@ -89,7 +90,7 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
       const outcome={state:attached?'attached':'unconfirmed',registered:false,error:String(error?.message||error)};
       await store('put',key,{...record,...outcome});return outcome;
     }
-  }finally{activeWindows.delete(windowId);}
+  }finally{release();}
 }
 
 // Wait only for the files from this attempt. Never retry an upload or read cookies.

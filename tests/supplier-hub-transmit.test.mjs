@@ -8,7 +8,16 @@ import {transmitSupplierHubPackage,waitForSupplierHubAttachments} from '../exten
 import {attachToSupplierHub} from '../extensions/supplier-hub/attach.mjs';
 import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
 import {requestSupplierHubValidation} from '../extensions/supplier-hub/validate.mjs';
-import {supplierHubUploadReady} from '../extensions/supplier-hub/hub-tab.mjs';
+import {supplierHubUploadReady,supplierHubStatusReady} from '../extensions/supplier-hub/hub-tab.mjs';
+import {prepareAttachments} from '../extensions/supplier-hub/package.mjs';
+import {verifyAppQuotationSource} from '../extensions/supplier-hub/source-check.mjs';
+import {claimSupplierHubTransmissionWindow} from '../extensions/supplier-hub/transmission-window.mjs';
+import {validateAppHubRequest,isHubRegistrationTab} from '../extensions/supplier-hub/app-request.mjs';
+import {resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
+import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
+import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-registration.mjs';
+import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
+import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
 
 const identity={productId:'product',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/'};
@@ -29,7 +38,7 @@ async function fixture(options={}){
  if(options.previous)records.set('attempt:123',{origin:new URL(sender.url).origin,...identity,company:{code:'A01464742',name:'와이홉'},includedOptions:2});
  const api={tabs:{query:async query=>{calls.push(['query',query]);return tabs;},get:async id=>id===7?{id:7,windowId:17,url:sender.url}:options.getTab??(id===124?fresh:tab),sendMessage:async(id,message,frame)=>{calls.push(['source',id,frame]);sourceChecks++;return {ok:true,...message.expected,checkedAt:Date.now(),...(options.sourceChangedAt===sourceChecks?{fingerprint:'b'.repeat(64)}:{})};},create:async input=>{calls.push(['create',input]);fresh={id:124,status:'complete',...input,...options.created};tabs.push(fresh);return fresh;}},scripting:{executeScript:async request=>{
    calls.push([request.func.name,request.args,request.target.tabId]);
-   if(request.func===supplierHubUploadReady)return [{result:true}];
+   if(request.func===supplierHubUploadReady||request.func===supplierHubStatusReady)return [{result:true}];
    if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[checks++]??'A01464742'}}];
    if(request.func===attachToSupplierHub){
      if(request.args[1]===true){if(options.preflightError)throw Error('changed upload sections');return [{result:{state:options.occupied&&request.target.tabId===123?'occupied':'ready',registered:false}}];}
@@ -37,15 +46,40 @@ async function fixture(options={}){
    }
    if(request.func===waitForSupplierHubAttachments)return [{result:options.ready??true}];
    if(request.func===requestSupplierHubValidation){assert.deepEqual(request.args,[agreements,true]);if(options.validationError)throw Error('button disabled');return [{result:{state:'validation-requested',validated:false,registered:false}}];}
+   if(request.func===readSupplierHubValidation){await options.onResult?.();return [{result:{filename:options.validationFilename??`YOOFAM-${identity.fingerprint}.xlsx`,state:options.validationState??'validation-pending',registered:false,...(options.validationState==='validation-complete'?{quotationId:'quote-123'}:{})}}];}
+   if(request.func===searchSupplierHubRegistration)return [{result:{state:'search-complete',quotationId:'quote-123',registered:false}}];
+   if(request.func===readSupplierHubRegistration){
+    const rows=['sku-1','sku-2'].map(skuId=>({title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:`YOOFAM-${identity.fingerprint}.xlsx`,skuId,status:'상품 검수중',stage:'가격/정책'}));
+    return [{result:{quotationId:'quote-123',scope:'visible-page',registered:false,rows,page:{current:1,hasNext:false,signature:JSON.stringify(rows)}}}];
+   }
    throw Error('unexpected script');
  }}};
  const store=async(action,key,value)=>{
    calls.push(['store',action,key]);
    if(action==='claim'){if(records.has(key))return false;records.set(key,value);return true;}
+   if(action==='put'&&key.startsWith('attempt:')&&options.bindingError)throw Error('tab binding storage unavailable');
    if(action==='put')records.set(key,value);else return records.get(key);
  };
  const message={...identity,type:'YOOFAM_TRANSMIT_PACKAGE',reviewedAgreements:agreements,base64:await packageBytes(options.plan)};
- return {calls,records,run:(patch={},who=sender)=>transmitSupplierHubPackage({...message,...patch},who,api,store)};
+ return {calls,records,api,store,message,run:(patch={},who=sender)=>transmitSupplierHubPackage({...message,...patch},who,api,store)};
+}
+
+function popup(h){
+ let consumed=false;
+ const saved={origin:new URL(sender.url).origin,...identity,createdAt:Date.now(),base64:h.message.base64,appTabId:7,windowId:17};
+ const source=fs.readFileSync(new URL('../extensions/supplier-hub/dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
+ const context=vm.createContext({Date,URL,Uint8Array,atob,prepareAttachments,attachToSupplierHub,verifySupplierHubCompany,verifyAppQuotationSource:(...args)=>verifyAppQuotationSource(...args,h.api),claimSupplierHubTransmissionWindow,
+  pendingPackage:async action=>{if(action==='get')return consumed?null:saved;if(action==='delete'){if(consumed)return false;consumed=true;return true;}throw Error('Unexpected package operation');},
+  transferRecord:h.store,chrome:{...h.api,runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`}}});
+ vm.runInContext(source,context);
+ return ()=>context.dispatchPendingPackage({tabId:123,fingerprint:identity.fingerprint},{id:'extension',url:'chrome-extension://extension/popup.html'});
+}
+
+function observe(h){
+ const source=fs.readFileSync(new URL('../extensions/supplier-hub/observe.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
+ const context=vm.createContext({Date,URL,validateAppHubRequest,isHubRegistrationTab,verifySupplierHubCompany,readSupplierHubValidation,resultKey,transferRecord:h.store,chrome:h.api});
+ vm.runInContext(source,context);
+ return ()=>context.observeSupplierHubResult({...identity,type:'YOOFAM_REFRESH_RESULT',kind:'validation'},sender);
 }
 
 test('app transmission uses its existing Chrome window and binds attachment/validation to the reviewed package',async()=>{
@@ -96,9 +130,131 @@ test('partial uploads, lost responses and upload timeout never repeat attachment
  for(const [opts,state] of [[{outcome:'partial'},'partial'],[{attachError:true},'unconfirmed'],[{ready:false},'attached'],[{validationError:true},'attached'],[{companyCodes:['A01464742','A01526306']},'attached']]){
    const h=await fixture(opts);const result=await h.run();assert.equal(result.state,state);assert.equal(result.registered,false);
    assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
-   assert.equal(h.records.has('attempt:123'),state==='attached');
+   assert.equal(h.records.has('attempt:123'),true);
    await assert.rejects(h.run());assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
  }
+});
+
+test('failed recovery binding stops before any upload and preserves the durable no-replay claim',async()=>{
+ const h=await fixture({bindingError:true});const result=await h.run();
+ assert.equal(result.state,'unconfirmed');assert.match(result.error,/binding storage/);
+ assert.equal(h.records.has('attempt:123'),false);
+ assert.equal(h.calls.some(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true),false);
+ assert.equal(h.calls.some(([name])=>name==='requestSupplierHubValidation'),false);
+ await assert.rejects(h.run(),/이미 전송/);
+});
+
+test('both companies bind the recoverable upload tab before partial attachment or a lost response',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  for(const options of [{outcome:'partial'},{attachError:true}]){
+   let beforeUpload;
+   const h=await fixture({...options,plan:{company},companyCodes:[company.code,company.code],onAttach:()=>{
+    beforeUpload=h.records.get('attempt:123');
+   }});
+   assert.equal((await h.run()).state,options.outcome||'unconfirmed');
+   assert.ok(beforeUpload,'the tab must already be recoverable when the first upload can start');
+   assert.equal(beforeUpload.company.code,company.code);assert.equal(beforeUpload.company.name,company.name);
+   assert.equal(beforeUpload.productId,identity.productId);assert.equal(beforeUpload.categoryId,identity.categoryId);
+   assert.equal(beforeUpload.fingerprint,identity.fingerprint);assert.equal(beforeUpload.includedOptions,2);
+   assert.equal(h.records.get('attempt:123').company.code,company.code);
+   const claim=h.calls.findIndex(([name,action])=>name==='store'&&action==='claim');
+   const binding=h.calls.findIndex(([name,action,key])=>name==='store'&&action==='put'&&key==='attempt:123');
+   const upload=h.calls.findIndex(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true);
+   assert.ok(claim<binding&&binding<upload);
+   await assert.rejects(h.run(),/이미 전송/);
+   assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
+   assert.equal(h.calls.some(([name])=>name==='requestSupplierHubValidation'),false);
+  }
+ }
+});
+
+test('both delivery paths recover failed acknowledgements into exact-company validation and SKU lookup without uploading again',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  for(const path of ['app','popup']){
+   for(const failure of [{outcome:'partial'},{attachError:true}]){
+    const options={...failure,plan:{company},companyCodes:Array(30).fill(company.code)};
+    const h=await fixture(options),deliver=path==='app'?()=>h.run():popup(h);
+    if(path==='popup'&&failure.attachError)await assert.rejects(deliver(),/lost response/);else await deliver();
+    const uploads=()=>h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length;
+    assert.equal(uploads(),1);
+    const lookup=observe(h);assert.equal((await lookup()).state,'validation-pending');
+    const key=resultKey({origin:new URL(sender.url).origin,...identity});
+    assert.equal(h.records.get(key).company.code,company.code);assert.equal(h.records.get(key).includedOptions,2);
+    options.validationState='validation-complete';await lookup();
+    const result=await refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},sender,h.api,h.store);
+    assert.equal(result.company.code,company.code);assert.equal(result.company.name,company.name);
+    assert.equal(result.registration.quotationId,'quote-123');assert.equal(result.registration.includedOptions,2);
+    assert.deepEqual(result.registration.rows.map(row=>row.skuId),['sku-1','sku-2']);
+    assert.equal(result.registration.hasMore,false);assert.equal(result.registered,false);
+    assert.equal(uploads(),1);assert.equal(h.calls.some(([name])=>name==='requestSupplierHubValidation'),false,'read-only recovery must not request or replay validation');
+    const sourceTab=h.records.get('attempt:123');assert.equal(sourceTab.purpose,undefined);assert.equal(sourceTab.company.code,company.code);
+    await assert.rejects(h.run(),/이미 전송/);assert.equal(uploads(),1);
+   }
+  }
+ }
+});
+
+test('app and popup share the existing-window lock until the pending attachment settles',async()=>{
+ for(const firstPath of ['app','popup']){
+  let finish;const held=new Promise(resolve=>{finish=resolve;});
+  const h=await fixture({onAttach:()=>held}),fromPopup=popup(h);
+  const first=firstPath==='app'?h.run():fromPopup();
+  for(let i=0;i<20&&!h.calls.some(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true);i++)await new Promise(resolve=>setImmediate(resolve));
+  const binding=h.records.get('attempt:123');assert.ok(binding);
+  try{await assert.rejects(firstPath==='app'?fromPopup():h.run(),/전송 중/);}
+  finally{finish();}
+  await first;assert.equal(h.records.get('attempt:123'),binding);
+  assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
+  const other=await fixture();assert.equal((await other.run()).state,'validation-requested','the window lock must release after either path');
+ }
+});
+
+test('previous-version claims recover their exact tab into validation and SKU lookup for both companies',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const options={outcome:'partial',plan:{company},companyCodes:Array(30).fill(company.code),validationState:'not-found'};
+  const h=await fixture(options);await h.run();h.records.delete('attempt:123');
+  const lookup=observe(h);assert.equal((await lookup()).state,'not-found');
+  assert.equal(h.records.get('attempt:123').company.code,company.code);
+  await assert.rejects(refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},sender,h.api,h.store),/검증 완료/);
+  options.validationState='validation-complete';await lookup();
+  const result=await refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},sender,h.api,h.store);
+  assert.equal(result.company.code,company.code);assert.equal(result.registration.rows.length,2);assert.equal(result.registered,false);
+  assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
+  assert.equal(h.calls.some(([name])=>name==='requestSupplierHubValidation'),false);
+ }
+});
+
+test('legacy recovery cannot overwrite newer work or accept another identity, company, window or malformed claim',async()=>{
+ for(const patch of [{productId:'other'},{categoryId:'999'},{origin:'http://localhost:3000'},{fingerprint:'b'.repeat(64)},{tabId:999},{windowId:18},{company:{code:'A01464742',name:'유앤채'}},{company:{code:'A01526306',name:'유앤채'}},{includedOptions:0},{includedOptions:201},{startedAt:Infinity},{registered:true},{state:'registered'}]){
+  const h=await fixture({outcome:'partial'});await h.run();h.records.delete('attempt:123');
+  const key=`transmission:${new URL(sender.url).origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
+  h.records.set(key,{...h.records.get(key),...patch});const before=h.calls.length;
+  await assert.rejects(observe(h)());assert.equal(h.records.has('attempt:123'),false);
+  assert.equal(h.calls.slice(before).some(([name])=>name==='readSupplierHubValidation'),false);
+  assert.equal(h.records.has(resultKey({origin:new URL(sender.url).origin,...identity})),false);
+ }
+ const newer=await fixture({outcome:'partial'});await newer.run();
+ const next={...newer.records.get('attempt:123'),productId:'newer-product'};newer.records.set('attempt:123',next);
+ await assert.rejects(observe(newer)());assert.equal(newer.records.get('attempt:123'),next);
+});
+
+test('a changed tab assignment or different filename during legacy lookup cannot bind or publish results',async()=>{
+ for(const mode of ['changed-assignment','different-file']){
+  const options={outcome:'partial',...(mode==='different-file'?{validationFilename:'other.xlsx'}:{})};
+  const h=await fixture(options);await h.run();h.records.delete('attempt:123');
+  if(mode==='changed-assignment')options.onResult=()=>h.records.set('attempt:123',{origin:new URL(sender.url).origin,...identity,productId:'new-work',company:{code:'A01464742',name:'와이홉'},includedOptions:2});
+  await assert.rejects(observe(h)(),mode==='changed-assignment'?/견적서가 변경/:/현재 견적서/);
+  assert.equal(h.records.has(resultKey({origin:new URL(sender.url).origin,...identity})),false);
+  assert.equal(h.records.get('attempt:123')?.productId,mode==='changed-assignment'?'new-work':undefined);
+ }
+});
+
+test('atomic legacy tab recovery loses to a newer assignment without overwriting it',async()=>{
+ const h=await fixture({outcome:'partial'});await h.run();h.records.delete('attempt:123');
+ const store=h.store,newer={origin:new URL(sender.url).origin,...identity,productId:'new-work',company:{code:'A01464742',name:'와이홉'},includedOptions:2};
+ h.store=async(action,key,value)=>{if(action==='claim'&&key==='attempt:123')h.records.set(key,newer);return store(action,key,value);};
+ await assert.rejects(observe(h)(),/견적서가 변경/);assert.equal(h.records.get('attempt:123'),newer);
+ assert.equal(h.records.has(resultKey({origin:new URL(sender.url).origin,...identity})),false);
 });
 
 test('closing the caller cannot permit a second transmission while worker attachment is pending',async()=>{

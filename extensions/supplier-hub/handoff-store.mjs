@@ -16,7 +16,7 @@ export function resultKey(identity){
 }
 export async function transferRecord(action,key,value){
   if(!['get','put','claim'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
-  if(action==='claim'&&!key.startsWith('transmission:'))throw Error('전송 시도 기록을 확인해주세요.');
+  if(action==='claim'&&!key.startsWith('transmission:')&&!/^attempt:\d+$/.test(key))throw Error('전송 시도 기록을 확인해주세요.');
   const db=await database();try{return await new Promise((resolve,reject)=>{
     const transaction=db.transaction('pending',action==='get'?'readonly':'readwrite'),store=transaction.objectStore('pending');let result;
     const request=action==='put'?store.put(value,key):store.get(key);

@@ -21,6 +21,7 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(result.companyBinding!==true)throw new Error('회사코드 확인을 지원하는 첨부 확장 0.2.18 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(direct&&result.directTransmission!==true)throw new Error('등록 전송을 지원하는 Chrome 확장 0.2.23 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(result.latestSourceBinding!==true)throw new Error('최신 저장본 확인을 지원하는 Chrome 확장 0.2.27 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  if(result.durableAttachmentRecovery!==true)throw new Error('부분 첨부 결과 복원과 중복 전송 방지를 지원하는 Chrome 확장 0.2.30 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
 }
 export type SupplierHubRegistrationRow={title:string;submittedAt:string;category:string;barcode:string;sourceQuotation:string;skuId:string;status:string;stage:string};
 export type SupplierHubRegistration={quotationId:string;registered:false;observedAt:number;includedOptions?:number;rows:SupplierHubRegistrationRow[]}&(
