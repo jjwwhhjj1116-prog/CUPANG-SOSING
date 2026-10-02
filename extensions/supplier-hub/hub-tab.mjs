@@ -24,12 +24,14 @@ export async function waitForSupplierHubPage(tabId,windowId,path,ready,api=chrom
 export function supplierHubUploadReady(){
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration')return false;
   const text=document.body.innerText||'';
-  return /Company Code:\s*A\d+\b/.test(text)&&['작성이 완료된 견적서 Excel 파일을 업로드하십시오.','상품 이미지를 업로드하십시오.','제품 필수 표시사항을 업로드하십시오.'].every(title=>text.includes(title))&&document.querySelectorAll('input[type="file"]').length>=3;
+  // Company codes live in a collapsed menu on a new tab. The caller opens
+  // that menu and verifies the exact company after the form is ready.
+  return ['작성이 완료된 견적서 Excel 파일을 업로드하십시오.','상품 이미지를 업로드하십시오.','제품 필수 표시사항을 업로드하십시오.'].every(title=>text.includes(title))&&document.querySelectorAll('input[type="file"]').length>=3;
 }
 export function supplierHubStatusReady(){
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/wims')return false;
   const visible=element=>element.getClientRects().length>0;
   const inputs=Array.from(document.querySelectorAll('input[id="quotationFile"][name="quotationFile"][type="text"]')).filter(visible);
   const labels=Array.from(document.querySelectorAll('label[for="quotationFile"]')).filter(visible);
-  return /Company Code:\s*A\d+\b/.test(document.body.innerText||'')&&inputs.length===1&&!inputs[0].disabled&&!inputs[0].readOnly&&labels.length===1&&(labels[0].innerText||'').trim()==='견적서 ID';
+  return inputs.length===1&&!inputs[0].disabled&&!inputs[0].readOnly&&labels.length===1&&(labels[0].innerText||'').trim()==='견적서 ID';
 }

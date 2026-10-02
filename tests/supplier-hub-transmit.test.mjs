@@ -19,6 +19,7 @@ import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-reg
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
 import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
 import {assertAppSupplierHubNotSubmitted} from '../extensions/supplier-hub/receipt-recovery.mjs';
+import {hubCompanyMenuPage} from './helpers/hub-company-menu.mjs';
 
 const identity={productId:'product',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/'};
@@ -36,11 +37,11 @@ async function packageBytes(changes={},patchFiles=()=>{}){
  return Buffer.from(exports.zipFiles(files)).toString('base64');
 }
 async function fixture(options={}){
- const calls=[],records=new Map();
+ const calls=[],records=new Map(),pages=new Map();
  const tab={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',...options.tab};
  let checks=0,sourceChecks=0,preflightChecked=false;
  const tabs=options.tabs??[tab];let fresh;
- if(options.previous)records.set('attempt:123',{origin:new URL(sender.url).origin,...identity,company:{code:'A01464742',name:'와이홉'},includedOptions:2});
+ if(options.previous)records.set('attempt:123',{origin:new URL(sender.url).origin,...identity,company:options.plan?.company??{code:'A01464742',name:'와이홉'},includedOptions:2});
  const api={tabs:{query:async query=>{calls.push(['query',query]);return tabs;},get:async id=>id===7?{id:7,windowId:17,url:sender.url}:options.getTab??(id===124?fresh:tab),sendMessage:async(id,message,frame)=>{
    if(message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'){
     calls.push(['receipt',id,frame]);if(options.receiptError)throw Error('receipt response lost');
@@ -52,6 +53,11 @@ async function fixture(options={}){
    calls.push(['source',id,frame]);sourceChecks++;return {ok:true,...message.expected,checkedAt:Date.now(),...(options.sourceChangedAt===sourceChecks?{fingerprint:'b'.repeat(64)}:{})};
   },create:async input=>{calls.push(['create',input]);fresh={id:124,status:'complete',...input,...options.created};tabs.push(fresh);return fresh;}},scripting:{executeScript:async request=>{
    calls.push([request.func.name,request.args,request.target.tabId]);
+   if(options.companyMenu&&[supplierHubUploadReady,supplierHubStatusReady,verifySupplierHubCompany].includes(request.func)){
+    const id=request.target.tabId;
+    if(!pages.has(id))pages.set(id,hubCompanyMenuPage({company:id===124&&options.createdCompany?options.createdCompany:options.plan?.company??{code:'A01464742',name:'와이홉'},path:new URL(id===124?fresh.url:tab.url).pathname}));
+    return [{result:await pages.get(id).run(request.func,request.args)}];
+   }
    if(request.func===supplierHubUploadReady||request.func===supplierHubStatusReady)return [{result:true}];
    if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[checks++]??options.plan?.company?.code??'A01464742'}}];
    if(request.func===attachToSupplierHub){
@@ -75,7 +81,7 @@ async function fixture(options={}){
    if(action==='put')records.set(key,value);else return records.get(key);
  };
  const message={...identity,type:'YOOFAM_TRANSMIT_PACKAGE',reviewedAgreements:agreements,base64:await packageBytes(options.plan,options.patchFiles)};
- return {calls,records,api,store,message,run:(patch={},who=sender)=>transmitSupplierHubPackage({...message,...patch},who,api,store)};
+ return {calls,records,pages,api,store,message,run:(patch={},who=sender)=>transmitSupplierHubPackage({...message,...patch},who,api,store)};
 }
 
 function popup(h){
@@ -160,6 +166,22 @@ test('a second product or existing attachments get a fresh upload tab in the sam
  for(const options of [{previous:true,created:{windowId:18}},{occupied:true,created:{url:'https://supplier.coupang.com/login'}},{previous:true,companyCodes:['A01526306']}]){
   const h=await fixture(options);await assert.rejects(h.run());assert.equal(h.calls.some(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true),false);
  }
+});
+
+test('fresh upload tabs open and verify their initially closed company menus before attaching once',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])for(const previous of [false,true]){
+  const h=await fixture({companyMenu:true,plan:{company},previous,occupied:!previous});
+  assert.equal((await h.run()).state,'validation-requested');assert.equal(h.pages.get(124).clicks,1);
+  const ready=h.calls.findIndex(([name,,tabId])=>name==='supplierHubUploadReady'&&tabId===124);
+  const verified=h.calls.findIndex(([name,,tabId],index)=>index>ready&&name==='verifySupplierHubCompany'&&tabId===124);
+  const uploaded=h.calls.findIndex(([name,args,tabId])=>name==='attachToSupplierHub'&&args[1]!==true&&tabId===124);
+  assert.ok(ready>=0&&verified>ready&&uploaded>verified);
+  assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
+  assert.equal(h.records.get('attempt:124').company.code,company.code);
+ }
+ const wrong=await fixture({companyMenu:true,previous:true,createdCompany:{name:'와이홉',code:'A01526306'}});
+ await assert.rejects(wrong.run(),/회사코드/);assert.equal(wrong.calls.some(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true),false);
+ assert.equal([...wrong.records.keys()].some(key=>key.startsWith('transmission:')),false);
 });
 
 test('untrusted frames, missing agreements and mismatched products cannot reach Supplier Hub',async()=>{

@@ -41,7 +41,7 @@ test('a late abandoned reply cannot acknowledge the next lookup request',async()
 });
 test('validation resumption uses identity and fresh choices only, enforces extension capability and rejects false acknowledgements',async()=>{
  const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
- const capability={ok:true,validationResume:true,latestSourceBinding:true,serverReceiptReplayProtection:true};
+ const capability={ok:true,validationResume:true,latestSourceBinding:true,serverReceiptReplayProtection:true,companyMenuRecovery:true};
  const h=harness((m,emit)=>emit(m,m.type==='PING'?capability:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',registered:false}}));
  assert.equal((await h.api.resumeSupplierHubValidation(identity,reviewed,new AbortController().signal)).state,'validation-requested');
  assert.deepEqual(h.sent.map(m=>m.type),['PING','VALIDATE']);assert.deepEqual(JSON.parse(JSON.stringify(h.sent[1].payload)),{...identity,reviewedAgreements:reviewed});assert.equal(h.sent[1].payload.base64,undefined);
@@ -56,6 +56,41 @@ test('new file delivery requires server receipt checks before preparing or trans
   const h=harness((m,emit)=>emit(m,{ok:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true}));
   await assert.rejects(h.api.checkSupplierHubExtension(new AbortController().signal,direct),/0.2.34/);assert.deepEqual(h.sent.map(m=>m.type),['PING']);
  }
+});
+
+test('0.2.39 cannot upload, resume validation or search registrations while 0.2.40 can',async()=>{
+ const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
+ const legacy={ok:true,version:'0.2.39',companyBinding:true,directTransmission:true,latestSourceBinding:true,
+  durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,
+  validationResume:true,registrationLookup:true,registrationPages:true,savedSubmission:true};
+ const record={...savedFixture().record,registration:{quotationId:'123',scope:'visible-page',observedAt:Date.now(),registered:false,includedOptions:2,rows:[]}};
+ const actions=[
+  {type:'TRANSMIT',run:async api=>{await api.checkSupplierHubExtension(new AbortController().signal,true);return api.transmitSupplierHubPackage(new Blob(['reviewed ZIP']),identity,reviewed,new AbortController().signal);}},
+  {type:'VALIDATE',run:api=>api.resumeSupplierHubValidation(identity,reviewed,new AbortController().signal)},
+  {type:'REGISTRATION',run:api=>api.getSupplierHubResult(identity,new AbortController().signal,'registration')},
+ ];
+ for(const {type,run} of actions){
+  for(const companyMenuRecovery of [undefined,false,'true']){
+   const old=harness((message,emit)=>emit(message,{...legacy,companyMenuRecovery}));
+   await assert.rejects(run(old.api),/0.2.40/);
+   assert.deepEqual(old.sent.map(message=>message.type),['PING']);
+   assert.equal(old.listeners.size,0);assert.equal(old.timers.size,0);
+  }
+  const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:'0.2.40',companyMenuRecovery:true}
+   :{ok:true,fingerprint:identity.fingerprint,registered:false,record,result:{state:'validation-requested',registered:false}}));
+  const result=await run(current.api);
+  assert.equal(result.registered,false);assert.deepEqual(current.sent.map(message=>message.type),['PING',type]);
+  assert.equal(current.sent[1].payload.fingerprint,identity.fingerprint);
+  if(type==='TRANSMIT')assert.equal(Buffer.from(current.sent[1].payload.base64,'base64').toString(),'reviewed ZIP');
+  else assert.equal(current.sent[1].payload.base64,undefined);
+ }
+ // The new runtime requirement applies only to operations that need to reopen
+ // the company menu. Previous packages and cached receipts stay readable.
+ const previous=savedReply(savedFixture(),legacy);
+ await previous.api.checkSupplierHubExtension(new AbortController().signal,false);
+ assert.equal((await previous.api.getSupplierHubSubmission(identity,new AbortController().signal)).attempt.state,'validation-requested');
+ assert.equal((await previous.api.getSupplierHubResult(identity,new AbortController().signal)).quotationId,'123');
+ assert.deepEqual(previous.sent.map(message=>message.type),['PING','PING','RESULT','RESULT']);
 });
 test('registration evidence stays bound to quotation ID and a bounded visible page',()=>{
  const api=harness().api;
@@ -120,7 +155,7 @@ test('old extension without company binding cannot prepare a new handoff',async(
 
 test('direct transmission requires the new capability and sends the current reviewed choices once',async()=>{
  const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
- const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',validated:false,registered:false}}));
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,companyMenuRecovery:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',validated:false,registered:false}}));
  await h.api.checkSupplierHubExtension(new AbortController().signal,true);
  assert.equal((await h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,reviewed,new AbortController().signal)).state,'validation-requested');
  assert.equal(h.sent[1].type,'TRANSMIT');assert.equal(h.sent[1].payload.productId,identity.productId);assert.equal(h.sent[1].payload.reviewedAgreements,reviewed);
@@ -184,13 +219,13 @@ test('live refresh uses the current identity rather than only previously stored 
 test('app registration lookup needs its capability and returns only matching refreshed rows',async()=>{
  const record={...identity,origin:'https://sourceflow.jjwwhhjj1116.workers.dev',filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-complete',quotationId:'123',observedAt:Date.now(),registered:false,includedOptions:3,
   registration:{quotationId:'123',scope:'visible-page',observedAt:Date.now(),registered:false,includedOptions:3,rows:[]}};
- const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true,registrationPages:true}:{ok:true,fingerprint:identity.fingerprint,record,registered:false}));
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true,registrationPages:true,companyMenuRecovery:true}:{ok:true,fingerprint:identity.fingerprint,record,registered:false}));
  assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal,'registration')).registration.quotationId,'123');
  assert.deepEqual(h.sent.map(message=>message.type),['PING','REGISTRATION']);assert.deepEqual(h.sent[1].payload,identity);
  const old=harness((m,emit)=>emit(m,{ok:true,companyBinding:true,directTransmission:true}));
  await assert.rejects(old.api.getSupplierHubResult(identity,new AbortController().signal,'registration'),/0.2.26/);assert.equal(old.sent.length,1);
  for(const patch of [{registration:undefined},{registration:{...record.registration,quotationId:'other'}},{registration:{...record.registration,includedOptions:2}},{state:'validation-pending'}]){
-  const bad=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true,registrationPages:true}:{ok:true,fingerprint:identity.fingerprint,record:{...record,...patch},registered:false}));
+  const bad=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,registrationLookup:true,registrationPages:true,companyMenuRecovery:true}:{ok:true,fingerprint:identity.fingerprint,record:{...record,...patch},registered:false}));
   await assert.rejects(bad.api.getSupplierHubResult(identity,new AbortController().signal,'registration'));assert.equal(bad.sent.length,2);
  }
 });

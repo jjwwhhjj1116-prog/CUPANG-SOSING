@@ -57,10 +57,28 @@ export function attachToSupplierHub(payload,checkOnly=false) {
   if(required&&legalArea().input.checked)legalTarget();
   if(checkOnly===true)return {state:'ready',registered:false};
   document.documentElement.dataset.yoofamAttachmentAttempt='started';
-  const dispatch=()=>{try{
+  const dispatch=(reopenCompany=true)=>{try{
     if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration'||document.documentElement.dataset.yoofamAttachmentAttempt!=='started')throw Error('첨부 화면이 변경되었습니다.');
     const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
+    // Selecting required documents can close the company menu. Read its actual
+    // code again before any file event, without treating the visible name as proof.
+    if(!codes.length&&reopenCompany){
+      const menus=Array.from(document.querySelectorAll('button')).filter(button=>button.getClientRects().length&&!button.disabled&&(button.innerText||'').trim()===company.name);
+      if(menus.length!==1)throw Error('첨부 전 회사 메뉴를 확인하지 못했습니다.');
+      menus[0].click();
+      return (async()=>{try{
+        for(let index=0;index<20;index++){
+          if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration'||document.documentElement.dataset.yoofamAttachmentAttempt!=='started')throw Error('첨부 화면이 변경되었습니다.');
+          if(/Company Code:\s*A\d+\b/.test(document.body.innerText||''))return dispatch(false);
+          await new Promise(resolve=>setTimeout(resolve,100));
+        }
+        throw Error('첨부 전 회사코드를 확인하지 못했습니다.');
+      }catch(error){return {state:'partial',dispatched,registered:false,error:String(error?.message||error)};}})();
+    }
     if(codes.length!==1||codes[0]!==company.code)throw Error('첨부 전 회사코드가 변경되었습니다.');
+    // The legal-area/menu waits can outlive a manual upload. Recheck the whole
+    // visible form before the first event, so another file is never replaced.
+    if(Array.from(document.querySelectorAll('input[type="file"]')).some(input=>input.files?.length)||/[^\s<>]+\.(?:xlsx|xls|csv|tsv|jpe?g|png|webp|gif|avif|pdf)\b/i.test(document.body.innerText||''))throw Error('대기 중 다른 파일이 첨부되었습니다. 기존 첨부를 유지하고 중단했습니다.');
     if(required)prepared.find(item=>item.key==='legalDocuments').input=legalTarget();
     for(const {key,input,transfer} of prepared){
       if(!transfer.files.length)continue;

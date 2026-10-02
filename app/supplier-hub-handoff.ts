@@ -30,6 +30,7 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(result.durableAttachmentRecovery!==true)throw new Error('부분 첨부 결과 복원과 중복 전송 방지를 지원하는 Chrome 확장 0.2.30 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(result.imageIntegrityBinding!==true)throw new Error('견적 이미지 내용 확인을 지원하는 Chrome 확장 0.2.31 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(result.serverReceiptReplayProtection!==true)throw new Error('서버 전송 기록 확인을 지원하는 Chrome 확장 0.2.34 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  if(direct&&result.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
 }
 export type SupplierHubRegistrationRow={title:string;submittedAt:string;category:string;barcode:string;sourceQuotation:string;skuId:string;status:string;stage:string};
 export type SupplierHubRegistration={quotationId:string;registered:false;observedAt:number;includedOptions?:number;rows:SupplierHubRegistrationRow[]}&(
@@ -87,6 +88,7 @@ export async function getSupplierHubResult(identity:PackageIdentity,signal:Abort
   if(refresh==='registration'){
     const capability=await exchange('PING',null,signal);
     if(capability.companyBinding!==true||capability.registrationLookup!==true||capability.registrationPages!==true)throw new Error('상품별 등록 조회를 지원하는 Chrome 확장 0.2.26 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+    if(capability.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   }
   const response=await exchange(refresh==='registration'?'REGISTRATION':refresh?'REFRESH':'RESULT',identity,signal);
   if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new SupplierHubResultInvalid('견적서 결과의 식별값이 일치하지 않습니다.');
@@ -140,6 +142,7 @@ export async function resumeSupplierHubValidation(identity:PackageIdentity,revie
     ||!(reviewedAgreements.legalDocumentsNotApplicable===true&&reviewedAgreements.legalDocumentsRequired!==true||reviewedAgreements.legalDocumentsRequired===true&&reviewedAgreements.legalDocumentsNotApplicable===false))throw Error('Supplier Hub 필수 동의와 법적 서류 선택을 확인해주세요.');
   const capability=await exchange('PING',null,signal);
   if(capability.validationResume!==true||capability.latestSourceBinding!==true||capability.serverReceiptReplayProtection!==true)throw Error('첨부 검증 재개를 지원하는 Chrome 확장 0.2.39로 갱신하고 앱 페이지를 새로고침해주세요.');
+  if(capability.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   const response=await exchange('VALIDATE',{...identity,reviewedAgreements},signal);
   const result=response.result as SupplierHubTransmission;
   if(response.fingerprint!==identity.fingerprint||response.registered!==false||!result||result.registered!==false

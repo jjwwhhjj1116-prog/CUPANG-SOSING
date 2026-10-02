@@ -5,13 +5,14 @@ import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
 import {supplierHubStatusReady} from '../extensions/supplier-hub/hub-tab.mjs';
 import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
+import {hubCompanyMenuPage} from './helpers/hub-company-menu.mjs';
 
 const identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const company={code:'A01464742',name:'와이홉'};
 const message={...identity,type:'YOOFAM_REFRESH_REGISTRATION'};
 const sender={frameId:0,url:'http://localhost:3000/',tab:{id:7,windowId:17}};
 function fixture(options={}){
- const calls=[],records=new Map();let companyChecks=0,resultReads=0,sourceChecks=0,searched=false;
+ const calls=[],records=new Map(),pages=new Map();let companyChecks=0,resultReads=0,sourceChecks=0,searched=false;
  const currentCompany=options.company??company;
  const source={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete',...options.source};
  const tabs=[...(options.closedSource?[]:[source]),...(options.tabs||[])];
@@ -30,6 +31,11 @@ function fixture(options={}){
   sourceChecks++;return {ok:true,...message.expected,checkedAt:Date.now(),...((options.sourceChangedAt===sourceChecks||(searched&&options.sourceChangeAfterSearch))?{fingerprint:'b'.repeat(64)}:{})};
  },create:async value=>{calls.push(['create',value]);const tab={id:124,status:'complete',...value,...options.created};tabs.push(tab);return tab;}},scripting:{executeScript:async request=>{
   calls.push([request.func.name,request.target.tabId,request.args]);
+  if(options.companyMenu&&[supplierHubStatusReady,verifySupplierHubCompany].includes(request.func)){
+   const id=request.target.tabId;
+   if(!pages.has(id))pages.set(id,hubCompanyMenuPage({company:id===124&&options.createdCompany?options.createdCompany:currentCompany,path:new URL(tabs.find(tab=>tab.id===id).url).pathname}));
+   return [{result:await pages.get(id).run(request.func,request.args)}];
+  }
   if(request.func===verifySupplierHubCompany)return [{result:{code:options.companyCodes?.[companyChecks++]??currentCompany.code}}];
   if(request.func===supplierHubStatusReady)return [{result:true}];
   if(request.func===searchSupplierHubRegistration){searched=true;await options.onSearch?.();return [{result:{state:'search-complete',quotationId:'quote-123',registered:false,...options.search}}];}
@@ -37,7 +43,7 @@ function fixture(options={}){
   throw Error('unexpected script');
  }}};
  const store=async(action,key,value)=>{calls.push(['store',action,key]);if(action==='claim'){if(options.concurrent)records.set(key,{...value,...options.concurrent});if(records.has(key))return false;records.set(key,value);return true;}if(action==='put')records.set(key,value);return records.get(key);};
- return {calls,records,key,tabs,run:(who=sender,patch={})=>refreshSupplierHubRegistration({...message,...patch},who,api,store)};
+ return {calls,records,key,tabs,pages,run:(who=sender,patch={})=>refreshSupplierHubRegistration({...message,...patch},who,api,store)};
 }
 test('app searches the saved exact quotation ID in an inactive tab in its existing Chrome window and reuses it',async()=>{
  const h=fixture();const first=await h.run();
@@ -49,6 +55,21 @@ test('app searches the saved exact quotation ID in an inactive tab in its existi
  assert.equal(h.records.get('attempt:123').purpose,undefined);assert.equal(h.records.get('attempt:124').purpose,'registration-status');
  await h.run();assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(h.calls.filter(([name])=>name==='searchSupplierHubRegistration').length,2);
 });
+test('fresh SKU lookup tabs open and verify collapsed company menus before the exact-ID search',async()=>{
+ for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}]){
+  const h=fixture({companyMenu:true,company:currentCompany}),record=await h.run();
+  assert.equal(record.registration.quotationId,'quote-123');assert.equal(record.company.code,currentCompany.code);assert.equal(record.registration.rows[0].skuId,'sku');
+  assert.equal(h.pages.get(124).clicks,1);
+  const ready=h.calls.findIndex(([name,id])=>name==='supplierHubStatusReady'&&id===124);
+  const verified=h.calls.findIndex(([name,id],index)=>index>ready&&name==='verifySupplierHubCompany'&&id===124);
+  const searched=h.calls.findIndex(([name,id])=>name==='searchSupplierHubRegistration'&&id===124);
+  assert.ok(ready>=0&&verified>ready&&searched>verified);
+  assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+ }
+ const wrong=fixture({companyMenu:true,createdCompany:{name:company.name,code:'A01526306'}});
+ await assert.rejects(wrong.run(),/회사코드/);assert.equal(wrong.calls.some(([name])=>name==='searchSupplierHubRegistration'),false);assert.equal(wrong.records.get(wrong.key).registration,undefined);
+});
+
 test('untrusted requests and non-complete, mismatched or unbounded validation never create or search a tab',async()=>{
  for(const who of [{...sender,frameId:1},{...sender,url:'https://evil.test/'},{...sender,tab:{id:7,windowId:-1}}]){const h=fixture();await assert.rejects(h.run(who));assert.equal(h.calls.length,0);}
  for(const saved of [{state:'validation-pending'},{productId:'other'},{categoryId:'999'},{filename:'other.xlsx'},{quotationId:''},{quotationId:' quote-123'},{quotationId:'x'.repeat(201)},{includedOptions:0},{registered:true}]){

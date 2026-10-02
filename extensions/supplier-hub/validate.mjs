@@ -77,11 +77,26 @@ export function requestSupplierHubValidation(reviewedAgreements = {}, waitForBut
   }
   for(const args of definitions){const input=agreement(...args);if(!input.checked)input.click();}
   if(definitions.some(args=>!agreement(...args).checked))throw Error('동의 선택이 화면에 반영되지 않았습니다. Supplier Hub에서 확인해주세요.');
-  const clickOnce=()=>{
+  const clickOnce=(reopenCompany=true)=>{
     if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration'
       ||data.yoofamAttachmentAttempt!==attemptMarker)throw Error('첨부 화면이 변경되었거나 검증을 이미 요청했습니다.');
     const current=document.body.innerText||'';
     const codes=Array.from(current.matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
+    // Reviewed radios and agreement clicks close the observed company menu.
+    // Reopen it once, then repeat every pre-click check against the visible code.
+    if(!codes.length&&reopenCompany){
+      const menus=Array.from(document.querySelectorAll('button')).filter(button=>button.getClientRects().length&&!button.disabled&&(button.innerText||'').trim()===attempt.company.name);
+      if(menus.length!==1)throw Error('검증 요청 전 회사 메뉴를 확인하지 못했습니다.');
+      menus[0].click();
+      return (async()=>{
+        for(let index=0;index<20;index++){
+          if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration'||data.yoofamAttachmentAttempt!==attemptMarker)throw Error('검증 요청 전 첨부 화면이 변경되었습니다.');
+          if(/Company Code:\s*A\d+\b/.test(document.body.innerText||''))return clickOnce(false);
+          await new Promise(resolve=>setTimeout(resolve,100));
+        }
+        throw Error('검증 요청 전 회사코드를 확인하지 못했습니다.');
+      })();
+    }
     if(codes.length!==1||codes[0]!==attempt.company.code||attempt.files.some(name=>!current.split(/[\s<>"'(),;]+/).includes(name)))throw Error('검증 요청 전 회사와 첨부 파일을 확인하지 못했습니다.');
     if(definitions.some(args=>!agreement(...args).checked)||(reviewedAgreements.legalDocumentsNotApplicable===true&&!legalChoice().checked))throw Error('필수 선택값이 변경되었습니다.');
     if(reviewedAgreements.legalDocumentsRequired===true)requiredLegalChoice();
