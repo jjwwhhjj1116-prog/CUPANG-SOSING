@@ -3,13 +3,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {validateAppHubRequest,isHubRegistrationTab} from '../extensions/supplier-hub/app-request.mjs';
+import {isStoredReceiptResult,resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
+import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-registration.mjs';
+import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
+import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
+import {supplierHubStatusReady} from '../extensions/supplier-hub/hub-tab.mjs';
+import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
+import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/observe.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
 
 async function appObservation(changes={}){
  const identity={company:{code:'A01464742',name:'와이홉'},origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64),includedOptions:3};
  const tabs=[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration'},...(changes.extraTab?[{id:124,windowId:17,url:'https://supplier.coupang.com/qvt/registration'}]:[])];
  const reads=[],puts=[],scripts=[];let gets=0;
- const context=vm.createContext({Date,URL,validateAppHubRequest,isHubRegistrationTab,verifySupplierHubCompany(){},readSupplierHubValidation(){},resultKey:()=> 'result:key',
+ const context=vm.createContext({Date,URL,validateAppHubRequest,isHubRegistrationTab,isStoredReceiptResult,verifySupplierHubCompany(){},readSupplierHubValidation(){},resultKey:()=> 'result:key',
    transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key.startsWith('attempt:')?{...identity,...changes.identity}:null;},
    chrome:{tabs:{query:async args=>{reads.push(args);return tabs;},get:async()=>{gets++;return {...tabs[0],...(changes.move&&gets>1?{windowId:18}:{})};}},scripting:{executeScript:async input=>{scripts.push(input);return [{result:input.func===context.verifySupplierHubCompany?{code:'A01464742'}:{filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-pending',registered:false,...changes.result}}];}}}
  });vm.runInContext(source,context);
@@ -32,11 +39,11 @@ test('app refresh cannot read another identity or save a result from a moved tab
 });
 function setup({kind='validation',senderChanges={},tabChanges={},resultChanges={},onExecute,missing=false,savedChanges={},identityChanges={},companyCodes,legacy=false}={}){
  const identity={company:{code:'A01464742',name:'와이홉'},origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64),includedOptions:3,...identityChanges};
- const saved={...identity,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-1',state:'validation-complete',registered:false,...savedChanges};
+ const saved={...identity,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-1',state:'validation-complete',observedAt:Date.now(),registered:false,...savedChanges};
  const result=kind==='validation'?{...saved,...resultChanges}:{quotationId:'quote-1',scope:'visible-page',rows:[{title:'상품',skuId:'sku-1'}],registered:false,...resultChanges};
  if(legacy)delete identity.company;
  const puts=[],scripts=[];let companyChecks=0;
- const context=vm.createContext({Date,URL,verifySupplierHubCompany(){},openSupplierHubRegistrationStatus:async()=>{},searchSupplierHubRegistration(){},readSupplierHubValidation(){},readSupplierHubRegistration(){},resultKey:()=> 'result:key',
+ const context=vm.createContext({Date,URL,isStoredReceiptResult,verifySupplierHubCompany(){},openSupplierHubRegistrationStatus:async()=>{},searchSupplierHubRegistration(){},readSupplierHubValidation(){},readSupplierHubRegistration(){},resultKey:()=> 'result:key',
   transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key==='attempt:123'?(missing?null:identity):saved;},
   chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com'+(kind==='validation'?'/qvt/registration':'/qvt/wims'),...tabChanges}]},scripting:{executeScript:async input=>{if(input.func===context.verifySupplierHubCompany){const code=companyCodes?.[companyChecks++]??'A01464742';return [{result:{code}}];}scripts.push(input);await onExecute?.();return [{result}];}}}
  });
@@ -104,4 +111,48 @@ test('legacy attempts and company-mismatched validation cannot initiate a regist
   const h=setup({kind:'registration-search',...options});await assert.rejects(h.run(),/회사/);
   assert.equal(h.scripts.length,0);assert.equal(h.puts.length,0);
  }
+});
+
+test('a file-table miss preserves the accepted receipt and its clocks for the next fresh exact-ID SKU lookup',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64),company,includedOptions:1};
+  const filename=`YOOFAM-${identity.fingerprint}.xlsx`,observedAt=Date.now()-10000,quotationId='accepted-quote';
+  const row={title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:filename,skuId:'sku-original',status:'검수중',stage:'확인중'};
+  const accepted={...identity,filename,quotationId,state:'validation-complete',observedAt,registered:false,profileId:'original-profile',registration:{quotationId,scope:'visible-page',observedAt,includedOptions:1,registered:false,rows:[row]}};
+  const key=resultKey(identity),records=new Map([[key,accepted],['attempt:123',identity]]),calls=[];
+  const store=async(action,name,value)=>{calls.push(['store',action,name]);if(action==='put')records.set(name,value);if(action==='claim'){if(records.has(name))return false;records.set(name,value);return true;}return records.get(name);};
+  const tabs=[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete'}],sender={frameId:0,url:identity.origin+'/',tab:{id:7,windowId:17}};
+  const table={getClientRects:()=>[{}],querySelectorAll:selector=>selector==='thead th'?['견적서 명','견적서 등록일','검증 상태','검증 결과','견적서 ID'].map(innerText=>({innerText})):[]};
+  const refresh={innerText:'새로고침',disabled:false,getClientRects:()=>[{}],getAttribute:()=>null,click(){calls.push(['file-refresh']);}};
+  const document={body:{},querySelectorAll:selector=>selector==='table'?[table]:[refresh]};
+  const api={tabs:{query:async()=>tabs,get:async id=>id===7?{id:7,windowId:17,url:identity.origin+'/'}:tabs.find(tab=>tab.id===id),
+   create:async value=>{const tab={id:124,status:'complete',...value};tabs.push(tab);return tab;},sendMessage:async()=>{assert.fail('the exact local accepted receipt and original tab remain available');}},
+   scripting:{executeScript:async({func,args})=>{
+    calls.push(['script',func.name,args]);
+    if(func===verifySupplierHubCompany)return [{result:{code:company.code}}];
+    if(func===readSupplierHubValidation)return [{result:await vm.runInNewContext(`(${func.toString()})(filename)`,{filename,document,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},MutationObserver:class{observe(){}disconnect(){}},setTimeout:callback=>{queueMicrotask(callback);return 1;},clearTimeout(){}})}];
+    if(func===supplierHubStatusReady)return [{result:true}];
+    if(func===searchSupplierHubRegistration){assert.deepEqual(args,[quotationId,true]);return [{result:{state:'search-complete',quotationId,registered:false}}];}
+    if(func===readSupplierHubRegistration){const rows=[{...row,stage:'상품 검수 완료'}];return [{result:{quotationId,scope:'visible-page',registered:false,rows,page:{current:1,hasNext:false,signature:JSON.stringify(rows)}}}];}
+    assert.fail('unexpected script '+func.name);
+   }}};
+  const context=vm.createContext({Date,URL,validateAppHubRequest,isHubRegistrationTab,isStoredReceiptResult,resultKey,transferRecord:store,verifySupplierHubCompany,readSupplierHubValidation,chrome:api});vm.runInContext(source,context);
+  assert.equal((await context.observeSupplierHubResult({...identity,type:'YOOFAM_REFRESH_RESULT',kind:'validation'},sender)).state,'not-found');
+  assert.deepEqual(records.get(key),accepted);assert.equal(calls.some(([name,action])=>name==='store'&&action==='put'),false,'absence is not a fresh acceptance observation');
+  const result=await refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},sender,api,store);
+  assert.equal(result.quotationId,quotationId);assert.equal(result.profileId,'original-profile');assert.equal(result.observedAt,observedAt);
+  assert.equal(result.registration.rows[0].stage,'상품 검수 완료');assert.ok(result.registration.observedAt>observedAt);
+  assert.deepEqual(records.get('attempt:123'),identity);assert.equal(calls.some(([name,func])=>name==='script'&&/attach|Validation$/.test(func)&&func!=='readSupplierHubValidation'),false);
+ }
+});
+
+test('explicit rejection and mismatched prior receipts are never hidden by acceptance preservation',async()=>{
+ for(const state of ['validation-pending','validation-rejected']){const h=setup({resultChanges:{state}});await h.run();assert.equal(h.puts[0].state,state);}
+ const matching=setup({resultChanges:{state:'not-found'}});await matching.run();assert.equal(matching.puts.length,0,'a valid original receipt need not have an optional profile ID');
+ for(const savedChanges of [{fingerprint:'b'.repeat(64)},{productId:'other'},{categoryId:'999'},{company:{code:'A01526306',name:'유앤채'}},{includedOptions:2},{includedOptions:201},{filename:'another.xlsx'},
+  {registered:true},{observedAt:0},{observedAt:Date.now()+61000},{observedAt:Infinity},{quotationId:''},{quotationId:' quote-1'},{quotationId:'x'.repeat(201)},
+  {profileId:''},{profileId:'../other'},{profileId:123},{state:'validation-rejected'},{state:'validation-pending'}]){
+  const h=setup({savedChanges,resultChanges:{state:'not-found',registered:false,filename:`YOOFAM-${'a'.repeat(64)}.xlsx`}});await h.run();assert.equal(h.puts.length,1);assert.equal(h.puts[0].state,'not-found');
+ }
+ const switched=setup({identityChanges:{profileId:'other-profile'},savedChanges:{profileId:'original-profile'},resultChanges:{state:'not-found'}});await switched.run();assert.equal(switched.puts.length,1);
 });

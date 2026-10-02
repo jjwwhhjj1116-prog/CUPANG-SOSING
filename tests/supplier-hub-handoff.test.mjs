@@ -120,9 +120,8 @@ test('new package preparation, direct upload and validation resume require attac
  const previous=harness((message,emit)=>emit(message,message.type==='PING'?legacy:{ok:true,fingerprint:identity.fingerprint,registered:false,attempt:fixture.attempt,record}));
  assert.equal((await previous.api.getSupplierHubSubmission(identity,new AbortController().signal)).attempt.state,'validation-requested');
  assert.equal((await previous.api.getSupplierHubResult(identity,new AbortController().signal)).quotationId,'123');
- assert.equal((await previous.api.getSupplierHubResult(identity,new AbortController().signal,true)).quotationId,'123');
  assert.equal((await previous.api.getSupplierHubResult(identity,new AbortController().signal,'registration')).registration.quotationId,'123');
- assert.deepEqual(previous.sent.map(message=>message.type),['PING','RESULT','RESULT','REFRESH','PING','REGISTRATION']);
+ assert.deepEqual(previous.sent.map(message=>message.type),['PING','RESULT','RESULT','PING','REGISTRATION']);
 });
 test('registration evidence stays bound to quotation ID and a bounded visible page',()=>{
  const api=harness().api;
@@ -244,8 +243,17 @@ test('direct transmission rejects unrelated acknowledgements and never retries a
 
 test('live refresh uses the current identity rather than only previously stored validation',async()=>{
  const record={...identity,origin:'https://sourceflow.jjwwhhjj1116.workers.dev',filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-pending',observedAt:Date.now(),registered:false};
- const h=harness((m,emit)=>emit(m,{ok:true,fingerprint:identity.fingerprint,registered:false,record}));
- assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal,true)).state,'validation-pending');assert.equal(h.sent[0].type,'REFRESH');assert.equal(h.sent[0].payload.fingerprint,identity.fingerprint);
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,acceptedReceiptRefreshRecovery:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,record}));
+ assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal,true)).state,'validation-pending');assert.deepEqual(h.sent.map(message=>message.type),['PING','REFRESH']);assert.equal(h.sent[1].payload.fingerprint,identity.fingerprint);
+});
+
+test('file refresh requires accepted receipt preservation before consulting Hub while cached records remain readable',async()=>{
+ for(const acceptedReceiptRefreshRecovery of [undefined,false,'true']){
+  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,version:'0.2.41',acceptedReceiptRefreshRecovery}:{ok:true,fingerprint:identity.fingerprint,registered:false,record:savedFixture().record}));
+  await assert.rejects(h.api.getSupplierHubResult(identity,new AbortController().signal,true),/0\.2\.42/);
+  assert.deepEqual(h.sent.map(message=>message.type),['PING']);assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+  assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal)).quotationId,'123');assert.equal(h.sent[1].type,'RESULT');
+ }
 });
 
 test('app registration lookup needs its capability and returns only matching refreshed rows',async()=>{

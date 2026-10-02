@@ -47,6 +47,10 @@ function OptionsEditor({ product, onSaved, pricingView = false, imageView = fals
   },[loading,pricingView,focusedOptionId]);
   const calculations = useMemo(() => saved ? calculateOptionPrices(rows, saved.pricing.policy) : [], [rows, saved]);
   const dirty = saved !== null && JSON.stringify(rows) !== JSON.stringify(optionInputs(saved.options));
+  const imageDirty = rows.some(row => saved?.options.rows.some(option => option.id === row.id && option.imageKey !== row.imageKey));
+  const otherDirty = saved !== null && JSON.stringify(rows.map(row=>({...row,imageKey:null}))) !== JSON.stringify(optionInputs(saved.options).map(row=>({...row,imageKey:null})));
+  // Route to the stage that can save each draft, even when its editor is hidden.
+  const sourceMarkers = <><span hidden data-quotation-source-step="가격" data-workspace-dirty={otherDirty}/><span hidden data-quotation-source-step="대표 이미지" data-workspace-dirty={imageDirty}/></>;
   const changedElsewhere = Boolean(product.updated_at && (!snapshotVersion || Date.parse(product.updated_at) > Date.parse(snapshotVersion)));
   useEffect(() => {
     if (!changedElsewhere || busy || loading || activeRequest.current) return;
@@ -106,9 +110,9 @@ function OptionsEditor({ product, onSaved, pricingView = false, imageView = fals
     const existing = rows.filter(row => saved?.options.rows.some(option => option.id === row.id));
     const activeId = imageOptionId || existing[0]?.id;
     const active = existing.find(row => row.id === activeId);
-    const imageDirty = existing.some(row => row.imageKey !== saved?.options.rows.find(option => option.id === row.id)?.imageKey);
     const fileUrl = (key: string) => '/api/files/' + key.split('/').map(encodeURIComponent).join('/');
     return <div ref={editorRoot} className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+      {sourceMarkers}
       <h3>옵션별 대표 이미지</h3>
       {loading && <p role="status">옵션 이미지를 불러오는 중입니다.</p>}
       {error && <p role="alert">{error}</p>}
@@ -135,6 +139,7 @@ function OptionsEditor({ product, onSaved, pricingView = false, imageView = fals
   }
 
   return <div ref={editorRoot} className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+    {sourceMarkers}
     <div className="panel-note"><div><strong>옵션·SKU별 견적 구성</strong><p>옵션 원가와 판매 단위당 구성 수량으로 각각 계산합니다. 상품의 대표 원가는 별도로 유지됩니다. 원문·한국어 이름을 수정해 저장할 수 있으며 자동 수집·번역이 실행되는 화면은 아닙니다. 공급자 재고는 수집 시점 또는 직접 입력한 값이며 실시간 재고가 아닙니다. 구성 수량·최소 주문 수량·견적 수량과는 별개입니다. 포장 무게(g)와 포장 치수(mm)는 실제 배송할 포장 상태를 입력하면 견적서 물류 정보에 자동 반영됩니다.</p></div></div>
     {loading && <p role="status">저장한 옵션과 가격 설정을 불러오는 중입니다.</p>}
     {error && <div role="alert" className="panel-note"><div><strong>{error}</strong>{conflict && <p>입력 내용을 보관한 후 최신 상품·가격·옵션을 확인해주세요.</p>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>{saved ? '입력 버리고 저장본 불러오기' : '다시 불러오기'}</button></div></div>}

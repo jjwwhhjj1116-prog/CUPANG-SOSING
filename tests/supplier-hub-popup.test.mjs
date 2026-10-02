@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {isStoredReceiptResult} from '../extensions/supplier-hub/handoff-store.mjs';
 const observation=fs.readFileSync(new URL('../extensions/supplier-hub/observe.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/popup.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
 async function popup(outcome,action='#attach'){
@@ -23,7 +24,7 @@ async function refreshValidation(previousChanges={},resultChanges={}){
  const registration={quotationId:'quotation-123',scope:'visible-page',registered:false,observedAt:1234,rows:[{title:'상품',skuId:'SKU1',status:'상품 검수중'}]};
  const previous={...identity,...result,state:'validation-complete',quotationId:'quotation-123',observedAt:1200,registration,...previousChanges};
  const nodes=new Map(),puts=[];
- const context=vm.createContext({Date,URL,Uint8Array,atob,verifySupplierHubCompany(){},pendingPackage:async()=>null,
+ const context=vm.createContext({Date,URL,Uint8Array,atob,isStoredReceiptResult,verifySupplierHubCompany(){},pendingPackage:async()=>null,
   transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key==='attempt:123'?identity:previous;},resultKey:()=> 'result:key',
   readSupplierHubValidation(){},document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{disabled:false,addEventListener(event,handler){this[event]=handler;}});return nodes.get(selector);}},
   chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration'}]},scripting:{executeScript:async input=>[{result:input.func===context.verifySupplierHubCompany?{code:identity.company.code}:result}]}}});

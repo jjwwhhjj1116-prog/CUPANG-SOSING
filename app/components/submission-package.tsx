@@ -33,7 +33,9 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
   const [resumableFingerprint,setResumableFingerprint]=useState('');
   const transferAttempted=Boolean(preview&&preview.fingerprint===attemptedFingerprint);
   const submissionChecked=Boolean(preview&&preview.fingerprint===checkedFingerprint);
-  const skuReceiptConfirmed=supplierHubRegistrationEvidence(hubResult).allSkus;
+  const registrationEvidence=supplierHubRegistrationEvidence(hubResult);
+  const skuReceiptConfirmed=registrationEvidence.allSkus;
+  const rejectedSubmission=hubResult?.state==='validation-rejected'||registrationEvidence.rejected;
   const requiresDocuments=preview?.report.legalDocuments?.applicability==='required';
   const canResumeValidation=Boolean(transferAttempted&&submissionChecked&&preview?.fingerprint===resumableFingerprint&&(!hubResult||hubResult.state==='not-found'));
   const active=useRef<AbortController|null>(null);
@@ -230,7 +232,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
   }
   return <section className="panel-stack" aria-label="견적서와 첨부 파일 준비" aria-busy={busy}>
-    <LegalDocumentsEditor productId={productId} disabled={busy||transferAttempted} onSaved={()=>{setPreview(null);setCheckedFingerprint('');setHubResult(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});setMessage('서류를 저장했습니다. 견적서와 첨부 파일을 다시 준비해주세요.');}}/>
+    <LegalDocumentsEditor productId={productId} disabled={busy||transferAttempted&&!rejectedSubmission} onSaved={()=>{setPreview(null);setCheckedFingerprint('');setHubResult(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});setMessage('서류를 저장했습니다. 견적서와 첨부 파일을 다시 준비해주세요.');}}/>
     <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('preview')}>{tracking?'등록 결과 확인 중…':busy?'견적서 준비 중…':'견적서 + 첨부 파일 준비'}</button>
     {tracking&&<button type="button" className="btn ghost" onClick={pauseTracking}>결과 확인 일시정지</button>}
     {error&&<p role="alert">{error}</p>}{receiptError&&<p role="alert">{receiptError}</p>}{message&&<p role="status">{message}</p>}
@@ -270,7 +272,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         {hubResult.registration.scope==='visible-page'?<small>현재 페이지의 결과입니다. 다른 페이지의 옵션은 아직 대조되지 않았습니다.</small>:
           <small>{hubResult.registration.hasMore===true?'다음 페이지가 남아 있습니다. 결과를 계속 확인해주세요.':hubResult.registration.hasMore===null?'추가 페이지 유무를 확인하지 못했습니다. Supplier Hub 결과 표를 확인해주세요.':'마지막 페이지까지 조회했습니다.'} 상품 검수 완료 여부는 각 행의 상태를 확인하세요.</small>}
       </div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.41.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.41)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.42.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.42)</a>
     </>}
   </section>;
 }

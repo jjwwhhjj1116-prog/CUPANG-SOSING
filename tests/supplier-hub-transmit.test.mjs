@@ -13,7 +13,7 @@ import {prepareAttachments} from '../extensions/supplier-hub/package.mjs';
 import {verifyAppQuotationSource} from '../extensions/supplier-hub/source-check.mjs';
 import {claimSupplierHubTransmissionWindow} from '../extensions/supplier-hub/transmission-window.mjs';
 import {validateAppHubRequest,isHubRegistrationTab} from '../extensions/supplier-hub/app-request.mjs';
-import {resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
+import {resultKey,isStoredReceiptResult} from '../extensions/supplier-hub/handoff-store.mjs';
 import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
 import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-registration.mjs';
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
@@ -97,7 +97,7 @@ function popup(h){
 
 function observe(h){
  const source=fs.readFileSync(new URL('../extensions/supplier-hub/observe.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
- const context=vm.createContext({Date,URL,validateAppHubRequest,isHubRegistrationTab,verifySupplierHubCompany,readSupplierHubValidation,resultKey,transferRecord:h.store,chrome:h.api});
+ const context=vm.createContext({Date,URL,validateAppHubRequest,isHubRegistrationTab,verifySupplierHubCompany,readSupplierHubValidation,resultKey,isStoredReceiptResult,transferRecord:h.store,chrome:h.api});
  vm.runInContext(source,context);
  return ()=>context.observeSupplierHubResult({...identity,type:'YOOFAM_REFRESH_RESULT',kind:'validation'},sender);
 }

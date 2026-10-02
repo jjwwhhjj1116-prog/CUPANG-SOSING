@@ -111,6 +111,51 @@ test('required evidence rejects changed bytes and exemption choice before any Ch
   h.objects.set(key,changed);assert.equal((await h.route(f.base+'/quotation',{method:'POST',body:{action:'preview'}})).status,409);
  }finally{h.close();}
 });
+
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test('registration precheck reports a missing saved original without altering the reviewed draft: '+company.companyCode,async()=>{
+ const f=await setup(company),{h}=f;try{
+  const saved=await json(await f.upload((await json(await f.request('GET'))).revision),201),file=saved.documents.files[0];
+  const ready=await json(await h.route(f.base+'/submission-review'));assert.equal(ready.errorCount,0);
+  const snapshot=JSON.stringify(h.sqlite.prepare('SELECT * FROM product_content').all());
+  h.objects.delete(file.key);
+  const missing=await json(await h.route(f.base+'/submission-review'));
+  assert.equal(missing.errorCount,1);assert.equal(missing.issues.filter(issue=>issue.code==='LEGAL_DOCUMENT_NOT_FOUND').length,1);
+  assert.match(missing.issues.find(issue=>issue.code==='LEGAL_DOCUMENT_NOT_FOUND').message,/시험 인증서\.pdf/);
+  assert.equal(missing.fingerprint,ready.fingerprint);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM product_content').all()),snapshot);
+  const preview=await json(await h.route(f.base+'/quotation',{method:'POST',body:{action:'preview'}}),409);assert.match(preview.error,/서류.*원본/);
+  h.objects.set(file.key,pdf);
+  const restored=await json(await h.route(f.base+'/submission-review'));assert.equal(restored.errorCount,0);assert.equal(restored.fingerprint,ready.fingerprint);
+  assert.deepEqual(Buffer.from(h.objects.get(file.key)),pdf);assert.equal(h.network.some(url=>url.includes('supplier.coupang.com')),false);
+ }finally{h.close();}
+});
+
+test('legal original metadata mismatches and unavailable storage are surfaced without downloading or leaking storage details',async()=>{
+ const f=await setup(),{h}=f;try{
+  const saved=await json(await f.upload((await json(await f.request('GET'))).revision),201),file=saved.documents.files[0],head=h.bindings.FILES.head;
+  for(const changed of [{size:file.byteLength+1},{httpMetadata:{contentType:'text/html'}},{customMetadata:{sha256:'a'.repeat(64),productId:f.product.id}},{customMetadata:{sha256:file.sha256,productId:'another-product'}}]){
+   h.bindings.FILES.head=async key=>{const object=await head(key);return key===file.key?{...object,...changed}:object;};
+   const report=await json(await h.route(f.base+'/submission-review'));assert.equal(report.issues.filter(issue=>issue.code==='LEGAL_DOCUMENT_STORAGE_MISMATCH').length,1);assert.equal(report.errorCount,1);
+  }
+  for(const mode of ['missing-head','private-error']){
+   h.bindings.FILES.head=mode==='missing-head'?undefined:async key=>{if(key===file.key)throw Error('private storage token');return head(key);};
+   const report=await json(await h.route(f.base+'/submission-review'));assert.equal(report.issues.filter(issue=>issue.code==='LEGAL_DOCUMENT_STORAGE_UNAVAILABLE').length,1);
+   assert.doesNotMatch(JSON.stringify(report),/private storage token/);
+  }
+  h.bindings.FILES.head=head;
+  const get=h.bindings.FILES.get;h.bindings.FILES.get=async key=>{if(key===file.key)assert.fail('precheck does not download original bytes');return get(key);};
+  const report=await json(await h.route(f.base+'/submission-review'));assert.equal(report.errorCount,0);assert.deepEqual(Buffer.from(h.objects.get(file.key)),pdf);
+ }finally{h.close();}
+});
+
+test('legal metadata without older verification records stays reviewable and exempt references are not queried',async()=>{
+ const f=await setup(),{h}=f;try{
+  const saved=await json(await f.upload((await json(await f.request('GET'))).revision),201),file=saved.documents.files[0],head=h.bindings.FILES.head;let documentHeads=0;
+  h.bindings.FILES.head=async key=>{if(key===file.key){documentHeads++;return {size:file.byteLength};}return head(key);};
+  const older=await json(await h.route(f.base+'/submission-review'));assert.equal(older.errorCount,0);assert.equal(older.issues.filter(issue=>issue.code==='LEGAL_DOCUMENT_METADATA_UNCONFIRMED').length,1);assert.equal(documentHeads,1);
+  await json(await f.request('PATCH',{expectedRevision:saved.revision,applicability:'not-applicable'}));documentHeads=0;h.objects.delete(file.key);
+  const exempt=await json(await h.route(f.base+'/submission-review'));assert.equal(exempt.errorCount,0);assert.equal(exempt.issues.filter(issue=>issue.code.startsWith('LEGAL_DOCUMENT_')).length,0);assert.equal(documentHeads,0);
+ }finally{h.close();}
+});
 test('required document preflight preserves occupied form and validation rejects wrong section or missing uploaded evidence',async()=>{
  const payload={company:{code:'A01464742',name:'와이홉'},quotation:[{name:'a.xlsx',base64:Buffer.from('PK').toString('base64')}],productImages:[],labelImages:[],legalDocumentsRequired:true,legalDocuments:[{name:'legal-001.pdf',base64:pdf.toString('base64')}]};
  const occupied=page(payload.company,{selected:true,occupied:true});assert.equal(occupied.run(attachToSupplierHub,[payload,true]).state,'occupied');assert.deepEqual(occupied.events,[]);assert.equal(occupied.legalFile.files[0].name,'existing.pdf');

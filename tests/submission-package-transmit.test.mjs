@@ -4,10 +4,15 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import {webcrypto} from 'node:crypto';
+import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
+import {submissionPackageUI} from './helpers/submission-package-ui.mjs';
 const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let index=0;index<8;index++)await new Promise(resolve=>setImmediate(resolve));};
 const fingerprint='a'.repeat(64);
+const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}];
 function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false,legalDocuments,attached=false,resumeStates=[],missedLookup=false,holdRetry=false}={}){
  const slots=[],calls=[],modules=new Map();let cursor=0,sourceChanged=false;
  let clock=0,editNext=false,resumeRetry;
@@ -60,6 +65,79 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
  const button=text=>nodes(render()).find(node=>node.type==='button'&&node.props.children===text);
  return {render,calls,button,resumeRetry(){resumeRetry?.();},remount(){slots.length=0;},changeSource(){sourceChanged=true;},editDuringNextLookup(){editNext=true;},editDuringRecovery(){editRecovery=true;},recover(){recoveryError=false;receiptReadStatus=200;receiptReadNetworkError=false;},failLookup(){lookupError=true;},holdLookup(){holdLookup=true;},resumeLookup(){holdLookup=false;resumeLookup?.();},setResultPatch(value){resultPatch=value;},complete(){validationComplete=true;issued=true;},hideSkus(){issued=false;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
 }
+
+test('rejected files and SKU rows unlock document correction while the original quotation stays blocked from retransmission',async()=>{
+ for(const company of companies)for(const rejectedFile of [true,false]){
+  const result={state:rejectedFile?'validation-rejected':'validation-complete',filename:`YOOFAM-${fingerprint}.xlsx`,company,includedOptions:1,observedAt:Date.now(),registered:false,
+   ...(rejectedFile?{status:'검증 실패',detail:'서류 수정 필요'}:{quotationId:'quote-123',registration:{quotationId:'quote-123',scope:'visible-page',includedOptions:1,observedAt:Date.now(),registered:false,rows:[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:`YOOFAM-${fingerprint}.xlsx`,skuId:'',status:'반려',stage:'서류 확인'}]}})};
+  const h=harness({company,savedSubmission:{attempt:null,result}});
+  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+  assert.equal(nodes(h.render()).find(node=>node.type==='legal-documents').props.disabled,false);
+  assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+  assert.equal(h.button('확장에 첨부 파일 준비').props.disabled,true);
+  assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'),false);
+ }
+});
+
+test('pending, accepted and uncertain transmissions keep document correction locked',async()=>{
+ const company=companies[0];
+ for(const state of ['validation-pending','validation-complete',null]){
+  const result=state?{state,filename:`YOOFAM-${fingerprint}.xlsx`,company,includedOptions:1,observedAt:Date.now(),registered:false,...(state==='validation-complete'?{quotationId:'quote-123'}:{})}:null;
+  const h=harness({savedSubmission:{attempt:{state:'unconfirmed',company,includedOptions:1,startedAt:Date.now(),registered:false},result}});
+  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+  assert.equal(nodes(h.render()).find(node=>node.type==='legal-documents').props.disabled,true);
+  assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+ }
+});
+
+test('document rejection correction creates a newly reviewed fingerprint without replacing the old receipt or manual values',async()=>{
+ const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
+ for(const company of companies)for(const rejectedFile of [true,false]){
+  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});
+  try{
+   const fields=['skuId','categoryId',...h.load('app/quotation-schema.ts').getQuotationSchema('80719').fields.map(field=>field.id)];
+   const workbook=quotationWorkbook(fields),sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
+   const storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,workbook);
+   const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'반려 수정 합성 시험',categoryId:'80719',categoryPath:h.context.category.categoryPath,
+    template:{name:'synthetic.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
+   h.context.category=profile;h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');await h.intake();
+   const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+   const content=(await json(await h.route(base+'/content'))).content,images=h.sqlite.prepare('SELECT object_key FROM collection_images ORDER BY image_index').all().map(row=>row.object_key);
+   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{label:{model:'MANUAL-KEEP',material:'나일론'},assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]}}}}));
+   const view=await json(await h.route(base+'/quotation-fields'));
+   await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
+    {fieldKey:'handlingReason',optionId:null,value:'해당사항없음'},{fieldKey:'packagedWeightG',optionId:null,value:'420'},{fieldKey:'packagedDimensionsMm',optionId:null,value:'100*200*300'},{fieldKey:'storageMaterial',optionId:null,value:''},
+   ]}}));
+   const documents=h.load('app/api/products/[id]/legal-documents/route.ts'),context={params:Promise.resolve({id:product.id})};
+   const upload=async revision=>{const body=new FormData();body.set('expectedRevision',String(revision));body.set('file',new File([`%PDF-1.7\n% synthetic revision ${revision}\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n`],'증빙.pdf'));return json(await documents.POST(new Request('https://app.test'+base+'/legal-documents',{method:'POST',body}),context),201);};
+   const original=await upload((await json(await h.route(base+'/legal-documents'))).revision);
+   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));assert.equal(preview.submissionReview.errorCount,0);
+   const result={state:rejectedFile?'validation-rejected':'validation-complete',filename:preview.filename,company,includedOptions:preview.report.rowCount,observedAt:Date.now(),registered:false,
+    ...(rejectedFile?{detail:'증빙 수정 필요'}:{quotationId:'old-quote',registration:{quotationId:'old-quote',scope:'queried-pages',pagesRead:1,hasMore:false,includedOptions:preview.report.rowCount,observedAt:Date.now(),registered:false,
+     rows:preview.rows.map((_,index)=>({title:'검토 상품 '+index,submittedAt:'2026-10-01',category:'합성 폼 시험',barcode:'',sourceQuotation:preview.filename,skuId:'',status:'반려',stage:'서류 확인'}))}})};
+   await json(await h.route(base+'/supplier-hub-receipt',{method:'POST',body:{profileId:'cat',categoryId:'80719',fingerprint:preview.fingerprint,result}}));
+   const priorReceipt=h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts').get().payload;
+   const beforeContent=(await json(await h.route(base+'/content'))).content,beforeOptions=h.sqlite.prepare('SELECT * FROM product_options ORDER BY product_id').all(),beforeOverrides=h.sqlite.prepare('SELECT * FROM product_quotation_fields').all();
+   const ui=submissionPackageUI({route:h.route,productId:product.id});await ui.click('견적서 + 첨부 파일 준비');
+   const editor=nodes(ui.render()).find(node=>node.type==='legal-documents');assert.equal(editor.props.disabled,false);
+   assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+   const replacement=await upload(original.revision);
+   await json(await h.route(base+'/legal-documents',{method:'PATCH',body:{expectedRevision:replacement.revision,removeKey:original.documents.files[0].key}}));editor.props.onSaved();
+   assert.equal(ui.button('등록 전송'),undefined);await ui.click('견적서 + 첨부 파일 준비');
+   assert.equal(ui.button('등록 전송').props.disabled,true,'the corrected quotation needs fresh manual agreements');ui.choose();assert.equal(ui.button('등록 전송').props.disabled,false);
+   const corrected=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));assert.notEqual(corrected.fingerprint,preview.fingerprint);assert.deepEqual(corrected.rows,preview.rows);
+   assert.equal((await json(await h.route(base+'/supplier-hub-receipt?fingerprint='+corrected.fingerprint))).receipt,null);
+   await ui.click('등록 전송');assert.deepEqual(ui.alerts(),[]);
+   const delivered=ui.calls.filter(call=>call.action==='transmit');assert.equal(delivered.length,1);assert.equal(delivered[0].files.quotation[0].name,corrected.filename);assert.equal(delivered[0].files.legalDocuments.length,1);
+   const newFile=replacement.documents.files.at(-1);assert.deepEqual(Buffer.from(delivered[0].files.legalDocuments[0].base64,'base64'),Buffer.from(h.objects.get(newFile.key)));
+   assert.equal(h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts WHERE fingerprint=?').get(preview.fingerprint).payload,priorReceipt);
+   const afterContent=(await json(await h.route(base+'/content'))).content;for(const key of ['label','seo','assets'])assert.deepEqual(afterContent[key],beforeContent[key]);
+   assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_options ORDER BY product_id').all(),beforeOptions);assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields').all(),beforeOverrides);
+   assert.ok(h.objects.has(original.documents.files[0].key),'old evidence bytes stay available');
+   ui.remount();await ui.click('견적서 + 첨부 파일 준비');assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);assert.equal(ui.calls.filter(call=>call.action==='transmit').length,1);
+  }finally{h.close();}
+ }
+});
 
 test('transmission UI survives a lost lookup reply and reaches fresh SKU results with only one upload',async()=>{
  for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){

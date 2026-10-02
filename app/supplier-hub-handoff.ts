@@ -90,6 +90,9 @@ export async function getSupplierHubResult(identity:PackageIdentity,signal:Abort
     const capability=await exchange('PING',null,signal);
     if(capability.companyBinding!==true||capability.registrationLookup!==true||capability.registrationPages!==true)throw new Error('상품별 등록 조회를 지원하는 Chrome 확장 0.2.26 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
     if(capability.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  }else if(refresh){
+    const capability=await exchange('PING',null,signal);
+    if(capability.acceptedReceiptRefreshRecovery!==true)throw new Error('확인한 견적서 기록을 보존하는 Chrome 확장 0.2.42 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   }
   const response=await exchange(refresh==='registration'?'REGISTRATION':refresh?'REFRESH':'RESULT',identity,signal);
   if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new SupplierHubResultInvalid('견적서 결과의 식별값이 일치하지 않습니다.');

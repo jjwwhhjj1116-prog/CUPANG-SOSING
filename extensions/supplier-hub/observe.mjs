@@ -1,6 +1,6 @@
 import {searchSupplierHubRegistration} from './registration-search.mjs';
 import {openSupplierHubRegistrationStatus} from './registration-navigation.mjs';
-import {transferRecord,resultKey} from './handoff-store.mjs';
+import {transferRecord,resultKey,isStoredReceiptResult} from './handoff-store.mjs';
 import {readSupplierHubValidation} from './result.mjs';
 import {readSupplierHubRegistration} from './registration-result.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
@@ -93,6 +93,13 @@ export async function observeSupplierHubResult(message,sender){
           throw Error('조회 중 전송한 견적서가 변경되었습니다. 결과를 저장하지 않았습니다.');
       }
       const key=resultKey(identity),previous=await transferRecord('get',key);
+      // A row missing from the current file table does not revoke its accepted
+      // quotation ID. Keep the exact receipt and its old observation times so
+      // the separate SKU lookup can still query that ID without another upload.
+      if(result.state==='not-found'&&previous?.state==='validation-complete'&&isStoredReceiptResult(identity,previous)
+        &&previous.company.code===identity.company.code&&previous.company.name===identity.company.name&&previous.includedOptions===identity.includedOptions
+        &&(previous.profileId===undefined||typeof previous.profileId==='string'&&/^\w[\w-]{0,99}$/.test(previous.profileId))
+        &&(identity.profileId===undefined||previous.profileId===identity.profileId))return result;
       // Refreshing file validation does not refresh or erase a matching SKU observation.
       // A different quotation or a non-complete validation must not inherit old rows.
       const keepRegistration=result.state==='validation-complete'&&previous?.state==='validation-complete'
