@@ -98,9 +98,10 @@ test('content runtime listener ignores other extensions and expires a hung API r
 test('bridge advertises current-source binding together with direct transmission capability',async()=>{
  const h=content();
  await h.windows[0]({source:h.context.window,origin,data:{channel:'YOOFAM_HUB_HANDOFF',type:'PING',requestId:'a'.repeat(36)}});
- const reply=h.calls.find(([name])=>name==='post');assert.equal(reply[1].result.version,'0.2.43');assert.equal(reply[1].result.serverReceiptRecovery,true);assert.equal(reply[1].result.serverReceiptReplayProtection,true);assert.equal(reply[1].result.publicMobileCapture,true);assert.equal(reply[1].result.latestSourceBinding,true);assert.equal(reply[1].result.directTransmission,true);assert.equal(reply[1].result.savedSubmission,true);assert.equal(reply[1].result.durableAttachmentRecovery,true);assert.equal(reply[1].result.imageIntegrityBinding,true);
+ const reply=h.calls.find(([name])=>name==='post');assert.equal(reply[1].result.version,'0.2.44');assert.equal(reply[1].result.serverReceiptRecovery,true);assert.equal(reply[1].result.serverReceiptReplayProtection,true);assert.equal(reply[1].result.publicMobileCapture,true);assert.equal(reply[1].result.latestSourceBinding,true);assert.equal(reply[1].result.directTransmission,true);assert.equal(reply[1].result.savedSubmission,true);assert.equal(reply[1].result.durableAttachmentRecovery,true);assert.equal(reply[1].result.imageIntegrityBinding,true);
  assert.equal(reply[1].result.legalDocumentAttachments,true);
  assert.equal(reply[1].result.validationResume,true);assert.equal(reply[1].result.companyMenuRecovery,true);assert.equal(reply[1].result.attachmentLifecycleRecovery,true);assert.equal(reply[1].result.acceptedReceiptRefreshRecovery,true);
+ assert.equal(reply[1].result.resultTableRefreshObservation,true);
  const manifest=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
  assert.equal(reply[1].result.version,manifest.version);
  for(const file of ['intake-queue-panel.tsx','submission-package.tsx','supplier-hub-category-browser.tsx']){

@@ -167,7 +167,7 @@ function panelHarness({ productVersion = version, optionVersion = version, secti
       if (path.endsWith('/attachments')) { attached.push(JSON.parse(init.body)); return failFirst && attached.length === 1 ? Response.json({ error: '일시적인 저장 오류' }, { status: 503 }) : Response.json({ productVersion: nextVersion }); }
       if (path.endsWith('/options')) return Response.json({ options, productVersion: optionVersion });
       if (path.endsWith('/content')) return Response.json({ content: contentModel.applyContentPatch(empty(), { label: { productName: '저장한 상품명', material: '면' } }, version) });
-      return Response.json({ product: { updated_at: productVersion } });
+      return Response.json({ product: { id: 'test', updated_at: productVersion, image_keys: '["owner/original.png"]' } });
     },
   });
   const render = () => { hook = 0; const wrapper = api.DocumentImagePanel({ productId: 'test', version: productVersion, section }); return wrapper.type(wrapper.props); };

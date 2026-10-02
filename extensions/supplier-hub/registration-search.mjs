@@ -41,7 +41,10 @@ export async function searchSupplierHubRegistration(quotationId,waitForResult=fa
     if(changed&&tables().length===1&&searches.length===1&&!searches[0].disabled&&searches[0].getAttribute('aria-disabled')!=='true'){cleanup();resolve();}
    };
    const observer=new MutationObserver(records=>{
-    if(records.some(record=>record.type!=='attributes'&&(observed.contains(record.target)||tables().some(table=>table.contains(record.target))||Array.from(record.addedNodes||[]).some(node=>node===observed||node.contains?.(observed)||node.querySelector?.('table'))))){
+    // Match the current result table itself or its wrapper when it is replaced.
+    // An unrelated table must not turn unchanged SKU rows into fresh results.
+    const current=tables();
+    if(records.some(record=>record.type!=='attributes'&&(observed.contains(record.target)||current.some(table=>table.contains(record.target))||Array.from(record.addedNodes||[]).some(node=>current.some(table=>node===table||node.contains?.(table)))))){
      changed=true;clearTimeout(timer);timer=setTimeout(finish,350);
     }else if(changed){clearTimeout(timer);timer=setTimeout(finish,350);}
    });

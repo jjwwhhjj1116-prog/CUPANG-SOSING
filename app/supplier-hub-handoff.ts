@@ -90,6 +90,7 @@ export async function getSupplierHubResult(identity:PackageIdentity,signal:Abort
     const capability=await exchange('PING',null,signal);
     if(capability.companyBinding!==true||capability.registrationLookup!==true||capability.registrationPages!==true)throw new Error('상품별 등록 조회를 지원하는 Chrome 확장 0.2.26 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
     if(capability.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+    if(capability.resultTableRefreshObservation!==true)throw new Error('새 상품별 조회 결과 확인을 지원하는 Chrome 확장 0.2.44 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   }else if(refresh){
     const capability=await exchange('PING',null,signal);
     if(capability.acceptedReceiptRefreshRecovery!==true)throw new Error('확인한 견적서 기록을 보존하는 Chrome 확장 0.2.42 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
