@@ -38,8 +38,7 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
       saved={...saved,profileId:restored.profileId,receiptRecovered:true};
     }
     const tab=status[0]||source[0]||tabs[0];
-    if(!tab)throw Error('앱과 같은 Chrome 창에 로그인한 Supplier Hub 등록 또는 견적서 조회 화면을 열어두세요.');
-    let tabId=tab.id;
+    let tabId=tab?.id;
     const checkSource=()=>saved.receiptRecovered?verifyAppQuotationSource(identity,saved,binding,api):Promise.resolve(true);
     const checkCompany=async(path)=>{
       if(!isSupplierHubTab(await api.tabs.get(tabId),windowId,path))throw Error('Supplier Hub 조회 탭의 창 또는 화면이 변경되었습니다.');
@@ -47,8 +46,19 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
       if(execution?.result?.code!==saved.company?.code)throw Error('견적서 회사와 현재 Supplier Hub 회사코드가 다릅니다.');
       if(!isSupplierHubTab(await api.tabs.get(tabId),windowId,path))throw Error('Supplier Hub 조회 탭의 창 또는 화면이 변경되었습니다.');
     };
-    await checkCompany(new URL(tab.url).pathname);
+    const createStatusTab=async()=>{
+      const fresh=await api.tabs.create({windowId,url:'https://supplier.coupang.com/qvt/wims',active:false});
+      if(!Number.isSafeInteger(fresh?.id)||fresh.id<0||fresh.windowId!==windowId)throw Error('같은 Chrome 창에 견적서 조회 탭을 준비하지 못했습니다.');
+      tabId=fresh.id;
+      await waitForSupplierHubPage(tabId,windowId,'/qvt/wims',supplierHubStatusReady,api);
+      await checkCompany('/qvt/wims');
+    };
+    if(tab)await checkCompany(new URL(tab.url).pathname);
     await checkSource();
+    // With the original tab closed, an authenticated exact receipt and source
+    // suffice to reopen a read-only status page in this same Chrome window.
+    // Its live login/company must still match before claiming or searching.
+    if(!tab)await createStatusTab();
     if(!local){
       if(!await store('claim',key,saved)){
         const concurrent=await store('get',key);
@@ -58,11 +68,7 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
       }
     }
     if(!status.length){
-      const fresh=await api.tabs.create({windowId,url:'https://supplier.coupang.com/qvt/wims',active:false});
-      if(!Number.isSafeInteger(fresh?.id)||fresh.id<0||fresh.windowId!==windowId)throw Error('같은 Chrome 창에 견적서 조회 탭을 준비하지 못했습니다.');
-      tabId=fresh.id;
-      await waitForSupplierHubPage(tabId,windowId,'/qvt/wims',supplierHubStatusReady,api);
-      await checkCompany('/qvt/wims');
+      if(tab)await createStatusTab();
       await store('put',`attempt:${tabId}`,{...identity,company:saved.company,includedOptions:saved.includedOptions,purpose:'registration-status',quotationId:saved.quotationId});
     }
     await checkCompany('/qvt/wims');

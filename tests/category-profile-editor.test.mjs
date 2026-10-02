@@ -10,7 +10,7 @@ const nativeRequire=createRequire(import.meta.url);
 function load(file,dependencies={},cache=new Map()){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   const output=ts.transpileModule(fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
-  vm.runInNewContext(output,{exports,Error,structuredClone,TextEncoder,TextDecoder,FormData,crypto:webcrypto,fetch:dependencies.fetch,require(name){
+  vm.runInNewContext(output,{exports,Error,AbortController,structuredClone,TextEncoder,TextDecoder,FormData,crypto:webcrypto,fetch:dependencies.fetch,require(name){
     if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime')return nativeRequire(name);
     if(name.startsWith('@/'))return load(name.slice(2)+'.ts',dependencies,cache);if(name.startsWith('./'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts',dependencies,cache);throw Error(name);
   }});return exports;
@@ -20,8 +20,8 @@ const profile={id:'profile',revision:1,name:'시험 분류',categoryId:'80719',c
   template:{name:'saved.csv',format:'csv',sha256:'a'.repeat(64),sheetName:'',headerRow:1,headers:['상품명','뚜껑 포함여부','공급가'],storageKey:'owner/category-templates/saved.csv'},
   mappings:[{column:0,field:'constant',required:true,constant:'수동 연결'},{column:2,field:'supplyPrice',required:false}]};
 function nodes(tree){if(Array.isArray(tree))return tree.flatMap(nodes);if(!tree||typeof tree!=='object')return[];return[tree,...nodes(tree.props?.children)];}
-function harness(value=profile,getSaved=async()=>new Response('상품명,뚜껑 포함여부,공급가\n'),saveRequest){
-  const states=[],refs=[],effects=[],saved=[];let index=0,refIndex=0,first=true;const hooks={
+function harness(value=profile,getSaved=async()=>new Response('상품명,뚜껑 포함여부,공급가\n'),saveRequest,onSave=()=>{}){
+  const states=[],refs=[],effects=[],cleanups=[],saved=[];let index=0,refIndex=0,first=true;const hooks={
     useState(initial){const slot=index++;if(slot>=states.length)states.push(typeof initial==='function'?initial():initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},
     useRef(initial){const slot=refIndex++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(effect){if(first)effects.push(effect);},
   };
@@ -36,9 +36,9 @@ function harness(value=profile,getSaved=async()=>new Response('상품명,뚜껑 
       if(url==='/api/category-profiles'){if(saveRequest)return saveRequest(options);const body=JSON.parse(options.body);saved.push(body.profile);return Response.json({profile:{...value,...body.profile}});}
       throw Error(url);
     }});
-  const render=()=>{index=0;refIndex=0;const tree=editor.CategoryProfileEditor({value,initialDraft:profile,onSave(){},onClose(){}});first=false;return tree;};render();
+  const render=()=>{index=0;refIndex=0;const tree=editor.CategoryProfileEditor({value,initialDraft:profile,onSave,onClose(){}});first=false;return tree;};render();
   const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node,'Expected editor element');return node;};
-  return{render,find,saved,startEffects:()=>effects.forEach(effect=>effect()),async upload(text){find(node=>node.type==='input'&&node.props.type==='file').props.onChange({target:{files:[new File([text],'replacement.csv',{type:'text/csv'})],value:'chosen'}});for(let i=0;i<200;i++){await new Promise(resolve=>setTimeout(resolve,1));if(!find(node=>node.type==='input'&&node.props.type==='file').props.disabled)return;}throw Error('upload did not complete');},async save(){await render().props.onSubmit({preventDefault(){}});assert.equal(saved.length,1);return saved[0];}};
+  return{render,find,saved,startEffects:()=>effects.splice(0).forEach(effect=>cleanups.push(effect())),close:()=>cleanups.forEach(cleanup=>cleanup?.()),async upload(text){find(node=>node.type==='input'&&node.props.type==='file').props.onChange({target:{files:[new File([text],'replacement.csv',{type:'text/csv'})],value:'chosen'}});for(let i=0;i<200;i++){await new Promise(resolve=>setTimeout(resolve,1));if(!find(node=>node.type==='input'&&node.props.type==='file').props.disabled)return;}throw Error('upload did not complete');},async save(){await render().props.onSubmit({preventDefault(){}});assert.equal(saved.length,1);return saved[0];}};
 }
 
 test('auto-fill preserves existing manual columns while a new template discards stale positions',async()=>{
@@ -144,4 +144,18 @@ test('category editor blocks simultaneous saves before React rerenders and retai
  finish(Response.json({error:'conflict'},{status:409}));await first;
  assert.match(JSON.stringify(h.render()),/conflict/);
  assert.equal(h.find(n=>n.props['aria-label']==='1열 고정값').props.value,'수동 연결');
+});
+
+test('closing a saving category editor prevents its late response from closing a newly opened draft',async()=>{
+ for(const value of [profile,null]){
+  let finish,request;const waiting=new Promise(resolve=>{finish=resolve;});
+  let workspace={categoryOpen:true,addOpen:false,manualValue:'처음 수동 연결'};
+  const h=harness(value,undefined,options=>{request=options;return waiting;},()=>{workspace={categoryOpen:false,addOpen:true,manualValue:null};});
+  h.startEffects();const pending=h.render().props.onSubmit({preventDefault(){}});
+  assert.equal(request.method,value?'PUT':'POST');
+  h.close();workspace={categoryOpen:true,addOpen:false,manualValue:'새 분류에서 직접 입력한 고정값'};
+  finish(Response.json({profile:{...profile,id:value?profile.id:'new-profile',revision:value?2:1}}));await pending;
+  assert.deepEqual(workspace,{categoryOpen:true,addOpen:false,manualValue:'새 분류에서 직접 입력한 고정값'});
+  assert.equal(request.signal.aborted,true);
+ }
 });

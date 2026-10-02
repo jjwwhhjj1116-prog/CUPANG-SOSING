@@ -4,6 +4,7 @@ import {getChatGPTUser} from '@/app/chatgpt-auth';
 import {membersDb,memberColumns,createSession,rateLimit,reviewMember,updateMemberCompany} from '@/db/members';
 import {memberEmail,memberCompany,validPassword,passwordHash,verifyPassword,tokenHash,type WorkspaceMember} from '@/app/workspace-members';
 import {readBoundedJson} from '@/app/request-body';
+import {supplierHubCompany} from '@/app/supplier-hub-company';
 const config=()=>env as {YOOFAM_AUTH_ENABLED?:string;YOOFAM_PASSWORD_PEPPER?:string};
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function GET(){
@@ -48,6 +49,7 @@ export async function POST(request:Request){
  if(user.membership.role!=='admin')return reply({error:'관리자만 승인할 수 있습니다.'},403);
  if(action==='company'){
   const code=memberCompany(body.companyCode),name=memberCompany(body.companyName);
+  if(!supplierHubCompany(code,name))return reply({error:'허용된 Supplier Hub 회사코드와 회사명을 함께 선택해주세요.'},400);
   const id=body.memberId===undefined?user.userId:body.memberId;
   if(typeof id!=='string'||!id||id.length>100)return reply({error:'수정할 계정을 선택해주세요.'},400);
   const target=await db.prepare('SELECT id FROM members WHERE id=?').bind(id).first();
@@ -56,6 +58,10 @@ export async function POST(request:Request){
   return reply({ok:true,reauthenticate:changed&&id===user.userId});
  }
  if(!['approve','reject','suspend'].includes(String(action))||typeof body.memberId!=='string')return reply({error:'처리할 가입 요청을 선택해주세요.'},400);
+ if(action==='approve'){
+  const target=await db.prepare('SELECT company_code AS companyCode,company_name AS companyName FROM members WHERE id=?').bind(body.memberId).first<{companyCode:string;companyName:string}>();
+  if(target&&!supplierHubCompany(target.companyCode,target.companyName))return reply({error:'승인 전에 허용된 Supplier Hub 회사코드와 회사명을 확인해주세요.'},400);
+ }
  const changed=await reviewMember(user.userId,body.memberId,action as 'approve'|'reject'|'suspend');
  return changed?reply({ok:true}):reply({error:'처리 상태를 확인해주세요. 승인 계정은 관리자 포함 최대 2개입니다.'},409);
  }catch{return reply({error:'입력값을 확인하거나 잠시 후 다시 시도해주세요.'},400);}

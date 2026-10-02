@@ -349,7 +349,7 @@ html,body{background:#fff}
 .membership-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .membership-card form { display:grid; gap:16px; max-width:540px; }
 .membership-card label { display:grid; gap:8px; font-size:14px; }
-.membership-card input { border:1px solid var(--line); border-radius:7px; padding:10px; width:100%; }
+.membership-card input,.membership-card select { border:1px solid var(--line); border-radius:7px; padding:10px; width:100%; background:#fff; color:var(--ink); font:inherit; }
 .membership-page button:disabled { cursor:not-allowed; opacity:.5; }
 .settings-margin { min-width:0; margin:0; padding:12px; border:1px solid var(--line); border-radius:8px; }
 .settings-margin legend { padding:0 5px; font-size:13px; font-weight:600; }

@@ -24,6 +24,8 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
   const workbookFiles = useRef<Map<string, Uint8Array> | null>(null);
   const protectedColumns = useRef(new Set<number>());
   const saving = useRef(false);
+  const activeSave = useRef<AbortController | null>(null);
+  useEffect(() => () => { activeSave.current?.abort(); }, []);
   const createRequest = useRef<{ body: string; id: string } | null>(null);
   const schemaFields=getQuotationSchema(draft.categoryId,draft.categoryPath,draft.hubSchema).fields;
   const changeCategory = (categoryId: string) => {
@@ -140,6 +142,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); if (busy || saving.current) return;
     saving.current = true;
+    const controller = new AbortController(); activeSave.current = controller;
     setBusy(true); setError('');
     try {
       const profile = validateCategoryProfile({ ...draft, categoryPath: path.split(/\s*>\s*/).filter(Boolean) });
@@ -155,12 +158,15 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
         if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
         headers['Idempotency-Key'] = createRequest.current.id;
       }
-      const response = await fetch('/api/category-profiles', { method: value ? 'PUT' : 'POST', headers, body });
+      const response = await fetch('/api/category-profiles', { method: value ? 'PUT' : 'POST', headers, body, signal: controller.signal });
       const result = await response.json() as { profile?: CategoryProfile; error?: string };
+      // A closed editor must not navigate away from a newly opened draft, even
+      // if the earlier request has already reached the server.
+      if (controller.signal.aborted) return;
       if (!response.ok || !result.profile) throw new Error(result.error ?? '저장 결과를 확인하지 못했습니다.');
       onSave(result.profile);
-    } catch (error) { setError(error instanceof Error ? error.message : '카테고리 설정을 저장하지 못했습니다.'); }
-    finally { saving.current = false; setBusy(false); }
+    } catch (error) { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : '카테고리 설정을 저장하지 못했습니다.'); }
+    finally { if (activeSave.current === controller) activeSave.current = null; saving.current = false; if (!controller.signal.aborted) setBusy(false); }
   };
   const issues = categoryProfileIssues(draft);
   const templateObservation = supplierTemplateObservation(draft.categoryId);

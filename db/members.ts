@@ -1,5 +1,6 @@
 import {env} from 'cloudflare:workers';
 import {newToken,tokenHash,type WorkspaceMember} from '@/app/workspace-members';
+import {SUPPLIER_HUB_COMPANIES,supplierHubCompany} from '@/app/supplier-hub-company';
 export const memberColumns='id,email,role,status,company_code AS companyCode,company_name AS companyName';
 export function membersDb(){if(!env.DB)throw Error('회원 DB 연결이 필요합니다.');return env.DB;}
 export async function sessionMember(cookie:string|null):Promise<WorkspaceMember|null>{
@@ -20,9 +21,11 @@ export async function rateLimit(key:string,maximum:number){
 }
 export async function reviewMember(actor:string,id:string,action:'approve'|'reject'|'suspend'){
  const db=membersDb(),status={approve:'approved',reject:'rejected',suspend:'suspended'}[action],now=new Date().toISOString();
+ const companyCondition=SUPPLIER_HUB_COMPANIES.map(()=>'(trim(company_code)=? AND trim(company_name)=?)').join(' OR ');
+ const companyValues=SUPPLIER_HUB_COMPANIES.flatMap(company=>[company.code,company.name]);
  // Single conditional UPDATE makes the two-account limit safe under concurrent approvals.
  const results=await db.batch([
- db.prepare(`UPDATE members SET status=?,updated_at=?,reviewed_by=? WHERE id=? AND role='member' AND EXISTS(SELECT 1 FROM members WHERE id=? AND role='admin' AND status='approved') AND ((?='approve' AND status IN ('pending','rejected','suspended') AND trim(company_code)<>'' AND trim(company_name)<>'' AND (SELECT count(*) FROM members WHERE status='approved')<2) OR (?='reject' AND status='pending') OR (?='suspend' AND status='approved'))`).bind(status,now,actor,id,actor,action,action,action),
+ db.prepare(`UPDATE members SET status=?,updated_at=?,reviewed_by=? WHERE id=? AND role='member' AND EXISTS(SELECT 1 FROM members WHERE id=? AND role='admin' AND status='approved') AND ((?='approve' AND status IN ('pending','rejected','suspended') AND (${companyCondition}) AND (SELECT count(*) FROM members WHERE status='approved')<2) OR (?='reject' AND status='pending') OR (?='suspend' AND status='approved'))`).bind(status,now,actor,id,actor,action,...companyValues,action,action),
  db.prepare(`INSERT INTO member_audit(id,actor_id,member_id,action,created_at) SELECT ?,?,?,?,? WHERE changes()=1`).bind(crypto.randomUUID(),actor,id,action,now),
  db.prepare(`DELETE FROM member_sessions WHERE member_id=? AND EXISTS(SELECT 1 FROM members WHERE id=? AND status<>'approved')`).bind(id,id)]);
  return results[0].meta.changes===1;
@@ -30,6 +33,8 @@ export async function reviewMember(actor:string,id:string,action:'approve'|'reje
 
 /** Company changes revoke prior sessions so an old company session cannot survive reassignment. */
 export async function updateMemberCompany(actor:string,id:string,code:string,name:string){
+ const company=supplierHubCompany(code,name);if(!company)return false;
+ code=company.code;name=company.name;
  const db=membersDb(),now=new Date().toISOString(),auditId=crypto.randomUUID();
  const results=await db.batch([
  db.prepare(`UPDATE members SET company_code=?,company_name=?,updated_at=?,reviewed_by=? WHERE id=? AND EXISTS(SELECT 1 FROM members WHERE id=? AND role='admin' AND status='approved') AND (company_code<>? OR company_name<>?)`).bind(code,name,now,actor,id,actor,code,name),

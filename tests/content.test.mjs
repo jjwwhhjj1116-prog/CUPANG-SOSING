@@ -73,12 +73,12 @@ test('KC information is an independent saved label with legacy compatibility and
  for(const value of [null,12,'x'.repeat(2001)])assert.throws(()=>model.validateContentInput(input({label:{kcInformation:value}}),[],'owner'));
 });
 
-test('content tracks edits without inventing generated content or changing untouched provenance', () => {
+test('content confirms explicitly saved SEO values and preserves unsubmitted provenance', () => {
   const original = model.emptyProductContent('test');
   original.seo.title = { value: '번역 상품명', provenance: 'translated', updatedAt: '2026-09-01T00:00:00.000Z' };
   const { patch } = model.validateContentInput(input({ seo: { title: '번역 상품명', keywords: ['수납', '수납', '  주방  '] }, label: { material: '면' } }), [], 'owner');
   const result = model.applyContentPatch(original, patch, now);
-  assert.equal(result.revision, 1); assert.equal(result.seo.title.provenance, 'translated');
+  assert.equal(result.revision, 1); assert.equal(result.seo.title.provenance, 'manual');
   assert.deepEqual(Array.from(result.seo.keywords.value), ['수납', '주방']);
   assert.equal(result.seo.keywords.provenance, 'manual'); assert.equal(result.label.material.provenance, 'manual');
   assert.equal(result.label.countryOfOrigin.value, ''); assert.equal(result.label.countryOfOrigin.provenance, 'unverified');

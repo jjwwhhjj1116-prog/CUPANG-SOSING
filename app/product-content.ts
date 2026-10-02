@@ -196,10 +196,12 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
     return JSON.stringify(previous.value) === JSON.stringify(value) ? previous : { value, provenance: 'manual', updatedAt: now };
   }
   if (patch.seo) {
-    if (patch.seo.title !== undefined) next.seo.title = edited(current.seo.title, patch.seo.title);
-    if (patch.seo.description !== undefined) next.seo.description = edited(current.seo.description, patch.seo.description);
+    // Explicit SEO saves confirm the displayed value, including an unchanged
+    // source value or blank, so a delayed generation cannot replace that choice.
+    if (patch.seo.title !== undefined) next.seo.title = { value: patch.seo.title, provenance: 'manual', updatedAt: now };
+    if (patch.seo.description !== undefined) next.seo.description = { value: patch.seo.description, provenance: 'manual', updatedAt: now };
     if (patch.seo.keywords !== undefined) {
-      next.seo.keywords = edited(current.seo.keywords, patch.seo.keywords);
+      next.seo.keywords = { value: patch.seo.keywords, provenance: 'manual', updatedAt: now };
       // Saving the same text or an empty list still confirms a user's choice.
       delete next.intakeKeywordSeed;
     }

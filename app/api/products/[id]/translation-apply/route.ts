@@ -14,6 +14,8 @@ import { getAttributeRules } from '@/db/quotation-attribute-rules';
 import { applyIntakeAttributeRules } from '@/app/intake-attribute-rules';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import {capturedAttributeCategory,attributeCategorySchema} from '@/app/quotation-attribute-schema';
+import { intakeTranslationReplayContent } from '@/app/intake-translation-replay';
+import { collectionSourceReference } from '@/app/sourcing';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -45,20 +47,25 @@ export async function POST(request: Request, context: Context) {
     let plan;
     try {
       let applicationJob=job;
+      let intakeReplay=false;
       if(job.productVersion!==product.updated_at){
         const initial=await findIntakeTranslation(owner,id);
         const optionBatch=scope==='options' && initial?.id!==job.id
           ? await findIntakeOptionsTranslation(owner,id,await fingerprint(job.review.source.attributes)) : null;
-        if((initial?.id!==job.id && optionBatch?.id!==job.id) || job.status!=='completed' || !job.result || (!optionBatch && job.contentRevision!==content.revision))throw Error('생성 이후 콘텐츠가 변경되었습니다. 저장된 결과를 다시 검토해주세요.');
-        // Full SEO replay requires unchanged content. An identified option-only batch
-        // retains all current content and checks exact option originals/provenance.
-        applicationJob={...job,productVersion:product.updated_at,...(optionBatch?{contentRevision:content.revision}:{})};
+        if((initial?.id!==job.id && optionBatch?.id!==job.id) || job.status!=='completed' || !job.result)throw Error('생성 이후 콘텐츠가 변경되었습니다. 저장된 결과를 다시 검토해주세요.');
+        intakeReplay=initial?.id===job.id && job.contentRevision!==content.revision;
+        if (intakeReplay && (!categorySource?.snapshot?.linked || job.review.source.reference !== collectionSourceReference(categorySource.snapshot.id, product.source_url)
+          || JSON.stringify(job.review.source.category?.path) !== JSON.stringify(JSON.parse(categorySource.snapshot.payload).category.categoryPath))) throw Error('생성 원문과 현재 상품의 수집 연결이 다릅니다. 저장된 결과를 다시 검토해주세요.');
+        // A canonical intake result can fill untouched source fields while
+        // retaining later edits. Option bindings still require exact originals.
+        applicationJob={...job,productVersion:product.updated_at,contentRevision:content.revision};
       }
       // Use the immutable intake settings, not settings changed after collection.
       const capturedSettings = categorySource?.snapshot?.linked ? JSON.parse(categorySource.snapshot.payload)?.settings : null;
       const hiddenAttributes = typeof capturedSettings?.hiddenAttributes === 'boolean' ? capturedSettings.hiddenAttributes : undefined;
       const intakeBrand = capturedSettings ? savedRegistrationSettings(capturedSettings).brand : undefined;
-      plan = integratedTranslationPlan(content, options, applicationJob, product.updated_at, scope, hiddenAttributes, intakeBrand);
+      plan = integratedTranslationPlan(intakeReplay ? intakeTranslationReplayContent(content,job) : content, options, applicationJob, product.updated_at, scope, hiddenAttributes, intakeBrand,
+        intakeReplay && !!content.categoryAttributes);
     }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }
     let attributeRules;

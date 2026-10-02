@@ -123,6 +123,36 @@ test('both companies recover six fresh SKUs from the app receipt without an old 
  }
 });
 
+test('closing the last Hub tab restores the exact receipt into one inactive status tab in the existing app window',async()=>{
+ for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}])for(const missingLocal of [false,true]){
+  const rows=Array.from({length:3},(_,index)=>({title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId:`sku-${index+1}`,status:'검수중',stage:'확인중'}));
+  const h=fixture({company:currentCompany,companyMenu:true,recover:true,missingLocal,closedSource:true,noAttempt:true,saved:{profileId:'profile'},result:{rows,page:{current:1,hasNext:false,signature:JSON.stringify(rows)}}});
+  const newer={...identity,fingerprint:'b'.repeat(64),company:currentCompany,includedOptions:2,purpose:'registration-status',quotationId:'newer-quote'};
+  h.records.set('attempt:123',newer);h.records.set('result:newer',newer);
+  const record=await h.run();assert.equal(record.quotationId,'quote-123');assert.equal(record.profileId,'profile');assert.equal(record.receiptRecovered,true);assert.equal(record.registered,false);
+  assert.deepEqual(record.registration.rows,rows);assert.equal(record.registration.includedOptions,3);
+  assert.deepEqual(h.calls.find(([name])=>name==='create'),['create',{windowId:17,url:'https://supplier.coupang.com/qvt/wims',active:false}]);
+  const sourceCheck=h.calls.findIndex(([name,,message])=>name==='app-message'&&message.type==='YOOFAM_VERIFY_QUOTATION_SOURCE'),created=h.calls.findIndex(([name])=>name==='create');
+  assert.ok(sourceCheck>=0&&created>sourceCheck);assert.equal(h.pages.get(124).clicks,1);
+  assert.deepEqual(h.records.get('attempt:123'),newer);assert.deepEqual(h.records.get('result:newer'),newer);
+  assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')),false);
+  assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+  await h.run();assert.equal(h.calls.filter(([name])=>name==='create').length,1,'the restored status tab is reused');
+ }
+});
+
+test('closed-last-tab recovery verifies receipt and source before creating, and live login/company before searching',async()=>{
+ for(const patch of [{recover:false},{reply:{ok:false}},{receipt:{profileId:'../wrong'}},{sourceChangedAt:1},{sourceChangedAt:2}]){
+  const h=fixture({recover:true,missingLocal:true,closedSource:true,noAttempt:true,...patch});await assert.rejects(h.run());
+  assert.equal(h.calls.some(([name])=>name==='create'||name==='searchSupplierHubRegistration'),false);assert.equal(h.records.has(h.key),false);
+ }
+ for(const patch of [{created:{url:'https://supplier.coupang.com/login'}},{created:{windowId:18}},{companyCodes:['A01526306']}]){
+  const h=fixture({recover:true,missingLocal:true,closedSource:true,noAttempt:true,...patch});await assert.rejects(h.run());
+  assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(h.calls.some(([name])=>name==='searchSupplierHubRegistration'),false);
+  assert.equal(h.records.has(h.key),false);assert.equal(h.records.has('attempt:124'),false);
+ }
+});
+
 test('an accepted local receipt with closed bindings resumes only when the authenticated app confirms the same ID',async()=>{
  const h=fixture({closedSource:true,recover:true,tabs:[{id:999,windowId:17,url:'https://supplier.coupang.com/qvt/registration'}]});
  assert.equal((await h.run()).registration.quotationId,'quote-123');assert.equal(h.records.get('attempt:123').purpose,undefined);

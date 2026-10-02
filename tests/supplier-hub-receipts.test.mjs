@@ -83,11 +83,11 @@ for(const company of companies)test(`actual owner-scoped API blocks server-only 
   assert.ok(calls.every(([path])=>/\/supplier-hub-receipt\?|\/quotation$/.test(path)));
  }finally{h.close();}
 });
-for(const company of companies)test(`actual receipt/source APIs recover a closed-tab six-SKU lookup with the original draft untouched (${company.companyCode})`,async()=>{
+for(const company of companies)for(const noHubTabs of [false,true])test(`actual receipt/source APIs recover a closed-tab six-SKU lookup with the original draft untouched (${company.companyCode}, no Hub tabs: ${noHubTabs})`,async()=>{
  const h=await setup(company);try{
   await json(await h.write(h.result));const before=h.sqlite.prepare('SELECT * FROM products').get();
   const origin='http://localhost:3000',identity={origin,productId:h.product.id,categoryId:'80719',fingerprint:h.preview.fingerprint};
-  const calls=[],records=new Map(),tabs=[{id:999,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete'}];let listener;
+  const calls=[],records=new Map(),tabs=noHubTabs?[]:[{id:999,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete'}];let listener;
   const content={URL,Date,AbortController,setTimeout,clearTimeout,location:{origin},window:{addEventListener(){},postMessage(){}},
    chrome:{runtime:{id:'extension',onMessage:{addListener(value){listener=value;}}}},fetch:async(path,init)=>{
     calls.push(['api',path,init.method]);const response=await h.route(path,{method:init.method,...(init.body?{body:JSON.parse(init.body)}:{})});
