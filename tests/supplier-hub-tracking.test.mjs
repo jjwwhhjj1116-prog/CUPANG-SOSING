@@ -7,7 +7,7 @@ import ts from 'typescript';
 const code=ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-tracking.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 function api(timers={setTimeout,clearTimeout}){
  const handoff={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-handoff.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:handoff,Error,Date,Set});
- const exports={};vm.runInNewContext(code,{exports,Error,Date,Set,...timers,require(name){return name==='@/app/supplier-hub-handoff'?handoff:{};}});return exports;
+ const exports={};vm.runInNewContext(code,{exports,Error,Date,Set,...timers,require(name){return name==='@/app/supplier-hub-handoff'?handoff:{};}});return {...exports,LookupUnavailable:handoff.SupplierHubLookupUnavailable};
 }
 const tracking=api();
 const source={productId:'p',categoryId:'80719',profileId:'profile',fingerprint:'a'.repeat(64),filename:`YOOFAM-${'a'.repeat(64)}.xlsx`,includedOptions:2,company:{code:'A01464742',name:'와이홉'}};
@@ -15,14 +15,93 @@ const row=(skuId,patch={})=>({title:'상품',submittedAt:'date',category:'cat',b
 const record=(state='validation-pending',patch={})=>({state,filename:source.filename,company:source.company,includedOptions:2,quotationId:state==='validation-complete'?'quote-123':undefined,observedAt:Date.now(),registered:false,...patch});
 const registered=(rows,patch={})=>record('validation-complete',{registration:{quotationId:'quote-123',scope:'visible-page',includedOptions:2,observedAt:Date.now(),registered:false,rows},...patch});
 function fixture(replies,{prepared=source,verify,read,wait,maxDurationMs=180000,initialResult}={}){
- let index=0,time=0;const calls=[],progress=[],controller=new AbortController();
+ let index=0,time=0;const calls=[],progress=[],retries=[],controller=new AbortController();
  const options={signal:controller.signal,maxDurationMs,initialResult,now:()=>time,
   verify:async(...args)=>{calls.push(['verify',...args]);await verify?.(...args);},
   read:async(...args)=>{calls.push(['read',...args]);await read?.(...args);return replies[Math.min(index++,replies.length-1)];},
   wait:async(ms,signal)=>{calls.push(['wait',ms]);time+=ms;await wait?.(ms,signal);},
-  onProgress:value=>progress.push(value)};
- return {calls,progress,controller,options,run:()=>tracking.followSupplierHubRegistration(prepared,options)};
+  onProgress:value=>progress.push(value),onRetry:value=>retries.push(value)};
+ return {calls,progress,retries,controller,options,run:()=>tracking.followSupplierHubRegistration(prepared,options)};
 }
+
+test('lost validation replies recover into fresh SKU results for both companies without changing request identity',async()=>{
+ for(const company of [source.company,{code:'A01526306',name:'유앤채'}]){
+  let reads=0;
+  const h=fixture([record('validation-complete',{company}),{...registered([row('sku-1'),row('sku-2')]),company}],{
+   prepared:{...source,company},read:async()=>{if(++reads<=2)throw new tracking.LookupUnavailable('lookup timeout');}
+  });
+  const outcome=await h.run();assert.equal(outcome.phase,'sku-issued');assert.equal(outcome.registered,false);
+  assert.deepEqual(h.retries.map(({phase,attempt,delayMs})=>[phase,attempt,delayMs]),[['validation-pending',1,3000],['validation-pending',2,10000]]);
+  assert.equal(h.progress.length,2,'missing replies must not publish or replace a receipt');
+  const requests=h.calls.filter(([kind])=>kind==='read');
+  assert.deepEqual(requests.map(([, , ,mode])=>mode),[true,true,true,'registration']);
+  assert.ok(requests.every(([,id])=>id.productId===source.productId&&id.categoryId===source.categoryId&&id.fingerprint===source.fingerprint));
+  assert.equal(h.calls.filter(([kind])=>kind==='verify').length,8);
+ }
+});
+
+test('lost SKU replies retain the known quotation anchor without counting restored rows as a new observation',async()=>{
+ let reads=0;const initialResult=registered([row('old-1'),row('old-2')]);
+ const h=fixture([registered([row('new-1'),row('new-2')])],{initialResult,read:async()=>{
+  if(++reads===1){assert.equal(h.progress.length,0);throw new tracking.LookupUnavailable('SKU timeout');}
+ }});
+ assert.equal((await h.run()).phase,'sku-issued');
+ assert.deepEqual(h.retries.map(({phase,attempt})=>[phase,attempt]),[['registration-pending',1]]);
+ assert.deepEqual(h.calls.filter(([kind])=>kind==='read').map(([, , ,mode])=>mode),['registration','registration']);
+ assert.equal(h.progress[0].result.registration.rows[0].skuId,'new-1');assert.equal(initialResult.registration.rows[0].skuId,'old-1');
+});
+
+test('missing replies stop after three retries and never publish an unobserved result',async()=>{
+ const h=fixture([],{read:async()=>{throw new tracking.LookupUnavailable('no reply');}});
+ await assert.rejects(h.run(),/no reply/);
+ assert.equal(h.calls.filter(([kind])=>kind==='read').length,4);
+ assert.deepEqual(h.calls.filter(([kind])=>kind==='wait').map(([,ms])=>ms),[3000,10000,30000]);
+ assert.equal(h.retries.length,3);assert.ok(h.retries.every(retry=>retry.maxAttempts===3));assert.equal(h.progress.length,0);
+});
+
+test('a successful file reply resets the missing-reply budget before subsequent SKU lookup',async()=>{
+ let reads=0;const h=fixture([record('validation-complete'),registered([row('sku-1'),row('sku-2')])],{read:async()=>{
+  if([1,2,4,5].includes(++reads))throw new tracking.LookupUnavailable('late reply');
+ }});
+ assert.equal((await h.run()).phase,'sku-issued');
+ assert.deepEqual(h.retries.map(({phase,attempt,delayMs})=>[phase,attempt,delayMs]),[
+  ['validation-pending',1,3000],['validation-pending',2,10000],['registration-pending',1,3000],['registration-pending',2,10000]
+ ]);
+});
+
+test('a changed source after a missing reply stops before any retry or result publication',async()=>{
+ let verifies=0;const h=fixture([],{read:async()=>{throw new tracking.LookupUnavailable('timeout');},verify:async()=>{
+  if(++verifies===2)throw Error('company/category/draft changed');
+ }});
+ await assert.rejects(h.run(),/changed/);assert.equal(h.retries.length,0);assert.equal(h.progress.length,0);
+ assert.equal(h.calls.filter(([kind])=>kind==='read').length,1);assert.equal(h.calls.some(([kind])=>kind==='wait'),false);
+});
+
+test('aborting the retry callback, retry wait or lookup prevents another request',async()=>{
+ for(const point of ['callback','wait','read']){
+  const h=fixture([],{read:async()=>{if(point==='read')h.controller.abort();throw new tracking.LookupUnavailable('timeout');},
+   wait:async()=>{if(point==='wait')h.controller.abort();}});
+  if(point==='callback')h.options.onRetry=()=>h.controller.abort();
+  await assert.rejects(h.run(),/중단/);assert.equal(h.calls.filter(([kind])=>kind==='read').length,1);assert.equal(h.progress.length,0);
+  if(point!=='wait')assert.equal(h.calls.some(([kind])=>kind==='wait'),false);
+ }
+});
+
+test('reply retries respect the overall deadline and preserve the last fresh file result',async()=>{
+ let reads=0;const h=fixture([record('validation-complete')],{maxDurationMs:2000,read:async()=>{
+  if(++reads===2)throw new tracking.LookupUnavailable('SKU timeout');
+ }});
+ const outcome=await h.run();assert.equal(outcome.timedOut,true);assert.equal(outcome.phase,'registration-pending');assert.equal(outcome.issuedSkus,0);
+ assert.equal(outcome.result.state,'validation-complete');assert.equal(outcome.registered,false);
+ assert.equal(h.retries[0].delayMs,2000);assert.equal(h.calls.filter(([kind])=>kind==='read').length,2);
+ const expired=fixture([],{read:async()=>{throw new tracking.LookupUnavailable('timeout');}});let tick=0;expired.options.now=()=>tick++?180000:0;
+ assert.equal((await expired.run()).timedOut,true);assert.equal(expired.retries.length,0);assert.equal(expired.calls.some(([kind])=>kind==='wait'),false);
+});
+
+test('a failed retry callback stops tracking instead of scheduling an unseen request',async()=>{
+ const h=fixture([],{read:async()=>{throw new tracking.LookupUnavailable('timeout');}});h.options.onRetry=()=>{throw Error('callback failed');};
+ await assert.rejects(h.run(),/callback failed/);assert.equal(h.calls.filter(([kind])=>kind==='read').length,1);assert.equal(h.calls.some(([kind])=>kind==='wait'),false);
+});
 
 test('continuing an accepted receipt queries its known quotation ID directly and never accepts a replacement',async()=>{
  for(const company of [source.company,{code:'A01526306',name:'유앤채'}]){

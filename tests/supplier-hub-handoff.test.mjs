@@ -13,6 +13,32 @@ function harness(reply){
   return {api:exports,sent,listeners,timers,expire(){for(const cb of [...timers])cb();}};
 }
 const identity={productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+
+test('only missing replies to read-only result requests have a retryable error type',async()=>{
+ for(const type of ['RESULT','REFRESH','REGISTRATION','PING','PREPARE','TRANSMIT','VALIDATE','CATEGORIES','SCHEMA','TEMPLATE']){
+  const h=harness(),pending=h.api.exchange(type,identity,new AbortController().signal);
+  const rejected=assert.rejects(pending,error=>error instanceof Error&&(error instanceof h.api.SupplierHubLookupUnavailable)===['RESULT','REFRESH','REGISTRATION'].includes(type));
+  h.expire();await rejected;assert.equal(h.sent.length,1);assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+ }
+});
+
+test('explicit extension errors and cancelled reads are fatal instead of retryable',async()=>{
+ const h=harness((message,emit)=>emit(message,{ok:false,error:'회사코드 불일치'}));
+ await assert.rejects(h.api.exchange('REGISTRATION',identity,new AbortController().signal),error=>!(error instanceof h.api.SupplierHubLookupUnavailable)&&/회사코드/.test(error.message));
+ const cancelled=harness(),controller=new AbortController(),pending=cancelled.api.exchange('REFRESH',identity,controller.signal);
+ const rejected=assert.rejects(pending,error=>!(error instanceof cancelled.api.SupplierHubLookupUnavailable));controller.abort();await rejected;
+ for(const current of [h,cancelled]){assert.equal(current.listeners.size,0);assert.equal(current.timers.size,0);}
+});
+
+test('a late abandoned reply cannot acknowledge the next lookup request',async()=>{
+ let oldRequest,emitReply;const h=harness((message,emit)=>{oldRequest??=message;emitReply=emit;});
+ const first=h.api.exchange('REFRESH',identity,new AbortController().signal);const rejected=assert.rejects(first,h.api.SupplierHubLookupUnavailable);
+ await Promise.resolve();h.expire();await rejected;
+ let settled=false;const next=h.api.exchange('REFRESH',identity,new AbortController().signal).then(value=>{settled=true;return value;});
+ await Promise.resolve();assert.notEqual(h.sent[0].requestId,h.sent[1].requestId);
+ emitReply(oldRequest,{ok:true,marker:'stale'});await Promise.resolve();assert.equal(settled,false);assert.equal(h.listeners.size,1);
+ emitReply(h.sent[1],{ok:true,marker:'fresh'});assert.equal((await next).marker,'fresh');assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+});
 test('validation resumption uses identity and fresh choices only, enforces extension capability and rejects false acknowledgements',async()=>{
  const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
  const capability={ok:true,validationResume:true,latestSourceBinding:true,serverReceiptReplayProtection:true};

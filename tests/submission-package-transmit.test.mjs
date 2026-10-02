@@ -8,9 +8,9 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let index=0;index<8;index++)await new Promise(resolve=>setImmediate(resolve));};
 const fingerprint='a'.repeat(64);
-function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false,legalDocuments,attached=false,resumeStates=[]}={}){
+function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false,legalDocuments,attached=false,resumeStates=[],missedLookup=false,holdRetry=false}={}){
  const slots=[],calls=[],modules=new Map();let cursor=0,sourceChanged=false;
- let clock=0,editNext=false;
+ let clock=0,editNext=false,resumeRetry;
  const preview={fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],report:{company,productId:'p',categoryId:'80719',profileId:'profile',rowCount:1,warnings:[],submissionReady:false,...(legalDocuments?{legalDocuments}:{})},submissionReview:{productId:'p',categoryId:'80719',inputFingerprint:fingerprint,submissionReady:false,transport:'not-connected',errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]}};
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
  let editRecovery=false,lookupError=false,holdLookup=false,resumeLookup;
@@ -28,6 +28,7 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
    calls.push(['result',identity,refresh]);if(refresh==='registration'&&editNext)sourceChanged=true;
    if(holdLookup)await new Promise(resolve=>{resumeLookup=resolve;});
    if(lookupError)throw Error('상품별 결과 응답 시간 초과');
+   if(missedLookup){missedLookup=false;throw new bridge.SupplierHubLookupUnavailable('lookup reply lost');}
    const result={state:validationComplete?'validation-complete':'validation-pending',filename:preview.filename,company:preview.report.company,includedOptions:1,quotationId:validationComplete?'quote-123':undefined,observedAt:Date.now(),registered:false,...(refresh==='registration'?{registration:{quotationId:'quote-123',scope:'visible-page',rows:issued?[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:preview.filename,skuId:'sku-123',status:'상품 검수중',stage:'가격/정책'}]:[],includedOptions:1,observedAt:Date.now(),registered:false,...registrationPatch}}:{}),...resultPatch};
    if(savedSubmission)savedSubmission={...savedSubmission,result};return result;
   }};
@@ -45,18 +46,35 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
  },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/supplier-hub-tracking')return trackingBridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  bridge.validateSupplierHubResultForSource=load('app/supplier-hub-handoff.ts').validateSupplierHubResultForSource;
  bridge.SupplierHubResultInvalid=load('app/supplier-hub-handoff.ts').SupplierHubResultInvalid;
+ bridge.SupplierHubLookupUnavailable=load('app/supplier-hub-handoff.ts').SupplierHubLookupUnavailable;
  bridge.supplierHubRegistrationEvidence=load('app/supplier-hub-handoff.ts').supplierHubRegistrationEvidence;
  bridge.validateRegistrationResult=load('app/supplier-hub-handoff.ts').validateRegistrationResult;
  const tracker=load('app/supplier-hub-tracking.ts');
- const trackingBridge={...tracker,followSupplierHubRegistration:(source,options)=>tracker.followSupplierHubRegistration(source,{...options,maxDurationMs:1000,now:()=>clock,wait:async(ms,signal)=>{
+ const trackingBridge={...tracker,followSupplierHubRegistration:(source,options)=>tracker.followSupplierHubRegistration(source,{...options,maxDurationMs:holdRetry?10000:1000,now:()=>clock,wait:async(ms,signal)=>{
+  if(holdRetry){holdRetry=false;await new Promise((resolve,reject)=>{const abort=()=>reject(Error('paused'));signal.addEventListener('abort',abort,{once:true});resumeRetry=()=>{signal.removeEventListener('abort',abort);resolve();};});}
   if(manualWait)return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('paused')),{once:true}));
   clock+=ms;
  }})};
  const Component=load('app/components/submission-package.tsx').SubmissionPackage;
  const render=()=>{cursor=0;return Component({productId:'p',profileId:'profile',categoryId:'80719',onInspect(){}});};
  const button=text=>nodes(render()).find(node=>node.type==='button'&&node.props.children===text);
- return {render,calls,button,remount(){slots.length=0;},changeSource(){sourceChanged=true;},editDuringNextLookup(){editNext=true;},editDuringRecovery(){editRecovery=true;},recover(){recoveryError=false;receiptReadStatus=200;receiptReadNetworkError=false;},failLookup(){lookupError=true;},holdLookup(){holdLookup=true;},resumeLookup(){holdLookup=false;resumeLookup?.();},setResultPatch(value){resultPatch=value;},complete(){validationComplete=true;issued=true;},hideSkus(){issued=false;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
+ return {render,calls,button,resumeRetry(){resumeRetry?.();},remount(){slots.length=0;},changeSource(){sourceChanged=true;},editDuringNextLookup(){editNext=true;},editDuringRecovery(){editRecovery=true;},recover(){recoveryError=false;receiptReadStatus=200;receiptReadNetworkError=false;},failLookup(){lookupError=true;},holdLookup(){holdLookup=true;},resumeLookup(){holdLookup=false;resumeLookup?.();},setResultPatch(value){resultPatch=value;},complete(){validationComplete=true;issued=true;},hideSkus(){issued=false;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
 }
+
+test('transmission UI survives a lost lookup reply and reaches fresh SKU results with only one upload',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const h=harness({company,missedLookup:true,holdRetry:true,validationComplete:true,issued:true});
+  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
+  assert.ok(nodes(h.render()).some(node=>node.props?.children==='Supplier Hub 검증 결과 응답이 늦어 3초 후 다시 확인합니다 (1/3).'));
+  assert.equal(h.calls.filter(([name])=>name==='result').length,1);
+  assert.equal(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'),false);
+  h.resumeRetry();await settle();
+  assert.ok(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'));
+  assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);assert.equal(h.calls.filter(([name])=>name==='resume-validation').length,0);
+  assert.equal(h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='export').length,1);
+  assert.deepEqual(h.calls.filter(([name])=>name==='result').map(([, ,mode])=>mode),[true,true,'registration']);
+ }
+});
 
 test('attached draft resumes validation without another export, upload or automatic retry',async()=>{
  for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){

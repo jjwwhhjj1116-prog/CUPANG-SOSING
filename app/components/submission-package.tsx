@@ -100,7 +100,10 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     try{
       const outcome=await followSupplierHubRegistration({productId,categoryId,profileId:preview.report.profileId,
         fingerprint:preview.fingerprint,filename:preview.filename,includedOptions:preview.report.rowCount,company:preview.report.company},
-      {signal:controller.signal,initialResult,onProgress:async progress=>{
+      {signal:controller.signal,initialResult,onRetry:retry=>{
+        if(controller.signal.aborted)return;
+        setMessage(`Supplier Hub ${retry.phase==='validation-pending'?'검증 결과':'상품별 등록 결과'} 응답이 늦어 ${Math.ceil(retry.delayMs/1000)}초 후 다시 확인합니다 (${retry.attempt}/${retry.maxAttempts}).`);
+      },onProgress:async progress=>{
         if(controller.signal.aborted)return;
         setHubResult(progress.result);
         setMessage(progress.phase==='validation-pending'?'Supplier Hub에서 견적서 파일을 검증하고 있습니다.':

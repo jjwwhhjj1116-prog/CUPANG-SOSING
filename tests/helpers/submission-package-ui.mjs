@@ -45,6 +45,7 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
  }
  bridge.validateSupplierHubResultForSource=load('app/supplier-hub-handoff.ts').validateSupplierHubResultForSource;
  bridge.SupplierHubResultInvalid=load('app/supplier-hub-handoff.ts').SupplierHubResultInvalid;
+ bridge.SupplierHubLookupUnavailable=load('app/supplier-hub-handoff.ts').SupplierHubLookupUnavailable;
  bridge.supplierHubRegistrationEvidence=load('app/supplier-hub-handoff.ts').supplierHubRegistrationEvidence;
  bridge.validateRegistrationResult=load('app/supplier-hub-handoff.ts').validateRegistrationResult;
  const tracker=load('app/supplier-hub-tracking.ts');let observationIndex=0;

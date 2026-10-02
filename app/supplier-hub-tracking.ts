@@ -1,4 +1,4 @@
-import { getSupplierHubResult, validateSupplierHubResultForSource, validateRegistrationResult, supplierHubRegistrationEvidence, SupplierHubResultInvalid, type SupplierHubResult } from '@/app/supplier-hub-handoff';
+import { getSupplierHubResult, validateSupplierHubResultForSource, validateRegistrationResult, supplierHubRegistrationEvidence, SupplierHubResultInvalid, SupplierHubLookupUnavailable, type SupplierHubResult } from '@/app/supplier-hub-handoff';
 import { verifyQuotationResultSource } from '@/app/quotation-result-source';
 
 export type SupplierHubTrackingSource = {
@@ -11,10 +11,12 @@ export type SupplierHubTrackingProgress = {
   observedRows:number; issuedSkus:number;
 };
 export type SupplierHubTrackingOutcome = SupplierHubTrackingProgress & { timedOut:boolean; registered:false };
+export type SupplierHubLookupRetry = { phase:'validation-pending'|'registration-pending'; attempt:number; maxAttempts:number; delayMs:number };
 
 /** Read-only follow-up to one accepted upload. This never attaches or resubmits files. */
 export async function followSupplierHubRegistration(prepared:SupplierHubTrackingSource,options:{
   signal:AbortSignal; onProgress?:(progress:SupplierHubTrackingProgress)=>void|Promise<void>;
+  onRetry?:(retry:SupplierHubLookupRetry)=>void|Promise<void>;
   initialResult?:SupplierHubResult|null;
   read?:typeof getSupplierHubResult; verify?:typeof verifyQuotationResultSource;
   wait?:(ms:number,signal:AbortSignal)=>Promise<void>; now?:()=>number;
@@ -57,12 +59,29 @@ export async function followSupplierHubRegistration(prepared:SupplierHubTracking
   const publish=async()=>{checkCancelled();await options.onProgress?.(progress);checkCancelled();};
   const outcome=(timedOut=false):SupplierHubTrackingOutcome=>({...progress,timedOut,registered:false});
   const delays=[3000,5000,10000,15000,30000];
+  const retryDelays=[3000,10000,30000];let missedReplies=0;
   // Time and request limits also bound unexpectedly immediate or changing replies.
   for(let attempt=0;attempt<300;attempt++){
     checkCancelled();
     if(attempt&&now()-start>=duration)return outcome(true);
     await verify(prepared,options.signal);checkCancelled();
-    const result=await read(identity,options.signal,mode);checkCancelled();
+    let result:SupplierHubResult|null;
+    try{result=await read(identity,options.signal,mode);checkCancelled();}
+    catch(cause){
+      checkCancelled();
+      if(!(cause instanceof SupplierHubLookupUnavailable))throw cause;
+      // A lost lookup reply is not evidence of acceptance/rejection. Keep the
+      // old receipt untouched and recheck the source before scheduling any read.
+      await verify(prepared,options.signal);checkCancelled();
+      if(++missedReplies>retryDelays.length)throw cause;
+      const remaining=duration-(now()-start);
+      if(remaining<=0)return outcome(true);
+      const delayMs=Math.min(retryDelays[missedReplies-1],remaining);
+      await options.onRetry?.({phase:mode==='registration'?'registration-pending':'validation-pending',attempt:missedReplies,maxAttempts:retryDelays.length,delayMs});checkCancelled();
+      await wait(delayMs,options.signal);checkCancelled();
+      continue;
+    }
+    missedReplies=0;
     // Editing while Chrome is reading must not publish evidence for the old draft.
     await verify(prepared,options.signal);checkCancelled();
     if(result)validateResult(result,quotationId||undefined);
