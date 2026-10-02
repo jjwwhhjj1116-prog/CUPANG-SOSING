@@ -4841,3 +4841,15 @@ AI등록 화면 확인:
 - TypeScript0, 변경 파일 lint 오류0/기존 intake onBusy effect 경고1; 마지막 변경 파일 lint0. 최종 빌드/11마이그레이션/확장 원본·번들·ZIP/diff 검사 통과. 확장0.2.36/35파일/410737바이트/SHA-256 73ecb4657581da48a58c78a2a47ff7e471b91c22a3628a25d1ddd42bd86c2c9b. 기존 확장 폴더와 앱 페이지 새로고침 필요. DB migration·권한/호스트·비밀 설정·이미지 Worker·유료 자원 추가 없음.
 - 앱 https://sourceflow.jjwwhhjj1116.workers.dev 버전3476424d-a65f-4831-9080-f6c45901b32a 배포 완료. 익명 앱/카테고리 컨텍스트/더미 접수API Access302 세 건만 확인했으며 인증 운영 기능/최종 접수 검증은 아니다.
 - 남은 핵심은 실제 승인 계정 전체 분류 응답·카테고리별 공식 Excel 자동 확보/연결·고유 항목 번역 연결 규칙 API 확장·운영 이미지 번역/필수 서류·두 회사 최종 접수번호/SKU 대조다. 새 기능을 실제 Chrome에서 실행했다고 주장하지 않는다. 전체 완료율/전분류 복제/최종 접수 완료를 추정하지 않는다. 오른쪽 Chrome/기존 작업 상품 보호 지시와 승인된 Git push/기존 배포 권한 유지.
+
+## 550. 선택 카테고리 공식 Excel 다운로드·원본 검증·견적 연결 (2026-10-02)
+
+- 공개 QVT 등록 HTML(3863바이트)과 main.js(7139840바이트/SHA-256 946350c602452505d1ce84ddeaf99a81991980033a8065d71b5b2da21cf23862)의 CategoryDownloader 계약을 AST로 분석했다. GET /qvt/v3/kan-categories/download-quotation?leafKanCategoryIds=<kan>&locale=ko. 상세 응답의 categoryId/kanCategoryId와 등록 표시코드를 구분한다. 익명 공개 자료 분석이며 로그인 파일 다운로드/실제 상세 양식 확보가 아니다. 공급자 코드 실행/복사·쿠키/세션 접근 없음. 상세 근거: docs/supplier-hub-official-template-2026-10-02.md.
+- 확장0.2.37 TEMPLATE 경로는 원래 앱 회원/승인 회사, 같은 창의 Hub 탭과 실제 전체 leaf 경로·직전 상세 원문/메타를 다시 확인한 뒤 빈 양식 GET만 실행한다. 회사/회원/탭 변경·HTML/리다이렉트·잘못된 MIME/ZIP·35초/5MB 초과를 거절한다. agent가 기존 Chrome 전체 탭 거절을 이 경로로 우회해 실행한 것은 아니다. 기존 오른쪽 Chrome/Couplus 작업 상품·폼 변경 없음.
+- 클라이언트는 회사/leaf/경로/원문/칸 코드/다운로드 URL/크기/지문을 검사하고 bounded 응답을 사용한다. 새 official-template API는 verifiedAccess/승인 회사/단일 multipart 파일+원문을 검증한 뒤 실제 OOXML 서명·고시/버전·원본 드롭다운의 표시코드/전체 경로·5~8행 안내/9행 작성 구조를 검사한다. 일치하는 작성 시트 하나만 채택하고 exact 열 제안/전체 선택값 출력형식을 연결한다. 원본 바이트를 owner R2 범위에 저장한다. 미연결/모호한 필수 열은 기존 출력 검사로 남기며 완료로 표시하지 않는다.
+- 카테고리 선택 시 Excel 연결이 없는 기존/새 프로필에 원본+매핑을 자동 저장한다. 수동 연결된 파일/열은 다운로드로 덮지 않는다. revision 충돌·취소/늦은 결과를 확인하고 저장 성공 뒤 기존 URL 수집으로 이어진다. 작업 상품의 수집 당시 양식·수동값/공란 보존 정책 유지.
+- 신규8개 공식 양식 및 picker2개 포함 전체1770/1770(258.898초), 집중33/33 통과. 실제 API/임시 SQLite + fixture 인증/Hub 상세/AI/이미지와 합성 공식 형식 Excel로 두 회사991234 선택→기록813724060928→6옵션 초안→제목/고유항목/옵션공란 수정→XLSX 출력을 검사했다. 실제 접수0건/미전송 상태. 초기 새 fixture ZIP 빌더/견적 resolved.schema/VM Error 기대값을 고쳤으며 제품 제약을 약화하지 않았다.
+- 이전 실제 바스켓 원본 supplier-basket-A01464742.xlsx(SHA c6069ceab0e81a93834b2d56af0f918102c55e5f711d0df5cc3ba281c447d3cb)을 변경 없이 검사해 80719↔6269/Notice17/Version190/74머리글/9행을 확인했다. 입력 상세 양식은 최소 합성 원문이므로 실제 모든 필드/전체 매핑 확인으로 보고하지 않는다. 원본/outputs는 Git 제외. README의 실제 Excel 미확인 문구만 확인된 범위로 정정했다.
+- TypeScript0, 변경 lint 오류0/기존 intake onBusy effect 경고1; 전체 repo lint 통과 주장 없음. 운영 빌드/11마이그레이션/확장 원본·번들·ZIP/diff 검사 통과. 확장0.2.37/36파일/416522바이트/SHA f8e634ac918b61a15ea0c7174a28db74572393f462199cfc99492949ef1c2914. 기존 확장 폴더와 앱 페이지 새로고침 필요. 권한/호스트·DB migration·비밀 설정·이미지 Worker·유료 자원 변경 없음.
+- 기존 앱 https://sourceflow.jjwwhhjj1116.workers.dev Worker 2d4d90bb-21c4-41cc-8203-409bdb719974 배포 완료. 익명 앱/분류 컨텍스트/더미 접수 API Access302 세 건만 확인했으며 인증 운영 UI/최종 접수 검증은 아니다.
+- 남은 핵심은 승인 계정 실제 전분류 응답·새 공식 Excel 다운로드의 운영 확인·동적 고유 항목 번역 연결 규칙·운영 이미지 번역/필수 서류·두 회사 최종 접수번호/SKU 대조다. 완성률을 추정하지 않는다. 반복 승인/로그인 질문 없이 기존 개발/배포/Git push 승인과 오른쪽 Chrome/기존 상품 보호를 유지한다.

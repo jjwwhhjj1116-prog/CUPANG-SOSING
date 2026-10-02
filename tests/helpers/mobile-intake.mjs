@@ -3,6 +3,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import * as parse5 from 'parse5';
 import * as nodeCrypto from 'node:crypto';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import {memoryDatabase,runtimeDDL} from '../../scripts/check-db-schema.mjs';
 import {parseProductJsonLd} from '../../extensions/supplier-hub/product-jsonld.mjs';
@@ -52,7 +53,7 @@ export function mobileIntakeHarness({companyCode='A01464742',companyName='와이
  }
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Headers,Response,Request,File,FormData,Blob,CompressionStream,DecompressionStream,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:nodeCrypto.webcrypto,process:{env:{NODE_ENV:'production'}},fetch:externalFetch,require(name){if(name in deps)return deps[name];assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');}});
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Date,Headers,Response,Request,File,FormData,Blob,CompressionStream,DecompressionStream,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,AbortSignal,setTimeout,clearTimeout,structuredClone,crypto:nodeCrypto.webcrypto,process:{env:{NODE_ENV:'production'}},fetch:externalFetch,require(name){if(name in deps)return deps[name];if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');}});
   return exports;
  }
  const now=new Date().toISOString(),settings=load('app/observed-price-preset.ts').applyObservedPricePreset({...load('app/workspace-settings.ts').defaultSettings,brand:'검토 브랜드',manufacturer:'검토 제조사',importer:companyName,boxSkuQuantity:50,tradeType:'제조사',importType:'수입상품',serviceContact:'쿠팡 고객센터 1577-7011'});

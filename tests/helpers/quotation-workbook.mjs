@@ -9,6 +9,10 @@ export function quotationWorkbook(headers) {
     ['xl/_rels/workbook.xml.rels', '<Relationships><Relationship Id="one" Type="x/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
     ['xl/worksheets/sheet1.xml', `<worksheet><sheetData><row r="1">${headers.map((header,index)=>`<c r="${column(index)}1" t="inlineStr"><is><t>${escape(header)}</t></is></c>`).join('')}</row></sheetData></worksheet>`],
   ];
+  return workbookArchive(files);
+}
+/** Stored ZIP for synthetic OOXML fixtures, including [Content_Types].xml. */
+export function workbookArchive(files) {
   const pieces = [], directory = []; let offset = 0;
   for (const [name, text] of files) {
     const nameBytes = Buffer.from(name), bytes = Buffer.from(text); let crc = 0xffffffff;
