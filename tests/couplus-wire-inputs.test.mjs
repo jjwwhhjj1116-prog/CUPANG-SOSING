@@ -142,3 +142,24 @@ test('refreshing the category profile does not introduce path bindings into an o
   assert.deepEqual(after.resolved.rows,before.resolved.rows);assert.deepEqual(after.resolved.schema,before.resolved.schema);assert.equal(after.inputFingerprint,before.inputFingerprint);
  }finally{local.close();}
 });
+
+test('a version refresh with an incompatible manually connected legacy field preserves the profile and working product for review',async()=>{
+ const local=mobileIntakeHarness();try{
+  const current=snapshot(),{inputBindings,...legacy}=current,f=await setup(local,legacy),path=f.base+'/quotation-fields';
+  let view=await json(await local.route(path));
+  const oldField=at(view.resolved.schema,'productPage.modelNumber');assert.match(oldField.id,/^live_/);assert.equal(at(schemaFor(current),'productPage.modelNumber').id,'model');
+  view=await json(await local.route(path,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:oldField.id,optionId:null,value:'기존 수동 모델'}]}}));
+  const bytes=new TextEncoder().encode('모델 번호\n'),sha256=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex'),storageKey=`owner/category-templates/${sha256}.csv`;
+  await local.bindings.FILES.put(storageKey,bytes,{customMetadata:{sha256,format:'csv'}});
+  const input={...f.input,template:{name:'legacy.csv',format:'csv',sheetName:'',headerRow:1,headers:['모델 번호'],sha256,storageKey},mappings:[{column:0,field:oldField.id,required:false}]};
+  const request=(revision,profile)=>new Request('https://app.test/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:f.profile.id,expectedRevision:revision,profile})});
+  const {profile}=await json(await f.api.PUT(request(f.profile.revision,input)));
+  const before={profile:local.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(profile.id),product:local.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.product.id),quotation:local.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get(f.product.id)};
+  const response=await f.api.PUT(request(profile.revision,{...input,hubSchema:{...legacy,inputBindings}}));
+  assert.equal(response.status,400);assert.match((await response.json()).error,/현재 카테고리의 견적 항목에 없습니다/);
+  assert.deepEqual(local.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(profile.id),before.profile);
+  assert.deepEqual(local.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.product.id),before.product);
+  assert.deepEqual(local.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get(f.product.id),before.quotation);
+  const after=await json(await local.route(path));assert.deepEqual(after.resolved,view.resolved);assert.equal(after.resolved.rows[0].fields[oldField.id].value,'기존 수동 모델');assert.ok(!local.network.includes('supplier.coupang.com'));
+ }finally{local.close();}
+});

@@ -173,7 +173,9 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
           description: previous.detail.description === initial.detail.description ? savedDraft.detail.description : previous.detail.description,
           altText: previous.detail.altText === initial.detail.altText ? savedDraft.detail.altText : previous.detail.altText,
         } } : {}),
-        ...(section==='SEO' && previous.labelProductNameLinked === initial.labelProductNameLinked && previous.label.productName === initial.label.productName ? {label:{...previous.label,productName:saved.label.productName.value}}:{}),
+        // A first-entry label can already follow SEO before that label is saved.
+        // Manual name edits (including clears) disable this draft linkage.
+        ...(section==='SEO' && (previous.labelProductNameLinked || (previous.labelProductNameLinked === initial.labelProductNameLinked && previous.label.productName === initial.label.productName)) ? {label:{...previous.label,productName:previous.labelProductNameLinked?saved.seo.title.value:saved.label.productName.value}}:{}),
         ...(section==='표시사항'?{labelClears:savedDraft.labelClears,labelProductNameLinked:savedDraft.labelProductNameLinked,labelLayout:savedDraft.labelLayout,customLabels:savedDraft.customLabels}:{}),
       }));
       setMessage(`${section} 저장 완료 · 검토용 자료에 반영됩니다.`); onSaved?.();

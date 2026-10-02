@@ -10,6 +10,19 @@ import './category-picker.css';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 import { SupplierHubCategoryBrowser } from '@/app/components/supplier-hub-category-browser';
 import { loadLiveHubCategorySchema,loadLiveHubCategoryTemplate } from '@/app/supplier-hub-catalog';
+import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
+import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
+
+// Draft rules are part of the reusable form definition. A new observation time
+// alone does not change it; refreshing this profile leaves product snapshots intact.
+function sameHubDefinition(saved: HubSchemaSnapshot | undefined, captured: HubSchemaSnapshot) {
+  return saved?.format === captured.format && saved.categoryId === captured.categoryId
+    && JSON.stringify(saved.categoryPath) === JSON.stringify(captured.categoryPath)
+    && saved.schemaString === captured.schemaString && JSON.stringify(saved.metadata) === JSON.stringify(captured.metadata)
+    && saved.company?.code === captured.company.code && saved.company?.name === captured.company.name
+    && saved.draftInitialization === captured.draftInitialization && saved.inputBindings === captured.inputBindings
+    && saved.settingsInitialization === captured.settingsInitialization;
+}
 
 function codeEvidenceLabel(choice: CategoryChoice) {
   if (choice.codeEvidence === 'supplier-hub') return 'Supplier Hub 코드 확인 · 전체 경로 일치';
@@ -55,14 +68,14 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       if(controller.signal.aborted)return;
       async function withSchema(profile:CategoryProfile){
         if(!hubSchema)return profile;
-        if(profile.template&&profile.hubSchema?.schemaString===hubSchema.schemaString&&JSON.stringify(profile.hubSchema.metadata)===JSON.stringify(hubSchema.metadata)&&profile.hubSchema.company.code===hubSchema.company.code&&profile.hubSchema.company.name===hubSchema.company.name)return profile;
-        const connection=profile.template?{template:profile.template,mappings:profile.mappings}:await loadLiveHubCategoryTemplate(target!,hubSchema,controller.signal);
+        if(profile.template&&sameHubDefinition(profile.hubSchema,hubSchema))return profile;
+        const connection=profile.template?{template:profile.template,mappings:translateHubRuleVersionMappings(profile.mappings,profile.hubSchema,hubSchema)}:await loadLiveHubCategoryTemplate(target!,hubSchema,controller.signal);
         if(controller.signal.aborted)return profile;
         const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...profile,hubSchema,...connection}}),signal:controller.signal});
         const result=await response.json() as {profile?:CategoryProfile;error?:string};
         if(!response.ok)throw Error(result.error??'상세 견적 양식을 저장하지 못했습니다.');
         const saved=result.profile;
-        if(!saved||saved.id!==profile.id||saved.revision!==profile.revision+1||saved.categoryId!==target!.categoryId||JSON.stringify(saved.categoryPath)!==JSON.stringify(target!.path)||saved.hubSchema?.schemaString!==hubSchema.schemaString||JSON.stringify(saved.hubSchema.metadata)!==JSON.stringify(hubSchema.metadata)||saved.hubSchema.company.code!==hubSchema.company.code||saved.hubSchema.company.name!==hubSchema.company.name||JSON.stringify(saved.template)!==JSON.stringify(connection.template)||JSON.stringify(saved.mappings)!==JSON.stringify(connection.mappings))throw Error('저장된 상세 양식과 기존 견적서 연결을 확인하지 못했습니다.');
+        if(!saved||saved.id!==profile.id||saved.revision!==profile.revision+1||saved.categoryId!==target!.categoryId||JSON.stringify(saved.categoryPath)!==JSON.stringify(target!.path)||!sameHubDefinition(saved.hubSchema,hubSchema)||JSON.stringify(saved.template)!==JSON.stringify(connection.template)||JSON.stringify(saved.mappings)!==JSON.stringify(connection.mappings))throw Error('저장된 상세 양식과 기존 견적서 연결을 확인하지 못했습니다.');
         return saved;
       }
       const existing = profiles.find(profile => profile.id === target.profileId);
@@ -113,7 +126,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
         || !Number.isSafeInteger(saved.revision) || saved.revision < 1
         || saved.categoryId !== target.categoryId
         || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(target.path)
-        || hubSchema&&(saved.hubSchema?.schemaString!==hubSchema.schemaString||JSON.stringify(saved.hubSchema.metadata)!==JSON.stringify(hubSchema.metadata)||saved.hubSchema.company.code!==hubSchema.company.code||saved.hubSchema.company.name!==hubSchema.company.name)
+        || hubSchema&&!sameHubDefinition(saved.hubSchema,hubSchema)
         ||connection&&(JSON.stringify(saved.template)!==JSON.stringify(connection.template)||JSON.stringify(saved.mappings)!==JSON.stringify(connection.mappings))) {
         throw new Error('저장된 카테고리 코드·경로·버전이 선택한 분류와 일치하지 않습니다. URL 입력을 중단했습니다. 카테고리 설정을 다시 확인해주세요.');
       }

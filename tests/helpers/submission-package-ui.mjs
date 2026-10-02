@@ -11,7 +11,7 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 
 /** Actual component, API, ZIP parser and source verifier. The final Hub transport
  * is captured locally: these tests never upload synthetic data to Supplier Hub. */
-export function submissionPackageUI({route,productId,profileId='cat',categoryId='80719',observations=[]}){
+export function submissionPackageUI({route,productId,profileId='cat',categoryId='80719',observations=[],lookupResults=[]}){
  const slots=[],modules=new Map(),calls=[],savedSubmissions=new Map();let cursor=0;
  const submissionKey=identity=>JSON.stringify([identity.productId,identity.categoryId,identity.fingerprint]);
  const fetcher=async(path,init)=>{const body=init?.body?JSON.parse(init.body):undefined;calls.push({action:body?.action??'receipt-read'});return route(path,{method:init?.method??'GET',body});};
@@ -29,7 +29,7 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
   useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
  let lookupError=false;
  const bridge={getSupplierHubSubmission:async identity=>{calls.push({action:'chrome-recover'});return savedSubmissions.get(submissionKey(identity))||{attempt:null,result:null};},
-  getSupplierHubResult:async(identity,_signal,mode)=>{calls.push({action:'lookup',mode});if(lookupError)throw Error('SKU 조회 응답 유실');return savedSubmissions.get(submissionKey(identity))?.result??null;},
+  getSupplierHubResult:async(identity,_signal,mode)=>{calls.push({action:'lookup',mode});if(lookupError)throw Error('SKU 조회 응답 유실');return lookupResults.length?lookupResults.shift():savedSubmissions.get(submissionKey(identity))?.result??null;},
   checkSupplierHubExtension:async()=>{},prepareSupplierHubHandoff:(blob,identity)=>connect('prepare',blob,identity),
   transmitSupplierHubPackage:(blob,identity,agreements)=>connect('transmit',blob,identity,agreements)};
  function load(file){

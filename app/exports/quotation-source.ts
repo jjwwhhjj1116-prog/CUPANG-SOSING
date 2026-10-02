@@ -17,6 +17,7 @@ import { publicDetailVersion, type PublicDetailConfig } from '@/app/quotation-pu
 import { optionPriceCalculationRevision } from '@/app/product-options';
 import { readCollectionResult } from '@/db/collection-results';
 import { collectionSourceGaps, type CollectionSourceGap } from '@/app/collection-source-gaps';
+import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -98,7 +99,10 @@ export async function readMappedQuotationSource(owner: string, productId: string
   }
   // Template/mappings use their latest saved revision, while field choices and
   // defaults stay with this product's captured schema, just as the editor does.
-  return {...saved,profile:saved.profile?{...saved.profile,hubSchema:saved.hubSchema}:null};
+  try {
+    return {...saved,profile:saved.profile?{...saved.profile,
+      mappings:translateHubRuleVersionMappings(saved.profile.mappings,saved.profile.hubSchema,saved.hubSchema),hubSchema:saved.hubSchema}:null};
+  } catch (error) { throw new QuotationExportError(error instanceof Error ? error.message : '저장 당시 상세 양식의 열 연결을 확인해주세요.',409); }
 }
 export function resolveQuotationExport(saved: QuotationExportSource) {
   const resolved = resolveQuotationFields({ categoryId: saved.categoryContext.categoryId, categoryPath: saved.categoryContext.categoryPath,

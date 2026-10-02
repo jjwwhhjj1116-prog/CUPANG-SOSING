@@ -213,6 +213,38 @@ test('saved SEO name propagates through linked label and quotation while manuall
  h.unmount();
 });
 
+test('saving SEO refreshes an unsaved linked label name while preserving other label edits and explicit name choices',async()=>{
+ for(const nameChoice of [undefined,'검토한 품명','']){
+  let saved;const requests=[];
+  const h=harness((url,init,content)=>{
+   if(url.endsWith('/registration-settings'))return Response.json({settings:{manufacturer:'기본 제조사'}});
+   if(init?.method==='PATCH'){
+    const request=JSON.parse(init.body);requests.push(request);
+    try{saved=h.model.applyContentPatch(saved??content,request.patch,'now');return Response.json({content:saved});}
+    catch(error){return Response.json({error:error.message},{status:400});}
+   }
+  },undefined,true,content=>{content.seo.title={value:'처음 상품명',provenance:'collected',updatedAt:'source'};});
+  await h.start();h.render('표시사항');await h.flush();
+  const label=(key)=>nodes(h.render('표시사항')).find(n=>n.type==='label'&&n.props.className==='field'&&n.props.children?.[0]?.props?.children?.[0]===h.model.labelFields[key]).props.children[1];
+  assert.equal(label('productName').props.value,'처음 상품명');
+  label('manufacturer').props.onChange({target:{value:'검토한 제조사'}});
+  if(nameChoice!==undefined)label('productName').props.onChange({target:{value:nameChoice}});
+  nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.onChange({target:{value:'수정 상품명'}});
+  h.button('SEO 저장','SEO').props.onClick();await settle();
+  assert.equal(label('productName').props.value,nameChoice??'수정 상품명');
+  assert.equal(label('manufacturer').props.value,'검토한 제조사');
+  assert.equal(saved.label.productName.value,'','SEO save must not persist the unsaved label draft');
+  assert.equal(h.button('표시사항 저장','표시사항').props.disabled,false);
+  h.button('표시사항 저장','표시사항').props.onClick();await settle();
+  assert.equal(requests.length,2);assert.equal(requests[1].expectedRevision,1);
+  assert.equal(saved.label.productName.value,nameChoice??'수정 상품명');
+  assert.equal(saved.labelProductNameLinked,nameChoice===undefined);
+  assert.equal(saved.label.manufacturer.value,'검토한 제조사');
+  if(nameChoice==='')assert.equal(saved.label.productName.provenance,'manual');
+  assert.equal(h.button('표시사항 저장','표시사항').props.disabled,true);h.unmount();
+ }
+});
+
 test('selected image strip reorders and removes additional images before saving exact quotation order',async()=>{
  let saved,patch,fail=true;
  const h=harness((_url,init,content)=>{if(init?.method!=='PATCH')return;patch=JSON.parse(init.body).patch;if(fail)return Response.json({error:'일시적 오류'},{status:503});saved=h.model.applyContentPatch(content,patch,'2026-09-27T01:00:00Z');return Response.json({content:saved});},'additional');

@@ -143,10 +143,16 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         const quotationId=hubResult?.state==='validation-complete'?hubResult.quotationId:undefined;
         await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
         if(controller.signal.aborted)return;
-        const result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal,action==='registration'?'registration':true);
+        let result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal,action==='registration'?'registration':true);
         await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
         if(!controller.signal.aborted){
           if(result){validateSupplierHubResultForSource(result,{filename:preview!.filename,company:preview!.report.company,includedOptions:preview!.report.rowCount,quotationId});setAttemptedFingerprint(preview!.fingerprint);}
+          // This Chrome may have fewer cached SKU rows than the restored server
+          // receipt. A file-only refresh does not re-observe those rows or their time.
+          if(action==='result'&&result?.state==='validation-complete'&&hubResult?.state==='validation-complete'
+            &&hubResult.registration&&hubResult.quotationId===result.quotationId
+            &&(!result.registration||result.registration.observedAt<hubResult.registration.observedAt))
+            result={...result,registration:hubResult.registration};
           setHubResult(result);if(!result)setMessage('이 견적서의 검증 결과가 아직 표시되지 않았습니다. 잠시 후 다시 확인해주세요.');
           await retainResult(preview!,result,controller);
         }

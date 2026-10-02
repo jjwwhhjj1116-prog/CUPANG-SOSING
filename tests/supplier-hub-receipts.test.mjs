@@ -145,6 +145,29 @@ for(const company of companies)test(`reviewed URL draft → transmission → per
   const detail=await json(await h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test'+h.base),{params:Promise.resolve({id:h.product.id})}));assert.deepEqual(detail.product.hub_receipt,summary);
  }finally{h.close();}
 });
+for(const company of companies)for(const cached of ['missing','older'])test(`file-only refresh keeps a newer server-restored SKU receipt when Chrome rows are ${cached} (${company.companyCode})`,async()=>{
+ const h=await setup(company);try{
+  await json(await h.write({...h.result,registration:h.registration}));
+  const before=h.sqlite.prepare('SELECT * FROM products').get();
+  const fileOnly={...h.result,observedAt:h.result.observedAt+10,...(cached==='older'?{registration:{...h.registration,observedAt:h.registration.observedAt-1,rows:[]}}:{})};
+  const freshEmpty={...h.result,registration:{...h.registration,observedAt:h.registration.observedAt+20,rows:[]}};
+  const ui=submissionPackageUI({route:h.route,productId:h.product.id,lookupResults:[fileOnly,freshEmpty]});
+  await ui.click('견적서 + 첨부 파일 준비');assert.ok(JSON.stringify(ui.render()).includes('sku-5'));
+  await ui.click('Supplier Hub 검증 결과 불러오기');assert.deepEqual(ui.alerts(),[]);
+  assert.ok(JSON.stringify(ui.render()).includes('sku-5'),'file validation cannot erase a newer server SKU observation');
+  assert.ok(JSON.stringify(ui.render()).includes(new Date(h.registration.observedAt).toLocaleString('ko-KR')),'SKU observation keeps its original time');
+  let stored=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+h.preview.fingerprint));
+  assert.equal(stored.receipt.result.registration.observedAt,h.registration.observedAt);assert.equal(stored.receipt.result.registration.rows.length,6);
+  await ui.click('견적서 ID로 상품별 등록 상태 조회');assert.deepEqual(ui.alerts(),[]);
+  assert.equal(JSON.stringify(ui.render()).includes('sku-5'),false,'a fresh SKU lookup must still replace previous rows');
+  stored=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+h.preview.fingerprint));
+  assert.equal(stored.receipt.result.registration.observedAt,freshEmpty.registration.observedAt);assert.equal(stored.receipt.result.registration.rows.length,0);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM products').get(),before);
+  const current=await json(await h.route(h.base+'/quotation',{method:'POST',body:{action:'source'}}));assert.equal(current.fingerprint,h.preview.fingerprint);
+  assert.equal(ui.calls.some(call=>['transmit','prepare','export'].includes(call.action)),false);
+  assert.deepEqual(ui.calls.filter(call=>call.action==='lookup').map(call=>call.mode),[true,'registration']);
+ }finally{h.close();}
+});
 for(const company of companies)test(`server outage and failed refresh preserve the six-SKU receipt without another upload (${company.companyCode})`,async()=>{
  const h=await setup(company);try{
   let unavailable=false;

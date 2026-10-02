@@ -5,6 +5,9 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {hubSchemaSnapshot} from './helpers/hub-schema.mjs';
+import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+const mappingHarness=mobileIntakeHarness();
+test.after(()=>mappingHarness.close());
 const native=createRequire(import.meta.url);
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));};
@@ -21,6 +24,7 @@ function harness(request,existing=false,{readProfiles=async()=>Response.json({pr
   if(name.endsWith('.css'))return{};
   if(name==='@/app/category-profiles')return{usableCategoryCode:()=>true};
   if(name==='@/app/quotation-schema')return{getQuotationSchema:()=>({fields:[],status:'observed'})};
+  if(name==='@/app/hub-rule-version-mappings')return mappingHarness.load('app/hub-rule-version-mappings.ts');
   if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};
   if(name==='@/app/components/category-quotation-preview')return{CategoryQuotationPreview:()=>null};
   if(name==='@/app/components/supplier-hub-category-browser')return{SupplierHubCategoryBrowser:()=>null};
@@ -44,6 +48,48 @@ test('existing template and manually mapped columns survive a live schema refres
   h.chooseLive();h.confirm()();await settle();assert.equal(h.calls.filter(call=>call.method==='PUT').length,1);assert.equal(h.calls.filter(call=>call.method==='POST').length,0);assert.equal(h.selected.length,conflict?0:1);if(!conflict)assert.deepEqual(h.selected[0].template,profile.template);
  }
 });
+const currentDraftRules={draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'};
+test('a fresh live selection refreshes each changed draft rule even when the saved raw schema and template match',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test'],...currentDraftRules};
+ for(const omitted of Object.keys(currentDraftRules)){
+  const legacy=structuredClone(snapshot);delete legacy[omitted];
+  const profile={id:'saved',categoryId:'80719',categoryPath:['test'],revision:3,hubSchema:legacy,template:{id:'official'},mappings:[{column:0,field:'title',required:true}]};
+  for(const conflict of [false,true]){
+   const h=harness(async(_url,init)=>{const body=JSON.parse(init.body);assert.equal(body.expectedRevision,3);assert.deepEqual(body.profile.hubSchema,snapshot);assert.deepEqual(body.profile.template,profile.template);assert.deepEqual(body.profile.mappings,profile.mappings);return conflict?Response.json({error:'changed'},{status:409}):Response.json({profile:{...body.profile,revision:4}});},false,{readProfiles:async()=>Response.json({profiles:[profile]}),readSchema:async()=>snapshot,readTemplate:async()=>{throw Error('Existing template must remain unchanged');}});
+   h.chooseLive();h.confirm()();await settle();
+   assert.equal(h.calls.filter(call=>call.method==='PUT').length,1,omitted);assert.equal(h.calls.filter(call=>call.method==='POST').length,0);
+   assert.equal(h.selected.length,conflict?0:1);if(!conflict)assert.equal(h.selected[0].hubSchema[omitted],currentDraftRules[omitted]);
+   assert.equal(profile.hubSchema[omitted],undefined,'the previous captured snapshot is not mutated');
+  }
+ }
+});
+
+test('a matching live definition reuses its profile without writing only to replace the observation timestamp',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test'],...currentDraftRules};
+ const profile={id:'saved',categoryId:'80719',categoryPath:['test'],revision:3,hubSchema:{...snapshot,observedAt:snapshot.observedAt-1000},template:{id:'official'},mappings:[]};
+ const h=harness(async()=>{throw Error('Unchanged definition must not be written');},false,{readProfiles:async()=>Response.json({profiles:[profile]}),readSchema:async()=>snapshot,readTemplate:async()=>{throw Error('Existing template must remain unchanged');}});
+ h.chooseLive();h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].revision,3);assert.ok(h.calls.every(call=>!call.method));
+});
+
+test('live rule upgrade preserves the manual column connection by its exact wire path',async()=>{
+ const legacy={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']},raw=JSON.parse(legacy.schemaString);
+ raw.properties.productPage.properties.modelNumber={type:'string',title:'모델 번호'};legacy.schemaString=JSON.stringify(raw);
+ const snapshot={...legacy,...currentDraftRules},schema=mappingHarness.load('app/quotation-schema.ts').getQuotationSchema('80719',['test'],legacy);
+ const old=schema.fields.find(field=>JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','modelNumber']));assert.match(old.id,/^live_/);
+ const mappings=[{column:1,field:old.id,required:false},{column:0,field:'constant',constant:'직접 고정값',required:true}],profile={id:'saved',categoryId:'80719',categoryPath:['test'],revision:3,hubSchema:legacy,template:{id:'official'},mappings};
+ const h=harness(async(_url,init)=>{const body=JSON.parse(init.body);assert.equal(init.method,'PUT');assert.deepEqual(body.profile.mappings,[{...mappings[0],field:'model'},mappings[1]]);assert.deepEqual(body.profile.template,profile.template);return Response.json({profile:{...body.profile,revision:4}});},false,{readProfiles:async()=>Response.json({profiles:[profile]}),readSchema:async()=>snapshot,readTemplate:async()=>{throw Error('No replacement workbook');}});
+ h.chooseLive();h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].mappings[0].field,'model');assert.equal(profile.mappings[0].field,old.id);
+});
+
+test('category create and refresh reject a saved response that drops any captured draft rule',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test'],...currentDraftRules};
+ for(const method of ['POST','PUT'])for(const omitted of Object.keys(currentDraftRules)){
+  const profile={id:'saved',categoryId:'80719',categoryPath:['test'],revision:3,template:{id:'official'},mappings:[]};
+  const h=harness(async(_url,init)=>{assert.equal(init.method,method);const body=JSON.parse(init.body),saved=method==='PUT'?{...body.profile,revision:4}:{...body,id:'new',categoryPath:['test'],revision:1};delete saved.hubSchema[omitted];return Response.json({profile:saved});},false,{readProfiles:async()=>Response.json({profiles:method==='PUT'?[profile]:[]}),readSchema:async()=>snapshot});
+  h.chooseLive();h.confirm()();await settle();assert.equal(h.calls.filter(call=>call.method===method).length,1);assert.equal(h.selected.length,0,method+':'+omitted);assert.match(JSON.stringify(h.render()),/확인하지 못했습니다|URL 입력을 중단/);
+ }
+});
+
 test('empty live profile acquires official Excel once with revision protection before URL entry',async()=>{
  const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']},profile={id:'empty',categoryId:'80719',categoryPath:['test'],revision:3,hubSchema:snapshot,template:null,mappings:[]};let reads=0;
  for(const conflict of [false,true]){const h=harness(async(_url,init)=>{const input=JSON.parse(init.body);assert.equal(input.id,profile.id);assert.equal(input.expectedRevision,3);assert.equal(input.profile.template.name,'official.xlsx');return conflict?Response.json({error:'다른 화면 변경'},{status:409}):Response.json({profile:{...input.profile,revision:4}});},false,{readProfiles:async()=>Response.json({profiles:[profile]}),readSchema:async()=>snapshot,readTemplate:async()=>{reads++;return{template:{name:'official.xlsx'},mappings:[{column:0,field:'title'}]};}});
