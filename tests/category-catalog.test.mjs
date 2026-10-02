@@ -9,16 +9,23 @@ const hubObservation = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-
 const yogaObservation = JSON.parse(fs.readFileSync(new URL('../docs/yoga-category-comparison-2026-09-28.json', import.meta.url), 'utf8'));
 const braceObservation = JSON.parse(fs.readFileSync(new URL('../docs/supplier-hub-81452-product-2026-09-24.json', import.meta.url), 'utf8'));
 const source = ts.transpileModule(fs.readFileSync(new URL('../app/category-catalog.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+const dependencyCache=new Map();
+function loadAppDependency(name){
+  assert.match(name,/^@\/app\/[a-z0-9-]+$/);
+  if(dependencyCache.has(name))return dependencyCache.get(name);
+  const exports={};dependencyCache.set(name,exports);
+  const file=new URL('../'+name.slice(2)+'.ts',import.meta.url);
+  const compiled=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  vm.runInNewContext(compiled,{exports,TextEncoder,require:loadAppDependency});
+  return exports;
+}
 function load(hub = hubObservation, yoga = yogaObservation) {
   const model = {};
   vm.runInNewContext(source, { exports: model, require(name) {
     if (name === '../docs/yoga-category-comparison-2026-09-28.json') return yoga;
     if (name === '../docs/couplus-category-dom-2026-09-22.json') return observation;
     if (name === '../docs/supplier-hub-category-ids-2026-09-22.json') return hub;
-    if (name === '@/app/category-profiles') {
-      const schema={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-schema.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:schema,TextEncoder});
-      const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/category-profiles.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports,require:dependency=>{assert.equal(dependency,'@/app/supplier-hub-schema');return schema;} }); return exports;
-    }
+    if (name === '@/app/category-profiles') return loadAppDependency(name);
     throw Error(name);
   } });
   return model;

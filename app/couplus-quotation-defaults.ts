@@ -28,6 +28,24 @@ const fixed80719: Readonly<Record<string,string>> = {
   taxType:'과세', barcodeMode:'request-coupang', shelfLifeDays:'0',
   noticeServiceContact:'쿠팡 고객센터 1577-7011',
 };
+/** Public createFieldStructure behavior, only after checking required ancestors
+ * in the captured Hub form. Numeric zero can still fail the form's constraints.
+ */
+export function couplusScalarDraftDefault(name:string,node:{type?:unknown;dropdown?:unknown;enum?:unknown}):string|undefined {
+  const types=Array.isArray(node.type)?node.type:[node.type];
+  if(types.includes('string')){
+    if(name==='fashionSeason')return '사계절';
+    const values=Array.isArray(node.dropdown)&&node.dropdown.length?node.dropdown:Array.isArray(node.enum)&&node.enum.length?node.enum:null;
+    if(!values)return '';
+    const value=values.includes('해당사항없음')?'해당사항없음':values[0];
+    return value===null?'':typeof value==='string'||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value)?String(value):undefined;
+  }
+  if(types.includes('number')||types.includes('integer'))return '0';
+  if(node.type==='boolean')return 'false';
+  // Other scalar structures start as null, represented by our empty text model.
+  return '';
+}
+
 type DraftField = { id: string; section?: string; visibility?: string; choices?: readonly {value:string;label:string}[]; draftDefault?:string; hubWire?:unknown };
 const recordedArrays: Readonly<Record<string, ReadonlySet<string>>> = {
   ...Object.fromEntries(Object.entries(hubProductSchemas).map(([id, schema]) => [id,

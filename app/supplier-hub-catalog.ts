@@ -59,7 +59,9 @@ export async function loadLiveHubCategorySchema(choice:CategoryChoice,signal:Abo
   if(branch.ownerId!==ownerId||branch.company.code!==company.code||branch.company.name!==company.name||!branch.children.some(node=>node.isLeaf&&node.categoryId===choice.categoryId&&node.name===choice.path.at(-1)))throw Error('상세 양식의 회원·회사·최종 분류가 변경되었습니다.');
   const schema=validateHubSchemaSnapshot((result.branch as {schema?:unknown}).schema,choice.categoryId,choice.path);
   if(schema.company.code!==company.code||schema.company.name!==company.name)throw Error('상세 견적 양식의 회사가 다릅니다.');
-  return schema;
+  // Version the app's draft behavior at capture time. Older working products
+  // retain their stored snapshot instead of gaining new automatic values.
+  return {...schema,draftInitialization:'couplus-required-v1'};
 }
 
 /** Auto-connect a blank official workbook only when the selected profile has no saved template. */
