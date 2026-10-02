@@ -7,7 +7,7 @@ const links: Readonly<Record<string, string>> = {
   supplyPrice: '2단계 옵션 공급가', salePrice: '2단계 옵션 판매가', msrp: '2단계 옵션 권장소비자가격',
   brand: '기본설정 브랜드', manufacturer: '6단계 제조사 → 기본설정 제조사',
   tradeType: '기본설정 거래타입', taxType: '기본설정 과세여부', importType: '기본설정 수입여부',
-  boxSkuQuantity: '기본설정 박스 내 SKU 수량', model: '6단계 모델명',
+  boxSkuQuantity: '기본설정 박스 내 SKU 수량', shelfLifeDays: '기본설정 유통기간', handlingReason: '기본설정 취급주의 사유', model: '6단계 모델명',
   packagedWeightG: '옵션 포장 무게 · g', packagedDimensionsMm: '옵션 포장 가로·세로·높이 · mm',
   quantity: '2단계 옵션 판매단위 수량', color: '옵션 색상', yoga_noticeColor: '옵션 색상', brace_noticeColor: '옵션 색상', marathon_noticeColor: '옵션 색상', glove_noticeColor: '옵션 색상',
   size: '옵션 사이즈 · 카테고리가 허용하는 경우 상품 치수', marathon_noticeSize: '옵션 사이즈',
@@ -25,6 +25,8 @@ const links: Readonly<Record<string, string>> = {
   noticeQualityAssurance: '6단계 품질보증기준', noticeServiceContact: '6단계 연락처 → 기본설정 A/S 연락처',
 };
 export function quotationInputLink(field: QuotationField): string | null {
+  if (field.section === 'legal' && field.label === '세탁방법 및 취급시 주의사항') return '6단계 세탁·취급 주의사항 → 기본설정 세탁방법·취급시 주의사항';
+  if (field.section === 'legal' && ['출시년월', '제조년월'].includes(field.label)) return '6단계 출시년월 → 기본설정 전월 자동 입력';
   const content = field.contentField ?? (field.id === 'storageMaterial' ? 'material' : undefined);
   if (content) return `6단계 ${{ material: '재질', components: '구성품', model: '모델명' }[content]}`;
   if (field.optionDimension) return `옵션 상품 ${{ widthCm: '가로', lengthCm: '세로', heightCm: '높이' }[field.optionDimension]} · cm`;

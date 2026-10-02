@@ -9,7 +9,8 @@ export function collectionRegistrationSettings(current: WorkspaceSettings, captu
   const stored = captured as Record<string, unknown>;
   const validated = savedRegistrationSettings(stored);
   const result = { ...current };
-  for (const key of ['brand','manufacturer','importer','serviceContact','tradeType','importType','taxType','boxSkuQuantity'] as const) {
+  for (const key of ['brand','manufacturer','importer','serviceContact','tradeType','importType','taxType','boxSkuQuantity',
+    'washingMethod','handlingPrecautions','manufactureDatePreviousMonth','shelfLifeDays','handlingReason'] as const) {
     Object.assign(result, { [key]: validated[key] });
   }
   return result;

@@ -49,7 +49,7 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   // Prepare the reviewable label together with the source draft, so entering
   // stage six is not required to establish the stage-seven input linkage.
   const labelDraft = Object.fromEntries(Object.entries(content.label).map(([key,field]) => [key,field.value])) as Record<LabelField,string>;
-  const autofill = fillLabelDraft(labelDraft, content, result.title, job.context.settings, job.context.category.categoryId ?? null);
+  const autofill = fillLabelDraft(labelDraft, content, result.title, job.context.settings, job.context.category.categoryId ?? null, [], job.context.capturedAt ?? now);
   for (const key of autofill.filled) content.label[key] = { value: autofill.label[key], provenance: 'generated', updatedAt: now };
   content.labelProductNameLinked = autofill.filled.includes('productName');
   const product:ProductRecord={id,owner_id:owner,source_url:result.sourceUrl,title:result.title,source_price_cny:cost,exchange_rate:policy.exchangeRate,supply_margin:policy.supplyMargin,coupang_margin:policy.coupangMargin,supply_price:price.supplyPrice,sale_price:price.salePrice,msrp:price.msrp,options_count:rows.length,...initialStatuses,registration_status:'수집 원문 반영',image_keys:'[]',goal_stage:job.goal,created_at:now,updated_at:now};

@@ -18,7 +18,7 @@ test('product label settings prefer the linked snapshot including explicit blank
  const h=api({captured:{linked:true,payload:JSON.stringify({settings:{manufacturer:'등록 당시 제조사',importer:'',serviceContact:'등록 당시 연락처',boxSkuQuantity:50}})}});
  const response=await h.get(),body=await response.json();
  assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(body.source,'collection');
- assert.deepEqual(body.settings,{manufacturer:'등록 당시 제조사',importer:'',serviceContact:'등록 당시 연락처',boxSkuQuantity:50});
+ assert.deepEqual(body.settings,{manufacturer:'등록 당시 제조사',importer:'',serviceContact:'등록 당시 연락처',boxSkuQuantity:50,washingMethod:'',handlingPrecautions:'',manufactureDatePreviousMonth:false,shelfLifeDays:null,handlingReason:''});
  assert.deepEqual(h.calls[1],['source','owner','813724060928','p']);
 });
 test('unlinked same-URL settings cannot overwrite this product and sparse snapshots keep missing registration facts blank',async()=>{

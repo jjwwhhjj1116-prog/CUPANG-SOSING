@@ -12,6 +12,7 @@ import type { ProductRecord } from '@/db/queries';
 import { hubProductSchemas } from '@/app/hub-product-schemas';
 import { couplusQuotationDefault } from '@/app/couplus-quotation-defaults';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
+import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus-registration-defaults';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -346,6 +347,15 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   }
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
     const id = definition.id;
+    // Match the complete observed notice name, never a hidden attribute or a
+    // similarly named notice. Manual content (including blanks) keeps priority.
+    if (definition.section === 'legal' && definition.label === '세탁방법 및 취급시 주의사항') {
+      return contentValue(content.label.washingPrecautions ?? { value: '', provenance: 'unverified', updatedAt: null }, washingPrecautionsText(settings));
+    }
+    if (definition.section === 'legal' && ['출시년월', '제조년월'].includes(definition.label)) {
+      return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null },
+        settings.manufactureDatePreviousMonth ? previousRegistrationMonth(product.created_at) : '');
+    }
     const linkedContent = definition.contentField ?? (id === 'storageMaterial' ? 'material' : undefined);
     if (linkedContent) {
       const saved = contentValue(content.label[linkedContent] ?? { value: '', provenance: 'unverified', updatedAt: null });
@@ -450,6 +460,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { value: '', source: entered || cleared ? 'option' : 'empty', issues: entered ? ['포장 가로·세로·높이를 모두 입력해주세요(mm).'] : [] };
       }
       case 'boxSkuQuantity': return literal(settings.boxSkuQuantity, 'settings');
+      case 'shelfLifeDays': return literal(settings.shelfLifeDays, 'settings');
+      case 'handlingReason': return literal(settings.handlingReason, 'settings');
       // Product facts never come from category names. The subsequent draft
       // initializer can supply recorded form defaults with separate provenance.
       default: return literal('', 'empty');

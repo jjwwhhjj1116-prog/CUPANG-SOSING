@@ -31,3 +31,27 @@ test('failed or malformed reads cannot expose fallback editor and retry can reco
 test('closing the settings read aborts the request and ignores late data',async()=>{
  let resolve;const pending=new Promise(r=>resolve=r);const h=harness(()=>pending);h.close();assert.equal(h.calls[0].init.signal.aborted,true);resolve(Response.json({settings:{brand:'late'}}));await settle();assert.equal(h.late,0);assert.equal(h.saves,0);
 });
+
+test('basic settings notice and logistics inputs save the reviewed values, including zero and opt-in month', async () => {
+ const slots=[];let index=0,saved;
+ function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,require(name){
+  if(name==='react')return{useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];}};
+  if(name==='@/app/components/settings-price-preview')return{SettingsPricePreview:()=>null};
+  if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);
+ }});return exports;}
+ const initial=load('app/workspace-settings.ts').newWorkspaceSettings,Editor=load('app/components/workspace-settings-editor.tsx').WorkspaceSettingsEditor;
+ const render=()=>{index=0;return Editor({value:initial,onSave:async value=>{saved=value;},onClose:()=>{}});};
+ const input=label=>nodes(nodes(render()).find(node=>node.type==='label'&&nodes(node.props.children).some(child=>child.type==='span'&&child.props.children===label))).find(node=>['input','select'].includes(node.type));
+ assert.equal(input('유통기간 · 식품의 경우 소비기간 (일)').props.value,'0');
+ assert.equal(input('취급주의 사유').props.value,'해당사항없음');
+ input('세탁방법').props.onChange({target:{value:'손세탁'}});
+ input('취급시 주의사항').props.onChange({target:{value:'화기 주의'}});
+ input('제조년월 · 전월 자동 입력').props.onChange({target:{checked:true}});
+ input('취급주의 사유').props.onChange({target:{value:'유리'}});
+ await render().props.onSubmit({preventDefault(){}});
+ assert.equal(saved.washingMethod,'손세탁');assert.equal(saved.handlingPrecautions,'화기 주의');assert.equal(saved.manufactureDatePreviousMonth,true);assert.equal(saved.shelfLifeDays,0);assert.equal(saved.handlingReason,'유리');
+ input('유통기간 · 식품의 경우 소비기간 (일)').props.onChange({target:{value:''}});
+ await render().props.onSubmit({preventDefault(){}});assert.equal(saved.shelfLifeDays,null);
+ input('유통기간 · 식품의 경우 소비기간 (일)').props.onChange({target:{value:'-1'}});
+ await render().props.onSubmit({preventDefault(){}});assert.equal(saved.shelfLifeDays,null);assert.ok(nodes(render()).some(node=>node.props?.role==='alert'));
+});
