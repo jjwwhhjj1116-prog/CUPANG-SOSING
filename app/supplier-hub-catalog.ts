@@ -53,7 +53,7 @@ export async function verifyLiveHubCategoryChoice(choice:CategoryChoice,signal:A
 export async function loadLiveHubCategorySchema(choice:CategoryChoice,signal:AbortSignal):Promise<HubSchemaSnapshot>{
   if(!choice.supplierHub||!choice.isLeaf)throw Error('Supplier Hub 최종 카테고리를 선택해주세요.');
   const capability=await exchange('PING',null,signal);
-  if(capability.categorySchema!==true)throw Error('상세 견적 양식을 지원하는 상품 수집·전송 확장 0.2.37으로 갱신해주세요.');
+  if(capability.categorySchema!==true)throw Error('상세 견적 양식을 지원하는 상품 수집·전송 확장 0.2.38으로 갱신해주세요.');
   const {trail,ownerId,company}=choice.supplierHub;
   const result=await exchange('SCHEMA',{trail,selection:{categoryId:choice.categoryId,name:choice.path.at(-1)}},signal),branch=validateHubCategoryBranch(result.branch,trail);
   if(branch.ownerId!==ownerId||branch.company.code!==company.code||branch.company.name!==company.name||!branch.children.some(node=>node.isLeaf&&node.categoryId===choice.categoryId&&node.name===choice.path.at(-1)))throw Error('상세 양식의 회원·회사·최종 분류가 변경되었습니다.');
@@ -67,7 +67,7 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
   if(signal.aborted)throw Error('작업을 취소했습니다.');
   if(!choice.supplierHub||!choice.isLeaf)throw Error('Supplier Hub 최종 카테고리를 선택해주세요.');
   validateHubSchemaSnapshot(snapshot,choice.categoryId,choice.path);
-  const capability=await exchange('PING',null,signal);if(capability.categoryTemplate!==true)throw Error('공식 Excel 연결을 지원하는 상품 수집·전송 확장 0.2.37로 갱신해주세요.');
+  const capability=await exchange('PING',null,signal);if(capability.categoryTemplate!==true)throw Error('공식 Excel 연결을 지원하는 상품 수집·전송 확장 0.2.38로 갱신해주세요.');
   const {trail,ownerId,company}=choice.supplierHub;
   if(snapshot.company.code!==company.code||snapshot.company.name!==company.name)throw Error('선택한 회사와 상세 양식 회사가 다릅니다.');
   const result=await exchange('TEMPLATE',{trail,selection:{categoryId:choice.categoryId,name:choice.path.at(-1)},expectedSchema:{schemaString:snapshot.schemaString,metadata:snapshot.metadata}},signal);

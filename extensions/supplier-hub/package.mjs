@@ -71,10 +71,26 @@ export async function prepareAttachments(bytes) {
     return result;
   };
   const productImages=await group(plan.productImages),labelImages=await group(plan.labelImages);
+  const legal=plan.legalDocuments;
+  const legalDocuments=[];
+  if(legal?.applicability!==undefined){
+    if(!['unconfirmed','required','not-applicable'].includes(legal.applicability)||!Array.isArray(legal.files)||legal.files.length>10||legal.applicability==='required'&&!legal.files.length||legal.applicability!=='required'&&legal.files.length)throw Error('법적 서류 해당 여부와 원본 첨부를 확인해주세요.');
+    let total=0;const names=new Set();
+    for(const entry of legal.files){
+      if(!entry||!/^documents\/legal-\d{3}\.(pdf|png|jpg)$/.test(entry.archivePath)||entry.filename!==entry.archivePath.split('/').at(-1)||names.has(entry.filename)||!Number.isSafeInteger(entry.byteLength)||entry.byteLength<1||entry.byteLength>5*1024*1024||typeof entry.sha256!=='string'||!/^[a-f0-9]{64}$/.test(entry.sha256))throw Error('법적 서류 파일 정보를 확인해주세요.');
+      names.add(entry.filename);total+=entry.byteLength;if(total>8*1024*1024)throw Error('법적 서류 합계는 8MB 이하입니다.');
+      const bytes=files.get(entry.archivePath);if(bytes?.length!==entry.byteLength)throw Error('법적 서류 원본 첨부가 누락되었습니다.');
+      const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),value=>value.toString(16).padStart(2,'0')).join('');
+      if(hash!==entry.sha256)throw Error('법적 서류 원본이 검토 이후 변경되었습니다.');
+      const ext=entry.filename.split('.').at(-1),isPdf=ext==='pdf'&&bytes.length>=12&&decoder.decode(bytes.subarray(0,5))==='%PDF-'&&new TextDecoder('latin1').decode(bytes.subarray(Math.max(0,bytes.length-1024))).includes('%%EOF'),isPng=ext==='png'&&bytes.length>=8&&[137,80,78,71,13,10,26,10].every((value,index)=>bytes[index]===value),isJpg=ext==='jpg'&&bytes.length>=3&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255;
+      if(!isPdf&&!isPng&&!isJpg)throw Error('PDF·PNG·JPEG 원본 서류만 첨부할 수 있습니다.');
+      legalDocuments.push(file(entry.filename,bytes));
+    }
+  }
   if(!labelImages.length||!Array.isArray(plan.missingLabels)||plan.missingLabels.length)throw Error('모든 포함 옵션의 표시사항 라벨을 연결해주세요.');
   const company=plan.company;
   if(!company||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},company.code)||({A01526306:'유앤채',A01464742:'와이홉'})[company.code]!==company.name)throw Error('승인된 회원 회사정보가 없는 견적서입니다. 회사정보를 확인하고 앱에서 다시 준비해주세요.');
   if(plan.profileId!=null&&(typeof plan.profileId!=='string'||!/^\w[\w-]{0,99}$/.test(plan.profileId)))throw Error('견적서 양식 연결 정보를 확인해주세요.');
-  return {productId:plan.productId,categoryId:plan.categoryId,profileId:plan.profileId??null,includedOptions:review.includedOptions,company:{code:company.code,name:company.name},quotation:[file(quote.filename,data)],productImages,labelImages};
+  return {productId:plan.productId,categoryId:plan.categoryId,profileId:plan.profileId??null,includedOptions:review.includedOptions,company:{code:company.code,name:company.name},quotation:[file(quote.filename,data)],productImages,labelImages,...(legal?.applicability==='required'?{legalDocuments,legalDocumentsRequired:true}:{})};
 }
 function encodeBase64(bytes){let text='';for(let i=0;i<bytes.length;i+=16384)text+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(text);}

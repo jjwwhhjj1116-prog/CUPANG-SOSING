@@ -15,7 +15,7 @@ async function loadPending(){
     if(version!==sequence)return;
     prepared=result;pendingFingerprint=saved.fingerprint;pendingExpires=saved.createdAt+15*60*1000;
     packageIdentity={origin:saved.origin,productId:saved.productId,categoryId:saved.categoryId,fingerprint:saved.fingerprint};
-    summary.textContent=`앱에서 준비한 상품 ${saved.productId}\n카테고리 ${result.categoryId} · 포함 옵션 ${result.includedOptions}개\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개`;
+    summary.textContent=`앱에서 준비한 상품 ${saved.productId}\n카테고리 ${result.categoryId} · 포함 옵션 ${result.includedOptions}개\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개 · 법적 서류 ${result.legalDocuments?.length??0}개`;
     button.disabled=false;status.textContent='현재 Supplier Hub 회사 계정과 파일 목록을 확인한 뒤 전달하세요.';
   }catch(error){if(version===sequence)status.textContent=error.message;}
 }
@@ -56,7 +56,8 @@ validateButton.addEventListener('click',async()=>{
   try{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     if(!tab?.id||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/registration')throw Error('현재 창의 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
-    const response=await chrome.runtime.sendMessage({type:'YOOFAM_VALIDATE_PACKAGE',tabId:tab.id,reviewedAgreements:{priceData:document.querySelector('#agree-price').checked===true,labelBusinessContact:document.querySelector('#agree-contact').checked===true,legalDocumentsNotApplicable:document.querySelector('#legal-not-applicable').checked===true}});
+    const legalRequired=document.querySelector('#legal-required').checked===true;
+    const response=await chrome.runtime.sendMessage({type:'YOOFAM_VALIDATE_PACKAGE',tabId:tab.id,reviewedAgreements:{priceData:document.querySelector('#agree-price').checked===true,labelBusinessContact:document.querySelector('#agree-contact').checked===true,legalDocumentsNotApplicable:document.querySelector('#legal-not-applicable').checked===true,...(legalRequired?{legalDocumentsRequired:true}:{})}});
     if(!response?.ok)throw Error(response?.error||'검증 요청 응답이 없습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
     if(response.result?.state!=='validation-requested')throw Error('검증 요청 결과를 확인하지 못했습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
     status.textContent='파일 검증을 요청했습니다. Supplier Hub의 검증 진행상태와 상품별 등록 상태에서 결과를 확인해주세요. 등록 완료는 아직 확인되지 않았습니다.';
@@ -64,12 +65,12 @@ validateButton.addEventListener('click',async()=>{
   finally{validateButton.disabled=false;picker.disabled=false;button.disabled=!prepared;}
 });
 picker.addEventListener('change',async()=>{
-  document.querySelector('#agree-price').checked=false;document.querySelector('#agree-contact').checked=false;document.querySelector('#legal-not-applicable').checked=false;
+  document.querySelector('#agree-price').checked=false;document.querySelector('#agree-contact').checked=false;document.querySelector('#legal-not-applicable').checked=false;document.querySelector('#legal-required').checked=false;
   const version=++sequence;prepared=null;pendingFingerprint=null;packageIdentity=null;button.disabled=true;summary.textContent='';
   try{
     const file=picker.files[0];if(!file)return;if(file.size>30*1024*1024)throw Error('ZIP 파일은 30MB 이하여야 합니다.');
     const result=await prepareAttachments(new Uint8Array(await file.arrayBuffer()));if(version!==sequence)return;
-    prepared=result;summary.textContent=`카테고리 ${result.categoryId} · 포함 옵션 ${result.includedOptions}개\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개`;button.disabled=false;
+    prepared=result;summary.textContent=`카테고리 ${result.categoryId} · 포함 옵션 ${result.includedOptions}개\nExcel 1개 · 상품 이미지 ${result.productImages.length}개 · 라벨 ${result.labelImages.length}개 · 법적 서류 ${result.legalDocuments?.length??0}개`;button.disabled=false;
     status.textContent='파일 내용과 현재 Supplier Hub 회사 계정을 확인한 뒤 전달하세요.';
   }catch(error){if(version===sequence)status.textContent=error.message;}
 });

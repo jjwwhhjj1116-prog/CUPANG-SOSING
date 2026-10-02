@@ -8,10 +8,10 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let index=0;index<8;index++)await new Promise(resolve=>setImmediate(resolve));};
 const fingerprint='a'.repeat(64);
-function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false}={}){
+function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false,legalDocuments}={}){
  const slots=[],calls=[],modules=new Map();let cursor=0,sourceChanged=false;
  let clock=0,editNext=false;
- const preview={fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],report:{company,productId:'p',categoryId:'80719',profileId:'profile',rowCount:1,warnings:[],submissionReady:false},submissionReview:{productId:'p',categoryId:'80719',inputFingerprint:fingerprint,submissionReady:false,transport:'not-connected',errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]}};
+ const preview={fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],report:{company,productId:'p',categoryId:'80719',profileId:'profile',rowCount:1,warnings:[],submissionReady:false,...(legalDocuments?{legalDocuments}:{})},submissionReview:{productId:'p',categoryId:'80719',inputFingerprint:fingerprint,submissionReady:false,transport:'not-connected',errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]}};
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
  let editRecovery=false,lookupError=false,holdLookup=false,resumeLookup;
  const bridge={checkSupplierHubExtension:async(_signal,direct)=>calls.push(['check',direct]),prepareSupplierHubHandoff:async()=>calls.push(['prepare']),
@@ -38,7 +38,7 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
    if(conflict)return Response.json({error:'저장값이 변경되었습니다.'},{status:409});
    if(body.action==='export'&&editDuringExport)sourceChanged=true;
    return new Response('ZIP bytes',{headers:{'content-type':'application/zip'}});
- },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/supplier-hub-tracking')return trackingBridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
+ },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/supplier-hub-tracking')return trackingBridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  bridge.validateSupplierHubResultForSource=load('app/supplier-hub-handoff.ts').validateSupplierHubResultForSource;
  bridge.SupplierHubResultInvalid=load('app/supplier-hub-handoff.ts').SupplierHubResultInvalid;
  bridge.supplierHubRegistrationEvidence=load('app/supplier-hub-handoff.ts').supplierHubRegistrationEvidence;
@@ -151,6 +151,21 @@ test('reviewed registration sends the current export and choices, refreshes evid
  assert.equal(h.calls.find(([name])=>name==='result')[2],true);assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
  const exportRequest=h.calls.find(([name,,body])=>name==='fetch'&&body.action==='export');assert.equal(exportRequest[2].fingerprint,fingerprint);
  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+});
+
+test('required document review sends the required choice and document edits invalidate that review',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const h=harness({company,legalDocuments:{applicability:'required',count:1}});
+  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();
+  assert.equal(h.button('등록 전송').props.disabled,false);
+  nodes(h.render()).find(node=>node.type==='legal-documents').props.onSaved();
+  assert.equal(h.button('등록 전송'),undefined);assert.equal(h.calls.some(([name])=>name==='transmit'),false);
+  h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+  assert.equal(h.button('등록 전송').props.disabled,true);h.choose();h.button('등록 전송').props.onClick();await settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([name])=>name==='transmit')[2])),{priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:false,legalDocumentsRequired:true});
+  assert.equal(nodes(h.render()).find(node=>node.type==='legal-documents').props.disabled,true);
+  assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+ }
 });
 
 test('registration status lookup requires completed validation and rechecks current saved source before Chrome',async()=>{

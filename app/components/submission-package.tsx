@@ -9,11 +9,13 @@ import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 import { checkSupplierHubExtension, prepareSupplierHubHandoff, transmitSupplierHubPackage, getSupplierHubResult, getSupplierHubSubmission, validateSupplierHubResultForSource, supplierHubRegistrationEvidence, SupplierHubResultInvalid, type SupplierHubResult, type SupplierHubAgreements } from '@/app/supplier-hub-handoff';
 import { followSupplierHubRegistration } from '@/app/supplier-hub-tracking';
 import { readStoredSupplierHubResult, storeSupplierHubReceipt, SupplierHubReceiptUnavailable } from '@/app/supplier-hub-receipt-client';
+import {LegalDocumentsEditor} from '@/app/components/legal-documents-editor';
+import {supplierHubAgreementsReady} from '@/app/supplier-hub-agreements';
 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
   submissionReview:PackageReview;
-  report:{company?:{code:string;name:string}|null;productId:string;categoryId:string|null;profileId:string;rowCount:number;warnings:string[];publicDetailImages?:{count:number;publishedByThisRequest:false};submissionReady:false};
+  report:{company?:{code:string;name:string}|null;productId:string;categoryId:string|null;profileId:string;rowCount:number;warnings:string[];legalDocuments?:{applicability:'unconfirmed'|'required'|'not-applicable';count:number};publicDetailImages?:{count:number;publishedByThisRequest:false};submissionReady:false};
 };
 
 /** Reuses the reviewed XLSX exporter. Preparing or downloading never marks a product submitted. */
@@ -31,6 +33,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
   const transferAttempted=Boolean(preview&&preview.fingerprint===attemptedFingerprint);
   const submissionChecked=Boolean(preview&&preview.fingerprint===checkedFingerprint);
   const skuReceiptConfirmed=supplierHubRegistrationEvidence(hubResult).allSkus;
+  const requiresDocuments=preview?.report.legalDocuments?.applicability==='required';
   const active=useRef<AbortController|null>(null);
   const receiptNotice=useRef('');
   useEffect(()=>()=>active.current?.abort(),[]);
@@ -131,7 +134,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
       }
       if(action==='handoff'||action==='transmit'){
         if(!categoryId||!preview?.filename.endsWith('.xlsx'))throw new Error('선택한 카테고리의 Excel 양식으로 견적서를 준비해주세요.');
-        if(action==='transmit'&&(transferAttempted||!Object.values(agreements).every(value=>value)))throw new Error('전송 시도와 필수 선택값을 확인해주세요.');
+        if(action==='transmit'&&(transferAttempted||!supplierHubAgreementsReady(agreements,requiresDocuments)))throw new Error('전송 시도와 필수 선택값을 확인해주세요.');
         if(!submissionChecked)throw new Error('이 견적서의 이전 전송 기록을 먼저 확인해주세요.');
         await checkSupplierHubExtension(controller.signal,action==='transmit');
       }
@@ -200,6 +203,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
   }
   return <section className="panel-stack" aria-label="견적서와 첨부 파일 준비" aria-busy={busy}>
+    <LegalDocumentsEditor productId={productId} disabled={busy||transferAttempted} onSaved={()=>{setPreview(null);setCheckedFingerprint('');setHubResult(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});setMessage('서류를 저장했습니다. 견적서와 첨부 파일을 다시 준비해주세요.');}}/>
     <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('preview')}>{tracking?'등록 결과 확인 중…':busy?'견적서 준비 중…':'견적서 + 첨부 파일 준비'}</button>
     {tracking&&<button type="button" className="btn ghost" onClick={pauseTracking}>결과 확인 일시정지</button>}
     {error&&<p role="alert">{error}</p>}{receiptError&&<p role="alert">{receiptError}</p>}{message&&<p role="status">{message}</p>}
@@ -216,10 +220,10 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
       <fieldset disabled={busy||transferAttempted||!submissionChecked} className="panel-stack"><legend>Supplier Hub 필수 선택</legend>
         <label><input type="checkbox" checked={agreements.priceData} onChange={event=>setAgreements(value=>({...value,priceData:event.target.checked}))}/> 제공된 권장소비자가격 또는 공식 판매처 가격 데이터에 대한 쿠팡 약관에 동의합니다.</label>
         <label><input type="checkbox" checked={agreements.labelBusinessContact} onChange={event=>setAgreements(value=>({...value,labelBusinessContact:event.target.checked}))}/> 상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.</label>
-        <label><input type="checkbox" checked={agreements.legalDocumentsNotApplicable} onChange={event=>setAgreements(value=>({...value,legalDocumentsNotApplicable:event.target.checked}))}/> 상품 개별법령에 따른 필수 서류: 해당없음</label>
-        <small>법적 서류가 필요한 상품은 Supplier Hub에 해당 서류를 함께 첨부해야 합니다.</small>
+        {requiresDocuments?<label><input type="checkbox" checked={agreements.legalDocumentsRequired===true} onChange={event=>setAgreements(value=>({...value,legalDocumentsNotApplicable:false,legalDocumentsRequired:event.target.checked}))}/> 상품 개별법령에 따른 필수 서류: 해당함 · 원본 {preview.report.legalDocuments?.count}개를 확인했습니다.</label>:<label><input type="checkbox" checked={agreements.legalDocumentsNotApplicable} onChange={event=>setAgreements(value=>({...value,legalDocumentsNotApplicable:event.target.checked}))}/> 상품 개별법령에 따른 필수 서류: 해당없음</label>}
+        <small>{requiresDocuments?'확인한 원본 서류를 견적서·이미지·라벨과 함께 전달합니다.':'서류가 필요한 상품은 위 법적 필수서류에서 원본을 첨부하고 견적서를 다시 준비하세요.'}</small>
       </fieldset>
-      <button type="button" className="btn rose" disabled={busy||transferAttempted||!submissionChecked||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0||!Object.values(agreements).every(value=>value)} onClick={()=>void run('transmit')}>{transferAttempted?'전송 시도됨 · 검증 결과 확인':'등록 전송'}</button>
+      <button type="button" className="btn rose" disabled={busy||transferAttempted||!submissionChecked||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0||!supplierHubAgreementsReady(agreements,requiresDocuments)} onClick={()=>void run('transmit')}>{transferAttempted?'전송 시도됨 · 검증 결과 확인':'등록 전송'}</button>
       {!submissionChecked&&preview.report.company&&categoryId&&preview.filename.endsWith('.xlsx')&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>void run('recover')}>전송 기록 다시 확인</button>}
       <p>이 앱과 같은 Chrome 창에서 회사코드가 일치하는 Supplier Hub 대량 상품 등록 탭을 사용합니다.</p>
       {!!preview.report.publicDetailImages?.count && <p>견적서 다운로드·첨부 준비·등록전송 시 상세 이미지 {preview.report.publicDetailImages.count}장의 공개 주소를 만듭니다. 해당 주소를 가진 사람은 이미지를 볼 수 있습니다.</p>}
@@ -238,7 +242,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         {hubResult.registration.scope==='visible-page'?<small>현재 페이지의 결과입니다. 다른 페이지의 옵션은 아직 대조되지 않았습니다.</small>:
           <small>{hubResult.registration.hasMore===true?'다음 페이지가 남아 있습니다. 결과를 계속 확인해주세요.':hubResult.registration.hasMore===null?'추가 페이지 유무를 확인하지 못했습니다. Supplier Hub 결과 표를 확인해주세요.':'마지막 페이지까지 조회했습니다.'} 상품 검수 완료 여부는 각 행의 상태를 확인하세요.</small>}
       </div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.37.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.37)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.38.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.38)</a>
     </>}
   </section>;
 }

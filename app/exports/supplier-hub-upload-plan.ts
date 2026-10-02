@@ -1,6 +1,7 @@
 import type { ResolvedQuotation } from '@/app/quotation-schema';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 import { isQuotationFilename } from '@/app/exports/quotation-filename';
+import type {LegalDocumentAttachment} from '@/app/exports/legal-documents';
 
 export type QuotationAttachment = { filename: string; byteLength: number; sha256: string };
 
@@ -8,7 +9,7 @@ type Reference = { optionId: string | null; optionLabel: string; fieldId: string
 type Attachment = { key: string; archivePath: string; filename: string; byteLength?: number; sha256?: string; references: Reference[] };
 
 /** A local manifest, not an upload command or a record of external consent. */
-export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: readonly BundleAsset[], quotation?: QuotationAttachment) {
+export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: readonly BundleAsset[], quotation?: QuotationAttachment, legal?:{applicability:'unconfirmed'|'required'|'not-applicable';attachments:LegalDocumentAttachment[]}) {
   if (quotation && (!isQuotationFilename(quotation.filename) || !Number.isSafeInteger(quotation.byteLength) || quotation.byteLength <= 0 || !/^[a-f0-9]{64}$/.test(quotation.sha256))) throw new Error('견적서 첨부 파일 정보를 확인해주세요.');
   const groups = { productImages: new Map<string, Attachment>(), labelImages: new Map<string, Attachment>() };
   const byKey = new Map<string, BundleAsset>();
@@ -48,7 +49,7 @@ export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: reado
     submissionReady: false, uploaded: false,
     quotation: { status: 'official-template-verification-required', ...(quotation ? {file: {...quotation}} : {}) },
     productImages: [...groups.productImages.values()], labelImages: [...groups.labelImages.values()], missingLabels,
-    legalDocuments: { status: 'applicability-and-files-unverified' },
+    legalDocuments: { status: 'applicability-and-files-unverified', ...(legal?{applicability:legal.applicability,files:legal.attachments}: {}) },
     agreements: { priceData: 'unconfirmed', labelBusinessContact: 'unconfirmed' },
     limits: ['화면에서 관찰한 업로드 영역별 준비 목록입니다. 파일을 업로드하거나 동의·검증·등록하지 않습니다.',
       '원래 저장 자료의 미사용 이미지와 제외 옵션 전용 이미지는 이 목록에서 제외합니다.',

@@ -16,7 +16,8 @@ export function requestSupplierHubValidation(reviewedAgreements = {}, waitForBut
     ['labelBusinessContact','labelContactAgreement','상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.'],
   ];
   if(!reviewedAgreements||typeof reviewedAgreements!=='object'||Array.isArray(reviewedAgreements)
-    ||Object.keys(reviewedAgreements).some(key=>(!definitions.some(([name])=>name===key)&&key!=='legalDocumentsNotApplicable')||typeof reviewedAgreements[key]!=='boolean'))throw Error('동의 선택값을 확인해주세요.');
+    ||Object.keys(reviewedAgreements).some(key=>(!definitions.some(([name])=>name===key)&&!['legalDocumentsNotApplicable','legalDocumentsRequired'].includes(key))||typeof reviewedAgreements[key]!=='boolean')||reviewedAgreements.legalDocumentsNotApplicable===true&&reviewedAgreements.legalDocumentsRequired===true)throw Error('동의 선택값을 확인해주세요.');
+  if((attempt.legalDocumentsRequired===true)!==(reviewedAgreements.legalDocumentsRequired===true))throw Error('법적 서류 선택과 첨부 기록이 다릅니다.');
   const agreement=(key,id,text)=>{
     const matches=document.querySelectorAll('input[type="checkbox"][id="'+id+'"]');
     if(matches.length!==1||matches[0].disabled)throw Error('Supplier Hub의 동의 항목을 확인해주세요.');
@@ -45,8 +46,23 @@ export function requestSupplierHubValidation(reviewedAgreements = {}, waitForBut
     if(candidates.length!==1||candidates[0].disabled)throw Error('법적 서류 해당없음 항목을 확인하지 못했습니다.');
     return candidates[0];
   };
+  const requiredLegalChoice=()=>{
+    if(!Array.isArray(attempt.legalDocuments)||!attempt.legalDocuments.length||attempt.legalDocuments.some(name=>typeof name!=='string'||!attempt.files.includes(name)||!/^legal-\d{3}\.(pdf|png|jpg)$/.test(name)))throw Error('첨부한 법적 서류 기록을 확인하지 못했습니다.');
+    const matches=Array.from(document.querySelectorAll('input[type="radio"][id="undefined-Y"]')).filter(input=>{
+      if(!input.checked||input.disabled||!Array.from(input.labels||[]).some(label=>(label.innerText||'').trim()==='해당함'))return false;
+      let section=input.parentElement;for(let depth=0;section&&depth<8;depth++,section=section.parentElement){
+        if(section.querySelectorAll('input[type="radio"]').length>2)return false;
+        if((section.innerText||'').includes('상품 개별법령에 따른 필수 서류')){
+          const words=(section.innerText||'').split(/[\s<>"'(),;]+/);
+          return section.querySelectorAll('input[type="file"]').length===1&&attempt.legalDocuments.every(name=>words.includes(name));
+        }
+      }return false;
+    });
+    if(matches.length!==1)throw Error('법적 서류 해당함 선택과 업로드 완료를 확인하지 못했습니다.');
+  };
   definitions.forEach(args=>agreement(...args));
   if(reviewedAgreements.legalDocumentsNotApplicable===true)legalChoice();
+  if(reviewedAgreements.legalDocumentsRequired===true)requiredLegalChoice();
   const validationButton=()=>{
     const buttons=Array.from(document.querySelectorAll('button')).filter(button=>(button.innerText||'').trim()==='파일 검증하기'&&button.getClientRects().length);
     if(buttons.length!==1)throw Error('파일 검증 버튼을 확인해주세요.');
@@ -66,6 +82,7 @@ export function requestSupplierHubValidation(reviewedAgreements = {}, waitForBut
     const codes=Array.from(current.matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
     if(codes.length!==1||codes[0]!==attempt.company.code||attempt.files.some(name=>!current.split(/[\s<>"'(),;]+/).includes(name)))throw Error('검증 요청 전 회사와 첨부 파일을 확인하지 못했습니다.');
     if(definitions.some(args=>!agreement(...args).checked)||(reviewedAgreements.legalDocumentsNotApplicable===true&&!legalChoice().checked))throw Error('필수 선택값이 변경되었습니다.');
+    if(reviewedAgreements.legalDocumentsRequired===true)requiredLegalChoice();
     const button=validationButton();
     if(button.disabled||button.getAttribute('aria-disabled')==='true')throw Error('파일 업로드와 필수 항목을 확인해주세요. 파일 검증 버튼이 아직 활성화되지 않았습니다.');
     // Mark before clicking: losing the caller must not repeat a remote request.

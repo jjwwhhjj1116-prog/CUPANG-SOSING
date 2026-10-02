@@ -39,6 +39,7 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
     if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;
     if(name==='@/app/supplier-hub-tracking')return observations.length?trackingBridge:{followSupplierHubRegistration:async()=>({phase:'validation-pending',timedOut:true,registered:false})};
     if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};
+    if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};
     return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);
    }});return exports;
  }

@@ -115,10 +115,11 @@ export async function prepareSupplierHubHandoff(blob:Blob,identity:PackageIdenti
   const result=await exchange('PREPARE',{...identity,base64:await packageBase64(blob)},signal);
   if(result.fingerprint!==identity.fingerprint||result.registered!==false)throw new Error('검토한 견적서와 확장 준비 결과가 다릅니다.');
 }
-export type SupplierHubAgreements={priceData:boolean;labelBusinessContact:boolean;legalDocumentsNotApplicable:boolean};
+export type SupplierHubAgreements={priceData:boolean;labelBusinessContact:boolean;legalDocumentsNotApplicable:boolean;legalDocumentsRequired?:boolean};
 export type SupplierHubTransmission={state:'not-started'|'validation-requested'|'attached'|'partial'|'unconfirmed';registered:false;error?:string};
 export async function transmitSupplierHubPackage(blob:Blob,identity:PackageIdentity,reviewedAgreements:SupplierHubAgreements,signal:AbortSignal):Promise<SupplierHubTransmission>{
-  if(!reviewedAgreements||!['priceData','labelBusinessContact','legalDocumentsNotApplicable'].every(key=>reviewedAgreements[key as keyof SupplierHubAgreements]===true))throw new Error('Supplier Hub 필수 동의와 법적 서류 선택을 확인해주세요.');
+  if(!reviewedAgreements||reviewedAgreements.priceData!==true||reviewedAgreements.labelBusinessContact!==true||!(reviewedAgreements.legalDocumentsNotApplicable===true&&reviewedAgreements.legalDocumentsRequired!==true||reviewedAgreements.legalDocumentsRequired===true&&reviewedAgreements.legalDocumentsNotApplicable===false))throw new Error('Supplier Hub 필수 동의와 법적 서류 선택을 확인해주세요.');
+  if(reviewedAgreements.legalDocumentsRequired===true){const capability=await exchange('PING',null,signal);if(capability.legalDocumentAttachments!==true)throw Error('법적 서류 전송을 지원하는 Chrome 확장 0.2.38로 갱신해주세요.');}
   const response=await exchange('TRANSMIT',{...identity,reviewedAgreements,base64:await packageBase64(blob)},signal);
   const result=response.result as SupplierHubTransmission;
   if(response.fingerprint!==identity.fingerprint||response.registered!==false||!result||result.registered!==false

@@ -34,6 +34,8 @@ export function savedTextOrFallback(field: ContentField<string>, fallback = ''):
 }
 export type ProductContent = {
   schemaVersion: 1; productId: string; revision: number; updatedAt: string | null;
+  /** Owner-supplied evidence; never generated from URL data or certification text. */
+  legalDocuments?: import('@/app/legal-documents').LegalDocuments;
   seo: { title: ContentField<string>; keywords: ContentField<string[]>; description: ContentField<string> };
   /** Server-created intake guidance, consumed by any explicit keyword save.
    * Absence (including legacy documents) means manual keywords stay protected. */

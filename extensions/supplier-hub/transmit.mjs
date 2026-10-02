@@ -12,15 +12,16 @@ import {assertAppSupplierHubNotSubmitted} from './receipt-recovery.mjs';
 export async function transmitSupplierHubPackage(message,sender,api=chrome,store=transferRecord){
   const identity=validateAppHubRequest(message,sender,'YOOFAM_TRANSMIT_PACKAGE');
   const reviewed=message.reviewedAgreements;
-  const choices=['priceData','labelBusinessContact','legalDocumentsNotApplicable'];
+  const choices=['priceData','labelBusinessContact','legalDocumentsNotApplicable','legalDocumentsRequired'];
   if(!reviewed||typeof reviewed!=='object'||Array.isArray(reviewed)
-    ||Object.keys(reviewed).length!==choices.length||choices.some(key=>reviewed[key]!==true))
-    throw Error('가격 정보·라벨 연락처 동의와 법적 서류 해당없음 선택을 확인해주세요. 법적 서류가 필요한 상품은 Supplier Hub에서 서류를 함께 첨부해야 합니다.');
+    ||Object.keys(reviewed).some(key=>!choices.includes(key))||Object.values(reviewed).some(value=>typeof value!=='boolean')||reviewed.priceData!==true||reviewed.labelBusinessContact!==true||!(reviewed.legalDocumentsNotApplicable===true&&reviewed.legalDocumentsRequired!==true||reviewed.legalDocumentsRequired===true&&reviewed.legalDocumentsNotApplicable===false))
+    throw Error('가격 정보·라벨 연락처 동의와 법적 서류 해당 여부를 확인해주세요.');
   const packageValue=validateHandoff({...message,type:'YOOFAM_PREPARE_PACKAGE'},sender);
   const windowId=sender.tab.windowId;
   const release=claimSupplierHubTransmissionWindow(windowId);
   try{
     const prepared=await prepareAttachments(Uint8Array.from(atob(packageValue.base64),c=>c.charCodeAt(0)));
+    if((prepared.legalDocumentsRequired===true)!==(reviewed.legalDocumentsRequired===true))throw Error('검토한 법적 서류 해당 여부와 첨부 패키지가 다릅니다.');
     if(prepared.productId!==identity.productId||prepared.categoryId!==identity.categoryId
       ||prepared.quotation[0]?.name!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('검토한 상품·카테고리와 첨부 견적서가 다릅니다.');
     const sourceCheck=()=>verifyAppQuotationSource(identity,prepared,{appTabId:sender.tab.id,windowId},api);
@@ -82,7 +83,7 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
       attached=true;
       await store('put',key,{...record,state:'attached'});
       await companyCheck();
-      const names=[...prepared.quotation,...prepared.productImages,...prepared.labelImages].map(file=>file.name);
+      const names=[...prepared.quotation,...prepared.productImages,...prepared.labelImages,...(prepared.legalDocuments??[])].map(file=>file.name);
       const [ready]=await api.scripting.executeScript({target:{tabId},func:waitForSupplierHubAttachments,args:[names,prepared.company]});
       if(ready?.result!==true)throw Error('파일 업로드 완료를 확인하지 못했습니다. Supplier Hub 첨부 목록을 확인해주세요.');
       await companyCheck();

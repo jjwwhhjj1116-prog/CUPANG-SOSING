@@ -15,6 +15,7 @@ import { ExportSizeError } from '@/app/exports/zip';
 import { quotationFilename } from '@/app/exports/quotation-filename';
 import { publicDetailConfig, resolvePublicDetail, publishPublicDetail, publicDetailMediaIssues, PublicDetailError } from '@/app/quotation-public-detail';
 import { productImageKeys } from '@/app/product-content';
+import {loadLegalDocumentAttachments} from '@/app/exports/legal-documents';
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, {status, headers:{'cache-control':'no-store'}});
 export async function POST(request: Request, context: {params: Promise<{id: string}>}) {
@@ -53,6 +54,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     if (quotationAttachmentKeys(saved,resolved).some(key => !isOwnedImageKey(owner,key))) return json({error:'상품의 첨부 이미지 소유자를 확인해주세요.'},409);
     const requestedKeys = quotationAttachmentKeys(saved,resolved,'quotation');
     const assets = await loadAttachments(owner,product.image_keys,requestedKeys);
+    const legal=await loadLegalDocumentAttachments(content.legalDocuments,owner,id);
     const original = await env.FILES.get(template.storageKey);
     if(!original) return json({error:'견적서 원본 파일을 찾을 수 없습니다.'},409);
     if(original.size > 5_000_000) return json({error:'견적서 원본이 허용 크기를 초과했습니다.'},413);
@@ -64,7 +66,8 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
       const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
       fields = quotationFieldFiles(saved,resolved,assets,revision,{filename, byteLength: generated.bytes.byteLength, sha256},[
         ...quotationWorkbookIssues(generated.report,profile,resolved), ...publicDetailMediaIssues(resolved,detail.images,assets),
-      ]);
+        ...(legal.applicability==='required'&&!legal.attachments.length?[{kind:'error' as const,code:'LEGAL_DOCUMENT_MISSING',optionId:null,optionLabel:'법적 필수서류',fieldId:null,message:'서류 해당함을 선택했습니다. 원본 서류를 첨부해주세요.'}]:[]),
+      ],legal);
     }
     catch(error) {return json({error:error instanceof Error?error.message:'견적서 양식을 채우지 못했습니다.'},error instanceof ExportSizeError?413:400);}
     let latest;
@@ -76,6 +79,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     const warnings = [...mappingWarnings,...categoryProfileIssues(profile),...generated.report.warnings,...fields.warnings,'Supplier Hub 공식 접수 검증 전인 검토용 파일입니다.','제조사·수입자·연락처 기본설정은 실제 상품과 일치하는지 확인해주세요.'];
     const publicDetailImageCount = profile.mappings.some(mapping => mapping.field === 'detailHtml') ? detail.images.length : 0;
     const report = {...generated.report,company:saved.company,mappingCoverage,warnings,productId:id,categoryId:saved.categoryContext.categoryId,productVersion:product.updated_at,contentRevision:content.revision,optionRevision:options.revision,quotationRevision:saved.state.revision,profileId:profile.id,profileRevision:profile.revision,templateSha256:template.sha256,
+      legalDocuments:{applicability:legal.applicability,count:legal.attachments.length},
       ...(detailConfig ? { publicDetailImages: { count: publicDetailImageCount, publishedByThisRequest: input.action !== 'preview' && publicDetailImageCount > 0 } } : {}),submissionReady:false};
     if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename,rows:generated.values,headers:template.headers});
     const bytes = input.action === 'download' ? new Uint8Array(generated.bytes) : createReviewBundle(product,content,assets,[
@@ -83,6 +87,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
       {name:'quotation-report.json',data:JSON.stringify(report,null,2)},
       {name:'options.json',data:JSON.stringify(options,null,2)},
       ...fields.files,
+      ...legal.files,
     ], 'quotation');
     // A preview/source read never publishes. Only an explicit download/package
     // request creates capability copies needed by Supplier Hub's HTML reader.

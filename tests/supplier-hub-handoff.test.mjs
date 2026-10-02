@@ -91,6 +91,18 @@ test('direct transmission requires the new capability and sends the current revi
  await assert.rejects(h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,{...reviewed,priceData:false},new AbortController().signal),/필수/);assert.equal(h.sent.length,2);
 });
 
+test('required evidence requires extension support before sending bytes and rejects conflicting review',async()=>{
+ const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:false,legalDocumentsRequired:true};
+ const old=harness((m,emit)=>emit(m,{ok:true}));
+ await assert.rejects(old.api.transmitSupplierHubPackage(new Blob(['zip']),identity,reviewed,new AbortController().signal),/0.2.38/);
+ assert.deepEqual(old.sent.map(m=>m.type),['PING']);
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,legalDocumentAttachments:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',registered:false}}));
+ assert.equal((await h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,reviewed,new AbortController().signal)).state,'validation-requested');
+ assert.deepEqual(h.sent.map(m=>m.type),['PING','TRANSMIT']);assert.equal(h.sent[1].payload.reviewedAgreements,reviewed);
+ await assert.rejects(h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,{...reviewed,legalDocumentsNotApplicable:true},new AbortController().signal),/필수/);
+ assert.equal(h.sent.length,2);assert.equal(h.listeners.size,0);
+});
+
 test('latest-source capability is required for both prepared and direct app transmission',async()=>{
  for(const direct of [false,true]){
   const old=harness((m,emit)=>emit(m,{ok:true,companyBinding:true,directTransmission:true}));

@@ -35,6 +35,15 @@ export function supplierHubUploadPage(plan: ReturnType<typeof supplierHubUploadP
     for (const row of plan.missingLabels) add(`<li>${escape(row.optionLabel)} (${escape(row.optionId ?? '공통')})</li>`);
     add('</ul>견적 편집에서 라벨을 연결하고 다시 내려받아주세요.</aside>');
   }
-  add('<section><h2>4. 법적 필수서류 및 동의</h2><p>서류 해당 여부·첨부 파일, 가격 데이터 및 라벨 업무용 연락처 동의는 미확인입니다. 이 목록은 해당없음 선택이나 동의를 대신하지 않습니다.</p></section><p>오류·검토 사유: submission-review.json/CSV · 첨부 참조 원본: supplier-hub-upload-plan.json</p></body></html>');
+  add('<section><h2>4. 법적 필수서류 및 동의</h2>');
+  if(plan.legalDocuments.applicability==='required'){
+    add('<p>서류 해당함 · 직접 첨부한 원본입니다. 필요한 서류의 종류와 내용은 제출 전에 확인해주세요.</p><ul>');
+    for(const file of plan.legalDocuments.files??[]){
+      if(!/^documents\/legal-\d{3}\.(pdf|png|jpg)$/.test(file.archivePath)||file.filename!==file.archivePath.split('/').at(-1))throw Error('서류 첨부 경로를 확인해주세요.');
+      add(`<li><a href="${escape(file.archivePath)}" download>${escape(file.originalName)}</a> · ${file.byteLength} bytes</li>`);
+    }
+    add('</ul>');
+  }else add('<p>서류 해당 여부·첨부 파일은 제출 전에 확인해주세요.</p>');
+  add('<p>가격 데이터 및 라벨 업무용 연락처 동의는 전송 시 확인합니다. 이 목록은 동의를 대신하지 않습니다.</p></section><p>오류·검토 사유: submission-review.json/CSV · 첨부 참조 원본: supplier-hub-upload-plan.json</p></body></html>');
   return parts.join('');
 }
