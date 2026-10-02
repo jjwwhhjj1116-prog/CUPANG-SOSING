@@ -1,11 +1,11 @@
 import type { ProductContent } from '@/app/product-content';
-import { getQuotationSchema, quotationValueIssues } from '@/app/quotation-schema';
+import { getQuotationSchema, quotationValueIssues,type QuotationSchema } from '@/app/quotation-schema';
 import { readAttributeRules } from '@/app/quotation-attribute-rules';
 import { translatedAttributeValue, quotationAttributeDisplay } from '@/app/quotation-translation-adoption';
 
 /** Capture explicit category rules; never redirect a skipped rule by name matching. */
-export function applyIntakeAttributeRules(snapshot: NonNullable<ProductContent['categoryAttributes']>, payload: string) {
-  const schema = getQuotationSchema(snapshot.categoryId);
+export function applyIntakeAttributeRules(snapshot: NonNullable<ProductContent['categoryAttributes']>, payload: string, schema:QuotationSchema=getQuotationSchema(snapshot.categoryId)) {
+  if(schema.categoryId!==snapshot.categoryId)throw Error('상품추가 당시 카테고리와 속성 연결 카테고리가 다릅니다.');
   const rules = readAttributeRules(payload, schema);
   const bindings: NonNullable<typeof snapshot.bindings> = [];
   const skipped: string[] = [];

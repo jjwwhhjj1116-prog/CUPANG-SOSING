@@ -13,6 +13,7 @@ import { readTranslationCategorySource } from '@/db/translation-category-source'
 import { getAttributeRules } from '@/db/quotation-attribute-rules';
 import { applyIntakeAttributeRules } from '@/app/intake-attribute-rules';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
+import {capturedAttributeCategory,attributeCategorySchema} from '@/app/quotation-attribute-schema';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -66,7 +67,8 @@ export async function POST(request: Request, context: Context) {
       attributeRules = { categoryId: plan.categoryAttributes.categoryId, payload: savedRules ? JSON.stringify(savedRules.rules) : null };
       if (attributeRules.payload) {
         try {
-          const applied = applyIntakeAttributeRules(plan.categoryAttributes, attributeRules.payload);
+          const applied = applyIntakeAttributeRules(plan.categoryAttributes, attributeRules.payload,
+            attributeCategorySchema(plan.categoryAttributes.categoryId,capturedAttributeCategory(plan.categoryAttributes.categoryId,categorySource)));
           plan.categoryAttributes = applied.snapshot; plan.skipped.push(...applied.skipped);
           plan.preview.push(...applied.preview);
         } catch (error) { return json({ error: error instanceof Error ? error.message : '카테고리 연결 규칙을 확인해주세요.' }, 409); }

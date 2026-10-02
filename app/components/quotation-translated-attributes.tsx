@@ -134,7 +134,7 @@ export function QuotationTranslatedAttributes({ productId, view, optionId, disab
       if (serverRevision === null) throw new Error('먼저 서버 규칙을 불러와주세요.');
       const selected = Object.entries(mapping).filter(([, fieldId]) => fieldId).map(([index, fieldId]) => ({ sourceIndex: Number(index), fieldId }));
       const rules = createAttributeRules(productId, view, job, optionId, selected, review);
-      const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules, expectedRevision: serverRevision }), signal });
+      const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules, expectedRevision: serverRevision,productId,profileId:view.categoryContext.source==='profile'?view.categoryContext.profileId:null }), signal });
       const body = await response.json() as { error?: string; revision: number; rules: unknown };
       if (signal.aborted) return;
       if (!response.ok) { if (response.status === 409) setServerRevision(null); throw new Error(body.error || '서버 규칙 처리 실패'); }

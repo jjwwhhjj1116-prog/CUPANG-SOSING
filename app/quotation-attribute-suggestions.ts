@@ -33,7 +33,9 @@ export async function fetchAttributeSuggestions(productId: string, view: Quotati
     return { ...empty, message: '현재 번역 결과에 연결할 상품 속성이 없습니다.' };
   }
   try {
-    const response = await request(`/api/quotation-attribute-rules?categoryId=${encodeURIComponent(view.resolved.schema.categoryId)}`, { cache: 'no-store' });
+    const query=new URLSearchParams({categoryId:view.resolved.schema.categoryId,productId});
+    if(view.categoryContext.source==='profile'&&view.categoryContext.profileId)query.set('profileId',view.categoryContext.profileId);
+    const response = await request(`/api/quotation-attribute-rules?${query}`, { cache: 'no-store' });
     const body = await response.json() as { error?: string; rules?: unknown; revision?: number };
     if (!response.ok) throw new Error(body.error || '서버 규칙 조회 실패');
     if (!Number.isSafeInteger(body.revision) || body.revision! < 0 || (body.rules === null ? body.revision !== 0 : !body.rules || body.revision === 0)) throw new Error('서버 규칙 응답을 확인하지 못했습니다.');

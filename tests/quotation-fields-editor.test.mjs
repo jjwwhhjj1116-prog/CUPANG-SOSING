@@ -17,7 +17,7 @@ function load(file, overrides = {}) {
   if (!Object.keys(overrides).length && cache.has(file)) return cache.get(file);
   const exports = {};
   const compiled = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  vm.runInNewContext(compiled, { exports, Error, TextEncoder, structuredClone, AbortController, fetch: overrides.fetch ?? fetch, require(name) {
+  vm.runInNewContext(compiled, { exports, Error, TextEncoder, URLSearchParams, structuredClone, AbortController, fetch: overrides.fetch ?? fetch, require(name) {
     if (name in overrides) return overrides[name];
     if (name.endsWith('.css')) return {};
     if (name.startsWith('@/app/')) {
@@ -682,6 +682,15 @@ test('explicit server-rule reload replaces old mappings on empty, failed, or inc
   assert.equal(slots[6],response.rules===null?0:null);assert.equal(slots[3],false);assert.equal(applied,0);
   assert.ok(nodes(render()).find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='선택한 연결로 서버 규칙 저장').props.disabled);
  }
+});
+
+test('rule save sends the reviewed product and selected profile without quotation writes',async()=>{
+ const h=attributeRequestHarness(async(_url,init)=>Response.json({rules:JSON.parse(init.body).rules,revision:4}));
+ h.view.categoryContext.profileId='profile_1';h.view.categoryContext.source='profile';const before=JSON.stringify(h.view);
+ h.button('선택한 연결로 서버 규칙 저장')();for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'/api/quotation-attribute-rules');assert.equal(h.calls[0].init.method,'PUT');
+ const body=JSON.parse(h.calls[0].init.body);assert.equal(body.productId,'p1');assert.equal(body.profileId,'profile_1');assert.equal(body.expectedRevision,3);assert.equal(body.rules.categoryId,'80719');
+ assert.equal(body.rules.rules[0].fieldId,'noticeMaterial');assert.equal(body.rules.rules[0].value,undefined);assert.equal(h.slots[6],4);assert.equal(JSON.stringify(h.view),before);
 });
 
 function attributeRequestHarness(request){
