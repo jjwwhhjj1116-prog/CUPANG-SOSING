@@ -1,5 +1,5 @@
 type PackageIdentity={productId:string;categoryId:string;fingerprint:string};
-function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH'|'REGISTRATION',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
+export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH'|'REGISTRATION'|'CATEGORIES',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
   return new Promise((resolve,reject)=>{
     if(signal.aborted){reject(new Error('작업을 취소했습니다.'));return;}
     const requestId=crypto.randomUUID();
@@ -11,7 +11,7 @@ function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH'|'REGISTRAT
       if(!result||result.ok!==true)reject(new Error(typeof result?.error==='string'?result.error:'확장에 견적서를 전달하지 못했습니다.'));
       else resolve(result);
     };
-    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':type==='TRANSMIT'?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='REGISTRATION'?'상품별 등록 상태 응답이 없습니다. 잠시 후 다시 조회해주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:type==='TRANSMIT'?55000:type==='REGISTRATION'?120000:20000);
+    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':type==='TRANSMIT'?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='REGISTRATION'?'상품별 등록 상태 응답이 없습니다. 잠시 후 다시 조회해주세요.':type==='CATEGORIES'?'카테고리 조회 응답을 확인하지 못했습니다. 다시 목록을 불러와주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:type==='TRANSMIT'?55000:type==='REGISTRATION'?120000:type==='CATEGORIES'?45000:20000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type,payload},window.location.origin);
   });

@@ -9,6 +9,7 @@ export type CategoryChoice = {
   key: string; categoryId: string; path: string[]; profileId?: string; profileName?: string;
   evidence: 'observed' | 'saved'; isLeaf: boolean; childrenObserved: boolean; templateLinked: boolean;
   codeEvidence: 'supplier-hub' | 'couplus' | 'saved' | 'unconfirmed'; codeObservedAt: string | null;
+  supplierHub?: {trail:{categoryId:string;name:string;isLeaf:boolean}[];ownerId:string;company:{code:string;name:string}};
 };
 export type CategoryAdvancedSeed = { categoryPath: string[]; categoryId: string; profileId?: string };
 const pathKey = (path: readonly string[]) => JSON.stringify(path);

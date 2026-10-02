@@ -8,6 +8,8 @@ import { getQuotationSchema } from '@/app/quotation-schema';
 import { CategoryQuotationPreview } from '@/app/components/category-quotation-preview';
 import './category-picker.css';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
+import { SupplierHubCategoryBrowser } from '@/app/components/supplier-hub-category-browser';
+import { verifyLiveHubCategoryChoice } from '@/app/supplier-hub-catalog';
 
 function codeEvidenceLabel(choice: CategoryChoice) {
   if (choice.codeEvidence === 'supplier-hub') return 'Supplier Hub 코드 확인 · 전체 경로 일치';
@@ -18,6 +20,8 @@ function codeEvidenceLabel(choice: CategoryChoice) {
 
 export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelected, onAdvanced }: { profiles: CategoryProfile[]; selectedId: string; onSelected: (profile: CategoryProfile) => void; onAdvanced: (seed?: CategoryAdvancedSeed) => void }) {
   const [refreshedProfiles, setRefreshedProfiles] = useState<CategoryProfile[] | null>(null);
+  const [liveChoice,setLiveChoice]=useState<CategoryChoice|null>(null);
+  const [catalogMode,setCatalogMode]=useState<'live'|'saved'>('live');
   const profiles = refreshedProfiles ?? suppliedProfiles;
   const choices = useMemo(() => categoryChoices(profiles), [profiles]);
   const [path, setPath] = useState<string[]>(profiles.find(profile => profile.id === selectedId)?.categoryPath ?? []);
@@ -27,15 +31,15 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
   const completed = useRef(false);
   const createRequest = useRef<{ body: string; id: string } | null>(null);
   useEffect(() => () => { activeRequest.current?.abort(); }, []);
-  const selected = choices.find(choice => choice.key === selectedKey);
+  const selected = liveChoice?.key===selectedKey?liveChoice:choices.find(choice => choice.key === selectedKey);
   const selectedProfile = profiles.find(profile => profile.id === selected?.profileId);
   const schema = selected?.categoryId ? getQuotationSchema(selected.categoryId, selected.path) : null;
   const visible = searchCategoryChoices(choices, query);
   const connections = categoryChoicesAtPath(choices, path).filter(choice => choice.isLeaf);
   const hasChildren = categoryLevel(choices, path, path.length).length > 0;
   const depths = Math.max(1, path.length + (hasChildren ? 1 : 0));
-  const unresolvedBranch = path.length > 0 && !hasChildren && connections.length === 0;
-  function choose(choice: CategoryChoice) { if (activeRequest.current) return; completed.current = false; setPath(choice.path); setSelectedKey(choice.key); setError(''); }
+  const unresolvedBranch = catalogMode==='saved'&&path.length > 0 && !hasChildren && connections.length === 0;
+  function choose(choice: CategoryChoice) { if (activeRequest.current) return; completed.current = false;setLiveChoice(null);setCatalogMode('saved');setPath(choice.path); setSelectedKey(choice.key); setError(''); }
   function navigate(next: string[]) {
     if (activeRequest.current) return;
     completed.current = false;
@@ -47,6 +51,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
     const controller = new AbortController(); activeRequest.current = controller;
     setBusy(true); setError('');
     try {
+      if(target.supplierHub)await verifyLiveHubCategoryChoice(target,controller.signal);
+      if(controller.signal.aborted)return;
       const existing = profiles.find(profile => profile.id === target.profileId);
       if (existing) {
         const result = { profiles: await loadCategoryProfiles(controller.signal) };
@@ -101,7 +107,10 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
   }
   return <div className="category-picker" aria-busy={busy}>
     <p className="category-instructions">등록할 상품의 카테고리를 선택해주세요. 단계별로 선택하면 하위 카테고리가 표시됩니다.</p>
-    {path.length > 0 && <nav className="category-breadcrumb" aria-label="선택한 카테고리 경로">{path.map((name,index)=><button type="button" key={index} disabled={busy} onClick={()=>navigate(path.slice(0,index+1))}>{name}</button>)}</nav>}
+    <div className="workspace-actions" role="group" aria-label="카테고리 목록 선택"><button type="button" className={`btn ${catalogMode==='live'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('live')}>Supplier Hub 카테고리</button><button type="button" className={`btn ${catalogMode==='saved'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('saved')}>저장된 목록</button></div>
+    {catalogMode==='live'&&<SupplierHubCategoryBrowser disabled={busy} onNavigating={()=>{if(activeRequest.current)return;completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(activeRequest.current)return;completed.current=false;setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');}}/>}
+    {path.length > 0 && <nav className="category-breadcrumb" aria-label="선택한 카테고리 경로">{path.map((name,index)=><button type="button" key={index} disabled={busy||catalogMode==='live'} onClick={()=>navigate(path.slice(0,index+1))}>{name}</button>)}</nav>}
+    <div hidden={catalogMode!=='saved'}>
     <label className="field"><span>카테고리 검색</span><input type="search" placeholder="카테고리 이름 또는 번호" value={query} onChange={event => setQuery(event.target.value)} disabled={busy}/></label>
     {profiles.length > 0 && <details className="category-saved"><summary>저장한 카테고리 설정에서 선택</summary><label className="field"><span>저장한 카테고리 설정</span><select value={selected?.profileId ?? ''} disabled={busy} onChange={event => { const found = choices.find(choice => choice.profileId === event.target.value); if (found) { choose(found); setQuery(''); } }}><option value="">저장한 설정 선택</option>{profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId || '코드 미입력'} · {profile.categoryPath.join(' › ')}</option>)}</select></label></details>}
     {query.trim() ? <div className="category-search-results">{visible.map(choice => <button key={choice.key} type="button" className={selectedKey === choice.key ? 'selected' : ''} onClick={() => { if (activeRequest.current || completed.current) return; if (choice.isLeaf) { choose(choice); if (canConfirmCategory(choice)) void confirm(choice); } else { navigate(choice.path); setQuery(''); } }} disabled={busy}><span>{choice.path.join(' › ')}{choice.profileName && <em>{choice.profileName}</em>}</span><small className={canConfirmCategory(choice) ? 'ready' : 'unconfirmed'}>{choice.categoryId ? `${choice.evidence === 'saved' ? '저장 설정 · ' : ''}${choice.categoryId}` : choice.isLeaf ? '최종 · 코드 미확인' : choice.childrenObserved ? '하위 분류 보기' : '하위 목록 미확인'}</small></button>)}{!visible.length && <p>관찰한 목록과 저장 설정에서 일치하는 분류가 없습니다. 전체 목록에 없는 것으로 단정할 수는 없습니다.</p>}</div> : <div className="category-tree">{Array.from({ length: depths }, (_, depth) => <section key={depth}><h3>{depth + 1}단계 카테고리</h3><div className="category-tree-options">{categoryLevel(choices, path, depth).map(name => {
@@ -109,6 +118,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       const known = leaves.some(canConfirmCategory); const children = categoryLevel(choices, next, next.length).length > 0;
       return <button type="button" key={name} className={path[depth] === name ? 'selected' : ''} disabled={busy} onClick={() => navigate(next)}><span>{name}</span><small className={known ? 'ready' : 'unconfirmed'}>{known ? '설정 선택' : leaves.length ? '최종 · 코드 미확인' : children ? '›' : '하위 미확인'}</small></button>;
     })}</div></section>)}</div>}
+    </div>
     {connections.length > 1 && <div className="category-connections"><strong>이 경로에 연결된 설정을 선택해주세요.</strong>{connections.map(choice => <button key={choice.key} className={selectedKey === choice.key ? 'selected' : ''} type="button" disabled={busy} onClick={() => choose(choice)}><span>{choice.profileName || '화면에서 관찰한 분류'} · {choice.categoryId || '코드 미입력'}</span><small>{codeEvidenceLabel(choice)}</small></button>)}</div>}
     {unresolvedBranch && <div className="category-unconfirmed" role="status"><strong>{path.join(' › ')}</strong><p>이 가지의 하위 목록은 아직 확보하지 못했습니다. {path[0] === '기프트카드' ? '쿠플러스에서 다른 분류의 이전 목록이 남아 있어 해당 하위 목록을 가져오지 않았습니다.' : '최종 분류 이름과 실제 코드를 확인한 뒤 저장 설정으로 연결해주세요.'}</p></div>}
     {selected?.isLeaf && <div className={`category-summary ${canConfirmCategory(selected) ? '' : 'unconfirmed'}`}><strong>{selected.path.join(' › ')}</strong><span>{selected.categoryId ? `카테고리 ${selected.categoryId}` : '분류 코드 미확인'}</span><p>{canConfirmCategory(selected) ? '선택 완료를 누르면 1688 URL 입력으로 이동합니다. 수집한 상품정보와 기본설정을 이 카테고리의 견적 항목에 연결합니다.' : '이 분류는 코드 확인이 필요합니다. 확인된 최종 카테고리를 선택해주세요.'}</p>{schema?.status === 'unconfirmed' && <small>이 카테고리의 전체 견적 항목은 아직 대조되지 않았습니다.</small>}</div>}

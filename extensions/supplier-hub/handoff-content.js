@@ -2,11 +2,11 @@
 window.addEventListener('message',async event=>{
   if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF'||!/^[a-f0-9-]{36}$/.test(event.data.requestId||''))return;
   const {requestId,type}=event.data;
-  if(!['PING','PREPARE','RESULT','TRANSMIT','REFRESH','REGISTRATION'].includes(type))return;
+  if(!['PING','PREPARE','RESULT','TRANSMIT','REFRESH','REGISTRATION','CATEGORIES'].includes(type))return;
   let result;
   try{
-    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION'};
-    result=type==='PING'?{ok:true,version:'0.2.34',publicMobileCapture:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
+    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH'};
+    result=type==='PING'?{ok:true,version:'0.2.35',categoryCatalog:true,publicMobileCapture:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
   }catch{result={ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
   window.postMessage({channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId,result},location.origin);
 });
@@ -81,8 +81,20 @@ async function readCurrentQuotationReceipt(expected,acceptedOnly=true){
       state:result.state,registered:false,observedAt:result.observedAt,
       ...Object.fromEntries(['submittedAt','status','detail','quotationId'].filter(field=>result[field]!==undefined).map(field=>[field,result[field]]))}}};
 }
+async function readCurrentCatalogContext(){
+  const path='/api/supplier-hub/catalog-context',controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+  try{
+    const response=await fetch(path,{method:'GET',cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});
+    if(!response.ok||response.redirected||response.url!==location.origin+path)throw Error('승인된 회원 회사정보를 확인하지 못했습니다.');
+    const text=await response.text();if(text.length>4096)throw Error('회원 회사정보 응답이 올바르지 않습니다.');
+    const result=JSON.parse(text);
+    if(controller.signal.aborted)throw Error('회원 회사정보 확인 시간이 초과됐습니다.');
+    return {ok:true,ownerId:result.ownerId,company:result.company};
+  }finally{clearTimeout(timer);}
+}
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(!['YOOFAM_VERIFY_QUOTATION_SOURCE','YOOFAM_READ_QUOTATION_RECEIPT','YOOFAM_READ_TRANSMISSION_RECEIPT'].includes(message?.type)||sender?.id!==chrome.runtime.id)return;
+  if(!['YOOFAM_VERIFY_QUOTATION_SOURCE','YOOFAM_READ_QUOTATION_RECEIPT','YOOFAM_READ_TRANSMISSION_RECEIPT','YOOFAM_READ_CATALOG_CONTEXT'].includes(message?.type)||sender?.id!==chrome.runtime.id)return;
+  if(message.type==='YOOFAM_READ_CATALOG_CONTEXT'){void readCurrentCatalogContext().then(respond,error=>respond({ok:false,error:error?.message||'회원 회사정보 확인 실패'}));return true;}
   const read=message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'?expected=>readCurrentQuotationReceipt(expected,false)
     :message.type==='YOOFAM_READ_QUOTATION_RECEIPT'?readCurrentQuotationReceipt:verifyCurrentQuotationSource;
   void read(message.expected).then(respond,error=>respond({ok:false,error:error?.message||'견적서 저장본 확인 실패'}));

@@ -6,9 +6,13 @@ import {capture1688Product,cancel1688Capture} from './capture-1688.mjs';
 import {transmitSupplierHubPackage} from './transmit.mjs';
 import {validateAppHubRequest} from './app-request.mjs';
 import {refreshSupplierHubRegistration} from './app-registration.mjs';
+import {readAppSupplierHubCatalog} from './catalog.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION'].includes(message?.type))return;
+  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION','YOOFAM_READ_CATEGORY_BRANCH'].includes(message?.type))return;
   (async()=>{try{
+    if(message.type==='YOOFAM_READ_CATEGORY_BRANCH'){
+      const branch=await readAppSupplierHubCatalog(message,sender);respond({ok:true,branch});return;
+    }
     if(message.type==='YOOFAM_CANCEL_1688'){
       respond(cancel1688Capture(message,sender));return;
     }
