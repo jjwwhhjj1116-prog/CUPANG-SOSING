@@ -9,7 +9,7 @@ import { CategoryQuotationPreview } from '@/app/components/category-quotation-pr
 import './category-picker.css';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 import { SupplierHubCategoryBrowser } from '@/app/components/supplier-hub-category-browser';
-import { verifyLiveHubCategoryChoice } from '@/app/supplier-hub-catalog';
+import { loadLiveHubCategorySchema } from '@/app/supplier-hub-catalog';
 
 function codeEvidenceLabel(choice: CategoryChoice) {
   if (choice.codeEvidence === 'supplier-hub') return 'Supplier Hub 코드 확인 · 전체 경로 일치';
@@ -51,8 +51,17 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
     const controller = new AbortController(); activeRequest.current = controller;
     setBusy(true); setError('');
     try {
-      if(target.supplierHub)await verifyLiveHubCategoryChoice(target,controller.signal);
+      const hubSchema=target.supplierHub?await loadLiveHubCategorySchema(target,controller.signal):undefined;
       if(controller.signal.aborted)return;
+      async function withSchema(profile:CategoryProfile){
+        if(!hubSchema||profile.hubSchema?.schemaString===hubSchema.schemaString&&JSON.stringify(profile.hubSchema.metadata)===JSON.stringify(hubSchema.metadata)&&profile.hubSchema.company.code===hubSchema.company.code&&profile.hubSchema.company.name===hubSchema.company.name)return profile;
+        const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...profile,hubSchema}}),signal:controller.signal});
+        const result=await response.json() as {profile?:CategoryProfile;error?:string};
+        if(!response.ok)throw Error(result.error??'상세 견적 양식을 저장하지 못했습니다.');
+        const saved=result.profile;
+        if(!saved||saved.id!==profile.id||saved.revision!==profile.revision+1||saved.categoryId!==target!.categoryId||JSON.stringify(saved.categoryPath)!==JSON.stringify(target!.path)||saved.hubSchema?.schemaString!==hubSchema.schemaString||JSON.stringify(saved.hubSchema.metadata)!==JSON.stringify(hubSchema.metadata)||saved.hubSchema.company.code!==hubSchema.company.code||saved.hubSchema.company.name!==hubSchema.company.name||JSON.stringify(saved.template)!==JSON.stringify(profile.template)||JSON.stringify(saved.mappings)!==JSON.stringify(profile.mappings))throw Error('저장된 상세 양식과 기존 견적서 연결을 확인하지 못했습니다.');
+        return saved;
+      }
       const existing = profiles.find(profile => profile.id === target.profileId);
       if (existing) {
         const result = { profiles: await loadCategoryProfiles(controller.signal) };
@@ -71,7 +80,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
         if (latest.revision !== existing.revision) {
           throw new Error('선택한 카테고리의 견적 설정이 변경되었습니다. 아래 갱신된 양식과 열 연결을 확인한 뒤 선택 완료를 눌러주세요.');
         }
-        completed.current = true; onSelected(latest); return;
+        const saved=hubSchema?await withSchema(latest):latest;if(controller.signal.aborted)return;completed.current = true; onSelected(saved); return;
       }
       // The picker may have been opened before this category's template was saved.
       // Read every current page before creating another empty configuration.
@@ -86,9 +95,9 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       if (matching.length === 1) {
         const latest = matching[0];
         if (!Number.isSafeInteger(latest.revision) || latest.revision < 1) throw new Error('카테고리 설정 응답이 올바르지 않습니다. 다시 시도해주세요.');
-        completed.current = true; onSelected(latest); return;
+        const saved=hubSchema?await withSchema(latest):latest;if(controller.signal.aborted)return;completed.current = true; onSelected(saved); return;
       }
-      const body = JSON.stringify(categoryProfileForChoice(target));
+      const body = JSON.stringify({...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{})});
       if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
       const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': createRequest.current.id }, body, signal: controller.signal });
       const result = await response.json() as { profile: CategoryProfile; error?: string };
@@ -98,7 +107,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       if (!saved || typeof saved.id !== 'string' || !saved.id.trim()
         || !Number.isSafeInteger(saved.revision) || saved.revision < 1
         || saved.categoryId !== target.categoryId
-        || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(target.path)) {
+        || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(target.path)
+        || hubSchema&&(saved.hubSchema?.schemaString!==hubSchema.schemaString||JSON.stringify(saved.hubSchema.metadata)!==JSON.stringify(hubSchema.metadata)||saved.hubSchema.company.code!==hubSchema.company.code||saved.hubSchema.company.name!==hubSchema.company.name)) {
         throw new Error('저장된 카테고리 코드·경로·버전이 선택한 분류와 일치하지 않습니다. URL 입력을 중단했습니다. 카테고리 설정을 다시 확인해주세요.');
       }
       completed.current = true; onSelected(result.profile);

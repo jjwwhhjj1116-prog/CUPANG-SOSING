@@ -1,3 +1,4 @@
+import {compileHubQuotationSchema,validateHubSchemaSnapshot} from '@/app/supplier-hub-schema';
 // Aggregate UTF-8 JSON request limit; per-field character limits still apply.
 export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
 export class CategoryProfileConflictError extends Error {}
@@ -517,13 +518,13 @@ export const categoryFields = {
   material: '소재', countryOfOrigin: '제조국', mainImage: '대표 이미지', detailImage: '상세 이미지',
   label: '표시사항 파일', constant: '고정값',
 } as const;
-export type CategoryField = keyof typeof categoryFields;
+export type CategoryField = keyof typeof categoryFields | `live_${string}`;
 /** Resolver provenance distinguishes an explicit empty-code choice from no input. */
 export type QuotationRowValues = Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>> & {
   selectedEmptyChoices?: readonly string[];
 };
 export function categoryFieldScope(field: string): string | null {
-  return field.startsWith('glove_') ? '81221' : field.startsWith('marathon_') ? '103495' : field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^hub_(\d+)_/.exec(field)?.[1] ?? null;
+  return field.startsWith('glove_') ? '81221' : field.startsWith('marathon_') ? '103495' : field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^(?:hub|live)_(\d+)_/.exec(field)?.[1] ?? null;
 }
 export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;
@@ -538,6 +539,7 @@ export type ColumnMapping = { column: number; field: CategoryField; required: bo
 export type CategoryProfileInput = {
   name: string; categoryId: string; categoryPath: string[];
   template: TemplateDefinition | null; mappings: ColumnMapping[];
+  hubSchema?: import('@/app/supplier-hub-schema').HubSchemaSnapshot;
 };
 export type CategoryProfile = CategoryProfileInput & {
   id: string; revision: number; verification: 'draft'; createdAt: string; updatedAt: string;
@@ -558,6 +560,8 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
   const categoryId = string(input.categoryId ?? '', '실제 카테고리 번호', 120, true);
   if (!Array.isArray(input.categoryPath) || !input.categoryPath.length || input.categoryPath.length > 10) throw new Error('카테고리 경로를 1~10단계로 입력해주세요.');
   const categoryPath = input.categoryPath.map(value => string(value, '카테고리 경로', 120));
+  const hubSchema=input.hubSchema===undefined?undefined:validateHubSchemaSnapshot(input.hubSchema,categoryId,categoryPath);
+  const liveFields=hubSchema?compileHubQuotationSchema(hubSchema).fields:[];
   let template: TemplateDefinition | null = null;
   if (input.template !== null && input.template !== undefined) {
     const value = record(input.template, '견적서 양식');
@@ -580,7 +584,7 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
     const column = Number(value.column);
     if (typeof value.column !== 'number' || !Number.isInteger(column) || column < 0 || !template || column >= template.headers.length || used.has(column)) throw new Error('견적서 열을 중복 없이 연결해주세요.');
     used.add(column);
-    if (typeof value.field !== 'string' || !Object.hasOwn(categoryFields, value.field) || typeof value.required !== 'boolean') throw new Error('열 연결 항목을 확인해주세요.');
+    if (typeof value.field !== 'string' || (!Object.hasOwn(categoryFields, value.field)&&!liveFields.some(field=>field.id===value.field)) || typeof value.required !== 'boolean') throw new Error('열 연결 항목을 확인해주세요.');
     if (value.choiceFormat !== undefined && value.choiceFormat !== 'value' && value.choiceFormat !== 'label') throw new Error('선택값 출력 형식을 확인해주세요.');
     const field = value.field as CategoryField;
     if (field === 'constant' && value.choiceFormat === 'label') throw new Error('고정값에는 선택 문구 변환을 적용할 수 없습니다.');
@@ -588,7 +592,7 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
     if (scopedCategory && scopedCategory !== categoryId) throw new Error('다른 카테고리의 고유 속성은 연결할 수 없습니다. 선택한 카테고리의 항목으로 다시 연결해주세요.');
     return { column, field, required: value.required, ...(value.choiceFormat !== undefined ? { choiceFormat: value.choiceFormat as 'value' | 'label' } : {}), ...(field === 'constant' ? { constant: string(value.constant ?? '', '고정값', 4000, true) } : {}) };
   });
-  return { name, categoryId, categoryPath, template, mappings };
+  return { name, categoryId, categoryPath, template, mappings, ...(hubSchema?{hubSchema}:{}) };
 }
 
 // This checks a locally configured mapping, not Supplier Hub acceptance.
@@ -612,7 +616,7 @@ export function categoryProfileIssues(profile: CategoryProfileInput): string[] {
 /** Validate writes against current category metadata; legacy settings remain readable. */
 export function validateQuotationChoiceFormats(profile: CategoryProfileInput, fields: readonly { id: string; type: string; choices?: readonly {value:string;label:string}[] }[]): void {
   for (const mapping of profile.mappings) {
-    const label = categoryFields[mapping.field];
+    const label = Object.hasOwn(categoryFields,mapping.field)?categoryFields[mapping.field as keyof typeof categoryFields]:mapping.field;
     const categorySpecific = categoryFieldScope(mapping.field) !== null || /^(관찰 카테고리:|상품고시:)/.test(label);
     if (categorySpecific && !fields.some(field => field.id === mapping.field)) {
       throw new Error(`${mapping.column + 1}열 (${label}): 현재 카테고리의 견적 항목에 없습니다. 연결 항목을 다시 선택해주세요.`);

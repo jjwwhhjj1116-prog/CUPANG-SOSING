@@ -75,7 +75,8 @@ export function quotationAttachmentKeys(saved: QuotationExportSource, resolved: 
 
 /** Uses the resolver's one price calculation and final manual overrides. */
 export function resolvedQuotationRows(saved: QuotationExportSource, resolved: ResolvedQuotation, assets: BundleAsset[]): QuotationRowData[] {
-  const unsupported = resolved.schema.fields.filter(field => !Object.hasOwn(categoryFields, field.id));
+  const unsupported = resolved.schema.fields.filter(field => !Object.hasOwn(categoryFields, field.id)
+    && !(field.hubWire && field.id.startsWith(`live_${resolved.schema.categoryId}_`)));
   if (unsupported.length) {
     throw new Error(`견적서 내보내기 연결이 없는 항목입니다: ${unsupported.map(field => field.label).join(', ')}. 항목 연결을 확인한 뒤 다시 내려받아주세요.`);
   }
@@ -100,10 +101,10 @@ export function resolvedQuotationRows(saved: QuotationExportSource, resolved: Re
         const asset = assets.find(asset => asset.key === key); if (!asset) throw new Error('견적서에 연결한 이미지 파일이 누락되었습니다.'); return asset.name.split('/').at(-1)!;
       }).join('\n');
       else if (field.type === 'number' && /^\d+(?:\.\d+)?$/.test(value) && Number.isFinite(Number(value))) value = Number(value);
-      if (Object.hasOwn(categoryFields, field.id)) data[field.id as Exclude<CategoryField, 'constant'>] = value;
+      data[field.id as Exclude<CategoryField, 'constant'>] = value;
     }
     for (const [legacy, current] of Object.entries(aliases)) {
-      if (Object.hasOwn(row.fields, current)) data[legacy as Exclude<CategoryField, 'constant'>] = data[current as Exclude<CategoryField, 'constant'>];
+      if (current && Object.hasOwn(row.fields, current)) data[legacy as Exclude<CategoryField, 'constant'>] = data[current as Exclude<CategoryField, 'constant'>];
     }
     return data;
   });

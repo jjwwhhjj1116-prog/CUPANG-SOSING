@@ -13,6 +13,7 @@ import { hubProductSchemas } from '@/app/hub-product-schemas';
 import { couplusQuotationDefault } from '@/app/couplus-quotation-defaults';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus-registration-defaults';
+import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapshot,type HubWireField} from '@/app/supplier-hub-schema';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -33,6 +34,7 @@ export type QuotationField = {
   /** Explicit shared meaning; never infer component materials from a label substring. */
   contentField?: 'material' | 'components' | 'model';
   optionDimension?: 'widthCm' | 'lengthCm' | 'heightCm';
+  hubWire?: HubWireField; draftDefault?: string; schemaDefault?: string;
 };
 export type QuotationSchema = {
   version: 1; categoryId: string | null; categoryPath: string[];
@@ -40,6 +42,7 @@ export type QuotationSchema = {
   submissionReady: false;
   maxIncludedOptions?: number;
   salePriceMustCoverSupply?: boolean;
+  unsupportedFields?: string[];
 };
 export type QuotationOverrides = { common: Record<string, string>; options: Record<string, Record<string, string>> };
 export type QuotationChange = { fieldKey: string; optionId: string | null; value: string | null };
@@ -169,7 +172,15 @@ function productContentBinding(item: QuotationField): QuotationField {
   return key ? { ...item, optionDimension: key } : item;
 }
 
-export function getQuotationSchema(categoryId: string | null, categoryPath: readonly string[] = []): QuotationSchema {
+export function getQuotationSchema(categoryId: string | null, categoryPath: readonly string[] = [], liveSnapshot?:HubSchemaSnapshot): QuotationSchema {
+  if(liveSnapshot){
+    const snapshot=validateHubSchemaSnapshot(liveSnapshot,categoryId??'',categoryPath);
+    const base=getQuotationSchema(categoryId,categoryPath),live=compileHubQuotationSchema(snapshot,base.fields);
+    const commonIds=new Set(commonFields.map(field=>field.id)),fields=base.fields.filter(field=>commonIds.has(field.id));
+    for(const field of live.fields){const bound=productContentBinding(field),index=fields.findIndex(item=>item.id===field.id);if(index<0)fields.push(bound);else fields[index]=bound;}
+    return {...base,categoryPath:[...categoryPath],fields,status:live.unsupported.length?'unconfirmed':'observed',
+      evidence:'선택한 회사의 Supplier Hub 상세 양식을 읽어 입력 항목을 연결했습니다. 운영 초안·공식 Excel·최종 접수는 별도 대조가 필요합니다.',unsupportedFields:live.unsupported};
+  }
   const hub = categoryId && Object.hasOwn(hubProductSchemas, categoryId) ? hubProductSchemas[categoryId] : undefined;
   const observed = Boolean(hub) || categoryId === '80719' || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || (categoryId === '77442' || categoryId === '81221');
   const fields = commonFields.map(item => observed && ['supplyPrice', 'salePrice', 'searchTags'].includes(item.id)
@@ -298,7 +309,7 @@ export function applyQuotationChanges(current: QuotationOverrides, changes: read
 }
 
 export type QuotationResolverInput = { categoryId: string | null; categoryPath?: readonly string[]; product: ProductRecord;
-  content: ProductContent; settings: WorkspaceSettings; options: ProductOptions | readonly ProductOption[]; overrides?: QuotationOverrides };
+  content: ProductContent; settings: WorkspaceSettings; options: ProductOptions | readonly ProductOption[]; overrides?: QuotationOverrides; hubSchema?:HubSchemaSnapshot };
 type Automatic = { value: string; source: QuotationSource; issues?: string[] };
 const literal = (value: unknown, source: QuotationSource): Automatic => ({ value: value === null || value === undefined ? '' : String(value), source: value === '' || value === null || value === undefined ? 'empty' : source });
 const htmlEscape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -309,7 +320,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   const untouchedOptions = Array.isArray(input.options) || (input.options as ProductOptions).revision === 0;
   const includeCommonRow = options.length === 0 && untouchedOptions;
   const overrides = input.overrides ?? emptyQuotationOverrides();
-  const schema = getQuotationSchema(input.categoryId, input.categoryPath);
+  const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema);
   let ownedKeys: string[] = [];
   const reviewMessages = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
   const issues = [...reviewMessages], validationIssues: string[] = [];
@@ -323,6 +334,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   try { const keys: unknown = JSON.parse(product.image_keys); if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string')) throw new Error(); ownedKeys = keys; }
   catch { constraint('상품 이미지 목록을 읽지 못했습니다. 이미지 자동 연결을 확인해주세요.'); }
   if (schema.status === 'unconfirmed') constraint('선택한 카테고리의 상세 속성과 상품고시 스키마가 아직 확인되지 않았습니다.');
+  if(schema.unsupportedFields?.length)constraint(`상세 양식의 추가 입력 규칙을 대조해야 합니다: ${schema.unsupportedFields.slice(0,8).join(', ')}`);
   if (!schema.categoryId) constraint('카테고리를 먼저 선택해주세요.');
   let prices: ReturnType<typeof calculateOptionPrices> = [];
   try { prices = calculateOptionPrices(options, resolveOptionPricePolicy(product, settings).policy); }
@@ -346,7 +358,16 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
   }
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
-    const id = definition.id;
+    // A live field keeps its category/wire identity. Shared source meanings are
+    // restricted to complete, observed labels and their section/group.
+    const noticeBinding=definition.hubWire&&definition.section==='legal'&&definition.visibility==='common'
+      ? notice80719.find(([,label])=>label===definition.label)?.[0]:undefined;
+    const id = noticeBinding??definition.id;
+    if(definition.hubWire&&definition.section==='product'&&definition.visibility==='exposed'){
+      if(definition.label==='색상')return option?.provenance.color==='manual'?{value:option.color??'',source:'option'}:literal(option?.color,'option');
+      if(definition.label==='수량')return literal(option?.unitsPerPack,'option');
+      if(definition.label==='사이즈')return option?.provenance.size==='manual'?{value:option.size??'',source:'option'}:literal(option?.size,'option');
+    }
     // Match the complete observed notice name, never a hidden attribute or a
     // similarly named notice. Manual content (including blanks) keeps priority.
     if (definition.section === 'legal' && definition.label === '세탁방법 및 취급시 주의사항') {
@@ -472,6 +493,10 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     const specific = optionId !== null && Object.hasOwn(overrides.options, optionId) ? overrides.options[optionId] : undefined;
     const fields = Object.fromEntries(schema.fields.map(definition => {
       let automatic = auto(definition, option);
+      if(definition.hubWire&&definition.type==='select'&&automatic.source!=='empty'){
+        const choices=definition.choices?.filter(choice=>choice.value===automatic.value||choice.label===automatic.value)??[];
+        if(choices.length===1)automatic={...automatic,value:choices[0].value};
+      }
       // Only fill an absent category product attribute; explicit content/option
       // values and manual overrides keep priority. Never infer legal defaults.
       // Invalid input is unresolved, not absent. Do not erase its diagnostics
@@ -498,6 +523,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         value: preset, source: 'couplus-default',
         issues: [],
       };
+      if(automatic.source==='empty'&&!automatic.issues?.length&&definition.schemaDefault!==undefined)automatic={value:definition.schemaDefault,source:'schema'};
       const manualOption = !definition.readOnly && specific && Object.hasOwn(specific, definition.id);
       const manualCommon = !definition.readOnly && Object.hasOwn(overrides.common, definition.id);
       const value = manualOption ? specific![definition.id] : manualCommon ? overrides.common[definition.id] : automatic.value;

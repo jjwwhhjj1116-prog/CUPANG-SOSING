@@ -28,7 +28,7 @@ const fixed80719: Readonly<Record<string,string>> = {
   taxType:'과세', barcodeMode:'request-coupang', shelfLifeDays:'0',
   noticeServiceContact:'쿠팡 고객센터 1577-7011',
 };
-type DraftField = { id: string; section?: string; visibility?: string; choices?: readonly {value:string;label:string}[] };
+type DraftField = { id: string; section?: string; visibility?: string; choices?: readonly {value:string;label:string}[]; draftDefault?:string; hubWire?:unknown };
 const recordedArrays: Readonly<Record<string, ReadonlySet<string>>> = {
   ...Object.fromEntries(Object.entries(hubProductSchemas).map(([id, schema]) => [id,
     new Set([...schema.exposed, ...schema.hidden, ...schema.notices].map(field => field.id))])),
@@ -43,6 +43,8 @@ const recordedArrays: Readonly<Record<string, ReadonlySet<string>>> = {
  * Only recorded category fields participate; missing schemas remain unconfirmed.
  */
 export function couplusQuotationDefault(categoryId:string|null,field:DraftField):string|undefined {
+  if(field.draftDefault!==undefined)return field.draftDefault;
+  if(field.hubWire)return undefined;
   if (categoryId && Object.hasOwn(recordedArrays, categoryId) && recordedArrays[categoryId].has(field.id)) {
     if (field.section === 'product' && field.visibility === 'hidden') return '';
     if (field.section === 'product' && field.visibility === 'exposed') return '해당사항없음';

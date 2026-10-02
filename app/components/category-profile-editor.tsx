@@ -25,11 +25,12 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
   const protectedColumns = useRef(new Set<number>());
   const saving = useRef(false);
   const createRequest = useRef<{ body: string; id: string } | null>(null);
+  const schemaFields=getQuotationSchema(draft.categoryId,draft.categoryPath,draft.hubSchema).fields;
   const changeCategory = (categoryId: string) => {
     const requirementRow = workbook && draft.template ? supplierHubRequirementRow(workbook, draft.template.sheetName, draft.template.headerRow) : null;
-    const next = refreshCategoryMappings(draft.template?.headers ?? [], categoryId, draft.mappings, automaticMappings.current, protectedColumns.current, requirementRow);
+    const next = refreshCategoryMappings(draft.template?.headers ?? [], categoryId, draft.mappings, automaticMappings.current, protectedColumns.current, requirementRow,categoryId===draft.categoryId?draft.hubSchema:undefined);
     automaticMappings.current = next.automatic;
-    setDraft({ ...draft, categoryId, mappings: next.mappings });
+    setDraft({ ...draft, categoryId, mappings: next.mappings, hubSchema:categoryId===draft.categoryId?draft.hubSchema:undefined });
     if (draft.template) setMessage('카테고리에 맞춰 자동 연결을 갱신했습니다. 저장된 연결·직접 수정한 연결·고정값은 보존합니다. 원본 양식이 새 카테고리에 맞는지 확인해주세요.');
   };
   useEffect(() => {
@@ -67,7 +68,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       let files: Map<string, Uint8Array> | null = null;
       if (extension === 'xlsx') {
         files = await readXlsxArchive(bytes); inspection = inspectXlsxArchive(files);
-        const candidate = suggestQuotationHeader(inspection, draft.categoryId);
+        const candidate = suggestQuotationHeader(inspection, draft.categoryId,draft.hubSchema);
         const officialSheets = inspection.sheets.filter(sheet => supplierHubSheetSignature(inspection!, sheet.name));
         if (officialSheets.length && (!candidate || !officialSheets.some(sheet => sheet.name === candidate.sheetName))) throw new Error('공식 견적서의 상품 작성 시트와 머리글을 확정하지 못했습니다. 파일의 카테고리와 버전을 확인해주세요.');
         headerNotice = candidate ? '열 이름을 기준으로 작성 시트·머리글 행을 추천했습니다. 공식 분류 일치 여부는 별도 확인이 필요합니다. ' : '작성 시트를 확정할 근거가 부족하거나 후보가 여러 개입니다. 시트·머리글 행을 직접 선택해주세요. ';
@@ -97,7 +98,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       const template = { name: file.name, format: extension, sha256: hash, sheetName, headerRow: selectedRow, dataStartRow, headers, storageKey: result.template.storageKey } as const;
       // Discard old column positions, then suggest exact labels in this category.
       const requirementRow = inspection ? supplierHubRequirementRow(inspection, sheetName, selectedRow) : null;
-      const suggested = suggestQuotationMappings(headers, draft.categoryId, requirementRow);
+      const suggested = suggestQuotationMappings(headers, draft.categoryId, requirementRow,draft.hubSchema);
       automaticMappings.current = suggested.mappings; protectedColumns.current.clear();
       workbookFiles.current = files;
       setDraft(current => ({ ...current, template, mappings: suggested.mappings }));
@@ -114,7 +115,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
         : textTemplate ? parseTemplateText(textTemplate.text, textTemplate.format === 'tsv' ? '\t' : ',', rowNumber)
           : (() => { throw new Error('저장된 원본을 불러온 뒤 머리글 행을 변경해주세요.'); })();
       const requirementRow = workbook ? supplierHubRequirementRow(workbook, sheetName, rowNumber) : null;
-      const relocated = relocateQuotationMappings(draft.template.headers, headers, draft.categoryId, draft.mappings, automaticMappings.current, protectedColumns.current, requirementRow);
+      const relocated = relocateQuotationMappings(draft.template.headers, headers, draft.categoryId, draft.mappings, automaticMappings.current, protectedColumns.current, requirementRow,draft.hubSchema);
       const layout = workbook ? supplierHubEntryLayout(workbook, sheetName, rowNumber) : null;
       if (workbook && supplierHubSheetSignature(workbook, sheetName) && !layout) throw new Error('공식 견적서의 입력 행 구성을 확인하지 못했습니다. 머리글과 원본 양식을 확인해주세요.');
       if (layout?.categoryIds.length && draft.categoryId && !layout.categoryIds.includes(draft.categoryId)) throw new Error(`선택한 상품 등록 카테고리 ${draft.categoryId}가 공식 견적서 예시의 카테고리 ${layout.categoryIds.join(', ')}와 다릅니다.`);
@@ -146,7 +147,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
       const layout = workbook && profile.template?.format === 'xlsx' ? supplierHubEntryLayout(workbook, profile.template.sheetName, profile.template.headerRow) : null;
       if (workbook && profile.template?.format === 'xlsx' && supplierHubSheetSignature(workbook, profile.template.sheetName) && !layout) throw new Error('공식 견적서의 입력 행 구성을 확인하지 못했습니다. 저장 전에 원본을 확인해주세요.');
       if (layout?.categoryIds.length && !layout.categoryIds.includes(profile.categoryId)) throw new Error(`공식 견적서 예시 카테고리 ${layout.categoryIds.join(', ')}와 상품 등록 카테고리 ${profile.categoryId || '(미입력)'}가 다릅니다.`);
-      validateQuotationChoiceFormats(profile, getQuotationSchema(profile.categoryId).fields);
+      validateQuotationChoiceFormats(profile, getQuotationSchema(profile.categoryId,profile.categoryPath,profile.hubSchema).fields);
       const body = JSON.stringify(value ? { id: value.id, expectedRevision: value.revision, profile } : profile);
       if (new TextEncoder().encode(body).byteLength > CATEGORY_PROFILE_BODY_LIMIT) throw new Error('카테고리 설정 전체는 UTF-8 JSON 기준 300,000바이트 이하로 저장할 수 있습니다. 열 이름이나 고정값을 줄여주세요.');
       const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -199,7 +200,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
         <p><strong>{draft.template.name}</strong> · {draft.template.sheetName && `${draft.template.sheetName} · `}{draft.template.headers.length}열 · 머리글 {draft.template.headerRow}행 {draft.template.storageKey && <a href={`/api/category-profiles/template?key=${encodeURIComponent(draft.template.storageKey)}`}>원본 다운로드</a>}</p>
         <button type="button" className="btn ghost" disabled={busy} onClick={() => {
           const requirementRow = workbook ? supplierHubRequirementRow(workbook, draft.template!.sheetName, draft.template!.headerRow) : null;
-          const suggested = suggestQuotationMappings(draft.template!.headers, draft.categoryId, requirementRow);
+          const suggested = suggestQuotationMappings(draft.template!.headers, draft.categoryId, requirementRow,draft.hubSchema);
           const occupied = new Set(draft.mappings.map(mapping => mapping.column));
           const additions = suggested.mappings.filter(mapping => !occupied.has(mapping.column));
           automaticMappings.current = [...automaticMappings.current, ...additions];
@@ -210,7 +211,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
         {workbook && <button type="button" className="btn ghost" disabled={busy} onClick={() => {
           try {
             if (!workbookFiles.current) throw new Error('견적서 원본을 먼저 불러와주세요.');
-            const changes = suggestQuotationChoiceFormats(workbookFiles.current, workbook, draft.template!.sheetName, quotationStartRow(draft.template!), draft.categoryId, draft.mappings);
+            const changes = suggestQuotationChoiceFormats(workbookFiles.current, workbook, draft.template!.sheetName, quotationStartRow(draft.template!), draft.categoryId, draft.mappings,draft.hubSchema);
             for (const change of changes) protectedColumns.current.add(change.column);
             automaticMappings.current = automaticMappings.current.filter(mapping => !changes.some(change => change.column === mapping.column));
             setDraft(current => ({ ...current, mappings: current.mappings.map(mapping => ({ ...mapping, ...changes.find(change => change.column === mapping.column) })) }));
@@ -222,7 +223,7 @@ export function CategoryProfileEditor({ value, initialDraft, onSave, onClose }: 
           <table style={{ width: '100%', textAlign: 'left' }}><thead><tr><th>견적서 열</th><th>상품 자료</th><th>필수</th><th>출력 형식 / 고정값</th></tr></thead><tbody>
             {draft.template.headers.map((header, column) => {
               const mapping = draft.mappings.find(value => value.column === column);
-              return <tr key={column}><td>{column + 1}. {header || '(이름 없는 열)'}</td><td><select aria-label={`${column + 1}열 연결`} value={mapping?.field ?? ''} disabled={busy} onChange={event => setMapping(column, event.target.value ? { field: event.target.value as CategoryField } : null)}><option value="">연결 안 함</option>{Object.entries(categoryFields).filter(([field]) => categoryFieldScope(field) === null || categoryFieldScope(field) === draft.categoryId || mapping?.field === field).map(([field, label]) => <option key={field} value={field}>{label}</option>)}</select></td><td><input aria-label={`${column + 1}열 필수`} type="checkbox" checked={mapping?.required ?? false} disabled={busy || !mapping} onChange={event => setMapping(column, { required: event.target.checked })} /></td><td>{mapping && (mapping.choiceFormat==='label'||getQuotationSchema(draft.categoryId).fields.find(field=>field.id===mapping.field)?.type==='select') && <label>선택값 출력<select aria-label={`${column + 1}열 선택값 출력`} disabled={busy} value={mapping.choiceFormat??'value'} onChange={event=>setMapping(column,{choiceFormat:event.target.value as 'value'|'label'})}><option value="value">저장 코드 그대로</option><option value="label" disabled={getQuotationSchema(draft.categoryId).fields.find(field=>field.id===mapping.field)?.type!=='select'}>표시 문구 · 공란 유지</option></select>{getQuotationSchema(draft.categoryId).fields.find(field=>field.id===mapping.field)?.type!=='select'&&<small role="alert">현재 분류의 선택형 항목이 아닙니다. 저장 코드로 바꾸거나 연결을 수정해주세요.</small>}</label>}{mapping?.field === 'constant' && <input aria-label={`${column + 1}열 고정값`} maxLength={4000} disabled={busy} value={mapping.constant ?? ''} onChange={event => setMapping(column, { constant: event.target.value })} />}</td></tr>;
+              return <tr key={column}><td>{column + 1}. {header || '(이름 없는 열)'}</td><td><select aria-label={`${column + 1}열 연결`} value={mapping?.field ?? ''} disabled={busy} onChange={event => setMapping(column, event.target.value ? { field: event.target.value as CategoryField } : null)}><option value="">연결 안 함</option>{Object.entries({...categoryFields,...Object.fromEntries(schemaFields.filter(field=>field.id.startsWith('live_')).map(field=>[field.id,field.label]))}).filter(([field]) => categoryFieldScope(field) === null || categoryFieldScope(field) === draft.categoryId || mapping?.field === field).map(([field, label]) => <option key={field} value={field}>{label}</option>)}</select></td><td><input aria-label={`${column + 1}열 필수`} type="checkbox" checked={mapping?.required ?? false} disabled={busy || !mapping} onChange={event => setMapping(column, { required: event.target.checked })} /></td><td>{mapping && (mapping.choiceFormat==='label'||schemaFields.find(field=>field.id===mapping.field)?.type==='select') && <label>선택값 출력<select aria-label={`${column + 1}열 선택값 출력`} disabled={busy} value={mapping.choiceFormat??'value'} onChange={event=>setMapping(column,{choiceFormat:event.target.value as 'value'|'label'})}><option value="value">저장 코드 그대로</option><option value="label" disabled={schemaFields.find(field=>field.id===mapping.field)?.type!=='select'}>표시 문구 · 공란 유지</option></select>{schemaFields.find(field=>field.id===mapping.field)?.type!=='select'&&<small role="alert">현재 분류의 선택형 항목이 아닙니다. 저장 코드로 바꾸거나 연결을 수정해주세요.</small>}</label>}{mapping?.field === 'constant' && <input aria-label={`${column + 1}열 고정값`} maxLength={4000} disabled={busy} value={mapping.constant ?? ''} onChange={event => setMapping(column, { constant: event.target.value })} />}</td></tr>;
             })}
           </tbody></table>
         </div>

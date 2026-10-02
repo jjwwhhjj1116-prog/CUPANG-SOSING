@@ -41,6 +41,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const imageKeys = productImageKeys(product.image_keys).filter(key => isOwnedImageKey(owner, key));
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
+  let hubSchema=profile?.hubSchema;
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
   {
     let offerId: string | null = null;
@@ -51,6 +52,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
       if (source?.linked) settings = collectionRegistrationSettings(settings, captured?.settings);
       if (source?.linked && profile) {
         const selected = captured?.category ? validateCategoryProfile(captured.category) : null;
+        hubSchema=selected?.hubSchema;
         if (!selected || captured.category.id !== profile.id || selected.categoryId !== profile.categoryId
           || JSON.stringify(selected.categoryPath) !== JSON.stringify(profile.categoryPath)) {
           throw new FieldsError('상품 추가 시 선택한 카테고리와 견적서 양식이 다릅니다. 선택한 카테고리 양식을 사용해주세요.', 409, 'QUOTATION_CATEGORY_MISMATCH');
@@ -58,6 +60,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
       }
       if (!profile && captured?.category) {
         const category = validateCategoryProfile(captured.category);
+        hubSchema=category.hubSchema;
         categoryContext = { source: 'collection', profileId: typeof captured.category.id === 'string' ? captured.category.id : null,
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };
       }
@@ -70,7 +73,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const source: QuotationSourceGuard = { productVersion: product.updated_at, imageKeys: product.image_keys, pricingPolicy: product.pricing_policy ?? null,
     contentRevision: content.revision, optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
-  const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings };
+  const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings,...(hubSchema?{hubSchema}:{}) };
   const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
   const automatic = (await resolvePublicDetail(resolveQuotationFields(inputs),content,owner,imageKeys,detailConfig)).resolved;
   const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);

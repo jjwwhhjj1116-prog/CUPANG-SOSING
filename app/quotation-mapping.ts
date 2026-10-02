@@ -1,11 +1,12 @@
 import { categoryFields, type CategoryField, type ColumnMapping } from './category-profiles';
 import { getQuotationSchema } from './quotation-schema';
 import type { XlsxInspection } from './xlsx-template';
+import type {HubSchemaSnapshot} from './supplier-hub-schema';
 
 /** A draft suggestion, never a claim that a workbook is an official category template. */
-export function suggestQuotationHeader(workbook: XlsxInspection, categoryId: string | null) {
+export function suggestQuotationHeader(workbook: XlsxInspection, categoryId: string | null,hubSchema?:HubSchemaSnapshot) {
   const candidates = workbook.sheets.flatMap(sheet => sheet.rows.flatMap(row => {
-    const result = suggestQuotationMappings(row.values, categoryId);
+    const result = suggestQuotationMappings(row.values, categoryId,null,hubSchema);
     const fields = new Set(result.mappings.map(mapping => mapping.field));
     if (result.ambiguousColumns.length || fields.size < 3 || !fields.has('title') || !fields.has('supplyPrice')) return [];
     return [{ sheetName: sheet.name, rowNumber: row.rowNumber, matchedFields: fields.size }];
@@ -39,7 +40,7 @@ export type QuotationMappingSuggestion = {
  */
 export function relocateQuotationMappings(
   previousHeaders: readonly string[], headers: readonly string[], categoryId: string | null,
-  mappings: readonly ColumnMapping[], automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>, requirementRow?: readonly string[] | null,
+  mappings: readonly ColumnMapping[], automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>, requirementRow?: readonly string[] | null,hubSchema?:HubSchemaSnapshot,
 ) {
   const before = previousHeaders.map(headerKey), after = headers.map(headerKey);
   const destinations = new Map<number, number>();
@@ -54,7 +55,7 @@ export function relocateQuotationMappings(
   const protectedNext = new Set([...protectedColumns].flatMap(column => {
     const destination = destinations.get(column); return destination === undefined ? [] : [destination];
   }));
-  const suggestion = suggestQuotationMappings(headers, categoryId, requirementRow);
+  const suggestion = suggestQuotationMappings(headers, categoryId, requirementRow,hubSchema);
   const occupied = new Set(retained.map(mapping => mapping.column));
   const additions = suggestion.mappings.filter(mapping => !occupied.has(mapping.column) && !protectedNext.has(mapping.column));
   const carriedAutomatic = automatic.flatMap(mapping => {
@@ -75,7 +76,7 @@ export function relocateQuotationMappings(
  */
 export function refreshCategoryMappings(
   headers: readonly string[], categoryId: string | null, mappings: readonly ColumnMapping[],
-  automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>, requirementRow?: readonly string[] | null,
+  automatic: readonly ColumnMapping[], protectedColumns: ReadonlySet<number>, requirementRow?: readonly string[] | null,hubSchema?:HubSchemaSnapshot,
 ) {
   const previous = new Map(automatic.map(mapping => [mapping.column, mapping]));
   const retained = mappings.filter(mapping => {
@@ -84,22 +85,22 @@ export function refreshCategoryMappings(
       || before.required !== mapping.required || before.constant !== mapping.constant || before.choiceFormat !== mapping.choiceFormat;
   });
   const occupied = new Set(retained.map(mapping => mapping.column));
-  const suggestion = suggestQuotationMappings(headers, categoryId, requirementRow);
+  const suggestion = suggestQuotationMappings(headers, categoryId, requirementRow,hubSchema);
   const nextAutomatic = suggestion.mappings.filter(mapping => !occupied.has(mapping.column) && !protectedColumns.has(mapping.column));
   return { ...suggestion, mappings: [...retained, ...nextAutomatic].sort((a, b) => a.column - b.column), automatic: nextAutomatic };
 }
 
 /** Creates an editable draft from exact labels in the chosen category only. */
-export function suggestQuotationMappings(headers: readonly string[], categoryId: string | null, requirementRow?: readonly string[] | null): QuotationMappingSuggestion {
-  const schema = getQuotationSchema(categoryId);
+export function suggestQuotationMappings(headers: readonly string[], categoryId: string | null, requirementRow?: readonly string[] | null,hubSchema?:HubSchemaSnapshot): QuotationMappingSuggestion {
+  const schema = getQuotationSchema(categoryId,hubSchema?.categoryPath,hubSchema);
   const candidates = new Map<string, Set<CategoryField>>();
   const required = new Map(schema.fields.map(field => [field.id, field.required]));
   const add = (label: string, field: CategoryField) => {
     const key = headerKey(label); if (!key) return;
     const fields = candidates.get(key) ?? new Set<CategoryField>(); fields.add(field); candidates.set(key, fields);
   };
-  for (const field of schema.fields) if (Object.hasOwn(categoryFields, field.id)) add(field.label, field.id as CategoryField);
-  for (const [field, labels] of Object.entries(aliases)) for (const label of labels) add(label, field as CategoryField);
+  for (const field of schema.fields) if (Object.hasOwn(categoryFields, field.id)||field.id.startsWith(`live_${categoryId}_`)) add(field.label, field.id as CategoryField);
+  for (const [field, labels] of Object.entries(aliases)) for (const label of labels ?? []) add(label, field as CategoryField);
   const mappings: ColumnMapping[] = []; const unmatchedColumns: number[] = []; const ambiguousColumns: number[] = [];
   const normalized = headers.map(headerKey);
   headers.forEach((_header, column) => {

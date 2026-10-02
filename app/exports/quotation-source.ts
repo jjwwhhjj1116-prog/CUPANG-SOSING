@@ -36,6 +36,7 @@ export async function readQuotationExportSource(owner: string, productId: string
   let settings = savedRegistrationSettings(savedSettings ? JSON.parse(savedSettings.payload) : null);
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
+  let hubSchema=profile?.hubSchema;
   let sourceGaps: CollectionSourceGap[] = [];
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
   {
@@ -52,6 +53,7 @@ export async function readQuotationExportSource(owner: string, productId: string
       if (captured?.linked) settings = collectionRegistrationSettings(settings, payload?.settings);
       if (captured?.linked && profile) {
         const selected = payload?.category ? validateCategoryProfile(payload.category) : null;
+        hubSchema=selected?.hubSchema;
         if (!selected || payload.category.id !== profile.id || selected.categoryId !== profile.categoryId
           || JSON.stringify(selected.categoryPath) !== JSON.stringify(profile.categoryPath)) {
           throw new QuotationExportError('상품 추가 시 선택한 카테고리와 견적서 양식이 다릅니다. 선택한 카테고리 양식을 사용해주세요.', 409);
@@ -59,6 +61,7 @@ export async function readQuotationExportSource(owner: string, productId: string
       }
       if (!profile && payload?.category) {
         const category = validateCategoryProfile(payload.category);
+        hubSchema=category.hubSchema;
         categoryContext = { source: 'collection', profileId: typeof payload.category.id === 'string' ? payload.category.id : null,
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };
       }
@@ -74,7 +77,7 @@ export async function readQuotationExportSource(owner: string, productId: string
   // This also detects changes during the independent source reads before any R2 work starts.
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
   return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company,
-    ...(sourceGaps.length ? { sourceGaps } : {}) };
+    ...(sourceGaps.length ? { sourceGaps } : {}),...(hubSchema?{hubSchema}:{}) };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
 /** Resolve only the profile captured when this product was collected; never guess by label. */
@@ -93,11 +96,13 @@ export async function readMappedQuotationSource(owner: string, productId: string
       || JSON.stringify(saved.profile.categoryPath) !== JSON.stringify(context.categoryPath)))) {
     throw new QuotationExportError('수집 당시 카테고리와 현재 양식이 달라졌습니다. 카테고리를 확인하고 다시 검사해주세요.', 409);
   }
-  return saved;
+  // Template/mappings use their latest saved revision, while field choices and
+  // defaults stay with this product's captured schema, just as the editor does.
+  return {...saved,profile:saved.profile?{...saved.profile,hubSchema:saved.hubSchema}:null};
 }
 export function resolveQuotationExport(saved: QuotationExportSource) {
   const resolved = resolveQuotationFields({ categoryId: saved.categoryContext.categoryId, categoryPath: saved.categoryContext.categoryPath,
-    product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides });
+    product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides,...(saved.hubSchema?{hubSchema:saved.hubSchema}:{}) });
   if (saved.categoryContext.categoryId && saved.savedScopes && hasLegacyQuotationOverrides(saved.savedScopes)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   return resolved;
 }
@@ -105,7 +110,7 @@ export async function quotationExportFingerprint(saved: QuotationExportSource, d
   // Raw source/state payloads matter: an override reset and an equal-valued manual
   // override have different provenance, even when the visible cell is unchanged.
   return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved, dataStartRow,
-    schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath),
+    schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath,saved.hubSchema),
     ...optionPriceCalculationRevision(saved.product, saved.options.rows, saved.settings, saved.state.overrides),
     ...(detailConfig ? { detailHtml: await publicDetailVersion(detailConfig) } : {}) });
 }

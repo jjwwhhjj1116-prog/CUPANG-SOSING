@@ -3,8 +3,8 @@ import { getQuotationSchema } from './quotation-schema';
 import { xlsxChoiceLists, type XlsxInspection } from './xlsx-template';
 
 /** Suggestions are applied explicitly in the editor, never during export. */
-export function suggestQuotationChoiceFormats(files: Map<string, Uint8Array>, workbook: XlsxInspection, sheetName: string, row: number, categoryId: string, mappings: readonly ColumnMapping[]) {
-  const fields = getQuotationSchema(categoryId).fields;
+export function suggestQuotationChoiceFormats(files: Map<string, Uint8Array>, workbook: XlsxInspection, sheetName: string, row: number, categoryId: string, mappings: readonly ColumnMapping[],hubSchema?:import('./supplier-hub-schema').HubSchemaSnapshot) {
+  const fields = getQuotationSchema(categoryId,hubSchema?.categoryPath,hubSchema).fields;
   const lists = xlsxChoiceLists(files, workbook, sheetName, mappings.filter(mapping => fields.some(field => field.id === mapping.field && field.type === 'select')).map(mapping => mapping.column), row);
   const changes: { column: number; choiceFormat: 'value' | 'label' }[] = [];
   for (const mapping of mappings) {

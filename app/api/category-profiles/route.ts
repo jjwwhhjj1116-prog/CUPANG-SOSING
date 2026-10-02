@@ -6,6 +6,7 @@ import { CategoryProfileConflictError, CATEGORY_PROFILE_BODY_LIMIT, validateCate
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { createCategoryProfile, getCategoryProfile, listCategoryProfiles, updateCategoryProfile } from '@/db/category-profiles';
 import { TemplateValidationError, validateStoredTemplate } from '@/db/category-templates';
+import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 
 const options = { headers: { 'cache-control': 'no-store' } };
 const unavailable = () => NextResponse.json({ error: '운영 인증이 연결되기 전에는 카테고리 설정을 공개할 수 없습니다.' }, { status: 503, ...options });
@@ -13,6 +14,11 @@ const owner = async () => await getWorkspaceOwnerId();
 const body = (request: Request) => readBoundedJson(request, CATEGORY_PROFILE_BODY_LIMIT);
 const inputStatus = (error: unknown) => error instanceof RequestBodyError ? error.status : 400;
 const errorText = (error: unknown) => error instanceof SyntaxError ? '올바른 JSON이 필요합니다.' : error instanceof Error ? error.message : '입력을 확인해주세요.';
+async function validateSchemaCompany(input:{hubSchema?:import('@/app/supplier-hub-schema').HubSchemaSnapshot}){
+  if(!input.hubSchema)return;
+  const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;
+  if(!company||company.code!==input.hubSchema.company.code||company.name!==input.hubSchema.company.name)throw Error('로그인 회원의 승인 회사와 상세 견적 양식 회사가 다릅니다.');
+}
 export async function GET(request?: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
   const after = request ? new URL(request.url).searchParams.get('after') ?? '' : '';
@@ -31,7 +37,7 @@ export async function POST(request: Request) {
     requestId = request.headers.get('Idempotency-Key') ?? undefined;
     if (requestId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new Error('카테고리 저장 요청 번호가 올바르지 않습니다.');
     requestId = requestId?.toLowerCase();
-    input = validateCategoryProfile(await body(request)); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId).fields);
+    input = validateCategoryProfile(await body(request)); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); await validateSchemaCompany(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema).fields);
   }
   catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
@@ -53,7 +59,7 @@ export async function PUT(request: Request) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('설정 번호와 저장 버전을 확인해주세요.');
     const value = raw as Record<string, unknown>;
     if (typeof value.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(value.id) || typeof value.expectedRevision !== 'number' || !Number.isSafeInteger(value.expectedRevision) || value.expectedRevision < 1) throw new Error('설정 번호와 저장 버전을 확인해주세요.');
-    id = value.id; expectedRevision = value.expectedRevision; input = validateCategoryProfile(value.profile); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId).fields);
+    id = value.id; expectedRevision = value.expectedRevision; input = validateCategoryProfile(value.profile); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); await validateSchemaCompany(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema).fields);
   } catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
     const ownerId = await owner();

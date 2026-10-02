@@ -15,7 +15,10 @@ function load(hub = hubObservation, yoga = yogaObservation) {
     if (name === '../docs/yoga-category-comparison-2026-09-28.json') return yoga;
     if (name === '../docs/couplus-category-dom-2026-09-22.json') return observation;
     if (name === '../docs/supplier-hub-category-ids-2026-09-22.json') return hub;
-    if (name === '@/app/category-profiles') { const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/category-profiles.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports }); return exports; }
+    if (name === '@/app/category-profiles') {
+      const schema={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-schema.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:schema,TextEncoder});
+      const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/category-profiles.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports,require:dependency=>{assert.equal(dependency,'@/app/supplier-hub-schema');return schema;} }); return exports;
+    }
     throw Error(name);
   } });
   return model;

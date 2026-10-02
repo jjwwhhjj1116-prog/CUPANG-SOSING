@@ -1,6 +1,7 @@
 import {exchange} from '@/app/supplier-hub-handoff';
 import type {CategoryChoice} from '@/app/category-catalog';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
+import {validateHubSchemaSnapshot,type HubSchemaSnapshot} from '@/app/supplier-hub-schema';
 
 export type HubCategoryNode={categoryId:string;name:string;isLeaf:boolean};
 export type HubCategoryBranch={trail:HubCategoryNode[];children:HubCategoryNode[];ownerId:string;company:SupplierHubCompany;observedAt:number;source:'supplier-hub-category-api';fullCatalogVerified:false};
@@ -46,4 +47,15 @@ export async function verifyLiveHubCategoryChoice(choice:CategoryChoice,signal:A
   const node=branch.children.find(node=>node.categoryId===choice.categoryId&&node.isLeaf&&node.name===choice.path.at(-1));
   if(!node||branch.ownerId!==ownerId||branch.company.code!==company.code||branch.company.name!==company.name
     ||JSON.stringify([...trail.map(node=>node.name),node.name])!==JSON.stringify(choice.path))throw new Error('선택한 회원·회사·최종 카테고리가 변경되었습니다. 분류를 다시 선택해주세요.');
+}
+export async function loadLiveHubCategorySchema(choice:CategoryChoice,signal:AbortSignal):Promise<HubSchemaSnapshot>{
+  if(!choice.supplierHub||!choice.isLeaf)throw Error('Supplier Hub 최종 카테고리를 선택해주세요.');
+  const capability=await exchange('PING',null,signal);
+  if(capability.categorySchema!==true)throw Error('상세 견적 양식을 지원하는 상품 수집·전송 확장 0.2.36으로 갱신해주세요.');
+  const {trail,ownerId,company}=choice.supplierHub;
+  const result=await exchange('SCHEMA',{trail,selection:{categoryId:choice.categoryId,name:choice.path.at(-1)}},signal),branch=validateHubCategoryBranch(result.branch,trail);
+  if(branch.ownerId!==ownerId||branch.company.code!==company.code||branch.company.name!==company.name||!branch.children.some(node=>node.isLeaf&&node.categoryId===choice.categoryId&&node.name===choice.path.at(-1)))throw Error('상세 양식의 회원·회사·최종 분류가 변경되었습니다.');
+  const schema=validateHubSchemaSnapshot((result.branch as {schema?:unknown}).schema,choice.categoryId,choice.path);
+  if(schema.company.code!==company.code||schema.company.name!==company.name)throw Error('상세 견적 양식의 회사가 다릅니다.');
+  return schema;
 }

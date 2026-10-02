@@ -7,6 +7,7 @@ import { getCategoryProfile } from '@/db/category-profiles';
 import { getSettings } from '@/db/queries';
 import { savedRegistrationSettings, validateSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
+import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 
 // Production requests require a verified Access assertion; ownership never falls
 // back to the local workspace if authentication changes during the request.
@@ -40,6 +41,7 @@ export async function POST(request: Request) {
     const category=await getCategoryProfile(owner,profileId);
     if(!category)return NextResponse.json({error:'선택한 카테고리 연결을 찾을 수 없습니다.'},{status:404});
     if(category.revision!==expectedProfileRevision)return NextResponse.json({error:'선택한 카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 최신 카테고리를 다시 선택해주세요.',code:'CATEGORY_PROFILE_CHANGED'},{status:409});
+    if(category.hubSchema){const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;if(!company||company.code!==category.hubSchema.company.code||company.name!==category.hubSchema.company.name)return NextResponse.json({error:'선택한 상세 양식의 회사가 현재 승인 회사와 다릅니다. 카테고리를 다시 선택해주세요.',code:'CATEGORY_COMPANY_CHANGED'},{status:409});}
     if(!usableCategoryCode(category.categoryId))return NextResponse.json({error:'선택한 카테고리 번호가 없거나 형식이 올바르지 않습니다. 설정에서 실제 번호를 수정한 뒤 다시 선택해주세요.',code:'CATEGORY_CODE_INVALID'},{status:400});
     try { validateCategoryIdentity(category); }
     catch (error) { return NextResponse.json({error:error instanceof Error ? error.message : '카테고리 코드와 경로를 확인해주세요.',code:'CATEGORY_IDENTITY_MISMATCH'},{status:400}); }
