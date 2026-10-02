@@ -105,15 +105,30 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
 // Wait only for the files from this attempt. Never retry an upload or read cookies.
 export async function waitForSupplierHubAttachments(names,company){
   if(!Array.isArray(names)||!names.length||names.some(name=>typeof name!=='string'))throw Error('첨부 목록을 확인해주세요.');
-  for(let attempt=0;attempt<80;attempt++){
+  const readCurrent=()=>{
     if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration')throw Error('Supplier Hub 등록 화면이 변경되었습니다.');
-    const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
-    if(codes.length!==1||codes[0]!==company?.code)throw Error('업로드 중 Supplier Hub 회사가 변경되었습니다.');
     let value;try{value=JSON.parse(document.documentElement.dataset.yoofamAttachmentAttempt||'');}catch{throw Error('첨부 시도 기록이 없습니다.');}
     if(value.state!=='dispatched'||value.company?.code!==company.code||value.company?.name!==company.name
       ||!Array.isArray(value.files)||value.files.length!==names.length||value.files.some((name,index)=>name!==names[index]))throw Error('다른 파일이 첨부되었거나 검증을 이미 요청했습니다.');
-    const visible=(document.body.innerText||'').split(/[\s<>"'(),;]+/);
-    if(names.every(name=>visible.includes(name)))return true;
+    return document.body.innerText||'';
+  };
+  let revealingCompany=false;
+  for(let attempt=0;attempt<80;attempt++){
+    let text=readCurrent(),codes=Array.from(text.matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
+    // Upload redraws can close the menu while files are still appearing. Reopen
+    // it without resetting inputs, and require the full code before returning.
+    if(!codes.length&&!revealingCompany){
+      const menus=Array.from(document.querySelectorAll('button')).filter(button=>button.getClientRects().length&&!button.disabled&&(button.innerText||'').trim()===company.name);
+      if(menus.length!==1)throw Error('업로드 중 Supplier Hub 회사 메뉴를 확인하지 못했습니다.');
+      menus[0].click();revealingCompany=true;
+      text=readCurrent();codes=Array.from(text.matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
+    }
+    if(codes.length){
+      if(codes.length!==1||codes[0]!==company.code)throw Error('업로드 중 Supplier Hub 회사가 변경되었습니다.');
+      revealingCompany=false;
+      const visible=text.split(/[\s<>"'(),;]+/);
+      if(names.every(name=>visible.includes(name)))return true;
+    }
     await new Promise(resolve=>setTimeout(resolve,250));
   }
   return false;

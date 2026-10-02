@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import fs from 'node:fs';
 import {resumeSupplierHubValidation,readAttachedSupplierHubPackage} from '../extensions/supplier-hub/validation-resume.mjs';
 import {requestSupplierHubValidation} from '../extensions/supplier-hub/validate.mjs';
+import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
 
 const identity={origin:'https://sourceflow.jjwwhhjj1116.workers.dev',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}];
@@ -13,28 +14,30 @@ function harness(company=companies[0],required=false){
  const names=[`YOOFAM-${identity.fingerprint}.xlsx`,'photo.png','label.png',...(required?['legal-001.pdf']:[])];
  const record={...identity,company,includedOptions:2,profileId:'profile',filename:names[0],attachmentNames:names,legalDocuments:required?['legal-001.pdf']:[],legalDocumentsRequired:required,validationResume:true,windowId:17,tabId:123,state:'attached',startedAt:Date.now(),registered:false};
  const records=new Map([[key,record],['attempt:123',{...identity,company,includedOptions:2}]]),events=[],calls=[],dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company,files:names,...(required?{legalDocumentsRequired:true,legalDocuments:record.legalDocuments}:{})})};
- const controls={code:company.code,names,disabled:false,markerChange:false,executeError:false,lostReply:false,receiptError:false,sourceError:false,wrongWindow:false,wrongTab:false,submitted:false};
+ const controls={code:company.code,names,disabled:false,markerChange:false,executeError:false,lostReply:false,receiptError:false,sourceError:false,wrongWindow:false,wrongTab:false,submitted:false,menuVisible:true,menuClicks:0};
  const legalArea={innerText:'상품 개별법령에 따른 필수 서류\n'+(required?'legal-001.pdf':''),parentElement:null,querySelectorAll(selector){return selector.includes('radio')?[legal,{}]:required?[{files:[{name:'legal-001.pdf'}]}]:[];}};
  const legal={checked:required,disabled:false,parentElement:legalArea,labels:[{innerText:required?'해당함':'해당없음'}],click(){this.checked=true;events.push('legal');}};
  const checkboxes=[{checked:false,disabled:false,labels:[{innerText:'제공된 권장소비자가격 또는 공식 판매처 가격 데이터에 대한 쿠팡 약관에 동의합니다.'}],click(){this.checked=true;events.push('price');}},
   {checked:false,disabled:false,labels:[{innerText:'상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.'}],click(){this.checked=true;events.push('contact');}}];
  const button={innerText:'파일 검증하기',get disabled(){return controls.disabled;},getClientRects:()=>[{}],getAttribute:()=>null,click(){events.push('validate');}};
  const table={getClientRects:()=>[{}],querySelectorAll(selector){return selector==='thead th'?['견적서 명','견적서 등록일','검증 상태','검증 결과','견적서 ID'].map(innerText=>({innerText})):[{querySelectorAll:()=>[{innerText:names[0]}]}];}};
- const document={documentElement:{dataset},body:{get innerText(){return 'Company Code: '+controls.code+'\n'+controls.names.join('\n');}},querySelectorAll(selector){
+ const companyMenu={innerText:company.name,disabled:false,getClientRects:()=>[{}],click(){controls.menuVisible=true;controls.menuClicks++;}};
+ const document={documentElement:{dataset},body:{get innerText(){return company.name+'\n'+(controls.menuVisible?'Company Code: '+controls.code+'\n':'')+controls.names.join('\n');}},querySelectorAll(selector){
   if(selector==='table')return controls.submitted?[table]:[];
   if(selector.includes(required?'undefined-Y':'undefined-N'))return [legal];
   if(selector.includes('msrpAgreement'))return [checkboxes[0]];if(selector.includes('labelContactAgreement'))return [checkboxes[1]];
-  if(selector==='button')return [button];return [];
+  if(selector==='button')return [button,companyMenu];return [];
  }};
  const context=vm.createContext({document,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},setTimeout});
- let held,resumeHeld;
+ let held,resumeHeld,sourceCalls=0;
  const api={tabs:{get:async id=>({id,windowId:controls.wrongWindow?18:17,url:id===7?sender.url:controls.wrongTab?'https://supplier.coupang.com/qvt/other':'https://supplier.coupang.com/qvt/registration'}),
   query(){assert.fail('Resume must not enumerate or select other tabs');},create(){assert.fail('Resume must not create a tab');},sendMessage:async(id,message)=>{
    calls.push(['message',id,message.type]);if(message.type==='YOOFAM_VERIFY_QUOTATION_SOURCE'&&controls.sourceError)throw Error('latest source changed');
+   if(message.type==='YOOFAM_VERIFY_QUOTATION_SOURCE'&&++sourceCalls===controls.closeOnSource)controls.menuVisible=false;
    if(message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'&&controls.receiptError)throw Error('server unavailable');
    return {ok:true,...message.expected,checkedAt:Date.now(),...(message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'?{receipt:null}:{})};
   }},scripting:{executeScript:async({target,func,args})=>{
-   assert.equal(target.tabId,123);assert.ok([readAttachedSupplierHubPackage,requestSupplierHubValidation].includes(func),'no upload/attachment script');calls.push(['script',func.name]);
+   assert.equal(target.tabId,123);assert.ok([verifySupplierHubCompany,readAttachedSupplierHubPackage,requestSupplierHubValidation].includes(func),'no upload/attachment script');calls.push(['script',func.name]);
    if(held&&func===readAttachedSupplierHubPackage)await new Promise(resolve=>{resumeHeld=resolve;});
    if(func===requestSupplierHubValidation){if(controls.markerChange)dataset.yoofamAttachmentAttempt+=' ';if(controls.executeError)throw Error('execution reply unavailable');}
    const result=await vm.runInContext(`(${func.toString()})(...args)`,Object.assign(context,{args}));
@@ -55,6 +58,29 @@ test('both companies resume the original XLSX, images and required/exempt eviden
   assert.equal(h.records.get(key).state,'validation-requested');assert.equal(h.records.get(key+':validation').state,'validation-requested');
   assert.deepEqual(h.record.attachmentNames,JSON.parse(h.dataset.yoofamAttachmentAttempt).files);
   await h.run();assert.equal(h.events.filter(event=>event==='validate').length,1);
+ }
+});
+
+test('returning to attached files with a collapsed company menu resumes only after reading the original company code',async()=>{
+ for(const company of companies)for(const required of [false,true]){
+  const h=harness(company,required);h.controls.menuVisible=false;
+  assert.equal((await h.run()).state,'validation-requested');assert.equal(h.controls.menuClicks,1);
+  assert.equal(h.events.filter(event=>event==='validate').length,1);assert.deepEqual(h.record.attachmentNames,JSON.parse(h.dataset.yoofamAttachmentAttempt).files);
+  assert.equal(h.calls.find(call=>call[0]==='script')[1],'verifySupplierHubCompany');
+ }
+});
+
+test('a lost validation reply reconciles its original marker even after the user closes the company menu',async()=>{
+ const h=harness();h.controls.lostReply=true;assert.equal((await h.run()).state,'unconfirmed');
+ h.controls.lostReply=false;h.controls.menuVisible=false;
+ assert.equal((await h.run()).state,'validation-requested');assert.equal(h.controls.menuClicks,1);assert.equal(h.events.filter(event=>event==='validate').length,1);
+});
+
+test('resumption reopens a menu closed during source recheck and rejects a revealed wrong company before claiming validation',async()=>{
+ const h=harness();h.controls.menuVisible=false;h.controls.closeOnSource=2;
+ assert.equal((await h.run()).state,'validation-requested');assert.equal(h.controls.menuClicks,2);assert.equal(h.events.filter(event=>event==='validate').length,1);
+ for(const company of companies){const wrong=harness(company);wrong.controls.menuVisible=false;wrong.controls.code=companies.find(value=>value.code!==company.code).code;
+  await assert.rejects(wrong.run(),/회사코드/);assert.equal(wrong.events.length,0);assert.equal(wrong.records.has(key+':validation'),false);assert.equal(wrong.records.get(key).state,'attached');
  }
 });
 test('slow file visibility keeps every attachment and allows only a later explicit validation request',async()=>{

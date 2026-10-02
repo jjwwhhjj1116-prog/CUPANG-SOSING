@@ -64,7 +64,7 @@ async function fixture(options={}){
      if(request.args[1]===true){preflightChecked=true;if(options.preflightError)throw Error('changed upload sections');return [{result:{state:options.occupied&&request.target.tabId===123?'occupied':'ready',registered:false}}];}
      await options.onAttach?.();if(options.attachError)throw Error('lost response');return [{result:{state:options.outcome??'dispatched',registered:false}}];
    }
-   if(request.func===waitForSupplierHubAttachments)return [{result:options.ready??true}];
+   if(request.func===waitForSupplierHubAttachments)return [{result:options.uploadWait?await options.uploadWait(...request.args):options.ready??true}];
    if(request.func===requestSupplierHubValidation){assert.deepEqual(request.args,[agreements,true]);if(options.validationError)throw Error('button disabled');return [{result:{state:'validation-requested',validated:false,registered:false}}];}
    if(request.func===readSupplierHubValidation){await options.onResult?.();return [{result:{filename:options.validationFilename??`YOOFAM-${identity.fingerprint}.xlsx`,state:options.validationState??'validation-pending',registered:false,...(options.validationState==='validation-complete'?{quotationId:'quote-123'}:{})}}];}
    if(request.func===searchSupplierHubRegistration)return [{result:{state:'search-complete',quotationId:'quote-123',registered:false}}];
@@ -346,5 +346,47 @@ test('upload readiness waits for all exact names and aborts if the company or at
    const result=vm.runInNewContext(`(${waitForSupplierHubAttachments.toString()})(names,company)`,{document,names,company,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},setTimeout(callback){waits++;if(mode==='ready')document.body.innerText+=' label.png';if(mode==='switch')document.body.innerText='Company Code: A01526306 quotation.xlsx label.png';if(mode==='changed')document.documentElement.dataset.yoofamAttachmentAttempt=JSON.stringify({state:'validation-requested',company,files:names});queueMicrotask(callback);}});
    if(['switch','changed'].includes(mode))await assert.rejects(result);else assert.equal(await result,mode==='ready');
    assert.ok(waits>0);assert.ok(waits<=80);
+ }
+});
+
+test('upload redraws can close the company menu while exact original attachments finish appearing',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const names=['quotation.xlsx','photo.png','label.png'];let shown=names.slice(0,1),open=true,waits=0,menuClicks=0;
+  const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company,files:names})};
+  const menu={innerText:company.name,disabled:false,getClientRects:()=>[{}],click(){menuClicks++;open=true;}};
+  const document={documentElement:{dataset},body:{get innerText(){return [company.name,...(open?['Company Code: '+company.code]:[]),...shown].join('\n');}},querySelectorAll:selector=>selector==='button'?[menu]:[]};
+  const result=await vm.runInNewContext(`(${waitForSupplierHubAttachments.toString()})(names,company)`,{document,names,company,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},setTimeout(callback){waits++;open=false;shown=names.slice(0,Math.min(names.length,waits+1));queueMicrotask(callback);}});
+  assert.equal(result,true);assert.equal(menuClicks,2);assert.equal(waits,2);assert.equal(JSON.parse(dataset.yoofamAttachmentAttempt).state,'dispatched');
+ }
+});
+
+test('upload wait requires a revealed exact code after reopening and remains bounded without changing files',async()=>{
+ for(const mode of ['delayed','wrong','ambiguous','marker','page','never']){
+  const company={code:'A01464742',name:'와이홉'},names=['quotation.xlsx','label.png'];let shown=false,waits=0,clicks=0;
+  const location={origin:'https://supplier.coupang.com',pathname:'/qvt/registration'};
+  const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company,files:names})};
+  const menu={innerText:company.name,disabled:false,getClientRects:()=>[{}],click(){clicks++;if(mode==='marker')dataset.yoofamAttachmentAttempt='changed';if(mode==='page')location.pathname='/qvt/wims';}};
+  const document={documentElement:{dataset},body:{get innerText(){return company.name+'\n'+names.join('\n')+(shown?'\nCompany Code: '+(mode==='wrong'?'A01526306':company.code)+(mode==='ambiguous'?'\nCompany Code: A01526306':''):'');}},querySelectorAll:()=>[menu]};
+  const pending=vm.runInNewContext(`(${waitForSupplierHubAttachments.toString()})(names,company)`,{document,names,company,location,setTimeout(callback){waits++;if(mode!=='never')shown=true;queueMicrotask(callback);}});
+  if(mode==='delayed')assert.equal(await pending,true);else if(mode==='never')assert.equal(await pending,false);else await assert.rejects(pending);
+  assert.equal(clicks,1);assert.ok(waits<=80);if(mode==='never')assert.equal(waits,80);
+ }
+});
+
+test('the direct route survives upload-menu redraws and never repeats delivery on a revealed wrong company',async()=>{
+ for(const wrongCompany of [false,true]){
+  let polls=0,menuClicks=0;
+  const h=await fixture({uploadWait:async(names,company)=>{
+   let open=true,shown=names.slice(0,1);
+   const dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company,files:names})};
+   const menu={innerText:company.name,disabled:false,getClientRects:()=>[{}],click(){menuClicks++;open=true;}};
+   const document={documentElement:{dataset},body:{get innerText(){return company.name+'\n'+shown.join('\n')+(open?'\nCompany Code: '+(wrongCompany&&polls?'A01526306':company.code):'');}},querySelectorAll:()=>[menu]};
+   return vm.runInNewContext(`(${waitForSupplierHubAttachments.toString()})(names,company)`,{document,names,company,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},setTimeout(callback){polls++;open=false;shown=names;queueMicrotask(callback);}});
+  }});
+  const outcome=await h.run();assert.equal(outcome.state,wrongCompany?'attached':'validation-requested');assert.equal(menuClicks,1);
+  assert.equal(h.records.get(`transmission:${new URL(sender.url).origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`).state,outcome.state);
+  assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
+  assert.equal(h.calls.filter(([name])=>name==='requestSupplierHubValidation').length,wrongCompany?0:1);
+  await assert.rejects(h.run(),/이미 전송/);assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
  }
 });

@@ -1,7 +1,13 @@
+import type {SubmissionIssue} from '@/app/submission-review';
+
 export const LEGAL_DOCUMENT_LIMIT=5*1024*1024;
 export const LEGAL_DOCUMENT_TOTAL_LIMIT=8*1024*1024;
 export type LegalDocument={key:string;name:string;byteLength:number;sha256:string;type:'pdf'|'png'|'jpg'};
 export type LegalDocuments={applicability:'unconfirmed'|'required'|'not-applicable';files:LegalDocument[]};
+/** A saved required choice needs at least one original; presence is not content verification. */
+export function legalDocumentSubmissionIssues(applicability:LegalDocuments['applicability'],fileCount:number):SubmissionIssue[]{
+ return applicability==='required'&&fileCount===0?[{kind:'error',code:'LEGAL_DOCUMENT_MISSING',optionId:null,optionLabel:'법적 필수서류',fieldId:null,message:'서류 해당함을 선택했습니다. 원본 서류를 첨부해주세요.'}]:[];
+}
 export function legalDocumentType(bytes:Uint8Array):LegalDocument['type']{
  if(bytes.length>=8&&[137,80,78,71,13,10,26,10].every((value,index)=>bytes[index]===value))return 'png';
  if(bytes.length>=3&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255)return 'jpg';

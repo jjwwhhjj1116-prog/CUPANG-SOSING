@@ -6,15 +6,20 @@ import {requestSupplierHubValidation} from '../extensions/supplier-hub/validate.
 
 const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}];
 const terms=['제공된 권장소비자가격 또는 공식 판매처 가격 데이터에 대한 쿠팡 약관에 동의합니다.','상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.'];
-function page(company,{attachment=false,closeOn='price',failure,delay=0,waitForButton=false}={}){
- let open=true,pending=0,waits=0,manualFilename='';
+function page(company,{attachment=false,closeOn='price',failure,delay=0,waitForButton=false,afterUpload}={}){
+ let open=true,pending=0,waits=0,manualFilename='',currentCompany=company.code;
+ const uploadedNames=[];
  const manualFile={name:'owner-work.png'};
  const events=[],dataset={},location={origin:'https://supplier.coupang.com',pathname:'/qvt/registration'};
  const titles=['작성이 완료된 견적서 Excel 파일을 업로드하십시오.','상품 이미지를 업로드하십시오.','제품 필수 표시사항을 업로드하십시오.'];
  const filenames=['a.xlsx','photo.png','label.png'];
  const inputs=titles.map((title,index)=>({files:attachment?[]:[{name:filenames[index]}],isConnected:true,disabled:false,closest:()=>null,
-  parentElement:{innerText:title,querySelectorAll:()=>[{}]},dispatchEvent(){events.push('upload-'+index);}}));
- const legalFile={files:[],isConnected:true,disabled:false,closest:()=>null,dispatchEvent(){events.push('upload-legal');}};
+  parentElement:{innerText:title,querySelectorAll:()=>[{}]},dispatchEvent(){events.push('upload-'+index);changed(index);}}));
+ const legalFile={files:[],isConnected:true,disabled:false,closest:()=>null,dispatchEvent(){events.push('upload-legal');changed('legal');}};
+ function changed(index){afterUpload?.(index,{inputs,legalFile,dataset,location,manualFile,
+  showFilename(value){manualFilename=value;},switchCompany(){currentCompany=companies.find(value=>value.code!==company.code).code;},closeCompany(){open=false;},
+  renderCompleted(group){const prior=inputs[group];uploadedNames.push(...prior.files.map(file=>file.name));prior.isConnected=false;inputs[group]={...prior,isConnected:true,files:[]};},
+ });}
  const close=name=>{events.push(name);if(name===closeOn)open=false;};
  const legal={checked:false,disabled:false,labels:[{innerText:attachment?'해당함':'해당없음'}],click(){this.checked=true;close(attachment?'legal-yes':'legal-no');}};
  const section={parentElement:null,get innerText(){return '상품 개별법령에 따른 필수 서류\n'+legalFile.files.map(file=>file.name).join('\n');},querySelectorAll(selector){return selector.includes('radio')?[legal,{}]:(attachment&&legal.checked?[legalFile]:[]);}};
@@ -23,7 +28,7 @@ function page(company,{attachment=false,closeOn='price',failure,delay=0,waitForB
  const button={innerText:'파일 검증하기',disabled:waitForButton,getClientRects:()=>[{}],getAttribute:()=>null,click(){events.push('validate');}};
  const menu={innerText:company.name,disabled:false,getClientRects:()=>[{}],click(){events.push('company-menu');pending=delay;if(!delay)open=true;if(failure==='marker')dataset.yoofamAttachmentAttempt='changed';if(failure==='location')location.pathname='/qvt/wims';if(failure==='file')inputs[0].files=[];if(failure==='agreement')checks[0].checked=false;}};
  if(!attachment)dataset.yoofamAttachmentAttempt=JSON.stringify({state:'dispatched',company,files:filenames});
- const document={documentElement:{dataset},body:{get innerText(){return [company.name,manualFilename,...(open?['Company Code: '+(failure==='switched'&&events.includes('company-menu')?companies.find(value=>value.code!==company.code).code:company.code),...(failure==='duplicate'&&events.includes('company-menu')?['Company Code: '+company.code]:[])]:[]),...[...inputs,legalFile].flatMap(input=>input.files.map(file=>file.name))].join('\n');}},querySelectorAll(selector){
+ const document={documentElement:{dataset},body:{get innerText(){return [company.name,manualFilename,...uploadedNames,...(open?['Company Code: '+(failure==='switched'&&events.includes('company-menu')?companies.find(value=>value.code!==company.code).code:currentCompany),...(failure==='duplicate'&&events.includes('company-menu')?['Company Code: '+company.code]:[])]:[]),...[...inputs,legalFile].flatMap(input=>input.files.map(file=>file.name))].join('\n');}},querySelectorAll(selector){
   if(selector==='button')return [button,...(failure==='missing'?[]:failure==='ambiguous'?[menu,menu]:[menu])];
   if(selector==='input[type="file"]')return [...inputs,...(attachment&&legal.checked?[legalFile]:[])];
   if(selector.includes(attachment?'undefined-Y':'undefined-N'))return [legal];
@@ -83,10 +88,100 @@ test('a manual upload appearing during company-menu recovery is preserved before
   assert.equal(p.run(attachToSupplierHub,[p.payload,true]).state,'ready');
   const result=await p.run(attachToSupplierHub,[p.payload]);
   assert.equal(result.state,'partial');assert.equal(result.dispatched.length,0);assert.match(result.error,/기존.*첨부|파일/);
-  assert.deepEqual(p.events,['legal-yes','company-menu']);assert.equal(p.waits,2);
+  assert.deepEqual(p.events,['legal-yes','company-menu']);assert.equal(p.waits,1);
   assert.equal(p.inputs[0].files.length,0);assert.equal(p.inputs[2].files.length,0);assert.equal(p.legalFile.files.length,0);
   if(failure==='manual-file')assert.equal(p.inputs[1].files[0],p.manualFile);
   else{assert.equal(p.inputs[1].files.length,0);assert.equal(p.manualFilename,p.manualFile.name);}
   assert.equal(p.dataset.yoofamAttachmentAttempt,'started');assert.throws(()=>p.run(attachToSupplierHub,[p.payload]));
+ }
+});
+
+test('a synchronous upload change preserves a manual file or rendered filename in a later group',async()=>{
+ for(const scenario of ['photo','label','legal','visible']){
+  const p=page(companies[0],{attachment:true,afterUpload(index,{inputs,legalFile,manualFile,showFilename}){
+   if(index!==0)return;
+   if(scenario==='visible')showFilename(manualFile.name);
+   else(scenario==='legal'?legalFile:inputs[scenario==='photo'?1:2]).files=[manualFile];
+  }});
+  const result=await p.run(attachToSupplierHub,[p.payload]);
+  assert.equal(result.state,'partial');assert.deepEqual(JSON.parse(JSON.stringify(result.dispatched)),[{group:'quotation',count:1}]);
+  assert.deepEqual(p.events,['legal-yes','upload-0']);assert.equal(p.inputs[0].files[0].name,'a.xlsx');
+  if(scenario==='visible')assert.equal(p.manualFilename,p.manualFile.name);
+  else assert.equal((scenario==='legal'?p.legalFile:p.inputs[scenario==='photo'?1:2]).files[0],p.manualFile);
+  const before=[...p.events];assert.throws(()=>p.run(attachToSupplierHub,[p.payload]));assert.deepEqual(p.events,before);
+ }
+});
+
+test('a synchronous upload change to company, marker or page stops all remaining groups',async()=>{
+ for(const scenario of ['company','marker','page']){
+  const p=page(companies[0],{attachment:true,afterUpload(index,{switchCompany,dataset,location}){
+   if(index!==0)return;
+   if(scenario==='company')switchCompany();else if(scenario==='marker')dataset.yoofamAttachmentAttempt='other-attempt';else location.pathname='/qvt/wims';
+  }});
+  const result=await p.run(attachToSupplierHub,[p.payload]);
+  assert.equal(result.state,'partial');assert.equal(result.dispatched.length,1);assert.deepEqual(p.events,['legal-yes','upload-0']);
+  assert.equal(p.inputs[1].files.length,0);assert.equal(p.inputs[2].files.length,0);assert.equal(p.legalFile.files.length,0);
+  assert.equal(p.dataset.yoofamAttachmentAttempt,scenario==='marker'?'other-attempt':'started');
+  assert.throws(()=>p.run(attachToSupplierHub,[p.payload]));
+ }
+});
+
+test('completed controlled inputs may reset and rerender while their filenames remain in the form',async()=>{
+ const p=page(companies[0],{attachment:true,afterUpload(index,{renderCompleted}){if(typeof index==='number')renderCompleted(index);}});
+ const result=await p.run(attachToSupplierHub,[p.payload]);
+ assert.equal(result.state,'dispatched');assert.equal(result.dispatched.length,4);
+ assert.deepEqual(p.events,['legal-yes','upload-0','upload-1','upload-2','upload-legal']);
+ assert.ok(p.inputs.every(input=>input.files.length===0));assert.equal(p.legalFile.files[0].name,'legal-001.pdf');
+});
+
+test('grouped uploads reveal a closed company menu without replaying completed changes',async()=>{
+ const p=page(companies[0],{attachment:true,delay:2,afterUpload(index,{closeCompany,renderCompleted}){if(typeof index==='number')renderCompleted(index);closeCompany();}});
+ const result=await p.run(attachToSupplierHub,[p.payload]);
+ assert.equal(result.state,'dispatched');assert.equal(result.dispatched.length,4);
+ assert.deepEqual(p.events,['legal-yes','upload-0','company-menu','upload-1','company-menu','upload-2','company-menu','upload-legal','company-menu']);
+ assert.equal(p.waits,8);assert.equal(JSON.parse(p.dataset.yoofamAttachmentAttempt).state,'dispatched');
+});
+
+test('manual work arriving during a company-menu wait between groups is preserved',async()=>{
+ for(const failure of ['manual-file','manual-filename']){
+  const p=page(companies[0],{attachment:true,failure,delay:2,afterUpload(index,{closeCompany}){if(index===0)closeCompany();}});
+  const result=await p.run(attachToSupplierHub,[p.payload]);
+  assert.equal(result.state,'partial');assert.equal(result.dispatched.length,1);
+  assert.deepEqual(p.events,['legal-yes','upload-0','company-menu']);assert.equal(p.inputs[2].files.length,0);assert.equal(p.legalFile.files.length,0);
+  if(failure==='manual-file')assert.equal(p.inputs[1].files[0],p.manualFile);else assert.equal(p.manualFilename,p.manualFile.name);
+  const before=[...p.events];assert.throws(()=>p.run(attachToSupplierHub,[p.payload]));assert.deepEqual(p.events,before);
+ }
+});
+
+test('a pending upload input whose section changes is never assigned another group',async()=>{
+ const p=page(companies[0],{attachment:true,afterUpload(index,{inputs}){if(index===0)inputs[1].parentElement.innerText='제품 필수 표시사항을 업로드하십시오.';}});
+ const result=await p.run(attachToSupplierHub,[p.payload]);
+ assert.equal(result.state,'partial');assert.equal(result.dispatched.length,1);assert.deepEqual(p.events,['legal-yes','upload-0']);
+ assert.equal(p.inputs[1].files.length,0);assert.equal(p.inputs[2].files.length,0);assert.equal(p.legalFile.files.length,0);
+});
+
+test('a replaced pending input preserves its new contents and never receives an old group event',async()=>{
+ for(const occupied of [false,true]){
+  const p=page(companies[0],{attachment:true,afterUpload(index,{inputs,manualFile}){
+   if(index!==0)return;
+   const prior=inputs[1];prior.isConnected=false;inputs[1]={...prior,isConnected:true,files:occupied?[manualFile]:[]};
+  }});
+  const result=await p.run(attachToSupplierHub,[p.payload]);
+  assert.equal(result.state,'partial');assert.equal(result.dispatched.length,1);assert.deepEqual(p.events,['legal-yes','upload-0']);
+  assert.deepEqual(p.inputs[1].files,occupied?[p.manualFile]:[]);assert.equal(p.inputs[2].files.length,0);assert.equal(p.legalFile.files.length,0);
+  const before=[...p.events];assert.throws(()=>p.run(attachToSupplierHub,[p.payload]));assert.deepEqual(p.events,before);
+ }
+});
+
+test('a final change to company, marker, page or files cannot be marked fully dispatched',async()=>{
+ for(const scenario of ['company','marker','page','file']){
+  const p=page(companies[0],{attachment:true,afterUpload(index,{dataset,switchCompany,location,inputs,manualFile}){
+   if(index!=='legal')return;
+   if(scenario==='company')switchCompany();else if(scenario==='marker')dataset.yoofamAttachmentAttempt='other-attempt';else if(scenario==='page')location.pathname='/qvt/wims';else inputs[1].files=[manualFile];
+  }});
+  const result=await p.run(attachToSupplierHub,[p.payload]);
+  assert.equal(result.state,'partial');assert.equal(result.dispatched.length,4);assert.equal(p.dataset.yoofamAttachmentAttempt,scenario==='marker'?'other-attempt':'started');
+  if(scenario==='file')assert.equal(p.inputs[1].files[0],p.manualFile);
+  const before=[...p.events];assert.throws(()=>p.run(attachToSupplierHub,[p.payload]));assert.deepEqual(p.events,before);
  }
 });

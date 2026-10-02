@@ -31,6 +31,7 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(result.imageIntegrityBinding!==true)throw new Error('견적 이미지 내용 확인을 지원하는 Chrome 확장 0.2.31 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(result.serverReceiptReplayProtection!==true)throw new Error('서버 전송 기록 확인을 지원하는 Chrome 확장 0.2.34 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(direct&&result.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  if(result.attachmentLifecycleRecovery!==true)throw new Error('첨부 파일 보호와 검증 재개를 지원하는 Chrome 확장 0.2.41 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
 }
 export type SupplierHubRegistrationRow={title:string;submittedAt:string;category:string;barcode:string;sourceQuotation:string;skuId:string;status:string;stage:string};
 export type SupplierHubRegistration={quotationId:string;registered:false;observedAt:number;includedOptions?:number;rows:SupplierHubRegistrationRow[]}&(
@@ -143,6 +144,7 @@ export async function resumeSupplierHubValidation(identity:PackageIdentity,revie
   const capability=await exchange('PING',null,signal);
   if(capability.validationResume!==true||capability.latestSourceBinding!==true||capability.serverReceiptReplayProtection!==true)throw Error('첨부 검증 재개를 지원하는 Chrome 확장 0.2.39로 갱신하고 앱 페이지를 새로고침해주세요.');
   if(capability.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  if(capability.attachmentLifecycleRecovery!==true)throw new Error('첨부 파일 보호와 검증 재개를 지원하는 Chrome 확장 0.2.41 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   const response=await exchange('VALIDATE',{...identity,reviewedAgreements},signal);
   const result=response.result as SupplierHubTransmission;
   if(response.fingerprint!==identity.fingerprint||response.registered!==false||!result||result.registered!==false

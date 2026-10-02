@@ -16,6 +16,7 @@ import { quotationFilename } from '@/app/exports/quotation-filename';
 import { publicDetailConfig, resolvePublicDetail, publishPublicDetail, publicDetailMediaIssues, PublicDetailError } from '@/app/quotation-public-detail';
 import { productImageKeys } from '@/app/product-content';
 import {loadLegalDocumentAttachments} from '@/app/exports/legal-documents';
+import {legalDocumentSubmissionIssues} from '@/app/legal-documents';
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, {status, headers:{'cache-control':'no-store'}});
 export async function POST(request: Request, context: {params: Promise<{id: string}>}) {
@@ -66,7 +67,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
       const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
       fields = quotationFieldFiles(saved,resolved,assets,revision,{filename, byteLength: generated.bytes.byteLength, sha256},[
         ...quotationWorkbookIssues(generated.report,profile,resolved), ...publicDetailMediaIssues(resolved,detail.images,assets),
-        ...(legal.applicability==='required'&&!legal.attachments.length?[{kind:'error' as const,code:'LEGAL_DOCUMENT_MISSING',optionId:null,optionLabel:'법적 필수서류',fieldId:null,message:'서류 해당함을 선택했습니다. 원본 서류를 첨부해주세요.'}]:[]),
+        ...legalDocumentSubmissionIssues(legal.applicability,legal.attachments.length),
       ],legal);
     }
     catch(error) {return json({error:error instanceof Error?error.message:'견적서 양식을 채우지 못했습니다.'},error instanceof ExportSizeError?413:400);}

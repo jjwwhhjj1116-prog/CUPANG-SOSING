@@ -15,8 +15,7 @@ export function attachToSupplierHub(payload,checkOnly=false) {
     if(found.length!==1||found[0].input.disabled)throw Error('법적 서류 해당함 영역을 확인하지 못했습니다.');
     return found[0];
   };
-  const all=Array.from(document.querySelectorAll('input[type="file"]'));
-  const targets=definitions.map(([key,title])=>{
+  const findTarget=(key,title,all)=>{
     const candidates=all.filter(input=>{
       let section=input.parentElement;
       for(let depth=0;section&&depth<12;depth++,section=section.parentElement){
@@ -28,7 +27,9 @@ export function attachToSupplierHub(payload,checkOnly=false) {
     const input=candidates[0];
     if(input.disabled||input.closest('[aria-disabled="true"]'))throw Error('파일 첨부가 비활성화되어 있습니다.');
     return {key,input};
-  });
+  };
+  const all=Array.from(document.querySelectorAll('input[type="file"]'));
+  const targets=definitions.map(([key,title])=>findTarget(key,title,all));
   // A pristine form only: avoid replacing files of a user's work in progress.
   if(document.documentElement.dataset.yoofamAttachmentAttempt||all.some(input=>input.files?.length)||document.body.innerText.match(/[^\s<>]+\.(?:xlsx|xls|csv|tsv|jpe?g|png|webp|gif|avif|pdf)\b/i)){
     if(checkOnly===true)return {state:'occupied',registered:false};
@@ -57,18 +58,38 @@ export function attachToSupplierHub(payload,checkOnly=false) {
   if(required&&legalArea().input.checked)legalTarget();
   if(checkOnly===true)return {state:'ready',registered:false};
   document.documentElement.dataset.yoofamAttachmentAttempt='started';
-  const dispatch=(reopenCompany=true)=>{try{
+  let nextGroup=0;
+  const checkPending=()=>{
     if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration'||document.documentElement.dataset.yoofamAttachmentAttempt!=='started')throw Error('첨부 화면이 변경되었습니다.');
+    const current=Array.from(document.querySelectorAll('input[type="file"]'));
+    const completed=prepared.slice(0,nextGroup),names=new Set(completed.flatMap(({transfer})=>Array.from(transfer.files,file=>file.name)));
+    // A controlled input may clear or remount after its change event. Only our
+    // already-delivered File objects/names may remain; pending groups stay empty.
+    if(current.some(input=>{
+      const files=Array.from(input.files||[]);if(!files.length)return false;
+      const sent=completed.find(item=>item.input===input),expected=sent&&Array.from(sent.transfer.files);
+      return !expected||files.length!==expected.length||files.some((file,index)=>file!==expected[index]);
+    })||Array.from((document.body.innerText||'').matchAll(/[^\s<>"'(),;]+\.(?:xlsx|xls|csv|tsv|jpe?g|png|webp|gif|avif|pdf)\b/gi),match=>match[0]).some(name=>!names.has(name)))throw Error('전달 중 다른 파일이 첨부되었습니다. 기존 첨부를 유지하고 중단했습니다.');
+    for(const item of prepared.slice(nextGroup)){
+      if(!item.transfer.files.length)continue;
+      const input=item.key==='legalDocuments'?legalTarget():findTarget(item.key,definitions.find(([key])=>key===item.key)[1],current).input;
+      if(item.input===null)item.input=input;
+      if(item.input!==input||!input.isConnected||input.disabled||input.closest('[aria-disabled="true"]'))throw Error('파일 전달 중 등록 화면이 변경되었습니다.');
+    }
+  };
+  const dispatch=(reopenCompany=true)=>{try{
+    for(;;){
+    checkPending();
     const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
-    // Selecting required documents can close the company menu. Read its actual
-    // code again before any file event, without treating the visible name as proof.
+    // Controls and upload rerenders can close the menu. Recover the actual code
+    // at this cursor, without replaying a completed group's change event.
     if(!codes.length&&reopenCompany){
       const menus=Array.from(document.querySelectorAll('button')).filter(button=>button.getClientRects().length&&!button.disabled&&(button.innerText||'').trim()===company.name);
       if(menus.length!==1)throw Error('첨부 전 회사 메뉴를 확인하지 못했습니다.');
       menus[0].click();
       return (async()=>{try{
         for(let index=0;index<20;index++){
-          if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration'||document.documentElement.dataset.yoofamAttachmentAttempt!=='started')throw Error('첨부 화면이 변경되었습니다.');
+          checkPending();
           if(/Company Code:\s*A\d+\b/.test(document.body.innerText||''))return dispatch(false);
           await new Promise(resolve=>setTimeout(resolve,100));
         }
@@ -76,16 +97,14 @@ export function attachToSupplierHub(payload,checkOnly=false) {
       }catch(error){return {state:'partial',dispatched,registered:false,error:String(error?.message||error)};}})();
     }
     if(codes.length!==1||codes[0]!==company.code)throw Error('첨부 전 회사코드가 변경되었습니다.');
-    // The legal-area/menu waits can outlive a manual upload. Recheck the whole
-    // visible form before the first event, so another file is never replaced.
-    if(Array.from(document.querySelectorAll('input[type="file"]')).some(input=>input.files?.length)||/[^\s<>]+\.(?:xlsx|xls|csv|tsv|jpe?g|png|webp|gif|avif|pdf)\b/i.test(document.body.innerText||''))throw Error('대기 중 다른 파일이 첨부되었습니다. 기존 첨부를 유지하고 중단했습니다.');
-    if(required)prepared.find(item=>item.key==='legalDocuments').input=legalTarget();
-    for(const {key,input,transfer} of prepared){
-      if(!transfer.files.length)continue;
-      if(!input.isConnected||input.disabled)throw Error('파일 전달 중 등록 화면이 변경되었습니다.');
+    if(nextGroup===prepared.length)break;
+    const {key,input,transfer}=prepared[nextGroup];
+    if(transfer.files.length){
       input.files=transfer.files;
       input.dispatchEvent(new Event('change',{bubbles:true}));
       dispatched.push({group:key,count:transfer.files.length});
+    }
+    nextGroup++;reopenCompany=true;
     }
     document.documentElement.dataset.yoofamAttachmentAttempt=JSON.stringify({state:'dispatched',company,files:prepared.flatMap(({transfer})=>Array.from(transfer.files,file=>file.name)),...(required?{legalDocuments:payload.legalDocuments.map(file=>file.name),legalDocumentsRequired:true}:{})});
     return {state:'dispatched',dispatched,registered:false};

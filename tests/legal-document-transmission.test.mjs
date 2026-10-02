@@ -75,6 +75,31 @@ test('legal evidence edits are revision-bound, owner scoped, preserve stored fil
   const exempt=await json(await h.route(f.base+'/quotation',{method:'POST',body:{action:'preview'}}));assert.equal(exempt.submissionReview.issues.some(issue=>issue.code==='LEGAL_DOCUMENT_MISSING'),false);
  }finally{h.close();}
 });
+
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test('registration precheck and workbook preview retain the same explicit required-document error: '+company.companyCode,async()=>{
+ const f=await setup(company),{h}=f;try{
+  const initial=await json(await f.request('GET'));
+  const required=await json(await f.request('PATCH',{expectedRevision:initial.revision,applicability:'required'}));
+  const snapshot=JSON.stringify(h.sqlite.prepare('SELECT * FROM product_content').all());
+  const review=await json(await h.route(f.base+'/submission-review'));
+  const preview=await json(await h.route(f.base+'/quotation',{method:'POST',body:{action:'preview'}}));
+  const missing=preview.submissionReview.issues.filter(issue=>issue.code==='LEGAL_DOCUMENT_MISSING');
+  assert.equal(missing.length,1);assert.equal(missing[0].kind,'error');assert.equal(preview.submissionReview.errorCount,1);
+  assert.deepEqual(review.issues.filter(issue=>issue.code==='LEGAL_DOCUMENT_MISSING'),missing);
+  assert.equal(review.errorCount,1);assert.equal(review.submissionReady,false);
+  assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM product_content').all()),snapshot,'inspection preserves manually reviewed content and document choice');
+  const uploaded=await json(await f.upload(required.revision),201);
+  const complete=await json(await h.route(f.base+'/submission-review'));
+  assert.equal(complete.issues.some(issue=>issue.code==='LEGAL_DOCUMENT_MISSING'),false);
+  assert.equal(complete.errorCount,0);assert.notEqual(complete.fingerprint,review.fingerprint);
+  const removed=await json(await f.request('PATCH',{expectedRevision:uploaded.revision,removeKey:uploaded.documents.files[0].key}));
+  assert.equal((await json(await h.route(f.base+'/submission-review'))).issues.filter(issue=>issue.code==='LEGAL_DOCUMENT_MISSING').length,1);
+  await json(await f.request('PATCH',{expectedRevision:removed.revision,applicability:'not-applicable'}));
+  const exempt=await json(await h.route(f.base+'/submission-review'));
+  assert.equal(exempt.issues.some(issue=>issue.code==='LEGAL_DOCUMENT_MISSING'),false);assert.equal(exempt.errorCount,0);
+  assert.deepEqual(Buffer.from(h.objects.get(uploaded.documents.files[0].key)),pdf,'excluding a reference preserves original evidence bytes');
+ }finally{h.close();}
+});
 test('required evidence rejects changed bytes and exemption choice before any Chrome request or storage claim',async()=>{
  const f=await setup(),{h}=f;try{
   const saved=await json(await f.upload((await json(await f.request('GET'))).revision),201),key=saved.documents.files[0].key;

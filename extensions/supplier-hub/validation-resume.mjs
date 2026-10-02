@@ -4,6 +4,7 @@ import {verifyAppQuotationSource} from './source-check.mjs';
 import {assertAppSupplierHubNotSubmitted} from './receipt-recovery.mjs';
 import {claimSupplierHubTransmissionWindow} from './transmission-window.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
+import {verifySupplierHubCompany} from './company.mjs';
 
 // Only the original, persisted attachment is eligible. No ZIP, file input,
 // tab creation or upload is part of this command.
@@ -40,7 +41,14 @@ export async function resumeSupplierHubValidation(message,sender,api=chrome,stor
       if(cached&&cached.state!=='not-found')throw Error('이미 검증 결과가 있습니다. 전송 결과 계속 확인으로 조회해주세요.');
       await assertAppSupplierHubNotSubmitted(identity,record,{appTabId:sender.tab.id,windowId:record.windowId},api,store);
     };
+    const checkCompany=async()=>{
+      if(!isHubRegistrationTab(await api.tabs.get(record.tabId),record.windowId))throw Error('처음 파일을 첨부한 Supplier Hub 등록 탭을 확인해주세요.');
+      const [checked]=await api.scripting.executeScript({target:{tabId:record.tabId},func:verifySupplierHubCompany,args:[record.company]});
+      if(checked?.result?.code!==record.company?.code)throw Error('첨부한 회사와 현재 Supplier Hub 회사코드가 다릅니다.');
+      if(!isHubRegistrationTab(await api.tabs.get(record.tabId),record.windowId))throw Error('회사 확인 중 Supplier Hub 등록 탭이 변경되었습니다.');
+    };
     await current();
+    await checkCompany();
     const [inspection]=await api.scripting.executeScript({target:{tabId:record.tabId},func:readAttachedSupplierHubPackage,args:[record]});
     const attached=inspection?.result;
     if(!attached||attached.registered!==false||!['dispatched','upload-pending','validation-requested'].includes(attached.state))throw Error('첨부 목록을 확인하지 못했습니다. Supplier Hub에서 확인해주세요.');
@@ -49,6 +57,7 @@ export async function resumeSupplierHubValidation(message,sender,api=chrome,stor
     if(record.state==='validation-requested')throw Error('검증 요청 기록이 있습니다. 다시 요청하지 않고 결과를 조회해주세요.');
     if(attached.state==='upload-pending')return save({state:'attached',registered:false,error:'첨부 파일 업로드가 아직 완료되지 않았습니다. 파일을 유지하고 잠시 후 검증을 재개해주세요.'});
     await current();
+    await checkCompany();
     const claimKey=key+':validation',claim=await store('get',claimKey);
     // An unanswered execution may still be running. Only an explicit response
     // proving no click occurred permits another user-initiated validation.

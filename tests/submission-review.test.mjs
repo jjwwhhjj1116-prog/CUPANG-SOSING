@@ -148,7 +148,7 @@ test('form evidence cannot disable transmission while actual and legacy constrai
 
 function route({current=true,revision=2,verified=false,mode='development',missing=false}={}) {
   const calls=[];class QuotationExportError extends Error{constructor(message,status){super(message);this.status=status;}}
-  const saved={product:{id:'p',title:'상품',source_url:'https://detail.1688.com/offer/123.html',image_keys:'["owner/main.png"]'},source:{},state:{revision:2}};
+  const saved={product:{id:'p',title:'상품',source_url:'https://detail.1688.com/offer/123.html',image_keys:'["owner/main.png"]'},content:{},source:{},state:{revision:2}};
   const handlers=load('app/api/products/[id]/submission-review/route.ts',{
     'cloudflare:workers':{env:{FILES:{head:async()=>({size:100,httpMetadata:{contentType:'image/png'},customMetadata:{imageValidation:'header-v1',dimensionValidation:'header-v1',imageWidth:'1000',imageHeight:'1000'}})}}},
     '@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:verified}),getWorkspaceOwnerId:async()=>'owner'},
