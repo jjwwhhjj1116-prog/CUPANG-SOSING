@@ -12,7 +12,7 @@ import type { ProductRecord } from '@/db/queries';
 import { hubProductSchemas } from '@/app/hub-product-schemas';
 import { couplusQuotationDefault } from '@/app/couplus-quotation-defaults';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
-import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus-registration-defaults';
+import { previousRegistrationMonth, washingPrecautionsText,couplusSettingDraftValue,type CouplusSettingRule } from '@/app/couplus-registration-defaults';
 import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapshot,type HubWireField} from '@/app/supplier-hub-schema';
 import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotation-scalar-constraints';
 import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
@@ -41,6 +41,7 @@ export type QuotationField = {
   optionDimension?: 'widthCm' | 'lengthCm' | 'heightCm';
   hubWire?: HubWireField; draftDefault?: string; schemaDefault?: string;
   hubInput?: CouplusQuotationInput;
+  couplusSetting?: CouplusSettingRule;
 };
 export type QuotationSchema = {
   version: 1; categoryId: string | null; categoryPath: string[];
@@ -374,6 +375,13 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     const noticeBinding=definition.hubWire&&definition.section==='legal'&&definition.visibility==='common'
       ? notice80719.find(([,label])=>label===definition.label)?.[0]:undefined;
     const id = definition.hubInput??noticeBinding??definition.id;
+    const settingValue=(stored:string):Automatic=>{
+      if(!definition.couplusSetting)return literal(stored,'settings');
+      const value=couplusSettingDraftValue(definition.couplusSetting,stored);
+      // A truthy owner setting may deliberately select the empty first choice;
+      // keep that explicit wire value instead of applying another default.
+      return value===undefined?literal('','empty'):{value,source:'settings'};
+    };
     if(definition.hubWire&&definition.section==='product'&&definition.visibility==='exposed'){
       if(definition.label==='색상')return option?.provenance.color==='manual'?{value:option.color??'',source:'option'}:literal(option?.color,'option');
       if(definition.label==='수량')return literal(option?.unitsPerPack,'option');
@@ -413,11 +421,11 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       // A fresh Couplus 80719 draft leaves this blank even after SEO completes.
       // The form's instruction to enter a name is not an automatic default.
       case 'model': return contentValue(content.label.model);
-      case 'brand': return literal(settings.brand, 'settings');
+      case 'brand': return settingValue(settings.brand);
       case 'manufacturer': return contentValue(content.label.manufacturer, settings.manufacturer);
-      case 'tradeType': return literal(settings.tradeType, 'settings');
+      case 'tradeType': return settingValue(settings.tradeType);
       case 'taxType': return literal(settings.taxType, 'settings');
-      case 'importType': return literal(settings.importType, 'settings');
+      case 'importType': return settingValue(settings.importType);
       case 'searchTags': return literal(content.seo.keywords.value.join(', '), 'content');
       case 'supplyPrice': case 'salePrice': case 'msrp': {
         if (!option) return literal(id === 'supplyPrice' ? product.supply_price : id === 'salePrice' ? product.sale_price : product.msrp, 'product');
@@ -493,7 +501,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'boxSkuQuantity': return literal(settings.boxSkuQuantity, 'settings');
       case 'shelfLifeDays': return literal(settings.shelfLifeDays, 'settings');
-      case 'handlingReason': return literal(settings.handlingReason, 'settings');
+      case 'handlingReason': return settingValue(settings.handlingReason);
       // Product facts never come from category names. The subsequent draft
       // initializer can supply recorded form defaults with separate provenance.
       default: return literal('', 'empty');

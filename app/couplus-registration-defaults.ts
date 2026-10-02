@@ -1,5 +1,19 @@
 /** Couplus public applyDefaultSettings, observed 2026-10-02. These are the
  * owner's form inputs, not verified supplier facts or certification evidence. */
+export type CouplusSettingInput='brand'|'tradeType'|'importType'|'handlingReason';
+export type CouplusSettingRule={input:CouplusSettingInput;values?:(string|number|boolean|null)[]};
+export function isCouplusSettingInput(input:unknown):input is CouplusSettingInput{
+  return input==='brand'||input==='tradeType'||input==='importType'||input==='handlingReason';
+}
+/** Public applySettingWithDropdownCheck uses exact wire choices, then the first
+ * choice. Only fresh captured drafts opt in; later manual values never use it. */
+export function couplusSettingDraftValue(rule:CouplusSettingRule,value:string):string|undefined{
+  if(!value)return undefined;
+  const candidate=rule.input==='brand'&&value.includes(',')?value.split(',')[0].trim():value;
+  if(!rule.values||rule.values.includes(candidate))return candidate;
+  return String(rule.values[0]||'');
+}
+
 export function washingPrecautionsText(settings: unknown): string {
   const stored = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings as Record<string, unknown> : {};
   const text = (key: string) => typeof stored[key] === 'string' && stored[key].length <= 500

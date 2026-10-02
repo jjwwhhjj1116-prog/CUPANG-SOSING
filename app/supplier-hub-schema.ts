@@ -2,9 +2,10 @@ import type {QuotationField,QuotationSection} from '@/app/quotation-schema';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import {couplusScalarDraftDefault} from '@/app/couplus-quotation-defaults';
 import {couplusQuotationInput} from '@/app/couplus-quotation-inputs';
+import {isCouplusSettingInput,type CouplusSettingRule} from '@/app/couplus-registration-defaults';
 
 export const HUB_SCHEMA_LIMIT=200_000;
-export type HubSchemaSnapshot={format:'supplier-hub-schema-v1';categoryId:string;categoryPath:string[];company:SupplierHubCompany;observedAt:number;schemaString:string;metadata:Record<string,string|number>;draftInitialization?:'couplus-required-v1';inputBindings?:'couplus-paths-v1'};
+export type HubSchemaSnapshot={format:'supplier-hub-schema-v1';categoryId:string;categoryPath:string[];company:SupplierHubCompany;observedAt:number;schemaString:string;metadata:Record<string,string|number>;draftInitialization?:'couplus-required-v1';inputBindings?:'couplus-paths-v1';settingsInitialization?:'couplus-options-v1'};
 export type HubWireField={path:string[];nameKey?:string;valueKey?:string;name?:string};
 export type LiveQuotationField=QuotationField&{hubWire:HubWireField;draftDefault?:string;schemaDefault?:string};
 const companies:Record<string,string>={A01464742:'와이홉',A01526306:'유앤채'};
@@ -36,13 +37,14 @@ export function validateHubSchemaSnapshot(value:unknown,categoryId:string,catego
   const metadata:Record<string,string|number>={};
   if(item.draftInitialization!==undefined&&item.draftInitialization!=='couplus-required-v1')throw Error('상세 견적 양식의 초안 초기화 버전을 확인해주세요.');
   if(item.inputBindings!==undefined&&item.inputBindings!=='couplus-paths-v1')throw Error('상세 견적 양식의 입력 연결 버전을 확인해주세요.');
+  if(item.settingsInitialization!==undefined&&item.settingsInitialization!=='couplus-options-v1')throw Error('상세 견적 양식의 기본설정 적용 버전을 확인해주세요.');
   for(const [key,val] of Object.entries(item.metadata)){
     if(!metadataKeys.includes(key)||!(safeText(val,500)||typeof val==='number'&&Number.isSafeInteger(val)&&val>=0))throw Error('상세 견적 양식 버전정보를 확인해주세요.');
     metadata[key]=val;
   }
   if(metadata.displayCategoryCode!==undefined&&String(metadata.displayCategoryCode)!==categoryId)throw Error('상세 견적 양식의 표시 분류코드가 다릅니다.');
   schemaDocument(item.schemaString);
-  return {format:item.format,categoryId,categoryPath:[...categoryPath],company:{...item.company},observedAt:item.observedAt,schemaString:item.schemaString,metadata,...(item.draftInitialization?{draftInitialization:item.draftInitialization}:{}),...(item.inputBindings?{inputBindings:item.inputBindings}:{})};
+  return {format:item.format,categoryId,categoryPath:[...categoryPath],company:{...item.company},observedAt:item.observedAt,schemaString:item.schemaString,metadata,...(item.draftInitialization?{draftInitialization:item.draftInitialization}:{}),...(item.inputBindings?{inputBindings:item.inputBindings}:{}),...(item.settingsInitialization?{settingsInitialization:item.settingsInitialization}:{})};
 }
 function stableId(categoryId:string,wire:HubWireField){
   const text=JSON.stringify(wire);let a=2166136261,b=2246822519;
@@ -104,10 +106,16 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     if(draftDefault===undefined&&imageAgreement)draftDefault='true';
     else if(draftDefault===undefined&&initialize)draftDefault=couplusScalarDraftDefault(wire.path.at(-1)!,node);
     if(node.enum!==undefined&&node.dropdown!==undefined&&JSON.stringify(node.enum)!==JSON.stringify(node.dropdown))issue(path);
+    // Keep primitive choices for exact equality and the public falsy first-item
+    // fallback. Compilation already checks the array shape and size above.
+    const settingValues=node.dropdown??node.enum;
+    const couplusSetting:CouplusSettingRule|undefined=snapshot.settingsInitialization==='couplus-options-v1'&&canonical&&isCouplusSettingInput(pathBinding)
+      ?{input:pathBinding,...(Array.isArray(settingValues)?{values:[...settingValues]}:{})}:undefined;
     const stringValue=!numeric&&!types.includes('boolean');
     const result:LiveQuotationField={id,section,label,type:canonical?.type==='images'?'images':choices?'select':numeric?'number':canonical?.type==='textarea'?'textarea':'text',required,visibility,reviewRequired:true,hubWire:wire,
       ...(canonical?.readOnly?{readOnly:true}:{}),...(canonical?.contentField?{contentField:canonical.contentField}:{}),
       ...(pathBinding&&canonical?{hubInput:pathBinding,...(canonical.unit?{unit:canonical.unit}:{})}:{}),
+      ...(couplusSetting?{couplusSetting}:{}),
       ...(canonical?.type==='images'&&canonical.maxItems?{maxItems:canonical.maxItems}:{}),
       maxLength:canonical?.type==='images'||pathBinding&&canonical?canonical?.maxLength??2000:2000,
       ...(choices?{choices}:{}),...(numeric?{integer:types.includes('integer')&&!types.includes('number'),...(choices?{numericValue:true as const}:{})}:{}),...(draftDefault!==undefined?{draftDefault}:{}),
