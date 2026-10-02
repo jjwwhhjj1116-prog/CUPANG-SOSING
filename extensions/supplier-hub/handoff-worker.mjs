@@ -4,11 +4,12 @@ import {validateHandoff,pendingPackage,resultKey,transferRecord} from './handoff
 import {dispatchPendingPackage} from './dispatch.mjs';
 import {capture1688Product,cancel1688Capture} from './capture-1688.mjs';
 import {transmitSupplierHubPackage} from './transmit.mjs';
+import {resumeSupplierHubValidation} from './validation-resume.mjs';
 import {validateAppHubRequest} from './app-request.mjs';
 import {refreshSupplierHubRegistration} from './app-registration.mjs';
 import {readAppSupplierHubCatalog} from './catalog.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION','YOOFAM_READ_CATEGORY_BRANCH','YOOFAM_READ_CATEGORY_SCHEMA','YOOFAM_READ_CATEGORY_TEMPLATE'].includes(message?.type))return;
+  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_RESUME_VALIDATION','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION','YOOFAM_READ_CATEGORY_BRANCH','YOOFAM_READ_CATEGORY_SCHEMA','YOOFAM_READ_CATEGORY_TEMPLATE'].includes(message?.type))return;
   (async()=>{try{
     if(['YOOFAM_READ_CATEGORY_BRANCH','YOOFAM_READ_CATEGORY_SCHEMA','YOOFAM_READ_CATEGORY_TEMPLATE'].includes(message.type)){
       const branch=await readAppSupplierHubCatalog(message,sender);respond({ok:true,branch});return;
@@ -34,10 +35,15 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       respond({ok:true,fingerprint:message.fingerprint,result,registered:false});return;
     }
     if(message.type==='YOOFAM_REFRESH_RESULT'){
+      // Result lookup remains independent of validation resumption.
       const identity=validateAppHubRequest(message,sender,'YOOFAM_REFRESH_RESULT');
       await observeSupplierHubResult({...message,kind:'validation'},sender);
       const record=await transferRecord('get',resultKey(identity));
       respond({ok:true,fingerprint:identity.fingerprint,record:record||null,registered:false});return;
+    }
+    if(message.type==='YOOFAM_RESUME_VALIDATION'){
+      const result=await resumeSupplierHubValidation(message,sender);
+      respond({ok:true,fingerprint:message.fingerprint,result,registered:false});return;
     }
     if(message.type==='YOOFAM_CAPTURE_1688'){
       respond(await capture1688Product(message,sender));return;

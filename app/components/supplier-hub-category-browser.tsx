@@ -34,7 +34,7 @@ export function SupplierHubCategoryBrowser({disabled,onChoice,onNavigating}:{dis
   return <div className="hub-category-browser" aria-busy={loading}>
     <div className="workspace-actions"><button className="btn ghost" type="button" disabled={disabled||loading} onClick={()=>void load([])}>카테고리 목록 새로고침</button></div>
     {loading&&<p role="status">하위 카테고리를 불러오는 중입니다.</p>}
-    {error&&<div role="alert"><p>{error}</p><button type="button" className="btn ghost" disabled={disabled||loading} onClick={()=>void load(retryTrail.current)}>다시 불러오기</button><a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.38.zip" download>상품 수집·전송 확장 0.2.38</a></div>}
+    {error&&<div role="alert"><p>{error}</p><button type="button" className="btn ghost" disabled={disabled||loading} onClick={()=>void load(retryTrail.current)}>다시 불러오기</button><a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.39.zip" download>상품 수집·전송 확장 0.2.39</a></div>}
     <div className="category-tree">{branches.map((branch,depth)=><section key={JSON.stringify(branch.trail)}><h3>{depth+1}단계 카테고리</h3><div className="category-tree-options">{branch.children.map(node=><button key={node.categoryId} type="button" disabled={disabled||loading} className={trail[depth]?.categoryId===node.categoryId||selected===node.categoryId?'selected':''} onClick={()=>select(branch,node)}><span>{node.name}</span><small className={node.isLeaf?'ready':'unconfirmed'}>{node.isLeaf?node.categoryId:'›'}</small></button>)}</div></section>)}</div>
   </div>;
 }

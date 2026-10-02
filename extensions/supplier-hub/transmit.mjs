@@ -64,7 +64,10 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
     await current();
     await sourceCheck();
     await receiptCheck();
-    const record={...identity,company:prepared.company,includedOptions:prepared.includedOptions,tabId,windowId,startedAt:Date.now(),state:'started',registered:false};
+    const record={...identity,company:prepared.company,includedOptions:prepared.includedOptions,profileId:prepared.profileId,
+      filename:prepared.quotation[0].name,attachmentNames:[...prepared.quotation,...prepared.productImages,...prepared.labelImages,...(prepared.legalDocuments??[])].map(file=>file.name),
+      legalDocuments:(prepared.legalDocuments??[]).map(file=>file.name),legalDocumentsRequired:prepared.legalDocumentsRequired===true,
+      validationResume:true,tabId,windowId,startedAt:Date.now(),state:'started',registered:false};
     // Atomic persisted claim survives a closed app tab or a restarted worker.
     if(!await store('claim',key,record))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
     let attached=false;

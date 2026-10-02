@@ -1,8 +1,9 @@
 // Runs only for a user-requested extension or app transmission.
-export function requestSupplierHubValidation(reviewedAgreements = {}, waitForButton = false) {
+export function requestSupplierHubValidation(reviewedAgreements = {}, waitForButton = false, resume = null) {
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/qvt/registration')throw Error('현재 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
   const data=document.documentElement.dataset;
   const attemptMarker=data.yoofamAttachmentAttempt;
+  if(resume!==null&&(waitForButton!==false||typeof resume?.marker!=='string'||resume.marker!==attemptMarker))throw Error('검증 재개 전 첨부 화면이 변경되었습니다.');
   let attempt;
   try{attempt=JSON.parse(data.yoofamAttachmentAttempt||'');}catch{throw Error('이 화면에서 확장으로 전달한 파일이 없습니다.');}
   if(attempt.state!=='dispatched'||!Array.isArray(attempt.files)||!attempt.files.length)throw Error('파일 전달이 완료되지 않았거나 검증을 이미 요청했습니다. Supplier Hub에서 진행 상태를 확인해주세요.');
@@ -68,7 +69,8 @@ export function requestSupplierHubValidation(reviewedAgreements = {}, waitForBut
     if(buttons.length!==1)throw Error('파일 검증 버튼을 확인해주세요.');
     return buttons[0];
   };
-  validationButton();
+  const initialButton=validationButton();
+  if(resume!==null&&(initialButton.disabled||initialButton.getAttribute('aria-disabled')==='true'))return {state:'attached',validationNotStarted:true,validated:false,registered:false};
   if(reviewedAgreements.legalDocumentsNotApplicable===true){
     const input=legalChoice();if(!input.checked)input.click();
     if(!legalChoice().checked)throw Error('법적 서류 선택이 반영되지 않았습니다. Supplier Hub에서 확인해주세요.');
@@ -84,7 +86,10 @@ export function requestSupplierHubValidation(reviewedAgreements = {}, waitForBut
     if(definitions.some(args=>!agreement(...args).checked)||(reviewedAgreements.legalDocumentsNotApplicable===true&&!legalChoice().checked))throw Error('필수 선택값이 변경되었습니다.');
     if(reviewedAgreements.legalDocumentsRequired===true)requiredLegalChoice();
     const button=validationButton();
-    if(button.disabled||button.getAttribute('aria-disabled')==='true')throw Error('파일 업로드와 필수 항목을 확인해주세요. 파일 검증 버튼이 아직 활성화되지 않았습니다.');
+    if(button.disabled||button.getAttribute('aria-disabled')==='true'){
+      if(resume!==null)return {state:'attached',validationNotStarted:true,validated:false,registered:false};
+      throw Error('파일 업로드와 필수 항목을 확인해주세요. 파일 검증 버튼이 아직 활성화되지 않았습니다.');
+    }
     // Mark before clicking: losing the caller must not repeat a remote request.
     data.yoofamAttachmentAttempt=JSON.stringify({...attempt,state:'validation-requested'});
     button.click();

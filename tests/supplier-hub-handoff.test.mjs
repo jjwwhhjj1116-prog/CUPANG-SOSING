@@ -13,6 +13,18 @@ function harness(reply){
   return {api:exports,sent,listeners,timers,expire(){for(const cb of [...timers])cb();}};
 }
 const identity={productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+test('validation resumption uses identity and fresh choices only, enforces extension capability and rejects false acknowledgements',async()=>{
+ const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
+ const capability={ok:true,validationResume:true,latestSourceBinding:true,serverReceiptReplayProtection:true};
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?capability:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',registered:false}}));
+ assert.equal((await h.api.resumeSupplierHubValidation(identity,reviewed,new AbortController().signal)).state,'validation-requested');
+ assert.deepEqual(h.sent.map(m=>m.type),['PING','VALIDATE']);assert.deepEqual(JSON.parse(JSON.stringify(h.sent[1].payload)),{...identity,reviewedAgreements:reviewed});assert.equal(h.sent[1].payload.base64,undefined);
+ assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+ const old=harness((m,emit)=>emit(m,{...capability,validationResume:false}));await assert.rejects(old.api.resumeSupplierHubValidation(identity,reviewed,new AbortController().signal),/0.2.39/);assert.deepEqual(old.sent.map(m=>m.type),['PING']);
+ for(const result of [{state:'partial',registered:false},{state:'validation-requested',registered:true},{state:'attached',registered:false,error:7}]){
+  const bad=harness((m,emit)=>emit(m,m.type==='PING'?capability:{ok:true,fingerprint:identity.fingerprint,registered:false,result}));await assert.rejects(bad.api.resumeSupplierHubValidation(identity,reviewed,new AbortController().signal),/응답/);
+ }
+});
 test('new file delivery requires server receipt checks before preparing or transmitting',async()=>{
  for(const direct of [false,true]){
   const h=harness((m,emit)=>emit(m,{ok:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true}));

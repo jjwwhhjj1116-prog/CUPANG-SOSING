@@ -6,7 +6,7 @@ import { isQuotationFilename } from '@/app/exports/quotation-filename';
 import { validatePackageReview, type PackageReview } from '@/app/submission-review-response';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
-import { checkSupplierHubExtension, prepareSupplierHubHandoff, transmitSupplierHubPackage, getSupplierHubResult, getSupplierHubSubmission, validateSupplierHubResultForSource, supplierHubRegistrationEvidence, SupplierHubResultInvalid, type SupplierHubResult, type SupplierHubAgreements } from '@/app/supplier-hub-handoff';
+import { checkSupplierHubExtension, prepareSupplierHubHandoff, transmitSupplierHubPackage, resumeSupplierHubValidation, getSupplierHubResult, getSupplierHubSubmission, validateSupplierHubResultForSource, supplierHubRegistrationEvidence, SupplierHubResultInvalid, type SupplierHubResult, type SupplierHubAgreements } from '@/app/supplier-hub-handoff';
 import { followSupplierHubRegistration } from '@/app/supplier-hub-tracking';
 import { readStoredSupplierHubResult, storeSupplierHubReceipt, SupplierHubReceiptUnavailable } from '@/app/supplier-hub-receipt-client';
 import {LegalDocumentsEditor} from '@/app/components/legal-documents-editor';
@@ -30,10 +30,12 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
   const [attemptedFingerprint,setAttemptedFingerprint]=useState('');
   const [checkedFingerprint,setCheckedFingerprint]=useState('');
   const [tracking,setTracking]=useState(false);
+  const [resumableFingerprint,setResumableFingerprint]=useState('');
   const transferAttempted=Boolean(preview&&preview.fingerprint===attemptedFingerprint);
   const submissionChecked=Boolean(preview&&preview.fingerprint===checkedFingerprint);
   const skuReceiptConfirmed=supplierHubRegistrationEvidence(hubResult).allSkus;
   const requiresDocuments=preview?.report.legalDocuments?.applicability==='required';
+  const canResumeValidation=Boolean(transferAttempted&&submissionChecked&&preview?.fingerprint===resumableFingerprint&&(!hubResult||hubResult.state==='not-found'));
   const active=useRef<AbortController|null>(null);
   const receiptNotice=useRef('');
   useEffect(()=>()=>active.current?.abort(),[]);
@@ -56,6 +58,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     await verifyQuotationResultSource(source,controller.signal);
     if(controller.signal.aborted)return;
     if(stored){
+      setResumableFingerprint('');
       setAttemptedFingerprint(value.fingerprint);setHubResult(stored);setCheckedFingerprint(value.fingerprint);
       setMessage('보관된 전송 결과를 불러왔습니다. 재전송 없이 결과 확인을 이어갈 수 있습니다.');return;
     }
@@ -68,6 +71,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     // An unavailable server never proves that this quotation has not been sent.
     if(unavailable){setReceiptError(unavailable.message);if(!saved.attempt&&!saved.result)throw unavailable;}
     if(saved.attempt||saved.result){
+      setResumableFingerprint(saved.attempt?.validationResume===true&&['attached','unconfirmed'].includes(saved.attempt.state)&&(!saved.result||saved.result.state==='not-found')?value.fingerprint:'');
       setAttemptedFingerprint(value.fingerprint);setHubResult(saved.result);
       setMessage(saved.attempt?.error||'이 견적서의 이전 전송 기록을 불러왔습니다. 재전송 없이 결과 확인을 이어갈 수 있습니다.');
       if(unavailable&&saved.result)await retainResult(value,saved.result,controller);
@@ -109,14 +113,27 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
       else if(outcome.timedOut)setMessage('Supplier Hub 처리가 아직 진행 중입니다. 전송 결과 계속 확인으로 조회를 이어갈 수 있습니다.');
     }finally{if(!controller.signal.aborted)setTracking(false);}
   }
-  async function run(action:'preview'|'export'|'download'|'handoff'|'transmit'|'result'|'registration'|'track'|'recover') {
+  async function run(action:'preview'|'export'|'download'|'handoff'|'transmit'|'resume-validation'|'result'|'registration'|'track'|'recover') {
     if(active.current || (action!=='preview'&&!preview))return;
     const controller=new AbortController();active.current=controller;
     setBusy(true);setError('');setReceiptError('');setMessage('');
-    if(action==='preview'){setPreview(null);setCheckedFingerprint('');setHubResult(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});}
+    if(action==='preview'){setPreview(null);setCheckedFingerprint('');setHubResult(null);setResumableFingerprint('');setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});}
     try {
       if(action==='recover'){setCheckedFingerprint('');await restoreSubmission(preview!,controller);return;}
       if(action==='track'){await followResults(controller);return;}
+      if(action==='resume-validation'){
+        if(!canResumeValidation||!categoryId||!preview!.report.company||!supplierHubAgreementsReady(agreements,requiresDocuments))throw Error('원래 첨부한 견적서와 필수 선택값을 확인해주세요.');
+        await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
+        if(controller.signal.aborted)return;
+        const outcome=await resumeSupplierHubValidation({productId,categoryId,fingerprint:preview!.fingerprint},agreements,controller.signal);
+        if(controller.signal.aborted)return;
+        if(outcome.state!=='validation-requested'){
+          if(outcome.state==='unconfirmed')setResumableFingerprint('');
+          setError(outcome.error||'Supplier Hub 첨부 목록과 필수 항목을 확인해주세요.');return;
+        }
+        setResumableFingerprint('');setMessage('기존 첨부 파일로 검증 요청을 확인했습니다. 전송 결과를 조회합니다.');
+        await followResults(controller,null);return;
+      }
       if(action==='result'||action==='registration'){
         if(!categoryId||!preview!.report.company)throw new Error('등록할 회사와 카테고리를 먼저 확인해주세요.');
         if(action==='registration'&&(hubResult?.state!=='validation-complete'||!hubResult.quotationId))throw new Error('견적서 파일 검증 완료 결과와 견적서 ID를 먼저 확인해주세요.');
@@ -178,6 +195,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
           const identity={productId,categoryId:categoryId!,fingerprint:preview!.fingerprint};
           const outcome=await transmitSupplierHubPackage(blob,identity,agreements,controller.signal);
           if(controller.signal.aborted)return;
+          setResumableFingerprint(['attached','unconfirmed'].includes(outcome.state)?preview!.fingerprint:'');
           if(outcome.state==='not-started'){
             setAttemptedFingerprint('');setError(outcome.error||'파일 전달이 시작되지 않았습니다. Supplier Hub 화면을 확인해주세요.');return;
           }
@@ -199,7 +217,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         setTimeout(()=>URL.revokeObjectURL(url),1000);
         setMessage(action==='download'?'검토한 견적서 파일을 내려받았습니다.':'작성된 견적서와 첨부 파일을 내려받았습니다. Supplier Hub 등록은 아직 실행되지 않았습니다.');
       }
-    }catch(cause){if(!controller.signal.aborted){if(cause instanceof QuotationResultSourceChanged){setPreview(null);setCheckedFingerprint('');setHubResult(null);}else if(cause instanceof SupplierHubResultInvalid){setHubResult(null);}setError(cause instanceof Error?cause.message:'견적서 준비 실패');}}
+    }catch(cause){if(!controller.signal.aborted){if(cause instanceof QuotationResultSourceChanged){setPreview(null);setCheckedFingerprint('');setHubResult(null);setResumableFingerprint('');}else if(cause instanceof SupplierHubResultInvalid){setHubResult(null);}setError(cause instanceof Error?cause.message:'견적서 준비 실패');}}
     finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
   }
   return <section className="panel-stack" aria-label="견적서와 첨부 파일 준비" aria-busy={busy}>
@@ -217,13 +235,14 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
       <details><summary>Excel 입력값 확인</summary><div className="table-wrap"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{String(cell)||'—'}</td>)}</tr>)}</tbody></table></div></details>
       <details><summary>양식·첨부 확인 항목 ({preview.report.warnings.length})</summary><ul>{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>
       <p>ZIP에는 작성된 Excel/CSV, 상품 이미지, 라벨과 업로드 준비 목록이 포함됩니다. 검토 후 저장값이 바뀌면 다시 준비해야 합니다.</p>
-      <fieldset disabled={busy||transferAttempted||!submissionChecked} className="panel-stack"><legend>Supplier Hub 필수 선택</legend>
+      <fieldset disabled={busy||transferAttempted&&!canResumeValidation||!submissionChecked} className="panel-stack"><legend>Supplier Hub 필수 선택</legend>
         <label><input type="checkbox" checked={agreements.priceData} onChange={event=>setAgreements(value=>({...value,priceData:event.target.checked}))}/> 제공된 권장소비자가격 또는 공식 판매처 가격 데이터에 대한 쿠팡 약관에 동의합니다.</label>
         <label><input type="checkbox" checked={agreements.labelBusinessContact} onChange={event=>setAgreements(value=>({...value,labelBusinessContact:event.target.checked}))}/> 상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.</label>
         {requiresDocuments?<label><input type="checkbox" checked={agreements.legalDocumentsRequired===true} onChange={event=>setAgreements(value=>({...value,legalDocumentsNotApplicable:false,legalDocumentsRequired:event.target.checked}))}/> 상품 개별법령에 따른 필수 서류: 해당함 · 원본 {preview.report.legalDocuments?.count}개를 확인했습니다.</label>:<label><input type="checkbox" checked={agreements.legalDocumentsNotApplicable} onChange={event=>setAgreements(value=>({...value,legalDocumentsNotApplicable:event.target.checked}))}/> 상품 개별법령에 따른 필수 서류: 해당없음</label>}
         <small>{requiresDocuments?'확인한 원본 서류를 견적서·이미지·라벨과 함께 전달합니다.':'서류가 필요한 상품은 위 법적 필수서류에서 원본을 첨부하고 견적서를 다시 준비하세요.'}</small>
       </fieldset>
       <button type="button" className="btn rose" disabled={busy||transferAttempted||!submissionChecked||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0||!supplierHubAgreementsReady(agreements,requiresDocuments)} onClick={()=>void run('transmit')}>{transferAttempted?'전송 시도됨 · 검증 결과 확인':'등록 전송'}</button>
+      {canResumeValidation&&<button type="button" className="btn primary" disabled={busy||!supplierHubAgreementsReady(agreements,requiresDocuments)} onClick={()=>void run('resume-validation')}>첨부 파일 확인 후 검증 재개</button>}
       {!submissionChecked&&preview.report.company&&categoryId&&preview.filename.endsWith('.xlsx')&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>void run('recover')}>전송 기록 다시 확인</button>}
       <p>이 앱과 같은 Chrome 창에서 회사코드가 일치하는 Supplier Hub 대량 상품 등록 탭을 사용합니다.</p>
       {!!preview.report.publicDetailImages?.count && <p>견적서 다운로드·첨부 준비·등록전송 시 상세 이미지 {preview.report.publicDetailImages.count}장의 공개 주소를 만듭니다. 해당 주소를 가진 사람은 이미지를 볼 수 있습니다.</p>}
@@ -242,7 +261,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         {hubResult.registration.scope==='visible-page'?<small>현재 페이지의 결과입니다. 다른 페이지의 옵션은 아직 대조되지 않았습니다.</small>:
           <small>{hubResult.registration.hasMore===true?'다음 페이지가 남아 있습니다. 결과를 계속 확인해주세요.':hubResult.registration.hasMore===null?'추가 페이지 유무를 확인하지 못했습니다. Supplier Hub 결과 표를 확인해주세요.':'마지막 페이지까지 조회했습니다.'} 상품 검수 완료 여부는 각 행의 상태를 확인하세요.</small>}
       </div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.38.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.38)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.39.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.39)</a>
     </>}
   </section>;
 }

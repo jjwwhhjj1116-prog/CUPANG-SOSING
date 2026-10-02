@@ -1,5 +1,5 @@
 type PackageIdentity={productId:string;categoryId:string;fingerprint:string};
-export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH'|'REGISTRATION'|'CATEGORIES'|'SCHEMA'|'TEMPLATE',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
+export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'VALIDATE'|'REFRESH'|'REGISTRATION'|'CATEGORIES'|'SCHEMA'|'TEMPLATE',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
   return new Promise((resolve,reject)=>{
     if(signal.aborted){reject(new Error('작업을 취소했습니다.'));return;}
     const requestId=crypto.randomUUID();
@@ -11,7 +11,7 @@ export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'REFRESH'|'RE
       if(!result||result.ok!==true)reject(new Error(typeof result?.error==='string'?result.error:'확장에 견적서를 전달하지 못했습니다.'));
       else resolve(result);
     };
-    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':type==='TRANSMIT'?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='REGISTRATION'?'상품별 등록 상태 응답이 없습니다. 잠시 후 다시 조회해주세요.':(type==='CATEGORIES'||type==='SCHEMA'||type==='TEMPLATE')?'카테고리 조회 응답을 확인하지 못했습니다. 다시 목록을 불러와주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:type==='TRANSMIT'?55000:type==='REGISTRATION'?120000:type==='CATEGORIES'?45000:type==='SCHEMA'?60000:type==='TEMPLATE'?90000:20000);
+    const timer=setTimeout(()=>{cleanup();reject(new Error(type==='PING'?'YOOFAM PLUS 첨부 확장 0.2 이상을 설치하고 이 페이지를 새로고침해주세요.':(type==='TRANSMIT'||type==='VALIDATE')?'전송 응답을 확인하지 못했습니다. 다시 전송하지 말고 Supplier Hub 첨부 목록과 검증 결과를 확인해주세요.':type==='REGISTRATION'?'상품별 등록 상태 응답이 없습니다. 잠시 후 다시 조회해주세요.':(type==='CATEGORIES'||type==='SCHEMA'||type==='TEMPLATE')?'카테고리 조회 응답을 확인하지 못했습니다. 다시 목록을 불러와주세요.':type==='RESULT'||type==='REFRESH'?'검증 결과 응답이 없습니다. Supplier Hub에서 검증 상태를 확인한 뒤 다시 불러와주세요.':'확장 준비 응답을 확인하지 못했습니다. Supplier Hub 확장에서 준비된 파일을 확인해주세요.'));},type==='PING'?2000:(type==='TRANSMIT'||type==='VALIDATE')?55000:type==='REGISTRATION'?120000:type==='CATEGORIES'?45000:type==='SCHEMA'?60000:type==='TEMPLATE'?90000:20000);
     window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
     window.postMessage({channel:'YOOFAM_HUB_HANDOFF',requestId,type,payload},window.location.origin);
   });
@@ -30,7 +30,7 @@ export type SupplierHubRegistration={quotationId:string;registered:false;observe
   {scope:'visible-page';pagesRead?:never;hasMore?:never}|{scope:'queried-pages';pagesRead:number;hasMore:boolean|null}
 );
 export type SupplierHubResult={state:string;filename:string;company?:{code:string;name:string};submittedAt?:string;status?:string;detail?:string;quotationId?:string;includedOptions?:number;observedAt:number;registered:false;registration?:SupplierHubRegistration};
-export type SupplierHubSavedAttempt={state:'started'|'validation-requested'|'attached'|'partial'|'unconfirmed';company:{code:string;name:string};includedOptions:number;startedAt:number;registered:false;error?:string};
+export type SupplierHubSavedAttempt={state:'started'|'validation-requested'|'attached'|'partial'|'unconfirmed';company:{code:string;name:string};includedOptions:number;startedAt:number;registered:false;validationResume?:boolean;error?:string};
 export type SupplierHubSavedSubmission={attempt:SupplierHubSavedAttempt|null;result:SupplierHubResult|null};
 type ResultSource={filename:string;company:{code:string;name:string};includedOptions:number;quotationId?:string};
 export class SupplierHubResultInvalid extends Error {}
@@ -105,6 +105,7 @@ export async function getSupplierHubSubmission(identity:PackageIdentity,signal:A
       ||typeof value.includedOptions!=='number'||!Number.isSafeInteger(value.includedOptions)||value.includedOptions<1||value.includedOptions>200
       ||typeof value.startedAt!=='number'||!Number.isSafeInteger(value.startedAt)||value.startedAt<=0||value.startedAt>Date.now()+60000
       ||!Number.isSafeInteger(value.tabId)||Number(value.tabId)<0||!Number.isSafeInteger(value.windowId)||Number(value.windowId)<0
+      ||value.validationResume!==undefined&&typeof value.validationResume!=='boolean'
       ||value.error!==undefined&&(typeof value.error!=='string'||value.error.length>20000))throw new Error('검토한 견적서의 저장된 전송 기록인지 확인하지 못했습니다.');
   }
   const attempt=value as SupplierHubSavedAttempt|null;
@@ -125,6 +126,19 @@ export async function transmitSupplierHubPackage(blob:Blob,identity:PackageIdent
   if(response.fingerprint!==identity.fingerprint||response.registered!==false||!result||result.registered!==false
     ||!['not-started','validation-requested','attached','partial','unconfirmed'].includes(result.state)
     ||(result.error!==undefined&&(typeof result.error!=='string'||result.error.length>20000)))throw new Error('전송 결과를 확인하지 못했습니다. Supplier Hub 첨부 목록과 검증 상태를 확인해주세요.');
+  return result;
+}
+/** Reuses the original Hub attachment; no exporter or package bytes are sent. */
+export async function resumeSupplierHubValidation(identity:PackageIdentity,reviewedAgreements:SupplierHubAgreements,signal:AbortSignal):Promise<SupplierHubTransmission>{
+  if(reviewedAgreements.priceData!==true||reviewedAgreements.labelBusinessContact!==true
+    ||!(reviewedAgreements.legalDocumentsNotApplicable===true&&reviewedAgreements.legalDocumentsRequired!==true||reviewedAgreements.legalDocumentsRequired===true&&reviewedAgreements.legalDocumentsNotApplicable===false))throw Error('Supplier Hub 필수 동의와 법적 서류 선택을 확인해주세요.');
+  const capability=await exchange('PING',null,signal);
+  if(capability.validationResume!==true||capability.latestSourceBinding!==true||capability.serverReceiptReplayProtection!==true)throw Error('첨부 검증 재개를 지원하는 Chrome 확장 0.2.39로 갱신하고 앱 페이지를 새로고침해주세요.');
+  const response=await exchange('VALIDATE',{...identity,reviewedAgreements},signal);
+  const result=response.result as SupplierHubTransmission;
+  if(response.fingerprint!==identity.fingerprint||response.registered!==false||!result||result.registered!==false
+    ||!['attached','validation-requested','unconfirmed'].includes(result.state)
+    ||result.error!==undefined&&(typeof result.error!=='string'||result.error.length>20000))throw Error('검증 요청 응답을 확인하지 못했습니다. 다시 첨부하지 않고 전송 결과를 확인해주세요.');
   return result;
 }
 async function packageBase64(blob:Blob){
