@@ -5,7 +5,7 @@ import { validateSettings } from '@/app/workspace-settings';
 import { calculatePrice, pricePolicy } from '@/app/pricing';
 import { emptyProductOptions, emptyOptionInput, optionFieldNames, validateOptionsInput, type ProductOption } from '@/app/product-options';
 import { workspaceBannerAssignments } from '@/app/workspace-banners';
-import { fillLabelDraft } from '@/app/label-autofill';
+import { fillLabelDraft, labelDateNotice } from '@/app/label-autofill';
 import { collectionLabelAttributes } from '@/app/collection-label-attributes';
 import { emptyProductContent, type LabelField } from '@/app/product-content';
 import { initialStatuses } from '@/app/workflow';
@@ -49,7 +49,8 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   // Prepare the reviewable label together with the source draft, so entering
   // stage six is not required to establish the stage-seven input linkage.
   const labelDraft = Object.fromEntries(Object.entries(content.label).map(([key,field]) => [key,field.value])) as Record<LabelField,string>;
-  const autofill = fillLabelDraft(labelDraft, content, result.title, job.context.settings, job.context.category.categoryId ?? null, [], job.context.capturedAt ?? now);
+  const dateNotice = labelDateNotice(category.categoryId, category.categoryPath, category.hubSchema);
+  const autofill = fillLabelDraft(labelDraft, content, result.title, job.context.settings, category.categoryId, [], job.context.capturedAt ?? now, dateNotice);
   for (const key of autofill.filled) content.label[key] = { value: autofill.label[key], provenance: 'generated', updatedAt: now };
   content.labelProductNameLinked = autofill.filled.includes('productName');
   const product:ProductRecord={id,owner_id:owner,source_url:result.sourceUrl,title:result.title,source_price_cny:cost,exchange_rate:policy.exchangeRate,supply_margin:policy.supplyMargin,coupang_margin:policy.coupangMargin,supply_price:price.supplyPrice,sale_price:price.salePrice,msrp:price.msrp,options_count:rows.length,...initialStatuses,registration_status:'수집 원문 반영',image_keys:'[]',goal_stage:job.goal,created_at:now,updated_at:now};

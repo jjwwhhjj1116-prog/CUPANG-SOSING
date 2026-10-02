@@ -125,23 +125,23 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const unavailableImages = [...new Set(Object.values(draft.assets).flat())].filter(key => !imageKeys.includes(key));
   const sectionTitle = section === '이미지' && focusedAssetRole ? assetRoles[focusedAssetRole] : section;
 
-  async function fillLabel() {
+  const fillLabel = useCallback(async () => {
     if(!loaded || busy || loading || activeRequest.current)return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     try {
       const response = await fetch(`/api/products/${encodeURIComponent(product.id)}/registration-settings`, { cache: 'no-store', signal:controller.signal });
-      const body = await response.json() as { settings?: unknown; categoryId?: string | null; referenceTime?: string; error?: string };
+      const body = await response.json() as { settings?: unknown; categoryId?: string | null; dateNotice?: boolean; referenceTime?: string; error?: string };
       if(controller.signal.aborted)return;
       if (!response.ok) throw new Error(body.error || '저장된 기본설정을 읽지 못했습니다.');
-      const next = fillLabelDraft(draft.label, content, product.title, body.settings, body.categoryId ?? null, draft.labelClears, body.referenceTime);
+      const next = fillLabelDraft(draft.label, content, product.title, body.settings, body.categoryId ?? null, draft.labelClears, body.referenceTime, typeof body.dateNotice === 'boolean' ? body.dateNotice : undefined);
       setDraft(previous => ({ ...previous, label: next.label, labelProductNameLinked: previous.labelProductNameLinked || (next.filled.includes('productName') && next.label.productName === content.seo.title.value) }));
       setMessage(next.filled.length
         ? `${next.filled.map(key => labelFields[key]).join(' · ')} 입력을 채웠습니다. 실제 상품과 대조한 뒤 표시사항을 저장하면 PNG와 견적 자료에 반영됩니다.${next.referenceFields.length ? ` ${next.referenceFields.map(key => labelFields[key]).join(' · ')}은 쿠플러스 참조 화면의 기본값이며 이 상품에서 확인된 정보는 아닙니다.` : ''}`
         : '채울 수 있는 빈 항목이 없습니다. 직접 입력·직접 비운 항목은 보존했습니다.');
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '기본설정 반영 실패'); }
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
-  }
+  }, [loaded, busy, loading, product.id, product.title, draft.label, draft.labelClears, content]);
 
   // Prepare a reviewable draft once on first entry; never refill a field the
   // owner clears later or discard unsaved edits in another stage.
@@ -149,7 +149,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
     if (section !== '표시사항' || !loaded || loading || busy || anyDirty || activeRequest.current || labelAutofillAttempted.current) return;
     labelAutofillAttempted.current = true;
     void fillLabel();
-  }, [section, loaded, loading, busy, anyDirty]);
+  }, [section, loaded, loading, busy, anyDirty, fillLabel]);
 
   async function save() {
     if(!loaded || busy || loading || conflict || activeRequest.current)return;

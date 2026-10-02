@@ -41,6 +41,21 @@ test('label fill and save cannot overlap; unmount ignores late fill and write re
  }
 });
 
+test('stage-six review uses its captured live date notice and preserves a subsequent explicit blank',async()=>{
+ let saved;
+ const h=harness((url,init,content)=>{
+  if(url.endsWith('/registration-settings'))return Response.json({settings:{manufactureDatePreviousMonth:true},categoryId:'991234',dateNotice:true,referenceTime:'2024-03-31T14:59:59Z'});
+  if(init?.method==='PATCH'){saved=h.model.applyContentPatch(saved??content,JSON.parse(init.body).patch,'now');return Response.json({content:saved});}
+ },undefined,true);
+ await h.start();h.render('표시사항');await h.flush();
+ const date=()=>nodes(h.render('표시사항')).find(n=>n.type==='textarea'&&n.props.value==='2024.02');
+ assert.ok(date());date().props.onChange({target:{value:''}});
+ h.button('상품명·저장 기본설정으로 빈 표시사항 채우기','표시사항').props.onClick();await settle();assert.equal(date(),undefined);
+ h.button('표시사항 저장','표시사항').props.onClick();await settle();
+ assert.equal(saved.label.releaseDate.value,'');assert.equal(saved.label.releaseDate.provenance,'manual');
+ h.button('상품명·저장 기본설정으로 빈 표시사항 채우기','표시사항').props.onClick();await settle();assert.equal(date(),undefined);h.unmount();
+});
+
 test('detail step saves explanation and image roles together while preserving an unsaved title',async()=>{
  let saved,patch;
  const h=harness((url,init,content)=>{if(init?.method==='PATCH'){patch=JSON.parse(init.body).patch;saved=h.model.applyContentPatch(saved??content,patch,'2026-09-25T03:00:00Z');return Response.json({content:saved});}},'detail');

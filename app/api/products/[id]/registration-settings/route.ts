@@ -5,6 +5,7 @@ import { readQuotationCollectionSource } from '@/db/quotation-fields';
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { parseCollectionRequest } from '@/app/sourcing';
+import { labelDateNotice } from '@/app/label-autofill';
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 /** Read the same captured registration inputs as the quotation resolver. */
@@ -19,6 +20,7 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
     let settings = savedRegistrationSettings(stored ? JSON.parse(stored.payload) : null);
     let source: 'collection' | 'workspace' = 'workspace';
     let categoryId: string | null = null;
+    let dateNotice: boolean | undefined;
     let referenceTime = product.created_at;
     let offerId: string | null = null;
     try { offerId = parseCollectionRequest({ urls: [product.source_url] })[0].offerId; } catch { /* Legacy non-1688 source. */ }
@@ -28,12 +30,13 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
         const context = JSON.parse(captured.payload);
         settings = collectionRegistrationSettings(settings, context?.settings);
         categoryId = typeof context?.category?.categoryId === 'string' ? context.category.categoryId : null;
+        if (context?.category?.hubSchema !== undefined) dateNotice = labelDateNotice(categoryId, context.category.categoryPath, context.category.hubSchema);
         if (typeof context?.capturedAt === 'string') referenceTime = context.capturedAt;
         source = 'collection';
       }
     }
     // Only the fields needed by label autofill and option logistics leave this endpoint.
-    return json({ productId: id, source, categoryId, referenceTime, settings: { manufacturer: settings.manufacturer, importer: settings.importer, serviceContact: settings.serviceContact, boxSkuQuantity: settings.boxSkuQuantity,
+    return json({ productId: id, source, categoryId, referenceTime, ...(dateNotice !== undefined ? { dateNotice } : {}), settings: { manufacturer: settings.manufacturer, importer: settings.importer, serviceContact: settings.serviceContact, boxSkuQuantity: settings.boxSkuQuantity,
       washingMethod: settings.washingMethod, handlingPrecautions: settings.handlingPrecautions, manufactureDatePreviousMonth: settings.manufactureDatePreviousMonth,
       shelfLifeDays: settings.shelfLifeDays, handlingReason: settings.handlingReason } });
   } catch { return json({ error: '상품에 연결된 등록 기본설정을 읽지 못했습니다.' }, 503); }
