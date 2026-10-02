@@ -30,5 +30,5 @@ export function quotationInputLink(field: QuotationField): string | null {
   const content = field.contentField ?? (field.id === 'storageMaterial' ? 'material' : undefined);
   if (content) return `6단계 ${{ material: '재질', components: '구성품', model: '모델명' }[content]}`;
   if (field.optionDimension) return `옵션 상품 ${{ widthCm: '가로', lengthCm: '세로', heightCm: '높이' }[field.optionDimension]} · cm`;
-  return links[field.id] ?? null;
+  return links[field.hubInput??field.id] ?? null;
 }

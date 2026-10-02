@@ -15,6 +15,7 @@ import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus-registration-defaults';
 import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapshot,type HubWireField} from '@/app/supplier-hub-schema';
 import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotation-scalar-constraints';
+import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -39,6 +40,7 @@ export type QuotationField = {
   contentField?: 'material' | 'components' | 'model';
   optionDimension?: 'widthCm' | 'lengthCm' | 'heightCm';
   hubWire?: HubWireField; draftDefault?: string; schemaDefault?: string;
+  hubInput?: CouplusQuotationInput;
 };
 export type QuotationSchema = {
   version: 1; categoryId: string | null; categoryPath: string[];
@@ -371,7 +373,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     // restricted to complete, observed labels and their section/group.
     const noticeBinding=definition.hubWire&&definition.section==='legal'&&definition.visibility==='common'
       ? notice80719.find(([,label])=>label===definition.label)?.[0]:undefined;
-    const id = noticeBinding??definition.id;
+    const id = definition.hubInput??noticeBinding??definition.id;
     if(definition.hubWire&&definition.section==='product'&&definition.visibility==='exposed'){
       if(definition.label==='색상')return option?.provenance.color==='manual'?{value:option.color??'',source:'option'}:literal(option?.color,'option');
       if(definition.label==='수량')return literal(option?.unitsPerPack,'option');

@@ -1,9 +1,10 @@
 import type {QuotationField,QuotationSection} from '@/app/quotation-schema';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import {couplusScalarDraftDefault} from '@/app/couplus-quotation-defaults';
+import {couplusQuotationInput} from '@/app/couplus-quotation-inputs';
 
 export const HUB_SCHEMA_LIMIT=200_000;
-export type HubSchemaSnapshot={format:'supplier-hub-schema-v1';categoryId:string;categoryPath:string[];company:SupplierHubCompany;observedAt:number;schemaString:string;metadata:Record<string,string|number>;draftInitialization?:'couplus-required-v1'};
+export type HubSchemaSnapshot={format:'supplier-hub-schema-v1';categoryId:string;categoryPath:string[];company:SupplierHubCompany;observedAt:number;schemaString:string;metadata:Record<string,string|number>;draftInitialization?:'couplus-required-v1';inputBindings?:'couplus-paths-v1'};
 export type HubWireField={path:string[];nameKey?:string;valueKey?:string;name?:string};
 export type LiveQuotationField=QuotationField&{hubWire:HubWireField;draftDefault?:string;schemaDefault?:string};
 const companies:Record<string,string>={A01464742:'와이홉',A01526306:'유앤채'};
@@ -34,13 +35,14 @@ export function validateHubSchemaSnapshot(value:unknown,categoryId:string,catego
     ||!Number.isSafeInteger(item.observedAt)||item.observedAt<=0||item.observedAt>Date.now()+60000||typeof item.schemaString!=='string'||!object(item.metadata))throw Error('선택한 회사·분류코드·경로의 상세 양식인지 확인해주세요.');
   const metadata:Record<string,string|number>={};
   if(item.draftInitialization!==undefined&&item.draftInitialization!=='couplus-required-v1')throw Error('상세 견적 양식의 초안 초기화 버전을 확인해주세요.');
+  if(item.inputBindings!==undefined&&item.inputBindings!=='couplus-paths-v1')throw Error('상세 견적 양식의 입력 연결 버전을 확인해주세요.');
   for(const [key,val] of Object.entries(item.metadata)){
     if(!metadataKeys.includes(key)||!(safeText(val,500)||typeof val==='number'&&Number.isSafeInteger(val)&&val>=0))throw Error('상세 견적 양식 버전정보를 확인해주세요.');
     metadata[key]=val;
   }
   if(metadata.displayCategoryCode!==undefined&&String(metadata.displayCategoryCode)!==categoryId)throw Error('상세 견적 양식의 표시 분류코드가 다릅니다.');
   schemaDocument(item.schemaString);
-  return {format:item.format,categoryId,categoryPath:[...categoryPath],company:{...item.company},observedAt:item.observedAt,schemaString:item.schemaString,metadata,...(item.draftInitialization?{draftInitialization:item.draftInitialization}:{})};
+  return {format:item.format,categoryId,categoryPath:[...categoryPath],company:{...item.company},observedAt:item.observedAt,schemaString:item.schemaString,metadata,...(item.draftInitialization?{draftInitialization:item.draftInitialization}:{}),...(item.inputBindings?{inputBindings:item.inputBindings}:{})};
 }
 function stableId(categoryId:string,wire:HubWireField){
   const text=JSON.stringify(wire);let a=2166136261,b=2246822519;
@@ -51,6 +53,11 @@ function stableId(categoryId:string,wire:HubWireField){
 export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readonly QuotationField[]=[]){
   const raw=schemaDocument(snapshot.schemaString),fields:LiveQuotationField[]=[],unsupported:string[]=[],used=new Set<string>();
   const issue=(path:string[])=>{const text=path.join(' / ');if(!unsupported.includes(text))unsupported.push(text);};
+  function hasSchemaPath(path:readonly string[]){
+    let node:unknown=raw;
+    for(const key of path){if(!object(node)||!object(node.properties)||!Object.hasOwn(node.properties,key))return false;node=node.properties[key];}
+    return true;
+  }
   function requiredKeys(node:Record<string,unknown>,path:string[]):string[]{
     if(!Object.hasOwn(node,'required'))return [];
     if(!Array.isArray(node.required)||node.required.some(key=>!safeText(key,500)||!key.trim())){issue([...path,'required']);return [];}
@@ -73,12 +80,21 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
       if(types.some(type=>type!=='boolean'&&type!=='null'))issue(path);
       choices=[{value:'true',label:'true'},{value:'false',label:'false'},...(types.includes('null')?[{value:'',label:'해당사항없음'}]:[])];
     }
-    const labelKey=(value:string)=>value.normalize('NFKC').replace(/\s+/gu,'');
-    const candidates=base.filter(item=>item.section===section&&item.visibility===visibility&&labelKey(item.label)===labelKey(label));
-    const canonical=candidates.length===1?candidates[0]:undefined,id=canonical?.id??stableId(snapshot.categoryId,wire);
-    if(used.has(id))return issue(path);used.add(id);
     const numeric=types.includes('number')||types.includes('integer')
       ||types.every(type=>type===undefined||type==='null')&&Array.isArray(enums)&&enums.some(value=>typeof value==='number')&&enums.every(value=>value===null||typeof value==='number');
+    const pathBinding=snapshot.inputBindings==='couplus-paths-v1'&&!wire.name?couplusQuotationInput(wire.path):undefined;
+    const labelKey=(value:string)=>value.normalize('NFKC').replace(/\s+/gu,'');
+    const candidates=base.filter(item=>item.section===section&&item.visibility===visibility
+      &&(pathBinding?item.id===pathBinding:(!snapshot.inputBindings||wire.name)&&labelKey(item.label)===labelKey(label)));
+    let canonical=candidates.length===1?candidates[0]:undefined;
+    if(pathBinding&&canonical){
+      const compatible=canonical.type==='number'?numeric&&!types.some(type=>type==='string'||type==='boolean')
+        :!numeric&&!types.includes('boolean');
+      if(!compatible){issue(path);canonical=undefined;}
+    }
+    const secondaryPrice=pathBinding==='msrp'&&wire.path.at(-1)==='osrp'&&hasSchemaPath(['productPage','commonAttributes','msrp']);
+    const id=canonical&&!secondaryPrice?canonical.id:stableId(snapshot.categoryId,wire);
+    if(used.has(id))return issue(path);used.add(id);
     if(numeric&&types.some(type=>type==='string'||type==='boolean'))issue(path);
     if(numeric&&Array.isArray(enums)&&enums.some(value=>value!==null&&typeof value!=='number'))issue(path);
     // Only the required ancestor chain creates scalar placeholders. Named
@@ -91,8 +107,9 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     const stringValue=!numeric&&!types.includes('boolean');
     const result:LiveQuotationField={id,section,label,type:canonical?.type==='images'?'images':choices?'select':numeric?'number':canonical?.type==='textarea'?'textarea':'text',required,visibility,reviewRequired:true,hubWire:wire,
       ...(canonical?.readOnly?{readOnly:true}:{}),...(canonical?.contentField?{contentField:canonical.contentField}:{}),
+      ...(pathBinding&&canonical?{hubInput:pathBinding,...(canonical.unit?{unit:canonical.unit}:{})}:{}),
       ...(canonical?.type==='images'&&canonical.maxItems?{maxItems:canonical.maxItems}:{}),
-      maxLength:canonical?.type==='images'?canonical.maxLength:2000,
+      maxLength:canonical?.type==='images'||pathBinding&&canonical?canonical?.maxLength??2000:2000,
       ...(choices?{choices}:{}),...(numeric?{integer:types.includes('integer')&&!types.includes('number'),...(choices?{numericValue:true as const}:{})}:{}),...(draftDefault!==undefined?{draftDefault}:{}),
       help:'선택한 회사의 Supplier Hub 상세 양식에서 가져온 항목입니다. 기본값과 상품정보를 확인·수정해주세요.'};
     for(const key of ['minLength','maxLength'] as const)if(Object.hasOwn(node,key)){

@@ -61,7 +61,7 @@ export async function loadLiveHubCategorySchema(choice:CategoryChoice,signal:Abo
   if(schema.company.code!==company.code||schema.company.name!==company.name)throw Error('상세 견적 양식의 회사가 다릅니다.');
   // Version the app's draft behavior at capture time. Older working products
   // retain their stored snapshot instead of gaining new automatic values.
-  return {...schema,draftInitialization:'couplus-required-v1'};
+  return {...schema,draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1'};
 }
 
 /** Auto-connect a blank official workbook only when the selected profile has no saved template. */
