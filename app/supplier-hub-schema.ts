@@ -53,7 +53,7 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     if(!safeText(label,500)||!label.trim())return issue(path);
     const types=Array.isArray(node.type)?node.type:[node.type],enums=node.enum??node.dropdown;
     if(types.some(type=>!['string','number','integer','null','boolean',undefined].includes(type)))return issue(path);
-    if(['$ref','oneOf','anyOf','allOf','if','not','const','exclusiveMinimum','exclusiveMaximum'].some(key=>Object.hasOwn(node,key)))issue(path);
+    if(['$ref','oneOf','anyOf','allOf','if','not','const'].some(key=>Object.hasOwn(node,key)))issue(path);
     let choices:{value:string;label:string}[]|undefined;
     if(enums!==undefined){
       if(!Array.isArray(enums)||!enums.length||enums.length>300||enums.some(value=>value!==null&&!safeText(value,2000)&&!(typeof value==='number'&&Number.isFinite(value))&&typeof value!=='boolean'))return issue(path);
@@ -68,16 +68,31 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     const candidates=base.filter(item=>item.section===section&&item.visibility===visibility&&labelKey(item.label)===labelKey(label));
     const canonical=candidates.length===1?candidates[0]:undefined,id=canonical?.id??stableId(snapshot.categoryId,wire);
     if(used.has(id))return issue(path);used.add(id);
-    const numeric=types.includes('number')||types.includes('integer');
+    const numeric=types.includes('number')||types.includes('integer')
+      ||types.every(type=>type===undefined||type==='null')&&Array.isArray(enums)&&enums.some(value=>typeof value==='number')&&enums.every(value=>value===null||typeof value==='number');
+    if(numeric&&types.some(type=>type==='string'||type==='boolean'))issue(path);
+    if(numeric&&Array.isArray(enums)&&enums.some(value=>value!==null&&typeof value!=='number'))issue(path);
+    const stringValue=!numeric&&!types.includes('boolean');
     const result:LiveQuotationField={id,section,label,type:canonical?.type==='images'?'images':choices?'select':numeric?'number':canonical?.type==='textarea'?'textarea':'text',required,visibility,reviewRequired:true,hubWire:wire,
       ...(canonical?.readOnly?{readOnly:true}:{}),...(canonical?.contentField?{contentField:canonical.contentField}:{}),
       ...(canonical?.type==='images'&&canonical.maxItems?{maxItems:canonical.maxItems}:{}),
-      maxLength:typeof node.maxLength==='number'&&Number.isSafeInteger(node.maxLength)&&node.maxLength>0&&node.maxLength<=150000?node.maxLength:canonical?.type==='images'?canonical.maxLength:2000,
-      ...(choices?{choices}:{}),...(numeric?{integer:types.includes('integer')}:{}),...(draftDefault!==undefined?{draftDefault}:{}),
+      maxLength:canonical?.type==='images'?canonical.maxLength:2000,
+      ...(choices?{choices}:{}),...(numeric?{integer:types.includes('integer')&&!types.includes('number'),...(choices?{numericValue:true as const}:{})}:{}),...(draftDefault!==undefined?{draftDefault}:{}),
       help:'선택한 회사의 Supplier Hub 상세 양식에서 가져온 항목입니다. 기본값과 상품정보를 확인·수정해주세요.'};
-    for(const [source,target] of [['minimum','min'],['maximum','max']] as const)if(typeof node[source]==='number'&&Number.isFinite(node[source]))result[target]=node[source];
-    if(node.pattern!==undefined||node.minLength!==undefined&&node.minLength!==0&&node.minLength!==1||node.multipleOf!==undefined||node.format!==undefined)issue(path);
-    if(node.maxLength!==undefined&&(!Number.isSafeInteger(node.maxLength)||Number(node.maxLength)<1||Number(node.maxLength)>150000))issue(path);
+    for(const key of ['minLength','maxLength'] as const)if(Object.hasOwn(node,key)){
+      const limit=node[key];
+      if(typeof limit!=='number'||!Number.isSafeInteger(limit)||limit<0||limit>150000)issue(path);
+      else if(stringValue)result[key]=limit;
+    }
+    if(result.minLength!==undefined&&result.maxLength!==undefined&&result.minLength>result.maxLength)issue(path);
+    for(const [source,target] of [['minimum','min'],['maximum','max'],['exclusiveMinimum','exclusiveMinimum'],['exclusiveMaximum','exclusiveMaximum'],['multipleOf','multipleOf']] as const)if(Object.hasOwn(node,source)){
+      const limit=node[source];
+      if(typeof limit!=='number'||!Number.isFinite(limit)||source==='multipleOf'&&limit<=0)issue(path);
+      else if(numeric)result[target]=limit;
+    }
+    const lower=Math.max(result.min??-Infinity,result.exclusiveMinimum??-Infinity),upper=Math.min(result.max??Infinity,result.exclusiveMaximum??Infinity);
+    if(lower>upper||lower===upper&&(result.exclusiveMinimum===lower||result.exclusiveMaximum===upper))issue(path);
+    if(node.pattern!==undefined||node.format!==undefined)issue(path);
     if(node.default!==undefined&&(node.default===null||safeText(node.default,2000)||typeof node.default==='number'&&Number.isFinite(node.default)||typeof node.default==='boolean'))result.schemaDefault=node.default===null?'':String(node.default);
     fields.push(result);if(fields.length>400)throw Error('상세 견적 항목이 400개를 초과했습니다.');
   }

@@ -14,6 +14,7 @@ import { couplusQuotationDefault } from '@/app/couplus-quotation-defaults';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus-registration-defaults';
 import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapshot,type HubWireField} from '@/app/supplier-hub-schema';
+import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotation-scalar-constraints';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -28,9 +29,12 @@ export type QuotationField = {
   id: string; section: QuotationSection; label: string;
   type: 'text' | 'textarea' | 'number' | 'select' | 'images';
   required: boolean; visibility: 'common' | 'exposed' | 'hidden';
-  choices?: { value: string; label: string }[]; unit?: string; maxLength?: number;
+  choices?: { value: string; label: string }[]; unit?: string; minLength?: number; maxLength?: number;
   reviewRequired?: boolean; readOnly?: boolean; help?: string;
   integer?: boolean; min?: number; max?: number; maxItems?: number;
+  exclusiveMinimum?: number; exclusiveMaximum?: number; multipleOf?: number;
+  /** Numeric enums use a select control but must validate and export as numbers. */
+  numericValue?: true;
   /** Explicit shared meaning; never infer component materials from a label substring. */
   contentField?: 'material' | 'components' | 'model';
   optionDimension?: 'widthCm' | 'lengthCm' | 'heightCm';
@@ -244,13 +248,18 @@ export function quotationImageRoleIssues(main: string, detail: string): string[]
 }
 export function quotationValueIssues(field: QuotationField, value: string, ownedKeys?: readonly string[]) {
   const issues: string[] = [];
-  if (!value.trim()) return field.required ? ['필수 값이 비어 있습니다.'] : [];
-  if (field.maxLength && value.length > field.maxLength) issues.push(`${field.maxLength}자 제한을 초과했습니다.`);
-  if (field.choices && !field.choices.some(choice => choice.value === value)) issues.push('지원하는 선택값을 확인해주세요.');
-  if (field.type === 'number') {
-    const numeric = /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
-    if (!Number.isFinite(numeric) || (field.integer && !Number.isSafeInteger(numeric)) || (field.min !== undefined && numeric < field.min) || (field.max !== undefined && numeric > field.max)) issues.push(`${field.unit ?? '숫자'} 값의 형식과 범위를 확인해주세요.`);
+  if (!value.trim()) {
+    if (field.required) issues.push('필수 값이 비어 있습니다.');
+    const length = quotationValueLength(field, value);
+    if (field.maxLength !== undefined && length > field.maxLength) issues.push(`${field.maxLength}자 제한을 초과했습니다.`);
+    // Draft clearing is allowed by the save API, but an emitted empty string
+    // must still satisfy its live length rule. A null/empty select is distinct.
+    if (!field.required && field.hubWire && field.minLength !== undefined && length < field.minLength
+      && !field.choices?.some(choice => choice.value === '')) issues.push(`최소 ${field.minLength}자 이상 입력해주세요.`);
+    return issues;
   }
+  issues.push(...quotationScalarValueIssues(field, value));
+  if (field.choices && !field.choices.some(choice => choice.value === value)) issues.push('지원하는 선택값을 확인해주세요.');
   if (field.id === 'searchTags' && value.split(',').some(tag => tag.trim().length > QUOTATION_TAG_ITEM_LIMIT)) issues.push('검색태그는 태그마다 20자 이하여야 합니다.');
   if (field.id === 'packagedDimensionsMm') {
     const parts = value.split(/[xX×*]/).map(part => part.trim());
@@ -272,7 +281,7 @@ export function validateQuotationChanges(input: unknown, context: { schema: Quot
     if (!field || field.readOnly) throw new Error('편집할 수 없는 견적 필드입니다.');
     if (item.optionId !== null && (typeof item.optionId !== 'string' || !context.optionIds.includes(item.optionId))) throw new Error('이 상품의 옵션을 선택해주세요.');
     const key = JSON.stringify([item.optionId, item.fieldKey]); if (seen.has(key)) throw new Error('동일 필드 변경이 중복됐습니다.'); seen.add(key);
-    if (item.value !== null && (typeof item.value !== 'string' || (field.maxLength && item.value.length > field.maxLength) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(item.value))) throw new Error('필드 값은 길이 제한 이내의 일반 텍스트 또는 수정 해제여야 합니다.');
+    if (item.value !== null && (typeof item.value !== 'string' || (field.maxLength !== undefined && quotationValueLength(field, item.value) > field.maxLength) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(item.value))) throw new Error('필드 값은 길이 제한 이내의 일반 텍스트 또는 수정 해제여야 합니다.');
     // Empty values can be saved as a draft; missing required values are surfaced
     // by the resolver instead of preventing a user from removing a wrong value.
     if (item.value !== null && item.value.trim()) {

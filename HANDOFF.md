@@ -4885,3 +4885,13 @@ AI등록 화면 확인:
 - TypeScript0, 핵심 신규 기능/테스트 lint 오류·경고0. 다운로드 링크만 바꾼 intake-queue-panel.tsx에는 HEAD에도 있던 useEffect onBusy 의존성 경고1개가 남으며 전체 repo lint 통과를 주장하지 않는다. 운영 빌드/11마이그레이션 검사/확장 원본·번들·ZIP 일치/diff 검사 통과. esbuild의 상위 폴더 읽기 제한은 기존 승인된 빌드 권한으로 해결했고 자동 승인 거절은 없었다.
 - 확장0.2.39/37파일/436640바이트/SHA-256 0c9c4a84a17fe55eca66141315bd796ed14b7b11e237c005f770098a70b6f93f. 기존 로드 폴더와 앱 페이지 새로고침 필요. 운영 https://sourceflow.jjwwhhjj1116.workers.dev 버전601e81b6-b9d2-4bfd-8804-f5018f9d4733 배포 완료. DB migration/권한·호스트/비밀 설정/이미지 Worker/유료 자원 변경 없음. 상세: docs/supplier-hub-validation-resume-2026-10-02.md.
 - 이번 Chrome 바인딩 selected()는 false였다. 새 프로필/창을 만들지 않았고 기존 전체 탭 열거 거절을 우회하지 않았다. 로그인/승인 질문과 Couplus 기존 작업 수정 없음. 전 카테고리 실제 기본값·추가 서류 대조, 운영 AI/이미지 번역, 두 회사 실제 최종 접수번호/SKU 검증은 여전히 미완료이며 100%/완전복제로 보고하지 않는다.
+
+## 554. 상세 견적 양식의 글자 수·숫자 배수·경계 조건 연결 (2026-10-02)
+
+- 선택 회사/최종 카테고리의 frozen Hub schema에서 minLength, maxLength=0, 숫자형 exclusiveMinimum/exclusiveMaximum, multipleOf를 컴파일한다. 입력 화면·저장 API·resolved 검토에 같은 조건을 적용한다. 잘못된 타입/모순 경계/0 이하 배수/지원하지 않는 혼합 타입은 unconfirmed를 유지한다. 조건부·regex·const·Draft4 Boolean 경계까지 지원한 것으로 취급하지 않는다.
+- 숫자 enum은 select라도 숫자 조건을 검사하고 견적 출력에서 number를 유지한다. 라이브 숫자에 한해 음수/지수 표기를 파싱하고 유한하지 않은 수/비영 숫자의 underflow를 거절한다. multipleOf는 직렬화할 Number의 정수 계수·자릿수를 BigInt로 맞춰 검사하며 epsilon 허용/자동 반올림을 하지 않는다. 기존 Couplus 금액 계산식·고정 숫자 형식·안전한 정수 규칙은 유지한다.
+- Hub 문자열의 Unicode 코드 포인트 길이를 UI 표시/서버 저장에 공유한다. 기존 고정 Couplus 양식의 길이 계산은 유지한다. 공란 저장은 허용하되 필수 또는 라이브 최소 글자 수 오류를 현재 견적 검토에 표시하며 빈 선택값은 기존 의미로 구분한다. 수동 원문/공란·상품의 frozen 양식은 유지하고 프로필 갱신으로 기존 작업을 수정하지 않는다. 연결 규칙의 전체 필드 서명에도 새 조건이 반영되어 변경 양식에 과거 규칙을 재사용하지 않는다.
+- 신규9개 포함 전체1815/1815(141.903초) 통과 후 공란 보완에 관련된 집중318/318(23.731초)을 다시 통과했다. 합성 상세 분류991234와 두 회사/임시 SQLite/프로젝트 API에서 기록 1688 URL813724060928→6옵션 초안→조건 위반 무저장→수동 정상값→숫자 견적 출력→프로필 갱신 후 원래 상품 보존을 검사했다. 실제 원격 Hub 접수 호출이나 실제 카테고리/전분류 증거가 아니다.
+- 최종 TypeScript 및 변경 파일 lint 오류·경고0, 최종 운영 빌드/11마이그레이션 확인/확장 원본·ZIP 일치/diff 검사 통과. 전체 repo lint 통과를 주장하지 않는다. 확장 검사 첫 sandbox 실행은 esbuild 상위 경로 읽기 제한으로 실패해 기존 승인된 권한에서 동일 검사를 통과했다. 자동 승인 거절 없음.
+- 기존 운영 https://sourceflow.jjwwhhjj1116.workers.dev Worker d484011b-a4d5-4acc-b4d7-0bd44db87b41 배포 완료. 익명 앱/분류 컨텍스트 읽기 전용 GET 두 건에서 기존 Access302를 확인했고 로그인 상품 데이터나 원격 접수는 조회하지 않았다. 확장0.2.39/37파일/436640바이트/SHA 0c9c4a84a17fe55eca66141315bd796ed14b7b11e237c005f770098a70b6f93f 유지; 이번 기능은 앱 새로고침으로 적용한다. DB migration/설정·비밀/호스트·권한/이미지 Worker/새 유료 자원 변경 없음. 상세: docs/supplier-hub-scalar-constraints-2026-10-02.md.
+- 기존 Chrome 바인딩 selected() 한 번은 false였다. 전체 탭 열거/새 창·프로필/로그인 재요청/자체 확장으로 agent 거절 우회 또는 기존 Couplus 작업 수정 없음. 전체 카테고리 Couplus 기본값·필수서류 대조, 운영 AI·이미지 번역과 두 회사 실제 최종 Hub 접수번호/SKU 검증이 남아 있다. 임의 완료율이나 완전복제를 주장하지 않는다. 기존 개발/배포/Git push 승인 유지.

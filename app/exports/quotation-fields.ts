@@ -5,6 +5,7 @@ import { categoryFields, type CategoryField, type CategoryProfileInput } from '@
 import { inspectSubmission, type SubmissionIssue } from '@/app/submission-review';
 import { currentDetailContent, productImageKeys, savedTextOrFallback } from '@/app/product-content';
 import { quotationSections, type ResolvedQuotation } from '@/app/quotation-schema';
+import { quotationNumericValue } from '@/app/quotation-scalar-constraints';
 import { quotationCsv } from '@/app/pricing';
 import { optionSourceCostCny, optionQuotationName } from '@/app/product-options';
 import type { BundleAsset } from '@/app/exports/review-bundle';
@@ -100,7 +101,10 @@ export function resolvedQuotationRows(saved: QuotationExportSource, resolved: Re
       if (field.type === 'images') value = imageKeys(cell.value).map(key => {
         const asset = assets.find(asset => asset.key === key); if (!asset) throw new Error('견적서에 연결한 이미지 파일이 누락되었습니다.'); return asset.name.split('/').at(-1)!;
       }).join('\n');
-      else if (field.type === 'number' && /^\d+(?:\.\d+)?$/.test(value) && Number.isFinite(Number(value))) value = Number(value);
+      else {
+        const numeric = quotationNumericValue(field, value);
+        if (numeric !== undefined) value = numeric;
+      }
       data[field.id as Exclude<CategoryField, 'constant'>] = value;
     }
     for (const [legacy, current] of Object.entries(aliases)) {
