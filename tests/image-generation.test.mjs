@@ -176,10 +176,59 @@ test('API reads saved settings into review and permits optional additional instr
   } finally {sqlite.close();}
 });
 
+for (const scenario of [
+  { name: 'absent null record', absent: null, background: false },
+  { name: 'absent undefined record', absent: undefined, background: false },
+  { name: 'saved empty legacy payload', payload: {}, background: true },
+  { name: 'saved partial legacy payload', payload: { translateImages: false, translationPrompt: '수동 번역 지침' }, background: true },
+  { name: 'saved explicit false', payload: { removeBackground: false }, background: false },
+  { name: 'saved explicit true', payload: { removeBackground: true }, background: true },
+]) {
+  test(`settings API and image thumbnail review agree for ${scenario.name}`, async () => {
+    const { sqlite, dependencies, settings, store } = harness();
+    if ('payload' in scenario) settings(scenario.payload);
+    else dependencies['@/db/queries'].getSettings = async () => scenario.absent;
+    const before = sqlite.prepare('SELECT * FROM workspace_settings').all();
+    const settingsRoute = load('app/api/settings/route.ts', { ...dependencies, '@/db/workspace-banners': {} });
+    const route = load('app/api/products/[id]/image-generation/route.ts', dependencies);
+    try {
+      const settingsResponse = await settingsRoute.GET();
+      assert.equal(settingsResponse.status, 200);
+      const workspace = load('app/workspace-settings.ts').savedRegistrationSettings((await settingsResponse.json()).settings);
+      assert.equal(workspace.removeBackground, scenario.background);
+      const viewResponse = await route.GET(new Request('http://localhost'), context);
+      assert.equal(viewResponse.status, 200);
+      const view = await viewResponse.json();
+      assert.equal(view.settings.removeBackground, workspace.removeBackground);
+      assert.deepEqual(view.settings, {
+        translateImages: workspace.translateImages, removeBackground: workspace.removeBackground,
+        addCopyright: workspace.addCopyright, translationPrompt: workspace.translationPrompt,
+      });
+      const prepared = await route.POST(request({ ...prepare, purpose: 'thumbnail', prompt: '' }), context);
+      assert.equal(prepared.status, 201);
+      const { job } = await prepared.json();
+      assert.deepEqual(job.review.settingsSnapshot, view.settings);
+      assert.equal(job.review.settingsFingerprint, view.settingsFingerprint);
+      assert.equal(job.review.recipe.find(step => step.key === 'background').status, scenario.background ? 'applied' : 'skipped');
+      assert.equal(job.review.effectivePrompt.includes('Replace only the background outside the product'), scenario.background);
+      const savedReview = JSON.parse(sqlite.prepare('SELECT review FROM image_jobs').get().review);
+      assert.deepEqual(savedReview.settingsSnapshot, view.settings);
+      const approval = await route.POST(request({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true }), context);
+      assert.equal(approval.status, 200);
+      // Exercise the final SQLite spending guard without invoking an image provider.
+      const claimed = await store.claimImageJob('owner', 'product', job.id, job.review.fingerprint, 'fixture-claim', new Date().toISOString());
+      assert.equal(claimed?.status, 'running');
+      assert.deepEqual(sqlite.prepare('SELECT * FROM workspace_settings').all(), before);
+      assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload, 'MANUAL_ROLES_MUST_NOT_CHANGE');
+    } finally { sqlite.close(); }
+  });
+}
+
 test('every relevant setting change invalidates approval and approved execution before any paid call', async () => {
   for (const changed of [{translateImages:false},{removeBackground:false},{addCopyright:false},{translationPrompt:'새 번역 지침'}]) {
     for (const phase of ['approve','execute']) {
       const {sqlite,dependencies,settings} = harness(); let calls=0;
+      settings({}); // Keep this change-detection fixture on the saved legacy defaults.
       const route=load('app/api/products/[id]/image-generation/route.ts',dependencies,'development',async()=>{calls++;return response();});
       try {
         const {job}=await (await route.POST(request(prepare),context)).json();
@@ -198,6 +247,7 @@ test('every relevant setting change invalidates approval and approved execution 
 
 test('SQLite claim detects settings changed during source validation; unrelated settings do not invalidate approval', async () => {
   const {sqlite,dependencies,files,settings} = harness(); let calls=0;
+  settings({});
   const route=load('app/api/products/[id]/image-generation/route.ts',dependencies,'development',async()=>{calls++;return response();});
   try {
     const job=await approvedJob(route); const originalGet=files.get;
@@ -210,6 +260,49 @@ test('SQLite claim detects settings changed during source validation; unrelated 
     assert.equal((await route.POST(request({action:'execute',jobId:job.id}),context)).status,200); assert.equal(calls,1);
   } finally {sqlite.close();}
 });
+
+for (const phase of ['prepare', 'execute']) {
+  for (const firstSave of ['legacy empty payload', 'displayed new-workspace values']) {
+    test(`concurrent first settings save of ${firstSave} during image ${phase} uses the same SQLite defaults as review`, async () => {
+      const { sqlite, dependencies, files, settings } = harness();
+      const saved = firstSave === 'legacy empty payload' ? {} : load('app/workspace-settings.ts').newWorkspaceSettings;
+      const changed = firstSave === 'legacy empty payload';
+      let calls = 0;
+      const route = load('app/api/products/[id]/image-generation/route.ts', dependencies, 'development', async () => { calls++; return response(); });
+      try {
+        let result;
+        if (phase === 'prepare') {
+          const readSettings = dependencies['@/db/queries'].getSettings;
+          dependencies['@/db/queries'].getSettings = async owner => {
+            const previous = await readSettings(owner);
+            settings(saved);
+            return previous;
+          };
+          result = await route.POST(request({ ...prepare, purpose: 'thumbnail' }), context);
+          assert.equal(result.status, changed ? 409 : 201);
+          assert.equal(sqlite.prepare('SELECT count(*) AS total FROM image_jobs').get().total, changed ? 0 : 1);
+          if (!changed) {
+            const { job, settingsFingerprint } = await result.json();
+            assert.equal(job.review.settingsSnapshot.removeBackground, false);
+            assert.equal(job.review.settingsFingerprint, settingsFingerprint);
+          }
+          assert.equal(calls, 0);
+        } else {
+          const job = await approvedJob(route);
+          assert.equal(job.review.settingsSnapshot.removeBackground, false);
+          const readFile = files.get;
+          files.get = async key => { settings(saved); return readFile(key); };
+          result = await route.POST(request({ action: 'execute', jobId: job.id }), context);
+          assert.equal(result.status, changed ? 409 : 200);
+          assert.equal(sqlite.prepare('SELECT status FROM image_jobs').get().status, changed ? 'approved' : 'completed');
+          assert.equal(calls, changed ? 0 : 1);
+        }
+        assert.deepEqual(JSON.parse(sqlite.prepare('SELECT payload FROM workspace_settings').get().payload), JSON.parse(JSON.stringify(saved)));
+        assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload, 'MANUAL_ROLES_MUST_NOT_CHANGE');
+      } finally { sqlite.close(); }
+    });
+  }
+}
 
 test('SQLite preparation rejects settings changed after the server read', async () => {
   const {sqlite,dependencies,settings} = harness();

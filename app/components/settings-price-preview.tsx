@@ -4,6 +4,23 @@ import { useState } from 'react';
 import { calculatePrice } from '@/app/pricing';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 
+/** Couplus displays the configured percentages here, not compound price shares. */
+export function SettingsPriceRatio({ settings }: { settings: WorkspaceSettings }) {
+  const { supplyMargin, coupangMargin } = settings;
+  const valid = [supplyMargin, coupangMargin].every(value => Number.isFinite(value) && value >= 0 && value <= 100)
+    && supplyMargin + coupangMargin <= 100;
+  const parts = [
+    { label: '상품 원가', value: 100 - supplyMargin - coupangMargin, color: '#fa986d' },
+    { label: '공급 마진', value: supplyMargin, color: '#78be95' },
+    { label: '쿠팡 마진', value: coupangMargin, color: '#2cb9de' },
+  ];
+  return <div className="settings-price-ratio" aria-label="설정 마진 비율">
+    <div className="settings-price-ratio-labels">{parts.map(part => <span key={part.label}>{part.label}</span>)}</div>
+    <div className="settings-price-ratio-bar">{valid && parts.map(part => <span key={part.label} role="progressbar" aria-label={part.label + ' 설정 비율'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={part.value} style={{ width: `${part.value}%`, background: part.color }}>{part.value > 0 && `${part.value.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}%`}</span>)}</div>
+    <small>{valid ? '입력한 설정 비율입니다. 실제 계산 결과는 세부 미리보기에서 확인하세요.' : '0~100 사이의 마진 합계가 100 이하일 때 비율막대를 표시합니다. 가격 계산과 저장 기준은 유지됩니다.'}</small>
+  </div>;
+}
+
 export function SettingsPricePreview({ settings, disabled }: { settings: WorkspaceSettings; disabled: boolean }) {
   const [cost, setCost] = useState('10');
   let preview: ReturnType<typeof calculatePrice> | undefined;

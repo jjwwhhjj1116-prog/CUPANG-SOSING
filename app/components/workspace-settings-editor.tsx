@@ -1,20 +1,23 @@
 'use client';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { validateSettings, type WorkspaceSettings } from '@/app/workspace-settings';
-import { SettingsPricePreview } from '@/app/components/settings-price-preview';
+import { SettingsPricePreview, SettingsPriceRatio } from '@/app/components/settings-price-preview';
 import { applyObservedPricePreset } from '@/app/observed-price-preset';
 
-export function WorkspaceSettingsEditor({ value, onSave, onClose }: { value: WorkspaceSettings; onSave:(value: WorkspaceSettings)=>Promise<void>; onClose:()=>void }) {
+export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { value: WorkspaceSettings; onSave:(value: WorkspaceSettings)=>Promise<void>; onClose:()=>void; onBusy?:(busy:boolean)=>void }) {
   const [draft,setDraft]=useState(() => validateSettings(value));
   const [busy,setBusy]=useState(false);
+  const busyRef=useRef(false);
   const [error,setError]=useState('');
+  const changeBusy=(value:boolean)=>{busyRef.current=value;setBusy(value);onBusy?.(value);};
   const update=(key:keyof WorkspaceSettings,value:string|number|boolean|null)=>{setDraft(current=>({...current,[key]:value}));setError('');};
-  const field=(key:keyof WorkspaceSettings,label:string,type='text')=><label className="field" key={key}><span>{label}</span><input type={type} step={type==='number'?'any':undefined} value={draft[key]===null?'':String(draft[key])} disabled={busy} onChange={event=>update(key,type==='number'?(event.target.value===''?(key==='shelfLifeDays'?null:NaN):Number(event.target.value)):event.target.value)}/></label>;
+  const field=(key:keyof WorkspaceSettings,label:string,type='text')=><label className="field" key={key}><span>{label}</span><input type={type} step={type==='number'?'any':undefined} value={draft[key]===null||typeof draft[key]==='number'&&!Number.isFinite(draft[key])?'':String(draft[key])} disabled={busy} onChange={event=>update(key,type==='number'?(event.target.value===''?(key==='shelfLifeDays'?null:NaN):Number(event.target.value)):event.target.value)}/></label>;
   const toggle=(key:keyof WorkspaceSettings,label:string)=><label className="switch-row" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(draft[key])} disabled={busy} onChange={event=>update(key,event.target.checked)}/><i/></label>;
-  const margin=(key:'supplyMargin'|'coupangMargin',label:string,formula:string)=><fieldset className="settings-margin"><legend>{label}</legend><label className="field"><span>{label}</span><input type="number" min={0} max={99.9} step="any" value={Number.isFinite(draft[key])?draft[key]:''} disabled={busy} onChange={event=>update(key,event.target.value===''?NaN:Number(event.target.value))}/></label><input aria-label={label+' 조절'} type="range" min={0} max={99} step={1} value={Number.isFinite(draft[key])?Math.min(99,Math.max(0,draft[key])):0} disabled={busy} onChange={event=>update(key,Number(event.target.value))}/><small>{formula}</small></fieldset>;
+  const margin=(key:'supplyMargin'|'coupangMargin',label:string,formula:string)=><fieldset className="settings-margin"><legend>{label}</legend><label className="settings-percent-input"><input aria-label={label} type="number" min={0} max={99.9} step="any" value={Number.isFinite(draft[key])?draft[key]:''} disabled={busy} onChange={event=>update(key,event.target.value===''?NaN:Number(event.target.value))}/><span aria-hidden="true">%</span></label><input aria-label={label+' 조절'} type="range" min={0} max={99} step={1} value={Number.isFinite(draft[key])?Math.min(99,Math.max(0,draft[key])):0} disabled={busy} onChange={event=>update(key,Number(event.target.value))}/><small>{formula}</small></fieldset>;
   const select=(key:keyof WorkspaceSettings,label:string,options:string[])=><label className="field"><span>{label}</span><select value={String(draft[key])} disabled={busy} onChange={event=>update(key,event.target.value)}><option value="">미입력</option>{options.map(option=><option key={option}>{option}</option>)}</select></label>;
   async function uploadBanner(key: 'topImageKey' | 'bottomImageKey', file: File) {
-    setBusy(true); setError('');
+    if(busyRef.current)return;
+    changeBusy(true); setError('');
     try {
       const form = new FormData(); form.set('file', file);
       const response = await fetch('/api/files', { method: 'POST', body: form });
@@ -22,7 +25,7 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose }: { value: Wor
       if (!response.ok || !result.key) throw new Error(result.error || '이미지를 업로드하지 못했습니다.');
       setDraft(current => ({ ...current, [key]: result.key!, [key === 'topImageKey' ? 'topImageEnabled' : 'bottomImageEnabled']: true }));
     } catch (cause) { setError(cause instanceof Error ? cause.message : '업로드 실패'); }
-    finally { setBusy(false); }
+    finally { changeBusy(false); }
   }
   const banner = (key: 'topImageKey' | 'bottomImageKey', label: string) => <div className="field">
     <span>{label}</span>
@@ -33,15 +36,21 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose }: { value: Wor
     </>}
     <input aria-label={label + ' 업로드'} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file&&!busy)void uploadBanner(key,file);}} />
   </div>;
-  return <form className="settings-form couplus-settings" onSubmit={async event=>{event.preventDefault();if(busy)return;setBusy(true);setError('');try{await onSave(validateSettings(draft));}catch(e){setError(e instanceof Error?e.message:'설정을 저장하지 못했습니다.');}finally{setBusy(false);}}}>
-    <section className="settings-registration"><h3>기본 등록 정보</h3><div className="form-grid">{field('brand','브랜드명 (쉼표로 구분)')}{field('manufacturer','제조사')}{field('importer','수입 및 판매원')}{select('tradeType','거래타입',['제조사','공식총판사','공식대리점','기타 도소매업자'])}{select('importType','수입여부',['수입대상아님','수입상품','병행수입상품'])}<label className="field"><span>과세여부</span><select value={draft.taxType} disabled={busy} onChange={event=>update('taxType',event.target.value)}><option value="">카테고리 기본값 사용</option>{['과세','면세','영세'].map(option=><option key={option} value={option}>{option}</option>)}</select><small>견적서의 자동값에 적용됩니다. 상품별 직접 수정값은 유지됩니다.</small></label>{field('serviceContact','A/S 책임자와 전화번호')}{field('boxSkuQuantity','박스 내 SKU 수량','number')}</div></section>
-    <section className="settings-registration"><h3>상품고시 기본설정</h3><div className="form-grid">{field('washingMethod','세탁방법')}{field('handlingPrecautions','취급시 주의사항')}</div><div className="switch-grid">{toggle('manufactureDatePreviousMonth','제조년월 · 전월 자동 입력')}</div><small>세탁방법과 취급시 주의사항은 함께 묶어 초안에 반영합니다. 전월 자동 입력은 선택한 카테고리의 출시년월·제조년월 고시에 적용되며 상품추가 시점의 한국 날짜로 고정됩니다. 실제 상품 정보와 대조해 수정해주세요.</small></section>
-    <section className="settings-registration"><h3>물류 기본설정</h3><div className="form-grid">{field('shelfLifeDays','유통기간 · 식품의 경우 소비기간 (일)','number')}{select('handlingReason','취급주의 사유',['해당사항없음','유리'])}</div><small>새 상품 견적서의 물류 정보에 반영됩니다. 유통기간이 해당되지 않는 상품은 0일을 사용합니다. 포장 무게와 포장 사이즈는 상품별로 확인해 입력해주세요.</small></section>
+  return <form className="settings-form couplus-settings" onSubmit={async event=>{event.preventDefault();if(busyRef.current)return;changeBusy(true);setError('');try{await onSave(validateSettings(draft));}catch(e){setError(e instanceof Error?e.message:'설정을 저장하지 못했습니다.');}finally{changeBusy(false);}}}>
+    <section className="settings-registration"><h3>기본 등록 정보</h3><div className="form-grid">{field('brand','브랜드명')}<small>쉼표(,)로 구분하여 여러 브랜드를 입력할 수 있습니다.</small>{field('manufacturer','제조사')}{field('importer','수입 및 판매원')}{select('tradeType','거래타입',['제조사','공식총판사','공식대리점','기타 도소매업자'])}{select('importType','수입여부',['수입대상아님','수입상품','병행수입상품'])}{field('serviceContact','A/S 책임자와 전화번호')}{field('boxSkuQuantity','박스 내 SKU 수량','number')}<small>1개의 박스에 담긴 SKU 수량을 입력해주세요.</small></div></section>
     <section className="settings-pricing"><h3>가격설정 방법</h3>
-    <details className="collection-receipt"><summary>쿠플러스에서 사용하던 가격 설정 적용</summary><p>2026년 9월 24일 계정에서 확인한 설정입니다. 환율 350원 · 공급 마진 50% · 쿠팡 마진 40% · 10원 반올림 · MSRP 1.3배 · 최소 공급 마진 보장 3,000원.</p><p>현재 환율을 조회한 값이 아닙니다. 아래 가격 입력만 변경하며 설정 저장 후 새 수집 요청에 적용됩니다. 기존 상품과 이미 접수한 요청의 가격은 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>{setDraft(current=>applyObservedPricePreset(current));setError('');}}>위 가격값을 입력란에 적용</button></details>
-    <div className="form-grid">{field('exchangeRate','적용환율 (CNY → KRW)','number')}{margin('supplyMargin','공급 마진율 (%)','공급가 = 매입가 ÷ (1 − 공급마진율/100)')}{margin('coupangMargin','쿠팡 마진율 (%)','판매가 = 공급가 ÷ (1 − 쿠팡마진율/100)')}{field('msrpMultiple','시장가격(MSRP) 배수','number')}
-    <label className="field"><span>가격 처리 단위</span><select value={draft.roundingUnit} disabled={busy} onChange={event=>update('roundingUnit',Number(event.target.value))}>{[1,10,100,1000].map(unit=><option key={unit} value={unit}>{unit}원</option>)}</select></label><label className="field"><span>가격 처리 방식</span><select value={draft.roundingMode} disabled={busy} onChange={event=>update('roundingMode',event.target.value as 'up'|'nearest')}><option value="up">올림 (기존 방식)</option><option value="nearest">반올림</option></select></label>{field('minimumMargin','최소 공급 마진액 (원)','number')}</div>
-    <div className="switch-grid">{toggle('minimumMarginEnabled','최소 공급 마진 보장')}{toggle('bundleEnabled','번들링 사용')}</div><p>원화 원가 = 중국 원가 × 적용환율. 최소 마진 보장을 켜면 비율로 계산한 공급가와 원가 + 최소 공급 마진액 중 큰 금액을 선택한 뒤 설정 단위로 처리합니다. 판매가와 시장가격도 각각 설정 단위로 처리합니다.</p><SettingsPricePreview settings={draft} disabled={busy}/><p>설정 저장 후 새 상품 초안에 적용됩니다. 기존 상품은 가격 단계에서 별도로 수정합니다. 번들링 실행기는 아직 연결되지 않았습니다.</p></section>
+      <SettingsPriceRatio settings={draft}/>
+      <div className="settings-price-inputs"><div className="settings-price-basis">
+        {field('exchangeRate','적용환율 (CNY → KRW)','number')}
+        <label className="field"><span>가격 처리 단위</span><select value={draft.roundingUnit} disabled={busy} onChange={event=>update('roundingUnit',Number(event.target.value))}>{[1,10,100,1000].map(unit=><option key={unit} value={unit}>{unit.toLocaleString('ko-KR')}원 단위</option>)}</select></label>
+        {field('msrpMultiple','시장가격(MSRP) 배수','number')}
+        <label className="field"><span>가격 처리 방식</span><select value={draft.roundingMode} disabled={busy} onChange={event=>update('roundingMode',event.target.value as 'up'|'nearest')}><option value="up">올림 (기존 방식)</option><option value="nearest">반올림</option></select></label>
+      </div>{margin('supplyMargin','공급 마진율 (%)','공급가 = 매입가 ÷ (1 − 공급마진율/100)')}{margin('coupangMargin','쿠팡 마진율 (%)','판매가 = 공급가 ÷ (1 − 쿠팡마진율/100)')}</div>
+      <div className="settings-minimum-margin">{toggle('minimumMarginEnabled','최소 공급 마진 보장')}{field('minimumMargin','최소 공급 마진액 (원)','number')}<small>비율로 계산한 공급가와 원가 + 최소 마진액 중 큰 금액에 가격 처리 단위를 적용합니다.</small></div>
+      <div className="settings-bundle">{toggle('bundleEnabled','번들링 활성화')}<small>설정값을 보관합니다. 번들링 실행기는 아직 연결되지 않았습니다.</small></div>
+      <details className="settings-price-details"><summary>실제 가격 계산 · 세부 미리보기</summary><p>원화 원가 = 중국 원가 × 적용환율. 판매가와 시장가격도 각각 설정 단위로 처리합니다.</p><SettingsPricePreview settings={draft} disabled={busy}/><p>설정 저장 후 새 상품 초안에 적용됩니다. 기존 상품은 가격 단계에서 별도로 수정합니다.</p></details>
+      <details className="settings-price-details"><summary>쿠플러스에서 사용하던 가격 설정 적용</summary><p>2026년 9월 24일 계정에서 확인한 설정입니다. 환율 350원 · 공급 마진 50% · 쿠팡 마진 40% · 10원 반올림 · MSRP 1.3배 · 최소 공급 마진 보장 3,000원.</p><p>현재 환율을 조회한 값이 아닙니다. 가격 입력만 변경하며 설정 저장 후 새 수집 요청에 적용됩니다. 기존 상품과 이미 접수한 요청의 가격은 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>{setDraft(current=>applyObservedPricePreset(current));setError('');}}>위 가격값을 입력란에 적용</button></details>
+    </section>
     <section className="settings-images"><h3>이미지 작업 설정</h3>
       <div className="settings-image-option">
         {toggle('topImageEnabled','상단 이미지 사용')}<small>브랜드 이미지, 이벤트 이미지 등</small>
@@ -60,9 +69,13 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose }: { value: Wor
       <small>공통 이미지는 10MB 이하로 업로드하세요. 설정 저장 후 새 상품 초안에 적용됩니다. 이미지 사용을 꺼도 선택한 파일은 보관됩니다.</small>
     </section>
     <section className="settings-ai"><h3>AI 설정</h3>
+      <div className="settings-ai-info"><strong>AI 상품 초안 작성</strong><p>수집한 상품정보와 선택한 카테고리를 바탕으로 상품명·검색어·속성 초안을 준비합니다. 각 단계에서 확인하고 수정해주세요.</p><small>이미지 번역·가공 결과는 검토한 뒤 적용합니다.</small></div>
       <div className="settings-image-option">{toggle('hiddenAttributes','비노출속성 자동 생성')}<small>선택한 카테고리의 비노출속성 초안 생성에 적용됩니다.</small></div>
-      <p>이미지 번역·배경 제거 등 AI 작업에는 별도 실행기 연결이 필요합니다.</p>
     </section>
-    {error&&<p role="alert" className="collection-error">{error}</p>}<div className="modal-actions"><button className="btn ghost" type="button" disabled={busy} onClick={onClose}>취소</button><button className="btn primary" disabled={busy}>{busy?'저장 중…':'설정 저장'}</button></div>
+    <details className="settings-additional"><summary>추가 설정 · 상품고시·물류·과세</summary><div className="settings-additional-grid">
+      <section className="settings-registration"><h3>상품고시 기본설정</h3><div className="form-grid">{field('washingMethod','세탁방법')}{field('handlingPrecautions','취급시 주의사항')}</div><div className="switch-grid">{toggle('manufactureDatePreviousMonth','제조년월 · 전월 자동 입력')}</div><small>세탁방법과 취급시 주의사항은 함께 묶어 초안에 반영합니다. 전월 자동 입력은 선택한 카테고리의 출시년월·제조년월 고시에 적용되며 상품추가 시점의 한국 날짜로 고정됩니다. 실제 상품 정보와 대조해 수정해주세요.</small></section>
+      <section className="settings-registration"><h3>물류·과세 기본설정</h3><div className="form-grid">{field('shelfLifeDays','유통기간 · 식품의 경우 소비기간 (일)','number')}{select('handlingReason','취급주의 사유',['해당사항없음','유리'])}<label className="field"><span>과세여부</span><select value={draft.taxType} disabled={busy} onChange={event=>update('taxType',event.target.value)}><option value="">카테고리 기본값 사용</option>{['과세','면세','영세'].map(option=><option key={option} value={option}>{option}</option>)}</select><small>견적서의 자동값에 적용됩니다. 상품별 직접 수정값은 유지됩니다.</small></label></div><small>새 상품 견적서의 물류 정보에 반영됩니다. 유통기간이 해당되지 않는 상품은 0일을 사용합니다. 포장 무게와 포장 사이즈는 상품별로 확인해 입력해주세요.</small></section>
+    </div></details>
+    {error&&<p role="alert" className="collection-error">{error}</p>}<div className="modal-actions"><button className="btn ghost" type="button" disabled={busy} onClick={()=>{if(!busyRef.current)onClose();}}>취소</button><button className="btn primary" disabled={busy}>{busy?'저장 중…':'설정 저장'}</button></div>
   </form>;
 }

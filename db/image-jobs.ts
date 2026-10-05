@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import type { ImageEditJob, ImageEditResult } from '@/app/automation/image-edit';
-import { defaultSettings } from '@/app/workspace-settings';
+import { defaultSettings, newWorkspaceSettings } from '@/app/workspace-settings';
 
 type Row = { id: string; product_id: string; product_version: string; content_revision: number; product_image_keys: string;
   status: ImageEditJob['status']; review: string; result: string | null; error: string | null;
@@ -23,8 +23,11 @@ const imageSettingsKeys = ['translateImages', 'removeBackground', 'addCopyright'
 // spend using an unreviewed configuration after the route's earlier read.
 function settingsGuard(owner: string, review: string) {
   return imageSettingsKeys.map(key => {
-    const fallback = typeof defaultSettings[key] === 'boolean' ? Number(defaultSettings[key]) : "''";
-    return `AND COALESCE((SELECT json_extract(payload,'$.${key}') FROM workspace_settings WHERE owner_id=${owner}),${fallback})=json_extract(${review},'$.settingsSnapshot.${key}')`;
+    const legacyFallback = typeof defaultSettings[key] === 'boolean' ? Number(defaultSettings[key]) : "''";
+    const newFallback = typeof newWorkspaceSettings[key] === 'boolean' ? Number(newWorkspaceSettings[key]) : "''";
+    // An absent row uses the new-workspace defaults shown in settings. A saved
+    // legacy payload still uses its historical defaults for missing fields.
+    return `AND COALESCE((SELECT COALESCE(json_extract(payload,'$.${key}'),${legacyFallback}) FROM workspace_settings WHERE owner_id=${owner}),${newFallback})=json_extract(${review},'$.settingsSnapshot.${key}')`;
   }).join('\n');
 }
 function job(row: Row): ImageEditJob {

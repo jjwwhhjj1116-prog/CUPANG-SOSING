@@ -35,7 +35,7 @@ test('closing the settings read aborts the request and ignores late data',async(
 test('basic settings notice and logistics inputs save the reviewed values, including zero and opt-in month', async () => {
  const slots=[];let index=0,saved;
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,require(name){
-  if(name==='react')return{useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];}};
+  if(name==='react')return{useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];}};
   if(name==='@/app/components/settings-price-preview')return{SettingsPricePreview:()=>null};
   if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);
  }});return exports;}

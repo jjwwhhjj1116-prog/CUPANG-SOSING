@@ -4,7 +4,7 @@ import { savedRegistrationSettings, type WorkspaceSettings } from '@/app/workspa
 import { WorkspaceSettingsEditor } from '@/app/components/workspace-settings-editor';
 
 /** Never offer an editable fallback when the saved settings could not be read. */
-export function WorkspaceSettingsDialog({ onSave, onClose }: { onSave:(value:WorkspaceSettings)=>Promise<void>; onClose:()=>void }) {
+export function WorkspaceSettingsDialog({ onSave, onClose, onBusy }: { onSave:(value:WorkspaceSettings)=>Promise<void>; onClose:()=>void; onBusy?:(busy:boolean)=>void }) {
   const [attempt,setAttempt]=useState(0);
   const [snapshot,setSnapshot]=useState<{attempt:number;value?:WorkspaceSettings;error?:string}|null>(null);
   const current=snapshot?.attempt===attempt?snapshot:null;
@@ -24,7 +24,7 @@ export function WorkspaceSettingsDialog({ onSave, onClose }: { onSave:(value:Wor
     })();
     return()=>controller.abort();
   },[attempt]);
-  if(current?.value)return <WorkspaceSettingsEditor value={current.value} onSave={onSave} onClose={onClose}/>;
+  if(current?.value)return <WorkspaceSettingsEditor value={current.value} onSave={onSave} onClose={onClose} onBusy={onBusy}/>;
   return <section aria-busy={!current}>
     {current?.error?<><p role="alert">{current.error} 기존 설정을 확인한 뒤 편집할 수 있습니다.</p><button type="button" className="btn primary" onClick={()=>setAttempt(value=>value+1)}>기본설정 다시 불러오기</button></>:<p role="status">저장된 기본설정을 불러오는 중…</p>}
     <button type="button" className="btn ghost" onClick={onClose}>닫기</button>

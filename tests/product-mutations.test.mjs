@@ -58,7 +58,7 @@ test('AI append during generic image PATCH validation survives with 409, preserv
     await queries.insertProduct(product);
     sqlite.exec('CREATE TABLE product_content(product_id TEXT PRIMARY KEY,owner_id TEXT,revision INTEGER,payload TEXT)');
     const imageStore = load('db/image-jobs.ts',{'cloudflare:workers':{env}});
-    const job = {id:'image-job',productId:product.id,productVersion:initialVersion,contentRevision:0,status:'prepared',review:{fingerprint:'review-fingerprint',expiresAt:'2999-12-31T00:00:00.000Z',settingsSnapshot:{translateImages:true,removeBackground:true,addCopyright:true,translationPrompt:''}},result:null,error:null,createdAt:new Date().toISOString(),approvedAt:null,startedAt:null,finishedAt:null};
+    const job = {id:'image-job',productId:product.id,productVersion:initialVersion,contentRevision:0,status:'prepared',review:{fingerprint:'review-fingerprint',expiresAt:'2999-12-31T00:00:00.000Z',settingsSnapshot:{translateImages:true,removeBackground:false,addCopyright:true,translationPrompt:''}},result:null,error:null,createdAt:new Date().toISOString(),approvedAt:null,startedAt:null,finishedAt:null};
     await imageStore.createImageJob('owner',job,product.image_keys,'local-test-key','local-test-fingerprint');
     await imageStore.approveImageJob('owner',product.id,job.id,job.review.fingerprint,new Date().toISOString());
     const claimed = await imageStore.claimImageJob('owner',product.id,job.id,job.review.fingerprint,'test-claim',new Date().toISOString());

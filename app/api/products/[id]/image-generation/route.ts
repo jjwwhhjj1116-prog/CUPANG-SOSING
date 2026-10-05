@@ -5,6 +5,7 @@ import { findProduct, getSettings } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
+import { newWorkspaceSettings } from '@/app/workspace-settings';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { fingerprint } from '@/app/automation/model';
 import { ImageEditError, imageConfiguration, imageProcessingSettings, requireImageConfig, validateImageEditInput, imageMetadata, imageByteLimit, prepareImageReview, executeImageEdit, type ImageSecrets, type ImageEditJob, type ImageEditResult } from '@/app/automation/image-edit';
@@ -16,7 +17,7 @@ const conflict = () => json({ error: '상품·원본·콘텐츠·승인 상태�
 const configuration = () => imageConfiguration(env as ImageSecrets);
 async function savedImageSettings(owner: string) {
   const stored = await getSettings(owner);
-  const settings = imageProcessingSettings(stored ? JSON.parse(stored.payload) : {});
+  const settings = imageProcessingSettings(stored ? JSON.parse(stored.payload) : newWorkspaceSettings);
   return { settings, settingsFingerprint: await fingerprint(settings) };
 }
 const settingsConflict = () => json({ error: '저장된 이미지 처리 설정이 검토 당시와 다릅니다. 설정을 새로고침한 뒤 새 요청을 검토·승인해주세요.', code: 'IMAGE_SETTINGS_CHANGED' }, 409);
