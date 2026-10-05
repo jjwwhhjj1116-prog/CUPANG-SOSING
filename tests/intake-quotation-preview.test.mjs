@@ -9,7 +9,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 const native=createRequire(import.meta.url),cache=new Map();
 function load(file,overrides={}){
  if(!Object.keys(overrides).length&&cache.has(file))return cache.get(file);
- const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,structuredClone,require(name){
+ const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,structuredClone,URL,Error,require(name){
   if(name in overrides)return overrides[name];
   if(name.startsWith('@/')){const path=name.slice(2);return load(path+(fs.existsSync(new URL('../'+path+'.ts',import.meta.url))?'.ts':'.tsx'));}
   if(name.endsWith('.css'))return{};return native(name);
@@ -70,4 +70,24 @@ test('queue starts with add button and retains selection while filtering rows',(
  get('검색 결과 전체 선택').props.onChange({target:{checked:true}});tree=render();assert.equal(get('2번째 상품 선택').props.checked,true);
  get('상품 대기열 검색').props.onChange({target:{value:''}});tree=render();assert.equal(get('1번째 상품 선택').props.checked,true);assert.equal(get('2번째 상품 선택').props.checked,true);
  assert.equal(rows[0].features,'red');assert.equal(rows[1].features,'blue');
+});
+
+test('image-draft goal is explicit, restores as work and carries unchanged URL/category into the intake request',()=>{
+ const slots=[];let cursor=0,goal='work';
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(){}};
+ const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{react:hooks,'@/app/components/category-picker':{CategoryPicker:()=>null},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:()=>null}});
+ const rows=[{id:'input',profile:{...profile,id:'00000000-0000-4000-8000-000000000001'},url:'https://detail.1688.com/offer/813724060928.html',features:'수동 특징',keywords:'',status:'draft',message:''}],before=JSON.stringify(rows);
+ const render=()=>{cursor=0;return IntakeQueuePanel({rows,onRows(){},profiles:[rows[0].profile],onProfile(){},onJobs(){},onBusy(){},goal,onGoal:value=>{goal=value;}});};
+ const choices=()=>nodes(render()).filter(node=>node.type==='label'&&node.props.className==='goal-card');
+ const control=id=>nodes(choices().find(node=>node.key===id)).find(node=>node.type==='input');
+ assert.equal(choices().length,3);assert.equal(control('work').props.checked,true);assert.equal(control('price').props.checked,false);
+ assert.match(JSON.stringify(choices().find(node=>node.key==='work')),/원본을 대표·추가·상세·옵션 이미지에 배치합니다/);
+ for(const selected of ['price','collect','work']){
+  control(selected).props.onChange();assert.equal(goal,selected);
+  for(const id of ['price','collect','work'])assert.equal(control(id).props.checked,id===selected);
+  const [request]=load('app/intake-queue.ts').intakeQueueRequests(rows,goal);
+  assert.equal(request.body.goal,selected);assert.equal(request.body.profileId,rows[0].profile.id);assert.equal(request.body.expectedProfileRevision,2);
+  assert.deepEqual(Array.from(request.body.urls),[rows[0].url]);assert.equal(request.body.features,'수동 특징');assert.equal(request.body.keywords,'');
+ }
+ assert.equal(JSON.stringify(rows),before);
 });

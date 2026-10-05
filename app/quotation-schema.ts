@@ -16,6 +16,7 @@ import { previousRegistrationMonth, washingPrecautionsText,couplusSettingDraftVa
 import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapshot,type HubWireField} from '@/app/supplier-hub-schema';
 import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotation-scalar-constraints';
 import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
+import { quotationNoticeInput } from '@/app/quotation-notice-inputs';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -374,7 +375,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     // restricted to complete, observed labels and their section/group.
     const noticeBinding=definition.hubWire&&definition.section==='legal'&&definition.visibility==='common'
       ? notice80719.find(([,label])=>label===definition.label)?.[0]:undefined;
-    const id = definition.hubInput??noticeBinding??definition.id;
+    const id = definition.hubInput??quotationNoticeInput(definition)??noticeBinding??definition.id;
     const settingValue=(stored:string):Automatic=>{
       if(!definition.couplusSetting)return literal(stored,'settings');
       const value=couplusSettingDraftValue(definition.couplusSetting,stored);
@@ -474,8 +475,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'noticeDimensions': return dimensions(option);
       // This notice contains product size/weight, not the option's packaging dimensions.
-      case 'yoga_noticeSpecifications': case 'brace_noticeSpecifications': case 'glove_noticeSpecifications': return contentValue(content.label.specifications ?? { value: '', provenance: 'unverified', updatedAt: null });
-      case 'yoga_noticeSizeWeight': case 'brace_noticeSizeWeight': case 'glove_noticeSizeWeight': return contentValue(content.label.dimensions);
+      case 'noticeSpecifications': case 'yoga_noticeSpecifications': case 'brace_noticeSpecifications': case 'glove_noticeSpecifications': return contentValue(content.label.specifications ?? { value: '', provenance: 'unverified', updatedAt: null });
+      case 'noticeSizeWeight': case 'yoga_noticeSizeWeight': case 'brace_noticeSizeWeight': case 'glove_noticeSizeWeight': return contentValue(content.label.dimensions);
       case 'noticeManufacturerImporter': {
         const manufacturer = savedTextOrFallback(content.label.manufacturer, settings.manufacturer); const importer = savedTextOrFallback(content.label.importer, settings.importer);
         const value = [manufacturer && `제조자: ${manufacturer}`, importer && `수입자: ${importer}`].filter(Boolean).join(' / ');
@@ -486,7 +487,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'marathon_noticeKind': return contentValue(content.label.productType ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'marathon_noticeCaution': return contentValue(content.label.precautions);
       case 'noticePermission': return contentValue(content.label.certification);
-      case 'yoga_noticeKc': case 'brace_noticeKc': case 'glove_noticeKc': return contentValue(content.label.kcInformation ?? { value: '', provenance: 'unverified', updatedAt: null });
+      case 'noticeKc': case 'yoga_noticeKc': case 'brace_noticeKc': case 'glove_noticeKc': return contentValue(content.label.kcInformation ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeComponents': return contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeReleaseDate': return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeQualityAssurance': return contentValue(content.label.qualityAssurance);

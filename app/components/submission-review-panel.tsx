@@ -11,8 +11,8 @@ import { SubmissionPackage } from '@/app/components/submission-package';
 
 type Target = {id:string;title:string;source_url:string;updated_at:string};
 type Result = {id:string;report?:SubmissionReview;error?:string};
-export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved}:{products:Target[];profiles:CategoryProfile[];onEdit:(id:string,profileId?:string,target?:QuotationNavigationTarget)=>void;onReceiptSaved?:()=>void}) {
-  const [profileId,setProfileId]=useState('');
+export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,initialProfileId}:{products:Target[];profiles:CategoryProfile[];onEdit:(id:string,profileId?:string,target?:QuotationNavigationTarget)=>void;onReceiptSaved?:()=>void;initialProfileId?:string}) {
+  const [profileId,setProfileId]=useState(initialProfileId??'');
   const [run,setRun]=useState(0);
   const [snapshot,setSnapshot]=useState<{key:string;results:Result[];finished:boolean}>({key:'',results:[],finished:false});
   const targetKey=JSON.stringify(products.map(product=>product.id));

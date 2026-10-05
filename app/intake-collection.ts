@@ -65,6 +65,13 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  await prepareDraft(outcome.productId);
  const draft=seo!;
  if(options.signal.aborted)return;
+ if(job.goal==='work'){
+  reportProgress('원본 이미지로 대표·추가·상세·옵션 초안 연결 중');
+  const imageResponse=await options.fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/image-draft`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({productId:outcome.productId}),signal:options.signal});
+  const imageDraft=await imageResponse.json() as {productId?:string;prepared?:boolean;error?:string};
+  if(options.signal.aborted)return;
+  if(!imageResponse.ok||imageDraft.productId!==outcome.productId||imageDraft.prepared!==true)throw Error(imageDraft.error||'이미지 초안 연결 상태를 확인하지 못했습니다. 저장한 원본과 수정값은 유지됩니다.');
+ }
  if(outcome.status!=='completed' || !draft.completed)throw Error([outcome.status!=='completed'?(outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.'):'',draft.message,...(outcome.warnings??[])].filter(Boolean).join(' '));
  return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',draft.message,...(outcome.warnings??[])].filter(Boolean).join(' ');
 }

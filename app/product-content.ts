@@ -229,7 +229,9 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
     if (patch.label?.productName !== undefined && patch.label.productName !== next.seo.title.value) throw new Error('연동 품명이 저장된 SEO 상품명과 다릅니다. 직접 수정한 품명은 연동을 해제해주세요.');
     next.label.productName = { value: next.seo.title.value, provenance: 'generated', updatedAt: current.label.productName.value !== next.seo.title.value || !current.labelProductNameLinked ? now : current.label.productName.updatedAt };
   }
-  for (const key of Object.keys(patch.assets ?? {}) as AssetRole[]) next.assets[key] = edited(current.assets[key], patch.assets![key]!);
+  // An explicitly saved empty role is a choice too; later source-draft work
+  // must not fill it just because its value was already empty when reviewed.
+  for (const key of Object.keys(patch.assets ?? {}) as AssetRole[]) next.assets[key] = { value: patch.assets![key]!, provenance: 'manual', updatedAt: now };
   const keys = Object.values(next.assets).flatMap(field => field.value);
   if (keys.length > 50 || new Set(keys).size !== keys.length) throw new Error('이미지는 최대 50개이며 한 파일에는 한 역할만 지정할 수 있습니다.');
   next.revision = current.revision + 1;

@@ -57,6 +57,30 @@ async function requestHarness(options={}){
 }
 const previewBody={fingerprint:'f',filename:'quote.csv',headers:['상품명'],rows:[['이전 상품']],report:{dataStartRow:2,rowCount:1,missingRequired:[],warnings:[],contentRevision:1,optionRevision:1,profileRevision:1}};
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&n.props.children===label);
+test('submission preparation carries the selected profile and blocks dirty or pending quotation operations',async()=>{
+ const h=await requestHarness(),prepared=[];
+ const props={onPrepareSubmission:id=>prepared.push(id)};
+ const oldClick=button(h.render(props),'저장한 견적 전송 준비').props.onClick;
+ oldClick();assert.deepEqual(prepared,['saved']);
+ nodes(h.render()).find(node=>node.type===h.Editor).props.onDirtyChange(true);
+ oldClick();assert.deepEqual(prepared,['saved']);assert.equal(button(h.render(),'저장한 견적 전송 준비').props.disabled,true);
+ nodes(h.render()).find(node=>node.type===h.Editor).props.onDirtyChange(false);
+ button(h.render(),'견적 자료 검토').props.onClick();oldClick();assert.deepEqual(prepared,['saved']);
+ h.pending[0](Response.json(previewBody));await h.settle();
+ let release;h.setRefresh(()=>new Promise(resolve=>{release=resolve;}));
+ button(h.render(),'저장한 양식 새로고침').props.onClick();oldClick();assert.deepEqual(prepared,['saved']);
+ release(Response.json({profiles:[]}));await h.settle();
+ const unavailable=button(h.render(),'저장한 견적 전송 준비');assert.equal(unavailable.props.disabled,true);unavailable.props.onClick();assert.deepEqual(prepared,['saved']);
+ assert.equal(h.calls.length,1);h.unmount();
+});
+
+test('missing reviewed profile cannot silently prepare another template',async()=>{
+ const h=await requestHarness(),prepared=[];
+ h.render({preferredProfileId:'deleted',onPrepareSubmission:id=>prepared.push(id)});await h.settle();
+ const tree=h.render(),prepare=button(tree,'저장한 견적 전송 준비');
+ assert.equal(prepare.props.disabled,true);prepare.props.onClick();assert.deepEqual(prepared,[]);
+ assert.equal(nodes(tree).find(node=>node.type==='select').props.value,'');assert.equal(h.calls.length,0);h.unmount();
+});
 test('linked product keeps its captured category profile in the quotation editor',async()=>{
  const h=await requestHarness({categoryContext:{source:'collection',profileId:'saved',categoryId:'80719',categoryPath:['바스켓']},profiles:[
   {id:'saved',name:'수집 양식',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본'}},

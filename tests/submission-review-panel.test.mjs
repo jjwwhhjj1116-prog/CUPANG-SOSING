@@ -21,6 +21,15 @@ function harness(){
 }
 const packages=tree=>nodes(tree).filter(node=>node.type==='package');
 
+test('single-product preparation keeps the exact requested profile even when it is no longer listed',async()=>{
+ for(const initialProfileId of ['b','missing']){
+  const h=harness();h.render({initialProfileId});assert.equal(h.calls.length,1);
+  assert.equal(new URL(h.calls[0].url,'https://example.com').searchParams.get('profileId'),initialProfileId);
+  assert.equal(nodes(h.render()).find(node=>node.type==='select').props.value,initialProfileId);
+  h.respond(0);await settle();assert.equal(packages(h.render())[0].props.profileId,initialProfileId);
+ }
+});
+
 test('automatic category review invalidates the prepared package when a saved workbook revision changes',async()=>{
  const h=harness();h.render();h.respond(0);await settle();const before=packages(h.render())[0];assert.ok(before);
  const tree=h.render({profiles:[profile('a',2),profile('b')]});assert.equal(packages(tree).length,0);assert.equal(h.calls.length,2);assert.equal(h.calls[0].signal.aborted,true);

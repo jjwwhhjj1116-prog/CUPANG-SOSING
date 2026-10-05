@@ -11,11 +11,13 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
 
 /** Real dashboard, archive, registration board and content editor. HTTP is held
  * at the response boundary; no browser, remote product or storage is used. */
-function harness(){
+function harness({submission=false}={}){
  const instances=new Map(),cache=new Map(),effects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,intakeSettings;
  const now='2026-10-05T00:00:00.000Z';
  const product=id=>({id,title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:0,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
  const products=[product('b')];
+ const profiles=['a','b'].map(id=>({id:'profile-'+id,name:'양식 '+id,revision:1,categoryId:'80719',categoryPath:['바스켓'],mappings:[],template:{name:id+'.xlsx',format:'xlsx',headerRow:1,headers:['상품명'],sheetName:'견적서'}}));
+ let quotationEditor;
  const hooks={
   useState(initial){const instance=active,index=instance.index++;if(!(index in instance.slots))instance.slots[index]=typeof initial==='function'?initial():initial;return[instance.slots[index],value=>{if(!instance.mounted){if(instance.name==='DashboardClient')lateDashboardWrites++;return;}instance.slots[index]=typeof value==='function'?value(instance.slots[index]):value;}];},
   useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},
@@ -25,6 +27,7 @@ function harness(){
   useId(){const index=active.index++;return 'test-'+index;},
  };
  const implemented=new Set(['dashboard-client','product-archive','registration-board','product-content-editor','workspace-settings-dialog','workspace-settings-editor','settings-price-preview']);
+ if(submission){implemented.add('quotation-panel');implemented.add('submission-review-panel');}
  async function request(url,init){
   requests.push({url,method:init?.method??'GET',body:init?.body});
   if(url==='/api/products')return Response.json({products});
@@ -38,7 +41,9 @@ function harness(){
   }
   if(url==='/api/files'&&init?.method==='POST'){const pending=deferred();bannerUploads.push(pending);return pending.promise;}
   if(url==='/api/collection-jobs')return Response.json({jobs:[]});
-  if(url==='/api/category-profiles')return Response.json({profiles:[],nextCursor:null});
+  if(url==='/api/category-profiles')return Response.json({profiles:submission?profiles:[],nextCursor:null});
+  if(submission&&/^\/api\/products\/[ab]\/quotation-fields$/.test(url)){const id=url.split('/')[3];return Response.json({categoryContext:{source:'collection',profileId:'profile-'+id,categoryId:'80719',categoryPath:['바스켓']}});}
+  if(submission&&/^\/api\/products\/[ab]\/submission-review/.test(url)){const parsed=new URL(url,'https://app.test'),id=parsed.pathname.split('/')[3];return Response.json({productId:id,requestedProfileId:parsed.searchParams.get('profileId'),title:'상품 '+id,sourceUrl:product(id).source_url,categoryId:'80719',categoryPath:['바스켓'],checkedAt:now,fingerprint:'a'.repeat(64),submissionReady:false,transport:'not-connected',includedOptions:1,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[],limits:[]});}
   if(url.startsWith('/api/product-archive?'))return Response.json({items:[{id:'a',sourceKind:'product',title:'상품 a',sourceUrl:product('a').source_url,offerId:'813724060928',createdAt:now,updatedAt:now,status:'검토 대기',supplierHubStatus:'미전송',category:null}],nextCursor:null,range:'7days',from:'2026-09-29',to:'2026-10-05',query:'',timeZone:'Asia/Seoul',limit:50});
   if(url==='/api/products/a'){const pending=deferred();archiveReads.push(pending);return pending.promise;}
   if(/^\/api\/products\/[ab]\/content$/.test(url)){
@@ -55,6 +60,7 @@ function harness(){
     if(name.endsWith('.css'))return{};
     if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>({rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false})};
     if(name==='@/app/components/intake-queue-panel')return{IntakeQueuePanel:props=>{intakeSettings=props.settings;return null;}};
+    if(submission&&name==='@/app/components/quotation-fields-editor')return{QuotationFieldsEditor:props=>{quotationEditor=props;return null;}};
     if(name.startsWith('@/app/components/')&&!implemented.has(name.split('/').at(-1)))return new Proxy({},{get:()=>()=>null});
     if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));
     return native(name);
@@ -70,7 +76,11 @@ function harness(){
    return expand(value.type(value.props),key,seen);
   }
   const next={...value,props:{...value.props,children:expand(value.props?.children,path+'/children',seen)}};
-  if(next.props.ref&&typeof next.props.ref==='object')next.props.ref.current={querySelector:()=>null,querySelectorAll:()=>[],scrollTo(){}};
+  if(next.props.ref&&typeof next.props.ref==='object'){
+   const match=(node,selector)=>{const parts=/^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);return parts&&node.props&&Object.hasOwn(node.props,parts[1])&&(parts[2]===undefined||String(node.props[parts[1]])===parts[2]);};
+   const dom=node=>({getAttribute:name=>node.props?.[name],querySelector:selector=>nodes(node.props?.children).filter(child=>match(child,selector)).map(dom)[0]??null});
+   next.props.ref.current={querySelector:selector=>nodes(next).filter(node=>match(node,selector)).map(dom)[0]??null,querySelectorAll:selector=>nodes(next).filter(node=>match(node,selector)).map(dom),scrollTo(){}};
+  }
   return next;
  }
  function render(){
@@ -80,7 +90,7 @@ function harness(){
  }
  const settle=async()=>{for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
- return{requests,archiveReads,settingsReads,settingsWrites,bannerUploads,product,render,settle,button,get lateDashboardWrites(){return lateDashboardWrites;},get intakeSettings(){return intakeSettings;},
+ return{requests,archiveReads,settingsReads,settingsWrites,bannerUploads,product,render,settle,button,get lateDashboardWrites(){return lateDashboardWrites;},get intakeSettings(){return intakeSettings;},get quotationEditor(){return quotationEditor;},
   setStoredSettings(value){storedSettings=value;},deferSettings(){holdSettings=true;},deferSettingsWrite(){holdSettingsWrite=true;},
   settingsPanel:()=>nodes(render()).find(node=>node.props?.id==='workspace-settings-panel'),
   settingsForm:()=>nodes(render()).find(node=>node.type==='form'&&node.props.className==='settings-form couplus-settings'),
@@ -90,6 +100,34 @@ function harness(){
   close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},
  };
 }
+
+test('reviewed archive product enters transmission preparation with its own profile without replacing board selection',async()=>{
+ const h=harness({submission:true});try{
+  await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.onChange({target:{checked:true}});
+  await h.click('▦상품 관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
+  const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서');assert.ok(step);step.props.onClick();await h.settle();
+  await h.click('저장한 견적 전송 준비');
+  assert.equal(h.workspace(),undefined);assert.match(text(h.render()),/선택한 상품 1건/);
+  let reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,1);assert.equal(reads[0].url,'/api/products/a/submission-review?profileId=profile-a');
+  await h.click('견적서 수정하기');assert.match(text(h.workspace()),/상품 a/);assert.equal(h.quotationEditor.profileId,'profile-a');
+  await h.click('저장한 견적 전송 준비');reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,2);assert.equal(reads[1].url,reads[0].url);
+  await h.click('×');await h.click('✦AI 상품등록');
+  assert.equal(nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.checked,true);
+  await h.click('등록 전송');reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.at(-1).url,'/api/products/b/submission-review');
+  assert.ok(h.requests.every(request=>request.method==='GET'),'preparation navigation never writes, exports or sends files');
+ }finally{h.close();}
+});
+
+test('transmission preparation preserves unsaved quotation and retained source input',async()=>{
+ const h=harness({submission:true});try{
+  await h.settle();await h.click('상품 b');
+  const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서');step.props.onClick();await h.settle();
+  h.quotationEditor.onDirtyChange(true);await h.settle();assert.equal(h.button('저장한 견적 전송 준비').props.disabled,true);
+  h.quotationEditor.onDirtyChange(false);await h.settle();h.title().props.onChange({target:{value:'보존할 미저장 상품명'}});await h.settle();
+  await h.click('저장한 견적 전송 준비');assert.ok(h.workspace());assert.equal(h.title().props.value,'보존할 미저장 상품명');
+  assert.equal(h.requests.some(request=>request.url.includes('/submission-review')),false);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
 
 test('late archive open cannot replace a newer product workspace or its unsaved SEO value',async()=>{
  for(const value of ['직접 수정한 상품명','']){const h=harness();try{

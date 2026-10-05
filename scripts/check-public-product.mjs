@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as parse5 from 'parse5';
+import {webcrypto} from 'node:crypto';
 import {parseProductJsonLd} from '../extensions/supplier-hub/product-jsonld.mjs';
 
 // Read-only diagnosis of the fixed public offer through the production collector.
@@ -13,6 +14,8 @@ const mobileUrl=`https://m.1688.com/offer/${offerId}.html`;
 const skuEndpoint='https://h5api.m.1688.com/h5/mtop.mbox.fc.common.gateway/1.0/';
 const skuData=JSON.stringify({params:JSON.stringify({offerId}),fcName:'mini-od-cse',fcGroup:'cbu-offer',serviceName:'wirelessCoreOdService'});
 const cache=new Map(),report={sourceUrl,checkedAt:new Date().toISOString(),requests:[]};
+const verifyImages=process.argv.includes('--verify-images');
+if(process.argv.slice(2).some(argument=>argument!=='--verify-images'))throw Error('Unknown diagnostic option');
 const requestCounts={desktop:0,mobile:0,sku:0,detail:0};
 let allowedDetailUrl;
 function requestKind(url,init){
@@ -58,7 +61,7 @@ function load(file){
  if(cache.has(file))return cache.get(file);
  const exports={};cache.set(file,exports);
  const code=ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(code,{exports,URL,URLSearchParams,Error,Response,TextEncoder,TextDecoder,AbortController,structuredClone,setTimeout,clearTimeout,require:name=>{
+ vm.runInNewContext(code,{exports,URL,URLSearchParams,Error,Response,TextEncoder,TextDecoder,AbortController,Uint8Array,ArrayBuffer,DataView,structuredClone,setTimeout,clearTimeout,crypto:webcrypto,require:name=>{
   if(name==='parse5')return parse5;
   if(name==='@/extensions/supplier-hub/product-jsonld.mjs')return {parseProductJsonLd};
   if(!name.startsWith('@/'))throw Error('Unexpected diagnostic dependency');
@@ -79,5 +82,27 @@ try{
  }});
  report.collected=true;report.offerId=result.offerId;report.provider=result.provider;report.options=result.options.length;report.images=result.images.length;
  report.attributes=result.attributes?.length??0;report.descriptionCharacters=result.description.length;
+ if(verifyImages){
+  // Validate actual image bytes using the same bounded downloader as import.
+  // Only URLs returned by this receipt are allowed; bytes stay in memory.
+  const {downloadCollectionImage}=load('app/collection-image.ts');
+  const {imageDimensions}=load('app/image-dimensions.ts');
+  const imageResults=Array(result.images.length);let next=0;
+  await Promise.all(Array.from({length:Math.min(3,result.images.length)},async()=>{
+   while(next<result.images.length){
+    const index=next++,image=result.images[index],entry={index,role:image.role};const started=Date.now();
+    try{
+     const downloaded=await downloadCollectionImage(image.url,'diagnostic-813724060928',async(url,init)=>{
+      if(url!==image.url||init.redirect!=='manual'||init.credentials!=='omit'||init.headers||init.body)throw Error('Unexpected image diagnostic request');
+      const response=await fetch(url,init);entry.status=response.status;return response;
+     },image.role);
+     Object.assign(entry,{verified:true,bytes:downloaded.bytes.byteLength,extension:downloaded.extension,dimensions:imageDimensions(downloaded.bytes)});
+    }catch{entry.verified=false;}
+    entry.elapsedMs=Date.now()-started;imageResults[index]=entry;
+   }
+  }));
+  report.imageVerification={verified:imageResults.filter(item=>item.verified).length,total:imageResults.length,images:imageResults};
+  if(imageResults.some(item=>!item.verified))process.exitCode=1;
+ }
 }catch{report.collected=false;report.error='Production collector did not return a validated product.';process.exitCode=1;}
 console.log(JSON.stringify(report,null,2));

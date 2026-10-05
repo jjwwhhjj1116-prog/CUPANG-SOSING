@@ -1,4 +1,5 @@
 import type { QuotationField } from '@/app/quotation-schema';
+import { quotationNoticeInput } from '@/app/quotation-notice-inputs';
 
 // Exact resolver bindings only. A category name is never an input mapping.
 const links: Readonly<Record<string, string>> = {
@@ -17,11 +18,11 @@ const links: Readonly<Record<string, string>> = {
   detailImages: '5단계 상세 이미지', detailHtml: '5단계 상세 설명·선택 이미지 → 전송용 HTML',
   labelImages: '6단계 한글 표시사항 이미지', noticeNameModel: '6단계 제품명·모델명 → SEO 상품명',
   noticeMaterial: '6단계 재질', noticeDimensions: '옵션 상품 치수 → 6단계 크기',
-  yoga_noticeSizeWeight: '6단계 크기·중량', brace_noticeSizeWeight: '6단계 크기·중량', glove_noticeSizeWeight: '6단계 크기·중량', noticeManufacturerImporter: '6단계 제조사·수입사 → 기본설정',
+  noticeSizeWeight: '6단계 크기·중량', yoga_noticeSizeWeight: '6단계 크기·중량', brace_noticeSizeWeight: '6단계 크기·중량', glove_noticeSizeWeight: '6단계 크기·중량', noticeManufacturerImporter: '6단계 제조사·수입사 → 기본설정',
   noticeCountryOfOrigin: '6단계 제조국', noticeImportDeclaration: '6단계 수입신고 문구 여부', marathon_noticeKind: '6단계 상품 유형',
   marathon_noticeCaution: '6단계 사용 시 주의사항', noticePermission: '6단계 인증정보',
-  yoga_noticeKc: '6단계 KC 인증정보', brace_noticeKc: '6단계 KC 인증정보', glove_noticeKc: '6단계 KC 인증정보', noticeComponents: '6단계 구성품', noticeReleaseDate: '6단계 출시년월',
-  yoga_noticeSpecifications: '6단계 상품별 세부 사양', brace_noticeSpecifications: '6단계 상품별 세부 사양', glove_noticeSpecifications: '6단계 상품별 세부 사양',
+  noticeKc: '6단계 KC 인증정보', yoga_noticeKc: '6단계 KC 인증정보', brace_noticeKc: '6단계 KC 인증정보', glove_noticeKc: '6단계 KC 인증정보', noticeComponents: '6단계 구성품', noticeReleaseDate: '6단계 출시년월',
+  noticeSpecifications: '6단계 상품별 세부 사양', yoga_noticeSpecifications: '6단계 상품별 세부 사양', brace_noticeSpecifications: '6단계 상품별 세부 사양', glove_noticeSpecifications: '6단계 상품별 세부 사양',
   noticeQualityAssurance: '6단계 품질보증기준', noticeServiceContact: '6단계 연락처 → 기본설정 A/S 연락처',
 };
 export function quotationInputLink(field: QuotationField): string | null {
@@ -30,5 +31,5 @@ export function quotationInputLink(field: QuotationField): string | null {
   const content = field.contentField ?? (field.id === 'storageMaterial' ? 'material' : undefined);
   if (content) return `6단계 ${{ material: '재질', components: '구성품', model: '모델명' }[content]}`;
   if (field.optionDimension) return `옵션 상품 ${{ widthCm: '가로', lengthCm: '세로', heightCm: '높이' }[field.optionDimension]} · cm`;
-  return links[field.hubInput??field.id] ?? null;
+  return links[field.hubInput??quotationNoticeInput(field)??field.id] ?? null;
 }
