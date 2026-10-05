@@ -88,7 +88,7 @@ function popup(h){
  let consumed=false;
  const saved={origin:new URL(sender.url).origin,...identity,createdAt:Date.now(),base64:h.message.base64,appTabId:7,windowId:17};
  const source=fs.readFileSync(new URL('../extensions/supplier-hub/dispatch.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
- const context=vm.createContext({Date,URL,Uint8Array,atob,prepareAttachments,attachToSupplierHub,verifySupplierHubCompany,verifyAppQuotationSource:(...args)=>verifyAppQuotationSource(...args,h.api),assertAppSupplierHubNotSubmitted:(...args)=>assertAppSupplierHubNotSubmitted(...args,h.api,h.store),claimSupplierHubTransmissionWindow,resultKey,
+ const context=vm.createContext({Date,URL,Uint8Array,atob,prepareAttachments,attachToSupplierHub,verifySupplierHubCompany,verifyAppQuotationSource:(...args)=>verifyAppQuotationSource(...args,h.api),assertAppSupplierHubNotSubmitted:(...args)=>assertAppSupplierHubNotSubmitted(...args,h.api,h.store),claimSupplierHubTransmissionWindow,resultKey,isHubRegistrationTab,
   pendingPackage:async action=>{if(action==='get')return consumed?null:saved;if(action==='delete'){if(consumed)return false;consumed=true;return true;}throw Error('Unexpected package operation');},
   transferRecord:h.store,chrome:{...h.api,runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`}}});
  vm.runInContext(source,context);

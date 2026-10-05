@@ -2,7 +2,7 @@
 
 /* Authenticated R2 previews use the existing file route without a public image optimizer. */
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { adoptGeneratedOptionImage } from '@/app/option-image-adoption';
 import { generatedImagesRolePatch } from '@/app/image-role-adoption';
 import type { ProductContent } from '@/app/product-content';
@@ -12,7 +12,8 @@ type Props = { productId: string; version: string; imageKeys: string[]; onProduc
 const statuses: Record<ImageEditJob['status'], string> = { prepared: '원본·요청 검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 호출 차단', completed: '이미지 생성 완료 · 검토 필요', failed: '실패 · 자동 재호출 없음', uncertain: '결과 확인 필요 · 자동 재호출 없음' };
 const imageUrl = (key: string) => `/api/files/${encodeURIComponent(key)}`;
 
-export default function ImageGenerationPanel({ productId, version, imageKeys, onProductChanged }: Props) {
+export default function ImageGenerationPanel(props: Props) { return <ImageGenerationContent key={props.productId} {...props} />; }
+function ImageGenerationContent({ productId, version, imageKeys, onProductChanged }: Props) {
   const [view, setView] = useState<ImageEditView | null>(null);
   const [sourceKey, setSourceKey] = useState('');
   const [purpose, setPurpose] = useState<ImagePurpose>('translate');
@@ -21,69 +22,96 @@ export default function ImageGenerationPanel({ productId, version, imageKeys, on
   const [prompt, setPrompt] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [requestBusy, setBusy] = useState(true);
+  const [loadedVersion,setLoadedVersion]=useState('');
+  const busy=requestBusy||loadedVersion!==version;
   const [error, setError] = useState('');
   const [notice,setNotice]=useState('');
   const [reviewedIds,setReviewedIds]=useState<string[]>([]);
+  const mounted=useRef(true);
+  const activeRequest=useRef<AbortController|null>(null);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;activeRequest.current?.abort();activeRequest.current=null;};},[productId,version]);
+  function beginRequest(allowMissing=false) {
+    if(!mounted.current||activeRequest.current||(!allowMissing&&!view))return null;
+    const controller=new AbortController();activeRequest.current=controller;return controller;
+  }
+  function finishRequest(controller:AbortController) {
+    if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current)setBusy(false);}
+  }
   const source = imageKeys.includes(sourceKey) ? sourceKey : imageKeys[0] ?? '';
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || job.review.settingsFingerprint !== view?.settingsFingerprint || job.review.recipeVersion !== 1));
 
   useEffect(() => {
-    let active = true;
-    fetch(`/api/products/${productId}/image-generation`).then(async response => {
+    const controller=new AbortController();activeRequest.current=controller;
+    fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}).then(async response => {
       const value = await response.json() as ImageEditView & { error?: string };
       if (!response.ok) throw Error(value.error ?? '이미지 작업을 불러오지 못했습니다.');
-      if (active) setView(value);
-    }).catch(reason => { if (active) setError(reason.message); });
-    return () => { active = false; };
+      if (!controller.signal.aborted) {setView(value);setConfirmed(false);}
+    }).catch(reason => { if (!controller.signal.aborted) setError(reason.message); }).finally(()=>{
+      if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current){setLoadedVersion(version);setBusy(false);}}
+    });
+    return () => { controller.abort(); };
   }, [productId, version]);
   async function action(body: Record<string, unknown>) {
+    const controller=beginRequest();if(!controller)return;
     setBusy(true); setError('');
     try {
-      const response = await fetch(`/api/products/${productId}/image-generation`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`, { signal:controller.signal,method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const value = await response.json() as Partial<ImageEditView> & { job?: ImageEditJob; error?: string };
+      if(controller.signal.aborted)return;
       if (!response.ok || !value.job) throw Error(value.error ?? '이미지 요청을 처리하지 못했습니다.');
       const saved = value.job;
       setView(previous => ({ configuration: value.configuration ?? previous!.configuration, settings: value.settings ?? previous!.settings, settingsFingerprint: value.settingsFingerprint ?? previous!.settingsFingerprint, jobs: [saved, ...(previous?.jobs ?? []).filter(item => item.id !== saved.id)] }));
       setSelectedId(saved.id); setConfirmed(false);
       if (saved.result?.attached) onProductChanged?.();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '요청 실패'); }
-    finally { setBusy(false); }
+    } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '요청 실패'); }
+    finally { finishRequest(controller); }
   }
   async function adoptRoles(batch = false) {
     const selected=batch?(view?.jobs??[]).filter(item=>reviewedIds.includes(item.id)):job?[job]:[];
     if(batch&&selected.length!==reviewedIds.length){setError('선택한 작업 목록이 변경됐습니다. 실행 이력을 새로고침하고 다시 선택해주세요.');return;}
-    if(!selected.length)return;setBusy(true);setError('');setNotice('');
+    if(!selected.length)return;
+    const controller=beginRequest();if(!controller)return;
+    setBusy(true);setError('');setNotice('');
     try{
-      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store'});
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store',signal:controller.signal});
       const current=await response.json() as {content:ProductContent;error?:string};
+      if(controller.signal.aborted)return;
       if(!response.ok)throw Error(current.error??'이미지 역할을 읽지 못했습니다.');
       const patch=generatedImagesRolePatch(current.content,selected,imageKeys);
-      const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/content`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.content.revision,patch})});
-      const value=await saved.json() as {error?:string};if(!saved.ok)throw Error(value.error??'이미지 역할 저장 실패');
+      const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/content`,{signal:controller.signal,method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.content.revision,patch})});
+      const value=await saved.json() as {error?:string};if(controller.signal.aborted)return;if(!saved.ok)throw Error(value.error??'이미지 역할 저장 실패');
       setReviewedIds([]);
       setNotice('원본이 있던 대표·추가·상세 위치에 검토한 결과를 적용했습니다. 다른 이미지 순서와 라벨·사이즈표는 유지했습니다. 원본 파일도 보관되어 있습니다.');onProductChanged?.();
-    }catch(reason){setError(reason instanceof Error?reason.message:'이미지 적용 실패');}
-    finally{setBusy(false);}
+    }catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'이미지 적용 실패');}
+    finally{finishRequest(controller);}
   }
   async function adoptOptionImages() {
     if (!job) return;
+    const controller=beginRequest();if(!controller)return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const count = await adoptGeneratedOptionImage(productId, job, imageKeys);
+      const request:typeof fetch=(input,init)=>{
+        controller.signal.throwIfAborted();
+        return fetch(input,{...init,signal:controller.signal});
+      };
+      const count = await adoptGeneratedOptionImage(productId, job, imageKeys,request);
+      if(controller.signal.aborted)return;
       setNotice(`같은 원본을 사용하던 옵션 ${count}개의 대표 이미지를 변경했습니다. 견적서에도 이 이미지가 반영됩니다.`);
       onProductChanged?.();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '옵션 이미지 적용 실패'); }
-    finally { setBusy(false); }
+    } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '옵션 이미지 적용 실패'); }
+    finally { finishRequest(controller); }
   }
   async function refresh() {
+    const controller=beginRequest(true);if(!controller)return;
     setBusy(true); setError('');
-    try { const response = await fetch(`/api/products/${productId}/image-generation`); const next = await response.json() as ImageEditView & { error?: string }; if (!response.ok) throw Error(next.error ?? '조회 실패'); setView(next); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : '조회 실패'); } finally { setBusy(false); }
+    try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); setView(next);setLoadedVersion(version); }
+    catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '조회 실패'); } finally { finishRequest(controller); }
   }
   return <section className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">
     <h4>원본 이미지 AI 가공</h4>
+    <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>저장된 설정·실행 이력 새로고침 · 무료</button>
     <p>상품에 업로드한 PNG·JPEG·WebP 한 장을 가공합니다. 결과는 새 파일로 보관하며, 원본과 기존 이미지 역할을 보존합니다.</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {!view && !error && <p>이미지 실행 설정을 확인하고 있습니다.</p>}
@@ -93,7 +121,6 @@ export default function ImageGenerationPanel({ productId, version, imageKeys, on
         <p>문구 번역 {view.settings.translateImages ? '켜짐' : '꺼짐'} · 대표 이미지 배경 정리 {view.settings.removeBackground ? '켜짐' : '꺼짐'} · 저작권 표시 {view.settings.addCopyright ? '켜짐 · 확인된 권리자 문구가 없어 미적용' : '꺼짐'}</p>
         <p>번역 목적을 직접 선택하면 기본 번역 설정과 관계없이 번역합니다. 번역·상세 작업의 배경과 원문 배치는 보존합니다.</p>
         {view.settings.translationPrompt && <details><summary>저장된 번역 지침</summary><pre>{view.settings.translationPrompt}</pre></details>}
-        <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>저장된 설정·실행 이력 새로고침 · 무료</button>
       </div>
       {!imageKeys.length && <p>먼저 이 상품에 원본 이미지를 업로드해주세요. 원본 없이 임의의 상품 이미지를 생성하지 않습니다.</p>}
       <label>가공할 원본<select value={source} onChange={event => setSourceKey(event.target.value)} disabled={busy || !imageKeys.length}>{!imageKeys.length && <option value="">원본 이미지 없음</option>}{imageKeys.map((key, index) => <option key={key} value={key}>이미지 {index + 1} · {key.split('/').at(-1)}</option>)}</select></label>

@@ -5,6 +5,7 @@ import {verifySupplierHubCompany} from './company.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
 import {claimSupplierHubTransmissionWindow} from './transmission-window.mjs';
 import {assertAppSupplierHubNotSubmitted} from './receipt-recovery.mjs';
+import {isHubRegistrationTab} from './app-request.mjs';
 
 // Own the app-package dispatch in the worker rather than in the disposable popup.
 // This is a single user-requested attempt, never an automatic upload retry.
@@ -14,8 +15,12 @@ export async function dispatchPendingPackage(message,sender){
   if(!Number.isSafeInteger(message.tabId)||message.tabId<0||!/^[a-f0-9]{64}$/.test(message.fingerprint||''))
     throw Error('전달할 탭과 견적서를 확인해주세요.');
   const [tab]=await chrome.tabs.query({active:true,currentWindow:true,url:'https://supplier.coupang.com/qvt/registration*'});
-  if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||new URL(tab.url).pathname!=='/qvt/registration')
+  if(tab?.id!==message.tabId||!Number.isSafeInteger(tab.windowId)||tab.windowId<0||!isHubRegistrationTab(tab,tab.windowId))
     throw Error('현재 창의 Supplier Hub 대량 상품 등록 탭에서 실행해주세요.');
+  const current=async()=>{
+    const live=await chrome.tabs.get(tab.id);
+    if(live?.id!==tab.id||!isHubRegistrationTab(live,tab.windowId))throw Error('Supplier Hub 탭의 Chrome 창 또는 등록 화면이 변경되었습니다.');
+  };
   const release=claimSupplierHubTransmissionWindow(tab.windowId);
   try{
     const saved=await pendingPackage('get');
@@ -27,19 +32,23 @@ export async function dispatchPendingPackage(message,sender){
       throw Error('앱에서 검토한 견적서와 파일이 일치하지 않습니다.');
     if(!Number.isSafeInteger(saved.windowId)||tab.windowId!==saved.windowId)throw Error('견적서를 준비한 앱과 같은 Chrome 창에서 전달해주세요.');
     await verifyAppQuotationSource(saved,prepared,saved);
+    await current();
     const [companyCheck]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:[prepared.company]});
     if(companyCheck?.result?.code!==prepared.company.code)throw Error('Supplier Hub 회사코드를 확인하지 못했습니다.');
+    await current();
     const {origin,productId,categoryId,fingerprint}=saved;
     const identity={origin,productId,categoryId,fingerprint,company:prepared.company,includedOptions:prepared.includedOptions};
     const key=`transmission:${origin}:${productId}:${categoryId}:${fingerprint}`;
     if(await transferRecord('get',key))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
     if(await transferRecord('get',resultKey(identity)))throw Error('이 견적서는 이미 접수 결과가 있습니다. 상품별 상태를 조회해주세요. 다시 첨부하지 않습니다.');
     await assertAppSupplierHubNotSubmitted(identity,prepared,saved);
+    await current();
     const [preflight]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:attachToSupplierHub,args:[prepared,true]});
     if(preflight?.result?.state!=='ready'||preflight.result.registered!==false)
       throw Error('기존 작업 보호를 위해 전달하지 않았습니다. 첨부가 없는 Supplier Hub 등록 화면을 확인해주세요.');
     await verifyAppQuotationSource(saved,prepared,saved);
     await assertAppSupplierHubNotSubmitted(identity,prepared,saved);
+    await current();
     if(!await pendingPackage('delete',saved.fingerprint))throw Error('이미 전달을 시도했거나 준비된 파일이 변경되었습니다.');
     const record={...identity,tabId:tab.id,windowId:tab.windowId,startedAt:Date.now(),state:'started',registered:false};
     // The app and popup share one durable claim. Closing the popup, preparing
@@ -47,6 +56,8 @@ export async function dispatchPendingPackage(message,sender){
     if(!await transferRecord('claim',key,record))throw Error('이 견적서는 이미 전송을 시도했습니다. 검증 결과를 확인해주세요. 자동으로 다시 첨부하지 않습니다.');
     try{
       await transferRecord('put',`attempt:${tab.id}`,identity);
+      // Source/receipt and storage waits must not let a moved tab receive files.
+      await current();
       const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:attachToSupplierHub,args:[prepared]});
       const result=execution?.result;
       if(!result||!['dispatched','partial'].includes(result.state)||result.registered!==false)

@@ -20,7 +20,7 @@ function harness(fetcher,initial={}){
  const render=()=>{cursor=0;const tree=Component({productId,version,refreshToken,profileId,onSaved(){saved++;}});effects.splice(0).forEach(fn=>fn());return tree;};
  const button=text=>nodes(render()).find(n=>n.type==='button'&&n.props.children===text);
  const input=label=>nodes(render()).find(n=>n.props?.['aria-label']===label);
- const idle=async()=>{const deadline=Date.now()+10000;while(render().props['data-workspace-saving']){assert.ok(Date.now()<deadline,'price UI request timed out');await new Promise(resolve=>setTimeout(resolve,1));}};
+ const idle=async()=>{await Promise.resolve();const deadline=Date.now()+10000;while(render().props['data-workspace-saving']){assert.ok(Date.now()<deadline,'price UI request timed out');await new Promise(resolve=>setTimeout(resolve,1));}};
  render();return {render,button,input,calls,idle,get saved(){return saved;},refresh(v){refreshToken=v;render();},setVersion(v){version=v;render();},select(p,c){productId=p;profileId=c;render();},close(){slots.forEach(s=>s?.cleanup?.());}};
 }
 
@@ -30,6 +30,63 @@ test('stage-two direct price saves only the changed option field using the same 
  const click=h.button('옵션 가격 저장').props.onClick;click();click();await settle();
  const writes=h.calls.filter(c=>c.init.method==='PUT');assert.equal(writes.length,1);
  const body=JSON.parse(writes[0].init.body);assert.deepEqual(body.changes,[{optionId:'red',fieldKey:'supplyPrice',value:'150'}]);assert.equal(body.expectedRevision,1);assert.equal(body.expectedInputFingerprint,'a'.repeat(64));assert.match(writes[0].url,/profileId=profile/);assert.equal(h.saved,1);
+});
+
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`unsaved option prices can recover after saving a new policy without losing blanks or same-value intent (${company.companyCode})`,async()=>{
+ const h=mobileIntakeHarness(company),json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};let prices;
+ try{
+  await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const current=await json(await h.route(base+'/quotation-fields')),target=current.resolved.rows.find(row=>row.included);
+  prices=harness((path,init)=>h.route(path,{method:init?.method??'GET',...(init?.body?{body:JSON.parse(init.body)}:{})}),{productId:product.id,profileId:undefined,version:current.productVersion});await prices.idle();
+  const label=field=>target.optionLabel+' '+field;
+  const manual=[['공급가',target.fields.supplyPrice.value],['판매가','99000'],['권장소비자가','']];
+  for(const [field,value]of manual)prices.input(label(field)).props.onChange({target:{value}});
+  const policy={...JSON.parse(product.pricing_policy??h.sqlite.prepare('SELECT payload FROM product_price_policy WHERE product_id=?').get(product.id).payload),exchangeRate:400};
+  const saved=await json(await h.route(base+'/pricing',{method:'POST',body:{expectedVersion:current.productVersion,policy}}));
+  prices.setVersion(saved.product.updated_at);await prices.idle();
+  for(let attempt=0;attempt<2;attempt++){prices.button('옵션 가격 저장').props.onClick();await prices.idle();assert.equal(prices.saved,0);}
+  for(const [field,value]of manual)assert.equal(prices.input(label(field)).props.value,value);
+  const before=prices.calls.filter(call=>call.init.method==='PUT').length;
+  const recover=prices.button('입력 유지·최신 가격 조회');assert.ok(recover,'retain the manual draft while refreshing its stale save base');
+  recover.props.onClick();await prices.idle();assert.equal(prices.calls.filter(call=>call.init.method==='PUT').length,before,'recovery only reads');
+  for(const [field,value]of manual)assert.equal(prices.input(label(field)).props.value,value);
+  prices.button('옵션 가격 저장').props.onClick();await prices.idle();assert.equal(prices.saved,1);
+  const final=await json(await h.route(base+'/quotation-fields')),row=final.resolved.rows.find(row=>row.optionId===target.optionId);
+  for(const [field,value]of [['supplyPrice',manual[0][1]],['salePrice','99000'],['msrp','']]){assert.equal(row.fields[field].value,value);assert.equal(row.fields[field].source,'manual-option');}
+  const last=JSON.parse(prices.calls.filter(call=>call.init.method==='PUT').at(-1).init.body);assert.notEqual(last.expectedInputFingerprint,current.inputFingerprint);
+  // A conflicting reviewed value is never rebased away by the recovery read.
+  prices.input(label('판매가')).props.onChange({target:{value:'98000'}});
+  const other=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:final.revision,expectedInputFingerprint:final.inputFingerprint,
+   changes:[{optionId:target.optionId,fieldKey:'salePrice',value:'97000'}]}}));
+  prices.setVersion(other.productVersion);await prices.idle();
+  const writes=prices.calls.filter(call=>call.init.method==='PUT').length;
+  prices.button('입력 유지·최신 가격 조회').props.onClick();await prices.idle();
+  assert.equal(prices.input(label('판매가')).props.value,'98000');assert.match(JSON.stringify(prices.render()),/다른 저장값/);
+  assert.equal(prices.calls.filter(call=>call.init.method==='PUT').length,writes);
+  prices.button('옵션 가격 저장').props.onClick();await prices.idle();assert.equal(prices.saved,1);
+  const unchanged=await json(await h.route(base+'/quotation-fields'));assert.equal(unchanged.overrides.options[target.optionId].salePrice,'97000');
+  prices.button('입력 취소·저장 가격 다시 조회').props.onClick();await prices.idle();assert.equal(prices.input(label('판매가')).props.value,'97000');
+  assert.equal(h.aiSources.length,1);assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
+ }finally{prices?.close();h.close();}
+});
+
+test('price draft recovery preserves inputs after a failed read and ignores a response after category switch or unmount',async()=>{
+ for(const end of ['retry','category','unmount']){
+  let reads=0,finish;const pending=new Promise(resolve=>finish=resolve);
+  const h=harness(async()=>{reads++;if(reads===1)return Response.json(view());if(reads===2)return Response.json({error:'fixture recovery offline'},{status:503});if(reads===3)return pending;return Response.json(view());});
+  try{
+   await h.idle();h.input('빨강 판매가').props.onChange({target:{value:'270'}});
+   h.button('입력 유지·최신 가격 조회').props.onClick();await h.idle();assert.equal(h.input('빨강 판매가').props.value,'270');assert.match(JSON.stringify(h.render()),/fixture recovery offline/);
+   h.button('입력 유지·최신 가격 조회').props.onClick();const read=h.calls.at(-1);
+   if(end==='category'){h.select('p','other');await h.idle();}else if(end==='unmount')h.close();
+   const latest=view();latest.revision=2;latest.inputFingerprint='b'.repeat(64);latest.resolved.rows[0].fields.salePrice.value='220';
+   finish(Response.json(latest));await settle();
+   if(end==='retry'){assert.equal(h.input('빨강 판매가').props.value,'270');assert.equal(h.render().props['data-workspace-dirty'],true);}
+   else assert.equal(read.init.signal.aborted,true);
+   if(end==='category')assert.equal(h.input('빨강 판매가').props.value,'200');
+   assert.equal(h.saved,0);assert.equal(h.calls.some(call=>call.init.method==='PUT'),false);
+  }finally{h.close();}
+ }
 });
 
 for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])

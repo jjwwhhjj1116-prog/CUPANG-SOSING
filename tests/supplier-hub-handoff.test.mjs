@@ -108,7 +108,7 @@ test('new package preparation, direct upload and validation resume require attac
    assert.deepEqual(old.sent.map(message=>message.type),['PING']);
    assert.equal(old.listeners.size,0);assert.equal(old.timers.size,0);
   }
-  const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:'0.2.41',attachmentLifecycleRecovery:true}
+  const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:'0.2.41',attachmentLifecycleRecovery:true,...(type==='PREPARE'?{popupWindowBinding:true}:{})}
    :{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',registered:false}}));
   await run(current.api);assert.deepEqual(current.sent.map(message=>message.type),['PING',type]);
   assert.equal(current.sent[1].payload.fingerprint,identity.fingerprint);
@@ -123,6 +123,40 @@ test('new package preparation, direct upload and validation resume require attac
  assert.equal((await previous.api.getSupplierHubResult(identity,new AbortController().signal,'registration')).registration.quotationId,'123');
  assert.deepEqual(previous.sent.map(message=>message.type),['PING','RESULT','RESULT','PING','REGISTRATION']);
 });
+
+test('popup preparation requires exact window binding support before reading or sending package bytes',async()=>{
+ const legacy={ok:true,version:'0.2.44',companyBinding:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,attachmentLifecycleRecovery:true};
+ const prepare=async(api,blob)=>{await api.checkSupplierHubExtension(new AbortController().signal);await api.prepareSupplierHubHandoff(blob,identity,new AbortController().signal);};
+ for(const popupWindowBinding of [undefined,false,'true']){
+  let readBytes=0;const blob={size:1,arrayBuffer:async()=>{readBytes++;return new Uint8Array([1]).buffer;}};
+  const h=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,popupWindowBinding}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
+  await assert.rejects(prepare(h.api,blob),/0\.2\.45/);
+  assert.deepEqual(h.sent.map(message=>message.type),['PING']);assert.equal(readBytes,0);assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+ }
+ const listeners=[],replies=[],origin='https://sourceflow.jjwwhhjj1116.workers.dev';
+ const window={addEventListener:(_type,listener)=>listeners.push(listener),postMessage:value=>replies.push(value)};
+ vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),{window,location:{origin},chrome:{runtime:{onMessage:{addListener(){}}}}});
+ await listeners[0]({source:window,origin,data:{channel:'YOOFAM_HUB_HANDOFF',type:'PING',requestId:'a'.repeat(36)}});
+ const actualCapability=replies[0].result;assert.equal(actualCapability.popupWindowBinding,true);
+ const current=harness((message,emit)=>emit(message,message.type==='PING'?actualCapability:{ok:true,fingerprint:identity.fingerprint,registered:false}));
+ await prepare(current.api,new Blob(['reviewed ZIP']));assert.deepEqual(current.sent.map(message=>message.type),['PING','PREPARE']);
+ assert.equal(Buffer.from(current.sent[1].payload.base64,'base64').toString(),'reviewed ZIP');assert.equal(current.listeners.size,0);assert.equal(current.timers.size,0);
+});
+
+test('previous extension direct upload, validation resume and result lookups do not require popup window support',async()=>{
+ const capability={ok:true,version:'0.2.44',companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,validationResume:true,acceptedReceiptRefreshRecovery:true,resultTableRefreshObservation:true,registrationLookup:true,registrationPages:true,savedSubmission:true};
+ const fixture=savedFixture(),record={...fixture.record,registration:{quotationId:'123',scope:'visible-page',observedAt:Date.now(),registered:false,includedOptions:2,rows:[]}};
+ const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
+ const h=harness((message,emit)=>emit(message,message.type==='PING'?capability:{ok:true,fingerprint:identity.fingerprint,registered:false,attempt:fixture.attempt,record,result:{state:'validation-requested',registered:false}}));
+ await h.api.checkSupplierHubExtension(new AbortController().signal,true);
+ assert.equal((await h.api.transmitSupplierHubPackage(new Blob(['reviewed ZIP']),identity,reviewed,new AbortController().signal)).state,'validation-requested');
+ assert.equal((await h.api.resumeSupplierHubValidation(identity,reviewed,new AbortController().signal)).state,'validation-requested');
+ for(const mode of [false,true,'registration'])assert.equal((await h.api.getSupplierHubResult(identity,new AbortController().signal,mode)).quotationId,'123');
+ assert.equal((await h.api.getSupplierHubSubmission(identity,new AbortController().signal)).result.quotationId,'123');
+ assert.deepEqual(h.sent.map(message=>message.type),['PING','TRANSMIT','PING','VALIDATE','RESULT','PING','REFRESH','PING','REGISTRATION','PING','RESULT']);
+ assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
+});
+
 test('registration evidence stays bound to quotation ID and a bounded visible page',()=>{
  const api=harness().api;
  const value={quotationId:'123',scope:'visible-page',registered:false,observedAt:Date.now(),includedOptions:2,rows:[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:'file',skuId:'1',status:'상품 검수 완료',stage:'발주서 발행'}]};
@@ -138,7 +172,7 @@ test('multi-page evidence validates actual coverage without treating it as regis
  for(const hasMore of [true,null])assert.equal(api.validateRegistrationResult({...value,hasMore},'123').hasMore,hasMore);
 });
 test('web package handoff sends exact reviewed identity and bytes, cleans listeners',async()=>{
-  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,attachmentLifecycleRecovery:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
+  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,attachmentLifecycleRecovery:true,popupWindowBinding:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
   await h.api.checkSupplierHubExtension(new AbortController().signal);
   await h.api.prepareSupplierHubHandoff(new Blob(['ZIP fixture']),identity,new AbortController().signal);
   assert.equal(h.sent[0].type,'PING');assert.equal(h.sent[1].payload.fingerprint,identity.fingerprint);

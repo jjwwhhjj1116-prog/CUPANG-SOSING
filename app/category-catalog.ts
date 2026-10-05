@@ -90,7 +90,9 @@ export function canConfirmCategory(choice: CategoryChoice | undefined): boolean 
 /** Reuse only the complete selected identity; never choose a template by leaf name. */
 export function categoryProfilesForChoice(profiles: readonly CategoryProfile[], choice: CategoryChoice): CategoryProfile[] {
   if (!canConfirmCategory(choice)) return [];
-  return profiles.filter(profile => profile.categoryId === choice.categoryId && samePath(profile.categoryPath, choice.path));
+  return profiles.filter(profile => profile.categoryId === choice.categoryId && samePath(profile.categoryPath, choice.path)
+    && (!choice.supplierHub || !profile.hubSchema || (profile.hubSchema.company.code === choice.supplierHub.company.code
+      && profile.hubSchema.company.name === choice.supplierHub.company.name)));
 }
 export function categoryProfileForChoice(choice: CategoryChoice): CategoryProfileInput {
   if (!canConfirmCategory(choice)) throw new Error('분류 코드가 확인되지 않았습니다. 실제 코드와 견적서 양식을 먼저 연결해주세요.');

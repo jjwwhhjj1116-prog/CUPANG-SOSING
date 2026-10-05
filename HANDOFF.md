@@ -5012,3 +5012,13 @@ AI등록 화면 확인:
 - 최종전체1960/1960(163.773초), 신규8·실패/취소/건너뜀0. TypeScript0·변경6코드/시험파일lint오류/경고0·diff·운영빌드·기존11마이그레이션원본·확장소스/번들/ZIP일치검사통과. 최초샌드박스빌드는esbuild상위경로읽기권한때문에실패→기존승인범위최종빌드통과; 자동승인거절없음. 확장0.2.44/37파일/447662바이트/SHA4355abb89cef081f9509de9ae662a7379846689e305e16ed575b31567fffa57b유지, 앱새로고침으로이번수정반영. 상세docs/intake-receipt-navigation-final-audit-2026-10-05.md.
 - 기존Worker53a5c927-0183-4d6b-a09a-c3498dbcd410배포·7자산업로드확인, 익명/login·기존ZIP GET Access302각각확인. 인증UI/ZIP바이트/실제접수완료검증아님. 운영회원/상품/DB마이그레이션/가격식/기본설정/카테고리양식/비밀/권한·호스트/이미지Worker/새유료자원변경없음.
 - 기존Chrome4/3의허용작업3호스트탭은초기/최종반환0. 사이트차단/로그아웃/승인거절추정·다른창/프로필/개인탭·기존Couplus작업상품조작·반복질문없음. 개발/배포/push승인유지. 관리자회사임의배정없음. 전실제카테고리기본값/공식양식·운영AI/이미지번역·양사최종견적ID/SKU실검수는남아있고완전복제/임의완성률/실제등록완료로보고하지않는다.
+
+## 567. 회사별 카테고리 양식·수정 가격·이미지 요청·팝업 창 검수 (2026-10-05)
+
+- 실제회사 카테고리 선택이 같은코드/전체경로의 다른회사 공식schema 프로필을 재사용해 새schema+이전workbook/수동매핑을 섞는 오류를 양사방향에서 수정전 재현했다. categoryProfilesForChoice에 실제회사code/name 대조를 추가해 현재회사양식을 별도 연결하며 unscoped legacy 수동프로필 경로는 유지한다. CategoryPicker→실제API/임시SQLite→격리원문초안→견적필드연결, 이전프로필/상품/수동공란/동결정책 불변 집중44/44. schema/AI는합성자료이며 실제전체카테고리검증아님.
+- 옵션가격 수정중 상품가격정책저장후 지속409/취소만가능 오류를 수정했다. 명시적 입력유지·최신가격GET은 category/context/schema/included옵션/revision 및 경쟁수동값을 확인하고 같은입력·판매가·MSRP공란을 보존한다. 다른manual값은 거절하고 동일값중복저장허용, 최신지문CAS 저장유지. 관련62/62·컴포넌트21/21, 계산식변경없음. 독립검토 추가결함없음.
+- 이미지패널의 재렌더전중복요청·종료후GET→PATCH·늦은응답부모갱신·초기GET실패재조회없음을 실제컴포넌트/역할/옵션함수로 재현해 동기잠금/AbortSignal/controller소유권을 추가했다. 독립검토에서version key의수동문구초기화회귀를 추가발견→수정전실패→productId만key+versioncleanup으로입력보존/기존요청중단/새이력조회까지busy. 최종32/32·신규7회귀, manual옵션명/가격/재고0/label/CAS보존. 운영AI/R2변경0, 서버이미실행된요청취소라고주장하지않음.
+- 팝업대기중 Hub탭이 다른Chrome창으로이동해도 실제파일3구역change가발생하던오류를 수정전재현했다. source/company/receipt대기뒤/pending소비전/claim직후실첨부전 exacttab/window/등록경로검사. claim전pending보존, 이후uncertain/no-replay유지. 집중78/78. popupPREPARE에만popupWindowBinding stricttrue요구하며 missing/false/string은PING만; 구버전direct/VALIDATE/RESULT/REFRESH/REGISTRATION호환유지, 집중54/54. 원격Hub작업0·독립검토결함없음.
+- 최종전체1978/1978(144.873초), 신규18·실패/취소/건너뜀0. TypeScript0·변경17코드/시험lint오류0/기존Hook경고2·diff·운영빌드·원본11마이그레이션·Cloudflare산출물검사통과. 확장0.2.45/37파일/449172바이트/SHAa26e33e168b58684cc3d224f6c9f745a75de32ae45df887f628e51e552d3218d 원본/배포ZIP일치·manifest/PING/3링크일치. 원본확장빌드성공, 별도검토추가esbuild실행은환경읽기권한제한(소스불일치아님). 자동승인거절없음. 상세docs/company-price-image-window-final-audit-2026-10-05.md.
+- 기존Worker c2059348-2d09-44f7-a54f-6132e56e7fb9배포·8자산업로드, 익명/login·신규ZIP Access302확인. 인증UI/ZIP응답바이트/실제등록완료증거아님. 확장폴더업데이트/새로고침과앱새로고침필요. 운영회원/상품/DB마이그레이션/가격식/기본설정/양식/비밀/권한·호스트/이미지Worker/새유료자원변경없음. outputs/step567-*Git제외.
+- 기존Chrome4/3 허용호스트탭반환0을 차단/로그아웃/승인거절로추정하지않았고 다른창/프로필/개인탭/기존Couplus작업상품조작·반복질문없음. 566현재URL공개수집증거유지, 모든실제카테고리/운영AI·이미지/양사최종ID·SKU실검수미완료·임의완성률/완전복제주장없음. 관리자회사임의배정없음. 사용자가추가지적한 기본설정UI·원본대조를 다음변경에서이어갈것.
