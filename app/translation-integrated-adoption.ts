@@ -2,13 +2,20 @@ import { translationBatchAdoption } from '@/app/translation-batch-adoption';
 import { adoptOptionTranslations } from '@/app/option-translation';
 import { applyOptionRows, optionFieldNames, type ProductOptions } from '@/app/product-options';
 import type { ProductContent } from '@/app/product-content';
-import type { TranslationJob } from '@/app/automation/translation';
+import { translationAttributeCoverage,type TranslationJob } from '@/app/automation/translation';
 
-export function integratedTranslationPlan(content: ProductContent, options: ProductOptions, job: TranslationJob, version: string, scope: 'all' | 'options' = 'all', hiddenAttributes?: boolean, intakeBrand?: string, preserveCategoryAttributes = false) {
+export function integratedTranslationPlan(content: ProductContent, options: ProductOptions, job: TranslationJob, version: string, scope: 'all' | 'options' = 'all', hiddenAttributes?: boolean, intakeBrand?: string, preserveCategoryAttributes = false, optionRecoveryJobs:readonly TranslationJob[] = []) {
   if (options.productId !== content.productId || job.contentRevision !== content.revision) throw Error('상품 또는 번역 원문의 콘텐츠 버전이 변경되었습니다. 최신 자료를 확인해주세요.');
   const text = scope === 'options' ? { input: null, preview: [], skipped: [] } : translationBatchAdoption(content, job, version, intakeBrand);
-  const translated = adoptOptionTranslations(options, job, version, true);
+  const translated = adoptOptionTranslations(options, job, version, true, optionRecoveryJobs);
   const preview = [...text.preview];
+  if(content.categoryAttributes && job.review.instructionsVersion==='sourceflow-translation-v6' && job.result &&
+    translationAttributeCoverage(job.review.source,job.result.draft).missingSourceIndexes.some(index=>job.review.source.attributes[index].name.startsWith('상품속성: '))){
+    // A partial refresh is not a replacement for the previously reviewed
+    // category snapshot or its explicit field bindings.
+    preserveCategoryAttributes=true;
+    text.skipped.push('일부 상품 속성 번역이 누락되어 기존 카테고리 속성과 연결값을 유지했습니다. 생성 이력의 반환된 속성을 확인해주세요.');
+  }
   const attributes = !preserveCategoryAttributes && scope === 'all' && job.review.source.category && job.result
     ? job.result.draft.attributes.filter(item => job.review.source.attributes[item.sourceIndex]?.name.startsWith('상품속성: '))
       .map(item => ({ name: item.name.trim(), value: item.value.trim(), sourceName: job.review.source.attributes[item.sourceIndex].name })).filter(item => item.name && item.value) : [];

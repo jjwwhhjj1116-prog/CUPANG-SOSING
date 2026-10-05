@@ -80,7 +80,9 @@ Cloudflare Workers + D1 `DB` + R2 `FILES` 구조입니다. 운영에서는 Cloud
 | `SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS` | 256~8000 출력 상한 |
 | `SOURCEFLOW_IMAGE_MODEL` | 사용 권한이 있는 Images Edits 지원 모델 ID |
 
-Workers AI 운영 초안은 `SOURCEFLOW_TEXT_PROVIDER=workers-ai`일 때 지원 모델 `@cf/meta/llama-3.3-70b-instruct-fp8-fast`와 출력 상한 4096을 사용합니다. 폐기된 모델 교체, 기존 검토 요청과 완료 결과의 처리 기준은 [모델 변경 기록](docs/workers-ai-model-update-2026-10-05.md)에 정리했습니다.
+현재 운영 텍스트 번역은 사용자 지정 `translate.googleapis.com/translate_a/single` 주소를 쓰는 `SOURCEFLOW_TEXT_PROVIDER=google-free`입니다. API 키 없이 `client=gtx`, 자동 언어 감지, 한국어 출력으로 요청하며 5,000자·개별 요청 10초 제한을 적용합니다. 실패는 원문을 유지하고 완료로 처리하지 않습니다. 자세한 연결·검증 범위는 [Google 번역 연결 기록](docs/google-free-translation-2026-10-05.md)을 참고하세요. 이미지 안의 글자를 읽고 재편집하는 기능은 이 텍스트 서비스와 별도입니다.
+
+별도로 `SOURCEFLOW_TEXT_PROVIDER=workers-ai`를 선택하면 지원 모델 `@cf/meta/llama-3.3-70b-instruct-fp8-fast`와 출력 상한 4096을 사용합니다. 기존 검토 요청과 완료 결과의 처리 기준은 [모델 변경 기록](docs/workers-ai-model-update-2026-10-05.md)에 정리했습니다.
 
 설정만으로 유료 호출이 시작되지는 않습니다. 승인한 작업은 모델·입력·제품 revision에 묶이며 실행 중복을 막습니다. 유료 응답 후 저장 장애가 생기면 결과가 불확실한 상태로 남길 수 있으므로 새 요청을 만들기 전에 이력과 제공자 사용량을 확인해야 합니다.
 

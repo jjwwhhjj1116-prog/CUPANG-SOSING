@@ -27,14 +27,16 @@ function resolve(snap,settings,overrides){
 const saved={...harness.settings,brand:'외부 브랜드, 검토 브랜드',tradeType:'기타 도소매업자',importType:'수입상품',handlingReason:'해당사항없음'};
 const cells=resolved=>resolved.rows.find(row=>row.optionId===null).fields;
 
-test('fresh captured setting choices use the public first-value fallback while valid values retain exact identity',()=>{
+test('fresh choices keep their fallback while free-text brand suggestions preserve the captured brand',()=>{
  for(const company of schemaCompanies){
   const snap=snapshot(company),fields=cells(resolve(snap,saved));
-  for(const [id,value] of [['brand','양식 브랜드'],['tradeType','공식총판사'],['importType','수입대상아님'],['handlingReason','유리']]){
+  for(const [id,value] of [['brand','외부 브랜드'],['tradeType','공식총판사'],['importType','수입대상아님'],['handlingReason','유리']]){
    assert.equal(fields[id].value,value,id);assert.equal(fields[id].source,'settings');assert.equal(fields[id].validationIssues.length,0,id);
   }
   const valid=cells(resolve(snap,{...saved,brand:'검토 브랜드, 외부 브랜드',tradeType:'제조사',importType:'병행수입상품',handlingReason:'유리'}));
   assert.equal(valid.brand.value,'검토 브랜드');assert.equal(valid.tradeType.value,'제조사');assert.equal(valid.importType.value,'병행수입상품');assert.equal(valid.handlingReason.value,'유리');
+  const closed=snapshot(company,raw=>{raw.properties.productPage.properties.brand.enum=[...raw.properties.productPage.properties.brand.dropdown];});
+  assert.equal(cells(resolve(closed,saved)).brand.value,'양식 브랜드','a real enum still restricts the initial setting');
  }
 });
 
@@ -97,7 +99,7 @@ for(const company of schemaCompanies)test(`URL intake applies saved category cho
  const local=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
   const f=await setup(local,snapshot(company));let view=await json(await local.route(f.path));
   assert.equal(view.resolved.rows.filter(row=>row.optionId!==null).length,6);
-  for(const row of view.resolved.rows)assert.deepEqual(['brand','tradeType','importType','handlingReason'].map(id=>row.fields[id].value),['양식 브랜드','공식총판사','수입대상아님','유리']);
+  for(const row of view.resolved.rows)assert.deepEqual(['brand','tradeType','importType','handlingReason'].map(id=>row.fields[id].value),['외부 브랜드','공식총판사','수입대상아님','유리']);
   await local.load('db/queries.ts').saveSettings('owner',JSON.stringify({...local.settings,brand:'검토 브랜드',tradeType:'제조사',handlingReason:'유리'}));
   const stable=await json(await local.route(f.path));assert.notEqual(stable.inputFingerprint,view.inputFingerprint);assert.deepEqual(stable.resolved.rows,view.resolved.rows);
   const stale=await local.route(f.path,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'brand',optionId:null,value:'검토 브랜드'}]}});assert.equal(stale.status,409);
@@ -108,7 +110,7 @@ for(const company of schemaCompanies)test(`URL intake applies saved category cho
   const assets=JSON.parse(f.product.image_keys).map((key,index)=>({key,name:'images/'+index+'.png'}));
   const output=local.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source,resolved,assets);
   assert.deepEqual(JSON.parse(JSON.stringify(['brand','tradeType','importType','handlingReason'].map(id=>output[0][id]))),['검토 브랜드','제조사','병행수입상품','']);
-  assert.deepEqual(JSON.parse(JSON.stringify(['brand','tradeType','importType','handlingReason'].map(id=>output[1][id]))),['양식 브랜드','공식총판사','수입대상아님','유리']);
+  assert.deepEqual(JSON.parse(JSON.stringify(['brand','tradeType','importType','handlingReason'].map(id=>output[1][id]))),['외부 브랜드','공식총판사','수입대상아님','유리']);
   assert.equal(source.hubSchema.settingsInitialization,'couplus-options-v1');assert.ok(!local.network.includes('supplier.coupang.com'));
  }finally{local.close();}
 });

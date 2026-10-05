@@ -9,11 +9,12 @@ const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...no
 const label=t=>Array.isArray(t)?t.map(label).join(''):typeof t==='string'||typeof t==='number'?String(t):'';
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(r=>setImmediate(r));};
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
-function harness(handler,status='completed',failInitial=false,emptyJobs=false,jobVersion='v',jobContentRevision=1,expiresAt='2099-09-24'){
+function harness(handler,status='completed',failInitial=false,emptyJobs=false,jobVersion='v',jobContentRevision=1,expiresAt='2099-09-24',reviewOverride={}){
  const slots=[],effects=[],cleanup=[],calls=[];let index=0,first=true,closed=false,late=0,saved=0;
  const content={revision:1,seo:Object.fromEntries(['title','description','keywords'].map(k=>[k,{value:k==='keywords'?[]:'manual'}]))};
  const job={id:'j',productId:'p',status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt,source:{title:'검토된 원문',description:'저장 설명',attributes:[],provenance:'manual',reference:'수집 원문'}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
- const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,issues:[]}};
+ Object.assign(job.review,reviewOverride);
+ const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,model:job.review.model,issues:[]}};
  const hooks={useCallback:fn=>fn,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  let initial=0;
  const fetcher=async function(url,init){assert.equal(this,undefined,'native fetch cannot receive helper options as its receiver');if(initial<2){initial++;return failInitial?Response.json({error:'초기 조회 실패'},{status:503}):Response.json(url.endsWith('/translation')?view:{content});}calls.push({url,init});return handler(url,init,{content,job,view});};
@@ -29,7 +30,31 @@ const options='미번역 옵션 불러오기 · 속성 입력 교체';
 const prepare='번역 요청 검토하기 · 무료';
 const execute='승인한 SEO 초안 작성 계속';
 const adopt='검토한 초안을 이 항목에 적용 · 기존 내용 교체';
-const adoptOptions='검토한 옵션 번역 적용 · 미번역 이름·수집 속성';
+
+test('Google review shows the actual translation service without token or pricing claims and retains explicit execution and application',async()=>{
+ const settings={destination:'Google 번역',model:'google-translate-gtx',maxOutputTokens:0,pricingUrl:'',paidNotice:'사용자 지정 Google 번역 주소에 텍스트만 전송합니다.'};
+ const h=harness(async(_url,init,{job})=>Response.json({job:{...job,status:JSON.parse(init.body).action==='approve'?'approved':'completed',result:{draft:{title:'한국어 초안',description:'',keywords:[],attributes:[],warnings:[]}}}}),'prepared',false,false,'v',1,'2099-09-24',settings);await settle();
+ const textOf=node=>Array.isArray(node)?node.map(textOf).join(''):node&&typeof node==='object'?textOf(node.props?.children):label(node);
+ const visible=()=>textOf(h.render());
+ assert.match(visible(),/번역 서비스 Google 번역 · 요청당 최대 5,000자/);assert.doesNotMatch(visible(),/토큰|공식 요금표/);assert.equal(h.calls.length,0);
+ assert.match(visible(),/카테고리·참고 메모·옵션 ID는 전송하지 않습니다/);assert.doesNotMatch(visible(),/위 모델/);
+ const approval=nodes(h.render()).find(node=>node.type==='label'&&label(node.props.children).includes('Google 번역 서비스의 사용 조건'));nodes(approval).find(node=>node.type==='input').props.onChange({target:{checked:true}});
+ h.button('SEO 초안 작성')();await settle();assert.deepEqual(h.calls.map(call=>JSON.parse(call.init.body).action),['approve','execute']);
+ assert.match(visible(),/Google 번역 초안/);assert.doesNotMatch(visible(),/AI 생성 초안|토큰|공식 요금표/);assert.equal(h.saved,0);
+ const ai=harness(()=>{throw Error('unexpected request');},'completed',false,false,'v',1,'2099-09-24',{destination:'Cloudflare Workers AI',pricingUrl:'https://developers.cloudflare.com/workers-ai/platform/pricing/'});await settle();
+ const text=nodes(ai.render()).map(node=>label(node.props?.children)).join(' ');assert.match(text,/AI 생성 초안/);assert.match(text,/최대 출력 1000토큰|최대 출력 1,000토큰/);assert.match(text,/공식 요금표/);
+});
+
+test('Google combined-source guidance describes text translation while retaining source context and paid-provider copy',async()=>{
+ for(const google of [true,false]){
+  const h=harness(async(url,init,{job})=>Response.json(init.method==='POST'?{job}:url.endsWith('/options')?{productVersion:'v',options:{productId:'p',attributes:[{name:'option:a',value:'白色'}]}}:{productVersion:'v',title:'수집 상품',description:'수집 설명',attributes:[],jobId:'source',sourceUrl:'https://example.invalid',message:'원문 확인',requestContext:{categoryId:'80719',categoryPath:['주방용품'],capturedAt:'2026-09-25',features:'저장 특징',keywords:'키워드'}}),'completed',false,false,'v',1,'2099-09-24',{model:google?'google-translate-gtx':'paid-model',destination:google?'Google 번역':'Cloudflare Workers AI'});
+  await settle();h.button('수집 원문·미번역 옵션 함께 불러오기 · 입력 교체')();await settle();
+  const text=JSON.stringify(h.render());assert.match(text,/option:a=白色/);assert.match(text,/저장 특징/);assert.match(text,/80719/);
+  if(google){assert.match(text,/함께 불러온 옵션 텍스트도 한국어로 번역/);assert.match(text,/Google에는 카테고리·참고 메모를 전송하지 않습니다/);assert.match(text,/검토 요청에 참고 메모 보관/);assert.doesNotMatch(text,/옵션·이미지 번역은 별도|카테고리 코드·경로를 번역 요청에 참고 정보로 포함|원문에서 확인되는 특징과 관련 키워드만 반영하도록 요청/);}
+  else{assert.match(text,/옵션·이미지 번역은 별도/);assert.match(text,/카테고리 코드·경로를 번역 요청에 참고 정보로 포함/);assert.match(text,/초안 생성에 참고 메모 포함/);}
+  h.button(prepare)();await settle();const input=JSON.parse(h.calls.at(-1).init.body);assert.equal(input.source.attributes[0].name,'option:a');assert.equal(input.source.category.id,'80719');assert.equal(input.source.guidance.features,'저장 특징');assert.equal(h.saved,0);
+ }
+});
 
 test('expired review renews the exact reviewed source without overwriting edited form or executing AI',async()=>{
  const pending=deferred();const h=harness(()=>pending.promise,'prepared',false,false,'v',1,'2000-01-01');await settle();

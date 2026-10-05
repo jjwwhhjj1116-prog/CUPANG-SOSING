@@ -5,7 +5,7 @@ import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {validateHubSchemaSnapshot,type HubSchemaSnapshot} from '@/app/supplier-hub-schema';
 import {CATEGORY_TEMPLATE_FILE_LIMIT} from '@/app/category-profiles';
 import {readBoundedBytes,RequestBodyError} from '@/app/request-body';
-import {connectOfficialHubTemplate,inspectOfficialHubTemplateIdentity} from '@/app/official-hub-template';
+import {connectOfficialHubTemplate,connectOfficialWorkbookTemplate,inspectOfficialHubTemplateIdentity} from '@/app/official-hub-template';
 import {templateKey} from '@/db/category-templates';
 import {readXlsxArchive} from '@/app/xlsx-template';
 
@@ -19,7 +19,7 @@ export async function POST(request:Request){
   const bounded=await readBoundedBytes(request,CATEGORY_TEMPLATE_FILE_LIMIT+700000),form=await new Response(bounded.buffer as ArrayBuffer,{headers:{'content-type':type}}).formData();
   if([...form.keys()].some(key=>!['file','schema','action','excelSchema'].includes(key))||form.getAll('file').length!==1||form.getAll('schema').length!==1||form.getAll('action').length>1||form.getAll('excelSchema').length>1)throw Error('공식 Excel 한 개와 각 상세 양식 한 개만 보내주세요.');
   const action=form.get('action'),excelRaw=form.get('excelSchema');
-  if(action!==null&&action!=='inspect'||action==='inspect'&&excelRaw!==null)throw Error('공식 Excel 확인 요청을 다시 준비해주세요.');
+  if(action!==null&&action!=='inspect'&&action!=='workbook'||action!==null&&excelRaw!==null)throw Error('공식 Excel 확인 요청을 다시 준비해주세요.');
   const candidate=form.get('file'),raw=form.get('schema');
   if(!(candidate instanceof File)||!candidate.name.endsWith('.xlsx')||candidate.name.length>240||/[\u0000-\u001f]/.test(candidate.name)||candidate.size<22)throw Error('공식 XLSX 원본을 확인해주세요.');
   if(candidate.size>CATEGORY_TEMPLATE_FILE_LIMIT)throw new RequestBodyError(413,'공식 Excel은 5MB 이하만 지원합니다.');
@@ -30,7 +30,7 @@ export async function POST(request:Request){
   if(action==='inspect')return NextResponse.json({identity:await inspectOfficialHubTemplateIdentity(bytes,snapshot),registered:false},{headers});
   let excel:HubSchemaSnapshot|undefined;
   if(excelRaw!==null){if(typeof excelRaw!=='string'||new TextEncoder().encode(excelRaw).length>300000)throw Error('Excel 상세 양식 원문 크기를 확인해주세요.');const raw=JSON.parse(excelRaw);excel=validateHubSchemaSnapshot(raw,snapshot.categoryId,snapshot.categoryPath);}
-  connection=await connectOfficialHubTemplate(bytes,snapshot,excel);
+  connection=action==='workbook'?await connectOfficialWorkbookTemplate(bytes,snapshot):await connectOfficialHubTemplate(bytes,snapshot,excel);
  }catch(error){
   let message=error instanceof Error?error.message:'공식 양식을 확인해주세요.';
   if(message==='XLSX 콘텐츠 목록이 없습니다.'){

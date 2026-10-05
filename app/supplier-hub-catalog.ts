@@ -4,7 +4,7 @@ import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import {validateHubSchemaSnapshot,type HubSchemaSnapshot} from '@/app/supplier-hub-schema';
 import {validateCategoryProfile,type CategoryProfile,type CategoryProfileInput} from '@/app/category-profiles';
 import {readBoundedStream} from '@/app/request-body';
-import {loadCategoryProfiles} from '@/app/load-category-profiles';
+import {loadCategoryProfiles,readCategoryJsonResponse} from '@/app/load-category-profiles';
 import {unwrapOfficialXlsxDownload} from '@/app/xlsx-template';
 
 export type HubCategoryNode={categoryId:string;name:string;isLeaf:boolean};
@@ -77,13 +77,14 @@ export async function loadLiveHubCategorySchema(choice:CategoryChoice,signal:Abo
 }
 
 /** Auto-connect a blank official workbook only when the selected profile has no saved template. */
-export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot:HubSchemaSnapshot,signal:AbortSignal):Promise<Pick<CategoryProfileInput,'template'|'mappings'>>{
+export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot:HubSchemaSnapshot,signal:AbortSignal,mode:'schema'|'workbook'='schema'):Promise<Pick<CategoryProfileInput,'template'|'mappings'>>{
   if(signal.aborted)throw Error('작업을 취소했습니다.');
   if(!choice.supplierHub||!choice.isLeaf)throw Error('Supplier Hub 최종 카테고리를 선택해주세요.');
   validateHubSchemaSnapshot(snapshot,choice.categoryId,choice.path);
   const capability=await exchange('PING',null,signal);if(capability.categoryTemplate!==true)throw Error('공식 Excel 연결을 지원하는 상품 수집·전송 확장 0.2.38로 갱신해주세요.');
   const separateExcel=(snapshot.metadata.scopeType??snapshot.metadata.scope)==='Retail_Categorized_Single';
-  if(separateExcel&&capability.categoryExcelSchema!==true)throw Error('Single·Excel 양식 구분을 지원하는 최신 상품 수집·전송 확장으로 갱신한 뒤 앱을 새로고침해주세요.');
+  if(mode==='workbook'&&!separateExcel)throw Error('공식 파일 기준 연결에는 확인된 Single 양식이 필요합니다.');
+  if(mode==='schema'&&separateExcel&&capability.categoryExcelSchema!==true)throw Error('Single·Excel 양식 구분을 지원하는 최신 상품 수집·전송 확장으로 갱신한 뒤 앱을 새로고침해주세요.');
   const {trail,ownerId,company}=choice.supplierHub;
   if(snapshot.company.code!==company.code||snapshot.company.name!==company.name)throw Error('선택한 회사와 상세 양식 회사가 다릅니다.');
   const result=await exchange('TEMPLATE',{trail,selection:{categoryId:choice.categoryId,name:choice.path.at(-1)},expectedSchema:{schemaString:snapshot.schemaString,metadata:snapshot.metadata}},signal);
@@ -107,10 +108,11 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
   const sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',workbook)),byte=>byte.toString(16).padStart(2,'0')).join('');
   signal.throwIfAborted();
   const form=new FormData();form.set('file',new File([workbook],data.name,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));form.set('schema',JSON.stringify(snapshot));
-  if(separateExcel){
+  if(mode==='workbook')form.set('action','workbook');
+  if(separateExcel&&mode==='schema'){
     form.set('action','inspect');
     const inspected=await fetch('/api/category-profiles/official-template',{method:'POST',body:form,signal,credentials:'same-origin',redirect:'error',cache:'no-store'});
-    const body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readBoundedStream(inspected.body,10000))) as {identity?:{scopeType:string;kanCategoryId:string;noticeNumber:string;version:string};registered?:false;error?:string};
+    const body=await readCategoryJsonResponse<{identity?:{scopeType:string;kanCategoryId:string;noticeNumber:string;version:string};registered?:false;error?:string}>(inspected,'공식 Excel 식별값 확인',async()=>JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readBoundedStream(inspected.body,10000))));
     signal.throwIfAborted();
     if(!inspected.ok)throw Error(body.error??'원본 Excel 식별값을 확인하지 못했습니다.');
     const identity=body.identity;
@@ -125,17 +127,22 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
     form.set('excelSchema',JSON.stringify({...excel,...(snapshot.inputBindings?{inputBindings:snapshot.inputBindings}:{})}));
   }
   const response=await fetch('/api/category-profiles/official-template',{method:'POST',body:form,signal,credentials:'same-origin',redirect:'error',cache:'no-store'});
-  const saved=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readBoundedStream(response.body,300000))) as {template:NonNullable<CategoryProfileInput['template']>;mappings:CategoryProfileInput['mappings'];report:{categoryId:string;categoryPath:string[];company:SupplierHubCompany;kanCategoryId:string;registered:false};error?:string};
+  const saved=await readCategoryJsonResponse<{template:NonNullable<CategoryProfileInput['template']>;mappings:CategoryProfileInput['mappings'];report:{categoryId:string;categoryPath:string[];company:SupplierHubCompany;kanCategoryId:string;registered:false};error?:string}>(response,'공식 Excel 원본 저장',async()=>JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readBoundedStream(response.body,300000))));
   if(signal.aborted)throw Error('작업을 취소했습니다.');
   if(!response.ok)throw Error(saved.error??'공식 Excel을 저장하지 못했습니다.');
   if(saved.template?.sha256!==sha256||saved.template.name!==data.name||saved.template.format!=='xlsx'||!saved.template.storageKey||saved.template.headerRow!==5||saved.template.dataStartRow!==9||!Array.isArray(saved.template.headers)||!Array.isArray(saved.mappings)
     ||saved.report?.categoryId!==choice.categoryId||JSON.stringify(saved.report.categoryPath)!==JSON.stringify(choice.path)||saved.report.company?.code!==company.code||saved.report.company?.name!==company.name||saved.report.kanCategoryId!==kan||saved.report.registered!==false)throw Error('공식 Excel 저장 결과의 카테고리·회사·원본 지문이 다릅니다.');
+  if(mode==='workbook'){
+    const evidence=saved.template.workbookEvidence,sourceSha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(snapshot.schemaString))),byte=>byte.toString(16).padStart(2,'0')).join('');
+    if(!evidence||evidence.kind!=='official-workbook-v1'||evidence.excelSchemaVerified!==false||evidence.templateSha256!==sha256||evidence.sourceSchemaSha256!==sourceSha256
+      ||evidence.companyCode!==company.code||evidence.companyName!==company.name||evidence.categoryId!==choice.categoryId||JSON.stringify(evidence.categoryPath)!==JSON.stringify(choice.path)||evidence.kanCategoryId!==kan)throw Error('공식 파일 연결의 미검증 범위·회사·원본 근거를 확인하지 못했습니다.');
+  }else if(saved.template.workbookEvidence)throw Error('별도 Excel 상세 양식 확인 결과가 공식 파일 기준 연결로 변경되었습니다.');
   return {template:saved.template,mappings:saved.mappings};
 }
 
 /** Official files are prepared explicitly after draft review. Resolve every
  * saved path segment exactly; never infer a different branch from a leaf name. */
-export async function prepareOfficialHubProfileTemplate(profile:CategoryProfile,signal:AbortSignal):Promise<CategoryProfile>{
+export async function prepareOfficialHubProfileTemplate(profile:CategoryProfile,signal:AbortSignal,mode:'schema'|'workbook'='schema'):Promise<CategoryProfile>{
   signal.throwIfAborted();
   if(profile.template)throw Error('이미 연결된 견적 양식은 유지합니다. 변경은 카테고리·양식 관리에서 확인해주세요.');
   const current=(await loadCategoryProfiles(signal)).find(item=>item.id===profile.id);
@@ -157,11 +164,11 @@ export async function prepareOfficialHubProfileTemplate(profile:CategoryProfile,
   if(!choice)throw Error('저장한 카테고리 경로를 확인해주세요.');
   const live=await loadLiveHubCategorySchema(choice,signal);signal.throwIfAborted();
   if(live.schemaString!==snapshot.schemaString||!sameMetadata(live.metadata,snapshot.metadata))throw Error('현재 상세 양식이 저장 당시와 다릅니다. 기존 초안은 유지하며 카테고리·양식 관리에서 확인해주세요.');
-  const connection=await loadLiveHubCategoryTemplate(choice,snapshot,signal);signal.throwIfAborted();
+  const connection=await loadLiveHubCategoryTemplate(choice,snapshot,signal,mode);signal.throwIfAborted();
   const expected=validateCategoryProfile({...current,...connection});
   const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},signal,
     body:JSON.stringify({id:current.id,expectedRevision:current.revision,profile:expected})});
-  const result=await response.json() as {profile?:CategoryProfile;error?:string};signal.throwIfAborted();
+  const result=await readCategoryJsonResponse<{profile?:CategoryProfile;error?:string}>(response,'공식 견적 양식 연결 저장');signal.throwIfAborted();
   if(!response.ok)throw Error(result.error??'공식 견적 양식을 연결하지 못했습니다. 저장한 양식을 새로고침해주세요.');
   const saved=result.profile;
   if(!saved||saved.id!==current.id||saved.revision!==current.revision+1||saved.name!==current.name||saved.categoryId!==current.categoryId

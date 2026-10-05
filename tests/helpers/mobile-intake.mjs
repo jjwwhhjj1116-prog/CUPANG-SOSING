@@ -19,7 +19,7 @@ const translated=pair=>pair.name.startsWith('option-color:')?color(pair.value):p
 
 /** Real handlers and SQLite, recorded public supplier facts; auth, AI and image
  * bytes are fixtures. Never contacts Supplier Hub or alters a real product. */
-export function mobileIntakeHarness({companyCode='A01464742',companyName='와이홉',sourceFetcher,desktopStatus=200}={}){
+export function mobileIntakeHarness({companyCode='A01464742',companyName='와이홉',sourceFetcher,translationFetcher,desktopStatus=200}={}){
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const results=statements.map(statement=>({results:statement.execute()}));sqlite.exec('COMMIT');return results;}catch(error){sqlite.exec('ROLLBACK');throw error;}}};
  const objects=new Map(),objectMetadata=new Map(),calls=[],network=[],cache=new Map(),aiSources=[];
@@ -29,6 +29,7 @@ export function mobileIntakeHarness({companyCode='A01464742',companyName='와이
  const deps={'cloudflare:workers':{env:bindings},'@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',status:'approved',companyCode,companyName}}),getWorkspaceOwnerId:async()=>'owner'},'next/server':{NextResponse:Response},parse5,'node:crypto':nodeCrypto,'@/extensions/supplier-hub/product-jsonld.mjs':{parseProductJsonLd}};
  async function externalFetch(target,init){
   const url=new URL(target);network.push(url.hostname);
+  if(url.hostname==='translate.googleapis.com' && translationFetcher)return translationFetcher(target,init);
   if(['detail.1688.com','m.1688.com','h5api.m.1688.com','itemcdn.tmall.com'].includes(url.hostname)){
    if(sourceFetcher)return sourceFetcher(target,init);
    if(url.hostname==='detail.1688.com')return new Response('<html>No JSON-LD on the observed desktop page</html>',{status:desktopStatus,headers:{'content-type':'text/html',...(desktopStatus===302?{location:'https://login.1688.com/'}:{})}});

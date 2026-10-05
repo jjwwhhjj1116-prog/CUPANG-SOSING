@@ -103,6 +103,15 @@ test('integrated completion never marks manual fields or fields absent from the 
  assert.equal(pending.total,1);assert.equal(pending.attributes[0].name,'option-size:red');
 });
 
+test('a partial v6 refresh preserves an existing category snapshot when an original product attribute was omitted',()=>{
+ const {content,options,job}=fixture();job.review.instructionsVersion='sourceflow-translation-v6';job.review.source.category={id:'80719',path:['주방용품','바스켓']};
+ job.review.source.attributes.push({name:'상품속성: shape',value:'方形'});
+ content.categoryAttributes={categoryId:'80719',jobId:'previous-review',values:[{sourceName:'상품속성: shape',name:'형태',value:'기존에 검토한 사각형'}],reservedFields:['shape'],bindings:[{fieldId:'shape',fieldSignature:'saved-signature',value:'기존값'}]};
+ const before=JSON.stringify(content.categoryAttributes),plan=model.integratedTranslationPlan(content,options,job,version);
+ assert.equal(plan.categoryAttributes,undefined);assert.equal(JSON.stringify(content.categoryAttributes),before);assert.ok(plan.skipped.some(message=>message.includes('기존 카테고리 속성')));
+ assert.equal(plan.patch.seo.title,'한국어 상품');assert.equal(plan.rows[0].translatedName,'빨강 옵션');
+});
+
 test('option-only API binds scope, preserves SEO and labels and persists verified options',async()=>{
  const h=harness();try{
   let saves=0;

@@ -28,7 +28,7 @@ function fixtureWorkbook(){
  ])};
 }
 function harness(api){
- const calls=[],modules=new Map(),slots=[],effects=[];let cursor=0,mode='',productId='';
+ const calls=[],downloads=[],modules=new Map(),slots=[],effects=[];let cursor=0,mode='',productId='',downloadBlob;
  const snapshot={...hubSchemaSnapshot(schemaCompanies.find(company=>company.code==='A01464742')),metadata:{displayCategoryCode:'991234',categoryId:3000,scope:'Retail_Categorized_Single',productNoticeNumber:17,version:73}};
  // Use the observed price paths consumed by current captured input rules;
  // the generic legacy helper also supports unrelated same-label price fields.
@@ -40,17 +40,18 @@ function harness(api){
  const branch=trail=>({source:'supplier-hub-category-api',ownerId:'owner',company:mode==='company'?schemaCompanies.find(company=>company.code!==snapshot.company.code):snapshot.company,observedAt:Date.now(),fullCatalogVerified:false,trail,children:trail.length?[leaf]:mode==='ambiguous'?[parent,{...parent,categoryId:'101'}]:mode==='missing'?[]:[parent]});
  const request=async(url,init={})=>{
   calls.push({url,method:init.method??'GET',body:typeof init.body==='string'?JSON.parse(init.body):undefined});
+  if(mode==='http-list'&&url==='/api/category-profiles'&&!init.method||mode==='http-template'&&url==='/api/category-profiles/official-template'||mode==='http-link'&&url==='/api/category-profiles'&&init.method==='PUT')return new Response('<!DOCTYPE html><html>PRIVATE_ACCESS_TOKEN_AND_BODY</html>',{status:mode==='http-list'?503:mode==='http-link'?502:200,headers:{'content-type':'text/html'}});
   if(url==='/api/category-profiles')return api.load('app/api/category-profiles/route.ts')[init.method??'GET'](new Request('https://app.test'+url,init));
   if(url==='/api/category-profiles/official-template')return api.load('app/api/category-profiles/official-template/route.ts').POST(new Request('https://app.test'+url,init));
   return api.route(url,{method:init.method??'GET',body:init.body});
  };
  const exchange=async(type,payload)=>{
   calls.push({type,payload});
-  if(type==='PING')return{categoryCatalog:true,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true};
+  if(type==='PING')return{categoryCatalog:true,categorySchema:true,categoryTemplate:true,...(mode==='workbook-only'?{}:{categoryExcelSchema:true})};
   const found=branch(payload.trail);
   if(type==='CATEGORIES')return{branch:found};
   const schema=mode==='schema'?{...snapshot,metadata:{...snapshot.metadata,version:191}}:snapshot;
-  if(type==='SCHEMA')return{branch:{...found,schema,...(payload.excelIdentity?{excelSchema:{...snapshot,metadata:{...snapshot.metadata,scope:'Retail_Categorized_Excel',version:190}}}:{})}};
+  if(type==='SCHEMA'){if(mode==='excel'&&payload.excelIdentity)throw Error('별도 Excel 상세 양식 조회 실패');return{branch:{...found,schema,...(payload.excelIdentity?{excelSchema:{...snapshot,metadata:{...snapshot.metadata,scope:'Retail_Categorized_Excel',version:190}}}:{})}};}
   assert.equal(type,'TEMPLATE');assert.deepEqual(plain(payload.expectedSchema),{schemaString:snapshot.schemaString,metadata:snapshot.metadata});
   if(mode==='download')throw Error('공식 원본 다운로드 실패');
   const bytes=workbook.bytes;
@@ -61,7 +62,7 @@ function harness(api){
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-   {exports,Error,Date,AbortController,File,FormData,TextDecoder,Uint8Array,crypto,atob,btoa,fetch:request,require(name){
+   {exports,Error,Date,AbortController,File,FormData,TextEncoder,TextDecoder,Uint8Array,crypto,atob,btoa,fetch:request,setTimeout:fn=>fn(),URL:{createObjectURL(blob){downloadBlob=blob;return'blob:fixture';},revokeObjectURL(){}},document:{createElement(){return{click(){downloads.push({name:this.download,blob:downloadBlob});}};}},require(name){
     if(name==='react')return hooks;
     if(name==='@/app/supplier-hub-handoff')return{exchange};
     if(name==='@/app/components/quotation-fields-editor')return{QuotationFieldsEditor:Editor};
@@ -74,7 +75,7 @@ function harness(api){
  const catalog=load('app/supplier-hub-catalog.ts'),Panel=load('app/components/quotation-panel.tsx').QuotationPanel;
  const render=()=>{cursor=0;const outer=Panel({productId,onManageCategories(){}}),tree=outer.type(outer.props);effects.splice(0).forEach(effect=>effect());return tree;};
  const settle=async()=>{const deadline=Date.now()+5000;for(let i=0;i<16||nodes(render()).some(node=>node.props?.['aria-busy']);i++){if(Date.now()>deadline)throw Error('Quotation request timeout');await new Promise(resolve=>setTimeout(resolve,1));render();}};
- return {calls,catalog,choice,snapshot,workbook,request,Editor,render,settle,setMode(value){mode=value;},async open(id){productId=id;render();await settle();},button(label){return nodes(render()).find(node=>node.type==='button'&&node.props.children===label);},close(){slots.forEach(slot=>slot?.cleanup?.());}};
+ return {calls,downloads,catalog,choice,snapshot,workbook,request,Editor,render,settle,setMode(value){mode=value;},async open(id){productId=id;render();await settle();},button(label){return nodes(render()).find(node=>node.type==='button'&&node.props.children===label);},close(){slots.forEach(slot=>slot?.cleanup?.());}};
 }
 
 test('live category enters URL drafts without XLSX, then explicit stage 7 preparation preserves frozen/manual values and produces the official workbook',async()=>{
@@ -113,8 +114,8 @@ test('official preparation rejects changed company, ambiguous/missing exact path
  const api=mobileIntakeHarness(),ui=harness(api);try{
   const profile=await api.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'시험',categoryId:ui.snapshot.categoryId,categoryPath:schemaPath,hubSchema:ui.snapshot,template:null,mappings:[]});
   const before=JSON.stringify(api.sqlite.prepare('SELECT * FROM category_profiles').all());
-  for(const mode of ['company','ambiguous','missing','schema']){
-   ui.setMode(mode);ui.calls.length=0;await assert.rejects(ui.catalog.prepareOfficialHubProfileTemplate(profile,new AbortController().signal));
+  for(const preparation of ['schema','workbook'])for(const mode of ['company','ambiguous','missing','schema']){
+   ui.setMode(mode);ui.calls.length=0;await assert.rejects(ui.catalog.prepareOfficialHubProfileTemplate(profile,new AbortController().signal,preparation));
    assert.equal(ui.calls.some(call=>call.type==='TEMPLATE'||call.method==='PUT'||call.method==='POST'),false,mode);
    assert.equal(JSON.stringify(api.sqlite.prepare('SELECT * FROM category_profiles').all()),before);
   }
@@ -123,5 +124,48 @@ test('official preparation rejects changed company, ambiguous/missing exact path
   const changed=await api.load('db/category-profiles.ts').updateCategoryProfile('owner',profile.id,profile.revision,{...profile,name:'다른 화면의 수동 설정'});
   await assert.rejects(ui.catalog.prepareOfficialHubProfileTemplate(profile,new AbortController().signal),/변경/);
   assert.equal((await api.load('db/category-profiles.ts').getCategoryProfile('owner',profile.id)).name,changed.name);
+ }finally{ui.close();api.close();}
+});
+
+test('explicit workbook mode uses existing TEMPLATE after Excel failure and downloads edited XLSX without a fallback or submission',async()=>{
+ const api=mobileIntakeHarness(),ui=harness(api);try{
+  const profile=await api.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'파일 근거 시험',categoryId:ui.snapshot.categoryId,categoryPath:schemaPath,hubSchema:ui.snapshot,template:null,mappings:[]});
+  api.context.category=profile;api.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(api.context));await api.intake();
+  const product=api.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const content=(await json(await api.route(base+'/content'))).content;
+  await json(await api.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'파일 연결 전에 저장한 제목',description:''},label:{material:''}}}}));
+  const retained=()=>JSON.stringify(['products','product_options','product_content','product_quotation_fields','collection_context'].map(table=>api.sqlite.prepare('SELECT * FROM '+table).all())),before=retained();
+  await ui.open(product.id);ui.setMode('excel');ui.button('공식 견적 양식 준비').props.onClick();await ui.settle();
+  assert.match(JSON.stringify(ui.render()),/별도 Excel 상세 양식 조회 실패/);assert.equal((await api.load('db/category-profiles.ts').getCategoryProfile('owner',profile.id)).template,null);assert.equal(ui.calls.filter(call=>call.method==='PUT').length,0);
+  ui.setMode('workbook-only');ui.calls.length=0;ui.button('공식 파일 기준으로 연결').props.onClick();await ui.settle();
+  const saved=await api.load('db/category-profiles.ts').getCategoryProfile('owner',profile.id);assert.ok(saved.template,JSON.stringify(ui.render()));
+  assert.equal(saved.template.workbookEvidence.excelSchemaVerified,false);assert.equal(saved.template.workbookEvidence.version,'190');assert.equal(saved.hubSchema.metadata.version,73);assert.equal(saved.template.workbookEvidence.templateSha256,saved.template.sha256);
+  const categories=api.load('app/api/category-profiles/route.ts'),evidence=saved.template.workbookEvidence;
+  for(const patch of [{version:'189'},{sourceSchemaSha256:'0'.repeat(64)},{companyCode:'A01526306'},{excelSchemaVerified:true},{unverifiedExtra:true}]){
+   await json(await categories.PUT(new Request('https://app.test/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:saved.id,expectedRevision:saved.revision,profile:{...saved,template:{...saved.template,workbookEvidence:{...evidence,...patch}}}})})),400);
+  }
+  assert.equal((await api.load('db/category-profiles.ts').getCategoryProfile('owner',profile.id)).revision,saved.revision,'file/Single evidence cannot be forged on later save');
+  assert.equal(ui.calls.filter(call=>call.type==='TEMPLATE').length,1);assert.ok(ui.calls.some(call=>call.type==='SCHEMA'));assert.equal(ui.calls.some(call=>call.payload?.excelIdentity),false);assert.equal(retained(),before);
+  ui.button('견적 자료 검토').props.onClick();await ui.settle();assert.ok(ui.button('채운 견적서 파일 다운로드'),JSON.stringify(ui.render()));
+  ui.button('채운 견적서 파일 다운로드').props.onClick();await ui.settle();assert.equal(ui.downloads.length,1,JSON.stringify(ui.render()));assert.match(ui.downloads[0].name,/\.xlsx$/);
+  const reader=api.load('app/xlsx-template.ts'),inspection=reader.inspectXlsxArchive(await reader.readXlsxArchive(await ui.downloads[0].blob.arrayBuffer()));
+  for(let row=9;row<15;row++)assert.equal(reader.xlsxHeaders(inspection,ui.workbook.sheetName,row)[0],'파일 연결 전에 저장한 제목');
+  assert.deepEqual(api.objects.get(saved.template.storageKey),ui.workbook.bytes);assert.equal(retained(),before);assert.equal(api.aiSources.length,1);
+  assert.equal(ui.calls.some(call=>['PREPARE','TRANSMIT','REGISTRATION'].includes(call.type)),false);assert.equal(product.supplier_hub_status,'미전송');
+ }finally{ui.close();api.close();}
+});
+
+test('official workbook UI identifies the failed app HTTP step without exposing HTML or changing saved drafts',async()=>{
+ const api=mobileIntakeHarness(),ui=harness(api);try{
+  const profile=await api.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'응답 진단 시험',categoryId:ui.snapshot.categoryId,categoryPath:schemaPath,hubSchema:ui.snapshot,template:null,mappings:[]});
+  api.context.category=profile;api.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(api.context));await api.intake();
+  const product=api.sqlite.prepare('SELECT * FROM products').get(),retained=()=>JSON.stringify(['products','product_options','product_content','product_quotation_fields','collection_context','category_profiles'].map(table=>api.sqlite.prepare('SELECT * FROM '+table).all())),before=retained();
+  await ui.open(product.id);
+  for(const [mode,stage,status]of [['http-list','카테고리 목록 조회',503],['http-template','공식 Excel 원본 저장',200],['http-link','공식 견적 양식 연결 저장',502]]){
+   ui.setMode(mode);ui.calls.length=0;ui.button('공식 파일 기준으로 연결').props.onClick();await ui.settle();const rendered=JSON.stringify(ui.render());
+   assert.ok(rendered.includes(stage),rendered);assert.ok(rendered.includes('HTTP '+status));assert.match(rendered,/HTML 응답/);assert.doesNotMatch(rendered,/PRIVATE_ACCESS_TOKEN|DOCTYPE|Unexpected token/);
+   assert.equal(retained(),before);assert.equal(ui.button('공식 파일 기준으로 연결').props.disabled,false);
+   if(mode!=='http-link')assert.equal(ui.calls.some(call=>call.method==='PUT'),false);
+  }
  }finally{ui.close();api.close();}
 });

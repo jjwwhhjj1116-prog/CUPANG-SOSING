@@ -3,7 +3,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
-import { getTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation } from '@/db/translation-jobs';
+import { getTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, listTranslationJobs } from '@/db/translation-jobs';
 import { saveIntegratedTranslation } from '@/db/translation-adoption';
 import { integratedTranslationPlan, applyIntegratedOptions } from '@/app/translation-integrated-adoption';
 import { applyContentPatch } from '@/app/product-content';
@@ -66,8 +66,9 @@ export async function POST(request: Request, context: Context) {
       const capturedSettings = categorySource?.snapshot?.linked ? JSON.parse(categorySource.snapshot.payload)?.settings : null;
       const hiddenAttributes = typeof capturedSettings?.hiddenAttributes === 'boolean' ? capturedSettings.hiddenAttributes : undefined;
       const intakeBrand = capturedSettings ? savedRegistrationSettings(capturedSettings).brand : undefined;
+      const optionRecoveryJobs = job.review.instructionsVersion==='sourceflow-translation-v6' ? await listTranslationJobs(owner,id) : [];
       plan = integratedTranslationPlan(intakeReplay ? intakeTranslationReplayContent(content,job) : content, options, applicationJob, product.updated_at, scope, hiddenAttributes, intakeBrand,
-        intakeReplay && !!content.categoryAttributes);
+        intakeReplay && !!content.categoryAttributes,optionRecoveryJobs);
     }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }
     let attributeRules;

@@ -43,7 +43,7 @@ export async function POST(request: Request, context: Context) {
     if (body.action === 'prepare-collected' || body.action === 'prepare-intake-options') {
       const optionsOnly = body.action === 'prepare-intake-options';
       if (Object.keys(body).some(key => !(optionsOnly ? ['action','expectedVersion'] : ['action','intake']).includes(key)) || (body.intake !== undefined && body.intake !== true)) throw new TranslationError('INVALID_REQUEST', '저장된 수집 원문만 사용할 수 있습니다.');
-      const autoDraft = (body.intake === true || optionsOnly) && config.provider === 'workers-ai';
+      const autoDraft = (body.intake === true || optionsOnly) && ['workers-ai','google-free'].includes(config.provider??'');
       let staleUnstarted: TranslationJob | null = null;
       if(optionsOnly){
         const initial=await findIntakeTranslation(owner,id);

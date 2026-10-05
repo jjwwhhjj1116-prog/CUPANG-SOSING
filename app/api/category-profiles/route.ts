@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
     const ownerId = await owner();
-    try { await validateStoredTemplate(ownerId, input.template); } catch (error) { if (error instanceof TemplateValidationError) return NextResponse.json({ error: errorText(error) }, { status: 400, ...options }); throw error; }
+    try { await validateStoredTemplate(ownerId, input.template,input.hubSchema); } catch (error) { if (error instanceof TemplateValidationError) return NextResponse.json({ error: errorText(error) }, { status: 400, ...options }); throw error; }
     const profile = await createCategoryProfile(ownerId, input, requestId);
     if (!profile) return NextResponse.json({ error: '카테고리 저장 요청이 충돌했습니다. 목록을 다시 불러온 뒤 저장해주세요.' }, { status: 409, ...options });
     return NextResponse.json({ profile }, { status: 201, ...options });
@@ -64,7 +64,7 @@ export async function PUT(request: Request) {
   try {
     const ownerId = await owner();
     if (!await getCategoryProfile(ownerId, id)) return NextResponse.json({ error: '카테고리 설정을 찾을 수 없습니다.' }, { status: 404, ...options });
-    try { await validateStoredTemplate(ownerId, input.template); } catch (error) { if (error instanceof TemplateValidationError) return NextResponse.json({ error: errorText(error) }, { status: 400, ...options }); throw error; }
+    try { await validateStoredTemplate(ownerId, input.template,input.hubSchema); } catch (error) { if (error instanceof TemplateValidationError) return NextResponse.json({ error: errorText(error) }, { status: 400, ...options }); throw error; }
     const profile = await updateCategoryProfile(ownerId, id, expectedRevision, input);
     if (!profile) return NextResponse.json({ error: '다른 화면에서 설정이 변경되었습니다. 다시 불러온 뒤 수정해주세요.' }, { status: 409, ...options });
     return NextResponse.json({ profile }, options);

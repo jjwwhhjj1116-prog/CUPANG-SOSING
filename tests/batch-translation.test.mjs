@@ -31,13 +31,20 @@ const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...no
 const settle=async()=>{for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));};
 test('batch view isolates product failures and links exact reviewed result without executing a provider',async()=>{
  const slots=[],effects=[];let cursor=0;const calls=[];function Preview(){}
- const hooks={useState(v){const i=cursor++;if(!(i in slots))slots[i]=v;return[slots[i],next=>slots[i]=typeof next==='function'?next(slots[i]):next];},useEffect(fn,deps){const i=cursor++;if(!slots[i]||deps.some((v,j)=>v!==slots[i].deps[j]))effects.push(()=>{slots[i]?.cleanup?.();slots[i]={deps,cleanup:fn()};});}};
+ const hooks={useState(v){const i=cursor++;if(!(i in slots))slots[i]=v;return[slots[i],next=>slots[i]=typeof next==='function'?next(slots[i]):next];},useMemo(fn,deps){const i=cursor++;if(!slots[i]||deps.some((v,j)=>v!==slots[i].deps[j]))slots[i]={deps,value:fn()};return slots[i].value;},useEffect(fn,deps){const i=cursor++;if(!slots[i]||deps.some((v,j)=>v!==slots[i].deps[j]))effects.push(()=>{slots[i]?.cleanup?.();slots[i]={deps,cleanup:fn()};});}};
  const {BatchTranslationPanel}=load('app/components/batch-translation-panel.tsx',{react:hooks,'@/app/components/batch-translation-apply':{BatchTranslationApply:()=>null},'@/app/components/translation-integrated-preview':{TranslationIntegratedPreview:Preview},'@/app/batch-translation':{readBatchTranslationTarget:async id=>{calls.push(id);if(id==='bad')throw Error('개별 조회 실패');return{productId:id,version,jobId:id==='empty'?null:job.id};}},fetch:()=>{throw Error('no provider');}});
- const products=[{id:'bad',title:'실패 상품'},{id:'p',title:'정상 상품'},{id:'empty',title:'대기 상품'}];
+ let products=[{id:'bad',title:'실패 상품'},{id:'p',title:'정상 상품'},{id:'empty',title:'대기 상품'}];
  const render=()=>{cursor=0;const tree=BatchTranslationPanel({products,onOpen(){}});effects.splice(0).forEach(fn=>fn());return tree;};
  render();await settle();const tree=render();assert.deepEqual(calls,['bad','p','empty']);assert.match(JSON.stringify(tree),/개별 조회 실패/);assert.match(JSON.stringify(tree),/완료 번역이 없습니다/);
  const previews=nodes(tree).filter(n=>n.type===Preview);assert.equal(previews.length,1);assert.equal(previews[0].props.productId,'p');assert.equal(previews[0].props.version,version);assert.equal(previews[0].props.jobId,job.id);assert.equal(previews[0].props.disabled,false);
- const batch=nodes(tree).find(n=>typeof n.props?.onBusyChange==='function');batch.props.onBusyChange(true);const locked=render();assert.equal(nodes(locked).find(n=>n.type===Preview).props.disabled,true);assert.ok(nodes(locked).filter(n=>n.type==='button').every(n=>n.props.disabled));
+ const originalProducts=products,batch=nodes(tree).find(n=>typeof n.props?.onBusyChange==='function');batch.props.onBusyChange(true);const locked=render();assert.equal(nodes(locked).find(n=>n.type===Preview).props.disabled,true);assert.ok(nodes(locked).filter(n=>n.type==='button').every(n=>n.props.disabled));
+ products=[{id:'other',title:'새 선택 상품'}];render();await settle();const changed=render();
+ assert.equal(nodes(changed).find(n=>n.type===Preview).props.disabled,false,'the previous selection cannot keep the new selection busy');
+ products=originalProducts;render();await settle();const returned=render();
+ assert.equal(nodes(returned).find(n=>n.type===Preview).props.disabled,false,'returning to the old selection must not revive its cancelled busy state');
+ const currentBatch=nodes(returned).find(n=>typeof n.props?.onBusyChange==='function');currentBatch.props.onBusyChange(true);render();batch.props.onBusyChange(false);
+ assert.equal(nodes(render()).find(n=>n.type===Preview).props.disabled,true,'a late completion for the old selection cannot unlock a new batch with the same product IDs');
+ currentBatch.props.onBusyChange(false);assert.equal(nodes(render()).find(n=>n.type===Preview).props.disabled,false);
 });
 
 test('batch discovery skips newer jobs from another content revision and keeps the applicable result',async()=>{

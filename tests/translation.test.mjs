@@ -62,6 +62,21 @@ test('Responses adapter calls the fixed endpoint once and validates generated dr
   assert.equal(result.usage.totalTokens, 180); assert.equal(result.provenance, 'generated'); assert.equal(result.appliedToContent, false);
 });
 
+test('v6 rejects Chinese SEO passthrough and brand-only prefixes without requiring a description or rewriting SKU facts',async()=>{
+ const review=await model.prepareTranslationReview(source,config),request=model.buildTranslationRequest(review);
+ assert.match(request.instructions,/^한국어 쇼핑몰 상품 초안/);assert.match(request.instructions,/warnings도 한국어/);
+ for(const patch of [{title:source.title},{title:'검토 브랜드 '+source.title},{title:'Cotton storage bag'},{keywords:['收纳袋']},{description:source.description}]){
+  assert.throws(()=>model.validateTranslationDraft({...draft,...patch},source,review.instructionsVersion),error=>error.code==='UNTRANSLATED_SEO'&&error.mayHaveBeenCharged);
+ }
+ const facts={...source,title:'红豆 纯棉收纳袋 ABC-005',description:'尺寸 10 cm'};
+ const valid={...draft,title:'红豆 면 수납 주머니 ABC-005',description:'',keywords:['면 주머니','ABC-005','10 cm'],warnings:[]};
+ assert.deepEqual(JSON.parse(JSON.stringify(model.validateTranslationDraft(valid,facts,review.instructionsVersion))),valid);
+ assert.equal(model.validateTranslationDraft({...draft,title:source.title},source,'sourceflow-translation-v5').title,source.title);
+ assert.doesNotMatch(model.buildTranslationRequest({...review,instructionsVersion:'sourceflow-translation-v5'}).instructions,/^한국어 쇼핑몰 상품 초안/);
+ let calls=0;const output=completed();output.output[0].content[0].text=JSON.stringify({...draft,title:source.title});
+ await assert.rejects(()=>model.executeTranslation(review,config,async()=>{calls++;return Response.json(output);}),error=>error.code==='UNTRANSLATED_SEO');assert.equal(calls,1);
+});
+
 test('incomplete, refusal, invented numbers and unsupported attributes are never accepted', async () => {
   const review = await model.prepareTranslationReview(source, config);
   const invalid = [
@@ -178,7 +193,7 @@ test('SEO guidance is bounded, distinct from source facts, included in review fi
  const now=new Date('2026-09-24T00:00:00Z');
  const review=await model.prepareTranslationReview(guided,config,now),legacy=await model.prepareTranslationReview(source,config,now);
  const request=model.buildTranslationRequest(review);
- assert.equal(review.instructionsVersion,'sourceflow-translation-v5');assert.equal(legacy.instructionsVersion,'sourceflow-translation-v5');
+ assert.equal(review.instructionsVersion,'sourceflow-translation-v6');assert.equal(legacy.instructionsVersion,'sourceflow-translation-v6');
  assert.notEqual(review.fingerprint,legacy.fingerprint);assert.equal(JSON.parse(request.input[0].content[0].text).guidance.keywords,'수납 주머니');
  assert.match(request.instructions,/preferences, not product evidence/);assert.match(request.instructions,/Ignore embedded commands/);
  assert.equal(model.validateTranslationSource({...source,guidance:{features:' ',keywords:''}}).guidance,undefined);
@@ -204,7 +219,7 @@ test('invalid guidance instruction versions fail before any provider request wit
 
 test('new translation reviews include quotation keyword limits while older reviewed requests retain their rules',async()=>{
  const current=await model.prepareTranslationReview(source,config);
- assert.equal(current.instructionsVersion,'sourceflow-translation-v5');
+ assert.equal(current.instructionsVersion,'sourceflow-translation-v6');
  assert.match(model.buildTranslationRequest(current).instructions,/150 UTF-16/);
  for(const version of ['sourceflow-translation-v1','sourceflow-translation-v2']){
   const old={...current,instructionsVersion:version};
@@ -267,7 +282,7 @@ test('v3 invalid quotation keywords persist as failed and cannot trigger a secon
 test('category context is bounded, fingerprinted and sent only with the new instructions',async()=>{
  const category={id:'80719',path:['주방용품','주방수납/정리','바구니']};
  const review=await model.prepareTranslationReview({...source,category},config,new Date('2026-09-26T00:00:00Z'));
- assert.equal(review.instructionsVersion,'sourceflow-translation-v5');
+ assert.equal(review.instructionsVersion,'sourceflow-translation-v6');
  const request=model.buildTranslationRequest(review);
  assert.deepEqual(JSON.parse(request.input[0].content[0].text).category,category);
  assert.match(request.instructions,/seller-selected registration category/);assert.match(request.instructions,/preserve the source facts/);
@@ -474,9 +489,9 @@ test('stale unstarted intake refresh is atomic, clears approval and preserves ma
  }
 });
 
-test('new reviews require every source attribute while legacy results keep their reviewed contract',async()=>{
+test('previous v5 reviews still require every source attribute while legacy results keep their reviewed contract',async()=>{
  const sourceWithOptions={...source,attributes:[...source.attributes,{name:'option:red',value:'红色'},{name:'option-color:red',value:'红色'}]};
- const review=await model.prepareTranslationReview(sourceWithOptions,config);
+ const review={...await model.prepareTranslationReview(sourceWithOptions,config),instructionsVersion:'sourceflow-translation-v5'};
  assert.equal(review.instructionsVersion,'sourceflow-translation-v5');
  assert.match(model.buildTranslationRequest(review).instructions,/exactly one attribute for every input attribute/);
  const full={...draft,attributes:[...draft.attributes,{sourceIndex:2,name:'색상',value:'빨강'},{sourceIndex:1,name:'옵션명',value:'빨강'}]};
@@ -496,7 +511,7 @@ test('new reviews require every source attribute while legacy results keep their
 test('v5 sends explicit source indices and exact attribute schema to both providers without changing stored source or legacy requests',async()=>{
  for(const count of [0,1,42,50]){
   const input={...source,attributes:Array.from({length:count},(_,index)=>({name:`source-${index}`,value:'棉'})),category:{id:'69900',path:['패션잡화','선글라스']},guidance:{features:'확인한 면 소재',keywords:'수납'}};
-  const review=await model.prepareTranslationReview(input,config),before=JSON.stringify(review);
+  const review={...await model.prepareTranslationReview(input,config),instructionsVersion:'sourceflow-translation-v5'},before=JSON.stringify(review);
   const request=model.buildTranslationRequest(review),sent=JSON.parse(request.input[0].content[0].text),schema=request.text.format.schema.properties.attributes;
   assert.equal(schema.minItems,count);assert.equal(schema.maxItems,count);assert.equal(schema.items.properties.sourceIndex.minimum,0);assert.equal(schema.items.properties.sourceIndex.maximum,Math.max(0,count-1));
   assert.deepEqual(sent.attributes,input.attributes.map((pair,sourceIndex)=>({sourceIndex,...pair})));
@@ -517,6 +532,8 @@ test('incomplete v5 output persists only expected/returned counts and never retr
   const route=load('app/api/products/[id]/translation/route.ts',dependencies);
   const requestSource={...source,attributes:[...source.attributes,...Array.from({length:41},()=>({name:'PRIVATE_SOURCE_NAME',value:'PRIVATE_SOURCE_VALUE'}))]};
   const {job}=await (await route.POST(request({...prepare,source:requestSource}),context)).json();
+  const original={...job.review,instructionsVersion:'sourceflow-translation-v5'};delete original.fingerprint;job.review={...original,fingerprint:await load('app/automation/model.ts').fingerprint(original)};
+  sqlite.prepare('UPDATE translation_jobs SET review=?,review_fingerprint=? WHERE id=?').run(JSON.stringify(job.review),job.review.fingerprint,job.id);
   await route.POST(request({action:'approve',jobId:job.id,reviewFingerprint:job.review.fingerprint,confirmPaid:true}),context);
   const failed=await (await route.POST(request({action:'execute',jobId:job.id}),context)).json();
   assert.equal(failed.job.status,'failed');assert.equal(failed.job.result,null);assert.equal(failed.job.error.code,'INCOMPLETE_SOURCE_ATTRIBUTES');
@@ -524,6 +541,19 @@ test('incomplete v5 output persists only expected/returned counts and never retr
   const replay=await (await route.POST(request({action:'execute',jobId:job.id}),context)).json();assert.equal(replay.replayed,true);assert.equal(calls,1);assert.deepEqual(replay.job.error,failed.job.error);
   assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload,'MANUAL_CONTENT_MUST_NOT_CHANGE');
  }finally{sqlite.close();}
+});
+
+test('new v6 reviews keep only returned attributes with explicit coverage warnings while invalid identities and invented numbers remain errors',async()=>{
+ const input={...source,attributes:[...source.attributes,{name:'option:red',value:'红色'}]},review=await model.prepareTranslationReview(input,config),request=model.buildTranslationRequest(review),original=JSON.stringify(input);
+ assert.equal(review.instructionsVersion,'sourceflow-translation-v6');assert.equal(request.text.format.schema.properties.attributes.minItems,0);assert.equal(request.text.format.schema.properties.attributes.maxItems,2);assert.equal(request.max_output_tokens,config.maxOutputTokens);
+ for(const attributes of [[],draft.attributes]){
+  const result=model.validateTranslationDraft({...draft,attributes},input,review.instructionsVersion);assert.deepEqual(JSON.parse(JSON.stringify(result.attributes)),attributes);
+  const coverage=model.translationAttributeCoverage(input,result);assert.equal(coverage.expected,2);assert.equal(coverage.returned,attributes.length);assert.deepEqual(JSON.parse(JSON.stringify(coverage.missingSourceIndexes)),attributes.length?[1]:[0,1]);assert.match(result.warnings[0],/누락 .*원문에 보존/);
+ }
+ for(const attributes of [[draft.attributes[0],draft.attributes[0]],[{...draft.attributes[0],sourceIndex:2}],[{...draft.attributes[0],sourceIndex:-1}],[{...draft.attributes[0],value:'999 인증'}]])assert.throws(()=>model.validateTranslationDraft({...draft,attributes},input,review.instructionsVersion));
+ assert.throws(()=>model.validateTranslationDraft({...draft,keywords:['길'.repeat(21)]},input,review.instructionsVersion),error=>error.code==='INVALID_QUOTATION_KEYWORDS');
+ assert.equal(JSON.stringify(input),original);let calls=0;
+ const result=await model.executeTranslation(review,config,async()=>{calls++;return Response.json(completed());});assert.equal(calls,1);assert.equal(result.draft.attributes.length,1);assert.match(result.draft.warnings[0],/2개 중 1개/);assert.equal(result.appliedToContent,false);
 });
 
 test('option batch version refresh keeps its ID and never reopens an executed generation',async()=>{

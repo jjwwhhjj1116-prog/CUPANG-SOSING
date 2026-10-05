@@ -81,6 +81,7 @@ export async function POST(request: Request, context: {params: Promise<{id: stri
     const publicDetailImageCount = profile.mappings.some(mapping => mapping.field === 'detailHtml') ? detail.images.length : 0;
     const report = {...generated.report,company:saved.company,mappingCoverage,warnings,productId:id,categoryId:saved.categoryContext.categoryId,productVersion:product.updated_at,contentRevision:content.revision,optionRevision:options.revision,quotationRevision:saved.state.revision,profileId:profile.id,profileRevision:profile.revision,templateSha256:template.sha256,
       legalDocuments:{applicability:legal.applicability,count:legal.attachments.length},
+      ...(template.workbookEvidence?{workbookEvidence:template.workbookEvidence}:{}),
       ...(detailConfig ? { publicDetailImages: { count: publicDetailImageCount, publishedByThisRequest: input.action !== 'preview' && publicDetailImageCount > 0 } } : {}),submissionReady:false};
     if(input.action === 'preview') return json({fingerprint:revision,report,submissionReview:fields.review,filename,rows:generated.values,headers:template.headers});
     const bytes = input.action === 'download' ? new Uint8Array(generated.bytes) : createReviewBundle(product,content,assets,[

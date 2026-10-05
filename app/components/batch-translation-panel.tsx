@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { readBatchTranslationTarget, type BatchTranslationTarget } from '@/app/batch-translation';
 import { BatchTranslationApply } from '@/app/components/batch-translation-apply';
 import { TranslationIntegratedPreview } from '@/app/components/translation-integrated-preview';
@@ -7,12 +7,13 @@ import { TranslationIntegratedPreview } from '@/app/components/translation-integ
 type Item = { id: string; title: string };
 type Result = { id: string; target?: BatchTranslationTarget; error?: string };
 export function BatchTranslationPanel({ products, onOpen }: { products: Item[]; onOpen: (id: string) => void }) {
-  const [batchBusy,setBatchBusy] = useState(false);
+  const [batchBusyToken,setBatchBusyToken] = useState<{key:string}|null>(null);
   const [attempt,setAttempt] = useState(0);
   const [snapshot,setSnapshot] = useState<{ key: string; results: Result[]; done: boolean }>({key:'',results:[],done:false});
   const ids = JSON.stringify(products.map(product=>product.id));
   const key = JSON.stringify([ids,attempt]);
-  useEffect(()=>{setBatchBusy(false);},[key]);
+  const selectionToken = useMemo(()=>({key}),[key]);
+  const batchBusy = batchBusyToken === selectionToken;
   const results = snapshot.key === key ? snapshot.results : [];
   const busy = snapshot.key !== key || !snapshot.done;
   useEffect(()=>{
@@ -37,7 +38,7 @@ export function BatchTranslationPanel({ products, onOpen }: { products: Item[]; 
     <p>선택 상품의 현재 버전과 일치하는 최신 완료 번역을 모았습니다. 각 상품의 변경 전후를 확인하고 SEO·표시사항·옵션을 함께 저장할 수 있습니다. 새 유료 번역과 이미지 처리, 등록 전송은 실행하지 않습니다.</p>
     <p role="status">확인 {results.length} / {products.length}개</p>
     <button type="button" className="btn ghost" disabled={busy||batchBusy} onClick={()=>setAttempt(value=>value+1)}>완료 번역 다시 조회</button>
-    <BatchTranslationApply key={key} products={products} disabled={busy} onBusyChange={setBatchBusy}/>
+    <BatchTranslationApply key={key} products={products} disabled={busy} onBusyChange={value=>setBatchBusyToken(previous=>value?selectionToken:previous===selectionToken?null:previous)}/>
     {products.map(product=>{
       const result=results.find(item=>item.id===product.id),target=result?.target;
       return <section key={product.id} className="translation-review"><h4>{product.title}</h4>

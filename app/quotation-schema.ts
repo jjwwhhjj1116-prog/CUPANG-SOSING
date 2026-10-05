@@ -489,8 +489,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       }
       case 'noticeImportDeclaration': return contentValue(content.label.importDeclaration ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeCountryOfOrigin': return contentValue(content.label.countryOfOrigin);
-      case 'marathon_noticeKind': return contentValue(content.label.productType ?? { value: '', provenance: 'unverified', updatedAt: null });
-      case 'marathon_noticeCaution': return contentValue(content.label.precautions);
+      case 'noticeKind': case 'marathon_noticeKind': return contentValue(content.label.productType ?? { value: '', provenance: 'unverified', updatedAt: null });
+      case 'noticeCaution': case 'marathon_noticeCaution': return contentValue(content.label.precautions);
       case 'noticePermission': return contentValue(content.label.certification);
       case 'noticeKc': case 'yoga_noticeKc': case 'brace_noticeKc': case 'glove_noticeKc': return contentValue(content.label.kcInformation ?? { value: '', provenance: 'unverified', updatedAt: null });
       case 'noticeComponents': return contentValue(content.label.components ?? { value: '', provenance: 'unverified', updatedAt: null });

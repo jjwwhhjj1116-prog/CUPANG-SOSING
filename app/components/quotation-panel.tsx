@@ -71,34 +71,34 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
       .finally(()=>{if(!controller.signal.aborted)setContextLoaded(true);});
     return()=>controller.abort();
   },[productId,preferredProfileId,loadAttempt,navigationTarget?.categoryId]);
-  async function request(action:'preview'|'export') {
-    if(activeRequest.current||profileRequest.current||dirty||!contextLoaded||!selected?.template||(action==='export'&&!preview))return;
+  async function request(action:'preview'|'export'|'download') {
+    if(activeRequest.current||profileRequest.current||dirty||!contextLoaded||!selected?.template||(action!=='preview'&&!preview))return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true);setError('');setMessage('');
     try {
-      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation`,{method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,profileId,...(!useSavedRow?{dataStartRow:startRow}:{}),...(action==='export'?{fingerprint:preview?.fingerprint}:{})})});
+      const response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation`,{method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,profileId,...(!useSavedRow?{dataStartRow:startRow}:{}),...(action!=='preview'?{fingerprint:preview?.fingerprint}:{})})});
       if(controller.signal.aborted)return;
       if(!response.ok){const body=await response.json() as {error?:string};if(response.status===409)setPreview(null);throw new Error(body.error||'견적서 생성 실패');}
       if(action==='preview'){const data=await response.json() as Preview;if(!controller.signal.aborted)setPreview(data);}
       else {
         const blob=await response.blob();if(controller.signal.aborted)return;
-        const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download='SourceFlow-quotation-review.zip';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-        setMessage('견적서와 첨부 자료를 내려받았습니다. Supplier Hub에 전송되지는 않았습니다.');
+        const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=action==='download'?preview!.filename:'SourceFlow-quotation-review.zip';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        setMessage(action==='download'?'채운 견적서 파일을 내려받았습니다. Supplier Hub에 전송되지는 않았습니다.':'견적서와 첨부 자료를 내려받았습니다. Supplier Hub에 전송되지는 않았습니다.');
       }
     }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'견적서 생성 실패');}
     finally{if(activeRequest.current===controller){activeRequest.current=null;setBusy(false);}}
   }
   const selected=profiles.find(profile=>profile.id===profileId);
-  async function prepareOfficialTemplate() {
+  async function prepareOfficialTemplate(mode:'schema'|'workbook'='schema') {
     if(activeRequest.current||profileRequest.current||dirtyRef.current||!contextLoaded||!selected||selected.template)return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true);setTemplateMessage('');setTemplateError('');setPreview(null);
     try {
-      const saved=await prepareOfficialHubProfileTemplate(selected,controller.signal);
+      const saved=await prepareOfficialHubProfileTemplate(selected,controller.signal,mode);
       if(controller.signal.aborted)return;
       setProfiles(current=>current.map(profile=>profile.id===saved.id?saved:profile));
       setStartRow(quotationStartRow(saved.template));setUseSavedRow(true);setProfileVersion(version=>version+1);
-      setTemplateMessage('선택한 회사·카테고리의 공식 양식을 연결했습니다. 견적 자료와 필수 서류를 검토한 뒤 전송해주세요.');
+      setTemplateMessage(mode==='workbook'?'공식 파일의 열·선택값 기준으로 연결했습니다. 별도 Excel JSON 양식은 미확인입니다. 견적 자료와 미연결 항목을 검토한 뒤 파일을 내려받아주세요.':'선택한 회사·카테고리의 공식 양식을 연결했습니다. 견적 자료와 필수 서류를 검토한 뒤 전송해주세요.');
     } catch(cause) {
       if(!controller.signal.aborted)setTemplateError(cause instanceof Error?cause.message:'공식 양식을 준비하지 못했습니다. 초안은 유지됩니다.');
     } finally {
@@ -132,6 +132,8 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
       setDirty(value);
     }} onSaved={()=>{setPreview(null);onSaved?.();}}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
     {selected&&!selected.template&&<div className="panel-note"><strong>전송할 공식 견적 양식 준비</strong><p>1~7단계 초안은 저장되어 있습니다. 전송 전에 현재 회사와 저장한 전체 카테고리 경로를 확인하고 공식 Excel을 연결합니다.</p><button type="button" className="btn primary" disabled={busy||dirty||refreshingProfiles||!contextLoaded||!selected.hubSchema} onClick={()=>void prepareOfficialTemplate()}>공식 견적 양식 준비</button>{!selected.hubSchema&&<small>카테고리·양식 관리에서 Supplier Hub 상세 양식을 먼저 확인해주세요.</small>}</div>}
+    {selected&&!selected.template&&(selected.hubSchema?.metadata.scopeType??selected.hubSchema?.metadata.scope)==='Retail_Categorized_Single'&&<div className="panel-note"><p>별도 Excel 상세 양식을 읽을 수 없다면 공식 파일의 열·선택값으로 연결할 수 있습니다. 현재 회사와 카테고리를 다시 확인하며, Excel JSON 미확인 상태와 기존 전송 검사는 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void prepareOfficialTemplate('workbook')}>공식 파일 기준으로 연결</button></div>}
+    {selected?.template?.workbookEvidence&&<p role="status" className="panel-note">공식 XLSX 파일 기준 연결 · 별도 Excel JSON 양식 미확인. 필수값·미연결 항목·첨부 검사는 그대로 적용됩니다.</p>}
     {templateError&&<p role="alert">{templateError} 상품 초안과 직접 수정한 값은 유지됩니다.</p>}{templateMessage&&<p role="status">{templateMessage}</p>}
     {onPrepareSubmission&&<div className="panel-stack"><button type="button" className="btn rose" disabled={dirty||busy||refreshingProfiles||!contextLoaded||!selected} onClick={()=>{
       if(dirtyRef.current||activeRequest.current||profileRequest.current||!contextLoaded||!selected)return;
@@ -168,6 +170,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
       <QuotationMappingReview findings={preview.report.mappingCoverage ?? []} disabled={busy||dirty} onManage={onManageCategories} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />
       <ul className="quote-warnings">{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>
       <small>콘텐츠 v{preview.report.contentRevision} · 옵션 v{preview.report.optionRevision} · 카테고리 연결 v{preview.report.profileRevision}</small>
+      <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('download')}>채운 견적서 파일 다운로드</button>
       <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('export')}>채운 견적서 + 첨부 자료 ZIP 다운로드</button>
     </>}</details>
   </section>;

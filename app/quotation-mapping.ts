@@ -108,7 +108,7 @@ export function refreshCategoryMappings(
 }
 
 /** Creates an editable draft from exact labels in the chosen category only. */
-export function suggestQuotationMappings(headers: readonly string[], categoryId: string | null, requirementRow?: readonly string[] | null,hubSchema?:HubSchemaSnapshot): QuotationMappingSuggestion {
+export function suggestQuotationMappings(headers: readonly string[], categoryId: string | null, requirementRow?: readonly string[] | null,hubSchema?:HubSchemaSnapshot,columnGroups?:readonly (string|null)[]): QuotationMappingSuggestion {
   const schema = getQuotationSchema(categoryId,hubSchema?.categoryPath,hubSchema);
   const candidates = new Map<string, Set<CategoryField>>();
   const prices=primaryNumericTextFields(schema.fields);
@@ -122,9 +122,22 @@ export function suggestQuotationMappings(headers: readonly string[], categoryId:
   const mappings: ColumnMapping[] = []; const unmatchedColumns: number[] = []; const ambiguousColumns: number[] = [];
   const normalized = headers.map(headerKey);
   headers.forEach((_header, column) => {
-    const key = normalized[column]; const fields = candidates.get(key);
+    const key = normalized[column]; let fields = candidates.get(key);
     if (!fields?.size) { unmatchedColumns.push(column); return; }
-    if (fields.size !== 1 || normalized.filter(value => value === key).length > 1) { ambiguousColumns.push(column); return; }
+    let repeated=normalized.filter(value => value === key).length>1;
+    // The official fashion file has two '출시 연도' columns: a hidden
+    // product attribute and a logistics season field. Only its original
+    // merged groups can distinguish their exact wires; header order cannot.
+    const group=columnGroups?.[column];
+    if((fields.size!==1||repeated)&&group){
+      const scoped=schema.fields.filter(field=>fields!.has(field.id as CategoryField)&&(
+        group==='비노출 속성'&&field.visibility==='hidden'&&field.hubWire?.name===field.label
+          &&JSON.stringify(field.hubWire.path)===JSON.stringify(['productPage','unexposedAttributes'])
+        ||group==='시즌 속성'&&field.section==='logistics'&&!field.hubWire?.name&&field.hubWire?.path.length===2
+          &&field.hubWire.path[0]==='logisticsPage'&&['fashionYear','fashionSeason'].includes(field.hubWire.path[1])));
+      if(scoped.length===1){fields=new Set([scoped[0].id as CategoryField]);repeated=normalized.filter((value,index)=>value===key&&columnGroups?.[index]===group).length>1;}
+    }
+    if (fields.size !== 1 || repeated) { ambiguousColumns.push(column); return; }
     const field = [...fields][0];
     const markedRequired = /^[*＊]\s*|[*＊]\s*$/u.test(headers[column].trim());
     mappings.push({ column, field, required: Boolean(required.get(field)) || markedRequired || requirementRow?.[column]?.trim() === '필수' });

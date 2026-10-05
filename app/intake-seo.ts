@@ -1,9 +1,9 @@
-import type { TranslationJob } from '@/app/automation/translation';
+import { translationAttributeCoverage, type TranslationJob } from '@/app/automation/translation';
 import { runReviewedTranslation } from '@/app/reviewed-translation';
 import { awaitIntakeTranslation } from '@/app/intake-translation-result';
 
 /** User-started intake produces editable content; never submits to Supplier Hub. */
-export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal, onCompleted: () => void = () => {}) {
+export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal, onCompleted: () => void = () => {}, onReviewRequired: () => void = () => {}) {
   if (signal.aborted) return '';
   let generating = false;
   // Keep source-review warnings visible at the entry point as well as in the
@@ -45,7 +45,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
       next={action:'prepare-intake-options',expectedVersion:body.productVersion};continue;
     }
     const remainder=body.remainingOptions ? ` 남은 옵션 번역 항목 ${body.remainingOptions}개는 원문에 보존됩니다.` : '';
-    if(!body.autoDraft || body.job.review?.destination !== 'Cloudflare Workers AI')return withWarnings(`수집 원문·카테고리·옵션으로 SEO 요청을 준비했습니다.${remainder}`);
+    if(!body.autoDraft || !['Cloudflare Workers AI','Google 번역'].includes(body.job.review?.destination))return withWarnings(`수집 원문·카테고리·옵션으로 SEO 요청을 준비했습니다.${remainder}`);
     generating=true;
     let job=body.job;
     if(job.status==='prepared'||job.status==='approved'){
@@ -57,6 +57,12 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     if(signal.aborted)return '';
     if(job.status!=='completed'||!job.result)return withWarnings(`상품은 저장됐지만 SEO 초안은 아직 반영되지 않았습니다. ${job.error?.message ?? (job.status==='running'?'생성 중입니다. 작업 상태를 다시 확인해주세요.':'생성 결과를 확인해주세요.')}`);
     rememberWarnings(job);
+    const coverage=job.review.instructionsVersion==='sourceflow-translation-v6'?translationAttributeCoverage(job.review.source,job.result.draft):null;
+    const partial=!!coverage?.missingSourceIndexes.length;
+    const reviewRequired=()=>{
+      onReviewRequired();
+      return withWarnings(`검토 필요 · 상품 초안을 저장했습니다. 생성 결과에서 속성·옵션 번역 ${coverage!.missingSourceIndexes.length}개가 누락됐습니다. 누락 항목은 번역 완료로 처리하지 않았으며 원문과 직접 수정한 값은 유지합니다. 1~7단계에서 확인·수정해주세요.${remainder}`);
+    };
     const applyVersion=body.applyVersion??job.productVersion;
     const send=async(action:'preview'|'apply',fingerprint?:string)=>{
       const response=await fetcher(`${base}/translation-apply`,{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,jobId:job.id,expectedVersion:applyVersion,...(body.optionsOnly?{scope:'options'}:{}),...(fingerprint?{fingerprint}:{})})});
@@ -67,6 +73,9 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     const preview=await send('preview');if(signal.aborted)return '';
     if(preview.productId!==productId||preview.productVersion!==applyVersion||!Array.isArray(preview.preview)||typeof preview.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(preview.fingerprint))throw Error('초안 반영 대상이 일치하지 않습니다.');
     if(!preview.preview.length){
+      // A completed partial response remains reusable, but is not evidence that
+      // every option is translated. A verified no-op also preserves manual edits.
+      if(partial)return reviewRequired();
       // An unchanged SEO result does not mean untranslated options are done.
       // Advance without writing, retaining the version checked by preview.
       if(!body.optionsOnly){next={action:'prepare-intake-options',expectedVersion:applyVersion};continue;}
@@ -74,6 +83,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     }
     const saved=await send('apply',preview.fingerprint);if(signal.aborted)return '';
     if(saved.productId!==productId||typeof saved.productVersion!=='string'||!Number.isFinite(Date.parse(saved.productVersion))||!Number.isInteger(saved.applied)||(saved.applied??0)<1)throw Error('초안 저장 결과를 확인해주세요.');
+    if(partial)return reviewRequired();
     appliedAny=true;next={action:'prepare-intake-options',expectedVersion:saved.productVersion};
     }
     return withWarnings('SEO·옵션 초안을 일부 반영했습니다. 남은 옵션은 SEO 단계에서 확인해주세요.');
@@ -84,7 +94,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
 
 /** Message text is never evidence that all pending draft fields were saved. */
 export async function prepareIntakeSeoOutcome(productId: string, fetcher: typeof fetch, signal: AbortSignal) {
-  let completed = false;
-  const message = await prepareIntakeSeo(productId, fetcher, signal, () => { completed = true; });
-  return { completed, message };
+  let completed = false, reviewRequired = false;
+  const message = await prepareIntakeSeo(productId, fetcher, signal, () => { completed = true; }, () => { reviewRequired = true; });
+  return { completed, reviewRequired, message };
 }

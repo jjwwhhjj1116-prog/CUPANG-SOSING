@@ -25,3 +25,12 @@ test('abort stops before the next page and a legacy single page remains compatib
   assert.equal(calls,1);
   assert.equal((await load(undefined,async()=>Response.json({profiles:[{id:'legacy'}]})))[0].id,'legacy');
 });
+
+test('non-JSON and malformed responses expose only the request stage and HTTP status, never upstream bodies',async()=>{
+  for(const [status,type,text,reason]of [[200,'text/html','<!DOCTYPE html>PRIVATE_LOGIN_BODY','HTML 응답'],[503,'text/html','PRIVATE_SERVER_BODY','HTML 응답'],[403,'text/plain','PRIVATE_ACCESS_BODY','JSON이 아닌 응답'],[200,'application/json','<!DOCTYPE html>PRIVATE_JSON_BODY','JSON 형식 오류'],[200,'application/json','null','JSON 형식 오류']]){
+    await assert.rejects(load(undefined,async()=>new Response(text,{status,headers:{'content-type':type}})),error=>{
+      assert.match(error.message,/카테고리 목록 조회/);assert.ok(error.message.includes('HTTP '+status));assert.ok(error.message.includes(reason));assert.doesNotMatch(error.message,/PRIVATE_|DOCTYPE|Unexpected/);return true;
+    });
+  }
+  assert.equal((await load(undefined,async()=>new Response('{"profiles":[{"id":"valid"}]}',{headers:{'content-type':'application/json; charset=utf-8'}})))[0].id,'valid');
+});

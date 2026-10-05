@@ -120,9 +120,10 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
       ||types.every(type=>type===undefined||type==='null')&&Array.isArray(enums)&&enums.some(value=>typeof value==='number')&&enums.every(value=>value===null||typeof value==='number');
     const pathBinding=snapshot.inputBindings==='couplus-paths-v1'&&!wire.name?couplusQuotationInput(wire.path):undefined;
     // Hub's brand dropdown is a suggestion list beside a free text input.
-    // Keep its initialization values, but enforce only a real JSON enum.
-    if(wire.path.length===2&&wire.path[0]==='productPage'&&wire.path[1]==='brand'&&!wire.name
-      &&node.enum===undefined&&types.includes('string')&&types.every(type=>type==='string'||type==='null'))choices=undefined;
+    // A suggestion must not replace the owner's captured brand setting.
+    const freeTextBrand=wire.path.length===2&&wire.path[0]==='productPage'&&wire.path[1]==='brand'&&!wire.name
+      &&node.enum===undefined&&types.includes('string')&&types.every(type=>type==='string'||type==='null');
+    if(freeTextBrand)choices=undefined;
     // Observed price/packaging inputs carry numeric text. Other string inputs
     // must never acquire numeric sources merely because their label matches.
     const numericText=Boolean(pathBinding&&['supplyPrice','salePrice','msrp','packagedWeightG'].includes(pathBinding)
@@ -148,11 +149,14 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
       &&wire.path.length===2&&wire.path[0]==='imagePage'&&['msrpAgree','labelContactAgreed'].includes(wire.path[1]);
     if(draftDefault===undefined&&imageAgreement)draftDefault='true';
     else if(draftDefault===undefined&&initialize)draftDefault=couplusScalarDraftDefault(wire.path.at(-1)!,node);
+    // A named-array text placeholder is not a stored image reference. Keep
+    // missing label attachments empty so normal required-file review can run.
+    if(canonical?.type==='images'&&wire.name&&draftDefault==='해당사항없음')draftDefault='';
     if(node.enum!==undefined&&node.dropdown!==undefined&&JSON.stringify(node.enum)!==JSON.stringify(node.dropdown)
       &&!(types.includes('null')&&Array.isArray(node.enum)&&JSON.stringify(node.enum.filter(value=>value!==null))===JSON.stringify(node.dropdown)))issue(path);
     // Keep primitive choices for exact equality and the public falsy first-item
     // fallback. Compilation already checks the array shape and size above.
-    const settingValues=node.dropdown??node.enum;
+    const settingValues=freeTextBrand?undefined:node.dropdown??node.enum;
     const couplusSetting:CouplusSettingRule|undefined=snapshot.settingsInitialization==='couplus-options-v1'&&canonical&&isCouplusSettingInput(pathBinding)
       ?{input:pathBinding,...(Array.isArray(settingValues)?{values:[...settingValues]}:{})}:undefined;
     const stringValue=!numeric&&!types.includes('boolean');

@@ -21,6 +21,27 @@ export function supplierHubRequirementRow(inspection: XlsxInspection, sheetName:
   if (!supplierHubEntryLayout(inspection, sheetName, headerRow)) return null;
   return inspection.sheets.find(value => value.name === sheetName)?.rows.find(value => value.rowNumber === headerRow + 1)?.values ?? null;
 }
+/** Original merged section labels, never inferred from column order or blanks. */
+export function xlsxMergedHeaderLabels(files:Map<string,Uint8Array>,inspection:XlsxInspection,sheetName:string,row:number,columnCount:number):(string|null)[]{
+  const empty=()=>Array<string|null>(columnCount).fill(null),labels=empty();
+  const values=inspection.sheets.find(sheet=>sheet.name===sheetName)?.rows.find(item=>item.rowNumber===row)?.values;
+  if(!values)return labels;
+  const worksheet=xml(files.get(xlsxWorksheetPath(files,sheetName))),occupied=new Set<number>();
+  const column=(letters:string)=>[...letters].reduce((value,letter)=>value*26+letter.charCodeAt(0)-64,0)-1;
+  for(const cell of children(worksheet,'mergeCells').flatMap(group=>children(group,'mergeCell'))){
+    const ref=cell.attributes.ref??'',match=/^([A-Z]{1,3})([1-9]\d*):([A-Z]{1,3})([1-9]\d*)$/.exec(ref);
+    if(!match)return empty();
+    const fromRow=Number(match[2]),toRow=Number(match[4]);
+    if(fromRow>row||toRow<row)continue;
+    const start=column(match[1]),end=column(match[3]);
+    if(fromRow!==row||toRow!==row||start>end||end>=columnCount||!values[start]?.trim())return empty();
+    for(let index=start;index<=end;index++){
+      if(occupied.has(index)||index>start&&values[index]?.trim())return empty();
+      occupied.add(index);labels[index]=values[start].trim();
+    }
+  }
+  return labels;
+}
 /** Read only static list rules covering a specific cell; ambiguous rules are not guessed. */
 export function xlsxChoiceLists(files: Map<string, Uint8Array>, inspection: XlsxInspection, sheetName: string, columns: readonly number[], row: number) {
   const sheet = xml(files.get(xlsxWorksheetPath(files, sheetName)));

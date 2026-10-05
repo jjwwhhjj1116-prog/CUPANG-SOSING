@@ -1,4 +1,5 @@
 import {compileHubQuotationSchema,validateHubSchemaSnapshot} from '@/app/supplier-hub-schema';
+import {validateOfficialWorkbookEvidence,type OfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 // Aggregate UTF-8 JSON request limit; per-field character limits still apply.
 export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
 export class CategoryProfileConflictError extends Error {}
@@ -530,6 +531,7 @@ export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;
   sheetName: string; headerRow: number; headers: string[];
   storageKey?: string; dataStartRow?: number;
+  workbookEvidence?:OfficialWorkbookEvidence;
 };
 /** Older profiles retain their original header-following default without rewriting stored payloads. */
 export function quotationStartRow(template?: TemplateDefinition | null): number {
@@ -575,6 +577,10 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
     template = { name: string(value.name, '견적서 파일 이름', 240), format: value.format as TemplateDefinition['format'], sha256: value.sha256.toLowerCase(), sheetName: string(value.sheetName ?? '', '시트 이름', 120, true), headerRow: Number(value.headerRow), headers,
       ...(value.dataStartRow !== undefined ? { dataStartRow: Number(value.dataStartRow) } : {}),
       ...(value.storageKey !== undefined ? { storageKey: string(value.storageKey, '견적서 저장 경로', 600) } : {}), };
+    if(value.workbookEvidence!==undefined){
+      if(template.format!=='xlsx'||template.headerRow!==5||template.dataStartRow!==9)throw Error('공식 파일 연결의 작성 시트 구성이 다릅니다.');
+      template.workbookEvidence=validateOfficialWorkbookEvidence(value.workbookEvidence,template.sha256,hubSchema);
+    }
   }
   if (!Array.isArray(input.mappings) || input.mappings.length > 200) throw new Error('견적서 열 연결을 확인해주세요.');
   if (!template && input.mappings.length) throw new Error('견적서 파일을 먼저 연결해주세요.');
@@ -610,6 +616,7 @@ export function categoryProfileIssues(profile: CategoryProfileInput): string[] {
   else if (!usableCategoryCode(profile.categoryId)) issues.push('카테고리 번호 형식 오류 · 저장 설정에서 번호를 수정해주세요.');
   if (!profile.template) issues.push('카테고리에 맞는 견적서 양식 미연결');
   else if (!profile.mappings.length) issues.push('견적서 열과 상품 자료 연결 필요');
+  if(profile.template?.workbookEvidence)issues.push('공식 XLSX 원본의 열·선택값 기준으로 연결했습니다. 별도 Excel JSON 양식은 미확인입니다. 미연결 항목과 전송 검사는 그대로 적용됩니다.');
   return issues;
 }
 
