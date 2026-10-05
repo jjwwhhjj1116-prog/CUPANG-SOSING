@@ -10,6 +10,7 @@ import { ImageSizeNotice } from '@/app/components/image-size-notice';
 import { currentLabelLayout, moveLabelField, type LabelLayout } from '@/app/product-content';
 import { type CustomLabel } from '@/app/product-content';
 import { CustomLabelEditor } from '@/app/components/custom-label-editor';
+import { attachResizedImage, readResizeSource, renderResizedImage, type ResizeSource, type ResizedImage } from '@/app/local-image-resize';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -73,11 +74,19 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const setAssetFilter=(filter:AssetEditorFilter)=>setAssetFilterOverride({step:filterStep,filter});
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number } | null>>({});
+  const [resizeSource,setResizeSource]=useState<ResizeSource|null>(null);
+  const [resizeWidth,setResizeWidth]=useState('');const [resizeHeight,setResizeHeight]=useState('');
+  const [resizeKeepRatio,setResizeKeepRatio]=useState(true);
+  const [resizePreview,setResizePreview]=useState<(ResizedImage&{url:string})|null>(null);
+  const [resizeAdded,setResizeAdded]=useState<{version:string;keys:string[]}>({version:'',keys:[]});
+  const resizeUpload=useRef<{key?:string}>({});
+  useEffect(()=>()=>{if(resizePreview)URL.revokeObjectURL(resizePreview.url);},[resizePreview]);
   const currentProductTitle = useRef(product.title);
   useEffect(() => { currentProductTitle.current = product.title; }, [product.title]);
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/content`;
   const applyLoaded = useCallback((saved: ProductContent) => {
     setContent(saved); setDraft(draftFrom(saved, currentProductTitle.current)); setLoaded(true); setConflict(false); setError(''); setMessage('');
+    setResizeSource(null);setResizePreview(null);resizeUpload.current={};
   }, []);
   const load = useCallback(async () => {
     if(activeRequest.current)return;
@@ -103,8 +112,9 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const detailDirty = JSON.stringify(draft.detail) !== JSON.stringify(initial.detail);
   const labelClearDirty = draft.labelClears.some(key => content.label[key].provenance !== 'manual');
   const dirty = (editingDetail && detailDirty) || (section==='이미지'?imageStageRoles(focusedAssetRole).some(role=>JSON.stringify(draft.assets[role])!==JSON.stringify(initial.assets[role])):JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey])) || (section==='표시사항'&&(labelClearDirty||draft.labelProductNameLinked!==initial.labelProductNameLinked||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
-  const anyDirty = JSON.stringify({ ...draft, labelClears: [] }) !== JSON.stringify(initial) || labelClearDirty;
-  const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion);
+  const resizeDirty=Boolean(resizeSource&&(resizePreview||resizeWidth!==String(resizeSource.width)||resizeHeight!==String(resizeSource.height)));
+  const anyDirty = JSON.stringify({ ...draft, labelClears: [] }) !== JSON.stringify(initial) || labelClearDirty || resizeDirty;
+  const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion && product.updated_at !== resizeAdded.version);
   useEffect(() => {
     if (!changedElsewhere || busy || loading || activeRequest.current) return;
     const controller = new AbortController();
@@ -119,11 +129,56 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   }, [changedElsewhere, anyDirty, endpoint, applyLoaded, product.updated_at, busy, loading]);
   let imageKeys: string[] = [];
   try { imageKeys = productImageKeys(product.image_keys); } catch { /* API reports invalid stored references on save. */ }
+  // Keep a confirmed new attachment visible until the parent refresh arrives;
+  // a subsequent product snapshot remains authoritative, including removals.
+  if(!product.updated_at||Date.parse(product.updated_at)<Date.parse(resizeAdded.version))imageKeys=[...new Set([...imageKeys,...resizeAdded.keys])];
   const visibleImages = orderedEditorImages(imageKeys, draft.assets, assetFilter);
   const activePreview = previewKey && imageKeys.includes(previewKey) ? previewKey : visibleImages[0] ?? null;
   const detailPreview = focusedAssetRole === 'detail' ? detailImageKeys(draft.assets).filter(key => imageKeys.includes(key)) : [];
   const unavailableImages = [...new Set(Object.values(draft.assets).flat())].filter(key => !imageKeys.includes(key));
   const sectionTitle = section === '이미지' && focusedAssetRole ? assetRoles[focusedAssetRole] : section;
+
+  async function resizeAction(action:(signal:AbortSignal)=>Promise<void>) {
+    if(!loaded||busy||loading||conflict||activeRequest.current)return;
+    const controller=new AbortController();activeRequest.current=controller;setBusy(true);setError('');setMessage('');
+    try{await action(controller.signal);}catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'이미지 크기를 조절하지 못했습니다.');}
+    finally{if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false);}
+  }
+  async function openResize(key:string) {
+    await resizeAction(async signal=>{
+      const source=await readResizeSource(product.id,key,content.revision,signal);
+      if(signal.aborted)return;
+      setResizeSource(source);setResizeWidth(String(source.width));setResizeHeight(String(source.height));setResizeKeepRatio(true);setResizePreview(null);resizeUpload.current={};
+    });
+  }
+  function changeResizeDimension(value:string,axis:'width'|'height') {
+    setResizePreview(null);resizeUpload.current={};
+    if(axis==='width')setResizeWidth(value);else setResizeHeight(value);
+    if(resizeKeepRatio&&resizeSource&&/^\d+$/.test(value)&&Number(value)>0){
+      if(axis==='width')setResizeHeight(String(Math.max(1,Math.round(Number(value)*resizeSource.height/resizeSource.width))));
+      else setResizeWidth(String(Math.max(1,Math.round(Number(value)*resizeSource.width/resizeSource.height))));
+    }
+  }
+  async function previewResize() {
+    if(!resizeSource)return;
+    await resizeAction(async signal=>{
+      const preview=await renderResizedImage(resizeSource,Number(resizeWidth),Number(resizeHeight),signal);
+      if(signal.aborted)return;
+      setResizePreview({...preview,url:URL.createObjectURL(preview.output)});resizeUpload.current={};
+    });
+  }
+  async function applyResize() {
+    if(!resizePreview)return;
+    await resizeAction(async signal=>{
+      const saved=await attachResizedImage(product.id,resizePreview,resizeUpload.current,signal);
+      if(signal.aborted)return;
+      const sourceKey=resizePreview.key,roles=imageStageRoles(focusedAssetRole);
+      setResizeAdded(previous=>({version:saved.productVersion,keys:[...new Set([...previous.keys,saved.key])]}));
+      setDraft(previous=>({...previous,assets:Object.fromEntries(Object.entries(previous.assets).map(([role,keys])=>[role,roles.includes(role as AssetRole)?keys.map(key=>key===sourceKey?saved.key:key):keys])) as Draft['assets']}));
+      setPreviewKey(saved.key);setResizePreview(null);setResizeSource(null);resizeUpload.current={};
+      setMessage('새 이미지를 자료함에 보관하고 현재 단계에서 선택된 원본 위치에 반영했습니다. 이미지 역할·순서를 저장하면 견적에 반영됩니다. 원본과 다른 단계·옵션별 선택은 유지했습니다.');onSaved?.();
+    });
+  }
 
   const fillLabel = useCallback(async () => {
     if(!loaded || busy || loading || activeRequest.current)return;
@@ -242,6 +297,17 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         {imageKeys.length > 0 && <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}><button type="button" className={`btn ${assetFilter === 'all' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'all'} onClick={() => setAssetFilter('all')}>전체 {imageKeys.length}</button>{(Object.entries(assetRoles) as [AssetRole, string][]).map(([role, label]) => <button type="button" key={role} className={`btn ${assetFilter === role ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === role} onClick={() => setAssetFilter(role)}>{label} {draft.assets[role].filter(key => imageKeys.includes(key)).length}</button>)}<button type="button" className={`btn ${assetFilter === 'unassigned' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'unassigned'} onClick={() => setAssetFilter('unassigned')}>미지정 {orderedEditorImages(imageKeys, draft.assets, 'unassigned').length}</button></div><small style={{ color: '#64748b' }}>역할별 저장 순서로 표시합니다. ↑↓로 순서를 바꾸고 이미지를 누르면 크게 볼 수 있습니다.</small></>}
         {unavailableImages.length > 0 && <div className="panel-note"><div><p>현재 상품 이미지 목록에 없는 역할 참조가 {unavailableImages.length}개 있습니다.</p><button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, assets: Object.fromEntries(Object.entries(previous.assets).map(([role, keys]) => [role, keys.filter(key => imageKeys.includes(key))])) as Draft['assets'] }))}>연결이 없는 역할 참조 제외</button></div></div>}
         {editingDetail && <label className="field"><span>상세 설명</span><textarea aria-label="상세페이지 설명" value={draft.detail.description} maxLength={20000} rows={6} onChange={event=>setDraft(previous=>({...previous,detail:{...previous.detail,description:event.target.value}}))}/><small>저장하면 7단계 상세 HTML과 상세페이지 검토 파일에 반영됩니다. 7단계에서 직접 수정한 HTML은 유지됩니다.</small></label>}
+        {resizeSource&&<section className="panel-stack" aria-label="이미지 크기 조절">
+          <strong>이미지 크기 조절 · 원본 {resizeSource.width}×{resizeSource.height}px</strong>
+          <div className="form-row"><label>가로(px)<input type="number" aria-label="이미지 가로 픽셀" min="1" max="16000" step="1" value={resizeWidth} onChange={event=>changeResizeDimension(event.target.value,'width')}/></label><label>세로(px)<input type="number" aria-label="이미지 세로 픽셀" min="1" max="16000" step="1" value={resizeHeight} onChange={event=>changeResizeDimension(event.target.value,'height')}/></label></div>
+          <label><input type="checkbox" checked={resizeKeepRatio} onChange={event=>{setResizeKeepRatio(event.target.checked);if(event.target.checked&&/^\d+$/.test(resizeWidth))setResizeHeight(String(Math.max(1,Math.round(Number(resizeWidth)*resizeSource.height/resizeSource.width))));setResizePreview(null);resizeUpload.current={};}}/> 원본 가로·세로 비율 유지</label>
+          <small>{resizeKeepRatio?'원본 비율에 맞춰 다른 치수를 함께 조절합니다.':'비율 유지를 끄면 입력한 가로·세로에 맞춰 늘어나거나 눌릴 수 있습니다.'} PNG로 저장되며 최대 10MB·4,000만 픽셀까지 지원합니다.</small>
+          <div className="quote-actions"><button type="button" className="btn ghost" onClick={()=>void previewResize()}>크기 조절 미리보기</button><button type="button" className="btn ghost" onClick={()=>{setResizeSource(null);setResizePreview(null);resizeUpload.current={};}}>크기 조절 취소</button></div>
+          {resizePreview&&<><figure>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={resizePreview.url} alt="크기 조절 결과 미리보기" style={{maxWidth:'100%',maxHeight:400,objectFit:'contain'}}/><figcaption>{resizePreview.outputWidth}×{resizePreview.outputHeight}px · {(resizePreview.output.size/1024).toFixed(1)}KB</figcaption>
+          </figure><button type="button" className="btn primary" onClick={()=>void applyResize()}>새 이미지 추가·현재 선택에 반영</button><small>현재 단계에서 원본을 선택 해제했다면 역할을 다시 지정하지 않습니다. 옵션별 대표 이미지는 아래 옵션 편집에서 새 파일을 선택하세요.</small></>}
+        </section>}
         <div className="image-edit-workspace">
         <section className="image-edit-canvas" aria-label={focusedAssetRole==='detail'?'상세페이지 배치 미리보기':'선택 이미지 미리보기'}>
           {editingDetail && draft.detail.description && <div aria-label="상세 설명 미리보기" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',padding:16}}>{draft.detail.description}</div>}
@@ -268,6 +334,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
               <span>이미지 {index + 1} · 확대</span>
             </button>
             <ImageSizeNotice size={imageSizes[key]} role={role} />
+            <button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 크기 조절`} onClick={()=>void openResize(key)}>크기 조절</button>
             {focusedAssetRole&&<button type="button" className={`btn ${role===focusedAssetRole?'primary':'ghost'}`} aria-pressed={role===focusedAssetRole} onClick={()=>assign(key,role===focusedAssetRole?'':focusedAssetRole)}>{role===focusedAssetRole?'선택 해제':`${assetRoles[focusedAssetRole]}로 선택`}</button>}
             <label className="field"><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} onChange={event => assign(key, event.target.value as AssetRole | '')}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
             {role && <div className="image-asset-order"><span>{assetRoles[role]} {position + 1}번째</span><div><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}

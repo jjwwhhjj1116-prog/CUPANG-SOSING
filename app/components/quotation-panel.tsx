@@ -11,6 +11,7 @@ import { QuotationFieldsEditor } from '@/app/components/quotation-fields-editor'
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { selectQuotationProfile } from '@/app/quotation-profile-selection';
 import { QuotationPreviewReview, type QuotationPreviewReviewData } from '@/app/components/quotation-preview-review';
+import { prepareOfficialHubProfileTemplate } from '@/app/supplier-hub-catalog';
 
 type Preview = {
   fingerprint:string;filename:string;headers:string[];rows:(string|number)[][];
@@ -46,6 +47,8 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
   const [refreshingProfiles,setRefreshingProfiles]=useState(false);
   const [profileRefreshError,setProfileRefreshError]=useState('');
   const [profileVersion,setProfileVersion]=useState(0);
+  const [templateMessage,setTemplateMessage]=useState('');
+  const [templateError,setTemplateError]=useState('');
   useEffect(()=>()=>{profileRequest.current?.abort();},[]);
   useEffect(()=>()=>{activeRequest.current?.abort();},[refreshToken]);
   useEffect(()=>{
@@ -86,6 +89,22 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
     finally{if(activeRequest.current===controller){activeRequest.current=null;setBusy(false);}}
   }
   const selected=profiles.find(profile=>profile.id===profileId);
+  async function prepareOfficialTemplate() {
+    if(activeRequest.current||profileRequest.current||dirtyRef.current||!contextLoaded||!selected||selected.template)return;
+    const controller=new AbortController();activeRequest.current=controller;
+    setBusy(true);setTemplateMessage('');setTemplateError('');setPreview(null);
+    try {
+      const saved=await prepareOfficialHubProfileTemplate(selected,controller.signal);
+      if(controller.signal.aborted)return;
+      setProfiles(current=>current.map(profile=>profile.id===saved.id?saved:profile));
+      setStartRow(quotationStartRow(saved.template));setUseSavedRow(true);setProfileVersion(version=>version+1);
+      setTemplateMessage('선택한 회사·카테고리의 공식 양식을 연결했습니다. 견적 자료와 필수 서류를 검토한 뒤 전송해주세요.');
+    } catch(cause) {
+      if(!controller.signal.aborted)setTemplateError(cause instanceof Error?cause.message:'공식 양식을 준비하지 못했습니다. 초안은 유지됩니다.');
+    } finally {
+      if(activeRequest.current===controller){activeRequest.current=null;setBusy(false);}
+    }
+  }
   async function refreshProfiles() {
     if(profileRequest.current||activeRequest.current||dirty||!contextLoaded)return;
     const controller=new AbortController();profileRequest.current=controller;
@@ -112,6 +131,8 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
       setDirty(value);
     }} onSaved={()=>{setPreview(null);onSaved?.();}}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
+    {selected&&!selected.template&&<div className="panel-note"><strong>전송할 공식 견적 양식 준비</strong><p>1~7단계 초안은 저장되어 있습니다. 전송 전에 현재 회사와 저장한 전체 카테고리 경로를 확인하고 공식 Excel을 연결합니다.</p><button type="button" className="btn primary" disabled={busy||dirty||refreshingProfiles||!contextLoaded||!selected.hubSchema} onClick={()=>void prepareOfficialTemplate()}>공식 견적 양식 준비</button>{!selected.hubSchema&&<small>카테고리·양식 관리에서 Supplier Hub 상세 양식을 먼저 확인해주세요.</small>}</div>}
+    {templateError&&<p role="alert">{templateError} 상품 초안과 직접 수정한 값은 유지됩니다.</p>}{templateMessage&&<p role="status">{templateMessage}</p>}
     {onPrepareSubmission&&<div className="panel-stack"><button type="button" className="btn rose" disabled={dirty||busy||refreshingProfiles||!contextLoaded||!selected} onClick={()=>{
       if(dirtyRef.current||activeRequest.current||profileRequest.current||!contextLoaded||!selected)return;
       onPrepareSubmission(selected.id);

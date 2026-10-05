@@ -5,7 +5,7 @@ import {readSupplierHubCategoryBranch} from './catalog-page.mjs';
 import {readSupplierHubSchema} from './schema-page.mjs';
 import {readSupplierHubTemplate} from './template-page.mjs';
 
-const catalogPath=path=>['/qvt/registration','/qvt/wims','/sr/registration'].includes(path)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(path);
+const catalogPath=path=>['/dashboard/KR','/qvt/registration','/qvt/wims','/sr/registration'].includes(path)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(path);
 const catalogTab=(tab,windowId)=>{try{const path=new URL(tab.url).pathname;return catalogPath(path)&&!tab.pendingUrl&&isSupplierHubTab(tab,windowId,path);}catch{return false;}};
 
 export async function readAppSupplierHubCatalog(message,sender,api=chrome){
@@ -27,10 +27,10 @@ export async function readAppSupplierHubCatalog(message,sender,api=chrome){
     return context;
   };
   const context=await readContext();
-  const tabs=(await api.tabs.query({windowId,url:['https://supplier.coupang.com/qvt/registration*','https://supplier.coupang.com/qvt/wims*','https://supplier.coupang.com/sr/registration*']}))
+  const tabs=(await api.tabs.query({windowId,url:['https://supplier.coupang.com/dashboard/KR*','https://supplier.coupang.com/qvt/registration*','https://supplier.coupang.com/qvt/wims*','https://supplier.coupang.com/sr/registration*']}))
     .filter(tab=>catalogTab(tab,windowId));
   const tab=tabs.find(tab=>tab.active)||tabs.find(tab=>isSupplierHubTab(tab,windowId,'/qvt/registration'))||tabs[0];
-  if(!tab)throw Error('앱과 같은 Chrome 창에 로그인된 Supplier Hub 등록 또는 견적 조회 탭을 열어두세요.');
+  if(!tab)throw Error('앱과 같은 Chrome 창에 로그인된 Supplier Hub 대시보드 또는 등록·조회 탭을 열어두세요.');
   const checkTab=async()=>{const current=await api.tabs.get(tab.id);if(current.pendingUrl||!isSupplierHubTab(current,windowId,new URL(tab.url).pathname))throw Error('카테고리를 읽던 Supplier Hub 탭이 변경되었습니다.');};
   await checkTab();
   const [company]=await api.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:[context.company,'catalog']});

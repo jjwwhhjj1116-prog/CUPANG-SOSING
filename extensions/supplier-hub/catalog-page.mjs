@@ -1,7 +1,7 @@
 /** Read-only official category API observed in public /sr frontend 2026-10-02. */
 export async function readSupplierHubCategoryBranch(trail,company){
   const origin='https://supplier.coupang.com';
-  const allowedPage=()=>['/qvt/registration','/qvt/wims','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname);
+  const allowedPage=()=>['/dashboard/KR','/qvt/registration','/qvt/wims','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname);
   if(location.origin!==origin||!allowedPage())throw Error('Supplier Hub 등록 또는 견적 조회 화면에서 카테고리를 읽어주세요.');
   if(!company||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},company.code)||({A01526306:'유앤채',A01464742:'와이홉'})[company.code]!==company.name)throw Error('승인된 회사정보가 필요합니다.');
   if(!Array.isArray(trail)||trail.length>10||trail.some(node=>!node||typeof node.categoryId!=='string'||!/^[1-9]\d{0,19}$/.test(node.categoryId)||typeof node.name!=='string'||!node.name.trim()||node.name!==node.name.trim()||node.name.length>240||node.isLeaf!==false)

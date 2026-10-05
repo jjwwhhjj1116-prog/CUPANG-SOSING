@@ -3,6 +3,7 @@ import {useEffect,useState} from 'react';
 import Link from 'next/link';
 import type {WorkspaceMember} from '@/app/workspace-members';
 import {SUPPLIER_HUB_COMPANIES,supplierHubCompany} from '@/app/supplier-hub-company';
+import {LoginPreferencesPanel} from '@/app/components/login-preferences-panel';
 const labels={pending:'승인 대기',approved:'승인',rejected:'거절',suspended:'이용 정지'};
 type Company={companyCode:string;companyName:string};
 async function readMembership(signal?:AbortSignal){
@@ -47,6 +48,7 @@ export default function AccountPage(){
   <header className="membership-header"><div><Link href="/">← 상품등록</Link><h1>YOOFAM PLUS 계정 관리</h1></div>{self&&<button className="btn ghost" disabled={busy} onClick={()=>void act('logout')}>로그아웃</button>}</header>
   <p role="status" aria-live="polite">{loading?'계정을 불러오는 중…':message}</p>
   {self&&<section className="membership-card"><h2>{self.role==='admin'?'관리자':'회원'} 계정</h2><p>{self.email}</p><p>{self.companyName||'회사정보 미설정'} {self.companyCode}</p>{self.role==='admin'&&<button className="btn ghost" disabled={busy} onClick={()=>editCompany(self)}>회사정보 수정</button>}</section>}
+  {self&&<LoginPreferencesPanel email={self.email}/>}
   {self?.role==='admin'&&<section className="membership-card"><div className="membership-header"><h2>회원가입 요청 및 승인 계정</h2><button className="btn ghost" disabled={busy} onClick={()=>{setBusy(true);void refresh().catch(error=>setMessage(error.message)).finally(()=>setBusy(false));}}>새로고침</button></div>
    <p>승인 {approved} / 2개 · 승인 대기 {members.filter(member=>member.status==='pending').length}개</p><p>회사정보를 확인한 후 승인해주세요. 회사정보 변경 시 해당 계정의 기존 로그인은 해제됩니다.</p>
    <div className="membership-table"><table><thead><tr><th>이메일</th><th>회사코드</th><th>회사명</th><th>상태</th><th>처리</th></tr></thead><tbody>{ordered.map(member=><tr key={member.id}>

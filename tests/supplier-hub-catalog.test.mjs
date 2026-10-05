@@ -44,7 +44,7 @@ function dispatcher({company=companies[0],contexts,tabs,changeTab}={}){
 }
 test('extension catalog requests use only this app window and approved company without creating tabs or changing forms',async()=>{
   for(const company of companies){const h=dispatcher({company}),result=await h.run([root,parent]);assert.equal(result.ownerId,'owner');assert.deepEqual(plain(result.children),[leaf]);
-    const query=h.calls.find(call=>call[0]==='query')[1];assert.equal(query.windowId,7);assert.ok(query.url.every(url=>url.startsWith(origin+'/qvt/')||url===origin+'/sr/registration*'));
+    const query=h.calls.find(call=>call[0]==='query')[1];assert.equal(query.windowId,7);assert.deepEqual(query.url,[origin+'/dashboard/KR*',origin+'/qvt/registration*',origin+'/qvt/wims*',origin+'/sr/registration*']);
     assert.deepEqual(h.calls.filter(call=>call[0]==='script').map(call=>[call[1],call[2]]),[[2,'verifySupplierHubCompany'],[2,'readSupplierHubCategoryBranch']]);assert.equal(h.calls.filter(call=>call[0]==='context').length,2);
   }
 });

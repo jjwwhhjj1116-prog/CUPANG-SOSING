@@ -9,7 +9,7 @@ import { CategoryQuotationPreview } from '@/app/components/category-quotation-pr
 import './category-picker.css';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 import { SupplierHubCategoryBrowser } from '@/app/components/supplier-hub-category-browser';
-import { loadLiveHubCategorySchema,loadLiveHubCategoryTemplate } from '@/app/supplier-hub-catalog';
+import { loadLiveHubCategorySchema } from '@/app/supplier-hub-catalog';
 import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
 
@@ -68,8 +68,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       if(controller.signal.aborted)return;
       async function withSchema(profile:CategoryProfile){
         if(!hubSchema)return profile;
-        if(profile.template&&sameHubDefinition(profile.hubSchema,hubSchema))return profile;
-        const connection=profile.template?{template:profile.template,mappings:translateHubRuleVersionMappings(profile.mappings,profile.hubSchema,hubSchema)}:await loadLiveHubCategoryTemplate(target!,hubSchema,controller.signal);
+        if(sameHubDefinition(profile.hubSchema,hubSchema))return profile;
+        const connection={template:profile.template,mappings:translateHubRuleVersionMappings(profile.mappings,profile.hubSchema,hubSchema)};
         if(controller.signal.aborted)return profile;
         const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...profile,hubSchema,...connection}}),signal:controller.signal});
         const result=await response.json() as {profile?:CategoryProfile;error?:string};
@@ -113,9 +113,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
         if (!Number.isSafeInteger(latest.revision) || latest.revision < 1) throw new Error('카테고리 설정 응답이 올바르지 않습니다. 다시 시도해주세요.');
         const saved=hubSchema?await withSchema(latest):latest;if(controller.signal.aborted)return;completed.current = true; onSelected(saved); return;
       }
-      const connection=hubSchema?await loadLiveHubCategoryTemplate(target,hubSchema,controller.signal):undefined;
-      if(controller.signal.aborted)return;
-      const body = JSON.stringify({...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{}),...(connection??{})});
+      const body = JSON.stringify({...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{})});
       if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
       const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': createRequest.current.id }, body, signal: controller.signal });
       const result = await response.json() as { profile: CategoryProfile; error?: string };
@@ -127,7 +125,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
         || saved.categoryId !== target.categoryId
         || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(target.path)
         || hubSchema&&!sameHubDefinition(saved.hubSchema,hubSchema)
-        ||connection&&(JSON.stringify(saved.template)!==JSON.stringify(connection.template)||JSON.stringify(saved.mappings)!==JSON.stringify(connection.mappings))) {
+        ||hubSchema&&(saved.template!==null||!Array.isArray(saved.mappings)||saved.mappings.length!==0)) {
         throw new Error('저장된 카테고리 코드·경로·버전이 선택한 분류와 일치하지 않습니다. URL 입력을 중단했습니다. 카테고리 설정을 다시 확인해주세요.');
       }
       completed.current = true; onSelected(result.profile);
@@ -156,7 +154,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
     <div className="modal-actions"><button className="btn primary" type="button" disabled={!canConfirmCategory(selected) || busy} onClick={() => void confirm()}>{busy ? '설정 중…' : '선택 완료 · URL 입력'}</button></div>
     <details className="category-advanced" key={selected?.key ?? 'unselected'}><summary>견적 항목·Excel 출력 설정</summary>
       {selected?.isLeaf && <p>{codeEvidenceLabel(selected)}{selected.codeObservedAt ? ` · ${selected.codeObservedAt.slice(0, 10)}` : ''}</p>}
-      <p>카테고리 선택과 초안 작성은 Excel 파일을 연결하지 않아도 진행할 수 있습니다. 원본 Excel 양식으로 출력할 때 아래 설정을 사용합니다.</p>
+      <p>회사·카테고리 확인 후 URL을 입력해 초안을 작성합니다. 공식 Excel 파일은 7단계 견적서의 ‘공식 견적 양식 준비’에서 연결합니다. 기존에 연결한 양식은 유지합니다.</p>
       {selected?.isLeaf && schema && (selectedProfile ? <IntakeQuotationPreview key={`${selected.key}:${selectedProfile.revision}`} profile={selectedProfile}/> : <CategoryQuotationPreview key={selected.key} schema={schema} />)}
       <button className="btn ghost" type="button" disabled={busy} onClick={() => onAdvanced(categoryAdvancedSeed(selected, path))}>{selected?.categoryId ? '카테고리·Excel 양식 설정' : '선택 경로로 실제 코드·양식 연결'}</button>
     </details>

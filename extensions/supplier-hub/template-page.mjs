@@ -6,7 +6,7 @@ export async function readSupplierHubTemplate(snapshot){
   ||meta?.kanCategoryId!==undefined&&meta?.categoryId!==undefined&&String(meta.kanCategoryId)!==String(meta.categoryId)
   ||!company||!Object.hasOwn({A01464742:'와이홉',A01526306:'유앤채'},company.code)||({A01464742:'와이홉',A01526306:'유앤채'})[company.code]!==company.name)throw Error('상세 양식에서 공식 Excel의 칸 카테고리 코드를 확인하지 못했습니다.');
  const check=()=>{
-  if(location.origin!==origin||!(['/qvt/registration','/qvt/wims','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname)))throw Error('공식 양식을 읽는 Supplier Hub 화면이 변경되었습니다.');
+  if(location.origin!==origin||!(['/dashboard/KR','/qvt/registration','/qvt/wims','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname)))throw Error('공식 양식을 읽는 Supplier Hub 화면이 변경되었습니다.');
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
   if(codes.length!==1||codes[0]!==company.code)throw Error('공식 양식을 읽는 회사코드가 다릅니다.');
  };

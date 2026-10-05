@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-function load(file,dependencies){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,Error,fetch:dependencies.fetch,URL:dependencies.URL,document:dependencies.document,setTimeout,require(name){if(name in dependencies)return dependencies[name];if(name==='@/app/load-category-profiles')return load('app/load-category-profiles.ts',dependencies);return require(name);}});return exports;}
+function load(file,dependencies){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,Error,fetch:dependencies.fetch,URL:dependencies.URL,document:dependencies.document,setTimeout,require(name){if(name in dependencies)return dependencies[name];if(name==='@/app/supplier-hub-catalog')return{prepareOfficialHubProfileTemplate(){throw Error('Unexpected official template preparation');}};if(name==='@/app/load-category-profiles')return load('app/load-category-profiles.ts',dependencies);return require(name);}});return exports;}
 function nodes(tree){if(Array.isArray(tree))return tree.flatMap(nodes);if(!tree||typeof tree!=='object')return[];return[tree,...nodes(tree.props?.children)];}
 
 test('deleted inspection profile keeps quotation editor and explicit replacement available without writes',async()=>{

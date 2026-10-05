@@ -16,7 +16,7 @@ function account({code='',name='',pending=[],read}={}){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,FormData:FormValues,window:{location:{assign:path=>redirects.push(path),replace:path=>redirects.push(path)}},fetch:async(url,init)=>{
    const body=init?.body?JSON.parse(init.body):null;requests.push({url,body,signal:init?.signal});return !body&&read?read():Response.json(body?{ok:true,reauthenticate:body.memberId===self.id}:{member:self,members:[self,...pending]});
-  },require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;
+  },require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;
  }
  const Page=load('app/account/page.tsx').default;
  function render(){cursor=0;const tree=Page();started=true;effects.splice(0).forEach(effect=>{const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup);});return tree;}

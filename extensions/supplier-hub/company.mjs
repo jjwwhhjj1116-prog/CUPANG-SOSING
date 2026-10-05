@@ -1,6 +1,6 @@
 // Only the observed visible company menu is read. No cookies or app internals.
 export async function verifySupplierHubCompany(company,purpose='registration') {
- const catalogPage=purpose==='catalog'&&(location.pathname==='/sr/registration'||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname));
+ const catalogPage=purpose==='catalog'&&(['/dashboard/KR','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname));
  if(location.origin!=='https://supplier.coupang.com'||(!['/qvt/registration','/qvt/wims'].includes(location.pathname)&&!catalogPage))throw Error('Supplier Hub 등록 또는 등록 상태 화면에서 실행해주세요.');
  if(company===undefined){try{company=JSON.parse(document.documentElement.dataset.yoofamAttachmentAttempt||'').company;}catch{throw Error('이 탭에서 전달한 회사정보가 없습니다.');}}
  if(!company||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},company.code)||({A01526306:'유앤채',A01464742:'와이홉'})[company.code]!==company.name)throw Error('승인된 회사정보가 필요합니다.');

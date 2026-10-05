@@ -1,6 +1,6 @@
 /** Read-only schema GET contract in the public Supplier Hub frontend. */
 export async function readSupplierHubSchema(categoryId,categoryPath,company){
- const origin='https://supplier.coupang.com',allowed=()=>['/qvt/registration','/qvt/wims','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname);
+ const origin='https://supplier.coupang.com',allowed=()=>['/dashboard/KR','/qvt/registration','/qvt/wims','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname);
  if(typeof categoryId!=='string'||!/^[1-9]\d{0,19}$/.test(categoryId)||!Array.isArray(categoryPath)||!categoryPath.length||categoryPath.length>10||categoryPath.some(name=>typeof name!=='string'||!name.trim()||name!==name.trim()||name.length>120))throw Error('상세 양식의 최종 분류를 확인해주세요.');
  if(!company||!Object.hasOwn({A01464742:'와이홉',A01526306:'유앤채'},company.code)||({A01464742:'와이홉',A01526306:'유앤채'})[company.code]!==company.name)throw Error('승인된 회사정보가 필요합니다.');
  const check=()=>{if(location.origin!==origin||!allowed())throw Error('상세 양식을 읽는 Supplier Hub 화면이 변경되었습니다.');const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);if(codes.length!==1||codes[0]!==company.code)throw Error('상세 양식을 읽는 회사코드가 다릅니다.');};

@@ -2,8 +2,9 @@ import {exchange} from '@/app/supplier-hub-handoff';
 import type {CategoryChoice} from '@/app/category-catalog';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import {validateHubSchemaSnapshot,type HubSchemaSnapshot} from '@/app/supplier-hub-schema';
-import type {CategoryProfileInput} from '@/app/category-profiles';
+import {validateCategoryProfile,type CategoryProfile,type CategoryProfileInput} from '@/app/category-profiles';
 import {readBoundedStream} from '@/app/request-body';
+import {loadCategoryProfiles} from '@/app/load-category-profiles';
 
 export type HubCategoryNode={categoryId:string;name:string;isLeaf:boolean};
 export type HubCategoryBranch={trail:HubCategoryNode[];children:HubCategoryNode[];ownerId:string;company:SupplierHubCompany;observedAt:number;source:'supplier-hub-category-api';fullCatalogVerified:false};
@@ -97,4 +98,41 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
   if(saved.template?.sha256!==sha256||saved.template.name!==data.name||saved.template.format!=='xlsx'||!saved.template.storageKey||saved.template.headerRow!==5||saved.template.dataStartRow!==9||!Array.isArray(saved.template.headers)||!Array.isArray(saved.mappings)
     ||saved.report?.categoryId!==choice.categoryId||JSON.stringify(saved.report.categoryPath)!==JSON.stringify(choice.path)||saved.report.company?.code!==company.code||saved.report.company?.name!==company.name||saved.report.kanCategoryId!==kan||saved.report.registered!==false)throw Error('공식 Excel 저장 결과의 카테고리·회사·원본 지문이 다릅니다.');
   return {template:saved.template,mappings:saved.mappings};
+}
+
+/** Official files are prepared explicitly after draft review. Resolve every
+ * saved path segment exactly; never infer a different branch from a leaf name. */
+export async function prepareOfficialHubProfileTemplate(profile:CategoryProfile,signal:AbortSignal):Promise<CategoryProfile>{
+  signal.throwIfAborted();
+  if(profile.template)throw Error('이미 연결된 견적 양식은 유지합니다. 변경은 카테고리·양식 관리에서 확인해주세요.');
+  const current=(await loadCategoryProfiles(signal)).find(item=>item.id===profile.id);
+  signal.throwIfAborted();
+  if(!current||current.revision!==profile.revision||current.categoryId!==profile.categoryId
+    ||JSON.stringify(current.categoryPath)!==JSON.stringify(profile.categoryPath)||JSON.stringify(current.hubSchema)!==JSON.stringify(profile.hubSchema)
+    ||current.template||current.mappings.length)throw Error('카테고리·양식 설정이 변경되었습니다. 저장한 양식을 새로고침한 뒤 다시 준비해주세요.');
+  if(!current.hubSchema)throw Error('확인된 Supplier Hub 상세 양식이 없습니다. 카테고리·양식 관리에서 먼저 확인해주세요.');
+  const snapshot=current.hubSchema,trail:HubCategoryNode[]=[];
+  let ownerId:string|undefined,choice:CategoryChoice|undefined;
+  for(let depth=0;depth<current.categoryPath.length;depth++){
+    const branch=await loadSupplierHubCategoryBranch(trail,signal);signal.throwIfAborted();
+    if(branch.company.code!==snapshot.company.code||branch.company.name!==snapshot.company.name||ownerId!==undefined&&branch.ownerId!==ownerId)throw Error('선택한 양식의 회원·회사와 현재 Supplier Hub가 다릅니다.');
+    ownerId=branch.ownerId;
+    const matches=branch.children.filter(node=>node.name===current.categoryPath[depth]),last=depth===current.categoryPath.length-1;
+    if(matches.length!==1||matches[0].isLeaf!==last||last&&matches[0].categoryId!==current.categoryId)throw Error('저장한 전체 카테고리 경로·최종 코드를 하나로 확인하지 못했습니다. 양식 연결을 중단했습니다.');
+    if(last)choice=hubCategoryChoice(branch,matches[0]);else trail.push(matches[0]);
+  }
+  if(!choice)throw Error('저장한 카테고리 경로를 확인해주세요.');
+  const live=await loadLiveHubCategorySchema(choice,signal);signal.throwIfAborted();
+  if(live.schemaString!==snapshot.schemaString||JSON.stringify(live.metadata)!==JSON.stringify(snapshot.metadata))throw Error('현재 상세 양식이 저장 당시와 다릅니다. 기존 초안은 유지하며 카테고리·양식 관리에서 확인해주세요.');
+  const connection=await loadLiveHubCategoryTemplate(choice,snapshot,signal);signal.throwIfAborted();
+  const expected=validateCategoryProfile({...current,...connection});
+  const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},signal,
+    body:JSON.stringify({id:current.id,expectedRevision:current.revision,profile:expected})});
+  const result=await response.json() as {profile?:CategoryProfile;error?:string};signal.throwIfAborted();
+  if(!response.ok)throw Error(result.error??'공식 견적 양식을 연결하지 못했습니다. 저장한 양식을 새로고침해주세요.');
+  const saved=result.profile;
+  if(!saved||saved.id!==current.id||saved.revision!==current.revision+1||saved.name!==current.name||saved.categoryId!==current.categoryId
+    ||JSON.stringify(saved.categoryPath)!==JSON.stringify(current.categoryPath)||JSON.stringify(saved.hubSchema)!==JSON.stringify(current.hubSchema)
+    ||JSON.stringify(saved.template)!==JSON.stringify(expected.template)||JSON.stringify(saved.mappings)!==JSON.stringify(expected.mappings))throw Error('공식 양식 연결 결과를 확인하지 못했습니다. 저장한 양식을 새로고침해주세요.');
+  return saved;
 }

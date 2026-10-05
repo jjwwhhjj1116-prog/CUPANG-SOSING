@@ -29,7 +29,7 @@ function harness(request,existing=false,{readProfiles=async()=>Response.json({pr
   if(name==='@/app/components/category-quotation-preview')return{CategoryQuotationPreview:()=>null};
   if(name==='@/app/components/supplier-hub-category-browser')return{SupplierHubCategoryBrowser:()=>null};
   if(name==='@/app/supplier-hub-catalog')return{loadLiveHubCategorySchema:readSchema,loadLiveHubCategoryTemplate:readTemplate};
-  if(name==='@/app/category-catalog')return{categoryChoices:profiles=>[...profiles.map(profile=>({...choice,key:profile.id,profileId:profile.id,path:profile.categoryPath,categoryId:profile.categoryId})),...(existing?[]:[choice])],canConfirmCategory:choice=>Boolean(choice),categoryAdvancedSeed:()=>({}),categoryChoicesAtPath:(choices,path)=>choices.filter(choice=>JSON.stringify(choice.path)===JSON.stringify(path)),categoryProfilesForChoice:(profiles,target)=>profiles.filter(profile=>profile.categoryId===target.categoryId&&JSON.stringify(profile.categoryPath)===JSON.stringify(target.path)),categoryLevel:()=>[],categoryObservationScope:{},categoryProfileForChoice:()=>({categoryId:'80719'}),searchCategoryChoices:choices=>choices};
+  if(name==='@/app/category-catalog')return{categoryChoices:profiles=>[...profiles.map(profile=>({...choice,key:profile.id,profileId:profile.id,path:profile.categoryPath,categoryId:profile.categoryId})),...(existing?[]:[choice])],canConfirmCategory:choice=>Boolean(choice),categoryAdvancedSeed:()=>({}),categoryChoicesAtPath:(choices,path)=>choices.filter(choice=>JSON.stringify(choice.path)===JSON.stringify(path)),categoryProfilesForChoice:(profiles,target)=>profiles.filter(profile=>profile.categoryId===target.categoryId&&JSON.stringify(profile.categoryPath)===JSON.stringify(target.path)),categoryLevel:()=>[],categoryObservationScope:{},categoryProfileForChoice:()=>({categoryId:'80719',template:null,mappings:[]}),searchCategoryChoices:choices=>choices};
   return native(name);
  }});
  const render=()=>{index=0;const tree=exports.CategoryPicker({profiles:existing?[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1}]:[],selectedId:'saved',onSelected:p=>selected.push(p),onAdvanced(){}});first=false;return tree;};
@@ -40,7 +40,7 @@ function harness(request,existing=false,{readProfiles=async()=>Response.json({pr
 test('live category confirmation saves detailed schema in a new profile before URL entry',async()=>{
  const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']};let reads=0,templates=0;
  const h=harness(async(_url,init)=>Response.json({profile:{...JSON.parse(init.body),id:'new',categoryPath:['test'],revision:1}}),false,{readSchema:async(choice,signal)=>{assert.equal(choice.categoryId,'80719');assert.equal(signal.aborted,false);reads++;return snapshot;},readTemplate:async(choice,raw,signal)=>{assert.equal(choice.categoryId,'80719');assert.equal(raw,snapshot);assert.equal(signal.aborted,false);templates++;return{template:{name:'official-auto.xlsx'},mappings:[{column:0,field:'title'}]};}});
- h.chooseLive();const click=h.confirm();click();click();await settle();assert.equal(reads,1);assert.equal(templates,1);assert.equal(h.calls.filter(call=>call.method==='POST').length,1);assert.equal(h.selected.length,1);assert.equal(h.selected[0].hubSchema.schemaString,snapshot.schemaString);assert.equal(h.selected[0].template.name,'official-auto.xlsx');
+ h.chooseLive();const click=h.confirm();click();click();await settle();assert.equal(reads,1);assert.equal(templates,0);assert.equal(h.calls.filter(call=>call.method==='POST').length,1);assert.equal(h.selected.length,1);assert.equal(h.selected[0].hubSchema.schemaString,snapshot.schemaString);assert.equal(h.selected[0].template,null);assert.deepEqual(h.selected[0].mappings,[]);
 });
 test('existing template and manually mapped columns survive a live schema refresh, conflict stops URL entry',async()=>{
  const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']},profile={id:'saved',categoryId:'80719',categoryPath:['test'],revision:3,template:{id:'official'},mappings:[{column:0,field:'title',required:true}]};
@@ -90,17 +90,12 @@ test('category create and refresh reject a saved response that drops any capture
  }
 });
 
-test('empty live profile acquires official Excel once with revision protection before URL entry',async()=>{
- const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']},profile={id:'empty',categoryId:'80719',categoryPath:['test'],revision:3,hubSchema:snapshot,template:null,mappings:[]};let reads=0;
- for(const conflict of [false,true]){const h=harness(async(_url,init)=>{const input=JSON.parse(init.body);assert.equal(input.id,profile.id);assert.equal(input.expectedRevision,3);assert.equal(input.profile.template.name,'official.xlsx');return conflict?Response.json({error:'다른 화면 변경'},{status:409}):Response.json({profile:{...input.profile,revision:4}});},false,{readProfiles:async()=>Response.json({profiles:[profile]}),readSchema:async()=>snapshot,readTemplate:async()=>{reads++;return{template:{name:'official.xlsx'},mappings:[{column:0,field:'title'}]};}});
-  h.chooseLive();h.confirm()();await settle();assert.equal(h.calls.filter(call=>call.method==='PUT').length,1);assert.equal(h.calls.filter(call=>call.method==='POST').length,0);assert.equal(h.selected.length,conflict?0:1);
- }assert.equal(reads,2);assert.equal(profile.template,null);assert.deepEqual(profile.mappings,[]);
+test('empty live profile enters URL intake without an official workbook or a profile rewrite',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']},profile={id:'empty',categoryId:'80719',categoryPath:['test'],revision:3,hubSchema:snapshot,template:null,mappings:[]};
+ const h=harness(async()=>{throw Error('Unchanged profile must not be written');},false,{readProfiles:async()=>Response.json({profiles:[profile]}),readSchema:async()=>snapshot,readTemplate:async()=>{throw Error('Official workbook is prepared at quotation review');}});
+ h.chooseLive();h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].revision,3);assert.equal(h.selected[0].template,null);assert.ok(h.calls.every(call=>!call.method));
 });
-test('failed/cancelled official download leaves category profiles and URL intake untouched',async()=>{
- const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']};
- const bad=harness(async()=>{throw Error('unexpected save');},false,{readSchema:async()=>snapshot,readTemplate:async()=>{throw Error('official workbook unavailable');}});bad.chooseLive();bad.confirm()();await settle();assert.equal(bad.selected.length,0);assert.ok(bad.calls.every(call=>!call.method));assert.match(JSON.stringify(bad.render()),/official workbook unavailable/);
- const wait=pending(),cancelled=harness(async()=>{throw Error('unexpected save');},false,{readSchema:async()=>snapshot,readTemplate:()=>wait.promise});cancelled.chooseLive();cancelled.confirm()();await settle();cancelled.close();wait.resolve({template:{name:'late.xlsx'},mappings:[]});await settle();assert.equal(cancelled.selected.length,0);assert.ok(cancelled.calls.every(call=>!call.method));assert.equal(cancelled.late,0);
-});
+
 test('failed or cancelled detailed schema retrieval never writes a profile or enters URL intake',async()=>{
  const bad=harness(async()=>{throw Error('unexpected save');},false,{readSchema:async()=>{throw Error('schema unavailable');}});bad.chooseLive();bad.confirm()();await settle();assert.equal(bad.calls.length,0);assert.equal(bad.selected.length,0);
  const wait=pending(),cancelled=harness(async()=>{throw Error('unexpected save');},false,{readSchema:()=>wait.promise});cancelled.chooseLive();cancelled.confirm()();cancelled.close();wait.resolve(hubSchemaSnapshot());await settle();assert.equal(cancelled.calls.length,0);assert.equal(cancelled.selected.length,0);assert.equal(cancelled.late,0);

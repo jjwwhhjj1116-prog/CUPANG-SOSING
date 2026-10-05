@@ -19,7 +19,7 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});
  try{
   const other=schemaCompanies.find(item=>item.code!==company.code),oldSchema=hubSchemaSnapshot(other),currentSchema={...hubSchemaSnapshot(company),draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'};
-  const previous=await template(h,other),current=await template(h,company);
+  const previous=await template(h,other);
   // A prior approved-company profile can remain in the same owner's workspace
   // after a membership reassignment. Templates here are synthetic CSV fixtures.
   const old=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'기존 회사 검토 설정',categoryId:oldSchema.categoryId,categoryPath:schemaPath,hubSchema:oldSchema,...previous});
@@ -34,24 +34,24 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
   const api=h.load('app/api/category-profiles/route.ts');let downloads=0;
   const picker=categoryPickerUI((path,init)=>api[init?.method??'GET'](new Request('https://app.test'+path,init)),{catalog:{
    loadLiveHubCategorySchema:async()=>currentSchema,
-   loadLiveHubCategoryTemplate:async()=>{downloads++;return current;},
+   loadLiveHubCategoryTemplate:async()=>{downloads++;throw Error('Official files are prepared after draft review');},
   }});
   const choice={key:'current-live',categoryId:currentSchema.categoryId,path:schemaPath,isLeaf:true,supplierHub:{trail:[],ownerId:'owner',company}};
   await picker.chooseLive(choice);
   assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));
   const selected=picker.selected[0];
   assert.notEqual(selected.id,old.id,'a live choice cannot relabel the previous company profile and retain its workbook');
-  assert.equal(downloads,1);assert.deepEqual(selected.hubSchema.company,company);
-  assert.deepEqual(selected.template,current.template);assert.deepEqual(selected.mappings,current.mappings);
+  assert.equal(downloads,0);assert.deepEqual(selected.hubSchema.company,company);
+  assert.equal(selected.template,null);assert.deepEqual(selected.mappings,[]);
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id),before);
   assert.ok(picker.calls.every(call=>call.method!=='PUT'));
   // With both company profiles present, another live selection reuses only the
   // current company's profile instead of becoming an ambiguous saved match.
   await picker.chooseLive(choice);assert.equal(picker.selected.length,2);
-  assert.equal(picker.selected[1].id,selected.id);assert.equal(downloads,1);
+  assert.equal(picker.selected[1].id,selected.id);assert.equal(downloads,0);
   const nextUrl='https://detail.1688.com/offer/813724060929.html';
   const queued=await json(await h.load('app/api/collection-jobs/route.ts').POST(new Request('https://app.test/api/collection-jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({urls:[nextUrl],goal:'price',profileId:selected.id,expectedProfileRevision:selected.revision})})));
-  const next=queued.jobs[0];assert.equal(next.context.category.id,selected.id);assert.deepEqual(next.context.category.hubSchema.company,company);assert.deepEqual(next.context.category.template,current.template);
+  const next=queued.jobs[0];assert.equal(next.context.category.id,selected.id);assert.deepEqual(next.context.category.hubSchema.company,company);assert.equal(next.context.category.template,null);
   // Synthetic second identity of the recorded source, never a live second URL.
   const receipts=h.load('db/collection-results.ts'),receipt=await receipts.readCollectionResult('owner','job');
   await receipts.storeCollectionResult('owner',next.id,{...receipt.result,offerId:'813724060929',sourceUrl:nextUrl});
@@ -62,8 +62,7 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
   const view=await json(await h.route(`/api/products/${created.productId}/quotation-fields`));
   assert.equal(view.categoryContext.profileId,selected.id);assert.ok(view.resolved.rows.every(row=>row.fields.title.value===content.seo.title.value));
   const source=await h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',created.productId,null);
-  assert.equal(source.profile.id,selected.id);assert.deepEqual(JSON.parse(JSON.stringify(source.profile.template)),current.template);
-  assert.equal(source.profile.mappings.find(mapping=>mapping.field==='constant').constant,company.name+' 수동 검토값');
+  assert.equal(source.profile.id,selected.id);assert.equal(source.profile.template,null);assert.deepEqual(JSON.parse(JSON.stringify(source.profile.mappings)),[]);
   assert.equal(existingWork(),originalWork);assert.deepEqual(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id),before);
  }finally{h.close();}
 });

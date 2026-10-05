@@ -1,12 +1,17 @@
 import {env} from 'cloudflare:workers';
 import {NextResponse} from 'next/server';
 import {getChatGPTUser} from '@/app/chatgpt-auth';
-import {membersDb,memberColumns,createSession,rateLimit,reviewMember,updateMemberCompany} from '@/db/members';
+import {membersDb,memberColumns,createSession,rotateSession,sessionMaxAge,rateLimit,reviewMember,updateMemberCompany} from '@/db/members';
 import {memberEmail,memberCompany,validPassword,passwordHash,verifyPassword,tokenHash,type WorkspaceMember} from '@/app/workspace-members';
 import {readBoundedJson} from '@/app/request-body';
 import {supplierHubCompany} from '@/app/supplier-hub-company';
 const config=()=>env as {YOOFAM_AUTH_ENABLED?:string;YOOFAM_PASSWORD_PEPPER?:string};
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
+function sessionReply(request:Request,token:string,rememberMe:boolean){
+ const response=reply({ok:true,rememberMe});
+ response.cookies.set('yoofam_session',token,{httpOnly:true,secure:new URL(request.url).protocol==='https:',sameSite:'strict',path:'/',maxAge:sessionMaxAge(rememberMe)});
+ return response;
+}
 export async function GET(){
  const user=await getChatGPTUser();
  if(!user?.membership)return reply({error:'로그인이 필요합니다.'},401);
@@ -21,6 +26,8 @@ export async function POST(request:Request){
  const body=await readBoundedJson(request,8192) as Record<string,unknown>;
  if(!body||typeof body!=='object'||Array.isArray(body))return reply({error:'입력값을 확인해주세요.'},400);
  const action=body.action,db=membersDb();
+ if((action==='login'||action==='remember-session')&&body.rememberMe!==undefined&&typeof body.rememberMe!=='boolean')return reply({error:'자동로그인 선택을 확인해주세요.'},400);
+ const rememberMe=body.rememberMe!==false;
  if(action==='login'||action==='signup'){
   const email=memberEmail(body.email);validPassword(body.password);
   const ip=request.headers.get('cf-connecting-ip')??'local';
@@ -35,12 +42,16 @@ export async function POST(request:Request){
   }
   const member=await db.prepare(`SELECT ${memberColumns},password_hash AS passwordHash FROM members WHERE email=?`).bind(email).first<WorkspaceMember&{passwordHash:string}>();
   if(!member||!await verifyPassword(body.password,member.passwordHash,pepper)||member.status!=='approved')return reply({error:'이메일·비밀번호 또는 가입 승인 상태를 확인해주세요.'},401);
-  const token=await createSession(member.id),response=reply({ok:true});
-  response.cookies.set('yoofam_session',token,{httpOnly:true,secure:new URL(request.url).protocol==='https:',sameSite:'strict',path:'/',maxAge:8*60*60});
-  return response;
+  const token=await createSession(member.id,rememberMe);
+  return token?sessionReply(request,token,rememberMe):reply({error:'이메일·비밀번호 또는 가입 승인 상태를 확인해주세요.'},401);
  }
  const user=await getChatGPTUser();
  if(!user?.membership)return reply({error:'로그인이 필요합니다.'},401);
+ if(action==='remember-session'){
+  if(body.memberId!==undefined&&body.memberId!==user.userId)return reply({error:'본인의 로그인 설정만 변경할 수 있습니다.'},403);
+  const token=await rotateSession(request.headers.get('cookie'),user.userId,rememberMe);
+  return token?sessionReply(request,token,rememberMe):reply({error:'다시 로그인해주세요.'},401);
+ }
  if(action==='logout'){
   const token=request.headers.get('cookie')?.split(';').map(s=>s.trim()).find(s=>s.startsWith('yoofam_session='))?.slice(15);
   if(token)await db.prepare('DELETE FROM member_sessions WHERE token_hash=?').bind(await tokenHash(token)).run();

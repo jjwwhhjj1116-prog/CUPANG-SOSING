@@ -397,3 +397,4 @@ html,body{background:#fff}
 .settings-margin legend { padding:0 5px; font-size:13px; font-weight:600; }
 .settings-margin input[type=range] { width:100%; margin:12px 0; accent-color:#2cb9de; }
 .settings-margin small { display:block; color:var(--muted); font-size:12px; }
+.login-preferences-card .login-preferences-options{display:flex;gap:24px;flex-wrap:wrap;margin:18px 0}.login-preferences-options label{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}.login-preferences-options input[type=checkbox]{width:17px;height:17px;accent-color:#1aafd5;margin:0}.login-preferences-options small{color:#1987a5;background:#eaf8fc;border-radius:4px;padding:2px 5px}.login-preferences-card form>button{background:#1aafd5;box-shadow:none}.login-preferences-card [role=status]{color:#21855e}.login-preferences-card [role=alert]{color:#b44144}
