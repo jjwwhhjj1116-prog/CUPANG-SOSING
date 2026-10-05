@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const text=tree=>Array.isArray(tree)?tree.map(text).join(''):tree&&typeof tree==='object'?text(tree.props?.children):tree==null?'':String(tree);
@@ -11,11 +12,11 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
 
 /** Real dashboard, archive, registration board and content editor. HTTP is held
  * at the response boundary; no browser, remote product or storage is used. */
-function harness({submission=false}={}){
- const instances=new Map(),cache=new Map(),effects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,intakeSettings;
+function harness({submission=false,batch}={}){
+ const instances=new Map(),cache=new Map(),effects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[],productReads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,holdProductRead=false,intakeSettings;
  const now='2026-10-05T00:00:00.000Z';
  const product=id=>({id,title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:0,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
- const products=[product('b')];
+ const products=[batch?.product??product('b')];
  const profiles=['a','b'].map(id=>({id:'profile-'+id,name:'양식 '+id,revision:1,categoryId:'80719',categoryPath:['바스켓'],mappings:[],template:{name:id+'.xlsx',format:'xlsx',headerRow:1,headers:['상품명'],sheetName:'견적서'}}));
  let quotationEditor;
  const hooks={
@@ -27,9 +28,14 @@ function harness({submission=false}={}){
   useId(){const index=active.index++;return 'test-'+index;},
  };
  const implemented=new Set(['dashboard-client','product-archive','registration-board','product-content-editor','workspace-settings-dialog','workspace-settings-editor','settings-price-preview']);
+ if(batch){implemented.add('batch-work-panel');implemented.add('image-generation-panel');}
  if(submission){implemented.add('quotation-panel');implemented.add('submission-review-panel');}
  async function request(url,init){
   requests.push({url,method:init?.method??'GET',body:init?.body});
+  if(batch&&url.startsWith('/api/products/'+batch.product.id)){
+   if(url==='/api/products/'+batch.product.id&&holdProductRead){holdProductRead=false;const pending=deferred();productReads.push({...pending,signal:init?.signal});return pending.promise;}
+   return batch.request(url,init);
+  }
   if(url==='/api/products')return Response.json({products});
   if(url==='/api/settings'){
    if(init?.method==='PUT'){
@@ -90,8 +96,9 @@ function harness({submission=false}={}){
  }
  const settle=async()=>{for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
- return{requests,archiveReads,settingsReads,settingsWrites,bannerUploads,product,render,settle,button,get lateDashboardWrites(){return lateDashboardWrites;},get intakeSettings(){return intakeSettings;},get quotationEditor(){return quotationEditor;},
+ return{requests,archiveReads,settingsReads,settingsWrites,bannerUploads,productReads,product,render,settle,button,get lateDashboardWrites(){return lateDashboardWrites;},get intakeSettings(){return intakeSettings;},get quotationEditor(){return quotationEditor;},
   setStoredSettings(value){storedSettings=value;},deferSettings(){holdSettings=true;},deferSettingsWrite(){holdSettingsWrite=true;},
+  deferProduct(){holdProductRead=true;},
   settingsPanel:()=>nodes(render()).find(node=>node.props?.id==='workspace-settings-panel'),
   settingsForm:()=>nodes(render()).find(node=>node.type==='form'&&node.props.className==='settings-form couplus-settings'),
   title:()=>nodes(render()).find(node=>node.type==='input'&&node.props.maxLength===500),
@@ -240,4 +247,65 @@ test('missing or mismatched archive product keeps the archive available for a su
    await h.click('상품 작업 열기 →');h.archiveReads[1].resolve(Response.json({product:h.product('a')}));await h.settle();assert.match(text(h.workspace()),/상품 a/);
   }finally{h.close();}
  }
+});
+
+async function batchFixture(){
+ const api=mobileIntakeHarness();await api.intake();
+ // The intake fixture appends a uniqueness byte for download identity. Image
+ // preparation validates the full PNG, so use its original complete bytes.
+ for(const [key,bytes]of api.objects)api.objects.set(key,bytes.slice(0,-1));
+ api.bindings.OPENAI_API_KEY='TEST-ONLY-NOT-A-REAL-KEY';api.bindings.SOURCEFLOW_IMAGE_MODEL='gpt-image-1.5';
+ const product=api.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+ const request=async(url,init={})=>url===base
+  ?api.load('app/api/products/[id]/route.ts')[init.method??'GET'](new Request('https://app.test'+url,init),{params:Promise.resolve({id:product.id})})
+  :api.route(url,{method:init.method??'GET',body:init.body});
+ const h=harness({batch:{product,request}});
+ const start=async()=>{await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']===product.title+' 선택').props.onChange({target:{checked:true}});await h.click('작업 개시');await h.click('선택 상품 초안 준비·가격 확인');};
+ return{api,h,product,base,request,start,close(){h.close();api.close();}};
+}
+
+test('batch draft review rereads the saved product before image preparation and retains the chosen step and list version',async()=>{
+ const f=await batchFixture(),{h,api,product,base}=f;try{
+  await f.start();const saved=api.sqlite.prepare('SELECT * FROM products').get();assert.notEqual(saved.updated_at,product.updated_at);
+  await h.click('이미지 초안 검토');assert.equal(h.button('3대표 이미지').props['aria-current'],'step');
+  await h.click('이미지 요청 검토하기 · 무료');
+  const sent=h.requests.find(request=>request.url===base+'/image-generation'&&request.method==='POST');
+  assert.equal(JSON.parse(sent.body).expectedVersion,saved.updated_at);
+  assert.equal(api.sqlite.prepare('SELECT count(*) n FROM image_jobs').get().n,1,'actual API accepts the newly opened draft version: '+nodes(h.render()).filter(node=>node.props?.role==='alert').map(text).join(' '));
+  assert.equal(h.requests.filter(request=>request.url==='/api/products').length,1,'only the selected product is refreshed');
+  assert.equal(h.requests.filter(request=>request.url===base).length,2,'batch run and review each read the current product');
+  const close=nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 작업 공간 닫기');close.props.onClick();await h.settle();
+  nodes(h.render()).find(node=>node.type==='button'&&node.props.className==='registration-title').props.onClick();await h.settle();await h.click('이미지 요청 검토하기 · 무료');
+  assert.equal(JSON.parse(h.requests.filter(request=>request.url===base+'/image-generation'&&request.method==='POST').at(-1).body).expectedVersion,saved.updated_at,'board row retains the refreshed product version');
+  assert.ok(h.requests.every(request=>request.method!=='POST'||!request.url.endsWith('/image-generation')||JSON.parse(request.body).action==='prepare'),'no paid image execution');
+ }finally{f.close();}
+});
+
+test('batch review read errors retain retry and quotation/work review choices',async()=>{
+ const f=await batchFixture(),{h,base}=f;try{
+  await f.start();
+  for(const response of [Response.json({error:'상품 읽기 실패'},{status:503}),Response.json({product:{id:'different'}})]){
+   h.deferProduct();await h.click('견적 초안 검토');assert.equal(Boolean(h.workspace()),false);
+   h.productReads.at(-1).resolve(response);await h.settle();assert.equal(Boolean(h.workspace()),false);
+   assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));
+  }
+  await h.click('견적 초안 검토');assert.equal(h.button('7견적서').props['aria-current'],'step');
+  nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 작업 공간 닫기').props.onClick();await h.settle();
+  await h.click('작업 개시');await h.click('상품별 작업 열기');assert.equal(nodes(h.workspace()).find(node=>node.type==='button'&&text(node)==='작업 이력').props['aria-pressed'],true);
+  assert.equal(h.requests.filter(request=>request.url===base+'/work-draft').length,1,'opening review does not repeat draft preparation');
+ }finally{f.close();}
+});
+
+test('late batch review responses cannot reopen a closed modal or replace a newer workspace, and unmount aborts the read',async()=>{
+ const f=await batchFixture(),{h,base}=f;try{
+  await f.start();h.deferProduct();await h.click('이미지 초안 검토');const closed=h.productReads.at(-1);
+  await h.click('×');assert.equal(closed.signal.aborted,true);
+  closed.resolve(await f.request(base));await h.settle();assert.equal(Boolean(h.workspace()),false);
+  await h.click('작업 개시');h.deferProduct();await h.click('이미지 초안 검토');const stale=h.productReads.at(-1);
+  await h.click('▦상품 관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
+  h.title().props.onChange({target:{value:''}});await h.settle();stale.resolve(await f.request(base));await h.settle();
+  assert.match(text(h.workspace()),/상품 a/);assert.equal(h.title().props.value,'');
+  h.deferProduct();await h.click('이미지 초안 검토');const unmounted=h.productReads.at(-1);h.close();assert.equal(unmounted.signal.aborted,true);
+  unmounted.resolve(await f.request(base));await h.settle();assert.equal(h.lateDashboardWrites,0);
+ }finally{f.close();}
 });

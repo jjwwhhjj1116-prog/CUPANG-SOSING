@@ -250,10 +250,13 @@ export function quotationImageRoleIssues(main: string, detail: string): string[]
   const keys = new Set(main.split('\n').map(key => key.trim()).filter(Boolean));
   return detail.split('\n').some(key => keys.has(key.trim())) ? [duplicateQuotationImageIssue] : [];
 }
-export function quotationValueIssues(field: QuotationField, value: string, ownedKeys?: readonly string[]) {
+export function quotationValueIssues(field: QuotationField, value: string, ownedKeys?: readonly string[], source?: QuotationSource) {
   const issues: string[] = [];
   if (!value.trim()) {
-    if (field.required) issues.push('필수 값이 비어 있습니다.');
+    // Required presence can be satisfied by an allowed empty wire choice, but
+    // only a supplied cell is a selection. Missing input and text clears remain errors.
+    const selectedEmpty = hasSelectedEmptyQuotationChoice(field, { value, source: source ?? 'empty' });
+    if (field.required && !selectedEmpty) issues.push('필수 값이 비어 있습니다.');
     const length = quotationValueLength(field, value);
     if (field.maxLength !== undefined && length > field.maxLength) issues.push(`${field.maxLength}자 제한을 초과했습니다.`);
     // Draft clearing is allowed by the save API, but an emitted empty string
@@ -548,7 +551,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       const manualCommon = !definition.readOnly && Object.hasOwn(overrides.common, definition.id);
       const value = manualOption ? specific![definition.id] : manualCommon ? overrides.common[definition.id] : automatic.value;
       const source: QuotationSource = manualOption ? 'manual-option' : manualCommon ? 'manual-common' : automatic.source;
-      const validationIssues = [...quotationValueIssues(definition, value, ownedKeys), ...(!manualOption && !manualCommon ? automatic.issues ?? [] : [])];
+      const validationIssues = [...quotationValueIssues(definition, value, ownedKeys, source), ...(!manualOption && !manualCommon ? automatic.issues ?? [] : [])];
       const reviewMessages: string[] = [];
       if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
       if (definition.reviewRequired && (value.trim() || hasSelectedEmptyQuotationChoice(definition, { value, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');

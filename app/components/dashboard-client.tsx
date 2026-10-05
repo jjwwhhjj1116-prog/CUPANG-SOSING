@@ -126,7 +126,8 @@ export default function DashboardClient({ userName }: { userName: string }) {
     return () => window.removeEventListener('beforeunload', protect);
   }, [detail]);
   const productNavigation=useRef(0);
-  useEffect(()=>()=>{productNavigation.current++;},[]);
+  const batchNavigation=useRef<AbortController|null>(null);
+  useEffect(()=>()=>{productNavigation.current++;batchNavigation.current?.abort();},[]);
   function changeView(next:'work'|'archive') {
     productNavigation.current++;
     setView(next);
@@ -135,6 +136,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [focusedOptionId, setFocusedOptionId] = useState<string|undefined>();
   const [optionBoardProduct, setOptionBoardProduct] = useState<Product|null>(null);
   const [batchOpen, setBatchOpen] = useState(false);
+  const [batchOpenError,setBatchOpenError]=useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyProductId, setHistoryProductId] = useState('');
   const [pendingUpload,setPendingUpload]=useState<{productId:string;key:string}|null>(null);
@@ -188,6 +190,26 @@ export default function DashboardClient({ userName }: { userName: string }) {
     if(signal.aborted||request!==productNavigation.current)return;
     if(!result.product||result.product.id!==productId)throw new Error('연결된 상품을 확인하지 못했습니다. 수집 대기열을 새로고침해주세요.');
     openProduct(result.product,initialTab);
+  }
+  function closeBatch() {
+    batchNavigation.current?.abort();batchNavigation.current=null;
+    setBatchOpen(false);setBatchOpenError('');
+  }
+  async function openBatchProduct(productId:string,initialTab='작업') {
+    batchNavigation.current?.abort();
+    const controller=new AbortController();batchNavigation.current=controller;
+    const request=++productNavigation.current;setBatchOpenError('');
+    try {
+      const result=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(productId)}`,{cache:'no-store',signal:controller.signal});
+      if(controller.signal.aborted||request!==productNavigation.current)return;
+      if(!result.product||result.product.id!==productId||!Number.isFinite(Date.parse(result.product.updated_at)))throw new Error('상품 최신 상태를 확인하지 못했습니다. 다시 열어주세요.');
+      setProducts(current=>current.map(product=>product.id===productId?result.product:product));
+      openProduct(result.product,initialTab);setBatchOpen(false);
+    } catch(error) {
+      if(!controller.signal.aborted&&request===productNavigation.current)setBatchOpenError(error instanceof Error?error.message:'상품 최신 상태를 읽지 못했습니다. 다시 열어주세요.');
+    } finally {
+      if(batchNavigation.current===controller)batchNavigation.current=null;
+    }
   }
   const detailStepIndex = registrationSteps.indexOf(tab);
   async function checkConnections() {
@@ -333,7 +355,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
       </Modal>}
       {categoryOpen&&<Modal wide title="카테고리·견적서 연결" subtitle="상품 자료를 견적서 열에 연결하고 카테고리별 설정을 보관합니다." onClose={()=>setCategoryOpen(false)}><CategoryProfileEditor value={editingCategory} initialDraft={categorySeed} onClose={()=>setCategoryOpen(false)} onSave={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setCategoryOpen(false);setAddOpen(true);}}/></Modal>}
 
-      {batchOpen&&<Modal wide title="선택 상품 일괄 작업" subtitle="저장한 상품을 순서대로 처리하고 각 결과를 기록합니다." onClose={()=>setBatchOpen(false)}><BatchWorkPanel products={products.filter(product=>selected.has(product.id))} onOpen={id=>{setBatchOpen(false);const product=products.find(product=>product.id===id);if(product)openProduct(product,'작업');}}/></Modal>}
+      {batchOpen&&<Modal wide title="선택 상품 일괄 작업" subtitle="저장한 상품을 순서대로 처리하고 각 결과를 기록합니다." onClose={closeBatch}>{batchOpenError&&<p role="alert">{batchOpenError}</p>}<BatchWorkPanel products={products.filter(product=>selected.has(product.id))} onOpen={(id,step)=>void openBatchProduct(id,step)}/></Modal>}
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div></Modal>}
 
       {detail&&<div className="drawer-backdrop" onMouseDown={()=>closeWorkspace()}><aside className="detail-drawer registration-workspace" role="dialog" aria-modal="true" aria-label="상품 등록 작업 공간" onMouseDown={e=>e.stopPropagation()}>

@@ -57,7 +57,7 @@ test('public option matching is exact and preserves an explicitly empty first ch
  assert.equal(value({input:'brand',values:['0']},'0'),'0');
  assert.equal(value({input:'brand',values:['양식 브랜드']},''),undefined);
  const empty=cells(resolve(snapshot(schemaCompanies[0],raw=>{raw.properties.productPage.properties.brand.dropdown=['','검토 브랜드'];}),saved));
- assert.equal(empty.brand.value,'');assert.equal(empty.brand.source,'settings');assert.deepEqual(JSON.parse(JSON.stringify(empty.brand.validationIssues)),['필수 값이 비어 있습니다.']);
+ assert.equal(empty.brand.value,'');assert.equal(empty.brand.source,'settings');assert.deepEqual(JSON.parse(JSON.stringify(empty.brand.validationIssues)),[]);
 });
 
 test('setting initialization is frozen and rejects unknown versions without changing older snapshots',()=>{

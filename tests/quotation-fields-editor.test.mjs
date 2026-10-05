@@ -10,6 +10,7 @@ import { webcrypto } from 'node:crypto';
 import { mobileIntakeHarness } from './helpers/mobile-intake.mjs';
 import { quotationWorkbook } from './helpers/quotation-workbook.mjs';
 import { submissionPackageUI } from './helpers/submission-package-ui.mjs';
+import { hubSchemaSnapshot } from './helpers/hub-schema.mjs';
 
 const requireNative = createRequire(import.meta.url);
 const cache = new Map();
@@ -91,6 +92,26 @@ test('owned image references are reviewable attachments in both editor and resol
  assert.equal(automatic.validationIssues.length,0);assert.ok(automatic.reviewMessages.some(message=>message.includes('첨부 이미지 파일명')));
  const invalid=editor.resolveQuotationEditorCell(view,[change('mainImage','other/foreign.png','red')],'red','mainImage');
  assert.ok(invalid.validationIssues.length>0);
+});
+
+test('required captured empty choices stay selected through editor validation, propagation and review',()=>{
+ const snapshot=hubSchemaSnapshot();
+ const view=fixture(undefined,undefined,source=>{source.categoryId=snapshot.categoryId;source.categoryPath=snapshot.categoryPath;source.hubSchema=snapshot;});
+ const field=view.resolved.schema.fields.find(field=>field.label==='렌즈 유형'),before=JSON.stringify(view);
+ const draft=[change(field.id,'','red')],cell=editor.resolveQuotationEditorCell(view,draft,'red',field.id);
+ assert.equal(cell.source,'manual-option');assert.equal(cell.value,'');assert.equal(cell.validationIssues.length,0);
+ assert.equal(editor.quotationEditorValidation(field,cell,view.imageKeys).length,0);
+ assert.ok(!editor.quotationEditorIssues(field,cell,view.imageKeys).some(issue=>issue.includes('필수')));
+ const choice=load('app/components/quotation-choice-input.tsx').QuotationChoiceInput({field,cell,id:'choice',disabled:false,onChange:()=>{}});
+ assert.equal(choice.props.value,'choice-0');
+ const preview=editor.previewQuotationEditorBulk(view,draft,'red',[field.id],true);
+ assert.equal(preview.skipped.length,0);assert.equal(preview.rows.length,1);assert.equal(preview.rows[0].afterDisplay,'해당사항없음');
+ const after=editor.applyQuotationEditorBulk(view,draft,preview);
+ assert.equal(editor.resolveQuotationEditorCell(view,after,'blue',field.id).validationIssues.length,0);
+ const missing={...cell,source:'empty',validationIssues:undefined,issues:[]};
+ assert.match(editor.quotationEditorValidation(field,missing,view.imageKeys).join(),/필수/);
+ assert.match(editor.resolveQuotationEditorCell(view,[change('brand','','red')],'red','brand').validationIssues.join(),/필수/);
+ assert.equal(JSON.stringify(view),before);
 });
 
 test('price relationship responds to both unsaved price cells, option inheritance and resets', () => {

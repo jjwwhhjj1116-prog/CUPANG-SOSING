@@ -90,7 +90,7 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
   ]);
   const validationIssues = [...new Set([
     ...(inherited?.validationIssues ?? inherited?.issues ?? []).filter(issue => !dynamicIssues.has(issue)),
-    ...(definition ? quotationValueIssues(definition, resolvedValue, view.imageKeys) : []),
+    ...(definition ? quotationValueIssues(definition, resolvedValue, view.imageKeys, source) : []),
     ...(fieldKey === 'salePrice' ? quotationPriceIssues(view.resolved.schema, resolveQuotationEditorCell(view, changes, optionId, 'supplyPrice').value, resolvedValue) : []),
   ])];
   if (fieldKey === 'barcode') {
@@ -139,7 +139,7 @@ export function previewQuotationEditorBulk(view: QuotationFieldsView, changes: r
     // override would erase its diagnostics and overwrite another SKU's facts.
     // Ordinary value validation (including deliberate required-field blanks)
     // still belongs to the editor/save path, preserving explicit clearing.
-    const valueIssues = new Set(quotationValueIssues(field, cell.value, view.imageKeys));
+    const valueIssues = new Set(quotationValueIssues(field, cell.value, view.imageKeys, cell.source));
     const sourceIssues = quotationEditorValidation(field, cell, view.imageKeys).filter(issue => !valueIssues.has(issue));
     if (sourceIssues.length) {
       skipped.push(`${field.label}: 원본을 확인한 뒤 적용해주세요. ${sourceIssues.join(' ')}`);
@@ -191,11 +191,11 @@ export function applyQuotationEditorBulk(view: QuotationFieldsView, changes: rea
   return next;
 }
 export function quotationEditorIssues(field: QuotationField, cell: Cell, imageKeys: readonly string[]) {
-  return [...new Set([...cell.issues, ...quotationValueIssues(field, cell.value, imageKeys)])];
+  return [...new Set([...cell.issues, ...quotationValueIssues(field, cell.value, imageKeys, cell.source)])];
 }
 function imageValues(value: string) { return [...new Set(value.split('\n').map(key => key.trim()).filter(Boolean))]; }
 export function quotationEditorValidation(field: QuotationField, cell: Cell, imageKeys: readonly string[]) {
-  return [...new Set(cell.validationIssues ?? quotationValueIssues(field, cell.value, imageKeys))];
+  return [...new Set(cell.validationIssues ?? quotationValueIssues(field, cell.value, imageKeys, cell.source))];
 }
 export function quotationSectionProgress(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], optionId: string | null) {
   return sections.map(section => {

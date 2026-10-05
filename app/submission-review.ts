@@ -56,7 +56,7 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
       const populated = Boolean(cell?.value.trim()) || selectedEmpty;
       const fieldLabel = selectedEmpty ? `${field.label} (${field.choices!.find(choice => choice.value === '')!.label})` : field.label;
       const errors = new Set(cell?.validationIssues ?? cell?.issues ?? []);
-      if (field.required && !cell?.value.trim() && !errors.size) errors.add('필수값을 입력해주세요.');
+      if (field.required && !populated && !errors.size) errors.add('필수값을 입력해주세요.');
       if (field.type === 'images') for (const key of (cell?.value ?? '').split('\n').map(item => item.trim()).filter(Boolean)) {
         if (!owned.has(key)) errors.add('이 상품에 저장된 이미지 연결이 아닙니다.');
         else { const check=imageChecks?.get(key); if(check?.kind==='error') errors.add(check.message); else if(check) add({kind:'review',code:'IMAGE_VERIFICATION',message:`${field.label}: ${check.message}`,optionId:row.optionId,optionLabel:row.optionLabel,fieldId:field.id}); }

@@ -1,6 +1,7 @@
 import { labelFields, validateContentInput, type LabelField, type ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
 import { collectionLabelField } from '@/app/collection-label-attributes';
+import { translationLabelSourceScope } from '@/app/translation-label-source-scope';
 
 export type TranslationLabelMapping = { sourceIndex: number; field: LabelField };
 // Explicit equivalent headings only. Do not collapse component materials, product
@@ -32,7 +33,13 @@ export function suggestTranslationLabels(content: ProductContent, job: Translati
     const candidates = attributes.filter(attribute => {
       const source = job.review.source.attributes[attribute.sourceIndex];
       if (!source?.name.startsWith('상품속성: ')) return false;
-      const sourceField = collectionLabelField(source.name.slice('상품속성: '.length));
+      const sourceName = source.name.slice('상품속성: '.length);
+      const scope = translationLabelSourceScope(sourceName);
+      if (scope) {
+        if (headings.includes(attribute.name.trim())) skipped.push(`${labelFields[field]}: 원문 ${sourceName}는 ${scope} 항목이므로 공통 표시사항에 자동 연결하지 않았습니다. 원문을 검토하고 직접 확인해주세요.`);
+        return false;
+      }
+      const sourceField = collectionLabelField(sourceName);
       // A renamed translated heading cannot redirect an identified source fact.
       if (sourceField && sourceField !== field) return false;
       if (headings.includes(attribute.name.trim())) return true;
