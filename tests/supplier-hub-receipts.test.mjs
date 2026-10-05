@@ -16,6 +16,7 @@ import {supplierHubStatusReady} from '../extensions/supplier-hub/hub-tab.mjs';
 import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
 import {assertAppSupplierHubNotSubmitted} from '../extensions/supplier-hub/receipt-recovery.mjs';
+import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
 
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 const companies=[{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}];
@@ -50,6 +51,31 @@ function renderBoard(products){
  Object.assign(exports,load('app/components/registration-board.tsx'));
  return renderToStaticMarkup(createElement(exports.RegistrationBoard,{products,selected:new Set(),onSelected(){},onOpen(){},loading:false,error:'',onArchive(){}}));
 }
+for(const company of companies)test(`serialized pending row with an empty quotation ID can advance to a pinned receipt and survive reload (${company.companyCode})`,async()=>{
+ const h=await setup(company);try{
+  const before={product:h.sqlite.prepare('SELECT * FROM products').get(),content:h.sqlite.prepare('SELECT * FROM product_content').all()};
+  let cells=[h.preview.filename,'2026-10-05','검증중','',''],notify;
+  const table={isConnected:true,getClientRects:()=>[{}],contains:node=>node===table,querySelectorAll:selector=>selector==='thead th'?['견적서 명','견적서 등록일','검증 상태','검증 결과','견적서 ID'].map(innerText=>({innerText})):[{querySelectorAll:()=>cells.map(innerText=>({innerText}))}]};
+  const refresh={innerText:'새로고침',getClientRects:()=>[{}],getAttribute:()=>null,click:()=>notify([{target:table}])};
+  const document={body:{},querySelectorAll:selector=>selector==='table'?[table]:[refresh]};
+  const read=async()=>vm.runInNewContext(`(${readSupplierHubValidation.toString()})(filename)`,{filename:h.preview.filename,document,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},setTimeout,clearTimeout,MutationObserver:class{constructor(callback){notify=callback;}observe(){}disconnect(){}}});
+  const pending={...h.result,...await read()};assert.equal(pending.state,'validation-pending');assert.equal(pending.quotationId,'');
+  await json(await h.write(pending));
+  cells=[h.preview.filename,'2026-10-05','완료','검증 완료',h.result.quotationId];
+  const complete={...h.result,...await read(),observedAt:pending.observedAt};
+  await json(await h.write(complete));
+  await json(await h.write({...complete,registration:{...h.registration,observedAt:complete.observedAt+1}}));
+  const receipt=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+h.preview.fingerprint));
+  assert.equal(receipt.receipt.result.quotationId,h.result.quotationId);assert.equal(receipt.receipt.result.registration.rows.length,6);
+  const pinned=h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts').get().payload;
+  for(const value of [{...complete,quotationId:'another-quote'},{...pending,quotationId:''}])assert.equal((await h.write({...value,observedAt:complete.observedAt+2})).status,409);
+  assert.equal(h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts').get().payload,pinned,'a real quotation ID stays pinned after assignment');
+  const ui=submissionPackageUI({route:h.route,productId:h.product.id});await ui.click('견적서 + 첨부 파일 준비');ui.remount();await ui.click('견적서 + 첨부 파일 준비');
+  assert.ok(JSON.stringify(ui.render()).includes('sku-5'));assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);assert.equal(ui.calls.some(call=>['transmit','prepare','export'].includes(call.action)),false);
+  assert.deepEqual({product:h.sqlite.prepare('SELECT * FROM products').get(),content:h.sqlite.prepare('SELECT * FROM product_content').all()},before);
+  const source=await json(await h.route(h.base+'/quotation',{method:'POST',body:{action:'source'}}));assert.equal(source.fingerprint,h.preview.fingerprint);
+ }finally{h.close();}
+});
 for(const company of companies)test(`actual owner-scoped API blocks server-only receipt replay for complete, pending and rejected states (${company.companyCode})`,async()=>{
  const h=await setup(company);try{
   const origin='http://localhost:3000',identity={origin,productId:h.product.id,categoryId:'80719',fingerprint:h.preview.fingerprint};

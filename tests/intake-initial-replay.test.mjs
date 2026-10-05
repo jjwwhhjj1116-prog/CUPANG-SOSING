@@ -12,6 +12,68 @@ const intake=async(h,fetch=fetcher(h))=>h.load('app/intake-collection.ts').colle
  signal:new AbortController().signal,fetcher:fetch,onJob:()=>{},onProgress:()=>{},
 });
 
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`initial completed intake can retry a manual content revision saved at the same product timestamp (${company.companyCode})`,async t=>{
+ const h=mobileIntakeHarness(company);
+ try{
+  h.context.keywords='';h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
+  // Source and images can finish while the first text-preparation request is
+  // offline. A resumed generation then starts at the already imported version.
+  await assert.rejects(intake(h,(path,init)=>path.endsWith('/translation')
+   ? Promise.resolve(Response.json({error:'fixture preparation offline'},{status:503})) : fetcher(h)(path,init)),/fixture preparation offline/);
+  assert.equal(h.aiSources.length,0);assert.equal(h.stats.downloads,19);
+  const original=h.bindings.AI.run;let edited=false;
+  h.bindings.AI.run=async(...args)=>{const answer=await original(...args);if(!edited){
+   edited=true;const before=product(h),revision=savedContent(h).revision;
+   // A real content PATCH uses wall-clock time; two saves within one clock tick
+   // advance the content revision without advancing products.updated_at.
+   t.mock.timers.enable({apis:['Date'],now:Date.parse(before.updated_at)});
+   try{await patch(h,{seo:{description:'',keywords:[]},label:{material:'같은 시각에 확인한 재질'}});}finally{t.mock.timers.reset();}
+   assert.equal(product(h).updated_at,before.updated_at);assert.equal(savedContent(h).revision,revision+1);
+  }return answer;};
+  await assert.rejects(intake(h,async(path,init)=>{
+   const response=await fetcher(h)(path,init);
+   if(path.endsWith('/translation-apply'))throw Error('fixture preview acknowledgement lost');
+   return response;
+  }),/fixture preview acknowledgement lost/);
+  const initial=h.sqlite.prepare('SELECT * FROM translation_jobs').get();
+  assert.equal(initial.status,'completed');assert.equal(product(h).updated_at,initial.product_version);
+  const frozen=h.sqlite.prepare('SELECT payload FROM collection_context').get().payload;
+  const policy=product(h).pricing_policy;
+  const reviewBody={jobId:initial.id,expectedVersion:product(h).updated_at};
+  const review=body=>h.route('/api/products/'+product(h).id+'/translation-apply',{method:'POST',body:{...reviewBody,...body}});
+  // The revision-only replay must still reject a different collected offer or
+  // category path, even when the product clock has not moved.
+  h.sqlite.prepare('UPDATE products SET source_url=?').run('https://detail.1688.com/offer/813724060929.html');
+  assert.equal((await review({action:'preview'})).status,409);
+  h.sqlite.prepare('UPDATE products SET source_url=?').run(h.sourceUrl);
+  const changedContext=JSON.parse(frozen);
+  changedContext.category.categoryPath[changedContext.category.categoryPath.length-1]='다른 분류';
+  h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(changedContext),'job');
+  assert.equal((await review({action:'preview'})).status,409);
+  h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(frozen,'job');
+  const preview=await json(await review({action:'preview'}));
+  const beforeReview=savedContent(h),clock=product(h).updated_at;
+  const revised=h.load('app/product-content.ts').applyContentPatch(beforeReview,{label:{material:'같은 시각에 다시 확인한 재질'}},clock);
+  assert.ok(await h.load('db/product-content.ts').saveProductContent('owner',revised,beforeReview.revision));
+  assert.equal(product(h).updated_at,clock);
+  assert.equal((await review({action:'apply',fingerprint:preview.fingerprint})).status,409,'content revision still invalidates an already reviewed plan');
+  assert.equal(JSON.stringify(savedContent(h)),JSON.stringify(revised));
+  assert.match(await intake(h),/SEO·옵션 초안을 생성해 반영/);
+  const content=savedContent(h),options=savedOptions(h);
+  assert.equal(content.seo.title.value,'검토 브랜드 우드 패턴 다리 선글라스');
+  assert.equal(content.seo.description.value,'');assert.equal(content.seo.description.provenance,'manual');
+  assert.deepEqual(content.seo.keywords.value,[]);assert.equal(content.seo.keywords.provenance,'manual');
+  assert.equal(content.label.material.value,'같은 시각에 다시 확인한 재질');assert.equal(content.categoryAttributes.jobId,initial.id);
+  assert.ok(options.rows.every(row=>row.translatedName&&row.provenance.translatedName==='translated'));
+  const quotation=await json(await h.route('/api/products/'+product(h).id+'/quotation-fields'));
+  assert.ok(quotation.resolved.rows.every(row=>row.fields.title.value===content.seo.title.value));
+  assert.equal(h.sqlite.prepare('SELECT payload FROM collection_context').get().payload,frozen);assert.equal(product(h).pricing_policy,policy);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs').get(),initial);assert.equal(h.aiSources.length,1);
+  const before=JSON.stringify({content,options});await intake(h);
+  assert.equal(JSON.stringify({content:savedContent(h),options:savedOptions(h)}),before);assert.equal(h.aiSources.length,1);
+ }finally{t.mock.timers.reset();h.close();}
+});
+
 for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`initial completed intake fills untouched source after a concurrent label edit (${company.companyCode})`,async()=>{
  const h=mobileIntakeHarness(company);
  try{

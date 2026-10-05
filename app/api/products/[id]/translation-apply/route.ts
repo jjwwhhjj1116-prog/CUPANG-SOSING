@@ -48,7 +48,9 @@ export async function POST(request: Request, context: Context) {
     try {
       let applicationJob=job;
       let intakeReplay=false;
-      if(job.productVersion!==product.updated_at){
+      // Content saves can advance their revision within the same product clock
+      // tick. Both guards must use the canonical, source-bound replay path.
+      if(job.productVersion!==product.updated_at || job.contentRevision!==content.revision){
         const initial=await findIntakeTranslation(owner,id);
         const optionBatch=scope==='options' && initial?.id!==job.id
           ? await findIntakeOptionsTranslation(owner,id,await fingerprint(job.review.source.attributes)) : null;

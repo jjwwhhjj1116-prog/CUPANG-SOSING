@@ -14,13 +14,14 @@ async function database(){
 /** Save an observation without changing product versions or invalidating its XLSX. */
 export async function saveSupplierHubReceipt(owner:string,productId:string,receipt:SupplierHubReceipt,source:QuotationSourceGuard,quotationRevision:number){
   const db=await database(),guard=sourceGuard(owner,productId,source);
+  // Hub pending rows carry an empty ID. Pin only an ID that has been assigned.
   const row=await db.prepare(`INSERT INTO supplier_hub_receipts(owner_id,product_id,fingerprint,observed_at,evidence_order,payload)
     SELECT p.owner_id,p.id,?,?,?,? FROM products p WHERE ${guard.sql}
       AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=?
     ON CONFLICT(owner_id,product_id,fingerprint) DO UPDATE SET observed_at=excluded.observed_at,evidence_order=excluded.evidence_order,payload=excluded.payload
       WHERE (excluded.observed_at>supplier_hub_receipts.observed_at
         OR excluded.observed_at=supplier_hub_receipts.observed_at AND excluded.evidence_order>supplier_hub_receipts.evidence_order)
-      AND (json_extract(supplier_hub_receipts.payload,'$.result.quotationId') IS NULL
+      AND (NULLIF(json_extract(supplier_hub_receipts.payload,'$.result.quotationId'),'') IS NULL
         OR json_extract(supplier_hub_receipts.payload,'$.result.quotationId')=json_extract(excluded.payload,'$.result.quotationId'))
       AND NOT (excluded.evidence_order=1 AND supplier_hub_receipts.evidence_order>1)
     RETURNING fingerprint`).bind(receipt.fingerprint,supplierHubReceiptObservationTime(receipt.result),supplierHubReceiptOrder(receipt.result),JSON.stringify(receipt),...guard.args,quotationRevision).first();
@@ -29,7 +30,7 @@ export async function saveSupplierHubReceipt(owner:string,productId:string,recei
   return Boolean(await db.prepare(`SELECT p.id FROM products p WHERE ${guard.sql}
     AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=?
     AND EXISTS(SELECT 1 FROM supplier_hub_receipts r WHERE r.owner_id=p.owner_id AND r.product_id=p.id AND r.fingerprint=?
-      AND (json_extract(r.payload,'$.result.quotationId') IS NULL OR json_extract(r.payload,'$.result.quotationId') IS ?))`)
+      AND (NULLIF(json_extract(r.payload,'$.result.quotationId'),'') IS NULL OR json_extract(r.payload,'$.result.quotationId') IS ?))`)
     .bind(...guard.args,quotationRevision,receipt.fingerprint,receipt.result.quotationId??null).first());
 }
 export async function readSupplierHubReceipt(owner:string,productId:string,fingerprint:string):Promise<SupplierHubReceipt|null>{

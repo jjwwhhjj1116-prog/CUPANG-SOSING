@@ -123,6 +123,10 @@ export default function DashboardClient({ userName }: { userName: string }) {
   }, [detail]);
   const productNavigation=useRef(0);
   useEffect(()=>()=>{productNavigation.current++;},[]);
+  function changeView(next:'work'|'archive') {
+    productNavigation.current++;
+    setView(next);
+  }
   const [busy, setBusy] = useState(false);
   const [focusedOptionId, setFocusedOptionId] = useState<string|undefined>();
   const [optionBoardProduct, setOptionBoardProduct] = useState<Product|null>(null);
@@ -202,7 +206,10 @@ export default function DashboardClient({ userName }: { userName: string }) {
     if(currentDetail)setDetail(current=>current?.id===detailId?currentDetail.product:current);
   }
   async function openArchivedProduct(id: string) {
-    const result=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(id)}`);
+    const request=++productNavigation.current;
+    const result=await readJson<{product:Product}>(`/api/products/${encodeURIComponent(id)}`,{cache:'no-store'});
+    if(request!==productNavigation.current)return;
+    if(!result.product||result.product.id!==id)throw new Error('보관함에 연결된 상품을 확인하지 못했습니다. 다시 시도해주세요.');
     openProduct(result.product);
   }
   useEffect(() => {
@@ -277,8 +284,8 @@ export default function DashboardClient({ userName }: { userName: string }) {
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">Y</span><span>YOOFAM PLUS</span></div>
         <nav aria-label="주 메뉴"><p className="nav-caption">WORKSPACE</p>
-          <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>setView('work')}><span>✦</span>AI 상품등록</button>
-          <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>setView('archive')}><span>▦</span>상품 관리</button><button className="nav-item"><span>◫</span>공급 관리</button><button className="nav-item"><span>▤</span>판매 장부</button>
+          <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>changeView('work')}><span>✦</span>AI 상품등록</button>
+          <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>changeView('archive')}><span>▦</span>상품 관리</button><button className="nav-item"><span>◫</span>공급 관리</button><button className="nav-item"><span>▤</span>판매 장부</button>
           <p className="nav-caption nav-gap">AUTOMATION</p><button className="nav-item" onClick={()=>void checkConnections()}><span>⌁</span>연동 설정</button><button className="nav-item" onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span>↻</span>작업 이력</button>
         </nav>
         <div className="sidebar-status"><span className="status-dot" /><div><strong>자동화 엔진</strong><small>작업별 연결 상태 확인</small></div></div>
@@ -301,7 +308,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
           <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><a href={job.source_url} target="_blank" rel="noreferrer" style={{overflowWrap:"anywhere"}}>{job.source_url}</a><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small>{job.received_at&&<small>원문 수신 {new Date(job.received_at).toLocaleString('ko-KR')}</small>}</div><span className={`collection-status ${collectionJobProgress(job).kind}`}>{collectionJobProgress(job).label}</span><CollectionResultPanel jobId={job.id} offerId={job.offer_id} productId={job.product_id} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
         </details>
 
-        <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={setOptionBoardProduct} loading={loading} error={loadError} onArchive={()=>setView('archive')}/></>}
+        <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={setOptionBoardProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/></>}
       </section>
 
       {addOpen&&<Modal wide title="상품 대기열" subtitle="상품마다 카테고리·URL·특징·키워드를 지정합니다." onClose={()=>{if(!busy&&!intakeDraft.loading)setAddOpen(false);}}>
