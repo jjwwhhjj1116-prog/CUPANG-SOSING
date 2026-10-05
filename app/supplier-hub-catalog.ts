@@ -5,10 +5,21 @@ import {validateHubSchemaSnapshot,type HubSchemaSnapshot} from '@/app/supplier-h
 import {validateCategoryProfile,type CategoryProfile,type CategoryProfileInput} from '@/app/category-profiles';
 import {readBoundedStream} from '@/app/request-body';
 import {loadCategoryProfiles} from '@/app/load-category-profiles';
+import {unwrapOfficialXlsxDownload} from '@/app/xlsx-template';
 
 export type HubCategoryNode={categoryId:string;name:string;isLeaf:boolean};
 export type HubCategoryBranch={trail:HubCategoryNode[];children:HubCategoryNode[];ownerId:string;company:SupplierHubCompany;observedAt:number;source:'supplier-hub-category-api';fullCatalogVerified:false};
 const companies:Record<string,string>={A01526306:'유앤채',A01464742:'와이홉'};
+const sameMetadata=(left:HubSchemaSnapshot['metadata'],right:HubSchemaSnapshot['metadata'])=>Object.keys(left).length===Object.keys(right).length&&Object.entries(left).every(([key,value])=>Object.hasOwn(right,key)&&right[key]===value);
+// Compare observed node fields, not the key insertion order after Chrome transport.
+function sameCategoryTrail(actual:unknown,expected:readonly HubCategoryNode[]){
+  const keys=['categoryId','name','isLeaf'] as const;
+  return Array.isArray(actual)&&actual.length===expected.length&&actual.every((node,index)=>{
+    const other=expected[index];
+    return node&&typeof node==='object'&&!Array.isArray(node)&&other&&Object.keys(node).length===keys.length&&Object.keys(other).length===keys.length
+      &&keys.every(key=>Object.hasOwn(node,key)&&Object.hasOwn(other,key)&&node[key]===other[key]);
+  });
+}
 function validNode(value:unknown):value is HubCategoryNode{
   const node=value as HubCategoryNode;
   return Boolean(node&&typeof node.categoryId==='string'&&/^[1-9]\d{0,19}$/.test(node.categoryId)
@@ -22,7 +33,7 @@ export function validateHubCategoryBranch(value:unknown,trail:readonly HubCatego
     ||!Number.isSafeInteger(branch.observedAt)||branch.observedAt<=0||branch.observedAt>Date.now()+60000
     ||!Array.isArray(branch.trail)||branch.trail.length>10||branch.trail.some(node=>!validNode(node)||node.isLeaf)
     ||new Set(branch.trail.map(node=>node.categoryId)).size!==branch.trail.length
-    ||JSON.stringify(branch.trail)!==JSON.stringify(trail)
+    ||!sameCategoryTrail(branch.trail,trail)
     ||!Array.isArray(branch.children)||!branch.children.length||branch.children.length>1000||branch.children.some(node=>!validNode(node))
     ||new Set(branch.children.map(node=>node.categoryId)).size!==branch.children.length
     ||branch.children.some(node=>trail.some(parent=>parent.categoryId===node.categoryId)))throw new Error('Supplier Hub의 회사·상위 경로·카테고리 목록을 확인하지 못했습니다.');
@@ -71,6 +82,8 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
   if(!choice.supplierHub||!choice.isLeaf)throw Error('Supplier Hub 최종 카테고리를 선택해주세요.');
   validateHubSchemaSnapshot(snapshot,choice.categoryId,choice.path);
   const capability=await exchange('PING',null,signal);if(capability.categoryTemplate!==true)throw Error('공식 Excel 연결을 지원하는 상품 수집·전송 확장 0.2.38로 갱신해주세요.');
+  const separateExcel=(snapshot.metadata.scopeType??snapshot.metadata.scope)==='Retail_Categorized_Single';
+  if(separateExcel&&capability.categoryExcelSchema!==true)throw Error('Single·Excel 양식 구분을 지원하는 최신 상품 수집·전송 확장으로 갱신한 뒤 앱을 새로고침해주세요.');
   const {trail,ownerId,company}=choice.supplierHub;
   if(snapshot.company.code!==company.code||snapshot.company.name!==company.name)throw Error('선택한 회사와 상세 양식 회사가 다릅니다.');
   const result=await exchange('TEMPLATE',{trail,selection:{categoryId:choice.categoryId,name:choice.path.at(-1)},expectedSchema:{schemaString:snapshot.schemaString,metadata:snapshot.metadata}},signal);
@@ -78,7 +91,7 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
   const schema=validateHubSchemaSnapshot((result.branch as {schema?:unknown}).schema,choice.categoryId,choice.path);
   const kan=String(snapshot.metadata.kanCategoryId??snapshot.metadata.categoryId??'');
   if(branch.ownerId!==ownerId||branch.company.code!==company.code||branch.company.name!==company.name||!branch.children.some(node=>node.isLeaf&&node.categoryId===choice.categoryId&&node.name===choice.path.at(-1))
-    ||schema.schemaString!==snapshot.schemaString||JSON.stringify(schema.metadata)!==JSON.stringify(snapshot.metadata)||schema.company.code!==company.code||schema.company.name!==company.name
+    ||schema.schemaString!==snapshot.schemaString||!sameMetadata(schema.metadata,snapshot.metadata)||schema.company.code!==company.code||schema.company.name!==company.name
     ||!data||data.format!=='supplier-hub-template-v1'||data.registered!==false||data.categoryId!==choice.categoryId||JSON.stringify(data.categoryPath)!==JSON.stringify(choice.path)
     ||(data.company as SupplierHubCompany)?.code!==company.code||(data.company as SupplierHubCompany)?.name!==company.name||!/^[1-9]\d{0,19}$/.test(kan)||data.kanCategoryId!==kan
     ||data.sourceUrl!==`https://supplier.coupang.com/qvt/v3/kan-categories/download-quotation?leafKanCategoryIds=${kan}&locale=ko`
@@ -87,10 +100,30 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
     ||typeof data.sha256!=='string'||!/^[a-f0-9]{64}$/.test(data.sha256)||data.name!==`SupplierHub-${company.code}-Kan${kan}.xlsx`)throw Error('선택한 회원·회사·분류의 공식 Excel 결과를 확인하지 못했습니다.');
   if(signal.aborted)throw Error('작업을 취소했습니다.');
   const binary=atob(data.base64),bytes=Uint8Array.from(binary,character=>character.charCodeAt(0));
-  const sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join('');
-  if(bytes.length!==data.size||sha256!==data.sha256||btoa(binary)!==data.base64)throw Error('공식 Excel 원본 바이트와 파일 지문이 다릅니다.');
+  const downloadSha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join('');
+  if(bytes.length!==data.size||downloadSha256!==data.sha256||btoa(binary)!==data.base64)throw Error('공식 Excel 원본 바이트와 파일 지문이 다릅니다.');
   if(signal.aborted)throw Error('작업을 취소했습니다.');
-  const form=new FormData();form.set('file',new File([bytes],data.name,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));form.set('schema',JSON.stringify(snapshot));
+  const workbook=await unwrapOfficialXlsxDownload(bytes.buffer);
+  const sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',workbook)),byte=>byte.toString(16).padStart(2,'0')).join('');
+  signal.throwIfAborted();
+  const form=new FormData();form.set('file',new File([workbook],data.name,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));form.set('schema',JSON.stringify(snapshot));
+  if(separateExcel){
+    form.set('action','inspect');
+    const inspected=await fetch('/api/category-profiles/official-template',{method:'POST',body:form,signal,credentials:'same-origin',redirect:'error',cache:'no-store'});
+    const body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readBoundedStream(inspected.body,10000))) as {identity?:{scopeType:string;kanCategoryId:string;noticeNumber:string;version:string};registered?:false;error?:string};
+    signal.throwIfAborted();
+    if(!inspected.ok)throw Error(body.error??'원본 Excel 식별값을 확인하지 못했습니다.');
+    const identity=body.identity;
+    if(body.registered!==false||!identity||identity.scopeType!=='Retail_Categorized_Excel'||identity.kanCategoryId!==kan||!/^\d{1,20}$/.test(identity.noticeNumber)||!/^\d{1,20}$/.test(identity.version))throw Error('원본 Excel의 scope·분류·고시·버전을 확인하지 못했습니다.');
+    const loaded=await exchange('SCHEMA',{trail,selection:{categoryId:choice.categoryId,name:choice.path.at(-1)},expectedSchema:{schemaString:snapshot.schemaString,metadata:snapshot.metadata},excelIdentity:identity},signal);
+    const returned=loaded.branch as {schema?:unknown;excelSchema?:unknown},verified=validateHubCategoryBranch(returned,trail),source=validateHubSchemaSnapshot(returned.schema,choice.categoryId,choice.path),excel=validateHubSchemaSnapshot(returned.excelSchema,choice.categoryId,choice.path);
+    const matches=(keys:string[],value:string)=>keys.some(key=>excel.metadata[key]!==undefined)&&keys.every(key=>excel.metadata[key]===undefined||String(excel.metadata[key])===value);
+    if(verified.ownerId!==ownerId||verified.company.code!==company.code||verified.company.name!==company.name||!verified.children.some(node=>node.isLeaf&&node.categoryId===choice.categoryId&&node.name===choice.path.at(-1))
+      ||source.schemaString!==snapshot.schemaString||!sameMetadata(source.metadata,snapshot.metadata)||source.company.code!==company.code||source.company.name!==company.name
+      ||excel.company.code!==company.code||excel.company.name!==company.name||!matches(['scope','scopeType'],identity.scopeType)||!matches(['categoryId','kanCategoryId'],identity.kanCategoryId)||!matches(['noticeNumber','productNoticeNumber'],identity.noticeNumber)||String(excel.metadata.version)!==identity.version)throw Error('별도 Excel 상세 양식의 회원·회사·분류·버전이 다릅니다.');
+    signal.throwIfAborted();form.delete('action');
+    form.set('excelSchema',JSON.stringify({...excel,...(snapshot.inputBindings?{inputBindings:snapshot.inputBindings}:{})}));
+  }
   const response=await fetch('/api/category-profiles/official-template',{method:'POST',body:form,signal,credentials:'same-origin',redirect:'error',cache:'no-store'});
   const saved=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readBoundedStream(response.body,300000))) as {template:NonNullable<CategoryProfileInput['template']>;mappings:CategoryProfileInput['mappings'];report:{categoryId:string;categoryPath:string[];company:SupplierHubCompany;kanCategoryId:string;registered:false};error?:string};
   if(signal.aborted)throw Error('작업을 취소했습니다.');
@@ -123,7 +156,7 @@ export async function prepareOfficialHubProfileTemplate(profile:CategoryProfile,
   }
   if(!choice)throw Error('저장한 카테고리 경로를 확인해주세요.');
   const live=await loadLiveHubCategorySchema(choice,signal);signal.throwIfAborted();
-  if(live.schemaString!==snapshot.schemaString||JSON.stringify(live.metadata)!==JSON.stringify(snapshot.metadata))throw Error('현재 상세 양식이 저장 당시와 다릅니다. 기존 초안은 유지하며 카테고리·양식 관리에서 확인해주세요.');
+  if(live.schemaString!==snapshot.schemaString||!sameMetadata(live.metadata,snapshot.metadata))throw Error('현재 상세 양식이 저장 당시와 다릅니다. 기존 초안은 유지하며 카테고리·양식 관리에서 확인해주세요.');
   const connection=await loadLiveHubCategoryTemplate(choice,snapshot,signal);signal.throwIfAborted();
   const expected=validateCategoryProfile({...current,...connection});
   const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},signal,

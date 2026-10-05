@@ -255,7 +255,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
       <button type="button" className="btn rose" disabled={busy||transferAttempted||!submissionChecked||preview.report.company==null||!categoryId||!preview.filename.endsWith('.xlsx')||preview.submissionReview.errorCount>0||!supplierHubAgreementsReady(agreements,requiresDocuments)} onClick={()=>void run('transmit')}>{transferAttempted?'전송 시도됨 · 검증 결과 확인':'등록 전송'}</button>
       {canResumeValidation&&<button type="button" className="btn primary" disabled={busy||!supplierHubAgreementsReady(agreements,requiresDocuments)} onClick={()=>void run('resume-validation')}>첨부 파일 확인 후 검증 재개</button>}
       {!submissionChecked&&preview.report.company&&categoryId&&preview.filename.endsWith('.xlsx')&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>void run('recover')}>전송 기록 다시 확인</button>}
-      <p>이 앱과 같은 Chrome 창에서 회사코드가 일치하는 Supplier Hub 대량 상품 등록 탭을 사용합니다.</p>
+      <p>이 앱과 같은 Chrome 창에 회사코드가 일치하는 Supplier Hub 대시보드 또는 대량 상품 등록 탭을 열어두세요. 등록 전송을 누르면 필요한 새 등록 탭을 준비합니다.</p>
       {!!preview.report.publicDetailImages?.count && <p>견적서 다운로드·첨부 준비·등록전송 시 상세 이미지 {preview.report.publicDetailImages.count}장의 공개 주소를 만듭니다. 해당 주소를 가진 사람은 이미지를 볼 수 있습니다.</p>}
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('download')}>견적서 파일 다운로드</button>
       <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('export')}>확인한 견적서 + 첨부 ZIP 다운로드</button>
@@ -272,7 +272,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         {hubResult.registration.scope==='visible-page'?<small>현재 페이지의 결과입니다. 다른 페이지의 옵션은 아직 대조되지 않았습니다.</small>:
           <small>{hubResult.registration.hasMore===true?'다음 페이지가 남아 있습니다. 결과를 계속 확인해주세요.':hubResult.registration.hasMore===null?'추가 페이지 유무를 확인하지 못했습니다. Supplier Hub 결과 표를 확인해주세요.':'마지막 페이지까지 조회했습니다.'} 상품 검수 완료 여부는 각 행의 상태를 확인하세요.</small>}
       </div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.47.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.47)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.49.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.49)</a>
     </>}
   </section>;
 }

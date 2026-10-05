@@ -10,6 +10,7 @@ const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유
 const root={categoryId:'100',name:'시험 대분류',isLeaf:false},parent={categoryId:'200',name:'시험 중분류',isLeaf:false},leaf={categoryId:'300',name:'시험 최종분류',isLeaf:true};
 const dto=node=>({leaf:node.isLeaf,displayItemCategoryDto:{displayItemCategoryCode:Number(node.categoryId),name:node.name}});
 const plain=value=>JSON.parse(JSON.stringify(value));
+const sortedKeys=value=>Array.isArray(value)?value.map(sortedKeys):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,sortedKeys(value[key])])):value;
 function page(company,{response,after,path='/qvt/registration'}={}){
   const calls=[],document={body:{innerText:'Company Code: '+company.code}},location={origin,pathname:path};
   const fetcher=async(url,init)=>{
@@ -36,10 +37,10 @@ test('forged parent names, leaf ancestors and changed company or page never yiel
 test('login HTML, failed responses, malformed DTOs and oversized streams are rejected',async()=>{
   for(const response of [()=>new Response('<html>login</html>',{headers:{'content-type':'text/html'}}),()=>Response.json({data:[]}),()=>Response.json([]),()=>Response.json([dto(root),dto(root)]),()=>Response.json([{...dto(root),leaf:'false'}]),()=>Response.json([{leaf:false,displayItemCategoryDto:{displayItemCategoryCode:9007199254740992,name:'unsafe'}}]),()=>Response.json([{leaf:true,displayItemCategoryDto:{displayItemCategoryCode:'001',name:'leading zero'}}]),()=>new Response('x'.repeat(512*1024+1),{headers:{'content-type':'application/json'}}),()=>Response.json([],{status:401})])await assert.rejects(page(companies[0],{response}).run());
 });
-function dispatcher({company=companies[0],contexts,tabs,changeTab}={}){
+function dispatcher({company=companies[0],contexts,tabs,changeTab,serialize=value=>value}={}){
   const calls=[],sender={url:'http://localhost:3000/',frameId:0,tab:{id:1,windowId:7}},app={id:1,windowId:7,url:sender.url};
   const hub={id:2,windowId:7,url:origin+'/qvt/registration'};let reads=0;
-  const api={tabs:{async get(id){calls.push(['get',id]);return changeTab?.(id,calls)??(id===1?app:hub);},async query(query){calls.push(['query',query]);return tabs??[hub];},async sendMessage(id,message,options){calls.push(['context',id,message,options]);return contexts?.[reads++]??{ok:true,ownerId:'owner',company};}},scripting:{async executeScript({target,func,args}){calls.push(['script',target.tabId,func.name]);return[{result:func.name==='verifySupplierHubCompany'?{code:company.code}:await page(company).run(args[0])}];}}};
+  const api={tabs:{async get(id){calls.push(['get',id]);return changeTab?.(id,calls)??(id===1?app:hub);},async query(query){calls.push(['query',query]);return tabs??[hub];},async sendMessage(id,message,options){calls.push(['context',id,message,options]);return contexts?.[reads++]??{ok:true,ownerId:'owner',company};}},scripting:{async executeScript({target,func,args}){calls.push(['script',target.tabId,func.name]);return[{result:serialize(func.name==='verifySupplierHubCompany'?{code:company.code}:await page(company).run(args[0]))}];}}};
   return {calls,sender,run:trail=>readAppSupplierHubCatalog({type:'YOOFAM_READ_CATEGORY_BRANCH',trail:trail??[]},sender,api)};
 }
 test('extension catalog requests use only this app window and approved company without creating tabs or changing forms',async()=>{
@@ -56,6 +57,28 @@ test('wrong app frame, other windows and changed member/company reject catalog r
 });
 const exchangeCalls=[];let catalogReply;
 const client={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-catalog.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:client,Date,Error,require:()=>({exchange:async(type,payload,signal)=>{if(signal.aborted)throw Error('cancelled');exchangeCalls.push({type,payload:plain(payload)});return type==='PING'?{categoryCatalog:true}:{branch:catalogReply};}})});
+for(const company of companies)test(`Chrome object-key reordering preserves exact root and multi-level category navigation (${company.code})`,async()=>{
+ for(const trail of [[],[root],[root,parent]]){
+  const h=dispatcher({company,serialize:sortedKeys});catalogReply=await h.run(trail);
+  const branch=await client.loadSupplierHubCategoryBranch(trail,new AbortController().signal);
+  assert.deepEqual(plain(branch.trail),plain(trail));assert.deepEqual(plain(branch.children),[trail.length===0?root:trail.length===1?parent:leaf]);assert.deepEqual(plain(branch.company),company);
+  if(trail.length)assert.notEqual(JSON.stringify(branch.trail),JSON.stringify(trail),'serialization must actually reorder keys');
+  const choice=client.hubCategoryChoice(branch,branch.children[0]);assert.deepEqual(plain(choice.path),[...trail.map(node=>node.name),branch.children[0].name]);
+ }
+});
+test('app branch validation accepts independently reordered requested and returned node keys',async()=>{
+ const branch={...plain(await page(companies[0]).run([root,parent])),ownerId:'owner'};
+ for(const [actual,expected] of [[sortedKeys(branch),[root,parent]],[branch,sortedKeys([root,parent])]])assert.deepEqual(plain(client.validateHubCategoryBranch(actual,expected).trail),plain(branch.trail));
+});
+test('semantic trail comparison still rejects wrong order, values, missing fields and unobserved extra fields',async()=>{
+ const original={...plain(await page(companies[0]).run([root,parent])),ownerId:'owner'};
+ for(const trail of [[parent,root],[root],[root,parent,parent],[{...root,categoryId:'999'},parent],[{...root,name:'다른 이름'},parent],[{...root,isLeaf:true},parent],[{...root,isLeaf:'false'},parent],[{categoryId:root.categoryId,name:root.name},parent],[{...root,guessedKanCategoryId:'999'},parent],null]){
+  const response={...sortedKeys(original),trail:sortedKeys(trail)};
+  assert.throws(()=>client.validateHubCategoryBranch(response,[root,parent]));
+  await assert.rejects(dispatcher({serialize:value=>value.source?response:value}).run([root,parent]),/상위 경로/);
+ }
+ assert.throws(()=>client.validateHubCategoryBranch(original,[{...root,guessedKanCategoryId:'999'},parent]));
+});
 test('live leaf selection carries the exact display code and full path, never a guessed kan ID or confirmed schema',async()=>{
   const branch={...plain(await page(companies[0]).run([root,parent])),ownerId:'owner'};
   const choice=client.hubCategoryChoice(branch,leaf);assert.equal(choice.categoryId,'300');assert.deepEqual(plain(choice.path),['시험 대분류','시험 중분류','시험 최종분류']);assert.equal(choice.codeEvidence,'supplier-hub');assert.equal(choice.templateLinked,false);

@@ -7,13 +7,14 @@ export function quotationValueLength(field: QuotationField, value: string): numb
 }
 
 export function isNumericQuotationField(field: QuotationField): boolean {
-  return field.type === 'number' || field.numericValue === true;
+  return field.type === 'number' || field.numericValue === true || field.numericText === true;
 }
 
 /** Parse exactly the value emitted by the quotation exporter. */
 export function quotationNumericValue(field: QuotationField, value: string): number | undefined {
   if (!isNumericQuotationField(field)) return undefined;
-  const syntax = field.hubWire ? /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/ : /^\d+(?:\.\d+)?$/;
+  const syntax = field.numericText&&field.hubInput==='packagedWeightG' ? /^\d+$/
+    : field.hubWire ? /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/ : /^\d+(?:\.\d+)?$/;
   if (!syntax.test(value)) return undefined;
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || (numeric === 0 && /[1-9]/.test(value.split(/[eE]/)[0]))) return undefined;

@@ -34,7 +34,7 @@ export function CollectionBatchPanel({ jobs, onSaved, onOpenProduct }: { jobs: C
     active.current = true; stop.current = false; setBusy(true);
     if (!retry) { setItems(selected); setResults({}); setProgress({}); }
     try {
-      await importReceivedJobs(selected, { fetcher: fetch, shouldStop: () => stop.current,
+      await importReceivedJobs(selected, { fetcher: (input,init)=>fetch(input,init), shouldStop: () => stop.current,
         onProgress: (id, message) => { if (mounted.current) { setProgress(previous => ({ ...previous, [id]: message })); setResults(previous => { const next = { ...previous }; delete next[id]; return next; }); } },
         onResult: (id, result) => { if (mounted.current) setResults(previous => ({ ...previous, [id]: result })); },
       });

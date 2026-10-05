@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import path from 'node:path';
 import ts from 'typescript';
 import * as parse5 from 'parse5';
 import {webcrypto} from 'node:crypto';
@@ -30,7 +31,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
  const source=JSON.parse(request.input[0].content[0].text);assert.equal(source.category.id,'80719');assert.equal(source.title,'原文商品');
  const draft={title:'한국어 수납 상품',description:'검토한 한국어 설명',keywords:['추천 검색어'],warnings:[],attributes:source.attributes.map((pair,sourceIndex)=>({sourceIndex,name:pair.name.startsWith('option-color:')?'색상':'옵션명',value:pair.name.startsWith('option-color:')?'검정':'검정 옵션'}))};
  return Response.json({id:'fixture-response',status:'completed',model:'fixture-model',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(draft)}]}],usage:{input_tokens:100,output_tokens:50,total_tokens:150}});
- }assert.equal(host,'cbu01.alicdn.com');return new Response(png);},require(name){if(name in deps)return deps[name];assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');}});return exports;}
+ }assert.equal(host,'cbu01.alicdn.com');return new Response(png);},require(name){if(name in deps)return deps[name];if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');assert.ok(name.startsWith('@/'),name);return load(name.slice(2)+'.ts');}});return exports;}
  try{
   if(automatic==='browser-source')deps['cloudflare:workers'].env.ALIBABA_PRODUCT_API_ENABLED='false';
   const now=new Date().toISOString();
@@ -65,7 +66,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
   deps['cloudflare:workers'].env.OPENAI_API_KEY='fixture-key';
   if(automatic){
    const bindings=deps['cloudflare:workers'].env;delete bindings.OPENAI_API_KEY;
-   bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';bindings.SOURCEFLOW_TEXT_MODEL='@cf/meta/llama-3.1-8b-instruct';
+   bindings.SOURCEFLOW_TEXT_PROVIDER='workers-ai';bindings.SOURCEFLOW_TEXT_MODEL='@cf/meta/llama-3.3-70b-instruct-fp8-fast';
    const expectedGenerations=automatic==='maximum'?13:(automatic==='many'||(automatic==='resume-options'||automatic==='resume-completed-options'))?4:1;
    if(automatic===true||automatic==='hidden-off-rule'){
     const field=load('app/quotation-schema.ts').getQuotationSchema('80719').fields.find(f=>f.id==='basketShape');

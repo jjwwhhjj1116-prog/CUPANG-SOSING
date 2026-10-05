@@ -307,9 +307,90 @@ test('Workers AI uses its server binding without OpenAI secrets and validates so
 });
 
 test('Workers AI configuration rejects absent binding, unsupported model and unknown provider', () => {
+  assert.equal(model.WORKERS_TEXT_MODEL,'@cf/meta/llama-3.3-70b-instruct-fp8-fast');
   const env = { SOURCEFLOW_TEXT_PROVIDER: 'workers-ai', SOURCEFLOW_TEXT_MODEL: model.WORKERS_TEXT_MODEL, SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '1024', AI: { run: async () => ({}) } };
-  for (const override of [{ AI: undefined }, { SOURCEFLOW_TEXT_MODEL: '@cf/unknown/model' }, { SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '0' }, { SOURCEFLOW_TEXT_PROVIDER: 'typo' }]) {
+  for (const override of [{ AI: undefined }, { SOURCEFLOW_TEXT_MODEL: '@cf/unknown/model' }, { SOURCEFLOW_TEXT_MODEL: '@cf/meta/llama-3.1-8b-instruct' }, { SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '0' }, { SOURCEFLOW_TEXT_PROVIDER: 'typo' }]) {
     assert.equal(model.translationConfiguration({ ...env, ...override }).configured, false);
+  }
+});
+
+test('Workers AI error codes expose only fixed guidance and never retry', async () => {
+  const known = [[3036,'무료'],[3040,'처리 용량'],[5007,'모델'],[5028,'폐기'],[3042,'모델'],[5035,'Paid'],[5016,'약관'],[5018,'접근'],[3041,'접근'],[3023,'계정'],[3006,'크기'],[3007,'시간'],[3008,'중단']];
+  for (const [code, guidance] of known) {
+    let calls = 0;
+    const own = model.requireTranslationConfig({ SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_TEXT_MODEL,SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'1024',AI:{run:async()=>{calls++;throw Error(`${code}: PRIVATE_PROVIDER_BODY token=DO_NOT_EXPOSE 原文`);}} });
+    const review = await model.prepareTranslationReview(source,own);
+    await assert.rejects(model.executeTranslation(review,own),error=>{
+      assert.equal(error.code,[3007,3008].includes(code)?'PROVIDER_OUTCOME_UNCERTAIN':`WORKERS_AI_${code}`);
+      assert.match(error.message,new RegExp(String(code)));assert.ok(error.message.includes(guidance));
+      assert.doesNotMatch(error.message,/PRIVATE_PROVIDER_BODY|DO_NOT_EXPOSE|原文/);
+      assert.match(error.message,/자동 재시도하지 않았습니다/);assert.equal(error.mayHaveBeenCharged,true);return true;
+    });
+    assert.equal(calls,1);
+  }
+  for(const code of ['9999','0000']){
+    const own=model.requireTranslationConfig({SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_TEXT_MODEL,SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'1024',AI:{run:async()=>{throw Error(`${code}: PRIVATE_PROVIDER_BODY token=DO_NOT_EXPOSE`);}}});
+    await assert.rejects(model.executeTranslation(await model.prepareTranslationReview(source,own),own),error=>{
+      assert.equal(error.code,'PROVIDER_OUTCOME_UNCERTAIN');assert.match(error.message,new RegExp(`오류 ${code}:`));assert.match(error.message,/분류되지 않은/);assert.doesNotMatch(error.message,/PRIVATE_PROVIDER_BODY|DO_NOT_EXPOSE/);return true;
+    });
+  }
+  for (const message of ['quota','JSON Mode failed to match schema; PRIVATE_PROVIDER_BODY','upstream response contains 3036: PRIVATE_PROVIDER_BODY','30360: PRIVATE_PROVIDER_BODY','9999x: PRIVATE_PROVIDER_BODY','999: PRIVATE_PROVIDER_BODY']) {
+    const own = model.requireTranslationConfig({SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_TEXT_MODEL,SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'1024',AI:{run:async()=>{throw Error(message);}}});
+    await assert.rejects(model.executeTranslation(await model.prepareTranslationReview(source,own),own),error=>error.code==='PROVIDER_OUTCOME_UNCERTAIN'&&!error.message.includes('PRIVATE_PROVIDER_BODY'));
+  }
+});
+
+test('retired-model approvals cannot execute with the replacement; completed history remains readable and new reviews use the active model',async()=>{
+ for(const status of ['prepared','approved','completed']){
+  const {sqlite,store,product,dependencies,env}=harness();let calls=0;
+  try{
+   Object.assign(env,{SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_TEXT_MODEL,AI:{run:async(name,input)=>{calls++;assert.equal(name,'@cf/meta/llama-3.3-70b-instruct-fp8-fast');assert.equal(input.response_format.type,'json_schema');return{response:draft};}}});
+   const active=model.requireTranslationConfig(env),oldModel='@cf/meta/llama-3.1-8b-instruct';
+   const review=await model.prepareTranslationReview(source,{...active,model:oldModel});
+   const now=new Date().toISOString(),id=crypto.randomUUID();
+   await store.createTranslationJob('owner',{id,productId:product.id,productVersion:product.updated_at,contentRevision:2,status:'prepared',review,createdAt:now},'old-model-review','historical-request');
+   const oldResult={draft,responseId:'workers-ai-local:historical',model:oldModel,usage:null,generatedAt:now,provenance:'generated',appliedToContent:false};
+   sqlite.prepare('UPDATE translation_jobs SET status=?,approved_at=?,started_at=?,finished_at=?,result=? WHERE id=?').run(status,status==='prepared'?null:now,status==='completed'?now:null,status==='completed'?now:null,status==='completed'?JSON.stringify(oldResult):null,id);
+   const storedBefore=sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(id);
+   const route=load('app/api/products/[id]/translation/route.ts',dependencies);
+   const history=await (await route.GET(new Request('http://localhost'),context)).json();
+   assert.equal(history.configuration.model,model.WORKERS_TEXT_MODEL);assert.equal(history.configuration.configured,true);
+   assert.equal(history.jobs[0].review.model,oldModel);assert.equal(history.jobs[0].status,status);
+   if(status==='completed')assert.deepEqual(history.jobs[0].result,oldResult);
+   for(const action of ['approve','execute']){
+    const response=await route.POST(request({action,jobId:id,...(action==='approve'?{reviewFingerprint:review.fingerprint,confirmPaid:true}:{})}),context);
+    assert.equal(response.status,409);assert.equal((await response.json()).code,'TRANSLATION_CONFLICT');
+   }
+   assert.equal(calls,0);assert.deepEqual(sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(id),storedBefore);
+   const fresh=await (await route.POST(request({...prepare,idempotencyKey:'replacement-model-review'}),context)).json();
+   assert.equal(fresh.job.review.model,model.WORKERS_TEXT_MODEL);assert.notEqual(fresh.job.review.fingerprint,review.fingerprint);
+   assert.equal((await route.POST(request({action:'approve',jobId:fresh.job.id,reviewFingerprint:fresh.job.review.fingerprint,confirmPaid:true}),context)).status,200);
+   const executed=await (await route.POST(request({action:'execute',jobId:fresh.job.id}),context)).json();assert.equal(executed.job.status,'completed');assert.equal(executed.job.result.model,model.WORKERS_TEXT_MODEL);assert.equal(calls,1);
+   assert.deepEqual(sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(id),storedBefore);
+   assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload,'MANUAL_CONTENT_MUST_NOT_CHANGE');
+  }finally{sqlite.close();}
+ }
+});
+
+test('Workers AI classified failures persist through the real API and replay without another model call or content edit',async()=>{
+  for(const code of [3036,5028,3007,9999]){
+    const {sqlite,dependencies,env}=harness();let calls=0;
+    Object.assign(env,{SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_TEXT_MODEL,AI:{run:async()=>{calls++;throw Error(`${code}: PRIVATE_PROVIDER_BODY token=DO_NOT_EXPOSE`);}}});
+    const route=load('app/api/products/[id]/translation/route.ts',dependencies);
+    try{
+      const {job}=await (await route.POST(request(prepare),context)).json();
+      const originalReview=JSON.stringify(job.review);
+      assert.equal((await route.POST(request({action:'approve',jobId:job.id,reviewFingerprint:job.review.fingerprint,confirmPaid:true}),context)).status,200);
+      const executed=await (await route.POST(request({action:'execute',jobId:job.id}),context)).json();
+      assert.equal(executed.job.status,[3036,5028].includes(code)?'failed':'uncertain');assert.equal(executed.job.result,null);
+      assert.equal(executed.job.error.code,[3036,5028].includes(code)?`WORKERS_AI_${code}`:'PROVIDER_OUTCOME_UNCERTAIN');
+      assert.ok(executed.job.error.message.includes(String(code)));assert.equal(JSON.stringify(executed.job.review),originalReview);
+      const replay=await (await route.POST(request({action:'execute',jobId:job.id}),context)).json();
+      assert.equal(replay.replayed,true);assert.deepEqual(replay.job,executed.job);assert.equal(calls,1);
+      assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,1);
+      assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload,'MANUAL_CONTENT_MUST_NOT_CHANGE');
+      assert.doesNotMatch(await (await route.GET(new Request('http://localhost'),context)).text(),/PRIVATE_PROVIDER_BODY|DO_NOT_EXPOSE/);
+    }finally{sqlite.close();}
   }
 });
 
@@ -410,6 +491,39 @@ test('new reviews require every source attribute while legacy results keep their
  await assert.rejects(model.executeTranslation(review,config,async()=>{calls++;return Response.json(completed());}),e=>e.code==='INCOMPLETE_SOURCE_ATTRIBUTES'&&e.mayHaveBeenCharged);
  assert.equal(calls,1);
  const noAttributes={...source,attributes:[]};assert.equal(model.validateTranslationDraft({...draft,attributes:[]},noAttributes,review.instructionsVersion).attributes.length,0);
+});
+
+test('v5 sends explicit source indices and exact attribute schema to both providers without changing stored source or legacy requests',async()=>{
+ for(const count of [0,1,42,50]){
+  const input={...source,attributes:Array.from({length:count},(_,index)=>({name:`source-${index}`,value:'棉'})),category:{id:'69900',path:['패션잡화','선글라스']},guidance:{features:'확인한 면 소재',keywords:'수납'}};
+  const review=await model.prepareTranslationReview(input,config),before=JSON.stringify(review);
+  const request=model.buildTranslationRequest(review),sent=JSON.parse(request.input[0].content[0].text),schema=request.text.format.schema.properties.attributes;
+  assert.equal(schema.minItems,count);assert.equal(schema.maxItems,count);assert.equal(schema.items.properties.sourceIndex.minimum,0);assert.equal(schema.items.properties.sourceIndex.maximum,Math.max(0,count-1));
+  assert.deepEqual(sent.attributes,input.attributes.map((pair,sourceIndex)=>({sourceIndex,...pair})));
+  assert.match(request.instructions,/untrusted seller preferences/);assert.match(request.instructions,/seller-selected registration category/);assert.match(request.instructions,/150 UTF-16/);
+  assert.equal(JSON.stringify(review),before);
+  const legacy=model.buildTranslationRequest({...review,instructionsVersion:'sourceflow-translation-v4'});
+  assert.deepEqual(JSON.parse(legacy.input[0].content[0].text),input);assert.equal(legacy.text.format.schema.properties.attributes.minItems,undefined);
+  let calls=0;
+  const own={...config,apiKey:'',provider:'workers-ai',model:model.WORKERS_TEXT_MODEL,ai:{run:async(_name,request)=>{calls++;assert.deepEqual(JSON.parse(request.messages[1].content).attributes,sent.attributes);assert.deepEqual(request.response_format.json_schema.properties.attributes,schema);return{response:{...draft,attributes:input.attributes.map((_,sourceIndex)=>({sourceIndex,name:'소재',value:'면'}))}};}}};
+  const result=await model.executeTranslation({...review,model:own.model,destination:'Cloudflare Workers AI'},own);assert.equal(result.draft.attributes.length,count);assert.equal(calls,1);
+ }
+});
+
+test('incomplete v5 output persists only expected/returned counts and never retries or fills missing attributes',async()=>{
+ const {sqlite,env,dependencies}=harness();let calls=0;
+ try{
+  Object.assign(env,{SOURCEFLOW_TEXT_PROVIDER:'workers-ai',SOURCEFLOW_TEXT_MODEL:model.WORKERS_TEXT_MODEL,AI:{run:async()=>{calls++;return{response:draft};}}});
+  const route=load('app/api/products/[id]/translation/route.ts',dependencies);
+  const requestSource={...source,attributes:[...source.attributes,...Array.from({length:41},()=>({name:'PRIVATE_SOURCE_NAME',value:'PRIVATE_SOURCE_VALUE'}))]};
+  const {job}=await (await route.POST(request({...prepare,source:requestSource}),context)).json();
+  await route.POST(request({action:'approve',jobId:job.id,reviewFingerprint:job.review.fingerprint,confirmPaid:true}),context);
+  const failed=await (await route.POST(request({action:'execute',jobId:job.id}),context)).json();
+  assert.equal(failed.job.status,'failed');assert.equal(failed.job.result,null);assert.equal(failed.job.error.code,'INCOMPLETE_SOURCE_ATTRIBUTES');
+  assert.match(failed.job.error.message,/기대 42개/);assert.match(failed.job.error.message,/반환 1개/);assert.doesNotMatch(failed.job.error.message,/PRIVATE_SOURCE/);
+  const replay=await (await route.POST(request({action:'execute',jobId:job.id}),context)).json();assert.equal(replay.replayed,true);assert.equal(calls,1);assert.deepEqual(replay.job.error,failed.job.error);
+  assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload,'MANUAL_CONTENT_MUST_NOT_CHANGE');
+ }finally{sqlite.close();}
 });
 
 test('option batch version refresh keeps its ID and never reopens an executed generation',async()=>{

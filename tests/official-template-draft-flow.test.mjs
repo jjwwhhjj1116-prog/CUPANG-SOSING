@@ -29,7 +29,7 @@ function fixtureWorkbook(){
 }
 function harness(api){
  const calls=[],modules=new Map(),slots=[],effects=[];let cursor=0,mode='',productId='';
- const snapshot={...hubSchemaSnapshot(schemaCompanies.find(company=>company.code==='A01464742')),metadata:{displayCategoryCode:'991234',categoryId:3000,scope:'Retail_Categorized_Excel',productNoticeNumber:17,version:190}};
+ const snapshot={...hubSchemaSnapshot(schemaCompanies.find(company=>company.code==='A01464742')),metadata:{displayCategoryCode:'991234',categoryId:3000,scope:'Retail_Categorized_Single',productNoticeNumber:17,version:73}};
  // Use the observed price paths consumed by current captured input rules;
  // the generic legacy helper also supports unrelated same-label price fields.
  const raw=JSON.parse(snapshot.schemaString),common=raw.properties.productPage.properties.commonAttributes;
@@ -46,11 +46,11 @@ function harness(api){
  };
  const exchange=async(type,payload)=>{
   calls.push({type,payload});
-  if(type==='PING')return{categoryCatalog:true,categorySchema:true,categoryTemplate:true};
+  if(type==='PING')return{categoryCatalog:true,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true};
   const found=branch(payload.trail);
   if(type==='CATEGORIES')return{branch:found};
   const schema=mode==='schema'?{...snapshot,metadata:{...snapshot.metadata,version:191}}:snapshot;
-  if(type==='SCHEMA')return{branch:{...found,schema}};
+  if(type==='SCHEMA')return{branch:{...found,schema,...(payload.excelIdentity?{excelSchema:{...snapshot,metadata:{...snapshot.metadata,scope:'Retail_Categorized_Excel',version:190}}}:{})}};
   assert.equal(type,'TEMPLATE');assert.deepEqual(plain(payload.expectedSchema),{schemaString:snapshot.schemaString,metadata:snapshot.metadata});
   if(mode==='download')throw Error('공식 원본 다운로드 실패');
   const bytes=workbook.bytes;
@@ -83,6 +83,7 @@ test('live category enters URL drafts without XLSX, then explicit stage 7 prepar
   const picker=categoryPickerUI(ui.request,{catalog:ui.catalog});await picker.chooseLive(ui.choice);
   assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));const selected=picker.selected[0];
   assert.equal(selected.template,null);assert.deepEqual(selected.mappings,[]);assert.equal(ui.calls.some(call=>call.type==='TEMPLATE'),false);
+  assert.equal(selected.hubSchema.metadata.scope,'Retail_Categorized_Single');assert.equal(selected.hubSchema.metadata.version,73);
   api.context.category=selected;api.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(api.context));
   await api.intake();const product=api.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
   assert.equal(product.options_count,6);assert.equal(JSON.parse(product.image_keys).length,19);assert.equal(api.aiSources.length,1);

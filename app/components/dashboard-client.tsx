@@ -10,6 +10,8 @@ import { CategoryProfileEditor } from '@/app/components/category-profile-editor'
 import { IntakeQueuePanel } from '@/app/components/intake-queue-panel';
 import { useIntakeDraft } from '@/app/components/use-intake-draft';
 import { ProductArchive } from '@/app/components/product-archive';
+import { ManagedProductsPanel } from '@/app/components/managed-products-panel';
+import HistoricalAiRegistrationsPanel from '@/app/components/historical-ai-registrations-panel';
 import { ProductContentEditor } from '@/app/components/product-content-editor';
 import { AutomationPanel } from '@/app/components/automation-panel';
 import { ProductOptionsEditor } from '@/app/components/product-options-editor';
@@ -109,7 +111,11 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [lastRegistrationStep, setLastRegistrationStep] = useState('SEO');
   const detailBody = useRef<HTMLDivElement>(null);
   const [closeNotice, setCloseNotice] = useState('');
+  const [sourceSupplementBusy,setSourceSupplementBusy]=useState(false);
+  const sourceSupplementBusyRef=useRef(false);
+  const changeSourceSupplementBusy=useCallback((value:boolean)=>{sourceSupplementBusyRef.current=value;setSourceSupplementBusy(value);},[]);
   function closeWorkspace(manageCategories = false) {
+    if(sourceSupplementBusyRef.current){setCloseNotice('상세 원문 보완을 마친 뒤 닫아주세요.');return;}
     const result = requestWorkspaceClose(detailBody.current, () => window.confirm('저장하지 않은 입력이 있습니다. 입력을 버리고 상품 작업창을 닫을까요?'));
     if (result === 'busy') { setCloseNotice('작업이 진행 중입니다. 현재 작업을 마친 뒤 닫아주세요.'); return; }
     if (result === 'cancel') return;
@@ -120,7 +126,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
     if (!detail) return;
     const protect = (event: BeforeUnloadEvent) => {
       const state = workspaceEditState(detailBody.current);
-      if (state.dirty || state.busy) { event.preventDefault(); event.returnValue = ''; }
+      if (state.dirty || state.busy || sourceSupplementBusyRef.current) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', protect);
     return () => window.removeEventListener('beforeunload', protect);
@@ -316,16 +322,16 @@ export default function DashboardClient({ userName }: { userName: string }) {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">Y</span><span>YOOFAM PLUS</span></div>
-        <nav aria-label="주 메뉴"><p className="nav-caption">WORKSPACE</p>
+        <nav aria-label="주 메뉴"><p className="nav-caption">로켓배송</p>
           <button className={`nav-item ${view==='work'?'active':''}`} onClick={()=>changeView('work')}><span>✦</span>AI 상품등록</button>
-          <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>changeView('archive')}><span>▦</span>상품 관리</button><button className="nav-item"><span>◫</span>공급 관리</button><button className="nav-item"><span>▤</span>판매 장부</button>
-          <p className="nav-caption nav-gap">AUTOMATION</p><button className="nav-item" onClick={()=>void checkConnections()}><span>⌁</span>연동 설정</button><button className="nav-item" onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span>↻</span>작업 이력</button>
+          <button className={`nav-item ${view==='archive'?'active':''}`} onClick={()=>changeView('archive')}><span>▦</span>상품관리(신규)</button>
+          <p className="nav-caption nav-gap">설정</p><button className="nav-item" onClick={()=>void checkConnections()}><span>⌁</span>연동 설정</button><button className="nav-item" onClick={()=>{setHistoryProductId(detail?.id??products[0]?.id??'');setHistoryOpen(true);}}><span>↻</span>작업 이력</button>
         </nav>
-        <div className="sidebar-status"><span className="status-dot" /><div><strong>자동화 엔진</strong><small>작업별 연결 상태 확인</small></div></div>
+        <div className="sidebar-status"><div><strong>YOOFAM PLUS</strong><small>로켓배송 상품 등록 · 관리</small></div></div>
       </aside>
 
       <section className="content">
-        <header className="topbar"><div><h1>로켓배송 AI상품등록</h1><p>상품별 등록 현황 및 관리</p></div>
+        <header className="topbar"><div><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
           <div className="top-actions"><a className="workspace-user" href="/account">{userName} · 계정 관리</a><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy} onClick={()=>{if(!settingsBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" onClick={()=>{setAddOpen(true);}}>＋ 상품 추가</button><details className="bulk-action-menu"><summary className="btn ghost">전체 작업 ▾</summary><div><button type="button" onClick={()=>setSelected(new Set(products.map(product=>product.id)))}>최근 상품 전체 선택</button><button type="button" onClick={()=>setSelected(new Set())}>선택 해제</button><button type="button" onClick={()=>setBatchOpen(true)}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy} onClick={runAutomation}>작업 개시</button><button className="btn rose" onClick={()=>{setSubmissionTarget(null);setTransmitOpen(true);}}>등록 전송</button></div></header>
 
         {settingsOpen&&<section id="workspace-settings-panel" className="workspace-settings-panel" aria-labelledby="workspace-settings-heading"><header><h2 id="workspace-settings-heading">기본 등록 정보 설정</h2></header><WorkspaceSettingsDialog onSave={saveWorkspaceSettings} onClose={()=>{if(!settingsBusyRef.current)setSettingsOpen(false);}} onBusy={changeSettingsBusy}/></section>}
@@ -334,7 +340,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
         {pendingUpload&&<div className="panel-note" role="status"><div><strong>업로드 파일 연결 대기</strong><p>파일은 보관돼 있습니다. 상품에 연결하기를 다시 시도할 수 있습니다.</p></div><button className="btn ghost" disabled={busy} onClick={()=>void retryUploadedImage()}>보관된 이미지 연결 재시도</button></div>}
 
 
-        {view==='archive'?<ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/>:<>
+        {view==='archive'?<><ManagedProductsPanel/><details className="collection-panel"><summary>YOOFAM PLUS 작업 상품 보관함</summary><ProductArchive onOpenProduct={openArchivedProduct} refreshToken={`${collectionJobs[0]?.updated_at}:${products[0]?.updated_at}`}/></details></>:<>
         <details className="collection-panel" aria-label="수집 대기열"><summary>상품 대기열 · {collectionJobs.filter(job=>job.status!=='cancelled').length}건</summary>
           <CollectionBatchPanel jobs={collectionJobs} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>
           <div className="collection-heading"><div><h2>수집 대기열 <span>{collectionJobs.filter(job => job.status !== 'cancelled').length}</span></h2><p>{collectionBlock}</p></div><button className="btn ghost" disabled={loading || busy} onClick={()=>{setLoading(true);void loadWorkspace();}}>새로고침</button></div>
@@ -343,7 +349,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
           <ul className="collection-list">{collectionJobs.filter(job=>showCancelled || job.status !== 'cancelled').map(job=><li key={job.id}><div><strong>1688 · {job.offer_id}</strong><a href={job.source_url} target="_blank" rel="noreferrer" style={{overflowWrap:"anywhere"}}>{job.source_url}</a><small>{job.context?.category.categoryPath.join(' > ') ?? '카테고리 미지정 · 기존 요청'}</small><small>목표: {goalOptions.find(goal=>goal.id===job.goal)?.title} · 요청 {new Date(job.created_at).toLocaleString('ko-KR')}</small>{job.received_at&&<small>원문 수신 {new Date(job.received_at).toLocaleString('ko-KR')}</small>}</div><span className={`collection-status ${collectionJobProgress(job).kind}`}>{collectionJobProgress(job).label}</span><CollectionResultPanel jobId={job.id} offerId={job.offer_id} productId={job.product_id} onSaved={()=>void loadWorkspace()} onOpenProduct={openCollectedProduct}/>{!job.product_id && job.status !== 'cancelled' && <button className="btn ghost" disabled={busy} aria-label={`${job.offer_id} 수집 취소`} onClick={()=>void cancelCollectionJob(job.id)}>취소</button>}</li>)}</ul>
         </details>
 
-        <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={setOptionBoardProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/></>}
+        <RegistrationBoard products={products} selected={selected} onSelected={setSelected} onOpen={openProduct} onOptions={setOptionBoardProduct} loading={loading} error={loadError} onArchive={()=>changeView('archive')}/><HistoricalAiRegistrationsPanel/></>}
       </section>
 
       {addOpen&&<Modal wide title="상품 대기열" subtitle="상품마다 카테고리·URL·특징·키워드를 지정합니다." onClose={()=>{if(!busy&&!intakeDraft.loading)setAddOpen(false);}}>
@@ -361,16 +367,16 @@ export default function DashboardClient({ userName }: { userName: string }) {
       {detail&&<div className="drawer-backdrop" onMouseDown={()=>closeWorkspace()}><aside className="detail-drawer registration-workspace" role="dialog" aria-modal="true" aria-label="상품 등록 작업 공간" onMouseDown={e=>e.stopPropagation()}>
         <header><div className="detail-heading"><span className="drawer-eyebrow">PRODUCT WORKSPACE · 등록 자료 준비</span><h2>{registrationTitle(detail)}</h2><div className="detail-product-meta"><span>YP-{detail.id.slice(0,8).toUpperCase()}</span><time dateTime={detail.created_at}>등록 {registrationDate(detail.created_at)}</time><span>{detail.options_count}개 옵션</span></div><div className="detail-source"><span>1688 원본 URL</span>{sourceLink(detail.source_url)?<a href={sourceLink(detail.source_url)} target="_blank" rel="noopener noreferrer">{detail.source_url}</a>:<span className="detail-source-value">{detail.source_url||'원본 URL 미입력'}</span>}</div></div><button className="icon-close" aria-label="상품 작업 공간 닫기" onClick={()=>closeWorkspace()}>×</button></header>{closeNotice&&<p role="status" className="panel-note">{closeNotice}</p>}
         <nav className="registration-steps" aria-label="상품 등록 7단계">{registrationSteps.map((value,index)=><button type="button" key={value} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={tab===value?'active':''}><span>{index+1}</span><strong>{value}</strong></button>)}</nav>
-        <ProductSourceContext key={detail.id} productId={detail.id} sourceUrl={detail.source_url} step={tab} onNavigate={selectDetailTab}/>
+        <ProductSourceContext key={detail.id} productId={detail.id} productVersion={detail.updated_at} sourceUrl={detail.source_url} step={tab} onNavigate={selectDetailTab} onSaved={loadWorkspace} onBusy={changeSourceSupplementBusy} onBeforeSupplement={()=>{const state=workspaceEditState(detailBody.current);if(state.dirty||state.busy){setCloseNotice('저장하지 않은 입력이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 상세 원문을 보완해주세요.');return false;}return true;}}/>
         <nav className="registration-tools" aria-label="상품 보조 작업"><span>보조 작업</span>{supportingTabs.map(item=><button key={item.value} type="button" onClick={()=>selectDetailTab(item.value)} aria-pressed={tab===item.value} className={tab===item.value?'active':''}>{item.label}</button>)}<small>단계 이동 시 입력 유지 · 각 단계에서 저장</small></nav>
-        <div className="detail-body" ref={detailBody}><DetailPanel key={detail.id} onPrepareSubmission={prepareCurrentSubmission} focusedOptionId={focusedOptionId} preferredProfileId={detailProfileId} quotationTarget={quotationTarget} onSaved={()=>void loadWorkspace()} onManageCategories={()=>closeWorkspace(true)} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div>
+        <div className="detail-body" ref={detailBody} inert={sourceSupplementBusy}><DetailPanel key={detail.id} onPrepareSubmission={prepareCurrentSubmission} focusedOptionId={focusedOptionId} preferredProfileId={detailProfileId} quotationTarget={quotationTarget} onSaved={()=>void loadWorkspace()} onManageCategories={()=>closeWorkspace(true)} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div>
         <footer className="registration-navigation">{detailStepIndex>=0?<><button type="button" className="btn ghost" disabled={detailStepIndex===0} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex-1])}>← 이전{detailStepIndex>0?` · ${registrationSteps[detailStepIndex-1]}`:''}</button><div><strong>{detailStepIndex+1} / {registrationSteps.length} · {tab}</strong><small>입력 단계이며 자동화 완료 상태를 뜻하지 않습니다.</small></div><button type="button" className="btn primary" disabled={detailStepIndex===registrationSteps.length-1} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex+1])}>{detailStepIndex===registrationSteps.length-1?'마지막 단계':`다음 · ${registrationSteps[detailStepIndex+1]} →`}</button></>:<><span>보조 작업 · {supportingTabs.find(item=>item.value===tab)?.label}</span><button type="button" className="btn primary" onClick={()=>selectDetailTab(lastRegistrationStep)}>{registrationSteps.indexOf(lastRegistrationStep)+1}. {lastRegistrationStep} 단계로 돌아가기 →</button></>}</footer>
       </aside></div>}
 
       {optionBoardProduct&&<Modal wide title={registrationTitle(optionBoardProduct)} subtitle="옵션별 상품 자료와 견적서를 확인합니다." onClose={()=>setOptionBoardProduct(null)}><ProductOptionBoard key={optionBoardProduct.id} productId={optionBoardProduct.id} sourceUrl={optionBoardProduct.source_url} imageKeys={optionBoardProduct.image_keys} onContent={step=>{openProduct(optionBoardProduct,step);setOptionBoardProduct(null);}} onImage={optionId=>{openProduct(optionBoardProduct,'대표 이미지',undefined,undefined,optionId);setOptionBoardProduct(null);}} onEdit={optionId=>{openProduct(optionBoardProduct,'가격',undefined,undefined,optionId);setOptionBoardProduct(null);}} onQuotation={optionId=>{openProduct(optionBoardProduct,'견적서',undefined,{optionId,fieldId:'title'});setOptionBoardProduct(null);}}/></Modal>}
       {transmitOpen&&<Modal title="Supplier Hub 등록 전송" subtitle="선택 상품의 실제 저장 자료를 검사하고 필요한 항목을 수정하세요." onClose={()=>setTransmitOpen(false)}><SubmissionReviewPanel key={submissionTarget?`${submissionTarget.product.id}:${submissionTarget.profileId}`:"selected"} products={submissionTarget?[submissionTarget.product]:products.filter(product=>selected.has(product.id))} profiles={categoryProfiles} initialProfileId={submissionTarget?.profileId} onReceiptSaved={()=>{void loadWorkspace().catch(()=>setToast('전송 결과는 보관됐습니다. 상품 목록을 다시 불러와주세요.'));}} onEdit={(id,preferredProfileId,target)=>{const product=submissionTarget?.product.id===id?submissionTarget.product:products.find(item=>item.id===id);if(product){setTransmitOpen(false);openProduct(product,'견적서',preferredProfileId,target);}}}/></Modal>}
 
-      {connectionsOpen&&<Modal title="연동 상태" subtitle="현재 실행 중인 서버를 확인합니다. Cloudflare 운영 배포 여부와는 별개입니다." onClose={()=>setConnectionsOpen(false)}>
+      {connectionsOpen&&<Modal title="연동 상태" subtitle="서버의 저장소·AI 설정 상태를 확인합니다." onClose={()=>setConnectionsOpen(false)}>
         <div className="settings-form">
           {checkingConnections&&<p role="status">서버 연결을 확인하고 있습니다.</p>}
           {connectionError&&<p role="alert">{connectionError}</p>}
@@ -380,13 +386,9 @@ export default function DashboardClient({ userName }: { userName: string }) {
             <div><dt>D1 · 상품 및 설정</dt><dd>{connections.database==='query_ok'?'읽기 쿼리 성공':'연결 확인 실패'}</dd></div>
             <div><dt>저장 테이블</dt><dd>{connections.databaseSchema?.status==='tables_present'?'필요 테이블 있음 · 열 구조 및 저장 동작은 별도 검증':connections.databaseSchema?.status==='missing_tables'?`업데이트 필요 · 누락: ${connections.databaseSchema.missingTables.join(', ')}`:'테이블 확인 실패 · 연결을 다시 확인해주세요'}</dd></div>
             <div><dt>R2 · 이미지 파일</dt><dd>{connections.files==='binding_present'?'바인딩 있음 · 읽기/쓰기 미검증':'바인딩 없음'}</dd></div>
-            <div><dt>상품 자동수집</dt><dd>상품 데이터 공급원 연결 필요</dd></div>
             <div><dt>AI 번역·SEO</dt><dd>{connections.translation.configured?'서버 설정됨 · '+connections.translation.model+' · 실제 호출 별도 검증':'서버 모델·키 설정 필요'}</dd></div>
             <div><dt>AI 이미지 가공</dt><dd>{connections.imageProcessing.configured?'서버 설정됨 · '+connections.imageProcessing.model+' · 실제 호출 별도 검증':'서버 모델·키 설정 필요'}</dd></div>
-            <div><dt>쿠플러스 확장</dt><dd>미확인 · 연결 코드 없음</dd></div>
-            <div><dt>Supplier Hub 탭</dt><dd>미확인 · 열린 탭 관찰 필요</dd></div>
-            <div><dt>CLI</dt><dd>미확인 · 역할 분석 필요</dd></div>
-          </dl><p>Supplier Hub를 열어두어야 한다는 조건은 전달받았지만, 확장과 탭의 실제 연결 방식은 아직 검증하지 못했습니다. 제안 전송은 차단되어 있습니다.</p><small>확인 시각: {new Date(connections.checkedAt).toLocaleString('ko-KR')}</small></>}
+          </dl><small>확인 시각: {new Date(connections.checkedAt).toLocaleString('ko-KR')}</small></>}
           <div className="modal-actions"><button className="btn ghost" onClick={()=>setConnectionsOpen(false)}>닫기</button><button className="btn primary" disabled={checkingConnections} onClick={()=>void checkConnections()}>다시 확인</button></div>
         </div>
       </Modal>}

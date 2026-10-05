@@ -58,7 +58,7 @@ const crcTable = Array.from({ length: 256 }, (_, value) => { for (let bit = 0; b
 function crc32(bytes: Uint8Array) { let crc = 0xffffffff; for (const byte of bytes) crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 255]; return (crc ^ 0xffffffff) >>> 0; }
 function fail(message: string): never { throw new Error(message); }
 
-async function unzip(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
+async function unzip(bytes: Uint8Array, budget = { expanded: 0 }): Promise<Map<string, Uint8Array>> {
   if (bytes.length < 22 || bytes.length > MAX_FILE) fail('Excel 파일 크기는 5MB 이하이어야 합니다.');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let end = -1;
@@ -68,14 +68,14 @@ async function unzip(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
   if (end < 0) fail('유효한 XLSX ZIP 파일이 아닙니다.');
   const count = view.getUint16(end + 10, true); const size = view.getUint32(end + 12, true); const start = view.getUint32(end + 16, true);
   if (view.getUint16(end + 4, true) || view.getUint16(end + 6, true) || count !== view.getUint16(end + 8, true) || count > 500 || count === 0 || start + size !== end) fail('분할·ZIP64 또는 과도하게 복잡한 Excel 파일은 지원하지 않습니다.');
-  const files = new Map<string, Uint8Array>(); let cursor = start; let expanded = 0;
+  const files = new Map<string, Uint8Array>(); let cursor = start;
   for (let entry = 0; entry < count; entry++) {
     if (cursor + 46 > end || view.getUint32(cursor, true) !== 0x02014b50) fail('Excel ZIP 목록이 손상되었습니다.');
     const flags = view.getUint16(cursor + 8, true); const method = view.getUint16(cursor + 10, true);
     const crc = view.getUint32(cursor + 16, true); const packed = view.getUint32(cursor + 20, true); const unpacked = view.getUint32(cursor + 24, true);
     const nameLength = view.getUint16(cursor + 28, true); const extraLength = view.getUint16(cursor + 30, true); const commentLength = view.getUint16(cursor + 32, true);
     const offset = view.getUint32(cursor + 42, true); const next = cursor + 46 + nameLength + extraLength + commentLength;
-    if (next > end || flags & 1 || (method !== 0 && method !== 8) || unpacked > MAX_ENTRY || (expanded += unpacked) > MAX_EXPANDED || view.getUint16(cursor + 34, true)) fail('암호화·지원하지 않는 압축 또는 너무 큰 Excel 파일입니다.');
+    if (next > end || flags & 1 || (method !== 0 && method !== 8) || unpacked > MAX_ENTRY || (budget.expanded += unpacked) > MAX_EXPANDED || view.getUint16(cursor + 34, true)) fail('암호화·지원하지 않는 압축 또는 너무 큰 Excel 파일입니다.');
     const nameBytes = bytes.subarray(cursor + 46, cursor + 46 + nameLength);
     const name = decoder.decode(nameBytes);
     if (!name || name.includes('\\') || name.startsWith('/') || name.includes('\0') || name.split('/').some(part => part === '..' || part === '.') || files.has(name)) fail('Excel ZIP의 파일 경로가 올바르지 않습니다.');
@@ -163,7 +163,20 @@ export async function inspectXlsx(input: ArrayBuffer): Promise<XlsxInspection> {
 export async function readXlsxArchive(input: ArrayBuffer): Promise<Map<string, Uint8Array>> {
   return unzip(new Uint8Array(input));
 }
-export function inspectXlsxArchive(files: Map<string, Uint8Array>): XlsxInspection {
+/** Official downloads may wrap one workbook and a readme in a ZIP. Keep the
+ * workbook bytes unchanged and share the expansion limit across both layers. */
+export async function unwrapOfficialXlsxDownload(input: ArrayBuffer): Promise<ArrayBuffer> {
+  const budget = { expanded: 0 }, files = await unzip(new Uint8Array(input), budget);
+  if (files.has('[Content_Types].xml')) { inspectXlsxArchive(files); return input; }
+  const workbooks = [...files].filter(([name]) => /\.xlsx$/i.test(name));
+  if (workbooks.length !== 1) fail('공식 다운로드에는 XLSX 파일이 정확히 1개 있어야 합니다.');
+  const bytes = workbooks[0][1], workbook = await unzip(bytes, budget);
+  if (!workbook.has('[Content_Types].xml')) fail('공식 다운로드 안의 XLSX가 통합문서가 아닙니다. 중첩 압축 파일은 지원하지 않습니다.');
+  inspectXlsxArchive(workbook);
+  return bytes.slice().buffer;
+}
+export function inspectXlsxArchive(files: Map<string, Uint8Array>, options: { rowLimit: number } = { rowLimit: 1000 }): XlsxInspection {
+  if (!Number.isSafeInteger(options.rowLimit) || options.rowLimit < 1 || options.rowLimit > 5001) fail('Excel 분석 행 수는 1~5001행이어야 합니다.');
   if (!files.has('[Content_Types].xml')) fail('XLSX 콘텐츠 목록이 없습니다.');
   const contentTypes = xml(files.get('[Content_Types].xml'));
   if (children(contentTypes, 'Override').some(node => /macroEnabled|vbaProject/i.test(node.attributes.ContentType ?? ''))) fail('매크로 포함 Excel 파일은 지원하지 않습니다.');
@@ -191,7 +204,7 @@ export function inspectXlsxArchive(files: Map<string, Uint8Array>): XlsxInspecti
     for (const row of children(worksheet, 'sheetData').flatMap(node => children(node, 'row'))) {
       const rowNumber = Number(row.attributes.r);
       if (!Number.isSafeInteger(rowNumber) || rowNumber < 1 || seenRows.has(rowNumber)) fail('Excel 행 번호가 올바르지 않습니다.');
-      seenRows.add(rowNumber); if (rowNumber > 1000) continue;
+      seenRows.add(rowNumber); if (rowNumber > options.rowLimit) { if (options.rowLimit !== 1000) fail('Excel 상품 행이 가져오기 한도를 초과했습니다.'); continue; }
       const values: string[] = []; const seenColumns = new Set<number>();
       for (const cell of children(row, 'c')) {
         const reference = /^([A-Z]{1,3})([1-9]\d*)$/.exec(cell.attributes.r ?? '');

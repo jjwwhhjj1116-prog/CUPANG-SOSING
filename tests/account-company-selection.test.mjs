@@ -23,26 +23,18 @@ function account({code='',name='',pending=[],read}={}){
  return {render,requests,redirects,writes:()=>writes,close:()=>cleanups.splice(0).forEach(cleanup=>cleanup()),async start(){render();await settle();},button(label){return nodes(render()).find(node=>node.type==='button'&&node.props.children===label);},field(name){return nodes(render()).find(node=>node.props?.name===name);},async submit(){const form=nodes(render()).find(node=>node.type==='form');form.props.onSubmit({preventDefault(){},currentTarget:form});await settle();}};
 }
 
-test('unconfigured administrator chooses an exact company pair without silently assigning either company',async()=>{
- for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
-  const h=account();await h.start();h.button('회사정보 수정').props.onClick();
-  assert.equal(h.field('companyCode').props.value,'');assert.equal(h.field('companyName').props.value,'');assert.equal(h.button('저장').props.disabled,true);
-  assert.equal(h.requests.some(request=>request.body),false);
-  h.field('companyCode').props.onChange({target:{value:company.code}});
-  assert.equal(h.field('companyName').props.value,company.name);assert.equal(h.field('companyName').props.readOnly,true);assert.equal(h.button('저장').props.disabled,false);
-  await h.submit();assert.deepEqual(h.requests.find(request=>request.body).body,{action:'company',memberId:'admin',companyCode:company.code,companyName:company.name});assert.deepEqual(h.redirects,['/login']);
- }
+test('assigned company is read-only and the account screen exposes no reassignment form',async()=>{
+ const h=account({code:'A01526306',name:'유앤채'});await h.start();
+ assert.equal(h.button('회사정보 수정'),undefined);assert.equal(h.field('companyCode'),undefined);assert.equal(h.field('companyName'),undefined);
+ assert.equal(h.requests.some(request=>request.body),false);
 });
 
-test('mismatched signup requests need explicit company correction before approval and do not preselect a replacement',async()=>{
- const pending={id:'member',email:'fixture-member@example.test',role:'member',status:'pending',companyCode:'A01526306',companyName:'와이홉'};
- const h=account({code:'A01464742',name:'와이홉',pending:[pending]});await h.start();
- assert.equal(h.button('승인').props.disabled,true);
- const rows=nodes(h.render()).filter(node=>node.type==='tr'),memberRow=rows.find(row=>nodes(row).some(node=>node.type==='td'&&Array.isArray(node.props.children)&&node.props.children[0]===pending.email));
- nodes(memberRow).find(node=>node.type==='button'&&node.props.children==='회사정보').props.onClick();
- assert.equal(h.field('companyCode').props.value,'');assert.equal(h.button('저장').props.disabled,true);assert.equal(h.requests.some(request=>request.body),false);
- h.field('companyCode').props.onChange({target:{value:'A01526306'}});await h.submit();
- assert.deepEqual(h.requests.find(request=>request.body).body,{action:'company',memberId:'member',companyCode:'A01526306',companyName:'유앤채'});assert.deepEqual(h.redirects,[]);
+test('administrator can suspend and resume the second fixed account without sending company or password data',async()=>{
+ for(const status of ['approved','suspended']){
+  const h=account({code:'A01526306',name:'유앤채',pending:[{id:'member',email:'unari8484@gmail.com',role:'member',status,companyCode:'A01464742',companyName:'와이홉'}]});await h.start();
+  h.button(status==='approved'?'이용 정지':'이용 재개').props.onClick();await settle();
+  assert.deepEqual(h.requests.find(request=>request.body).body,{action:status==='approved'?'suspend':'approve',memberId:'member'});
+ }
 });
 
 test('leaving account settings cancels the read and ignores late membership or expired-login responses',async()=>{

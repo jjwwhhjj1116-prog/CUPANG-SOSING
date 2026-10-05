@@ -1,8 +1,9 @@
 import {type CategoryProfileInput} from '@/app/category-profiles';
 import {validateHubSchemaSnapshot,type HubSchemaSnapshot} from '@/app/supplier-hub-schema';
 import {readXlsxArchive,inspectXlsxArchive,supplierHubSheetSignature,supplierHubEntryLayout,supplierHubRequirementRow,xlsxHeaders,xlsxChoiceLists} from '@/app/xlsx-template';
-import {suggestQuotationMappings} from '@/app/quotation-mapping';
+import {suggestQuotationMappings,hasQuotationInputMappings} from '@/app/quotation-mapping';
 import {suggestQuotationChoiceFormats} from '@/app/quotation-choice-format';
+import {getQuotationSchema,type QuotationField} from '@/app/quotation-schema';
 
 export function hubTemplateKanId(snapshot:HubSchemaSnapshot):string{
  const meta=snapshot.metadata,kan=String(meta.kanCategoryId??meta.categoryId??'');
@@ -10,8 +11,14 @@ export function hubTemplateKanId(snapshot:HubSchemaSnapshot):string{
  return kan;
 }
 const pathKey=(path:readonly string[])=>JSON.stringify(path.map(part=>part.normalize('NFKC').replace(/\s+/gu,'')));
+export type OfficialHubTemplateIdentity={scopeType:'Retail_Categorized_Excel';kanCategoryId:string;noticeNumber:string;version:string};
+const scope=(snapshot:HubSchemaSnapshot)=>{
+ const {scope,scopeType}=snapshot.metadata;
+ if(scope!==undefined&&scopeType!==undefined&&scope!==scopeType)throw Error('상세 양식의 scope 정보가 서로 다릅니다.');
+ return scopeType??scope;
+};
 /** Verify the selected display code in the original dropdown, not a leaf name or a download ID guess. */
-export async function connectOfficialHubTemplate(bytes:ArrayBuffer,raw:HubSchemaSnapshot){
+async function inspectOfficialHubTemplate(bytes:ArrayBuffer,raw:HubSchemaSnapshot){
  const snapshot=validateHubSchemaSnapshot(raw,raw.categoryId,raw.categoryPath),kan=hubTemplateKanId(snapshot);
  const files=await readXlsxArchive(bytes),inspection=inspectXlsxArchive(files);
  const candidates=inspection.sheets.flatMap(sheet=>{
@@ -24,16 +31,55 @@ export async function connectOfficialHubTemplate(bytes:ArrayBuffer,raw:HubSchema
   const allowed=xlsxChoiceLists(files,inspection,sheet.name,[categoryColumns[0].column],layout.dataStartRow).get(categoryColumns[0].column);
   const matching=(allowed??[]).filter(value=>new RegExp(`\\(${snapshot.categoryId}\\)\\s*$`).test(value));
   if(matching.length!==1||pathKey(matching[0].replace(/\s*\(\d+\)\s*$/,'').split('>').map(part=>part.trim()))!==pathKey(snapshot.categoryPath))return [];
-  if(!['title','supplyPrice','category'].every(field=>suggested.mappings.some(mapping=>mapping.field===field)))return [];
+  if(!hasQuotationInputMappings(suggested.mappings,['title','supplyPrice','category'],snapshot.categoryId,snapshot))return [];
   return [{sheetName:sheet.name,headers,layout,suggested,noticeNumber:metadata[2],version:metadata[3],categoryValue:matching[0]}];
  });
  if(candidates.length!==1)throw Error('선택한 등록 코드·전체 경로와 일치하는 공식 Excel 작성 시트를 하나로 확인하지 못했습니다.');
- const selected=candidates[0],meta=snapshot.metadata,notice=meta.productNoticeNumber??meta.noticeNumber;
+ return {snapshot,kan,files,inspection,selected:candidates[0]};
+}
+/** A read-only inspection does not approve the Single schema for Excel or store a file. */
+export async function inspectOfficialHubTemplateIdentity(bytes:ArrayBuffer,raw:HubSchemaSnapshot):Promise<OfficialHubTemplateIdentity>{
+ const inspected=await inspectOfficialHubTemplate(bytes,raw),sourceScope=scope(inspected.snapshot);
+ if(sourceScope!=='Retail_Categorized_Single')throw Error('별도 Excel 상세 양식 조회는 확인된 Single 양식에만 사용합니다.');
+ return {scopeType:'Retail_Categorized_Excel',kanCategoryId:inspected.kan,noticeNumber:inspected.selected.noticeNumber,version:inspected.selected.version};
+}
+const wireKey=(field:QuotationField)=>field.hubWire?JSON.stringify([field.hubWire.path,field.hubWire.nameKey??null,field.hubWire.valueKey??null,field.hubWire.name??null]):null;
+const constraints=(field:QuotationField)=>JSON.stringify([field.type,field.choices??null,field.unit??null,field.minLength??null,field.maxLength??null,field.integer??false,field.numericValue??false,field.numericText??false,field.min??null,field.max??null,field.maxItems??null,field.exclusiveMinimum??null,field.exclusiveMaximum??null,field.multipleOf??null]);
+export async function connectOfficialHubTemplate(bytes:ArrayBuffer,raw:HubSchemaSnapshot,rawExcel?:HubSchemaSnapshot){
+ const {snapshot,kan,files,inspection,selected}=await inspectOfficialHubTemplate(bytes,raw);
+ let mappingSnapshot=snapshot;
+ if(scope(snapshot)==='Retail_Categorized_Single'){
+  if(!rawExcel)throw Error('화면용 Single 양식과 공식 Excel 양식은 다릅니다. 원본 Excel의 scope·고시·버전으로 별도 상세 양식을 확인해주세요.');
+  const excel=validateHubSchemaSnapshot(rawExcel,snapshot.categoryId,snapshot.categoryPath);
+  if(excel.company.code!==snapshot.company.code||excel.company.name!==snapshot.company.name||hubTemplateKanId(excel)!==kan||scope(excel)!=='Retail_Categorized_Excel')throw Error('별도 Excel 상세 양식의 회사·분류·scope가 다릅니다.');
+  const meta=excel.metadata,notice=meta.productNoticeNumber??meta.noticeNumber;
+  if(meta.version===undefined||notice===undefined||String(meta.version)!==selected.version||String(notice)!==selected.noticeNumber
+   ||meta.productNoticeNumber!==undefined&&meta.noticeNumber!==undefined&&String(meta.productNoticeNumber)!==String(meta.noticeNumber))throw Error('별도 Excel 상세 양식과 원본 파일의 고시·버전이 다릅니다.');
+  mappingSnapshot=excel;
+ }else if(rawExcel)throw Error('별도 Excel 상세 양식은 Single 양식 연결에만 사용합니다.');
+ const meta=mappingSnapshot.metadata,notice=meta.productNoticeNumber??meta.noticeNumber;
  if(meta.version!==undefined&&String(meta.version)!==selected.version||notice!==undefined&&String(notice)!==selected.noticeNumber
   ||meta.scope!==undefined&&meta.scope!=='Retail_Categorized_Excel'||meta.scopeType!==undefined&&meta.scopeType!=='Retail_Categorized_Excel')throw Error('상세 양식과 공식 Excel의 고시·버전이 다릅니다. 카테고리를 다시 선택해주세요.');
- const formats=suggestQuotationChoiceFormats(files,inspection,selected.sheetName,selected.layout.dataStartRow,snapshot.categoryId,selected.suggested.mappings,snapshot);
- const mappings=selected.suggested.mappings.map(mapping=>({...mapping,...(formats.find(format=>format.column===mapping.column)??{})}));
+ const suggestion=mappingSnapshot===snapshot?selected.suggested:suggestQuotationMappings(selected.headers,snapshot.categoryId,supplierHubRequirementRow(inspection,selected.sheetName,5),mappingSnapshot);
+ let connected=suggestion.mappings;
+ if(mappingSnapshot!==snapshot){
+  const from=getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,mappingSnapshot),to=getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot);
+  const unsupported=(schema:typeof from,field:QuotationField)=>field.hubWire&&(schema.unsupportedFields??[]).some(path=>{
+   const parent=path.replace(/(?:^| \/ )required$/u,'');
+   return path==='schema'||!parent||parent.startsWith(field.hubWire!.path.join(' / '))||field.hubWire!.path.join(' / ').startsWith(parent);
+  });
+  connected=suggestion.mappings.flatMap(mapping=>{
+   const sources=from.fields.filter(field=>field.id===mapping.field);if(sources.length!==1)return [];
+   const source=sources[0],wire=wireKey(source),targets=to.fields.filter(field=>wire?wireKey(field)===wire:!field.hubWire&&field.id===source.id);
+   if(targets.length!==1||constraints(source)!==constraints(targets[0])||unsupported(from,source)||unsupported(to,targets[0]))return [];
+   return [{...mapping,field:targets[0].id as typeof mapping.field}];
+  });
+ }
+ const omitted=suggestion.mappings.filter(mapping=>!connected.some(item=>item.column===mapping.column)).map(mapping=>mapping.column);
+ if(!hasQuotationInputMappings(connected,['title','supplyPrice','category'],snapshot.categoryId,snapshot))throw Error('Single·Excel 양식에서 상품명·공급가·카테고리 연결을 정확히 확인하지 못했습니다.');
+ const formats=suggestQuotationChoiceFormats(files,inspection,selected.sheetName,selected.layout.dataStartRow,snapshot.categoryId,connected,snapshot);
+ const mappings=connected.map(mapping=>({...mapping,...(formats.find(format=>format.column===mapping.column)??{})}));
  return {template:{format:'xlsx',sheetName:selected.sheetName,headerRow:5,dataStartRow:selected.layout.dataStartRow,headers:selected.headers} as Omit<NonNullable<CategoryProfileInput['template']>,'name'|'sha256'|'storageKey'>,
   mappings,report:{categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,company:snapshot.company,kanCategoryId:kan,noticeNumber:selected.noticeNumber,version:selected.version,categoryValue:selected.categoryValue,
-   matchedColumns:mappings.length,unmatchedColumns:selected.suggested.unmatchedColumns,ambiguousColumns:selected.suggested.ambiguousColumns,registered:false as const}};
+   matchedColumns:mappings.length,unmatchedColumns:[...suggestion.unmatchedColumns,...omitted].sort((a,b)=>a-b),ambiguousColumns:suggestion.ambiguousColumns,registered:false as const}};
 }

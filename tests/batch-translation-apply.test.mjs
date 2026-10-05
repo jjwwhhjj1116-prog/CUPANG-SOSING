@@ -37,7 +37,7 @@ const text=t=>typeof t==='string'||typeof t==='number'?String(t):Array.isArray(t
 function harness(){
  const slots=[],effects=[];let cursor=0;const busy=[],calls=[];
  const hooks={useState(v){const i=cursor++;if(!(i in slots))slots[i]=v;return[slots[i],next=>slots[i]=typeof next==='function'?next(slots[i]):next];},useRef(v){const i=cursor++;return slots[i]??(slots[i]={current:v});},useEffect(fn){const i=cursor++;if(!slots[i]){slots[i]=true;effects.push(fn);}}};
- const fetcher=async(url,init)=>{const id=url.split('/')[3],body=JSON.parse(init.body);calls.push([id,body.action]);return Response.json(body.action==='preview'?item(id).plan:receipt(id));};
+ const fetcher=async function(url,init){assert.equal(this,undefined,'native fetch cannot receive helper options as its receiver');const id=url.split('/')[3],body=JSON.parse(init.body);calls.push([id,body.action]);return Response.json(body.action==='preview'?item(id).plan:receipt(id));};
  const {BatchTranslationApply}=load('app/components/batch-translation-apply.tsx',{react:hooks,'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},'@/app/batch-translation':{readBatchTranslationTarget:async id=>item(id).target},'@/app/batch-translation-apply':model,fetch:fetcher});
  const props={products:[{id:'a',title:'첫 상품'},{id:'b',title:'둘째 상품'}],disabled:false,onBusyChange:v=>busy.push(v)};
  const render=()=>{cursor=0;return BatchTranslationApply(props);};render();const cleanup=effects.map(fn=>fn());

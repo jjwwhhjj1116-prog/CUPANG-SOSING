@@ -14,13 +14,14 @@ export async function collectionRequestWithRetry(url: string, init: RequestInit,
  fetcher: typeof fetch; attempts?: number; shouldStop?: () => boolean;
  wait?: (milliseconds: number) => Promise<void>; onRetry?: (attempt: number) => void;
 }): Promise<Response> {
+ const fetcher=options.fetcher;
  const attempts=options.attempts??1;
  if(!Number.isInteger(attempts)||attempts<1||attempts>3)throw new Error('재시도 횟수는 1~3회여야 합니다.');
  const wait=options.wait??(milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds)));
  for(let attempt=1;attempt<=attempts;attempt++){
   if(options.shouldStop?.())throw new Error('수집 반영을 중단했습니다.');
   let response:Response;
-  try{response=await options.fetcher(url,init);}catch(error){
+  try{response=await fetcher(url,init);}catch(error){
    if(attempt===attempts||options.shouldStop?.())throw error;
    options.onRetry?.(attempt+1);await wait(500*attempt);continue;
   }

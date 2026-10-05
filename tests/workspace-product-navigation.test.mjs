@@ -12,7 +12,7 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
 
 /** Real dashboard, archive, registration board and content editor. HTTP is held
  * at the response boundary; no browser, remote product or storage is used. */
-function harness({submission=false,batch}={}){
+function harness({submission=false,batch,integration}={}){
  const instances=new Map(),cache=new Map(),effects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[],productReads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,holdProductRead=false,intakeSettings;
  const now='2026-10-05T00:00:00.000Z';
  const product=id=>({id,title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:0,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
@@ -37,6 +37,7 @@ function harness({submission=false,batch}={}){
    return batch.request(url,init);
   }
   if(url==='/api/products')return Response.json({products});
+  if(url==='/api/integrations'&&integration)return Response.json(integration);
   if(url==='/api/settings'){
    if(init?.method==='PUT'){
     if(holdSettingsWrite){holdSettingsWrite=false;const pending=deferred();settingsWrites.push(pending);return pending.promise;}
@@ -108,10 +109,23 @@ function harness({submission=false,batch}={}){
  };
 }
 
+test('connection dialog displays returned server states without static collection or transmission failure claims',async()=>{
+ const integration={checkedAt:'2026-10-05T00:00:00Z',authentication:'cloudflare_access',database:'query_ok',databaseSchema:{status:'tables_present',missingTables:[]},files:'binding_present',translation:{configured:true,model:'fixture-text'},imageProcessing:{configured:false,model:null}};
+ const h=harness({integration});try{
+  await h.settle();await h.click('⌁연동 설정');
+  const dialog=()=>nodes(h.render()).find(node=>node.props?.['aria-label']==='연동 상태');
+  assert.match(text(dialog()),/Cloudflare Access 검증됨/);assert.match(text(dialog()),/읽기 쿼리 성공/);assert.match(text(dialog()),/fixture-text/);assert.match(text(dialog()),/서버 모델·키 설정 필요/);
+  assert.doesNotMatch(text(dialog()),/공급원 연결 필요|쿠플러스 확장|역할 분석 필요|전달받았|제안 전송은 차단/);
+  integration.database='unavailable';integration.translation.configured=false;await h.click('다시 확인');
+  assert.match(text(dialog()),/연결 확인 실패/);assert.doesNotMatch(text(dialog()),/fixture-text/);
+  assert.equal(h.requests.filter(request=>request.url==='/api/integrations').length,2);assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
 test('reviewed archive product enters transmission preparation with its own profile without replacing board selection',async()=>{
  const h=harness({submission:true});try{
   await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.onChange({target:{checked:true}});
-  await h.click('▦상품 관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
+  await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서');assert.ok(step);step.props.onClick();await h.settle();
   await h.click('저장한 견적 전송 준비');
   assert.equal(h.workspace(),undefined);assert.match(text(h.render()),/선택한 상품 1건/);
@@ -138,7 +152,7 @@ test('transmission preparation preserves unsaved quotation and retained source i
 
 test('late archive open cannot replace a newer product workspace or its unsaved SEO value',async()=>{
  for(const value of ['직접 수정한 상품명','']){const h=harness();try{
-  await h.settle();await h.click('▦상품 관리');await h.click('상품 작업 열기 →');assert.equal(h.archiveReads.length,1);
+  await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');assert.equal(h.archiveReads.length,1);
   await h.click('✦AI 상품등록');await h.click('상품 b');
   h.title().props.onChange({target:{value}});await h.settle();assert.equal(h.title().props.value,value);
   h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
@@ -148,7 +162,7 @@ test('late archive open cannot replace a newer product workspace or its unsaved 
 });
 
 test('archive open ignores completion after dashboard unmount',async()=>{
- const h=harness();await h.settle();await h.click('▦상품 관리');await h.click('상품 작업 열기 →');h.close();
+ const h=harness();await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.close();
  h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();assert.equal(h.lateDashboardWrites,0);
 });
 
@@ -226,8 +240,8 @@ test('collapsing an inline settings read aborts it and reopening ignores the old
 });
 
 test('leaving the archive cancels a pending product open before another product is selected',async()=>{
- for(const returnToArchive of [null,'▦상품 관리','전체 보관함']){const h=harness();try{
-  await h.settle();await h.click('▦상품 관리');await h.click('상품 작업 열기 →');
+ for(const returnToArchive of [null,'▦상품관리(신규)','전체 보관함']){const h=harness();try{
+  await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');
   await h.click('✦AI 상품등록');
   if(returnToArchive)await h.click(returnToArchive);
   h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
@@ -242,7 +256,7 @@ test('leaving the archive cancels a pending product open before another product 
 test('missing or mismatched archive product keeps the archive available for a successful retry',async()=>{
  for(const response of [Response.json({error:'상품 없음'},{status:404}),Response.json({product:{id:'unexpected'}})]){
   const h=harness();try{
-   await h.settle();await h.click('▦상품 관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(response);await h.settle();
+   await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(response);await h.settle();
    assert.equal(Boolean(h.workspace()),false);assert.match(text(h.render()),/상품을 열지 못했습니다/);
    await h.click('상품 작업 열기 →');h.archiveReads[1].resolve(Response.json({product:h.product('a')}));await h.settle();assert.match(text(h.workspace()),/상품 a/);
   }finally{h.close();}
@@ -302,7 +316,7 @@ test('late batch review responses cannot reopen a closed modal or replace a newe
   await h.click('×');assert.equal(closed.signal.aborted,true);
   closed.resolve(await f.request(base));await h.settle();assert.equal(Boolean(h.workspace()),false);
   await h.click('작업 개시');h.deferProduct();await h.click('이미지 초안 검토');const stale=h.productReads.at(-1);
-  await h.click('▦상품 관리');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
+  await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   h.title().props.onChange({target:{value:''}});await h.settle();stale.resolve(await f.request(base));await h.settle();
   assert.match(text(h.workspace()),/상품 a/);assert.equal(h.title().props.value,'');
   h.deferProduct();await h.click('이미지 초안 검토');const unmounted=h.productReads.at(-1);h.close();assert.equal(unmounted.signal.aborted,true);

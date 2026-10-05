@@ -53,9 +53,13 @@ async function fixture(options={}){
    calls.push(['source',id,frame]);sourceChecks++;return {ok:true,...message.expected,checkedAt:Date.now(),...(options.sourceChangedAt===sourceChecks?{fingerprint:'b'.repeat(64)}:{})};
   },create:async input=>{calls.push(['create',input]);fresh={id:124,status:'complete',...input,...options.created};tabs.push(fresh);return fresh;}},scripting:{executeScript:async request=>{
    calls.push([request.func.name,request.args,request.target.tabId]);
+   if(options.serializedUpload&&request.target.tabId===124){
+    if(!pages.has(124))pages.set(124,registrationPage(options.createdCompany??options.plan?.company??{code:'A01464742',name:'와이홉'}));
+    return [{result:await pages.get(124).run(request.func,request.args)}];
+   }
    if(options.companyMenu&&[supplierHubUploadReady,supplierHubStatusReady,verifySupplierHubCompany].includes(request.func)){
     const id=request.target.tabId;
-    if(!pages.has(id))pages.set(id,hubCompanyMenuPage({company:id===124&&options.createdCompany?options.createdCompany:options.plan?.company??{code:'A01464742',name:'와이홉'},path:new URL(id===124?fresh.url:tab.url).pathname}));
+    if(!pages.has(id))pages.set(id,hubCompanyMenuPage({company:id===124&&options.createdCompany?options.createdCompany:id===123&&options.dashboardCompany?options.dashboardCompany:options.plan?.company??{code:'A01464742',name:'와이홉'},path:new URL(id===124?fresh.url:tab.url).pathname}));
     return [{result:await pages.get(id).run(request.func,request.args)}];
    }
    if(request.func===supplierHubUploadReady||request.func===supplierHubStatusReady)return [{result:true}];
@@ -83,6 +87,65 @@ async function fixture(options={}){
  const message={...identity,type:'YOOFAM_TRANSMIT_PACKAGE',reviewedAgreements:agreements,base64:await packageBytes(options.plan,options.patchFiles)};
  return {calls,records,pages,api,store,message,run:(patch={},who=sender)=>transmitSupplierHubPackage({...message,...patch},who,api,store)};
 }
+
+// Real serialized upload/validation functions and File objects; no Hub requests.
+function registrationPage(company){
+ let open=false;const events=[],dataset={};
+ const titles=['작성이 완료된 견적서 Excel 파일을 업로드하십시오.','상품 이미지를 업로드하십시오.','제품 필수 표시사항을 업로드하십시오.'];
+ const inputs=titles.map((title,index)=>({files:[],disabled:false,isConnected:true,closest:()=>null,parentElement:{innerText:title,querySelectorAll:()=>[{}]},dispatchEvent(event){assert.equal(event.type,'change');events.push('upload-'+index);open=false;}}));
+ const terms=['제공된 권장소비자가격 또는 공식 판매처 가격 데이터에 대한 쿠팡 약관에 동의합니다.','상품 라벨 내 기재된 (010 이하) 연락처는 법인 명의 개통 번호이거나, 해당 브랜드의 공식 대외 창구로 지정된 업무용 연락처에 해당함을 확인하며, 당사는 해당 정보가 대외적으로 공개됨에 동의합니다.'];
+ const checks=terms.map((text,index)=>({checked:false,disabled:false,labels:[{innerText:text}],click(){this.checked=true;open=false;events.push(index?'contact':'price');}}));
+ const legal={checked:false,disabled:false,labels:[{innerText:'해당없음'}],click(){this.checked=true;open=false;events.push('legal-no');}};
+ legal.parentElement={innerText:'상품 개별법령에 따른 필수 서류',querySelectorAll:selector=>selector.includes('radio')?[legal,{}]:[]};
+ const menu={innerText:company.name,disabled:false,getClientRects:()=>[{}],click(){open=true;events.push('company-menu');}};
+ const button={innerText:'파일 검증하기',get disabled(){return inputs.some(input=>!input.files.length)||checks.some(input=>!input.checked)||!legal.checked;},getClientRects:()=>[{}],getAttribute:()=>null,click(){events.push('validate');}};
+ const document={documentElement:{dataset},body:{get innerText(){return [company.name,...titles,...(open?['Company Code: '+company.code]:[]),...inputs.flatMap(input=>Array.from(input.files,file=>file.name))].join('\n');}},querySelectorAll(selector){
+  if(selector==='button')return [menu,button];if(selector==='input[type="file"]')return inputs;
+  if(selector.includes('msrpAgreement'))return [checks[0]];if(selector.includes('labelContactAgreement'))return [checks[1]];if(selector.includes('undefined-N'))return [legal];return [];
+ }};
+ class Transfer{constructor(){this.files=[];this.items={add:file=>this.files.push(file)};}}
+ return {events,inputs,dataset,run:(func,args=[])=>vm.runInNewContext(`(${func.toString()})(...args)`,{document,args,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},File,Event,DataTransfer:Transfer,Uint8Array,atob,setTimeout:callback=>queueMicrotask(callback)})};
+}
+
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`explicit transmission from dashboard alone prepares one same-window tab and validates reviewed files (${company.code})`,async()=>{
+ const dashboard={id:123,windowId:17,url:'https://supplier.coupang.com/dashboard/KR'},h=await fixture({tab:dashboard,plan:{company},companyMenu:true,serializedUpload:true});
+ const before=JSON.stringify(await h.api.tabs.get(123)),result=await h.run();assert.equal(result.state,'validation-requested');assert.equal(result.registered,false);
+ assert.deepEqual(h.calls.filter(([name])=>name==='create'),[['create',{windowId:17,url:'https://supplier.coupang.com/qvt/registration',active:false}]]);
+ assert.equal(JSON.stringify(await h.api.tabs.get(123)),before);assert.equal(h.pages.get(123).clicks,1);assert.equal(h.pages.get(123).document.documentElement.dataset.yoofamAttachmentAttempt,undefined);
+ assert.deepEqual(h.calls.find(([name,,id])=>name==='verifySupplierHubCompany'&&id===123)[1],[company,'catalog']);
+ const page=h.pages.get(124);assert.deepEqual(page.events.filter(event=>event.startsWith('upload')||event==='validate'),['upload-0','upload-1','upload-2','validate']);
+ assert.deepEqual(page.events.filter(event=>['price','contact','legal-no'].includes(event)),['legal-no','price','contact']);
+ assert.deepEqual(page.inputs.map(input=>input.files[0].name),[`YOOFAM-${identity.fingerprint}.xlsx`,'photo.png','label.png']);
+ const prepared=await prepareAttachments(Uint8Array.from(atob(h.message.base64),c=>c.charCodeAt(0)));
+ for(const [index,group] of ['quotation','productImages','labelImages'].entries())assert.deepEqual(Buffer.from(await page.inputs[index].files[0].arrayBuffer()),Buffer.from(prepared[group][0].base64,'base64'));
+ assert.equal(h.records.get('attempt:124').company.code,company.code);assert.equal(h.records.has('attempt:123'),false);
+ assert.ok(h.calls.findIndex(([name])=>name==='create')>h.calls.findIndex(([name,,id])=>name==='verifySupplierHubCompany'&&id===123));
+ await assert.rejects(h.run(),/이미 전송/);assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(page.events.filter(event=>event==='validate').length,1);
+});
+
+test('dashboard fallback does not create or upload from another window, company, locale, login, or ambiguous tabs',async()=>{
+ const dashboard={id:123,windowId:17,url:'https://supplier.coupang.com/dashboard/KR'};
+ for(const options of [{tabs:[]},{tab:{...dashboard,windowId:18}},{tab:{...dashboard,url:'https://supplier.coupang.com/dashboard/US'}},{tab:{...dashboard,url:'https://supplier.coupang.com/dashboard'}},{tab:{...dashboard,url:'https://supplier.coupang.com/login'}},{tab:{...dashboard,pendingUrl:'https://supplier.coupang.com/login'}},{tab:dashboard,tabs:[dashboard,{...dashboard,id:125}]},{tab:dashboard,dashboardCompany:{code:'A01526306',name:'유앤채'}},{tab:dashboard,sourceChangedAt:1},{tab:dashboard,sourceChangedAt:2},{tab:dashboard,serverReceipt:{}},{tab:dashboard,receiptError:true}]){
+  const h=await fixture({...options,companyMenu:true,serializedUpload:true});await assert.rejects(h.run());
+  assert.equal(h.calls.some(([name])=>name==='create'||name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
+ }
+});
+
+test('an existing registration tab belonging to another company is not bypassed through a dashboard',async()=>{
+ const registration={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration'},dashboard={id:125,windowId:17,url:'https://supplier.coupang.com/dashboard/KR'};
+ const h=await fixture({tabs:[registration,dashboard],companyMenu:true,serializedUpload:true});
+ const otherAttempt={origin:new URL(sender.url).origin,...identity,company:{code:'A01526306',name:'유앤채'},includedOptions:2};h.records.set('attempt:123',otherAttempt);
+ await assert.rejects(h.run(),/등록 탭/);assert.equal(h.records.get('attempt:123'),otherAttempt);assert.equal(h.records.size,1);
+ assert.equal(h.calls.some(([name])=>name==='create'||name==='verifySupplierHubCompany'||name==='attachToSupplierHub'),false);assert.equal(h.calls.filter(([name])=>name==='query').length,1);
+});
+
+test('a new registration tab must independently match the reviewed company and registration route',async()=>{
+ for(const options of [{createdCompany:{code:'A01526306',name:'유앤채'}},{created:{url:'https://supplier.coupang.com/login'}},{created:{windowId:18}}]){
+  const h=await fixture({tab:{url:'https://supplier.coupang.com/dashboard/KR'},companyMenu:true,serializedUpload:true,...options});await assert.rejects(h.run());
+  assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+  assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
+ }
+});
 
 function popup(h){
  let consumed=false;

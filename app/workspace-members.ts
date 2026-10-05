@@ -1,4 +1,16 @@
 export type WorkspaceMember = { id: string; email: string; role: 'admin'|'member'; status: 'pending'|'approved'|'rejected'|'suspended'; companyCode: string; companyName: string };
+/** These are the only native accounts; provisioning preserves each existing member id. */
+export const WORKSPACE_ACCOUNTS = [
+ {email:'jwhj1116@kakao.com',role:'admin',companyCode:'A01526306',companyName:'유앤채'},
+ {email:'unari8484@gmail.com',role:'member',companyCode:'A01464742',companyName:'와이홉'},
+] as const;
+export function workspaceAccount(email:unknown){
+ return typeof email==='string'?WORKSPACE_ACCOUNTS.find(account=>account.email===email.trim().toLowerCase())??null:null;
+}
+export function matchesWorkspaceAccount(member:Pick<WorkspaceMember,'email'|'role'|'companyCode'|'companyName'>){
+ const account=workspaceAccount(member.email);
+ return !!account&&member.role===account.role&&member.companyCode===account.companyCode&&member.companyName===account.companyName;
+}
 export function memberEmail(value: unknown) {
  if(typeof value!=='string'||value.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()))throw Error('이메일을 확인해주세요.');
  return value.trim().toLowerCase();

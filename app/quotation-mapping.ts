@@ -1,5 +1,5 @@
 import { categoryFields, type CategoryField, type ColumnMapping } from './category-profiles';
-import { getQuotationSchema } from './quotation-schema';
+import { getQuotationSchema, type QuotationField } from './quotation-schema';
 import type { XlsxInspection } from './xlsx-template';
 import type {HubSchemaSnapshot} from './supplier-hub-schema';
 
@@ -8,7 +8,7 @@ export function suggestQuotationHeader(workbook: XlsxInspection, categoryId: str
   const candidates = workbook.sheets.flatMap(sheet => sheet.rows.flatMap(row => {
     const result = suggestQuotationMappings(row.values, categoryId,null,hubSchema);
     const fields = new Set(result.mappings.map(mapping => mapping.field));
-    if (result.ambiguousColumns.length || fields.size < 3 || !fields.has('title') || !fields.has('supplyPrice')) return [];
+    if (result.ambiguousColumns.length || fields.size < 3 || !hasQuotationInputMappings(result.mappings,['title','supplyPrice'],categoryId,hubSchema)) return [];
     return [{ sheetName: sheet.name, rowNumber: row.rowNumber, matchedFields: fields.size }];
   })).sort((a, b) => b.matchedFields - a.matchedFields);
   return candidates.length && (candidates.length === 1 || candidates[0].matchedFields > candidates[1].matchedFields) ? candidates[0] : null;
@@ -34,6 +34,23 @@ const aliases: Partial<Record<CategoryField, string[]>> = {
 export type QuotationMappingSuggestion = {
   mappings: ColumnMapping[]; unmatchedColumns: number[]; ambiguousColumns: number[];
 };
+
+// Numeric text Hub inputs retain old live IDs so saved manual edits survive.
+// Prefer their exact primary wire path only in newly suggested connections.
+export function primaryNumericTextFields(fields:readonly QuotationField[]) {
+  const paths:Record<string,string[]>={supplyPrice:['productPage','commonAttributes','purchasePrice'],salePrice:['productPage','commonAttributes','coupangSalePrice'],msrp:['productPage','commonAttributes','msrp'],packagedWeightG:['logisticsPage','skuUnitBoxWeight']};
+  return new Map(Object.entries(paths).flatMap(([input,path])=>{
+    const matches=fields.filter(field=>field.numericText&&field.hubInput===input&&!field.hubWire?.name
+      &&JSON.stringify(field.hubWire?.path)===JSON.stringify(path));
+    return matches.length===1?[[input,matches[0].id] as const]:[];
+  }));
+}
+
+/** Core workbook inputs can use preserved live IDs or their canonical IDs. */
+export function hasQuotationInputMappings(mappings:readonly ColumnMapping[],inputs:readonly string[],categoryId:string|null,hubSchema?:HubSchemaSnapshot) {
+  const prices=primaryNumericTextFields(getQuotationSchema(categoryId,hubSchema?.categoryPath,hubSchema).fields);
+  return inputs.every(input=>mappings.some(mapping=>mapping.field===input||mapping.field===prices.get(input)));
+}
 
 /** Carry connections only across unique, identical labels in the same file.
  * Never reuse an old column position or infer an alias for a manual choice.
@@ -94,10 +111,11 @@ export function refreshCategoryMappings(
 export function suggestQuotationMappings(headers: readonly string[], categoryId: string | null, requirementRow?: readonly string[] | null,hubSchema?:HubSchemaSnapshot): QuotationMappingSuggestion {
   const schema = getQuotationSchema(categoryId,hubSchema?.categoryPath,hubSchema);
   const candidates = new Map<string, Set<CategoryField>>();
+  const prices=primaryNumericTextFields(schema.fields);
   const required = new Map(schema.fields.map(field => [field.id, field.required]));
   const add = (label: string, field: CategoryField) => {
     const key = headerKey(label); if (!key) return;
-    const fields = candidates.get(key) ?? new Set<CategoryField>(); fields.add(field); candidates.set(key, fields);
+    const fields = candidates.get(key) ?? new Set<CategoryField>(); fields.add((prices.get(field)??field) as CategoryField); candidates.set(key, fields);
   };
   for (const field of schema.fields) if (Object.hasOwn(categoryFields, field.id)||field.id.startsWith(`live_${categoryId}_`)) add(field.label, field.id as CategoryField);
   for (const [field, labels] of Object.entries(aliases)) for (const label of labels ?? []) add(label, field as CategoryField);

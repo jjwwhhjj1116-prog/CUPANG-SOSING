@@ -51,9 +51,43 @@ function stableId(categoryId:string,wire:HubWireField){
   for(let i=0;i<text.length;i++){a=Math.imul(a^text.charCodeAt(i),16777619);b=Math.imul(b^text.charCodeAt(i),3266489917);}
   return `live_${categoryId}_${(a>>>0).toString(16).padStart(8,'0')}${(b>>>0).toString(16).padStart(8,'0')}`;
 }
+/** Observed Hub bookkeeping, hidden in its form and excluded by Couplus's
+ * required-input validator. Unknown fields or validation rules stay unsupported. */
+function hiddenSourcingPage(node:unknown):boolean{
+  const keys=['sourcingChannelType','sourcingChannelId'];
+  const annotations=['$id','name','level','parent','title','description','examples'];
+  if(!object(node)||node.type!=='object'||node.hidden!==true||!object(node.properties)
+    ||Object.keys(node).some(key=>![...annotations,'type','hidden','required','properties'].includes(key))
+    ||Object.keys(node.properties).length!==2||keys.some(key=>!Object.hasOwn(node.properties as Record<string,unknown>,key))
+    ||!Array.isArray(node.required)||node.required.length!==2||keys.some(key=>!(node.required as unknown[]).includes(key)))return false;
+  return Object.values(node.properties).every(field=>object(field)&&field.hidden===true&&field.requirement==='선택'
+    &&Array.isArray(field.type)&&field.type.length===2&&field.type.includes('string')&&field.type.includes('null')
+    &&Object.keys(field).every(key=>[...annotations,'type','hidden','requirement'].includes(key)));
+}
+/** The official form metadata names its notice type. It is a category fact,
+ * distinct from a user-entered product notice and from spreadsheet formulas. */
+function prefilledNoticeName(raw:Record<string,unknown>,snapshot:HubSchemaSnapshot):string|undefined{
+  if(typeof raw.metadata!=='string')return;
+  const values=new Map<string,string>();
+  for(const part of raw.metadata.split(';')){
+    const separator=part.indexOf(':'),key=part.slice(0,separator),value=part.slice(separator+1);
+    if(separator<=0||!/^\w+$/.test(key)||values.has(key))return;
+    values.set(key,value);
+  }
+  const matches=(keys:string[],value:string|undefined)=>value!==undefined&&keys.some(key=>snapshot.metadata[key]!==undefined)
+    &&keys.every(key=>snapshot.metadata[key]===undefined||String(snapshot.metadata[key])===value);
+  const scope=values.get('scope'),kan=values.get('categoryId'),notice=values.get('productNoticeCategoryId'),version=values.get('version'),name=values.get('productNoticeName');
+  if(!['Retail_Categorized_Single','Retail_Categorized_Excel'].includes(scope??'')
+    ||![kan,notice,version].every(value=>typeof value==='string'&&/^\d{1,20}$/.test(value))
+    ||!matches(['scope','scopeType'],scope)||!matches(['categoryId','kanCategoryId'],kan)
+    ||!matches(['noticeNumber','productNoticeNumber'],notice)||!matches(['version'],version)
+    ||!safeText(name,500)||!name.trim()||name!==name.trim()||/[\r\n\t]/.test(name))return;
+  return name;
+}
 /** Public /sr convertAllOfToItems contract: named arrays contain a name enum and value schema. */
 export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readonly QuotationField[]=[]){
   const raw=schemaDocument(snapshot.schemaString),fields:LiveQuotationField[]=[],unsupported:string[]=[],used=new Set<string>();
+  const noticeName=prefilledNoticeName(raw,snapshot);
   const issue=(path:string[])=>{const text=path.join(' / ');if(!unsupported.includes(text))unsupported.push(text);};
   function hasSchemaPath(path:readonly string[]){
     let node:unknown=raw;
@@ -85,17 +119,26 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     const numeric=types.includes('number')||types.includes('integer')
       ||types.every(type=>type===undefined||type==='null')&&Array.isArray(enums)&&enums.some(value=>typeof value==='number')&&enums.every(value=>value===null||typeof value==='number');
     const pathBinding=snapshot.inputBindings==='couplus-paths-v1'&&!wire.name?couplusQuotationInput(wire.path):undefined;
+    // Hub's brand dropdown is a suggestion list beside a free text input.
+    // Keep its initialization values, but enforce only a real JSON enum.
+    if(wire.path.length===2&&wire.path[0]==='productPage'&&wire.path[1]==='brand'&&!wire.name
+      &&node.enum===undefined&&types.includes('string')&&types.every(type=>type==='string'||type==='null'))choices=undefined;
+    // Observed price/packaging inputs carry numeric text. Other string inputs
+    // must never acquire numeric sources merely because their label matches.
+    const numericText=Boolean(pathBinding&&['supplyPrice','salePrice','msrp','packagedWeightG'].includes(pathBinding)
+      &&types.includes('string')&&types.every(type=>type==='string'||type==='null'));
     const labelKey=(value:string)=>value.normalize('NFKC').replace(/\s+/gu,'');
     const candidates=base.filter(item=>item.section===section&&item.visibility===visibility
       &&(pathBinding?item.id===pathBinding:(!snapshot.inputBindings||wire.name)&&labelKey(item.label)===labelKey(label)));
     let canonical=candidates.length===1?candidates[0]:undefined;
     if(pathBinding&&canonical){
-      const compatible=canonical.type==='number'?numeric&&!types.some(type=>type==='string'||type==='boolean')
+      const compatible=canonical.type==='number'?numericText||numeric&&!types.some(type=>type==='string'||type==='boolean')
         :!numeric&&!types.includes('boolean');
       if(!compatible){issue(path);canonical=undefined;}
     }
     const secondaryPrice=pathBinding==='msrp'&&wire.path.at(-1)==='osrp'&&hasSchemaPath(['productPage','commonAttributes','msrp']);
-    const id=canonical&&!secondaryPrice?canonical.id:stableId(snapshot.categoryId,wire);
+    // Keep the IDs used by previously saved string-price manual values/blanks.
+    const id=canonical&&!secondaryPrice&&!numericText?canonical.id:stableId(snapshot.categoryId,wire);
     if(used.has(id))return issue(path);used.add(id);
     if(numeric&&types.some(type=>type==='string'||type==='boolean'))issue(path);
     if(numeric&&Array.isArray(enums)&&enums.some(value=>value!==null&&typeof value!=='number'))issue(path);
@@ -105,20 +148,31 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
       &&wire.path.length===2&&wire.path[0]==='imagePage'&&['msrpAgree','labelContactAgreed'].includes(wire.path[1]);
     if(draftDefault===undefined&&imageAgreement)draftDefault='true';
     else if(draftDefault===undefined&&initialize)draftDefault=couplusScalarDraftDefault(wire.path.at(-1)!,node);
-    if(node.enum!==undefined&&node.dropdown!==undefined&&JSON.stringify(node.enum)!==JSON.stringify(node.dropdown))issue(path);
+    if(node.enum!==undefined&&node.dropdown!==undefined&&JSON.stringify(node.enum)!==JSON.stringify(node.dropdown)
+      &&!(types.includes('null')&&Array.isArray(node.enum)&&JSON.stringify(node.enum.filter(value=>value!==null))===JSON.stringify(node.dropdown)))issue(path);
     // Keep primitive choices for exact equality and the public falsy first-item
     // fallback. Compilation already checks the array shape and size above.
     const settingValues=node.dropdown??node.enum;
     const couplusSetting:CouplusSettingRule|undefined=snapshot.settingsInitialization==='couplus-options-v1'&&canonical&&isCouplusSettingInput(pathBinding)
       ?{input:pathBinding,...(Array.isArray(settingValues)?{values:[...settingValues]}:{})}:undefined;
     const stringValue=!numeric&&!types.includes('boolean');
-    const result:LiveQuotationField={id,section,label,type:canonical?.type==='images'?'images':choices?'select':numeric?'number':canonical?.type==='textarea'?'textarea':'text',required,visibility,reviewRequired:true,hubWire:wire,
+    // These optional Hub wires require a key, not a nonempty user value.
+    // Basic required detail images/alt text remain governed by their own rules.
+    const optionalNullable=!wire.name&&node.requirement==='선택'&&types.includes('string')&&types.includes('null')&&types.every(type=>type==='string'||type==='null')
+      &&!['minLength','pattern','format','enum','dropdown'].some(key=>Object.hasOwn(node,key))
+      &&[['productPage','commonAttributes','msrp'],['imagePage','images','additionalImage'],['imagePage','details','htmlProductDetailContent']].some(path=>JSON.stringify(path)===JSON.stringify(wire.path));
+    // adCert is the Hub additional-document control; attachment validation is
+    // separate from its empty scalar placeholder (Couplus explicitly skips it).
+    const documentControl=!wire.name&&JSON.stringify(wire.path)===JSON.stringify(['legalPage','adCert'])&&node.type==='string'
+      &&!['minLength','pattern','format','enum','dropdown'].some(key=>Object.hasOwn(node,key));
+    const result:LiveQuotationField={id,section,label,type:canonical?.type==='images'?'images':choices?'select':numeric?'number':canonical?.type==='textarea'?'textarea':'text',required:required&&!optionalNullable&&!documentControl,visibility,reviewRequired:true,hubWire:wire,
       ...(canonical?.readOnly?{readOnly:true}:{}),...(canonical?.contentField?{contentField:canonical.contentField}:{}),
       ...(pathBinding&&canonical?{hubInput:pathBinding,...(canonical.unit?{unit:canonical.unit}:{})}:{}),
       ...(couplusSetting?{couplusSetting}:{}),
       ...(canonical?.type==='images'&&canonical.maxItems?{maxItems:canonical.maxItems}:{}),
       maxLength:canonical?.type==='images'||pathBinding&&canonical?canonical?.maxLength??2000:2000,
       ...(choices?{choices}:{}),...(numeric?{integer:types.includes('integer')&&!types.includes('number'),...(choices?{numericValue:true as const}:{})}:{}),...(draftDefault!==undefined?{draftDefault}:{}),
+      ...(numericText&&canonical?{numericText:true as const,integer:canonical.integer,min:canonical.min,max:canonical.max}:{}),
       help:'선택한 회사의 Supplier Hub 상세 양식에서 가져온 항목입니다. 기본값과 상품정보를 확인·수정해주세요.'};
     for(const key of ['minLength','maxLength'] as const)if(Object.hasOwn(node,key)){
       const limit=node[key];
@@ -135,6 +189,10 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     if(lower>upper||lower===upper&&(result.exclusiveMinimum===lower||result.exclusiveMaximum===upper))issue(path);
     if(node.pattern!==undefined||node.format!==undefined)issue(path);
     if(node.default!==undefined&&(node.default===null||safeText(node.default,2000)||typeof node.default==='number'&&Number.isFinite(node.default)||typeof node.default==='boolean'))result.schemaDefault=node.default===null?'':String(node.default);
+    if(!wire.name&&JSON.stringify(wire.path)===JSON.stringify(['legalPage','productNoticeName'])
+      &&node.prefilled===true&&node.type==='string'&&node.default===undefined&&noticeName!==undefined){
+      result.schemaDefault=noticeName;delete result.draftDefault;
+    }
     fields.push(result);if(fields.length>400)throw Error('상세 견적 항목이 400개를 초과했습니다.');
   }
   function visit(node:unknown,path:string[],section:QuotationSection,required=false,initialize=false){
@@ -147,7 +205,8 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     }
     const group=path.at(-1)!;
     if(Array.isArray(node.allOf)&&node.type==='array'){
-      if(['minItems','maxItems','uniqueItems','items'].some(key=>Object.hasOwn(node,key)))issue(path);
+      if(['minItems','maxItems','uniqueItems'].some(key=>Object.hasOwn(node,key))
+        ||Object.hasOwn(node,'items')&&(!object(node.items)||Object.keys(node.items).length!==0))issue(path);
       if(node.allOf.length>400)throw Error('상세 견적 배열의 항목 수가 너무 많습니다.');
       for(const entry of node.allOf){
         const properties=object(entry)&&object(entry.contains)&&object(entry.contains.properties)?entry.contains.properties:null;
@@ -167,7 +226,7 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
   }
   if(['$ref','oneOf','anyOf','allOf','if','not','dependentRequired','dependencies','patternProperties'].some(key=>Object.hasOwn(raw,key)))issue(['schema']);
   const requiredPages=requiredKeys(raw,[]);
-  for(const [page,node] of Object.entries(raw.properties as Record<string,unknown>)){if(Object.hasOwn(pages,page))visit(node,[page],pages[page],false,snapshot.draftInitialization==='couplus-required-v1'&&requiredPages.includes(page));else issue([page]);}
+  for(const [page,node] of Object.entries(raw.properties as Record<string,unknown>)){if(Object.hasOwn(pages,page))visit(node,[page],pages[page],false,snapshot.draftInitialization==='couplus-required-v1'&&requiredPages.includes(page));else if(page!=='sourcingPage'||!hiddenSourcingPage(node))issue([page]);}
   if(!fields.length)throw Error('상세 견적 양식의 입력 항목이 없습니다.');
   return {fields,unsupported};
 }

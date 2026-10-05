@@ -39,7 +39,7 @@ export function productionConfig(environment, hosting) {
     vars: {
       NODE_ENV: 'production', SOURCEFLOW_DEPLOYMENT_MODE: 'production', SOURCEFLOW_SITES_PROJECT_ID: SITES_PROJECT_ID,
       CLOUDFLARE_ACCESS_TEAM_DOMAIN: team.replace(/\/$/, ''), CLOUDFLARE_ACCESS_AUD: audience,
-      ...(workersAi ? { SOURCEFLOW_TEXT_PROVIDER: 'workers-ai', SOURCEFLOW_TEXT_MODEL: '@cf/meta/llama-3.1-8b-instruct', SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '4096' } : {}),
+      ...(workersAi ? { SOURCEFLOW_TEXT_PROVIDER: 'workers-ai', SOURCEFLOW_TEXT_MODEL: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '4096' } : {}),
     },
   };
 }

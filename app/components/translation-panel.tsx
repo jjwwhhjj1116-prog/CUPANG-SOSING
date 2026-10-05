@@ -147,7 +147,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     const controller=beginRequest();if(!controller)return;
     setBusy(true);setError('');setNotice('SEO 초안 작성 중…');
     try {
-      const result=await runReviewedTranslation(productId,job,{signal:controller.signal,fetcher:fetch,onJob:saved=>{
+      const result=await runReviewedTranslation(productId,job,{signal:controller.signal,fetcher:(input,init)=>fetch(input,init),onJob:saved=>{
         if(controller.signal.aborted)return;
         setView(previous=>previous?{...previous,jobs:[saved,...previous.jobs.filter(item=>item.id!==saved.id)]}:previous);
         setSelectedId(saved.id);setConfirmed(false);setSelectedFields([]);

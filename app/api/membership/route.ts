@@ -2,7 +2,7 @@ import {env} from 'cloudflare:workers';
 import {NextResponse} from 'next/server';
 import {getChatGPTUser} from '@/app/chatgpt-auth';
 import {membersDb,memberColumns,createSession,rotateSession,sessionMaxAge,rateLimit,reviewMember,updateMemberCompany} from '@/db/members';
-import {memberEmail,memberCompany,validPassword,passwordHash,verifyPassword,tokenHash,type WorkspaceMember} from '@/app/workspace-members';
+import {memberEmail,memberCompany,validPassword,verifyPassword,tokenHash,WORKSPACE_ACCOUNTS,workspaceAccount,matchesWorkspaceAccount,type WorkspaceMember} from '@/app/workspace-members';
 import {readBoundedJson} from '@/app/request-body';
 import {supplierHubCompany} from '@/app/supplier-hub-company';
 const config=()=>env as {YOOFAM_AUTH_ENABLED?:string;YOOFAM_PASSWORD_PEPPER?:string};
@@ -16,7 +16,7 @@ export async function GET(){
  const user=await getChatGPTUser();
  if(!user?.membership)return reply({error:'로그인이 필요합니다.'},401);
  if(user.membership.role!=='admin')return reply({member:user.membership});
- const members=await membersDb().prepare(`SELECT ${memberColumns},created_at AS createdAt FROM members ORDER BY created_at DESC LIMIT 200`).all();
+ const members=await membersDb().prepare(`SELECT ${memberColumns},created_at AS createdAt FROM members WHERE lower(trim(email)) IN (?,?) ORDER BY created_at DESC`).bind(...WORKSPACE_ACCOUNTS.map(account=>account.email)).all();
  return reply({member:user.membership,members:members.results});
 }
 export async function POST(request:Request){
@@ -28,21 +28,16 @@ export async function POST(request:Request){
  const action=body.action,db=membersDb();
  if((action==='login'||action==='remember-session')&&body.rememberMe!==undefined&&typeof body.rememberMe!=='boolean')return reply({error:'자동로그인 선택을 확인해주세요.'},400);
  const rememberMe=body.rememberMe!==false;
- if(action==='login'||action==='signup'){
+ if(action==='signup')return reply({error:'지정된 두 계정만 이용할 수 있습니다. 회원가입은 지원하지 않습니다.'},403);
+ if(action==='login'){
   const email=memberEmail(body.email);validPassword(body.password);
   const ip=request.headers.get('cf-connecting-ip')??'local';
   if(!await rateLimit(`${action}:ip:${ip}`,30)||!await rateLimit(`${action}:email:${email}`,8))return reply({error:'요청이 많습니다. 15분 후 다시 시도해주세요.'},429);
   const pepper=config().YOOFAM_PASSWORD_PEPPER;
   if(!pepper||pepper.length<32)return reply({error:'로그인 서버 설정이 필요합니다.'},503);
-  if(action==='signup'){
-   const companyCode=memberCompany(body.companyCode),companyName=memberCompany(body.companyName);
-   const hash=await passwordHash(body.password,pepper),now=new Date().toISOString();
-   await db.prepare(`INSERT OR IGNORE INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at) VALUES(?,?,?,'member','pending',?,?,?,?)`).bind(crypto.randomUUID(),email,hash,companyCode,companyName,now,now).run();
-   return reply({message:'가입 요청을 접수했습니다. 관리자 승인 후 로그인해주세요.'});
-  }
   const member=await db.prepare(`SELECT ${memberColumns},password_hash AS passwordHash FROM members WHERE email=?`).bind(email).first<WorkspaceMember&{passwordHash:string}>();
-  if(!member||!await verifyPassword(body.password,member.passwordHash,pepper)||member.status!=='approved')return reply({error:'이메일·비밀번호 또는 가입 승인 상태를 확인해주세요.'},401);
-  const token=await createSession(member.id,rememberMe);
+  if(!member||!matchesWorkspaceAccount(member)||!await verifyPassword(body.password,member.passwordHash,pepper)||member.status!=='approved')return reply({error:'이메일·비밀번호 또는 계정 상태를 확인해주세요.'},401);
+  const token=await createSession(member.id,rememberMe,member.passwordHash);
   return token?sessionReply(request,token,rememberMe):reply({error:'이메일·비밀번호 또는 가입 승인 상태를 확인해주세요.'},401);
  }
  const user=await getChatGPTUser();
@@ -63,17 +58,19 @@ export async function POST(request:Request){
   if(!supplierHubCompany(code,name))return reply({error:'허용된 Supplier Hub 회사코드와 회사명을 함께 선택해주세요.'},400);
   const id=body.memberId===undefined?user.userId:body.memberId;
   if(typeof id!=='string'||!id||id.length>100)return reply({error:'수정할 계정을 선택해주세요.'},400);
-  const target=await db.prepare('SELECT id FROM members WHERE id=?').bind(id).first();
+  const target=await db.prepare('SELECT email,role FROM members WHERE id=?').bind(id).first<{email:string;role:string}>();
   if(!target)return reply({error:'계정을 찾을 수 없습니다.'},404);
+  const account=workspaceAccount(target.email);
+  if(!account||account.role!==target.role||account.companyCode!==code||account.companyName!==name)return reply({error:'이 계정에 지정된 회사는 변경할 수 없습니다.'},403);
   const changed=await updateMemberCompany(user.userId,id,code,name);
   return reply({ok:true,reauthenticate:changed&&id===user.userId});
  }
  if(!['approve','reject','suspend'].includes(String(action))||typeof body.memberId!=='string')return reply({error:'처리할 가입 요청을 선택해주세요.'},400);
  if(action==='approve'){
-  const target=await db.prepare('SELECT company_code AS companyCode,company_name AS companyName FROM members WHERE id=?').bind(body.memberId).first<{companyCode:string;companyName:string}>();
-  if(target&&!supplierHubCompany(target.companyCode,target.companyName))return reply({error:'승인 전에 허용된 Supplier Hub 회사코드와 회사명을 확인해주세요.'},400);
+  const target=await db.prepare(`SELECT ${memberColumns} FROM members WHERE id=?`).bind(body.memberId).first<WorkspaceMember>();
+  if(target&&!matchesWorkspaceAccount(target))return reply({error:'이 계정에 지정된 역할과 회사정보를 확인해주세요.'},400);
  }
  const changed=await reviewMember(user.userId,body.memberId,action as 'approve'|'reject'|'suspend');
- return changed?reply({ok:true}):reply({error:'처리 상태를 확인해주세요. 승인 계정은 관리자 포함 최대 2개입니다.'},409);
+ return changed?reply({ok:true}):reply({error:'지정된 계정과 처리 상태를 확인해주세요.'},409);
  }catch{return reply({error:'입력값을 확인하거나 잠시 후 다시 시도해주세요.'},400);}
 }

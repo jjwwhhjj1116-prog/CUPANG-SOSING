@@ -1,5 +1,7 @@
 # Workers AI production activation — 2026-09-27
 
+Current configuration update (2026-10-05): the model named in this historical activation record has been retired. The supported deployment model is now `@cf/meta/llama-3.3-70b-instruct-fp8-fast`; see [model replacement and validation](workers-ai-model-update-2026-10-05.md). Earlier deployment and verification statements below remain historical records.
+
 The existing Chrome Cloudflare session was recovered with its prefilled sign-in form. The account's Workers plans screen showed Free with Current plan, and Paid with Upgrade. No plan change was made.
 
 Production build input `.env.production.local` now includes `SOURCEFLOW_TEXT_PROVIDER=workers-ai`. Existing deployment configuration emits AI binding, model `@cf/meta/llama-3.1-8b-instruct`, and output limit 4096. No OpenAI key is required for this provider. Keep this opt-in input when rebuilding; do not put credentials in tracked configuration.

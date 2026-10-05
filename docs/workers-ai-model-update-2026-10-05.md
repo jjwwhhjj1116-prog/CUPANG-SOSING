@@ -1,0 +1,11 @@
+# Workers AI model replacement — 2026-10-05
+
+The production draft attempt returned error 5028 while the deployed configuration still selected `@cf/meta/llama-3.1-8b-instruct`. Cloudflare's [May 8 deprecation announcement](https://developers.cloudflare.com/changelog/post/2026-05-08-planned-model-deprecations/) lists that model as retired on May 30, 2026 and explicitly keeps `@cf/meta/llama-3.3-70b-instruct-fp8-fast` active. The [replacement model specification](https://developers.cloudflare.com/workers-ai/models/llama-3.3-70b-instruct-fp8-fast/) includes `response_format` support.
+
+`app/automation/translation.ts` accepts that replacement model, and `deployment/cloudflare-config.mjs` emits the same model when `SOURCEFLOW_TEXT_PROVIDER=workers-ai`. AI binding `AI`, output ceiling 4096, explicit opt-in, single execution claim, strict generated-value validation, and the 60-second deadline are unchanged. No account plan, Access policy, API key or provider credentials are changed. Production model selection comes from the tracked build configuration, not a new secret or local environment override.
+
+Cloudflare's [pricing documentation](https://developers.cloudflare.com/workers-ai/platform/pricing/) provides 10,000 neurons daily on Workers Free; further operations fail beyond the free allowance. Workers Paid can charge for excess usage. The model change does not inspect or change the account plan and is not a promise of unlimited free generation.
+
+Error 5028 now has a fixed model-retirement explanation. Raw provider messages and source text remain excluded. The application does not retry failed/uncertain executions automatically. Old prepared or approved requests retain their old model identity and cannot execute against the replacement: prepare and review a new request. Completed historical results remain readable without another provider call or any change to saved product content.
+
+Offline regression coverage checks the exact deployment model/token ceiling, rejected retired model configuration, unchanged JSON-schema request contract, safe persisted 5028 guidance/replay, model-change approval rejection, and historical completed-result reads. Test provider responses are fixtures; a successful live response after deployment must be verified separately.

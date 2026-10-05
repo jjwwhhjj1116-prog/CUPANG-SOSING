@@ -153,7 +153,14 @@ test('initial replay never replaces a newer completed category snapshot or its r
     await patch(h,{label:{material:'최신 검토 재질'}});
     const base='/api/products/'+product(h).id+'/translation';
     const post=body=>h.route(base,{method:'POST',body});
-    newer=(await json(await post({action:'prepare',source:JSON.parse(args[1].messages[1].content),expectedVersion:product(h).updated_at,idempotencyKey:'newer-reviewed-result'}))).job;
+    // v5 adds sourceIndex only to its provider transport. A new user review
+    // starts from the persisted source contract, never that transport copy.
+    const source=JSON.parse(h.sqlite.prepare("SELECT review FROM translation_jobs WHERE idempotency_key='intake-auto-v1'").get().review).source;
+    const transport=JSON.parse(args[1].messages[1].content);
+    assert.ok(transport.attributes.every((attribute,index)=>attribute.sourceIndex===index));
+    assert.ok(source.attributes.every(attribute=>!Object.hasOwn(attribute,'sourceIndex')));
+    assert.deepEqual(transport.attributes.map(({name,value})=>({name,value})),source.attributes);
+    newer=(await json(await post({action:'prepare',source,expectedVersion:product(h).updated_at,idempotencyKey:'newer-reviewed-result'}))).job;
     await json(await post({action:'approve',jobId:newer.id,reviewFingerprint:newer.review.fingerprint,confirmPaid:true}));
     await json(await post({action:'execute',jobId:newer.id}));
     const body={jobId:newer.id,expectedVersion:product(h).updated_at};

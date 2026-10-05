@@ -69,6 +69,11 @@ export async function readQuotationExportSource(owner: string, productId: string
       }
     }
   }
+  // Reassigning a login must not relabel an older company's captured proposal.
+  // Keep the source and owned assets untouched; use the company that collected it.
+  if(company&&[hubSchema,profile?.hubSchema].some(schema=>schema&&(schema.company.code!==company.code||schema.company.name!==company.name))){
+    throw new QuotationExportError('이 상품의 저장된 상세 양식 회사가 현재 로그인 회사와 다릅니다. 원래 회사의 상품과 양식을 사용해주세요.',409);
+  }
   if (categoryContext.categoryId) {
     try { validateCategoryIdentity({ categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath }); }
     catch (error) { throw new QuotationExportError(error instanceof Error ? error.message : '카테고리 연결을 확인해주세요.', 409); }

@@ -302,7 +302,6 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     const layout = supplierHubEntryLayout(inspection, template.sheetName, template.headerRow);
     if (supplierHubSheetSignature(inspection, template.sheetName) && !layout) fail('공식 견적서의 입력 행 구성을 확인하지 못했습니다. 안내·예시 행을 보존하기 위해 출력을 중단했습니다.');
     if (layout && input.dataStartRow < layout.dataStartRow) fail(`공식 견적서 ${template.headerRow + 1}~${layout.dataStartRow - 1}행은 작성 안내·예시입니다. 상품 입력은 ${layout.dataStartRow}행부터 가능합니다.`);
-    if (layout?.categoryIds.length && !layout.categoryIds.includes(profile.categoryId)) fail(`공식 견적서 카테고리 ${layout.categoryIds.join(', ')}와 선택한 상품 카테고리 ${profile.categoryId || '(미입력)'}가 다릅니다.`);
     const headers = xlsxHeaders(inspection, template.sheetName, template.headerRow);
     if (JSON.stringify(headers.map(value => value.trim())) !== JSON.stringify(template.headers)) fail('견적서 원본 머리글과 열 연결이 일치하지 않습니다.');
     if (layout) {
@@ -312,6 +311,11 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
       for (const column of categoryColumns) {
         const matches = lists.get(column)?.filter(value => /\((\d+)\)\s*$/.exec(value)?.[1] === profile.categoryId) ?? [];
         if (matches.length !== 1) fail(`공식 견적서 ${column + 1}열에서 카테고리 코드 ${profile.categoryId}에 해당하는 드롭다운 값을 하나로 확인하지 못했습니다.`);
+        // Row eight is only an example; one workbook serves multiple leaves.
+        // Bind output to the original dropdown's exact code and full path.
+        const selectedPath=matches[0].replace(/\s*\(\d+\)\s*$/,'').split('>');
+        const pathKey=(parts:readonly string[])=>JSON.stringify(parts.map(part=>part.normalize('NFKC').replace(/\s+/gu,'')));
+        if(pathKey(selectedPath)!==pathKey(profile.categoryPath))fail('공식 견적서 카테고리의 전체 경로와 선택한 상품 경로가 다릅니다.');
         if (values.some(row => !String(row[column] ?? '').trim())) fail(`공식 견적서 ${column + 1}열 카테고리가 비어 있습니다. 모든 상품의 카테고리를 확인해주세요.`);
         let updated = 0;
         for (const row of values) if (String(row[column] ?? '').trim() && row[column] !== matches[0]) { row[column] = matches[0]; updated++; }

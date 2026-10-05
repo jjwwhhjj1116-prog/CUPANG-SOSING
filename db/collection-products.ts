@@ -7,12 +7,14 @@ import { prepareCollectionProduct } from '@/app/collection-product';
 import type { CollectionJob } from '@/app/sourcing';
 import type { CollectionResult } from '@/app/collection-result';
 import { collectionProductSchema } from '@/db/collection-jobs';
+import { effectiveCollectionPayload, readCollectionResult } from '@/db/collection-results';
 export async function findCollectionProduct(owner:string,jobId:string){
  if(!env.DB)throw new Error('D1 unavailable');await env.DB.prepare(collectionProductSchema).run();
  return env.DB.prepare('SELECT product_id FROM collection_products WHERE job_id=? AND owner_id=?').bind(jobId,owner).first<{product_id:string}>();
 }
 export async function promoteCollection(owner:string,job:CollectionJob,receipt:CollectionResult){
  await ensureDatabase();const existing=await findCollectionProduct(owner,job.id);if(existing)return existing;
+ await readCollectionResult(owner,job.id);
  const id=crypto.randomUUID();const now=new Date().toISOString();const prepared=prepareCollectionProduct(owner,job,receipt,id,now);
  await verifyWorkspaceBannerFiles(owner, job.context!.settings, true);
  await readProductOptions(owner,id);await readProductContent(owner,id);
@@ -21,7 +23,7 @@ export async function promoteCollection(owner:string,job:CollectionJob,receipt:C
  await db.batch([
   db.prepare(`INSERT INTO products(${entries.map(([key])=>key).join(',')})
    SELECT ${entries.map(()=>'?').join(',')} FROM collection_jobs j JOIN collection_results r ON r.job_id=j.id JOIN collection_context c ON c.job_id=j.id
-   WHERE j.id=? AND j.owner_id=? AND r.owner_id=? AND j.status='awaiting_connector' AND r.payload=? AND c.payload=?
+   WHERE j.id=? AND j.owner_id=? AND r.owner_id=? AND j.status='awaiting_connector' AND ${effectiveCollectionPayload}=? AND c.payload=?
    AND NOT EXISTS(SELECT 1 FROM collection_products WHERE job_id=j.id)`)
    .bind(...entries.map(([,value])=>value),job.id,owner,owner,JSON.stringify(receipt),JSON.stringify(job.context)),
   db.prepare('INSERT INTO product_price_policy(product_id,payload) SELECT id,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(prepared.policy),id,owner),

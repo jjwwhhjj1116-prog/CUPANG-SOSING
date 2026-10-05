@@ -4,7 +4,7 @@ import {prepareAttachments} from './package.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
 import {attachToSupplierHub} from './attach.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
-import {waitForSupplierHubPage,supplierHubUploadReady} from './hub-tab.mjs';
+import {isSupplierHubTab,waitForSupplierHubPage,supplierHubUploadReady} from './hub-tab.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
 import {claimSupplierHubTransmissionWindow} from './transmission-window.mjs';
 import {assertAppSupplierHubNotSubmitted} from './receipt-recovery.mjs';
@@ -38,8 +38,8 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
       if(!attempt)unused.push(tab);
       else if(attempt.origin===identity.origin&&attempt.company?.code===prepared.company.code&&attempt.company?.name===prepared.company.name)owned.push(tab);
     }
-    if(unused.length>1||(!unused.length&&!owned.length))throw Error('앱과 같은 Chrome 창의 Supplier Hub 대량 상품 등록 탭을 확인해주세요. 작업 중인 탭이 여러 개면 사용할 탭을 하나 남겨주세요.');
-    let tabId=(unused[0]||owned[0]).id;
+    if(unused.length>1||(tabs.length&&!unused.length&&!owned.length))throw Error('앱과 같은 Chrome 창의 Supplier Hub 대량 상품 등록 탭을 확인해주세요. 작업 중인 탭이 여러 개면 사용할 탭을 하나 남겨주세요.');
+    let tabId=(unused[0]||owned[0])?.id;
     const current=async()=>{const tab=await api.tabs.get(tabId);if(!isHubRegistrationTab(tab,windowId))throw Error('Supplier Hub 탭이 이동되거나 등록 화면이 변경되었습니다.');};
     const companyCheck=async()=>{
       await current();
@@ -47,18 +47,39 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
       if(execution?.result?.code!==prepared.company.code)throw Error('회원 회사와 Supplier Hub 회사코드가 일치하지 않습니다.');
       await current();
     };
-    await companyCheck();
     let preflight;
-    if(unused.length)[preflight]=await api.scripting.executeScript({target:{tabId},func:attachToSupplierHub,args:[prepared,true]});
-    if(!unused.length||preflight?.result?.state==='occupied'){
-      // Preserve the original file inputs, agreements and validation history.
-      await companyCheck();
+    const prepareFreshTab=async()=>{
       const fresh=await api.tabs.create({windowId,url:'https://supplier.coupang.com/qvt/registration',active:false});
       if(!Number.isSafeInteger(fresh?.id)||fresh.id<0||fresh.windowId!==windowId)throw Error('같은 Chrome 창에 새 등록 탭을 준비하지 못했습니다.');
       tabId=fresh.id;
       await waitForSupplierHubPage(tabId,windowId,'/qvt/registration',supplierHubUploadReady,api);
       await companyCheck();
       [preflight]=await api.scripting.executeScript({target:{tabId},func:attachToSupplierHub,args:[prepared,true]});
+    };
+    if(!tabs.length){
+      // The explicit app transmission may start from the logged-in dashboard.
+      // Read its exact company, then use a fresh form without navigating it.
+      const dashboards=(await api.tabs.query({windowId,url:'https://supplier.coupang.com/dashboard/KR*'}))
+        .filter(tab=>!tab.pendingUrl&&isSupplierHubTab(tab,windowId,'/dashboard/KR'));
+      if(dashboards.length!==1)throw Error('앱과 같은 Chrome 창에 로그인된 Supplier Hub 대시보드 또는 대량 상품 등록 탭을 열어두세요. 사용할 대시보드 탭은 하나만 남겨주세요.');
+      const dashboardId=dashboards[0].id;
+      const checkDashboard=async()=>{const tab=await api.tabs.get(dashboardId);if(tab?.id!==dashboardId||tab.pendingUrl||!isSupplierHubTab(tab,windowId,'/dashboard/KR'))throw Error('Supplier Hub 대시보드가 이동되거나 로그인 화면이 변경되었습니다.');};
+      await checkDashboard();
+      const [company]=await api.scripting.executeScript({target:{tabId:dashboardId},func:verifySupplierHubCompany,args:[prepared.company,'catalog']});
+      if(company?.result?.code!==prepared.company.code)throw Error('회원 회사와 Supplier Hub 회사코드가 일치하지 않습니다.');
+      await checkDashboard();
+      await sourceCheck();
+      await receiptCheck();
+      await checkDashboard();
+      await prepareFreshTab();
+    }else{
+      await companyCheck();
+      if(unused.length)[preflight]=await api.scripting.executeScript({target:{tabId},func:attachToSupplierHub,args:[prepared,true]});
+      if(!unused.length||preflight?.result?.state==='occupied'){
+        // Preserve the original file inputs, agreements and validation history.
+        await companyCheck();
+        await prepareFreshTab();
+      }
     }
     if(preflight?.result?.state!=='ready'||preflight.result.registered!==false)throw Error('Supplier Hub 첨부 화면을 확인하지 못했습니다.');
     await current();

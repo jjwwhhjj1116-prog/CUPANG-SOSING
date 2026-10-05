@@ -9,10 +9,11 @@ export function translationReviewExpired(job: TranslationJob, now = Date.now()) 
 export async function runReviewedTranslation(productId: string, job: TranslationJob, options: {
   signal: AbortSignal; fetcher: typeof fetch; onJob: (job: TranslationJob) => void;
 }) {
+  const fetcher = options.fetcher;
   if (job.productId !== productId || !['prepared', 'approved'].includes(job.status)) throw Error('검토한 번역 작업을 확인해주세요.');
   if (translationReviewExpired(job)) throw Error('SEO 검토 기한이 지났습니다. 검토 기한을 갱신한 뒤 실행해주세요.');
   const send = async (body: Record<string, unknown>) => {
-    const response = await options.fetcher(`/api/products/${encodeURIComponent(productId)}/translation`, {
+    const response = await fetcher(`/api/products/${encodeURIComponent(productId)}/translation`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, signal: options.signal, body: JSON.stringify(body),
     });
     const value = await response.json() as { job?: TranslationJob; error?: string; message?: string };

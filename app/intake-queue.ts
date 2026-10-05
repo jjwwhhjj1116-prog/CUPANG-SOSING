@@ -56,6 +56,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
   collect?: (job:CollectionJob,onProgress:(message:string)=>void,onProduct:(id:string)=>void)=>Promise<string|undefined>;
 }) {
   if (options.signal.aborted) return;
+  const fetcher = options.fetcher;
   const selectedRows = options.selectedIds ? rows.filter(row => options.selectedIds!.has(row.id)) : rows;
   const validation = validateIntakeQueue(selectedRows, goal);
   if (validation.errors.length) {
@@ -68,7 +69,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
     if (options.signal.aborted) break;
     let savedProductId: string | undefined;
     try {
-      const response = await options.fetcher('/api/collection-jobs', { method: 'POST', signal: options.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({...request.body,...(expectedSettings?{expectedSettings}:{})}) });
+      const response = await fetcher('/api/collection-jobs', { method: 'POST', signal: options.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({...request.body,...(expectedSettings?{expectedSettings}:{})}) });
       const result = await response.json() as { jobs?: CollectionJob[]; preservedRequests?: PreservedCollectionRequest[]; error?: string; code?: string };
       if (options.signal.aborted) break;
       if(!response.ok&&result.code==='REGISTRATION_SETTINGS_CHANGED'){options.onRow(request.id,{status:'error',message:result.error||'기본설정을 다시 확인해주세요.'});options.onSettingsChanged?.();break;}

@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import path from 'node:path';
 import ts from 'typescript';
 import { webcrypto, createHash } from 'node:crypto';
 import { unzipSync, zipSync } from 'fflate';
@@ -18,6 +19,7 @@ function load(file, overrides = {}, mode = 'development', cache = new Map()) {
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
       if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode, cache);
+      if (name.startsWith('./') || name.startsWith('../')) return load(path.posix.join(path.posix.dirname(file),name)+'.ts', overrides, mode, cache);
       throw Error(name);
     } });
   return exports;

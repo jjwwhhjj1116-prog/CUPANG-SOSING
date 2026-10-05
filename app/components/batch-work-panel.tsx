@@ -20,7 +20,7 @@ export function BatchWorkPanel({products,onOpen}:{products:Item[];onOpen:(id:str
       setResults(previous=>({...previous,[product.id]:{status:'running',message:'저장 원본 이미지 초안 준비·가격 확인 중'}}));
       try {
         let preparation='';
-        const workflow=await runBatchProduct(product.id,{fetcher:fetch,signal:active.signal,keys:keys.current,newKey:()=>crypto.randomUUID(),prepareDrafts:true,onPreparation:result=>{preparation=result.message;}});
+        const workflow=await runBatchProduct(product.id,{fetcher:(input,init)=>fetch(input,init),signal:active.signal,keys:keys.current,newKey:()=>crypto.randomUUID(),prepareDrafts:true,onPreparation:result=>{preparation=result.message;}});
         if(!workflow)break;
         const pricingReady=workflow.stages.some(stage=>stage.id==='pricing'&&stage.status==='complete');
         const drafts=workflow.stages.filter(stage=>stage.status==='draft').length;

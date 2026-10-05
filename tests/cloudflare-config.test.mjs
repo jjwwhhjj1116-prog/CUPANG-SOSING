@@ -59,7 +59,10 @@ test('Workers AI deployment is opt-in and binds only the validated model', () =>
   const config = { ...productionConfig({ ...input, SOURCEFLOW_TEXT_PROVIDER: 'workers-ai' }, hosting), no_bundle: true };
   assert.deepEqual(config.ai, { binding: 'AI' });
   assert.equal(config.vars.SOURCEFLOW_TEXT_PROVIDER, 'workers-ai');
+  assert.equal(config.vars.SOURCEFLOW_TEXT_MODEL, '@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+  assert.equal(config.vars.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS, '4096');
   assert.doesNotThrow(() => assertProductionArtifactConfig(config, hosting));
   assert.throws(() => assertProductionArtifactConfig({ ...config, ai: { binding: 'OTHER' } }, hosting));
   assert.throws(() => assertProductionArtifactConfig({ ...config, vars: { ...config.vars, SOURCEFLOW_TEXT_MODEL: 'different' } }, hosting));
+  assert.throws(() => assertProductionArtifactConfig({ ...config, vars: { ...config.vars, SOURCEFLOW_TEXT_MODEL: '@cf/meta/llama-3.1-8b-instruct' } }, hosting));
 });

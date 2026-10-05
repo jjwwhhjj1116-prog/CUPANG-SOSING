@@ -15,7 +15,7 @@ export function categoryPickerUI(request,{catalog}={}){
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,
-   {exports,Error,crypto,AbortController,structuredClone,fetch:fetcher,require(name){
+   {exports,Error,crypto,AbortController,TextDecoder,structuredClone,fetch:fetcher,require(name){
     if(name==='react')return hooks;if(name.endsWith('.css'))return {};
     if(name==='@/app/supplier-hub-catalog'&&catalog)return catalog;
     if(name.startsWith('../docs/')&&name.endsWith('.json'))return JSON.parse(fs.readFileSync(new URL('../../docs/'+name.slice(8),import.meta.url),'utf8'));

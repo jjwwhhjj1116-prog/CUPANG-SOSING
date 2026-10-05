@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { findCollectionJob } from '@/db/collection-jobs';
 import { findCollectionProduct, findProductCollection } from '@/db/collection-products';
-import { readCollectionResult } from '@/db/collection-results';
+import { effectiveCollectionPayload, readCollectionResult } from '@/db/collection-results';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
@@ -32,7 +32,7 @@ export async function prepareCollectedImageDraft(owner: string, jobId: string, p
     AND EXISTS(SELECT 1 FROM collection_products cp JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=cp.owner_id
       JOIN collection_results r ON r.job_id=j.id AND r.owner_id=j.owner_id JOIN collection_context c ON c.job_id=j.id
       WHERE cp.product_id=products.id AND cp.owner_id=products.owner_id AND j.id=? AND j.status='awaiting_connector' AND j.goal=?
-      AND j.offer_id=? AND j.source_url=products.source_url AND r.payload=? AND c.payload=?)
+      AND j.offer_id=? AND j.source_url=products.source_url AND ${effectiveCollectionPayload}=? AND c.payload=?)
     AND (SELECT count(*) FROM collection_images WHERE owner_id=products.owner_id AND product_id=products.id AND job_id=?)=json_array_length(?)
     AND NOT EXISTS(SELECT 1 FROM collection_images ci WHERE ci.owner_id=products.owner_id AND ci.product_id=products.id AND ci.job_id=?
       AND NOT EXISTS(SELECT 1 FROM json_each(?) saved WHERE json_extract(saved.value,'$.imageIndex')=ci.image_index AND json_extract(saved.value,'$.key')=ci.object_key))`;

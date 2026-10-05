@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
+const retry={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/collection-retry.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:retry,Error,setTimeout});
 const steps = ['SEO', '가격', '대표 이미지', '추가 이미지', '상세 이미지', '표시사항', '견적서'];
 function nodes(tree) { if (Array.isArray(tree)) return tree.flatMap(nodes); return tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : []; }
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
@@ -12,10 +13,10 @@ function harness(onOpenProduct, outcome = { status: 'completed', productId: 'sav
   const states = [], refs = [], cleanups = []; let index = 0, ri = 0, first = true, imports = 0;
   const hooks = { useState(initial) { const n = index++; if (n >= states.length) states.push(initial); return [states[n], value => { states[n] = typeof value === 'function' ? value(states[n]) : value; }]; }, useRef(initial) { const n = ri++; if (n >= refs.length) refs.push({ current: initial }); return refs[n]; }, useEffect(effect) { if (first) cleanups.push(effect()); } };
   const exports = {};
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/collection-batch-panel.tsx', import.meta.url), 'utf8'), { fileName: 'panel.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, { exports, AbortController, Error, fetch: () => { throw Error('unexpected request'); }, require(name) {
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/collection-batch-panel.tsx', import.meta.url), 'utf8'), { fileName: 'panel.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, { exports, AbortController, Error, fetch: async function(url) { assert.equal(this,undefined,'native fetch cannot receive helper options as its receiver');assert.equal(url,'/api/collection-jobs/job/result');return Response.json({}); }, require(name) {
     if (name === 'react') return hooks;
     if (name === '@/app/registration-navigation') return { registrationSteps: steps };
-    if (name === '@/app/collection-batch') return { linkedReceivedJobs: () => [], pendingReceivedJobs: jobs => jobs, importReceivedJobs: async (jobs, options) => { imports++; options.onResult(jobs[0].id, outcome); } };
+    if (name === '@/app/collection-batch') return { linkedReceivedJobs: () => [], pendingReceivedJobs: jobs => jobs, importReceivedJobs: async (jobs, options) => { imports++;try{await retry.collectionRequestWithRetry('/api/collection-jobs/job/result',{cache:'no-store'},{fetcher:options.fetcher});options.onResult(jobs[0].id, outcome);}catch(error){options.onResult(jobs[0].id,{status:'failed',productId:null,completedImages:0,error:error.message});} } };
     return require(name);
   } });
   const render = () => { index = 0; ri = 0; const tree = exports.CollectionBatchPanel({ jobs: [{ id: 'job', offer_id: '123', source_url: 'https://detail.1688.com/offer/123.html' }], onSaved() {}, onOpenProduct }); first = false; return tree; };

@@ -43,7 +43,7 @@ test('login submits selected duration, remembers only email and choices, and res
   assert.equal(h.input('rememberEmail').checked,true);assert.equal(h.input('rememberMe').checked,true);
   assert.equal(h.input('email').node.props.autoComplete,'username');assert.equal(h.input('password').node.props.autoComplete,'current-password');
   h.choose('email','Member@Example.Test');h.choose('password','TEST-ONLY-password-123');await h.submit();
-  assert.deepEqual(h.calls,[{url:'/api/membership',method:'POST',body:{action:'login',email:'Member@Example.Test',password:'TEST-ONLY-password-123',rememberMe:true,companyCode:null,companyName:null}}]);
+  assert.deepEqual(h.calls,[{url:'/api/membership',method:'POST',body:{action:'login',email:'Member@Example.Test',password:'TEST-ONLY-password-123',rememberMe:true}}]);
   assert.deepEqual(JSON.parse(storage.get(storageKey)),{email:'member@example.test',rememberEmail:true,rememberMe:true});assert.deepEqual(h.redirects,['/']);
   assert.ok(h.storageWrites.every(write=>!write.value.includes('password')&&!write.value.includes('TEST-ONLY')));
   const returned=ui({storage});try{assert.equal(returned.input('email').value,'member@example.test');assert.equal(returned.input('password').value,'');assert.equal(returned.input('rememberMe').checked,true);}finally{returned.close();}
@@ -70,16 +70,11 @@ test('failed login preserves form entries, does not persist credentials, and pre
  }finally{h.close();}
 });
 
-test('signup submits typed company facts and keeps approval success separate from login and remembered values',async()=>{
- const storage=new Map([[storageKey,JSON.stringify({email:'remembered@example.test',rememberEmail:true,rememberMe:false})]]),h=ui({storage,reply:async()=>Response.json({message:'승인 후 로그인해주세요.'})});try{
-  const before=storage.get(storageKey);h.click('회원가입 요청');assert.equal(h.input('password').node.props.autoComplete,'new-password');
-  assert.equal(h.input('companyCode').value,'');assert.equal(h.input('companyName').value,'');assert.equal(h.input('rememberMe'),undefined);
-  h.choose('email','request@example.test');h.choose('password','TEST-ONLY-signup-password');h.choose('companyCode','A01526306');h.choose('companyName','유앤채');
+test('closed workspace has login only, no signup or editable company inputs',async()=>{
+ const h=ui();try{
+  assert.equal(h.button('회원가입 요청'),undefined);assert.equal(h.input('companyCode'),undefined);assert.equal(h.input('companyName'),undefined);
+  assert.match(text(h.render()),/유앤채·와이홉/);assert.equal(h.input('password').node.props.autoComplete,'current-password');
   h.click('비밀번호 보기');assert.equal(h.input('password').type,'text');h.click('비밀번호 숨기기');assert.equal(h.input('password').type,'password');
-  await h.submit();assert.deepEqual(h.calls[0].body,{action:'signup',email:'request@example.test',password:'TEST-ONLY-signup-password',rememberMe:false,companyCode:'A01526306',companyName:'유앤채'});
-  assert.ok(nodes(h.render()).some(node=>node.props?.role==='status'&&text(node).includes('승인 후 로그인')));assert.equal(nodes(h.render()).find(node=>node.type==='button'&&node.props.type==='submit').props.disabled,true);
-  assert.deepEqual(h.redirects,[]);assert.equal(storage.get(storageKey),before);
-  h.click('로그인');assert.equal(h.input('password').node.props.autoComplete,'current-password');assert.equal(h.input('rememberMe').checked,false);assert.equal(h.input('companyCode'),undefined);
  }finally{h.close();}
 });
 

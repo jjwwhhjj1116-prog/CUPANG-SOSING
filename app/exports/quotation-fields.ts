@@ -6,6 +6,7 @@ import { inspectSubmission, type SubmissionIssue } from '@/app/submission-review
 import { currentDetailContent, productImageKeys, savedTextOrFallback } from '@/app/product-content';
 import { quotationSections, type ResolvedQuotation } from '@/app/quotation-schema';
 import { quotationNumericValue } from '@/app/quotation-scalar-constraints';
+import { primaryNumericTextFields } from '@/app/quotation-mapping';
 import { quotationCsv } from '@/app/pricing';
 import { optionSourceCostCny, optionQuotationName } from '@/app/product-options';
 import type { BundleAsset } from '@/app/exports/review-bundle';
@@ -40,6 +41,12 @@ const aliases: Partial<Record<CategoryField, string>> = { boxQuantity: 'boxSkuQu
 export function quotationMappingCoverage(resolved: ResolvedQuotation, profile: CategoryProfileInput) {
   const mapped = new Set(profile.mappings.filter(mapping => mapping.field !== 'constant').map(mapping => aliases[mapping.field] ?? mapping.field));
   const included = resolved.rows.filter(row => row.included);
+  // Live numeric text inputs keep separate IDs for saved manual edits. Their
+  // exact wire represents the common field only while every output agrees.
+  for(const [input,wireId] of primaryNumericTextFields(resolved.schema.fields)){
+    if(mapped.has(wireId)&&included.length&&included.every(row=>row.fields[input]
+      &&row.fields[wireId]&&row.fields[input].value===row.fields[wireId].value))mapped.add(input);
+  }
   return resolved.schema.fields.filter(field => !mapped.has(field.id)).flatMap(field => {
     const manualOptions = included.filter(row => row.fields[field.id]?.source.startsWith('manual-')).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
     const automaticOptions = included.filter(row => {
@@ -103,7 +110,7 @@ export function resolvedQuotationRows(saved: QuotationExportSource, resolved: Re
       }).join('\n');
       else {
         const numeric = quotationNumericValue(field, value);
-        if (numeric !== undefined) value = numeric;
+        if (numeric !== undefined && !field.numericText) value = numeric;
       }
       data[field.id as Exclude<CategoryField, 'constant'>] = value;
     }

@@ -67,10 +67,17 @@ test('official import endpoint stores original bytes in the owning workspace and
  const before=h.objects.size;
  for(const [raw,binary,options] of [[snap(schemaCompanies[1]),bytes],[snapshot,workbook({category:'991235'}).bytes],[snapshot,bytes,{extra:true}],[snapshot,bytes,{duplicateFile:true}],[snapshot,encode('bad xlsx')]]){const failed=await api.POST(request(raw,binary,options));assert.equal(failed.status,400,await failed.clone().text());assert.equal(h.objects.size,before);}
 });
-function client(local,snapshot,template,{mutate,capability=true,afterExchange}={}){
+test('official download archive errors report only bounded entry counts, never filenames or file contents',async()=>{
+ const api=h.load('app/api/category-profiles/official-template/route.ts'),before=h.objects.size;
+ const bytes=workbookArchive([['PRIVATE_COMPANY_ORIGINAL.xlsx',workbook().bytes],['PRIVATE_SERVER_MESSAGE.txt','DO_NOT_EXPOSE']]);
+ const response=await api.POST(request(snap(),bytes));assert.equal(response.status,400);
+ const body=await response.json();assert.match(body.error,/압축 파일 2개/);assert.match(body.error,/XLSX 1개/);assert.match(body.error,/ZIP 0개/);assert.match(body.error,/기타 1개/);
+ assert.doesNotMatch(body.error,/PRIVATE_COMPANY|PRIVATE_SERVER|DO_NOT_EXPOSE/);assert.equal(h.objects.size,before);
+});
+function client(local,snapshot,template,{mutate,capability=true,afterExchange,excelSchema,excelCapability=true}={}){
  const exported={},parent={categoryId:'100',name:schemaPath[0],isLeaf:false},leaf={categoryId:snapshot.categoryId,name:schemaPath[1],isLeaf:true},calls=[];
- let branch={source:'supplier-hub-category-api',ownerId:'owner',company:snapshot.company,trail:[parent],children:[leaf],observedAt:Date.now(),fullCatalogVerified:false,schema:snapshot,template};mutate?.(branch);
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-catalog.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exported,Date,Error,File,FormData,TextDecoder,Uint8Array,crypto,atob,btoa,fetch:async(url,init)=>{calls.push({url});return local.load('app/api/category-profiles/official-template/route.ts').POST(new Request('https://app.test'+url,init));},require:name=>name==='@/app/supplier-hub-schema'?local.load('app/supplier-hub-schema.ts'):name==='@/app/request-body'?local.load('app/request-body.ts'):{exchange:async type=>{calls.push({type});if(type==='PING')return{categoryTemplate:capability};afterExchange?.();return{branch};}}});
+ let branch={source:'supplier-hub-category-api',ownerId:'owner',company:snapshot.company,trail:[parent],children:[leaf],observedAt:Date.now(),fullCatalogVerified:false,schema:snapshot,template,...(excelSchema?{excelSchema}:{})};mutate?.(branch);
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-catalog.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exported,Date,Error,File,FormData,TextDecoder,Uint8Array,crypto,atob,btoa,fetch:async(url,init)=>{calls.push({url,action:init.body.get('action')});return local.load('app/api/category-profiles/official-template/route.ts').POST(new Request('https://app.test'+url,init));},require:name=>name==='@/app/supplier-hub-schema'?local.load('app/supplier-hub-schema.ts'):name==='@/app/request-body'?local.load('app/request-body.ts'):name==='@/app/xlsx-template'?local.load('app/xlsx-template.ts'):{exchange:async(type,payload)=>{calls.push({type,...(payload?.excelIdentity?{identity:plain(payload.excelIdentity)}:{})});if(type==='PING')return{categoryTemplate:capability,categoryExcelSchema:excelCapability};afterExchange?.();return{branch};}}});
  return {calls,run:signal=>exported.loadLiveHubCategoryTemplate({key:'live',categoryId:snapshot.categoryId,path:schemaPath,isLeaf:true,supplierHub:{trail:[parent],ownerId:'owner',company:snapshot.company}},snapshot,signal)};
 }
 test('client checks byte hash, company/path/leaf/member and cancellation before uploading official bytes',async()=>{
@@ -80,9 +87,20 @@ test('client checks byte hash, company/path/leaf/member and cancellation before 
  const missing=client(h,snapshot,template,{capability:false});await assert.rejects(missing.run(new AbortController().signal));assert.deepEqual(missing.calls,[{type:'PING'}]);
  const controller=new AbortController(),cancelled=client(h,snapshot,template,{afterExchange:()=>controller.abort()});await assert.rejects(cancelled.run(controller.signal));assert.ok(!cancelled.calls.some(call=>call.url));
 });
-for(const company of schemaCompanies)test(`automatic official import links URL draft and manual changes to original XLSX for ${company.code}`,async()=>{
+test('Single import requires the new capability and rejects wrong Excel response before storage while accepting metadata key reordering',async()=>{
+ const single={...snap(),metadata:{...snap().metadata,scope:'Retail_Categorized_Single',version:73}},excel=snap(),template=await download(single,workbook().bytes),before=h.objects.size;
+ const old=client(h,single,template,{excelCapability:false});await assert.rejects(old.run(new AbortController().signal),/Single·Excel/);assert.deepEqual(old.calls,[{type:'PING'}]);
+ const wrong=client(h,single,template,{excelSchema:{...excel,metadata:{...excel.metadata,version:73}}});await assert.rejects(wrong.run(new AbortController().signal),/버전/);assert.equal(h.objects.size,before);assert.deepEqual(wrong.calls.filter(call=>call.url).map(call=>call.action),['inspect']);
+ const reordered=client(h,single,template,{excelSchema:excel,mutate:branch=>{branch.schema={...single,metadata:Object.fromEntries(Object.entries(single.metadata).reverse())};}});
+ assert.ok((await reordered.run(new AbortController().signal)).template);
+});
+for(const company of schemaCompanies)for(const mode of ['Excel','Single','Single wrapper'])test(`automatic official import links ${mode} URL draft and manual changes to original XLSX for ${company.code}`,async()=>{
  const local=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
-  const snapshot=snap(company),original=workbook(),template=await download(snapshot,original.bytes),c=client(local,snapshot,template),connected=await c.run(new AbortController().signal);
+  const separate=mode!=='Excel',excel=snap(company),snapshot=separate?{...excel,metadata:{...excel.metadata,scope:'Retail_Categorized_Single',version:73}}:excel,original=workbook(),bytes=mode==='Single wrapper'?workbookArchive([['download/official.XLSX',original.bytes],['download/readme.txt','original download sidecar']]):original.bytes,template=await download(snapshot,bytes),before=JSON.stringify(snapshot),c=client(local,snapshot,template,{excelSchema:separate?excel:undefined}),connected=await c.run(new AbortController().signal);
+  assert.equal(connected.template.sha256,(await download(snapshot,original.bytes)).sha256);
+  if(mode==='Single wrapper')assert.notEqual(connected.template.sha256,template.sha256);
+  assert.equal(JSON.stringify(snapshot),before);assert.deepEqual(c.calls.filter(call=>call.url).map(call=>call.action),separate?['inspect',null]:[null]);
+  if(separate)assert.deepEqual(c.calls.find(call=>call.identity).identity,{scopeType:'Retail_Categorized_Excel',kanCategoryId:'3000',noticeNumber:'17',version:'190'});
   const api=local.load('app/api/category-profiles/route.ts'),created=await api.POST(new Request('https://app.test/api/category-profiles',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({name:'자동 공식 연결 시험',categoryId:snapshot.categoryId,categoryPath:schemaPath,hubSchema:snapshot,...connected})}));
   assert.equal(created.status,201,await created.clone().text());const {profile}=await created.json();local.context.category=profile;local.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(local.context));
   await local.intake();const product=local.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
@@ -91,6 +109,7 @@ for(const company of schemaCompanies)test(`automatic official import links URL d
   const edited=await local.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'직접 검토한 상품명'}}}});assert.equal(edited.status,200);
   view=await (await local.route(base+'/quotation-fields')).json();const changed=await local.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:lens.id,optionId:null,value:'UV'},{fieldKey:notice.id,optionId:'collected-2',value:''}]}});assert.equal(changed.status,200,await changed.clone().text());
   const source=await local.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',product.id,profile.id),resolved=local.load('app/exports/quotation-source.ts').resolveQuotationExport(source),rows=local.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source,resolved,[]);
+  assert.deepEqual(plain(source.profile.hubSchema.metadata),snapshot.metadata);assert.equal(source.profile.hubSchema.schemaString,snapshot.schemaString);
   const output=await local.load('app/exports/mapped-quotation.ts').createMappedQuotation({originalBytes:original.bytes.buffer,profile:source.profile,rows,dataStartRow:9});assert.equal(output.values.length,6);assert.equal(output.report.validationIssues.length,0);
   for(let index=0;index<6;index++){assert.equal(output.values[index][0],'직접 검토한 상품명');assert.equal(output.values[index][1],schemaPath.join('>')+' (991234)');assert.equal(output.values[index][4],'UV');assert.equal(output.values[index][5],index===1?'':'해당사항없음');}
   const archive=await local.load('app/xlsx-template.ts').readXlsxArchive(output.bytes.buffer),inspection=local.load('app/xlsx-template.ts').inspectXlsxArchive(archive);assert.deepEqual(plain(local.load('app/xlsx-template.ts').xlsxHeaders(inspection,original.sheetName,7)),original.headers.map(()=> '작성 안내'));assert.deepEqual(local.objects.get(profile.template.storageKey),original.bytes);

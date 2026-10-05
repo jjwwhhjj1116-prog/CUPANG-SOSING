@@ -37,6 +37,8 @@ export type QuotationField = {
   exclusiveMinimum?: number; exclusiveMaximum?: number; multipleOf?: number;
   /** Numeric enums use a select control but must validate and export as numbers. */
   numericValue?: true;
+  /** Observed string price wires validate as numeric amounts but emit text. */
+  numericText?: true;
   /** Explicit shared meaning; never infer component materials from a label substring. */
   contentField?: 'material' | 'components' | 'model';
   optionDimension?: 'widthCm' | 'lengthCm' | 'heightCm';

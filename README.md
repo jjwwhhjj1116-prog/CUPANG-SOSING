@@ -80,6 +80,8 @@ Cloudflare Workers + D1 `DB` + R2 `FILES` 구조입니다. 운영에서는 Cloud
 | `SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS` | 256~8000 출력 상한 |
 | `SOURCEFLOW_IMAGE_MODEL` | 사용 권한이 있는 Images Edits 지원 모델 ID |
 
+Workers AI 운영 초안은 `SOURCEFLOW_TEXT_PROVIDER=workers-ai`일 때 지원 모델 `@cf/meta/llama-3.3-70b-instruct-fp8-fast`와 출력 상한 4096을 사용합니다. 폐기된 모델 교체, 기존 검토 요청과 완료 결과의 처리 기준은 [모델 변경 기록](docs/workers-ai-model-update-2026-10-05.md)에 정리했습니다.
+
 설정만으로 유료 호출이 시작되지는 않습니다. 승인한 작업은 모델·입력·제품 revision에 묶이며 실행 중복을 막습니다. 유료 응답 후 저장 장애가 생기면 결과가 불확실한 상태로 남길 수 있으므로 새 요청을 만들기 전에 이력과 제공자 사용량을 확인해야 합니다.
 
 `.openai/hosting.json`의 기존 project_id `appgprj_6a8d4a6c78908191acecd48b7e0d1620`를 유지합니다. 새 Sites 프로젝트를 만들지 마세요. Vite의 로컬 D1 ID를 운영 리소스로 간주하거나 생성된 wrangler 설정을 그대로 배포하지 마세요. 로컬 자료는 다른 PC나 Cloudflare로 자동 이전되지 않습니다.

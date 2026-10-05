@@ -56,7 +56,7 @@ test('public option matching is exact and preserves an explicitly empty first ch
  assert.equal(value({input:'brand',values:[0]},'0'),'');
  assert.equal(value({input:'brand',values:['0']},'0'),'0');
  assert.equal(value({input:'brand',values:['양식 브랜드']},''),undefined);
- const empty=cells(resolve(snapshot(schemaCompanies[0],raw=>{raw.properties.productPage.properties.brand.dropdown=['','검토 브랜드'];}),saved));
+ const empty=cells(resolve(snapshot(schemaCompanies[0],raw=>{raw.properties.productPage.properties.brand.dropdown=['','검토 브랜드'];raw.properties.productPage.properties.brand.enum=['','검토 브랜드'];}),saved));
  assert.equal(empty.brand.value,'');assert.equal(empty.brand.source,'settings');assert.deepEqual(JSON.parse(JSON.stringify(empty.brand.validationIssues)),[]);
 });
 
@@ -65,7 +65,7 @@ test('setting initialization is frozen and rejects unknown versions without chan
  assert.equal(settingsInitialization,'couplus-options-v1');assert.equal(model.validateHubSchemaSnapshot(current,current.categoryId,schemaPath).settingsInitialization,settingsInitialization);
  assert.equal(model.validateHubSchemaSnapshot(legacy,legacy.categoryId,schemaPath).settingsInitialization,undefined);
  assert.throws(()=>model.validateHubSchemaSnapshot({...current,settingsInitialization:'other'},current.categoryId,schemaPath),/기본설정 적용 버전/);
- const previous=cells(resolve(legacy,saved));assert.equal(previous.brand.value,saved.brand);assert.equal(previous.tradeType.value,saved.tradeType);assert.ok(previous.brand.validationIssues.length);
+ const previous=cells(resolve(legacy,saved));assert.equal(previous.brand.value,saved.brand);assert.equal(previous.tradeType.value,saved.tradeType);assert.equal(previous.brand.validationIssues.length,0);
 });
 
 test('setting defaults bind only the four observed exact paths, never tax, manufacturer or a same-labelled sibling',()=>{
