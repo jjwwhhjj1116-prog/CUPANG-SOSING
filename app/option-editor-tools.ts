@@ -1,9 +1,10 @@
 import { calculateOptionPrices, OPTION_LIMIT, type ProductOption, type OptionInput } from '@/app/product-options';
 import type { PricePolicy } from '@/app/pricing';
 import type { AssetRole } from '@/app/product-content';
+import { bundlePolicy, suggestBundleQuantity, type BundlePolicy } from '@/app/bundle-policy';
 
 export type PackagingValues = { packagedWeightG: number; packagedWidthMm: number; packagedLengthMm: number; packagedHeightMm: number };
-export type BulkOptionAction = { type: 'packaging'; value: PackagingValues } | { type: 'clearPackaging' } | { type: 'unitCostCny' | 'unitsPerPack'; value: number } | { type: 'addBundle'; value: number; newIds: Record<string, string> } | { type: 'imageKey'; value: string | null } | { type: 'include' | 'exclude' | 'remove' };
+export type BulkOptionAction = { type: 'packaging'; value: PackagingValues } | { type: 'clearPackaging' } | { type: 'unitCostCny' | 'unitsPerPack'; value: number } | { type: 'autoBundle'; value: BundlePolicy } | { type: 'addBundle'; value: number; newIds: Record<string, string> } | { type: 'imageKey'; value: string | null } | { type: 'include' | 'exclude' | 'remove' };
 export type BulkOptionPreview = {
   priceBase: string;
   base: string; action: BulkOptionAction; selectedIds: string[]; rows: OptionInput[];
@@ -19,6 +20,7 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
   if (action.type === 'unitCostCny' && (!Number.isFinite(action.value) || action.value <= 0 || action.value > 1e9)) throw new Error('개당 원가는 0보다 크고 10억 CNY 이하이어야 합니다.');
   if (action.type === 'unitsPerPack' && (!Number.isInteger(action.value) || action.value < 1 || action.value > 1e6)) throw new Error('판매 단위당 구성 수량은 1~1,000,000 사이 정수입니다.');
   if (action.type === 'imageKey' && action.value !== null && !imageKeys.includes(action.value)) throw new Error('이 상품에 저장된 이미지를 다시 선택해주세요.');
+  if (action.type === 'autoBundle') bundlePolicy(action.value);
   if (action.type === 'packaging') {
     if (!action.value || typeof action.value !== 'object' || Array.isArray(action.value) || Object.keys(action.value).length !== 4) throw Error('포장 무게와 가로·세로·높이를 모두 입력해주세요.');
     for (const key of ['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'] as const) {
@@ -37,6 +39,11 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
       translatedName: row.translatedName ? `${row.translatedName} (${action.value}개입)`.slice(0, 500) : '',
       originalName: row.originalName || row.supplierSku, unitsPerPack: action.value,
       supplierSku: '', stock: null, packagingConfirmed: false, minimumOrderQuantity: null, widthCm: null, lengthCm: null, heightCm: null, weightKg: null, packagedWeightG: null, packagedWidthMm: null, packagedLengthMm: null, packagedHeightMm: null }];
+    if (action.type === 'autoBundle') {
+      if (row.unitCostCny === null) throw new Error('선택한 옵션의 개당 원가를 먼저 입력해주세요.');
+      const unitsPerPack = suggestBundleQuantity(row.unitCostCny, policy, action.value);
+      return [{ ...row, unitsPerPack, ...(unitsPerPack !== row.unitsPerPack ? { packagingConfirmed: false } : {}) }];
+    }
     if (action.type === 'packaging') return [{ ...row, ...action.value, packagingConfirmed: true }];
     if (action.type === 'clearPackaging') return [{ ...row, packagedWeightG: null, packagedWidthMm: null, packagedLengthMm: null, packagedHeightMm: null, packagingConfirmed: false }];
     if (action.type === 'remove') return [];

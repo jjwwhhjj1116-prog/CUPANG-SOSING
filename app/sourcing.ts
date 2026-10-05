@@ -26,6 +26,18 @@ export function preservedCollectionRequests(jobs: readonly CollectionJob[], requ
     if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
     return JSON.stringify(value) ?? 'undefined';
   };
+  const settingsForComparison = (value: unknown, inactiveBundle: boolean): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const compared = { ...value } as Record<string, unknown>;
+    // Old captures predate the three bundle criteria. Compare missing fields as
+    // legacy nulls; while both switches are off, criteria cannot affect intake.
+    // Never normalize the stored capture or hide an active policy difference.
+    for (const key of ['bundleCriterion','bundleMinimumSupplyMargin','bundleMinimumCoupangMargin']) {
+      if (inactiveBundle) delete compared[key];
+      else if (!Object.hasOwn(compared, key)) compared[key] = null;
+    }
+    return compared;
+  };
   return jobs.flatMap(job => {
     const request = requests.find(item => item.offerId === job.offer_id);
     if (!request) return [];
@@ -34,7 +46,8 @@ export function preservedCollectionRequests(jobs: readonly CollectionJob[], requ
     if (!job.context) differences.push('카테고리·기본설정 기록 없음');
     else {
       if (canonical(job.context.category) !== canonical(context.category)) differences.push('카테고리·견적서 설정');
-      if (canonical(job.context.settings) !== canonical(context.settings)) differences.push('기본설정');
+      const inactiveBundle = job.context.settings?.bundleEnabled === false && context.settings?.bundleEnabled === false;
+      if (canonical(settingsForComparison(job.context.settings, inactiveBundle)) !== canonical(settingsForComparison(context.settings, inactiveBundle))) differences.push('기본설정');
       if (job.context.features !== context.features) differences.push('상품 특징');
       if (job.context.keywords !== context.keywords) differences.push('타겟 키워드');
     }

@@ -11,6 +11,7 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
   const [error,setError]=useState('');
   const changeBusy=(value:boolean)=>{busyRef.current=value;setBusy(value);onBusy?.(value);};
   const update=(key:keyof WorkspaceSettings,value:string|number|boolean|null)=>{setDraft(current=>({...current,[key]:value}));setError('');};
+  const configureBundling=(change:Partial<WorkspaceSettings>)=>{setDraft(current=>({...current,bundleCriterion:current.bundleCriterion??'supplyMargin',bundleMinimumSupplyMargin:current.bundleMinimumSupplyMargin??3000,bundleMinimumCoupangMargin:current.bundleMinimumCoupangMargin??3000,...change}));setError('');};
   const field=(key:keyof WorkspaceSettings,label:string,type='text')=><label className="field" key={key}><span>{label}</span><input type={type} step={type==='number'?'any':undefined} value={draft[key]===null||typeof draft[key]==='number'&&!Number.isFinite(draft[key])?'':String(draft[key])} disabled={busy} onChange={event=>update(key,type==='number'?(event.target.value===''?(key==='shelfLifeDays'?null:NaN):Number(event.target.value)):event.target.value)}/></label>;
   const toggle=(key:keyof WorkspaceSettings,label:string)=><label className="switch-row" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(draft[key])} disabled={busy} onChange={event=>update(key,event.target.checked)}/><i/></label>;
   const margin=(key:'supplyMargin'|'coupangMargin',label:string,formula:string)=><fieldset className="settings-margin"><legend>{label}</legend><label className="settings-percent-input"><input aria-label={label} type="number" min={0} max={99.9} step="any" value={Number.isFinite(draft[key])?draft[key]:''} disabled={busy} onChange={event=>update(key,event.target.value===''?NaN:Number(event.target.value))}/><span aria-hidden="true">%</span></label><input aria-label={label+' 조절'} type="range" min={0} max={99} step={1} value={Number.isFinite(draft[key])?Math.min(99,Math.max(0,draft[key])):0} disabled={busy} onChange={event=>update(key,Number(event.target.value))}/><small>{formula}</small></fieldset>;
@@ -47,7 +48,17 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
         <label className="field"><span>가격 처리 방식</span><select value={draft.roundingMode} disabled={busy} onChange={event=>update('roundingMode',event.target.value as 'up'|'nearest')}><option value="up">올림 (기존 방식)</option><option value="nearest">반올림</option></select></label>
       </div>{margin('supplyMargin','공급 마진율 (%)','공급가 = 매입가 ÷ (1 − 공급마진율/100)')}{margin('coupangMargin','쿠팡 마진율 (%)','판매가 = 공급가 ÷ (1 − 쿠팡마진율/100)')}</div>
       <div className="settings-minimum-margin">{toggle('minimumMarginEnabled','최소 공급 마진 보장')}{field('minimumMargin','최소 공급 마진액 (원)','number')}<small>비율로 계산한 공급가와 원가 + 최소 마진액 중 큰 금액에 가격 처리 단위를 적용합니다.</small></div>
-      <div className="settings-bundle">{toggle('bundleEnabled','번들링 활성화')}<small>설정값을 보관합니다. 번들링 실행기는 아직 연결되지 않았습니다.</small></div>
+      <div className="settings-bundle">
+        <label className="switch-row"><span>번들링 활성화</span><input type="checkbox" checked={draft.bundleEnabled} disabled={busy} onChange={event=>event.target.checked?configureBundling({bundleEnabled:true}):update('bundleEnabled',false)}/><i/></label>
+        <small>선택한 마진액을 기준으로 새 상품의 옵션별 판매 구성 수량을 계산합니다.</small>
+        {draft.bundleEnabled && <>
+          <label className="field"><span>번들 수량 기준</span><select value={draft.bundleCriterion??''} disabled={busy} onChange={event=>configureBundling({bundleCriterion:event.target.value as 'supplyMargin'|'coupangMargin'})}><option value="" disabled>마진 기준 선택</option><option value="supplyMargin">공급 마진액</option><option value="coupangMargin">쿠팡 마진액</option></select></label>
+          {field('bundleMinimumSupplyMargin','번들 기준 최소 공급 마진액 (원)','number')}
+          {field('bundleMinimumCoupangMargin','번들 기준 최소 쿠팡 마진액 (원)','number')}
+          <small>최소 공급 마진 보장과 별개인 수량 계산 기준입니다. 새 상품에 적용하며, 2단계 가격 설정에서 제안 수량과 가격을 확인·수정할 수 있습니다.</small>
+          {draft.bundleCriterion===null && <p role="status">저장된 설정에 번들 기준이 없습니다. 마진 기준을 선택하고 설정을 저장하면 새 상품부터 적용됩니다.</p>}
+        </>}
+      </div>
       <details className="settings-price-details"><summary>실제 가격 계산 · 세부 미리보기</summary><p>원화 원가 = 중국 원가 × 적용환율. 판매가와 시장가격도 각각 설정 단위로 처리합니다.</p><SettingsPricePreview settings={draft} disabled={busy}/><p>설정 저장 후 새 상품 초안에 적용됩니다. 기존 상품은 가격 단계에서 별도로 수정합니다.</p></details>
       <details className="settings-price-details"><summary>쿠플러스에서 사용하던 가격 설정 적용</summary><p>2026년 9월 24일 계정에서 확인한 설정입니다. 환율 350원 · 공급 마진 50% · 쿠팡 마진 40% · 10원 반올림 · MSRP 1.3배 · 최소 공급 마진 보장 3,000원.</p><p>현재 환율을 조회한 값이 아닙니다. 가격 입력만 변경하며 설정 저장 후 새 수집 요청에 적용됩니다. 기존 상품과 이미 접수한 요청의 가격은 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>{setDraft(current=>applyObservedPricePreset(current));setError('');}}>위 가격값을 입력란에 적용</button></details>
     </section>

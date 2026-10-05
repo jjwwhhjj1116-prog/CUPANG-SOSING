@@ -230,6 +230,61 @@ test('context comparison ignores capture time and object key order but reports s
  assert.equal(JSON.stringify(job),before);
 });
 
+test('pre-bundle captured requests resume through the actual API and queue without changing their frozen context',async()=>{
+ const settingsModule=load('app/workspace-settings.ts'),queue=load('app/intake-queue.ts');
+ const keys=['bundleCriterion','bundleMinimumSupplyMargin','bundleMinimumCoupangMargin'];
+ for(const mode of ['saved-off','unsaved-off','legacy-enabled']){
+  const {sqlite,queries}=storage();
+  try{
+   const stored=mode==='unsaved-off'?null:{...settingsModule.defaultSettings,bundleEnabled:mode==='legacy-enabled'};
+   if(stored)for(const key of keys)delete stored[key];
+   const current=settingsModule.savedRegistrationSettings(stored),legacy={...current};
+   for(const key of keys)delete legacy[key];
+   const category={id:payload.profileId,revision:1,categoryId:'80719',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath,template:null,mappings:[]};
+   const context={category,settings:legacy,features:'',keywords:'',capturedAt:'2026-10-04T00:00:00Z'};
+   const [original]=await queries.enqueueCollection('local-demo',parse(payload),context);
+   const frozen=sqlite.prepare('SELECT payload FROM collection_context').get().payload;
+   const api=load('app/api/collection-jobs/route.ts',{'@/db/collection-jobs':queries,'@/db/category-profiles':{getCategoryProfile:async()=>category},'@/db/queries':{getSettings:async()=>stored?{payload:JSON.stringify(stored)}:null}});
+   const states=[];let collected=0;
+   await queue.submitIntakeQueue([{...queue.intakeRow(category,'row'),url}],'collect',{
+    signal:new AbortController().signal,expectedSettings:current,
+    fetcher:async(_url,init)=>api.POST(request(JSON.parse(init.body))),onJobs(){},onRow:(_id,state)=>states.push(state),
+    collect:async job=>{collected++;assert.equal(job.id,original.id);return '기존 원문 작업 이어가기';},
+   });
+   assert.equal(collected,1,mode+' must reach the existing collector, not stop at a false settings conflict');
+   assert.equal(states.at(-1).status,'saved',mode);
+   assert.equal(sqlite.prepare('SELECT payload FROM collection_context').get().payload,frozen,mode);
+   assert.equal((await queries.listCollectionJobs('local-demo')).length,1,mode);
+  }finally{sqlite.close();}
+ }
+});
+
+test('bundle comparison ignores only inactive criteria or missing-versus-null legacy keys',()=>{
+ const compare=load('app/sourcing.ts').preservedCollectionRequests;
+ const context={category:{id:'a',categoryId:'80719'},settings:{exchangeRate:350,bundleEnabled:false},features:'',keywords:'',capturedAt:'today'};
+ const criteria={bundleCriterion:'supplyMargin',bundleMinimumSupplyMargin:3000,bundleMinimumCoupangMargin:3000};
+ const cases=[
+  [{bundleEnabled:false},{bundleEnabled:false,...criteria},false],
+  [{bundleEnabled:false,...criteria},{bundleEnabled:false,...criteria,bundleCriterion:'coupangMargin',bundleMinimumSupplyMargin:9000},false],
+  [{bundleEnabled:true},{bundleEnabled:true,bundleCriterion:null,bundleMinimumSupplyMargin:null,bundleMinimumCoupangMargin:null},false],
+  [{bundleEnabled:true},{bundleEnabled:true,...criteria},true],
+  [{bundleEnabled:false,...criteria},{bundleEnabled:true,...criteria},true],
+  [{bundleEnabled:true,...criteria},{bundleEnabled:false,...criteria},true],
+  [{bundleEnabled:true,...criteria},{bundleEnabled:true,...criteria,bundleCriterion:'coupangMargin'},true],
+  [{bundleEnabled:true,...criteria},{bundleEnabled:true,...criteria,bundleMinimumSupplyMargin:7000},true],
+  [{bundleEnabled:true,...criteria},{bundleEnabled:true,...criteria,bundleMinimumCoupangMargin:5000},true],
+  [{bundleEnabled:false},{bundleEnabled:false,...criteria,exchangeRate:190},true],
+ ];
+ for(const [before,after,conflict] of cases){
+  const job={offer_id:'123456789',source_url:url,goal:'collect',context:{...context,settings:{...context.settings,...before}}};
+  const next={...context,settings:{...context.settings,...after}},saved=JSON.stringify({job,next});
+  const result=compare([job],parse(payload),next);
+  assert.equal(result.length,conflict?1:0,JSON.stringify({before,after}));
+  if(conflict)assert.equal(result[0].differences.join(','),'기본설정');
+  assert.equal(JSON.stringify({job,next}),saved,'comparison must not rewrite captured or current settings');
+ }
+});
+
 test('legacy invalid category codes cannot enter collection and fail before reading settings or enqueuing', async () => {
   let touched = 0;
   for (const categoryId of ['', '카테고리', '80719/81452', 'a'.repeat(101)]) {

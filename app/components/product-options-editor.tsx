@@ -7,6 +7,7 @@ import { productImageKeys } from '@/app/product-content';
 import { applyOptionBulk, duplicateOption, moveOption, optionBulkPriceBase, previewOptionBulk, type BulkOptionAction, type BulkOptionPreview } from '@/app/option-editor-tools';
 import type { PricePolicy } from '@/app/pricing';
 import { mergeOptionDraft, refreshOptionPriceBase } from '@/app/option-price-refresh';
+import { configuredBundlePolicy, type BundlePolicy } from '@/app/bundle-policy';
 
 type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; onSaved?: () => void; imageView?: boolean; pricingView?: boolean; focusedOptionId?: string };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
@@ -188,7 +189,12 @@ function OptionBulkTools({ productId, rows, images, selected, onSelect, policy, 
   const [value, setValue] = useState(''); const [preview, setPreview] = useState<BulkOptionPreview | null>(null);
   const [error, setError] = useState(''); const [undo, setUndo] = useState<{ before: OptionInput[]; after: string } | null>(null);
   const [settings, setSettings] = useState<{ boxSkuQuantity: number } | null>(null); const [settingsMessage, setSettingsMessage] = useState('');
-  const actionNames = { packaging: '포장 무게·치수 입력', clearPackaging: '포장 정보 비우기', addBundle: '번들 추가 (원래 옵션 유지)', unitsPerPack: '판매 단위당 구성 수량', unitCostCny: '개당 원가 CNY', include: '견적에 포함', exclude: '견적에서 제외', remove: '옵션 삭제', imageKey: '옵션 이미지 연결' };
+  const [bundleCriterion, setBundleCriterion] = useState<BundlePolicy['bundleCriterion']>('supplyMargin');
+  const [bundleSupply, setBundleSupply] = useState('3000'), [bundleCoupang, setBundleCoupang] = useState('3000');
+  const [bundleLoading, setBundleLoading] = useState(false);
+  const bundleRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => { bundleRequest.current?.abort(); }, []);
+  const actionNames = { packaging: '포장 무게·치수 입력', clearPackaging: '포장 정보 비우기', addBundle: '번들 추가 (원래 옵션 유지)', autoBundle: '자동 번들 수량 제안', unitsPerPack: '판매 단위당 구성 수량', unitCostCny: '개당 원가 CNY', include: '견적에 포함', exclude: '견적에서 제외', remove: '옵션 삭제', imageKey: '옵션 이미지 연결' };
   const current = Boolean(preview && preview.priceBase === optionBulkPriceBase(policy) && preview.base === JSON.stringify(rows) && [...preview.selectedIds].sort().join('\n') === [...selected].sort().join('\n'));
   async function showDefaults() {
     try {
@@ -197,31 +203,52 @@ function OptionBulkTools({ productId, rows, images, selected, onSelect, policy, 
       setSettings(body.settings ?? null); setSettingsMessage(body.settings ? '' : '저장한 기본설정이 없습니다.');
     } catch (cause) { setSettings(null); setSettingsMessage(cause instanceof Error ? cause.message : '기본설정을 불러오지 못했습니다.'); }
   }
+  async function loadBundleDefaults() {
+    if (bundleRequest.current) return;
+    const controller = new AbortController(); bundleRequest.current = controller;
+    setBundleLoading(true); setPreview(null); setError('');
+    try {
+      const response = await fetch('/api/settings', { cache: 'no-store', signal: controller.signal });
+      const body = await response.json() as { settings?: unknown; error?: string };
+      if (controller.signal.aborted) return;
+      if (!response.ok) throw new Error(body.error || '번들 기준을 불러오지 못했습니다.');
+      const bundle = configuredBundlePolicy(body.settings);
+      if (!bundle) throw new Error('저장된 번들 기준이 없습니다. 기준과 금액을 직접 확인해주세요.');
+      setBundleCriterion(bundle.bundleCriterion); setBundleSupply(String(bundle.bundleMinimumSupplyMargin)); setBundleCoupang(String(bundle.bundleMinimumCoupangMargin));
+    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '번들 기준을 불러오지 못했습니다.'); }
+    finally { if (bundleRequest.current === controller) bundleRequest.current = null; if (!controller.signal.aborted) setBundleLoading(false); }
+  }
   function makePreview() {
+    if (bundleRequest.current) return;
     setError('');
     try {
-      const action: BulkOptionAction = operation === 'packaging' ? {type:'packaging',value:{packagedWeightG:Number(packaging.packagedWeightG),packagedWidthMm:Number(packaging.packagedWidthMm),packagedLengthMm:Number(packaging.packagedLengthMm),packagedHeightMm:Number(packaging.packagedHeightMm)}} : operation === 'addBundle' ? { type: operation, value: value.trim() ? Number(value) : NaN, newIds: Object.fromEntries(selected.map(id => [id, crypto.randomUUID()])) } : operation === 'unitCostCny' || operation === 'unitsPerPack' ? { type: operation, value: value.trim() ? Number(value) : NaN } : operation === 'imageKey' ? { type: operation, value: imageKey || null } : { type: operation };
+      const action: BulkOptionAction = operation === 'autoBundle' ? { type: operation, value: { bundleCriterion, bundleMinimumSupplyMargin: bundleSupply.trim() ? Number(bundleSupply) : NaN, bundleMinimumCoupangMargin: bundleCoupang.trim() ? Number(bundleCoupang) : NaN } } : operation === 'packaging' ? {type:'packaging',value:{packagedWeightG:Number(packaging.packagedWeightG),packagedWidthMm:Number(packaging.packagedWidthMm),packagedLengthMm:Number(packaging.packagedLengthMm),packagedHeightMm:Number(packaging.packagedHeightMm)}} : operation === 'addBundle' ? { type: operation, value: value.trim() ? Number(value) : NaN, newIds: Object.fromEntries(selected.map(id => [id, crypto.randomUUID()])) } : operation === 'unitCostCny' || operation === 'unitsPerPack' ? { type: operation, value: value.trim() ? Number(value) : NaN } : operation === 'imageKey' ? { type: operation, value: imageKey || null } : { type: operation };
       setPreview(previewOptionBulk(rows, selected, action, policy, images));
     } catch (cause) { setPreview(null); setError(cause instanceof Error ? cause.message : '변경값을 확인해주세요.'); }
   }
   function applyPreview() {
-    if (!preview || !current) return;
+    if (!preview || !current || bundleRequest.current) return;
     try { const next = applyOptionBulk(rows, preview, policy, images); setUndo({ before: rows.map(row => ({ ...row })), after: JSON.stringify(next) }); onApply(next); setPreview(null); setError(''); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '미리보기를 다시 실행해주세요.'); }
   }
-  const describe = (row: OptionInput | null) => !row ? '삭제' : operation === 'packaging' || operation === 'clearPackaging' ? `${row.unitsPerPack}개입 · ${row.packagedWeightG ?? '미입력'}g · ${row.packagedWidthMm ?? '미입력'} × ${row.packagedLengthMm ?? '미입력'} × ${row.packagedHeightMm ?? '미입력'}mm` : operation === 'imageKey' ? (row.imageKey ? (images.includes(row.imageKey) ? '업로드 이미지 '+(images.indexOf(row.imageKey)+1) : '상품에서 제외된 이미지') : '공통 대표 이미지') : operation === 'unitCostCny' ? `¥ ${row.unitCostCny ?? '미입력'}` : (operation === 'unitsPerPack' || operation === 'addBundle') ? `${row.unitsPerPack}개` : row.included ? '견적 포함' : '견적 제외';
+  const describe = (row: OptionInput | null) => !row ? '삭제' : operation === 'packaging' || operation === 'clearPackaging' ? `${row.unitsPerPack}개입 · ${row.packagedWeightG ?? '미입력'}g · ${row.packagedWidthMm ?? '미입력'} × ${row.packagedLengthMm ?? '미입력'} × ${row.packagedHeightMm ?? '미입력'}mm` : operation === 'imageKey' ? (row.imageKey ? (images.includes(row.imageKey) ? '업로드 이미지 '+(images.indexOf(row.imageKey)+1) : '상품에서 제외된 이미지') : '공통 대표 이미지') : operation === 'unitCostCny' ? `¥ ${row.unitCostCny ?? '미입력'}` : (operation === 'unitsPerPack' || operation === 'addBundle' || operation === 'autoBundle') ? `${row.unitsPerPack}개` : row.included ? '견적 포함' : '견적 제외';
   return <details style={{ border: '1px solid #dfe4ec', borderRadius: 10, padding: 14, marginBottom: 16 }}>
     <summary style={{ cursor: 'pointer', fontWeight: 700 }}>선택 옵션 일괄 편집 · {selected.length}개 선택</summary>
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 12 }}><button type="button" className="btn ghost" onClick={() => onSelect(rows.map(row => row.id))}>전체 선택</button><button type="button" className="btn ghost" onClick={() => onSelect(rows.filter(row => row.included).map(row => row.id))}>견적 포함 옵션 선택</button><button type="button" className="btn ghost" onClick={() => onSelect([])}>선택 해제</button><button type="button" className="btn ghost" onClick={() => void showDefaults()}>저장한 기본설정 확인</button></div>
     {settings && <p style={{ fontSize: 13, color: '#64748b' }}>이 상품의 기본 박스 내 SKU {settings.boxSkuQuantity}개(물류 입수)</p>}
     {settingsMessage && <p role="status">{settingsMessage}</p>}
     <p style={{ fontSize: 13, color: '#64748b' }}>판매 구성 수량은 직접 확인한 값으로 지정합니다. 박스 내 SKU 수량은 물류용 기본설정이며 옵션 구성 수량으로 자동 적용하지 않습니다.</p>
-    <div className="form-grid"><label className="field"><span>선택 옵션에 적용할 작업</span><select value={operation} onChange={event => { setOperation(event.target.value as BulkOptionAction['type']); setPreview(null); }} style={{ padding: 10, border: '1px solid #dfe4ec', borderRadius: 8 }}>{Object.entries(actionNames).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label>{(operation === 'unitsPerPack' || operation === 'addBundle' || operation === 'unitCostCny') && <label className="field"><span>변경값 · {operation !== 'unitCostCny' ? '개' : 'CNY'}</span><input aria-label="일괄 편집 변경값" type="number" min={0} step={operation !== 'unitCostCny' ? 1 : 'any'} value={value} onChange={event => { setValue(event.target.value); setPreview(null); }} /></label>}</div>
+    <div className="form-grid"><label className="field"><span>선택 옵션에 적용할 작업</span><select value={operation} disabled={bundleLoading} onChange={event => { if (bundleRequest.current) return; setOperation(event.target.value as BulkOptionAction['type']); setPreview(null); }} style={{ padding: 10, border: '1px solid #dfe4ec', borderRadius: 8 }}>{Object.entries(actionNames).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label>{(operation === 'unitsPerPack' || operation === 'addBundle' || operation === 'unitCostCny') && <label className="field"><span>변경값 · {operation !== 'unitCostCny' ? '개' : 'CNY'}</span><input aria-label="일괄 편집 변경값" type="number" min={0} step={operation !== 'unitCostCny' ? 1 : 'any'} value={value} onChange={event => { setValue(event.target.value); setPreview(null); }} /></label>}</div>
+    {operation === 'autoBundle' && <><div className="form-grid">
+      <label className="field"><span>번들 수량 기준</span><select aria-label="번들 수량 기준" value={bundleCriterion} disabled={bundleLoading} onChange={event => { if (bundleRequest.current) return; setBundleCriterion(event.target.value as BundlePolicy['bundleCriterion']); setPreview(null); }}><option value="supplyMargin">최소 공급 마진액</option><option value="coupangMargin">최소 쿠팡 마진액</option></select></label>
+      <label className="field"><span>번들 최소 공급 마진액</span><input aria-label="번들 최소 공급 마진액" type="number" min={1000} step={1000} value={bundleSupply} disabled={bundleLoading} onChange={event => { if (bundleRequest.current) return; setBundleSupply(event.target.value); setPreview(null); }}/></label>
+      <label className="field"><span>번들 최소 쿠팡 마진액</span><input aria-label="번들 최소 쿠팡 마진액" type="number" min={1000} step={1000} value={bundleCoupang} disabled={bundleLoading} onChange={event => { if (bundleRequest.current) return; setBundleCoupang(event.target.value); setPreview(null); }}/></label>
+    </div><button type="button" className="btn ghost" disabled={bundleLoading} onClick={() => void loadBundleDefaults()}>{bundleLoading ? '번들 기준 읽는 중…' : '저장한 번들 기준 불러오기'}</button><p>이 상품에 저장된 환율·마진·가격 처리 단위로 1·3·5…21개 중 수량을 제안합니다. 실제 구성과 포장을 확인한 뒤 적용해주세요. 기본설정을 불러와도 상품 가격 정책과 옵션은 바뀌지 않습니다.</p></>}
     {operation === 'packaging' && <><div className="form-grid">{(['packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'] as const).map(key=><label className="field" key={key}><span>{optionFieldNames[key]}</span><input type="number" min={1} step={1} max={key==='packagedWeightG'?1e9:1e6} aria-label={'일괄 '+optionFieldNames[key]} value={packaging[key]} onChange={event=>{setPackaging(previous=>({...previous,[key]:event.target.value}));setPreview(null);}}/></label>)}</div><p>선택한 각 옵션의 현재 구성에 같은 포장값을 적용합니다. 실제 포장 상태가 같은 옵션을 선택해주세요. 적용 후 옵션을 저장하면 각 구성 수량의 포장 정보로 기록됩니다.</p></>}
     {operation === 'clearPackaging' && <p>선택한 옵션의 포장 무게·치수만 공란으로 바꿉니다. 상품 자체의 크기·무게와 견적서에서 직접 수정한 물류값은 유지됩니다.</p>}
     {operation === 'addBundle' && <p>원래 옵션을 유지하고 지정 수량(2~100개)의 새 옵션을 추가합니다. 개당 원가와 이미지를 사용해 가격을 계산합니다. 새 옵션의 공급자 SKU·재고·최소주문량·포장 크기·무게는 비워 두므로 저장 전에 확인해주세요.</p>}
     {operation === 'imageKey' && <label className="field"><span>선택 옵션에 연결할 이미지</span><select aria-label="일괄 연결 이미지" value={imageKey} onChange={event=>{setImageKey(event.target.value);setPreview(null);}}><option value="">공통 대표 이미지 사용</option>{images.map((key,index)=><option key={key} value={key}>업로드 이미지 {index+1}</option>)}</select><small>선택한 옵션의 기존 이미지 연결을 바꿉니다. 파일은 삭제하지 않으며, 미리보기 적용 후 옵션 저장으로 확정합니다.</small></label>}
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}><button type="button" className="btn ghost" disabled={!selected.length} onClick={makePreview}>변경 미리보기</button>{undo && <button type="button" className="btn ghost" disabled={undo.after !== JSON.stringify(rows)} onClick={() => { onApply(undo.before.map(row => ({ ...row }))); setUndo(null); setPreview(null); }}>최근 일괄 변경 되돌리기</button>}</div>
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}><button type="button" className="btn ghost" disabled={!selected.length || bundleLoading} onClick={makePreview}>변경 미리보기</button>{undo && <button type="button" className="btn ghost" disabled={undo.after !== JSON.stringify(rows)} onClick={() => { onApply(undo.before.map(row => ({ ...row }))); setUndo(null); setPreview(null); }}>최근 일괄 변경 되돌리기</button>}</div>
     {error && <p role="alert" style={{ color: '#a34410' }}>{error}</p>}
     {preview && <div style={{ marginTop: 14 }}><strong>{actionNames[preview.action.type]} · {preview.changes.length}개 옵션 미리보기</strong><div style={{ maxHeight: 260, overflow: 'auto', marginTop: 8 }}><table style={{ width: '100%', fontSize: 13 }}><thead><tr><th>옵션</th><th>현재 → 변경</th><th>공급가 변경</th></tr></thead><tbody>{preview.changes.map(change => <tr key={change.id}><td>{change.name}</td><td>{describe(change.before)} → {describe(change.after)}</td><td>{change.beforePrice === null ? '—' : won(change.beforePrice)} → {change.error ? change.error : change.afterPrice === null ? '—' : won(change.afterPrice)}</td></tr>)}</tbody></table></div>{!current && <p role="status">선택·편집 내용 또는 가격 정책이 바뀌었습니다. 미리보기를 다시 실행해주세요.</p>}<p style={{ fontSize: 13, color: '#64748b' }}>적용 후에도 아직 저장되지 않습니다. 아래 옵션 저장 버튼으로 서버에 저장하세요.</p><div style={{ display: 'flex', gap: 8 }}><button type="button" className="btn ghost" onClick={() => setPreview(null)}>미리보기 취소</button><button type="button" className="btn primary" disabled={!current} onClick={applyPreview}>편집 내용에 적용</button></div></div>}
   </details>;

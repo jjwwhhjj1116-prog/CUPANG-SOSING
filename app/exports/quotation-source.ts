@@ -18,6 +18,7 @@ import { optionPriceCalculationRevision } from '@/app/product-options';
 import { readCollectionResult } from '@/db/collection-results';
 import { collectionSourceGaps, type CollectionSourceGap } from '@/app/collection-source-gaps';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
+import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -113,7 +114,7 @@ export function resolveQuotationExport(saved: QuotationExportSource) {
 export async function quotationExportFingerprint(saved: QuotationExportSource, dataStartRow: number | null, detailConfig: PublicDetailConfig | null = null) {
   // Raw source/state payloads matter: an override reset and an equal-valued manual
   // override have different provenance, even when the visible cell is unchanged.
-  return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved, dataStartRow,
+  return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...saved, settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,
     schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath,saved.hubSchema),
     ...optionPriceCalculationRevision(saved.product, saved.options.rows, saved.settings, saved.state.overrides),
     ...(detailConfig ? { detailHtml: await publicDetailVersion(detailConfig) } : {}) });

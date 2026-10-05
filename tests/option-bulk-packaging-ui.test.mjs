@@ -8,7 +8,7 @@ const native=createRequire(import.meta.url);
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
 test('bulk packaging UI requires all measurements, invalidates edits and supports apply and undo without saving',()=>{
  const state=[],cache=new Map();let cursor=0,applied=0;
- const hooks={useState(initial){const i=cursor++;if(!(i in state))state[i]=initial;return[state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];}};
+ const hooks={useRef:initial=>({current:initial}),useEffect:()=>{},useState(initial){const i=cursor++;if(!(i in state))state[i]=initial;return[state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
  const code=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8')+(file.endsWith('product-options-editor.tsx')?'\nexport {OptionBulkTools};':'');
  vm.runInNewContext(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,crypto,require:name=>name==='react'?hooks:name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name)});return exports;

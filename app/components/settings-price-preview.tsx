@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { calculatePrice } from '@/app/pricing';
+import { initialBundleQuantity } from '@/app/bundle-policy';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
 
 /** Couplus displays the configured percentages here, not compound price shares. */
@@ -24,10 +25,13 @@ export function SettingsPriceRatio({ settings }: { settings: WorkspaceSettings }
 export function SettingsPricePreview({ settings, disabled }: { settings: WorkspaceSettings; disabled: boolean }) {
   const [cost, setCost] = useState('10');
   let preview: ReturnType<typeof calculatePrice> | undefined;
+  let quantity = 1;
   let error = '';
   try {
     if (!cost.trim()) throw new Error('미리보기 원가를 입력해주세요.');
-    preview = calculatePrice(Number(cost), { ...settings, minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0 });
+    const policy = { ...settings, minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0 };
+    quantity = initialBundleQuantity(Number(cost), policy, settings);
+    preview = calculatePrice(Number(cost), policy, quantity);
   } catch (cause) { error = cause instanceof Error ? cause.message : '가격 입력값을 확인해주세요.'; }
   const won = (value: number) => value.toLocaleString('ko-KR', { maximumFractionDigits: 2 }) + '원';
   const parts = preview ? [
@@ -37,8 +41,9 @@ export function SettingsPricePreview({ settings, disabled }: { settings: Workspa
   ] : [];
   return <div className="panel-stack" aria-label="기본 가격 미리보기">
     <label className="field"><span>미리보기 원가 (CNY)</span><input inputMode="decimal" value={cost} disabled={disabled} onChange={event => setCost(event.target.value)} /></label>
-    <small>판매 단위 원가를 입력하세요. 미리보기 원가는 저장되지 않으며 기존 상품 가격은 바뀌지 않습니다.</small>
+    <small>1688의 단품 원가를 입력하세요. 미리보기 원가는 저장되지 않으며 기존 상품 가격은 바뀌지 않습니다.</small>
     {preview && <>
+      <p aria-label="신규 상품 판매 구성 수량">판매 구성 수량: <strong>{quantity}개</strong>{quantity > 1 && ' · 번들 기준으로 계산한 새 상품 초안의 수량입니다.'}</p>
       <div className="price-formula"><div><small>공급가</small><strong>{won(preview.supplyPrice)}</strong></div><b>→</b><div><small>판매가</small><strong>{won(preview.salePrice)}</strong></div><b>→</b><div><small>MSRP 초안</small><strong>{won(preview.msrp)}</strong></div></div>
       <div aria-hidden="true" style={{ display: 'flex', height: 16, borderRadius: 6, overflow: 'hidden' }}>{parts.map(part => <span key={part.label} style={{ width: `${part.value / preview.salePrice * 100}%`, background: part.color }} />)}</div>
       <ul aria-label="판매가 기준 가격 구성">{parts.map(part => <li key={part.label}>{part.label}: {won(part.value)} · 판매가의 {(part.value / preview.salePrice * 100).toFixed(1)}%</li>)}</ul>

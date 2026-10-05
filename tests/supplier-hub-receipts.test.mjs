@@ -51,6 +51,76 @@ function renderBoard(products){
  Object.assign(exports,load('app/components/registration-board.tsx'));
  return renderToStaticMarkup(createElement(exports.RegistrationBoard,{products,selected:new Set(),onSelected(){},onOpen(){},loading:false,error:'',onArchive(){}}));
 }
+const bundleKeys=['bundleCriterion','bundleMinimumSupplyMargin','bundleMinimumCoupangMargin'];
+const oldSettings=value=>Object.fromEntries(Object.entries(value).filter(([key])=>!bundleKeys.includes(key)));
+async function legacyBundleSource(h){
+ // Model a previously persisted request without rewriting its original facts.
+ const context=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_context').get().payload);
+ context.settings=oldSettings(context.settings);
+ h.sqlite.prepare('UPDATE collection_context SET payload=?').run(JSON.stringify(context));
+ return h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',h.product.id,'cat');
+}
+for(const company of companies)test(`new bundle defaults preserve legacy accepted quotation identity and explicit pack edits still change it (${company.companyCode})`,async()=>{
+ const h=await setup(company);try{
+  const source=await legacyBundleSource(h),model=h.load('app/automation/model.ts');
+  const legacy={...source,settings:oldSettings(source.settings)},dataStartRow=h.load('app/category-profiles.ts').quotationStartRow(source.profile.template);
+  // Exact pre-bundle deployment fingerprint contract, with no new normalized keys.
+  const fingerprint=await model.fingerprint({format:'sourceflow-quotation-fields-v1',saved:legacy,dataStartRow,
+   schema:h.load('app/quotation-schema.ts').getQuotationSchema(source.categoryContext.categoryId,source.categoryContext.categoryPath,source.hubSchema),
+   ...h.load('app/product-options.ts').optionPriceCalculationRevision(source.product,source.options.rows,legacy.settings,source.state.overrides)});
+  const result={...h.result,filename:`YOOFAM-${fingerprint}.xlsx`,registration:{...h.registration,rows:h.registration.rows.map(row=>({...row,sourceQuotation:`YOOFAM-${fingerprint}.xlsx`}))}};
+  const receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'cat',categoryId:'80719',fingerprint,productVersion:source.product.updated_at,recordedAt:new Date().toISOString(),result};
+  assert.equal(await h.load('db/supplier-hub-receipts.ts').saveSupplierHubReceipt('owner',h.product.id,receipt,source.source,source.state.revision),true);
+  const before={product:h.sqlite.prepare('SELECT * FROM products').get(),options:h.sqlite.prepare('SELECT * FROM product_options').get(),content:h.sqlite.prepare('SELECT * FROM product_content').get(),context:h.sqlite.prepare('SELECT * FROM collection_context').get()};
+  const preview=await json(await h.route(h.base+'/quotation',{method:'POST',body:{action:'preview'}}));
+  assert.equal(preview.fingerprint,fingerprint,'deployment-only criteria must not create a new transmission identity');
+  assert.equal(preview.filename,result.filename);assert.deepEqual(preview.rows,h.preview.rows);
+  const preserved=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+preview.fingerprint));
+  assert.equal(preserved.receipt.result.quotationId,result.quotationId);assert.equal(preserved.receipt.result.registration.rows.length,6);
+  await json(await h.route(h.base+'/supplier-hub-receipt',{method:'POST',body:{profileId:'cat',categoryId:'80719',fingerprint,result}}));
+  const ui=submissionPackageUI({route:h.route,productId:h.product.id});await ui.click('견적서 + 첨부 파일 준비');ui.remount();await ui.click('견적서 + 첨부 파일 준비');
+  assert.equal(ui.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);assert.ok(JSON.stringify(ui.render()).includes('sku-5'));
+  assert.equal(ui.calls.some(call=>['transmit','prepare','export'].includes(call.action)),false);
+  for(const [key,table] of [['product','products'],['options','product_options'],['content','product_content'],['context','collection_context']])assert.deepEqual(h.sqlite.prepare(`SELECT * FROM ${table}`).get(),before[key]);
+  const rows=h.load('app/product-options.ts').optionInputs(source.options);rows[0].unitsPerPack=3;
+  await json(await h.route(h.base+'/options',{method:'PATCH',body:{expectedRevision:source.options.revision,expectedProductVersion:source.product.updated_at,rows}}));
+  const changed=await json(await h.route(h.base+'/quotation',{method:'POST',body:{action:'preview'}}));assert.notEqual(changed.fingerprint,fingerprint);
+  assert.equal(changed.rows[0][changed.headers.indexOf('quantity')], '3');
+  assert.notEqual(changed.rows[0][changed.headers.indexOf('supplyPrice')],preview.rows[0][preview.headers.indexOf('supplyPrice')]);
+  assert.equal((await h.route(h.base+'/quotation',{method:'POST',body:{action:'export',fingerprint}})).status,409);
+  const old=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+fingerprint));assert.equal(old.receipt.result.quotationId,result.quotationId);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM supplier_hub_receipts').get().n,1);
+ }finally{h.close();}
+});
+for(const company of companies)test(`bundle criteria do not stale legacy quotation edits or local pricing workflows (${company.companyCode})`,async()=>{
+ const h=await setup(company);try{
+  await legacyBundleSource(h);
+  const exporter=h.load('app/exports/quotation-source.ts'),source=await exporter.readQuotationExportSource('owner',h.product.id,null),model=h.load('app/automation/model.ts');
+  const settings=oldSettings(source.settings),view=await json(await h.route(h.base+'/quotation-fields'));
+  const inputs={categoryId:source.categoryContext.categoryId,categoryPath:source.categoryContext.categoryPath,product:source.product,content:source.content,options:source.options,settings,...(source.hubSchema?{hubSchema:source.hubSchema}:{})};
+  const legacyFingerprint=await model.fingerprint({inputs,schema:view.automatic.schema,categoryContext:source.categoryContext,profileRevision:null,settingsPayload:source.source.settingsPayload,collection:source.source.collection,
+   ...h.load('app/product-options.ts').optionPriceCalculationRevision(source.product,source.options.rows,settings)});
+  assert.equal(view.inputFingerprint,legacyFingerprint,'an unchanged stage-seven editor remains saveable across deployment');
+  const quotation=await h.load('db/quotation-fields.ts').readQuotationFields('owner',h.product.id);
+  const currentSettings=h.load('app/workspace-settings.ts').savedRegistrationSettings(null),legacySettings=oldSettings(currentSettings);
+  const workflow=await model.planAutomation(source.product,legacySettings,null,source.content,null,undefined,source.options,quotation);
+  const command={action:'run',expectedVersion:source.product.updated_at,idempotencyKey:crypto.randomUUID(),stages:['pricing']};
+  const completed=model.executeLocalAutomation(workflow,source.product,legacySettings,command,workflow.updatedAt,source.options);
+  const saved=await h.load('db/automation.ts').saveAutomation('owner',completed,null,command,await model.fingerprint(command),{optionRevision:source.options.revision,quotationRevision:quotation.revision,settingsPayload:source.source.settingsPayload});assert.ok(saved);
+  const observed=await json(await h.route(h.base+'/automation'));assert.equal(observed.stale,false);
+  for(const settings of [currentSettings,{...currentSettings,bundleCriterion:'coupangMargin',bundleMinimumSupplyMargin:9000,bundleMinimumCoupangMargin:7000}]){
+   const planned=await model.planAutomation(source.product,settings,completed,source.content,null,completed.updatedAt,source.options,quotation);
+   assert.equal(planned.inputFingerprint,completed.inputFingerprint);assert.equal(JSON.stringify(planned.stages.find(stage=>stage.id==='pricing')),JSON.stringify(completed.stages.find(stage=>stage.id==='pricing')));
+  }
+  await json(await h.route(h.base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:legacyFingerprint,changes:[{fieldKey:'storageMaterial',optionId:null,value:''}]}}));
+  // Raw settings and the immutable collection context still participate in CAS.
+  const before=await exporter.readMappedQuotationSource('owner',h.product.id,'cat'),original=await exporter.quotationExportFingerprint(before,2);
+  const payload=JSON.stringify({...legacySettings,bundleCriterion:'supplyMargin',bundleMinimumSupplyMargin:3000,bundleMinimumCoupangMargin:3000});
+  await h.load('db/queries.ts').saveSettings('owner',payload);
+  assert.equal(await h.load('db/quotation-fields.ts').quotationSourcesCurrent('owner',h.product.id,before.source),false);
+  assert.notEqual(await exporter.quotationExportFingerprint(await exporter.readMappedQuotationSource('owner',h.product.id,'cat'),2),original);
+ }finally{h.close();}
+});
 for(const company of companies)test(`serialized pending row with an empty quotation ID can advance to a pinned receipt and survive reload (${company.companyCode})`,async()=>{
  const h=await setup(company);try{
   const before={product:h.sqlite.prepare('SELECT * FROM products').get(),content:h.sqlite.prepare('SELECT * FROM product_content').all()};

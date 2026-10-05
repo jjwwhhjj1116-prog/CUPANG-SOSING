@@ -1,5 +1,6 @@
 import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { defaultSettings, type WorkspaceSettings } from '@/app/workspace-settings';
+import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
 import type { ProductRecord } from '@/db/queries';
 import { contentDetailImageKeys, labelDocumentRows, type ProductContent } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
@@ -127,7 +128,7 @@ export function automationInputFingerprint(product: ProductRecord, settings: Wor
   if(options && options.productId!==product.id)throw new Error('옵션과 상품이 일치하지 않습니다.');
   if(quotation && quotation.productId!==product.id)throw new Error('견적과 상품이 일치하지 않습니다.');
   const current = currentTranslation(product, content, translation);
-  return fingerprint({ product, settings, content, options, quotation, translation: current ? { id: current.id, responseId: current.result!.responseId, fingerprint: current.review.fingerprint } : null });
+  return fingerprint({ product, settings: savedProductFingerprintSettings(settings), content, options, quotation, translation: current ? { id: current.id, responseId: current.result!.responseId, fingerprint: current.review.fingerprint } : null });
 }
 
 export function policyForProduct(product: ProductRecord, settings: WorkspaceSettings): PricePolicy {

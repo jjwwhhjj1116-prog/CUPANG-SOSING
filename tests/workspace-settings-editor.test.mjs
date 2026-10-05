@@ -71,3 +71,47 @@ test('configured ratio stays 10/50/40 while the retained price preview uses unch
  }
  assert.equal(h.saves.length,0);
 });
+
+test('bundle settings activate complete criteria and retain each amount when switching off or changing the selected margin',async()=>{
+ const h=harness(),before=JSON.stringify(h.initial);
+ h.edit('번들링 활성화',true);
+ assert.equal(h.control('번들 수량 기준').props.value,'supplyMargin');
+ h.edit('번들 기준 최소 공급 마진액 (원)',7000);h.edit('번들 기준 최소 쿠팡 마진액 (원)',5000);
+ h.edit('번들 수량 기준','coupangMargin');h.edit('번들링 활성화',false);
+ await h.save();assert.equal(h.saves[0].bundleEnabled,false);assert.equal(h.saves[0].bundleCriterion,'coupangMargin');
+ h.edit('번들링 활성화',true);await h.save();
+ const saved=h.saves[1];assert.equal(saved.bundleEnabled,true);assert.equal(saved.bundleCriterion,'coupangMargin');
+ assert.equal(saved.bundleMinimumSupplyMargin,7000);assert.equal(saved.bundleMinimumCoupangMargin,5000);
+ assert.equal(saved.minimumMargin,3000);assert.equal(JSON.stringify(h.initial),before);
+});
+
+test('legacy inert bundle switch remains inert until a criterion is explicitly chosen',async()=>{
+ const h=harness({bundleEnabled:true,bundleCriterion:null,bundleMinimumSupplyMargin:null,bundleMinimumCoupangMargin:null});
+ assert.equal(h.control('번들 수량 기준').props.value,'');assert.ok(text(h.render()).includes('저장된 설정에 번들 기준이 없습니다'));
+ h.edit('브랜드명','확인한 브랜드');await h.save();
+ assert.equal(h.saves[0].bundleCriterion,null);assert.equal(h.saves[0].bundleMinimumSupplyMargin,null);
+ h.edit('번들 수량 기준','supplyMargin');await h.save();
+ assert.equal(h.saves[1].bundleCriterion,'supplyMargin');assert.equal(h.saves[1].bundleMinimumSupplyMargin,3000);assert.equal(h.saves[1].bundleMinimumCoupangMargin,3000);
+});
+
+test('incomplete or invalid bundle amounts cannot be silently saved as zero or disable the requested bundle',async()=>{
+ const h=harness();h.edit('번들링 활성화',true);
+ for(const invalid of ['',0,999,1500.5,Number.MAX_SAFE_INTEGER+1]){
+  h.edit('번들 기준 최소 공급 마진액 (원)',invalid);await h.save();assert.equal(h.saves.length,0);
+  assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));
+ }
+ h.edit('번들 기준 최소 공급 마진액 (원)',1500);await h.save();assert.equal(h.saves.length,1);
+ assert.equal(h.saves[0].bundleMinimumSupplyMargin,1500);
+});
+
+test('new-intake preview shows the selected bundle quantity and final pack price without writing product data',()=>{
+ const h=harness();h.edit('번들링 활성화',true);
+ const cost=()=>nodes(h.render()).find(node=>node.type==='label'&&text(node.props.children[0])==='미리보기 원가 (CNY)').props.children[1];
+ cost().props.onChange({target:{value:'3.6'}});
+ const preview=()=>text(nodes(h.render()).find(node=>node.props?.['aria-label']==='기본 가격 미리보기'));
+ assert.ok(preview().includes('판매 구성 수량: 3개'));
+ for(const price of ['7,560원','12,600원','16,380원'])assert.ok(preview().includes(price),price);
+ h.edit('번들링 활성화',false);assert.ok(preview().includes('판매 구성 수량: 1개'));assert.ok(preview().includes('4,260원'));
+ h.edit('번들링 활성화',true);h.edit('번들 수량 기준','coupangMargin');h.edit('번들 기준 최소 쿠팡 마진액 (원)',9000);
+ assert.ok(preview().includes('판매 구성 수량: 7개'));assert.equal(h.saves.length,0);
+});
