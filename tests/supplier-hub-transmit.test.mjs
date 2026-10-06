@@ -59,7 +59,7 @@ async function fixture(options={}){
    }
    if(options.companyMenu&&[supplierHubUploadReady,supplierHubStatusReady,verifySupplierHubCompany].includes(request.func)){
     const id=request.target.tabId;
-    if(!pages.has(id))pages.set(id,hubCompanyMenuPage({company:id===124&&options.createdCompany?options.createdCompany:id===123&&options.dashboardCompany?options.dashboardCompany:options.plan?.company??{code:'A01464742',name:'와이홉'},path:new URL(id===124?fresh.url:tab.url).pathname}));
+    if(!pages.has(id))pages.set(id,hubCompanyMenuPage({company:id===124&&options.createdCompany?options.createdCompany:id===123&&(options.anchorCompany??options.dashboardCompany)?options.anchorCompany??options.dashboardCompany:options.plan?.company??{code:'A01464742',name:'와이홉'},path:new URL(id===124?fresh.url:tab.url).pathname}));
     return [{result:await pages.get(id).run(request.func,request.args)}];
    }
    if(request.func===supplierHubUploadReady||request.func===supplierHubStatusReady)return [{result:true}];
@@ -128,6 +128,93 @@ test('dashboard fallback does not create or upload from another window, company,
  for(const options of [{tabs:[]},{tab:{...dashboard,windowId:18}},{tab:{...dashboard,url:'https://supplier.coupang.com/dashboard/US'}},{tab:{...dashboard,url:'https://supplier.coupang.com/dashboard'}},{tab:{...dashboard,url:'https://supplier.coupang.com/login'}},{tab:{...dashboard,pendingUrl:'https://supplier.coupang.com/login'}},{tab:dashboard,tabs:[dashboard,{...dashboard,id:125}]},{tab:dashboard,dashboardCompany:{code:'A01526306',name:'유앤채'}},{tab:dashboard,sourceChangedAt:1},{tab:dashboard,sourceChangedAt:2},{tab:dashboard,serverReceipt:{}},{tab:dashboard,receiptError:true}]){
   const h=await fixture({...options,companyMenu:true,serializedUpload:true});await assert.rejects(h.run());
   assert.equal(h.calls.some(([name])=>name==='create'||name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
+ }
+});
+
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`status-only transmission preserves the original page and attaches the reviewed bytes in one same-window form (${company.code})`,async()=>{
+ const status={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/wims?view=pending'},h=await fixture({tab:status,plan:{company},companyMenu:true,serializedUpload:true});
+ const original=hubCompanyMenuPage({company,path:'/qvt/wims'}),dataset={yoofamAttachmentAttempt:'existing-user-status-marker',userFilter:'pending'};
+ Object.assign(original.document.documentElement.dataset,dataset);h.pages.set(123,original);
+ const before=JSON.stringify(await h.api.tabs.get(123)),outcome=await h.run();
+ assert.equal(outcome.state,'validation-requested');assert.equal(outcome.registered,false);
+ assert.deepEqual(h.calls.filter(([name])=>name==='query'),[
+  ['query',{windowId:17,url:'https://supplier.coupang.com/qvt/registration*'}],
+  ['query',{windowId:17,url:['https://supplier.coupang.com/dashboard/KR*','https://supplier.coupang.com/qvt/wims*']}],
+ ]);
+ assert.deepEqual(h.calls.filter(([name])=>name==='create'),[['create',{windowId:17,url:'https://supplier.coupang.com/qvt/registration',active:false}]]);
+ assert.equal(JSON.stringify(await h.api.tabs.get(123)),before);assert.deepEqual(original.document.documentElement.dataset,dataset);assert.equal(original.clicks,1);
+ const originalScripts=h.calls.filter(([name,,id])=>id===123&&name!=='query');
+ assert.deepEqual(originalScripts,[['verifySupplierHubCompany',[company,'catalog'],123]],'the status page is only used to read its company');
+ const page=h.pages.get(124),prepared=await prepareAttachments(Uint8Array.from(atob(h.message.base64),c=>c.charCodeAt(0)));
+ assert.deepEqual(page.events.filter(event=>event.startsWith('upload')||event==='validate'),['upload-0','upload-1','upload-2','validate']);
+ assert.deepEqual(page.events.filter(event=>['price','contact','legal-no'].includes(event)),['legal-no','price','contact']);
+ assert.deepEqual(page.inputs.map(input=>input.files[0].name),[`YOOFAM-${identity.fingerprint}.xlsx`,'photo.png','label.png']);
+ for(const [index,group] of ['quotation','productImages','labelImages'].entries())assert.deepEqual(Buffer.from(await page.inputs[index].files[0].arrayBuffer()),Buffer.from(prepared[group][0].base64,'base64'));
+ assert.equal(h.records.has('attempt:123'),false);assert.equal(h.records.get('attempt:124').company.code,company.code);
+ const companyRead=h.calls.findIndex(([name,,id])=>name==='verifySupplierHubCompany'&&id===123),create=h.calls.findIndex(([name])=>name==='create');
+ assert.ok(companyRead>=0&&create>companyRead);assert.equal(h.calls.slice(0,create).filter(([name])=>name==='source').length,2);assert.equal(h.calls.slice(0,create).filter(([name])=>name==='receipt').length,2);
+ await assert.rejects(h.run(),/이미 전송/);assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(page.events.filter(event=>event==='validate').length,1);
+});
+
+test('status fallback refuses other windows, unapproved companies, login, pending navigation and ambiguous eligible pages before creating or claiming',async()=>{
+ const status={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/wims'},dashboard={id:125,windowId:17,url:'https://supplier.coupang.com/dashboard/KR'};
+ for(const options of [
+  {tabs:[]},{tab:{...status,windowId:18}},{tab:{...status,url:'https://supplier.coupang.com/qvt/wims/'}},{tab:{...status,url:'https://supplier.coupang.com/qvt/wims-other'}},
+  {tab:{...status,url:'https://supplier.coupang.com/login'}},{tab:{...status,pendingUrl:'https://supplier.coupang.com/login'}},
+  {tab:status,tabs:[status,{...status,id:125}]},{tab:status,tabs:[status,dashboard,{...dashboard,id:126}]},
+  {tab:status,anchorCompany:{code:'A01526306',name:'유앤채'}},{tab:status,sourceChangedAt:1},{tab:status,sourceChangedAt:2},
+  {tab:status,serverReceipt:{}},{tab:status,receiptError:true},
+ ]){
+  const h=await fixture({...options,companyMenu:true,serializedUpload:true});await assert.rejects(h.run());
+  assert.equal(h.calls.some(([name])=>name==='create'||name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+  assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
+ }
+});
+
+test('one dashboard keeps fallback precedence when a status page coexists without reading or changing it',async()=>{
+ const company={code:'A01464742',name:'와이홉'},dashboard={id:123,windowId:17,url:'https://supplier.coupang.com/dashboard/KR'};
+ const statusPages=[{id:125,windowId:17,url:'https://supplier.coupang.com/qvt/wims?view=old'}];
+ const h=await fixture({tab:dashboard,tabs:[dashboard,...statusPages],plan:{company},companyMenu:true,serializedUpload:true});
+ const originals=statusPages.map(page=>JSON.stringify(page));
+ const result=await h.run();assert.equal(result.state,'validation-requested');assert.equal(result.registered,false);
+ assert.deepEqual(h.calls.filter(([name,,id])=>name==='verifySupplierHubCompany'&&id===123),[['verifySupplierHubCompany',[company,'catalog'],123]]);
+ assert.equal(h.calls.some(([, ,id])=>statusPages.some(page=>page.id===id)),false,'status pages must not receive scripts or uploads');
+ assert.deepEqual(statusPages.map(page=>JSON.stringify(page)),originals);
+ assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(h.records.has('attempt:123'),false);
+ assert.equal(h.records.get('attempt:124').company.code,company.code);
+ assert.deepEqual(h.pages.get(124).events.filter(event=>event.startsWith('upload')||event==='validate'),['upload-0','upload-1','upload-2','validate']);
+ const wrong=await fixture({tab:dashboard,tabs:[dashboard,...statusPages],anchorCompany:{code:'A01526306',name:'유앤채'},companyMenu:true,serializedUpload:true});
+ await assert.rejects(wrong.run(),/회사/);assert.equal(wrong.calls.some(([name])=>name==='create'||name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+ assert.equal(wrong.calls.some(([, ,id])=>statusPages.some(page=>page.id===id)),false,'a wrong dashboard company cannot be bypassed through another status page');
+});
+
+test('status source is rechecked after company, saved source and receipt verification without navigating the user page',async()=>{
+ const status={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/wims'};
+ for(const stage of ['company','source','receipt'])for(const moved of [{url:'https://supplier.coupang.com/login'},{windowId:18},{pendingUrl:'https://supplier.coupang.com/login'}]){
+  const h=await fixture({tab:status,companyMenu:true,serializedUpload:true}),get=h.api.tabs.get;
+  h.api.tabs.get=async id=>{
+   const changed=stage==='company'?h.calls.some(([name,,target])=>name==='verifySupplierHubCompany'&&target===123):h.calls.filter(([name])=>name===stage).length>=2;
+   return id===123&&changed?{...status,...moved}:get(id);
+  };
+  await assert.rejects(h.run(),/화면|로그인/);
+  assert.equal(h.calls.some(([name])=>name==='create'||name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+  assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
+ }
+});
+
+test('a status anchor does not bypass the existing registration path or independently verifying a new form',async()=>{
+ const registration={id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration'},status={id:125,windowId:17,url:'https://supplier.coupang.com/qvt/wims'};
+ const current=await fixture({tab:registration,tabs:[registration,status],companyMenu:true});assert.equal((await current.run()).state,'validation-requested');
+ assert.equal(current.calls.filter(([name])=>name==='query').length,1);assert.equal(current.calls.some(([name])=>name==='create'),false);assert.equal(current.calls.some(([, ,id])=>id===125),false);
+ assert.equal(current.records.has('attempt:123'),true);
+ const foreign=await fixture({tab:registration,tabs:[registration,status],companyMenu:true});
+ const previous={origin:new URL(sender.url).origin,...identity,company:{code:'A01526306',name:'유앤채'},includedOptions:2};foreign.records.set('attempt:123',previous);
+ await assert.rejects(foreign.run(),/등록 탭/);assert.equal(foreign.records.get('attempt:123'),previous);assert.equal(foreign.records.size,1);
+ assert.equal(foreign.calls.some(([name])=>name==='create'||name==='verifySupplierHubCompany'||name==='attachToSupplierHub'),false);assert.equal(foreign.calls.filter(([name])=>name==='query').length,1);
+ for(const options of [{createdCompany:{code:'A01526306',name:'유앤채'}},{created:{url:'https://supplier.coupang.com/login'}},{created:{windowId:18}}]){
+  const h=await fixture({tab:{url:'https://supplier.coupang.com/qvt/wims'},companyMenu:true,serializedUpload:true,...options});await assert.rejects(h.run());
+  assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
+  assert.equal([...h.records.keys()].some(key=>key.startsWith('transmission:')||key.startsWith('attempt:')),false);
  }
 });
 
@@ -253,7 +340,7 @@ test('untrusted frames, missing agreements and mismatched products cannot reach 
 });
 
 test('wrong window, ambiguous tabs, wrong company and work in progress are rejected before claiming or uploading',async()=>{
- for(const opts of [{tab:{windowId:18}},{tab:{url:'https://supplier.coupang.com/qvt/wims'}},{tabs:[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration'},{id:124,windowId:17,url:'https://supplier.coupang.com/qvt/registration'}]},{companyCodes:['A01526306']},{preflightError:true}]){
+ for(const opts of [{tab:{windowId:18}},{tab:{url:'https://supplier.coupang.com/qvt/wims-other'}},{tabs:[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration'},{id:124,windowId:17,url:'https://supplier.coupang.com/qvt/registration'}]},{companyCodes:['A01526306']},{preflightError:true}]){
    const h=await fixture(opts);await assert.rejects(h.run());assert.equal(h.records.size,0);assert.equal(h.calls.some(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true),false);
  }
 });
@@ -349,7 +436,7 @@ test('previous-version claims recover their exact tab into validation and SKU lo
   const h=await fixture(options);await h.run();h.records.delete('attempt:123');
   const lookup=observe(h);assert.equal((await lookup()).state,'not-found');
   assert.equal(h.records.get('attempt:123').company.code,company.code);
-  await assert.rejects(refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},sender,h.api,h.store),/검증 완료/);
+  await assert.rejects(refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},sender,h.api,h.store),/완료된 파일 검증 결과와 접수 ID/);
   options.validationState='validation-complete';await lookup();
   const result=await refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},sender,h.api,h.store);
   assert.equal(result.company.code,company.code);assert.equal(result.registration.rows.length,2);assert.equal(result.registered,false);

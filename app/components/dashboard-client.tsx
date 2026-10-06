@@ -13,6 +13,7 @@ import { ProductArchive } from '@/app/components/product-archive';
 import { ManagedProductsPanel } from '@/app/components/managed-products-panel';
 import HistoricalAiRegistrationsPanel from '@/app/components/historical-ai-registrations-panel';
 import { ProductContentEditor } from '@/app/components/product-content-editor';
+import { OptionSeoEditor } from '@/app/components/option-seo-editor';
 import { AutomationPanel } from '@/app/components/automation-panel';
 import { ProductOptionsEditor } from '@/app/components/product-options-editor';
 import { QuotationPanel } from '@/app/components/quotation-panel';
@@ -504,13 +505,15 @@ function DetailPanel({ onBeforeFreeImageApply, onPrepareSubmission, onReviewPack
   const contentSection = isImageStep ? '이미지' : tab==='표시사항' ? '표시사항' : 'SEO';
   const focusedAssetRole=tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='상세 이미지'?'detail':undefined;
   let imageKeys:string[]=[];try{const keys:unknown=JSON.parse(product.image_keys);if(Array.isArray(keys))imageKeys=keys.filter((key):key is string=>typeof key==='string');}catch{/* The file and content APIs report invalid stored references. */}
+  const contentEditor=<ProductContentEditor product={product} section={contentSection} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy} onTranslateImage={(sourceKey,sourceLanguage,role)=>{
+    if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||(role!==undefined&&!validFreeImageRole(role)))return;
+    setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,...(role?{role}:{})}));
+  }}/>;
   return <>
     <div hidden={!['SEO','표시사항',...imageSteps].includes(tab)} className="panel-stack">
       {isImageStep&&<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" onChange={onUpload}/></label>}
-      <ProductContentEditor product={product} section={contentSection} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy} onTranslateImage={(sourceKey,sourceLanguage,role)=>{
-        if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||(role!==undefined&&!validFreeImageRole(role)))return;
-        setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,...(role?{role}:{})}));
-      }}/>
+      <div hidden={tab!=='SEO'||!focusedOptionId}>{focusedOptionId&&<OptionSeoEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</div>
+      <details open={tab==='SEO'&&focusedOptionId?undefined:true}><summary hidden={tab!=='SEO'||!focusedOptionId}>상품 공통 SEO·설명 편집</summary><p hidden={tab!=='SEO'||!focusedOptionId} className="panel-note">아래 수정값은 상품의 공통 자료에 저장됩니다. 옵션별로 저장한 상품명과 검색태그는 해당 옵션의 값을 유지합니다.</p>{contentEditor}</details>
     </div>
     <div hidden={!isImageStep} className="panel-stack"><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{})}:undefined}/><details><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
     <div hidden={tab!=='표시사항'}><button type="button" className="btn ghost" aria-expanded={labelTranslationOpen} aria-controls={`label-translation-${product.id}`} onClick={()=>setLabelTranslationOpen(open=>!open)}>한글 표시사항 번역</button><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></div>

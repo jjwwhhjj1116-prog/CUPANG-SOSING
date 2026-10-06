@@ -5228,3 +5228,18 @@ AI등록 화면 확인:
 - 첫Node24heap256build는rsc Rust409616byte allocation실패(exit3221226505),배포0. childheap192/semi1/Rayon1/UV1+wrapperheap64로새build성공;15migrationartifact통과. private outputs/step585-bounded-build.mjs 재현. 사용자Chrome/devserver/타프로세스종료/OS메모리·보안변경0.
 - 기존Worker 0e9b73fc-109c-453b-82e6-0c6275fe3875 배포완료;240staticread/7new/217reuse. OCR17files49,515,369bytes+manifest distSHA/size exactmatch. 확장0.2.52/37files465032bytes/SHA1299da7c471751c45a34e2bc95c8a06e07386bfe9ea36d877e9b46117d4f1e5e unchanged/reload불필요. D1migration/요금제/자원생성/운영상품변경0.01:03KST(2026-10-06T16:03:02.937Z) 익명 /와/api/products 둘모두Access302,본문/토큰불읽음.
 - CUA기존CouplusURL+browserchrome선택20s timeout/kernelreset. 실제auth/사이트권한실패나auto-review거절확인아님;새로그인/재승인/새프로필/새Chrome창/cookie/CDP우회0. 실제운영화면/모든카테고리default·최소마진분기·상품관리latestSKU/재고/가격·공식Excel·Hub최종ID검수남음. 와이홉검수품47b31f51-3c9a-416c-9d3c-5791f4714716 포장g/mm12개를추정/기존업무상품전송하지말것. 임의완료율/100%금지.
+
+
+## Step 586 — 2026-10-07 옵션 SEO·목록·Hub 전송 연결
+
+기준: step585 커밋 30e316c9544dd1b527609b9bf9873cd0a09cf040. 이번 검증 기록은 docs/step586-option-seo-board-hub-transmission-2026-10-07.md에 있다.
+
+- 선택 SKU SEO는 새 OptionSeoEditor와 quotation-seo-targets를 사용한다. 정확한 title/searchTags Hub primary + 같은 옵션 canonical 요약을 명시 저장한다. 다른 SKU·공통 콘텐츠·가격·명시공란은 보존한다. 공통 SEO와 선택 SKU SEO는 모두 단계 이동 때 마운트를 유지한다. dirty/saving/source markers는 기존 견적 진입·닫기 검사와 연결했다.
+- q PUT 성공은 productVersion도 증가한다. 새 편집기의 GET은 prop 버전 확인을 유지하고 PUT ACK는 정확한 revision+1·updatedAt=productVersion·시각 증가·같은 content/option/image/category/SEO targets·요청값을 확인한다. 정상 저장을 실패로 처리하던 새 코드의 결함을 실제 API 검사로 수정했다. useLayoutEffect로 요청 범위를 commit 때 바꾸고 취소하며 ref를 렌더에서 변경하지 않는다.
+- 옵션 보드는 current quotation snapshot의 최종 title/main/additional/detail/label을 읽는다. 정확한 wire가 있으면 우선하며 manual blank·perSKU 라벨·이미지 경고·owned keys를 유지한다. validationIssues와 일반 review notes를 구분한다. size는 여전히 common source다. 가격 공식·범용 resolver·입고 무게·카테고리 기본값은 변경하지 않았다.
+- 확장 fallback registration → dashboard → wims. dashboard+status 두 탭이면 기존 dashboard 우선 동작을 유지한다. 선택한 기준 종류는 정확히1개·같은 창·확인한 회사를 요구하며 원래 작업/조회 탭은 이동·첨부하지 않는다. source·receipt·anchor를 재확인한 뒤 fresh registration을 준비한다.
+- 6개 파일 서로 다른128/128 통과: transmit39, dashboard/close/navigation47, board30, SEO12. 양회사 실제API→임시SQLite→labelplan→syntheticXLSX 검증 포함. 실Hub 업로드/등록0. 타입0, 변경 소스 lint오류0 및 downloadlink만바꾼 intake-queue 기존 onBusy warning1. 원본 public source 모듈·확장 ZIP·OCR dist 복사 검사 통과.
+- 확장0.2.53,37파일466295bytes SHA256 e766a04fd4908619b6b8efbcd94f8abf185b2a76a685791cfb795030c767b3b7. ZIP 다운로드와 unpacked source를 준비했고 기존 권한/호스트/메시지/Chrome범위는 그대로다. 실제 Chrome에 새 확장 코드가 로드됐다는 확인은 없다.
+- Worker c4166c5d-f858-45f5-80f0-85231efe38e5 배포완료. 빌드 childheap192/semi1/Rayon1/UV1(wrapper64) 성공. D1원본migration15동일·OCR17/49515369bytes동일. 2026-10-06T17:15:07.723Z anonymous / 및 /api/products 기존Access302 확인; no body/token read.
+- CUA Chrome4 선택/문서는 응답했고 tabs.list에727924264 couplus AIRocketReg는 보였다. 기존탭 read/claim은 Debugger unattached, same-profile 새검수tab은 Emulation.setFocusEmulationEnabled timeout. 사이트차단/로그아웃/승인부족으로 해석하지 말 것. 기존탭 reload·userrecord save/delete/run/transmit0. 다른profile/window0. 자동정리 대상새탭 외 기존작업tab들은 보존.
+- 다음: 실제 같은 Chrome의 Couplus read-only UI/기본설정 대조와 operating app 지정검증상품 URL→1–7→공식Excel→실접수/개별SKU 결과. 기존Couplus/Hub작업상품은 수정금지. 별도검증상품47b31f51-3c9a-416c-9d3c-5791f4714716은69900/813724060928/6SKU이며 포장 g/mm값과 공식Excel 문제는 추정해 채우지 않는다. 모든카테고리 defaults/저가minimummargin/실시간상품관리 SKU·재고/가격 sync/선택SKU 추가·상세·표시사항 전용편집 및 active size table은 전체완료로 주장하지 않는다.

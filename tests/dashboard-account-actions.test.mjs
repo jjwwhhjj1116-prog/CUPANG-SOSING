@@ -236,6 +236,25 @@ test('every typed option stage opens the intended product workspace and retains 
  }
 });
 
+test('selected option SEO mounts its own quotation editor while common SEO stays in a separate closed detail',async()=>{
+ const h=harness();try{
+  await h.settle();const first=h.products[0],fresh={...first,updated_at:'2026-10-07T00:00:01.000Z'};
+  h.setProductReply(async id=>Response.json({product:id===first.id?fresh:h.products[1]}));
+  h.component('registration-board').onOptions(first);await h.settle();
+  h.component('product-option-board').onStage('option-a-2','SEO');await h.settle();
+  const editor=h.component('option-seo-editor');assert.ok(editor);assert.equal(editor.productId,first.id);assert.equal(editor.optionId,'option-a-2');assert.equal(editor.version,fresh.updated_at);
+  const common=nodes(h.render()).find(node=>node.type==='details'&&text(node).includes('상품 공통 SEO·설명 편집'));
+  assert.ok(common);assert.notEqual(common.props.open,true);assert.match(text(common),/상품의 공통 자료/);
+  assert.equal(h.component('product-content-editor').section,'SEO');assert.equal(h.component('product-content-editor').product.updated_at,fresh.updated_at);
+  const before=editor.refreshToken;editor.onSaved();await h.settle();assert.notEqual(h.component('option-seo-editor').refreshToken,before);
+  const mount=h.componentMount('option-seo-editor'),commonMount=h.componentMount('product-content-editor');
+  await h.click('2가격');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('product-content-editor'),commonMount);
+  await h.click('1SEO');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('product-content-editor'),commonMount);
+  assert.ok(h.requests.every(request=>request.method==='GET'));
+  h.component('registration-board').onOpen(h.products[1],'SEO');await h.settle();assert.equal(h.component('option-seo-editor'),undefined);assert.equal(h.component('product-content-editor').product.id,h.products[1].id);
+ }finally{h.close();}
+});
+
 test('option management navigation prepares the existing removal editor without deleting or saving and resets for another product',async()=>{
  const h=harness();try{
   await h.settle();const first=h.products[0],second=h.products[1];h.component('registration-board').onOptions(first);await h.settle();const board=h.component('product-option-board'),initialReads=h.requests.length;assert.equal(typeof board.onManage,'function');board.onManage('option-a-2');await h.settle();

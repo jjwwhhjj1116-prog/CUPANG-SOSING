@@ -57,20 +57,23 @@ export async function transmitSupplierHubPackage(message,sender,api=chrome,store
       [preflight]=await api.scripting.executeScript({target:{tabId},func:attachToSupplierHub,args:[prepared,true]});
     };
     if(!tabs.length){
-      // The explicit app transmission may start from the logged-in dashboard.
-      // Read its exact company, then use a fresh form without navigating it.
-      const dashboards=(await api.tabs.query({windowId,url:'https://supplier.coupang.com/dashboard/KR*'}))
-        .filter(tab=>!tab.pendingUrl&&isSupplierHubTab(tab,windowId,'/dashboard/KR'));
-      if(dashboards.length!==1)throw Error('앱과 같은 Chrome 창에 로그인된 Supplier Hub 대시보드 또는 대량 상품 등록 탭을 열어두세요. 사용할 대시보드 탭은 하나만 남겨주세요.');
-      const dashboardId=dashboards[0].id;
-      const checkDashboard=async()=>{const tab=await api.tabs.get(dashboardId);if(tab?.id!==dashboardId||tab.pendingUrl||!isSupplierHubTab(tab,windowId,'/dashboard/KR'))throw Error('Supplier Hub 대시보드가 이동되거나 로그인 화면이 변경되었습니다.');};
-      await checkDashboard();
-      const [company]=await api.scripting.executeScript({target:{tabId:dashboardId},func:verifySupplierHubCompany,args:[prepared.company,'catalog']});
+      // Read the company from an existing logged-in dashboard or status page.
+      // Preserve that user's page and use a fresh form only after the checks.
+      const loggedInPages=(await api.tabs.query({windowId,url:['https://supplier.coupang.com/dashboard/KR*','https://supplier.coupang.com/qvt/wims*']}))
+        .filter(tab=>!tab.pendingUrl);
+      const dashboards=loggedInPages.filter(tab=>isSupplierHubTab(tab,windowId,'/dashboard/KR'));
+      // Preserve the established dashboard path even if status pages coexist.
+      const anchors=dashboards.length?dashboards:loggedInPages.filter(tab=>isSupplierHubTab(tab,windowId,'/qvt/wims'));
+      if(anchors.length!==1)throw Error('앱과 같은 Chrome 창에 로그인된 Supplier Hub 대시보드·견적서 등록 상태 또는 대량 상품 등록 탭을 열어두세요. 사용할 대시보드·등록 상태 탭은 하나만 남겨주세요.');
+      const anchorId=anchors[0].id,anchorPath=new URL(anchors[0].url).pathname;
+      const checkAnchor=async()=>{const tab=await api.tabs.get(anchorId);if(tab?.id!==anchorId||tab.pendingUrl||!isSupplierHubTab(tab,windowId,anchorPath))throw Error('Supplier Hub 화면이 이동되거나 로그인 상태가 변경되었습니다.');};
+      await checkAnchor();
+      const [company]=await api.scripting.executeScript({target:{tabId:anchorId},func:verifySupplierHubCompany,args:[prepared.company,'catalog']});
       if(company?.result?.code!==prepared.company.code)throw Error('회원 회사와 Supplier Hub 회사코드가 일치하지 않습니다.');
-      await checkDashboard();
+      await checkAnchor();
       await sourceCheck();
       await receiptCheck();
-      await checkDashboard();
+      await checkAnchor();
       await prepareFreshTab();
     }else{
       await companyCheck();
