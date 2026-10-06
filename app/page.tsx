@@ -15,5 +15,5 @@ export default async function Home() {
   const {user, accessMessage} = await pageIdentity();
   if ((env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true' && !user?.membership) redirect('/login');
   if(process.env.NODE_ENV==='production'&&!user?.verifiedAccess)return <main style={{maxWidth:680,margin:'12vh auto',padding:32,fontFamily:'sans-serif'}}><h1>YOOFAM PLUS 로그인 확인</h1><p>이 작업 공간은 Cloudflare Access로 보호됩니다.</p><p>{accessMessage}</p><form action="/" method="get"><button type="submit">다시 확인</button></form></main>;
-  return <DashboardClient userName={user?.displayName ?? '로켓셀러'} />;
+  return <DashboardClient key={user?.userId ?? 'local-demo'} userName={user?.displayName ?? '로켓셀러'} workspaceOwnerId={user?.userId ?? 'local-demo'} />;
 }

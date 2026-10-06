@@ -40,7 +40,7 @@ function seedCompanions(db) {
 
 test('checked-in bootstrap matches every runtime table, constraint, column and named index on fresh SQLite', () => {
   const result = checkDatabaseSchema();
-  assert.equal(result.tables, 27); assert.equal(result.indexes, 13); assert.equal(result.runtimeModules, 18);
+  assert.equal(result.tables, 28); assert.equal(result.indexes, 14); assert.equal(result.runtimeModules, 18);
 });
 
 test('legacy Drizzle schema upgrade preserves product/settings rows, defaults, PK declarations and indexes', () => {
@@ -83,8 +83,9 @@ test('reapplying bootstrap preserves every current table including uncertain/run
       db.prepare('INSERT INTO supplier_hub_receipts(owner_id,product_id,fingerprint,observed_at,evidence_order,payload) VALUES (?,?,?,?,?,?)').run(owner,productId,'synthetic-hub-fingerprint',Date.parse(now),1,json);
     db.prepare('INSERT INTO managed_products VALUES(?,?,?,?,?,?,?,?,?,?)').run(owner,'test-company','synthetic-sku','보존 상품',json,'fixture.xlsx','a'.repeat(64),2,now,now);
     db.prepare('INSERT INTO historical_ai_records VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(owner,'test-company','registration','synthetic-registration','','보존 등록',1,'https://example.invalid/synthetic','원본 상태',json,'fixture.json','b'.repeat(64),1,now);
+    db.prepare('INSERT INTO product_removals(product_id,owner_id,removed_at,product_version) VALUES(?,?,?,?)').run(productId,owner,now,now);
     const before = tableData(db); const schema = schemaSnapshot(db);
-    assert.equal(before.length, 27); assert.ok(before.every(table => table.rows.length === 1));
+    assert.equal(before.length, 28); assert.ok(before.every(table => table.rows.length === 1));
     db.exec(migrations); db.exec(migrations);
     assert.deepEqual(tableData(db), before); assert.deepEqual(schemaSnapshot(db), schema);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
@@ -128,7 +129,7 @@ test('schema checker detects missing indexes, changed CHECK/default/unique defin
 });
 
 test('quotation-fields migration adds one guarded table without changing the existing thirteen tables or rows', () => {
-  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql','0009_members.sql','0010_category_profile_pagination.sql','0011_supplier_hub_receipts.sql','0012_collection_source_supplements.sql','0013_managed_products.sql','0014_historical_ai_records.sql']);
+  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql','0009_members.sql','0010_category_profile_pagination.sql','0011_supplier_hub_receipts.sql','0012_collection_source_supplements.sql','0013_managed_products.sql','0014_historical_ai_records.sql','0015_product_removals.sql']);
   const db=memoryDatabase();
   try {
     db.exec(bootstrap);seedLegacy(db);seedCompanions(db);
@@ -145,6 +146,22 @@ test('quotation-fields migration adds one guarded table without changing the exi
     const withOverride=tableData(db);db.exec(files[1].sql);assert.deepEqual(tableData(db),withOverride);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
   } finally {db.close();}
+});
+
+test('product-removals migration preserves existing tables and repeated applications keep removal markers',()=>{
+ const files=readMigrationFiles(),migration=files.at(-1);assert.equal(migration.name,'0015_product_removals.sql');
+ const db=memoryDatabase();try{
+  db.exec(files.slice(0,-1).map(file=>file.sql).join('\n'));seedLegacy(db);seedCompanions(db);
+  const previousSchema=schemaSnapshot(db),previousData=tableData(db);assert.equal(previousData.length,27);
+  db.exec(migration.sql);const currentSchema=schemaSnapshot(db),currentData=tableData(db);assert.equal(currentData.length,28);
+  for(const previous of previousSchema)assert.deepEqual(currentSchema.find(value=>value.name===previous.name),previous);
+  for(const previous of previousData)assert.deepEqual(currentData.find(value=>value.name===previous.name),previous);
+  assert.throws(()=>db.prepare('INSERT INTO product_removals VALUES(?,?,?,?)').run('missing-product',owner,now,now),/FOREIGN KEY/);
+  db.prepare('INSERT INTO product_removals VALUES(?,?,?,?)').run(productId,owner,now,now);
+  assert.throws(()=>db.prepare('INSERT INTO product_removals VALUES(?,?,?,?)').run(productId,owner,now,now),/UNIQUE/);
+  const withRemoval=tableData(db);db.exec(migration.sql);db.exec(migrations);assert.deepEqual(tableData(db),withRemoval);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+ }finally{db.close();}
 });
 
 test('runtime DDL discovery reads literal TypeScript and rejects dynamic or destructive schema changes', () => {

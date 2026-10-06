@@ -8,12 +8,13 @@ import { generatedImagesRolePatch } from '@/app/image-role-adoption';
 import type { ProductContent } from '@/app/product-content';
 import type { ImageEditJob, ImageEditView, ImagePurpose, ImageQuality, ImageSize } from '@/app/automation/image-edit';
 
-type Props = { productId: string; version: string; imageKeys: string[]; onProductChanged?: () => void };
+type Props = { productId: string; version: string; imageKeys: string[]; onProductChanged?: () => void; translationTarget?: { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en' }; onBusyChange?: (busy: boolean) => void };
 const statuses: Record<ImageEditJob['status'], string> = { prepared: '원본·요청 검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 호출 차단', completed: '이미지 생성 완료 · 검토 필요', failed: '실패 · 자동 재호출 없음', uncertain: '결과 확인 필요 · 자동 재호출 없음' };
 const imageUrl = (key: string) => `/api/files/${encodeURIComponent(key)}`;
+const translationTargetLimitError = '추가 요청 문구가 길어서 선택한 언어 지침을 넣을 수 없습니다. 문구를 줄인 뒤 번역 버튼을 다시 눌러주세요.';
 
 export default function ImageGenerationPanel(props: Props) { return <ImageGenerationContent key={props.productId} {...props} />; }
-function ImageGenerationContent({ productId, version, imageKeys, onProductChanged }: Props) {
+function ImageGenerationContent({ productId, version, imageKeys, onProductChanged, translationTarget, onBusyChange }: Props) {
   const [view, setView] = useState<ImageEditView | null>(null);
   const [sourceKey, setSourceKey] = useState('');
   const [purpose, setPurpose] = useState<ImagePurpose>('translate');
@@ -28,12 +29,42 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   const [error, setError] = useState('');
   const [notice,setNotice]=useState('');
   const [reviewedIds,setReviewedIds]=useState<string[]>([]);
+  const imageWorkBusy = busy || Boolean(view?.jobs.some(item => item.status === 'running'));
   const mounted=useRef(true);
   const activeRequest=useRef<AbortController|null>(null);
   const notifiedAttachment=useRef('');
   const attachmentContext=useRef({productId,imageKeys,onProductChanged});
+  const panelRef=useRef<HTMLElement|null>(null);
+  const sourceRef=useRef<HTMLSelectElement|null>(null);
+  const handledTranslation=useRef<number|null>(null);
+  const languageDirective=useRef('');
   useEffect(()=>{attachmentContext.current={productId,imageKeys,onProductChanged};},[productId,imageKeys,onProductChanged]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;activeRequest.current?.abort();activeRequest.current=null;};},[productId,version]);
+  useEffect(()=>{onBusyChange?.(imageWorkBusy);},[imageWorkBusy,onBusyChange]);
+  useEffect(()=>()=>onBusyChange?.(false),[onBusyChange]);
+  useEffect(()=>{
+    if (!translationTarget || handledTranslation.current === translationTarget.sequence) return;
+    handledTranslation.current = translationTarget.sequence;
+    if (!mounted.current || imageWorkBusy || activeRequest.current || !imageKeys.includes(translationTarget.sourceKey)) return;
+    if (translationTarget.sourceLanguage) {
+      const language = translationTarget.sourceLanguage === 'zh' ? '중국어' : '영어';
+      const directive = `${language}→한국어 번역: 읽을 수 있는 ${language} 문구를 한국어로 번역하고, 다른 언어의 문구와 숫자·단위·식별자는 원문 그대로 보존하세요.`;
+      const previous = languageDirective.current;
+      let retained = prompt;
+      if (previous && prompt === previous) retained = '';
+      else if (previous && prompt.endsWith(`\n\n${previous}`)) retained = prompt.slice(0, -(previous.length + 2));
+      const next = retained ? `${retained}\n\n${directive}` : directive;
+      if (next.length > 4000) {
+        setError(translationTargetLimitError);
+        return;
+      }
+      setPrompt(next); languageDirective.current = directive;
+    }
+    setError(previous => previous === translationTargetLimitError ? '' : previous);
+    setSourceKey(translationTarget.sourceKey); setPurpose('translate'); setConfirmed(false);
+    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    sourceRef.current?.focus({ preventScroll: true });
+  },[translationTarget,imageWorkBusy,imageKeys,prompt]);
   function beginRequest(allowMissing=false) {
     if(!mounted.current||activeRequest.current||(!allowMissing&&!view))return null;
     const controller=new AbortController();activeRequest.current=controller;return controller;
@@ -127,7 +158,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); const snapshot=attachmentSnapshot(next);setView(next);setLoadedVersion(version);notifyAttachment(snapshot); }
     catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '조회 실패'); } finally { finishRequest(controller); }
   }
-  return <section className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">
+  return <section ref={panelRef} className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">
     <h4>원본 이미지 AI 가공</h4>
     <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>저장된 설정·실행 이력 새로고침 · 무료</button>
     <p>상품에 업로드한 PNG·JPEG·WebP 한 장을 가공합니다. 결과는 새 파일로 보관하며, 원본과 기존 이미지 역할을 보존합니다.</p>
@@ -141,7 +172,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
         {view.settings.translationPrompt && <details><summary>저장된 번역 지침</summary><pre>{view.settings.translationPrompt}</pre></details>}
       </div>
       {!imageKeys.length && <p>먼저 이 상품에 원본 이미지를 업로드해주세요. 원본 없이 임의의 상품 이미지를 생성하지 않습니다.</p>}
-      <label>가공할 원본<select value={source} onChange={event => setSourceKey(event.target.value)} disabled={busy || !imageKeys.length}>{!imageKeys.length && <option value="">원본 이미지 없음</option>}{imageKeys.map((key, index) => <option key={key} value={key}>이미지 {index + 1} · {key.split('/').at(-1)}</option>)}</select></label>
+      <label>가공할 원본<select ref={sourceRef} value={source} onChange={event => setSourceKey(event.target.value)} disabled={busy || !imageKeys.length}>{!imageKeys.length && <option value="">원본 이미지 없음</option>}{imageKeys.map((key, index) => <option key={key} value={key}>이미지 {index + 1} · {key.split('/').at(-1)}</option>)}</select></label>
       {source && <img src={imageUrl(source)} alt="선택한 원본 이미지" style={{ maxWidth: 240, maxHeight: 240, objectFit: 'contain' }} />}
       <label>작업 목적<select value={purpose} onChange={event => setPurpose(event.target.value as ImagePurpose)} disabled={busy}><option value="translate">이미지 속 문구 번역</option><option value="thumbnail">대표 이미지 초안</option><option value="detail">상세 이미지 초안</option><option value="cleanup">대표·추가 이미지 문구 정리</option></select></label>
       {purpose==='cleanup'&&<p>상품 바깥 설명 문구를 정리합니다. 상품 표면의 인쇄는 유지합니다.</p>}

@@ -10,6 +10,7 @@ export type ProductRecord = {
   goal_stage: string; created_at: string; updated_at: string;
   pricing_policy?: string | null;
 };
+export type RemovedProductRecord = ProductRecord & {removed_at:string};
 
 function database() {
   if (!env.DB) throw new Error('D1 binding DB is unavailable.');
@@ -31,6 +32,11 @@ export async function ensureDatabase() {
     )`),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_products_owner_updated ON products(owner_id, updated_at)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_products_owner_status ON products(owner_id, registration_status)'),
+    db.prepare(`CREATE TABLE IF NOT EXISTS product_removals (
+      product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
+      removed_at TEXT NOT NULL, product_version TEXT NOT NULL
+    )`),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_product_removals_owner_removed ON product_removals(owner_id, removed_at)'),
     db.prepare(`CREATE TABLE IF NOT EXISTS workspace_settings (
       owner_id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
@@ -41,11 +47,18 @@ export async function ensureDatabase() {
   await db.prepare('PRAGMA optimize').run();
 }
 
-export async function listProducts(ownerId: string) {
+export async function listProducts(ownerId: string, removed: 'exclude' | 'only' = 'exclude') {
   await ensureDatabase();
   const result = await database().prepare(
-    'SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy FROM products p WHERE owner_id = ? ORDER BY updated_at DESC LIMIT 200',
-  ).bind(ownerId).all<ProductRecord>();
+    removed === 'only'
+      ? `SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy, r.removed_at
+          FROM products p INNER JOIN product_removals r ON r.product_id=p.id AND r.owner_id=p.owner_id
+          WHERE p.owner_id=? ORDER BY r.removed_at DESC, p.updated_at DESC LIMIT 200`
+      : `SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy
+          FROM products p WHERE p.owner_id=? AND NOT EXISTS (
+            SELECT 1 FROM product_removals r WHERE r.product_id=p.id AND r.owner_id=p.owner_id
+          ) ORDER BY p.updated_at DESC LIMIT 200`,
+  ).bind(ownerId).all<ProductRecord | RemovedProductRecord>();
   return result.results;
 }
 

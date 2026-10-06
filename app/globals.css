@@ -225,6 +225,16 @@ a.product-source-url:hover { text-decoration: underline; }
 .image-asset-order>span { color: #748199; font-size: 11px; }
 .image-asset-order>div { display: flex; gap: 5px; }
 .image-asset-order .btn { padding: 5px 10px; }
+.detail-image-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; background: #fff; border-bottom: 1px solid #e2e8f0; }
+.detail-image-toolbar .btn { padding: 6px 10px; font-size: 11px; }
+.detail-image-toolbar .btn:last-child { margin-left: auto; color: #b4534a; }
+.registration-source-link { display: inline-flex; align-items: center; justify-content: center; color: #29b9df; padding: 6px; border-radius: 5px; }
+.registration-source-link:hover { background: #eafaff; }
+.registration-source-empty { color: #94a3b8; font-size: 11px; }
+.registration-management { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.registration-delete { display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 25px; padding: 4px; background: #ff8d6d; color: #fff; border: 0; border-radius: 50%; cursor: pointer; }
+.registration-delete:hover { background: #fb7451; }
+.registration-delete:disabled { opacity: .5; cursor: wait; }
 .content-editor-save { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 20px; }
 .content-editor-save>span { font-size: 12px; color: #64748b; }
 .content-editor-save small { display: block; margin-top: 5px; font-size: 11px; line-height: 1.6; }

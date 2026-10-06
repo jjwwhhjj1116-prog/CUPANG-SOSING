@@ -33,4 +33,11 @@ export const workspaceSettings = sqliteTable('workspace_settings', {
   updatedAt: text('updated_at').notNull(),
 });
 
+export const productRemovals = sqliteTable('product_removals', {
+  productId: text('product_id').primaryKey().references(() => products.id),
+  ownerId: text('owner_id').notNull(),
+  removedAt: text('removed_at').notNull(),
+  productVersion: text('product_version').notNull(),
+}, (table) => [index('idx_product_removals_owner_removed').on(table.ownerId, table.removedAt)]);
+
 export type ProductRow = typeof products.$inferSelect;

@@ -26,6 +26,8 @@ const text = tree => Array.isArray(tree) ? tree.map(text).join('') : tree && typ
 
 function harness(company) {
   const owner = 'local-' + company.code;
+  const email = company.code === 'A01526306' ? 'jwhj1116@kakao.com' : 'unari8484@gmail.com';
+  const role = company.code === 'A01526306' ? 'admin' : 'member';
   const sqlite = memoryDatabase();
   for (const statement of runtimeDDL()) sqlite.exec(statement.sql);
   let externalCalls = 0;
@@ -43,7 +45,7 @@ function harness(company) {
         if (name === 'node:crypto') return nodeCrypto;
         if (name === 'next/server') return { NextResponse: Response };
         if (name === 'cloudflare:workers') return { env: { DB: db } };
-        if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner, membership: { id: owner, role: 'member', status: 'approved', companyCode: company.code, companyName: company.name } }), getWorkspaceOwnerId: async () => owner };
+        if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner, email, membership: { id: owner, email, role, status: 'approved', companyCode: company.code, companyName: company.name } }), getWorkspaceOwnerId: async () => owner };
         if (name === 'react') return { useState: initial => [initial, () => { throw Error('Unexpected state update on clean initial render'); }] };
         if (name === '@/app/components/option-quotation-prices') return { OptionQuotationPrices: () => null };
         if (name === '@/app/components/option-price-preview') return { OptionPricePreview: () => null };

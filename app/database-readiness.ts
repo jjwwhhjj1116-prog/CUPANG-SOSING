@@ -5,7 +5,7 @@ export const requiredDatabaseTables = [
   'product_automation', 'product_automation_receipts', 'product_automation_history',
   'translation_jobs', 'image_jobs', 'product_quotation_fields', 'collection_results',
   'collection_products', 'collection_images', 'quotation_attribute_rules', 'intake_drafts',
-  'members', 'member_sessions', 'member_rate_limits', 'member_audit', 'supplier_hub_receipts', 'collection_source_supplements', 'managed_products', 'historical_ai_records',
+  'members', 'member_sessions', 'member_rate_limits', 'member_audit', 'supplier_hub_receipts', 'collection_source_supplements', 'managed_products', 'historical_ai_records', 'product_removals',
 ] as const;
 
 export async function inspectDatabaseTables(database: D1Database) {

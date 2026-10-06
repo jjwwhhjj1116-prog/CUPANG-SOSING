@@ -98,7 +98,7 @@ test('saved settings API persists opt-in notice and logistics fields and rejects
   try {
     const route = h.load('app/api/settings/route.ts');
     const value = { ...h.settings, washingMethod: '손세탁', handlingPrecautions: '화기 주의', manufactureDatePreviousMonth: true, shelfLifeDays: 30, handlingReason: '유리' };
-    const put = patch => route.PUT(new Request('https://app.test/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }));
+    const put = patch => route.PUT(new Request('https://app.test/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...patch, expectedOwnerId: 'owner' }) }));
     assert.equal((await put(value)).status, 200);
     assert.deepEqual((await (await route.GET()).json()).settings, value);
     assert.equal((await put({ ...value, shelfLifeDays: -1 })).status, 400);

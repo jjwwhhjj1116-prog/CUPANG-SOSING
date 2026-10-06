@@ -10,10 +10,10 @@ import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
 async function ownerId() { return await getWorkspaceOwnerId(); }
 
-export async function GET() {
+export async function GET(request?: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({error:'Cloudflare Access 로그인 또는 서버 인증 설정을 확인해주세요.'},{status:503});
   try {
-    const owner=await ownerId();const products=await listProducts(owner);
+    const owner=await ownerId();const removed=request&&new URL(request.url).searchParams.get('removed')==='only'?'only':'exclude';const products=await listProducts(owner,removed);
     const [summaries,sourceImages,receipts]=await Promise.all([
       readRegistrationSummaries(owner,products).catch(()=>null),
       readRegistrationSourceImages(owner,products).catch(()=>null),

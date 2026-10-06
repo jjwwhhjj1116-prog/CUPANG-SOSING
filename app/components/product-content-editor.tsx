@@ -17,6 +17,8 @@ type Props = {
   section: 'SEO' | '표시사항' | '이미지';
   focusedAssetRole?: 'main' | 'additional' | 'detail';
   onSaved?: () => void;
+  onTranslateImage?: (sourceKey: string, sourceLanguage?: 'zh' | 'en') => void;
+  imageProcessingBusy?: boolean;
 };
 type Draft = {
   seo: { title: string; keywords: string; description: string };
@@ -54,7 +56,7 @@ async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<Pro
 
 export function ProductContentEditor(props: Props) { return <ContentEditor key={props.product.id} {...props} />; }
 
-function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
+function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false }: Props) {
   const [content, setContent] = useState<ProductContent>(() => emptyProductContent(product.id));
   const [draft, setDraft] = useState<Draft>(() => draftFrom(emptyProductContent(product.id)));
   const [loading, setLoading] = useState(true);
@@ -276,6 +278,13 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       return { ...previous, assets: { ...previous.assets, [role]: keys } };
     });
   }
+  function detailImageAction(key: string, action: () => void) {
+    if (!loaded || busy || loading || conflict || imageProcessingBusy || activeRequest.current || !imageKeys.includes(key)) return;
+    action();
+  }
+  function excludeDetailImage(key: string, role: 'detailTop' | 'detail' | 'detailBottom') {
+    setDraft(previous => ({ ...previous, assets: { ...previous.assets, [role]: previous.assets[role].filter(value => value !== key) } }));
+  }
 
   return <div className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={anyDirty} data-workspace-saving={busy}>
     {([
@@ -340,10 +349,23 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         <div className="image-edit-workspace">
         <section className="image-edit-canvas" aria-label={focusedAssetRole==='detail'?'상세페이지 배치 미리보기':'선택 이미지 미리보기'}>
           {editingDetail && draft.detail.description && <div aria-label="상세 설명 미리보기" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',padding:16}}>{draft.detail.description}</div>}
-          {detailPreview.length>0 ? <div className="detail-image-strip">{detailPreview.map((key,index)=><figure key={key}><figcaption>{draft.assets.detailTop.includes(key)?'상단 이미지':draft.assets.detailBottom.includes(key)?'하단 이미지':`본문 이미지 ${draft.assets.detail.indexOf(key)+1}`}</figcaption>
+          {detailPreview.length>0 ? <div className="detail-image-strip">{detailPreview.map((key,index)=>{
+            const sourceIndex = imageKeys.indexOf(key) + 1;
+            const role = draft.assets.detailTop.includes(key) ? 'detailTop' : draft.assets.detailBottom.includes(key) ? 'detailBottom' : 'detail';
+            const position = draft.assets[role].indexOf(key);
+            const disabled = busy || loading || conflict || imageProcessingBusy;
+            return <figure key={key}><figcaption>{role==='detailTop'?'상단 이미지':role==='detailBottom'?'하단 이미지':`본문 이미지 ${position+1}`}</figcaption>
+            <div className="detail-image-toolbar" role="group" aria-label={`이미지 ${sourceIndex} 상세 편집`}>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 중국어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'zh'))}>중국어→한국어 번역</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 영어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'en'))}>영어→한국어 번역</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 편집`} disabled={disabled} onClick={()=>detailImageAction(key,()=>void openResize(key))}>편집</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 위로`} disabled={disabled || role!=='detail' || position===0} onClick={()=>detailImageAction(key,()=>move(role,position,-1))}>↑</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 아래로`} disabled={disabled || role!=='detail' || position===draft.assets[role].length-1} onClick={()=>detailImageAction(key,()=>move(role,position,1))}>↓</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 상세에서 제외`} title="상세페이지에서 제외" disabled={disabled} onClick={()=>detailImageAction(key,()=>excludeDetailImage(key,role))}>삭제</button>
+            </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`상세페이지 순서 ${index+1}`} loading="lazy"/>
-          </figure>)}</div> : activePreview ? <figure className="image-large-preview"><figcaption>이미지 {imageKeys.indexOf(activePreview)+1} 미리보기</figcaption>
+          </figure>;})}</div> : activePreview ? <figure className="image-large-preview"><figcaption>이미지 {imageKeys.indexOf(activePreview)+1} 미리보기</figcaption>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${activePreview.split('/').map(encodeURIComponent).join('/')}`} alt={`이미지 ${imageKeys.indexOf(activePreview)+1} 큰 미리보기`}/>
           </figure> : <p className="empty">이미지 목록에서 미리볼 자료를 선택하세요.</p>}

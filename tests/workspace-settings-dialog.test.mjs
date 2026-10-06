@@ -7,14 +7,15 @@ import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
-function harness(fetcher){
- const slots=[],effects=[],calls=[];let index=0,closed=false,late=0,saves=0;
+const text=t=>Array.isArray(t)?t.map(text).join(''):t&&typeof t==='object'?text(t.props?.children):String(t??'');
+function harness(fetcher,{workspaceOwnerId}={}){
+ const slots=[],effects=[],calls=[],saved=[];let index=0,closed=false,late=0,saves=0;
  const Editor=()=>null;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useEffect(fn,deps){const i=index++;if(!slots[i]||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){slots[i]?.cleanup?.();effects.push(()=>{slots[i]={deps,cleanup:fn()};});}}};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,fetch:(url,init)=>{calls.push({url,init});return fetcher(url,init);},require(name){if(name==='react')return hooks;if(name==='@/app/components/workspace-settings-editor')return{WorkspaceSettingsEditor:Editor};if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;}
  const Component=load('app/components/workspace-settings-dialog.tsx').WorkspaceSettingsDialog;
- const render=()=>{index=0;const tree=Component({onSave:async()=>{saves++;},onClose:()=>{}});effects.splice(0).forEach(fn=>fn());return tree;};
- render();return{render,calls,editor:()=>nodes(render()).find(n=>n.type===Editor),close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());},get late(){return late;},get saves(){return saves;}};
+ const render=()=>{index=0;const tree=Component({workspaceOwnerId,onSave:async(value,scope)=>{saves++;saved.push({value,scope});},onClose:()=>{}});effects.splice(0).forEach(fn=>fn());return tree;};
+ render();return{render,calls,saved,editor:()=>nodes(render()).find(n=>n.type===Editor),switchOwner(value){workspaceOwnerId=value;return render();},close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());},get late(){return late;},get saves(){return saves;}};
 }
 test('settings editor stays absent until a fresh successful read and displays saved facts',async()=>{
  let resolve;const pending=new Promise(r=>resolve=r);const h=harness(()=>pending);
@@ -30,6 +31,28 @@ test('failed or malformed reads cannot expose fallback editor and retry can reco
 });
 test('closing the settings read aborts the request and ignores late data',async()=>{
  let resolve;const pending=new Promise(r=>resolve=r);const h=harness(()=>pending);h.close();assert.equal(h.calls[0].init.signal.aborted,true);resolve(Response.json({settings:{brand:'late'}}));await settle();assert.equal(h.late,0);assert.equal(h.saves,0);
+});
+
+const accountScope=(ownerId,code='A01526306')=>({ownerId,company:{code,name:code==='A01526306'?'유앤채':'와이홉'}});
+test('account-bound settings display their company and save with the scope that loaded the draft',async()=>{
+ for(const [ownerId,code,brand] of [['admin','A01526306','유앤채'],['member','A01464742','와이홉']]){
+  const scope=accountScope(ownerId,code),h=harness(async()=>Response.json({settings:{brand,manufacturer:'',importer:brand},scope}),{workspaceOwnerId:ownerId});await settle();
+  const editor=h.editor();assert.equal(editor.props.value.brand,brand);assert.equal(editor.props.value.manufacturer,'');assert.equal(editor.key,ownerId);
+  assert.ok(nodes(h.render()).some(n=>n.type==='strong'&&text(n)===brand+' 기본설정'));
+  await editor.props.onSave(editor.props.value);assert.equal(h.saves,1);assert.deepEqual(JSON.parse(JSON.stringify(h.saved[0].scope)),scope);h.close();
+ }
+});
+test('wrong or missing account scope cannot reveal an editable other-account draft',async()=>{
+ for(const scope of [undefined,accountScope('member','A01464742'),{ownerId:'admin',company:{code:'A01464742',name:'유앤채'}}]){
+  const h=harness(async()=>Response.json({settings:{brand:'다른 계정 입력'},...(scope?{scope}:{})}),{workspaceOwnerId:'admin'});await settle();
+  assert.equal(h.editor(),undefined);assert.equal(h.saves,0);assert.ok(nodes(h.render()).some(n=>n.props?.role==='alert'));h.close();
+ }
+});
+test('switching the page owner clears the former editor and ignores its late settings response',async()=>{
+ const deferred=[],h=harness(()=>new Promise(resolve=>deferred.push(resolve)),{workspaceOwnerId:'admin'});
+ assert.equal(h.calls.length,1);h.switchOwner('member');assert.equal(h.editor(),undefined);assert.equal(h.calls[0].init.signal.aborted,true);assert.equal(h.calls.length,2);
+ deferred[0](Response.json({settings:{brand:'유앤채'},scope:accountScope('admin')}));await settle();assert.equal(h.editor(),undefined);
+ deferred[1](Response.json({settings:{brand:'와이홉'},scope:accountScope('member','A01464742')}));await settle();assert.equal(h.editor().props.value.brand,'와이홉');assert.equal(h.editor().key,'member');assert.equal(h.saves,0);h.close();
 });
 
 test('basic settings notice and logistics inputs save the reviewed values, including zero and opt-in month', async () => {

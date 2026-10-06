@@ -17,6 +17,10 @@ function load(relative, overrides = {}) {
       if (name === '@/db/product-content') return {readRegistrationSummaries: async()=>({})};
       if (name === '@/db/collection-images') return {readRegistrationSourceImages: async()=>({})};
       if (name === '@/db/supplier-hub-receipts') return {readSupplierHubReceiptSummaries: async()=>({})};
+      if (name === '@/db/product-removals') return {
+        removeProduct: async()=>{assert.fail('PATCH workflow must not remove a product.');},
+        restoreProduct: async()=>{assert.fail('PATCH workflow must not restore a product.');},
+      };
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'test-owner' }), getWorkspaceOwnerId: async () => 'test-owner' };
       if (name === '@/db/workspace-banners' || name === '@/app/workspace-banners') return load(name.slice(2)+'.ts');
@@ -176,7 +180,7 @@ test('integration diagnostics distinguish D1 query from R2 binding and never cla
 
 test('integration diagnostics expose missing storage tables without hiding a successful connection', async () => {
   const readiness = load('app/database-readiness.ts');
-  const expected = ['collection_results', 'collection_products', 'collection_images'];
+  const expected = ['collection_results', 'collection_products', 'collection_images', 'product_removals'];
   for (const fail of [false, true]) {
     const route = load('app/api/integrations/route.ts', {'cloudflare:workers': {env: {DB: {prepare: sql => {
       if (sql === 'SELECT 1 AS ok') return {first: async () => ({ok: 1})};
