@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {validateAppHubRequest,isHubRegistrationTab} from '../extensions/supplier-hub/app-request.mjs';
-import {isStoredReceiptResult,resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
+import {isStoredReceiptResult,canObserveSupplierHubRegistration,resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
 import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-registration.mjs';
 import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
 import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
@@ -42,9 +42,15 @@ function setup({kind='validation',senderChanges={},tabChanges={},resultChanges={
  const saved={...identity,filename:`YOOFAM-${identity.fingerprint}.xlsx`,quotationId:'quote-1',state:'validation-complete',observedAt:Date.now(),registered:false,...savedChanges};
  const result=kind==='validation'?{...saved,...resultChanges}:{quotationId:'quote-1',scope:'visible-page',rows:[{title:'상품',skuId:'sku-1'}],registered:false,...resultChanges};
  if(legacy)delete identity.company;
- const puts=[],scripts=[];let companyChecks=0;
+ const puts=[],scripts=[];let companyChecks=0,currentSaved=saved;
  const context=vm.createContext({Date,URL,isStoredReceiptResult,verifySupplierHubCompany(){},openSupplierHubRegistrationStatus:async()=>{},searchSupplierHubRegistration(){},readSupplierHubValidation(){},readSupplierHubRegistration(){},resultKey:()=> 'result:key',
-  transferRecord:async(action,key,value)=>{if(action==='put')puts.push(value);else return key==='attempt:123'?(missing?null:identity):saved;},
+  transferRecord:async(action,key,value)=>{
+   if(action==='put'){puts.push(value);currentSaved=value;}
+   else if(action==='register'){
+    if(JSON.stringify(currentSaved)!==JSON.stringify(value.expected)||!canObserveSupplierHubRegistration(value.expected,value.observation))return false;
+    puts.push(value.observation);currentSaved=value.observation;return true;
+   }else return key==='attempt:123'?(missing?null:identity):currentSaved;
+  },
   chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com'+(kind==='validation'?'/qvt/registration':'/qvt/wims'),...tabChanges}]},scripting:{executeScript:async input=>{if(input.func===context.verifySupplierHubCompany){const code=companyCodes?.[companyChecks++]??'A01464742';return [{result:{code}}];}scripts.push(input);await onExecute?.();return [{result}];}}}
  });
  vm.runInContext(source,context);
@@ -120,7 +126,8 @@ test('a file-table miss preserves the accepted receipt and its clocks for the ne
   const row={title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:filename,skuId:'sku-original',status:'검수중',stage:'확인중'};
   const accepted={...identity,filename,quotationId,state:'validation-complete',observedAt,registered:false,profileId:'original-profile',registration:{quotationId,scope:'visible-page',observedAt,includedOptions:1,registered:false,rows:[row]}};
   const key=resultKey(identity),records=new Map([[key,accepted],['attempt:123',identity]]),calls=[];
-  const store=async(action,name,value)=>{calls.push(['store',action,name]);if(action==='put')records.set(name,value);if(action==='claim'){if(records.has(name))return false;records.set(name,value);return true;}return records.get(name);};
+  const store=async(action,name,value)=>{calls.push(['store',action,name]);if(action==='put')records.set(name,value);if(action==='claim'){if(records.has(name))return false;records.set(name,value);return true;}
+   if(action==='register'){if(JSON.stringify(records.get(name))!==JSON.stringify(value.expected)||!canObserveSupplierHubRegistration(value.expected,value.observation))return false;records.set(name,value.observation);return true;}return records.get(name);};
   const tabs=[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete'}],sender={frameId:0,url:identity.origin+'/',tab:{id:7,windowId:17}};
   const table={getClientRects:()=>[{}],querySelectorAll:selector=>selector==='thead th'?['견적서 명','견적서 등록일','검증 상태','검증 결과','견적서 ID'].map(innerText=>({innerText})):[]};
   const refresh={innerText:'새로고침',disabled:false,getClientRects:()=>[{}],getAttribute:()=>null,click(){calls.push(['file-refresh']);}};

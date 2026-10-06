@@ -17,6 +17,32 @@ export function quotationPackagedWeightPeer(fields: readonly QuotationField[], f
   return fieldId === base.id ? wire.id : fieldId === wire.id ? base.id : null;
 }
 
+/** A reviewed literal edit updates the exact g pair. A reset still addresses
+ * only its stored field; deriving the peer's displayed value is read-only.
+ */
+export function quotationPackagedWeightEditFields(fields: readonly QuotationField[], fieldId: string, value: string | null): string[] {
+  const peer = value === null ? null : quotationPackagedWeightPeer(fields, fieldId);
+  return peer ? [fieldId, peer] : [fieldId];
+}
+type WeightChange = { fieldKey: string; optionId: string | null; value: string | null };
+/** Complete single-input plans before saving/copying. Keep an explicitly staged
+ * per-field reset, and refuse competing literals instead of choosing by order.
+ */
+export function quotationPackagedWeightEditChanges(fields: readonly QuotationField[], changes: readonly WeightChange[]): WeightChange[] {
+  const result = changes.map(change => ({ ...change }));
+  for (const change of changes) {
+    const peer = change.value === null ? null : quotationPackagedWeightPeer(fields, change.fieldKey);
+    if (!peer) continue;
+    const explicit = changes.find(item => item.optionId === change.optionId && item.fieldKey === peer);
+    if (explicit) {
+      if (explicit.value !== null && explicit.value !== change.value) throw new Error('연결된 포장 무게 값이 다릅니다. 사용할 무게를 직접 입력한 뒤 적용해주세요.');
+      continue;
+    }
+    if (!result.some(item => item.optionId === change.optionId && item.fieldKey === peer)) result.push({ ...change, fieldKey: peer });
+  }
+  return result;
+}
+
 /** A null means no override (including a staged reset); '' is a manual blank.
  * Option overrides precede common overrides across the exact pair. At the same
  * layer each field's own value wins, so existing conflicting edits stay visible.

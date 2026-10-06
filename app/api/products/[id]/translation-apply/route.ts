@@ -67,6 +67,13 @@ export async function POST(request: Request, context: Context) {
       const hiddenAttributes = typeof capturedSettings?.hiddenAttributes === 'boolean' ? capturedSettings.hiddenAttributes : undefined;
       const intakeBrand = capturedSettings ? savedRegistrationSettings(capturedSettings).brand : undefined;
       const optionRecoveryJobs = job.review.instructionsVersion==='sourceflow-translation-v6' ? await listTranslationJobs(owner,id) : [];
+      if (optionRecoveryJobs.length === 20) {
+        // listTranslationJobs is intentionally bounded. An older canonical
+        // intake proof must remain available to the exact-copy detector;
+        // current option source/provenance checks still decide each adoption.
+        const canonical = await findIntakeTranslation(owner,id);
+        if (canonical && !optionRecoveryJobs.some(value => value.id === canonical.id)) optionRecoveryJobs.push(canonical);
+      }
       plan = integratedTranslationPlan(intakeReplay ? intakeTranslationReplayContent(content,job) : content, options, applicationJob, product.updated_at, scope, hiddenAttributes, intakeBrand,
         intakeReplay && !!content.categoryAttributes,optionRecoveryJobs);
     }

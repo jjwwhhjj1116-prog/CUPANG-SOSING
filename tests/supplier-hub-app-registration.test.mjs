@@ -10,7 +10,7 @@ import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
 import {supplierHubStatusReady} from '../extensions/supplier-hub/hub-tab.mjs';
 import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
-import {canPromoteSupplierHubReceipt,resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
+import {canPromoteSupplierHubReceipt,canObserveSupplierHubRegistration,resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
 import {validateAppHubRequest} from '../extensions/supplier-hub/app-request.mjs';
 import {transmitSupplierHubPackage} from '../extensions/supplier-hub/transmit.mjs';
 import {hubCompanyMenuPage} from './helpers/hub-company-menu.mjs';
@@ -56,6 +56,9 @@ function fixture(options={}){
   if(options.concurrent)records.set(key,{...value.accepted,...options.concurrent});
   if(!canPromoteSupplierHubReceipt(identity,records.get(key),value.accepted)||JSON.stringify(records.get(key))!==JSON.stringify(value.expected))return false;
   records.set(key,value.accepted);return true;
+ }if(action==='register'){
+  if(JSON.stringify(records.get(key))!==JSON.stringify(value.expected)||!canObserveSupplierHubRegistration(value.expected,value.observation))return false;
+  records.set(key,value.observation);return true;
  }if(action==='put')records.set(key,value);return records.get(key);};
  return {calls,records,key,tabs,pages,run:(who=sender,patch={})=>refreshSupplierHubRegistration({...message,...patch},who,api,store)};
 }
@@ -224,7 +227,13 @@ test('receipt recovery rejects wrong Hub companies, source changes during search
  for(const patch of [{companyCodes:['A01526306']},{sourceChangedAt:2},{sourceChangeAfterSearch:true},{concurrent:{quotationId:'other'}}]){
   const h=fixture({recover:true,missingLocal:true,noAttempt:true,...patch});await assert.rejects(h.run());
   assert.equal(h.records.get(h.key)?.registration,undefined);assert.equal(h.calls.some(([name])=>name==='attachToSupplierHub'||name==='requestSupplierHubValidation'),false);
-  if(patch.companyCodes||patch.sourceChangedAt||patch.concurrent)assert.equal(h.calls.some(([name])=>name==='create'||name==='searchSupplierHubRegistration'),false);
+  assert.equal(h.calls.some(([name,id])=>['verifySupplierHubCompany','supplierHubStatusReady','searchSupplierHubRegistration','readSupplierHubRegistration'].includes(name)&&id===123),false,'the unrelated unbound working form is never read or changed');
+  if(patch.companyCodes){
+   assert.deepEqual(h.calls.filter(([name])=>name==='create'),[['create',{windowId:17,url:'https://supplier.coupang.com/qvt/wims',active:false}]]);
+   assert.equal(h.calls.some(([name])=>name==='searchSupplierHubRegistration'),false);assert.equal(h.records.has(h.key),false);assert.equal(h.records.has('attempt:124'),false);
+   assert.equal(h.calls.some(([name,action])=>name==='store'&&['put','claim','promote','register'].includes(action)),false,'fresh live company verification precedes any receipt/binding write');
+  }else if(patch.sourceChangedAt)assert.equal(h.calls.some(([name])=>name==='create'||name==='searchSupplierHubRegistration'),false);
+  else if(patch.concurrent){assert.equal(h.calls.filter(([name])=>name==='create').length,1);assert.equal(h.calls.some(([name])=>name==='searchSupplierHubRegistration'),false);}
  }
 });
 

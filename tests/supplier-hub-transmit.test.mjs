@@ -13,7 +13,7 @@ import {prepareAttachments} from '../extensions/supplier-hub/package.mjs';
 import {verifyAppQuotationSource} from '../extensions/supplier-hub/source-check.mjs';
 import {claimSupplierHubTransmissionWindow} from '../extensions/supplier-hub/transmission-window.mjs';
 import {validateAppHubRequest,isHubRegistrationTab} from '../extensions/supplier-hub/app-request.mjs';
-import {resultKey,isStoredReceiptResult} from '../extensions/supplier-hub/handoff-store.mjs';
+import {resultKey,isStoredReceiptResult,canObserveSupplierHubRegistration} from '../extensions/supplier-hub/handoff-store.mjs';
 import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
 import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-registration.mjs';
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
@@ -81,6 +81,10 @@ async function fixture(options={}){
  const store=async(action,key,value)=>{
    calls.push(['store',action,key]);
    if(action==='claim'){if(records.has(key))return false;records.set(key,value);return true;}
+   if(action==='register'){
+    if(JSON.stringify(records.get(key))!==JSON.stringify(value.expected)||!canObserveSupplierHubRegistration(value.expected,value.observation))return false;
+    records.set(key,value.observation);return true;
+   }
    if(action==='put'&&key.startsWith('attempt:')&&options.bindingError)throw Error('tab binding storage unavailable');
    if(action==='put')records.set(key,value);else return records.get(key);
  };

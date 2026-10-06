@@ -58,8 +58,8 @@ for(const [companyIndex,company]of companies.entries())test(`stage-seven weight 
   ui.field(entry).props.onChange({target:{value:'420'}});ui.field('packagedDimensionsMm').props.onChange({target:{value:'160*70*50'}});
   assert.equal(ui.field(peer).props.value,'420','the unsaved sibling input must show the exact effective weight');
   const fieldBox=id=>nodes(ui.render().tree).find(node=>node.props?.className?.startsWith('quotation-field ')&&nodes(node).some(child=>child.props?.id?.endsWith('-'+id)));
-  assert.match(text(fieldBox(peer)),/공통 직접 수정/);assert.ok(!nodes(fieldBox(peer)).some(node=>node.type==='button'&&text(node).startsWith('수정 해제')),'derived input has no own override to reset');
-  await ui.click('견적 입력 저장');f.view=ui.view;assert.deepEqual(pair(f.view,null,wire),['420','420']);assert.equal(Object.hasOwn(f.view.overrides.common,peer),false);
+  assert.match(text(fieldBox(peer)),/공통 직접 수정/);assert.ok(nodes(fieldBox(peer)).some(node=>node.type==='button'&&text(node).startsWith('수정 해제')),'an explicit paired edit stages its own peer override and exact per-field reset');
+  await ui.click('견적 입력 저장');f.view=ui.view;assert.deepEqual(pair(f.view,null,wire),['420','420']);assert.equal(f.view.overrides.common[peer],'420');
   assert.deepEqual(weightIssues(await f.checkWorkbook(Array(6).fill('420')),wire),[]);
   const optionIds=f.view.resolved.rows.filter(row=>row.included).map(row=>row.optionId);ui.close();ui=null;
   // Layers are option before common, even when the option belongs to the peer.
@@ -104,8 +104,82 @@ test('packaged weight resolution requires one exact editable g pair and leaves p
  }finally{h.close();}
 });
 
+test('explicit g-weight plan pairs literal values and blanks but keeps exact staged null resets and ambiguous weights independent',()=>{
+ const h=mobileIntakeHarness();try{
+  const fields=plain(h.load('app/quotation-schema.ts').getQuotationSchema('69900',categoryPath,snapshot(companies[0])).fields),wire=fields.find(field=>field.hubInput==='packagedWeightG'&&field.numericText),helper=h.load('app/quotation-packaged-weight.ts');
+  for(const fieldKey of ['packagedWeightG',wire.id])for(const value of ['420','']){
+   const result=helper.quotationPackagedWeightEditChanges(fields,[{optionId:'selected',fieldKey,value}]);
+   assert.deepEqual(plain(result),[{optionId:'selected',fieldKey,value},{optionId:'selected',fieldKey:fieldKey==='packagedWeightG'?wire.id:'packagedWeightG',value}]);
+  }
+  const reset=[{optionId:'selected',fieldKey:'packagedWeightG',value:null},{optionId:'selected',fieldKey:wire.id,value:'420'}];
+  assert.deepEqual(plain(helper.quotationPackagedWeightEditChanges(fields,reset)),reset);
+  assert.deepEqual(Array.from(helper.quotationPackagedWeightEditFields(fields,'packagedWeightG',null)),['packagedWeightG']);
+  assert.throws(()=>helper.quotationPackagedWeightEditChanges(fields,[{optionId:null,fieldKey:'packagedWeightG',value:'420'},{optionId:null,fieldKey:wire.id,value:'610'}]),/연결된 포장 무게/);
+  for(const mutate of [copy=>copy.find(field=>field.id===wire.id).unit='kg',copy=>copy.push({...copy.find(field=>field.id===wire.id),id:'ambiguous-weight'}),copy=>copy.find(field=>field.id===wire.id).hubWire.path=['logisticsPage','otherWeight']]){
+   const copy=plain(fields);mutate(copy);assert.deepEqual(plain(helper.quotationPackagedWeightEditChanges(copy,[{optionId:null,fieldKey:'packagedWeightG',value:'420'}])),[{optionId:null,fieldKey:'packagedWeightG',value:'420'}]);
+  }
+ }finally{h.close();}
+});
+
+for(const company of companies)test(`explicit selected weight/blank and copy-to-all reconcile conflicting peers without changing excluded rows (${company.code})`,async()=>{
+ const f=await fixture(company);let ui;try{
+  const ids=f.view.resolved.rows.filter(row=>row.included).map(row=>row.optionId),{wire,h}=f;
+  await f.save([{optionId:null,fieldKey:'packagedWeightG',value:'400'},{optionId:null,fieldKey:wire.id,value:'500'},{optionId:null,fieldKey:'packagedDimensionsMm',value:'160*70*50'},
+   ...ids.flatMap((optionId,index)=>[{optionId,fieldKey:'packagedWeightG',value:String(600+index*20)},{optionId,fieldKey:wire.id,value:String(610+index*20)}])]);
+  const options=await json(await h.route(f.base+'/options')),rows=h.load('app/product-options.ts').optionInputs(options.options);rows.at(-1).included=false;
+  await json(await h.route(f.base+'/options',{method:'PATCH',body:{expectedRevision:options.options.revision,expectedProductVersion:options.productVersion,rows}}));
+  f.view=await json(await h.route(f.endpoint));const sources=f.retained(),before=plain(f.view.overrides),excluded=plain(before.options[ids.at(-1)]);
+  const writes=[];ui=quotationLabelFormUI({productId:f.product.id,load:h.load,request:(path,init={})=>{if(init.method==='PUT')writes.push(JSON.parse(init.body));return h.route(path,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});},renderDocument:()=>assert.fail('packaging edits never render an image')});
+  await ui.idle();ui.selectOption(ids[0]);ui.field('packagedWeightG').props.onChange({target:{value:'420'}});
+  assert.equal(ui.field(wire.id).props.value,'420');await ui.click('견적 입력 저장');f.view=ui.view;
+  assert.deepEqual(writes.at(-1).changes.map(change=>[change.optionId,change.fieldKey,change.value]),[[ids[0],'packagedWeightG','420'],[ids[0],wire.id,'420']]);
+  assert.deepEqual(pair(f.view,ids[0],wire),['420','420']);for(const optionId of ids.slice(1))assert.deepEqual(plain(f.view.overrides.options[optionId]),before.options[optionId]);assert.deepEqual(plain(f.view.overrides.common),before.common);
+  ui.field(wire.id).props.onChange({target:{value:''}});assert.equal(ui.field('packagedWeightG').props.value,'');await ui.click('견적 입력 저장');f.view=ui.view;assert.deepEqual(pair(f.view,ids[0],wire),['','']);
+  const common=plain(f.view.overrides.common);ui.field('packagedWeightG').props.onChange({target:{value:'420'}});
+  nodes(ui.render().tree).find(node=>node.type==='input'&&node.props.role==='switch').props.onChange({target:{checked:true}});
+  await ui.click('견적 입력 저장');f.view=ui.view;
+  for(const optionId of ids.slice(0,-1)){assert.deepEqual(pair(f.view,optionId,wire),['420','420']);assert.equal(f.view.overrides.options[optionId].packagedWeightG,'420');assert.equal(f.view.overrides.options[optionId][wire.id],'420');}
+  assert.deepEqual(plain(f.view.overrides.options[ids.at(-1)]),excluded);assert.deepEqual(plain(f.view.overrides.common),common);
+  assert.equal(writes.at(-1).changes.length,10);assert.ok(writes.at(-1).changes.every(change=>ids.slice(0,-1).includes(change.optionId)&&['packagedWeightG',wire.id].includes(change.fieldKey)));
+  assert.deepEqual(weightIssues(await f.checkWorkbook(Array(5).fill('420')),wire),[]);assert.equal(f.retained(),sources);
+ }finally{ui?.close();f.h.close();}
+});
+
+test('a source clock change rejects a reviewed paired weight PUT as a whole',async()=>{
+ const f=await fixture(companies[0]);try{
+  const old=f.view,id=old.resolved.rows.find(row=>row.included).optionId,changes=f.h.load('app/quotation-packaged-weight.ts').quotationPackagedWeightEditChanges(old.resolved.schema.fields,[{optionId:id,fieldKey:'packagedWeightG',value:'420'}]);
+  const current=f.h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.product.id);
+  assert.ok(await f.h.load('db/queries.ts').updateProduct('owner',f.product.id,{title:'별도 편집자가 저장한 상품명'},current.updated_at));
+  const before=JSON.stringify(['products','product_quotation_fields','product_options','product_content'].map(table=>f.h.sqlite.prepare('SELECT * FROM '+table).all()));
+  const response=await f.h.route(f.endpoint,{method:'PUT',body:{expectedRevision:old.revision,expectedInputFingerprint:old.inputFingerprint,changes}});assert.equal(response.status,409,await response.clone().text());
+  assert.equal(JSON.stringify(['products','product_quotation_fields','product_options','product_content'].map(table=>f.h.sqlite.prepare('SELECT * FROM '+table).all())),before);
+ }finally{f.h.close();}
+});
+
+for(const company of companies)test(`field-selected copy preview stages each exact weight pair once and preserves the source/common layer (${company.code})`,async()=>{
+ const f=await fixture(company);let ui;try{
+  const {wire,h}=f,ids=f.view.resolved.rows.filter(row=>row.included).map(row=>row.optionId);
+  await f.save([{optionId:null,fieldKey:'packagedWeightG',value:'400'},{optionId:null,fieldKey:wire.id,value:'500'},{optionId:null,fieldKey:'packagedDimensionsMm',value:'160*70*50'},
+   ...ids.flatMap((optionId,index)=>[{optionId,fieldKey:'packagedWeightG',value:index?'600':'420'},{optionId,fieldKey:wire.id,value:index?'610':'420'}])]);
+  const before=plain(f.view.overrides),sources=f.retained(),writes=[];
+  ui=quotationLabelFormUI({productId:f.product.id,load:h.load,request:(path,init={})=>{if(init.method==='PUT')writes.push(JSON.parse(init.body));return h.route(path,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});},renderDocument:()=>assert.fail('copy preview does not render an image')});
+  await ui.idle();ui.selectOption(ids[0]);
+  for(const fieldKey of ['packagedWeightG',wire.id]){
+   const box=nodes(ui.render().tree).find(node=>node.props?.className?.startsWith('quotation-field ')&&nodes(node).some(child=>child.props?.id?.endsWith('-'+fieldKey)));
+   nodes(box).find(node=>node.type==='input'&&node.props.type==='checkbox').props.onChange({target:{checked:true}});
+  }
+  await ui.click('적용 범위 미리보기');assert.equal(writes.length,0);assert.match(text(ui.render().tree),/5개 옵션.*10개 값 변경 예정/);
+  await ui.click('확인한 범위에 적용');assert.equal(writes.length,0);ui.selectOption(ids[1]);assert.equal(ui.field('packagedWeightG').props.value,'420');assert.equal(ui.field(wire.id).props.value,'420');
+  await ui.click('견적 입력 저장');f.view=ui.view;
+  assert.equal(writes.length,1);assert.equal(writes[0].changes.length,10);assert.equal(new Set(writes[0].changes.map(change=>JSON.stringify([change.optionId,change.fieldKey]))).size,10);
+  assert.deepEqual(plain(f.view.overrides.common),before.common);assert.deepEqual(plain(f.view.overrides.options[ids[0]]),before.options[ids[0]]);
+  for(const optionId of ids.slice(1))assert.deepEqual(pair(f.view,optionId,wire),['420','420']);
+  assert.deepEqual(weightIssues(await f.checkWorkbook(Array(6).fill('420')),wire),[]);assert.equal(f.retained(),sources);
+ }finally{ui?.close();f.h.close();}
+});
+
 for(const company of companies)test(`actual original 69900 XLSX accepts either stage-seven weight input after Google 429 (${company.code})`,{skip:!fs.existsSync(originalPath)||!fs.existsSync(schemaPath)},async()=>{
- const f=await fixture(company,true);try{
+ const f=await fixture(company,true);let ui;try{
   for(const entry of ['packagedWeightG',f.wire.id]){
    const peer=entry==='packagedWeightG'?f.wire.id:'packagedWeightG';
    await f.save([{fieldKey:entry,optionId:null,value:'420'},{fieldKey:peer,optionId:null,value:null},{fieldKey:'packagedDimensionsMm',optionId:null,value:'160*70*50'}]);
@@ -113,6 +187,13 @@ for(const company of companies)test(`actual original 69900 XLSX accepts either s
    assert.ok(preview.submissionReview.issues.some(issue=>issue.kind==='error'),'other real missing inputs still block submission');
    assert.equal(Object.hasOwn(f.view.overrides.common,peer),false);
   }
+  const ids=f.view.resolved.rows.filter(row=>row.included).map(row=>row.optionId);
+  await f.save(ids.flatMap((optionId,index)=>[{optionId,fieldKey:'packagedWeightG',value:String(600+index)},{optionId,fieldKey:f.wire.id,value:String(610+index)}]));
+  ui=quotationLabelFormUI({productId:f.product.id,load:f.h.load,request:(path,init={})=>f.h.route(path,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})}),renderDocument:()=>assert.fail('packaging editing never translates or renders an image')});
+  await ui.idle();ui.selectOption(ids[0]);ui.field(f.wire.id).props.onChange({target:{value:'420'}});
+  nodes(ui.render().tree).find(node=>node.type==='input'&&node.props.role==='switch').props.onChange({target:{checked:true}});
+  await ui.click('견적 입력 저장');f.view=ui.view;assert.ok(f.view.resolved.rows.filter(row=>row.included).every(row=>pair(f.view,row.optionId,f.wire).every(value=>value==='420')));
+  assert.deepEqual(weightIssues(await f.checkWorkbook(Array(6).fill('420')),f.wire),[]);
   assert.equal(f.retained(),f.before);assert.equal(f.providerCalls,1);assert.equal(f.h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
- }finally{f.h.close();}
+ }finally{ui?.close();f.h.close();}
 });

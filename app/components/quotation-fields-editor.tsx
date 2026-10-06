@@ -15,7 +15,7 @@ import { quotationFieldDisplay } from '@/app/quotation-field-display';
 import { quotationValueLength } from '@/app/quotation-scalar-constraints';
 import { hasCouplusEmptyAttributeDefault } from '@/app/couplus-quotation-defaults';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
-import { quotationPackagedWeightManual, quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
+import { quotationPackagedWeightEditChanges, quotationPackagedWeightEditFields, quotationPackagedWeightManual, quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
 import { isPackagedDimensionsMmField, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
@@ -47,11 +47,11 @@ export function updateQuotationEditorDraft(overrides: QuotationOverrides, change
 
 /** Copy only the current option's edits; keep every untouched automatic field linked. */
 export function quotationSavePlan(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], sourceOptionId: string | null, allOptions: boolean) {
-  let planned = changes.map(change => ({ ...change }));
+  let planned = quotationPackagedWeightEditChanges(view.resolved.schema.fields, changes);
   const propagated: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string }[] = [];
   if (!allOptions) return { changes: planned, propagated };
   if (sourceOptionId === null || !view.resolved.rows.some(row => row.optionId === sourceOptionId && row.included)) throw Error('견적에 포함된 원본 옵션을 선택해주세요.');
-  const edits = changes.filter(change => change.optionId === sourceOptionId);
+  const edits = planned.filter(change => change.optionId === sourceOptionId);
   for (const row of view.resolved.rows) {
     if (row.optionId === null || row.optionId === sourceOptionId || !row.included) continue;
     for (const edit of edits) {
@@ -136,6 +136,7 @@ export function previewQuotationEditorBulk(view: QuotationFieldsView, changes: r
   const fields = [...new Set(fieldKeys)].map(key => view.resolved.schema.fields.find(field => field.id === key));
   if (!fields.length || fields.some(field => !field || field.readOnly)) throw new Error('적용할 수정 가능 항목을 선택해주세요.');
   const rows: BulkPreview['rows'] = []; const planned: QuotationEditorChange[] = [];
+  let targetDraft = [...changes];
   const skipped: string[] = [];
   const copyable = (fields as QuotationField[]).filter(field => {
     const cell = resolveQuotationEditorCell(view, changes, sourceOptionId, field.id);
@@ -153,17 +154,28 @@ export function previewQuotationEditorBulk(view: QuotationFieldsView, changes: r
     skipped.push(`${field.label}: 원본이 미입력이므로 다른 옵션의 값과 자동 연동을 유지합니다.`);
     return false;
   });
+  for (const field of copyable) {
+    const peer = quotationPackagedWeightPeer(view.resolved.schema.fields, field.id);
+    if (peer && copyable.some(item => item.id === peer)
+      && resolveQuotationEditorCell(view, changes, sourceOptionId, field.id).value !== resolveQuotationEditorCell(view, changes, sourceOptionId, peer).value) {
+      throw new Error('연결된 포장 무게 값이 다릅니다. 사용할 무게를 직접 입력한 뒤 적용해주세요.');
+    }
+  }
   for (const row of view.resolved.rows) {
     if (row.optionId === null || row.optionId === sourceOptionId || (includedOnly && !row.included)) continue;
     for (const field of copyable) {
-      const before = resolveQuotationEditorCell(view, changes, row.optionId, field.id);
       const source = resolveQuotationEditorCell(view, changes, sourceOptionId, field.id);
       const after = isPackagedDimensionsMmField(field) ? normalizePackagedDimensionsMm(source.value) : source.value;
-      if (draftManual(view, changes, row.optionId, field.id) === after) continue;
-      rows.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldKey: field.id, label: field.label, before: before.value, after,
-        beforeDisplay: quotationFieldDisplay(field, before), afterDisplay: quotationFieldDisplay(field, { ...source, value: after }), manualBefore: before.source.startsWith('manual-') });
-      planned.push({ optionId: row.optionId, fieldKey: field.id, value: after });
-      if (planned.length > 1000) throw new Error('한 번에 1,000개 값까지 적용할 수 있습니다. 항목 선택 범위를 줄여주세요.');
+      for (const fieldKey of quotationPackagedWeightEditFields(view.resolved.schema.fields, field.id, after)) {
+        const target = view.resolved.schema.fields.find(item => item.id === fieldKey)!;
+        if (draftManual(view, targetDraft, row.optionId, fieldKey) === after) continue;
+        const before = resolveQuotationEditorCell(view, changes, row.optionId, fieldKey);
+        rows.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldKey, label: target.label, before: before.value, after,
+          beforeDisplay: quotationFieldDisplay(target, before), afterDisplay: quotationFieldDisplay(target, { ...source, value: after }), manualBefore: before.source.startsWith('manual-') });
+        planned.push({ optionId: row.optionId, fieldKey, value: after });
+        targetDraft = updateQuotationEditorDraft(view.overrides, targetDraft, { optionId: row.optionId, fieldKey, value: after });
+        if (planned.length > 1000) throw new Error('한 번에 1,000개 값까지 적용할 수 있습니다. 항목 선택 범위를 줄여주세요.');
+      }
     }
   }
   return { base: bulkBase(view, changes), changes: planned, rows, skipped };
@@ -365,8 +377,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     if (!view || busy || loading || !view.resolved.rows.some(row => row.optionId === optionId)) return;
     const field = view.resolved.schema.fields.find(field => field.id === fieldKey);
     if (typeof value === 'string' && field && isPackagedDimensionsMmField(field)) value = normalizePackagedDimensionsMm(value);
-    setChanges(previous => updateQuotationEditorDraft(view.overrides, previous, { fieldKey, optionId, value }));
-    setConflicts(previous => previous.filter(conflict => conflict.key !== quotationEditorKey(optionId, fieldKey)));
+    const fieldKeys = quotationPackagedWeightEditFields(view.resolved.schema.fields, fieldKey, value);
+    setChanges(previous => fieldKeys.reduce((draft, id) => updateQuotationEditorDraft(view.overrides, draft, { fieldKey: id, optionId, value }), previous));
+    setConflicts(previous => previous.filter(conflict => !fieldKeys.some(id => conflict.key === quotationEditorKey(optionId, id))));
     setBulk(null); setMessage('');
   }
   async function save() {

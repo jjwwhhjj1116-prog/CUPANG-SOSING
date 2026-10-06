@@ -5,20 +5,21 @@ import {readSupplierHubValidation} from './result.mjs';
 import {readSupplierHubRegistration} from './registration-result.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
 import {validateAppHubRequest,isHubRegistrationTab} from './app-request.mjs';
+import {recoverSupplierHubValidationTab,verifyRecoveredValidationSource,isRecoveredValidationBinding} from './validation-recovery.mjs';
 
 const activeTabs=new Set();
-export async function observeSupplierHubResult(message,sender){
+export async function observeSupplierHubResult(message,sender,api=chrome,store=transferRecord){
   const appRequest=message?.type==='YOOFAM_REFRESH_RESULT';
   let expected,recovered;
   if(appRequest){
     expected=validateAppHubRequest(message,sender,'YOOFAM_REFRESH_RESULT');
     if(message.kind!=='validation')throw Error('앱에서는 현재 견적서의 검증 결과만 조회할 수 있습니다.');
-    const tabs=(await chrome.tabs.query({windowId:sender.tab.windowId})).filter(tab=>isHubRegistrationTab(tab,sender.tab.windowId));
-    const claim=await transferRecord('get',`transmission:${expected.origin}:${expected.productId}:${expected.categoryId}:${expected.fingerprint}`);
+    const tabs=(await api.tabs.query({windowId:sender.tab.windowId})).filter(tab=>!tab.pendingUrl&&isHubRegistrationTab(tab,sender.tab.windowId));
+    const claim=await store('get',`transmission:${expected.origin}:${expected.productId}:${expected.categoryId}:${expected.fingerprint}`);
     const matches=value=>value&&['origin','productId','categoryId','fingerprint'].every(key=>value[key]===expected[key]);
     const matching=[];
     for(const tab of tabs){
-      const saved=await transferRecord('get',`attempt:${tab.id}`);
+      const saved=await store('get',`attempt:${tab.id}`);
       if(matches(saved))matching.push(tab);
       // Older partial/lost replies have a durable claim but no tab binding.
       // Recover only that exact live tab, never replace a newer tab assignment.
@@ -30,25 +31,29 @@ export async function observeSupplierHubResult(message,sender){
         recovered={...expected,company:claim.company,includedOptions:claim.includedOptions};matching.push(tab);
       }
     }
-    if(matching.length!==1)throw Error('같은 Chrome 창에서 이 견적서를 전달한 Supplier Hub 등록 탭을 확인하지 못했습니다.');
-    message={...message,tabId:matching[0].id};
-  }else if(sender?.id!==chrome.runtime.id||sender?.url!==chrome.runtime.getURL('popup.html')||sender.tab)throw Error('확장 화면에서 결과를 확인해주세요.');
+    if(matching.length>1)throw Error('같은 Chrome 창에서 이 견적서를 전달한 Supplier Hub 등록 탭을 확인하지 못했습니다.');
+    if(!matching.length){const restored=await recoverSupplierHubValidationTab(expected,sender,api,store);recovered=restored.identity;message={...message,tabId:restored.tabId};}
+    else message={...message,tabId:matching[0].id};
+  }else if(sender?.id!==api.runtime.id||sender?.url!==api.runtime.getURL('popup.html')||sender.tab)throw Error('확장 화면에서 결과를 확인해주세요.');
   if(!['validation','registration','registration-search'].includes(message.kind)||!Number.isSafeInteger(message.tabId)||message.tabId<0)throw Error('결과 조회 요청을 확인해주세요.');
   if(activeTabs.has(message.tabId))throw Error('이 탭의 결과를 확인 중입니다. 잠시 후 다시 확인해주세요.');
   activeTabs.add(message.tabId);
   try{
-    const tab=appRequest?await chrome.tabs.get(message.tabId):(await chrome.tabs.query({active:true,currentWindow:true}))[0];
+    const tab=appRequest?await api.tabs.get(message.tabId):(await api.tabs.query({active:true,currentWindow:true}))[0];
     const path=message.kind!=='validation'?'/qvt/wims':'/qvt/registration';
     const allowedPaths=message.kind==='registration-search'?['/qvt/registration','/qvt/wims']:[path];
     if(tab?.id!==message.tabId||!tab.url||new URL(tab.url).origin!=='https://supplier.coupang.com'||!allowedPaths.includes(new URL(tab.url).pathname))throw Error('현재 창의 해당 Supplier Hub 결과 화면에서 실행해주세요.');
-    const identity=await transferRecord('get',`attempt:${tab.id}`)||recovered;
+    const identity=await store('get',`attempt:${tab.id}`)||recovered;
     if(appRequest&&(!isHubRegistrationTab(tab,sender.tab.windowId)||!identity||!['origin','productId','categoryId','fingerprint'].every(key=>identity[key]===expected[key])))throw Error('전송한 견적서 또는 Chrome 창이 변경되었습니다.');
     // Legacy app attempts cannot infer their company from the current login.
     if(identity&&!identity.company)throw Error('전송 기록에 회사정보가 없습니다. 기존 견적서는 Supplier Hub에서 직접 확인해주세요.');
     if(identity?.includedOptions!==undefined&&(!Number.isSafeInteger(identity.includedOptions)||identity.includedOptions<1||identity.includedOptions>200))throw Error('전송한 견적서의 옵션 수를 확인하지 못했습니다.');
+    const readOnlyRecovery=Boolean(appRequest&&identity?.purpose==='validation-status');
+    const checkRecoveredSource=async()=>{if(readOnlyRecovery)await verifyRecoveredValidationSource(expected,identity,sender,api);};
+    await checkRecoveredSource();
     const checkCompany=async()=>{
-      if(appRequest&&!isHubRegistrationTab(await chrome.tabs.get(tab.id),sender.tab.windowId))throw Error('Supplier Hub 등록 탭이 다른 창으로 이동되었습니다.');
-      const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:identity?[identity.company]:[]});
+      if(appRequest){const current=await api.tabs.get(tab.id);if(current?.pendingUrl||!isHubRegistrationTab(current,sender.tab.windowId))throw Error('Supplier Hub 등록 탭이 다른 창으로 이동되었습니다.');}
+      const [execution]=await api.scripting.executeScript({target:{tabId:tab.id},func:verifySupplierHubCompany,args:identity?[identity.company]:[]});
       const code=execution?.result?.code;
       if(!code||(identity&&code!==identity.company.code))throw Error('전송한 회사와 현재 Supplier Hub 회사코드가 일치하지 않습니다.');
       return code;
@@ -56,43 +61,47 @@ export async function observeSupplierHubResult(message,sender){
     const companyCode=await checkCompany();
     if(message.kind!=='validation'){
       if(!identity)throw Error('이 탭에서 전달한 상품 정보가 없습니다.');
-      const key=resultKey(identity),saved=await transferRecord('get',key);
+      const key=resultKey(identity),saved=await store('get',key);
       if(saved?.company?.code!==identity.company.code||saved?.company?.name!==identity.company.name)throw Error('검증 결과의 회사정보가 일치하지 않습니다.');
       if(saved?.state!=='validation-complete'||!saved.quotationId||saved.filename!==`YOOFAM-${identity.fingerprint}.xlsx`)throw Error('먼저 대량 상품 등록 화면에서 해당 파일의 검증 완료 결과와 견적서 ID를 확인해주세요.');
       if(message.kind==='registration-search'){
         await openSupplierHubRegistrationStatus(tab.id);
         await checkCompany();
-        const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:searchSupplierHubRegistration,args:[saved.quotationId]});
+        const [execution]=await api.scripting.executeScript({target:{tabId:tab.id},func:searchSupplierHubRegistration,args:[saved.quotationId]});
         const result=execution?.result;
         if(result?.state!=='search-requested'||result.quotationId!==saved.quotationId||result.registered!==false)throw Error('검색 요청 결과를 확인하지 못했습니다. Supplier Hub 화면을 확인해주세요.');
         return result;
       }
-      const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubRegistration,args:[saved.quotationId]});
+      const [execution]=await api.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubRegistration,args:[saved.quotationId]});
       const result=execution?.result;
       if(!result||result.quotationId!==saved.quotationId||result.scope!=='visible-page'||result.registered!==false||!Array.isArray(result.rows))throw Error('상품별 결과를 확인하지 못했습니다.');
       const includedOptions=saved.includedOptions;
       if(includedOptions!==undefined&&(!Number.isSafeInteger(includedOptions)||includedOptions<1||includedOptions>200))throw Error('저장한 견적서의 옵션 수를 확인하지 못했습니다.');
       await checkCompany();
       const registration={...result,...(includedOptions===undefined?{}:{includedOptions}),observedAt:Date.now()};
-      await transferRecord('put',key,{...saved,registration});
+      if(!await store('register',key,{expected:saved,observation:{...saved,registration}}))throw Error('조회 중 더 최신 상품별 결과가 저장되었습니다. 기존 결과를 유지했습니다.');
       return registration;
     }
     const expectedFilename=identity&&/^[a-f0-9]{64}$/.test(identity.fingerprint)?`YOOFAM-${identity.fingerprint}.xlsx`:undefined;
-    const [execution]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation,args:expectedFilename?[expectedFilename]:[]});
+    const beforeResult=readOnlyRecovery?await store('get',resultKey(identity)):undefined;
+    const [execution]=await api.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation,args:expectedFilename?[expectedFilename]:[]});
     const result=execution?.result;
     if(!result||result.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(result.state))throw Error('검증 결과를 확인하지 못했습니다.');
     if(appRequest&&result.filename!==expectedFilename)throw Error('현재 견적서 파일의 검증 결과인지 확인하지 못했습니다.');
+    await checkRecoveredSource();
     if(await checkCompany()!==companyCode)throw Error('조회 중 Supplier Hub 회사가 변경되었습니다. 결과를 저장하지 않았습니다.');
     if(identity&&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`){
       if(appRequest){
-        const current=await transferRecord('get',`attempt:${tab.id}`);
+        const current=await store('get',`attempt:${tab.id}`);
         if(current&&(!['origin','productId','categoryId','fingerprint'].every(field=>current[field]===identity[field])
           ||current.company?.code!==identity.company.code||current.company?.name!==identity.company.name||current.includedOptions!==identity.includedOptions))
           throw Error('조회 중 전송한 견적서가 변경되었습니다. 결과를 저장하지 않았습니다.');
-        if(recovered&&!current&&!await transferRecord('claim',`attempt:${tab.id}`,identity))
+        if(readOnlyRecovery&&(!isRecoveredValidationBinding(current,expected)||current.profileId!==identity.profileId||current.filename!==identity.filename))throw Error('조회 중 읽기 전용 견적서 연결이 변경되었습니다.');
+        if(recovered&&!current&&!await store('claim',`attempt:${tab.id}`,identity))
           throw Error('조회 중 전송한 견적서가 변경되었습니다. 결과를 저장하지 않았습니다.');
       }
-      const key=resultKey(identity),previous=await transferRecord('get',key);
+      const key=resultKey(identity),previous=await store('get',key);
+      if(readOnlyRecovery&&JSON.stringify(previous)!==JSON.stringify(beforeResult))throw Error('조회 중 더 최신 전송 결과가 저장되었습니다. 기존 결과를 유지했습니다.');
       // A row missing from the current file table does not revoke its accepted
       // quotation ID. Keep the exact receipt and its old observation times so
       // the separate SKU lookup can still query that ID without another upload.
@@ -108,7 +117,9 @@ export async function observeSupplierHubResult(message,sender){
         &&previous.includedOptions===identity.includedOptions&&previous.registration?.includedOptions===identity.includedOptions
         &&previous.filename===result.filename&&typeof result.quotationId==='string'&&Boolean(result.quotationId.trim())
         &&previous.quotationId===result.quotationId&&previous.registration?.quotationId===result.quotationId;
-      await transferRecord('put',key,{...identity,...result,company:identity.company,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{})});
+      const observation={...identity,...result,company:identity.company,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{})};
+      if(readOnlyRecovery){if(!await store('observe',key,{expected:beforeResult,observation}))throw Error('조회 중 더 최신 전송 결과가 저장되었습니다. 기존 결과를 유지했습니다.');}
+      else await store('put',key,observation);
     }
     return result;
   }finally{activeTabs.delete(message.tabId);}

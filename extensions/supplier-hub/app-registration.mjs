@@ -7,6 +7,7 @@ import {verifySupplierHubCompany} from './company.mjs';
 import {searchSupplierHubRegistration} from './registration-search.mjs';
 import {readSupplierHubRegistration} from './registration-result.mjs';
 import {collectSupplierHubRegistrationPages} from './registration-pages.mjs';
+import {isRecoveredValidationBinding} from './validation-recovery.mjs';
 
 const activeWindows=new Set();
 export async function refreshSupplierHubRegistration(message,sender,api=chrome,store=transferRecord){
@@ -23,12 +24,17 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
     if(recovering&&!canPromoteSupplierHubReceipt(identity,local,saved))throw Error('보관된 접수 결과와 이전 검증 기록의 회사·옵션·견적서가 다릅니다.');
     const tabs=(await api.tabs.query({windowId,url:['https://supplier.coupang.com/qvt/registration*','https://supplier.coupang.com/qvt/wims*']}))
       .filter(tab=>['/qvt/registration','/qvt/wims'].some(path=>isSupplierHubTab(tab,windowId,path)));
-    const source=[],status=[];
+    const source=[],status=[];let recoveredValidationSource=false;
     for(const tab of tabs){
       const attempt=await store('get',`attempt:${tab.id}`);
       if(!attempt||!['origin','productId','categoryId','fingerprint'].every(field=>attempt[field]===identity[field]))continue;
       if(attempt.company?.code!==saved.company?.code||attempt.company?.name!==saved.company?.name||attempt.includedOptions!==saved.includedOptions)throw Error('전송 기록과 검증 결과의 회사·옵션 수가 다릅니다.');
       if(attempt.purpose==='registration-status'&&attempt.quotationId===saved.quotationId&&isSupplierHubTab(tab,windowId,'/qvt/wims'))status.push(tab);
+      else if(attempt.purpose==='validation-status'){
+        if(!isSupplierHubTab(tab,windowId,'/qvt/registration')||!isRecoveredValidationBinding(attempt,identity)
+          ||attempt.profileId!==saved.profileId||attempt.filename!==saved.filename)throw Error('복구한 검증 조회 탭과 접수 결과의 원래 견적서가 다릅니다.');
+        source.push(tab);recoveredValidationSource=true;
+      }
       else if(!attempt.purpose)source.push(tab);
     }
     if(status.length>1||(!status.length&&source.length>1))throw Error('같은 Chrome 창에서 해당 견적서를 전송한 Supplier Hub 탭을 확인하지 못했습니다.');
@@ -39,9 +45,9 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
         throw Error('Chrome 전송 기록과 앱에 보관된 접수 결과가 다릅니다.');
       saved={...saved,profileId:restored.profileId,receiptRecovered:true};
     }
-    const tab=status[0]||source[0]||tabs[0];
+    const tab=status[0]||source[0];
     let tabId=tab?.id;
-    const checkSource=()=>saved.receiptRecovered?verifyAppQuotationSource(identity,saved,binding,api):Promise.resolve(true);
+    const checkSource=()=>saved.receiptRecovered||recoveredValidationSource||isRecoveredValidationBinding(saved,identity)?verifyAppQuotationSource(identity,saved,binding,api):Promise.resolve(true);
     const checkCompany=async(path)=>{
       if(!isSupplierHubTab(await api.tabs.get(tabId),windowId,path))throw Error('Supplier Hub 조회 탭의 창 또는 화면이 변경되었습니다.');
       const [execution]=await api.scripting.executeScript({target:{tabId},func:verifySupplierHubCompany,args:[saved.company]});
@@ -75,6 +81,10 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
     }
     await checkCompany('/qvt/wims');
     await checkSource();
+    const observationBase=await store('get',key);
+    if(!isAcceptedResult(identity,observationBase)||observationBase.quotationId!==saved.quotationId||observationBase.filename!==saved.filename
+      ||observationBase.company.code!==saved.company.code||observationBase.company.name!==saved.company.name||observationBase.includedOptions!==saved.includedOptions)
+      throw Error('상품별 조회를 시작하기 전에 견적서 검증 결과가 변경되었습니다.');
     const [searched]=await api.scripting.executeScript({target:{tabId},func:searchSupplierHubRegistration,args:[saved.quotationId,true]});
     if(searched?.result?.state!=='search-complete'||searched.result.quotationId!==saved.quotationId||searched.result.registered!==false)throw Error('견적서 ID 검색 결과를 확인하지 못했습니다.');
     const checkCurrent=async()=>{
@@ -82,15 +92,18 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
       await checkSource();
       const current=await store('get',key);
       if(!isAcceptedResult(identity,current)||current.quotationId!==saved.quotationId||current.filename!==saved.filename||current.company?.code!==saved.company?.code||current.company?.name!==saved.company?.name
-        ||current.includedOptions!==saved.includedOptions||!['origin','productId','categoryId','fingerprint'].every(field=>current[field]===identity[field]))throw Error('조회 중 견적서 검증 결과가 변경되었습니다. 결과를 저장하지 않았습니다.');
+        ||current.includedOptions!==saved.includedOptions||!['origin','productId','categoryId','fingerprint'].every(field=>current[field]===identity[field])
+        ||JSON.stringify(current)!==JSON.stringify(observationBase))throw Error('조회 중 견적서 검증 결과가 변경되었습니다. 결과를 저장하지 않았습니다.');
     };
     const readPage=async(advanceFrom)=>{
       const [execution]=await api.scripting.executeScript({target:{tabId},func:readSupplierHubRegistration,args:[saved.quotationId,{company:saved.company,...(advanceFrom?{advanceFrom}:{})}]});
       return execution?.result;
     };
     const result=await collectSupplierHubRegistrationPages(saved.quotationId,saved.includedOptions,{check:checkCurrent,read:()=>readPage(),advance:readPage});
-    await checkCurrent();const latest=await store('get',key);
+    await checkCurrent();
     const registration={...result,includedOptions:saved.includedOptions,observedAt:Date.now()};
-    const record={...latest,...(saved.receiptRecovered?{profileId:saved.profileId,receiptRecovered:true}:{}),registration};await store('put',key,record);return record;
+    const record={...observationBase,...(saved.receiptRecovered?{profileId:saved.profileId,receiptRecovered:true}:{}),registration};
+    if(!await store('register',key,{expected:observationBase,observation:record}))throw Error('조회 중 더 최신 상품별 결과가 저장되었습니다. 기존 결과를 유지했습니다.');
+    return record;
   }finally{activeWindows.delete(windowId);}
 }

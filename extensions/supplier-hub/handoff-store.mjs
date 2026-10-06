@@ -47,8 +47,50 @@ export function canPromoteSupplierHubReceipt(identity,expected,accepted){
     &&(expected.profileId===undefined||expected.profileId===accepted.profileId)
     &&(!expected.quotationId||expected.quotationId===accepted.quotationId));
 }
+/** Only the new read-only validation-status observation uses this CAS. Keep an
+ * accepted ID and its SKU observation monotonic while a file table redraws. */
+export function canObserveSupplierHubValidation(expected,observation){
+  if(!observation||!HANDOFF_ORIGINS.includes(observation.origin)||!/^\w[\w-]{0,99}$/.test(observation.productId||'')
+    ||!/^\d{1,20}$/.test(observation.categoryId||'')||!/^[a-f0-9]{64}$/.test(observation.fingerprint||'')
+    ||observation.purpose!=='validation-status'||!/^\w[\w-]{0,99}$/.test(observation.profileId||'')
+    ||!Number.isSafeInteger(observation.recoveredAt)||observation.recoveredAt<=0||observation.recoveredAt>Date.now()+60000
+    ||observation.validationResume!==undefined||observation.attachmentNames!==undefined
+    ||!(isStoredReceiptResult(observation,observation)||isRecoverableSupplierHubResult(observation,observation)))return false;
+  if(expected===undefined||expected===null)return observation.registration===undefined;
+  if(!(isStoredReceiptResult(observation,expected)||isRecoverableSupplierHubResult(observation,expected))
+    ||expected.company.code!==observation.company.code||expected.company.name!==observation.company.name
+    ||expected.includedOptions!==observation.includedOptions||(expected.profileId!==undefined&&expected.profileId!==observation.profileId)
+    ||expected.observedAt>observation.observedAt||expected.quotationId&&expected.quotationId!==observation.quotationId)return false;
+  if(expected.state==='validation-complete'&&!isAcceptedResult(observation,observation))return false;
+  if((expected.registration!==undefined||observation.registration!==undefined)&&(expected.state!=='validation-complete'||observation.state!=='validation-complete'
+    ||expected.quotationId!==observation.quotationId||JSON.stringify(expected.registration)!==JSON.stringify(observation.registration)))return false;
+  return true;
+}
+/** A SKU lookup may replace only the accepted receipt it started from. File
+ * identity and validation evidence stay intact; a competing observation wins. */
+export function canObserveSupplierHubRegistration(expected,observation){
+  if(!expected||!observation||!HANDOFF_ORIGINS.includes(observation.origin)||!/^\w[\w-]{0,99}$/.test(observation.productId||'')
+    ||!/^\d{1,20}$/.test(observation.categoryId||'')||!/^[a-f0-9]{64}$/.test(observation.fingerprint||'')
+    ||!isStoredReceiptResult(observation,expected)||!isStoredReceiptResult(observation,observation)
+    ||!isAcceptedResult(observation,expected)||!isAcceptedResult(observation,observation))return false;
+  const ignored=new Set(['registration','profileId','receiptRecovered']),before=Object.keys(expected).filter(key=>!ignored.has(key)).sort(),after=Object.keys(observation).filter(key=>!ignored.has(key)).sort();
+  if(JSON.stringify(before)!==JSON.stringify(after)||before.some(key=>JSON.stringify(expected[key])!==JSON.stringify(observation[key]))
+    ||(expected.profileId!==undefined&&expected.profileId!==observation.profileId)
+    ||(observation.profileId!==undefined&&(typeof observation.profileId!=='string'||!/^\w[\w-]{0,99}$/.test(observation.profileId)))
+    ||(expected.receiptRecovered!==undefined&&expected.receiptRecovered!==observation.receiptRecovered)
+    ||(observation.receiptRecovered!==undefined&&observation.receiptRecovered!==true))return false;
+  const registration=observation.registration;
+  return Boolean(registration&&registration.quotationId===expected.quotationId&&registration.registered===false
+    &&registration.includedOptions===expected.includedOptions&&['visible-page','queried-pages'].includes(registration.scope)
+    &&Number.isSafeInteger(registration.observedAt)&&registration.observedAt>0&&registration.observedAt<=Date.now()+60000
+    &&Array.isArray(registration.rows)&&registration.rows.length<=expected.includedOptions
+    &&registration.rows.every(row=>row&&typeof row==='object'&&!Array.isArray(row))
+    &&(!Number.isSafeInteger(expected.registration?.observedAt)||registration.observedAt>=expected.registration.observedAt));
+}
 export async function transferRecord(action,key,value){
-  if(!['get','put','claim','promote'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  if(!['get','put','claim','promote','observe','register'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  if(action==='register'&&(!value||key!==resultKey(value.observation)||!canObserveSupplierHubRegistration(value.expected,value.observation)))throw Error('상품별 결과의 조건부 조회 기록을 확인해주세요.');
+  if(action==='observe'&&(!value||key!==resultKey(value.observation)||!canObserveSupplierHubValidation(value.expected,value.observation)))throw Error('검증 결과의 조건부 조회 기록을 확인해주세요.');
   if(action==='promote'&&!(HANDOFF_ORIGINS.includes(value?.accepted?.origin)&&/^\w[\w-]{0,99}$/.test(value.accepted.productId||'')
     &&/^\d{1,20}$/.test(value.accepted.categoryId||'')&&/^[a-f0-9]{64}$/.test(value.accepted.fingerprint||'')
     &&key===resultKey(value.accepted)&&canPromoteSupplierHubReceipt(value.accepted,value.expected,value.accepted)))throw Error('접수 결과의 조건부 복구 정보를 확인해주세요.');
@@ -64,6 +106,14 @@ export async function transferRecord(action,key,value){
         // observation wins over recovery of the previously read pending row.
         if(!canPromoteSupplierHubReceipt(value.accepted,result,value.accepted)||JSON.stringify(result)!==JSON.stringify(value.expected))result=false;
         else{store.put(value.accepted,key);result=true;}
+      }
+      else if(action==='observe'){
+        if(JSON.stringify(result)!==JSON.stringify(value.expected)||!canObserveSupplierHubValidation(result,value.observation))result=false;
+        else{store.put(value.observation,key);result=true;}
+      }
+      else if(action==='register'){
+        if(JSON.stringify(result)!==JSON.stringify(value.expected)||!canObserveSupplierHubRegistration(result,value.observation))result=false;
+        else{store.put(value.observation,key);result=true;}
       }
     };transaction.oncomplete=()=>resolve(result);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||Error('전송 기록 저장 실패'));
   });}finally{db.close();}
