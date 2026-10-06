@@ -59,6 +59,25 @@ export async function connectOfficialWorkbookTemplate(bytes:ArrayBuffer,raw:HubS
   report:{categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,company:snapshot.company,kanCategoryId:kan,noticeNumber:selected.noticeNumber,version:selected.version,categoryValue:selected.categoryValue,
    matchedColumns:selected.suggested.mappings.length,unmatchedColumns:selected.suggested.unmatchedColumns,ambiguousColumns:selected.suggested.ambiguousColumns,registered:false as const}};
 }
+export type VerifiedOfficialWorkbook={evidence:OfficialWorkbookEvidence;optionalUnmappedOsrpFieldId:string|null};
+/** Recheck saved evidence against the exact original bytes used for this export. */
+export async function verifyOfficialWorkbookTemplate(bytes:ArrayBuffer,profile:CategoryProfileInput):Promise<VerifiedOfficialWorkbook|undefined>{
+ const template=profile.template,saved=template?.workbookEvidence;if(!saved)return undefined;
+ if(!profile.hubSchema)throw Error('공식 파일 연결의 원본 Single 양식이 없습니다.');
+ const checked=await connectOfficialWorkbookTemplate(bytes,profile.hubSchema),actual=checked.template.workbookEvidence!;
+ if(template.format!=='xlsx'||template.sha256!==actual.templateSha256||template.sheetName!==checked.template.sheetName
+  ||template.headerRow!==checked.template.headerRow||template.dataStartRow!==checked.template.dataStartRow
+  ||JSON.stringify(template.headers)!==JSON.stringify(checked.template.headers.map(header=>header.trim()))
+  ||Object.keys(saved).length!==Object.keys(actual).length
+  ||Object.entries(actual).some(([key,value])=>JSON.stringify(value)!==JSON.stringify(saved[key as keyof typeof actual])))throw Error('공식 파일 연결의 원본·Single 지문·식별값이 다릅니다. 다시 준비해주세요.');
+ const fields=getQuotationSchema(profile.categoryId,profile.categoryPath,profile.hubSchema).fields;
+ const osrp=fields.find(field=>!field.required&&!field.hubWire?.name&&JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','commonAttributes','osrp']));
+ // An absent column is not an alias for MSRP. Ambiguous or explicitly named
+ // OSRP columns must still be mapped; no file/schema equivalence is inferred.
+ const hasOsrpColumn=osrp&&(checked.mappings.some(mapping=>mapping.field===osrp.id)
+  ||checked.template.headers.some(header=>/osrp|공식판매처/iu.test(header.normalize('NFKC').replace(/\s+/gu,''))));
+ return {evidence:actual,optionalUnmappedOsrpFieldId:osrp&&!hasOsrpColumn&&!checked.report.ambiguousColumns.length?osrp.id:null};
+}
 const wireKey=(field:QuotationField)=>field.hubWire?JSON.stringify([field.hubWire.path,field.hubWire.nameKey??null,field.hubWire.valueKey??null,field.hubWire.name??null]):null;
 const constraints=(field:QuotationField)=>JSON.stringify([field.type,field.choices??null,field.unit??null,field.minLength??null,field.maxLength??null,field.integer??false,field.numericValue??false,field.numericText??false,field.min??null,field.max??null,field.maxItems??null,field.exclusiveMinimum??null,field.exclusiveMaximum??null,field.multipleOf??null]);
 export async function connectOfficialHubTemplate(bytes:ArrayBuffer,raw:HubSchemaSnapshot,rawExcel?:HubSchemaSnapshot){

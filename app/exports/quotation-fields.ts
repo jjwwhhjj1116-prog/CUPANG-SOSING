@@ -19,6 +19,7 @@ import { quotationImageIndex } from '@/app/exports/quotation-image-index';
 import { inspectQuotationAssets } from '@/app/exports/quotation-image-checks';
 import { quotationLabelsPage } from '@/app/exports/quotation-labels';
 import { collectionSourceReview } from '@/app/collection-source-review';
+import type {VerifiedOfficialWorkbook} from '@/app/official-hub-template';
 
 const MAX_QUOTATION_TEXT_BYTES = 6 * 1024 * 1024;
 function ensureFieldBudget(document: { rows: unknown[] }, tables: (string | number)[][][], additionalBytes = 0) {
@@ -37,16 +38,22 @@ function ensureFieldBudget(document: { rows: unknown[] }, tables: (string | numb
 // Older saved Excel mappings must point to the same final cells as the editor.
 const aliases: Partial<Record<CategoryField, string>> = { boxQuantity: 'boxSkuQuantity', detailImage: 'detailImages', label: 'labelImages',
   material: 'noticeMaterial', countryOfOrigin: 'noticeCountryOfOrigin', serviceContact: 'noticeServiceContact' };
-/** Check required and populated final fields against explicit mappings. */
-export function quotationMappingCoverage(resolved: ResolvedQuotation, profile: CategoryProfileInput) {
-  const mapped = new Set(profile.mappings.filter(mapping => mapping.field !== 'constant').map(mapping => aliases[mapping.field] ?? mapping.field));
+function mappedQuotationFields(resolved: ResolvedQuotation, profile: CategoryProfileInput) {
+  const direct = new Set(profile.mappings.filter(mapping => mapping.field !== 'constant').map(mapping => aliases[mapping.field] ?? mapping.field));
+  const represented = new Set(direct);
   const included = resolved.rows.filter(row => row.included);
   // Live numeric text inputs keep separate IDs for saved manual edits. Their
   // exact wire represents the common field only while every output agrees.
   for(const [input,wireId] of primaryNumericTextFields(resolved.schema.fields)){
-    if(mapped.has(wireId)&&included.length&&included.every(row=>row.fields[input]
-      &&row.fields[wireId]&&row.fields[input].value===row.fields[wireId].value))mapped.add(input);
+    if(direct.has(wireId)&&included.length&&included.every(row=>row.fields[input]
+      &&row.fields[wireId]&&row.fields[input].value===row.fields[wireId].value))represented.add(input);
   }
+  return {direct,represented};
+}
+/** Check required and populated final fields against explicit mappings. */
+export function quotationMappingCoverage(resolved: ResolvedQuotation, profile: CategoryProfileInput, verifiedWorkbook?:VerifiedOfficialWorkbook) {
+  const {represented:mapped}=mappedQuotationFields(resolved,profile);
+  const included=resolved.rows.filter(row=>row.included);
   return resolved.schema.fields.filter(field => !mapped.has(field.id)).flatMap(field => {
     const manualOptions = included.filter(row => row.fields[field.id]?.source.startsWith('manual-')).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
     const automaticOptions = included.filter(row => {
@@ -58,14 +65,21 @@ export function quotationMappingCoverage(resolved: ResolvedQuotation, profile: C
       return cell && !cell.source.startsWith('manual-') && (cell.value.trim() || selectedEmptyChoice);
     }).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel }));
     if (!field.required && !manualOptions.length && !automaticOptions.length) return [];
-    return [{ fieldId: field.id, label: field.label, required: field.required, manualOptions, automaticOptions }];
+    const workbookOnlyAutomatic=Boolean(verifiedWorkbook&&profile.template?.workbookEvidence
+      &&verifiedWorkbook.evidence.templateSha256===profile.template.sha256&&verifiedWorkbook.evidence.categoryId===resolved.schema.categoryId
+      &&verifiedWorkbook.optionalUnmappedOsrpFieldId===field.id&&!field.required&&!field.hubWire?.name
+      &&JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','commonAttributes','osrp'])
+      &&!manualOptions.length&&included.length&&included.every(row=>row.fields[field.id]?.source==='pricing'));
+    return [{ fieldId: field.id, label: field.label, required: field.required, manualOptions, automaticOptions,...(workbookOnlyAutomatic?{workbookOnlyAutomatic:true as const}:{}) }];
   });
 }
 const imageKeys = (value: string) => value.split('\n').map(key => key.trim()).filter(Boolean);
-export function quotationMappingIssues(resolved: ResolvedQuotation, profile: CategoryProfileInput): SubmissionIssue[] {
-  return quotationMappingCoverage(resolved, profile).map(field => ({
-    kind: 'error', code: 'EXCEL_FIELD_UNMAPPED', optionId: null, optionLabel: '견적서 양식', fieldId: field.fieldId,
-    message: `${field.label}: ${field.required ? '필수 항목' : field.manualOptions.length ? '직접 수정한 항목' : '자동 작성 항목'}이 Excel 열에 연결되지 않았습니다. 카테고리 양식에서 열을 연결한 뒤 다시 준비해주세요.`,
+export function quotationMappingIssues(resolved: ResolvedQuotation, profile: CategoryProfileInput, verifiedWorkbook?:VerifiedOfficialWorkbook): SubmissionIssue[] {
+  return quotationMappingCoverage(resolved, profile, verifiedWorkbook).map(field => ({
+    kind: field.workbookOnlyAutomatic?'review':'error', code: field.workbookOnlyAutomatic?'EXCEL_OPTIONAL_SINGLE_OMITTED':'EXCEL_FIELD_UNMAPPED', optionId: null, optionLabel: '견적서 양식', fieldId: field.fieldId,
+    message: field.workbookOnlyAutomatic
+      ? `${field.label}: 원본 공식 Excel에 대응 열이 없는 화면용 선택 항목입니다. 자동 계산값은 quotation-fields 파일에 보존하고 XLSX에는 기록하지 않았습니다. MSRP 열로 대체하지 않았으며 별도 Excel 상세 양식 JSON은 미확인입니다.`
+      : `${field.label}: ${field.required ? '필수 항목' : field.manualOptions.length ? '직접 수정한 항목' : '자동 작성 항목'}이 Excel 열에 연결되지 않았습니다. 카테고리 양식에서 열을 연결한 뒤 다시 준비해주세요.`,
   }));
 }
 export function quotationAttachmentKeys(saved: QuotationExportSource, resolved: ResolvedQuotation, scope: 'snapshot' | 'quotation' = 'snapshot') {
@@ -121,10 +135,11 @@ export function resolvedQuotationRows(saved: QuotationExportSource, resolved: Re
   });
 }
 
-export function quotationFieldFiles(saved: QuotationExportSource, resolved: ResolvedQuotation, assets: BundleAsset[], inputFingerprint: string, quotation?: QuotationAttachment, workbookIssues: readonly SubmissionIssue[] = [], legal?:Parameters<typeof supplierHubUploadPlan>[3]) {
+export function quotationFieldFiles(saved: QuotationExportSource, resolved: ResolvedQuotation, assets: BundleAsset[], inputFingerprint: string, quotation?: QuotationAttachment, workbookIssues: readonly SubmissionIssue[] = [], legal?:Parameters<typeof supplierHubUploadPlan>[3], verifiedWorkbook?:VerifiedOfficialWorkbook) {
   const fileByKey = new Map(assets.map(asset => [asset.key, asset.name]));
   const fields = new Map(resolved.schema.fields.map(field => [field.id, field]));
-  const mapped = new Set(saved.profile?.mappings.filter(mapping => mapping.field !== 'constant').map(mapping => aliases[mapping.field] ?? mapping.field) ?? []);
+  const mapped = saved.profile ? mappedQuotationFields(resolved,saved.profile) : {direct:new Set<string>(),represented:new Set<string>()};
+  const included=resolved.rows.filter(row=>row.included);
   const sourceIssues = collectionSourceReview(saved.sourceGaps);
   const warnings: string[] = [...resolved.issues, ...sourceIssues.map(issue => issue.message)];
   const overrides: (string | number)[][] = [['범위', '옵션 ID', '현재 옵션명', '견적 포함', '구역 ID', '구역', '필드 ID', '필드명', '수동 수정값', '현재 스키마', 'Excel 열 연결']];
@@ -132,9 +147,14 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
     const option = optionId === null ? null : saved.options.rows.find(option => option.id === optionId);
     for (const [key, value] of Object.entries(values)) {
       const field = fields.get(key); const active = Boolean(field && (optionId === null || option));
-      overrides.push([optionId === null ? 'common' : 'option', optionId ?? '', option?.translatedName || option?.originalName || '', optionId === null ? '공통값' : option?.included ? '포함' : option ? '제외' : '삭제된 옵션', field?.section ?? '', field ? quotationSections[field.section] : '', key, field?.label ?? key, value, active ? '포함' : '현재 비활성', mapped.has(key) && active ? '연결' : '미연결']);
+      // A derived wire connection represents only overrides that contribute to
+      // included output; excluded or shadowed edits remain archived separately.
+      const connected=active&&(mapped.direct.has(key)||(mapped.represented.has(key)&&included.some(row=>
+        (optionId===null?row.fields[key]?.source==='manual-common':row.optionId===optionId&&row.fields[key]?.source==='manual-option')
+        &&row.fields[key]?.value===value)));
+      overrides.push([optionId === null ? 'common' : 'option', optionId ?? '', option?.translatedName || option?.originalName || '', optionId === null ? '공통값' : option?.included ? '포함' : option ? '제외' : '삭제된 옵션', field?.section ?? '', field ? quotationSections[field.section] : '', key, field?.label ?? key, value, active ? '포함' : '현재 비활성', connected ? '연결' : '미연결']);
       if (!active) warnings.push(`보존된 수동값 ${optionId ?? '공통'}/${key}: 현재 카테고리 또는 옵션에 해당하지 않아 overrides 파일에 보존했습니다.`);
-      else if (saved.profile && !mapped.has(key)) warnings.push(`수동값 ${optionId ?? '공통'}/${field!.label}: Excel 열 미연결. quotation-fields.json/CSV에 보존했습니다.`);
+      else if (saved.profile && !connected) warnings.push(`수동값 ${optionId ?? '공통'}/${field!.label}: Excel 열 미연결. quotation-fields.json/CSV에 보존했습니다.`);
     }
   }
   const rows: (string | number)[][] = [['옵션 ID', '옵션명', '구역 ID', '구역', '필드 ID', '필드명', '최종값', '출처', '검토 필요', '확인 사항']];
@@ -165,7 +185,7 @@ export function quotationFieldFiles(saved: QuotationExportSource, resolved: Reso
   const review = { format: 'sourceflow-quotation-review-v1', productId: saved.product.id,
     sourceUrl: saved.product.source_url, inputFingerprint,
     quotationRevision: saved.state.revision, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
-    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys), inspectQuotationAssets(resolved, assets), 'attachment-bytes', quotationAssetIdentities(assets), [...sourceIssues,...(saved.profile ? quotationMappingIssues(resolved, saved.profile) : []),...workbookIssues]),
+    ...inspectSubmission(resolved, productImageKeys(saved.product.image_keys), inspectQuotationAssets(resolved, assets), 'attachment-bytes', quotationAssetIdentities(assets), [...sourceIssues,...(saved.profile ? quotationMappingIssues(resolved, saved.profile, verifiedWorkbook) : []),...workbookIssues]),
   };
   const reviewRows: (string | number)[][] = [['구분', '코드', '옵션 ID', '옵션명', '필드 ID', '확인 사항'],
     ...review.issues.map(issue => [issue.kind === 'error' ? '오류' : '검토', issue.code, issue.optionId ?? '', issue.optionLabel, issue.fieldId ?? '', issue.message])];

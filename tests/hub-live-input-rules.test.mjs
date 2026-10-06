@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {unzipSync} from 'fflate';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
 
@@ -91,7 +92,32 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
   for(const value of ['0','-1','1.5','1e3','1000000001','420g']){const invalid=await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:field.id,optionId:option.optionId,value}]}});assert.equal(invalid.status,400,value);}
   const preview=()=>h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}).then(json);let report=await preview();assert.ok(!report.report.mappingCoverage.some(item=>item.fieldId==='packagedWeightG'));assert.equal(report.rows[0][0],'420');
   view=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:field.id,optionId:option.optionId,value:''}]}}));
-  report=await preview();assert.equal(report.rows[0][0],'');assert.ok(report.report.mappingCoverage.some(item=>item.fieldId==='packagedWeightG'));assert.equal(view.resolved.rows.find(row=>row.optionId===option.optionId).fields[field.id].source,'manual-option');
+  report=await preview();assert.equal(report.rows[0][0],'');assert.ok(!report.report.mappingCoverage.some(item=>item.fieldId==='packagedWeightG'));
+  const blank=view.resolved.rows.find(row=>row.optionId===option.optionId);assert.equal(blank.fields[field.id].source,'manual-option');assert.equal(blank.fields.packagedWeightG.value,'');
+  assert.ok(report.submissionReview.issues.some(issue=>issue.code==='FIELD_INVALID'&&issue.optionId===option.optionId&&issue.fieldId==='packagedWeightG'),'the exact weight pair is mapped but its required blank still blocks submission');
   assert.equal(JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload).rows[0].packagedWeightG,420);
+  const save=async changes=>view=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}}));
+  await save([{fieldKey:field.id,optionId:option.optionId,value:null},{fieldKey:'packagedWeightG',optionId:null,value:'420'},{fieldKey:'packagedWeightG',optionId:option.optionId,value:'420'}]);
+  const label=view.resolved.schema.fields.find(field=>field.id==='packagedWeightG').label,decode=bytes=>new TextDecoder().decode(bytes);
+  const exportedFields=async()=>{
+   const report=await preview(),response=await h.route(base+'/quotation',{method:'POST',body:{action:'export',profileId:profile.id,fingerprint:report.fingerprint}});assert.equal(response.status,200,await response.clone().text());
+   const files=unzipSync(new Uint8Array(await response.arrayBuffer())),document=JSON.parse(decode(files['quotation-fields.json'])),csv=decode(files['quotation-overrides.csv']);
+   const canonicalRows=csv.split(/\r?\n/).filter(row=>row.includes('"packagedWeightG"'));
+   return{report,files,document,canonicalRows,connections:canonicalRows.map(row=>row.match(/"([^"]*)"$/)?.[1]),warnings:document.warnings.filter(message=>message.includes(label+': Excel 열 미연결.'))};
+  };
+  const aligned=await exportedFields(),reader=h.load('app/xlsx-template.ts'),sheet=reader.inspectXlsxArchive(await reader.readXlsxArchive(aligned.files[aligned.report.filename]));
+  for(let index=0;index<6;index++)assert.equal(reader.xlsxHeaders(sheet,'견적서',index+2)[0],'420','the real XLSX includes the canonical manual weight through its exact live wire');
+  assert.equal(aligned.document.overrides.common.packagedWeightG,'420');assert.equal(aligned.document.overrides.options[option.optionId].packagedWeightG,'420');
+  assert.deepEqual({connections:aligned.connections,warnings:aligned.warnings},{connections:['연결','연결'],warnings:[]});
+  await save([{fieldKey:field.id,optionId:option.optionId,value:'500'}]);
+  const divergent=await exportedFields();assert.equal(divergent.report.rows[0][0],'500');assert.ok(divergent.report.report.mappingCoverage.some(item=>item.fieldId==='packagedWeightG'));
+  assert.deepEqual(divergent.connections,['미연결','미연결']);assert.equal(divergent.warnings.length,2);
+  await save([{fieldKey:'packagedWeightG',optionId:option.optionId,value:''},{fieldKey:field.id,optionId:option.optionId,value:'420'}]);
+  const manualBlank=await exportedFields();assert.equal(manualBlank.document.overrides.options[option.optionId].packagedWeightG,'');assert.equal(manualBlank.report.rows[0][0],'420');assert.deepEqual(manualBlank.connections,['미연결','미연결']);
+  await save([{fieldKey:'packagedWeightG',optionId:option.optionId,value:'500'},{fieldKey:field.id,optionId:option.optionId,value:'510'}]);
+  const latestOptions=await json(await h.route(base+'/options')),remaining=h.load('app/product-options.ts').optionInputs(latestOptions.options);remaining.find(row=>row.id===option.optionId).included=false;
+  await json(await h.route(base+'/options',{method:'PATCH',body:{expectedRevision:latestOptions.options.revision,expectedProductVersion:latestOptions.productVersion,rows:remaining}}));
+  const excluded=await exportedFields();assert.equal(excluded.report.rows.length,5);assert.ok(!excluded.report.report.mappingCoverage.some(item=>item.fieldId==='packagedWeightG'));
+  assert.deepEqual(excluded.connections,['연결','미연결']);assert.equal(excluded.warnings.length,1);assert.ok(excluded.canonicalRows[1].includes('"제외"'));assert.equal(excluded.document.overrides.options[option.optionId].packagedWeightG,'500');
  }finally{h.close();}
 });

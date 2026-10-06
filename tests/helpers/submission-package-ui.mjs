@@ -11,7 +11,7 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 
 /** Actual component, API, ZIP parser and source verifier. The final Hub transport
  * is captured locally: these tests never upload synthetic data to Supplier Hub. */
-export function submissionPackageUI({route,productId,profileId='cat',categoryId='80719',observations=[],lookupResults=[]}){
+export function submissionPackageUI({route,productId,profileId='cat',categoryId='80719',observations=[],lookupResults=[],requestTimeoutMs=5000}){
  const slots=[],modules=new Map(),calls=[],savedSubmissions=new Map();let cursor=0;
  const submissionKey=identity=>JSON.stringify([identity.productId,identity.categoryId,identity.fingerprint]);
  const fetcher=async(path,init)=>{const body=init?.body?JSON.parse(init.body):undefined;calls.push({action:body?.action??'receipt-read'});return route(path,{method:init?.method??'GET',body});};
@@ -56,7 +56,7 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
  const button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
  async function click(label){
   const target=button(label);if(!target||target.props.disabled)throw Error('Button unavailable: '+label);target.props.onClick();
-  const deadline=Date.now()+5000;while(render().props['aria-busy']){if(Date.now()>deadline)throw Error('UI request timeout');await new Promise(resolve=>setTimeout(resolve,1));}
+  const deadline=Date.now()+requestTimeoutMs;while(render().props['aria-busy']){if(Date.now()>deadline)throw Error('UI request timeout');await new Promise(resolve=>setTimeout(resolve,1));}
  }
  return {calls,button,click,render,remount(){slots.length=0;},setLookupError(value){lookupError=value;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
   alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children)};

@@ -1,4 +1,5 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
+import {verifyOfficialWorkbookTemplate,type VerifiedOfficialWorkbook} from '@/app/official-hub-template';
 import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type QuotationRowValues, type CategoryProfileInput } from '@/app/category-profiles';
 import { inspectXlsxArchive, readXlsxArchive, supplierHubEntryLayout, supplierHubRequirementRow, supplierHubSheetSignature, xlsxChoiceLists, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
 
@@ -10,7 +11,7 @@ export type MappedQuotationReport = {
   validationIssues: QuotationValidationIssue[]; validationIssueCount: number; missingRequired: QuotationCellIssue[]; blankCells: QuotationCellIssue[]; warnings: string[];
 };
 export type MappedQuotationInput = { originalBytes: ArrayBuffer; profile: CategoryProfileInput; rows: QuotationData[]; dataStartRow: number };
-export type MappedQuotationResult = { bytes: Uint8Array; filename: string; mimeType: string; report: MappedQuotationReport; values: (string | number)[][] };
+export type MappedQuotationResult = { bytes: Uint8Array; filename: string; mimeType: string; report: MappedQuotationReport; values: (string | number)[][]; verifiedWorkbook?:VerifiedOfficialWorkbook };
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const MAX_OUTPUT = 10_000_000;
@@ -284,6 +285,7 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
   if (input.originalBytes.byteLength < 1 || input.originalBytes.byteLength > 5_000_000) fail('견적서 원본은 5MB 이하이어야 합니다.');
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', input.originalBytes))).map(byte => byte.toString(16).padStart(2, '0')).join('');
   if (hash !== template.sha256) fail('선택한 견적서와 저장된 원본 파일 지문이 일치하지 않습니다.');
+  const verifiedWorkbook=await verifyOfficialWorkbookTemplate(input.originalBytes,profile);
   const report: MappedQuotationReport = { verification: 'draft', rowCount: input.rows.length, dataStartRow: input.dataStartRow, validationIssues: [], validationIssueCount: 0, missingRequired: [], blankCells: [], warnings: ['생성 결과는 검토용입니다. Supplier Hub 접수·카테고리별 필수 정보 검증은 완료되지 않았습니다.'] };
   const schemaFields = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema).fields;
   let payloadSize = 0;
@@ -362,5 +364,5 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
   }
   if (bytes.byteLength > MAX_OUTPUT) fail('생성한 견적서가 10MB를 초과합니다.');
   const name = template.name.replace(/\.[^.]+$/, '').replace(/[\u0000-\u001f\\/:*?"<>|]/g, '_').slice(0, 180);
-  return { bytes, filename: `${name || 'quotation'}-검토용.${template.format}`, mimeType, report, values: previewValues };
+  return { bytes, filename: `${name || 'quotation'}-검토용.${template.format}`, mimeType, report, values: previewValues,...(verifiedWorkbook?{verifiedWorkbook}:{}) };
 }

@@ -1,14 +1,22 @@
-import type { ResolvedQuotation } from '@/app/quotation-schema';
+import type { QuotationSchema, ResolvedQuotation } from '@/app/quotation-schema';
 import type { DocumentImagePlan } from '@/app/document-image';
 import { quotationFieldDisplay } from '@/app/quotation-field-display';
+
+/** Live option attributes retain wire-specific IDs instead of color/size IDs. */
+export function quotationLabelFields(schema: QuotationSchema) {
+  const identity = new Set(['title', 'model', 'brand', 'manufacturer', 'color', 'quantity', 'size']);
+  return schema.fields.filter(field => identity.has(field.id) || field.section === 'legal'
+    || field.section === 'product' && field.visibility === 'exposed' && field.hubWire?.name
+      && field.hubWire.path.length === 3 && field.hubWire.path[0] === 'productPage'
+      && field.hubWire.path[1] === 'commonAttributes' && field.hubWire.path[2] === 'exposedAttributes');
+}
 
 /** Use resolved cells, so option overrides and deliberately cleared values survive. */
 export function quotationLabelPlan(resolved: ResolvedQuotation, optionId: string | null): DocumentImagePlan {
   const row = resolved.rows.find(item => item.optionId === optionId);
   if (!row || !row.included) throw new Error('견적에 포함된 옵션을 선택해주세요.');
   if (!resolved.schema.categoryId) throw new Error('카테고리를 먼저 선택해주세요.');
-  const identity = new Set(['title', 'model', 'brand', 'manufacturer', 'color', 'quantity', 'size']);
-  const fields = resolved.schema.fields.filter(field => identity.has(field.id) || field.section === 'legal');
+  const fields = quotationLabelFields(resolved.schema);
   if (!fields.some(field => row.fields[field.id]?.value.trim())) throw new Error('견적 값을 저장한 후 표시사항 PNG를 만들어주세요.');
   return {
     title: '견적 기준 표시사항 · 검토용',

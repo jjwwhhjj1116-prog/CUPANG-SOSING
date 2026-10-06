@@ -24,3 +24,12 @@ test('busy or unsaved mapping review cannot navigate or manage, and empty findin
  for(const button of nodes(tree).filter(n=>n.type==='button')){assert.equal(button.props.disabled,true);button.props.onClick();}
  assert.equal(calls,0);assert.equal(render({findings:[],disabled:false,onInspect(){},onManage(){}}),null);
 });
+test('verified file-only automatic values are reviewable without an impossible connect instruction',()=>{
+ const optional={fieldId:'live_osrp',label:'공식 판매처 가격',required:false,manualOptions:[],automaticOptions:[{optionId:'one',optionLabel:'첫 옵션'}],workbookOnlyAutomatic:true};
+ const targets=[];let managed=0;
+ const tree=render({findings:[optional],disabled:false,onInspect:target=>targets.push(target),onManage:()=>managed++});
+ const html=renderToStaticMarkup(tree);assert.match(html,/공식 파일에 없는 선택 항목/);assert.match(html,/검토 자료에 보존/);assert.doesNotMatch(html,/출력할 열을 연결|누락된 입력|카테고리·양식 연결 수정/);
+ nodes(tree).find(node=>node.type==='button').props.onClick();assert.deepEqual(JSON.parse(JSON.stringify(targets)),[{optionId:'one',fieldId:'live_osrp'}]);assert.equal(managed,0);
+ const mixed=render({findings:[optional,...findings],disabled:false,onInspect(){},onManage:()=>managed++});
+ assert.match(renderToStaticMarkup(mixed),/출력할 열을 연결/);nodes(mixed).find(node=>node.type==='button'&&node.props.children==='카테고리·양식 연결 수정').props.onClick();assert.equal(managed,1);
+});

@@ -43,7 +43,7 @@ for(const company of schemaCompanies)test(`actual official XLSX file evidence pr
   assert.equal(preview.submissionReview.issues.filter(issue=>issue.code==='EXCEL_VALUE_INVALID'&&issue.fieldId===brand.id).length,0,'free text brand with disabled original error alert is advisory, not a transmission error');
   const materialColumn=profile.mappings.find(mapping=>mapping.field===material.id).column,titleColumn=profile.mappings.find(mapping=>mapping.field==='title').column;
   for(const [index,row]of preview.rows.entries()){assert.equal(row[titleColumn],'공식 파일로 검토한 수동 제목');assert.match(row[1],/\(69900\)$/);assert.equal(row[materialColumn],index===1?'':'사용자 전체 소재');}
-  assert.ok(preview.report.mappingCoverage.some(field=>field.label==='공식 판매처 가격'));assert.ok(preview.submissionReview.issues.some(issue=>issue.code==='EXCEL_FIELD_UNMAPPED'));
+  assert.ok(preview.report.mappingCoverage.some(field=>field.label==='공식 판매처 가격'&&field.workbookOnlyAutomatic===true));assert.ok(preview.submissionReview.issues.some(issue=>issue.code==='EXCEL_OPTIONAL_SINGLE_OMITTED'&&issue.kind==='review'));
   assert.ok(preview.report.missingRequired.length>0,'file-only download does not hide missing factual measurements/label images');
   const download=await h.route(base+'/quotation',{method:'POST',body:{action:'download',profileId:profile.id,fingerprint:preview.fingerprint}});assert.equal(download.status,200,await download.clone().text());
   const inspection=reader.inspectXlsxArchive(await reader.readXlsxArchive(await download.arrayBuffer()));

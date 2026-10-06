@@ -17,6 +17,7 @@ import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapsh
 import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotation-scalar-constraints';
 import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
 import { quotationNoticeInput } from '@/app/quotation-notice-inputs';
+import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -551,9 +552,13 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       if(automatic.source==='empty'&&!automatic.issues?.length&&definition.schemaDefault!==undefined)automatic={value:definition.schemaDefault,source:'schema'};
       const manualOption = !definition.readOnly && specific && Object.hasOwn(specific, definition.id);
       const manualCommon = !definition.readOnly && Object.hasOwn(overrides.common, definition.id);
-      const value = manualOption ? specific![definition.id] : manualCommon ? overrides.common[definition.id] : automatic.value;
-      const source: QuotationSource = manualOption ? 'manual-option' : manualCommon ? 'manual-common' : automatic.source;
-      const validationIssues = [...quotationValueIssues(definition, value, ownedKeys, source), ...(!manualOption && !manualCommon ? automatic.issues ?? [] : [])];
+      const weightManual = quotationPackagedWeightManual(schema.fields, definition.id, optionId, (layer, id) => {
+        const values = layer === null ? overrides.common : Object.hasOwn(overrides.options, layer) ? overrides.options[layer] : undefined;
+        return values && Object.hasOwn(values, id) ? values[id] : null;
+      });
+      const value = weightManual?.value ?? (manualOption ? specific![definition.id] : manualCommon ? overrides.common[definition.id] : automatic.value);
+      const source: QuotationSource = weightManual?.source ?? (manualOption ? 'manual-option' : manualCommon ? 'manual-common' : automatic.source);
+      const validationIssues = [...quotationValueIssues(definition, value, ownedKeys, source), ...(!weightManual && !manualOption && !manualCommon ? automatic.issues ?? [] : [])];
       const reviewMessages: string[] = [];
       if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
       if (definition.reviewRequired && (value.trim() || hasSelectedEmptyQuotationChoice(definition, { value, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
