@@ -5,7 +5,7 @@ import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
 const filename='YOOFAM-'+ 'a'.repeat(64)+'.xlsx';
 function run(rows,options={}){
  let notify;
- const table={isConnected:true,contains:target=>target===table,getClientRects:()=>[{}],querySelectorAll(selector){return selector==='thead th'?['견적서 명 ?','견적서 등록일 ?','검증 상태 ?','검증 결과 ?','견적서 ID ?'].map(innerText=>({innerText})):rows.map(values=>({querySelectorAll:()=>values.map(innerText=>({innerText}))}));}};
+ const table={isConnected:true,contains:target=>target===table,getClientRects:()=>[{}],querySelectorAll(selector){return selector==='thead th'?['견적서 명 ?','견적서 등록일 ?','검증 상태 ?','검증 결과 ?','견적서 ID ?'].map(innerText=>({innerText})):rows.map(values=>({querySelectorAll:()=>values.map(value=>({innerText:typeof value==='string'?value:value.text,querySelectorAll:()=>typeof value==='string'?[]:(value.copies??[]).map(copy=>({getClientRects:()=>copy.hidden?[]:[{}],getAttribute:()=>copy.id}))}))}));}};
  const refresh={innerText:'refresh 새로고침',disabled:!!options.refreshDisabled,getAttribute:()=>null,getClientRects:()=>[{}],click(){options.onRefresh?.();if(options.refreshedRows)rows=options.refreshedRows;notify([{target:table}]);}};
  const document={body:{},documentElement:{dataset:{yoofamAttachmentAttempt:JSON.stringify({state:options.state||'validation-requested',files:[filename]})}},querySelectorAll:selector=>selector==='button'?(options.noRefresh?[]:[refresh]):options.ambiguous?[table,table]:[table]};
  if(options.reloaded)document.documentElement.dataset={};
@@ -41,4 +41,25 @@ test('an already open result table is refreshed before its new status is read',a
  const result=await run([[filename,'date','검증중','','123']],{onRefresh:()=>clicks++,refreshedRows:[[filename,'date','완료','완료','123']]});
  assert.equal(clicks,1);assert.equal(result.state,'validation-complete');assert.equal(result.registered,false);
  for(const options of [{noRefresh:true},{refreshDisabled:true}])await assert.rejects(()=>run([[filename,'date','완료','','123']],options),/새로고침/);
+});
+
+test('a visible full quotation copy ID anchors validation results instead of its abbreviated display',async()=>{
+ const id='c4541e05-8d56-4c6a-a67b-4d93683123c9';
+ for(const text of [id,`${id.slice(0,8)}...`]){
+  const result=await run([[filename,'date','완료','검증 완료',{text,copies:[{id}]}]]);
+  assert.equal(result.quotationId,id);assert.equal(result.state,'validation-complete');assert.equal(result.registered,false);
+ }
+});
+
+test('ambiguous, hidden, contradictory or unresolved quotation IDs cannot become accepted receipts',async()=>{
+ const id='c4541e05-8d56-4c6a-a67b-4d93683123c9';
+ for(const cell of [
+  {text:`${id.slice(0,8)}...`,copies:[{id},{id}]},
+  {text:`${id.slice(0,8)}...`,copies:[{id,hidden:true}]},
+  {text:'different...',copies:[{id}]},
+  {text:`${id.slice(0,8)}...`,copies:[{id:` ${id}`}]},
+  {text:`${id.slice(0,8)}...`,copies:[{id:'12345678...'}]},
+  `${id.slice(0,8)}...`,`${id.slice(0,8)}…`,
+ ])await assert.rejects(()=>run([[filename,'date','완료','검증 완료',cell]]),/견적서 ID/);
+ const pending=await run([[filename,'date','검증중','','']]);assert.equal(pending.state,'validation-pending');assert.equal(pending.quotationId,'');
 });

@@ -43,6 +43,7 @@ export type SupplierHubSavedAttempt={state:'started'|'validation-requested'|'att
 export type SupplierHubSavedSubmission={attempt:SupplierHubSavedAttempt|null;result:SupplierHubResult|null};
 type ResultSource={filename:string;company:{code:string;name:string};includedOptions:number;quotationId?:string};
 export class SupplierHubResultInvalid extends Error {}
+function abbreviatedQuotationId(value:unknown){return typeof value==='string'&&/\.\.\.|…/.test(value);}
 /** Shared evidence for restored receipts and fresh lookups; SKU issuance is not approval. */
 export function supplierHubRegistrationEvidence(result:SupplierHubResult|null){
   const registration=result?.registration,rows=registration?.rows??[],includedOptions=result?.includedOptions;
@@ -60,6 +61,7 @@ export function supplierHubRegistrationEvidence(result:SupplierHubResult|null){
 }
 /** A cached receipt and a live lookup must refer to the same reviewed company and rows. */
 export function validateSupplierHubResultForSource(result:SupplierHubResult,source:ResultSource):void{
+  if(abbreviatedQuotationId(result.quotationId))throw new SupplierHubResultInvalid('생략된 견적서 ID로는 접수 결과를 저장하거나 상품별 상태를 조회할 수 없습니다. 전체 접수 ID를 확인해주세요.');
   if(result.registered!==false||result.filename!==source.filename||result.company?.code!==source.company.code||result.company?.name!==source.company.name)
     throw new SupplierHubResultInvalid('현재 검토한 회사의 견적서 결과인지 확인하지 못했습니다.');
   if(result.includedOptions!==source.includedOptions||result.registration&&(result.registration.includedOptions!==source.includedOptions||result.registration.rows.length>source.includedOptions))
@@ -69,6 +71,7 @@ export function validateSupplierHubResultForSource(result:SupplierHubResult,sour
 }
 export function validateRegistrationResult(value:unknown,quotationId:unknown):SupplierHubRegistration{
   const result=value as SupplierHubRegistration;
+  if(abbreviatedQuotationId(quotationId)||abbreviatedQuotationId(result?.quotationId))throw new SupplierHubResultInvalid('상품별 조회에는 생략되지 않은 전체 견적서 ID가 필요합니다.');
   if(!result||typeof quotationId!=='string'||!quotationId.trim()||result.quotationId!==quotationId||!['visible-page','queried-pages'].includes(result.scope)||result.registered!==false||!Number.isFinite(result.observedAt)||result.observedAt<=0||result.observedAt>Date.now()+60000||(result.includedOptions!==undefined&&(!Number.isSafeInteger(result.includedOptions)||result.includedOptions<1||result.includedOptions>200))||!Array.isArray(result.rows)||result.rows.length>1000||result.rows.some(row=>!row||['title','submittedAt','category','barcode','sourceQuotation','skuId','status','stage'].some(key=>typeof row[key as keyof SupplierHubRegistrationRow]!=='string'||row[key as keyof SupplierHubRegistrationRow].length>20000)))throw new SupplierHubResultInvalid('현재 견적서의 상품별 등록 결과인지 확인하지 못했습니다.');
   if(result.scope==='queried-pages'&&(!Number.isSafeInteger(result.pagesRead)||result.pagesRead<1||result.pagesRead>200||![true,false,null].includes(result.hasMore)
     ||result.includedOptions===undefined||result.rows.length>result.includedOptions)
@@ -78,6 +81,7 @@ export function validateRegistrationResult(value:unknown,quotationId:unknown):Su
 function readResultRecord(value:unknown,identity:PackageIdentity):SupplierHubResult|null{
   if(value===null)return null;
   const record=value as Record<string,unknown>;
+  if(abbreviatedQuotationId(record?.quotationId))throw new SupplierHubResultInvalid('생략된 견적서 ID로는 접수 결과를 저장하거나 상품별 상태를 조회할 수 없습니다. 전체 접수 ID를 확인해주세요.');
   if(!record||record.origin!==window.location.origin||record.productId!==identity.productId||record.categoryId!==identity.categoryId||record.fingerprint!==identity.fingerprint||record.filename!==`YOOFAM-${identity.fingerprint}.xlsx`||record.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(String(record.state))||typeof record.observedAt!=='number'||!Number.isFinite(record.observedAt)||record.observedAt<=0||record.observedAt>Date.now()+60000||(record.includedOptions!==undefined&&(typeof record.includedOptions!=='number'||!Number.isSafeInteger(record.includedOptions)||record.includedOptions<1||record.includedOptions>200))||['submittedAt','status','detail','quotationId'].some(key=>record[key]!==undefined&&(typeof record[key]!=='string'||String(record[key]).length>20000)))throw new SupplierHubResultInvalid('검토한 상품의 검증 결과인지 확인하지 못했습니다.');
   if(record.registration!==undefined){
     if(record.state!=='validation-complete')throw new SupplierHubResultInvalid('파일 검증 완료 결과가 필요합니다.');

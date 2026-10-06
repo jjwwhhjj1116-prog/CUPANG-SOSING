@@ -375,6 +375,18 @@ test('manual and recovered source binding also checks option coverage and pinned
   assert.throws(()=>api.validateSupplierHubResultForSource({...value.record,...patch},source));
 });
 
+test('unresolved abbreviated quotation IDs cannot be restored, retained or used for SKU result binding',async()=>{
+ for(const quotationId of ['c4541e05...','c4541e05…']){
+  const value=savedFixture(),record={...value.record,quotationId},h=savedReply({...value,record});
+  await assert.rejects(h.api.getSupplierHubResult(identity,new AbortController().signal),/전체 접수 ID/);
+  await assert.rejects(h.api.getSupplierHubSubmission(identity,new AbortController().signal),/전체 접수 ID/);
+  const source={filename:record.filename,company:record.company,includedOptions:record.includedOptions};
+  assert.throws(()=>h.api.validateSupplierHubResultForSource(record,source),/전체 접수 ID/);
+  assert.throws(()=>h.api.validateRegistrationResult({quotationId,scope:'visible-page',observedAt:Date.now(),registered:false,rows:[]},quotationId),/전체 견적서 ID/);
+  assert.ok(h.sent.every(message=>['PING','RESULT'].includes(message.type)),'malformed cached IDs must not trigger a live Hub search or transmission');
+ }
+});
+
 test('cancelling cache recovery releases all listeners and never sends a live Hub request',async()=>{
  const h=harness((message,emit)=>{if(message.type==='PING')emit(message,{ok:true,savedSubmission:true});});
  const controller=new AbortController(),pending=h.api.getSupplierHubSubmission(identity,controller.signal);

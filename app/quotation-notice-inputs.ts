@@ -1,4 +1,6 @@
-import type { QuotationField } from '@/app/quotation-schema';
+import type { QuotationField, QuotationResolverInput, ResolvedQuotation } from '@/app/quotation-schema';
+import { savedTextOrFallback } from '@/app/product-content';
+import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus-registration-defaults';
 
 // Complete notice names recorded in the sports quotation forms. These are
 // source bindings, never inferred product facts or category-specific defaults.
@@ -14,6 +16,43 @@ const inputs: Readonly<Record<string,string>> = {
 const fashionInputs: Readonly<Record<string,string>> = {
   '종류':'noticeKind', '소재':'noticeMaterial', '치수':'noticeDimensions', '취급시 주의사항':'noticeCaution',
 };
+
+/** Recorded static notices retain their meanings. A captured form must carry
+ * the exact named legalPage.notices wire; a matching control title is not proof. */
+export function isQuotationLegalNotice(field: QuotationField): boolean {
+  if (field.section !== 'legal' || field.visibility !== 'common') return false;
+  if (!field.hubWire) return true;
+  const wire = field.hubWire;
+  return wire.path.length === 2 && wire.path[0] === 'legalPage' && wire.path[1] === 'notices'
+    && wire.name === field.label && Boolean(wire.nameKey) && Boolean(wire.valueKey);
+}
+
+/** Change identity only when the former title shortcut changed an exported
+ * automatic value. Keep normal notices, inactive settings and manual cells on
+ * their existing fingerprint contract; never rewrite an earlier receipt. */
+export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverInput, 'content' | 'settings' | 'product'>, resolved: ResolvedQuotation): { noticeBindingRevision?: 'exact-legal-notices-v1' } {
+  for (const field of resolved.schema.fields) {
+    if (!field.hubWire || field.section !== 'legal' || isQuotationLegalNotice(field)) continue;
+    const date = ['출시년월', '제조년월'].includes(field.label), washing = field.label === '세탁방법 및 취급시 주의사항';
+    if (!date && !washing) continue;
+    const stored = input.content.label[date ? 'releaseDate' : 'washingPrecautions'];
+    const fallback = date ? input.settings.manufactureDatePreviousMonth ? previousRegistrationMonth(input.product.created_at) : ''
+      : washingPrecautionsText(input.settings);
+    // An explicit stage-six blank suppresses the former fallback too. An
+    // absent source fell through to the same form/schema defaults as today.
+    if (stored?.provenance !== 'manual' && !stored?.value && !fallback) continue;
+    let previous = stored ? savedTextOrFallback(stored, fallback) : fallback;
+    if (field.type === 'select') {
+      const choices = field.choices?.filter(choice => choice.value === previous || choice.label === previous) ?? [];
+      if (choices.length === 1) previous = choices[0].value;
+    }
+    if (resolved.rows.some(row => row.included && row.fields[field.id]
+      && !row.fields[field.id].source.startsWith('manual-') && row.fields[field.id].value !== previous)) {
+      return { noticeBindingRevision: 'exact-legal-notices-v1' };
+    }
+  }
+  return {};
+}
 
 export function quotationNoticeInput(field: QuotationField): string | undefined {
   // Only the named legal notice array has this meaning. Same-labelled product

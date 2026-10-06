@@ -1,5 +1,5 @@
 import type { QuotationField } from '@/app/quotation-schema';
-import { quotationNoticeInput } from '@/app/quotation-notice-inputs';
+import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-notice-inputs';
 
 // Exact resolver bindings only. A category name is never an input mapping.
 const links: Readonly<Record<string, string>> = {
@@ -26,8 +26,8 @@ const links: Readonly<Record<string, string>> = {
   noticeQualityAssurance: '6단계 품질보증기준', noticeServiceContact: '6단계 연락처 → 기본설정 A/S 연락처',
 };
 export function quotationInputLink(field: QuotationField): string | null {
-  if (field.section === 'legal' && field.label === '세탁방법 및 취급시 주의사항') return '6단계 세탁·취급 주의사항 → 기본설정 세탁방법·취급시 주의사항';
-  if (field.section === 'legal' && ['출시년월', '제조년월'].includes(field.label)) return '6단계 출시년월 → 기본설정 전월 자동 입력';
+  if (isQuotationLegalNotice(field) && field.label === '세탁방법 및 취급시 주의사항') return '6단계 세탁·취급 주의사항 → 기본설정 세탁방법·취급시 주의사항';
+  if (isQuotationLegalNotice(field) && ['출시년월', '제조년월'].includes(field.label)) return '6단계 출시년월 → 기본설정 전월 자동 입력';
   const content = field.contentField ?? (field.id === 'storageMaterial' ? 'material' : undefined);
   if (content) return `6단계 ${{ material: '재질', components: '구성품', model: '모델명' }[content]}`;
   if (field.optionDimension) return `옵션 상품 ${{ widthCm: '가로', lengthCm: '세로', heightCm: '높이' }[field.optionDimension]} · cm`;

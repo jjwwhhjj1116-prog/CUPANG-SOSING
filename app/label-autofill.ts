@@ -3,11 +3,12 @@ import { savedTextOrFallback, type LabelField, type ProductContent } from '@/app
 import { previousRegistrationMonth, washingPrecautionsText } from '@/app/couplus-registration-defaults';
 import { getQuotationSchema } from '@/app/quotation-schema';
 import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
+import { isQuotationLegalNotice } from '@/app/quotation-notice-inputs';
 
 /** Use the product's frozen form, including a live form that omits a recorded
  * category notice. Never infer a manufacturing notice from a product attribute. */
 export function labelDateNotice(categoryId: string | null, categoryPath: readonly string[] = [], hubSchema?: HubSchemaSnapshot): boolean {
-  return getQuotationSchema(categoryId, categoryPath, hubSchema).fields.some(field => field.section === 'legal' && ['출시년월', '제조년월'].includes(field.label));
+  return getQuotationSchema(categoryId, categoryPath, hubSchema).fields.some(field => isQuotationLegalNotice(field) && ['출시년월', '제조년월'].includes(field.label));
 }
 
 /** Fill untouched review drafts from saved inputs and category-scoped observed defaults. */

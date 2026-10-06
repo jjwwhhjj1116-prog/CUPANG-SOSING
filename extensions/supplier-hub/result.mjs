@@ -47,10 +47,22 @@ export async function readSupplierHubValidation(expectedFilename) {
     });
   }
   const tables=table();if(tables.length!==1)throw Error('검증 결과 표가 아직 표시되지 않았습니다.');
-  const rows=Array.from(tables[0].querySelectorAll('tbody tr')).map(row=>Array.from(row.querySelectorAll('td')).map(cell=>normalize(cell.innerText)));
-  const matches=rows.filter(cells=>cells.length===5&&cells[0]===filename);
+  const rows=Array.from(tables[0].querySelectorAll('tbody tr')).map(row=>Array.from(row.querySelectorAll('td')));
+  const matches=rows.filter(cells=>cells.length===5&&normalize(cells[0].innerText)===filename);
   if(matches.length>1)throw Error('같은 파일명의 결과가 여러 개입니다. 견적서 ID를 직접 확인해주세요.');
   if(!matches.length)return {state:'not-found',filename,registered:false};
-  const [,submittedAt,status,detail,quotationId]=matches[0];
+  const [,submittedAt,status,detail,visibleId]=matches[0].map(cell=>normalize(cell.innerText));
+  // The same visible copy controls used by Hub's product status table can carry
+  // a full quotation ID while its cell shows only the first eight characters.
+  // Bind only this exact file row; never infer an ID from a prefix or clipboard.
+  const copies=Array.from(matches[0][4].querySelectorAll('button[data-clipboard-text]')).filter(button=>button.getClientRects().length);
+  let quotationId=visibleId;
+  if(copies.length>1)throw Error('견적서 ID 복사 버튼이 중복되어 전체 접수 ID를 확인하지 못했습니다.');
+  if(copies.length===1){
+    quotationId=copies[0].getAttribute('data-clipboard-text');
+    if(typeof quotationId!=='string'||!quotationId||quotationId!==quotationId.trim()||quotationId.length>200
+      ||visibleId!==quotationId&&visibleId!==`${quotationId.slice(0,8)}...`)throw Error('표시된 견적서 ID와 복사 버튼의 전체 접수 ID가 다릅니다.');
+  }
+  if(/\.\.\.|…/.test(quotationId))throw Error('생략된 견적서 ID로는 접수 결과를 저장하거나 상품별 상태를 조회할 수 없습니다. 전체 접수 ID를 확인해주세요.');
   return {state:status==='완료'?'validation-complete':status==='반려'?'validation-rejected':'validation-pending',filename,submittedAt,status,detail,quotationId,registered:false};
 }

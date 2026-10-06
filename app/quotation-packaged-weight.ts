@@ -1,4 +1,4 @@
-import type { QuotationField } from '@/app/quotation-schema';
+import type { QuotationField, QuotationOverrides, ResolvedQuotation } from '@/app/quotation-schema';
 
 /** The legacy numeric input and observed string wire are the same g quantity.
  * Keep both saved IDs; never infer aliases from a label or another weight unit. */
@@ -34,4 +34,33 @@ export function quotationPackagedWeightManual(
     }
   }
   return null;
+}
+
+/** The former resolver read only each field's own option/common override.
+ * Version this alias rule only when an included output value actually differs.
+ * The lazy fallback resolves the same source with quotation overrides cleared;
+ * automatic option facts, defaults and the stored overrides remain untouched. */
+export function quotationPackagedWeightBindingFingerprint(
+  overrides: QuotationOverrides, resolved: ResolvedQuotation, automatic: () => ResolvedQuotation,
+): { packagedWeightBindingRevision?: 'exact-g-pair-v1' } {
+  const peer = quotationPackagedWeightPeer(resolved.schema.fields, 'packagedWeightG');
+  if (!peer) return {};
+  let fallback: ResolvedQuotation | undefined;
+  for (const row of resolved.rows) {
+    if (!row.included) continue;
+    const specific = row.optionId !== null && Object.hasOwn(overrides.options, row.optionId) ? overrides.options[row.optionId] : undefined;
+    for (const id of ['packagedWeightG', peer]) {
+      const cell = row.fields[id];
+      if (!cell?.source.startsWith('manual-')) continue;
+      let previous = specific && Object.hasOwn(specific, id) ? specific[id]
+        : Object.hasOwn(overrides.common, id) ? overrides.common[id] : undefined;
+      if (previous === undefined) {
+        fallback ??= automatic();
+        previous = fallback.rows.find(before => before.optionId === row.optionId)?.fields[id]?.value;
+        if (previous === undefined) throw new Error('포장 무게의 자동 기준값을 대조하지 못했습니다.');
+      }
+      if (previous !== undefined && previous !== cell.value) return { packagedWeightBindingRevision: 'exact-g-pair-v1' };
+    }
+  }
+  return {};
 }

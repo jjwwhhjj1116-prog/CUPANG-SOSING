@@ -125,3 +125,48 @@ test('same-named product attributes are not manufacturing notices and malformed 
     assert.equal((await h.route(f.base + '/registration-settings')).status, 503);
   } finally { h.close(); }
 });
+
+for (const company of schemaCompanies) test(`same-titled legal controls cannot receive notice settings or create a date label (${company.code})`, async () => {
+  const h = mobileIntakeHarness({ companyCode: company.code, companyName: company.name });
+  try {
+    const value = snapshot(company, '출시년월 안내'), raw = JSON.parse(value.schemaString);
+    const scalarNames = ['제조년월', '세탁방법 및 취급시 주의사항'];
+    raw.required = ['legalPage'];
+    raw.properties.legalPage.required = ['dateControl', 'washingControl'];
+    raw.properties.legalPage.properties.dateControl = { title: scalarNames[0], type: 'string' };
+    raw.properties.legalPage.properties.washingControl = { title: scalarNames[1], type: 'string' };
+    raw.properties.legalPage.properties.certificates = { type: 'array', allOf: scalarNames.map(name => ({ contains: { type: 'object', properties: {
+      name: { type: 'string', enum: [name] }, value: { type: 'string' },
+    } } })) };
+    Object.assign(value, { schemaString: JSON.stringify(raw), draftInitialization: 'couplus-required-v1', inputBindings: 'couplus-paths-v1' });
+    Object.assign(h.context.settings, { washingMethod: '손세탁', handlingPrecautions: '화기 주의' });
+    const f = await setup(h, value), registration = await json(await h.route(f.base + '/registration-settings'));
+    assert.equal(registration.dateNotice, false, 'legal titles alone are not legalPage.notices entries');
+    const content = (await json(await h.route(f.base + '/content'))).content;
+    assert.equal(content.label.releaseDate.value, '');
+    const view = await json(await h.route(f.base + '/quotation-fields'));
+    const unrelated = view.resolved.schema.fields.filter(field => scalarNames.includes(field.label));
+    assert.equal(unrelated.length, 4);
+    for (const field of unrelated) {
+      assert.equal(h.load('app/quotation-input-links.ts').quotationInputLink(field), null);
+      for (const row of view.resolved.rows) {
+        assert.equal(row.fields[field.id].value, field.hubWire.path[1] === 'certificates' ? '해당사항없음' : '');
+        assert.equal(row.fields[field.id].source, 'couplus-default');
+      }
+    }
+    const scalar = unrelated.find(field => field.hubWire.path[1] === 'dateControl'), option = view.resolved.rows.find(row => row.optionId);
+    await json(await h.route(f.base + '/quotation-fields', { method: 'PUT', body: {
+      expectedRevision: view.revision, expectedInputFingerprint: view.inputFingerprint,
+      changes: [{ fieldKey: scalar.id, optionId: null, value: '법적 제어 직접 입력' }, { fieldKey: scalar.id, optionId: option.optionId, value: '' }],
+    } }));
+    const storedContext = h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload;
+    const source = await h.load('app/exports/quotation-source.ts').readQuotationExportSource('owner', f.product.id, f.profile.id);
+    const resolved = h.load('app/exports/quotation-source.ts').resolveQuotationExport(source);
+    const rows = h.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source, resolved, []);
+    assert.equal(rows.length, 6); assert.equal(rows[0][scalar.id], ''); assert.equal(rows[1][scalar.id], '법적 제어 직접 입력');
+    assert.equal(resolved.rows.find(row => row.optionId === option.optionId).fields[scalar.id].source, 'manual-option');
+    assert.equal(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload, storedContext);
+    assert.equal(source.hubSchema.schemaString, value.schemaString);
+    assert.ok(!h.network.includes('supplier.coupang.com'));
+  } finally { h.close(); }
+});

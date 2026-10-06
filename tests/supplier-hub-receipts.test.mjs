@@ -121,18 +121,27 @@ for(const company of companies)test(`bundle criteria do not stale legacy quotati
   assert.notEqual(await exporter.quotationExportFingerprint(await exporter.readMappedQuotationSource('owner',h.product.id,'cat'),2),original);
  }finally{h.close();}
 });
-for(const company of companies)test(`serialized pending row with an empty quotation ID can advance to a pinned receipt and survive reload (${company.companyCode})`,async()=>{
+for(const company of companies)test(`serialized pending row advances through a full copy ID and exact search to a pinned receipt that survives reload (${company.companyCode})`,async()=>{
  const h=await setup(company);try{
   const before={product:h.sqlite.prepare('SELECT * FROM products').get(),content:h.sqlite.prepare('SELECT * FROM product_content').all()};
   let cells=[h.preview.filename,'2026-10-05','검증중','',''],notify;
-  const table={isConnected:true,getClientRects:()=>[{}],contains:node=>node===table,querySelectorAll:selector=>selector==='thead th'?['견적서 명','견적서 등록일','검증 상태','검증 결과','견적서 ID'].map(innerText=>({innerText})):[{querySelectorAll:()=>cells.map(innerText=>({innerText}))}]};
+  const table={isConnected:true,getClientRects:()=>[{}],contains:node=>node===table,querySelectorAll:selector=>selector==='thead th'?['견적서 명','견적서 등록일','검증 상태','검증 결과','견적서 ID'].map(innerText=>({innerText})):[{querySelectorAll:()=>cells.map(value=>({innerText:typeof value==='string'?value:value.text,querySelectorAll:()=>typeof value==='string'?[]:value.copies.map(id=>({getClientRects:()=>[{}],getAttribute:()=>id}))}))}]};
   const refresh={innerText:'새로고침',getClientRects:()=>[{}],getAttribute:()=>null,click:()=>notify([{target:table}])};
   const document={body:{},querySelectorAll:selector=>selector==='table'?[table]:[refresh]};
   const read=async()=>vm.runInNewContext(`(${readSupplierHubValidation.toString()})(filename)`,{filename:h.preview.filename,document,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},setTimeout,clearTimeout,MutationObserver:class{constructor(callback){notify=callback;}observe(){}disconnect(){}}});
   const pending={...h.result,...await read()};assert.equal(pending.state,'validation-pending');assert.equal(pending.quotationId,'');
   await json(await h.write(pending));
-  cells=[h.preview.filename,'2026-10-05','완료','검증 완료',h.result.quotationId];
+  cells=[h.preview.filename,'2026-10-05','완료','검증 완료',{text:`${h.result.quotationId.slice(0,8)}...`,copies:[h.result.quotationId]}];
   const complete={...h.result,...await read(),observedAt:pending.observedAt};
+  assert.equal(complete.quotationId,h.result.quotationId);
+  class Input {get value(){return this.current??'';}set value(value){this.current=value;}}
+  const input=new Input();Object.assign(input,{isConnected:true,getClientRects:()=>[{}],dispatchEvent(){}});
+  const label={innerText:'견적서 ID',getClientRects:()=>[{}]},filters=new Map(['input#productName','input#barcode','input#skuId','input#sourcingChannelId','select#state','select#progress','input#isReplyNeeded'].map(selector=>[selector,{value:'',type:selector.endsWith('isReplyNeeded')?'checkbox':'text',checked:false,getClientRects:()=>[{}]}]));
+  let searches=0;
+  const button={innerText:'검색',isConnected:true,getClientRects:()=>[{}],getAttribute:()=>null,click(){searches++;}},reset={innerText:'재설정',getClientRects:()=>[{}],getAttribute:()=>null,click(){input.value='';}};
+  const searched=await vm.runInNewContext(`(${searchSupplierHubRegistration.toString()})(quotationId)`,{quotationId:complete.quotationId,HTMLInputElement:Input,Event:class{constructor(type){this.type=type;}},location:{origin:'https://supplier.coupang.com',pathname:'/qvt/wims'},document:{querySelectorAll:selector=>selector==='button'?[button,reset]:filters.has(selector)?[filters.get(selector)]:selector.startsWith('input[id=')?[input]:selector.startsWith('label')?[label]:[]}});
+  assert.equal(searched.quotationId,h.result.quotationId);assert.equal(input.value,h.result.quotationId);assert.equal(searches,1);assert.equal(searched.registered,false);
+  assert.equal((await h.write({...complete,quotationId:`${complete.quotationId.slice(0,8)}...`})).status,400,'an unresolved display value cannot replace the stored pending receipt');
   await json(await h.write(complete));
   await json(await h.write({...complete,registration:{...h.registration,observedAt:complete.observedAt+1}}));
   const receipt=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+h.preview.fingerprint));

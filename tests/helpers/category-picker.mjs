@@ -28,9 +28,8 @@ export function categoryPickerUI(request,{catalog}={}){
  const settle=async()=>{const deadline=Date.now()+5000;while(nodes(render()).some(node=>node.props?.className==='category-picker'&&node.props['aria-busy'])){
   if(Date.now()>deadline)throw Error('Category lookup timeout');await new Promise(resolve=>setTimeout(resolve,1));
  }};
- return {render,selected,calls,alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async chooseLive(choice){
+ return {render,selected,calls,reopen(){slots.length=0;},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async chooseLive(choice){
   nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice(choice);
-  nodes(render()).find(node=>node.type==='button'&&String(node.props.children).includes('URL 입력')).props.onClick();
   await settle();
  },async chooseCode(code){
   nodes(render()).find(node=>node.type==='input'&&node.props.type==='search').props.onChange({target:{value:code}});

@@ -33,9 +33,28 @@ function harness(request,existing=false,{readProfiles=async()=>Response.json({pr
   return native(name);
  }});
  const render=()=>{index=0;const tree=exports.CategoryPicker({profiles:existing?[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1}]:[],selectedId:'saved',onSelected:p=>selected.push(p),onAdvanced(){}});first=false;return tree;};
- const confirm=()=>nodes(render()).find(n=>n.type==='button'&&String(n.props.children).includes('URL 입력')).props.onClick;
+ const confirm=()=>nodes(nodes(render()).find(n=>n.props?.className==='modal-actions')).find(n=>n.type==='button').props.onClick;
  return{calls,selected,render,confirm,chooseLive(){nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice({...choice,key:'live',supplierHub:{trail:[],ownerId:'owner',company:{code:'A01464742',name:'와이홉'}}});},close(){closed=true;cleanup.forEach(fn=>fn?.());},get late(){return late;}};
 }
+
+test('live leaf selection opens URL entry with one click only after the exact schema and saved profile acknowledge',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']},schemaReply=pending();let reads=0;
+ const h=harness(async(_url,init)=>Response.json({profile:{...JSON.parse(init.body),id:'new',categoryPath:['test'],revision:1}}),false,{readSchema:async()=>{reads++;return schemaReply.promise;}});
+ h.chooseLive();h.chooseLive();assert.equal(reads,1,'one leaf click starts schema confirmation without a second confirmation button');
+ assert.equal(h.selected.length,0);assert.equal(h.calls.length,0,'URL entry waits for the live company/category schema');
+ schemaReply.resolve(snapshot);await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].categoryId,'80719');assert.deepEqual(h.selected[0].categoryPath,['test']);assert.equal(h.selected[0].hubSchema.schemaString,snapshot.schemaString);
+ assert.equal(h.calls.filter(call=>call.method==='POST').length,1);h.chooseLive();h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(reads,1,'the completed selection cannot create another URL row');h.close();
+});
+
+test('one-click live selection preserves its leaf on verification failure and ignores a late closed-picker reply',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']};let failed=true,reads=0;
+ const h=harness(async(_url,init)=>Response.json({profile:{...JSON.parse(init.body),id:'new',categoryPath:['test'],revision:1}}),false,{readSchema:async()=>{reads++;if(failed)throw Error('선택한 회사·최종 분류 변경');return snapshot;}});
+ h.chooseLive();await settle();assert.equal(h.selected.length,0);assert.equal(h.calls.length,0);assert.match(JSON.stringify(h.render()),/선택한 회사·최종 분류 변경/);
+ failed=false;h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(reads,2);assert.equal(h.calls.filter(call=>call.method==='POST').length,1);h.close();
+ const reply=pending();let signal;
+ const closed=harness(async()=>{throw Error('closed picker must not write a profile');},false,{readSchema:async(_choice,current)=>{signal=current;return reply.promise;}});
+ closed.chooseLive();closed.close();assert.equal(signal.aborted,true);reply.resolve(snapshot);await settle();assert.equal(closed.selected.length,0);assert.equal(closed.calls.length,0);assert.equal(closed.late,0);
+});
 
 test('live category confirmation saves detailed schema in a new profile before URL entry',async()=>{
  const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']};let reads=0,templates=0;

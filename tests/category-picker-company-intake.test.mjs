@@ -45,9 +45,9 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
   assert.equal(selected.template,null);assert.deepEqual(selected.mappings,[]);
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id),before);
   assert.ok(picker.calls.every(call=>call.method!=='PUT'));
-  // With both company profiles present, another live selection reuses only the
+  // Reopening the completed picker with both company profiles present reuses only the
   // current company's profile instead of becoming an ambiguous saved match.
-  await picker.chooseLive(choice);assert.equal(picker.selected.length,2);
+  picker.reopen();await picker.chooseLive(choice);assert.equal(picker.selected.length,2);
   assert.equal(picker.selected[1].id,selected.id);assert.equal(downloads,0);
   const nextUrl='https://detail.1688.com/offer/813724060929.html';
   const queued=await json(await h.load('app/api/collection-jobs/route.ts').POST(new Request('https://app.test/api/collection-jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({urls:[nextUrl],goal:'price',profileId:selected.id,expectedProfileRevision:selected.revision})})));

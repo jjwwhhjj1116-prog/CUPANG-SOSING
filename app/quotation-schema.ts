@@ -16,7 +16,7 @@ import { previousRegistrationMonth, washingPrecautionsText,couplusSettingDraftVa
 import {compileHubQuotationSchema,validateHubSchemaSnapshot,type HubSchemaSnapshot,type HubWireField} from '@/app/supplier-hub-schema';
 import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotation-scalar-constraints';
 import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
-import { quotationNoticeInput } from '@/app/quotation-notice-inputs';
+import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
@@ -396,10 +396,10 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     }
     // Match the complete observed notice name, never a hidden attribute or a
     // similarly named notice. Manual content (including blanks) keeps priority.
-    if (definition.section === 'legal' && definition.label === '세탁방법 및 취급시 주의사항') {
+    if (isQuotationLegalNotice(definition) && definition.label === '세탁방법 및 취급시 주의사항') {
       return contentValue(content.label.washingPrecautions ?? { value: '', provenance: 'unverified', updatedAt: null }, washingPrecautionsText(settings));
     }
-    if (definition.section === 'legal' && ['출시년월', '제조년월'].includes(definition.label)) {
+    if (isQuotationLegalNotice(definition) && ['출시년월', '제조년월'].includes(definition.label)) {
       return contentValue(content.label.releaseDate ?? { value: '', provenance: 'unverified', updatedAt: null },
         settings.manufactureDatePreviousMonth ? previousRegistrationMonth(product.created_at) : '');
     }
