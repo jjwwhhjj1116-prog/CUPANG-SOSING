@@ -5305,3 +5305,16 @@ Live Couplus read-only pricing capture corrected prior parity assumption: clicki
 Deployment auth: --env-file production CLI D1 request7403; same fixed accountDB query/migration/deploy succeeded using existing Wrangler auth without env-file. Do not read/print credentials or expand permissions.
 
 Next concrete Couplus parity audit: actual transmitted rows disable deletion with tooltip; verify YOOFAM receipt-backed deletion state. Retain manualreview→explicittransmit→verifiedreceipt workflow; unknown package/certification facts cannot be guessed.
+
+
+## Step591 — 2026-10-07 Couplus transmitted-product removal (shipped)
+
+Worker abc7eb2d-3bc5-4868-b976-539183d7e339. D1 still17migrations; extension0.2.54 unchanged. Detail: docs/step591-transmitted-product-removal-2026-10-07.md.
+
+ActualCouplus submitted rows disabled trash tooltip matches. New app/product-removal-policy.ts parses all owner/product raw receipts including DBfingerprint/payload/time/order identity. All pending/complete/assignedIDs block regardless registered:false/currentdraftcompany/category/version. Only verified noID/noregistration file-rejected evidence is allowed; malformed or >512KiB verifiedhistory blocks. readProductRemovalPolicies batches80 and list/singleGET expose authoritative removal_policy. Delete atomic INSERT matches exactly reviewed allowed receipt tuple JSON; any new/changed receipt prevents marker. Restore unchanged.
+
+UI disabled icon + exacttooltip + directcallback guard. Dashboard synchronous busylock/freshownedGET/no-store/id/owner/version/policy/abort guards late GET after account switch/unmount. Existing metadata/status strings alone cannot mark externalsubmission. Chrome-only attempts notyetobserved onserver are not inferred from this DBpolicy; preserve existing busy/transmission recovery behavior.
+
+Final checks111/111 (72removal/receipt/UI +39policy/intake/schema), types0, lint0errors/9existingwarnings, buildpass. PriorStep590190/190 also shipped in this same user turn; do not sum these as unique global coverage or claimallHubcaseslivecomplete. Step591 testsinclude valid priorrejectedpreservationfixture and full actual sourceGuard/saveReceipt lifecycle, noR2mutation.
+
+Correct Chrome browser IDs CHANGE after cua kernelreset. Lastmatchingprofile extensionInstanceId f55ae7c4-3641-4800-9023-606745290da7 was ChromeID2 (ID4 became IAB). Alwaysfreshbrowserinventory afterreset toverifytype+profile; NEVERuse IAB/anotherprofile toworkaround oldtabfailure. Originalunsaveduser app727924101 still untouched. Final ownvalidationtab reloadedonlyaftercleanclose; app/couplus authWaih confirmed. ExistingHubotherChrome listing timedout; correctapp/couplusprofile Hub redirectedauth. No furtherlogin/approvalquestions, norealHubsubmission.

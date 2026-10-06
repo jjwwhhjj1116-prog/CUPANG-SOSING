@@ -33,8 +33,10 @@ function harness(){
   sqlite.prepare('INSERT INTO collection_source_supplements VALUES(?,?,?,?,?,?)').run('job','owner','{ "originalSupplierText":"原文" }','{"captured":"补充"}','{ "merged":"原文 + 补充" }',version);
   sqlite.prepare('INSERT INTO collection_products VALUES(?,?,?,?)').run('job','owner',product.id,version);
   sqlite.prepare('INSERT INTO collection_images VALUES(?,?,?,?,?,?,?)').run('job',0,'owner',product.id,'owner/main.png','image-operation',version);
-  const fingerprint='a'.repeat(64),receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'category',categoryId:'80719',fingerprint,productVersion:version,recordedAt:version,result:{state:'validation-complete',filename:`YOOFAM-${fingerprint}.xlsx`,company:{code:'A01464742',name:'와이홉'},includedOptions:2,quotationId:'saved-quotation',observedAt:1,registered:false}};
-  sqlite.prepare('INSERT INTO supplier_hub_receipts VALUES(?,?,?,?,?,?)').run('owner',product.id,fingerprint,1,1,JSON.stringify(receipt));
+  const fingerprint='a'.repeat(64),receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'category',categoryId:'80719',fingerprint,productVersion:version,recordedAt:version,result:{state:'validation-rejected',filename:`YOOFAM-${fingerprint}.xlsx`,company:{code:'A01464742',name:'와이홉'},includedOptions:2,observedAt:1,registered:false}};
+  sqlite.prepare('INSERT INTO supplier_hub_receipts VALUES(?,?,?,?,?,?)').run('owner',product.id,fingerprint,1,1000,JSON.stringify(receipt));
+  assert.equal(load('app/supplier-hub-receipt.ts').parseStoredSupplierHubReceipt(JSON.stringify(receipt)).result.state,'validation-rejected');
+  assert.equal(load('app/product-removal-policy.ts').productRemovalDecisionFromReceipts([{fingerprint,payload:JSON.stringify(receipt),observed_at:1,evidence_order:1000}]).blocked,false,'unsubmitted file rejection remains a valid preserved receipt');
   return product;
  }
  return{sqlite,state,env,objects,load,queries,removals,route,listing,request,list,snapshot,fileSnapshot,seed,close:()=>sqlite.close()};
@@ -50,7 +52,7 @@ test('soft removal and restore preserve every product, dependent row and stored 
   assert.equal(h.snapshot(),before);assert.equal(h.fileSnapshot(),files);assert.deepEqual(h.state.fileCalls,[]);
   const active=await json(await h.list());assert.deepEqual(active.products.map(row=>row.id),['visible']);
   const trash=await json(await h.list(true));assert.equal(trash.products.length,1);assert.equal(trash.products[0].id,product.id);assert.equal(trash.products[0].removed_at,removed.removedAt);
-  assert.equal(trash.products[0].updated_at,version);assert.equal(trash.products[0].content_summary.seoTitle,'저장한 수정 상품명');assert.equal(trash.products[0].content_summary.mainImageKey,'owner/main.png');assert.equal(trash.products[0].source_image_key,'owner/main.png');assert.equal(trash.products[0].hub_receipt.quotationId,'saved-quotation');
+  assert.equal(trash.products[0].updated_at,version);assert.equal(trash.products[0].content_summary.seoTitle,'저장한 수정 상품명');assert.equal(trash.products[0].content_summary.mainImageKey,'owner/main.png');assert.equal(trash.products[0].source_image_key,'owner/main.png');assert.equal(trash.products[0].hub_receipt.quotationId,null);assert.equal(trash.products[0].hub_receipt.label,'파일 반려');
   const restored=await json(await h.request({action:'restore',expectedVersion:version,expectedRemovedAt:removed.removedAt}));assert.deepEqual(restored,{productId:product.id,restored:true});
   assert.equal(h.sqlite.prepare('SELECT count(*) AS count FROM product_removals').get().count,0);assert.equal(h.snapshot(),before);assert.equal(h.fileSnapshot(),files);assert.deepEqual(h.state.fileCalls,[]);
   const defaultAfter=await json(await h.list());assert.deepEqual(defaultAfter,defaultBefore);assert.deepEqual((await json(await h.list(true))).products,[]);

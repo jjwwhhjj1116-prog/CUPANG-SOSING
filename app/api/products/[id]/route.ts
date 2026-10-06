@@ -8,7 +8,8 @@ import { readBoundedJson, readBoundedStream, RequestBodyError } from '@/app/requ
 import { readRegistrationSummaries } from '@/db/product-content';
 import { readRegistrationSourceImages } from '@/db/collection-images';
 import { readSupplierHubReceiptSummaries } from '@/db/supplier-hub-receipts';
-import { removeProduct, restoreProduct } from '@/db/product-removals';
+import { readProductRemovalPolicies, removeProduct, restoreProduct } from '@/db/product-removals';
+import { unconfirmedProductRemovalDecision } from '@/app/product-removal-policy';
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   if(process.env.NODE_ENV==='production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({error:'운영 인증 연결 후 사용할 수 있습니다.'},{status:503});
@@ -16,12 +17,13 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     const ownerId=await getWorkspaceOwnerId();const {id}=await context.params;
     const product=await findProduct(ownerId,id);
     if (!product) return NextResponse.json({error:'상품을 찾을 수 없습니다.'},{status:404});
-    const [summaries,sourceImages,receipts]=await Promise.all([
+    const [summaries,sourceImages,receipts,removalPolicies]=await Promise.all([
       readRegistrationSummaries(ownerId,[product]).catch(()=>null),
       readRegistrationSourceImages(ownerId,[product]).catch(()=>null),
       readSupplierHubReceiptSummaries(ownerId,[product]).catch(()=>null),
+      readProductRemovalPolicies(ownerId,[product]).catch(()=>({[id]:unconfirmedProductRemovalDecision()})),
     ]);
-    return NextResponse.json({product:{...product,content_summary:summaries?.[id]??null,source_image_key:sourceImages?.[id]??null,hub_receipt:receipts?.[id]??null}},{headers:{'cache-control':'no-store'}});
+    return NextResponse.json({product:{...product,content_summary:summaries?.[id]??null,source_image_key:sourceImages?.[id]??null,hub_receipt:receipts?.[id]??null,removal_policy:removalPolicies[id]}},{headers:{'cache-control':'no-store'}});
   } catch {return NextResponse.json({error:'상품을 읽지 못했습니다.'},{status:503});}
 }
 
@@ -93,7 +95,14 @@ export async function DELETE(request:Request,context:{params:Promise<{id:string}
       ?await restoreProduct(ownerId,id,fields.expectedVersion,fields.expectedRemovedAt as string)
       :await removeProduct(ownerId,id,fields.expectedVersion);
     if(marker)return NextResponse.json(restore?{productId:id,restored:true}:{productId:id,removed:true,removedAt:marker.removed_at,productVersion:marker.product_version},{headers:{'cache-control':'no-store'}});
-    if(await findProduct(ownerId,id))return NextResponse.json({error:restore?'상품 또는 삭제 상태가 변경되었습니다. 삭제된 상품 목록을 다시 불러온 뒤 복원해주세요.':'상품이 변경되었거나 이미 삭제되었습니다. 목록을 다시 불러온 뒤 확인해주세요.'},{status:409});
+    const current=await findProduct(ownerId,id);
+    if(current){
+      if(!restore){
+        const policy=(await readProductRemovalPolicies(ownerId,[current]))[id];
+        if(policy.blocked)return NextResponse.json({error:policy.reason,code:policy.code,productId:id,productVersion:current.updated_at,removal_policy:policy,hub_receipt:policy.receipt},{status:409,headers:{'cache-control':'no-store'}});
+      }
+      return NextResponse.json({error:restore?'상품 또는 삭제 상태가 변경되었습니다. 삭제된 상품 목록을 다시 불러온 뒤 복원해주세요.':'상품이 변경되었거나 이미 삭제되었습니다. 목록을 다시 불러온 뒤 확인해주세요.'},{status:409});
+    }
     return NextResponse.json({error:'상품을 찾을 수 없습니다.'},{status:404});
   }catch{return NextResponse.json({error:restore?'상품을 복원하지 못했습니다. 다시 시도해주세요.':'상품을 삭제하지 못했습니다. 다시 시도해주세요.'},{status:503});}
 }

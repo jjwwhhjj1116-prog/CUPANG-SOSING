@@ -1,6 +1,7 @@
 import { readRegistrationSummaries } from '@/db/product-content';
 import { readRegistrationSourceImages } from '@/db/collection-images';
 import { readSupplierHubReceiptSummaries } from '@/db/supplier-hub-receipts';
+import { readProductRemovalPolicies } from '@/db/product-removals';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { getSettings, insertProduct, listProducts, type ProductRecord } from '@/db/queries';
 import { NextResponse } from 'next/server';
@@ -14,12 +15,13 @@ export async function GET(request?: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({error:'Cloudflare Access 로그인 또는 서버 인증 설정을 확인해주세요.'},{status:503});
   try {
     const owner=await ownerId();const removed=request&&new URL(request.url).searchParams.get('removed')==='only'?'only':'exclude';const products=await listProducts(owner,removed);
-    const [summaries,sourceImages,receipts]=await Promise.all([
+    const [summaries,sourceImages,receipts,removalPolicies]=await Promise.all([
       readRegistrationSummaries(owner,products).catch(()=>null),
       readRegistrationSourceImages(owner,products).catch(()=>null),
       readSupplierHubReceiptSummaries(owner,products).catch(()=>null),
+      readProductRemovalPolicies(owner,products),
     ]);
-    return NextResponse.json({products:products.map(product=>({...product,content_summary:summaries?.[product.id]??null,source_image_key:sourceImages?.[product.id]??null,hub_receipt:receipts?.[product.id]??null}))},{headers:{'cache-control':'no-store'}});
+    return NextResponse.json({products:products.map(product=>({...product,content_summary:summaries?.[product.id]??null,source_image_key:sourceImages?.[product.id]??null,hub_receipt:receipts?.[product.id]??null,removal_policy:removalPolicies[product.id]}))},{headers:{'cache-control':'no-store'}});
   }
   catch { return NextResponse.json({ error: '상품 목록을 읽지 못했습니다. 다시 시도해주세요.' }, { status: 503 }); }
 }

@@ -13,7 +13,7 @@ function nodeText(node){return Array.isArray(node)?node.map(nodeText).join(''):n
 function boardHarness(props={}){
  const values=[],confirmations=[];let cursor=0;
  const {RegistrationBoard:Board}=load('app/components/registration-board.tsx',{window:{confirm(message){confirmations.push(message);return props.confirm!==false;}},react:{...require('react'),useRef(initial){const index=cursor++;if(!(index in values))values[index]={current:initial};return values[index];},useState(initial){const index=cursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],value=>{values[index]=typeof value==='function'?value(values[index]):value;}];}}});
- const product={id:'12345678-abcd',title:'수집한 상품명',source_url:'https://detail.1688.com/offer/813724060928.html',created_at:'2026-09-26T00:00:00Z',image_keys:'["owner/source","owner/main"]',source_image_key:'owner/source',options_count:3,registration_status:'작업 중',seo_status:'대기',quote_status:'대기',supply_price:1000,sale_price:2000,content_summary:{seoTitle:'수정한 상품명',mainImageKey:'owner/main',seo:true,main:1,additional:0,detail:0,label:0,missingImages:false}};
+ const product={id:'12345678-abcd',title:'수집한 상품명',source_url:'https://detail.1688.com/offer/813724060928.html',created_at:'2026-09-26T00:00:00Z',image_keys:'["owner/source","owner/main"]',source_image_key:'owner/source',options_count:3,registration_status:'작업 중',seo_status:'대기',quote_status:'대기',supply_price:1000,sale_price:2000,removal_policy:{blocked:false,code:null,reason:'',receipt:null},content_summary:{seoTitle:'수정한 상품명',mainImageKey:'owner/main',seo:true,main:1,additional:0,detail:0,label:0,missingImages:false}};
  const calls=[],options=[],selections=[];
  const base={products:[product],selected:new Set(),onSelected:value=>selections.push(value),onOpen:(...args)=>calls.push(args),onOptions:value=>options.push(value),loading:false,error:'',onArchive:()=>{},...props};
  return {product:base.products[0],calls,options,selections,confirmations,render(){cursor=0;return Board(base);}};
@@ -172,6 +172,32 @@ test('cancelled or failed removal keeps the product available and surfaces the s
  const h=boardHarness({onDelete:async()=>{throw Error('상품이 변경되었습니다. 목록을 다시 불러와주세요.');}});const before=JSON.stringify(h.product);
  const [trash]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');await trash.props.onClick();
  assert.equal(JSON.stringify(h.product),before);assert.equal(elements(h.render(),node=>node.props?.role==='alert').map(nodeText).join(''),'상품이 변경되었습니다. 목록을 다시 불러와주세요.');
+});
+
+test('receipt-backed deletion locks keep the Couplus trash shape and exact tooltip, even when the latest file failed',async()=>{
+ const reason='쿠팡에 이미 전송된 상품이라 삭제할 수 없습니다';
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  let writes=0;const h=boardHarness({onDelete:async()=>{writes++;}});
+  const accepted={label:'견적서 접수',company,quotationId:'previous-accepted-quote',fingerprint:'a'.repeat(64),categoryId:'69900',observedAt:1,includedOptions:3,issuedSkus:0};
+  h.product.hub_receipt={...accepted,label:'파일 반려',quotationId:null,fingerprint:'b'.repeat(64)};
+  h.product.removal_policy={blocked:true,code:'PRODUCT_HUB_TRANSMITTED',reason,receipt:accepted};
+  const before=JSON.stringify(h.product),tree=h.render(),management=elements(tree,node=>node.type==='td'&&node.props['data-column']==='management')[0];
+  const [trash]=elements(management,node=>node.type==='button');assert.equal(trash.props.className,'registration-delete');assert.equal(trash.props.disabled,true);assert.equal(trash.props.title,reason);assert.equal(elements(trash,node=>node.type==='svg').length,1);
+  await trash.props.onClick();assert.equal(writes,0);assert.equal(h.confirmations.length,0);assert.equal(JSON.stringify(h.product),before);
+  const status=elements(tree,node=>node.type==='td'&&node.props['data-column']==='status')[0];assert.match(nodeText(status),/파일 반려/,'the latest observed status remains independent of older transmission evidence');
+ }
+});
+
+test('unconfirmed deletion policies stay inert while verified unsubmitted or failed-only drafts can be removed',async()=>{
+ for(const policy of [undefined,null,{blocked:false},{blocked:true,code:'PRODUCT_HUB_EVIDENCE_UNCONFIRMED',reason:'전송 결과를 확인한 뒤 삭제해주세요.',receipt:null}]){
+  let writes=0;const h=boardHarness({onDelete:async()=>{writes++;}});h.product.removal_policy=policy;
+  const [trash]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');assert.equal(trash.props.disabled,true);assert.ok(trash.props.title);await trash.props.onClick();assert.equal(writes,0);assert.equal(h.confirmations.length,0);
+ }
+ for(const state of ['미전송','파일 반려']){
+  let writes=0;const h=boardHarness({onDelete:async()=>{writes++;}});h.product.supplier_hub_status=state;
+  if(state==='파일 반려')h.product.hub_receipt={label:state,company:{code:'A01464742',name:'와이홉'},quotationId:null,fingerprint:'a'.repeat(64),categoryId:'80719',observedAt:1,includedOptions:3,issuedSkus:0};
+  const [trash]=elements(h.render(),node=>node.type==='button'&&node.props.className==='registration-delete');assert.equal(trash.props.disabled,false);assert.equal(trash.props.title,'삭제');await trash.props.onClick();assert.equal(writes,1);assert.equal(h.confirmations.length,1);
+ }
 });
 
 test('real collected draft renders a product preview while quotation image fields remain blank',async()=>{

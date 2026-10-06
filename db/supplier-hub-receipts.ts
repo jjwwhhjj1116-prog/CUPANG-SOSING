@@ -11,6 +11,7 @@ async function database(){
   )`).run();
   return env.DB;
 }
+export { database as ensureSupplierHubReceiptDatabase };
 /** Save an observation without changing product versions or invalidating its XLSX. */
 export async function saveSupplierHubReceipt(owner:string,productId:string,receipt:SupplierHubReceipt,source:QuotationSourceGuard,quotationRevision:number){
   const db=await database(),guard=sourceGuard(owner,productId,source);

@@ -40,6 +40,8 @@ import { WorkspaceSettingsDialog } from '@/app/components/workspace-settings-dia
 import { savedRegistrationSettings, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
 import { parseWorkspaceSettingsScope, type WorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 import { requestErrorMessage } from '@/app/request-error';
+import { productRemovalDecision, type ProductRemovalDecision } from '@/app/product-removal-policy';
+import type { SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
 import { PriceEditor } from '@/app/components/price-editor';
 import { quotationCsv, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { collectionBlock, collectionJobProgress, type CollectionJob } from '@/app/sourcing';
@@ -50,6 +52,9 @@ type Product = {
   options_count: number; seo_status: string; image_status: string; quote_status: string;
   registration_status: string; supplier_hub_status: string; image_keys: string; goal_stage: string;
   created_at: string; updated_at: string;
+  owner_id?: string;
+  removal_policy?: ProductRemovalDecision | null;
+  hub_receipt?: SupplierHubReceiptSummary | null;
   pricing_policy?: string | null;
   source_image_key?: string | null;
   content_summary?: RegistrationContentSummary | null;
@@ -111,6 +116,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [removedOpen,setRemovedOpen]=useState(false);
   const removalBusy=useRef(false);
+  const productRemovalRequest=useRef<AbortController|null>(null),productRemovalMounted=useRef(false);
+  useEffect(()=>{
+    productRemovalMounted.current=true;
+    return()=>{productRemovalMounted.current=false;productRemovalRequest.current?.abort();productRemovalRequest.current=null;removalBusy.current=false;};
+  },[workspaceOwnerId]);
   const changeRemovalBusy=useCallback((value:boolean)=>{removalBusy.current=value;},[]);
   const settingsBusyRef=useRef(false);
   const changeSettingsBusy=useCallback((value:boolean)=>{settingsBusyRef.current=value;setSettingsBusy(value);},[]);
@@ -349,14 +359,24 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
 
   async function removeWorkspaceProduct(product:Product){
-    if(removalBusy.current||busy||settingsBusyRef.current)throw Error('진행 중인 작업을 마친 뒤 삭제해주세요.');
+    if(!productRemovalMounted.current)throw Error('상품 목록을 다시 불러온 뒤 삭제해주세요.');
+    if(removalBusy.current||busyRef.current||settingsBusyRef.current)throw Error('진행 중인 작업을 마친 뒤 삭제해주세요.');
+    const decision=productRemovalDecision(product);if(decision.blocked)throw Error(decision.reason);
+    const controller=new AbortController();productRemovalRequest.current=controller;
     removalBusy.current=true;
     try{
-      const result=await readJson<{productId:string;removed:boolean}>(`/api/products/${encodeURIComponent(product.id)}`,{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({expectedVersion:product.updated_at})});
+      const endpoint=`/api/products/${encodeURIComponent(product.id)}`;
+      const latest=await readJson<{product?:Product}>(endpoint,{cache:'no-store',signal:controller.signal});
+      if(controller.signal.aborted)return;
+      if(!latest.product||latest.product.id!==product.id||(workspaceOwnerId&&latest.product.owner_id!==workspaceOwnerId))throw Error('현재 계정의 상품을 확인하지 못했습니다. 상품 목록을 다시 불러와주세요.');
+      const currentDecision=productRemovalDecision(latest.product);if(currentDecision.blocked)throw Error(currentDecision.reason);
+      if(latest.product.updated_at!==product.updated_at)throw Error('상품이 변경되었습니다. 상품 목록을 다시 불러온 뒤 삭제해주세요.');
+      const result=await readJson<{productId:string;removed:boolean}>(endpoint,{method:'DELETE',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({expectedVersion:product.updated_at})});
+      if(controller.signal.aborted)return;
       if(result.productId!==product.id||result.removed!==true)throw Error('삭제 결과를 확인하지 못했습니다. 상품 목록을 다시 불러와주세요.');
       setProducts(current=>current.filter(row=>row.id!==product.id));setSelected(current=>new Set([...current].filter(id=>id!==product.id)));
       setDetail(current=>current?.id===product.id?null:current);showToast('상품을 삭제했습니다. 삭제된 상품에서 복원할 수 있습니다.');
-    }finally{removalBusy.current=false;}
+    }finally{if(productRemovalRequest.current===controller){productRemovalRequest.current=null;removalBusy.current=false;}}
   }
 
   async function attachUploadedImage(productId:string,key:string) {

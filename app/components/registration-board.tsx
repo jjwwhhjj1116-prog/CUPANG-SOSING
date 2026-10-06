@@ -3,10 +3,11 @@
 
 import type { RegistrationContentSummary } from '@/app/registration-content-summary';
 import type { SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
+import { productRemovalDecision, type ProductRemovalDecision } from '@/app/product-removal-policy';
 import { useRef, useState } from 'react';
 import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
 
-type BoardProduct = {hub_receipt?:SupplierHubReceiptSummary|null;content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
+type BoardProduct = {removal_policy?:ProductRemovalDecision|null;hub_receipt?:SupplierHubReceiptSummary|null;content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
 export function filterRegistrationProducts<T extends BoardProduct>(products:T[],query:string,from:string|null,to:string|null) {
   return products.filter(product=>{
     const time=Date.parse(product.created_at);
@@ -63,7 +64,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
   const rows=filtered.slice(currentPage*pageSize,(currentPage+1)*pageSize);
   const toggle=(ids:string[],include:boolean)=>{const next=new Set(selected);for(const id of ids){if(include)next.add(id);else next.delete(id);}onSelected(next);};
   const deleteProduct=async(product:T)=>{
-    if(deleteInFlight.current||!onDelete||!window.confirm(`“${registrationTitle(product)}” 상품을 삭제된 상품으로 이동할까요? 저장된 이미지와 편집 내용은 복원할 수 있습니다.`))return;
+    if(deleteInFlight.current||!onDelete||productRemovalDecision(product).blocked||!window.confirm(`“${registrationTitle(product)}” 상품을 삭제된 상품으로 이동할까요? 저장된 이미지와 편집 내용은 복원할 수 있습니다.`))return;
     deleteInFlight.current=true;
     setDeleting(product.id);setDeleteError('');
     try{await onDelete(product);}catch(cause){setDeleteError(cause instanceof Error?cause.message:'상품을 삭제하지 못했습니다. 다시 시도해주세요.');}
@@ -87,7 +88,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
       <fieldset><legend>높이 고정</legend><label><input type="radio" name="registration-height" checked={fixedHeight} onChange={()=>setFixedHeight(true)}/>Y</label><label><input type="radio" name="registration-height" checked={!fixedHeight} onChange={()=>setFixedHeight(false)}/>N</label></fieldset>
     </div>
     <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,40+displayedColumns.reduce((width,column)=>width+column.width,0))}}><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.length>0&&rows.every(product=>selected.has(product.id))} onChange={event=>toggle(rows.map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)}>{column.label}</th>)}</tr></thead><tbody>
-    {rows.map(product=>{const image=registrationThumbnail(product);const title=registrationTitle(product);return <tr key={product.id}>
+    {rows.map(product=>{const image=registrationThumbnail(product);const title=registrationTitle(product);const removal=productRemovalDecision(product);return <tr key={product.id}>
       <td><input type="checkbox" aria-label={`${title} 선택`} checked={selected.has(product.id)} onChange={event=>toggle([product.id],event.target.checked)}/></td>
       {displayedColumns.map(column=><td key={column.id} data-column={column.id} className={`${column.id==='product'?'registration-product':''}${pinned(column.id)}`}>
         {column.id==='id'&&<><span className="registration-id">YP-{product.id.slice(0,8).toUpperCase()}</span><time dateTime={product.created_at}>{Number.isFinite(Date.parse(product.created_at))?dateTime.format(new Date(product.created_at)):'날짜 미확인'}</time></>}
@@ -96,7 +97,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
         {column.id==='source'&&(sourceUrl(product.source_url)?<a className="registration-source-link" href={sourceUrl(product.source_url)} target="_blank" rel="noopener noreferrer" aria-label={`${title} 구매링크 새 창에서 열기`} title={product.source_url}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7"/></svg></a>:<span className="registration-source-empty">{product.source_url?'링크 확인 필요':'미입력'}</span>)}
         {column.step&&<button type="button" className="registration-cell-button" aria-label={`${title} ${column.label} 열기`} onClick={()=>onOptions?onOptions(product):onOpen(product,column.step)}>{registrationStepLabel(product,column.step)}</button>}
         {column.id==='status'&&<><span className="registration-state" title={product.hub_receipt?'최근 전송한 견적서에서 확인한 Supplier Hub 결과':'Supplier Hub 전송·접수 여부 검증 필요'}>{registrationTransmissionLabel(product)}</span>{product.hub_receipt&&<div aria-label="최근 전송 결과"><small>{product.hub_receipt.company.name} · SKU {product.hub_receipt.issuedSkus}/{product.hub_receipt.includedOptions}개</small>{product.hub_receipt.quotationId&&<small>견적서 ID: {product.hub_receipt.quotationId}</small>}<time dateTime={new Date(product.hub_receipt.observedAt).toISOString()}>{dateTime.format(new Date(product.hub_receipt.observedAt))}</time><small>최근 전송한 견적서 기준</small></div>}</>}
-        {column.id==='management'&&<div className="registration-management">{onDelete?<button type="button" className="registration-delete" aria-label={`${title} 삭제`} title={deleting===product.id?'삭제 중':'삭제'} disabled={deleting!==null} onClick={()=>deleteProduct(product)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg></button>:<button type="button" className="btn ghost" aria-label={`${title} 상세`} onClick={()=>onOpen(product)}>열기</button>}</div>}
+        {column.id==='management'&&<div className="registration-management">{onDelete?<button type="button" className="registration-delete" aria-label={`${title} 삭제`} title={removal.blocked?removal.reason:deleting===product.id?'삭제 중':'삭제'} disabled={deleting!==null||removal.blocked} onClick={()=>deleteProduct(product)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg></button>:<button type="button" className="btn ghost" aria-label={`${title} 상세`} onClick={()=>onOpen(product)}>열기</button>}</div>}
       </td>)}
     </tr>;})}
     </tbody></table>{!rows.length&&<div className="empty"><strong>{loading?'상품을 불러오는 중입니다.':error?'상품 조회 오류를 확인해주세요.':'조건에 맞는 상품이 없습니다.'}</strong><small>상품을 추가하거나 조회 기간·검색어를 변경하세요.</small></div>}</div>

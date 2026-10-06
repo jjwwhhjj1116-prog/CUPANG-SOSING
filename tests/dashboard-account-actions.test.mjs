@@ -11,7 +11,7 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
 const scope=(ownerId='test-owner')=>({ownerId,company:{code:'A01526306',name:'유앤채'}});
 const plain=value=>JSON.parse(JSON.stringify(value));
 const version='2026-10-06T00:00:00.000Z';
-const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://source.example.test/product/'+id,created_at:version,updated_at:version,image_keys:JSON.stringify(['test-owner/'+id+'/source.png','test-owner/'+id+'/second.png']),options_count:1,source_price_cny:2,exchange_rate:350,supply_margin:50,coupang_margin:40,supply_price:1400,sale_price:2340,msrp:3050,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
+const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://source.example.test/product/'+id,created_at:version,updated_at:version,image_keys:JSON.stringify(['test-owner/'+id+'/source.png','test-owner/'+id+'/second.png']),options_count:1,source_price_cny:2,exchange_rate:350,supply_margin:50,coupang_margin:40,supply_price:1400,sale_price:2340,msrp:3050,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',removal_policy:{blocked:false,code:null,reason:'',receipt:null},goal_stage:'work'});
 
 /** Actual DashboardClient, its private DetailPanel and settings dialog. Child
  * renderers record their received props; every tested callback is the real
@@ -111,7 +111,7 @@ test('actual dashboard deletion sends the saved version and removes only its row
 test('pending and failed dashboard deletion preserve rows/selection and duplicate calls cannot issue another DELETE',async()=>{
  const h=harness();try{
   await h.settle();const first=h.products[0];h.component('registration-board').onSelected(new Set([first.id]));const pending=h.deferDelete(),handler=h.component('registration-board').onDelete;
-  const saving=handler(first);await assert.rejects(()=>handler(first),/진행 중인 작업/);assert.equal(h.requests.filter(request=>request.method==='DELETE').length,1);assert.equal(h.component('registration-board').products.length,2);
+  const saving=handler(first);await assert.rejects(()=>handler(first),/진행 중인 작업/);await h.settle();assert.equal(h.requests.filter(request=>request.method==='DELETE').length,1);assert.equal(h.component('registration-board').products.length,2);
   pending.resolve(Response.json({error:'상품 버전이 변경되었습니다.'},{status:409}));await assert.rejects(()=>saving,/버전/);await h.settle();assert.equal(h.component('registration-board').products.length,2);assert.deepEqual(Array.from(h.component('registration-board').selected),[first.id]);
   await h.component('registration-board').onDelete(first);await h.settle();assert.equal(h.component('registration-board').products.length,1);assert.equal(h.requests.filter(request=>request.method==='DELETE').length,2);
  }finally{h.close();}
@@ -123,6 +123,53 @@ test('malformed dashboard deletion confirmations cannot remove any product or it
    await h.settle();h.component('registration-board').onSelected(new Set(['product-a','product-b']));await assert.rejects(()=>h.component('registration-board').onDelete(h.products[0]),/삭제 결과/);await h.settle();assert.deepEqual(Array.from(h.component('registration-board').products,row=>row.id),['product-a','product-b']);assert.deepEqual(Array.from(h.component('registration-board').selected),['product-a','product-b']);
   }finally{h.close();}
  }
+});
+
+test('retained deletion callbacks re-read current transmission evidence before any DELETE, even at the same product clock',async()=>{
+ const reason='쿠팡에 이미 전송된 상품이라 삭제할 수 없습니다';
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const h=harness();try{
+   await h.settle();const first=h.products[0],handler=h.component('registration-board').onDelete;
+   h.component('registration-board').onSelected(new Set([first.id]));
+   const accepted={label:'견적서 접수',company,quotationId:'accepted-before-retry',fingerprint:'a'.repeat(64),categoryId:'69900',observedAt:1,includedOptions:1,issuedSkus:0};
+   const latest={...first,hub_receipt:{...accepted,label:'파일 반려',quotationId:null,fingerprint:'b'.repeat(64)},removal_policy:{blocked:true,code:'PRODUCT_HUB_TRANSMITTED',reason,receipt:accepted}};
+   h.setProductReply(async()=>Response.json({product:latest}));
+   const start=h.requests.length;await assert.rejects(()=>handler(first),error=>error.message===reason);await h.settle();
+   const requests=h.requests.slice(start);assert.equal(requests.length,1);assert.equal(requests[0].method,'GET');assert.equal(requests[0].url,'/api/products/'+first.id);assert.equal(requests[0].init.cache,'no-store');assert.ok(requests[0].init.signal instanceof AbortSignal);
+   assert.equal(h.requests.filter(request=>request.method==='DELETE').length,0);assert.deepEqual(Array.from(h.component('registration-board').products,row=>row.id),['product-a','product-b']);assert.deepEqual(Array.from(h.component('registration-board').selected),[first.id]);
+   // A failed preflight releases its lock. A fresh verified allowed response is
+   // required before this same explicit callback can remove a local-only draft.
+   h.setProductReply(async()=>Response.json({product:first}));await handler(first);await h.settle();assert.equal(h.requests.filter(request=>request.method==='DELETE').length,1);
+  }finally{h.close();}
+ }
+});
+
+test('missing or corrupt current deletion proof and changed source identity preserve the row without a DELETE',async()=>{
+ for(const mutate of [
+  row=>({...row,removal_policy:undefined}),row=>({...row,removal_policy:null}),row=>({...row,removal_policy:{blocked:false}}),
+  row=>({...row,id:'different-product'}),row=>({...row,owner_id:'another-owner'}),row=>({...row,updated_at:'2026-10-07T00:00:01.000Z'}),
+ ]){
+  const h=harness();try{
+   await h.settle();const first=h.products[0],before=JSON.stringify(h.products);h.component('registration-board').onSelected(new Set([first.id]));h.setProductReply(async()=>Response.json({product:mutate(first)}));
+   await assert.rejects(()=>h.component('registration-board').onDelete(first));await h.settle();assert.equal(h.requests.filter(request=>request.method==='DELETE').length,0);assert.equal(JSON.stringify(h.products),before);assert.deepEqual(Array.from(h.component('registration-board').selected),[first.id]);
+  }finally{h.close();}
+ }
+});
+
+test('a locked visible product cannot start even the preflight and its legacy status never substitutes for server proof',async()=>{
+ const h=harness();try{
+  const reason='쿠팡에 이미 전송된 상품이라 삭제할 수 없습니다',first=h.products[0];first.removal_policy={blocked:true,code:'PRODUCT_HUB_EVIDENCE_UNCONFIRMED',reason:'전송 결과를 확인한 뒤 삭제해주세요.',receipt:null};
+  await h.settle();let reads=h.requests.length;await assert.rejects(()=>h.component('registration-board').onDelete(first));assert.equal(h.requests.length,reads);
+  first.removal_policy={blocked:false,code:null,reason:'',receipt:null};first.registration_status='전송완료';first.supplier_hub_status='전송완료';await h.settle();
+  await h.component('registration-board').onDelete(first);await h.settle();assert.equal(h.requests.filter(request=>request.method==='DELETE').length,1);assert.equal(h.component('registration-board').products.length,1);assert.ok(!text(h.render()).includes(reason));
+ }finally{h.close();}
+});
+
+test('unmounting a pending deletion preflight aborts it and retained callbacks cannot issue reads or writes',async()=>{
+ const h=harness();await h.settle();const first=h.products[0],handler=h.component('registration-board').onDelete,pending=h.deferProduct(first.id),removing=handler(first);await h.settle();
+ const request=h.requests.at(-1);assert.equal(request.method,'GET');assert.equal(request.url,'/api/products/'+first.id);assert.equal(request.init.signal.aborted,false);
+ h.close();assert.equal(request.init.signal.aborted,true);pending.resolve(Response.json({product:first}));await removing;await h.settle();assert.equal(h.requests.filter(request=>request.method==='DELETE').length,0);assert.equal(h.lateWrites,0);
+ const count=h.requests.length;await assert.rejects(()=>handler(first));assert.equal(h.requests.length,count);
 });
 
 test('detail image translation parent targets the free editor while rejecting missing images and paid or free busy work',async()=>{
