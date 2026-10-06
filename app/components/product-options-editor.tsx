@@ -9,7 +9,7 @@ import type { PricePolicy } from '@/app/pricing';
 import { mergeOptionDraft, refreshOptionPriceBase } from '@/app/option-price-refresh';
 import { configuredBundlePolicy, type BundlePolicy } from '@/app/bundle-policy';
 
-type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; onSaved?: () => void; imageView?: boolean; pricingView?: boolean; focusedOptionId?: string };
+type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; pricingView?: boolean; focusedOptionId?: string };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 const originNames = { manual: '직접 입력', collected: '수집 원문', translated: '번역 결과', unverified: '미확인' };
 async function fetchOptions(endpoint: string, signal?: AbortSignal): Promise<ProductOptionsResponse> {
@@ -19,7 +19,7 @@ async function fetchOptions(endpoint: string, signal?: AbortSignal): Promise<Pro
   return body;
 }
 export function ProductOptionsEditor(props: Props) { return <OptionsEditor key={props.product.id} {...props} />; }
-function OptionsEditor({ product, onSaved, pricingView = false, imageView = false, focusedOptionId }: Props) {
+function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = false, imageView = false, focusedOptionId }: Props) {
   const [saved, setSaved] = useState<ProductOptionsResponse | null>(null);
   const [rows, setRows] = useState<OptionInput[]>([]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -67,6 +67,9 @@ function OptionsEditor({ product, onSaved, pricingView = false, imageView = fals
   }, [changedElsewhere, dirty, endpoint, applyLoaded, product.updated_at, busy, loading]);
   let images: string[] = []; try { images = productImageKeys(product.image_keys); } catch { /* Server checks invalid references on save. */ }
   const included = rows.filter(row => row.included).length;
+  const packagingTarget = saved?.options.rows.find(row => selected.has(row.id))?.id
+    ?? (focusedOptionId ? saved?.options.rows.find(row => row.id === focusedOptionId)?.id
+      : saved?.options.rows.find(row => row.included)?.id ?? null);
   async function reload() {
     if(activeRequest.current || busy || loading)return;
     const controller=new AbortController();activeRequest.current=controller;
@@ -141,7 +144,7 @@ function OptionsEditor({ product, onSaved, pricingView = false, imageView = fals
 
   return <div ref={editorRoot} className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
     {sourceMarkers}
-    <div className="panel-note"><div><strong>옵션·SKU별 견적 구성</strong><p>옵션 원가와 판매 단위당 구성 수량으로 각각 계산합니다. 상품의 대표 원가는 별도로 유지됩니다. 원문·한국어 이름을 수정해 저장할 수 있으며 자동 수집·번역이 실행되는 화면은 아닙니다. 공급자 재고는 수집 시점 또는 직접 입력한 값이며 실시간 재고가 아닙니다. 구성 수량·최소 주문 수량·견적 수량과는 별개입니다. 포장 무게(g)와 포장 치수(mm)는 실제 배송할 포장 상태를 입력하면 견적서 물류 정보에 자동 반영됩니다.</p></div></div>
+    <div className="panel-note"><div><strong>옵션·SKU별 견적 구성</strong><p>옵션 원가와 판매 단위당 구성 수량으로 각각 계산합니다. 상품의 대표 원가는 별도로 유지됩니다. 원문·한국어 이름을 수정해 저장할 수 있으며 자동 수집·번역이 실행되는 화면은 아닙니다. 공급자 재고는 수집 시점 또는 직접 입력한 값이며 실시간 재고가 아닙니다. 구성 수량·최소 주문 수량·견적 수량과는 별개입니다. 포장 무게(g)와 포장 치수(mm)는 실제 배송할 포장 상태를 입력하고 저장하세요. 7단계에서 직접 수정한 포장값은 유지됩니다. 전송 전에 견적서에 적용된 값을 확인해주세요.</p></div></div>
     {loading && <p role="status">저장한 옵션과 가격 설정을 불러오는 중입니다.</p>}
     {error && <div role="alert" className="panel-note"><div><strong>{error}</strong>{conflict && <p>입력 내용을 보관한 후 최신 상품·가격·옵션을 확인해주세요.</p>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void reload()}>{saved ? '입력 버리고 저장본 불러오기' : '다시 불러오기'}</button></div></div>}
     {message && <p role="status">{message}</p>}
@@ -177,6 +180,10 @@ function OptionsEditor({ product, onSaved, pricingView = false, imageView = fals
           </article>;
         })}</div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 18 }}><small style={{ color: '#64748b' }}>{dirty ? '저장하지 않은 변경' : `저장 버전 ${saved.options.revision}`}</small><button type="button" className="btn primary" disabled={!dirty || conflict || busy || changedElsewhere} onClick={() => void save()}>{busy ? '저장 중…' : '옵션 저장·가격 계산'}</button></div>
+        {onReviewPackaging && <button type="button" className="btn ghost" disabled={dirty || busy || loading || conflict || changedElsewhere || packagingTarget === undefined} onClick={() => {
+          if (activeRequest.current || dirty || busy || loading || conflict || changedElsewhere || packagingTarget === undefined) return;
+          onReviewPackaging(packagingTarget);
+        }}>견적서 포장값 확인</button>}
       </fieldset>
     </>}
   </div>;

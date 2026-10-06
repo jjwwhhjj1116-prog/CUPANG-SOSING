@@ -31,7 +31,7 @@ async function fixture(company,actual=false){
   }
   const profile=(await json(await h.load('app/api/category-profiles/route.ts').POST(new Request('https://app.test/api/category-profiles',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'포장 무게 검토',categoryId:'69900',categoryPath,hubSchema,template:connected.template,mappings:connected.mappings})})),201)).profile;
   h.context.category=profile;h.sqlite.prepare('UPDATE collection_context SET payload=?').run(JSON.stringify(h.context));h.sqlite.prepare("UPDATE collection_jobs SET goal='work'").run();h.bindings.SOURCEFLOW_TEXT_PROVIDER='google-free';
-  await assert.rejects(h.intake(),/HTTP 429/);assert.equal(providerCalls,1);
+  const intake=await h.intake();assert.match(intake,/번역 미완료/);assert.match(intake,/HTTP 429/);assert.equal(providerCalls,1);
   const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id,endpoint=base+'/quotation-fields';
   const retained=()=>JSON.stringify(['product_options','product_content','product_price_policy','collection_results','collection_context'].map(table=>h.sqlite.prepare('SELECT * FROM '+table).all()));
   const before=retained();let view=await json(await h.route(endpoint));

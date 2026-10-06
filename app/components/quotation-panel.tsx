@@ -18,18 +18,19 @@ type Preview = {
   submissionReview?: QuotationPreviewReviewData;
   report:{dataStartRow:number;mappingCoverage?:QuotationMappingFinding[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {onPrepareSubmission?:(profileId:string)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+type QuotationPanelProps = {onPrepareSubmission?:(profileId:string)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
   return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId])} {...props}/>;
 }
-function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget}: QuotationPanelProps) {
+function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [useSavedRow,setUseSavedRow]=useState(true);
   const [previewState,setPreviewState]=useState<{data:Preview;version?:string}|null>(null);const [busy,setBusy]=useState(false);
   const preview=previewState?.version===refreshToken?previewState?.data??null:null;
   const setPreview=(data:Preview|null)=>setPreviewState(data?{data,version:refreshToken}:null);
-  const [reviewTarget,setReviewTarget]=useState<{target:QuotationNavigationTarget;sequence:number}|null>(null);
+  const [reviewTarget,setReviewTarget]=useState<{target:QuotationNavigationTarget;sequence:number;navigationSequence:number}|null>(null);
+  const currentReviewTarget=reviewTarget?.navigationSequence===navigationSequence?reviewTarget:null;
   const editorRef=useRef<HTMLDivElement>(null);
   const [error,setError]=useState('');const [message,setMessage]=useState('');
   const [dirty,setDirty]=useState(false);
@@ -126,7 +127,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
     {connectionWarning && <p role="status" className="panel-note">{connectionWarning}</p>}
-    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={reviewTarget?.sequence??0} navigationTarget={reviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onDirtyChange={value=>{
+    <div ref={editorRef}>{contextLoaded?<QuotationFieldsEditor key={`${navigationSequence}:${currentReviewTarget?.sequence??0}`} navigationTarget={currentReviewTarget?.target??navigationTarget} productId={productId} profileId={overrideProfileId} refreshToken={JSON.stringify([refreshToken,profileVersion])} onDirtyChange={value=>{
       dirtyRef.current=value;
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
       setDirty(value);
@@ -164,10 +165,10 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
     {preview&&<>
       <h3>출력 미리보기 · {preview.report.rowCount}행</h3><p>실제 상품 입력 시작: {preview.report.dataStartRow}행 · {useSavedRow?'카테고리 저장 설정':'이번 출력 지정값'}</p>
       <p style={{overflowWrap:'anywhere'}}>견적서 파일명: {preview.filename}</p>
-      {preview.submissionReview && <QuotationPreviewReview review={preview.submissionReview} disabled={busy||dirty} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />}
+      {preview.submissionReview && <QuotationPreviewReview review={preview.submissionReview} disabled={busy||dirty} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1,navigationSequence}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />}
       <div className="table-wrap quote-preview"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((value,column)=><td key={column}>{String(value)||'—'}</td>)}</tr>)}</tbody></table></div>
       {preview.report.missingRequired.length>0&&<div className="panel-note"><div><strong>필수 연결 값 {preview.report.missingRequired.length}개 미입력</strong><ul>{preview.report.missingRequired.map((field,index)=><li key={index}>{field.row}행 · {field.header||`${field.column}열`}</li>)}</ul></div></div>}
-      <QuotationMappingReview findings={preview.report.mappingCoverage ?? []} disabled={busy||dirty} onManage={onManageCategories} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />
+      <QuotationMappingReview findings={preview.report.mappingCoverage ?? []} disabled={busy||dirty} onManage={onManageCategories} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1,navigationSequence}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />
       <ul className="quote-warnings">{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>
       <small>콘텐츠 v{preview.report.contentRevision} · 옵션 v{preview.report.optionRevision} · 카테고리 연결 v{preview.report.profileRevision}</small>
       <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('download')}>채운 견적서 파일 다운로드</button>

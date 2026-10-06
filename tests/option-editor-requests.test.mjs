@@ -21,6 +21,29 @@ function harness(handler, readHandler, props={}){
  return{render,button,image,product,get saves(){return saves;},async start(){render();effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
 }
 
+test('saved option packaging opens its exact quotation target only after a successful save',async()=>{
+ let finish;const pending=new Promise(resolve=>{finish=resolve;}),requests=[],targets=[];
+ const h=harness(async(_url,init,base)=>{const body=JSON.parse(init.body);requests.push(body);await pending;return Response.json({...base,options:{...base.options,revision:2,rows:body.rows.map(row=>({...row,provenance:{...base.options.rows.find(saved=>saved.id===row.id)?.provenance,packagedWeightG:'manual'}}))},productVersion:'2026-09-24T00:01:00Z'});},undefined,{onReviewPackaging:id=>targets.push(id)});
+ await h.start();const review=()=>nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='견적서 포장값 확인');
+ assert.equal(review().props.disabled,false);review().props.onClick();assert.deepEqual(targets,['a']);assert.equal(requests.length,0);
+ const weight=nodes(h.render()).find(node=>node.props?.['aria-label']==='옵션 1 포장 무게 g');weight.props.onChange({target:{value:'730',valueAsNumber:730}});
+ assert.equal(review().props.disabled,true);review().props.onClick();assert.deepEqual(targets,['a']);
+ h.button().props.onClick();review().props.onClick();assert.deepEqual(targets,['a']);finish();await settle();
+ assert.equal(requests.length,1);assert.equal(requests[0].rows[0].packagedWeightG,730);assert.equal(review().props.disabled,false);
+ review().props.onClick();assert.deepEqual(targets,['a','a']);assert.equal(requests.length,1,'reviewing never rewrites an existing quotation override');
+ h.product.updated_at='2026-09-24T00:02:00Z';assert.equal(review().props.disabled,true);review().props.onClick();assert.deepEqual(targets,['a','a']);
+});
+
+test('packaging review preserves a focused or explicitly selected option and never replaces a missing target',async()=>{
+ for(const focus of ['b','deleted']){
+  const targets=[],h=harness(()=>{},body=>{body.options.rows.push({...body.options.rows[0],id:'b'});return Response.json(body);},{focusedOptionId:focus,pricingView:true,onReviewPackaging:id=>targets.push(id)});await h.start();
+  const review=()=>nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='견적서 포장값 확인');
+  assert.equal(review().props.disabled,focus==='deleted');review().props.onClick();assert.deepEqual(targets,focus==='b'?['b']:[]);
+  if(focus==='deleted'){nodes(h.render()).find(node=>node.props?.['aria-label']==='가격 옵션 2 선택').props.onChange({target:{checked:true}});review().props.onClick();assert.deepEqual(targets,['b']);}
+ }
+ const h=harness(()=>{},undefined,{imageView:true,onReviewPackaging:()=>assert.fail('image view cannot route packaging')});await h.start();assert.ok(!nodes(h.render()).some(node=>node.props?.children==='견적서 포장값 확인'));
+});
+
 test('option image save is single-flight and next edit uses the returned revision and product version',async()=>{
  let finish;const pending=new Promise(resolve=>{finish=resolve;});const requests=[];
  const h=harness(async(_url,init,base)=>{const request=JSON.parse(init.body);requests.push(request);if(requests.length===1)await pending;return Response.json({...base,options:{...base.options,revision:request.expectedRevision+1,rows:request.rows.map(row=>({...row,provenance:{imageKey:'manual'}}))},productVersion:'2026-09-24T00:01:00Z'});});

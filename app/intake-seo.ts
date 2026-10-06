@@ -1,9 +1,9 @@
-import { translationAttributeCoverage, type TranslationJob } from '@/app/automation/translation';
+import { GOOGLE_TEXT_MODEL, translationAttributeCoverage, type TranslationJob } from '@/app/automation/translation';
 import { runReviewedTranslation } from '@/app/reviewed-translation';
 import { awaitIntakeTranslation } from '@/app/intake-translation-result';
 
 /** User-started intake produces editable content; never submits to Supplier Hub. */
-export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal, onCompleted: () => void = () => {}, onReviewRequired: () => void = () => {}) {
+export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch, signal: AbortSignal, onCompleted: () => void = () => {}, onReviewRequired: () => void = () => {}, onManualReady: () => void = () => {}) {
   if (signal.aborted) return '';
   let generating = false;
   // Keep source-review warnings visible at the entry point as well as in the
@@ -23,6 +23,18 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     }).join(' / ');
     return `${message} AI 검토 알림 ${warnings.size}개: ${summary}${warnings.size > 3 ? ` 외 ${warnings.size - 3}개.` : ''} 전체 내용은 1단계 SEO 생성 이력에서 확인해주세요.`;
   };
+  const failedGoogleDraft = (job: TranslationJob): string | null => {
+    // Only an acknowledged terminal Google failure can leave a manual source
+    // draft ready. Unknown execution/persistence and apply conflicts stay errors.
+    if (job.productId !== productId || job.status !== 'failed' || job.result !== null
+      || job.review?.destination !== 'Google 번역' || job.review.model !== GOOGLE_TEXT_MODEL
+      || job.review.instructionsVersion !== 'sourceflow-translation-v6'
+      || !job.error?.code || !job.error.message || job.error.mayHaveBeenCharged !== false
+      || !job.startedAt || !Number.isFinite(Date.parse(job.startedAt))
+      || !job.finishedAt || !Number.isFinite(Date.parse(job.finishedAt))) return null;
+    onManualReady();
+    return withWarnings(`원문 초안 저장 · 번역 미완료. ${job.error.message} 원문과 직접 수정한 값은 유지됩니다. 1~7단계에서 바로 확인·수정해주세요.`);
+  };
   try {
     const base = `/api/products/${encodeURIComponent(productId)}`;
     let next: Record<string,unknown> = {action:'prepare-collected',intake:true};
@@ -40,6 +52,10 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     }
     if (!response.ok || body.job?.productId !== productId) return withWarnings(`상품은 저장됐지만 SEO 요청 준비는 완료되지 않았습니다. ${body.error ?? 'SEO 단계에서 다시 확인해주세요.'}`);
     rememberWarnings(body.job);
+    // A failed canonical job can predate manual edits. Reuse its saved failure
+    // without attempting another options request or changing current content.
+    const previousFailure = failedGoogleDraft(body.job);
+    if (previousFailure !== null) return previousFailure;
     if(body.intakePreserved){
       if(!body.productVersion)throw Error('현재 상품 버전을 확인하지 못했습니다.');
       next={action:'prepare-intake-options',expectedVersion:body.productVersion};continue;
@@ -55,6 +71,8 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     }
     if(job.status==='running')job=await awaitIntakeTranslation(job,fetcher,signal);
     if(signal.aborted)return '';
+    const executedFailure = failedGoogleDraft(job);
+    if(executedFailure !== null)return executedFailure;
     if(job.status!=='completed'||!job.result)return withWarnings(`상품은 저장됐지만 SEO 초안은 아직 반영되지 않았습니다. ${job.error?.message ?? (job.status==='running'?'생성 중입니다. 작업 상태를 다시 확인해주세요.':'생성 결과를 확인해주세요.')}`);
     rememberWarnings(job);
     const coverage=job.review.instructionsVersion==='sourceflow-translation-v6'?translationAttributeCoverage(job.review.source,job.result.draft):null;
@@ -94,7 +112,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
 
 /** Message text is never evidence that all pending draft fields were saved. */
 export async function prepareIntakeSeoOutcome(productId: string, fetcher: typeof fetch, signal: AbortSignal) {
-  let completed = false, reviewRequired = false;
-  const message = await prepareIntakeSeo(productId, fetcher, signal, () => { completed = true; }, () => { reviewRequired = true; });
-  return { completed, reviewRequired, message };
+  let completed = false, reviewRequired = false, manualReady = false;
+  const message = await prepareIntakeSeo(productId, fetcher, signal, () => { completed = true; }, () => { reviewRequired = true; }, () => { manualReady = true; });
+  return { completed, reviewRequired, manualReady, message };
 }

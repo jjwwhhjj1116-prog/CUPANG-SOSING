@@ -20,7 +20,7 @@ export async function GET(request: Request, context: {params:Promise<{id:string}
     const owner = await getWorkspaceOwnerId(); const {id} = await context.params;
     const saved = await readQuotationExportSource(owner,id,profileId);
     const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
-    const resolved = (await resolvePublicDetail(resolveQuotationExport(saved),saved.content,owner,productImageKeys(saved.product.image_keys),detailConfig)).resolved;
+    const resolved: ReturnType<typeof resolveQuotationExport> = (await resolvePublicDetail(resolveQuotationExport(saved),saved.content,owner,productImageKeys(saved.product.image_keys),detailConfig)).resolved;
     const keys = productImageKeys(saved.product.image_keys).filter(key=>isOwnedImageKey(owner,key));
     const checks = await inspectQuotationImages(resolved,keys,env.FILES ? key=>env.FILES.head(key) : undefined);
     const documents=readLegalDocuments(saved.content.legalDocuments,owner,id);
@@ -32,7 +32,8 @@ export async function GET(request: Request, context: {params:Promise<{id:string}
     if (!await quotationSourcesCurrent(owner,id,saved.source) || (await readQuotationFields(owner,id)).revision !== saved.state.revision) {
       return json({error:'검사 중 자료가 변경되었습니다. 저장을 마친 뒤 다시 검사해주세요.'},409);
     }
-    return json({...report,productId:id,requestedProfileId:profileId,title:saved.product.title,sourceUrl:saved.product.source_url,checkedAt:new Date().toISOString(),fingerprint});
+    const title = resolved.rows.find(row=>row.optionId===null)?.fields.title?.value ?? '';
+    return json({...report,productId:id,requestedProfileId:profileId,title,sourceUrl:saved.product.source_url,checkedAt:new Date().toISOString(),fingerprint});
   } catch (error) {
     if (error instanceof PublicDetailError) return json({error:error.message},error.status);
     if (error instanceof QuotationExportError) return json({error:error.message},error.status);

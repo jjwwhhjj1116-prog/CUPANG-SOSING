@@ -57,6 +57,21 @@ async function requestHarness(options={}){
 }
 const previewBody={fingerprint:'f',filename:'quote.csv',headers:['상품명'],rows:[['이전 상품']],report:{dataStartRow:2,rowCount:1,missingRequired:[],warnings:[],contentRevision:1,optionRevision:1,profileRevision:1}};
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&n.props.children===label);
+
+test('explicit source navigation reopens the same field without resetting the selected workbook or manual start row',async()=>{
+ const h=await requestHarness(),editor=tree=>nodes(tree).find(node=>node.type===h.Editor);
+ let tree=h.render();const initial=editor(tree).key;
+ nodes(tree).find(node=>node.type==='input'&&node.props.type==='checkbox').props.onChange({target:{checked:false}});
+ nodes(h.render()).find(node=>node.type==='input'&&node.props.type==='number').props.onChange({target:{value:'9'}});
+ button(h.render(),'견적 자료 검토').props.onClick();h.pending.shift()(Response.json(previewBody));await h.settle();
+ const mapping=nodes(h.render()).find(node=>Array.isArray(node.props?.findings));mapping.props.onInspect({optionId:'old-option',fieldId:'salePrice'});
+ const inspected=editor(h.render());assert.equal(inspected.props.navigationTarget.fieldId,'salePrice');
+ tree=h.render({navigationSequence:1,navigationTarget:{optionId:'saved-option',fieldId:'packagedWeightG'}});
+ assert.notEqual(editor(tree).key,initial);assert.notEqual(editor(tree).key,inspected.key);assert.equal(editor(tree).props.navigationTarget.optionId,'saved-option');assert.equal(editor(tree).props.navigationTarget.fieldId,'packagedWeightG');assert.equal(editor(tree).props.profileId,'saved');
+ assert.equal(nodes(tree).find(node=>node.type==='select').props.value,'saved');assert.equal(nodes(tree).find(node=>node.type==='input'&&node.props.type==='number').props.value,9);
+ const first=editor(tree).key;tree=h.render({navigationSequence:2});assert.notEqual(editor(tree).key,first);assert.equal(editor(tree).props.navigationTarget.fieldId,'packagedWeightG');
+ assert.equal(h.calls.length,1,'an inspection request is the only POST; navigation never changes field values');
+});
 test('submission preparation carries the selected profile and blocks dirty or pending quotation operations',async()=>{
  const h=await requestHarness(),prepared=[];
  const props={onPrepareSubmission:id=>prepared.push(id)};

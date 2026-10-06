@@ -204,7 +204,7 @@ test('review panel keeps successful but wrong-product responses out of its repor
  }
 });
 test('review UI shows actual issues and URL, escapes source text and has no misleading global send button',()=>{
-  const report={...inspectSubmission(resolved(),[]),checkedAt:'2026-09-23T00:00:00Z'};
+  const report={...inspectSubmission(resolved(),[]),title:'<script>saved title</script>',checkedAt:'2026-09-23T00:00:00Z'};
   const html=renderPanel([{id:'p',title:'<script>unsafe</script>',source_url:'javascript:alert(1)'}],[{id:'p',report}]);
   assert.ok(html.includes('입력 오류 1개'));assert.ok(html.includes('증빙 확인 1개'));
   assert.ok(html.includes('견적서 수정하기'));assert.ok(html.includes('&lt;script&gt;'));

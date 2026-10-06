@@ -12,13 +12,13 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
 
 /** Real dashboard, archive, registration board and content editor. HTTP is held
  * at the response boundary; no browser, remote product or storage is used. */
-function harness({submission=false,batch,integration}={}){
+function harness({submission=false,batch,integration,packaging=false}={}){
  const instances=new Map(),cache=new Map(),effects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[],productReads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,holdProductRead=false,intakeSettings;
  const now='2026-10-05T00:00:00.000Z';
  const product=id=>({id,title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:0,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
  const products=[batch?.product??product('b')];
  const profiles=['a','b'].map(id=>({id:'profile-'+id,name:'양식 '+id,revision:1,categoryId:'80719',categoryPath:['바스켓'],mappings:[],template:{name:id+'.xlsx',format:'xlsx',headerRow:1,headers:['상품명'],sheetName:'견적서'}}));
- let quotationEditor;
+ let quotationEditor,packagingEditor,quotationDirty=false,quotationBusy=false;
  const hooks={
   useState(initial){const instance=active,index=instance.index++;if(!(index in instance.slots))instance.slots[index]=typeof initial==='function'?initial():initial;return[instance.slots[index],value=>{if(!instance.mounted){if(instance.name==='DashboardClient')lateDashboardWrites++;return;}instance.slots[index]=typeof value==='function'?value(instance.slots[index]):value;}];},
   useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},
@@ -67,7 +67,8 @@ function harness({submission=false,batch,integration}={}){
     if(name.endsWith('.css'))return{};
     if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>({rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false})};
     if(name==='@/app/components/intake-queue-panel')return{IntakeQueuePanel:props=>{intakeSettings=props.settings;return null;}};
-    if(submission&&name==='@/app/components/quotation-fields-editor')return{QuotationFieldsEditor:props=>{quotationEditor=props;return null;}};
+    if(submission&&name==='@/app/components/quotation-fields-editor')return{QuotationFieldsEditor:props=>{quotationEditor={...props,mount:active,onDirtyChange(value){quotationDirty=value;props.onDirtyChange(value);}};return {type:'div',props:{'data-workspace-dirty':quotationDirty,'data-workspace-saving':quotationBusy}};}};
+    if(packaging&&name==='@/app/components/product-options-editor')return{ProductOptionsEditor:props=>{packagingEditor=props;return null;}};
     if(name.startsWith('@/app/components/')&&!implemented.has(name.split('/').at(-1)))return new Proxy({},{get:()=>()=>null});
     if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));
     return native(name);
@@ -98,6 +99,7 @@ function harness({submission=false,batch,integration}={}){
  const settle=async()=>{for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
  return{requests,archiveReads,settingsReads,settingsWrites,bannerUploads,productReads,product,render,settle,button,get lateDashboardWrites(){return lateDashboardWrites;},get intakeSettings(){return intakeSettings;},get quotationEditor(){return quotationEditor;},
+  get packagingEditor(){return packagingEditor;},setQuotationBusy(value){quotationBusy=value;},
   setStoredSettings(value){storedSettings=value;},deferSettings(){holdSettings=true;},deferSettingsWrite(){holdSettingsWrite=true;},
   deferProduct(){holdProductRead=true;},
   settingsPanel:()=>nodes(render()).find(node=>node.props?.id==='workspace-settings-panel'),
@@ -108,6 +110,48 @@ function harness({submission=false,batch,integration}={}){
   close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},
  };
 }
+
+test('packaging review retains unsaved source and quotation fields before opening the exact saved option',async()=>{
+ const h=harness({submission:true,packaging:true});try{
+  await h.settle();await h.click('상품 b');
+  h.title().props.onChange({target:{value:'보존할 미저장 상품명'}});await h.settle();
+  h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.equal(h.title().props.value,'보존할 미저장 상품명');assert.equal(h.quotationEditor.navigationTarget,undefined);
+  h.title().props.onChange({target:{value:'저장 상품명'}});await h.settle();
+  h.quotationEditor.onDirtyChange(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.equal(h.quotationEditor.navigationTarget,undefined);assert.match(text(h.workspace()),/견적서에 저장하지 않은 입력/);
+  h.quotationEditor.onDirtyChange(false);h.setQuotationBusy(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.equal(h.quotationEditor.navigationTarget,undefined);assert.match(text(h.workspace()),/작업이 진행 중/);
+  h.setQuotationBusy(false);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG'});assert.equal(h.quotationEditor.profileId,'profile-b');assert.equal(h.button('7견적서').props['aria-current'],'step');
+  const before=h.quotationEditor.mount;h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.notEqual(h.quotationEditor.mount,before);
+  assert.ok(h.requests.every(request=>request.method==='GET'),'navigation does not overwrite saved values or transmit a package');
+ }finally{h.close();}
+});
+
+test('retained packaging callback cannot replace a newly opened workspace target',async()=>{
+ const h=harness({submission:true,packaging:true});try{
+  await h.settle();await h.click('상품 b');const old=h.packagingEditor.onReviewPackaging;
+  await h.click('상품 b');old('previous-option');await h.settle();assert.equal(h.quotationEditor.navigationTarget,undefined);assert.equal(h.button('1SEO').props['aria-current'],'step');
+  assert.ok(h.requests.every(request=>request.method==='GET'));
+ }finally{h.close();}
+});
+
+test('packaging review from a category-bound submission target keeps the quotation panel and manual start row',async()=>{
+ const h=harness({submission:true,packaging:true});try{
+  await h.settle();await h.click('상품 b');await h.click('7견적서');await h.click('저장한 견적 전송 준비');await h.click('견적서 수정하기');
+  assert.equal(h.quotationEditor.navigationTarget.categoryId,'80719');assert.equal(h.quotationEditor.profileId,'profile-b');
+  const automaticRow=()=>nodes(h.workspace()).find(node=>node.type==='label'&&text(node)==='카테고리에 저장한 입력 시작 행 자동 사용');
+  const rowInput=()=>nodes(nodes(h.workspace()).find(node=>node.type==='label'&&text(node).startsWith('상품 데이터 입력 시작 행'))).find(node=>node.type==='input');
+  nodes(automaticRow()).find(node=>node.type==='input').props.onChange({target:{checked:false}});await h.settle();
+  rowInput().props.onChange({target:{value:'9'}});await h.settle();assert.equal(rowInput().props.value,9);
+  await h.click('2가격');const reads=h.requests.length,originalEditor=h.quotationEditor.mount;
+  h.packagingEditor.onReviewPackaging('sku-2');await h.settle();
+  assert.equal(rowInput().props.value,9,'packaging navigation must not remount the panel and reset its output row');
+  assert.equal(nodes(automaticRow()).find(node=>node.type==='input').props.checked,false);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG',categoryId:'80719'});
+  assert.equal(h.quotationEditor.profileId,'profile-b');assert.notEqual(h.quotationEditor.mount,originalEditor,'only the field editor is remounted to consume the explicit target');
+  assert.equal(h.button('7견적서').props['aria-current'],'step');assert.equal(h.requests.length,reads,'the current panel profile and row settings are retained without reloading them');
+  assert.ok(h.requests.every(request=>request.method==='GET'),'inspection never changes saved values or transmits files');
+ }finally{h.close();}
+});
 
 test('connection dialog displays returned server states without static collection or transmission failure claims',async()=>{
  const integration={checkedAt:'2026-10-05T00:00:00Z',authentication:'cloudflare_access',database:'query_ok',databaseSchema:{status:'tables_present',missingTables:[]},files:'binding_present',translation:{configured:true,model:'fixture-text'},imageProcessing:{configured:false,model:null}};

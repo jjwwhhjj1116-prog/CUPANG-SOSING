@@ -81,6 +81,9 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(options.signal.aborted)return;
   if(!imageResponse.ok||imageDraft.productId!==outcome.productId||imageDraft.prepared!==true)throw Error(imageDraft.error||'이미지 초안 연결 상태를 확인하지 못했습니다. 저장한 원본과 수정값은 유지됩니다.');
  }
- if(outcome.status!=='completed' || !draft.completed&&!draft.reviewRequired)throw Error([outcome.status!=='completed'?(outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.'):'',draft.message,...(outcome.warnings??[])].filter(Boolean).join(' '));
+ if(outcome.status!=='completed' || !draft.completed&&!draft.reviewRequired&&!draft.manualReady)throw Error([outcome.status!=='completed'?(outcome.error||'이미지 반영을 완료하지 못했습니다. 원문은 보존됩니다.'):'',draft.message,...(outcome.warnings??[])].filter(Boolean).join(' '));
+ // Manual readiness is acknowledged only after source/options/image import and
+ // (for work) role assignment succeed. It never marks translation completed.
+ if(draft.manualReady)return [draft.message,supplementNotice,...(outcome.warnings??[])].filter(Boolean).join(' ');
  return ['상품 초안 저장됨 · 옵션·이미지·견적서를 확인하고 수정해주세요.',draft.message,supplementNotice,...(outcome.warnings??[])].filter(Boolean).join(' ');
 }

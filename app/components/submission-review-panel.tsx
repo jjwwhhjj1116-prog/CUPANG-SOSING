@@ -54,7 +54,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
     {products.map(product=>{
       const result=results.find(item=>item.id===product.id); const report=result?.report;
       return <article key={product.id} className="panel-stack">
-        <h3>{product.title}</h3><a href={safeUrl(product.source_url)} target="_blank" rel="noreferrer" style={{overflowWrap:'anywhere'}}>{product.source_url}</a>
+        <h3>{report ? report.title.trim() ? report.title : '상품명 미입력' : product.title}</h3><a href={safeUrl(product.source_url)} target="_blank" rel="noreferrer" style={{overflowWrap:'anywhere'}}>{product.source_url}</a>
         {result?.error&&<p role="alert">{result.error}</p>}
         {report&&<>
           <p>{report.categoryPath.join(' › ')||'카테고리 미선택'} · 포함 옵션 {report.includedOptions}개</p>
