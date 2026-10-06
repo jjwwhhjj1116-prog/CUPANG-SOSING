@@ -277,10 +277,13 @@ export async function executeTranslation(review: TranslationReview, config: Tran
   }
   let response: Response;
   try {
-    response = await fetcher('https://api.openai.com/v1/responses', { method: 'POST', redirect: 'error',
+    response = await fetcher('https://api.openai.com/v1/responses', { method: 'POST', redirect: 'manual',
       headers: { 'Authorization': `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(request), signal: AbortSignal.timeout(60000) });
   } catch { throw new TranslationError('PROVIDER_OUTCOME_UNCERTAIN', '응답을 확인하지 못했습니다. 비용이 발생했을 수 있으므로 자동 재시도하지 않습니다.', true); }
+  // Workers does not support redirect:'error'. Never forward a paid request or
+  // its Authorization header to a redirect target.
+  if (response.status >= 300 && response.status < 400) throw new TranslationError('PROVIDER_OUTCOME_UNCERTAIN', `OpenAI가 다른 주소로 연결하는 응답(HTTP ${response.status})을 반환해 실행 결과를 확인하지 못했습니다. 비용이 발생했을 수 있으며 해당 주소로 요청을 보내거나 자동 재시도하지 않았습니다.`, true);
   if (!response.ok) throw new TranslationError(`PROVIDER_HTTP_${response.status}`, 'OpenAI 요청을 완료하지 못했습니다. 서버 모델 접근 권한·잔액·한도를 확인해주세요. 자동 재시도하지 않았습니다.', true);
   const raw = await response.text();
   if (raw.length > 512 * 1024) throw new TranslationError('PROVIDER_RESPONSE_TOO_LARGE', '응답 크기가 제한을 초과했습니다.', true);

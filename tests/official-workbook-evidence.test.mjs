@@ -27,7 +27,7 @@ for(const company of schemaCompanies)test(`actual official XLSX file evidence pr
   for(const patch of [{version:'190'},{sourceSchemaSha256:'0'.repeat(64)},{companyCode:'A00000000'},{excelSchemaVerified:true}])await json(await post({...input,template:{...input.template,workbookEvidence:{...evidence,...patch}}}),400);
   const profile=(await json(await post(input),201)).profile;
   assert.equal(profile.hubSchema.metadata.version,188);assert.equal(profile.hubSchema.metadata.scopeType,'Retail_Categorized_Single');
-  h.context.category=profile;h.sqlite.prepare("UPDATE collection_jobs SET goal='work' WHERE id='job'").run();h.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(h.context));await h.intake();
+  h.context.category=profile;h.context.settings.brand=company.name;h.sqlite.prepare("UPDATE collection_jobs SET goal='work' WHERE id='job'").run();h.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(h.context));await h.intake();
   const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
   let content=(await json(await h.route(base+'/content'))).content;
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'공식 파일로 검토한 수동 제목',description:''},label:{productType:'사용자 종류',material:'사용자 전체 소재',dimensions:'사용자 확인 치수',precautions:'사용자 확인 주의'}}}}));
@@ -36,6 +36,11 @@ for(const company of schemaCompanies)test(`actual official XLSX file evidence pr
   const retained=()=>JSON.stringify(['products','product_options','product_content','product_quotation_fields','collection_context'].map(table=>h.sqlite.prepare('SELECT * FROM '+table).all())),before=retained();
   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));
   assert.equal(preview.rows.length,6);assert.equal(preview.report.workbookEvidence.excelSchemaVerified,false);assert.equal(preview.report.submissionReady,false);
+  const brand=fields.resolved.schema.fields.find(field=>field.hubWire?.path.join('.')==='productPage.brand'),brandColumn=profile.mappings.find(mapping=>mapping.field===brand.id).column;
+  assert.equal(brand.type,'text');assert.equal(brand.choices,undefined);
+  for(const row of preview.rows)assert.equal(row[brandColumn],company.name,'captured company brand remains the exact output');
+  assert.equal(preview.report.warnings.filter(message=>/!F(?:9|10|11|12|13|14) \(브랜드\)/.test(message)&&message.includes('드롭다운')).length,6,'the original advisory list mismatch stays visible');
+  assert.equal(preview.submissionReview.issues.filter(issue=>issue.code==='EXCEL_VALUE_INVALID'&&issue.fieldId===brand.id).length,0,'free text brand with disabled original error alert is advisory, not a transmission error');
   const materialColumn=profile.mappings.find(mapping=>mapping.field===material.id).column,titleColumn=profile.mappings.find(mapping=>mapping.field==='title').column;
   for(const [index,row]of preview.rows.entries()){assert.equal(row[titleColumn],'공식 파일로 검토한 수동 제목');assert.match(row[1],/\(69900\)$/);assert.equal(row[materialColumn],index===1?'':'사용자 전체 소재');}
   assert.ok(preview.report.mappingCoverage.some(field=>field.label==='공식 판매처 가격'));assert.ok(preview.submissionReview.issues.some(issue=>issue.code==='EXCEL_FIELD_UNMAPPED'));

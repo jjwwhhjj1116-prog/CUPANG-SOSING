@@ -95,7 +95,7 @@ test('original file validation rejects foreign assets, wrong MIME, truncation an
 test('Images Edits adapter sends one reviewed multipart image and validates PNG output', async () => {
   const review = await model.prepareImageReview(input, await model.imageMetadata(original), config.model); let calls = 0;
   const result = await model.executeImageEdit(review, config, original, async (url, request) => {
-    calls++; assert.equal(url, 'https://api.openai.com/v1/images/edits'); assert.equal(request.redirect, 'error');
+    calls++; assert.equal(url, 'https://api.openai.com/v1/images/edits'); assert.equal(request.redirect, 'manual');
     assert.equal(request.headers.Authorization, `Bearer ${config.apiKey}`); assert.equal(request.headers['Content-Type'], undefined);
     assert.equal(request.body.get('n'), '1'); assert.equal(request.body.get('model'), config.model); assert.equal(request.body.get('output_format'), 'png');
     assert.equal(request.body.get('prompt'), review.effectivePrompt); assert.equal(request.body.get('image').type, 'image/png');
@@ -155,6 +155,25 @@ test('image prepare/approve are free; execute appends one owned R2 result and pr
     assert.equal(keys[0], input.sourceKey); assert.equal(keys[1], saved.result.storageKey); assert.equal(keys.length, 2);
     assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload, 'MANUAL_ROLES_MUST_NOT_CHANGE');
     assert.equal((await route.POST(request({ action: 'execute', jobId: job.id }), context)).status, 200); assert.equal(calls, 1);
+  } finally { sqlite.close(); }
+});
+
+test('paid image redirects remain uncertain without following, writing an asset or retrying the saved job', async () => {
+  const { sqlite, objects, dependencies } = harness(); let calls = 0;
+  const route = load('app/api/products/[id]/image-generation/route.ts', dependencies, 'development', async (url, init) => {
+    calls++; assert.equal(url, 'https://api.openai.com/v1/images/edits'); assert.equal(init.redirect, 'manual');
+    return new Response('PRIVATE_REDIRECT_BODY', { status: 307, headers: { location: 'https://redirect.invalid/private' } });
+  });
+  try {
+    const job = await approvedJob(route);
+    const body = await (await route.POST(request({ action: 'execute', jobId: job.id }), context)).json();
+    assert.equal(body.job.status, 'uncertain'); assert.equal(body.job.result, null);
+    assert.equal(body.job.error.code, 'PROVIDER_OUTCOME_UNCERTAIN'); assert.equal(body.job.error.mayHaveBeenCharged, true); assert.match(body.job.error.message, /HTTP 307/);
+    assert.doesNotMatch(JSON.stringify(body), /PRIVATE_REDIRECT_BODY|redirect\.invalid|TEST-ONLY-NOT-A-REAL-KEY/);
+    const replay = await (await route.POST(request({ action: 'execute', jobId: job.id }), context)).json();
+    assert.equal(replay.job.status, 'uncertain'); assert.equal(calls, 1); assert.equal(objects.size, 1);
+    assert.equal(JSON.parse(sqlite.prepare('SELECT image_keys FROM products').get().image_keys).length, 1);
+    assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload, 'MANUAL_ROLES_MUST_NOT_CHANGE');
   } finally { sqlite.close(); }
 });
 

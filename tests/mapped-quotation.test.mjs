@@ -497,6 +497,35 @@ test('workbook review distinguishes definite violations, required blanks and unc
  assert.equal(overflow.at(-1).code,'EXCEL_VALUE_INVALID_OVERFLOW');
 });
 
+test('only an explicit advisory workbook list for a live free text brand avoids a blocking issue',async()=>{
+ const {hubSchemaSnapshot}=await import('./helpers/hub-schema.mjs');
+ const {getQuotationSchema}=load('app/quotation-schema.ts'),{quotationWorkbookIssues}=load('app/exports/quotation-workbook-issues.ts');
+ const run=async({alert='false',strict=false,nested=false,live=true,value='사용자 브랜드',allowBlank=false}={})=>{
+  const snapshot=hubSchemaSnapshot();snapshot.inputBindings='couplus-paths-v1';
+  const brand={type:'string',title:'브랜드',...(!nested?{dropdown:['브랜드 없음']}:{}),...(strict?{enum:['브랜드 없음']}:{})};
+  snapshot.schemaString=JSON.stringify({type:'object',properties:{productPage:{type:'object',properties:nested?{basicAttributes:{type:'object',properties:{brand}}}:{brand}},legalPage:{type:'object',properties:{}}}});
+  const rule=`<dataValidation type="list" sqref="E5:E10"${alert===null?'':` showErrorMessage="${alert}"`}${allowBlank?' allowBlank="true"':''}><formula1>"브랜드 없음"</formula1></dataValidation>`;
+  const input=await inputFrom(entries(sheet=>sheet.replace(/<dataValidations[\s\S]*?<\/dataValidations>/,`<dataValidations>${rule}</dataValidations>`)));
+  input.profile={...input.profile,categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,...(live?{hubSchema:snapshot}:{})};
+  const schema=getQuotationSchema(input.profile.categoryId,input.profile.categoryPath,input.profile.hubSchema),field=schema.fields.find(field=>field.label==='브랜드');
+  input.profile.mappings=[{column:4,field:field.id,required:true}];input.rows=[{[field.id]:value}];
+  const result=await createMappedQuotation(input),resolved={schema,rows:[{included:true,optionId:'option-1',optionLabel:'첫 옵션'}]};
+  return {result,issues:quotationWorkbookIssues(result.report,input.profile,resolved)};
+ };
+ for(const alert of ['false','0']){
+  const {result,issues}=await run({alert});assert.equal(result.values[0][4],'사용자 브랜드');
+  assert.equal(result.report.validationIssueCount,0);assert.equal(issues.length,0);
+  assert.ok(result.report.warnings.some(message=>message.includes('드롭다운')&&message.includes('자유 입력')),'advisory mismatch is still explained to the reviewer');
+  const files=await reader.readXlsxArchive(result.bytes.buffer);assert.match(decode(files.get('xl/worksheets/sheet1.xml')),new RegExp(`showErrorMessage="${alert}"`),'original validation stays intact');
+ }
+ for(const config of [{alert:'true'},{alert:'1'},{alert:null},{alert:'False'},{strict:true},{nested:true},{live:false}]){
+  const {result,issues}=await run(config);assert.equal(result.report.validationIssueCount,1,JSON.stringify(config));assert.equal(issues[0].code,'EXCEL_VALUE_INVALID');
+ }
+ for(const allowBlank of [false,true]){
+  const {issues}=await run({value:'',allowBlank});assert.equal(issues.length,1);assert.equal(issues[0].code,allowBlank?'EXCEL_REQUIRED_MISSING':'EXCEL_VALUE_INVALID');
+ }
+});
+
 test('template choice formats are suggested from the entire static dropdown, and exported accordingly',async()=>{
  const {suggestQuotationChoiceFormats}=load('app/quotation-choice-format.ts');
  const schema=load('app/quotation-schema.ts').getQuotationSchema('80719');

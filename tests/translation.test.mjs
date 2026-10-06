@@ -53,7 +53,7 @@ test('review fixes the exact model, input and token ceiling without performing H
 test('Responses adapter calls the fixed endpoint once and validates generated draft and receipt', async () => {
   const review = await model.prepareTranslationReview(source, config); let calls = 0;
   const result = await model.executeTranslation(review, config, async (url, request) => {
-    calls++; assert.equal(url, 'https://api.openai.com/v1/responses'); assert.equal(request.redirect, 'error');
+    calls++; assert.equal(url, 'https://api.openai.com/v1/responses'); assert.equal(request.redirect, 'manual');
     assert.equal(request.headers.Authorization, `Bearer ${config.apiKey}`);
     assert.equal(JSON.parse(request.body).text.format.name, 'korean_product_draft');
     return Response.json(completed());
@@ -127,6 +127,25 @@ test('prepare and approve never call provider; execute requires separate paid ap
     assert.equal((await route.POST(request({ action: 'execute', jobId: job.id }), context)).status, 200); assert.equal(calls, 1);
     assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload, 'MANUAL_CONTENT_MUST_NOT_CHANGE');
     const read = await route.GET(new Request('http://localhost'), context); assert.ok(!(await read.text()).includes(secrets.OPENAI_API_KEY));
+  } finally { sqlite.close(); }
+});
+
+test('paid translation redirects remain uncertain without following, exposing provider data or retrying the saved job', async () => {
+  const { sqlite, dependencies } = harness(); let calls = 0;
+  const route = load('app/api/products/[id]/translation/route.ts', dependencies, 'development', async (url, init) => {
+    calls++; assert.equal(url, 'https://api.openai.com/v1/responses'); assert.equal(init.redirect, 'manual');
+    return new Response('PRIVATE_REDIRECT_BODY', { status: 308, headers: { location: 'https://redirect.invalid/private' } });
+  });
+  try {
+    const { job } = await (await route.POST(request(prepare), context)).json();
+    await route.POST(request({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true }), context);
+    const body = await (await route.POST(request({ action: 'execute', jobId: job.id }), context)).json();
+    assert.equal(body.job.status, 'uncertain'); assert.equal(body.job.result, null);
+    assert.equal(body.job.error.code, 'PROVIDER_OUTCOME_UNCERTAIN'); assert.equal(body.job.error.mayHaveBeenCharged, true); assert.match(body.job.error.message, /HTTP 308/);
+    assert.doesNotMatch(JSON.stringify(body), /PRIVATE_REDIRECT_BODY|redirect\.invalid|TEST-ONLY-DO-NOT-USE/);
+    const replay = await (await route.POST(request({ action: 'execute', jobId: job.id }), context)).json();
+    assert.equal(replay.job.status, 'uncertain'); assert.equal(calls, 1);
+    assert.equal(sqlite.prepare('SELECT payload FROM product_content').get().payload, 'MANUAL_CONTENT_MUST_NOT_CHANGE');
   } finally { sqlite.close(); }
 });
 

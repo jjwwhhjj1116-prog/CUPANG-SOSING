@@ -186,8 +186,11 @@ export async function executeImageEdit(review: ImageEditReview, config: { apiKey
   form.set('size', review.size); form.set('quality', review.quality); form.set('output_format', 'png');
   form.set('image', new Blob([source as BlobPart], { type: original.mime }), `source.${original.mime === 'image/jpeg' ? 'jpg' : original.mime.split('/')[1]}`);
   let response: Response;
-  try { response = await fetcher('https://api.openai.com/v1/images/edits', { method: 'POST', redirect: 'error', headers: { Authorization: `Bearer ${config.apiKey}` }, body: form, signal: AbortSignal.timeout(120000) }); }
+  try { response = await fetcher('https://api.openai.com/v1/images/edits', { method: 'POST', redirect: 'manual', headers: { Authorization: `Bearer ${config.apiKey}` }, body: form, signal: AbortSignal.timeout(120000) }); }
   catch { throw new ImageEditError('PROVIDER_OUTCOME_UNCERTAIN', '이미지 실행 결과를 확인하지 못했습니다. 비용이 발생했을 수 있으며 자동 재시도하지 않습니다.', true); }
+  // Workers supports manual redirects; reject them before forwarding the
+  // original image, paid request or Authorization header to another address.
+  if (response.status >= 300 && response.status < 400) throw new ImageEditError('PROVIDER_OUTCOME_UNCERTAIN', `이미지 API가 다른 주소로 연결하는 응답(HTTP ${response.status})을 반환해 실행 결과를 확인하지 못했습니다. 비용이 발생했을 수 있으며 해당 주소로 요청을 보내거나 자동 재시도하지 않았습니다.`, true);
   if (!response.ok) throw new ImageEditError(`IMAGE_PROVIDER_HTTP_${response.status}`, '이미지 API 요청을 완료하지 못했습니다. 서버 모델 접근 권한·잔액·한도를 확인해주세요.', true);
   let payload: Record<string, unknown>;
   try { payload = await boundedResponse(response); } catch (error) { if (error instanceof ImageEditError) throw error; throw new ImageEditError('INVALID_IMAGE_RESPONSE', '이미지 응답을 검증하지 못했습니다.', true); }

@@ -183,7 +183,7 @@ function delimitedCell(value: string | number): string { return `"${String(delim
 function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection, rows: QuotationData[]): { warnings: string[]; issues: QuotationValidationIssue[]; count: number } {
   const root = spans(source);
   const fields = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema).fields;
-  const warnings: string[] = []; const issues: QuotationValidationIssue[] = []; let mismatches = 0; let unchecked = 0; let uncertainLengths = 0;
+  const warnings: string[] = []; const issues: QuotationValidationIssue[] = []; let mismatches = 0; let blockingMismatches = 0; let unchecked = 0; let uncertainLengths = 0;
   const rules = root.children.filter(node => node.local === 'dataValidations').flatMap(node => node.children.filter(child => child.local === 'dataValidation'));
   for (const rule of rules) {
     let areas: ReturnType<typeof range>[];
@@ -241,11 +241,20 @@ function validationWarnings(source: string, profile: CategoryProfileInput, value
       if (verdict === null) { uncertainLengths++; continue; }
       if (verdict) continue;
       mismatches++;
-      if (issues.length < 1000) issues.push({row:startRow+index,column:mapping.column+1,header:profile.template!.headers[mapping.column],message:description});
+      const field = fields.find(field => field.id === mapping.field);
+      // The observed brand list is a suggestion only. Both the original file's
+      // disabled error alert and the exact live free-text wire must prove this;
+      // required blanks, enum constraints and other columns remain errors.
+      const advisoryBrand = rule.attributes.type === 'list' && ['0', 'false'].includes(rule.attributes.showErrorMessage ?? '')
+        && String(value).trim() !== '' && field?.type === 'text' && !field.choices && !field.hubWire?.name
+        && field.hubWire?.path.length === 2 && field.hubWire.path[0] === 'productPage' && field.hubWire.path[1] === 'brand';
+      if (!advisoryBrand) {
+        blockingMismatches++;
+        if (issues.length < 1000) issues.push({row:startRow+index,column:mapping.column+1,header:profile.template!.headers[mapping.column],message:description});
+      }
       if (warnings.length < 20) {
-        let suggestion = '';
+        let suggestion = advisoryBrand ? ' 원본은 목록 외 입력을 허용하며, Supplier Hub 브랜드도 자유 입력 항목입니다.' : '';
         if (rule.attributes.type === 'list') {
-          const field = fields.find(field => field.id === mapping.field);
           const raw = mapping.field === 'constant' ? undefined : rows[index][mapping.field];
           // A blank is a selection only when the resolver supplied provenance.
           const selected = raw !== undefined && raw !== null && (raw !== '' || rows[index].selectedEmptyChoices?.includes(mapping.field));
@@ -264,7 +273,7 @@ function validationWarnings(source: string, profile: CategoryProfileInput, value
   if (uncertainLengths) warnings.push(`글자 수 검사 ${uncertainLengths}개는 특수문자의 Excel 호환성 설정 또는 숫자 셀 서식에 따라 달라질 수 있어 판정하지 않았습니다. Excel에서 확인해주세요.`);
   if (unchecked) warnings.push(`원본 유효성 검사 ${unchecked}개는 수식·참조·지원하지 않는 규칙이므로 검사하지 못했습니다. Excel에서 확인해주세요.`);
   if (root.children.some(node => node.local === 'extLst')) warnings.push('Excel 확장 규칙은 검사하지 않았습니다. 원본 프로그램에서 유효성 검사를 확인해주세요.');
-  return {warnings,issues,count:mismatches};
+  return {warnings,issues,count:blockingMismatches};
 }
 
 export async function createMappedQuotation(input: MappedQuotationInput): Promise<MappedQuotationResult> {
