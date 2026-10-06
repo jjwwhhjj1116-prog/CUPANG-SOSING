@@ -50,7 +50,7 @@ function editorHarness({handler,readSource,missing=false,shared=false,initialPen
   if(init?.method==='PATCH'){persisted=h.load('app/product-content.ts').applyContentPatch(persisted,JSON.parse(init.body).patch,'2026-10-06T00:00:00Z');return Response.json({content:persisted});}
   assert.equal(init?.method,undefined,'only the initial content read is implicit');return Response.json({content:persisted});
  };
- const h=componentHarness('app/components/product-content-editor.tsx','ProductContentEditor',{product,section:'이미지',focusedAssetRole:'detail',onTranslateImage(sourceKey,sourceLanguage){translations.push({sourceKey,sourceLanguage});},onSaved(){notices++;}},request,
+ const h=componentHarness('app/components/product-content-editor.tsx','ProductContentEditor',{product,section:'이미지',focusedAssetRole:'detail',onTranslateImage(sourceKey,sourceLanguage,role){translations.push({sourceKey,sourceLanguage,role});},onSaved(){notices++;}},request,
   {'@/app/local-image-resize':{readResizeSource(...args){sourceReads.push(args);return readSource?.(...args)??Promise.resolve({key:args[1],width:100,height:150,contentRevision:args[2],productVersion:'synthetic'});}}});
  persisted=h.load('app/product-content.ts').emptyProductContent(product.id);persisted.revision=3;
  for(const [role,keys]of Object.entries({main:[editorKeys[0]],additional:[editorKeys[1]],detailTop:[editorKeys[2]],detail:[...editorKeys.slice(3,6),...(missing?['owner/no-longer-attached.png']:[])],detailBottom:[editorKeys[6]],label:[editorKeys[7]],size:[editorKeys[8]]}))persisted.assets[role].value=keys;
@@ -76,9 +76,11 @@ test('stage-five preview toolbar retains source keys and excludes unavailable re
   for(const sourceIndex of [3,7])for(const action of ['위로','아래로'])assert.equal(h.button(`이미지 ${sourceIndex} ${action}`).props.disabled,true,'top/bottom stay in their single-image roles');
   assert.equal(h.button('이미지 4 위로').props.disabled,true);
   for(const [label,sourceLanguage]of [['중국어→한국어 번역','zh'],['영어→한국어 번역','en']]){
-   const button=h.button(`이미지 5 ${label}`);assert.equal(text(button),label);button.props.onClick();assert.deepEqual(h.translations.at(-1),{sourceKey:editorKeys[4],sourceLanguage});
+   const button=h.button(`이미지 5 ${label}`);assert.equal(text(button),label);button.props.onClick();assert.deepEqual(h.translations.at(-1),{sourceKey:editorKeys[4],sourceLanguage,role:'detail'});
   }
   assert.equal(h.translations.length,2);assert.equal(writes(h).length,0);assert.equal(h.sourceReads.length,0);
+  h.button('이미지 3 중국어→한국어 번역').props.onClick();assert.equal(h.translations.at(-1).role,'detailTop');
+  h.button('이미지 7 영어→한국어 번역').props.onClick();assert.equal(h.translations.at(-1).role,'detailBottom');assert.equal(writes(h).length,0);
  }finally{h.close();}
 });
 

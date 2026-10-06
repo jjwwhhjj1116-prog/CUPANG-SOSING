@@ -19,7 +19,7 @@ const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'http
 function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false}={}){
  const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
  let currentSettings=settingsBody,replyDelete=deleteReply,nextDelete=null,nextSettings=null,replySettingsPut=null,nextProduct=null,replyProduct=null;
- const workspaceEdits={dirty:false,busy:false};
+ const workspaceEdits={dirty:false,busy:false,freeDirty:false,freeBusy:false};
  const products=[product('product-a'),product('product-b')];
  const draft={rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false,saving:false,dirty:false,message:'',save(){},load(){}};
  const hooks={
@@ -84,7 +84,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
   const next={...value,props:{...value.props,children:expand(value.props?.children,path+'/children',seen)}};
   if(next.props.ref&&typeof next.props.ref==='object'){
    const marker={getAttribute:name=>name==='data-quotation-source-step'?'SEO':name==='data-workspace-dirty'?'true':null,querySelector:()=>null};
-   next.props.ref.current={querySelector:selector=>selector==='[data-workspace-dirty="true"]'&&workspaceEdits.dirty||selector==='[data-workspace-saving="true"]'&&workspaceEdits.busy?marker:null,querySelectorAll:selector=>selector==='[data-quotation-source-step]'&&workspaceEdits.dirty?[marker]:[],scrollTo(){}};
+   next.props.ref.current={querySelector:selector=>(selector.includes('[data-workspace-dirty="true"]')&&(workspaceEdits.dirty||!selector.includes(':not(')&&workspaceEdits.freeDirty))||(selector.includes('[data-workspace-saving="true"]')&&(workspaceEdits.busy||!selector.includes(':not(')&&workspaceEdits.freeBusy))?marker:null,querySelectorAll:selector=>selector==='[data-quotation-source-step]'&&workspaceEdits.dirty?[marker]:[],scrollTo(){}};
   }
   return next;
  }
@@ -125,25 +125,39 @@ test('malformed dashboard deletion confirmations cannot remove any product or it
  }
 });
 
-test('detail image translation parent forwards owned source/language with a new sequence and rejects missing images or busy work',async()=>{
+test('detail image translation parent targets the free editor while rejecting missing images and paid or free busy work',async()=>{
  const h=harness();try{
   await h.settle();h.component('registration-board').onOpen(h.products[0],'상세 이미지');await h.settle();const source=JSON.parse(h.products[0].image_keys)[0];
-  assert.equal(h.component('image-generation-panel').translationTarget,undefined);
+  assert.equal(h.component('free-image-translation-panel').translationTarget,undefined);
   for(const [language,sequence]of [['zh',1],['en',2],['zh',3]]){
-   h.component('product-content-editor').onTranslateImage(source,language);await h.settle();assert.deepEqual(plain(h.component('image-generation-panel').translationTarget),{sourceKey:source,sourceLanguage:language,sequence});
+   h.component('product-content-editor').onTranslateImage(source,language);await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),{sourceKey:source,sourceLanguage:language,sequence});
   }
-  const previous=plain(h.component('image-generation-panel').translationTarget);h.component('product-content-editor').onTranslateImage('other-owner/foreign.png','en');await h.settle();assert.deepEqual(plain(h.component('image-generation-panel').translationTarget),previous);
-  h.component('image-generation-panel').onBusyChange(true);await h.settle();assert.equal(h.component('product-content-editor').imageProcessingBusy,true);h.component('product-content-editor').onTranslateImage(source,'en');await h.settle();assert.deepEqual(plain(h.component('image-generation-panel').translationTarget),previous);
-  h.component('image-generation-panel').onBusyChange(false);await h.settle();h.component('product-content-editor').onTranslateImage(source,'en');await h.settle();assert.equal(h.component('image-generation-panel').translationTarget.sequence,4);
+  const previous=plain(h.component('free-image-translation-panel').translationTarget);h.component('product-content-editor').onTranslateImage('other-owner/foreign.png','en');await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),previous);
+  h.component('image-generation-panel').onBusyChange(true);await h.settle();assert.equal(h.component('product-content-editor').imageProcessingBusy,true);h.component('product-content-editor').onTranslateImage(source,'en');await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),previous);
+  h.component('image-generation-panel').onBusyChange(false);await h.settle();h.component('product-content-editor').onTranslateImage(source,'en');await h.settle();assert.equal(h.component('free-image-translation-panel').translationTarget.sequence,4);
+  assert.equal(h.component('image-generation-panel').translationTarget,undefined);
+  h.component('free-image-translation-panel').onBusyChange(true);h.component('product-content-editor').onTranslateImage(source,'zh','detailTop');await h.settle();assert.equal(h.component('free-image-translation-panel').translationTarget.sequence,4);
+  h.component('free-image-translation-panel').onBusyChange(false);h.component('product-content-editor').onTranslateImage(source,'zh','detailTop');await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),{sourceKey:source,sourceLanguage:'zh',sequence:5,role:'detailTop'});
+ }finally{h.close();}
+});
+
+test('free image apply excludes its own reviewed draft but guards all other drafts, busy tasks and retained callbacks',async()=>{
+ const h=harness();try{
+  await h.settle();h.component('registration-board').onOpen(h.products[0],'상세 이미지');await h.settle();const beforeApply=h.component('free-image-translation-panel').beforeApply;
+  h.setWorkspaceEdits({freeDirty:true});assert.equal(beforeApply(),true);const reads=h.requests.length;
+  h.setWorkspaceEdits({dirty:true});assert.equal(beforeApply(),false);h.setWorkspaceEdits({dirty:false,busy:true});assert.equal(beforeApply(),false);h.setWorkspaceEdits({busy:false});
+  h.component('image-generation-panel').onBusyChange(true);assert.equal(beforeApply(),false);h.component('image-generation-panel').onBusyChange(false);assert.equal(beforeApply(),true);
+  await h.click('＋ 상품 추가');const intakeBusy=h.component('intake-queue-panel').onBusy;intakeBusy(true);assert.equal(beforeApply(),false);intakeBusy(false);assert.equal(beforeApply(),true);
+  h.component('registration-board').onOpen(h.products[1],'상세 이미지');await h.settle();assert.equal(beforeApply(),false);assert.equal(h.component('free-image-translation-panel').productId,h.products[1].id);assert.equal(h.requests.length,reads);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 
 test('translation selection stays scoped to its product and an unmounted product callback cannot seed a later product',async()=>{
  const h=harness();try{
-  await h.settle();h.component('registration-board').onOpen(h.products[0],'상세 이미지');await h.settle();const old=h.component('product-content-editor').onTranslateImage,source=JSON.parse(h.products[0].image_keys)[0];old(source,'zh');await h.settle();assert.equal(h.component('image-generation-panel').translationTarget.sequence,1);
-  h.component('registration-board').onOpen(h.products[1],'상세 이미지');await h.settle();assert.equal(h.component('image-generation-panel').productId,h.products[1].id);assert.equal(h.component('image-generation-panel').translationTarget,undefined);
-  old(source,'en');await h.settle();assert.equal(h.component('image-generation-panel').translationTarget,undefined);
-  const secondSource=JSON.parse(h.products[1].image_keys)[0];h.component('product-content-editor').onTranslateImage(secondSource,'en');await h.settle();assert.deepEqual(plain(h.component('image-generation-panel').translationTarget),{sourceKey:secondSource,sourceLanguage:'en',sequence:1});
+  await h.settle();h.component('registration-board').onOpen(h.products[0],'상세 이미지');await h.settle();const old=h.component('product-content-editor').onTranslateImage,source=JSON.parse(h.products[0].image_keys)[0];old(source,'zh');await h.settle();assert.equal(h.component('free-image-translation-panel').translationTarget.sequence,1);
+  h.component('registration-board').onOpen(h.products[1],'상세 이미지');await h.settle();assert.equal(h.component('image-generation-panel').productId,h.products[1].id);assert.equal(h.component('free-image-translation-panel').translationTarget,undefined);
+  old(source,'en');await h.settle();assert.equal(h.component('free-image-translation-panel').translationTarget,undefined);
+  const secondSource=JSON.parse(h.products[1].image_keys)[0];h.component('product-content-editor').onTranslateImage(secondSource,'en');await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),{sourceKey:secondSource,sourceLanguage:'en',sequence:1});
  }finally{h.close();}
 });
 

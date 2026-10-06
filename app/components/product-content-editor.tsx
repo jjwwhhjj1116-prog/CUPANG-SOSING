@@ -17,7 +17,7 @@ type Props = {
   section: 'SEO' | '표시사항' | '이미지';
   focusedAssetRole?: 'main' | 'additional' | 'detail';
   onSaved?: () => void;
-  onTranslateImage?: (sourceKey: string, sourceLanguage?: 'zh' | 'en') => void;
+  onTranslateImage?: (sourceKey: string, sourceLanguage?: 'zh' | 'en', role?: 'detailTop' | 'detail' | 'detailBottom') => void;
   imageProcessingBusy?: boolean;
 };
 type Draft = {
@@ -356,8 +356,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
             const disabled = busy || loading || conflict || imageProcessingBusy;
             return <figure key={key}><figcaption>{role==='detailTop'?'상단 이미지':role==='detailBottom'?'하단 이미지':`본문 이미지 ${position+1}`}</figcaption>
             <div className="detail-image-toolbar" role="group" aria-label={`이미지 ${sourceIndex} 상세 편집`}>
-              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 중국어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'zh'))}>중국어→한국어 번역</button>
-              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 영어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'en'))}>영어→한국어 번역</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 중국어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'zh',role as 'detailTop'|'detail'|'detailBottom'))}>중국어→한국어 번역</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 영어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'en',role as 'detailTop'|'detail'|'detailBottom'))}>영어→한국어 번역</button>
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 편집`} disabled={disabled} onClick={()=>detailImageAction(key,()=>void openResize(key))}>편집</button>
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 위로`} disabled={disabled || role!=='detail' || position===0} onClick={()=>detailImageAction(key,()=>move(role,position,-1))}>↑</button>
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 아래로`} disabled={disabled || role!=='detail' || position===draft.assets[role].length-1} onClick={()=>detailImageAction(key,()=>move(role,position,1))}>↓</button>

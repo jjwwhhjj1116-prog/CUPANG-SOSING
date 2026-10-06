@@ -1,6 +1,22 @@
 import type { ProductContent, LabelField } from '@/app/product-content';
 import type { TranslationJob } from '@/app/automation/translation';
 import { collectionLabelField } from '@/app/collection-label-attributes';
+import type { ProductOptions } from '@/app/product-options';
+
+/** The canonical saved intake result can outlive an explicit option deletion.
+ * Drop only those result bindings in its planning view, without changing the
+ * saved job or source indexes. Other/manual translation jobs stay strict. */
+export function intakeTranslationReplayJob(job: TranslationJob, options: ProductOptions): TranslationJob {
+  if (job.productId !== options.productId || job.status !== 'completed' || !job.result) throw Error('저장된 상품 초안과 옵션 연결을 확인해주세요.');
+  const ids = new Set(options.rows.map(row => row.id));
+  const attributes = job.result.draft.attributes.filter(attribute => {
+    const source = job.review.source.attributes[attribute.sourceIndex];
+    const binding = source?.name.match(/^option(?:-(?:color|size))?:([A-Za-z0-9_-]{1,80})$/u);
+    return !binding || ids.has(binding[1]);
+  });
+  if (attributes.length === job.result.draft.attributes.length) return job;
+  return { ...job, result: { ...job.result, draft: { ...job.result.draft, attributes } } };
+}
 
 /** A planning-only view for the canonical completed intake result. Only source
  * values that remain untouched may be filled after an intervening edit. */

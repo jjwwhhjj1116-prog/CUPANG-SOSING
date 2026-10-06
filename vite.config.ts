@@ -52,6 +52,9 @@ export default defineConfig(async ({ command }) => {
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   return {
+    // Size reporting allocates extra gzip buffers during each build environment.
+    // It is informational only; keep generated assets and delivery unchanged.
+    build: { reportCompressedSize: false },
     css: { postcss: { plugins: [tailwindcss()] } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }

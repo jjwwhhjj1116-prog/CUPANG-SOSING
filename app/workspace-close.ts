@@ -1,7 +1,8 @@
-export function workspaceEditState(root: Pick<ParentNode, 'querySelector'> | null) {
+export function workspaceEditState(root: Pick<ParentNode, 'querySelector'> | null, ignoreFreeImageEditor = false) {
+  const otherEditors = ignoreFreeImageEditor ? ':not([data-free-image-editor])' : '';
   return {
-    busy: !!root?.querySelector('[data-workspace-saving="true"]'),
-    dirty: !!root?.querySelector('[data-workspace-dirty="true"]'),
+    busy: !!root?.querySelector(`[data-workspace-saving="true"]${otherEditors}`),
+    dirty: !!root?.querySelector(`[data-workspace-dirty="true"]${otherEditors}`),
   };
 }
 

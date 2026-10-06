@@ -19,6 +19,18 @@ test('in-flight writes block close even if discard would be approved; retry read
 });
 test('closed workspace has no pending state',()=>{assert.equal(exports.requestWorkspaceClose(null,()=>{throw Error('unexpected prompt');}),'close');});
 
+test('free-image apply ignores only its own reviewed draft while closing still guards it and retained source drafts remain protected',()=>{
+ const flags={freeDirty:true,freeBusy:false,otherDirty:false,otherBusy:false};
+ const element={querySelector:selector=>{
+  const busy=selector.includes('saving'),own=busy?flags.freeBusy:flags.freeDirty,other=busy?flags.otherBusy:flags.otherDirty;
+  return other||own&&!selector.includes(':not([data-free-image-editor])')?{}:null;
+ }};
+ assert.equal(exports.workspaceEditState(element).dirty,true);assert.equal(exports.workspaceEditState(element,true).dirty,false);
+ assert.equal(exports.requestWorkspaceClose(element,()=>false),'cancel');
+ flags.freeBusy=true;assert.equal(exports.requestWorkspaceClose(element,()=>{throw Error('no discard during save');}),'busy');assert.equal(exports.workspaceEditState(element,true).busy,false);
+ flags.otherDirty=true;flags.otherBusy=true;assert.equal(exports.workspaceEditState(element,true).dirty,true);assert.equal(exports.workspaceEditState(element,true).busy,true);
+});
+
 test('quotation entry finds hidden source drafts, deduplicates steps and excludes unrelated quotation drafts',()=>{
  const element=(step,own=false,nested=false)=>({getAttribute:key=>key==='data-quotation-source-step'?step:own?'true':'false',querySelector:()=>nested?{}:null});
  const elements=[element('SEO',true),element('가격',false,true),element('SEO',true),element('대표 이미지')];

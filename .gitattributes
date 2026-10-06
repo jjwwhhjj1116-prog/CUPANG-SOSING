@@ -1,0 +1,2 @@
+# OCR runtime checksums require the exact upstream bytes on every platform.
+public/ocr/** -text

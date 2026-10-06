@@ -25,6 +25,8 @@ import { ProductRemovalDialog } from '@/app/components/product-removal-dialog';
 import { ProductSourceContext } from '@/app/components/product-source-context';
 import TranslationPanel from '@/app/components/translation-panel';
 import ImageGenerationPanel from '@/app/components/image-generation-panel';
+import FreeImageTranslationPanel from '@/app/components/free-image-translation-panel';
+import {validFreeImageRole,type FreeImageRole} from '@/app/free-image-translation';
 import { DocumentImagePanel } from '@/app/components/document-image-panel';
 import type { ProductContent } from '@/app/product-content';
 import type { RegistrationContentSummary } from '@/app/registration-content-summary';
@@ -442,7 +444,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         <nav className="registration-steps" aria-label="상품 등록 7단계">{registrationSteps.map((value,index)=><button type="button" key={value} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={tab===value?'active':''}><span>{index+1}</span><strong>{value}</strong></button>)}</nav>
         <ProductSourceContext key={detail.id} productId={detail.id} productVersion={detail.updated_at} sourceUrl={detail.source_url} step={tab} onNavigate={selectDetailTab} onSaved={loadWorkspace} onBusy={changeSourceSupplementBusy} onBeforeSupplement={()=>{const state=workspaceEditState(detailBody.current);if(state.dirty||state.busy){setCloseNotice('저장하지 않은 입력이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 상세 원문을 보완해주세요.');return false;}return true;}}/>
         <nav className="registration-tools" aria-label="상품 보조 작업"><span>보조 작업</span>{supportingTabs.map(item=><button key={item.value} type="button" onClick={()=>selectDetailTab(item.value)} aria-pressed={tab===item.value} className={tab===item.value?'active':''}>{item.label}</button>)}<small>단계 이동 시 입력 유지 · 각 단계에서 저장</small></nav>
-        <div className="detail-body" ref={detailBody} inert={sourceSupplementBusy}><DetailPanel key={detail.id} onPrepareSubmission={prepareCurrentSubmission} onReviewPackaging={optionId=>{
+        <div className="detail-body" ref={detailBody} inert={sourceSupplementBusy}><DetailPanel key={detail.id} onBeforeFreeImageApply={()=>{
+          if(sourceSupplementBusyRef.current||busyRef.current||detailNavigation!==productNavigation.current)return false;
+          const pending=workspaceEditState(detailBody.current,true);
+          if(pending.busy||pending.dirty){setCloseNotice('다른 단계에 저장하지 않은 입력 또는 진행 중인 작업이 있습니다. 먼저 저장한 뒤 번역 이미지를 적용해주세요.');return false;}
+          return true;
+        }} onPrepareSubmission={prepareCurrentSubmission} onReviewPackaging={optionId=>{
           if(sourceSupplementBusyRef.current || detailNavigation !== productNavigation.current) return;
           const pending=workspaceEditState(detailBody.current);
           if(pending.busy || detailBody.current?.querySelector('[aria-busy="true"]')){setCloseNotice('작업이 진행 중입니다. 작업이 끝나면 견적서를 확인해주세요.');return;}
@@ -479,11 +486,15 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 function Modal({ title, subtitle, onClose, children, wide=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" onClick={onClose}>×</button></header>{children}</section></div>;
 }
-function DetailPanel({ onPrepareSubmission, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { onPrepareSubmission:(profileId:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
+function DetailPanel({ onBeforeFreeImageApply, onPrepareSubmission, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
-  const [imageProcessingBusy,setImageProcessingBusy]=useState(false);
-  const changeImageProcessingBusy=useCallback((busy:boolean)=>setImageProcessingBusy(busy),[]);
-  const [imageTranslation,setImageTranslation]=useState<{productId:string;sourceKey:string;sequence:number;sourceLanguage?:'zh'|'en'}|null>(null);
+  const [paidImageBusy,setPaidImageBusy]=useState(false);
+  const [freeImageBusy,setFreeImageBusy]=useState(false);
+  const imageProcessingRefs=useRef({paid:false,free:false});
+  const imageProcessingBusy=paidImageBusy||freeImageBusy;
+  const changeImageProcessingBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.paid=busy;setPaidImageBusy(busy);},[]);
+  const changeFreeImageBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.free=busy;setFreeImageBusy(busy);},[]);
+  const [imageTranslation,setImageTranslation]=useState<{productId:string;sourceKey:string;sequence:number;sourceLanguage?:'zh'|'en';role?:FreeImageRole}|null>(null);
   const [labelTranslationOpen,setLabelTranslationOpen]=useState(false);
   const [quotationScope,setQuotationScope] = useState<{requested?:string;selected?:string}>({requested:preferredProfileId,selected:preferredProfileId});
   const pricingProfileId=quotationScope.requested===preferredProfileId?quotationScope.selected:preferredProfileId;
@@ -496,12 +507,12 @@ function DetailPanel({ onPrepareSubmission, onReviewPackaging, tab, product, set
   return <>
     <div hidden={!['SEO','표시사항',...imageSteps].includes(tab)} className="panel-stack">
       {isImageStep&&<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" onChange={onUpload}/></label>}
-      <ProductContentEditor product={product} section={contentSection} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy} onTranslateImage={(sourceKey,sourceLanguage)=>{
-        if(imageProcessingBusy||!imageKeys.includes(sourceKey))return;
-        setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage}));
+      <ProductContentEditor product={product} section={contentSection} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy} onTranslateImage={(sourceKey,sourceLanguage,role)=>{
+        if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||(role!==undefined&&!validFreeImageRole(role)))return;
+        setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,...(role?{role}:{})}));
       }}/>
     </div>
-    <div hidden={!isImageStep} className="panel-stack"><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage}:undefined}/></div>
+    <div hidden={!isImageStep} className="panel-stack"><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{})}:undefined}/><details><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
     <div hidden={tab!=='표시사항'}><button type="button" className="btn ghost" aria-expanded={labelTranslationOpen} aria-controls={`label-translation-${product.id}`} onClick={()=>setLabelTranslationOpen(open=>!open)}>한글 표시사항 번역</button><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div id={`label-translation-${product.id}`} hidden={tab!=='번역'&&!(tab==='표시사항'&&labelTranslationOpen)}>

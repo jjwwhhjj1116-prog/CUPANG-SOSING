@@ -14,7 +14,7 @@ import { getAttributeRules } from '@/db/quotation-attribute-rules';
 import { applyIntakeAttributeRules } from '@/app/intake-attribute-rules';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import {capturedAttributeCategory,attributeCategorySchema} from '@/app/quotation-attribute-schema';
-import { intakeTranslationReplayContent } from '@/app/intake-translation-replay';
+import { intakeTranslationReplayContent, intakeTranslationReplayJob } from '@/app/intake-translation-replay';
 import { collectionSourceReference } from '@/app/sourcing';
 
 type Context = { params: Promise<{ id: string }> };
@@ -60,7 +60,7 @@ export async function POST(request: Request, context: Context) {
           || JSON.stringify(job.review.source.category?.path) !== JSON.stringify(JSON.parse(categorySource.snapshot.payload).category.categoryPath))) throw Error('생성 원문과 현재 상품의 수집 연결이 다릅니다. 저장된 결과를 다시 검토해주세요.');
         // A canonical intake result can fill untouched source fields while
         // retaining later edits. Option bindings still require exact originals.
-        applicationJob={...job,productVersion:product.updated_at,contentRevision:content.revision};
+        applicationJob=intakeTranslationReplayJob({...job,productVersion:product.updated_at,contentRevision:content.revision}, options);
       }
       // Use the immutable intake settings, not settings changed after collection.
       const capturedSettings = categorySource?.snapshot?.linked ? JSON.parse(categorySource.snapshot.payload)?.settings : null;
