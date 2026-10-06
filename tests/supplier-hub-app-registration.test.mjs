@@ -280,7 +280,7 @@ for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}])test(`
    if(new URL(tabs.find(tab=>tab.id===request.target.tabId).url).pathname==='/qvt/registration')return [{result:await vm.runInNewContext(`(${request.func.toString()})(...args)`,{args:request.args,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},document:{body:{innerText:'Company Code: '+(currentCompany.code===company.code?'A01526306':company.code)}}})}];
    return [{result:await statusPage.script(request.func,request.args)}];
   }}};
-  const contentContext={window:win,location:win.location,URL,Date,AbortController,setTimeout,clearTimeout,fetch:fetcher,chrome:{runtime:{id:'extension',onMessage:{addListener(listener){contentListener=listener;}},sendMessage:async message=>{
+  const contentContext={window:win,location:win.location,URL,Date,AbortController,setTimeout,clearTimeout,fetch:fetcher,chrome:{runtime:{id:'extension',getManifest:()=>JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8')),onMessage:{addListener(listener){contentListener=listener;}},sendMessage:async message=>{
    const reply=await new Promise(resolve=>assert.equal(workerListener(message,sender,resolve),true));calls.push(['worker',message.type,reply]);
    if(dropPreflightReply&&reply.result?.state==='not-started'){dropPreflightReply=false;throw Error('합성 시험: 확정된 전송 전 오류 응답 유실');}return reply;
   }}}};

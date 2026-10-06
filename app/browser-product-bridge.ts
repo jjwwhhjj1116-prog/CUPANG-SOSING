@@ -1,8 +1,16 @@
+import {exchange} from '@/app/supplier-hub-handoff';
+
 export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object};
 
 /** Runs only after a user starts a URL import. The extension opens the URL
  * in that same Chrome window; it never reads cookies or another profile. */
-export function capture1688FromChrome(sourceUrl:string,signal:AbortSignal):Promise<BrowserProductCapture>{
+export async function capture1688FromChrome(sourceUrl:string,signal:AbortSignal):Promise<BrowserProductCapture>{
+ if(signal.aborted)throw Error('작업을 취소했습니다.');
+ let capability:Record<string,unknown>;
+ try{capability=await exchange('PING',null,signal);}
+ catch(cause){if(signal.aborted)throw cause;throw Error('현재 Chrome의 상품 수집 확장 응답을 확인하지 못했습니다. 확장과 앱 페이지를 새로고침한 뒤 다시 시도해주세요.');}
+ if(signal.aborted)throw Error('작업을 취소했습니다.');
+ if(capability.publicMobileCapture!==true)throw Error('현재 Chrome 확장이 1688 원문 수집을 지원하지 않습니다. 최신 상품 수집 확장을 적용하고 앱 페이지를 새로고침해주세요.');
  return new Promise((resolve,reject)=>{
   if(signal.aborted){reject(Error('작업을 취소했습니다.'));return;}
   const requestId=crypto.randomUUID();
@@ -32,7 +40,7 @@ export function capture1688FromChrome(sourceUrl:string,signal:AbortSignal):Promi
       ||result.scripts.reduce((sum:number,value:string)=>sum+new TextEncoder().encode(value).byteLength,0)>1500000){reject(Error('1688 상품 페이지의 응답이 요청 URL과 일치하지 않습니다.'));return;}
    resolve({sourceUrl,scripts:result.scripts});
   };
-  const timer=setTimeout(()=>{cancel();cleanup();reject(Error('상품 수집 응답을 확인하지 못했습니다. 상품 수집 확장 0.2.32를 갱신하고 앱 페이지를 새로고침해주세요.'));},45000);
+  const timer=setTimeout(()=>{cancel();cleanup();reject(Error('1688 원문 수집 응답을 확인하지 못했습니다. 현재 상품 페이지를 확인한 뒤 다시 시도해주세요.'));},45000);
   window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
   window.postMessage({channel:'YOOFAM_1688_CAPTURE',requestId,type:'CAPTURE',sourceUrl},location.origin);
  });

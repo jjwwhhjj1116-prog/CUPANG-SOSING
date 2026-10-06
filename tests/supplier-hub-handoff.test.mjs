@@ -13,6 +13,24 @@ function harness(reply){
   return {api:exports,sent,listeners,timers,expire(){for(const cb of [...timers])cb();}};
 }
 const identity={productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
+const extensionManifest=JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8'));
+
+test('actual content PING reports the runtime manifest version while retaining its capabilities',async()=>{
+ const source=fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8');
+ let capabilities;
+ for(const manifest of [extensionManifest,{...extensionManifest,version:'9.8.7'}]){
+  const listeners=[],replies=[],origin='https://sourceflow.jjwwhhjj1116.workers.dev';let manifestReads=0,commands=0;
+  const window={addEventListener:(_type,listener)=>listeners.push(listener),postMessage:(message,targetOrigin)=>replies.push({message,targetOrigin})};
+  vm.runInNewContext(source,{window,location:{origin},chrome:{runtime:{getManifest(){manifestReads++;return manifest;},onMessage:{addListener(){}},sendMessage(){commands++;throw Error('PING must not send a worker command');}}}});
+  await listeners[0]({source:window,origin,data:{channel:'YOOFAM_HUB_HANDOFF',type:'PING',requestId:'a'.repeat(36)}});
+  assert.equal(replies.length,1);assert.equal(replies[0].targetOrigin,origin);
+  const {message}=replies[0];assert.equal(message.channel,'YOOFAM_HUB_HANDOFF_RESULT');assert.equal(message.requestId,'a'.repeat(36));
+  assert.equal(message.result.version,manifest.version);assert.equal(manifestReads,1);assert.equal(commands,0);
+  const {version:reportedVersion,...current}=JSON.parse(JSON.stringify(message.result));assert.equal(reportedVersion,manifest.version);
+  assert.equal(current.ok,true);assert.equal(current.popupWindowBinding,true);assert.equal(current.serverReceiptReplayProtection,true);
+  if(capabilities)assert.deepEqual(current,capabilities);else capabilities=current;
+ }
+});
 
 test('only missing replies to read-only result requests have a retryable error type',async()=>{
  for(const type of ['RESULT','REFRESH','REGISTRATION','PING','PREPARE','TRANSMIT','VALIDATE','CATEGORIES','SCHEMA','TEMPLATE']){
@@ -135,7 +153,7 @@ test('popup preparation requires exact window binding support before reading or 
  }
  const listeners=[],replies=[],origin='https://sourceflow.jjwwhhjj1116.workers.dev';
  const window={addEventListener:(_type,listener)=>listeners.push(listener),postMessage:value=>replies.push(value)};
- vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),{window,location:{origin},chrome:{runtime:{onMessage:{addListener(){}}}}});
+ vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),{window,location:{origin},chrome:{runtime:{getManifest:()=>extensionManifest,onMessage:{addListener(){}}}}});
  await listeners[0]({source:window,origin,data:{channel:'YOOFAM_HUB_HANDOFF',type:'PING',requestId:'a'.repeat(36)}});
  const actualCapability=replies[0].result;assert.equal(actualCapability.popupWindowBinding,true);
  const current=harness((message,emit)=>emit(message,message.type==='PING'?actualCapability:{ok:true,fingerprint:identity.fingerprint,registered:false}));

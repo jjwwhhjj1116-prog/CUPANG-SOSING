@@ -18,6 +18,7 @@ import { quotationScalarValueIssues, quotationValueLength } from '@/app/quotatio
 import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
 import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
+import { isPackagedDimensionsMmField, isCanonicalPackagedDimensionsMm, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -271,10 +272,7 @@ export function quotationValueIssues(field: QuotationField, value: string, owned
   issues.push(...quotationScalarValueIssues(field, value));
   if (field.choices && !field.choices.some(choice => choice.value === value)) issues.push('지원하는 선택값을 확인해주세요.');
   if (field.id === 'searchTags' && value.split(',').some(tag => tag.trim().length > QUOTATION_TAG_ITEM_LIMIT)) issues.push('검색태그는 태그마다 20자 이하여야 합니다.');
-  if (field.id === 'packagedDimensionsMm') {
-    const parts = value.split(/[xX×*]/).map(part => part.trim());
-    if (parts.length !== 3 || parts.some(part => !/^\d+$/.test(part) || Number(part) <= 0 || Number(part) > 1e6)) issues.push('포장 가로*세로*높이를 양의 정수 3개로 입력해주세요(mm).');
-  }
+  if (isPackagedDimensionsMmField(field) && !isCanonicalPackagedDimensionsMm(value)) issues.push('포장 가로*세로*높이를 별표(*)로 구분한 양의 정수 3개로 입력해주세요(mm).');
   if (field.type === 'images') {
     const keys = value.split('\n').map(key => key.trim()).filter(Boolean);
     if (keys.length > (field.maxItems ?? 30) || new Set(keys).size !== keys.length || keys.some(key => key.length > 512 || !ownedKeys?.includes(key))) issues.push('이 상품에 저장된 이미지 참조만 중복 없이 선택해주세요.');
@@ -292,13 +290,14 @@ export function validateQuotationChanges(input: unknown, context: { schema: Quot
     if (item.optionId !== null && (typeof item.optionId !== 'string' || !context.optionIds.includes(item.optionId))) throw new Error('이 상품의 옵션을 선택해주세요.');
     const key = JSON.stringify([item.optionId, item.fieldKey]); if (seen.has(key)) throw new Error('동일 필드 변경이 중복됐습니다.'); seen.add(key);
     if (item.value !== null && (typeof item.value !== 'string' || (field.maxLength !== undefined && quotationValueLength(field, item.value) > field.maxLength) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(item.value))) throw new Error('필드 값은 길이 제한 이내의 일반 텍스트 또는 수정 해제여야 합니다.');
+    const value = typeof item.value === 'string' && isPackagedDimensionsMmField(field) ? normalizePackagedDimensionsMm(item.value) : item.value;
     // Empty values can be saved as a draft; missing required values are surfaced
     // by the resolver instead of preventing a user from removing a wrong value.
-    if (item.value !== null && item.value.trim()) {
-      const issues = quotationValueIssues(field, item.value, context.ownedImageKeys);
+    if (value !== null && value.trim()) {
+      const issues = quotationValueIssues(field, value, context.ownedImageKeys);
       if (issues.length) throw new Error(`${field.label}: ${issues.join(' ')}`);
     }
-    return { fieldKey: item.fieldKey, optionId: item.optionId, value: item.value };
+    return { fieldKey: item.fieldKey, optionId: item.optionId, value };
   });
   const barcodeChanges = changes.filter(change => change.fieldKey === 'barcode' || change.fieldKey === 'barcodeMode');
   if (barcodeChanges.length) {
@@ -501,7 +500,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'packagedWeightG': return option?.provenance.packagedWeightG === 'manual' ? { value: option.packagedWeightG == null ? '' : String(option.packagedWeightG), source: 'option' } : literal(option?.packagedWeightG, 'option');
       case 'packagedDimensionsMm': {
         const dimensions = [option?.packagedWidthMm, option?.packagedLengthMm, option?.packagedHeightMm];
-        if (dimensions.every(value => value != null)) return literal(dimensions.join('*'), 'option');
+        if (dimensions.every(value => value != null)) return literal(normalizePackagedDimensionsMm(dimensions.join('*')), 'option');
         const entered = dimensions.some(value => value != null);
         const cleared = option && (['packagedWidthMm','packagedLengthMm','packagedHeightMm'] as const).some(key => option.provenance[key] === 'manual');
         return { value: '', source: entered || cleared ? 'option' : 'empty', issues: entered ? ['포장 가로·세로·높이를 모두 입력해주세요(mm).'] : [] };

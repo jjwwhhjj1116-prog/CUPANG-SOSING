@@ -16,6 +16,7 @@ import { quotationValueLength } from '@/app/quotation-scalar-constraints';
 import { hasCouplusEmptyAttributeDefault } from '@/app/couplus-quotation-defaults';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { quotationPackagedWeightManual, quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
+import { isPackagedDimensionsMmField, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -157,10 +158,10 @@ export function previewQuotationEditorBulk(view: QuotationFieldsView, changes: r
     for (const field of copyable) {
       const before = resolveQuotationEditorCell(view, changes, row.optionId, field.id);
       const source = resolveQuotationEditorCell(view, changes, sourceOptionId, field.id);
-      const after = source.value;
+      const after = isPackagedDimensionsMmField(field) ? normalizePackagedDimensionsMm(source.value) : source.value;
       if (draftManual(view, changes, row.optionId, field.id) === after) continue;
       rows.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldKey: field.id, label: field.label, before: before.value, after,
-        beforeDisplay: quotationFieldDisplay(field, before), afterDisplay: quotationFieldDisplay(field, source), manualBefore: before.source.startsWith('manual-') });
+        beforeDisplay: quotationFieldDisplay(field, before), afterDisplay: quotationFieldDisplay(field, { ...source, value: after }), manualBefore: before.source.startsWith('manual-') });
       planned.push({ optionId: row.optionId, fieldKey: field.id, value: after });
       if (planned.length > 1000) throw new Error('한 번에 1,000개 값까지 적용할 수 있습니다. 항목 선택 범위를 줄여주세요.');
     }
@@ -362,6 +363,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
 
   function edit(fieldKey: string, value: string | null, optionId: string | null = selectedOption) {
     if (!view || busy || loading || !view.resolved.rows.some(row => row.optionId === optionId)) return;
+    const field = view.resolved.schema.fields.find(field => field.id === fieldKey);
+    if (typeof value === 'string' && field && isPackagedDimensionsMmField(field)) value = normalizePackagedDimensionsMm(value);
     setChanges(previous => updateQuotationEditorDraft(view.overrides, previous, { fieldKey, optionId, value }));
     setConflicts(previous => previous.filter(conflict => conflict.key !== quotationEditorKey(optionId, fieldKey)));
     setBulk(null); setMessage('');

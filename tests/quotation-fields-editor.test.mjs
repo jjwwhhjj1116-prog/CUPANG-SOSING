@@ -233,6 +233,18 @@ test('editor shares schema validation for packaging, integer quantities, search 
   assert.doesNotThrow(() => model.validateQuotationChanges([change('packagedWeightG', '')], { schema: view.resolved.schema, optionIds: ['red', 'blue', 'excluded'], ownedImageKeys: view.imageKeys }));
 });
 
+test('explicit packaging edits and copy previews normalize millimetres without rewriting saved raw or other scalar inputs',()=>{
+ const view=fixture({common:{packagedDimensionsMm:'160×70×50',model:'한글 모델, X × 160x70x50'},options:{}}),before=JSON.stringify(view),context={schema:view.resolved.schema,optionIds:['red','blue','excluded'],ownedImageKeys:view.imageKeys,overrides:view.overrides};
+ const raw=editor.resolveQuotationEditorCell(view,[],null,'packagedDimensionsMm');assert.equal(raw.value,'160×70×50');assert.ok(raw.validationIssues.some(issue=>issue.includes('별표')));
+ const normalized=model.validateQuotationChanges([change('packagedDimensionsMm',' 160 x 70 × 50 '),change('model','한글 모델, X × 160x70x50')],context);
+ assert.equal(normalized[0].value,'160*70*50');assert.equal(normalized[1].value,'한글 모델, X × 160x70x50');
+ for(const value of ['',null])assert.equal(model.validateQuotationChanges([change('packagedDimensionsMm',value)],context)[0].value,value);
+ for(const value of ['0','0×70×50','160×70','160.5×70×50','160×70×50 mm'])assert.throws(()=>model.validateQuotationChanges([change('packagedDimensionsMm',value)],context));
+ const preview=editor.previewQuotationEditorBulk(view,[],'red',['packagedDimensionsMm'],true);assert.equal(preview.rows.length,1);assert.equal(preview.rows[0].after,'160*70*50');assert.equal(preview.rows[0].afterDisplay,'160*70*50');
+ const applied=editor.applyQuotationEditorBulk(view,[],preview);assert.equal(editor.resolveQuotationEditorCell(view,applied,'blue','packagedDimensionsMm').value,'160*70*50');assert.equal(editor.resolveQuotationEditorCell(view,applied,'red','packagedDimensionsMm').value,'160×70×50');
+ assert.equal(editor.resolveQuotationEditorCell(view,applied,'excluded','packagedDimensionsMm').value,'160×70×50');assert.equal(JSON.stringify(view),before);
+});
+
 function renderEditor(view, section = 'start', changes = []) {
   let slot = 0;
   const states = [view, changes, [], false, false, '', '', section, null, [], true, null];

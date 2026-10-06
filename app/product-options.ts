@@ -1,5 +1,5 @@
 import { calculatePrice, pricePolicy, type PricePolicy } from '@/app/pricing';
-import { defaultSettings } from '@/app/workspace-settings';
+import { defaultSettings, newWorkspaceSettings } from '@/app/workspace-settings';
 
 export const OPTION_LIMIT = 200;
 export const OPTIONS_BODY_LIMIT = 512 * 1024;
@@ -152,7 +152,7 @@ export function calculateOptionPrices(rows: readonly OptionInput[], policy: Pric
     } catch (error) { return { optionId: row.id, included: true, sourceCostCny: null, calculation: null, error: error instanceof Error ? error.message : '옵션 가격을 계산하지 못했습니다.' }; }
   });
 }
-export function resolveOptionPricePolicy(product: { pricing_policy?: string | null; exchange_rate: number; supply_margin: number; coupang_margin: number }, workspaceInput: unknown = defaultSettings): Pick<OptionPricing, 'policy' | 'policySource'> {
+export function resolveOptionPricePolicy(product: { pricing_policy?: string | null; exchange_rate: number; supply_margin: number; coupang_margin: number }, workspaceInput: unknown = newWorkspaceSettings): Pick<OptionPricing, 'policy' | 'policySource'> {
   if (product.pricing_policy) return { policy: pricePolicy(JSON.parse(product.pricing_policy)), policySource: 'saved-product' };
   if (!workspaceInput || typeof workspaceInput !== 'object' || Array.isArray(workspaceInput)) throw new Error('가격 설정 객체가 필요합니다.');
   const settings = { ...defaultSettings, ...workspaceInput };

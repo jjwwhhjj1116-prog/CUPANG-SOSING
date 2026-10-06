@@ -54,7 +54,7 @@ function content({responsePatch={},reportPatch={},status=200,urlPatch,redirected
  const requested=expected(companies[0]);
  const payload={fingerprint,filename:requested.filename,report:{productId:'product',categoryId:'80719',profileId:'profile',company:companies[0],submissionReady:false,...reportPatch},...responsePatch};
  const context={window:{addEventListener(type,listener){windows.push(listener);},postMessage(data,target){calls.push(['post',data,target]);}},
-  location:{origin:originPatch??origin},chrome:{runtime:{id:'extension',onMessage:{addListener(listener){listeners.push(listener);}}}},
+  location:{origin:originPatch??origin},chrome:{runtime:{id:'extension',getManifest:()=>JSON.parse(fs.readFileSync(new URL('../extensions/supplier-hub/manifest.json',import.meta.url),'utf8')),onMessage:{addListener(listener){listeners.push(listener);}}}},
   URL,Date,AbortController,setTimeout(callback){expire=callback;return 1;},clearTimeout(){calls.push(['clear']);},
   fetch:async(path,init)=>{
    calls.push(['fetch',path,init]);
@@ -98,7 +98,7 @@ test('content runtime listener ignores other extensions and expires a hung API r
 test('bridge advertises current-source binding together with direct transmission capability',async()=>{
  const h=content();
  await h.windows[0]({source:h.context.window,origin,data:{channel:'YOOFAM_HUB_HANDOFF',type:'PING',requestId:'a'.repeat(36)}});
- const reply=h.calls.find(([name])=>name==='post');assert.equal(reply[1].result.version,'0.2.49');assert.equal(reply[1].result.serverReceiptRecovery,true);assert.equal(reply[1].result.serverReceiptReplayProtection,true);assert.equal(reply[1].result.publicMobileCapture,true);assert.equal(reply[1].result.latestSourceBinding,true);assert.equal(reply[1].result.directTransmission,true);assert.equal(reply[1].result.savedSubmission,true);assert.equal(reply[1].result.durableAttachmentRecovery,true);assert.equal(reply[1].result.imageIntegrityBinding,true);
+ const reply=h.calls.find(([name])=>name==='post');assert.equal(reply[1].result.serverReceiptRecovery,true);assert.equal(reply[1].result.serverReceiptReplayProtection,true);assert.equal(reply[1].result.publicMobileCapture,true);assert.equal(reply[1].result.latestSourceBinding,true);assert.equal(reply[1].result.directTransmission,true);assert.equal(reply[1].result.savedSubmission,true);assert.equal(reply[1].result.durableAttachmentRecovery,true);assert.equal(reply[1].result.imageIntegrityBinding,true);
  assert.equal(reply[1].result.legalDocumentAttachments,true);
  assert.equal(reply[1].result.validationResume,true);assert.equal(reply[1].result.companyMenuRecovery,true);assert.equal(reply[1].result.attachmentLifecycleRecovery,true);assert.equal(reply[1].result.acceptedReceiptRefreshRecovery,true);
  assert.equal(reply[1].result.resultTableRefreshObservation,true);
