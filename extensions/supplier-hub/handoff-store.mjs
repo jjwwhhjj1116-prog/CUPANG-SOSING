@@ -32,15 +32,40 @@ export function isStoredReceiptResult(identity,result){
     &&['submittedAt','status','detail','quotationId'].every(field=>result[field]===undefined||(typeof result[field]==='string'&&result[field].length<=20000))
     &&(result.state!=='validation-complete'||isAcceptedResult(identity,result)));
 }
+export function isRecoverableSupplierHubResult(identity,result){
+  return Boolean(result&&['validation-pending','not-found'].includes(result.state)
+    &&isStoredReceiptResult(identity,{...result,state:'validation-pending'})&&result.registration===undefined
+    &&(result.profileId===undefined||typeof result.profileId==='string'&&/^\w[\w-]{0,99}$/.test(result.profileId))
+    &&(result.quotationId===undefined||result.quotationId===''||typeof result.quotationId==='string'
+      &&result.quotationId===result.quotationId.trim()&&result.quotationId.length<=200&&!/\.\.\.|…/.test(result.quotationId)));
+}
+export function canPromoteSupplierHubReceipt(identity,expected,accepted){
+  return Boolean(isRecoverableSupplierHubResult(identity,expected)&&isStoredReceiptResult(identity,accepted)&&isAcceptedResult(identity,accepted)
+    &&typeof accepted.profileId==='string'&&/^\w[\w-]{0,99}$/.test(accepted.profileId)&&!/\.\.\.|…/.test(accepted.quotationId)
+    &&expected.company.code===accepted.company.code&&expected.company.name===accepted.company.name
+    &&expected.includedOptions===accepted.includedOptions&&expected.filename===accepted.filename
+    &&(expected.profileId===undefined||expected.profileId===accepted.profileId)
+    &&(!expected.quotationId||expected.quotationId===accepted.quotationId));
+}
 export async function transferRecord(action,key,value){
-  if(!['get','put','claim'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  if(!['get','put','claim','promote'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  if(action==='promote'&&!(HANDOFF_ORIGINS.includes(value?.accepted?.origin)&&/^\w[\w-]{0,99}$/.test(value.accepted.productId||'')
+    &&/^\d{1,20}$/.test(value.accepted.categoryId||'')&&/^[a-f0-9]{64}$/.test(value.accepted.fingerprint||'')
+    &&key===resultKey(value.accepted)&&canPromoteSupplierHubReceipt(value.accepted,value.expected,value.accepted)))throw Error('접수 결과의 조건부 복구 정보를 확인해주세요.');
   if(action==='claim'&&!key.startsWith('transmission:')&&!/^attempt:\d+$/.test(key)
     &&!(HANDOFF_ORIGINS.includes(value?.origin)&&/^\w[\w-]{0,99}$/.test(value.productId||'')&&/^\d{1,20}$/.test(value.categoryId||'')
       &&/^[a-f0-9]{64}$/.test(value.fingerprint||'')&&key===resultKey(value)&&isStoredReceiptResult(value,value)))throw Error('전송 시도 기록을 확인해주세요.');
   const db=await database();try{return await new Promise((resolve,reject)=>{
     const transaction=db.transaction('pending',action==='get'?'readonly':'readwrite'),store=transaction.objectStore('pending');let result;
     const request=action==='put'?store.put(value,key):store.get(key);
-    request.onsuccess=()=>{result=request.result;if(action==='claim'){if(result!==undefined){result=false;}else{store.put(value,key);result=true;}}};transaction.oncomplete=()=>resolve(result);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||Error('전송 기록 저장 실패'));
+    request.onsuccess=()=>{result=request.result;if(action==='claim'){if(result!==undefined){result=false;}else{store.put(value,key);result=true;}}
+      else if(action==='promote'){
+        // Compare and replace in one transaction: a newer accepted/rejected
+        // observation wins over recovery of the previously read pending row.
+        if(!canPromoteSupplierHubReceipt(value.accepted,result,value.accepted)||JSON.stringify(result)!==JSON.stringify(value.expected))result=false;
+        else{store.put(value.accepted,key);result=true;}
+      }
+    };transaction.oncomplete=()=>resolve(result);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||Error('전송 기록 저장 실패'));
   });}finally{db.close();}
 }
 export async function pendingPackage(action,value){

@@ -1,26 +1,33 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
-import type {HistoricalAiCounts,HistoricalAiList,HistoricalAiQuote} from '@/app/historical-ai-registrations';
+import {useCallback,useEffect,useRef,useState} from 'react';
+import {canonicalHistoricalAiSourceUrl,historicalAiCompany,type HistoricalAiCounts,type HistoricalAiList,type HistoricalAiQuote,type HistoricalAiRecord,type HistoricalAiUrlReuse} from '@/app/historical-ai-registrations';
 type Preview={sha256:string;counts:HistoricalAiCounts;sample:{registrationId:string;optionId:string;title:string;kind:string}[]};
-export default function HistoricalAiRegistrationsPanel(){
+export type HistoricalAiRegistrationsPanelProps={onReuseUrl?:(target:HistoricalAiUrlReuse,signal:AbortSignal)=>void|Promise<void>};
+export default function HistoricalAiRegistrationsPanel({onReuseUrl}:HistoricalAiRegistrationsPanelProps={}){
  const [data,setData]=useState<HistoricalAiList|null>(null),[page,setPage]=useState(1),[search,setSearch]=useState(''),[draft,setDraft]=useState(''),[refresh,setRefresh]=useState(0),[loading,setLoading]=useState(true),[error,setError]=useState(''),[forbidden,setForbidden]=useState(false);
  const [files,setFiles]=useState<File[]>([]),[preview,setPreview]=useState<Preview|null>(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[selected,setSelected]=useState<string|null>(null),[quotes,setQuotes]=useState<HistoricalAiQuote[]>([]),[quoteError,setQuoteError]=useState('');
  const active=useRef<AbortController|null>(null);
- useEffect(()=>()=>active.current?.abort(),[]);
+ const [reusingId,setReusingId]=useState<string|null>(null);
+ const [listReady,setListReady]=useState(false);
+ const reuseRequest=useRef<AbortController|null>(null),mounted=useRef(true),currentList=useRef<HistoricalAiList|null>(null);
+ const reuseCallback=useRef(onReuseUrl);
+ const cancelReuse=useCallback(()=>{reuseRequest.current?.abort();reuseRequest.current=null;queueMicrotask(()=>{if(mounted.current&&!reuseRequest.current)setReusingId(null);});},[]);
+ useEffect(()=>{reuseCallback.current=onReuseUrl;if(!onReuseUrl)cancelReuse();},[onReuseUrl,cancelReuse]);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;active.current?.abort();reuseRequest.current?.abort();currentList.current=null;};},[]);
  useEffect(()=>{
-  const controller=new AbortController();queueMicrotask(()=>{if(!controller.signal.aborted){setLoading(true);setError('');}});
+  const controller=new AbortController();currentList.current=null;cancelReuse();queueMicrotask(()=>{if(!controller.signal.aborted){setListReady(false);setLoading(true);setError('');}});
   void(async()=>{try{
    const response=await fetch('/api/historical-ai-registrations?'+new URLSearchParams({page:String(page),search}),{signal:controller.signal,cache:'no-store'});
    if(response.status===403){if(!controller.signal.aborted){setForbidden(true);setData(null);setSelected(null);}return;}
-   const body=await response.json() as HistoricalAiList&{error?:string};if(!response.ok)throw Error(body.error??'기록을 읽지 못했습니다.');if(!controller.signal.aborted)setData(body);
-  }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'기록을 읽지 못했습니다.');}finally{if(!controller.signal.aborted)setLoading(false);}})();return()=>controller.abort();
- },[page,search,refresh]);
+   const body=await response.json() as HistoricalAiList&{error?:string};if(!response.ok)throw Error(body.error??'기록을 읽지 못했습니다.');if(!controller.signal.aborted){if(!validList(body))throw Error('현재 회사의 원본 기록을 확인하지 못했습니다.');currentList.current=body;setForbidden(false);setData(body);setListReady(true);}
+  }catch(cause){if(!controller.signal.aborted){setListReady(false);setError(cause instanceof Error?cause.message:'기록을 읽지 못했습니다.');}}finally{if(!controller.signal.aborted)setLoading(false);}})();return()=>controller.abort();
+ },[page,search,refresh,cancelReuse]);
  useEffect(()=>{
   const controller=new AbortController();queueMicrotask(()=>{if(!controller.signal.aborted){setQuotes([]);setQuoteError('');}});
   if(selected)void(async()=>{try{const response=await fetch('/api/historical-ai-registrations?'+new URLSearchParams({registrationId:selected}),{signal:controller.signal,cache:'no-store'}),body=await response.json() as {quotes:HistoricalAiQuote[];error?:string};if(!response.ok)throw Error(body.error??'견적 자료를 읽지 못했습니다.');if(!controller.signal.aborted)setQuotes(body.quotes);}catch(cause){if(!controller.signal.aborted)setQuoteError(cause instanceof Error?cause.message:'견적 자료를 읽지 못했습니다.');}})();return()=>controller.abort();
  },[selected,refresh]);
  async function upload(commit:boolean){
-  if(active.current||!files.length||commit&&!preview)return;
+  if(active.current||reuseRequest.current||!files.length||commit&&!preview)return;
   const controller=new AbortController();active.current=controller;setBusy(true);setMessage('');
   try{
    if(files.length>100||files.reduce((size,file)=>size+file.size,0)>1500000)throw Error('JSON 파일은 한 번에 100개, 합계 1.5MB 이하로 선택해주세요. 나머지 페이지는 이어서 보관할 수 있습니다.');
@@ -32,23 +39,45 @@ export default function HistoricalAiRegistrationsPanel(){
   }catch(cause){if(!controller.signal.aborted)setMessage(cause instanceof Error?cause.message:'응답을 확인하지 못했습니다. 같은 파일로 다시 확인해주세요.');}
   finally{active.current=null;if(!controller.signal.aborted)setBusy(false);}
  }
+ function validList(value:HistoricalAiList):boolean{return value?.company?.code===historicalAiCompany.code&&value.company.name===historicalAiCompany.name&&Array.isArray(value.records)&&(value.accountContext===undefined||typeof value.accountContext==='string'&&/^[a-f0-9]{64}$/.test(value.accountContext));}
+ async function reuseUrl(row:HistoricalAiRecord){
+  const snapshot=currentList.current,sourceUrl=canonicalHistoricalAiSourceUrl(row.sourceUrl),callback=onReuseUrl;
+  if(!callback||!reuseCallback.current||!sourceUrl||!snapshot||snapshot!==data||!listReady||loading||busy||active.current||reuseRequest.current||!mounted.current||!snapshot.records.includes(row))return;
+  const controller=new AbortController();reuseRequest.current=controller;setReusingId(row.registrationId);setError('');
+  try{
+   const response=await fetch('/api/historical-ai-registrations?'+new URLSearchParams({page:String(page),search}),{signal:controller.signal,cache:'no-store'});
+   if(controller.signal.aborted)return;
+   if(response.status===403){currentList.current=null;setForbidden(true);setData(null);setSelected(null);return;}
+   const fresh=await response.json() as HistoricalAiList&{error?:string};if(controller.signal.aborted)return;
+   if(!response.ok)throw Error(fresh.error??'상품 추가 전에 원본 기록을 확인하지 못했습니다.');
+   if(!validList(fresh)||typeof fresh.accountContext!=='string'){currentList.current=null;setListReady(false);throw Error('현재 계정·회사의 원본 기록을 확인하지 못했습니다. 원본 기록을 다시 조회해주세요.');}
+   if(snapshot.accountContext!==undefined&&snapshot.accountContext!==fresh.accountContext){currentList.current=null;setListReady(false);setData(null);setSelected(null);throw Error('로그인 계정 또는 회사정보가 변경되었습니다. 원본 기록을 다시 조회해주세요.');}
+   const matches=fresh.records.filter(item=>item.registrationId===row.registrationId);
+   if(matches.length!==1||canonicalHistoricalAiSourceUrl(matches[0].sourceUrl)!==sourceUrl)throw Error('선택한 원본 URL이 변경되었습니다. 원본 기록을 다시 조회해주세요.');
+   if(!mounted.current||controller.signal.aborted||reuseRequest.current!==controller||currentList.current!==snapshot)return;
+   const currentCallback=reuseCallback.current;if(!currentCallback)return;
+   await currentCallback({sourceUrl,registrationId:row.registrationId,company:{...historicalAiCompany},accountContext:fresh.accountContext},controller.signal);
+  }catch(cause){if(mounted.current&&!controller.signal.aborted&&reuseRequest.current===controller)setError(cause instanceof Error?cause.message:'상품 추가 화면을 열지 못했습니다. 원본 기록은 유지됩니다.');}
+  finally{if(reuseRequest.current===controller){reuseRequest.current=null;if(mounted.current)setReusingId(null);}}
+ }
+ function reload(){currentList.current=null;cancelReuse();setRefresh(value=>value+1);}
  if(forbidden)return null;
  return <section className="panel" aria-label="쿠플러스 원본 AI 등록 기록">
   <h2>쿠플러스 원본 AI 등록 기록</h2><p>와이홉 계정에서 보관한 등록 목록과 부분 견적자료입니다. 단계 상태와 옵션 개수는 원본 화면에 표시된 값입니다.</p>
   {error&&<p role="alert">{error}</p>}
   <details><summary>원본 JSON 가져오기</summary><p>목록 페이지와 해당 등록번호의 견적 JSON을 함께 선택할 수 있습니다. 같은 원본은 중복 보관하지 않습니다.</p>
-   <input aria-label="쿠플러스 원본 JSON 파일" type="file" multiple accept=".json,application/json" disabled={busy} onChange={event=>{if(active.current)return;setFiles(Array.from(event.target.files??[]));setPreview(null);setMessage('');}}/>
-   <button className="btn" disabled={busy||!files.length} onClick={()=>void upload(false)}>기록 미리보기</button>
-   {preview&&<div><p>원본 등록 목록 {preview.counts.registrations}개 · 부분 견적자료 {preview.counts.quotations}개 · 신규 {preview.counts.added}개 · 동일 {preview.counts.unchanged}개</p><ul>{preview.sample.map(row=><li key={JSON.stringify([row.kind,row.registrationId,row.optionId])}>{row.registrationId} {row.title||'부분 견적자료'}</li>)}</ul><button className="btn primary" disabled={busy} onClick={()=>void upload(true)}>원본 기록 보관</button></div>}
+   <input aria-label="쿠플러스 원본 JSON 파일" type="file" multiple accept=".json,application/json" disabled={busy||reusingId!==null} onChange={event=>{if(active.current||reuseRequest.current)return;setFiles(Array.from(event.target.files??[]));setPreview(null);setMessage('');}}/>
+   <button className="btn" disabled={busy||reusingId!==null||!files.length} onClick={()=>void upload(false)}>기록 미리보기</button>
+   {preview&&<div><p>원본 등록 목록 {preview.counts.registrations}개 · 부분 견적자료 {preview.counts.quotations}개 · 신규 {preview.counts.added}개 · 동일 {preview.counts.unchanged}개</p><ul>{preview.sample.map(row=><li key={JSON.stringify([row.kind,row.registrationId,row.optionId])}>{row.registrationId} {row.title||'부분 견적자료'}</li>)}</ul><button className="btn primary" disabled={busy||reusingId!==null} onClick={()=>void upload(true)}>원본 기록 보관</button></div>}
    {message&&<p role="status">{message}</p>}
   </details>
-  <form onSubmit={event=>{event.preventDefault();setSearch(draft.trim());setPage(1);}}><label>상품명·등록번호 <input value={draft} maxLength={200} onChange={event=>setDraft(event.target.value)}/></label><button className="btn ghost">검색</button><button className="btn ghost" type="button" disabled={loading} onClick={()=>setRefresh(value=>value+1)}>새로고침</button></form>
+  <form onSubmit={event=>{event.preventDefault();currentList.current=null;cancelReuse();setSearch(draft.trim());setPage(1);}}><label>상품명·등록번호 <input value={draft} maxLength={200} onChange={event=>setDraft(event.target.value)}/></label><button className="btn ghost">검색</button><button className="btn ghost" type="button" disabled={loading} onClick={reload}>새로고침</button></form>
   <p>원본 등록 기록 {data?.total??0}개 · 원본에 표시된 옵션 수 합계 {data?.reportedOptions??0}개</p>
   <div className="table-wrap" aria-busy={loading}><table><thead><tr><th>원본 등록번호</th><th>상품명</th><th>표시 옵션 수</th><th>원본 단계 상태</th><th>원본 등록 상태</th><th>부분 견적자료</th><th>원본 URL</th></tr></thead><tbody>
-   {data?.records.map(row=><tr key={row.registrationId}><td>{row.registrationId}</td><td>{row.title}</td><td>{row.optionCount}</td><td><details><summary>원본 상태 보기</summary><ol>{row.raw.cells.slice(5,13).map((value,index)=><li key={index}>원본 {index+1}열: {value||'빈칸'}</li>)}</ol></details></td><td>{row.status}</td><td>{row.quoteCount?<button className="btn ghost" onClick={()=>setSelected(row.registrationId)}>자료 {row.quoteCount}개 보기</button>:'미보관'}</td><td><a href={row.sourceUrl} target="_blank" rel="noopener noreferrer">1688 원본</a></td></tr>)}
+   {data?.records.map(row=><tr key={row.registrationId}><td>{row.registrationId}</td><td>{row.title}</td><td>{row.optionCount}</td><td><details><summary>원본 상태 보기</summary><ol>{row.raw.cells.slice(5,13).map((value,index)=><li key={index}>원본 {index+1}열: {value||'빈칸'}</li>)}</ol></details></td><td>{row.status}</td><td>{row.quoteCount?<button className="btn ghost" onClick={()=>{cancelReuse();setSelected(row.registrationId);}}>자료 {row.quoteCount}개 보기</button>:'미보관'}</td><td>{canonicalHistoricalAiSourceUrl(row.sourceUrl)?<a href={row.sourceUrl} target="_blank" rel="noopener noreferrer">1688 원본</a>:<span>원본 URL 확인 필요</span>}<button type="button" className="btn ghost" disabled={!onReuseUrl||!canonicalHistoricalAiSourceUrl(row.sourceUrl)||!listReady||loading||busy||reusingId!==null} onClick={()=>void reuseUrl(row)}>이 URL로 상품 추가</button></td></tr>)}
    {!loading&&!data?.records.length&&<tr><td colSpan={7}>보관된 원본 기록이 없습니다.</td></tr>}
   </tbody></table></div>
-  <p><button className="btn ghost" disabled={loading||page===1} onClick={()=>setPage(value=>value-1)}>이전</button> {page} / {Math.max(1,Math.ceil((data?.total??0)/25))} <button className="btn ghost" disabled={loading||page*25>=(data?.total??0)} onClick={()=>setPage(value=>value+1)}>다음</button></p>
+  <p><button className="btn ghost" disabled={loading||page===1} onClick={()=>{currentList.current=null;cancelReuse();setPage(value=>value-1);}}>이전</button> {page} / {Math.max(1,Math.ceil((data?.total??0)/25))} <button className="btn ghost" disabled={loading||page*25>=(data?.total??0)} onClick={()=>{currentList.current=null;cancelReuse();setPage(value=>value+1);}}>다음</button></p>
   {selected&&<section aria-label="부분 견적자료"><h3>등록번호 {selected} · 부분 견적자료</h3><button className="btn ghost" onClick={()=>setSelected(null)}>닫기</button>{quoteError&&<p role="alert">{quoteError}</p>}{quotes.map(quote=><div key={quote.sourceOptionId}><p>원본 옵션번호 {quote.sourceOptionId} · 카테고리 {quote.categoryCode} · 관찰 {quote.collectedAt}</p><dl>{quote.controls.map(control=><div key={control.index}><dt>{control.label||`원본 입력 ${control.index+1}`}</dt><dd>{typeof control.value==='boolean'?(control.value?'선택':'선택 안 함'):control.value||'빈칸'}</dd></div>)}</dl></div>)}</section>}
  </section>;
 }

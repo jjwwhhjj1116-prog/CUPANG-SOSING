@@ -5,6 +5,24 @@ const json=async(response,status=200)=>{assert.equal(response.status,status,awai
 const snapshot=h=>JSON.stringify(h.sqlite.prepare('SELECT * FROM historical_ai_records ORDER BY record_kind,registration_id,option_id').all());
 const commit=async(h,files)=>{const preview=await json(await h.submit(files));return json(await h.submit(files,{action:'import',sha256:preview.sha256}));};
 
+test('read-only history context binds the owner without changing original list or quotation values',async()=>{
+ const h=historicalHarness();try{
+  const quote=historicalQuote();await commit(h,[doc('page.json',[historicalRow()]),doc('quote.json',quote)]);const before=snapshot(h),first=await json(await h.fetcher('/api/historical-ai-registrations')),second=await json(await h.fetcher('/api/historical-ai-registrations'));
+  assert.match(first.accountContext,/^[a-f0-9]{64}$/);assert.equal(first.accountContext,second.accountContext);assert.ok(!JSON.stringify(first).includes(h.state.user.userId));
+  assert.equal(first.accountContext,await h.load('app/historical-ai-registrations.ts').historicalAiAccountContext(h.state.user.userId));
+  const detail=await json(await h.fetcher('/api/historical-ai-registrations?registrationId=261002001001'));assert.deepEqual(detail,{registrationId:'261002001001',quotes:[quote]});assert.equal(snapshot(h),before);
+ }finally{h.close();}
+});
+
+test('history ownership changes during a read reject the response without rewriting the retained original',async()=>{
+ const h=historicalHarness();try{
+  await commit(h,[doc('page.json',[historicalRow()])]);const before=snapshot(h),original=h.state.user;
+  h.state.beforeBatch=()=>{h.state.beforeBatch=null;h.state.user={...original,userId:'after-read-owner',membership:{...original.membership,id:'after-read-owner'}};};
+  const response=await h.fetcher('/api/historical-ai-registrations');assert.equal(response.status,409);assert.match(await response.text(),/계정 또는 회사정보가 변경/);assert.equal(snapshot(h),before);
+  for(const table of ['products','collection_jobs','supplier_hub_receipts'])assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,0);
+ }finally{h.close();}
+});
+
 test('actual API/SQLite keeps distinct registrations sharing a URL and exact partial quotation blanks, false and option IDs',async()=>{
  const h=historicalHarness({withoutMigration:true});try{
   assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sqlite_schema WHERE name='historical_ai_records'").get().n,0);

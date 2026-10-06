@@ -1,6 +1,6 @@
 import {validateAppHubRequest} from './app-request.mjs';
 import {isSupplierHubTab,waitForSupplierHubPage,supplierHubStatusReady} from './hub-tab.mjs';
-import {transferRecord,resultKey,isAcceptedResult} from './handoff-store.mjs';
+import {transferRecord,resultKey,isAcceptedResult,isRecoverableSupplierHubResult,canPromoteSupplierHubReceipt} from './handoff-store.mjs';
 import {readAppSupplierHubReceipt} from './receipt-recovery.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
@@ -15,10 +15,12 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
   activeWindows.add(windowId);
   try{
     const key=resultKey(identity),local=await store('get',key),binding={appTabId:sender.tab.id,windowId};
-    if(local!==undefined&&local!==null&&!isAcceptedResult(identity,local))
+    const recovering=local!==undefined&&local!==null&&!isAcceptedResult(identity,local)&&isRecoverableSupplierHubResult(identity,local);
+    if(local!==undefined&&local!==null&&!isAcceptedResult(identity,local)&&!recovering)
       throw Error('이 견적서의 파일 검증 완료 결과와 견적서 ID를 먼저 불러와주세요.');
-    let restored=local?null:await readAppSupplierHubReceipt(identity,binding,api),saved=local||restored;
+    let restored=!local||recovering?await readAppSupplierHubReceipt(identity,binding,api):null,saved=recovering?restored:local||restored;
     if(!saved)throw Error('이 견적서의 파일 검증 완료 결과와 견적서 ID를 먼저 불러와주세요.');
+    if(recovering&&!canPromoteSupplierHubReceipt(identity,local,saved))throw Error('보관된 접수 결과와 이전 검증 기록의 회사·옵션·견적서가 다릅니다.');
     const tabs=(await api.tabs.query({windowId,url:['https://supplier.coupang.com/qvt/registration*','https://supplier.coupang.com/qvt/wims*']}))
       .filter(tab=>['/qvt/registration','/qvt/wims'].some(path=>isSupplierHubTab(tab,windowId,path)));
     const source=[],status=[];
@@ -59,8 +61,8 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
     // suffice to reopen a read-only status page in this same Chrome window.
     // Its live login/company must still match before claiming or searching.
     if(!tab)await createStatusTab();
-    if(!local){
-      if(!await store('claim',key,saved)){
+    if(!local||recovering){
+      if(!await store(recovering?'promote':'claim',key,recovering?{expected:local,accepted:saved}:saved)){
         const concurrent=await store('get',key);
         if(!isAcceptedResult(identity,concurrent)||!['quotationId','filename','includedOptions'].every(field=>concurrent[field]===saved[field])
           ||concurrent.company.code!==saved.company.code||concurrent.company.name!==saved.company.name)

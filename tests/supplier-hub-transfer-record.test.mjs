@@ -65,3 +65,33 @@ test('pending and rejected server receipts can be restored atomically without cr
   for(const patch of [{observedAt:0},{state:'not-found'},{includedOptions:201},{detail:'x'.repeat(20001)}])await assert.rejects(h.record('claim',key,{...value,...patch}));
  }
 });
+
+test('accepted receipt promotion atomically replaces only the exact pending snapshot for both companies',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])for(const state of ['validation-pending','not-found']){
+  const h=fixture(),identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)},key=`result:${identity.origin}:p:80719:${identity.fingerprint}`;
+  const expected={...identity,company,includedOptions:6,filename:`YOOFAM-${identity.fingerprint}.xlsx`,state,observedAt:Date.now(),registered:false};
+  const accepted={...expected,state:'validation-complete',quotationId:'synthetic-accepted',profileId:'profile',receiptRecovered:true};
+  await h.record('put',key,expected);
+  const results=await Promise.all(Array.from({length:8},()=>h.record('promote',key,{expected,accepted})));
+  assert.equal(results.filter(Boolean).length,1);assert.deepEqual(await h.record('get',key),accepted);assert.equal(h.rows.size,1);
+  assert.ok(h.modes.slice(1,9).every(mode=>mode==='readwrite'));
+ }
+});
+
+test('promotion cannot overwrite competing accepted/rejected or newer pending observations and rejects mismatched receipt sources',async()=>{
+ const identity={origin:'http://localhost:3000',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)},key=`result:${identity.origin}:p:80719:${identity.fingerprint}`;
+ const expected={...identity,company:{code:'A01464742',name:'와이홉'},includedOptions:6,filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-pending',observedAt:Date.now(),registered:false};
+ const accepted={...expected,state:'validation-complete',quotationId:'synthetic-accepted',profileId:'profile',receiptRecovered:true};
+ for(const competing of [{...accepted,quotationId:'another-id'},{...expected,state:'validation-rejected'},{...expected,observedAt:expected.observedAt+1},{...expected,status:'newer pending'},undefined]){
+  const h=fixture();if(competing)await h.record('put',key,competing);assert.equal(await h.record('promote',key,{expected,accepted}),false);
+  assert.deepEqual(await h.record('get',key),competing);
+ }
+ for(const patch of [{company:{code:'A01526306',name:'유앤채'}},{includedOptions:5},{profileId:'../profile'},{filename:'other.xlsx'},{fingerprint:'b'.repeat(64)},
+  {state:'validation-rejected'},{quotationId:'truncated...'},{observedAt:0}]){
+  const h=fixture();await h.record('put',key,expected);await assert.rejects(h.record('promote',key,{expected,accepted:{...accepted,...patch}}));
+  assert.deepEqual(await h.record('get',key),expected);
+ }
+ for(const patch of [{profileId:'different'},{quotationId:'other-id'},{state:'validation-rejected'},{registration:{rows:[]}},{productId:'another-product'}]){
+  const h=fixture(),prior={...expected,...patch};await h.record('put',key,prior);await assert.rejects(h.record('promote',key,{expected:prior,accepted}));assert.deepEqual(await h.record('get',key),prior);
+ }
+});

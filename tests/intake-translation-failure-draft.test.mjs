@@ -153,6 +153,48 @@ test('a completed initial draft plus a failed Google options-only batch opens a 
  }finally{f.close();}
 });
 
+for(const company of companies)for(const status of [429,503])test(`Google HTTP ${status} in description stops later automatic option batches despite retained Korean attributes (${company.code})`,async()=>{
+ const f=await fixture(company,'price',true,target=>new URL(target).searchParams.get('q').startsWith('太阳眼镜')
+  ?Response.json([[['원문 기준 선글라스',new URL(target).searchParams.get('q'),null,null]],null,'zh-CN'])
+  :new Response('private limit body',{status,headers:{'retry-after':'3600'}}));try{
+  let seeded=false;
+  f.intercept=(path,init)=>{
+   if(path.endsWith('/translation')&&init.method==='POST'&&JSON.parse(init.body).action==='prepare-collected'&&!seeded){
+    const receipt=payload(f.h,'collection_results');receipt.attributes=Array.from({length:50},(_,index)=>({name:'검토 속성 '+index,value:'확인한 값'}));receipt.description='原文说明';
+    f.h.sqlite.prepare('UPDATE collection_results SET payload=?').run(JSON.stringify(receipt));seeded=true;
+   }
+   return null;
+  };
+  await f.start();
+  assert.equal(f.calls.filter(call=>call.body?.action==='prepare-intake-options').length,0,'a service stop cannot start another automatic request batch');
+  assert.equal(f.calls.filter(call=>call.body?.action==='execute').length,1);assert.equal(f.googleCalls,2);
+  assert.equal(f.rows[0].status,'saved');assert.match(f.rows[0].message,new RegExp(`HTTP ${status}.*중단|중단.*HTTP ${status}`));assert.equal(f.opened.length,1);
+  assert.ok(f.opened[0].options.rows.every(row=>row.provenance.translatedName!=='translated'));
+  const saved=f.h.sqlite.prepare('SELECT * FROM translation_jobs').get();assert.equal(saved.status,'completed');assert.equal(JSON.parse(saved.result).googleStoppedHttpStatus,status);assert.equal(JSON.parse(saved.result).draft.attributes.length,50);
+  const before=preserved(f.h);f.restorePending();await f.start();assert.equal(f.rows[0].status,'saved');assert.equal(f.opened.length,2);assert.equal(f.googleCalls,2);
+  assert.equal(f.calls.filter(call=>call.body?.action==='prepare-intake-options').length,0);assert.equal(f.calls.filter(call=>call.body?.action==='execute').length,1);assert.equal(preserved(f.h),before);
+ }finally{f.close();}
+});
+
+test('historical warnings, foreign-provider markers and malformed statuses cannot become Google stop evidence',async()=>{
+ const h=mobileIntakeHarness();try{
+  const version='2026-10-06T00:00:00Z',prepare=h.load('app/intake-seo.ts').prepareIntakeSeoOutcome;
+  const job={id:'job',productId:'product',productVersion:version,contentRevision:0,status:'completed',review:{destination:'Google 번역',model:'google-translate-gtx',instructionsVersion:'sourceflow-translation-v6',source:{attributes:[]}},result:{model:'google-translate-gtx',draft:{title:'한국어 상품',description:'',keywords:[],attributes:[],warnings:['Google 번역 HTTP 429 응답으로 남은 요청을 중단했습니다.']}}};
+  for(const change of [value=>value,value=>({...value,review:{...value.review,destination:'Cloudflare Workers AI'},result:{...value.result,googleStoppedHttpStatus:429}}),
+   value=>({...value,review:{...value.review,instructionsVersion:'sourceflow-translation-v5'},result:{...value.result,googleStoppedHttpStatus:429}}),
+   value=>({...value,result:{...value.result,model:'other-model',googleStoppedHttpStatus:429}}),
+   value=>({...value,result:{...value.result,googleStoppedHttpStatus:'429'}}),value=>({...value,result:{...value.result,googleStoppedHttpStatus:400}})]){
+   const current=change(job),actions=[];
+   const result=await prepare('product',async(path,init)=>{
+    const body=JSON.parse(init.body);actions.push(body.action);
+    if(path.endsWith('/translation-apply'))return Response.json({productId:'product',productVersion:version,preview:[],fingerprint:'a'.repeat(64)});
+    return body.action==='prepare-intake-options'?Response.json({done:true,productId:'product',productVersion:version}):Response.json({job:current,autoDraft:true,productVersion:version});
+   },new AbortController().signal);
+   assert.equal(result.completed,true);assert.equal(result.reviewRequired,false);assert.equal(actions.filter(action=>action==='prepare-intake-options').length,1);
+  }
+ }finally{h.close();}
+});
+
 test('a saved Google failure cannot hide a failed, foreign-product or unprepared work image-draft acknowledgement',async()=>{
  for(const mode of ['http','product','prepared']){
   const f=await fixture(companies[0],'work');try{

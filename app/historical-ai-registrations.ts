@@ -5,7 +5,9 @@ export type HistoricalAiEntry={kind:'registration'|'quotation';registrationId:st
 export type HistoricalAiImport={entries:HistoricalAiEntry[];sha256:string};
 export type HistoricalAiCounts={total:number;registrations:number;quotations:number;added:number;unchanged:number;conflicts:number;unlinked:number};
 export type HistoricalAiRecord={registrationId:string;title:string;optionCount:number;sourceUrl:string;status:string;raw:HistoricalAiRow;quoteCount:number;sourceName:string;importedAt:string};
-export type HistoricalAiList={company:typeof historicalAiCompany;records:HistoricalAiRecord[];total:number;page:number;pageSize:number;reportedOptions:number};
+export type HistoricalAiList={company:typeof historicalAiCompany;records:HistoricalAiRecord[];total:number;page:number;pageSize:number;reportedOptions:number;accountContext?:string};
+export type HistoricalAiUrlReuse={sourceUrl:string;registrationId:string;company:typeof historicalAiCompany;accountContext:string};
+export function canonicalHistoricalAiSourceUrl(value:unknown):string|null{return typeof value==='string'&&/^https:\/\/detail\.1688\.com\/offer\/[1-9]\d{0,19}\.html$/.test(value)?value:null;}
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
 export class HistoricalAiInputError extends Error {
  constructor(message:string,public readonly code:'INVALID_FORMAT'|'INPUT_LIMIT'|'DUPLICATE_KEY'|'INVALID_OPTION_MARKER'='INVALID_FORMAT'){super(message);this.name='HistoricalAiInputError';}
@@ -16,6 +18,7 @@ const text=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length<=ma
 const exact=(v:Record<string,unknown>,keys:string[])=>Object.keys(v).length===keys.length&&keys.every(key=>Object.hasOwn(v,key));
 const registration=(v:unknown):v is string=>typeof v==='string'&&/^\d{12}(?:_[1-9]\d*){0,2}$/.test(v);
 export async function historicalAiHash(value:string){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),byte=>byte.toString(16).padStart(2,'0')).join('');}
+export function historicalAiAccountContext(ownerId:string){return historicalAiHash(JSON.stringify(['sourceflow-historical-ai-account-v1',ownerId,historicalAiCompany.code,historicalAiCompany.name]));}
 function row(input:unknown):HistoricalAiRow{
  if(!object(input)||!exact(input,['cells','images','links'])||!Array.isArray(input.cells)||input.cells.length!==15||!input.cells.every(v=>text(v,5000))
   ||!Array.isArray(input.images)||input.images.length>5||!Array.isArray(input.links)||input.links.length>20||!input.links.every(v=>text(v,2048)))return fail();
@@ -54,7 +57,7 @@ export async function parseHistoricalAiImport(input:unknown):Promise<HistoricalA
     const markers=[...parsed.cells[3].matchAll(/(?:\n| {2,})옵션 ([1-9]\d{0,4})개(?=\n| {2,}|$)/g)];
     if(markers.length!==1)throw new HistoricalAiInputError('상품명 셀의 표시 옵션 수를 정확히 확인할 수 없습니다. 원본 목록 페이지 형식을 확인해주세요.','INVALID_OPTION_MARKER');
     const optionMatch=markers[0],title=parsed.cells[3].slice(0,optionMatch.index).split('\n')[0].trim();
-    const urls=[...new Set(parsed.links.filter(url=>/^https:\/\/detail\.1688\.com\/offer\/[1-9]\d{0,19}\.html$/.test(url)))];
+    const urls=[...new Set(parsed.links.filter(url=>canonicalHistoricalAiSourceUrl(url)!==null))];
     if(!registration(registrationId)||!title||urls.length!==1||!['등록완료','등록대기','등록실패'].includes(parsed.cells[13]))return fail();
     entries.push({kind:'registration',registrationId,optionId:'',title,optionCount:Number(optionMatch[1]),sourceUrl:urls[0],status:parsed.cells[13],payload:JSON.stringify(parsed),...common,sourceRow:index+1});
    }

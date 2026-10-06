@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CategoryPicker } from '@/app/components/category-picker';
 import { intakeProductId, intakeRow, submitIntakeQueue, visibleIntakeRows, type IntakeRow } from '@/app/intake-queue';
-import { collectionBlock, type CollectionJob } from '@/app/sourcing';
+import { collectionBlock, parseCollectionRequest, type CollectionJob } from '@/app/sourcing';
 import { savedRegistrationSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { CategoryAdvancedSeed } from '@/app/category-catalog';
@@ -10,7 +10,9 @@ import { collectIntakeProduct } from '@/app/intake-collection';
 import { capture1688FromChrome } from '@/app/browser-product-bridge';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 
-export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, onSettingsReloaded, jobs = [], onOpenProduct }: {
+export type IntakeSourceSeed={id:string;sourceUrl:string};
+export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed }: {
+  sourceSeed?:IntakeSourceSeed;onSourceConsumed?:(id:string)=>void;
   jobs?:CollectionJob[]; onOpenProduct?:(id:string,signal:AbortSignal)=>Promise<void>;
   settings:WorkspaceSettings; onSettingsReloaded:(settings:WorkspaceSettings)=>void;
   rows: IntakeRow[]; onRows: (update: (rows: IntakeRow[]) => IntakeRow[]) => void;
@@ -18,7 +20,10 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   onAdvanced: (seed?: CategoryAdvancedSeed) => void; onJobs: (jobs: CollectionJob[]) => void; onBusy: (busy: boolean) => void;
   goal: string; onGoal: (goal: string) => void;
 }) {
-  const [categoryTarget, setCategoryTarget] = useState<string | null>(null);
+  const [categoryTarget, setCategoryTarget] = useState<string | null>(sourceSeed?'new':null);
+  const pendingSeed=useRef(sourceSeed?.id??null);
+  const sourceMounted=useRef(true);
+  useEffect(()=>{sourceMounted.current=true;return()=>{sourceMounted.current=false;};},[]);
   const [query, setQuery] = useState('');
   const [pinnedColumn, setPinnedColumn] = useState('none');
   const [excluded, setExcluded] = useState<string[]>([]);
@@ -104,14 +109,29 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { finish(controller); }
   }
-  if (categoryTarget) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={() => setCategoryTarget(null)}>×</button></header><CategoryPicker profiles={profiles} selectedId={rows.find(row => row.id === categoryTarget)?.profile.id ?? ''} onAdvanced={onAdvanced} onSelected={profile => {
-    onProfile(profile);
+  function cancelCategory(){
+    const id=pendingSeed.current;pendingSeed.current=null;
+    if(id)onSourceConsumed?.(id);
+    setCategoryTarget(null);
+  }
+  if (categoryTarget) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={cancelCategory}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker profiles={profiles} selectedId={rows.find(row => row.id === categoryTarget)?.profile.id ?? ''} onAdvanced={onAdvanced} onSelected={profile => {
+    if(!sourceMounted.current)return;
+    if(sourceSeed&&categoryTarget==='new'&&pendingSeed.current!==sourceSeed.id)return;
     if (categoryTarget === 'new') {
-      if (rows.length < 50) { const id = crypto.randomUUID(); focusRow.current = id; onRows(previous => previous.length < 50 ? [...previous, intakeRow(profile, id)] : previous); }
+      if(rows.length>=50){setError('상품 대기열은 최대 50행입니다. 기존 입력을 정리한 뒤 상품을 추가해주세요.');return;}
+      let sourceUrl='';
+      if(sourceSeed&&pendingSeed.current===sourceSeed.id){
+        try{[sourceUrl]=parseCollectionRequest({urls:[sourceSeed.sourceUrl],goal:'collect'}).map(value=>value.sourceUrl);}
+        catch{setError('보관된 1688 URL을 확인해주세요. 기존 입력은 유지했습니다.');return;}
+      }
+      const id = crypto.randomUUID(); focusRow.current = id;
+      onRows(previous => previous.length < 50 ? [...previous,{...intakeRow(profile,id),url:sourceUrl}] : previous);
+      const seedId=pendingSeed.current;pendingSeed.current=null;if(seedId)onSourceConsumed?.(seedId);
     } else { focusRow.current = categoryTarget; edit(categoryTarget, { profile }); }
+    onProfile(profile);
     setQuery('');
     setCategoryTarget(null);
-  }} /><footer><button type="button" className="btn ghost" onClick={() => setCategoryTarget(null)}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
+  }} /><footer><button type="button" className="btn ghost" onClick={cancelCategory}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
   return <div className="modal-form intake-queue">
     <div className="intake-queue-tools"><label>검색<input type="search" aria-label="상품 대기열 검색" placeholder="카테고리 · 1688 URL · 특징 · 키워드" value={query} disabled={busy} onChange={event => setQuery(event.target.value)}/></label><label className="intake-pin-control"><select aria-label="상품 대기열 고정할 열 선택" value={pinnedColumn} onChange={event => setPinnedColumn(event.target.value)}><option value="none">고정할 열 선택</option><option value="category">카테고리</option><option value="url">1688 링크</option><option value="features">특징</option><option value="keywords">키워드</option><option value="status">상태</option></select></label><span>전체 {rows.length}건 · 선택 {pending}건</span>{query && <button type="button" className="btn ghost" disabled={busy} onClick={() => setQuery('')}>검색 해제</button>}</div>
     <div className="intake-queue-table" data-pinned={pinnedColumn} role="region" aria-label="상품 대기열 표" tabIndex={0}><table><thead><tr><th><input type="checkbox" aria-label="검색 결과 전체 선택" disabled={busy || !visiblePending.length} checked={visiblePending.length > 0 && visiblePending.every(row => !excluded.includes(row.id))} onChange={event => toggle(visiblePending.map(row => row.id), event.target.checked)}/></th><th>카테고리</th><th>1688 링크</th><th>특징</th><th>키워드</th><th>상태</th><th>관리</th></tr></thead><tbody>
@@ -131,7 +151,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       ['work', 'SEO·가격 + 이미지 초안', '원본을 대표·추가·상세·옵션 이미지에 배치합니다. 번역·편집 후 확인하세요.'],
       ['collect', '상품정보만 가져오기', '원문·옵션·가격을 가져오고 SEO 작성은 나중에 진행합니다.'],
     ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={(goal==='collect'?'collect':goal==='work'?'work':'price') === id} onChange={() => onGoal(id)} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
-    <p className="collection-notice">{collectionBlock} <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.50.zip" download>상품 수집·전송 확장 0.2.50 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
+    <p className="collection-notice">{collectionBlock} <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.51.zip" download>상품 수집·전송 확장 0.2.51 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
     {selected.some(row => !visible.some(item => item.id === row.id)) && <p className="collection-notice">검색으로 숨겨진 선택 상품도 함께 처리합니다. 선택 {pending}건 중 숨겨진 상품 {selected.filter(row => !visible.some(item => item.id === row.id)).length}건</p>}
     {settingsChanged&&<div className="panel-note"><p>기본설정이 변경돼 남은 상품 처리를 멈췄습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reloadSettings()}>최신 기본설정 불러오기</button></div>}
     {settingsMessage&&<p role="status">{settingsMessage}</p>}

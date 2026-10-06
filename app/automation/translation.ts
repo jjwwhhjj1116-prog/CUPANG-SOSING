@@ -10,7 +10,7 @@ export type TranslationReview = {
   paidNotice: string; pricingUrl: string; expiresAt: string; fingerprint: string;
   reviewId?: string; // Older persisted reviews remain valid without this field.
 };
-export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false; detectedSourceLanguages?: string[]; translationRequests?: number };
+export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false; detectedSourceLanguages?: string[]; translationRequests?: number; googleStoppedHttpStatus?: number };
 export type TranslationJob = {
   id: string; productId: string; productVersion: string; contentRevision: number;
   status: 'prepared' | 'approved' | 'running' | 'completed' | 'failed' | 'uncertain';
@@ -250,7 +250,8 @@ export async function executeTranslation(review: TranslationReview, config: Tran
     let draft:TranslationDraft;
     try { draft=validateTranslationDraft(translated.draft,review.source,review.instructionsVersion); }
     catch(error) { if(error instanceof TranslationError)throw new TranslationError(error.code,error.message,false);throw error; }
-    return {draft,responseId:`google-free-local:${crypto.randomUUID()}`,model:review.model,usage:null,generatedAt:new Date().toISOString(),provenance:'generated',appliedToContent:false,detectedSourceLanguages:translated.detectedSourceLanguages,translationRequests:translated.requests};
+    return {draft,responseId:`google-free-local:${crypto.randomUUID()}`,model:review.model,usage:null,generatedAt:new Date().toISOString(),provenance:'generated',appliedToContent:false,detectedSourceLanguages:translated.detectedSourceLanguages,translationRequests:translated.requests,
+      ...(translated.stoppedHttpStatus===null?{}:{googleStoppedHttpStatus:translated.stoppedHttpStatus})};
   }
   const request = buildTranslationRequest(review);
   if (config.provider === 'workers-ai') {

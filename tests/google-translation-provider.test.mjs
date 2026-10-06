@@ -45,7 +45,7 @@ test('429, malformed or unchanged Chinese product names fail before sending attr
 test('missing attributes stay missing, long descriptions are not truncated, and invented numbers cannot be adopted',async()=>{
  const review=await model.prepareTranslationReview({...source,description:'中'.repeat(5001)},config);let calls=0;
  const result=await model.executeTranslation(review,config,async url=>{calls++;const q=new URL(url).searchParams.get('q');return q==='材质'?new Response('error',{status:429}):googleReply(translated.get(q));});
- assert.equal(result.draft.description,'');assert.deepEqual(plain(result.draft.attributes.map(pair=>pair.sourceIndex)),[1,2,3]);assert.match(result.draft.warnings.join(' '),/누락 1개/);assert.equal(calls,5);
+ assert.equal(result.draft.description,'');assert.deepEqual(plain(result.draft.attributes.map(pair=>pair.sourceIndex)),[1,2]);assert.match(result.draft.warnings.join(' '),/누락 2개/);assert.match(result.draft.warnings.join(' '),/HTTP 429.*중단/);assert.equal(calls,4);
  let inventedCalls=0;const inventedReview=await model.prepareTranslationReview({...source,attributes:[]},config);await assert.rejects(()=>model.executeTranslation(inventedReview,config,async url=>{inventedCalls++;return googleReply(new URL(url).searchParams.get('q')===source.title?'면 주머니 999':'크기 10 cm');}),error=>error.code==='UNSUPPORTED_FACT'&&!error.mayHaveBeenCharged);assert.equal(inventedCalls,2);
 });
 
@@ -53,7 +53,66 @@ test('one batch respects the Free subrequest cap and prioritizes exact options b
  const many={...source,description:'',attributes:[...Array.from({length:80},(_,i)=>({name:`名称${i}`,value:`值${i}`})),{name:'option:sku_last',value:'黑色'}]};let calls=0,active=0,maxActive=0;
  const result=await drafts.buildGoogleTranslationDraft(many,async url=>{calls++;active++;maxActive=Math.max(active,maxActive);await new Promise(resolve=>setTimeout(resolve,1));active--;const q=new URL(url).searchParams.get('q');return googleReply(q===source.title?'면 수납 주머니 ABC-005':q==='黑色'?'검정':`검토 ${q.match(/\d+/)?.[0]??''}`);});
  assert.equal(calls,49);assert.ok(maxActive<=3);assert.ok(result.draft.attributes.some(pair=>pair.sourceIndex===80&&pair.name==='option:sku_last'&&pair.value==='검정'));assert.match(result.draft.warnings.join(' '),/한도/);
- let failures=0;const stopped=await drafts.buildGoogleTranslationDraft(many,async url=>{failures++;return new URL(url).searchParams.get('q')===source.title?googleReply('면 수납 주머니 ABC-005'):new Response('error',{status:429});});assert.ok(failures<=6);assert.match(stopped.draft.warnings.join(' '),/연속/);
+ let failures=0;const stopped=await drafts.buildGoogleTranslationDraft(many,async url=>{failures++;return new URL(url).searchParams.get('q')===source.title?googleReply('면 수납 주머니 ABC-005'):new Response('error',{status:429});});assert.equal(failures,4);assert.match(stopped.draft.warnings.join(' '),/HTTP 429.*중단/);
+});
+
+for(const translatedTitle of [false,true])test(`the first Google 429 stops unsent texts despite successful in-flight responses (retained title: ${translatedTitle})`,async()=>{
+ const input={...source,title:translatedTitle?'한국어 선글라스':'太阳镜',description:'',attributes:Array.from({length:20},(_,index)=>({name:`option-color:sku_${index}`,value:`颜色${index}`}))},queries=[];
+ const result=await drafts.buildGoogleTranslationDraft(input,async url=>{
+  const q=new URL(url).searchParams.get('q');queries.push(q);
+  if(q===input.title)return googleReply('선글라스');
+  if(q==='颜色0')return new Response('private limit body',{status:429,headers:{'retry-after':'3600'}});
+  return googleReply(`색상 ${q.match(/\d+/u)[0]}`);
+ });
+ assert.equal(queries.length,translatedTitle?3:4,'only the initial concurrent requests may settle after the first quota response');
+ assert.deepEqual(plain(result.draft.attributes.map(attribute=>attribute.sourceIndex)),[1,2]);
+ assert.equal(result.draft.title,translatedTitle?input.title:'선글라스');assert.equal(result.requests,queries.length);
+ assert.match(result.draft.warnings.join(' '),/429.*중단|중단.*429/);assert.ok(!queries.includes('颜色3'));
+});
+
+for(const status of [500,503])test(`HTTP ${status} stops unsent Google texts while ordinary text failures remain bounded`,async()=>{
+ const input={...source,title:'한국어 선글라스',description:'',attributes:Array.from({length:20},(_,index)=>({name:`option-color:sku_${index}`,value:`颜色${index}`}))};let calls=0;
+ const result=await drafts.buildGoogleTranslationDraft(input,async url=>{
+  calls++;const q=new URL(url).searchParams.get('q');return q==='颜色0'?new Response('private upstream body',{status}):googleReply(`색상 ${q.match(/\d+/u)[0]}`);
+ });
+ assert.equal(calls,3);assert.deepEqual(plain(result.draft.attributes.map(attribute=>attribute.sourceIndex)),[1,2]);assert.match(result.draft.warnings.join(' '),new RegExp(`HTTP ${status}.*중단`));
+ let textFailures=0;const independent=await drafts.buildGoogleTranslationDraft(input,async url=>{
+  textFailures++;const q=new URL(url).searchParams.get('q');return q==='颜色0'?new Response('invalid individual text',{status:400}):googleReply(`색상 ${q.match(/\d+/u)[0]}`);
+ });
+ assert.equal(textFailures,20);assert.equal(independent.draft.attributes.length,19);assert.doesNotMatch(independent.draft.warnings.join(' '),/HTTP 400.*중단/);
+});
+
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`Google quota stops a partial API job once and preserves missing option fields on replay (${company.companyCode})`,async()=>{
+ const queries=[];let input;
+ const h=mobileIntakeHarness({...company,translationFetcher:async url=>{
+  const q=new URL(url).searchParams.get('q');queries.push(q);
+  if(q===input.title)return googleReply('원문 기준 선글라스');
+  if(q===input.attributes[0].value)return new Response('private quota body',{status:429,headers:{'retry-after':'3600'}});
+  if(q===input.attributes[1].value)return googleReply('유광 검정');
+  if(q===input.attributes[2].value)return googleReply('선글라스');
+  assert.fail('no additional pending text may be sent after quota acknowledgement');
+ }});
+ try{
+  h.sqlite.exec("UPDATE collection_jobs SET goal='collect'");await h.intake();h.bindings.SOURCEFLOW_TEXT_PROVIDER='google-free';
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),before=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload),base='/api/products/'+product.id;
+  input={title:product.title,description:'',provenance:'manual',reference:'Local API quota-stop fixture',category:{id:h.context.category.categoryId,path:h.context.category.categoryPath},attributes:before.rows.slice(0,3).flatMap(row=>[
+   {name:'option:'+row.id,value:row.originalName},{name:'option-color:'+row.id,value:row.color},{name:'option-size:'+row.id,value:row.size},
+  ])};
+  const json=async response=>{assert.ok(response.ok,await response.clone().text());return response.json();},request=body=>h.route(base+'/translation',{method:'POST',body});
+  const prepared=await json(await request({action:'prepare',expectedVersion:product.updated_at,idempotencyKey:crypto.randomUUID(),source:input}));
+  await json(await request({action:'approve',jobId:prepared.job.id,reviewFingerprint:prepared.job.review.fingerprint,confirmPaid:true}));
+  const {job}=await json(await request({action:'execute',jobId:prepared.job.id}));assert.equal(job.status,'completed');assert.equal(job.result.translationRequests,4);assert.equal(job.result.googleStoppedHttpStatus,429);assert.equal(queries.length,4);
+  assert.deepEqual(job.result.draft.attributes.map(attribute=>attribute.sourceIndex),[1,2,4,8]);assert.match(job.result.draft.warnings.join(' '),/9개 중 4개.*누락 5개/);assert.match(job.result.draft.warnings.join(' '),/HTTP 429.*중단/);
+  assert.deepEqual(job.review.source,input);const persisted=h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(job.id);
+  const repeated=await json(await request({action:'execute',jobId:job.id}));assert.equal(repeated.replayed,true);assert.equal(queries.length,4);
+  const preview=await json(await h.route(base+'/translation-apply',{method:'POST',body:{action:'preview',jobId:job.id,expectedVersion:product.updated_at}}));
+  await json(await h.route(base+'/translation-apply',{method:'POST',body:{action:'apply',jobId:job.id,expectedVersion:product.updated_at,fingerprint:preview.fingerprint}}));
+  const after=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  assert.ok(after.rows.every(row=>row.translatedName===''&&row.provenance.translatedName!=='translated'));
+  assert.equal(after.rows[0].color,'유광 검정');assert.equal(after.rows[0].size,'선글라스');assert.equal(after.rows[2].color,before.rows[2].color);assert.equal(after.rows[2].provenance.color,'collected');
+  for(const [index,row]of after.rows.entries())for(const key of ['id','originalName','supplierSku','unitCostCny','unitsPerPack','imageKey'])assert.equal(row[key],before.rows[index][key]);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(job.id),persisted);assert.equal(queries.length,4);assert.equal(h.aiSources.length,0);assert.ok(!h.network.includes('supplier.coupang.com'));
+ }finally{h.close();}
 });
 
 test('Chinese copies with Korean text remain missing attributes in Google and the shared v6 validator',async()=>{

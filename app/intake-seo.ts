@@ -76,10 +76,19 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     if(job.status!=='completed'||!job.result)return withWarnings(`상품은 저장됐지만 SEO 초안은 아직 반영되지 않았습니다. ${job.error?.message ?? (job.status==='running'?'생성 중입니다. 작업 상태를 다시 확인해주세요.':'생성 결과를 확인해주세요.')}`);
     rememberWarnings(job);
     const coverage=job.review.instructionsVersion==='sourceflow-translation-v6'?translationAttributeCoverage(job.review.source,job.result.draft):null;
-    const partial=!!coverage?.missingSourceIndexes.length;
+    const stoppedStatus=job.result.googleStoppedHttpStatus;
+    // Only typed evidence from this acknowledged Google result stops later
+    // automatic batches. Warning text and older results are not state flags.
+    const serviceStopped=job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
+      &&job.review.instructionsVersion==='sourceflow-translation-v6'&&job.result.model===GOOGLE_TEXT_MODEL
+      &&Number.isInteger(stoppedStatus)&&(stoppedStatus===429||(stoppedStatus??0)>=500&&(stoppedStatus??0)<=599);
+    const partial=!!coverage?.missingSourceIndexes.length||serviceStopped;
     const reviewRequired=()=>{
       onReviewRequired();
-      return withWarnings(`검토 필요 · 상품 초안을 저장했습니다. 생성 결과에서 속성·옵션 번역 ${coverage!.missingSourceIndexes.length}개가 누락됐습니다. 누락 항목은 번역 완료로 처리하지 않았으며 원문과 직접 수정한 값은 유지합니다. 1~7단계에서 확인·수정해주세요.${remainder}`);
+      const missing=coverage?.missingSourceIndexes.length??0;
+      const reason=serviceStopped?`Google 번역 HTTP ${stoppedStatus} 응답으로 남은 자동 요청을 중단했습니다.${missing?` 속성·옵션 번역 ${missing}개가 누락됐습니다.`:''}`
+        :`생성 결과에서 속성·옵션 번역 ${missing}개가 누락됐습니다.`;
+      return withWarnings(`검토 필요 · 상품 초안을 저장했습니다. ${reason} 미완료 항목은 번역 완료로 처리하지 않았으며 원문과 직접 수정한 값은 유지합니다. 1~7단계에서 확인·수정해주세요.${remainder}`);
     };
     const applyVersion=body.applyVersion??job.productVersion;
     const send=async(action:'preview'|'apply',fingerprint?:string)=>{
