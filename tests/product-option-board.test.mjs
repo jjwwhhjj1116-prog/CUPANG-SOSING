@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {renderToStaticMarkup} from 'react-dom/server';
 const native=createRequire(import.meta.url);
 function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,fetch,AbortController,require(name){if(name in overrides)return overrides[name];if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;}
-function quotation(contentRevision=undefined){return {productVersion:data.productVersion,optionRevision:1,contentRevision,resolved:{rows:data.options.rows.map(row=>({optionId:row.id,fields:{supplyPrice:{value:'4100'},salePrice:{value:'6200'}}}))}};}
+function quotation(contentRevision=undefined,imageKeys=['owner/red.png','owner/shared.png','owner/source.png','owner/size.png']){return {productVersion:data.productVersion,optionRevision:1,contentRevision,imageKeys,resolved:{rows:data.options.rows.map(row=>({optionId:row.id,fields:{supplyPrice:{value:'4100'},salePrice:{value:'6200'}}}))}};}
 const model=load('app/components/product-option-board.tsx');
 const data={productVersion:'v1',options:{schemaVersion:1,productId:'p1',revision:1,rows:[{id:'red',originalName:'Red',translatedName:'빨강',supplierSku:'sku-red',unitCostCny:4.5,unitsPerPack:2,stock:0,included:true,imageKey:'owner/red.png',provenance:{}},{id:'blue',originalName:'Blue',translatedName:'',supplierSku:'sku-blue',unitCostCny:null,unitsPerPack:1,stock:null,included:false,imageKey:'other/private.png',provenance:{translatedName:'manual'}}]},pricing:{rows:[{optionId:'red',calculation:{supplyPrice:4000,salePrice:6000},error:null}]}};
 test('option board fetch checks product identity and propagates abort signal',async()=>{
@@ -17,31 +17,34 @@ test('option board fetch checks product identity and propagates abort signal',as
  for(const bad of [null,{}, {...data,options:{...data.options,productId:'p2'}}])await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:true,json:async()=>bad})),/응답/);
  await assert.rejects(model.readOptionBoard('p1',signal,async()=>({ok:false,json:async()=>({error:'인증 필요'})})),/인증 필요/);
 });
-function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html',boardData=data,owned=['owner/red.png'],loadedIdentity={productId:'p1',attempt:0},attempt=0){
- let slot=0;const selected=[];const edited=[];const images=[];const contentSteps=[];const states=[{...loadedIdentity,data:boardData,error:''},attempt,query];
- const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,()=>{}];},useEffect(){}};
+function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.html',boardData=data,owned=['owner/red.png'],loadedIdentity={productId:'p1',attempt:0},attempt=0,features={},snapshotKeys=boardData.imageKeys??owned){
+ let slot=0;const selected=[];const edited=[];const images=[];const contentSteps=[];const stages=[];const managed=[];const states=[{...loadedIdentity,data:{...boardData,imageKeys:snapshotKeys},error:''},attempt,query];
+ const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useEffect(){}};
  const {ProductOptionBoard}=load('app/components/product-option-board.tsx',{react:hooks});
- return {selected,edited,images,contentSteps,tree:ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(owned),onQuotation:id=>selected.push(id),onContent:step=>contentSteps.push(step),onImage:id=>images.push(id),onEdit:id=>edited.push(id)})};
+ const render=()=>{slot=0;return ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(owned),onQuotation:id=>selected.push(id),onContent:step=>contentSteps.push(step),onImage:id=>images.push(id),onEdit:id=>edited.push(id),...(features.stage?{onStage:(id,step)=>stages.push([id,step])}:{}),...(features.manage?{onManage:id=>managed.push(id)}:{})});};
+ return {selected,edited,images,contentSteps,stages,managed,render,tree:render()};
 }
 function nodes(value){if(!value||typeof value!=='object')return[];if(Array.isArray(value))return value.flatMap(nodes);return[value,...nodes(value.props?.children)];}
+const byLabel=(result,label)=>nodes(result).find(node=>node.props?.['aria-label']===label);
+function text(value){if(Array.isArray(value))return value.map(text).join('');if(value&&typeof value==='object')return text(value.props?.children);return typeof value==='boolean'?'':String(value??'');}
 test('option list opens the clicked option and preserves zero, unknown and deliberately blank names',()=>{
  const result=tree();const html=renderToStaticMarkup(result.tree);
  assert.match(html,/재고 0개/);assert.match(html,/재고 미확인/);assert.match(html,/옵션명 공란/);assert.match(html,/4,000원/);assert.match(html,/6,000원/);
  assert.match(html,/813724060928/);assert.ok(!html.includes('/api/files/other/private.png'));
- const buttons=nodes(result.tree).filter(n=>n.type==='button'&&n.props.children==='견적서 열기');buttons[1].props.onClick();assert.deepEqual(result.selected,['blue']);
- const filtered=tree('sku-red');assert.equal(nodes(filtered.tree).filter(n=>n.type==='button'&&n.props.children==='견적서 열기').length,1);
+ const buttons=nodes(result.tree).filter(n=>n.type==='button'&&n.props['aria-label']?.endsWith('견적서 편집'));buttons[1].props.onClick();assert.deepEqual(result.selected,['blue']);
+ const filtered=tree('sku-red');assert.equal(nodes(filtered.tree).filter(n=>n.type==='button'&&n.props['aria-label']?.endsWith('견적서 편집')).length,1);
  const unsafe=renderToStaticMarkup(tree('','javascript:alert(1)').tree);assert.ok(!unsafe.includes('href="javascript:'));
 });
 
 test('price buttons retain the chosen option ID and general editing does not pass a click event',()=>{
  const result=tree();const buttons=nodes(result.tree).filter(n=>n.type==='button');
- buttons.filter(n=>n.props.children==='가격 편집')[1].props.onClick();
+ buttons.filter(n=>n.props['aria-label']?.endsWith('가격설정 편집'))[1].props.onClick();
  buttons.find(n=>n.props.children==='옵션·번들·가격 수정').props.onClick({type:'click'});
  assert.deepEqual(result.edited,['blue',undefined]);
 });
 
 test('image editing passes the clicked option identity even when it has no individual image',()=>{
- const result=tree();const buttons=nodes(result.tree).filter(n=>n.type==='button'&&n.props.children==='이미지 편집');
+ const result=tree();const buttons=nodes(result.tree).filter(n=>n.type==='button'&&n.props['aria-label']?.endsWith('대표이미지 편집'));
  assert.equal(buttons.length,2);buttons[1].props.onClick();assert.deepEqual(result.images,['blue']);assert.deepEqual(result.edited,[]);assert.deepEqual(result.selected,[]);
 });
 
@@ -63,7 +66,7 @@ test('shared content columns count only saved product images and open their matc
  const shared={...data,commonAssets:{additional:['owner/a.png','other/x.png'],detail:['owner/top.png','owner/detail.png','owner/bottom.png'],label:[]}};
  const result=tree('sku-red',undefined,shared,['owner/a.png','owner/top.png','owner/detail.png','owner/bottom.png']);const html=renderToStaticMarkup(result.tree);
  assert.match(html,/1장.*연결 확인 필요/);assert.match(html,/3장/);assert.match(html,/0장/);
- for(const text of ['추가 이미지 편집','상세 이미지 편집','표시사항 편집'])nodes(result.tree).find(n=>n.type==='button'&&[n.props.children].flat().join('')===text).props.onClick();
+ for(const label of ['추가이미지','상세이미지','한글표시사항'])byLabel(result.tree,`옵션 red ${label} 편집`).props.onClick();
  assert.deepEqual(result.contentSteps,['추가 이미지','상세 이미지','표시사항']);assert.deepEqual(result.images,[]);
 });
 
@@ -78,6 +81,85 @@ test('shared content columns count only saved product images and open their matc
  content.assets.label.value=[42];
  await assert.rejects(model.readOptionBoard('p1',signal,fetcher),/이미지 응답/);
  });
+
+test('option board renders the observed twelve data headers with matching row cells',()=>{
+ const result=tree(),headers=nodes(result.tree).filter(node=>node.type==='th').slice(1).map(text);
+ assert.deepEqual(headers,['옵션번호','옵션명','SEO설정','가격설정','대표이미지','추가이미지','상세이미지','사이즈표','한글표시사항','견적서','재고/가격','관리']);
+ for(const row of nodes(result.tree).filter(node=>node.type==='tr'&&node.props['data-option-id']))assert.equal(nodes(row).filter(node=>node.type==='td').length,13);
+ assert.equal(nodes(result.tree).filter(node=>node.type==='input'&&node.props.type==='checkbox').length,3);
+});
+
+test('typed stage callbacks preserve the clicked option across every stage and take precedence over legacy callbacks',()=>{
+ const result=tree('',undefined,data,['owner/red.png'],undefined,0,{stage:true});
+ const expected=[['SEO설정','SEO'],['가격설정','가격'],['대표이미지','대표 이미지'],['추가이미지','추가 이미지'],['상세이미지','상세 이미지'],['사이즈표','옵션'],['한글표시사항','표시사항'],['견적서','견적서']];
+ for(const [label] of expected)byLabel(result.tree,`옵션 blue ${label} 편집`).props.onClick({type:'click'});
+ assert.deepEqual(result.stages,expected.map(([,step])=>['blue',step]));assert.deepEqual(result.edited,[]);assert.deepEqual(result.images,[]);assert.deepEqual(result.contentSteps,[]);assert.deepEqual(result.selected,[]);
+ const legacy=tree();assert.equal(byLabel(legacy.tree,'옵션 red SEO설정 편집'),undefined);assert.equal(byLabel(legacy.tree,'옵션 red 사이즈표 편집'),undefined);
+});
+
+test('management trash opens the connected deletion review without mutating the option or invoking a stage',()=>{
+ const before=JSON.stringify(data),result=tree('',undefined,data,['owner/red.png'],undefined,0,{stage:true,manage:true});
+ const row=nodes(result.tree).find(node=>node.type==='tr'&&node.props['data-option-id']==='blue'),cells=nodes(row).filter(node=>node.type==='td'),management=cells.at(-1);
+ const buttons=nodes(management).filter(node=>node.type==='button');assert.equal(buttons.length,1);assert.equal(buttons[0].props['aria-label'],'옵션 blue 삭제 검토');assert.equal(buttons[0].props.className,'registration-delete');buttons[0].props.onClick();
+ assert.deepEqual(result.managed,['blue']);assert.deepEqual(result.stages,[]);assert.deepEqual(result.edited,[]);assert.equal(JSON.stringify(data),before);
+ const legacy=tree();const fallback=byLabel(legacy.tree,'옵션 blue 수정');assert.equal(text(fallback),'수정');fallback.props.onClick();assert.deepEqual(legacy.edited,['blue']);assert.equal(nodes(legacy.tree).some(node=>node.props?.className==='registration-delete'),false);
+});
+
+test('selection changes only visible row identities and preserves saved option data',()=>{
+ const before=JSON.stringify(data),result=tree();byLabel(result.tree,'옵션 blue 선택').props.onChange({target:{checked:true}});
+ let rendered=result.render();assert.equal(byLabel(rendered,'옵션 blue 선택').props.checked,true);assert.equal(byLabel(rendered,'옵션 red 선택').props.checked,false);assert.match(text(rendered),/선택 1개/);
+ byLabel(rendered,'상품 옵션 검색').props.onChange({target:{value:'sku-red'}});rendered=result.render();byLabel(rendered,'현재 옵션 전체 선택').props.onChange({target:{checked:true}});
+ rendered=result.render();assert.equal(byLabel(rendered,'옵션 red 선택').props.checked,true);assert.equal(byLabel(rendered,'옵션 blue 선택'),undefined);assert.match(text(rendered),/선택 2개/);
+ byLabel(rendered,'현재 옵션 전체 선택').props.onChange({target:{checked:false}});rendered=result.render();assert.match(text(rendered),/선택 1개/);assert.equal(JSON.stringify(data),before);
+});
+
+test('saved SEO title and separate size-image role load without substituting a deliberately blank title',async()=>{
+ const content={productId:'p1',schemaVersion:1,revision:2,seo:{title:{value:'저장한 SEO 제목',provenance:'manual'}},assets:{main:{value:[]},size:{value:['owner/size.png']}}},signal=new AbortController().signal;
+ const fetcher=async url=>({ok:true,json:async()=>url.endsWith('/options')?data:url.endsWith('/quotation-fields')?quotation(2):{content}});
+ const loaded=await model.readOptionBoard('p1',signal,fetcher);assert.equal(loaded.seoTitle,'저장한 SEO 제목');assert.deepEqual(Array.from(loaded.commonAssets.size),['owner/size.png']);
+ content.seo.title.value='';const cleared=await model.readOptionBoard('p1',signal,fetcher);assert.equal(cleared.seoTitle,'');
+ const result=tree('sku-red',undefined,cleared,['owner/size.png'],undefined,0,{stage:true});assert.equal(text(byLabel(result.tree,'옵션 red SEO설정 편집')),'미입력');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'1장');
+ const changed={...cleared,commonAssets:{...cleared.commonAssets,size:[]},options:{...cleared.options,rows:cleared.options.rows.map(row=>({...row,size:'XL'}))}};
+ assert.equal(text(byLabel(tree('sku-red',undefined,changed,[],undefined,0,{stage:true}).tree,'옵션 red 사이즈표 편집')),'미사용');
+});
+
+test('image badges count only assigned product members and source previews never complete the representative stage',()=>{
+ const shown={...data,seoTitle:'',commonImageKeys:[],commonAssets:{additional:['owner/a.png','foreign/x.png'],detail:['owner/detail.png'],size:['foreign/size.png'],label:[]},sourceImageKeys:{red:'owner/source.png'},options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:null}))}};
+ const before=JSON.stringify(shown),result=tree('sku-red',undefined,shown,['owner/source.png','owner/a.png','owner/detail.png'],undefined,0,{stage:true}),html=renderToStaticMarkup(result.tree);
+ assert.match(html,/src="\/api\/files\/owner\/source.png"/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'0장');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 상세이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'연결 확인 필요');assert.equal(text(byLabel(result.tree,'옵션 red 한글표시사항 편집')),'0장');
+ assert.doesNotMatch(html,/완료|\/api\/files\/foreign/);assert.equal(JSON.stringify(shown),before);
+ shown.sourceImageKeys.red='foreign/source.png';assert.doesNotMatch(renderToStaticMarkup(tree('sku-red',undefined,shown,[],undefined,0,{stage:true}).tree),/src=/);
+});
+
+test('malformed SEO, size references and response metadata are rejected without a partial board snapshot',async()=>{
+ const signal=new AbortController().signal,validContent={productId:'p1',schemaVersion:1,revision:2,seo:{title:{value:''}},assets:{main:{value:[]},size:{value:[]}}};
+ const read=(options=data,content=validContent,quote=quotation(2))=>model.readOptionBoard('p1',signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/quotation-fields')?quote:{content}}));
+ for(const seo of [null,[],{}, {title:null},{title:{value:1}}])await assert.rejects(read(data,{...validContent,seo}),/SEO 응답/);
+ for(const size of [null,[],{}, {value:'owner/size.png'}, {value:[1]}])await assert.rejects(read(data,{...validContent,assets:{main:{value:[]},size}}),/이미지 응답/);
+ for(const options of [{...data,productVersion:null},{...data,options:{...data.options,revision:-1}},{...data,options:{...data.options,rows:[null]}},{...data,options:{...data.options,rows:[data.options.rows[0],data.options.rows[0]]}},{...data,pricing:{rows:[null]}},{...data,pricing:{rows:[{optionId:'foreign',calculation:null}]}},{...data,pricing:{rows:[{optionId:'red',calculation:{supplyPrice:'123',salePrice:1}}]}}])await assert.rejects(read(options),/옵션 응답/);
+ await assert.rejects(read(data,validContent,{...quotation(2),resolved:{rows:[null]}}),/견적 가격 응답/);
+ await assert.rejects(read(data,validContent,{...quotation(2),resolved:{rows:[...quotation(2).resolved.rows,quotation(2).resolved.rows[0]]}}),/견적 가격 응답/);
+ for(const imageKeys of [undefined,null,{},[1],['']])await assert.rejects(read(data,validContent,{...quotation(2),imageKeys}),/이미지 목록 응답/);
+});
+
+test('a refreshed board displays newly attached images using its quotation snapshot despite stale parent image keys',async()=>{
+ const content={productId:'p1',schemaVersion:1,revision:2,seo:{title:{value:'저장한 상품'}},assets:{main:{value:[]},additional:{value:['owner/new-additional.png']},size:{value:['owner/new-size.png']}}};
+ const options={...data,sourceImageKeys:{red:'owner/new-source.png',blue:'owner/new-source.png'},options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:row.id==='red'?'owner/new-main.png':null}))}};
+ const keys=['owner/new-main.png','owner/new-source.png','owner/new-additional.png','owner/new-size.png'];
+ const refreshed=await model.readOptionBoard('p1',new AbortController().signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/content')?{content}:quotation(2,keys)}));
+ assert.deepEqual(Array.from(refreshed.imageKeys),keys);
+ const result=tree('',undefined,refreshed,['owner/old-parent.png'],{productId:'p1',attempt:1},1,{stage:true});
+ assert.match(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/new-main.png"/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'1장');
+ assert.match(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/new-source.png"/);assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'0장');
+});
+
+test('a refreshed board excludes removed assignments and source previews even when the parent still lists those keys',async()=>{
+ const content={productId:'p1',schemaVersion:1,revision:2,assets:{main:{value:[]},additional:{value:['owner/removed.png','owner/retained.png']},size:{value:['owner/removed.png']}}};
+ const options={...data,sourceImageKeys:{red:'owner/removed.png',blue:'owner/removed.png'},options:{...data.options,rows:data.options.rows.map(row=>({...row,imageKey:row.id==='red'?'owner/removed.png':null}))}};
+ const refreshed=await model.readOptionBoard('p1',new AbortController().signal,async url=>({ok:true,json:async()=>url.endsWith('/options')?options:url.endsWith('/content')?{content}:quotation(2,['owner/retained.png'])}));
+ const result=tree('',undefined,refreshed,['owner/removed.png','owner/retained.png'],{productId:'p1',attempt:1},1,{stage:true}),html=renderToStaticMarkup(result.tree);
+ assert.doesNotMatch(html,/src=/);assert.equal(text(byLabel(result.tree,'옵션 red 대표이미지 편집')),'연결 확인 필요');assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'0장');assert.equal(text(byLabel(result.tree,'옵션 red 추가이미지 편집')),'1장');assert.equal(text(byLabel(result.tree,'옵션 red 사이즈표 편집')),'연결 확인 필요');
+});
 
 test('option board shows saved quotation overrides and preserves intentional blank instead of calculated price',()=>{
  const updated={...data,quotationPrices:{red:{supplyPrice:'5120',salePrice:''},blue:{supplyPrice:'',salePrice:''}}};

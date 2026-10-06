@@ -67,7 +67,7 @@ test('board separates all requested columns, shows saved title/image and opens t
 });
 
 test('every stage and product option badge keeps its real connected handler',()=>{
- const h=boardHarness(),tree=h.render();
+ const h=boardHarness({onOptions:undefined}),tree=h.render();
  const steps=[['SEO','SEO설정'],['가격','가격설정'],['대표 이미지','대표이미지'],['추가 이미지','추가이미지'],['상세 이미지','상세이미지'],['옵션','사이즈표'],['표시사항','한글표시사항'],['견적서','견적서']];
  for(const [step,label] of steps){
   const [button]=elements(tree,node=>node.type==='button'&&node.props['aria-label']===`${registrationTitle(h.product)} ${label} 열기`);
@@ -75,11 +75,19 @@ test('every stage and product option badge keeps its real connected handler',()=
  }
  const [thumbnail]=elements(tree,node=>node.type==='button'&&node.props.className==='registration-thumbnail');thumbnail.props.onClick();assert.equal(h.calls.at(-1)[1],'대표 이미지');
  const [title]=elements(tree,node=>node.type==='button'&&node.props.className==='registration-title');title.props.onClick();assert.equal(h.calls.at(-1).length,1);
- const [options]=elements(tree,node=>node.type==='button'&&node.props.className==='registration-options');options.props.onClick();assert.equal(h.options.at(-1),h.product);
+ const [options]=elements(tree,node=>node.type==='button'&&node.props.className==='registration-options');options.props.onClick();assert.equal(h.calls.at(-1)[1],'옵션');
  const management=elements(tree,node=>node.type==='td'&&node.props['data-column']==='management')[0];
  const [open]=elements(management,node=>node.type==='button');assert.equal(nodeText(open),'열기');open.props.onClick();assert.equal(h.calls.at(-1)[0],h.product);assert.equal(h.calls.at(-1).length,1);
  assert.equal(elements(tree,node=>node.type==='button'&&nodeText(node)==='삭제').length,0);
  const fallback=boardHarness({onOptions:undefined});const [badge]=elements(fallback.render(),node=>node.type==='button'&&node.props.className==='registration-options');badge.props.onClick();assert.equal(fallback.calls.at(-1)[1],'옵션');
+});
+
+test('connected stage cells and product previews open the product option selector before editing',()=>{
+ const h=boardHarness(),tree=h.render();
+ const buttons=elements(tree,node=>node.type==='button'&&(node.props.className==='registration-cell-button'||node.props.className==='registration-thumbnail'||node.props.className==='registration-title'||node.props.className==='registration-options'));
+ assert.equal(buttons.length,11);
+ for(const button of buttons){button.props.onClick();assert.equal(h.options.at(-1),h.product);}
+ assert.equal(h.options.length,11);assert.equal(h.calls.length,0);assert.equal(h.confirmations.length,0);
 });
 
 test('column picker hides and restores purchase links in requested order and pin selector tracks visible columns',()=>{

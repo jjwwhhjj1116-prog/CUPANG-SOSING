@@ -10,15 +10,17 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 const text=tree=>Array.isArray(tree)?tree.map(text).join(''):tree&&typeof tree==='object'?text(tree.props?.children):tree==null?'':String(tree);
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 
-/** Real dashboard, archive, registration board and content editor. HTTP is held
- * at the response boundary; no browser, remote product or storage is used. */
+/** Real dashboard, archive, registration board and content editor. The option
+ * list child records the real dashboard callbacks so navigation follows the
+ * primary cell -> option -> stage flow. HTTP is held at the response boundary;
+ * no browser, remote product or operating storage is used. */
 function harness({submission=false,batch,integration,packaging=false}={}){
  const instances=new Map(),cache=new Map(),effects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[],productReads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,holdProductRead=false,intakeSettings;
  const now='2026-10-05T00:00:00.000Z';
- const product=id=>({id,title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:0,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
+ const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:1,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
  const products=[batch?.product??product('b')];
  const profiles=['a','b'].map(id=>({id:'profile-'+id,name:'양식 '+id,revision:1,categoryId:'80719',categoryPath:['바스켓'],mappings:[],template:{name:id+'.xlsx',format:'xlsx',headerRow:1,headers:['상품명'],sheetName:'견적서'}}));
- let quotationEditor,packagingEditor,quotationDirty=false,quotationBusy=false;
+ let quotationEditor,packagingEditor,optionBoard,quotationDirty=false,quotationBusy=false;
  const hooks={
   useState(initial){const instance=active,index=instance.index++;if(!(index in instance.slots))instance.slots[index]=typeof initial==='function'?initial():initial;return[instance.slots[index],value=>{if(!instance.mounted){if(instance.name==='DashboardClient')lateDashboardWrites++;return;}instance.slots[index]=typeof value==='function'?value(instance.slots[index]):value;}];},
   useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},
@@ -31,7 +33,7 @@ function harness({submission=false,batch,integration,packaging=false}={}){
  if(batch){implemented.add('batch-work-panel');implemented.add('image-generation-panel');}
  if(submission){implemented.add('quotation-panel');implemented.add('submission-review-panel');}
  async function request(url,init){
-  requests.push({url,method:init?.method??'GET',body:init?.body});
+  requests.push({url,method:init?.method??'GET',body:init?.body,cache:init?.cache,signal:init?.signal});
   if(batch&&url.startsWith('/api/products/'+batch.product.id)){
    if(url==='/api/products/'+batch.product.id&&holdProductRead){holdProductRead=false;const pending=deferred();productReads.push({...pending,signal:init?.signal});return pending.promise;}
    return batch.request(url,init);
@@ -53,6 +55,7 @@ function harness({submission=false,batch,integration,packaging=false}={}){
   if(submission&&/^\/api\/products\/[ab]\/submission-review/.test(url)){const parsed=new URL(url,'https://app.test'),id=parsed.pathname.split('/')[3];return Response.json({productId:id,requestedProfileId:parsed.searchParams.get('profileId'),title:'상품 '+id,sourceUrl:product(id).source_url,categoryId:'80719',categoryPath:['바스켓'],checkedAt:now,fingerprint:'a'.repeat(64),submissionReady:false,transport:'not-connected',includedOptions:1,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[],limits:[]});}
   if(url.startsWith('/api/product-archive?'))return Response.json({items:[{id:'a',sourceKind:'product',title:'상품 a',sourceUrl:product('a').source_url,offerId:'813724060928',createdAt:now,updatedAt:now,status:'검토 대기',supplierHubStatus:'미전송',category:null}],nextCursor:null,range:'7days',from:'2026-09-29',to:'2026-10-05',query:'',timeZone:'Asia/Seoul',limit:50});
   if(url==='/api/products/a'){const pending=deferred();archiveReads.push(pending);return pending.promise;}
+  if(url==='/api/products/b')return Response.json({product:product('b')});
   if(/^\/api\/products\/[ab]\/content$/.test(url)){
    const content=load('app/product-content.ts').emptyProductContent(url.split('/')[3]);content.seo.title.value='저장 상품명';return Response.json({content});
   }
@@ -67,6 +70,7 @@ function harness({submission=false,batch,integration,packaging=false}={}){
     if(name.endsWith('.css'))return{};
     if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>({rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false})};
     if(name==='@/app/components/intake-queue-panel')return{IntakeQueuePanel:props=>{intakeSettings=props.settings;return null;}};
+    if(name==='@/app/components/product-option-board')return{ProductOptionBoard:props=>{optionBoard=props;return null;}};
     if(submission&&name==='@/app/components/quotation-fields-editor')return{QuotationFieldsEditor:props=>{quotationEditor={...props,mount:active,onDirtyChange(value){quotationDirty=value;props.onDirtyChange(value);}};return {type:'div',props:{'data-workspace-dirty':quotationDirty,'data-workspace-saving':quotationBusy}};}};
     if(packaging&&name==='@/app/components/product-options-editor')return{ProductOptionsEditor:props=>{packagingEditor=props;return null;}};
     if(name.startsWith('@/app/components/')&&!implemented.has(name.split('/').at(-1)))return new Proxy({},{get:()=>()=>null});
@@ -107,18 +111,29 @@ function harness({submission=false,batch,integration,packaging=false}={}){
   title:()=>nodes(render()).find(node=>node.type==='input'&&node.props.maxLength===500),
   workspace:()=>nodes(render()).find(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),
   async click(label){const target=button(label);assert.ok(target&&!target.props.disabled,'available button: '+label);target.props.onClick();await settle();},
+  async openBoardStage(label,step='SEO',optionId='sku-2'){
+   const target=button(label);assert.ok(target&&!target.props.disabled,'available board button: '+label);target.props.onClick();await settle();
+   assert.equal(nodes(render()).some(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),false,'the primary product cell opens option selection before editing');
+   assert.ok(optionBoard&&typeof optionBoard.onStage==='function','the opened option list exposes the real dashboard stage callback');
+   assert.equal(optionBoard.productId,products[0].id,'option selection belongs to the clicked visible product');
+   const productId=optionBoard.productId,before=requests.length;optionBoard.onStage(optionId,step);await settle();
+   const reads=requests.slice(before).filter(request=>request.url==='/api/products/'+productId);
+   assert.equal(reads.length,1,'the selected stage rereads exactly the clicked product');assert.equal(reads[0].method,'GET');assert.equal(reads[0].cache,'no-store');assert.ok(reads[0].signal instanceof AbortSignal);
+   assert.ok(nodes(render()).some(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),'the saved selected product opens only after the stage refresh');
+  },
   close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},
  };
 }
 
 test('packaging review retains unsaved source and quotation fields before opening the exact saved option',async()=>{
  const h=harness({submission:true,packaging:true});try{
-  await h.settle();await h.click('상품 b');
+  await h.settle();await h.openBoardStage('상품 b');
+  const initialTarget=JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget));assert.deepEqual(initialTarget,{optionId:'sku-2',fieldId:'title'});
   h.title().props.onChange({target:{value:'보존할 미저장 상품명'}});await h.settle();
-  h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.equal(h.title().props.value,'보존할 미저장 상품명');assert.equal(h.quotationEditor.navigationTarget,undefined);
+  h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.equal(h.title().props.value,'보존할 미저장 상품명');assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),initialTarget);
   h.title().props.onChange({target:{value:'저장 상품명'}});await h.settle();
-  h.quotationEditor.onDirtyChange(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.equal(h.quotationEditor.navigationTarget,undefined);assert.match(text(h.workspace()),/견적서에 저장하지 않은 입력/);
-  h.quotationEditor.onDirtyChange(false);h.setQuotationBusy(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.equal(h.quotationEditor.navigationTarget,undefined);assert.match(text(h.workspace()),/작업이 진행 중/);
+  h.quotationEditor.onDirtyChange(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),initialTarget);assert.match(text(h.workspace()),/견적서에 저장하지 않은 입력/);
+  h.quotationEditor.onDirtyChange(false);h.setQuotationBusy(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),initialTarget);assert.match(text(h.workspace()),/작업이 진행 중/);
   h.setQuotationBusy(false);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();
   assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG'});assert.equal(h.quotationEditor.profileId,'profile-b');assert.equal(h.button('7견적서').props['aria-current'],'step');
   const before=h.quotationEditor.mount;h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.notEqual(h.quotationEditor.mount,before);
@@ -128,15 +143,17 @@ test('packaging review retains unsaved source and quotation fields before openin
 
 test('retained packaging callback cannot replace a newly opened workspace target',async()=>{
  const h=harness({submission:true,packaging:true});try{
-  await h.settle();await h.click('상품 b');const old=h.packagingEditor.onReviewPackaging;
-  await h.click('상품 b');old('previous-option');await h.settle();assert.equal(h.quotationEditor.navigationTarget,undefined);assert.equal(h.button('1SEO').props['aria-current'],'step');
+  await h.settle();await h.openBoardStage('상품 b');const old=h.packagingEditor.onReviewPackaging;
+  await h.openBoardStage('상품 b','SEO','sku-3');const requestCount=h.requests.length;
+  assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-3',fieldId:'title'});
+  old('previous-option');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-3',fieldId:'title'});assert.equal(h.button('1SEO').props['aria-current'],'step');assert.equal(h.requests.length,requestCount,'retained callback cannot refresh or navigate the newly selected option');
   assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 
 test('packaging review from a category-bound submission target keeps the quotation panel and manual start row',async()=>{
  const h=harness({submission:true,packaging:true});try{
-  await h.settle();await h.click('상품 b');await h.click('7견적서');await h.click('저장한 견적 전송 준비');await h.click('견적서 수정하기');
+  await h.settle();await h.openBoardStage('상품 b');await h.click('7견적서');await h.click('저장한 견적 전송 준비');await h.click('견적서 수정하기');
   assert.equal(h.quotationEditor.navigationTarget.categoryId,'80719');assert.equal(h.quotationEditor.profileId,'profile-b');
   const automaticRow=()=>nodes(h.workspace()).find(node=>node.type==='label'&&text(node)==='카테고리에 저장한 입력 시작 행 자동 사용');
   const rowInput=()=>nodes(nodes(h.workspace()).find(node=>node.type==='label'&&text(node).startsWith('상품 데이터 입력 시작 행'))).find(node=>node.type==='input');
@@ -185,7 +202,7 @@ test('reviewed archive product enters transmission preparation with its own prof
 
 test('transmission preparation preserves unsaved quotation and retained source input',async()=>{
  const h=harness({submission:true});try{
-  await h.settle();await h.click('상품 b');
+  await h.settle();await h.openBoardStage('상품 b');
   const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서');step.props.onClick();await h.settle();
   h.quotationEditor.onDirtyChange(true);await h.settle();assert.equal(h.button('저장한 견적 전송 준비').props.disabled,true);
   h.quotationEditor.onDirtyChange(false);await h.settle();h.title().props.onChange({target:{value:'보존할 미저장 상품명'}});await h.settle();
@@ -197,7 +214,7 @@ test('transmission preparation preserves unsaved quotation and retained source i
 test('late archive open cannot replace a newer product workspace or its unsaved SEO value',async()=>{
  for(const value of ['직접 수정한 상품명','']){const h=harness();try{
   await h.settle();await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');assert.equal(h.archiveReads.length,1);
-  await h.click('✦AI 상품등록');await h.click('상품 b');
+  await h.click('✦AI 상품등록');await h.openBoardStage('상품 b');
   h.title().props.onChange({target:{value}});await h.settle();assert.equal(h.title().props.value,value);
   h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
   assert.match(text(h.workspace()),/상품 b/);assert.equal(h.title().props.value,value);
@@ -317,9 +334,10 @@ async function batchFixture(){
  const request=async(url,init={})=>url===base
   ?api.load('app/api/products/[id]/route.ts')[init.method??'GET'](new Request('https://app.test'+url,init),{params:Promise.resolve({id:product.id})})
   :api.route(url,{method:init.method??'GET',body:init.body});
+ const optionId=(await (await request(base+'/options')).json()).options.rows[0].id;
  const h=harness({batch:{product,request}});
  const start=async()=>{await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']===product.title+' 선택').props.onChange({target:{checked:true}});await h.click('작업 개시');await h.click('선택 상품 초안 준비·가격 확인');};
- return{api,h,product,base,request,start,close(){h.close();api.close();}};
+ return{api,h,product,base,optionId,request,start,close(){h.close();api.close();}};
 }
 
 test('batch draft review rereads the saved product before image preparation and retains the chosen step and list version',async()=>{
@@ -333,8 +351,10 @@ test('batch draft review rereads the saved product before image preparation and 
   assert.equal(h.requests.filter(request=>request.url==='/api/products').length,1,'only the selected product is refreshed');
   assert.equal(h.requests.filter(request=>request.url===base).length,2,'batch run and review each read the current product');
   const close=nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 작업 공간 닫기');close.props.onClick();await h.settle();
-  nodes(h.render()).find(node=>node.type==='button'&&node.props.className==='registration-title').props.onClick();await h.settle();await h.click('이미지 요청 검토하기 · 무료');
-  assert.equal(JSON.parse(h.requests.filter(request=>request.url===base+'/image-generation'&&request.method==='POST').at(-1).body).expectedVersion,saved.updated_at,'board row retains the refreshed product version');
+  const title=text(nodes(h.render()).find(node=>node.type==='button'&&node.props.className==='registration-title'));
+  await h.openBoardStage(title,'대표 이미지',f.optionId);await h.click('이미지 요청 검토하기 · 무료');
+  assert.equal(JSON.parse(h.requests.filter(request=>request.url===base+'/image-generation'&&request.method==='POST').at(-1).body).expectedVersion,saved.updated_at,'reopening the board option rereads and preserves the current saved product version');
+  assert.equal(h.requests.filter(request=>request.url===base).length,3,'board stage navigation adds exactly one fresh product read to the batch run and review');
   assert.ok(h.requests.every(request=>request.method!=='POST'||!request.url.endsWith('/image-generation')||JSON.parse(request.body).action==='prepare'),'no paid image execution');
  }finally{f.close();}
 });
