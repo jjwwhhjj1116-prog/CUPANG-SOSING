@@ -10,7 +10,7 @@ import { ImageSizeNotice } from '@/app/components/image-size-notice';
 import { currentLabelLayout, moveLabelField, type LabelLayout } from '@/app/product-content';
 import { type CustomLabel } from '@/app/product-content';
 import { CustomLabelEditor } from '@/app/components/custom-label-editor';
-import { attachResizedImage, readResizeSource, renderResizedImage, type ResizeSource, type ResizedImage } from '@/app/local-image-resize';
+import { attachResizedImage, imageTransformPlan, readResizeSource, renderResizedImage, type ImageTransform, type ResizeSource, type ResizedImage } from '@/app/local-image-resize';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -77,6 +77,9 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const [resizeSource,setResizeSource]=useState<ResizeSource|null>(null);
   const [resizeWidth,setResizeWidth]=useState('');const [resizeHeight,setResizeHeight]=useState('');
   const [resizeKeepRatio,setResizeKeepRatio]=useState(true);
+  const [resizeCropEnabled,setResizeCropEnabled]=useState(false);
+  const [resizeCrop,setResizeCrop]=useState({x:'0',y:'0',width:'',height:''});
+  const [resizeRotation,setResizeRotation]=useState<0|90|180|270>(0);
   const [resizePreview,setResizePreview]=useState<(ResizedImage&{url:string})|null>(null);
   const [resizeAdded,setResizeAdded]=useState<{version:string;keys:string[]}>({version:'',keys:[]});
   const resizeUpload=useRef<{key?:string}>({});
@@ -112,7 +115,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
   const detailDirty = JSON.stringify(draft.detail) !== JSON.stringify(initial.detail);
   const labelClearDirty = draft.labelClears.some(key => content.label[key].provenance !== 'manual');
   const dirty = (editingDetail && detailDirty) || (section==='이미지'?imageStageRoles(focusedAssetRole).some(role=>JSON.stringify(draft.assets[role])!==JSON.stringify(initial.assets[role])):JSON.stringify(draft[draftKey]) !== JSON.stringify(initial[draftKey])) || (section==='표시사항'&&(labelClearDirty||draft.labelProductNameLinked!==initial.labelProductNameLinked||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)));
-  const resizeDirty=Boolean(resizeSource&&(resizePreview||resizeWidth!==String(resizeSource.width)||resizeHeight!==String(resizeSource.height)));
+  const resizeDirty=Boolean(resizeSource&&(resizePreview||resizeRotation!==0||resizeCropEnabled
+    ||resizeWidth!==String(resizeSource.width)||resizeHeight!==String(resizeSource.height)));
   const anyDirty = JSON.stringify({ ...draft, labelClears: [] }) !== JSON.stringify(initial) || labelClearDirty || resizeDirty;
   const changedElsewhere = Boolean(product.updated_at && product.updated_at !== snapshotVersion && product.updated_at !== resizeAdded.version);
   useEffect(() => {
@@ -149,20 +153,40 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
       const source=await readResizeSource(product.id,key,content.revision,signal);
       if(signal.aborted)return;
       setResizeSource(source);setResizeWidth(String(source.width));setResizeHeight(String(source.height));setResizeKeepRatio(true);setResizePreview(null);resizeUpload.current={};
+      setResizeCropEnabled(false);setResizeCrop({x:'0',y:'0',width:String(source.width),height:String(source.height)});setResizeRotation(0);
     });
   }
+  function currentTransform(crop=resizeCrop,enabled=resizeCropEnabled,rotation=resizeRotation):ImageTransform {
+    return {rotation,...(enabled?{crop:Object.fromEntries(Object.entries(crop).map(([key,value])=>[key,value.trim()?Number(value):NaN])) as NonNullable<ImageTransform['crop']>}: {})};
+  }
+  function editAspect(crop=resizeCrop,enabled=resizeCropEnabled,rotation=resizeRotation) {
+    if(!resizeSource)return 1;
+    try {const plan=imageTransformPlan(resizeSource,currentTransform(crop,enabled,rotation));return plan.height/plan.width;}
+    catch {return resizeSource.height/resizeSource.width;}
+  }
+  function changeCrop(crop:typeof resizeCrop,enabled=resizeCropEnabled) {
+    if(activeRequest.current)return;
+    setResizeCrop(crop);setResizeCropEnabled(enabled);setResizePreview(null);resizeUpload.current={};
+    if(resizeKeepRatio&&/^\d+$/.test(resizeWidth))setResizeHeight(String(Math.max(1,Math.round(Number(resizeWidth)*editAspect(crop,enabled)))));
+  }
+  function changeRotation(rotation:0|90|180|270) {
+    if(activeRequest.current)return;
+    if((rotation%180)!==(resizeRotation%180)){setResizeWidth(resizeHeight);setResizeHeight(resizeWidth);}
+    setResizeRotation(rotation);setResizePreview(null);resizeUpload.current={};
+  }
   function changeResizeDimension(value:string,axis:'width'|'height') {
+    if(activeRequest.current)return;
     setResizePreview(null);resizeUpload.current={};
     if(axis==='width')setResizeWidth(value);else setResizeHeight(value);
     if(resizeKeepRatio&&resizeSource&&/^\d+$/.test(value)&&Number(value)>0){
-      if(axis==='width')setResizeHeight(String(Math.max(1,Math.round(Number(value)*resizeSource.height/resizeSource.width))));
-      else setResizeWidth(String(Math.max(1,Math.round(Number(value)*resizeSource.width/resizeSource.height))));
+      if(axis==='width')setResizeHeight(String(Math.max(1,Math.round(Number(value)*editAspect()))));
+      else setResizeWidth(String(Math.max(1,Math.round(Number(value)/editAspect()))));
     }
   }
   async function previewResize() {
     if(!resizeSource)return;
     await resizeAction(async signal=>{
-      const preview=await renderResizedImage(resizeSource,Number(resizeWidth),Number(resizeHeight),signal);
+      const preview=await renderResizedImage(resizeSource,Number(resizeWidth),Number(resizeHeight),signal,currentTransform());
       if(signal.aborted)return;
       setResizePreview({...preview,url:URL.createObjectURL(preview.output)});resizeUpload.current={};
     });
@@ -297,15 +321,20 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
         {imageKeys.length > 0 && <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}><button type="button" className={`btn ${assetFilter === 'all' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'all'} onClick={() => setAssetFilter('all')}>전체 {imageKeys.length}</button>{(Object.entries(assetRoles) as [AssetRole, string][]).map(([role, label]) => <button type="button" key={role} className={`btn ${assetFilter === role ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === role} onClick={() => setAssetFilter(role)}>{label} {draft.assets[role].filter(key => imageKeys.includes(key)).length}</button>)}<button type="button" className={`btn ${assetFilter === 'unassigned' ? 'primary' : 'ghost'}`} aria-pressed={assetFilter === 'unassigned'} onClick={() => setAssetFilter('unassigned')}>미지정 {orderedEditorImages(imageKeys, draft.assets, 'unassigned').length}</button></div><small style={{ color: '#64748b' }}>역할별 저장 순서로 표시합니다. ↑↓로 순서를 바꾸고 이미지를 누르면 크게 볼 수 있습니다.</small></>}
         {unavailableImages.length > 0 && <div className="panel-note"><div><p>현재 상품 이미지 목록에 없는 역할 참조가 {unavailableImages.length}개 있습니다.</p><button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, assets: Object.fromEntries(Object.entries(previous.assets).map(([role, keys]) => [role, keys.filter(key => imageKeys.includes(key))])) as Draft['assets'] }))}>연결이 없는 역할 참조 제외</button></div></div>}
         {editingDetail && <label className="field"><span>상세 설명</span><textarea aria-label="상세페이지 설명" value={draft.detail.description} maxLength={20000} rows={6} onChange={event=>setDraft(previous=>({...previous,detail:{...previous.detail,description:event.target.value}}))}/><small>저장하면 7단계 상세 HTML과 상세페이지 검토 파일에 반영됩니다. 7단계에서 직접 수정한 HTML은 유지됩니다.</small></label>}
-        {resizeSource&&<section className="panel-stack" aria-label="이미지 크기 조절">
-          <strong>이미지 크기 조절 · 원본 {resizeSource.width}×{resizeSource.height}px</strong>
+        {resizeSource&&<section className="panel-stack" aria-label="이미지 편집">
+          <strong>이미지 편집 · 원본 {resizeSource.width}×{resizeSource.height}px</strong>
+          <fieldset disabled={busy||loading} style={{border:0,padding:0}}>
+          <label><input type="checkbox" aria-label="이미지 자르기 사용" checked={resizeCropEnabled} onChange={event=>changeCrop(resizeCrop,event.target.checked)}/> 선택 영역 자르기</label>
+          {resizeCropEnabled&&<div className="form-row">{(['x','y','width','height'] as const).map(axis=><label key={axis}>{({x:'왼쪽',y:'위쪽',width:'영역 가로',height:'영역 세로'})[axis]}(px)<input type="number" aria-label={`자르기 ${axis}`} min={axis==='x'||axis==='y'?0:1} max={axis==='x'||axis==='width'?resizeSource.width:resizeSource.height} step="1" value={resizeCrop[axis]} onChange={event=>changeCrop({...resizeCrop,[axis]:event.target.value})}/></label>)}</div>}
+          <label>회전<select aria-label="이미지 회전" value={resizeRotation} onChange={event=>changeRotation(Number(event.target.value) as 0|90|180|270)}>{[0,90,180,270].map(value=><option key={value} value={value}>{value}도</option>)}</select></label>
           <div className="form-row"><label>가로(px)<input type="number" aria-label="이미지 가로 픽셀" min="1" max="16000" step="1" value={resizeWidth} onChange={event=>changeResizeDimension(event.target.value,'width')}/></label><label>세로(px)<input type="number" aria-label="이미지 세로 픽셀" min="1" max="16000" step="1" value={resizeHeight} onChange={event=>changeResizeDimension(event.target.value,'height')}/></label></div>
-          <label><input type="checkbox" checked={resizeKeepRatio} onChange={event=>{setResizeKeepRatio(event.target.checked);if(event.target.checked&&/^\d+$/.test(resizeWidth))setResizeHeight(String(Math.max(1,Math.round(Number(resizeWidth)*resizeSource.height/resizeSource.width))));setResizePreview(null);resizeUpload.current={};}}/> 원본 가로·세로 비율 유지</label>
-          <small>{resizeKeepRatio?'원본 비율에 맞춰 다른 치수를 함께 조절합니다.':'비율 유지를 끄면 입력한 가로·세로에 맞춰 늘어나거나 눌릴 수 있습니다.'} PNG로 저장되며 최대 10MB·4,000만 픽셀까지 지원합니다.</small>
-          <div className="quote-actions"><button type="button" className="btn ghost" onClick={()=>void previewResize()}>크기 조절 미리보기</button><button type="button" className="btn ghost" onClick={()=>{setResizeSource(null);setResizePreview(null);resizeUpload.current={};}}>크기 조절 취소</button></div>
+          <label><input type="checkbox" checked={resizeKeepRatio} onChange={event=>{if(activeRequest.current)return;setResizeKeepRatio(event.target.checked);if(event.target.checked&&/^\d+$/.test(resizeWidth))setResizeHeight(String(Math.max(1,Math.round(Number(resizeWidth)*editAspect()))));setResizePreview(null);resizeUpload.current={};}}/> 선택 영역의 가로·세로 비율 유지</label>
+          <small>{resizeKeepRatio?'자르기·회전을 반영한 비율에 맞춰 다른 치수를 조절합니다.':'비율 유지를 끄면 입력한 가로·세로에 맞춰 늘어나거나 눌릴 수 있습니다.'} 원본을 보존하고 새 PNG로 저장합니다. 최대 10MB·4,000만 픽셀까지 지원합니다.</small>
+          <div className="quote-actions"><button type="button" className="btn ghost" onClick={()=>void previewResize()}>편집 미리보기</button><button type="button" className="btn ghost" onClick={()=>{if(activeRequest.current)return;setResizeSource(null);setResizePreview(null);resizeUpload.current={};}}>편집 취소</button></div>
+          </fieldset>
           {resizePreview&&<><figure>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={resizePreview.url} alt="크기 조절 결과 미리보기" style={{maxWidth:'100%',maxHeight:400,objectFit:'contain'}}/><figcaption>{resizePreview.outputWidth}×{resizePreview.outputHeight}px · {(resizePreview.output.size/1024).toFixed(1)}KB</figcaption>
+            <img src={resizePreview.url} alt="이미지 편집 결과 미리보기" style={{maxWidth:'100%',maxHeight:400,objectFit:'contain'}}/><figcaption>{resizePreview.outputWidth}×{resizePreview.outputHeight}px · {(resizePreview.output.size/1024).toFixed(1)}KB</figcaption>
           </figure><button type="button" className="btn primary" onClick={()=>void applyResize()}>새 이미지 추가·현재 선택에 반영</button><small>현재 단계에서 원본을 선택 해제했다면 역할을 다시 지정하지 않습니다. 옵션별 대표 이미지는 아래 옵션 편집에서 새 파일을 선택하세요.</small></>}
         </section>}
         <div className="image-edit-workspace">
@@ -334,7 +363,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved }: Props) {
               <span>이미지 {index + 1} · 확대</span>
             </button>
             <ImageSizeNotice size={imageSizes[key]} role={role} />
-            <button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 크기 조절`} onClick={()=>void openResize(key)}>크기 조절</button>
+            <button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 편집하기`} onClick={()=>void openResize(key)}>편집하기</button>
             {focusedAssetRole&&<button type="button" className={`btn ${role===focusedAssetRole?'primary':'ghost'}`} aria-pressed={role===focusedAssetRole} onClick={()=>assign(key,role===focusedAssetRole?'':focusedAssetRole)}>{role===focusedAssetRole?'선택 해제':`${assetRoles[focusedAssetRole]}로 선택`}</button>}
             <label className="field"><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} onChange={event => assign(key, event.target.value as AssetRole | '')}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
             {role && <div className="image-asset-order"><span>{assetRoles[role]} {position + 1}번째</span><div><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}

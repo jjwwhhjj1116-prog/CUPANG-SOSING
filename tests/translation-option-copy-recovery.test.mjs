@@ -76,13 +76,16 @@ test('copy recovery preserves real manual option edits, blanks, excluded rows an
  }finally{h.close();}
 });
 
-test('genuine translated Korean stays excluded and another Chinese copy cannot be applied as recovery',async()=>{
+test('genuine translated Korean stays excluded and a copied recovery value remains pending in a partial v6 draft',async()=>{
  const h=mobileIntakeHarness();try{
   const {base,job,request}=await legacyCopy(h,true),current=options(h),model=h.load('app/option-translation.ts');assert.equal(current.rows[0].provenance.translatedName,'translated');
   const batch=model.optionTranslationBatch(current,50,[job]);assert.equal(batch.total,17);assert.ok(batch.attributes.every(pair=>pair.name!==`option:${current.rows[0].id}`));
   const prepared=await json(await request({action:'prepare',expectedVersion:product(h).updated_at,idempotencyKey:crypto.randomUUID(),source:{...job.review.source,attributes:plain(batch.attributes)}}));
   const original=h.bindings.AI.run;h.bindings.AI.run=async(...args)=>{const response=await original(...args);response.response.attributes[0].value=prepared.job.review.source.attributes[0].value;return response;};
   await json(await request({action:'approve',jobId:prepared.job.id,reviewFingerprint:prepared.job.review.fingerprint,confirmPaid:true}));const executed=await json(await request({action:'execute',jobId:prepared.job.id}));assert.equal(executed.job.status,'completed');
-  const response=await h.route(base+'/translation-apply',{method:'POST',body:{action:'preview',scope:'options',jobId:prepared.job.id,expectedVersion:product(h).updated_at}});assert.equal(response.status,409);assert.match((await response.json()).error,/중국어/);assert.deepEqual(options(h),current);assert.equal(options(h).rows[0].translatedName,'기존 한국어 옵션');
+  assert.equal(executed.job.result.draft.attributes.length,16);assert.ok(executed.job.result.draft.attributes.every(item=>item.sourceIndex!==0));assert.match(executed.job.result.draft.warnings.join(' '),/17개 중 16개.*누락 1개/);
+  const version=product(h).updated_at,response=await h.route(base+'/translation-apply',{method:'POST',body:{action:'preview',scope:'options',jobId:prepared.job.id,expectedVersion:version}}),preview=await json(response);assert.equal(preview.preview.length,16);assert.deepEqual(options(h),current);
+  await json(await h.route(base+'/translation-apply',{method:'POST',body:{action:'apply',scope:'options',jobId:prepared.job.id,expectedVersion:version,fingerprint:preview.fingerprint}}));
+  assert.equal(options(h).rows[0].translatedName,'기존 한국어 옵션');assert.equal(model.optionTranslationBatch(options(h),50,[job]).total,1);assert.equal(model.optionTranslationBatch(options(h),50,[job]).attributes[0].name,batch.attributes[0].name);
  }finally{h.close();}
 });

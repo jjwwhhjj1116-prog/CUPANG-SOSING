@@ -31,7 +31,8 @@ export type ImageEditJob = {
   review: ImageEditReview; result: ImageEditResult | null; error: { code: string; message: string; mayHaveBeenCharged: boolean } | null;
   createdAt: string; approvedAt: string | null; startedAt: string | null; finishedAt: string | null;
 };
-export type ImageEditView = { jobs: ImageEditJob[]; configuration: ImageConfiguration; settings: ImageProcessingSettings; settingsFingerprint: string };
+export type ImageEditView = { jobs: ImageEditJob[]; configuration: ImageConfiguration; settings: ImageProcessingSettings; settingsFingerprint: string;
+  product?: { id: string; version: string; imageKeys: string[] } };
 export type ImageEditInput = { sourceKey: string; prompt: string; purpose: ImagePurpose; size: ImageSize; quality: ImageQuality };
 export class ImageEditError extends Error {
   constructor(public code: string, message: string, public mayHaveBeenCharged = false) { super(message); }

@@ -8,7 +8,7 @@ export function generatedImageRolePatch(content:ProductContent,job:ImageEditJob,
  if(source===result||!imageKeys.includes(source)||!imageKeys.includes(result))throw new Error('원본과 결과 이미지의 상품 연결을 확인해주세요.');
  if(Object.values(content.assets).some(field=>field.value.includes(result)))throw new Error('결과 이미지가 이미 지정되어 있습니다. 이미지 편집에서 순서를 확인해주세요.');
  const assets:NonNullable<ContentPatch['assets']>={};
- for(const role of ['main','additional','detail'] as const){
+ for(const role of ['main','additional','detailTop','detail','detailBottom'] as const){
   const before=content.assets[role].value;
   if(!before.includes(source))continue;
   if(before.includes(result))throw new Error('결과 이미지가 이미 지정되어 있습니다. 이미지 편집에서 순서를 확인해주세요.');
@@ -30,7 +30,7 @@ export function generatedImagesRolePatch(content:ProductContent,jobs:readonly Im
  }
  if([...outputs].some(key=>replacements.has(key)))throw new Error('다른 선택 작업의 원본을 결과로 사용하는 연결은 한 번에 적용할 수 없습니다.');
  const assets:NonNullable<ContentPatch['assets']>={};
- for(const role of ['main','additional','detail'] as const){
+ for(const role of ['main','additional','detailTop','detail','detailBottom'] as const){
   const current=content.assets[role].value;
   if(current.some(key=>replacements.has(key)))assets[role]=current.map(key=>replacements.get(key)??key);
  }

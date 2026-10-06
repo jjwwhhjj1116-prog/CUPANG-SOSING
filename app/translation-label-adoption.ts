@@ -2,6 +2,7 @@ import { labelFields, validateContentInput, type LabelField, type ProductContent
 import type { TranslationJob } from '@/app/automation/translation';
 import { collectionLabelField } from '@/app/collection-label-attributes';
 import { translationLabelSourceScope } from '@/app/translation-label-source-scope';
+import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
 
 export type TranslationLabelMapping = { sourceIndex: number; field: LabelField };
 // Explicit equivalent headings only. Do not collapse component materials, product
@@ -69,6 +70,7 @@ export function translationLabelAdoption(content: ProductContent, job: Translati
     const source = job.review.source.attributes[mapping.sourceIndex];
     const matches = job.result.draft.attributes.filter(item => item.sourceIndex === mapping.sourceIndex);
     if (!source?.name.startsWith('상품속성: ') || matches.length !== 1 || !matches[0].value.trim()) throw Error('번역이 완료된 수집 상품 속성을 선택해주세요.');
+    if(job.review.instructionsVersion==='sourceflow-translation-v6'&&translationAttributeIssue(source,matches[0]))throw Error('중국어 원문 복사 또는 다른 항목의 숫자가 포함된 번역값은 반영하지 않습니다. 같은 원문의 번역값을 확인해주세요.');
     const current = content.label[mapping.field];
     if (current?.provenance === 'manual') throw Error(`${labelFields[mapping.field]}: 직접 수정한 값은 보존합니다. 표시사항 편집에서 수정해주세요.`);
     label[mapping.field] = matches[0].value;

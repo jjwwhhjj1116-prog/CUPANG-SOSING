@@ -24,21 +24,22 @@ export async function createManagedProductImportPlan(bytes,{ownerId,companyCode,
  if(!(bytes instanceof ArrayBuffer)||typeof ownerId!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(ownerId)
   ||typeof sourceName!=='string'||!sourceName.toLowerCase().endsWith('.xlsx')||sourceName.length>240||/[\\/\u0000-\u001f]/.test(sourceName))throw Error('INVALID_TARGET');
  let schema='',captured;
- const db={prepare(sql){const q={sql,args:[],bind(...args){q.args=args;return q;},async run(){if(!/^CREATE TABLE IF NOT EXISTS managed_products \(/.test(sql))throw Error('UNEXPECTED_WRITE');schema=sql;}};return q;},async batch(queries){if(captured)throw Error('UNEXPECTED_BATCH');captured=queries;return queries.map(()=>({results:[{total:0,added:0,unchanged:0}]}));}};
+ const db={prepare(sql){const q={sql,args:[],bind(...args){q.args=args;return q;},async run(){if(!/^CREATE TABLE IF NOT EXISTS managed_products \(/.test(sql))throw Error('UNEXPECTED_WRITE');schema=sql;}};return q;},async batch(queries){if(captured)throw Error('UNEXPECTED_BATCH');captured=queries;return queries.map(()=>({results:[{total:0,added:0,unchanged:0,accountAuthorized:1}]}));}};
  const load=modules(db),account=load('app/workspace-members.ts').WORKSPACE_ACCOUNTS.find(account=>account.role==='member'&&account.companyCode===companyCode);
  if(!account)throw Error('INVALID_COMPANY');
  const company={code:account.companyCode,name:account.companyName},source=await load('app/managed-products.ts').parseManagedProductWorkbook(bytes,company);
  await load('db/managed-products.ts').importManagedProducts(ownerId,source,sourceName,false);
+ const authorization=load('db/managed-products.ts').managedProductImportAuthorization;
  if(!schema||!captured?.length||captured.length%2)throw Error('IMPORT_CONTRACT_CHANGED');
  const guard=`EXISTS(SELECT 1 FROM members WHERE id=${literal(ownerId)} AND lower(trim(email))=${literal(account.email)} AND role='member' AND status='approved' AND company_code=${literal(company.code)} AND company_name=${literal(company.name)})`;
  const previews=[],inserts=[];
  for(let index=0;index<captured.length;index+=2){
   const count=captured[index],insert=captured[index+1];
-  if(!count.sql.startsWith('SELECT COUNT(*) AS total,')||!insert.sql.startsWith('INSERT INTO managed_products(')||!insert.sql.includes('FROM json_each(?) WHERE 1\n')||count.args.length!==3||insert.args.length!==7
-   ||count.args[0]!==insert.args[6]||count.args[1]!==ownerId||count.args[2]!==company.code||insert.args[0]!==ownerId||insert.args[1]!==company.code)throw Error('IMPORT_CONTRACT_CHANGED');
-  const guarded=insert.sql.replace('FROM json_each(?) WHERE 1\n',`FROM json_each(?) WHERE ${guard}\n`);
-  const renderInsert=rows=>render(guarded,[...insert.args.slice(0,-1),JSON.stringify(rows)]);
-  const append=rows=>{const payload=JSON.stringify(rows),statement=renderInsert(rows);if(Buffer.byteLength(statement)>80000)throw Error('STATEMENT_TOO_LARGE');inserts.push(statement+';');previews.push(`SELECT ${previews.length+1} AS chunk,CASE WHEN ${guard} THEN 1 ELSE 0 END AS authorized,counts.* FROM (${render(count.sql,[payload,ownerId,company.code])}) counts;`);};
+  if(typeof authorization!=='string'||!authorization.startsWith('EXISTS(SELECT 1 FROM members WHERE id=? AND status=')||!count.sql.startsWith('SELECT COUNT(*) AS total,')||!insert.sql.startsWith('INSERT INTO managed_products(')||!insert.sql.includes(`FROM json_each(?) WHERE ${authorization}\n`)||count.args.length!==6||insert.args.length!==10
+   ||count.args[3]!==insert.args[6]||count.args[0]!==ownerId||count.args[1]!==company.code||count.args[2]!==company.name||count.args[4]!==ownerId||count.args[5]!==company.code||insert.args[0]!==ownerId||insert.args[1]!==company.code||insert.args[7]!==ownerId||insert.args[8]!==company.code||insert.args[9]!==company.name)throw Error('IMPORT_CONTRACT_CHANGED');
+  const guarded=insert.sql.replace(`FROM json_each(?) WHERE ${authorization}\n`,`FROM json_each(?) WHERE ${authorization} AND ${guard}\n`);
+  const renderInsert=rows=>render(guarded,[...insert.args.slice(0,6),JSON.stringify(rows),...insert.args.slice(7)]);
+  const append=rows=>{const payload=JSON.stringify(rows),statement=renderInsert(rows);if(Buffer.byteLength(statement)>80000)throw Error('STATEMENT_TOO_LARGE');inserts.push(statement+';');previews.push(`SELECT ${previews.length+1} AS chunk,CASE WHEN ${guard} THEN 1 ELSE 0 END AS authorized,counts.* FROM (${render(count.sql,[...count.args.slice(0,3),payload,...count.args.slice(4)])}) counts;`);};
   let group=[];
   for(const entry of JSON.parse(insert.args[6])){if(group.length&&Buffer.byteLength(renderInsert([...group,entry]))>80000){append(group);group=[];}group.push(entry);}if(group.length)append(group);
  }

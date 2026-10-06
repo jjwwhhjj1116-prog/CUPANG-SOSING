@@ -56,6 +56,93 @@ test('one batch respects the Free subrequest cap and prioritizes exact options b
  let failures=0;const stopped=await drafts.buildGoogleTranslationDraft(many,async url=>{failures++;return new URL(url).searchParams.get('q')===source.title?googleReply('면 수납 주머니 ABC-005'):new Response('error',{status:429});});assert.ok(failures<=6);assert.match(stopped.draft.warnings.join(' '),/연속/);
 });
 
+test('Chinese copies with Korean text remain missing attributes in Google and the shared v6 validator',async()=>{
+ const input={...source,description:'',attributes:[
+  {name:'상품속성: 材质',value:'棉 검토'},
+  {name:'option-color:sku_1',value:'黑色 검토'},
+  {name:'option-size:sku_1',value:'10 cm'},
+  {name:'상품속성: 尺寸',value:'10 cm'},
+ ]};
+ const review=await model.prepareTranslationReview(input,config),queries=[];
+ const result=await model.executeTranslation(review,config,async url=>{
+  const q=new URL(url).searchParams.get('q');queries.push(q);
+  return googleReply(q===input.title?'면 수납 주머니 ABC-005':q==='材质'?'재질':q==='尺寸'?'크기':q);
+ });
+ assert.deepEqual(plain(result.draft.attributes.map(item=>item.sourceIndex)),[2,3]);
+ assert.equal(result.draft.attributes[0].name,'option-size:sku_1');assert.equal(result.draft.attributes[0].value,'10 cm');
+ assert.match(result.draft.warnings.join(' '),/4개 중 2개.*누락 2개/);assert.equal(queries.filter(q=>q==='黑色 검토').length,1);
+ const copied={title:'면 수납 주머니 ABC-005',description:'',keywords:[],warnings:[],attributes:input.attributes.map((item,sourceIndex)=>({sourceIndex,name:sourceIndex===0?'재질':sourceIndex===3?'크기':item.name,value:item.value}))};
+ const shared=model.validateTranslationDraft(copied,input,'sourceflow-translation-v6');
+ assert.deepEqual(plain(shared.attributes.map(item=>item.sourceIndex)),[2,3]);assert.match(shared.warnings.join(' '),/원문.*반환/);
+ assert.equal(model.validateTranslationDraft(copied,input,'sourceflow-translation-v5').attributes.length,4,'earlier stored result contract stays intact');
+ assert.deepEqual(plain(input.attributes),[
+  {name:'상품속성: 材质',value:'棉 검토'},{name:'option-color:sku_1',value:'黑色 검토'},
+  {name:'option-size:sku_1',value:'10 cm'},{name:'상품속성: 尺寸',value:'10 cm'},
+ ]);
+});
+
+test('Chinese copied attribute headings and Korean-only prefixes do not count as translated coverage',()=>{
+ const input={...source,description:'',attributes:[
+  {name:'상품속성: 材质',value:'棉'},
+  {name:'option:sku_1',value:'男士太阳眼镜'},
+  {name:'option-size:sku_1',value:'XL'},
+  {name:'option-color:sku_1',value:'검정'},
+ ]};
+ const output={title:'면 수납 주머니 ABC-005',description:'',keywords:[],warnings:[],attributes:[
+  {sourceIndex:0,name:'상품속성: 材质',value:'면'},
+  {sourceIndex:1,name:'option:sku_1',value:'한국어 男士太阳眼镜'},
+  {sourceIndex:2,name:'option-size:sku_1',value:'XL'},
+  {sourceIndex:3,name:'option-color:sku_1',value:'검정'},
+ ]};
+ const result=model.validateTranslationDraft(output,input,'sourceflow-translation-v6');
+ assert.deepEqual(plain(result.attributes.map(item=>item.sourceIndex)),[2,3]);
+ assert.deepEqual(plain(model.translationAttributeCoverage(input,result).missingSourceIndexes),[0,1]);
+});
+
+test('an unchanged mixed Korean and Chinese title fails once before any attribute request',async()=>{
+ const input={...source,title:'선글라스 太阳镜'},review=await model.prepareTranslationReview(input,config);let calls=0;
+ await assert.rejects(()=>model.executeTranslation(review,config,async url=>{
+  calls++;assert.equal(new URL(url).searchParams.get('q'),input.title);return googleReply(input.title);
+ }),error=>error.code==='GOOGLE_TRANSLATION_FAILED'&&!error.mayHaveBeenCharged);
+ assert.equal(calls,1);
+});
+
+test('v6 attributes retain their own numeric evidence rather than borrowing measurements, dates or title numbers',()=>{
+ const input={...source,title:'收纳袋 99',description:'日期 2025',attributes:[
+  {name:'상품속성: 宽度',value:'10 cm'},{name:'상품속성: 长度',value:'20 cm'},
+  {name:'상품속성: 日期',value:'2024-03'},{name:'option:sku_1',value:'ABC-005'},
+  {name:'상품속성: 厚度',value:'2.5 cm'},{name:'상품속성: 颜色',value:'검정'},
+  {name:'상품속성: 出厂年份',value:'2025'},{name:'상품속성: 材质',value:'棉'},
+ ]};
+ const output={title:'수납 주머니 99',description:'날짜 2025',keywords:[],warnings:[],attributes:[
+  {sourceIndex:0,name:'너비',value:'20 cm'},{sourceIndex:1,name:'길이',value:'10 cm'},
+  {sourceIndex:2,name:'날짜',value:'2025년 03월'},{sourceIndex:3,name:'option:sku_1',value:'ABC-005'},
+  {sourceIndex:4,name:'두께',value:'2.5 센티미터'},{sourceIndex:5,name:'색상 99',value:'검정'},
+  {sourceIndex:6,name:'생산 연도',value:'2025년'},{sourceIndex:7,name:'재질',value:'2025 면'},
+ ]};
+ const original=JSON.stringify({input,output}),result=model.validateTranslationDraft(output,input,'sourceflow-translation-v6');
+ assert.deepEqual(plain(result.attributes.map(item=>item.sourceIndex)),[3,4,6]);
+ assert.deepEqual(plain(model.translationAttributeCoverage(input,result).missingSourceIndexes),[0,1,2,5,7]);
+ assert.match(result.warnings.join(' '),/8개 중 3개.*누락 5개/);assert.match(result.warnings.join(' '),/같은.*원문에 없는 숫자.*5개/);
+ assert.equal(result.title,output.title);assert.equal(result.description,output.description);
+ assert.equal(model.validateTranslationDraft(output,input,'sourceflow-translation-v5').attributes.length,8);
+ assert.equal(JSON.stringify({input,output}),original);
+});
+
+test('Google measurements swapped across fields stay partial while their source indexes and numeric literals remain intact',async()=>{
+ const input={...source,description:'',attributes:[
+  {name:'option-size:sku_1',value:'小号 10 cm'},
+  {name:'상품속성: 长度',value:'长度 20 cm'},
+  {name:'상품속성: 厚度',value:'2.5 cm'},
+ ]},review=await model.prepareTranslationReview(input,config);
+ const result=await model.executeTranslation(review,config,async url=>{
+  const q=new URL(url).searchParams.get('q'),value=q===input.title?'면 수납 주머니 ABC-005':q==='小号 10 cm'?'소형 20 cm':q==='长度 20 cm'?'길이 10 cm':q==='长度'?'길이':q==='厚度'?'두께':q;
+  return googleReply(value);
+ });
+ assert.deepEqual(plain(result.draft.attributes),[{sourceIndex:2,name:'두께',value:'2.5 cm'}]);
+ assert.match(result.draft.warnings.join(' '),/3개 중 1개.*누락 2개/);assert.match(result.draft.warnings.join(' '),/같은.*원문에 없는 숫자.*2개/);
+});
+
 for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`recorded 1688 intake uses Google through real API/SQLite and preserves manual edits on reopen (${company.companyCode})`,async()=>{
  const color=value=>({'亮黑':'유광 검정','砂黑':'무광 검정','砂灰':'무광 회색'}[value]??value),size=value=>value==='太阳镜'?'선글라스':value==='太阳镜 加005 盒子'?'선글라스 + 005 케이스':value;
  let calls=0;const h=mobileIntakeHarness({...company,translationFetcher:async url=>{calls++;const q=new URL(url).searchParams.get('q');let value=q.startsWith('太阳眼镜木纹')?'우드 패턴 다리 선글라스':q.includes(' / ')?q.split(' / ').map((part,i)=>i?size(part):color(part)).join(' / '):color(size(q));if(value===q)value=`원문 검토 ${q.match(/\d+(?:[.,]\d+)*/g)?.join(' ')??''}`;return googleReply(value);}});

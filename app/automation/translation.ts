@@ -1,5 +1,6 @@
 import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
 import { fingerprint } from '@/app/automation/model';
+import { translationAttributeIssue,translationNumbers } from '@/app/translation-attribute-evidence';
 
 export type TranslationSource = { title: string; description: string; attributes: { name: string; value: string }[]; provenance: 'manual'; reference: string; category?: { id: string; path: string[] }; guidance?: { features: string; keywords: string } };
 export type TranslationDraft = { title: string; keywords: string[]; description: string; attributes: { sourceIndex: number; name: string; value: string }[]; warnings: string[] };
@@ -177,6 +178,11 @@ export function validateTranslationDraft(value: unknown, source: TranslationSour
   const result = { title, description, keywords: [...new Set(draft.keywords.map(word => text(word, 100)))], attributes, warnings: draft.warnings.map(warning => text(warning, 2000)) };
   if(instructionsVersion==='sourceflow-translation-v6'){
     validateKoreanSeo(result,source);
+    const issues=attributes.map(attribute=>translationAttributeIssue(source.attributes[attribute.sourceIndex],attribute));
+    result.attributes=attributes.filter((_,index)=>issues[index]===null);
+    const copied=issues.filter(issue=>issue==='chinese-copy').length,foreignNumbers=issues.filter(issue=>issue==='foreign-number').length;
+    if(copied)result.warnings.unshift(`중국어 원문을 그대로 반환한 상품 속성·옵션 ${copied}개는 번역 완료로 처리하지 않았습니다. 해당 원문과 기존 값을 유지했습니다.`);
+    if(foreignNumbers)result.warnings.unshift(`같은 상품 속성·옵션 원문에 없는 숫자를 반환한 ${foreignNumbers}개는 적용하지 않았습니다. 다른 항목의 숫자를 옮기지 않고 해당 원문과 기존 값을 유지했습니다.`);
     const coverage=translationAttributeCoverage(source,result);
     if(coverage.missingSourceIndexes.length)result.warnings.unshift(`상품 속성·옵션 ${coverage.expected}개 중 ${coverage.returned}개를 번역 초안으로 받았습니다. 누락 ${coverage.missingSourceIndexes.length}개는 원문에 보존했으며 번역 완료로 처리하지 않았습니다. SEO·옵션·표시사항에서 확인하고 수정해주세요.`);
   }
@@ -184,9 +190,9 @@ export function validateTranslationDraft(value: unknown, source: TranslationSour
     throw new TranslationError('INVALID_QUOTATION_KEYWORDS', '번역 검색어가 견적서의 전체 150자·태그별 20자 기준을 초과하거나 구분자를 포함합니다. 결과를 자동 적용하지 않았으며 자동 재요청하지 않습니다.', true);
   }
   const sourceText = [source.title, source.description, ...source.attributes.map(attribute => `${attribute.name} ${attribute.value}`)].join(' ');
-  const sourceNumbers = new Set(sourceText.match(/\d+(?:[.,]\d+)*/g) ?? []);
+  const sourceNumbers = new Set(translationNumbers(sourceText));
   const outputText = [title, description, ...result.keywords, ...attributes.map(attribute => attribute.value)].join(' ');
-  for (const number of outputText.match(/\d+(?:[.,]\d+)*/g) ?? []) {
+  for (const number of translationNumbers(outputText)) {
     if (!sourceNumbers.has(number)) throw new TranslationError('UNSUPPORTED_FACT', '원문에 없는 숫자가 번역에 포함되어 자동 채택하지 않았습니다.', true);
   }
   return result;

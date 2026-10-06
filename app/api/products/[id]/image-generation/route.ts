@@ -39,7 +39,13 @@ export async function GET(_request: Request, context: Context) {
   try { const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
     if (!await findProduct(owner, id)) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
     const [jobs, settings] = await Promise.all([listImageJobs(owner, id), savedImageSettings(owner)]);
-    return json({ jobs, configuration: configuration(), ...settings });
+    // Re-read after the jobs: an execution may have attached its result while
+    // the list was loading. Membership is current evidence; an old attached
+    // flag alone must not restore a result that the user later removed.
+    const product = await findProduct(owner, id);
+    if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
+    return json({ jobs, configuration: configuration(), ...settings,
+      product: { id: product.id, version: product.updated_at, imageKeys: productImageKeys(product.image_keys) } });
   } catch { return json({ error: '이미지 실행 이력을 불러오지 못했습니다.' }, 503); }
 }
 export async function POST(request: Request, context: Context) {

@@ -25,7 +25,7 @@ test('generated SQL reuses the full 1101-row parser/import contract, preserves q
 test('generated INSERT independently guards the exact current owner, approved member, email and company pair',async()=>{
  const plan=await createManagedProductImportPlan(buffer(managedFixture(1)),target);
  for(const overrides of [{id:'22222222-2222-4222-8222-222222222222'},{email:'other@example.test'},{role:'admin'},{status:'suspended'},{companyCode:'A01526306'},{companyName:'다른 회사'}]){
-  const h=managedProductHarness();try{member(h,overrides);h.sqlite.exec(plan.importSql);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,0);}finally{h.close();}
+  const h=managedProductHarness();try{member(h,overrides);assert.equal(h.sqlite.prepare(plan.previewSql).get().authorized,0,'the CLI identity guard stays distinct from the generic account guard');h.sqlite.exec(plan.importSql);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,0);}finally{h.close();}
  }
  const h=managedProductHarness();try{member(h);h.sqlite.exec(plan.previewSql);h.sqlite.exec("UPDATE members SET status='suspended'");h.sqlite.exec(plan.importSql);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,0);}finally{h.close();}
  await assert.rejects(()=>createManagedProductImportPlan(buffer(managedFixture(1)),{...target,companyCode:'UNKNOWN'}));

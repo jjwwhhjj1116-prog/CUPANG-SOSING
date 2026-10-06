@@ -30,6 +30,9 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   const [reviewedIds,setReviewedIds]=useState<string[]>([]);
   const mounted=useRef(true);
   const activeRequest=useRef<AbortController|null>(null);
+  const notifiedAttachment=useRef('');
+  const attachmentContext=useRef({productId,imageKeys,onProductChanged});
+  useEffect(()=>{attachmentContext.current={productId,imageKeys,onProductChanged};},[productId,imageKeys,onProductChanged]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;activeRequest.current?.abort();activeRequest.current=null;};},[productId,version]);
   function beginRequest(allowMissing=false) {
     if(!mounted.current||activeRequest.current||(!allowMissing&&!view))return null;
@@ -42,12 +45,27 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
   const stale = Boolean(job && (job.productVersion !== version || job.review.settingsFingerprint !== view?.settingsFingerprint || job.review.recipeVersion !== 1));
 
+  function attachmentSnapshot(next:ImageEditView) {
+    const {productId,imageKeys}=attachmentContext.current;
+    const snapshot=next.product;
+    if(!snapshot)return ''; // Existing histories without a source snapshot remain readable.
+    if(snapshot.id!==productId||typeof snapshot.version!=='string'||!snapshot.version||snapshot.version.length>200
+      ||!Array.isArray(snapshot.imageKeys)||snapshot.imageKeys.length>50||new Set(snapshot.imageKeys).size!==snapshot.imageKeys.length
+      ||snapshot.imageKeys.some(key=>typeof key!=='string'||!key||key.length>512))throw Error('현재 상품의 이미지 저장본을 확인하지 못했습니다.');
+    const recovered=next.jobs.some(item=>item.productId===productId&&item.status==='completed'&&item.result?.attached===true
+      &&snapshot.imageKeys.includes(item.result.storageKey)&&!imageKeys.includes(item.result.storageKey));
+    return recovered?JSON.stringify([snapshot.id,snapshot.version,snapshot.imageKeys]):'';
+  }
+  function notifyAttachment(snapshot:string) {
+    if(snapshot&&notifiedAttachment.current!==snapshot){notifiedAttachment.current=snapshot;attachmentContext.current.onProductChanged?.();}
+  }
+
   useEffect(() => {
     const controller=new AbortController();activeRequest.current=controller;
     fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}).then(async response => {
       const value = await response.json() as ImageEditView & { error?: string };
       if (!response.ok) throw Error(value.error ?? '이미지 작업을 불러오지 못했습니다.');
-      if (!controller.signal.aborted) {setView(value);setConfirmed(false);}
+      if (!controller.signal.aborted) {const snapshot=attachmentSnapshot(value);setView(value);setConfirmed(false);notifyAttachment(snapshot);}
     }).catch(reason => { if (!controller.signal.aborted) setError(reason.message); }).finally(()=>{
       if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current){setLoadedVersion(version);setBusy(false);}}
     });
@@ -106,7 +124,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   async function refresh() {
     const controller=beginRequest(true);if(!controller)return;
     setBusy(true); setError('');
-    try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); setView(next);setLoadedVersion(version); }
+    try { const response = await fetch(`/api/products/${encodeURIComponent(productId)}/image-generation`,{cache:'no-store',signal:controller.signal}); const next = await response.json() as ImageEditView & { error?: string };if(controller.signal.aborted)return; if (!response.ok) throw Error(next.error ?? '조회 실패'); const snapshot=attachmentSnapshot(next);setView(next);setLoadedVersion(version);notifyAttachment(snapshot); }
     catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '조회 실패'); } finally { finishRequest(controller); }
   }
   return <section className="translation-panel image-generation-panel" aria-label="원본 이미지 AI 가공">

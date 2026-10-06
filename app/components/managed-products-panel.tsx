@@ -1,63 +1,73 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import type {ManagedProductList,ManagedProductFilter,ManagedProductImportCounts,ManagedProductInput} from '@/app/managed-products';
+import type {ManagedProductList,ManagedProductFilter,ManagedProductImportCounts,ManagedProductInput,ManagedProductAccountContext} from '@/app/managed-products';
 import './managed-products-panel.css';
 
 const columns=['SKUID','바코드','제품분류','노출ID','옵션ID','vendorItemId','productId','판매링크','발주가능상태','재고','판매가','판매가기준일','공급가','리뷰평점','리뷰수','구매링크','옵션1_중국어','옵션2_중국어','판매구성수량','매입단가','공급가액','부가세액','총매입가','구매정보','매입정보','latestImportPrice','구매정보여부','winner','productIdHistory','priceHistory','otherSellers','쿠팡마진','쿠팡마진율','마진','마진율','ROI','최소ROAS'];
 const jsonColumns=['구매정보','매입정보','productIdHistory','priceHistory','otherSellers'];
 const initialColumns=['SKUID','바코드','노출ID','옵션ID','판매링크','발주가능상태','재고','판매가','판매가기준일','공급가','리뷰평점','리뷰수','구매정보','매입정보'];
-type Preview={preview:true;sha256:string;company:ManagedProductList['company'];counts:ManagedProductImportCounts;sample:ManagedProductInput[]};
+type List=ManagedProductList&ManagedProductAccountContext;
+type Preview={preview:true;sha256:string;company:ManagedProductList['company'];counts:ManagedProductImportCounts;sample:ManagedProductInput[]}&ManagedProductAccountContext;
 type ImportResult=Omit<Preview,'preview'>&{preview:boolean;error?:string};
 function link(value:string){try{const url=new URL(value);return ['https:','http:'].includes(url.protocol)?url.href:undefined;}catch{return undefined;}}
 function thumbnail(value:string){const url=link(value);if(!url)return;return new URL(url).hostname.endsWith('.coupangcdn.com')?url:undefined;}
 
 export function ManagedProductsPanel(){
- const [data,setData]=useState<ManagedProductList|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[refresh,setRefresh]=useState(0);
+ const [data,setData]=useState<List|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[refresh,setRefresh]=useState(0);
  const [page,setPage]=useState(1),[pageSize,setPageSize]=useState(25),[search,setSearch]=useState(''),[searchDraft,setSearchDraft]=useState(''),[filter,setFilter]=useState<ManagedProductFilter>('all');
  const [visible,setVisible]=useState(initialColumns),[file,setFile]=useState<File|null>(null),[preview,setPreview]=useState<Preview|null>(null),[confirmed,setConfirmed]=useState(false),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
  const active=useRef<AbortController|null>(null);
+ const importContext=useRef<List|null>(null),latestList=useRef<List|null>(null);
+ const currentPreview=preview&&data&&preview.accountContext===data.accountContext&&preview.company.code===data.company.code&&preview.company.name===data.company.name?preview:null;
  useEffect(()=>()=>{active.current?.abort();},[]);
  useEffect(()=>{
   const controller=new AbortController();
+  importContext.current=null;
   queueMicrotask(()=>{if(!controller.signal.aborted){setLoading(true);setError('');}});
   void(async()=>{try{
-   const params=new URLSearchParams({page:String(page),pageSize:String(pageSize),search,filter}),response=await fetch('/api/managed-products?'+params,{signal:controller.signal,cache:'no-store'}),body=await response.json() as ManagedProductList&{error?:string};
+   const params=new URLSearchParams({page:String(page),pageSize:String(pageSize),search,filter}),response=await fetch('/api/managed-products?'+params,{signal:controller.signal,cache:'no-store'}),body=await response.json() as List&{error?:string};
    if(!response.ok)throw Error(body.error??'상품 목록을 읽지 못했습니다.');
-   if(!Array.isArray(body.products)||!body.company||!Number.isSafeInteger(body.total))throw Error('상품 목록 응답을 확인하지 못했습니다.');
-   if(!controller.signal.aborted)setData(body);
-  }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'상품 목록을 읽지 못했습니다.');}
+   if(!Array.isArray(body.products)||!body.company||!Number.isSafeInteger(body.total)||!/^[a-f0-9]{64}$/.test(body.accountContext))throw Error('상품 목록 응답을 확인하지 못했습니다.');
+   if(!controller.signal.aborted){
+    const previous=latestList.current;latestList.current=body;importContext.current=body;
+    if(previous&&(previous.accountContext!==body.accountContext||previous.company.code!==body.company.code||previous.company.name!==body.company.name)){setPreview(null);setConfirmed(false);setMessage('로그인 계정 또는 회사정보가 변경되었습니다. 선택한 파일을 다시 미리보기해주세요.');}
+    setData(body);
+   }
+  }catch(cause){if(!controller.signal.aborted){importContext.current=null;setData(null);setPreview(null);setConfirmed(false);setError(cause instanceof Error?cause.message:'상품 목록을 읽지 못했습니다.');}}
   finally{if(!controller.signal.aborted)setLoading(false);}})();
   return()=>controller.abort();
  },[page,pageSize,search,filter,refresh]);
  async function upload(commit:boolean){
-  if(active.current||!file||!data||commit&&(!preview||!confirmed))return;
+  const context=importContext.current;
+  if(active.current||!file||!data||!context||context.accountContext!==data.accountContext||context.company.code!==data.company.code||context.company.name!==data.company.name||commit&&(!currentPreview||!confirmed))return;
   const controller=new AbortController();active.current=controller;setBusy(true);setMessage('');
   try{
-   const form=new FormData();form.set('file',file);form.set('action',commit?'import':'preview');form.set('companyCode',data.company.code);
-   if(commit){form.set('expectedSha256',preview!.sha256);form.set('confirmedCompany','true');}
+   const form=new FormData();form.set('file',file);form.set('action',commit?'import':'preview');form.set('companyCode',context.company.code);
+   if(commit){form.set('expectedSha256',currentPreview!.sha256);form.set('expectedAccountContext',currentPreview!.accountContext);form.set('confirmedCompany','true');}
    const response=await fetch('/api/managed-products/import',{method:'POST',body:form,signal:controller.signal,credentials:'same-origin'}),body=await response.json() as ImportResult;
    if(!response.ok)throw Error(body.error??'상품 DB 가져오기를 확인하지 못했습니다.');
-   if(body.company?.code!==data.company.code||body.preview!==!commit||!body.counts||!['total','added','updated','unchanged'].every(key=>Number.isSafeInteger(body.counts[key as keyof ManagedProductImportCounts])&&body.counts[key as keyof ManagedProductImportCounts]>=0)
+   if(body.company?.code!==context.company.code||body.company.name!==context.company.name||body.accountContext!==context.accountContext||body.preview!==!commit||!body.counts||!['total','added','updated','unchanged'].every(key=>Number.isSafeInteger(body.counts[key as keyof ManagedProductImportCounts])&&body.counts[key as keyof ManagedProductImportCounts]>=0)
     ||body.counts.total!==body.counts.added+body.counts.updated+body.counts.unchanged||!commit&&(!Array.isArray(body.sample)||!/^[a-f0-9]{64}$/.test(body.sha256)))throw Error('가져온 회사와 결과를 확인하지 못했습니다.');
-   if(controller.signal.aborted)return;
+   if(controller.signal.aborted||active.current!==controller||importContext.current?.accountContext!==context.accountContext)return;
    if(commit){setMessage(`총 ${body.counts.total.toLocaleString()}개 확인: 신규 ${body.counts.added.toLocaleString()}개, 갱신 ${body.counts.updated.toLocaleString()}개, 동일 ${body.counts.unchanged.toLocaleString()}개. 상품관리 DB에 저장했습니다.`);setPreview(null);setConfirmed(false);setRefresh(value=>value+1);}
    else{setPreview({...body,preview:true});setConfirmed(false);}
   }catch(cause){if(!controller.signal.aborted)setMessage(cause instanceof Error?cause.message:'응답을 확인하지 못했습니다. 같은 파일로 다시 확인해주세요.');}
-  finally{if(!controller.signal.aborted){setBusy(false);active.current=null;}}
+  finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
  }
+ function refreshList(){importContext.current=null;setLoading(true);setRefresh(value=>value+1);}
  const summary=data?.summary,filters:{id:ManagedProductFilter;name:string;count:number}[]=[{id:'all',name:'전체',count:summary?.total??0},{id:'unavailable',name:'발주불가(품절)',count:summary?.unavailable??0},{id:'loser',name:'아이템루저',count:summary?.loser??0},{id:'no-purchase',name:'구매정보없음',count:summary?.noPurchase??0},{id:'no-import',name:'매입정보없음',count:summary?.noImport??0}];
  return <section className="managed-products" aria-label="로켓배송 상품관리 신규">
-  <header><div><h2>로켓배송 상품관리 (신규)</h2><p>쿠플러스 상품 DB를 가져와 구매정보·매입정보·가격을 확인합니다.</p></div><button className="btn ghost" disabled={loading||busy} onClick={()=>setRefresh(value=>value+1)}>목록 새로고침</button></header>
+  <header><div><h2>로켓배송 상품관리 (신규)</h2><p>쿠플러스 상품 DB를 가져와 구매정보·매입정보·가격을 확인합니다.</p></div><button className="btn ghost" disabled={loading||busy} onClick={refreshList}>목록 새로고침</button></header>
   {error&&<p role="alert">{error}</p>}
   <details className="managed-import"><summary>상품 DB 가져오기</summary>
    <p>{data?`${data.company.name} (${data.company.code})`:'회사정보를 확인하고 있습니다.'}의 원본 XLSX를 선택하세요. 같은 SKU는 중복 추가하지 않으며 원본 값이 바뀐 행만 갱신합니다.</p>
-   <label>로켓배송상품DB XLSX <input type="file" accept=".xlsx" disabled={busy||!data} onChange={event=>{if(active.current)return;setFile(event.target.files?.[0]??null);setPreview(null);setConfirmed(false);setMessage('');}}/></label>
-   <button className="btn" disabled={!file||busy||!data} onClick={()=>void upload(false)}>{busy?'처리 중…':'파일 미리보기'}</button>
-   {preview&&<div className="managed-preview"><strong>{preview.company.name} · {preview.counts.total.toLocaleString()}개 SKU</strong><p>신규 {preview.counts.added.toLocaleString()}개 · 변경 {preview.counts.updated.toLocaleString()}개 · 동일 {preview.counts.unchanged.toLocaleString()}개</p>
-    <ul>{preview.sample.map(row=><li key={row.skuId}>{row.title} <small>SKU {row.skuId}</small></li>)}</ul>
-    <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={event=>{if(!active.current)setConfirmed(event.target.checked);}}/> 이 파일은 {preview.company.name} ({preview.company.code}) 계정에서 내려받은 상품 DB입니다.</label>
+   <label>로켓배송상품DB XLSX <input type="file" accept=".xlsx" disabled={busy||loading||!data} onChange={event=>{if(active.current)return;setFile(event.target.files?.[0]??null);setPreview(null);setConfirmed(false);setMessage('');}}/></label>
+   <button className="btn" disabled={!file||busy||loading||!data} onClick={()=>void upload(false)}>{busy?'처리 중…':'파일 미리보기'}</button>
+   {currentPreview&&<div className="managed-preview"><strong>{currentPreview.company.name} · {currentPreview.counts.total.toLocaleString()}개 SKU</strong><p>신규 {currentPreview.counts.added.toLocaleString()}개 · 변경 {currentPreview.counts.updated.toLocaleString()}개 · 동일 {currentPreview.counts.unchanged.toLocaleString()}개</p>
+    <ul>{currentPreview.sample.map(row=><li key={row.skuId}>{row.title} <small>SKU {row.skuId}</small></li>)}</ul>
+    <label><input type="checkbox" checked={confirmed} disabled={busy||loading} onChange={event=>{if(!active.current&&importContext.current?.accountContext===currentPreview.accountContext)setConfirmed(event.target.checked);}}/> 이 파일은 {currentPreview.company.name} ({currentPreview.company.code}) 계정에서 내려받은 상품 DB입니다.</label>
     <p>가격·재고는 파일 기준입니다. AI 초안이나 Supplier Hub 전송 이력으로 표시하지 않습니다.</p>
-    <button className="btn primary" disabled={!confirmed||busy} onClick={()=>void upload(true)}>상품 DB {preview.counts.total.toLocaleString()}개 가져오기</button>
+    <button className="btn primary" disabled={!confirmed||busy||loading} onClick={()=>void upload(true)}>상품 DB {currentPreview.counts.total.toLocaleString()}개 가져오기</button>
    </div>}
    {message&&<p role="status">{message}</p>}
   </details>

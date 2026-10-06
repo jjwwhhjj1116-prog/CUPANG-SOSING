@@ -52,6 +52,7 @@ test('company and owner boundaries, preview file hash, duplicate SKUs and precis
   const originalUser=h.state.user;h.state.user={...originalUser,userId:'other-owner',membership:{...originalUser.membership,id:'other-owner'}};
   assert.equal((await json(await h.fetcher('/api/managed-products'))).total,0);
   h.state.user={...originalUser,userId:'admin-test',membership:{...originalUser.membership,id:'admin-test',companyCode:'A01526306',companyName:'유앤채'}};
+  h.syncMember();
   const own=await json(await h.submit(bytes,{companyCode:'A01526306'}));await json(await h.submit(bytes,{companyCode:'A01526306',action:'import',sha256:own.sha256}),201);
   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,6);
   h.state.user=null;assert.equal((await h.fetcher('/api/managed-products')).status,403);assert.equal((await h.submit(bytes)).status,403);
@@ -65,4 +66,42 @@ test('multi-chunk import rolls back entirely on storage failure and exposes no d
   const response=await h.submit(bytes,{action:'import',sha256:preview.sha256});assert.equal(response.status,503);assert.doesNotMatch(await response.text(),/PRIVATE_DATABASE_ERROR/);
   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,0);
  }finally{h.close();}
+});
+
+test('import requires the reviewed opaque owner/company context and cannot reuse it for another owner in the same company',async()=>{
+ const h=managedProductHarness();try{
+  const bytes=managedFixture(),preview=await json(await h.submit(bytes)),list=await json(await h.fetcher('/api/managed-products'));
+  assert.match(preview.accountContext,/^[a-f0-9]{64}$/);assert.equal(list.accountContext,preview.accountContext);assert.ok(!JSON.stringify(list).includes(h.state.user.userId));
+  for(const accountContext of [null,'f'.repeat(64)])assert.equal((await h.submit(bytes,{action:'import',sha256:preview.sha256,accountContext})).status,409);
+  const original=h.state.user;h.state.user={...original,userId:'next-owner',membership:{...original.membership,id:'next-owner'}};h.syncMember();
+  const next=await json(await h.fetcher('/api/managed-products'));assert.notEqual(next.accountContext,preview.accountContext);
+  const rejected=await json(await h.submit(bytes,{action:'import',sha256:preview.sha256,accountContext:preview.accountContext}),409);assert.equal(rejected.counts,undefined);
+  assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,0);
+  const reviewed=await json(await h.submit(bytes));const saved=await json(await h.submit(bytes,{action:'import',sha256:reviewed.sha256,accountContext:reviewed.accountContext}),201);
+  assert.equal(saved.accountContext,next.accountContext);assert.ok(h.sqlite.prepare('SELECT owner_id FROM managed_products').all().every(row=>row.owner_id==='next-owner'));
+ }finally{h.close();}
+});
+
+test('a parsed file cannot cross an owner change before its second authorization read',async()=>{
+ for(const action of ['preview','import']){
+  const h=managedProductHarness();try{
+   const bytes=managedFixture(),preview=await json(await h.submit(bytes)),original=h.state.user,model=h.load('app/managed-products.ts'),parse=model.parseManagedProductWorkbook;
+   model.parseManagedProductWorkbook=async(...args)=>{const result=await parse(...args);h.state.user={...original,userId:'after-parse-owner',membership:{...original.membership,id:'after-parse-owner'}};h.syncMember();return result;};
+   const response=await h.submit(bytes,{action,sha256:preview.sha256,accountContext:preview.accountContext});assert.equal(response.status,409);assert.match(await response.text(),/계정 또는 회사정보가 변경/);
+   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,0);
+  }finally{h.close();}
+ }
+});
+
+test('atomic multi-chunk writes recheck approved ownership and the exact company without changing prior rows',async()=>{
+ for(const change of ["UPDATE members SET status='suspended'","UPDATE members SET company_code='A01526306'","UPDATE members SET company_name='다른 회사'","DELETE FROM members"]){
+  const h=managedProductHarness();try{
+   const initial=managedFixture(),first=await json(await h.submit(initial));await json(await h.submit(initial,{action:'import',sha256:first.sha256,accountContext:first.accountContext}),201);
+   const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products ORDER BY sku_id').all()),bytes=managedFixture(501,rows=>{rows[0]['상품명']='덮어쓰면 안 되는 값';}),preview=await json(await h.submit(bytes));
+   h.state.beforeBatch=queries=>{if(queries.some(query=>query.sql.startsWith('INSERT INTO managed_products('))){h.state.beforeBatch=null;h.sqlite.exec(change);}};
+   const response=await json(await h.submit(bytes,{action:'import',sha256:preview.sha256,accountContext:preview.accountContext}),409);assert.equal(response.counts,undefined);assert.match(response.error,/계정 또는 회사정보가 변경/);
+   assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products ORDER BY sku_id').all()),before);
+   for(const table of ['products','collection_jobs','supplier_hub_receipts'])assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,0);
+  }finally{h.close();}
+ }
 });

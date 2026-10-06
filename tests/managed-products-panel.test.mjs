@@ -31,3 +31,44 @@ test('actual component previews owner file, requires company confirmation, impor
   assert.ok(nodes(panel.render()).some(n=>n.type==='pre'&&text(n)==='[{"price":8000}]'));
  }finally{panel.close();h.close();}
 });
+
+test('a refreshed company cannot reuse the previous file company confirmation or its retained commit callback',async()=>{
+ for(const [first,next]of [[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}],[{code:'A01526306',name:'유앤채'},{code:'A01464742',name:'와이홉'}]]){
+  const h=managedProductHarness();Object.assign(h.state.user.membership,{companyCode:first.code,companyName:first.name});h.syncMember();const panel=ui(h.fetcher);try{
+   await panel.settle();const file=new File([managedFixture(3)],'상품DB.xlsx');
+   nodes(panel.render()).find(n=>n.type==='input'&&n.props.type==='file').props.onChange({target:{files:[file]}});
+   panel.button('파일 미리보기').props.onClick();await panel.settle();
+   const check=()=>nodes(panel.render()).find(n=>n.type==='label'&&text(n).includes('이 파일은 '));
+   nodes(check()).find(n=>n.type==='input').props.onChange({target:{checked:true}});
+   const previousCommit=panel.button('상품 DB 3개 가져오기').props.onClick;
+   Object.assign(h.state.user.membership,{companyCode:next.code,companyName:next.name});
+   h.syncMember();
+   panel.button('목록 새로고침').props.onClick();await panel.settle();
+   const currentCommit=nodes(panel.render()).find(n=>n.type==='button'&&text(n)==='상품 DB 3개 가져오기');
+   if(currentCommit&&!currentCommit.props.disabled)currentCommit.props.onClick();await panel.settle();
+   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,0,'no original-company confirmation may write rows for the refreshed company');
+   assert.equal(nodes(panel.render()).some(n=>n.type==='button'&&text(n)==='상품 DB 3개 가져오기'&&!n.props.disabled),false,'an earlier company confirmation must not authorize this company');
+   previousCommit();await panel.settle();assert.equal(h.state.calls.filter(c=>c.method==='POST').length,1);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM managed_products').get().n,0);
+   assert.match(text(panel.render()),new RegExp(next.name));
+   panel.button('파일 미리보기').props.onClick();await panel.settle();assert.match(text(check()),new RegExp(next.name));
+   nodes(check()).find(n=>n.type==='input').props.onChange({target:{checked:true}});panel.button('상품 DB 3개 가져오기').props.onClick();await panel.settle();
+   const stored=h.sqlite.prepare('SELECT * FROM managed_products ORDER BY sku_id').all();assert.equal(stored.length,3);assert.ok(stored.every(row=>row.company_code===next.code));
+   assert.equal(JSON.parse(stored[0].source_payload)['재고'],'0');assert.equal(JSON.parse(stored[0].source_payload)['구매링크'],'');assert.equal(Object.keys(JSON.parse(stored[0].source_payload)).length,39);
+  }finally{panel.close();h.close();}
+ }
+});
+
+test('a new owner in the same company must preview again while the original file and column choices remain available',async()=>{
+ const h=managedProductHarness(),existing=managedFixture(1,rows=>{rows[0]['상품명']='이전 계정 보관 상품';}),first=await(await h.submit(existing)).json();await h.submit(existing,{action:'import',sha256:first.sha256,accountContext:first.accountContext});
+ const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products').all()),panel=ui(h.fetcher);try{
+  await panel.settle();const file=new File([managedFixture(3)],'상품DB.xlsx');nodes(panel.render()).find(n=>n.type==='input'&&n.props.type==='file').props.onChange({target:{files:[file]}});
+  const column=()=>nodes(panel.render()).find(n=>n.type==='label'&&text(n)==='ROI');nodes(column()).find(n=>n.type==='input').props.onChange({target:{checked:true}});
+  panel.button('파일 미리보기').props.onClick();await panel.settle();const check=()=>nodes(panel.render()).find(n=>n.type==='label'&&text(n).includes('이 파일은 '));nodes(check()).find(n=>n.type==='input').props.onChange({target:{checked:true}});
+  const previousCommit=panel.button('상품 DB 3개 가져오기').props.onClick,old=h.state.user;h.state.user={...old,userId:'same-company-next-owner',membership:{...old.membership,id:'same-company-next-owner'}};h.syncMember();
+  panel.button('목록 새로고침').props.onClick();previousCommit();await panel.settle();assert.ok(!text(panel.render()).includes('이전 계정 보관 상품'));assert.equal(check(),undefined);assert.equal(nodes(column()).find(n=>n.type==='input').props.checked,true);
+  assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products').all()),before);assert.equal(panel.button('파일 미리보기').props.disabled,false);
+  panel.button('파일 미리보기').props.onClick();await panel.settle();assert.equal(panel.button('상품 DB 3개 가져오기').props.disabled,true);
+  nodes(check()).find(n=>n.type==='input').props.onChange({target:{checked:true}});panel.button('상품 DB 3개 가져오기').props.onClick();await panel.settle();
+  assert.equal(JSON.stringify(h.sqlite.prepare("SELECT * FROM managed_products WHERE owner_id='unari-test'").all()),before);assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM managed_products WHERE owner_id='same-company-next-owner'").get().n,3);
+ }finally{panel.close();h.close();}
+});

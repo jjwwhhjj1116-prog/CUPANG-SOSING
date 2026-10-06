@@ -6,6 +6,13 @@ export type ManagedProductInput={skuId:string;title:string;sourceRow:number;valu
 export type ManagedProduct=ManagedProductInput&{companyCode:string;sourceName:string;importedAt:string;firstImportedAt:string};
 export type ManagedProductImport={rows:ManagedProductInput[];headers:string[];sha256:string;company:SupplierHubCompany};
 export type ManagedProductImportCounts={total:number;added:number;updated:number;unchanged:number};
+export type ManagedProductAccountContext={accountContext:string};
+export class ManagedProductContextChanged extends Error {}
+/** Identify the authenticated import owner and exact company without exposing an owner ID. */
+export async function managedProductAccountContext(ownerId:string,company:SupplierHubCompany):Promise<string>{
+ const bytes=new TextEncoder().encode(JSON.stringify(['sourceflow-managed-product-account-v1',ownerId,company.code,company.name]));
+ return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),value=>value.toString(16).padStart(2,'0')).join('');
+}
 export type ManagedProductFilter='all'|'unavailable'|'loser'|'no-purchase'|'no-import';
 export type ManagedProductList={products:ManagedProduct[];total:number;page:number;pageSize:number;company:SupplierHubCompany;summary:{total:number;unavailable:number;loser:number;noPurchase:number;noImport:number;lastImportedAt:string|null;priceDate:string|null}};
 const required=['상품명','SKUID','바코드','발주가능상태','판매가','판매가기준일','공급가','구매정보','매입정보'];

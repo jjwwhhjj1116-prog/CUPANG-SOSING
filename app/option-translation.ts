@@ -1,5 +1,6 @@
 import { optionInputs, type ProductOptions, type OptionInput } from '@/app/product-options';
 import type { TranslationJob } from '@/app/automation/translation';
+import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
 
 /** Confirm the committed snapshot, not just an HTTP success status. */
 export function confirmOptionTranslationSave(input: unknown, current: ProductOptions, productVersion: string, requested: readonly OptionInput[]): void {
@@ -80,6 +81,7 @@ export function adoptOptionTranslations(options:ProductOptions,job:TranslationJo
   // Excluded rows remain available for later use, but must not be changed by
   // a batch prepared before they were excluded.
   if(!row.included)continue;
+  if(job.review.instructionsVersion==='sourceflow-translation-v6'&&translationAttributeIssue(source,translated))continue;
   const recovery=copied.get(source.name)===source.value;
   if(field){
    // Only unchanged collected attributes may be replaced. Reviewed/manual blanks stay blank.

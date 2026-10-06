@@ -112,6 +112,36 @@ test('a partial v6 refresh preserves an existing category snapshot when an origi
  assert.equal(plan.patch.seo.title,'한국어 상품');assert.equal(plan.rows[0].translatedName,'빨강 옵션');
 });
 
+test('stored v6 Chinese copies stay pending without replacing labels, category bindings or manual option blanks',()=>{
+ const {content,options,job}=fixture();job.review.instructionsVersion='sourceflow-translation-v6';job.review.source.category={id:'80719',path:['주방용품','바스켓']};
+ job.review.source.attributes[0].value='棉 검토';job.result.draft.attributes[0].value='棉 검토';
+ job.result.draft.attributes[1].value='红色';job.result.draft.attributes[2].value='红色';
+ content.label.material={value:'기존 검토 재질',provenance:'translated',updatedAt:version};
+ content.categoryAttributes={categoryId:'80719',jobId:'previous',values:[{name:'재질',value:'기존 검토 재질'}],reservedFields:['material'],bindings:[{fieldId:'material',fieldSignature:'saved-signature',value:'기존 검토 재질'}]};
+ const before=JSON.stringify({content,options,job}),plan=model.integratedTranslationPlan(content,options,job,version),next=model.applyIntegratedOptions(options,plan,nextVersion);
+ assert.equal(plan.patch?.label?.material,undefined);assert.equal(plan.categoryAttributes,undefined);assert.equal(plan.reviewedOptions.length,0);
+ assert.equal(next.rows[0].translatedName,'');assert.equal(next.rows[0].color,'红色');assert.equal(next.rows[0].provenance.color,'collected');
+ assert.match(plan.skipped.join(' '),/3개.*기존 값/);assert.equal(load('app/option-translation.ts').optionTranslationBatch(next).total,2);
+ assert.equal(JSON.stringify({content,options,job}),before);
+ options.rows[0].provenance.translatedName='manual';options.rows[0].color='';options.rows[0].provenance.color='manual';
+ const manual=model.integratedTranslationPlan(content,options,job,version);assert.equal(manual.rows[0].translatedName,'');assert.equal(manual.rows[0].color,'');
+ options.rows[0].included=false;
+ const excluded=model.integratedTranslationPlan(content,options,job,version);assert.equal(excluded.reviewedOptions.length,0);assert.equal(excluded.rows[0].included,false);assert.equal(excluded.rows[0].id,'red');
+});
+
+test('stored v6 measurement swaps cannot mark an option completed or replace a reviewed category binding',()=>{
+ const {content,options,job}=fixture();job.review.instructionsVersion='sourceflow-translation-v6';job.review.source.category={id:'80719',path:['주방용품','바스켓']};
+ options.rows[0].size='10 cm';options.rows[0].provenance.size='collected';
+ job.review.source.attributes.push({name:'option-size:red',value:'10 cm'},{name:'상품속성: 长度',value:'20 cm'});
+ job.result.draft.attributes.push({sourceIndex:3,name:'option-size:red',value:'20 cm'},{sourceIndex:4,name:'길이',value:'10 cm'});
+ content.categoryAttributes={categoryId:'80719',jobId:'previous',values:[{name:'길이',value:'검토한 20 cm'}],reservedFields:['length'],bindings:[{fieldId:'length',fieldSignature:'saved-signature',value:'20 cm'}]};
+ const before=JSON.stringify({content,options,job}),plan=model.integratedTranslationPlan(content,options,job,version),next=model.applyIntegratedOptions(options,plan,nextVersion);
+ assert.equal(plan.categoryAttributes,undefined);assert.equal(next.rows[0].size,'10 cm');assert.equal(next.rows[0].provenance.size,'collected');
+ assert.ok(plan.reviewedOptions.every(item=>item.field!=='size'));assert.match(plan.skipped.join(' '),/2개.*기존 값/);
+ assert.equal(load('app/option-translation.ts').adoptOptionTranslations(options,job,version).rows[0].size,'10 cm');
+ assert.equal(JSON.stringify({content,options,job}),before);
+});
+
 test('option-only API binds scope, preserves SEO and labels and persists verified options',async()=>{
  const h=harness();try{
   let saves=0;

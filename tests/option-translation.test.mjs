@@ -136,3 +136,13 @@ test('excluded rows before active rows do not starve a bounded translation batch
  assert.equal(batch.total,1);assert.equal(batch.remaining,0);
  assert.equal(batch.attributes[0].name,'option:b');
 });
+
+test('direct v6 option adoption leaves copied Chinese values pending while codes and Korean literals stay valid',()=>{
+ const {options,job}=fixture();job.review.instructionsVersion='sourceflow-translation-v6';
+ options.rows[0].color='黑色 검토';options.rows[0].provenance.color='collected';options.rows[0].size='XL';options.rows[0].provenance.size='collected';
+ job.review.source.attributes=[{name:'option:a',value:'白色'},{name:'option-color:a',value:'黑色 검토'},{name:'option-size:a',value:'XL'}];
+ job.result.draft.attributes=[{sourceIndex:0,name:'option:a',value:'白色'},{sourceIndex:1,name:'option-color:a',value:'黑色 검토'},{sourceIndex:2,name:'option-size:a',value:'XL'}];
+ const before=JSON.stringify(options),result=model.adoptOptionTranslations(options,job,'v');
+ assert.equal(result.changed,1);assert.equal(result.rows[0].translatedName,'');assert.equal(result.rows[0].color,'黑色 검토');assert.equal(result.rows[0].size,'XL');
+ assert.deepEqual(JSON.parse(JSON.stringify(result.reviewed)),[{optionId:'a',field:'size'}]);assert.equal(JSON.stringify(options),before);
+});
