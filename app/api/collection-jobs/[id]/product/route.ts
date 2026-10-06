@@ -4,13 +4,17 @@ import { findCollectionJob } from '@/db/collection-jobs';
 import { readCollectionResult } from '@/db/collection-results';
 import { findCollectionProduct,promoteCollection } from '@/db/collection-products';
 import { prepareCollectionProduct } from '@/app/collection-product';
+import { findProduct } from '@/db/queries';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function POST(_:Request,context:{params:Promise<{id:string}>}){
  try{
  if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return reply({error:'운영 인증 연결이 필요합니다.'},503);
  const owner=await getWorkspaceOwnerId();const {id}=await context.params;const job=await findCollectionJob(owner,id);
  if(!job)return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
- const previous=await findCollectionProduct(owner,id);if(previous)return reply({productId:previous.product_id,reused:true,executionStarted:false});
+ const previous=await findCollectionProduct(owner,id);if(previous){
+  if(!await findProduct(owner,previous.product_id,true))return reply({error:'삭제된 상품의 수집 요청입니다. 상품 추가에서 같은 URL로 새 초안을 만들거나 삭제된 상품을 복원해주세요.',code:'COLLECTION_PRODUCT_REMOVED'},409);
+  return reply({productId:previous.product_id,reused:true,executionStarted:false});
+ }
  if(job.status==='cancelled')return reply({error:'취소된 수집 요청입니다.'},409);
  const receipt=await readCollectionResult(owner,id);if(!receipt)return reply({error:'수집 결과가 아직 없습니다.'},409);
  try{prepareCollectionProduct(owner,job,receipt.result,'validation',new Date().toISOString());}catch(cause){return reply({error:cause instanceof Error?cause.message:'원문을 확인해주세요.'},400);}

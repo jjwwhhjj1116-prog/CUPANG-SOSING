@@ -146,11 +146,29 @@ function storage(files){const sqlite=memoryDatabase();for(const statement of run
  sqlite.prepare('INSERT INTO collection_context VALUES (?,?)').run(job.id,JSON.stringify(job.context));
  sqlite.prepare('INSERT INTO collection_results VALUES (?,?,?,?)').run(job.id,'owner',JSON.stringify(result),now);
  const db={prepare(sql){let args=[];const q={bind(...v){args=v;return q;},execute(){return sqlite.prepare(sql).all(...args);},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const results=statements.map(s=>({results:s.execute()}));sqlite.exec('COMMIT');return results;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
- const deps={'cloudflare:workers':{env:{DB:db,FILES:files}},'@/db/queries':{ensureDatabase:async()=>{}},'@/db/product-options':{readProductOptions:async()=>{}},'@/db/product-content':{readProductContent:async()=>{}}};return {sqlite,...load('db/collection-products.ts',deps),jobs:load('db/collection-jobs.ts',deps)};}
+ const deps={'cloudflare:workers':{env:{DB:db,FILES:files}},'@/db/queries':{ensureDatabase:async()=>{},findProduct:async(owner,id,excludeRemoved=false)=>sqlite.prepare(`SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy FROM products p
+   WHERE p.owner_id=? AND p.id=?${excludeRemoved?' AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=p.id AND r.owner_id=p.owner_id)':''}`).get(owner,id)??null},'@/db/product-options':{readProductOptions:async()=>{}},'@/db/product-content':{readProductContent:async()=>{}}};return {sqlite,...load('db/collection-products.ts',deps),jobs:load('db/collection-jobs.ts',deps)};}
 test('transaction creates all companion rows once and retry preserves manual edits',async()=>{const s=storage();const first=await s.promoteCollection('owner',job,result);s.sqlite.prepare('UPDATE products SET title=? WHERE id=?').run('수동 수정',first.product_id);const second=await s.promoteCollection('owner',job,result);assert.equal(first.product_id,second.product_id);for(const table of ['products','product_options','product_content','product_price_policy','collection_products'])assert.equal(s.sqlite.prepare(`SELECT count(*) n FROM ${table}`).get().n,1);assert.equal(s.sqlite.prepare('SELECT title FROM products').get().title,'수동 수정');assert.equal(await s.jobs.cancelCollection('owner',job.id),null);assert.equal(s.sqlite.prepare('SELECT status FROM collection_jobs').get().status,'awaiting_connector');s.sqlite.close();});
 test('failed companion insert rolls back product and all earlier writes',async()=>{const s=storage();s.sqlite.exec("CREATE TRIGGER fail_content BEFORE INSERT ON product_content BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");await assert.rejects(()=>s.promoteCollection('owner',job,result));for(const table of ['products','product_options','product_price_policy','collection_products'])assert.equal(s.sqlite.prepare(`SELECT count(*) n FROM ${table}`).get().n,0);s.sqlite.exec('DROP TRIGGER fail_content');assert.ok((await s.promoteCollection('owner',job,result)).product_id);s.sqlite.close();});
 test('cancellation, other owner and changed receipt/context create no products',async()=>{for(const mutation of ['cancel','owner','receipt','context']){const s=storage();if(mutation==='cancel')s.sqlite.exec("UPDATE collection_jobs SET status='cancelled'");if(mutation==='receipt')s.sqlite.exec("UPDATE collection_results SET payload='{}'");if(mutation==='context')s.sqlite.exec("UPDATE collection_context SET payload='{}'");await assert.rejects(()=>s.promoteCollection(mutation==='owner'?'other':'owner',job,result));assert.equal(s.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);s.sqlite.close();}});
-test('production API rejects unverified requests before any product read or write',async()=>{const api=load('app/api/collection-jobs/[id]/product/route.ts',{'@/app/chatgpt-auth':{getChatGPTUser:async()=>null},'@/db/collection-jobs':{},'@/db/collection-results':{},'@/db/collection-products':{}},'production');const r=await api.POST(new Request('https://example.test',{method:'POST'}),{params:Promise.resolve({id:'job'})});assert.equal(r.status,503);});
+test('production API rejects unverified requests before any product read or write',async()=>{
+ let calls=0;const forbidden=async()=>{calls++;throw Error('unverified request must not read or write');};
+ const api=load('app/api/collection-jobs/[id]/product/route.ts',{'@/app/chatgpt-auth':{getChatGPTUser:async()=>null,getWorkspaceOwnerId:forbidden},'@/db/queries':{findProduct:forbidden},'@/db/collection-jobs':{findCollectionJob:forbidden},'@/db/collection-results':{readCollectionResult:forbidden},'@/db/collection-products':{findCollectionProduct:forbidden,promoteCollection:forbidden}},'production');
+ const r=await api.POST(new Request('https://example.test',{method:'POST'}),{params:Promise.resolve({id:'job'})});assert.equal(r.status,503);assert.match((await r.json()).error,/운영 인증 연결/);assert.equal(calls,0);
+});
+
+test('promotion retries refuse a removed owned product without changing its original source, companion rows or clock',async()=>{
+ const s=storage();try{
+  const saved=await s.promoteCollection('owner',job,result);
+  const product=s.sqlite.prepare('SELECT * FROM products WHERE id=?').get(saved.product_id);
+  const tables=['products','product_price_policy','product_content','product_options','collection_jobs','collection_context','collection_results','collection_products'];
+  const snapshot=()=>JSON.stringify(Object.fromEntries(tables.map(table=>[table,s.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()])));
+  const before=snapshot();
+  s.sqlite.prepare('INSERT INTO product_removals(product_id,owner_id,removed_at,product_version) VALUES(?,?,?,?)').run(saved.product_id,'owner',now,product.updated_at);
+  await assert.rejects(()=>s.promoteCollection('owner',job,result),/삭제된 상품/);assert.equal(snapshot(),before);
+  assert.equal(s.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(saved.product_id).updated_at,product.updated_at);
+ }finally{s.sqlite.close();}
+});
 
 test('promotion persists supplier stock by SKU including zero without changing quotation inclusion',async()=>{
  const s=storage();const saved=await s.promoteCollection('owner',job,result);

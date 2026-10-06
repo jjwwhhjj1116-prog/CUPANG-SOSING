@@ -8,6 +8,9 @@ import ts from 'typescript';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const bootstrapPath = path.join(root, 'db/migrations/0001_sourceflow_bootstrap.sql');
 const identifier = name => `"${name.replaceAll('"', '""')}"`;
+const approvedIndexDropTokens = ['drop', 'index', 'if', 'exists', 'idx_collection_active_offer'];
+const approvedIndexDrop = tokens => tokens.length === approvedIndexDropTokens.length
+  && tokens.every((token, index) => token === approvedIndexDropTokens[index]);
 
 // Read code as syntax, never import application modules or execute their requests.
 export function ddlFromSource(source, filename = 'source.ts') {
@@ -19,8 +22,17 @@ export function ddlFromSource(source, filename = 'source.ts') {
     if (/^\s*(?:CREATE|ALTER|DROP)\s/i.test(text)) {
       const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
       if (!literal) throw new Error(`${filename}:${line}: dynamic DDL cannot be compared; make the schema explicit.`);
+      const tokens = sqlTokens(text);
+      if (tokens.at(-1) === ';') tokens.pop();
+      if (approvedIndexDrop(tokens)) {
+        statements.push({file: filename, line, name: 'idx_collection_active_offer', type: 'drop-index', sql: text.trim()});
+        ts.forEachChild(node, visit); return;
+      }
       const match = /^\s*CREATE\s+(TABLE|(?:UNIQUE\s+)?INDEX)\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z_]\w*)\b/i.exec(text);
       if (!match) throw new Error(`${filename}:${line}: unsupported runtime DDL; update the migration checker explicitly.`);
+      // One literal represents one declaration. A CREATE prefix must not hide
+      // a second statement that deletes records or changes another index.
+      if (tokens.includes(';')) throw new Error(`${filename}:${line}: unsupported runtime DDL; one literal must contain one declaration.`);
       statements.push({ file: filename, line, name: match[2], type: /TABLE/i.test(match[1]) ? 'table' : 'index', sql: text.trim() });
     }
     ts.forEachChild(node, visit);
@@ -37,15 +49,16 @@ export function runtimeDDL() {
   const statements = collect(path.join(root, 'db'));
   const declarations = new Map();
   for (const statement of statements) {
-    const previous = declarations.get(statement.name);
+    const key = statement.type === 'drop-index' ? `drop-index:${statement.name}` : statement.name;
+    const previous = declarations.get(key);
     if (previous) assert.deepEqual(sqlTokens(statement.sql), sqlTokens(previous.sql), `Conflicting runtime DDL for ${statement.name}: ${previous.file}:${previous.line} and ${statement.file}:${statement.line}.`);
-    else declarations.set(statement.name, statement);
+    else declarations.set(key, statement);
   }
   assert.ok(statements.length, 'No runtime schema was found.');
   // Create parent tables before their indexes. SQLite permits references to a
   // table created later, and foreign-key checking stays enabled throughout.
   const unique = Array.from(declarations.values());
-  return [...unique.filter(value => value.type === 'table'), ...unique.filter(value => value.type === 'index')];
+  return [...unique.filter(value => value.type === 'table'), ...unique.filter(value => value.type === 'index'), ...unique.filter(value => value.type === 'drop-index')];
 }
 
 export function readBootstrap() { return fs.readFileSync(bootstrapPath, 'utf8'); }
@@ -73,6 +86,7 @@ export function assertAdditiveBootstrap(sql) {
   if (tokens.length) statements.push(tokens);
   assert.ok(statements.length, 'Bootstrap is empty.');
   for (const statement of statements) {
+    if (approvedIndexDrop(statement)) continue;
     assert.match(statement.join(' '), /^create (?:table|(?:unique )?index) if not exists [a-zA-Z_]\w* /, 'Baseline must only create missing tables/indexes. Schema changes need a separately reviewed migration.');
   }
 }

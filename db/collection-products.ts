@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { ensureDatabase } from '@/db/queries';
+import { ensureDatabase, findProduct } from '@/db/queries';
 import { readProductOptions } from '@/db/product-options';
 import { readProductContent } from '@/db/product-content';
 import { verifyWorkspaceBannerFiles } from '@/db/workspace-banners';
@@ -13,7 +13,10 @@ export async function findCollectionProduct(owner:string,jobId:string){
  return env.DB.prepare('SELECT product_id FROM collection_products WHERE job_id=? AND owner_id=?').bind(jobId,owner).first<{product_id:string}>();
 }
 export async function promoteCollection(owner:string,job:CollectionJob,receipt:CollectionResult){
- await ensureDatabase();const existing=await findCollectionProduct(owner,job.id);if(existing)return existing;
+ await ensureDatabase();const existing=await findCollectionProduct(owner,job.id);if(existing){
+  if(!await findProduct(owner,existing.product_id,true))throw new Error('삭제된 상품의 수집 요청입니다. 상품 추가에서 같은 URL로 새 초안을 만들거나 삭제된 상품을 복원해주세요.');
+  return existing;
+ }
  await readCollectionResult(owner,job.id);
  const id=crypto.randomUUID();const now=new Date().toISOString();const prepared=prepareCollectionProduct(owner,job,receipt,id,now);
  await verifyWorkspaceBannerFiles(owner, job.context!.settings, true);
@@ -31,7 +34,7 @@ export async function promoteCollection(owner:string,job:CollectionJob,receipt:C
   db.prepare('INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at) SELECT id,owner_id,1,?,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(prepared.content),now,id,owner),
   db.prepare('INSERT INTO collection_products(job_id,owner_id,product_id,created_at) SELECT ?,owner_id,id,? FROM products WHERE id=? AND owner_id=?').bind(job.id,now,id,owner),
  ]);
- const saved=await findCollectionProduct(owner,job.id);if(!saved)throw new Error('수집 요청이나 원문이 변경되어 상품 반영을 중단했습니다.');return saved;
+ const saved=await findCollectionProduct(owner,job.id);if(!saved||!await findProduct(owner,saved.product_id,true))throw new Error('수집 요청이나 상품이 변경되어 상품 반영을 중단했습니다.');return saved;
 }
 
 /** Exact product link only; never select another receipt just because the URL matches. */

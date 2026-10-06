@@ -5290,3 +5290,18 @@ Step587 실제 Chrome UI 검수 보충: 기존727924317 앱 로그인/6옵션/25
 - Actualprice2 newstrictqpriceUI loaded6SKUsandstored4260/4930+7100/8220. TEMPfirstsale7110→q7navigationblockedpriceunsaved; cancelGETrestored7100/saveinactive;workspaceclosedclean. No realpricePOST/qPUT/Hubsubmit/Couplusrecordedit. AppJPGcapture5sectimeoutnooutput; privateAX outputs/step589-settings-preview-ax.txt + step589-option-price-clean-ax.txt NEVERGit. Appdeliverablemarkedmainboard. Oldunsaved727924101 neverreload/close.
 - ReusableCUA browser586b/app587/cuaApp587/freshuserTabs589. FreshAX beforeeachnumericclick; setValue workedonnumberstepper. NeverreuseoldIDs afterDOMreads.
 - Remainingwholegoal: trueautomaticintegratedrateprovider, allcategorydefaults andallminimummarginbranches, focusedpricepopupparity(globalpolicy+all6 currentlyvisible), header/footerassetroles/perSKUtranslatedimages, trueofficialExcel/Hubreceipts/managedproductsync; physicalpackagingg/mm mustnotguess. No arbitrarycompletionpercent/100%claim.
+
+
+## Step590 — 2026-10-07 category intake recovery (shipped)
+
+Worker 50cfcea5-d61b-4178-b8d8-c2b0f0605a96; D1 migration0017 applied. Extension0.2.54 unchanged/no reload needed. Full detail: docs/step590-category-intake-recovery-2026-10-07.md.
+
+Separate collection_offer_claims retires only dedupe metadata for removed products; old job/status/context/results/product links remain unchanged. SameURL after deletion makes fresh captured-category/settings product+receipt. Undeleted/pending and lost-response retries preserve first capture. Restored historical products retain source and cannot steal a newer offer claim. Archive uses exact product→job first, URL fallback only for legacy unlinked records. Old removed product POST returns409 COLLECTION_PRODUCT_REMOVED.
+
+Quotation GET/PUT now match exporter approved-company guard (QUOTATION_COMPANY_MISMATCH); quotation and options atomic saves exclude owner-matching product_removals. Regression190/190, types0, buildpass, lint0errors/9preexistingwarnings. Pin-verified upstream OCR ignored by application lint without rewriting vendor assets. Runtime schema30tables/14namedindexes/19modules; checker allows only exact legacy index drop, all other destructiveDDL stays rejected.
+
+Live Couplus read-only pricing capture corrected prior parity assumption: clicking oneSKU price opens ALL option rows. Root did not save/recalculate/Next/delete/transmit any Couplus working record. Correct Chrome profile app/couplus auth confirmed; other ChromeHub inventory timedout, sameprofile Hub authredirect. ActualHubfinalreceipt/allcategorylivecomparison NOT complete. No new approval/login question. Existing app tab727924101 must neverreload/close. Private screenshots/AX under outputs, neverGit.
+
+Deployment auth: --env-file production CLI D1 request7403; same fixed accountDB query/migration/deploy succeeded using existing Wrangler auth without env-file. Do not read/print credentials or expand permissions.
+
+Next concrete Couplus parity audit: actual transmitted rows disable deletion with tooltip; verify YOOFAM receipt-backed deletion state. Retain manualreview→explicittransmit→verifiedreceipt workflow; unknown package/certification facts cannot be guessed.

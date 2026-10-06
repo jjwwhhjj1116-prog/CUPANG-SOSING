@@ -124,9 +124,11 @@ export async function saveSettings(ownerId: string, payload: string) {
     .bind(ownerId, payload, now).run();
 }
 
-export async function findProduct(ownerId: string, id: string) {
+export async function findProduct(ownerId: string, id: string, activeOnly = false) {
   await ensureDatabase();
-  return database().prepare('SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy FROM products p WHERE owner_id = ? AND id = ?').bind(ownerId, id).first<ProductRecord>();
+  return database().prepare('SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy FROM products p WHERE owner_id = ? AND id = ?'
+    +(activeOnly?' AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=p.id AND r.owner_id=p.owner_id)':''))
+    .bind(ownerId, id).first<ProductRecord>();
 }
 
 export async function applyProductPrice(ownerId: string, id: string, expectedVersion: string, values: {

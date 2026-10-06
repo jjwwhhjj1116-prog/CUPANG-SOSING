@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { ensureDatabase } from '@/db/queries';
-import { collectionSchema, collectionUniqueIndex } from '@/db/collection-jobs';
+import { ensureCollectionDatabase } from '@/db/collection-jobs';
 import { archiveOfferId, nextArchiveCursor, type ArchiveItem, type ArchivePage, type ArchiveQuery } from '@/app/product-archive';
 
 export const archiveProductIndex = 'CREATE INDEX IF NOT EXISTS idx_products_owner_created_id ON products(owner_id, created_at DESC, id DESC)';
@@ -9,8 +9,8 @@ export const archiveRequestUrlIndex = 'CREATE INDEX IF NOT EXISTS idx_collection
 async function database() {
   await ensureDatabase();
   if (!env.DB) throw new Error('D1 unavailable');
-  await env.DB.batch([env.DB.prepare(collectionSchema), env.DB.prepare(collectionUniqueIndex),
-    env.DB.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)'),
+  await ensureCollectionDatabase();
+  await env.DB.batch([
     env.DB.prepare(archiveProductIndex), env.DB.prepare(archiveRequestIndex), env.DB.prepare(archiveRequestUrlIndex)]);
   return env.DB;
 }
@@ -45,12 +45,14 @@ export async function listProductArchive(ownerId: string, query: ArchiveQuery): 
       SELECT j.id,'request' AS source_kind,'' AS title,j.source_url,j.offer_id,j.created_at,j.updated_at,j.status,NULL AS supplier_hub_status
       FROM collection_jobs j WHERE ${requests.sql}
     ), page AS (SELECT * FROM history ORDER BY created_at DESC,id DESC,source_kind DESC LIMIT ?), linked AS (
-      SELECT page.*,CASE WHEN source_kind='request' THEN id ELSE (
+      SELECT page.*,CASE WHEN source_kind='request' THEN id ELSE COALESCE((
+        SELECT cp.job_id FROM collection_products cp JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=cp.owner_id
+        WHERE cp.product_id=page.id AND cp.owner_id=?),(
         SELECT j.id FROM collection_jobs j WHERE j.owner_id=? AND j.source_url=substr(page.source_url,1,min(instr(page.source_url||'?','?'),instr(page.source_url||'#','#'))-1)
-        ORDER BY j.created_at DESC,j.id DESC LIMIT 1) END AS request_id FROM page
+        ORDER BY j.created_at DESC,j.id DESC LIMIT 1)) END AS request_id FROM page
     ) SELECT linked.*,CASE WHEN json_valid(c.payload) THEN json_object('id',json_extract(c.payload,'$.category.categoryId'),'path',json_extract(c.payload,'$.category.categoryPath')) ELSE NULL END AS category_json
       FROM linked LEFT JOIN collection_context c ON c.job_id=linked.request_id ORDER BY created_at DESC,id DESC,source_kind DESC`)
-    .bind(...products.args, ...requests.args, query.limit + 1, ownerId).all<ArchiveRow>();
+    .bind(...products.args, ...requests.args, query.limit + 1, ownerId,ownerId).all<ArchiveRow>();
   const hasMore = result.results.length > query.limit;
   const items = result.results.slice(0, query.limit).map((row): ArchiveItem => ({ id: row.id, sourceKind: row.source_kind,
     title: row.title, sourceUrl: row.source_url, offerId: row.offer_id || archiveOfferId(row.source_url), createdAt: row.created_at,

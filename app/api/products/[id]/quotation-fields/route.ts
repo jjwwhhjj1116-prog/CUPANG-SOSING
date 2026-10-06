@@ -22,6 +22,7 @@ import { optionPriceCalculationRevision } from '@/app/product-options';
 import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
 import { quotationNoticeBindingFingerprint } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightBindingFingerprint } from '@/app/quotation-packaged-weight';
+import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -68,6 +69,13 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };
       }
     }
+  }
+  // Editing and exporting must resolve the same approved company. Membership
+  // reassignment cannot turn an older captured form into the new company's form.
+  const user = await getChatGPTUser();
+  const company = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
+  if (company && [hubSchema, profile?.hubSchema].some(schema => schema && (schema.company.code !== company.code || schema.company.name !== company.name))) {
+    throw new FieldsError('이 상품의 저장된 상세 양식 회사가 현재 로그인 회사와 다릅니다. 원래 회사의 상품과 양식을 사용해주세요.', 409, 'QUOTATION_COMPANY_MISMATCH');
   }
   if (categoryContext.categoryId) {
     try { validateCategoryIdentity({ categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath }); }

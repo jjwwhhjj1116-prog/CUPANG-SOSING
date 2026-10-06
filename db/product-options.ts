@@ -24,6 +24,7 @@ export async function saveProductOptions(ownerId: string, options: ProductOption
   const result = await db.batch<Row>([
     db.prepare(`INSERT INTO product_options(product_id,owner_id,revision,payload,updated_at)
       SELECT id,owner_id,?,?,? FROM products WHERE id=? AND owner_id=? AND updated_at=?
+        AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=products.id AND r.owner_id=products.owner_id)
         AND (?=0 OR EXISTS(SELECT 1 FROM product_options WHERE product_id=? AND owner_id=? AND revision=?))
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at
         WHERE product_options.owner_id=excluded.owner_id AND product_options.revision=?

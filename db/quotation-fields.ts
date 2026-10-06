@@ -46,6 +46,7 @@ export async function readQuotationCollectionSource(owner: string, offerId: stri
 export function sourceGuard(owner: string, productId: string, source: QuotationSourceGuard) {
   const conditions = [
     'p.id=? AND p.owner_id=? AND p.updated_at=? AND p.image_keys=?',
+    'NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=p.id AND r.owner_id=p.owner_id)',
     '(SELECT payload FROM product_price_policy WHERE product_id=p.id) IS ?',
     'COALESCE((SELECT revision FROM product_content WHERE product_id=p.id AND owner_id=p.owner_id),0)=?',
     'COALESCE((SELECT revision FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id),0)=?',
