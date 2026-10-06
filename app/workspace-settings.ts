@@ -7,6 +7,7 @@ export const defaultSettings = {
   shelfLifeDays: null as number | null, handlingReason: '',
   exchangeRate: 190, supplyMargin: 40, coupangMargin: 35, minimumMargin: 3000,
   minimumMarginEnabled: true, msrpMultiple: 1.3, roundingUnit: 100, roundingMode: 'up' as 'up' | 'nearest',
+  useIntegratedRate: false, integratedRate: null as number | null,
   bundleEnabled: false,
   // Older snapshots only had an inert bundleEnabled switch. Missing criteria
   // must not retrospectively turn those saved requests into multi-item packs.
@@ -51,7 +52,7 @@ export function validateSettings(input: unknown): WorkspaceSettings {
   if (!['','제조사','공식총판사','공식대리점','기타 도소매업자'].includes(p.tradeType) || !['','수입대상아님','수입상품','병행수입상품'].includes(p.importType)) throw new Error('거래타입과 수입여부를 확인해주세요.');
   if (!['', '과세', '면세', '영세'].includes(p.taxType)) throw new Error('과세여부를 확인해주세요.');
   if (!['', '해당사항없음', '유리'].includes(p.handlingReason)) throw new Error('취급주의 사유를 확인해주세요.');
-  for (const key of ['minimumMarginEnabled','bundleEnabled','translateImages','removeBackground','addCopyright','topImageEnabled','bottomImageEnabled','hiddenAttributes','manufactureDatePreviousMonth'] as const) {
+  for (const key of ['minimumMarginEnabled','useIntegratedRate','bundleEnabled','translateImages','removeBackground','addCopyright','topImageEnabled','bottomImageEnabled','hiddenAttributes','manufactureDatePreviousMonth'] as const) {
     if (typeof p[key] !== 'boolean') throw new Error('작업 설정은 켜짐/꺼짐 값이어야 합니다.');
   }
   return Object.fromEntries(Object.keys(defaultSettings).map(key=>[key,p[key as keyof WorkspaceSettings]])) as WorkspaceSettings;

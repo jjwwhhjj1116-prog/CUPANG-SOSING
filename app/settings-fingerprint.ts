@@ -7,5 +7,6 @@ const bundleCriteria = ['bundleCriterion', 'bundleMinimumSupplyMargin', 'bundleM
  * invalidate a saved workflow. Raw settings payloads and captured intake
  * snapshots remain separate source guards and are deliberately not filtered. */
 export function savedProductFingerprintSettings(settings: WorkspaceSettings) {
-  return Object.fromEntries(Object.entries(settings).filter(([key]) => !bundleCriteria.some(field => field === key))) as Omit<WorkspaceSettings, typeof bundleCriteria[number]>;
+  return Object.fromEntries(Object.entries(settings).filter(([key]) => !bundleCriteria.some(field => field === key)
+    && !(settings.useIntegratedRate !== true && (key === 'useIntegratedRate' || key === 'integratedRate')))) as Omit<WorkspaceSettings, typeof bundleCriteria[number]>;
 }

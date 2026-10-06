@@ -134,7 +134,7 @@ export function automationInputFingerprint(product: ProductRecord, settings: Wor
 export function policyForProduct(product: ProductRecord, settings: WorkspaceSettings): PricePolicy {
   if (product.pricing_policy) return pricePolicy(JSON.parse(product.pricing_policy));
   return pricePolicy({ ...settings, exchangeRate: product.exchange_rate, supplyMargin: product.supply_margin,
-    coupangMargin: product.coupang_margin, minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0 });
+    coupangMargin: product.coupang_margin, minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0, useIntegratedRate: false, integratedRate: null });
 }
 
 export function deriveWorkflowStatus(stages: AutomationStage[]): AutomationStatus {

@@ -1,4 +1,4 @@
-export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest' };
+export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest'; useIntegratedRate?: boolean; integratedRate?: number | null };
 export function pricePolicy(input: unknown): PricePolicy {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('가격 설정을 확인해주세요.');
   const record = input as Record<string, unknown>;
@@ -7,7 +7,14 @@ export function pricePolicy(input: unknown): PricePolicy {
   const p = record as PricePolicy;
   if (p.exchangeRate <= 0 || p.supplyMargin < 0 || p.supplyMargin >= 100 || p.coupangMargin < 0 || p.coupangMargin >= 100 || p.minimumMargin < 0 || p.msrpMultiple < 1 || ![1,10,100,1000].includes(p.roundingUnit)) throw new Error('환율·마진·최소 마진·시장가격 배수·올림 단위를 확인해주세요.');
   if (record.roundingMode !== undefined && record.roundingMode !== 'up' && record.roundingMode !== 'nearest') throw new Error('가격 처리 방식을 확인해주세요.');
-  return { ...Object.fromEntries(keys.map(key => [key, p[key]])), ...(record.roundingMode === 'nearest' ? { roundingMode: 'nearest' as const } : {}) } as PricePolicy;
+  if (record.useIntegratedRate !== undefined && typeof record.useIntegratedRate !== 'boolean') throw new Error('통합통관 환율 사용 여부를 확인해주세요.');
+  if (record.integratedRate !== undefined && record.integratedRate !== null
+    && (typeof record.integratedRate !== 'number' || !Number.isFinite(record.integratedRate) || record.integratedRate <= 0)) throw new Error('확인한 통합통관 환율을 양수로 입력해주세요.');
+  if (record.useIntegratedRate === true && (typeof record.integratedRate !== 'number' || !Number.isFinite(record.integratedRate) || record.integratedRate <= 0)) throw new Error('통합통관 환율을 사용하려면 확인한 양수 환율이 필요합니다.');
+  // Off/missing integration is the original policy, byte-for-byte. A rate held
+  // in the settings editor is not a charge until the owner enables it.
+  return { ...Object.fromEntries(keys.map(key => [key, p[key]])), ...(record.roundingMode === 'nearest' ? { roundingMode: 'nearest' as const } : {}),
+    ...(record.useIntegratedRate === true ? { useIntegratedRate: true, integratedRate: record.integratedRate } : {}) } as PricePolicy;
 }
 export function calculatePrice(sourcePriceCny: number, input: PricePolicy, unitsPerPack = 1) {
   const p = pricePolicy(input);
@@ -18,7 +25,13 @@ export function calculatePrice(sourcePriceCny: number, input: PricePolicy, units
   const hundred = decimal(100);
   // The pack total must also remain rational. Converting it to a display number
   // first can move the target across a rounding step before applying the rate.
-  const cost = multiply(multiply(decimal(sourcePriceCny), rational(BigInt(unitsPerPack))), decimal(p.exchangeRate));
+  const packCny = multiply(decimal(sourcePriceCny), rational(BigInt(unitsPerPack)));
+  // Recorded Couplus purchaseCost receives the TOTAL selling-pack CNY amount.
+  // Handling 200 + barcode 100 are charged once per pack, VAT follows, and the
+  // purchase cost is rounded to one KRW before the ordinary margin algorithm.
+  const cost = p.useIntegratedRate === true
+    ? rational(roundCurrency(multiply(add(multiply(packCny, decimal(p.integratedRate!)), add(decimal(200), decimal(100))), decimal(1.1)), 1, 'nearest'))
+    : multiply(packCny, decimal(p.exchangeRate));
   const supplyTarget = divide(multiply(cost, hundred), subtract(hundred, decimal(p.supplyMargin)));
   const minimumTarget = add(cost, decimal(p.minimumMargin));
   // Apply the selected rounding once, after selecting the margin target.

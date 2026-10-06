@@ -12,7 +12,7 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
   const changeBusy=(value:boolean)=>{busyRef.current=value;setBusy(value);onBusy?.(value);};
   const update=(key:keyof WorkspaceSettings,value:string|number|boolean|null)=>{setDraft(current=>({...current,[key]:value}));setError('');};
   const configureBundling=(change:Partial<WorkspaceSettings>)=>{setDraft(current=>({...current,bundleCriterion:current.bundleCriterion??'supplyMargin',bundleMinimumSupplyMargin:current.bundleMinimumSupplyMargin??3000,bundleMinimumCoupangMargin:current.bundleMinimumCoupangMargin??3000,...change}));setError('');};
-  const field=(key:keyof WorkspaceSettings,label:string,type='text')=><label className="field" key={key}><span>{label}</span><input type={type} step={type==='number'?'any':undefined} value={draft[key]===null||typeof draft[key]==='number'&&!Number.isFinite(draft[key])?'':String(draft[key])} disabled={busy} onChange={event=>update(key,type==='number'?(event.target.value===''?(key==='shelfLifeDays'?null:NaN):Number(event.target.value)):event.target.value)}/></label>;
+  const field=(key:keyof WorkspaceSettings,label:string,type='text')=><label className="field" key={key}><span>{label}</span><input type={type} step={type==='number'?'any':undefined} value={draft[key]===null||typeof draft[key]==='number'&&!Number.isFinite(draft[key])?'':String(draft[key])} disabled={busy} onChange={event=>update(key,type==='number'?(event.target.value===''?(['shelfLifeDays','integratedRate'].includes(key)?null:NaN):Number(event.target.value)):event.target.value)}/></label>;
   const toggle=(key:keyof WorkspaceSettings,label:string)=><label className="switch-row" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(draft[key])} disabled={busy} onChange={event=>update(key,event.target.checked)}/><i/></label>;
   const margin=(key:'supplyMargin'|'coupangMargin',label:string,formula:string)=><fieldset className="settings-margin"><legend>{label}</legend><label className="settings-percent-input"><input aria-label={label} type="number" min={0} max={99.9} step="any" value={Number.isFinite(draft[key])?draft[key]:''} disabled={busy} onChange={event=>update(key,event.target.value===''?NaN:Number(event.target.value))}/><span aria-hidden="true">%</span></label><input aria-label={label+' 조절'} type="range" min={0} max={99} step={1} value={Number.isFinite(draft[key])?Math.min(99,Math.max(0,draft[key])):0} disabled={busy} onChange={event=>update(key,Number(event.target.value))}/><small>{formula}</small></fieldset>;
   const select=(key:keyof WorkspaceSettings,label:string,options:string[])=><label className="field"><span>{label}</span><select value={String(draft[key])} disabled={busy} onChange={event=>update(key,event.target.value)}><option value="">미입력</option>{options.map(option=><option key={option}>{option}</option>)}</select></label>;
@@ -42,7 +42,9 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
     <section className="settings-pricing"><h3>가격설정 방법</h3>
       <SettingsPriceRatio settings={draft}/>
       <div className="settings-price-inputs"><div className="settings-price-basis">
-        {field('exchangeRate','적용환율 (CNY → KRW)','number')}
+        {toggle('useIntegratedRate','통합통관 환율 사용')}
+        <small>켜면 매입가 = (위안가 × 통합통관 환율 + 포장검수 200원 + 바코드 100원) × 1.1, 원 단위 반올림</small>
+        {draft.useIntegratedRate ? <>{field('integratedRate','통합통관 적용환율 (CNY → KRW)','number')}<small>확인한 통합통관 환율을 입력하세요. 일반 적용환율과 별도로 저장합니다.</small></> : field('exchangeRate','적용환율 (CNY → KRW)','number')}
         <label className="field"><span>가격 처리 단위</span><select value={draft.roundingUnit} disabled={busy} onChange={event=>update('roundingUnit',Number(event.target.value))}>{[1,10,100,1000].map(unit=><option key={unit} value={unit}>{unit.toLocaleString('ko-KR')}원 단위</option>)}</select></label>
         {field('msrpMultiple','시장가격(MSRP) 배수','number')}
         <label className="field"><span>가격 처리 방식</span><select value={draft.roundingMode} disabled={busy} onChange={event=>update('roundingMode',event.target.value as 'up'|'nearest')}><option value="up">올림 (기존 방식)</option><option value="nearest">반올림</option></select></label>
@@ -59,7 +61,7 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
           {draft.bundleCriterion===null && <p role="status">저장된 설정에 번들 기준이 없습니다. 마진 기준을 선택하고 설정을 저장하면 새 상품부터 적용됩니다.</p>}
         </>}
       </div>
-      <details className="settings-price-details"><summary>실제 가격 계산 · 세부 미리보기</summary><p>원화 원가 = 중국 원가 × 적용환율. 판매가와 시장가격도 각각 설정 단위로 처리합니다.</p><SettingsPricePreview settings={draft} disabled={busy}/><p>설정 저장 후 새 상품 초안에 적용됩니다. 기존 상품은 가격 단계에서 별도로 수정합니다.</p></details>
+      <details className="settings-price-details"><summary>실제 가격 계산 · 세부 미리보기</summary><p>{draft.useIntegratedRate ? '통합통관 매입가를 원 단위 반올림한 뒤 공급가·판매가·시장가격을 계산합니다.' : '원화 원가 = 중국 원가 × 적용환율.'} 판매가와 시장가격도 각각 설정 단위로 처리합니다.</p><SettingsPricePreview settings={draft} disabled={busy}/><p>설정 저장 후 새 상품 초안에 적용됩니다. 기존 상품은 가격 단계에서 별도로 수정합니다.</p></details>
       <details className="settings-price-details"><summary>쿠플러스에서 사용하던 가격 설정 적용</summary><p>2026년 9월 24일 계정에서 확인한 설정입니다. 환율 350원 · 공급 마진 50% · 쿠팡 마진 40% · 10원 반올림 · MSRP 1.3배 · 최소 공급 마진 보장 3,000원.</p><p>현재 환율을 조회한 값이 아닙니다. 가격 입력만 변경하며 설정 저장 후 새 수집 요청에 적용됩니다. 기존 상품과 이미 접수한 요청의 가격은 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>{setDraft(current=>applyObservedPricePreset(current));setError('');}}>위 가격값을 입력란에 적용</button></details>
     </section>
     <section className="settings-images"><h3>이미지 작업 설정</h3>

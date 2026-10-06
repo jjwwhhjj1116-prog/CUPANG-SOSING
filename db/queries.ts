@@ -138,7 +138,8 @@ export async function applyProductPrice(ownerId: string, id: string, expectedVer
   const payload = JSON.stringify(policy);
   const result = await database().batch<ProductRecord>([database().prepare(`UPDATE products SET exchange_rate=?, supply_margin=?, coupang_margin=?,
     supply_price=?, sale_price=?, msrp=?, quote_status='대기', updated_at=?
-    WHERE owner_id=? AND id=? AND updated_at=? RETURNING *`)
+    WHERE owner_id=? AND id=? AND updated_at=?
+      AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=products.id AND r.owner_id=products.owner_id) RETURNING *`)
     .bind(values.exchangeRate, values.supplyMargin, values.coupangMargin, values.supplyPrice, values.salePrice, values.msrp,
       version, ownerId, id, expectedVersion),
     database().prepare(`INSERT INTO product_price_policy(product_id, payload)

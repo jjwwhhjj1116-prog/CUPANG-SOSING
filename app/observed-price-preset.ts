@@ -5,6 +5,7 @@ export const observedCouplusPricePreset = Object.freeze({
   exchangeRate: 350, supplyMargin: 50, coupangMargin: 40,
   roundingUnit: 10, roundingMode: 'nearest' as const,
   msrpMultiple: 1.3, minimumMarginEnabled: true, minimumMargin: 3000,
+  useIntegratedRate: false,
 });
 
 /** Updates the settings editor draft only; all non-price inputs remain untouched. */

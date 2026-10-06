@@ -159,7 +159,8 @@ export function resolveOptionPricePolicy(product: { pricing_policy?: string | nu
   // Registration facts can be intentionally absent; only price inputs affect this calculation.
   pricePolicy(settings);
   if (typeof settings.minimumMarginEnabled !== 'boolean') throw new Error('최소 마진 적용 여부를 확인해주세요.');
-  return { policy: pricePolicy({ ...settings, exchangeRate: product.exchange_rate, supplyMargin: product.supply_margin, coupangMargin: product.coupang_margin, minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0 }), policySource: 'product-and-workspace' };
+  return { policy: pricePolicy({ ...settings, exchangeRate: product.exchange_rate, supplyMargin: product.supply_margin, coupangMargin: product.coupang_margin,
+    minimumMargin: settings.minimumMarginEnabled ? settings.minimumMargin : 0, useIntegratedRate: false, integratedRate: null }), policySource: 'product-and-workspace' };
 }
 
 /** Preserve existing review/receipt identities unless this upgrade changes a cell. */

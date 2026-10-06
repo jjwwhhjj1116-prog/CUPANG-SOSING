@@ -47,7 +47,7 @@ export function SettingsPricePreview({ settings, disabled }: { settings: Workspa
       <div className="price-formula"><div><small>공급가</small><strong>{won(preview.supplyPrice)}</strong></div><b>→</b><div><small>판매가</small><strong>{won(preview.salePrice)}</strong></div><b>→</b><div><small>MSRP 초안</small><strong>{won(preview.msrp)}</strong></div></div>
       <div aria-hidden="true" style={{ display: 'flex', height: 16, borderRadius: 6, overflow: 'hidden' }}>{parts.map(part => <span key={part.label} style={{ width: `${part.value / preview.salePrice * 100}%`, background: part.color }} />)}</div>
       <ul aria-label="판매가 기준 가격 구성">{parts.map(part => <li key={part.label}>{part.label}: {won(part.value)} · 판매가의 {(part.value / preview.salePrice * 100).toFixed(1)}%</li>)}</ul>
-      <small>실제 공급 마진율: {preview.actualMargin.toFixed(1)}% (공급가 기준). 가격 구성 비율은 반올림·최소 마진 적용 후 판매가 기준입니다. 운송비 등 부대비용은 포함하지 않습니다.</small>
+      <small>실제 공급 마진율: {preview.actualMargin.toFixed(1)}% (공급가 기준). 가격 구성 비율은 반올림·최소 마진 적용 후 판매가 기준입니다. {settings.useIntegratedRate ? '통합통관 매입가에 포장검수·바코드·1.1배를 포함하고 그 밖의 운송비는 포함하지 않습니다.' : '운송비 등 부대비용은 포함하지 않습니다.'}</small>
     </>}
     {error && <p role="status">{error}</p>}
   </div>;

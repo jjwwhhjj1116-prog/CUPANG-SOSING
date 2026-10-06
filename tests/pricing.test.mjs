@@ -8,10 +8,11 @@ import { DatabaseSync } from 'node:sqlite';
 function load(file, overrides = {}, mode = 'development') {
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(output, { exports, Response, Error, process: { env: { NODE_ENV: mode } }, require: name => {
+  vm.runInNewContext(output, { exports, Response, Error, TextEncoder, TextDecoder, Uint8Array, process: { env: { NODE_ENV: mode } }, require: name => {
     if (name in overrides) return overrides[name];
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/pricing') return load('app/pricing.ts');
+    if (name === '@/app/request-body') return load('app/request-body.ts');
     if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
     if (name === '@/app/product-options') return load('app/product-options.ts');
     if (name === '@/db/product-options') return { readProductOptions:async(_owner,id)=>({productId:id,rows:[],revision:0}) };
@@ -23,7 +24,7 @@ function load(file, overrides = {}, mode = 'development') {
 const pricing = load('app/pricing.ts');
 const policy = { exchangeRate:100,supplyMargin:0,coupangMargin:0,minimumMargin:0,msrpMultiple:1,roundingUnit:10 };
 const product = { id:'test', source_price_cny:10, updated_at:'2026-09-22T00:00:00.000Z' };
-const request = body => new Request('http://localhost', {method:'POST',body:JSON.stringify(body)});
+const request = body => new Request('http://localhost', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const input = { policy, expectedVersion:product.updated_at };
 const context = { params: Promise.resolve({id:product.id}) };
 
@@ -179,13 +180,15 @@ test('CSV escapes commas, quotes, multiline values and spreadsheet formulas',()=
   assert.ok(csv.includes('"\'=HYPERLINK(""bad"")"'));
   assert.ok(csv.includes('"one,two"'));assert.ok(csv.includes('"line\nbreak"'));assert.ok(csv.includes('"\'  +CMD"'));assert.ok(csv.endsWith('"123"'));
 });
-test('server computes from stored cost, ignores forged totals, and returns stored product',async()=>{
+test('server rejects forged totals and computes accepted prices only from stored cost',async()=>{
   let written;
   const route=load('app/api/products/[id]/pricing/route.ts',{'@/db/queries':{
     findProduct:async(owner,id)=>{assert.equal(owner,'owner');assert.equal(id,'test');return product;},
     applyProductPrice:async(owner,id,version,values)=>{written=values;assert.equal(version,product.updated_at);return {...product,supply_price:values.supplyPrice};},
   }});
-  const response=await route.POST(request({...input,sourcePriceCny:1,supplyPrice:1}),context);
+  const forged=await route.POST(request({...input,sourcePriceCny:1,supplyPrice:1}),context);
+  assert.equal(forged.status,400);assert.equal(written,undefined);
+  const response=await route.POST(request(input),context);
   assert.equal(response.status,200);assert.equal(written.supplyPrice,1000);
   assert.equal((await response.json()).product.supply_price,1000);
 });

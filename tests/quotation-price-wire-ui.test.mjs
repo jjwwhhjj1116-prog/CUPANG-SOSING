@@ -9,6 +9,7 @@ import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {workbookArchive} from './helpers/quotation-workbook.mjs';
 import {submissionPackageUI} from './helpers/submission-package-ui.mjs';
 const native=createRequire(import.meta.url);
+const initialVersion='2026-10-07T00:00:00.000Z';
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 const plain=value=>JSON.parse(JSON.stringify(value));
 const path=['패션의류잡화','유니섹스/남녀공용 패션','공용 잡화','선글라스','남녀공용패션선글라스'];
@@ -23,9 +24,10 @@ const snapshot=company=>({format:'supplier-hub-schema-v1',categoryId:'69900',cat
 const wire=(schema,key)=>schema.fields.find(field=>!field.hubWire?.name&&JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','commonAttributes',key]));
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 
-function priceUI(fetcher,{productId='p',version='v',profileId}={}){
+function priceUI(fetcher,{productId='p',version=initialVersion,profileId}={}){
  const slots=[],effects=[],cache=new Map(),calls=[];let cursor=0,saved=0;
- const react={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(fn,deps){const index=cursor++;if(!slots[index]||JSON.stringify(slots[index].deps)!==JSON.stringify(deps)){slots[index]?.cleanup?.();slots[index]={deps};effects.push(()=>slots[index].cleanup=fn());}}};
+ const effect=(fn,deps)=>{const index=cursor++;if(!slots[index]||JSON.stringify(slots[index].deps)!==JSON.stringify(deps)){slots[index]?.cleanup?.();slots[index]={deps};effects.push(()=>slots[index].cleanup=fn());}};
+ const react={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect:effect,useLayoutEffect:effect};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,structuredClone,TextEncoder,fetch:async(url,init)=>{calls.push({url,init});return fetcher(url,init);},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name.startsWith('./')||name.startsWith('../'))return load(pathTools.posix.join(pathTools.posix.dirname(file),name)+'.ts');return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;
  }
@@ -45,10 +47,10 @@ function formView(){
  const fields=inputs.map((id,index)=>({id,label:id,type:'number',integer:true,min:1,required:false,section:'product',visibility:'common'}));
  const primary=inputs.map((hubInput,index)=>({id:'wire-'+hubInput,label:hubInput,type:'text',numericText:true,integer:true,min:1,required:false,section:'product',visibility:'common',hubInput,hubWire:{path:['productPage','commonAttributes',keys[index]]}}));
  const osrp={...primary[2],id:'wire-osrp',hubWire:{path:['productPage','commonAttributes','osrp']}};
- const schema={fields:[...fields,...primary,osrp],salePriceMustCoverSupply:true};
+ const schema={categoryId:'69900',categoryPath:path,fields:[...fields,...primary,osrp],salePriceMustCoverSupply:true};
  const row=overrides=>({optionId:'red',optionLabel:'빨강',included:true,fields:Object.fromEntries(schema.fields.map((field,index)=>{const automatic=String((index%3+1)*100),specific=overrides.options.red??{},value=Object.hasOwn(specific,field.id)?specific[field.id]:overrides.common[field.id]??automatic;return[field.id,{value,source:Object.hasOwn(specific,field.id)?'manual-option':Object.hasOwn(overrides.common,field.id)?'manual-common':'pricing',validationIssues:[]}];}))});
  const overrides={common:{supplyPrice:'120','wire-supplyPrice':'130','wire-osrp':'777'},options:{red:{supplyPrice:'150','wire-supplyPrice':'160',unrelated:'keep'}}};
- const view={revision:1,inputFingerprint:'a'.repeat(64),productVersion:'v',imageKeys:[],categoryContext:{categoryId:'69900',categoryPath:path},overrides,resolved:{schema,rows:[row(overrides)]},automatic:{schema,rows:[row({common:{},options:{}})]}};
+ const view={revision:1,inputFingerprint:'a'.repeat(64),productVersion:initialVersion,contentRevision:1,optionRevision:1,updatedAt:initialVersion,imageKeys:[],categoryContext:{source:'collection',profileId:null,categoryId:'69900',categoryPath:path},overrides,resolved:{schema,rows:[row(overrides)]},automatic:{schema,rows:[row({common:{},options:{}})]}};
  return{view,resolve(){view.resolved.rows=[row(view.overrides)];return view;}};
 }
 
@@ -76,7 +78,7 @@ test('stage-two price targets require exact unique primary paths and use OSRP on
 
 test('wire price UI preserves divergent saved values until explicit editing and restores option values without removing common or OSRP values',async()=>{
  const fixture=formView(),before=JSON.stringify(fixture.view.overrides);
- const ui=priceUI(async(url,init)=>{if(init?.method==='PUT'){const changes=JSON.parse(init.body).changes;for(const change of changes){const values=fixture.view.overrides.options[change.optionId]??={};if(change.value===null)delete values[change.fieldKey];else values[change.fieldKey]=change.value;}fixture.view.revision++;fixture.resolve();}return Response.json(fixture.view);});
+ const ui=priceUI(async(url,init)=>{if(init?.method==='PUT'){const changes=JSON.parse(init.body).changes;for(const change of changes){const values=fixture.view.overrides.options[change.optionId]??={};if(change.value===null)delete values[change.fieldKey];else values[change.fieldKey]=change.value;}fixture.view.revision++;fixture.view.productVersion=new Date(Date.parse(fixture.view.productVersion)+1).toISOString();fixture.view.updatedAt=fixture.view.productVersion;fixture.view.inputFingerprint=String(fixture.view.revision%10).repeat(64);fixture.resolve();}return Response.json(fixture.view);});
  try{
   await ui.idle();assert.equal(ui.input('빨강 공급가').props.value,'160');assert.match(JSON.stringify(ui.render()),/이전 공통·직접 수정값/);assert.equal(JSON.stringify(fixture.view.overrides),before);assert.equal(ui.calls.filter(call=>call.init?.method==='PUT').length,0);
   ui.input('빨강 공급가').props.onChange({target:{value:'170'}});ui.button('옵션 가격 저장').props.onClick();await ui.idle();
@@ -91,7 +93,7 @@ test('wire price UI preserves divergent saved values until explicit editing and 
 
 test('ambiguous wire paths expose no editable price action or writes',async()=>{
  const fixture=formView();fixture.view.resolved.schema.fields.push({...fixture.view.resolved.schema.fields.find(field=>field.id==='wire-supplyPrice'),id:'ambiguous'});
- const ui=priceUI(async()=>Response.json(fixture.view));try{await ui.idle();assert.equal(ui.input('빨강 공급가').props.disabled,true);assert.equal(ui.button('옵션 가격 저장').props.disabled,true);assert.match(JSON.stringify(ui.render()),/연결을 하나로 확인/);ui.input('빨강 공급가').props.onChange({target:{value:'180'}});ui.button('옵션 가격 저장').props.onClick();await ui.idle();assert.equal(ui.calls.some(call=>call.init?.method==='PUT'),false);}finally{ui.close();}
+ const ui=priceUI(async()=>Response.json(fixture.view));try{await ui.idle();assert.equal(ui.input('빨강 공급가'),undefined);assert.equal(ui.button('옵션 가격 저장').props.disabled,true);assert.match(JSON.stringify(ui.render()),/연결을 하나로 확인/);ui.button('옵션 가격 저장').props.onClick();await ui.idle();assert.equal(ui.calls.some(call=>call.init?.method==='PUT'),false);}finally{ui.close();}
 });
 
 test('an OSRP-only price input saves its exact observed wire while preserving unrelated prior MSRP wire overrides',async()=>{

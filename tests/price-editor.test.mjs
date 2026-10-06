@@ -17,7 +17,7 @@ function harness({onSave}={}){
   return native(name);
  }});
  const render=()=>{let tree;for(let i=0;i<10;i++){cursor=0;changed=false;tree=exports.PriceEditor({initial,sourcePrice:2,onSave:async p=>{saveCalls++;if(fail)throw Error('save failed');await onSave?.(p);initial={...p};}});if(!changed)return tree;}throw Error('render loop');};
- return{render,update(p){initial=p;},fail(){fail=true;},get saveCalls(){return saveCalls;},input(){return nodes(render()).find(n=>n.type==='input');},reset(){return nodes(render()).find(n=>n.type==='button'&&n.props.type==='button');}};
+ return{render,update(p){initial=p;},fail(){fail=true;},get saveCalls(){return saveCalls;},input(){return nodes(render()).find(n=>n.type==='input'&&n.props.type==='number');},reset(){return nodes(render()).find(n=>n.type==='button'&&n.props.type==='button');}};
 }
 test('price editor refreshes clean policy after an external update',()=>{
  const h=harness();assert.equal(h.input().props.value,200);h.update({...base,exchangeRate:350});assert.equal(h.input().props.value,350);assert.equal(h.reset(),undefined);
@@ -34,7 +34,7 @@ test('equivalent rounding defaults do not create a false conflict',()=>{
 
 test('minimum margin toggle restores the edited amount and saves disabled policy as zero',async()=>{
  const h=harness();h.update({...base,minimumMargin:4500});h.render();
- const toggle=()=>nodes(h.render()).find(n=>n.type==='input'&&n.props.type==='checkbox');
+ const toggle=()=>nodes(h.render()).find(n=>n.type==='label'&&n.props.children?.[0]?.props?.children==='최소 공급 마진 보장').props.children[1];
  const minimum=()=>nodes(h.render()).find(n=>n.type==='label'&&n.props.children?.[0]?.props?.children==='최소 공급 마진 (원)').props.children[1];
  assert.equal(toggle().props.checked,true);
  minimum().props.onChange({target:{value:'5500'}});

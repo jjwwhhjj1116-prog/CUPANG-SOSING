@@ -11,25 +11,112 @@ import {submissionPackageUI} from './helpers/submission-package-ui.mjs';
 const native=createRequire(import.meta.url);
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));};
-const view=()=>({revision:1,inputFingerprint:'a'.repeat(64),productVersion:'v',imageKeys:[],categoryContext:{categoryId:'80719',categoryPath:['주방']},overrides:{common:{},options:{}},resolved:{schema:{fields:['supplyPrice','salePrice','msrp'].map(id=>({id,label:id,type:'number',min:1,integer:true}))},rows:[{optionId:'red',optionLabel:'빨강',included:true,fields:Object.fromEntries(['supplyPrice','salePrice','msrp'].map((id,i)=>[id,{value:String((i+1)*100),source:'pricing'}]))}]},automatic:{rows:[{optionId:'red',fields:{supplyPrice:{value:'100'},salePrice:{value:'200'},msrp:{value:'300'}}}]}});
+const version='2026-10-07T00:00:00.000Z',advance=before=>new Date(Date.parse(before)+1).toISOString(),plain=value=>JSON.parse(JSON.stringify(value));
+const view=()=>{const schema={categoryId:'80719',categoryPath:['주방'],fields:['supplyPrice','salePrice','msrp'].map(id=>({id,label:id,type:'number',min:1,integer:true}))};
+ return{revision:1,inputFingerprint:'a'.repeat(64),productVersion:version,contentRevision:1,optionRevision:1,updatedAt:version,imageKeys:[],categoryContext:{source:'profile',profileId:'profile',categoryId:'80719',categoryPath:['주방']},overrides:{common:{},options:{}},resolved:{schema,rows:[{optionId:'red',optionLabel:'빨강',included:true,fields:Object.fromEntries(['supplyPrice','salePrice','msrp'].map((id,i)=>[id,{value:String((i+1)*100),source:'pricing'}]))}]},automatic:{schema,rows:[{optionId:'red',fields:{supplyPrice:{value:'100',source:'pricing'},salePrice:{value:'200',source:'pricing'},msrp:{value:'300',source:'pricing'}}}]}};
+};
+function fixture(){const current=view();return{current,reply(url,init={}){
+ if(init.method==='PUT'){const body=JSON.parse(init.body);if(body.expectedRevision!==current.revision||body.expectedInputFingerprint!==current.inputFingerprint)return Response.json({error:'동시 수정'},{status:409});
+  for(const change of body.changes){const values=change.optionId===null?current.overrides.common:(current.overrides.options[change.optionId]??={});if(change.value===null)delete values[change.fieldKey];else values[change.fieldKey]=change.value;if(change.optionId!==null&&!Object.keys(values).length)delete current.overrides.options[change.optionId];}
+  current.revision++;current.productVersion=advance(current.productVersion);current.updatedAt=current.productVersion;current.inputFingerprint=String(current.revision%10).repeat(64);
+  for(const row of current.resolved.rows)for(const field of current.resolved.schema.fields){const own=current.overrides.options[row.optionId]??{},common=current.overrides.common,automatic=current.automatic.rows.find(item=>item.optionId===row.optionId).fields[field.id];row.fields[field.id]={...row.fields[field.id],value:Object.hasOwn(own,field.id)?own[field.id]:Object.hasOwn(common,field.id)?common[field.id]:automatic.value,source:Object.hasOwn(own,field.id)?'manual-option':Object.hasOwn(common,field.id)?'manual-common':automatic.source};}
+ }
+ const output=plain(current);if(url.includes('profileId=other'))output.categoryContext.profileId='other';return Response.json(output);
+}};}
 function harness(fetcher,initial={}){
- const slots=[],effects=[],calls=[];let cursor=0,saved=0,version=initial.version??'v',refreshToken='0',productId=initial.productId??'p',profileId=Object.hasOwn(initial,'profileId')?initial.profileId:'profile';
- const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>slots[i]=typeof v==='function'?v(slots[i]):v];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){const i=cursor++;if(!slots[i]||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){slots[i]?.cleanup?.();slots[i]={deps};effects.push(()=>slots[i].cleanup=fn());}}};
- function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,fetch:async(url,init)=>{calls.push({url,init});return fetcher(url,init);},require(name){if(name==='react')return react;return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
+ const slots=[],effects=[],layouts=[],calls=[],cache=new Map();let cursor=0,saved=0,closed=false,lateWrites=0,currentVersion=initial.version??version,refreshToken='0',productId=initial.productId??'p',profileId=Object.hasOwn(initial,'profileId')?initial.profileId:'profile';
+ const effect=(queue,fn,deps)=>{const i=cursor++,old=slots[i];if(!old||JSON.stringify(old.deps)!==JSON.stringify(deps)){const entry={deps,cleanup:old?.cleanup};slots[i]=entry;queue.push(()=>{entry.cleanup?.();entry.cleanup=fn();});}};
+ const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],v=>{if(closed){lateWrites++;return;}slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){effect(effects,fn,deps);},useLayoutEffect(fn,deps){effect(layouts,fn,deps);}};
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,structuredClone,TextEncoder,fetch:async(url,init)=>{calls.push({url,init});return fetcher(url,init);},require(name){if(name==='react')return react;return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  const Component=load('app/components/option-quotation-prices.tsx').OptionQuotationPrices;
- const render=()=>{cursor=0;const tree=Component({productId,version,refreshToken,profileId,onSaved(){saved++;}});effects.splice(0).forEach(fn=>fn());return tree;};
+ const render=(flush=true)=>{cursor=0;const tree=Component({productId,version:currentVersion,refreshToken,profileId,onSaved(){saved++;}});layouts.splice(0).forEach(fn=>fn());if(flush)effects.splice(0).forEach(fn=>fn());return tree;};
  const button=text=>nodes(render()).find(n=>n.type==='button'&&n.props.children===text);
  const input=label=>nodes(render()).find(n=>n.props?.['aria-label']===label);
- const idle=async()=>{await Promise.resolve();const deadline=Date.now()+10000;while(render().props['data-workspace-saving']){assert.ok(Date.now()<deadline,'price UI request timed out');await new Promise(resolve=>setTimeout(resolve,1));}};
- render();return {render,button,input,calls,idle,get saved(){return saved;},refresh(v){refreshToken=v;render();},setVersion(v){version=v;render();},select(p,c){productId=p;profileId=c;render();},close(){slots.forEach(s=>s?.cleanup?.());}};
+ const idle=async()=>{const deadline=Date.now()+10000;let stable=0,last='';for(;;){render();await new Promise(resolve=>setImmediate(resolve));const tree=render(),identity=JSON.stringify([currentVersion,refreshToken,productId,profileId,calls.length]);stable=!tree.props['data-workspace-saving']&&!effects.length&&!layouts.length&&identity===last?stable+1:0;if(stable>=3)return;last=identity;assert.ok(Date.now()<deadline,'price UI request timed out');await new Promise(resolve=>setTimeout(resolve,1));}};
+ render();return {render,button,input,calls,idle,load,get saved(){return saved;},get lateWrites(){return lateWrites;},refresh(v,flush=true){refreshToken=v;render(flush);},setVersion(v,flush=true){currentVersion=v;render(flush);},select(p,c,flush=true){productId=p;profileId=c;render(flush);},close(){closed=true;slots.forEach(s=>s?.cleanup?.());}};
 }
 
 test('stage-two direct price saves only the changed option field using the same quotation version',async()=>{
- const h=harness(async()=>Response.json(view()));await settle();
+ const f=fixture(),h=harness((url,init)=>f.reply(url,init));await settle();
  h.input('빨강 공급가').props.onChange({target:{value:'150'}});
  const click=h.button('옵션 가격 저장').props.onClick;click();click();await settle();
  const writes=h.calls.filter(c=>c.init.method==='PUT');assert.equal(writes.length,1);
  const body=JSON.parse(writes[0].init.body);assert.deepEqual(body.changes,[{optionId:'red',fieldKey:'supplyPrice',value:'150'}]);assert.equal(body.expectedRevision,1);assert.equal(body.expectedInputFingerprint,'a'.repeat(64));assert.match(writes[0].url,/profileId=profile/);assert.equal(h.saved,1);
+});
+
+test('retained price callbacks submit the latest synchronous edits and preserve an intentional optional blank',async()=>{
+ const f=fixture(),h=harness((url,init)=>f.reply(url,init));try{
+  await h.idle();h.input('빨강 공급가').props.onChange({target:{value:'150'}});const captured=h.button('옵션 가격 저장').props.onClick;
+  h.input('빨강 공급가').props.onChange({target:{value:'170'}});h.input('빨강 권장소비자가').props.onChange({target:{value:''}});captured();captured();await h.idle();
+  const writes=h.calls.filter(call=>call.init.method==='PUT');assert.equal(writes.length,1);assert.deepEqual(JSON.parse(writes[0].init.body).changes,[{optionId:'red',fieldKey:'supplyPrice',value:'170'},{optionId:'red',fieldKey:'msrp',value:''}]);
+  assert.equal(h.saved,1);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(h.input('빨강 공급가').props.value,'170');assert.equal(h.input('빨강 권장소비자가').props.value,'');
+ }finally{h.close();}
+});
+
+test('unchanged, wrong-scope or forged manual-price acknowledgements retain all edits instead of claiming success',async()=>{
+ for(const [name,mutate]of[
+  ['unchanged',(_body,before)=>before],['revision',body=>{body.revision++;}],['clock',body=>{body.productVersion=version;}],['updatedAt',body=>{body.updatedAt=version;}],
+  ['input proof',body=>{body.inputFingerprint='a'.repeat(64);}],['content',body=>{body.contentRevision++;}],['options',body=>{body.optionRevision++;}],
+  ['category',body=>{body.categoryContext.profileId='other';}],['wire definition',body=>{body.resolved.schema.fields[0].maxLength=99;}],
+  ['common override',body=>{body.overrides.common.msrp='999';}],['other override',body=>{body.overrides.options.blue={salePrice:'999'};}],
+  ['other returned price',body=>{body.resolved.rows[1].fields.salePrice.value='999';}],
+  ['other automatic price',body=>{body.automatic.rows[1].fields.salePrice.value='999';body.resolved.rows[1].fields.salePrice.value='999';}],
+  ['other title',body=>{body.resolved.rows[1].fields.title.value='unexpected title';}],['missing row',body=>{body.resolved.rows.pop();body.automatic.rows.pop();}],
+  ['image source',body=>{body.imageKeys.push('owner/other.png');}],['selected cell',body=>{body.resolved.rows[0].fields.supplyPrice.value='151';}],
+ ]){
+  const f=fixture();f.current.resolved.schema.fields.push({id:'title',label:'상품명',type:'text'});
+  f.current.resolved.rows[0].fields.title={value:'unchanged title',source:'product'};f.current.automatic.rows[0].fields.title={value:'unchanged title',source:'product'};
+  f.current.resolved.rows.push({...plain(f.current.resolved.rows[0]),optionId:'blue',optionLabel:'파랑'});f.current.automatic.rows.push({...plain(f.current.automatic.rows[0]),optionId:'blue'});
+  const before=plain(f.current),h=harness((url,init)=>{const response=f.reply(url,init);if(init?.method==='PUT'){const body=plain(f.current),replacement=mutate(body,before);return Response.json(replacement??body);}return response;});
+  try{await h.idle();h.input('빨강 공급가').props.onChange({target:{value:'150'}});h.button('옵션 가격 저장').props.onClick();await h.idle();
+   assert.equal(h.saved,0,name);assert.equal(h.render().props['data-workspace-dirty'],true,name);assert.equal(h.input('빨강 공급가').props.value,'150',name);assert.equal(h.input('파랑 판매가').props.value,'200',name);
+   assert.match(JSON.stringify(h.render()),/확인하지 못했습니다|다릅니다/,name);assert.equal(h.calls.filter(call=>call.init.method==='PUT').length,1,name);
+  }finally{h.close();}
+ }
+});
+
+test('a reset price acknowledgement must prove the final common/automatic value and source',async()=>{
+ const f=fixture();f.current.overrides.common.salePrice='220';f.current.overrides.options.red={salePrice:'250'};f.current.resolved.rows[0].fields.salePrice={value:'250',source:'manual-option'};
+ const h=harness((url,init)=>{const response=f.reply(url,init);if(init?.method==='PUT'){const forged=plain(f.current);forged.resolved.rows[0].fields.salePrice={value:'250',source:'manual-option'};return Response.json(forged);}return response;});
+ try{await h.idle();nodes(h.render()).filter(node=>node.type==='button'&&node.props.children==='복원')[1].props.onClick();h.button('옵션 가격 저장').props.onClick();await h.idle();
+  assert.equal(h.saved,0);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.input('빨강 판매가').props.value,'220');assert.equal(f.current.overrides.options.red,undefined);
+  h.button('입력 유지·최신 가격 조회').props.onClick();await h.idle();assert.equal(h.saved,1);assert.equal(h.input('빨강 판매가').props.value,'220');assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(h.calls.filter(call=>call.init.method==='PUT').length,1);
+ }finally{h.close();}
+});
+
+test('layout source guards reject retained callbacks before passive cleanup and ignore aborted writes after source change',async()=>{
+ for(const kind of ['version','refresh','category','product','unmount']){
+  const f=fixture();let finish,sent;const pending=new Promise(resolve=>finish=resolve),h=harness((url,init)=>{if(init?.method==='PUT'){sent={url,init};return pending;}if(url.includes('profileId=other')||url.includes('/other-product/')){const body=view();if(url.includes('profileId=other'))body.categoryContext.profileId='other';return Response.json(body);}return f.reply(url,init);});
+  try{await h.idle();h.input('빨강 판매가').props.onChange({target:{value:'270'}});const oldEdit=h.input('빨강 판매가').props.onChange,oldSave=h.button('옵션 가격 저장').props.onClick;oldSave();
+   if(kind==='version')h.setVersion(advance(version),false);else if(kind==='refresh')h.refresh('1',false);else if(kind==='category')h.select('p','other',false);else if(kind==='product')h.select('other-product','profile',false);else h.close();
+   assert.equal(sent.init.signal.aborted,true,kind);oldEdit({target:{value:'999'}});oldSave();assert.equal(h.calls.filter(call=>call.init.method==='PUT').length,1,kind);
+   finish(f.reply(sent.url,sent.init));await settle();if(kind!=='unmount')await h.idle();assert.equal(h.saved,0,kind);assert.equal(h.lateWrites,0,kind);
+   if(kind!=='unmount'){const field=h.input('빨강 판매가');assert.ok(field,JSON.stringify({kind,alerts:nodes(h.render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),reads:h.calls.filter(call=>call.init.method!=='PUT').map(call=>call.url)}));assert.equal(field.props.value,kind==='version'||kind==='refresh'?'270':'200',kind);}
+  }finally{if(kind!=='unmount')h.close();}
+ }
+});
+
+test('explicit refresh refuses older parent-known clocks and changed category/price rules without discarding a draft',async()=>{
+ for(const kind of ['clock','category','schema','option']){
+  const f=fixture();let changed=false;const h=harness((url,init)=>{if(!changed)return f.reply(url,init);const body=plain(f.current);if(kind==='category')body.categoryContext.categoryId='69900';if(kind==='schema')body.resolved.schema.fields[0].maxLength=99;if(kind==='option'){body.resolved.rows[0].included=false;}return Response.json(body);});
+  try{await h.idle();h.input('빨강 판매가').props.onChange({target:{value:'270'}});changed=true;if(kind==='clock')h.setVersion(advance(version));
+   h.button('입력 유지·최신 가격 조회').props.onClick();await h.idle();assert.equal(h.saved,0,kind);assert.equal(h.input('빨강 판매가').props.value,'270',kind);assert.equal(h.render().props['data-workspace-dirty'],true,kind);assert.equal(h.calls.some(call=>call.init.method==='PUT'),false,kind);
+  }finally{h.close();}
+ }
+});
+
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`a real committed price save lost its ACK and recovers once by explicit read while the parent clock remains old (${company.companyCode})`,async()=>{
+ const api=mobileIntakeHarness(company);let ui;try{
+  await api.intake();const product=api.sqlite.prepare('SELECT * FROM products').get(),endpoint='/api/products/'+product.id+'/quotation-fields',before=await (await api.route(endpoint)).json(),selected=before.resolved.rows.find(row=>row.included),others=plain(before.overrides);let lost=true;
+  ui=harness(async(url,init)=>{const response=await api.route(url,{method:init?.method??'GET',...(init?.body?{body:JSON.parse(init.body)}:{})});if(init?.method==='PUT'&&response.ok&&lost){lost=false;throw Error('committed price ACK lost');}return response;},{productId:product.id,version:before.productVersion,profileId:undefined});
+  await ui.idle();for(const [caption,value]of[['공급가','12345'],['판매가','23456'],['권장소비자가','']])ui.input(selected.optionLabel+' '+caption).props.onChange({target:{value}});
+  ui.button('옵션 가격 저장').props.onClick();await ui.idle();assert.equal(ui.saved,0);assert.equal(ui.render().props['data-workspace-dirty'],true);assert.match(JSON.stringify(ui.render()),/committed price ACK lost/);
+  ui.button('입력 유지·최신 가격 조회').props.onClick();await ui.idle();assert.equal(ui.saved,1);assert.equal(ui.render().props['data-workspace-dirty'],false);assert.equal(ui.calls.filter(call=>call.init.method==='PUT').length,1);
+  const final=await (await api.route(endpoint)).json(),row=final.resolved.rows.find(row=>row.optionId===selected.optionId);assert.notEqual(final.productVersion,before.productVersion);
+  for(const [id,value]of[['supplyPrice','12345'],['salePrice','23456'],['msrp','']]){assert.equal(row.fields[id].value,value);assert.equal(row.fields[id].source,'manual-option');}
+  assert.deepEqual(final.overrides.common,others.common);for(const id of Object.keys(others.options))if(id!==selected.optionId)assert.deepEqual(final.overrides.options[id],others.options[id]);
+  ui.button('저장 가격 다시 조회').props.onClick();await ui.idle();assert.equal(ui.saved,1);assert.equal(ui.calls.filter(call=>call.init.method==='PUT').length,1);assert.equal(api.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
+ }finally{ui?.close();api.close();}
 });
 
 for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`unsaved option prices can recover after saving a new policy without losing blanks or same-value intent (${company.companyCode})`,async()=>{
@@ -73,13 +160,13 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
 test('price draft recovery preserves inputs after a failed read and ignores a response after category switch or unmount',async()=>{
  for(const end of ['retry','category','unmount']){
   let reads=0,finish;const pending=new Promise(resolve=>finish=resolve);
-  const h=harness(async()=>{reads++;if(reads===1)return Response.json(view());if(reads===2)return Response.json({error:'fixture recovery offline'},{status:503});if(reads===3)return pending;return Response.json(view());});
+  const h=harness(async url=>{reads++;if(reads===1)return Response.json(view());if(reads===2)return Response.json({error:'fixture recovery offline'},{status:503});if(reads===3)return pending;const body=view();if(url.includes('profileId=other'))body.categoryContext.profileId='other';return Response.json(body);});
   try{
    await h.idle();h.input('빨강 판매가').props.onChange({target:{value:'270'}});
    h.button('입력 유지·최신 가격 조회').props.onClick();await h.idle();assert.equal(h.input('빨강 판매가').props.value,'270');assert.match(JSON.stringify(h.render()),/fixture recovery offline/);
    h.button('입력 유지·최신 가격 조회').props.onClick();const read=h.calls.at(-1);
    if(end==='category'){h.select('p','other');await h.idle();}else if(end==='unmount')h.close();
-   const latest=view();latest.revision=2;latest.inputFingerprint='b'.repeat(64);latest.resolved.rows[0].fields.salePrice.value='220';
+   const latest=view();latest.revision=2;latest.inputFingerprint='b'.repeat(64);latest.productVersion=advance(version);latest.updatedAt=latest.productVersion;latest.resolved.rows[0].fields.salePrice.value='220';latest.automatic.rows[0].fields.salePrice.value='220';
    finish(Response.json(latest));await settle();
    if(end==='retry'){assert.equal(h.input('빨강 판매가').props.value,'270');assert.equal(h.render().props['data-workspace-dirty'],true);}
    else assert.equal(read.init.signal.aborted,true);
@@ -182,7 +269,8 @@ function failedAutomaticPrices(common={}){
    settings:h.settings,content:h.load('app/product-content.ts').emptyProductContent('p'),
    options:options.applyOptionRows(options.emptyProductOptions('p'),[{...options.emptyOptionInput('red'),originalName:'빨강',included:true,unitCostCny:1e9,unitsPerPack:1e6}], 'v')};
   const overrides={common,options:{}};
-  return {...view(),overrides,resolved:model.resolveQuotationFields({...source,overrides}),automatic:model.resolveQuotationFields(source)};
+  const resolved=model.resolveQuotationFields({...source,overrides}),automatic=model.resolveQuotationFields(source);
+  return {...view(),categoryContext:{...view().categoryContext,categoryPath:resolved.schema.categoryPath},overrides,resolved,automatic};
  }finally{h.close();}
 }
 
@@ -236,26 +324,26 @@ test('price conflicts preserve entered values and reload is explicit; invalid pr
  h.button('입력 취소·저장 가격 다시 조회').props.onClick();await settle();assert.equal(h.input('빨강 판매가').props.value,'200');
 });
 
-test('restoring an option price sends null and uses the common override before automatic calculation',async()=>{
- const initial=view();initial.overrides.common.salePrice='220';initial.resolved.rows[0].fields.salePrice.value='250';initial.overrides.options.red={salePrice:'250'};
- const h=harness(async()=>Response.json(initial));await settle();
+test('restoring an option price sends null and verifies the common override before automatic calculation',async()=>{
+ const f=fixture(),initial=f.current;initial.overrides.common.salePrice='220';initial.resolved.rows[0].fields.salePrice={value:'250',source:'manual-option'};initial.overrides.options.red={salePrice:'250'};
+ const h=harness((url,init)=>f.reply(url,init));await settle();
  nodes(h.render()).filter(n=>n.type==='button'&&n.props.children==='복원')[1].props.onClick();assert.equal(h.input('빨강 판매가').props.value,'220');
- h.button('옵션 가격 저장').props.onClick();await settle();assert.equal(JSON.parse(h.calls.at(-1).init.body).changes[0].value,null);
+ h.button('옵션 가격 저장').props.onClick();await settle();assert.equal(JSON.parse(h.calls.at(-1).init.body).changes[0].value,null);assert.equal(h.saved,1);assert.equal(h.input('빨강 판매가').props.value,'220');h.close();
 });
 
 test('version changes retain edits and unmount aborts an in-flight write',async()=>{
  let finish;const pending=new Promise(resolve=>finish=resolve);
  const h=harness(async(url,init)=>init.method==='PUT'?pending:Response.json(view()));await settle();
- h.input('빨강 판매가').props.onChange({target:{value:'270'}});h.setVersion('new');assert.equal(h.input('빨강 판매가').props.value,'270');assert.equal(h.calls.length,1);
- h.button('옵션 가격 저장').props.onClick();h.close();assert.equal(h.calls.at(-1).init.signal.aborted,true);finish(Response.json(view()));await settle();assert.equal(h.saved,0);
+ h.input('빨강 판매가').props.onChange({target:{value:'270'}});h.button('옵션 가격 저장').props.onClick();const write=h.calls.at(-1);
+ h.setVersion(advance(version),false);assert.equal(write.init.signal.aborted,true);assert.equal(h.input('빨강 판매가').props.value,'270');h.close();finish(Response.json(view()));await settle();assert.equal(h.saved,0);assert.equal(h.lateWrites,0);
 });
 
-test('quotation saves refresh clean stage-two prices without changing product version and retain unsaved edits',async()=>{
+test('quotation source saves refresh clean stage-two prices while retaining unsaved edits on later clocks',async()=>{
  const latest=view();const h=harness(async()=>Response.json(latest));await settle();
- latest.resolved.rows[0].fields.salePrice.value='260';h.refresh('1');await settle();
+ latest.revision++;latest.productVersion=advance(latest.productVersion);latest.updatedAt=latest.productVersion;latest.inputFingerprint='b'.repeat(64);latest.overrides.options.red={salePrice:'260'};latest.resolved.rows[0].fields.salePrice={value:'260',source:'manual-option'};h.setVersion(latest.productVersion);h.refresh('1');await settle();
  assert.equal(h.input('빨강 판매가').props.value,'260');assert.equal(h.calls.length,2);
  h.input('빨강 판매가').props.onChange({target:{value:'280'}});
- latest.resolved.rows[0].fields.salePrice.value='290';h.refresh('2');await settle();
+ latest.revision++;latest.productVersion=advance(latest.productVersion);latest.updatedAt=latest.productVersion;latest.inputFingerprint='c'.repeat(64);latest.overrides.options.red.salePrice='290';latest.resolved.rows[0].fields.salePrice.value='290';h.setVersion(latest.productVersion);h.refresh('2');await settle();
  assert.equal(h.input('빨강 판매가').props.value,'280');assert.equal(h.calls.length,2);
 });
 
@@ -272,7 +360,7 @@ test('changing category or product clears old prices even when the new lookup fa
 
 test('switching category aborts an old save and ignores its late response',async()=>{
  let finish;const pending=new Promise(resolve=>finish=resolve);
- const h=harness(async(url,init)=>init.method==='PUT'?pending:Response.json(view()));await settle();
+ const h=harness(async(url,init)=>{if(init.method==='PUT')return pending;const body=view();if(url.includes('profileId=other'))body.categoryContext.profileId='other';return Response.json(body);});await settle();
  h.input('빨강 판매가').props.onChange({target:{value:'270'}});h.button('옵션 가격 저장').props.onClick();
  const write=h.calls.at(-1);h.select('p','other');await settle();assert.equal(write.init.signal.aborted,true);
  const stale=view();stale.resolved.rows[0].fields.salePrice.value='270';finish(Response.json(stale));await settle();

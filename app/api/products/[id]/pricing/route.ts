@@ -4,19 +4,23 @@ import { findProduct, applyProductPrice } from '@/db/queries';
 import { pricePolicy, calculatePrice } from '@/app/pricing';
 import { readProductOptions } from '@/db/product-options';
 import { calculateOptionPrices } from '@/app/product-options';
+import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return NextResponse.json({ error: '운영 인증 연결 후 가격 변경을 사용할 수 있습니다.' }, { status: 503 });
   let policy; let expectedVersion: string;
   try {
-    const input: unknown = await request.json();
+    if (request.headers.get('origin') && request.headers.get('origin') !== new URL(request.url).origin) throw new Error('같은 사이트에서 가격을 저장해주세요.');
+    const input: unknown = await readBoundedJson(request, 8 * 1024);
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('가격 설정 객체가 필요합니다.');
     const body = input as Record<string, unknown>;
+    if (Object.keys(body).some(key => !['policy', 'expectedVersion'].includes(key))) throw new Error('가격 정책과 현재 상품 저장 버전을 확인해주세요.');
     policy = pricePolicy(body.policy);
     if (typeof body.expectedVersion !== 'string' || !Number.isFinite(Date.parse(body.expectedVersion))) throw new Error('상품을 다시 불러와주세요.');
     expectedVersion = body.expectedVersion;
-  } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : '입력을 확인해주세요.' }, { status: 400 }); }
-  const owner = await getWorkspaceOwnerId();
+  } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : '입력을 확인해주세요.' }, { status: error instanceof RequestBodyError ? error.status : 400 }); }
+  let owner: string;
+  try { owner = await getWorkspaceOwnerId(); } catch { return NextResponse.json({ error: '운영 인증 연결 후 가격 변경을 사용할 수 있습니다.' }, { status: 503 }); }
   const { id } = await context.params;
   try {
     const product = await findProduct(owner, id);

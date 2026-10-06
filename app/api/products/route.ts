@@ -48,7 +48,7 @@ export async function POST(request: Request) {
   let policy:PricePolicy,calculation:ReturnType<typeof calculatePrice>;
   try {
     const input:Record<string,unknown>={...settings};
-    for(const key of ['exchangeRate','supplyMargin','coupangMargin','minimumMargin','msrpMultiple','roundingUnit','roundingMode'] as const){
+    for(const key of ['exchangeRate','supplyMargin','coupangMargin','minimumMargin','msrpMultiple','roundingUnit','roundingMode','useIntegratedRate','integratedRate'] as const){
       if(Object.hasOwn(body,key))input[key]=body[key];
     }
     const enabled=Object.hasOwn(body,'minimumMarginEnabled')?body.minimumMarginEnabled:settings.minimumMarginEnabled;

@@ -29,7 +29,11 @@ export function configuredBundlePolicy(input: unknown): BundlePolicy | null {
  * Captured public code: step556 processOptions/updateOptionPricing uses 100;
  * pricing editing and the step546 worker pass their configured roundUnit.
  * The loop actually chooses 1, 3, ... 21, despite the page's even-number hint.
- * Minimum supply guarantee and MSRP do not participate in this selector. */
+ * Minimum supply guarantee and MSRP do not participate in this selector.
+ * The recorded selector also uses exchangeRate when integrated pricing is on:
+ * updateOptionPricing chooses quantity here, then calls purchaseCost for the
+ * entire selected pack with the integrated policy (step556 offsets 466037,
+ * 467519; step546 offset 163547). Do not add per-pack fees to this selector. */
 export function suggestBundleQuantity(unitCostCny: number, pricing: PricePolicy, input: BundlePolicy, roundingUnit = pricing.roundingUnit): number {
   const policy = pricePolicy(pricing), bundle = bundlePolicy(input);
   if (!Number.isFinite(unitCostCny) || unitCostCny <= 0 || ![1, 10, 100, 1000].includes(roundingUnit)) throw new Error('번들 원가와 가격 처리 단위를 확인해주세요.');

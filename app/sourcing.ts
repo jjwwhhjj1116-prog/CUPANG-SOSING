@@ -26,7 +26,7 @@ export function preservedCollectionRequests(jobs: readonly CollectionJob[], requ
     if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
     return JSON.stringify(value) ?? 'undefined';
   };
-  const settingsForComparison = (value: unknown, inactiveBundle: boolean): unknown => {
+  const settingsForComparison = (value: unknown, inactiveBundle: boolean, inactiveIntegrated: boolean): unknown => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
     const compared = { ...value } as Record<string, unknown>;
     // Old captures predate the three bundle criteria. Compare missing fields as
@@ -36,6 +36,8 @@ export function preservedCollectionRequests(jobs: readonly CollectionJob[], requ
       if (inactiveBundle) delete compared[key];
       else if (!Object.hasOwn(compared, key)) compared[key] = null;
     }
+    if (inactiveIntegrated) { delete compared.useIntegratedRate; delete compared.integratedRate; }
+    else { if (!Object.hasOwn(compared, 'useIntegratedRate')) compared.useIntegratedRate = false; if (!Object.hasOwn(compared, 'integratedRate')) compared.integratedRate = null; }
     return compared;
   };
   return jobs.flatMap(job => {
@@ -47,7 +49,8 @@ export function preservedCollectionRequests(jobs: readonly CollectionJob[], requ
     else {
       if (canonical(job.context.category) !== canonical(context.category)) differences.push('카테고리·견적서 설정');
       const inactiveBundle = job.context.settings?.bundleEnabled === false && context.settings?.bundleEnabled === false;
-      if (canonical(settingsForComparison(job.context.settings, inactiveBundle)) !== canonical(settingsForComparison(context.settings, inactiveBundle))) differences.push('기본설정');
+      const inactiveIntegrated = [job.context.settings?.useIntegratedRate, context.settings?.useIntegratedRate].every(value => value === undefined || value === false);
+      if (canonical(settingsForComparison(job.context.settings, inactiveBundle, inactiveIntegrated)) !== canonical(settingsForComparison(context.settings, inactiveBundle, inactiveIntegrated))) differences.push('기본설정');
       if (job.context.features !== context.features) differences.push('상품 특징');
       if (job.context.keywords !== context.keywords) differences.push('타겟 키워드');
     }
