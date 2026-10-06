@@ -2,7 +2,7 @@ import { labelDocumentRows, withCurrentLabelFields, type ProductContent } from '
 import type { ProductOptions } from '@/app/product-options';
 
 export type DocumentImageSection = 'label' | 'size';
-export type DocumentImagePlan = { title: string; subtitle: string; width: number; columnWidths: number[]; headers: string[]; rows: string[][]; footer: string };
+export type DocumentImagePlan = { title: string; subtitle: string; width: number; columnWidths: number[]; headers: string[]; rows: string[][]; footer: string; format?: 'product-label' };
 export const MAX_DOCUMENT_HEIGHT = 12000;
 export const MAX_SIZE_ROWS = 60;
 export function documentImagePlan(section: DocumentImageSection, content: ProductContent, options: ProductOptions): DocumentImagePlan {

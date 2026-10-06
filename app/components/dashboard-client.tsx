@@ -16,6 +16,7 @@ import { ProductContentEditor } from '@/app/components/product-content-editor';
 import { OptionSeoEditor } from '@/app/components/option-seo-editor';
 import { OptionImageEditor } from '@/app/components/option-image-editor';
 import { OptionLabelEditor } from '@/app/components/option-label-editor';
+import { ProductLabelEditor } from '@/app/components/product-label-editor';
 import { AutomationPanel } from '@/app/components/automation-panel';
 import { ProductOptionsEditor } from '@/app/components/product-options-editor';
 import { QuotationPanel } from '@/app/components/quotation-panel';
@@ -506,8 +507,8 @@ function DetailPanel({ onBeforeFreeImageApply, onPrepareSubmission, onReviewPack
   const isImageStep=imageSteps.includes(tab);
   const contentSection = isImageStep ? '이미지' : tab==='표시사항' ? '표시사항' : 'SEO';
   const focusedAssetRole=tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='상세 이미지'?'detail':undefined;
-  const scopedContent=!!focusedOptionId&&['SEO','추가 이미지','상세 이미지'].includes(tab);
-  const commonContentLabel=tab==='추가 이미지'?'추가 이미지':tab==='상세 이미지'?'상세 이미지':tab==='표시사항'?'표시사항':'SEO·설명';
+  const scopedContent=tab==='표시사항'||!!focusedOptionId&&['SEO','추가 이미지','상세 이미지'].includes(tab);
+  const commonContentLabel=tab==='추가 이미지'?'추가 이미지':tab==='상세 이미지'?'상세 이미지':tab==='표시사항'?'추가 표시사항·이전 자료':'SEO·설명';
   let imageKeys:string[]=[];try{const keys:unknown=JSON.parse(product.image_keys);if(Array.isArray(keys))imageKeys=keys.filter((key):key is string=>typeof key==='string');}catch{/* The file and content APIs report invalid stored references. */}
   const contentEditor=<ProductContentEditor product={product} section={contentSection} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy} onTranslateImage={(sourceKey,sourceLanguage,role)=>{
     if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||(role!==undefined&&!validFreeImageRole(role)))return;
@@ -519,10 +520,11 @@ function DetailPanel({ onBeforeFreeImageApply, onPrepareSubmission, onReviewPack
       <div hidden={tab!=='SEO'||!focusedOptionId}>{focusedOptionId&&<OptionSeoEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</div>
       <div hidden={!focusedOptionId||tab!=='추가 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:additional`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="additional" disabled={imageProcessingBusy} onSaved={sourceSaved}/>}</div>
       <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="detail" disabled={imageProcessingBusy} onSaved={sourceSaved}/>}</div>
+      <div hidden={tab!=='표시사항'}><ProductLabelEditor key={`${product.id}:${focusedOptionId??'common'}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId??null} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/></div>
       <details open={scopedContent?undefined:true}><summary hidden={!scopedContent}>상품 공통 {commonContentLabel} 편집</summary><p hidden={!scopedContent} className="panel-note">아래 수정값은 상품의 공통 자료에 저장됩니다. 옵션별로 직접 저장한 값은 해당 옵션의 값을 유지합니다.</p>{contentEditor}</details>
     </div>
     <div hidden={!isImageStep} className="panel-stack"><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{})}:undefined}/><details><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
-    <div hidden={tab!=='표시사항'}><button type="button" className="btn ghost" aria-expanded={labelTranslationOpen} aria-controls={`label-translation-${product.id}`} onClick={()=>setLabelTranslationOpen(open=>!open)}>한글 표시사항 번역</button><details open><summary hidden={!focusedOptionId}>상품 공통 표시사항 PNG 작성</summary><p hidden={!focusedOptionId} className="panel-note">제품 라벨은 저장한 상품 공통 표시사항으로 만듭니다. 선택 옵션의 카테고리별 상품고시는 7단계 견적서에서 별도로 수정할 수 있습니다.</p><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></details></div>
+    <div hidden={tab!=='표시사항'}><button type="button" className="btn ghost" aria-expanded={labelTranslationOpen} aria-controls={`label-translation-${product.id}`} onClick={()=>setLabelTranslationOpen(open=>!open)}>한글 표시사항 번역</button><details><summary>이전 공통 표시사항 PNG·추가 항목 조판</summary><p className="panel-note">이전 공통 자료와 직접 추가한 항목을 조판합니다. 9항목 제품 라벨은 위 편집 영역에서 만들고, 카테고리별 상품고시는 7단계 견적서에서 확인하세요.</p><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></details></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div id={`label-translation-${product.id}`} hidden={tab!=='번역'&&!(tab==='표시사항'&&labelTranslationOpen)}>
       {tab==='표시사항'&&labelTranslationOpen&&<p className="panel-note">수집 상품 속성의 원문과 완료된 번역 결과를 확인한 뒤, 아래 ‘번역한 상품 속성을 한글 표시사항에 연결’에서 항목을 선택해 공통 표시사항에 저장하세요. 카테고리별 상품고시는 7단계 견적서에서 별도로 확인하세요.</p>}

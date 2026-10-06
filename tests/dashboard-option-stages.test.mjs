@@ -146,13 +146,13 @@ test('selected image scope follows product, option, effective profile and the sa
   } finally { h.close(); }
 });
 
-test('common content keeps its draft across scoped image collapses and the open common step 6 editor', () => {
+test('common content keeps its draft across scoped image collapses and advanced step 6 source tools', () => {
   const h = harness(); try {
     const common = h.record('product-content-editor'); h.edit('product-content-editor', 'shared content draft');
-    for (const [tab, section, role, label] of [['추가 이미지', '이미지', 'additional', '추가 이미지'], ['상세 이미지', '이미지', 'detail', '상세 이미지'], ['표시사항', '표시사항', undefined, '표시사항'], ['SEO', 'SEO', undefined, 'SEO·설명']]) {
+    for (const [tab, section, role, label] of [['추가 이미지', '이미지', 'additional', '추가 이미지'], ['상세 이미지', '이미지', 'detail', '상세 이미지'], ['표시사항', '표시사항', undefined, '추가 표시사항·이전 자료'], ['SEO', 'SEO', undefined, 'SEO·설명']]) {
       h.render({ tab }); const current = h.record('product-content-editor'), collapse = current.ancestors.findLast(element => element.type === 'details');
       assert.equal(current.instance, common.instance); assert.equal(current.draft, 'shared content draft'); assert.equal(current.props.product.id, 'product-a');
-      const scoped = tab !== '표시사항';
+      const scoped = true;
       assert.equal(current.props.section, section); assert.equal(current.props.focusedAssetRole, role); assert.equal(collapse.props.open, scoped ? undefined : true);
       assert.ok(nodes(collapse).some(node => node.type === 'summary' && node.props.hidden === !scoped && text(node) === '상품 공통 ' + label + ' 편집'));
     }
@@ -168,7 +168,7 @@ test('step 6 keeps common label tools separate from the selected Supplier Hub no
     const commonLabel = h.record('document-image-panel', received => received.section === 'label'), notices = h.record('option-label-editor');
     h.edit('document-image-panel', 'common PNG draft', received => received.section === 'label'); h.edit('option-label-editor', 'selected notice draft');
     assert.equal(h.visible(commonLabel), true); assert.equal(h.visible(notices), false); assert.equal(notices.props.productId, 'product-a'); assert.equal(notices.props.optionId, 'red'); assert.equal(notices.props.profileId, 'profile-a');
-    const labelCollapse = commonLabel.ancestors.findLast(element => element.type === 'details'); assert.equal(labelCollapse.props.open, true); assert.ok(nodes(labelCollapse).some(node => node.type === 'summary' && text(node) === '상품 공통 표시사항 PNG 작성'));
+    const labelCollapse = commonLabel.ancestors.findLast(element => element.type === 'details'); assert.equal(labelCollapse.props.open, undefined); assert.ok(nodes(labelCollapse).some(node => node.type === 'summary' && text(node) === '이전 공통 표시사항 PNG·추가 항목 조판'));
     for (const tab of ['상세 이미지', '가격', 'SEO', '견적서', '표시사항']) {
       h.render({ tab }); const label = h.record('document-image-panel', received => received.section === 'label'), notice = h.record('option-label-editor');
       assert.equal(label.instance, commonLabel.instance); assert.equal(label.draft, 'common PNG draft'); assert.equal(h.visible(label), tab === '표시사항');
