@@ -378,9 +378,14 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
     // A live field keeps its category/wire identity. Shared source meanings are
     // restricted to complete, observed labels and their section/group.
-    const noticeBinding=definition.hubWire&&definition.section==='legal'&&definition.visibility==='common'
+    const noticeBinding=definition.hubWire&&isQuotationLegalNotice(definition)
       ? notice80719.find(([,label])=>label===definition.label)?.[0]:undefined;
-    const id = definition.hubInput??quotationNoticeInput(definition)??noticeBinding??definition.id;
+    // Some earlier captures reuse a recorded notice ID for a same-labelled
+    // control in another legal array. Keep that ID for saved overrides, but
+    // automatic sources require the exact notice wire or an explicit Hub input.
+    const id = definition.hubInput ?? (definition.hubWire && definition.section === 'legal'
+      && definition.visibility === 'common' && !isQuotationLegalNotice(definition)
+      ? '' : quotationNoticeInput(definition) ?? noticeBinding ?? definition.id);
     const settingValue=(stored:string):Automatic=>{
       if(!definition.couplusSetting)return literal(stored,'settings');
       const value=couplusSettingDraftValue(definition.couplusSetting,stored);

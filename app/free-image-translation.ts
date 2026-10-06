@@ -1,6 +1,7 @@
 export const FREE_IMAGE_ROLES=['main','additional','detailTop','detail','detailBottom'] as const;
 export type FreeImageRole=typeof FREE_IMAGE_ROLES[number];
-export type FreeImageSource={productId:string;productVersion:string;contentRevision:number;sourceKey:string;sourceSha256:string;role:FreeImageRole;width:number;height:number};
+export type FreeImageSource={productId:string;productVersion:string;contentRevision:number;sourceKey:string;sourceSha256:string;role:FreeImageRole;width:number;height:number;
+ optionImages?:{revision:number;optionIds:string[];commonAssigned?:false}};
 export type ImageTextRegion={id:string;text:string};
 export type ImageTextTranslation={id:string;original:string;translated:string|null;issue:string|null};
 export const MAX_OCR_PIXELS=12000000;
@@ -10,7 +11,7 @@ export function validFreeImageRole(value:unknown):value is FreeImageRole{return 
 export function validateFreeImageSource(value:unknown):FreeImageSource{
  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('이미지 원본 정보를 확인해주세요.');
  const source=value as Record<string,unknown>;
- if(Object.keys(source).some(key=>!['productId','productVersion','contentRevision','sourceKey','sourceSha256','role','width','height'].includes(key))
+ if(Object.keys(source).some(key=>!['productId','productVersion','contentRevision','sourceKey','sourceSha256','role','width','height','optionImages'].includes(key))
   ||typeof source.productId!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(source.productId)
   ||typeof source.productVersion!=='string'||!Number.isFinite(Date.parse(source.productVersion))
   ||!Number.isSafeInteger(source.contentRevision)||(source.contentRevision as number)<0
@@ -18,7 +19,31 @@ export function validateFreeImageSource(value:unknown):FreeImageSource{
   ||typeof source.sourceSha256!=='string'||!/^[a-f0-9]{64}$/.test(source.sourceSha256)||!validFreeImageRole(source.role)
   ||![source.width,source.height].every(n=>Number.isSafeInteger(n)&&(n as number)>0&&(n as number)<=16000)
   ||(source.width as number)*(source.height as number)>MAX_OCR_PIXELS)throw Error('이미지 원본·역할·저장 버전을 확인해주세요.');
+ if(source.optionImages!==undefined){
+  const options=source.optionImages as Record<string,unknown>;
+  if(source.role!=='main'||!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>!['revision','optionIds','commonAssigned'].includes(key))
+   ||!Number.isSafeInteger(options.revision)||(options.revision as number)<0||!Array.isArray(options.optionIds)||options.optionIds.length>200
+   ||options.optionIds.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(id))||new Set(options.optionIds).size!==options.optionIds.length
+   ||JSON.stringify(options.optionIds)!==JSON.stringify([...options.optionIds].sort())
+   ||options.commonAssigned!==undefined&&(options.commonAssigned!==false||options.optionIds.length===0))throw Error('대표 이미지의 옵션 연결과 저장 버전을 확인해주세요.');
+ }
  return source as FreeImageSource;
+}
+export function freeImageSourceIdentity(source:FreeImageSource){
+ return JSON.stringify({productId:source.productId,productVersion:source.productVersion,contentRevision:source.contentRevision,
+  sourceKey:source.sourceKey,sourceSha256:source.sourceSha256,role:source.role,width:source.width,height:source.height,
+  ...(source.optionImages?{optionImages:{revision:source.optionImages.revision,optionIds:source.optionImages.optionIds,
+   ...(source.optionImages.commonAssigned===false?{commonAssigned:false}:{})}}:{})});
+}
+export function validateFreeImageOptionIds(source:FreeImageSource,value:unknown):string[]{
+ if(!Array.isArray(value)||value.length>200||value.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(id))||new Set(value).size!==value.length
+  ||value.some(id=>source.role!=='main'||!source.optionImages?.optionIds.includes(id)))throw Error('이 원본을 대표 이미지로 사용하는 옵션만 선택해주세요.');
+ return [...value].sort() as string[];
+}
+export function freeImageApplyIdentity(source:FreeImageSource,optionImageIds:readonly string[]=[]){
+ const ids=validateFreeImageOptionIds(source,[...optionImageIds]);
+ if(source.optionImages?.commonAssigned===false&&!ids.length)throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
+ return ids.length?JSON.stringify({source:freeImageSourceIdentity(source),optionImageIds:ids}):freeImageSourceIdentity(source);
 }
 export function validateImageTextRegions(value:unknown):ImageTextRegion[]{
  if(!Array.isArray(value)||!value.length||value.length>MAX_OCR_REGIONS)throw Error('번역할 문구는 1~100개 영역으로 선택해주세요.');

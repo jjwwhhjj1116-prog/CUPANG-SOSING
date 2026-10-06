@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { quotationPriceIssues, quotationValueIssues, type QuotationFieldsView, type QuotationChange } from '@/app/quotation-schema';
+import { quotationPriceTargets, type QuotationPriceInput, type QuotationPriceTargets } from '@/app/quotation-price-targets';
 
 const prices = [['supplyPrice','공급가'],['salePrice','판매가'],['msrp','권장소비자가']] as const;
 function verifyDraftRefresh(base:QuotationFieldsView,latest:QuotationFieldsView,edits:QuotationChange[]) {
@@ -49,6 +50,8 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   return()=>{active=false;request.current?.abort();request.current=null;};
  },[endpoint,version,refreshToken]);
  const rows=view?.resolved.rows.filter(row=>row.included)??[];
+ let targets:QuotationPriceTargets|undefined;let targetError='';
+ if(view){try{targets=quotationPriceTargets(view.resolved.schema.fields);}catch(error){targetError=error instanceof Error?error.message:'가격 연결을 확인해주세요.';}}
  function value(optionId:string|null,fieldKey:string){
   const edit=edits.find(change=>change.optionId===optionId&&change.fieldKey===fieldKey);
   if(edit?.value===null){const common=optionId===null?undefined:view?.overrides.common[fieldKey];return common??view?.automatic.rows.find(row=>row.optionId===optionId)?.fields[fieldKey]?.value??'';}
@@ -67,17 +70,20 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   return reviewed!==null?[]:(automatic?.validationIssues??automatic?.issues??[])
    .filter(issue=>issue!=='판매가는 공급가보다 작을 수 없습니다.');
  }
- function change(optionId:string|null,fieldKey:string,value:string|null){
-  if(request.current)return;
-  setEdits(previous=>[...previous.filter(item=>item.optionId!==optionId||item.fieldKey!==fieldKey),{optionId,fieldKey,value}]);setMessage('');
+ function change(optionId:string|null,input:QuotationPriceInput,value:string|null){
+  if(request.current||!targets)return;
+  const fields=targets[input].linked;
+  setEdits(previous=>[...previous.filter(item=>item.optionId!==optionId||!fields.includes(item.fieldKey)),...fields.map(fieldKey=>({optionId,fieldKey,value}))]);setMessage('');
  }
- const issues=view?rows.flatMap(row=>[
-  ...prices.flatMap(([key,label])=>{const field=view.resolved.schema.fields.find(field=>field.id===key);
-   return [...new Set([...sourceIssues(row.optionId,key),...(field?quotationValueIssues(field,value(row.optionId,key),view.imageKeys):[])])].map(issue=>`${row.optionLabel||'상품 공통'} · ${label}: ${issue}`);}),
-  ...quotationPriceIssues(view.resolved.schema,value(row.optionId,'supplyPrice'),value(row.optionId,'salePrice')).map(issue=>`${row.optionLabel||'상품 공통'} · 판매가: ${issue}`),
+ const issues=view&&targets?rows.flatMap(row=>[
+  ...prices.flatMap(([key,label])=>targets![key].linked.flatMap(fieldKey=>{const field=view.resolved.schema.fields.find(field=>field.id===fieldKey);
+   return [...new Set([...sourceIssues(row.optionId,fieldKey),...(field?quotationValueIssues(field,value(row.optionId,fieldKey),view.imageKeys):[])])].map(issue=>`${row.optionLabel||'상품 공통'} · ${label}: ${issue}`);})),
+  ...quotationPriceIssues(view.resolved.schema,value(row.optionId,targets!.supplyPrice.primary),value(row.optionId,targets!.salePrice.primary)).map(issue=>`${row.optionLabel||'상품 공통'} · 판매가: ${issue}`),
  ]):[];
+ const differences=targets?rows.flatMap(row=>prices.flatMap(([key,label])=>targets![key].linked.some(fieldKey=>value(row.optionId,fieldKey)!==value(row.optionId,targets![key].primary))
+  ?[`${row.optionLabel||'상품 공통'} · ${label}: 이전 공통·직접 수정값과 Supplier Hub 가격이 다릅니다. 기존 값은 유지했습니다. 아래에서 가격을 직접 입력하면 두 항목에 함께 반영됩니다.`]:[])):[];
  async function save(){
-  if(!view||!edits.length||issues.length||request.current)return;
+  if(!view||!targets||!edits.length||issues.length||request.current)return;
   const controller=new AbortController();request.current=controller;setBusy(true);setError('');
   try{const response=await fetch(endpoint,{method:'PUT',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:edits})});const body=await response.json() as QuotationFieldsView & {error?:string};
    if(controller.signal.aborted)return;
@@ -89,13 +95,15 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
  return <section aria-label="옵션별 견적 가격 편집" data-workspace-dirty={edits.length>0} data-workspace-saving={busy}>
   <h4>옵션별 가격</h4>
   {view&&<p>{view.categoryContext.categoryPath.join(' > ')} · {view.categoryContext.categoryId||'카테고리 미지정'}</p>}
-  <p>7단계 견적서와 같은 가격입니다. 직접 입력한 값은 자동 계산보다 우선하며, 복원하면 공통 수정값 또는 자동 계산을 사용합니다.</p>
+  <p>7단계 견적서의 Supplier Hub 가격입니다. 직접 입력하면 연결된 가격 항목에 함께 반영됩니다. 복원하면 각 항목의 공통 수정값 또는 자동 계산을 사용합니다. 공식 판매처 가격은 별도 항목으로 유지됩니다.</p>
   {busy&&<p role="status">가격 처리 중…</p>}{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
   {!!edits.length&&view&&loadedSource!==sourceKey&&<p role="status">상품 정보가 변경됐습니다. 입력을 유지한 채 최신 가격을 조회한 뒤 저장해주세요.</p>}
-  {!!rows.length&&<div className="table-wrap"><table><thead><tr><th>옵션</th>{prices.map(([key,label])=><th key={key}>{label} (원)</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.optionId??'common'}><th scope="row">{row.optionLabel||'상품 공통'}</th>{prices.map(([key,label])=><td key={key}><input aria-label={`${row.optionLabel||'상품 공통'} ${label}`} type="number" min={1} step={1} value={value(row.optionId,key)} disabled={busy} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>change(row.optionId,key,event.target.value)}/><button type="button" className="btn ghost" disabled={busy} onClick={()=>change(row.optionId,key,null)}>복원</button></td>)}</tr>)}</tbody></table></div>}
+  {targetError&&<p role="alert">{targetError}</p>}
+  {!!differences.length&&<p role="status">{differences.join(' ')}</p>}
+  {!!rows.length&&<div className="table-wrap"><table><thead><tr><th>옵션</th>{prices.map(([key,label])=><th key={key}>{label} (원)</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.optionId??'common'}><th scope="row">{row.optionLabel||'상품 공통'}</th>{prices.map(([key,label])=><td key={key}><input aria-label={`${row.optionLabel||'상품 공통'} ${label}`} type="number" min={1} step={1} value={value(row.optionId,targets?.[key].primary??key)} disabled={busy||!targets} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>change(row.optionId,key,event.target.value)}/><button type="button" className="btn ghost" disabled={busy||!targets} onClick={()=>change(row.optionId,key,null)}>복원</button></td>)}</tr>)}</tbody></table></div>}
   {view&&!rows.length&&<p>견적서에 포함한 옵션이 없습니다.</p>}
   {!!issues.length&&<p role="alert">{[...new Set(issues)].join(' ')}</p>}
-  <button type="button" className="btn primary" disabled={busy||!edits.length||!!issues.length} onClick={()=>void save()}>옵션 가격 저장</button>
+  <button type="button" className="btn primary" disabled={busy||!targets||!edits.length||!!issues.length} onClick={()=>void save()}>옵션 가격 저장</button>
   {!!edits.length&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>void load(true)}>입력 유지·최신 가격 조회</button>}
   <button type="button" className="btn ghost" disabled={busy} onClick={()=>void load()}>{edits.length?'입력 취소·저장 가격 다시 조회':'저장 가격 다시 조회'}</button>
  </section>;

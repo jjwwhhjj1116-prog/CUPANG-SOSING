@@ -216,7 +216,7 @@ test('replay cannot resurrect a removed role, changed original or forged output 
       const source = await h.source(), applied = await h.request('POST', h.applyBody(source)); await assertStatus(applied, 200); const saved = await applied.json();
       if (mode === 'removed-role') await h.changeContent({ assets: { detail: [] } });
       if (mode === 'changed-original') h.objects.get(h.key).bytes = png(3, 2, 33);
-      if (mode === 'metadata') h.objects.get(saved.key).customMetadata.freeImageSource = '{}';
+      if (mode === 'metadata') h.objects.get(saved.key).customMetadata.freeImageSourceSha256 = '0'.repeat(64);
       if (mode === 'output-bytes') h.objects.get(saved.key).bytes = png(3, 2, 34);
       const before = await h.content(); await assertStatus(await h.request('POST', h.applyBody(source)), 409); assert.deepEqual(await h.content(), before); assert.equal(h.writes.length, 1);
     } finally { h.close(); }

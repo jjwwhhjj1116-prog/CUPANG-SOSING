@@ -164,3 +164,126 @@ test('uncertain apply keeps exact PNG/proof for explicit retry, binds the determ
   await assert.rejects(h.client.applyFreeImageTranslation(rendered, new AbortController().signal, async () => Response.json({ error: 'source changed' }, { status: 409 })), error => error.uncertain === false);
   assert.equal(await h.client.expectedFreeImageOutputKey({ ...rendered, source: { height: 12, width: 20, role: 'detail', sourceSha256: source.sourceSha256, sourceKey: source.sourceKey, contentRevision: 2, productVersion: version, productId: 'product' } }), expected, 'source JSON key order never changes artifact identity');
 });
+
+test('main-image source and translation echoes bind the exact sorted option scope and revision', async () => {
+  const h = fixture(), bytes = new TextEncoder().encode('authenticated original bytes');
+  const original = { ...source, role: 'main', sourceSha256: await hash(bytes), optionImages: { revision: 7, optionIds: ['sku-a', 'sku-b'] } };
+  const loaded = await h.client.readFreeImageSource('product', version, source.sourceKey, 'main', new AbortController().signal,
+    async url => url.startsWith('/api/products/') ? Response.json({ source: original }) : new Response(bytes));
+  assert.deepEqual(plain(loaded.source.optionImages), original.optionImages);
+  for (const change of [
+    { optionImages: { revision: -1, optionIds: ['sku-a'] } }, { optionImages: { revision: 7.5, optionIds: ['sku-a'] } },
+    { optionImages: { revision: 7, optionIds: ['sku-b', 'sku-a'] } }, { optionImages: { revision: 7, optionIds: ['sku-a', 'sku-a'] } },
+    { optionImages: { revision: 7, optionIds: ['bad/id'] } }, { optionImages: { revision: 7, optionIds: ['sku-a'], foreign: true } },
+    { role: 'detail' },
+  ]) {
+    let reads = 0;
+    await assert.rejects(h.client.readFreeImageSource('product', version, source.sourceKey, 'main', new AbortController().signal,
+      async () => { reads++; return Response.json({ source: { ...original, ...change } }); }));
+    assert.equal(reads, 1, 'invalid option proof never starts the original-file read');
+  }
+  const requested = [{ id: 'r1', text: '中文' }], reply = { source: original,
+    regions: [{ id: 'r1', original: '中文', translated: '한국어', issue: null }], requests: 1, stoppedHttpStatus: null, warnings: [] };
+  assert.equal(h.client.readFreeImageTranslationReply(reply, original, requested).regions[0].translated, '한국어');
+  for (const optionImages of [undefined, { revision: 8, optionIds: ['sku-a', 'sku-b'] }, { revision: 7, optionIds: ['sku-a'] }]) {
+    assert.equal(h.client.sameFreeImageSource({ ...original, optionImages }, original), false);
+    assert.throws(() => h.client.readFreeImageTranslationReply({ ...reply, source: { ...original, optionImages } }, original, requested));
+  }
+});
+
+test('preview freezes the chosen main-image option subset and separates artifact keys despite identical PNG bytes', async () => {
+  const h = fixture(), loaded = image(h); loaded.source = { ...source, role: 'main', optionImages: { revision: 7, optionIds: ['sku-a', 'sku-b', 'sku-c'] } };
+  const selected = ['sku-b', 'sku-a'], row = region('r1', { x: 3, y: 2, width: 8, height: 6 });
+  const rendered = await h.client.renderFreeImageTranslation(loaded, [row], new AbortController().signal, selected);
+  selected.splice(0, selected.length, 'sku-c');
+  assert.deepEqual(plain(rendered.optionImageIds), ['sku-a', 'sku-b'], 'later checkbox edits cannot change the earlier PNG apply scope');
+  const all = [undefined, ['sku-a'], ['sku-b'], ['sku-a', 'sku-b']];
+  const keys = await Promise.all(all.map(optionImageIds => h.client.expectedFreeImageOutputKey({ ...rendered, optionImageIds })));
+  assert.equal(new Set(keys).size, all.length, 'common-only, each option and both options have distinct apply identities');
+  assert.equal(await h.client.expectedFreeImageOutputKey({ ...rendered, optionImageIds: ['sku-b', 'sku-a'] }), keys[3], 'selection order is not artifact identity');
+  const output = new Uint8Array(await rendered.output.arrayBuffer()), before = loaded.canvas.pixels;
+  for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) if (!(x >= 3 && x < 11 && y >= 2 && y < 8)) {
+    const offset = (y * 20 + x) * 4; assert.deepEqual(output.slice(offset, offset + 4), before.slice(offset, offset + 4));
+  }
+  const count = h.canvases.length;
+  for (const ids of [['foreign'], ['sku-a', 'sku-a'], ['sku/a']]) {
+    await assert.rejects(h.client.renderFreeImageTranslation(loaded, [row], new AbortController().signal, ids));
+  }
+  await assert.rejects(h.client.renderFreeImageTranslation({ ...loaded, source }, [row], new AbortController().signal, ['sku-a']));
+  assert.equal(h.canvases.length, count, 'an invalid option scope does not render or mutate a new image');
+});
+
+test('selected-option apply retains exact PNG/scope after a lost ACK and rejects expanded scope or unproven revisions', async () => {
+  const h = fixture(), original = { ...source, role: 'main', optionImages: { revision: 7, optionIds: ['sku-a', 'sku-b', 'sku-c'] } };
+  const rendered = { source: original, output: new Blob(['same selected PNG'], { type: 'image/png' }), width: 20, height: 12, optionImageIds: ['sku-b', 'sku-a'] };
+  const expected = await h.client.expectedFreeImageOutputKey(rendered), sent = []; let calls = 0;
+  const good = { source: original, key: expected, productVersion: '2026-10-06T00:00:01Z', contentRevision: 3,
+    optionImageIds: ['sku-a', 'sku-b'], optionRevision: 8, applied: true };
+  const request = async (url, init) => {
+    assert.equal(url, '/api/products/product/image-text'); assert.equal(init.method, 'POST');
+    sent.push({ source: init.body.get('source'), ids: init.body.get('optionImageIds'), file: new Uint8Array(await init.body.get('file').arrayBuffer()) });
+    if (++calls === 1) throw Error('saved ACK lost');
+    return Response.json({ ...good, contentRevision: 5, optionRevision: 10, replayed: true });
+  };
+  await assert.rejects(h.client.applyFreeImageTranslation(rendered, new AbortController().signal, request), error => error.uncertain === true);
+  assert.equal(calls, 1, 'uncertain save never automatically retries');
+  const result = await h.client.applyFreeImageTranslation(rendered, new AbortController().signal, request);
+  assert.equal(result.replayed, true); assert.equal(calls, 2);
+  assert.equal(sent[0].source, sent[1].source); assert.equal(sent[0].ids, sent[1].ids); assert.deepEqual(JSON.parse(sent[0].ids), ['sku-a', 'sku-b']);
+  assert.deepEqual(sent[0].file, sent[1].file); assert.deepEqual(JSON.parse(sent[0].source).optionImages, original.optionImages);
+  for (const change of [
+    { optionImageIds: undefined }, { optionImageIds: ['sku-a'] }, { optionImageIds: ['sku-b', 'sku-a'] },
+    { optionImageIds: ['sku-a', 'sku-c'] }, { optionImageIds: ['sku-a', 'sku-b', 'sku-c'] },
+    { optionRevision: undefined }, { optionRevision: 7 }, { optionRevision: 9 }, { replayed: true, optionRevision: 7 },
+    { source: { ...original, optionImages: { revision: 8, optionIds: ['sku-a', 'sku-b', 'sku-c'] } } },
+    { source: { ...original, optionImages: { revision: 7, optionIds: ['sku-a', 'sku-b'] } } },
+    { key: await h.client.expectedFreeImageOutputKey({ ...rendered, optionImageIds: ['sku-a'] }) },
+  ]) assert.throws(() => h.client.readFreeImageApplyReply({ ...good, ...change }, rendered, expected), error => error.uncertain === true);
+  const common = { ...rendered, optionImageIds: [] }, commonKey = await h.client.expectedFreeImageOutputKey(common);
+  let commonCalls = 0;
+  await h.client.applyFreeImageTranslation(common, new AbortController().signal, async (url, init) => {
+    commonCalls++; assert.equal(init.body.get('optionImageIds'), null, 'common-only apply omits option mutation scope');
+    return Response.json({ source: original, key: commonKey, productVersion: good.productVersion, contentRevision: 3, applied: true });
+  }); assert.equal(commonCalls, 1);
+  assert.throws(() => h.client.readFreeImageApplyReply({ source: original, key: commonKey, productVersion: good.productVersion,
+    contentRevision: 3, optionImageIds: ['sku-a'], optionRevision: 8, applied: true }, common, commonKey), error => error.uncertain === true,
+  'an unselected preview cannot accept an ACK claiming an additional option mutation');
+});
+
+test('individual-only representative translation requires selected options and exactly zero content revision change', async () => {
+  const h = fixture(), loaded = image(h); loaded.source = { ...source, sourceKey: 'owner/individual.png', role: 'main',
+    optionImages: { revision: 7, optionIds: ['sku-a', 'sku-b'], commonAssigned: false } };
+  const row = region('r1', { x: 3, y: 2, width: 8, height: 6 }), count = h.canvases.length;
+  await assert.rejects(h.client.renderFreeImageTranslation(loaded, [row], new AbortController().signal, []));
+  assert.equal(h.canvases.length, count, 'an individual-only source never renders a common-only apply');
+  const rendered = await h.client.renderFreeImageTranslation(loaded, [row], new AbortController().signal, ['sku-b']);
+  assert.deepEqual(plain(rendered.optionImageIds), ['sku-b']); assert.equal(rendered.source.optionImages.commonAssigned, false);
+  const key = await h.client.expectedFreeImageOutputKey(rendered), commonSource = { ...loaded.source,
+    optionImages: { revision: 7, optionIds: ['sku-a', 'sku-b'] } };
+  assert.equal(h.client.sameFreeImageSource(commonSource, loaded.source), false);
+  assert.notEqual(await h.client.expectedFreeImageOutputKey({ ...rendered, source: commonSource }), key,
+    'the same bytes/option subset cannot be mistaken for a source assigned to common main');
+  const good = { source: loaded.source, key, productVersion: '2026-10-06T00:00:01Z', contentRevision: source.contentRevision,
+    optionImageIds: ['sku-b'], optionRevision: 8, applied: true };
+  assert.equal(h.client.readFreeImageApplyReply(good, rendered, key).contentRevision, 2);
+  for (const change of [{ contentRevision: 3 }, { contentRevision: 1 }, { contentRevision: '2' }, { source: commonSource },
+    { optionImageIds: ['sku-a'] }, { optionRevision: 7 }, { optionRevision: 9 }, { replayed: true, contentRevision: 1 }]) {
+    assert.throws(() => h.client.readFreeImageApplyReply({ ...good, ...change }, rendered, key), error => error.uncertain === true);
+  }
+  assert.equal(h.client.readFreeImageApplyReply({ ...good, replayed: true, contentRevision: 5, optionRevision: 10 }, rendered, key).replayed, true,
+    'proven replay can acknowledge unrelated later content edits without inventing a new common-image apply');
+  let attempts = 0; const sent = [];
+  const request = async (url, init) => {
+    assert.equal(url, '/api/products/product/image-text');
+    sent.push({ source: init.body.get('source'), ids: init.body.get('optionImageIds'), output: new Uint8Array(await init.body.get('file').arrayBuffer()) });
+    if (++attempts === 1) throw Error('individual apply ACK lost');
+    return Response.json({ ...good, replayed: true });
+  };
+  await assert.rejects(h.client.applyFreeImageTranslation(rendered, new AbortController().signal, request), error => error.uncertain === true);
+  assert.equal(attempts, 1); await h.client.applyFreeImageTranslation(rendered, new AbortController().signal, request);
+  assert.equal(attempts, 2); assert.deepEqual(sent[0], sent[1]);
+  assert.equal(JSON.parse(sent[0].source).optionImages.commonAssigned, false); assert.deepEqual(JSON.parse(sent[0].ids), ['sku-b']);
+  const noOptions = { ...rendered, optionImageIds: [] }; let network = 0;
+  await assert.rejects(h.client.applyFreeImageTranslation(noOptions, new AbortController().signal, async () => { network++; return Response.json(good); }));
+  assert.equal(network, 0, 'a removed option-only preview scope is rejected before transmission');
+});

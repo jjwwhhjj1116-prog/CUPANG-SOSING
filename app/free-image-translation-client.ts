@@ -1,5 +1,6 @@
 import {
   MAX_OCR_PIXELS, MAX_OCR_REGIONS, MAX_OCR_TEXT, validateFreeImageSource, validateImageTextRegions,
+  freeImageApplyIdentity, freeImageSourceIdentity, validateFreeImageOptionIds,
   type FreeImageRole, type FreeImageSource, type ImageTextRegion, type ImageTextTranslation,
 } from '@/app/free-image-translation';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
@@ -12,15 +13,14 @@ export type FreeImageRegion = {
   background: string; foreground: string; fontSize: number;
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number };
-export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number };
+export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[] };
 type OcrWorker = Pick<Worker, 'recognize' | 'terminate'>;
 export type OcrWorkerFactory = (languages: string[], oem: 1, options: Partial<WorkerOptions>) => Promise<OcrWorker>;
 // A cancelled initialization can finish after its view closes. Queue the next
 // OCR behind that worker's termination instead of creating two local engines.
 let workerSlot: Promise<void> = Promise.resolve();
-const sourceFields: (keyof FreeImageSource)[] = ['productId', 'productVersion', 'contentRevision', 'sourceKey', 'sourceSha256', 'role', 'width', 'height'];
 export function sameFreeImageSource(actual: unknown, expected: FreeImageSource): boolean {
-  try { const source = validateFreeImageSource(actual); return sourceFields.every(key => source[key] === expected[key]); } catch { return false; }
+  try { return freeImageSourceIdentity(validateFreeImageSource(actual)) === freeImageSourceIdentity(validateFreeImageSource(expected)); } catch { return false; }
 }
 export function validateOcrBox(box: OcrBox, width: number, height: number): OcrBox {
   if (!box || ![box.x, box.y, box.width, box.height].every(Number.isSafeInteger) || box.x < 0 || box.y < 0
@@ -182,8 +182,10 @@ function wrappedLines(context: CanvasRenderingContext2D, value: string, maximumW
 }
 /** Only chosen rectangles are painted. This preserves every pixel outside
  * them; a flat fill is a reviewed text replacement, not AI reconstruction. */
-export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal): Promise<FreeImageRendered> {
+export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = []): Promise<FreeImageRendered> {
   dimensions(image.width, image.height); signal.throwIfAborted();
+  const selectedOptions = validateFreeImageOptionIds(image.source, [...optionImageIds]);
+  if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
   const chosen = regions.filter(row => row.selected);
   if (!chosen.length || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
   validateImageTextRegions(chosen.map(region => ({ id: region.id, text: region.translated })));
@@ -216,27 +218,32 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   const blob = await abortable(new Promise<Blob>((resolve, reject) => output.canvas.toBlob(value => value ? resolve(value) : reject(Error('번역 이미지 미리보기를 만들지 못했습니다.')), 'image/png')), signal);
   signal.throwIfAborted();
   if (!blob.size || blob.size > MAX_IMAGE_BYTES) throw Error('번역 이미지가 10MB를 초과합니다. 원본 크기를 줄여주세요.');
-  return { source: image.source, output: blob, width: image.width, height: image.height };
+  return { source: image.source, output: blob, width: image.width, height: image.height, ...(selectedOptions.length ? { optionImageIds: selectedOptions } : {}) };
 }
 
 export class FreeImageApplyError extends Error { constructor(message: string, public uncertain: boolean) { super(message); } }
-export type FreeImageApplyReply = { source: FreeImageSource; key: string; productVersion: string; contentRevision: number; applied: true; replayed?: boolean };
+export type FreeImageApplyReply = { source: FreeImageSource; key: string; productVersion: string; contentRevision: number; applied: true; replayed?: boolean; optionImageIds?: string[]; optionRevision?: number };
 export async function expectedFreeImageOutputKey(image: FreeImageRendered): Promise<string> {
   const source = validateFreeImageSource(image.source), owner = source.sourceKey.split('/')[0];
   if (!isOwnedImageKey(owner, source.sourceKey)) throw new FreeImageApplyError('원본 이미지 저장 범위를 확인해주세요.', false);
-  const identity = JSON.stringify({ productId: source.productId, productVersion: source.productVersion, contentRevision: source.contentRevision,
-    sourceKey: source.sourceKey, sourceSha256: source.sourceSha256, role: source.role, width: source.width, height: source.height });
+  const identity = freeImageApplyIdentity(source, image.optionImageIds ?? []);
   const digest = async (bytes: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource)), byte => byte.toString(16).padStart(2, '0')).join('');
   const [fingerprint, outputSha256] = await Promise.all([digest(new TextEncoder().encode(identity)), digest(await image.output.arrayBuffer())]);
   return `${owner}/free-image-${source.productId}-${fingerprint}-${outputSha256}.png`;
 }
 export function readFreeImageApplyReply(input: unknown, image: FreeImageRendered, expectedKey: string): FreeImageApplyReply {
   const body = input as FreeImageApplyReply, owner = image.source.sourceKey.split('/')[0];
-  if (!body || !sameFreeImageSource(body.source, image.source) || body.applied !== true || !isOwnedImageKey(owner, body.key)
+  const ids = validateFreeImageOptionIds(image.source, image.optionImageIds ?? []);
+  const contentDelta = image.source.optionImages?.commonAssigned === false ? 0 : 1;
+  if (!body || image.source.optionImages?.commonAssigned === false && !ids.length
+    || !sameFreeImageSource(body.source, image.source) || body.applied !== true || !isOwnedImageKey(owner, body.key)
     || body.key === image.source.sourceKey || body.key !== expectedKey || typeof body.productVersion !== 'string' || !Number.isFinite(Date.parse(body.productVersion))
     || Date.parse(body.productVersion) <= Date.parse(image.source.productVersion) || !Number.isSafeInteger(body.contentRevision)
-    || (body.replayed === true ? body.contentRevision < image.source.contentRevision + 1 : body.contentRevision !== image.source.contentRevision + 1)
-    || body.replayed !== undefined && typeof body.replayed !== 'boolean') {
+    || (body.replayed === true ? body.contentRevision < image.source.contentRevision + contentDelta : body.contentRevision !== image.source.contentRevision + contentDelta)
+    || body.replayed !== undefined && typeof body.replayed !== 'boolean'
+    || ids.length === 0 && body.optionImageIds !== undefined && (!Array.isArray(body.optionImageIds) || body.optionImageIds.length > 0)
+    || ids.length > 0 && (JSON.stringify(body.optionImageIds) !== JSON.stringify(ids) || !Number.isSafeInteger(body.optionRevision)
+      || (body.replayed === true ? body.optionRevision! < image.source.optionImages!.revision + 1 : body.optionRevision !== image.source.optionImages!.revision + 1))) {
     throw new FreeImageApplyError('저장 응답의 원본·결과 연결을 확인하지 못했습니다. 같은 미리보기의 저장 상태를 다시 확인해주세요.', true);
   }
   return body;
@@ -248,6 +255,8 @@ export async function applyFreeImageTranslation(image: FreeImageRendered, signal
   if (image.output.type !== 'image/png' || !image.output.size || image.output.size > MAX_IMAGE_BYTES) throw new FreeImageApplyError('저장할 PNG 미리보기를 확인해주세요.', false);
   const expectedKey = await expectedFreeImageOutputKey(image); signal.throwIfAborted();
   const form = new FormData(); form.set('action', 'apply'); form.set('source', JSON.stringify(image.source));
+  const ids = validateFreeImageOptionIds(image.source, image.optionImageIds ?? []);
+  if (ids.length) form.set('optionImageIds', JSON.stringify(ids));
   form.set('file', new File([image.output], 'translated-text.png', { type: 'image/png' }));
   let response: Response;
   try { response = await fetcher(`/api/products/${encodeURIComponent(image.source.productId)}/image-text`, { method: 'POST', signal, body: form }); }

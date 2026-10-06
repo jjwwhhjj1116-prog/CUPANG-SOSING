@@ -46,7 +46,7 @@ function harness(company) {
         if (name === 'next/server') return { NextResponse: Response };
         if (name === 'cloudflare:workers') return { env: { DB: db } };
         if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner, email, membership: { id: owner, email, role, status: 'approved', companyCode: company.code, companyName: company.name } }), getWorkspaceOwnerId: async () => owner };
-        if (name === 'react') return { useState: initial => [initial, () => { throw Error('Unexpected state update on clean initial render'); }] };
+        if (name === 'react') return { useRef: initial => ({ current: initial }), useState: initial => [initial, () => { throw Error('Unexpected state update on clean initial render'); }] };
         if (name === '@/app/components/option-quotation-prices') return { OptionQuotationPrices: () => null };
         if (name === '@/app/components/option-price-preview') return { OptionPricePreview: () => null };
         if (name.startsWith('@/')) return load(name.slice(2) + '.ts');

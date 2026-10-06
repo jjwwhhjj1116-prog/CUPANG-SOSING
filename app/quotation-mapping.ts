@@ -40,8 +40,13 @@ export type QuotationMappingSuggestion = {
 export function primaryNumericTextFields(fields:readonly QuotationField[]) {
   const paths:Record<string,string[]>={supplyPrice:['productPage','commonAttributes','purchasePrice'],salePrice:['productPage','commonAttributes','coupangSalePrice'],msrp:['productPage','commonAttributes','msrp'],packagedWeightG:['logisticsPage','skuUnitBoxWeight']};
   return new Map(Object.entries(paths).flatMap(([input,path])=>{
-    const matches=fields.filter(field=>field.numericText&&field.hubInput===input&&!field.hubWire?.name
+    let matches=fields.filter(field=>field.numericText&&field.hubInput===input&&!field.hubWire?.name
       &&JSON.stringify(field.hubWire?.path)===JSON.stringify(path));
+    // The observed OSRP-only compiler binds that exact wire to MSRP. Once an
+    // actual MSRP wire exists, OSRP remains an independent export field.
+    if(input==='msrp'&&!fields.some(field=>!field.hubWire?.name&&JSON.stringify(field.hubWire?.path)===JSON.stringify(path)))
+      matches=fields.filter(field=>field.numericText&&field.hubInput==='msrp'&&!field.hubWire?.name
+        &&JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','commonAttributes','osrp']));
     return matches.length===1?[[input,matches[0].id] as const]:[];
   }));
 }

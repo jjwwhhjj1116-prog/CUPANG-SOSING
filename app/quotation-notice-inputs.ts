@@ -16,6 +16,19 @@ const inputs: Readonly<Record<string,string>> = {
 const fashionInputs: Readonly<Record<string,string>> = {
   '종류':'noticeKind', '소재':'noticeMaterial', '치수':'noticeDimensions', '취급시 주의사항':'noticeCaution',
 };
+// Exact 80719 notice meanings used by the former label-only fallback. This
+// identity list retires only packages potentially affected by that shortcut.
+const basketInputs: Readonly<Record<string, string>> = {
+  '품명 및 모델명': 'noticeNameModel', '재질': 'noticeMaterial', '구성품': 'noticeComponents',
+  '크기': 'noticeDimensions', '제조자(수입자)': 'noticeManufacturerImporter', '제조국': 'noticeCountryOfOrigin',
+  '수입신고 문구 여부': 'noticeImportDeclaration', '품질보증기준': 'noticeQualityAssurance',
+  'A/S 책임자와 전화번호': 'noticeServiceContact',
+};
+const recordedNoticeSources = new Set([...Object.values(inputs), ...Object.values(basketInputs)]);
+type NoticeBindingIdentity = {
+  noticeBindingRevision?: 'exact-legal-notices-v1';
+  noticeSourceBindingRevision?: 'exact-legal-notice-sources-v1';
+};
 
 /** Recorded static notices retain their meanings. A captured form must carry
  * the exact named legalPage.notices wire; a matching control title is not proof. */
@@ -27,10 +40,12 @@ export function isQuotationLegalNotice(field: QuotationField): boolean {
     && wire.name === field.label && Boolean(wire.nameKey) && Boolean(wire.valueKey);
 }
 
-/** Change identity only when the former title shortcut changed an exported
- * automatic value. Keep normal notices, inactive settings and manual cells on
- * their existing fingerprint contract; never rewrite an earlier receipt. */
-export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverInput, 'content' | 'settings' | 'product'>, resolved: ResolvedQuotation): { noticeBindingRevision?: 'exact-legal-notices-v1' } {
+/** Date/washing corrections change identity only for a changed automatic value.
+ * The narrow former sports/basket source scope conservatively requests fresh
+ * review, including equal automatic values. Proper notices and manual cells
+ * keep their existing fingerprint contract; earlier receipts are not rewritten. */
+export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverInput, 'content' | 'settings' | 'product'>, resolved: ResolvedQuotation): NoticeBindingIdentity {
+  const identity: NoticeBindingIdentity = {};
   for (const field of resolved.schema.fields) {
     if (!field.hubWire || field.section !== 'legal' || isQuotationLegalNotice(field)) continue;
     const date = ['출시년월', '제조년월'].includes(field.label), washing = field.label === '세탁방법 및 취급시 주의사항';
@@ -48,17 +63,32 @@ export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverI
     }
     if (resolved.rows.some(row => row.included && row.fields[field.id]
       && !row.fields[field.id].source.startsWith('manual-') && row.fields[field.id].value !== previous)) {
-      return { noticeBindingRevision: 'exact-legal-notices-v1' };
+      identity.noticeBindingRevision = 'exact-legal-notices-v1';
+      break;
     }
   }
-  return {};
+  for (const field of resolved.schema.fields) {
+    if (!field.hubWire || field.section !== 'legal' || field.visibility !== 'common'
+      || field.hubInput || isQuotationLegalNotice(field)
+      || ['출시년월', '제조년월', '세탁방법 및 취급시 주의사항'].includes(field.label)) continue;
+    const previousSports = field.hubWire.path[0] === 'legalPage' && field.hubWire.name === field.label
+      ? inputs[field.label] : undefined;
+    const previousId = previousSports ?? basketInputs[field.label] ?? field.id;
+    // A conservative fresh-review identity for the narrow former source scope.
+    // Equal/empty automatic cells may also refresh; proper notices, unrelated
+    // controls and saved quotation overrides retain their package identity.
+    if (recordedNoticeSources.has(previousId) && resolved.rows.some(row => row.included
+      && row.fields[field.id] && !row.fields[field.id].source.startsWith('manual-'))) {
+      identity.noticeSourceBindingRevision = 'exact-legal-notice-sources-v1';
+      break;
+    }
+  }
+  return identity;
 }
 
 export function quotationNoticeInput(field: QuotationField): string | undefined {
   // Only the named legal notice array has this meaning. Same-labelled product
   // attributes, scalar controls and similar notice names keep their own rules.
-  if(field.section !== 'legal' || field.visibility !== 'common'
-    || field.hubWire?.path[0] !== 'legalPage' || field.hubWire.name !== field.label)return undefined;
-  return inputs[field.label] ?? (field.hubWire.path.length===2 && field.hubWire.path[1]==='notices'
-    ? fashionInputs[field.label] : undefined);
+  if (!field.hubWire || !isQuotationLegalNotice(field)) return undefined;
+  return inputs[field.label] ?? fashionInputs[field.label];
 }
