@@ -37,6 +37,7 @@ import type { RegistrationContentSummary } from '@/app/registration-content-summ
 import { BatchWorkPanel } from '@/app/components/batch-work-panel';
 import type { CategoryProfile, CategoryProfileInput } from '@/app/category-profiles';
 import { WorkspaceSettingsDialog } from '@/app/components/workspace-settings-dialog';
+import { SupplierHubExtensionCheck } from '@/app/components/supplier-hub-extension-check';
 import { savedRegistrationSettings, type WorkspaceSettings as Settings } from '@/app/workspace-settings';
 import { parseWorkspaceSettingsScope, type WorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 import { requestErrorMessage } from '@/app/request-error';
@@ -488,6 +489,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
       {connectionsOpen&&<Modal title="연동 상태" subtitle="서버의 저장소·AI 설정 상태를 확인합니다." onClose={()=>setConnectionsOpen(false)}>
         <div className="settings-form">
+          <SupplierHubExtensionCheck />
           {checkingConnections&&<p role="status">서버 연결을 확인하고 있습니다.</p>}
           {connectionError&&<p role="alert">{connectionError}</p>}
           {connections&&<><dl className="connection-list">

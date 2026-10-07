@@ -9,6 +9,7 @@ export type TranslationReview = {
   instructionsVersion: 'sourceflow-translation-v1' | 'sourceflow-translation-v2' | 'sourceflow-translation-v3' | 'sourceflow-translation-v4' | 'sourceflow-translation-v5' | 'sourceflow-translation-v6'; destination: 'OpenAI Responses API' | 'Cloudflare Workers AI' | 'Google 번역';
   paidNotice: string; pricingUrl: string; expiresAt: string; fingerprint: string;
   reviewId?: string; // Older persisted reviews remain valid without this field.
+  optionsRetry?: { retryKey: string; optionRevision: number; scope: 'options' }; // Server-created, option-only free retry proof.
 };
 export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false; detectedSourceLanguages?: string[]; translationRequests?: number; googleStoppedHttpStatus?: number };
 export type TranslationJob = {
@@ -162,10 +163,12 @@ function validateKoreanSeo(draft:TranslationDraft,source:TranslationSource){
   }
 }
 
-export function validateTranslationDraft(value: unknown, source: TranslationSource, instructionsVersion: TranslationReview['instructionsVersion'] = 'sourceflow-translation-v1'): TranslationDraft {
+export function validateTranslationDraft(value: unknown, source: TranslationSource, instructionsVersion: TranslationReview['instructionsVersion'] = 'sourceflow-translation-v1', scope:'all'|'options'='all'): TranslationDraft {
   const draft = object(value, ['title', 'keywords', 'description', 'attributes', 'warnings']);
   const title = text(draft.title, 500, true), description = text(draft.description, 20000, true);
-  if (!title && !description) throw new TranslationError('EMPTY_MODEL_OUTPUT', '모델이 상품 번역 초안을 만들지 못했습니다.', true);
+  if (scope!=='options' && !title && !description) throw new TranslationError('EMPTY_MODEL_OUTPUT', '모델이 상품 번역 초안을 만들지 못했습니다.', true);
+  if (scope==='options' && (title || description || !Array.isArray(draft.keywords) || draft.keywords.length || !source.attributes.length))
+    throw new TranslationError('INVALID_MODEL_OUTPUT','옵션 전용 번역이 SEO 값을 반환했습니다. 적용하지 않았습니다.',false);
   if (!Array.isArray(draft.keywords) || draft.keywords.length > 30 || !Array.isArray(draft.warnings) || draft.warnings.length > 50 || !Array.isArray(draft.attributes) || draft.attributes.length > source.attributes.length) throw new TranslationError('INVALID_MODEL_OUTPUT', '응답 형식 또는 항목 수가 요청과 다릅니다.', true);
   const seen = new Set<number>();
   const attributes = draft.attributes.map(item => {
@@ -177,7 +180,7 @@ export function validateTranslationDraft(value: unknown, source: TranslationSour
   if(instructionsVersion==='sourceflow-translation-v5' && seen.size!==source.attributes.length)throw new TranslationError('INCOMPLETE_SOURCE_ATTRIBUTES', `상품 속성·옵션 번역 일부가 누락되었습니다(기대 ${source.attributes.length}개 · 반환 ${seen.size}개). 원문은 보존했으며 불완전한 결과를 자동 반영하지 않았습니다.`, true);
   const result = { title, description, keywords: [...new Set(draft.keywords.map(word => text(word, 100)))], attributes, warnings: draft.warnings.map(warning => text(warning, 2000)) };
   if(instructionsVersion==='sourceflow-translation-v6'){
-    validateKoreanSeo(result,source);
+    if(scope!=='options')validateKoreanSeo(result,source);
     const issues=attributes.map(attribute=>translationAttributeIssue(source.attributes[attribute.sourceIndex],attribute));
     result.attributes=attributes.filter((_,index)=>issues[index]===null);
     const copied=issues.filter(issue=>issue==='chinese-copy').length,foreignNumbers=issues.filter(issue=>issue==='foreign-number').length;
@@ -238,17 +241,23 @@ function workersAiFailure(error: unknown): TranslationError {
 export async function executeTranslation(review: TranslationReview, config: TranslationConfig, fetcher: typeof fetch = fetch): Promise<TranslationResult> {
   if (translationDestination(config) !== review.destination || config.model !== review.model || config.maxOutputTokens !== review.maxOutputTokens) throw new TranslationError('CONFIGURATION_CHANGED', '검토한 모델 설정이 변경되었습니다. 새 요청을 검토해주세요.');
   validateTranslationSource(review.source);
+  let optionsOnly=false;
+  if(Object.hasOwn(review,'optionsRetry')){
+    const {optionsRetryReviewProof}=await import('@/app/options-translation-retry');
+    optionsOnly=!!optionsRetryReviewProof(review);
+    if(config.provider!=='google-free')throw new TranslationError('CONFIGURATION_CHANGED','옵션 재시도는 검토한 무료 Google 번역만 사용할 수 있습니다.');
+  }
   if (config.provider === 'google-free') {
     if (config.model !== GOOGLE_TEXT_MODEL || review.instructionsVersion !== 'sourceflow-translation-v6') throw new TranslationError('CONFIGURATION_CHANGED','Google 번역 방식으로 새 요청을 준비해주세요.');
     const {buildGoogleTranslationDraft} = await import('@/app/automation/google-translation-draft');
-    const translated = await buildGoogleTranslationDraft(review.source,fetcher);
-    if(review.source.title.trim()&&!translated.draft.title.trim()){
+    const translated = await buildGoogleTranslationDraft(review.source,fetcher,optionsOnly?'options':'all');
+    if(!optionsOnly&&review.source.title.trim()&&!translated.draft.title.trim()){
       const failure=translated.failure;
       const detail=failure?.reason==='http'?`Google 번역 서비스가 HTTP ${failure.status} 응답을 반환했습니다.${failure.status===429?' 요청 한도가 제한된 상태입니다.':''}`:failure?.reason==='timeout'?'Google 번역 요청이 10초 제한시간을 초과했습니다.':failure?.reason==='network'?'Google 번역 서비스에 연결하지 못했습니다.':failure?.reason==='invalid-response'?'Google 번역 응답 형식을 확인하지 못했습니다.':'Google 번역 응답을 받지 못했습니다.';
       throw new TranslationError(`GOOGLE_TRANSLATION_FAILED${failure?.detail ? `_${failure.detail.toUpperCase().replace(/-/g,'_')}` : ''}`,`${detail} 상품 원문과 저장한 초안은 유지했습니다. 자동 재시도하지 않았습니다.`);
     }
     let draft:TranslationDraft;
-    try { draft=validateTranslationDraft(translated.draft,review.source,review.instructionsVersion); }
+    try { draft=validateTranslationDraft(translated.draft,review.source,review.instructionsVersion,optionsOnly?'options':'all'); }
     catch(error) { if(error instanceof TranslationError)throw new TranslationError(error.code,error.message,false);throw error; }
     return {draft,responseId:`google-free-local:${crypto.randomUUID()}`,model:review.model,usage:null,generatedAt:new Date().toISOString(),provenance:'generated',appliedToContent:false,detectedSourceLanguages:translated.detectedSourceLanguages,translationRequests:translated.requests,
       ...(translated.stoppedHttpStatus===null?{}:{googleStoppedHttpStatus:translated.stoppedHttpStatus})};

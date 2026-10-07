@@ -38,6 +38,45 @@ export async function getTranslationJob(ownerId: string, productId: string, id: 
   const row = await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND id=?').bind(ownerId, productId, id).first<Row>();
   return row ? job(row) : null;
 }
+
+/** Exact user-started retry lookup; a lost acknowledgement never needs a new nonce. */
+export async function findOptionsRetryTranslation(ownerId: string, productId: string, retryKey: string) {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(retryKey)) throw Error('Invalid options retry key');
+  const db = await database();
+  const row = await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?')
+    .bind(ownerId, productId, 'options-retry-' + retryKey).first<Row>();
+  return row ? job(row) : null;
+}
+
+export async function hasUnsettledTranslation(ownerId: string, productId: string) {
+  const db = await database();
+  return !!await db.prepare("SELECT id FROM translation_jobs WHERE owner_id=? AND product_id=? AND status IN ('running','uncertain') LIMIT 1")
+    .bind(ownerId, productId).first();
+}
+
+/** Create only. Failed/partial originals, approvals and results are never reset. */
+export async function createOptionsRetryTranslation(ownerId: string, value: TranslationJob, retryKey: string, requestFingerprint: string, optionRevision: number) {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(retryKey)) throw Error('Invalid options retry key');
+  if (!Number.isSafeInteger(optionRevision) || optionRevision < 0) throw Error('Invalid options retry revision');
+  const db = await database();
+  const row = await db.prepare(`INSERT INTO translation_jobs(id,owner_id,product_id,idempotency_key,request_fingerprint,
+    product_version,content_revision,status,review_fingerprint,review,expires_at,created_at)
+    SELECT ?,?,?,?,?,?,?,'prepared',?,?,?,?
+    WHERE EXISTS(SELECT 1 FROM products WHERE id=? AND owner_id=? AND updated_at=?)
+    AND NOT EXISTS(SELECT 1 FROM product_removals WHERE product_id=? AND owner_id=?)
+    AND COALESCE((SELECT revision FROM product_content WHERE product_id=? AND owner_id=?),0)=?
+    AND COALESCE((SELECT revision FROM product_options WHERE product_id=? AND owner_id=?),0)=?
+    AND NOT EXISTS(SELECT 1 FROM translation_jobs WHERE owner_id=? AND product_id=? AND status IN ('running','uncertain'))
+    ON CONFLICT(owner_id,product_id,idempotency_key) DO NOTHING RETURNING *`)
+    .bind(value.id, ownerId, value.productId, 'options-retry-' + retryKey, requestFingerprint, value.productVersion, value.contentRevision,
+      value.review.fingerprint, JSON.stringify(value.review), value.review.expiresAt, value.createdAt,
+      value.productId, ownerId, value.productVersion, value.productId, ownerId, value.productId, ownerId, value.contentRevision,
+      value.productId, ownerId, optionRevision, ownerId, value.productId).first<Row>();
+  if (row) return { job: job(row), replayed: false, conflict: false };
+  const existing = await db.prepare('SELECT * FROM translation_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?')
+    .bind(ownerId, value.productId, 'options-retry-' + retryKey).first<Row>();
+  return existing ? { job: job(existing), replayed: true, conflict: existing.request_fingerprint !== requestFingerprint } : null;
+}
 export async function createTranslationJob(ownerId: string, value: TranslationJob, key: string, requestFingerprint: string) {
   const db = await database();
   const row = await db.prepare(`INSERT INTO translation_jobs(id,owner_id,product_id,idempotency_key,request_fingerprint,
@@ -90,23 +129,36 @@ export async function refreshUnstartedIntake(ownerId:string, previous:Translatio
   return row?{job:job(row),replayed:true,conflict:false}:null;
 }
 
-export async function approveTranslationJob(ownerId: string, productId: string, id: string, reviewFingerprint: string, now: string) {
+export async function approveTranslationJob(ownerId: string, productId: string, id: string, reviewFingerprint: string, now: string, optionRevision?: number) {
   const db = await database();
+  if (optionRevision !== undefined && (!Number.isSafeInteger(optionRevision) || optionRevision < 0)) throw Error('Invalid options retry revision');
+  const retryGuard = optionRevision === undefined ? '' : `AND COALESCE((SELECT revision FROM product_options WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id),0)=?
+    AND NOT EXISTS(SELECT 1 FROM product_removals WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id)
+    AND NOT EXISTS(SELECT 1 FROM translation_jobs other WHERE other.owner_id=translation_jobs.owner_id AND other.product_id=translation_jobs.product_id
+      AND other.id<>translation_jobs.id AND other.status IN ('running','uncertain'))`;
   const row = await db.prepare(`UPDATE translation_jobs SET status='approved',approved_at=?
     WHERE owner_id=? AND product_id=? AND id=? AND status='prepared' AND review_fingerprint=? AND expires_at>?
     AND EXISTS(SELECT 1 FROM products WHERE id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id AND updated_at=translation_jobs.product_version)
     AND COALESCE((SELECT revision FROM product_content WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id),0)=content_revision
-    RETURNING *`).bind(now, ownerId, productId, id, reviewFingerprint, now).first<Row>();
+    ${retryGuard}
+    RETURNING *`).bind(now, ownerId, productId, id, reviewFingerprint, now, ...(optionRevision === undefined ? [] : [optionRevision])).first<Row>();
   return row ? job(row) : null;
 }
 
-export async function claimTranslationJob(ownerId: string, productId: string, id: string, reviewFingerprint: string, claim: string, now: string) {
+export async function claimTranslationJob(ownerId: string, productId: string, id: string, reviewFingerprint: string, claim: string, now: string, optionRevision?: number) {
   const db = await database();
+  if (optionRevision !== undefined && (!Number.isSafeInteger(optionRevision) || optionRevision < 0)) throw Error('Invalid options retry revision');
+  const retryGuard = optionRevision === undefined ? '' : `AND COALESCE((SELECT revision FROM product_options WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id),0)=?
+    AND NOT EXISTS(SELECT 1 FROM product_removals WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id)`;
   const row = await db.prepare(`UPDATE translation_jobs SET status='running',started_at=?,claim_token=?
     WHERE owner_id=? AND product_id=? AND id=? AND status='approved' AND review_fingerprint=? AND expires_at>?
     AND EXISTS(SELECT 1 FROM products WHERE id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id AND updated_at=translation_jobs.product_version)
     AND COALESCE((SELECT revision FROM product_content WHERE product_id=translation_jobs.product_id AND owner_id=translation_jobs.owner_id),0)=content_revision
-    RETURNING *`).bind(now, claim, ownerId, productId, id, reviewFingerprint, now).first<Row>();
+    AND NOT EXISTS(SELECT 1 FROM translation_jobs other WHERE other.owner_id=translation_jobs.owner_id AND other.product_id=translation_jobs.product_id
+      AND other.id<>translation_jobs.id AND other.status IN ('running','uncertain')
+      AND (translation_jobs.idempotency_key LIKE 'options-retry-%' OR other.idempotency_key LIKE 'options-retry-%'))
+    ${retryGuard}
+    RETURNING *`).bind(now, claim, ownerId, productId, id, reviewFingerprint, now, ...(optionRevision === undefined ? [] : [optionRevision])).first<Row>();
   return row ? job(row) : null;
 }
 

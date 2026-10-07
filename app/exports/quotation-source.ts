@@ -21,6 +21,9 @@ import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings
 import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
 import { quotationNoticeBindingFingerprint } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightBindingFingerprint } from '@/app/quotation-packaged-weight';
+import { inspectGeneratedProductLabels } from '@/app/product-label-proof';
+import type { ProductLabelsView } from '@/app/product-label';
+import { env } from 'cloudflare:workers';
 
 export class QuotationExportError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -85,8 +88,22 @@ export async function readQuotationExportSource(owner: string, productId: string
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   // This also detects changes during the independent source reads before any R2 work starts.
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
+  const generatedProductLabelIssues = await inspectGeneratedProductLabels({ownerId:owner,productId,profileId:categoryContext.profileId,
+    resolved:resolveQuotationFields({categoryId:categoryContext.categoryId,categoryPath:categoryContext.categoryPath,product,content,options,settings,
+      overrides:scopedQuotationOverrides(state,categoryContext.categoryId),...(hubSchema?{hubSchema}:{})}),
+    head:async key=>env.FILES?.head?await env.FILES.head(key):null,
+    readView:async selectedProfileId=>{
+      const {GET:productLabelsGET}=await import('@/app/api/products/[id]/product-labels/route');
+      const url=new URL(`/api/products/${encodeURIComponent(productId)}/product-labels`,'https://label.invalid');if(selectedProfileId)url.searchParams.set('profileId',selectedProfileId);
+      const response=await productLabelsGET(new Request(url),{params:Promise.resolve({id:productId})});
+      const view=await response.json() as ProductLabelsView & {error?:string};
+      if(!response.ok||view.productVersion!==product.updated_at||view.contentRevision!==content.revision||view.optionRevision!==options.revision||view.quotationRevision!==state.revision)
+        throw new QuotationExportError(view.error||'생성한 표시사항과 현재 저장값의 연결이 변경되었습니다. 다시 검사해주세요.',409);
+      return view;
+    }});
+  if(!await quotationSourcesCurrent(owner,productId,source))throw new QuotationExportError('표시사항 파일을 확인하는 동안 저장값이 변경되었습니다. 다시 검토해주세요.',409);
   return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company,
-    ...(sourceGaps.length ? { sourceGaps } : {}),...(hubSchema?{hubSchema}:{}) };
+    ...(sourceGaps.length ? { sourceGaps } : {}),...(hubSchema?{hubSchema}:{}),...(generatedProductLabelIssues.length?{generatedProductLabelIssues}:{}) };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
 /** Resolve only the profile captured when this product was collected; never guess by label. */

@@ -32,7 +32,17 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(result.serverReceiptReplayProtection!==true)throw new Error('서버 전송 기록 확인을 지원하는 Chrome 확장 0.2.34 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(direct&&result.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(result.attachmentLifecycleRecovery!==true)throw new Error('첨부 파일 보호와 검증 재개를 지원하는 Chrome 확장 0.2.41 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  if(direct&&(result.pendingReceiptRefreshRecovery!==true||result.registrationObservationCas!==true))throw new Error('전송 후 검증 결과 복구와 상품별 조회 기록 보존을 지원하는 Chrome 확장 0.2.56으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(!direct&&result.popupWindowBinding!==true)throw new Error('팝업 첨부 전 Chrome 창 확인을 지원하는 확장 0.2.45 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+}
+export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean};
+/** Reports the installed manifest reply in this app tab. Does not inspect Hub,
+ * create a browser tab, prepare files, or change any transmission record. */
+export async function readSupplierHubExtensionInfo(signal:AbortSignal):Promise<SupplierHubExtensionInfo>{
+  const result=await exchange('PING',null,signal),version=result.version;
+  if(typeof version!=='string'||version!==version.trim()||!/^(?:0|[1-9]\d{0,4})(?:\.(?:0|[1-9]\d{0,4})){1,3}$/.test(version)
+    ||version.split('.').some(part=>Number(part)>65535))throw Error('설치된 Chrome 확장의 버전을 확인하지 못했습니다. 앱 페이지를 새로고침한 뒤 다시 확인해주세요.');
+  return {version,pendingReceiptRefreshRecovery:result.pendingReceiptRefreshRecovery===true,registrationObservationCas:result.registrationObservationCas===true};
 }
 export type SupplierHubRegistrationRow={title:string;submittedAt:string;category:string;barcode:string;sourceQuotation:string;skuId:string;status:string;stage:string};
 export type SupplierHubRegistration={quotationId:string;registered:false;observedAt:number;includedOptions?:number;rows:SupplierHubRegistrationRow[]}&(
@@ -96,9 +106,11 @@ export async function getSupplierHubResult(identity:PackageIdentity,signal:Abort
     if(capability.companyBinding!==true||capability.registrationLookup!==true||capability.registrationPages!==true)throw new Error('상품별 등록 조회를 지원하는 Chrome 확장 0.2.26 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
     if(capability.companyMenuRecovery!==true)throw new Error('회사 메뉴 복구를 지원하는 Chrome 확장 0.2.40 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
     if(capability.resultTableRefreshObservation!==true)throw new Error('새 상품별 조회 결과 확인을 지원하는 Chrome 확장 0.2.44 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+    if(capability.registrationObservationCas!==true)throw new Error('최신 상품별 조회 기록을 보존하는 Chrome 확장 0.2.56으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   }else if(refresh){
     const capability=await exchange('PING',null,signal);
     if(capability.acceptedReceiptRefreshRecovery!==true)throw new Error('확인한 견적서 기록을 보존하는 Chrome 확장 0.2.42 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+    if(capability.pendingReceiptRefreshRecovery!==true)throw new Error('원본 탭이 닫힌 견적서 검증 결과 복구를 지원하는 Chrome 확장 0.2.56으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   }
   const response=await exchange(refresh==='registration'?'REGISTRATION':refresh?'REFRESH':'RESULT',identity,signal);
   if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new SupplierHubResultInvalid('견적서 결과의 식별값이 일치하지 않습니다.');

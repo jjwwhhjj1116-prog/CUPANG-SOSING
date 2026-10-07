@@ -9,18 +9,19 @@ const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...no
 const label=t=>Array.isArray(t)?t.map(label).join(''):typeof t==='string'||typeof t==='number'?String(t):'';
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(r=>setImmediate(r));};
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
-function harness(handler,status='completed',failInitial=false,emptyJobs=false,jobVersion='v',jobContentRevision=1,expiresAt='2099-09-24',reviewOverride={}){
+function harness(handler,status='completed',failInitial=false,emptyJobs=false,jobVersion='v',jobContentRevision=1,expiresAt='2099-09-24',reviewOverride={},optionsRetry={}){
  const slots=[],effects=[],cleanup=[],calls=[];let index=0,first=true,closed=false,late=0,saved=0;
+ const productId=optionsRetry.productId??'p';
  const content={revision:1,seo:Object.fromEntries(['title','description','keywords'].map(k=>[k,{value:k==='keywords'?[]:'manual'}]))};
- const job={id:'j',productId:'p',status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt,source:{title:'검토된 원문',description:'저장 설명',attributes:[],provenance:'manual',reference:'수집 원문'}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
+ const job={id:'j',productId,status,productVersion:jobVersion,contentRevision:jobContentRevision,review:{model:'mock',inputCharacters:1,maxOutputTokens:1000,expiresAt,source:{title:'검토된 원문',description:'저장 설명',attributes:[],provenance:'manual',reference:'수집 원문'}},result:status==='completed'?{draft:{title:'초안',description:'설명',keywords:[],attributes:[{name:'색상',value:'검정'}],warnings:[]}}:null};
  Object.assign(job.review,reviewOverride);
  const view={jobs:emptyJobs?[]:[job],configuration:{configured:true,model:job.review.model,issues:[]}};
  const hooks={useCallback:fn=>fn,useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>{if(closed)late++;slots[i]=typeof v==='function'?v(slots[i]):v;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
  let initial=0;
  const fetcher=async function(url,init){assert.equal(this,undefined,'native fetch cannot receive helper options as its receiver');if(initial<2){initial++;return failInitial?Response.json({error:'초기 조회 실패'},{status:503}):Response.json(url.endsWith('/translation')?view:{content});}calls.push({url,init});return handler(url,init,{content,job,view});};
  const exports={};const file='app/components/translation-panel.tsx';
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,fetch:fetcher,require(name){if(name==='@/app/reviewed-translation'){const result={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/reviewed-translation.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:result,Error});return result;}if(name==='react')return hooks;if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationBatch:(options,capacity=50)=>({attributes:(options.attributes??[]).slice(0,capacity),remaining:Math.max(0,(options.attributes??[]).length-capacity)}),adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
- const render=()=>{index=0;const wrapper=exports.default({productId:'p',version:'v',title:'원문',onContentSaved(){saved++;}});const tree=wrapper.type(wrapper.props);first=false;return tree;};
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,crypto,sessionStorage:optionsRetry.sessionStorage,fetch:fetcher,require(name){if(name==='@/app/options-translation-retry')return{newOptionsRetryState:(productId,productVersion)=>({productId,productVersion,retryKey:crypto.randomUUID(),jobId:null,executeSubmitted:false,applySubmitted:false}),parseOptionsRetryState:()=>null,retryOptionsTranslation:()=>{throw Error('Unexpected options retry');},...optionsRetry};if(name==='@/app/reviewed-translation'){const result={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/reviewed-translation.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:result,Error});return result;}if(name==='react')return hooks;if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};if(name==='@/app/components/translation-batch-preview')return{TranslationBatchPreview:()=>null};if(name==='@/app/components/translation-label-mapping')return{TranslationLabelMappingEditor:()=>null};if(name==='@/app/translation-label-adoption')return{translationLabelAdoption:()=>({input:{patch:'labels'}})};if(name==='@/app/option-translation')return{optionTranslationBatch:(options,capacity=50)=>({attributes:(options.attributes??[]).slice(0,capacity),remaining:Math.max(0,(options.attributes??[]).length-capacity)}),adoptOptionTranslations:()=>({rows:[],changed:1}),confirmOptionTranslationSave:value=>{if(!value.confirmed)throw Error("저장 응답 불일치");}};if(name==='@/app/translation-adoption')return{translationSeoFields:['title','description','keywords'],translationAdoptionInput:()=>({patch:'mock'})};if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:()=>[]};return native(name);}});
+ const render=()=>{index=0;const wrapper=exports.default({productId,version:'v',title:'원문',onContentSaved(){saved++;}});const tree=wrapper.type(wrapper.props);first=false;return tree;};
  const buttons=()=>nodes(render()).filter(n=>n.type==='button');
  render();effects.forEach(fn=>cleanup.push(fn()));
  return{calls,render,button(name){const button=buttons().find(n=>label(n.props.children)===name);assert.ok(button,name);return button.props.onClick;},close(){closed=true;cleanup.forEach(fn=>fn?.());},get late(){return late;},get saved(){return saved;}};
@@ -30,6 +31,39 @@ const options='미번역 옵션 불러오기 · 속성 입력 교체';
 const prepare='번역 요청 검토하기 · 무료';
 const execute='승인한 SEO 초안 작성 계속';
 const adopt='검토한 초안을 이 항목에 적용 · 기존 내용 교체';
+
+test('explicit free options button retains one nonce across duplicate clicks and uncertain recovery without changing typed source',async()=>{
+ const pending=deferred(),seen=[];let attempt=0;
+ const h=harness(()=>{throw Error('unexpected direct API call');},'completed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},
+  {retryOptionsTranslation:async(state,options)=>{seen.push(state.retryKey);options.onState({...state,executeSubmitted:true});if(++attempt===1){await pending.promise;return{done:false,saved:false,job:null,message:'같은 작업 결과 확인 필요'};}return{done:true,saved:true,job:null,message:'같은 재시도 저장 확인'};}});
+ await settle();assert.equal(seen.length,0);
+ nodes(h.render()).find(node=>node.type==='input'&&node.props.maxLength===1000).props.onChange({target:{value:'직접 입력 중인 상품명'}});
+ const click=h.button('미번역 옵션 한국어로 채우기 · 무료');click();click();assert.equal(seen.length,1);
+ pending.resolve();await settle();assert.equal(h.saved,0);assert.match(JSON.stringify(h.render()),/직접 입력 중인 상품명/);
+ h.button('옵션 번역 재시도 상태 확인 · 무료')();await settle();assert.equal(seen.length,2);assert.equal(seen[0],seen[1]);assert.equal(h.saved,1);
+ assert.match(JSON.stringify(h.render()),/직접 입력 중인 상품명/);assert.equal(h.calls.length,0);
+});
+
+test('closing during explicit free options retry aborts it and suppresses late notices and save callbacks',async()=>{
+ const pending=deferred();let signal;
+ const h=harness(()=>{throw Error('unexpected direct API call');},'completed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},
+  {retryOptionsTranslation:async(state,options)=>{signal=options.signal;await pending.promise;options.onState({...state,executeSubmitted:true});return{done:true,saved:true,job:null,message:'늦게 도착한 저장 확인'};}});
+ await settle();h.button('미번역 옵션 한국어로 채우기 · 무료')();h.close();assert.equal(signal.aborted,true);
+ pending.resolve();await settle();assert.equal(h.saved,0);assert.equal(h.late,0);
+});
+
+test('a queued old-product session nonce read is cancelled on cleanup and cannot initialize the next product',async()=>{
+ const reads=[],state={productId:'p',productVersion:'2026-10-07T00:00:00.000Z',retryKey:crypto.randomUUID(),jobId:null,executeSubmitted:false,applySubmitted:false};
+ const storage={getItem(key){reads.push(key);return key==='yoofam-options-retry:p'?JSON.stringify(state):null;}};
+ const dependency={sessionStorage:storage,parseOptionsRetryState:(value,productId)=>value.productId===productId?value:null};
+ const old=harness(()=>{throw Error('unexpected request');},'completed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},dependency);
+ old.close();
+ const next=harness(()=>{throw Error('unexpected request');},'completed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},{...dependency,productId:'next'});
+ await settle();assert.deepEqual(reads,['yoofam-options-retry:next']);assert.equal(old.late,0);assert.equal(old.saved,0);
+ assert.ok(next.button('미번역 옵션 한국어로 채우기 · 무료'));assert.doesNotMatch(JSON.stringify(next.render()),/옵션 번역 재시도 상태 확인/);
+ const resumed=harness(()=>{throw Error('unexpected request');},'completed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},dependency);
+ await settle();assert.ok(resumed.button('옵션 번역 재시도 상태 확인 · 무료'));assert.equal(resumed.calls.length,0);assert.equal(resumed.saved,0);
+});
 
 test('Google review shows the actual translation service without token or pricing claims and retains explicit execution and application',async()=>{
  const settings={destination:'Google 번역',model:'google-translate-gtx',maxOutputTokens:0,pricingUrl:'',paidNotice:'사용자 지정 Google 번역 주소에 텍스트만 전송합니다.'};

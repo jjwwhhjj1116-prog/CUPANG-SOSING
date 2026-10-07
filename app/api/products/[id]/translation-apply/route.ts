@@ -16,6 +16,7 @@ import { savedRegistrationSettings } from '@/app/workspace-settings';
 import {capturedAttributeCategory,attributeCategorySchema} from '@/app/quotation-attribute-schema';
 import { intakeTranslationReplayContent, intakeTranslationReplayJob } from '@/app/intake-translation-replay';
 import { collectionSourceReference } from '@/app/sourcing';
+import { optionsRetryProof, optionsRetryApplicationFingerprint } from '@/app/options-translation-retry';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -40,6 +41,11 @@ export async function POST(request: Request, context: Context) {
     const [content, options, job] = await Promise.all([readProductContent(owner, id), readProductOptions(owner, id), getTranslationJob(owner, id, body.jobId as string)]);
     if (!job) return json({ error: '번역 결과를 찾을 수 없습니다.' }, 404);
     const scope = body.scope === 'options' ? 'options' : 'all';
+    let retryProof;
+    try { retryProof = optionsRetryProof(job); }
+    catch { return json({error:'옵션 재시도 원문 연결을 확인하지 못했습니다.'},409); }
+    if (retryProof && (scope !== 'options' || retryProof.optionRevision !== options.revision))
+      return json({error:'이 재시도는 검토한 미번역 옵션에만 적용할 수 있습니다. 현재 옵션을 다시 확인해주세요.'},409);
     let categorySource;
     try {
       if (job.review.source.category) categorySource = await readTranslationCategorySource(owner, id, product.source_url, job.review.source.category.id);
@@ -92,7 +98,10 @@ export async function POST(request: Request, context: Context) {
       }
     }
     const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null });
-    const preview = { scope, productId: id, productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, fingerprint: digest, preview: plan.preview, skipped: plan.skipped };
+    const optionsRetry = retryProof ? {applicationFingerprint:await optionsRetryApplicationFingerprint(job,
+      applyContentPatch(content,plan.patch??{},'options-retry-application'),applyIntegratedOptions(options,plan,'options-retry-application'),'options-retry-application')} : null;
+    const preview = { scope, productId: id, productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, fingerprint: digest, preview: plan.preview, skipped: plan.skipped,
+      ...(optionsRetry?{optionsRetry}:{}) };
     if (body.action === 'preview') return json(preview);
     if (body.fingerprint !== digest) return json({ error: '검토 이후 자료가 변경되었습니다. 통합 미리보기를 다시 확인해주세요.' }, 409);
     if (!plan.preview.length) return json({ error: '새로 적용할 번역 항목이 없습니다.' }, 409);

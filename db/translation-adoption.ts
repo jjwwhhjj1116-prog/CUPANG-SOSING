@@ -33,6 +33,7 @@ export async function saveIntegratedTranslation(owner: string, content: ProductC
   const result = await env.DB.batch([
     env.DB.prepare(`UPDATE products SET updated_at=?,quote_status='대기',options_count=?
       WHERE id=? AND owner_id=? AND updated_at=? AND image_keys=?
+      AND NOT EXISTS(SELECT 1 FROM product_removals WHERE product_id=products.id AND owner_id=products.owner_id)
       AND NOT EXISTS(SELECT 1 FROM product_content c WHERE c.product_id=products.id AND c.owner_id<>products.owner_id)
       AND NOT EXISTS(SELECT 1 FROM product_options o WHERE o.product_id=products.id AND o.owner_id<>products.owner_id)
       AND COALESCE((SELECT revision FROM product_content WHERE product_id=? AND owner_id=?),0)=?

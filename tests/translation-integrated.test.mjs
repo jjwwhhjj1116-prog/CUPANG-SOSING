@@ -21,6 +21,7 @@ function harness(){
  CREATE TABLE product_content(product_id TEXT PRIMARY KEY,owner_id TEXT,revision INTEGER,payload TEXT,updated_at TEXT);
  CREATE TABLE product_options(product_id TEXT PRIMARY KEY,owner_id TEXT,revision INTEGER,payload TEXT,updated_at TEXT);
  CREATE TABLE quotation_attribute_rules(owner_id TEXT,category_id TEXT,payload TEXT); CREATE TABLE translation_jobs(id TEXT PRIMARY KEY,owner_id TEXT,product_id TEXT,status TEXT,product_version TEXT,content_revision INTEGER);`);
+ sqlite.exec(fs.readFileSync(new URL('../db/migrations/0015_product_removals.sql',import.meta.url),'utf8'));
  sqlite.prepare('INSERT INTO products VALUES (?,?,?,?,?,?)').run('p','owner',version,'[]','대기',1);
  sqlite.prepare('INSERT INTO translation_jobs VALUES (?,?,?,?,?,?)').run(jobId,'owner','p','completed',version,0);
  const data=fixture();sqlite.prepare('INSERT INTO product_options VALUES (?,?,?,?,?)').run('p','owner',1,JSON.stringify(data.options),version);

@@ -63,7 +63,7 @@ export default function HistoricalAiRegistrationsPanel({onReuseUrl}:HistoricalAi
  function reload(){currentList.current=null;cancelReuse();setRefresh(value=>value+1);}
  if(forbidden)return null;
  return <section className="panel" aria-label="쿠플러스 원본 AI 등록 기록">
-  <h2>쿠플러스 원본 AI 등록 기록</h2><p>와이홉 계정에서 보관한 등록 목록과 부분 견적자료입니다. 단계 상태와 옵션 개수는 원본 화면에 표시된 값입니다.</p>
+  <h2>쿠플러스 원본 AI 등록 기록</h2><p>현재 계정에 보관한 등록 목록과 부분 견적자료입니다. 단계 상태와 옵션 개수는 원본 화면에 표시된 값입니다.</p>
   {error&&<p role="alert">{error}</p>}
   <details><summary>원본 JSON 가져오기</summary><p>목록 페이지와 해당 등록번호의 견적 JSON을 함께 선택할 수 있습니다. 같은 원본은 중복 보관하지 않습니다.</p>
    <input aria-label="쿠플러스 원본 JSON 파일" type="file" multiple accept=".json,application/json" disabled={busy||reusingId!==null} onChange={event=>{if(active.current||reuseRequest.current)return;setFiles(Array.from(event.target.files??[]));setPreview(null);setMessage('');}}/>

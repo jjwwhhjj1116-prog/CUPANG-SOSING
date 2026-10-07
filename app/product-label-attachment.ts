@@ -2,6 +2,7 @@ import { productLabelPlan, verifyProductLabelsView, type ProductLabelsView } fro
 import { applyQuotationChanges, validateQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { findProductLabelUpload, productLabelPreviewSignature } from '@/app/product-label-upload';
+import { productLabelProofRequest } from '@/app/product-label-proof';
 
 type Input = { productId: string; endpoint: string; quotationEndpoint: string; renderedView: ProductLabelsView; optionId: string | null;
   blob: Blob | null; uploadedKey: string | null; onUploaded: (key: string) => void };
@@ -77,6 +78,7 @@ export async function attachProductLabel(input: Input, request: typeof fetch = f
   if (!key) {
     if (!input.blob || input.blob.type !== 'image/png' || input.blob.size < 1 || input.blob.size > 10 * 1024 * 1024) throw Error('내용이 있는 표시사항 PNG를 먼저 만들어주세요.');
     const form = new FormData(); form.set('file', new File([input.blob], 'sourceflow-quotation-label.png', { type: 'image/png' })); form.set('labelUploadId', stored.uploadId);
+    form.set('productLabelProof',JSON.stringify(productLabelProofRequest({productId:input.productId,optionId:input.optionId,endpoint:input.endpoint,view:state.view})));
     let uploaded: { key?: string; contentType?: string; size?: number } | null = null;
     try { uploaded = await read<{ key?: string; contentType?: string; size?: number }>('/api/files', { method: 'POST', body: form }); }
     catch (cause) {

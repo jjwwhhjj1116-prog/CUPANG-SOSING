@@ -26,7 +26,7 @@ export async function GET(request: Request, context: {params:Promise<{id:string}
     const documents=readLegalDocuments(saved.content.legalDocuments,owner,id);
     const legalIssues=await inspectLegalDocumentStorage(documents,id,env.FILES?.head ? key=>env.FILES.head(key) : undefined);
     const report = inspectSubmission(resolved,keys,checks,'storage-metadata',undefined,[
-      ...collectionSourceReview(saved.sourceGaps),...legalIssues,
+      ...collectionSourceReview(saved.sourceGaps),...legalIssues,...(saved.generatedProductLabelIssues ?? []),
     ]);
     const fingerprint = await quotationExportFingerprint(saved,null,detailConfig);
     if (!await quotationSourcesCurrent(owner,id,saved.source) || (await readQuotationFields(owner,id)).revision !== saved.state.revision) {

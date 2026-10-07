@@ -10,9 +10,12 @@ const optionBinding=(name:string)=>/^option(?:-(?:color|size))?:[A-Za-z0-9_-]{1,
 
 /** Direct text translation preserves source indexes and option IDs. It does
  * not send a prompt or ask the service to invent listing facts. */
-export async function buildGoogleTranslationDraft(source:TranslationSource,fetcher:typeof fetch=fetch){
-  const title=source.title.trim(),description=source.description.trim();
+export async function buildGoogleTranslationDraft(source:TranslationSource,fetcher:typeof fetch=fetch,scope:'all'|'options'='all'){
+  // A server-proved option retry retains SEO as local review context only.
+  // An already translated title/description must not consume its free quota.
+  const title=scope==='options'?'':source.title.trim(),description=scope==='options'?'':source.description.trim();
   const fields=source.attributes.map(pair=>({name:pair.name.replace(/^상품속성: /u,'').trim(),value:pair.value.trim(),bound:optionBinding(pair.name)}));
+  if(scope==='options'&&fields.some(pair=>!pair.bound))throw Error('옵션 전용 번역에 상품 속성을 보낼 수 없습니다.');
   const originals=[title,description,...fields.filter(pair=>pair.bound).map(pair=>pair.value),...fields.filter(pair=>!pair.bound).flatMap(pair=>[pair.name,pair.value])];
   const unique=[...new Set(originals.filter(Boolean))],translated=new Map<string,string>();
   const languages=new Set<string>();
@@ -76,7 +79,7 @@ export async function buildGoogleTranslationDraft(source:TranslationSource,fetch
       if(!issue)attributes.push(attribute);
     }
   });
-  const warnings=['Google 텍스트 번역 초안입니다. 판매자가 기재한 재질·인증·성능과 상품명·옵션 의미를 확인하고 수정해주세요.'];
+  const warnings=[scope==='options'?'Google 옵션 텍스트 번역 초안입니다. 옵션 의미를 확인하고 수정해주세요. 상품명·설명·표시사항은 요청하거나 변경하지 않았습니다.':'Google 텍스트 번역 초안입니다. 판매자가 기재한 재질·인증·성능과 상품명·옵션 의미를 확인하고 수정해주세요.'];
   if(stopStatus!==null)warnings.push(`Google 번역 HTTP ${stopStatus} 응답으로 남은 요청을 중단했습니다. 이미 받은 번역은 초안으로 유지하고 요청하지 않은 항목은 원문에 보존했습니다. 자동 재시도하지 않았습니다.`);
   if(foreignNumbers)warnings.push(`같은 상품 속성·옵션 원문에 없는 숫자를 반환한 ${foreignNumbers}개는 적용하지 않고 원문에 보존했습니다.`);
   if(description&&!translatedDescription)warnings.push('상품 설명 번역을 받지 못했습니다. 원문은 유지했으며 설명 초안을 비워 두었습니다.');
@@ -85,6 +88,6 @@ export async function buildGoogleTranslationDraft(source:TranslationSource,fetch
   if(consecutiveFailures>=3)warnings.push('연속된 번역 응답 실패로 남은 요청을 중단했습니다. 실패한 항목은 원문에 보존했습니다.');
   const failedStatuses=[...new Set([...failures.values()].map(failure=>failure.status).filter((status):status is number=>typeof status==='number'))];
   if(failedStatuses.length)warnings.push(`일부 텍스트의 Google 번역 HTTP 응답: ${failedStatuses.join(', ')}. 실패한 텍스트는 원문에 보존했습니다.`);
-  if(source.guidance)warnings.push('SEO 참고 메모는 별도 상품 사실로 번역에 추가하지 않았습니다. 검색어는 번역한 상품명에서만 구성했습니다.');
+  if(source.guidance&&scope!=='options')warnings.push('SEO 참고 메모는 별도 상품 사실로 번역에 추가하지 않았습니다. 검색어는 번역한 상품명에서만 구성했습니다.');
   return {draft:{title:translatedTitle,description:translatedDescription,keywords,attributes,warnings} satisfies TranslationDraft,requests,detectedSourceLanguages:[...languages],stoppedHttpStatus:stopStatus,failure:null};
 }
