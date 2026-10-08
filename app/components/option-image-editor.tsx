@@ -143,7 +143,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <section className="image-edit-canvas" aria-label="선택 옵션 이미지 미리보기"><h4>현재 {label} · {selected.length}/{limit}개</h4>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {activePreview ? <figure className="image-large-preview"><figcaption>이미지 {view.imageKeys.indexOf(activePreview) + 1} 미리보기</figcaption><img src={imageUrl(activePreview)} alt={`선택 옵션 ${label} 큰 미리보기`} /></figure> : <p>이미지 목록에서 미리볼 자료를 선택하세요.</p>}
-        <div className="image-selected-strip" aria-label={`선택 옵션 ${label} 순서`}>{selected.map((key, index) => <figure className="image-selected-item" key={key}>
+        <div className="image-selected-strip option-additional-image-strip" aria-label={`선택 옵션 ${label} 순서`}>{selected.map((key, index) => <figure className="image-selected-item" key={key}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {view.imageKeys.includes(key) ? <button type="button" aria-label={`${label} ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (current() && !request.current && !disabled) setPreview({ scope, key }); }}><img src={imageUrl(key)} alt={`${label} ${index + 1}`} width={64} height={64} /><span>{index + 1}</span></button> : <p>현재 상품에 없는 이미지</p>}
       <figcaption>{index + 1} · {key.split('/').at(-1)}</figcaption>
