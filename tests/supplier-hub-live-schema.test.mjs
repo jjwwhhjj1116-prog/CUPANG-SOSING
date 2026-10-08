@@ -21,6 +21,66 @@ test('live schema compiles exact section/attribute identity, real enums/defaults
   assert.equal(schema.fields.find(field=>field.id==='taxType').schemaDefault,'과세');assert.equal(schema.fields.find(field=>field.id==='supplyPrice').min,1);
  }
 });
+test('named category arrays keep field identity, defaults and source linkage when JSON value precedes name',()=>{
+ for(const company of schemaCompanies){
+  const snapshot=hubSchemaSnapshot(company),original=quotes.getQuotationSchema(snapshot.categoryId,schemaPath,snapshot);
+  const reversed=modify(snapshot,raw=>{
+   const reorder=node=>{
+    if(!node||typeof node!=='object')return;
+    if(node.contains?.properties?.name&&node.contains.properties.value){
+     const {name,value}=node.contains.properties;node.contains.properties={value,name};
+    }
+    for(const child of Object.values(node))if(Array.isArray(child))child.forEach(reorder);else reorder(child);
+   };
+   reorder(raw);
+  });
+  const actual=quotes.getQuotationSchema(snapshot.categoryId,schemaPath,reversed);
+  assert.equal(actual.status,'observed');assert.deepEqual(plain(actual.fields),plain(original.fields));
+  const imported=h.load('app/product-content.ts').emptyProductContent('read-only');
+  const option={id:'SKU',originalName:'원본 색상',translatedName:'검토한 색상',supplierSku:'123',included:true,color:'검정',unitsPerPack:1,
+   unitCostCny:1,weightKg:null,size:null,widthCm:null,lengthCm:null,heightCm:null,imageKey:null,provenance:{color:'manual'}};
+  const input={categoryId:snapshot.categoryId,categoryPath:schemaPath,product:{id:'read-only',title:'읽은 상품',image_keys:'[]',source_price_cny:1},
+   content:imported,settings:h.settings,options:[option]};
+  const before=quotes.resolveQuotationFields({...input,hubSchema:snapshot}),after=quotes.resolveQuotationFields({...input,hubSchema:reversed});
+  assert.deepEqual(plain(after.rows),plain(before.rows));
+  const color=actual.fields.find(field=>field.hubWire?.name==='색상');
+  assert.equal(after.rows.find(row=>row.optionId==='SKU').fields[color.id].value,'검정');
+ }
+});
+test('explicit name/value keys distinguish a single permitted value and preserve manual values for either JSON order',()=>{
+ const snapshot=modify(hubSchemaSnapshot(),raw=>{
+  raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf[1].contains.properties.value={type:'string',enum:['UV']};
+ });
+ const reversed=modify(snapshot,raw=>{
+  const item=raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf[1];
+  const {name,value}=item.contains.properties;item.contains.properties={value,name};
+ });
+ const before=model.compileHubQuotationSchema(snapshot),after=model.compileHubQuotationSchema(reversed);
+ assert.deepEqual(plain(after),plain(before));
+ const lens=after.fields.find(field=>field.hubWire.name==='렌즈 유형');
+ assert.equal(lens.hubWire.nameKey,'name');assert.equal(lens.hubWire.valueKey,'value');assert.equal(lens.choices[0].value,'UV');
+ const changed=quotes.applyQuotationChanges(quotes.emptyQuotationOverrides(),[{fieldKey:lens.id,optionId:'SKU',value:'UV'}]);
+ assert.equal(changed.options.SKU[lens.id],'UV');assert.equal(before.fields.find(field=>field.hubWire.name==='렌즈 유형').id,lens.id);
+});
+test('nonstandard named-array keys require one unambiguous name schema and never infer singleton-enum order',()=>{
+ const snapshot=hubSchemaSnapshot();
+ const replace=properties=>modify(snapshot,raw=>{
+  raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf=[{contains:{type:'object',properties}}];
+ });
+ const named={type:'string',enum:['시험 속성']},value={type:'string'};
+ const forward=model.compileHubQuotationSchema(replace({attributeName:named,attributeValue:value}));
+ const reverse=model.compileHubQuotationSchema(replace({attributeValue:value,attributeName:named}));
+ assert.deepEqual(plain(reverse),plain(forward));assert.equal(reverse.unsupported.length,0);
+ assert.deepEqual(plain(reverse.fields.find(field=>field.hubWire.name==='시험 속성').hubWire),{
+  path:['productPage','commonAttributes','exposedAttributes'],nameKey:'attributeName',valueKey:'attributeValue',name:'시험 속성',
+ });
+ for(const properties of [{attributeName:named,attributeValue:{type:'string',enum:['한 값']}},{attributeValue:{type:'string',enum:['한 값']},attributeName:named},
+  {name:{type:'string'},value:{type:'string',enum:['잘못된 이름 후보']}}]){
+  const result=model.compileHubQuotationSchema(replace(properties));
+  assert.ok(result.unsupported.includes('productPage / commonAttributes / exposedAttributes'));
+  assert.ok(!result.fields.some(field=>field.hubWire.path.at(-1)==='exposedAttributes'));
+ }
+});
 test('snapshot rejects cross-category/path/company metadata, prototype keys and malformed/oversized raw schema',()=>{
  const snap=hubSchemaSnapshot();
  for(const patch of [{categoryId:'007'}, {categoryPath:['other']},{company:schemaCompanies[1],categoryPath:[]},{company:{code:'A00000000',name:'와이홉'}},{observedAt:Date.now()+120000},{metadata:{displayCategoryCode:'other'}},{metadata:{token:'private'}},{schemaString:'{}'},{schemaString:'x'.repeat(200001)},{schemaString:'{"properties":{"productPage":{},"legalPage":{}},"__proto__":{}}'}])assert.throws(()=>model.validateHubSchemaSnapshot({...snap,...patch},snap.categoryId,schemaPath));

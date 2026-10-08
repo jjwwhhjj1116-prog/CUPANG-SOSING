@@ -215,8 +215,18 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
       for(const entry of node.allOf){
         const properties=object(entry)&&object(entry.contains)&&object(entry.contains.properties)?entry.contains.properties:null;
         if(!properties||Object.keys(properties).length!==2){issue(path);continue;}
-        const [namePair,valuePair]=Object.entries(properties);
-        if(!object(namePair[1])||!Array.isArray(namePair[1].enum)||namePair[1].enum.length!==1||!safeText(namePair[1].enum[0],500)||!object(valuePair[1])){issue(path);continue;}
+        const pairs=Object.entries(properties);
+        const isName=(value:unknown):value is Record<string,unknown>&{enum:[string]}=>object(value)
+          &&Array.isArray(value.enum)&&value.enum.length===1&&safeText(value.enum[0],500);
+        // JSON property order has no meaning. Hub's explicit name/value keys
+        // also disambiguate a value dropdown containing one permitted choice.
+        // Preserve other observed keys only when exactly one property can be
+        // the name; two singleton enums without explicit keys are ambiguous.
+        const explicit=Object.hasOwn(properties,'name')&&Object.hasOwn(properties,'value');
+        const names=explicit?pairs.filter(([key])=>key==='name'):pairs.filter(([,value])=>isName(value));
+        if(names.length!==1){issue(path);continue;}
+        const namePair=names[0],valuePair=pairs.find(([key])=>key!==namePair[0])!;
+        if(!isName(namePair[1])||!object(valuePair[1])){issue(path);continue;}
         const label=namePair[1].enum[0],visibility=group==='exposedAttributes'?'exposed':group==='unexposedAttributes'?'hidden':'common';
         const optionalHidden=group==='unexposedAttributes';
         const wire={path,nameKey:namePair[0],valueKey:valuePair[0],name:label};

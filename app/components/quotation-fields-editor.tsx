@@ -17,6 +17,8 @@ import { hasCouplusEmptyAttributeDefault } from '@/app/couplus-quotation-default
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
 import { quotationPackagedWeightEditChanges, quotationPackagedWeightEditFields, quotationPackagedWeightManual, quotationPackagedWeightPeer } from '@/app/quotation-packaged-weight';
 import { isPackagedDimensionsMmField, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
+import { quotationPriceDisplayField, quotationPriceEditChanges, quotationPriceEditFields, quotationPriceEditInput, quotationPriceStagedEdit, quotationPriceVisibleFields } from '@/app/quotation-price-edits';
+import { quotationPriceTargets } from '@/app/quotation-price-targets';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -34,6 +36,10 @@ const sections = [
 const sourceLabels: Record<string, string> = { 'couplus-default': '쿠플러스 양식 기본값', 'manual-option': '옵션 직접 수정', 'manual-common': '공통 직접 수정', content: '저장 콘텐츠', settings: '기본 설정', option: '저장 옵션', pricing: '가격 계산', product: '저장 상품', schema: '선택 카테고리', empty: '미입력' };
 const has = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 export const quotationEditorKey = (optionId: string | null, fieldKey: string) => JSON.stringify([optionId, fieldKey]);
+export function resolveQuotationEditorNavigation(resolved: QuotationFieldsView['resolved'], target: QuotationNavigationTarget) {
+  const destination = resolveQuotationNavigation(resolved, target);
+  return destination.ok ? { ...destination, fieldId: quotationPriceDisplayField(resolved.schema.fields, destination.fieldId) } : destination;
+}
 function manualValue(overrides: QuotationOverrides, optionId: string | null, fieldKey: string): string | null {
   const record = optionId === null ? overrides.common : overrides.options[optionId];
   return record && has(record, fieldKey) ? record[fieldKey] : null;
@@ -47,19 +53,18 @@ export function updateQuotationEditorDraft(overrides: QuotationOverrides, change
 
 /** Copy only the current option's edits; keep every untouched automatic field linked. */
 export function quotationSavePlan(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], sourceOptionId: string | null, allOptions: boolean) {
-  let planned = quotationPackagedWeightEditChanges(view.resolved.schema.fields, changes);
+  let planned = quotationPriceEditChanges(view.resolved.schema.fields, quotationPackagedWeightEditChanges(view.resolved.schema.fields, changes));
   const propagated: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string }[] = [];
-  if (!allOptions) return { changes: planned, propagated };
-  if (sourceOptionId === null || !view.resolved.rows.some(row => row.optionId === sourceOptionId && row.included)) throw Error('견적에 포함된 원본 옵션을 선택해주세요.');
-  const edits = planned.filter(change => change.optionId === sourceOptionId);
-  for (const row of view.resolved.rows) {
+  if (allOptions && (sourceOptionId === null || !view.resolved.rows.some(row => row.optionId === sourceOptionId && row.included))) throw Error('견적에 포함된 원본 옵션을 선택해주세요.');
+  const edits = allOptions ? planned.filter(change => change.optionId === sourceOptionId) : [];
+  for (const row of allOptions ? view.resolved.rows : []) {
     if (row.optionId === null || row.optionId === sourceOptionId || !row.included) continue;
     for (const edit of edits) {
       const field = view.resolved.schema.fields.find(field => field.id === edit.fieldKey);
       if (!field || field.readOnly) throw Error('복사할 견적 항목을 다시 확인해주세요.');
       const target = { ...edit, optionId: row.optionId };
-      if (draftManual(view, planned, row.optionId, edit.fieldKey) === edit.value) continue;
-      const before = resolveQuotationEditorCell(view, planned, row.optionId, edit.fieldKey);
+      if (storedDraftManual(view, planned, row.optionId, edit.fieldKey) === edit.value) continue;
+      const before = resolveQuotationEditorCell(view, changes, row.optionId, edit.fieldKey);
       planned = updateQuotationEditorDraft(view.overrides, planned, target);
       const after = resolveQuotationEditorCell(view, planned, row.optionId, edit.fieldKey);
       propagated.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldKey: edit.fieldKey, label: field.label,
@@ -67,9 +72,24 @@ export function quotationSavePlan(view: QuotationFieldsView, changes: readonly Q
       if (planned.length > 1000) throw Error('한 번에 1,000개 값까지 저장할 수 있습니다. 수정 항목을 나눠 저장해주세요.');
     }
   }
+  const priceScopes = new Set(planned.filter(change => ['supplyPrice', 'salePrice'].includes(quotationPriceEditInput(view.resolved.schema.fields, change.fieldKey) ?? '')).map(change => change.optionId));
+  if (priceScopes.size) {
+    const targets = quotationPriceTargets(view.resolved.schema.fields);
+    for (const row of view.resolved.rows.filter(row => (row.included || priceScopes.has(row.optionId)) && (priceScopes.has(row.optionId) || priceScopes.has(null)))) {
+      const issues = quotationPriceIssues(view.resolved.schema,
+        resolveQuotationEditorCell(view, planned, row.optionId, targets.supplyPrice.primary).value,
+        resolveQuotationEditorCell(view, planned, row.optionId, targets.salePrice.primary).value);
+      if (issues.length) throw new Error(`${row.optionLabel}: ${issues.join(' ')}`);
+    }
+  }
   return { changes: planned, propagated };
 }
 function draftManual(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], optionId: string | null, fieldKey: string) {
+  try { const price = quotationPriceStagedEdit(view.resolved.schema.fields, changes, optionId, fieldKey); if (price) return price.value; }
+  catch { /* Keep each conflicting input visible; the save plan reports it. */ }
+  return storedDraftManual(view, changes, optionId, fieldKey);
+}
+function storedDraftManual(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], optionId: string | null, fieldKey: string) {
   const staged = changes.find(change => change.optionId === optionId && change.fieldKey === fieldKey);
   return staged ? staged.value : manualValue(view.overrides, optionId, fieldKey);
 }
@@ -92,10 +112,18 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
     '실제 바코드 번호를 입력해주세요.', '바코드 생성 요청 방식과 입력된 번호가 충돌합니다.',
     ...quotationBarcodeIssues(view.resolved.schema.categoryId, 'existing', resolvedValue),
   ]);
+  const priceIssues: string[] = [];
+  try {
+    for (const layer of optionId === null ? [null] : [optionId, null]) quotationPriceStagedEdit(view.resolved.schema.fields, changes, layer, fieldKey);
+    if (quotationPriceEditInput(view.resolved.schema.fields, fieldKey) === 'salePrice') {
+      const target = quotationPriceTargets(view.resolved.schema.fields);
+      priceIssues.push(...quotationPriceIssues(view.resolved.schema, resolveQuotationEditorCell(view, changes, optionId, target.supplyPrice.primary).value, resolvedValue));
+    }
+  } catch (cause) { priceIssues.push(cause instanceof Error ? cause.message : '연결된 가격 수정값을 확인해주세요.'); }
   const validationIssues = [...new Set([
     ...(inherited?.validationIssues ?? inherited?.issues ?? []).filter(issue => !dynamicIssues.has(issue)),
     ...(definition ? quotationValueIssues(definition, resolvedValue, view.imageKeys, source) : []),
-    ...(fieldKey === 'salePrice' ? quotationPriceIssues(view.resolved.schema, resolveQuotationEditorCell(view, changes, optionId, 'supplyPrice').value, resolvedValue) : []),
+    ...priceIssues,
   ])];
   if (fieldKey === 'barcode') {
     const mode = resolveQuotationEditorCell(view, changes, optionId, 'barcodeMode').value;
@@ -117,15 +145,19 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
 export function reconcileQuotationEditorDraft(previous: QuotationFieldsView, next: QuotationFieldsView, changes: readonly QuotationEditorChange[], pending: readonly Conflict[] = []) {
   const conflicts: Conflict[] = [];
   const retained = changes.filter(change => {
-    const before = manualValue(previous.overrides, change.optionId, change.fieldKey);
-    const saved = manualValue(next.overrides, change.optionId, change.fieldKey);
-    const unavailable = !next.resolved.schema.fields.some(field => field.id === change.fieldKey && !field.readOnly) || !next.resolved.rows.some(row => row.optionId === change.optionId);
     const key = quotationEditorKey(change.optionId, change.fieldKey);
-    const definition = (view: QuotationFieldsView) => view.resolved.schema.fields.find(field => field.id === change.fieldKey);
-    const schemaChanged = previous.resolved.schema.categoryId !== next.resolved.schema.categoryId ||
-      JSON.stringify(definition(previous)) !== JSON.stringify(definition(next)) || pending.some(conflict => conflict.key === key && conflict.schemaChanged);
-    if (!unavailable && !schemaChanged && saved === change.value) return false;
-    if (unavailable || schemaChanged || before !== saved || pending.some(conflict => conflict.key === key)) conflicts.push({ key, change, before, saved, unavailable, ...(schemaChanged ? { schemaChanged: true } : {}) });
+    let linked = [change.fieldKey], nextLinked = linked, priceSchemaChanged = false;
+    try { linked = quotationPriceEditFields(previous.resolved.schema.fields, change.fieldKey); nextLinked = quotationPriceEditFields(next.resolved.schema.fields, change.fieldKey); }
+    catch { priceSchemaChanged = true; }
+    const definition = (view: QuotationFieldsView, id: string) => view.resolved.schema.fields.find(field => field.id === id);
+    const unavailable = linked.some(id => !next.resolved.schema.fields.some(field => field.id === id && !field.readOnly)) || !next.resolved.rows.some(row => row.optionId === change.optionId);
+    const schemaChanged = priceSchemaChanged || JSON.stringify(linked) !== JSON.stringify(nextLinked) || previous.resolved.schema.categoryId !== next.resolved.schema.categoryId ||
+      linked.some(id => JSON.stringify(definition(previous, id)) !== JSON.stringify(definition(next, id))) || pending.some(conflict => conflict.key === key && conflict.schemaChanged);
+    const fulfilled = linked.every(id => manualValue(next.overrides, change.optionId, id) === change.value);
+    if (!unavailable && !schemaChanged && fulfilled) return false;
+    const changedId = linked.find(id => manualValue(previous.overrides, change.optionId, id) !== manualValue(next.overrides, change.optionId, id));
+    const before = manualValue(previous.overrides, change.optionId, changedId ?? change.fieldKey), saved = manualValue(next.overrides, change.optionId, changedId ?? change.fieldKey);
+    if (unavailable || schemaChanged || changedId !== undefined || pending.some(conflict => conflict.key === key)) conflicts.push({ key, change, before, saved, unavailable, ...(schemaChanged ? { schemaChanged: true } : {}) });
     return true;
   });
   return { changes: retained.map(change => ({ ...change })), conflicts };
@@ -160,15 +192,20 @@ export function previewQuotationEditorBulk(view: QuotationFieldsView, changes: r
       && resolveQuotationEditorCell(view, changes, sourceOptionId, field.id).value !== resolveQuotationEditorCell(view, changes, sourceOptionId, peer).value) {
       throw new Error('연결된 포장 무게 값이 다릅니다. 사용할 무게를 직접 입력한 뒤 적용해주세요.');
     }
+    const prices = quotationPriceEditFields(view.resolved.schema.fields, field.id);
+    if (prices.length > 1 && prices.some(id => copyable.some(item => item.id === id)
+      && resolveQuotationEditorCell(view, changes, sourceOptionId, id).value !== resolveQuotationEditorCell(view, changes, sourceOptionId, field.id).value)) {
+      throw new Error('연결된 가격의 수정값이 다릅니다. 사용할 금액을 직접 입력한 뒤 적용해주세요.');
+    }
   }
   for (const row of view.resolved.rows) {
     if (row.optionId === null || row.optionId === sourceOptionId || (includedOnly && !row.included)) continue;
     for (const field of copyable) {
       const source = resolveQuotationEditorCell(view, changes, sourceOptionId, field.id);
       const after = isPackagedDimensionsMmField(field) ? normalizePackagedDimensionsMm(source.value) : source.value;
-      for (const fieldKey of quotationPackagedWeightEditFields(view.resolved.schema.fields, field.id, after)) {
+      for (const fieldKey of [...new Set(quotationPackagedWeightEditFields(view.resolved.schema.fields, field.id, after).flatMap(key => quotationPriceEditFields(view.resolved.schema.fields, key)))]) {
         const target = view.resolved.schema.fields.find(item => item.id === fieldKey)!;
-        if (draftManual(view, targetDraft, row.optionId, fieldKey) === after) continue;
+        if (storedDraftManual(view, targetDraft, row.optionId, fieldKey) === after) continue;
         const before = resolveQuotationEditorCell(view, changes, row.optionId, fieldKey);
         rows.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldKey, label: target.label, before: before.value, after,
           beforeDisplay: quotationFieldDisplay(target, before), afterDisplay: quotationFieldDisplay(target, { ...source, value: after }), manualBefore: before.source.startsWith('manual-') });
@@ -182,7 +219,7 @@ export function previewQuotationEditorBulk(view: QuotationFieldsView, changes: r
 }
 /** Remove only selected option overrides. Shared edits remain the inheritance source. */
 export function previewQuotationEditorRestore(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], fieldKeys: readonly string[], includedOnly: boolean): BulkPreview {
-  const fields = [...new Set(fieldKeys)].map(key => view.resolved.schema.fields.find(field => field.id === key));
+  const fields = [...new Set(fieldKeys.flatMap(key => quotationPriceEditFields(view.resolved.schema.fields, key)))].map(key => view.resolved.schema.fields.find(field => field.id === key));
   if (!fields.length || fields.some(field => !field || field.readOnly)) throw new Error('복원할 수정 가능 항목을 선택해주세요.');
   const rows: BulkPreview['rows'] = []; const planned: QuotationEditorChange[] = [];
   for (const row of view.resolved.rows) {
@@ -191,7 +228,8 @@ export function previewQuotationEditorRestore(view: QuotationFieldsView, changes
       if (draftManual(view, changes, row.optionId, field.id) === null) continue;
       const reset = { optionId: row.optionId, fieldKey: field.id, value: null };
       const before = resolveQuotationEditorCell(view, changes, row.optionId, field.id);
-      const after = resolveQuotationEditorCell(view, updateQuotationEditorDraft(view.overrides, changes, reset), row.optionId, field.id);
+      const resets = quotationPriceEditFields(view.resolved.schema.fields, field.id).reduce((draft, key) => updateQuotationEditorDraft(view.overrides, draft, { ...reset, fieldKey: key }), [...changes]);
+      const after = resolveQuotationEditorCell(view, resets, row.optionId, field.id);
       rows.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldKey: field.id, label: field.label, before: before.value, after: after.value,
         beforeDisplay: quotationFieldDisplay(field, before), afterDisplay: quotationFieldDisplay(field, after), manualBefore: true });
       planned.push(reset);
@@ -211,11 +249,11 @@ export function quotationEditorIssues(field: QuotationField, cell: Cell, imageKe
 }
 function imageValues(value: string) { return [...new Set(value.split('\n').map(key => key.trim()).filter(Boolean))]; }
 export function quotationEditorValidation(field: QuotationField, cell: Cell, imageKeys: readonly string[]) {
-  return [...new Set(cell.validationIssues ?? quotationValueIssues(field, cell.value, imageKeys, cell.source))];
+  return [...new Set([...(cell.validationIssues ?? []), ...quotationValueIssues(field, cell.value, imageKeys, cell.source)])];
 }
 export function quotationSectionProgress(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], optionId: string | null) {
   return sections.map(section => {
-    const fields = view.resolved.schema.fields.filter(field => field.section === section.id);
+    const fields = quotationPriceVisibleFields(view.resolved.schema.fields).filter(field => field.section === section.id);
     let required = 0; let complete = 0; let invalid = 0;
     for (const field of fields) {
       const cell = resolveQuotationEditorCell(view, changes, optionId, field.id);
@@ -230,7 +268,7 @@ export function quotationOptionOverview(view: QuotationFieldsView, changes: read
   return view.resolved.rows.filter(row => row.included).map(row => {
     let linked = 0; let defaults = 0; let manual = 0; let missing = 0;
     const problems: { fieldKey: string; label: string; section: QuotationField['section']; issues: string[] }[] = [];
-    for (const field of view.resolved.schema.fields) {
+    for (const field of quotationPriceVisibleFields(view.resolved.schema.fields)) {
       const cell = resolveQuotationEditorCell(view, changes, row.optionId, field.id);
       if (cell.source.startsWith('manual-')) manual++;
       else if (cell.source === 'couplus-default') defaults++;
@@ -328,7 +366,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     fetchView(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted && id === requests.current) {
         setView(saved);
         if (initialTarget.current) {
-          const destination = resolveQuotationNavigation(saved.resolved, initialTarget.current);
+          const destination = resolveQuotationEditorNavigation(saved.resolved, initialTarget.current);
           if (destination.ok) { setSelectedOption(destination.optionId); setActive(destination.section); pendingFocus.current = destination.fieldId; setMessage(destination.message); }
           else setMessage(destination.message);
         }
@@ -377,7 +415,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     if (!view || busy || loading || !view.resolved.rows.some(row => row.optionId === optionId)) return;
     const field = view.resolved.schema.fields.find(field => field.id === fieldKey);
     if (typeof value === 'string' && field && isPackagedDimensionsMmField(field)) value = normalizePackagedDimensionsMm(value);
-    const fieldKeys = quotationPackagedWeightEditFields(view.resolved.schema.fields, fieldKey, value);
+    let fieldKeys: string[];
+    try { fieldKeys = [...new Set(quotationPackagedWeightEditFields(view.resolved.schema.fields, fieldKey, value).flatMap(key => quotationPriceEditFields(view.resolved.schema.fields, key)))]; }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '가격 항목 연결을 확인해주세요.'); return; }
     setChanges(previous => fieldKeys.reduce((draft, id) => updateQuotationEditorDraft(view.overrides, draft, { fieldKey: id, optionId, value }), previous));
     setConflicts(previous => previous.filter(conflict => !fieldKeys.some(id => conflict.key === quotationEditorKey(optionId, id))));
     setBulk(null); setMessage('');
@@ -404,13 +444,14 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const row = view?.resolved.rows.find(item => item.optionId === selectedOption);
   function openSection(section: (typeof sections)[number]['id'], fieldId?: string) {
     setActive(section);
-    const target = document.getElementById(fieldId ? `${prefix}-${fieldId}` : `${prefix}-section-${section}`);
+    const visibleField = fieldId && schema ? quotationPriceDisplayField(schema.fields, fieldId) : fieldId;
+    const target = document.getElementById(visibleField ? `${prefix}-${visibleField}` : `${prefix}-section-${section}`);
     target?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     if (fieldId) target?.focus({ preventScroll: true });
   }
   const counts = view ? quotationSectionProgress(view, changes, selectedOption) : [];
   const allIssues = view && schema ? schema.fields.flatMap(field => quotationEditorIssues(field, resolveQuotationEditorCell(view, changes, selectedOption, field.id), view.imageKeys).map(issue => ({ field, issue }))) : [];
-  const missingRequired = view && schema ? schema.fields.filter(field => field.required && !resolveQuotationEditorCell(view, changes, selectedOption, field.id).value.trim()).length : 0;
+  const missingRequired = view && schema ? quotationPriceVisibleFields(schema.fields).filter(field => field.required && !resolveQuotationEditorCell(view, changes, selectedOption, field.id).value.trim()).length : 0;
   const optionCount = view?.resolved.rows.filter(item => item.optionId !== null).length ?? 0;
   const optionLimitIssue = view && schema ? quotationOptionLimitIssue(schema, view.resolved.rows.filter(item => item.optionId !== null && item.included).length) : null;
   let hasInvalidDraft = false; let invalidDraftMessage = '';
@@ -438,11 +479,13 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       {conflicts.length > 0 && <div className="quotation-fields-notice" role="alert"><strong>다시 검토할 항목 {conflicts.length}개</strong><ul className="quotation-fields-conflicts">{conflicts.map(conflict => <li key={conflict.key}><strong>{schema?.fields.find(field => field.id === conflict.change.fieldKey)?.label ?? conflict.change.fieldKey} · {view.resolved.rows.find(item => item.optionId === conflict.change.optionId)?.optionLabel ?? '삭제된 옵션'}</strong>{conflict.schemaChanged && <p>카테고리 또는 항목 규격이 변경되었습니다. 같은 값이라도 새 양식에 맞는지 확인해주세요.</p>}<p>{conflict.unavailable ? '현재 카테고리 또는 옵션에 없는 입력입니다.' : `현재 저장값: ${conflict.saved === null ? '자동값 사용' : conflict.saved || '(공란)'}`}</p><p>내 입력: {conflict.change.value === null ? '수동 수정 해제' : conflict.change.value || '(공란)'}</p><div className="quote-actions">{!conflict.unavailable && <button type="button" className="btn ghost" disabled={busy || loading} onClick={() => setConflicts(previous => previous.filter(item => item.key !== conflict.key))}>내 입력 유지</button>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => { setChanges(previous => previous.filter(change => quotationEditorKey(change.optionId, change.fieldKey) !== conflict.key)); setConflicts(previous => previous.filter(item => item.key !== conflict.key)); setBulk(null); }}>{conflict.unavailable ? '이 입력 제외' : '저장된 값 사용'}</button></div></li>)}</ul></div>}
       <div className="quotation-fields-actions">{selectedOption !== null && row?.included && optionCount > 1 && <label className="quotation-apply-all"><input type="checkbox" role="switch" checked={applyAll} disabled={busy || loading} onChange={event => setApplyAll(event.target.checked)}/>모든 포함 옵션에 적용</label>}<small>입력 v{view.revision} · 작성 중에도 저장할 수 있습니다.<br />수동 수정값은 기본값이 바뀌어도 유지됩니다.</small><div><button type="button" className="btn ghost" disabled={busy || loading || !dirty} onClick={() => void refresh(true)}>입력 버리고 저장본 불러오기</button><button type="button" className="btn primary" disabled={busy || loading || !dirty || !row || conflicts.length > 0 || hasInvalidDraft} onClick={() => void save()}>{operationBusy ? '저장 중…' : `견적 입력 저장${dirty ? ` (${savePlan.changes.length || changes.length})` : ''}`}</button></div></div>
       {applyAll && <div className="quotation-fields-bulk" role="status"><p>현재 옵션에서 수정한 항목만 다른 포함 옵션에 적용합니다. 대상의 같은 항목에 직접 입력한 값이 있으면 바뀝니다. 수정하지 않은 항목과 제외 옵션은 유지됩니다.</p><strong>다른 옵션 {new Set(savePlan.propagated.map(item => item.optionId)).size}개 · {savePlan.propagated.length}개 값 적용 예정</strong>{savePlan.propagated.length > 0 && <details><summary>함께 저장할 변경 내용</summary><div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션 / 항목</th><th>현재 입력</th><th>저장할 값</th></tr></thead><tbody>{savePlan.propagated.map(item => <tr key={quotationEditorKey(item.optionId,item.fieldKey)}><td>{item.optionLabel}<br/>{item.label}</td><td>{item.before}</td><td>{item.after}</td></tr>)}</tbody></table></div></details>}</div>}
-      {row && sections.map((section, sectionIndex) => <fieldset key={section.id} id={`${prefix}-section-${section.id}`} data-section={section.id} className="quotation-fields-section" disabled={busy || loading} style={{ padding: 0, margin: 0, minWidth: 0 }}><header><h4>{sectionIndex + 1}. {section.english} Page ({section.title})</h4><small>* 필수 입력</small><p className="quotation-field-help" style={{ width: '100%' }}>{section.description}</p></header><div className="quotation-fields-grid">{(schema?.fields.filter(field => field.section === section.id) ?? []).flatMap((field, fieldIndex, sectionFields) => {
+      {row && sections.map((section, sectionIndex) => <fieldset key={section.id} id={`${prefix}-section-${section.id}`} data-section={section.id} className="quotation-fields-section" disabled={busy || loading} style={{ padding: 0, margin: 0, minWidth: 0 }}><header><h4>{sectionIndex + 1}. {section.english} Page ({section.title})</h4><small>* 필수 입력</small><p className="quotation-field-help" style={{ width: '100%' }}>{section.description}</p></header><div className="quotation-fields-grid">{quotationPriceVisibleFields(schema?.fields ?? []).filter(field => field.section === section.id).flatMap((field, fieldIndex, sectionFields) => {
         const cell = resolveQuotationEditorCell(view, changes, selectedOption, field.id);
         const automatic = view.automatic.rows.find(item => item.optionId === selectedOption)?.fields[field.id];
         const issues = quotationEditorIssues(field, cell, view.imageKeys);
-        const id = `${prefix}-${field.id}`; const ownManual = draftManual(view, changes, selectedOption, field.id) !== null;
+        const id = `${prefix}-${field.id}`;
+        const priceAliases = (schema?.fields ?? []).filter(item => item.id !== field.id && quotationPriceDisplayField(schema?.fields ?? [], item.id) === field.id);
+        const ownManual = [field, ...priceAliases].some(item => draftManual(view, changes, selectedOption, item.id) !== null);
         const inheritedManual = selectedOption !== null && !ownManual && cell.source === 'manual-common';
         const weightManual = quotationPackagedWeightManual(view.resolved.schema.fields, field.id, selectedOption,
           (layer, key) => draftManual(view, changes, layer, key));
@@ -451,8 +494,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           ? resolveQuotationEditorCell(view, updateQuotationEditorDraft(view.overrides, changes, { fieldKey: field.id, optionId: selectedOption, value: null }), selectedOption, field.id) : null;
         const editable = !field.readOnly; const imageKeys = imageValues(cell.value);
         const inputProps = { id, value: cell.value, readOnly: !editable, 'aria-invalid': quotationEditorValidation(field, cell, view.imageKeys).length > 0, 'aria-describedby': `${id}-notes`, onChange: (event: { target: { value: string } }) => edit(field.id, event.target.value) };
-        const group = quotationFieldGroup(field);
-        const heading = group && (fieldIndex === 0 || quotationFieldGroup(sectionFields[fieldIndex - 1]) !== group) ? <h5 key={`group-${field.id}`} className="quotation-field-group">{group}</h5> : null;
+        const group = quotationFieldGroup(field, schema?.fields);
+        const heading = group && (fieldIndex === 0 || quotationFieldGroup(sectionFields[fieldIndex - 1], schema?.fields) !== group) ? <h5 key={`group-${field.id}`} className="quotation-field-group">{group}</h5> : null;
+        const priceMismatch = priceAliases.map(alias => ({ alias, cell: resolveQuotationEditorCell(view, changes, selectedOption, alias.id) })).filter(item => item.cell.value !== cell.value);
         return [heading, <div className={`quotation-field ${field.type === 'textarea' || field.type === 'images' ? 'wide' : ''}`} key={field.id}>
           <div className="quotation-field-heading"><label htmlFor={id}>{field.label}{field.unit ? ` (${field.unit})` : ''}{field.required && <b>*</b>}</label><div className="quotation-field-badges"><span className={`quotation-field-badge ${cell.source.startsWith('manual-') ? 'manual' : ''}`}>{sourceLabels[cell.source] ?? cell.source}</span>{field.visibility === 'exposed' && <span className="quotation-field-badge">노출 속성</span>}{field.visibility === 'hidden' && <span className="quotation-field-badge">비노출 속성</span>}{cell.needsReview && <span className="quotation-field-badge review">검토 필요</span>}</div></div>
           {field.type === 'select' && editable ? <QuotationChoiceInput field={field} cell={cell} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => edit(field.id, value)}/>
@@ -461,7 +505,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           {field.type === 'images' && <><div className="quotation-fields-image-list">{view.imageKeys.map((key, index) => <button className="quotation-fields-image-choice" key={key} type="button" disabled={!editable} aria-pressed={imageKeys.includes(key)} aria-label={`이미지 ${index + 1} ${imageKeys.includes(key) ? '연결 해제' : '연결'}`} onClick={() => edit(field.id, (imageKeys.includes(key) ? imageKeys.filter(item => item !== key) : field.maxItems === 1 ? [key] : [...imageKeys, key]).join('\n'))}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} loading="lazy" /><span>이미지 {index + 1}</span>{imageKeys.includes(key) && <b>{imageKeys.indexOf(key) + 1}</b>}</button>)}</div>{imageKeys.length > 0 && <div className="quotation-fields-image-selected">{imageKeys.map((key, index) => <div key={key}><span>{index + 1}. {view.imageKeys.includes(key) ? `이미지 ${view.imageKeys.indexOf(key) + 1}` : `연결 확인: ${key}`}</span><button type="button" disabled={!editable || index === 0} aria-label={`${index + 1}번 이미지 앞으로`} onClick={() => { const next = [...imageKeys]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; edit(field.id, next.join('\n')); }}>↑</button><button type="button" disabled={!editable || index === imageKeys.length - 1} aria-label={`${index + 1}번 이미지 뒤로`} onClick={() => { const next = [...imageKeys]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; edit(field.id, next.join('\n')); }}>↓</button><button type="button" disabled={!editable} onClick={() => edit(field.id, imageKeys.filter(item => item !== key).join('\n'))}>제외</button></div>)}</div>}</>}
-          <div id={`${id}-notes`}>{'help' in field && field.help ? <p className="quotation-field-help">{String(field.help)}</p> : null}{issues.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>
+          <div id={`${id}-notes`}>{'help' in field && field.help ? <p className="quotation-field-help">{String(field.help)}</p> : null}{priceMismatch.map(item => <p key={item.alias.id} className="quotation-field-issue">이전 요약 가격 {quotationFieldDisplay(item.alias, item.cell, '(공란)')}과 Supplier Hub 가격이 다릅니다. 저장값은 유지했습니다. 이 금액을 직접 입력하면 두 항목에 함께 반영합니다.</p>)}{issues.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>
           {ownManual && <div className="quotation-field-auto">{restoredWeight ? `수정 해제 후 ${sourceLabels[restoredWeight.source]}: ${quotationFieldDisplay(field, restoredWeight, '(미입력)')}` : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? `수정 해제 후 공통값: ${quotationFieldDisplay(field, {value:draftManual(view, changes, null, field.id)!,source:'manual-common'})}` : `자동값 (${sourceLabels[automatic?.source ?? 'empty'] ?? '저장 자료'}): ${quotationFieldDisplay(field, automatic ?? {value:'',source:'empty'}, '(미입력)')}`}</div>}
           <div className="quotation-field-footer"><div>{editable && ownManual && <button type="button" className="quotation-field-text-button" onClick={() => edit(field.id, null)}>{restoredWeight ? restoredWeight.source.startsWith('manual-') ? '수정 해제 · 연결값 사용' : '수정 해제 · 자동값 복원' : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '수정 해제 · 공통값 사용' : '수정 해제 · 자동값 복원'}</button>}{linkedWeight ? <small>연결된 포장 무게의 {weightManual.source === 'manual-option' ? '옵션' : '공통'} 입력값을 따릅니다.</small> : inheritedManual && <small>공통값을 따릅니다. 여기서 입력하면 이 옵션만 바뀝니다.</small>}{field.minLength !== undefined && field.minLength > 0 && <small> 최소 {field.minLength}자</small>}{field.maxLength !== undefined && <small> {quotationValueLength(field, cell.value)}/{field.maxLength}자</small>}</div>{editable && optionCount > 0 && <label className="quotation-field-select-copy"><input type="checkbox" checked={selectedFields.includes(field.id)} onChange={event => { setSelectedFields(previous => event.target.checked ? [...previous, field.id] : previous.filter(key => key !== field.id)); setBulk(null); }} />다른 옵션에 적용</label>}</div>
         </div>];

@@ -1,10 +1,13 @@
 import type { QuotationField } from '@/app/quotation-schema';
+import { quotationPriceEditInput } from '@/app/quotation-price-edits';
 /** Subsection names observed in the supplied Couplus quotation screens. */
-export function quotationFieldGroup(field: QuotationField): string {
+export function quotationFieldGroup(field: QuotationField, fields?: readonly QuotationField[]): string {
   if (field.section === 'product') {
     if (field.visibility === 'exposed') return '노출 속성';
     if (field.visibility === 'hidden') return '비노출 속성';
-    return ['supplyPrice','salePrice','msrp','barcodeMode','barcode'].includes(field.id) ? '가격 정보' : '기본 정보';
+    let exactPrice = false;
+    if (fields) try { exactPrice = quotationPriceEditInput(fields, field.id) !== null; } catch { /* Ambiguous controls keep their original grouping. */ }
+    return exactPrice || ['supplyPrice','salePrice','msrp','barcodeMode','barcode'].includes(field.id) ? '가격 정보' : '기본 정보';
   }
   if (field.section === 'image') {
     if (field.id === 'labelImages') return '라벨 이미지';
