@@ -64,6 +64,7 @@ function worker(options={}){
  const calls=[];let gets=0;
  const api={tabs:{get:async()=>{calls.push('get');return {id:7,windowId:17,url:identity.origin+'/',...(options.moved&&++gets===2?{windowId:18}:{}),...options.tab};},
   sendMessage:async(id,message,frame)=>{calls.push({id,message,frame});return {ok:true,...message.expected,checkedAt:Date.now(),
+    ...(message.type==='YOOFAM_READ_PRODUCT_TRANSMISSION_HISTORY'?{history:options.history??{schemaVersion:1,productId:identity.productId,blocked:false,receipts:[]}}:{}),
     ...(['YOOFAM_READ_QUOTATION_RECEIPT','YOOFAM_READ_TRANSMISSION_RECEIPT'].includes(message.type)?{receipt:options.receipt===null?null:receipt(options.receipt)}:{}),...options.reply};}}};
  return {api,calls,run:()=>readAppSupplierHubReceipt(identity,binding,api),stored:()=>readAppSupplierHubStoredReceipt(identity,binding,api)};
 }
@@ -95,14 +96,14 @@ test('preflight never interprets unreadable or mismatched server receipts as per
  for(const options of [{reply:{ok:false}},{reply:{receipt:undefined}},{reply:{checkedAt:Date.now()-61000}},
   {receipt:{result:{...receipt().result,state:'unknown'}}},{receipt:{result:{...receipt().result,detail:'x'.repeat(20001)}}}]){
   const h=worker(options);let writes=0;
-  await assert.rejects(assertAppSupplierHubNotSubmitted(identity,prepared,binding,h.api,async()=>{writes++;}),error=>error.code==='SUPPLIER_HUB_RECEIPT_UNCONFIRMED');assert.equal(writes,0);
+  await assert.rejects(assertAppSupplierHubNotSubmitted(identity,prepared,binding,h.api,async action=>{if(action==='history')return [];writes++;}),error=>error.code==='SUPPLIER_HUB_RECEIPT_UNCONFIRMED');assert.equal(writes,0);
  }
  for(const options of [{receipt:{result:{...receipt().result,includedOptions:5}}},{receipt:{profileId:'other'}}]){
-  const h=worker(options);let writes=0;await assert.rejects(assertAppSupplierHubNotSubmitted(identity,prepared,binding,h.api,async()=>{writes++;}),error=>error.code==='SUPPLIER_HUB_RECEIPT_UNCONFIRMED');assert.equal(writes,0);
+  const h=worker(options);let writes=0;await assert.rejects(assertAppSupplierHubNotSubmitted(identity,prepared,binding,h.api,async action=>{if(action==='history')return [];writes++;}),error=>error.code==='SUPPLIER_HUB_RECEIPT_UNCONFIRMED');assert.equal(writes,0);
  }
- assert.equal(await assertAppSupplierHubNotSubmitted(identity,prepared,binding,worker({receipt:null}).api,async()=>{throw Error('must not claim');}),true);
+ assert.equal(await assertAppSupplierHubNotSubmitted(identity,prepared,binding,worker({receipt:null}).api,async action=>{if(action==='history')return [];throw Error('must not claim');}),true);
  const h=worker();let claims=0;await assert.rejects(assertAppSupplierHubNotSubmitted(identity,prepared,binding,h.api,async(action,key,value)=>{
-  claims++;assert.equal(action,'claim');assert.ok(key.startsWith('result:'));assert.equal(value.quotationId,'quote-123');return false;
+  if(action==='history')return [];claims++;assert.equal(action,'claim');assert.ok(key.startsWith('result:'));assert.equal(value.quotationId,'quote-123');return false;
  }),error=>error.code==='SUPPLIER_HUB_ALREADY_SUBMITTED');assert.equal(claims,1);
 });
 

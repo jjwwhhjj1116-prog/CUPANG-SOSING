@@ -10,6 +10,7 @@ export type TranslationReview = {
   paidNotice: string; pricingUrl: string; expiresAt: string; fingerprint: string;
   reviewId?: string; // Older persisted reviews remain valid without this field.
   optionsRetry?: { retryKey: string; optionRevision: number; scope: 'options' }; // Server-created, option-only free retry proof.
+  seoRetry?: {retryKey:string;scope:'seo';optionRevision:number;sourceFingerprint:string;company:{code:string;name:string}};
 };
 export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false; detectedSourceLanguages?: string[]; translationRequests?: number; googleStoppedHttpStatus?: number };
 export type TranslationJob = {
@@ -241,6 +242,10 @@ function workersAiFailure(error: unknown): TranslationError {
 export async function executeTranslation(review: TranslationReview, config: TranslationConfig, fetcher: typeof fetch = fetch): Promise<TranslationResult> {
   if (translationDestination(config) !== review.destination || config.model !== review.model || config.maxOutputTokens !== review.maxOutputTokens) throw new TranslationError('CONFIGURATION_CHANGED', '검토한 모델 설정이 변경되었습니다. 새 요청을 검토해주세요.');
   validateTranslationSource(review.source);
+  if(Object.hasOwn(review,'seoRetry')){
+    const {seoRetryReviewProof}=await import('@/app/seo-translation-retry');seoRetryReviewProof(review);
+    if(config.provider!=='google-free')throw new TranslationError('CONFIGURATION_CHANGED','SEO 재시도는 검토한 무료 Google 번역만 사용할 수 있습니다.');
+  }
   let optionsOnly=false;
   if(Object.hasOwn(review,'optionsRetry')){
     const {optionsRetryReviewProof}=await import('@/app/options-translation-retry');

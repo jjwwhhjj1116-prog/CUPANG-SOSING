@@ -13,13 +13,14 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 const settle=async()=>{for(let index=0;index<8;index++)await new Promise(resolve=>setImmediate(resolve));};
 const fingerprint='a'.repeat(64);
 const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}];
-function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,preflightRejected=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false,legalDocuments,attached=false,resumeStates=[],missedLookup=false,holdRetry=false}={}){
+function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,preflightRejected=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false,legalDocuments,attached=false,resumeStates=[],missedLookup=false,holdRetry=false,history,localHistoryBlocked=false,historyLookupError=false}={}){
  const slots=[],calls=[],modules=new Map();let cursor=0,sourceChanged=false;
  let clock=0,editNext=false,resumeRetry;
  const preview={fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],report:{company,productId:'p',categoryId:'80719',profileId:'profile',rowCount:1,warnings:[],submissionReady:false,...(legalDocuments?{legalDocuments}:{})},submissionReview:{productId:'p',categoryId:'80719',inputFingerprint:fingerprint,submissionReady:false,transport:'not-connected',errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]}};
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
  let editRecovery=false,lookupError=false,holdLookup=false,resumeLookup;
- const bridge={checkSupplierHubExtension:async(_signal,direct)=>calls.push(['check',direct]),prepareSupplierHubHandoff:async()=>calls.push(['prepare']),
+ const bridge={getSupplierHubProductHistory:async()=>{if(historyLookupError)throw Error('이전 Chrome 이력 조회 실패');return {records:[],blocked:localHistoryBlocked};},
+  checkSupplierHubExtension:async(_signal,direct)=>calls.push(['check',direct]),prepareSupplierHubHandoff:async()=>calls.push(['prepare']),
   getSupplierHubSubmission:async identity=>{calls.push(['recover',identity]);if(recoveryError)throw Error('전송 기록 읽기 실패');if(editRecovery)sourceChanged=true;return savedSubmission||{attempt:null,result:null};},
   transmitSupplierHubPackage:async(blob,identity,reviewed)=>{
    calls.push(['transmit',identity,reviewed,await blob.text()]);
@@ -38,10 +39,11 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
    const result={state:validationComplete?'validation-complete':'validation-pending',filename:preview.filename,company:preview.report.company,includedOptions:1,quotationId:validationComplete?'quote-123':undefined,observedAt:Date.now(),registered:false,...(refresh==='registration'?{registration:{quotationId:'quote-123',scope:'visible-page',rows:issued?[{title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:preview.filename,skuId:'sku-123',status:'상품 검수중',stage:'가격/정책'}]:[],includedOptions:1,observedAt:Date.now(),registered:false,...registrationPatch}}:{}),...resultPatch};
    if(savedSubmission)savedSubmission={...savedSubmission,result};return result;
   }};
- function load(file){if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,setTimeout,fetch:async(url,init)=>{
+ function load(file){if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,TextEncoder,setTimeout,fetch:async(url,init)=>{
    if(url.includes('supplier-hub-receipt')){
     if(init?.method!=='POST'&&receiptReadNetworkError)throw Error('network disconnected');
     if(init?.method!=='POST'&&receiptReadStatus!==200)return Response.json({error:'결과 조회 실패',code:receiptReadCode},{status:receiptReadStatus});
+    if(url.includes('mode=history'))return Response.json({history:history??{schemaVersion:1,productId:'p',blocked:false,receipts:[]}});
     return receiptStoreError&&init?.method==='POST'?Response.json({error:'결과 보관 일시 실패'},{status:503}):Response.json(init?.method==='POST'?{saved:true,fingerprint,registered:false}:{receipt:null});
    }
    const body=JSON.parse(init.body);calls.push(['fetch',url,body]);
@@ -49,7 +51,7 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
    if(conflict)return Response.json({error:'저장값이 변경되었습니다.'},{status:409});
    if(body.action==='export'&&editDuringExport)sourceChanged=true;
    return new Response('ZIP bytes',{headers:{'content-type':'application/zip'}});
- },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/supplier-hub-tracking')return trackingBridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
+ },require(name){if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;if(name==='@/app/supplier-hub-tracking')return trackingBridge;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};if(name==='@/app/components/historical-supplier-hub-result')return {HistoricalSupplierHubResult:'historical-result'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  bridge.validateSupplierHubResultForSource=load('app/supplier-hub-handoff.ts').validateSupplierHubResultForSource;
  bridge.SupplierHubResultInvalid=load('app/supplier-hub-handoff.ts').SupplierHubResultInvalid;
  bridge.SupplierHubLookupUnavailable=load('app/supplier-hub-handoff.ts').SupplierHubLookupUnavailable;
@@ -77,6 +79,20 @@ test('rejected files and SKU rows unlock document correction while the original 
   assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
   assert.equal(h.button('확장에 첨부 파일 준비').props.disabled,true);
   assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'),false);
+ }
+});
+
+for(const company of companies)test(`a new preview keeps old pending A visible and cannot transmit edited B despite fresh manual agreements (${company.code})`,async()=>{
+ const oldFingerprint='c'.repeat(64),receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'original-profile',categoryId:'69900',fingerprint:oldFingerprint,productVersion:'2026-10-01T00:00:00.000Z',recordedAt:'2026-10-01T00:00:01.000Z',result:{state:'validation-pending',filename:`YOOFAM-${oldFingerprint}.xlsx`,company,includedOptions:6,observedAt:Date.now(),registered:false}},before=JSON.stringify(receipt);
+ const h=harness({company,history:{schemaVersion:1,productId:'p',blocked:true,receipts:[receipt]}});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();
+ assert.equal(h.button('등록 전송').props.disabled,true);assert.equal(h.button('확장에 첨부 파일 준비').props.disabled,true);assert.equal(h.button('견적서 파일 다운로드').props.disabled,false);
+ const panel=nodes(h.render()).find(node=>node.type==='historical-result');assert.equal(panel.props.receipt.fingerprint,oldFingerprint);assert.equal(panel.props.receipt.categoryId,'69900');assert.equal(panel.props.receipt.result.includedOptions,6);assert.equal(panel.props.productId,'p');
+ assert.equal(JSON.stringify(receipt),before);assert.equal(h.calls.some(([action])=>['transmit','prepare','result'].includes(action)),false);assert.equal(h.calls.some(([name,,body])=>name==='fetch'&&body.action==='export'),false);
+});
+test('Chrome-only uncertain history and unreadable whole history lock new sends while retained results remain available',async()=>{
+ for(const options of [{localHistoryBlocked:true},{historyLookupError:true}]){
+  const h=harness(options);h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();assert.equal(h.button('등록 전송').props.disabled,true);assert.equal(h.button('확장에 첨부 파일 준비').props.disabled,true);assert.equal(h.button('견적서 파일 다운로드').props.disabled,false);
+  assert.equal(h.calls.some(([action])=>['transmit','prepare'].includes(action)),false);if(options.historyLookupError)assert.equal(h.button('전송 기록 다시 확인').props.disabled,false);
  }
 });
 
@@ -125,9 +141,16 @@ test('document rejection correction creates a newly reviewed fingerprint without
    const replacement=await upload(original.revision);
    await json(await h.route(base+'/legal-documents',{method:'PATCH',body:{expectedRevision:replacement.revision,removeKey:original.documents.files[0].key}}));editor.props.onSaved();
    assert.equal(ui.button('등록 전송'),undefined);await ui.click('견적서 + 첨부 파일 준비');
-   assert.equal(ui.button('등록 전송').props.disabled,true,'the corrected quotation needs fresh manual agreements');ui.choose();assert.equal(ui.button('등록 전송').props.disabled,false);
+   assert.equal(ui.button('등록 전송').props.disabled,true,'the corrected quotation needs fresh manual agreements');ui.choose();assert.equal(ui.button('등록 전송').props.disabled,!rejectedFile,'an assigned quotation ID stays blocked even when its SKU rows were rejected');
    const corrected=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));assert.notEqual(corrected.fingerprint,preview.fingerprint);assert.deepEqual(corrected.rows,preview.rows);
    assert.equal((await json(await h.route(base+'/supplier-hub-receipt?fingerprint='+corrected.fingerprint))).receipt,null);
+   if(!rejectedFile){
+    assert.equal(ui.button('확장에 첨부 파일 준비').props.disabled,true);assert.equal(ui.calls.some(call=>call.action==='transmit'||call.action==='prepare'),false);
+    const originalPanel=nodes(ui.render()).find(node=>node.type==='historical-result');assert.equal(originalPanel.props.receipt.fingerprint,preview.fingerprint);assert.equal(originalPanel.props.receipt.result.quotationId,'old-quote');
+    assert.equal(h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts WHERE fingerprint=?').get(preview.fingerprint).payload,priorReceipt);
+    assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_options ORDER BY product_id').all(),beforeOptions);assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields').all(),beforeOverrides);
+    continue;
+   }
    await ui.click('등록 전송');assert.deepEqual(ui.alerts(),[]);
    const delivered=ui.calls.filter(call=>call.action==='transmit');assert.equal(delivered.length,1);assert.equal(delivered[0].files.quotation[0].name,corrected.filename);assert.equal(delivered[0].files.legalDocuments.length,1);
    const newFile=replacement.documents.files.at(-1);assert.deepEqual(Buffer.from(delivered[0].files.legalDocuments[0].base64,'base64'),Buffer.from(h.objects.get(newFile.key)));

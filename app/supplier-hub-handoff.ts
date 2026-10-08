@@ -1,7 +1,9 @@
+import {validateSupplierHubLocalHistory} from '@/app/supplier-hub-local-history';
+import type {SupplierHubReceipt} from '@/app/supplier-hub-receipt';
 type PackageIdentity={productId:string;categoryId:string;fingerprint:string};
 /** Only a missing reply to a read-only result request is safe to retry. */
 export class SupplierHubLookupUnavailable extends Error {}
-export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'VALIDATE'|'REFRESH'|'REGISTRATION'|'CATEGORIES'|'SCHEMA'|'TEMPLATE',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
+export function exchange(type:'PING'|'PREPARE'|'RESULT'|'TRANSMIT'|'VALIDATE'|'REFRESH'|'REGISTRATION'|'HISTORY'|'CATEGORIES'|'SCHEMA'|'TEMPLATE',payload:unknown,signal:AbortSignal):Promise<Record<string,unknown>>{
   return new Promise((resolve,reject)=>{
     if(signal.aborted){reject(new Error('작업을 취소했습니다.'));return;}
     const requestId=crypto.randomUUID();
@@ -34,15 +36,39 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(result.attachmentLifecycleRecovery!==true)throw new Error('첨부 파일 보호와 검증 재개를 지원하는 Chrome 확장 0.2.41 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(direct&&(result.pendingReceiptRefreshRecovery!==true||result.registrationObservationCas!==true))throw new Error('전송 후 검증 결과 복구와 상품별 조회 기록 보존을 지원하는 Chrome 확장 0.2.56으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(!direct&&result.popupWindowBinding!==true)throw new Error('팝업 첨부 전 Chrome 창 확인을 지원하는 확장 0.2.45 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  if(result.productTransmissionHistory!==true||result.historicalReceiptLookup!==true)throw new Error('수정 전 견적서의 전체 전송 이력 확인을 지원하는 Chrome 확장 0.2.57으로 업데이트하고 앱 페이지를 새로고침해주세요.');
 }
-export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean};
+export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean;productTransmissionHistory:boolean;historicalReceiptLookup:boolean};
 /** Reports the installed manifest reply in this app tab. Does not inspect Hub,
  * create a browser tab, prepare files, or change any transmission record. */
 export async function readSupplierHubExtensionInfo(signal:AbortSignal):Promise<SupplierHubExtensionInfo>{
   const result=await exchange('PING',null,signal),version=result.version;
   if(typeof version!=='string'||version!==version.trim()||!/^(?:0|[1-9]\d{0,4})(?:\.(?:0|[1-9]\d{0,4})){1,3}$/.test(version)
     ||version.split('.').some(part=>Number(part)>65535))throw Error('설치된 Chrome 확장의 버전을 확인하지 못했습니다. 앱 페이지를 새로고침한 뒤 다시 확인해주세요.');
-  return {version,pendingReceiptRefreshRecovery:result.pendingReceiptRefreshRecovery===true,registrationObservationCas:result.registrationObservationCas===true};
+  return {version,pendingReceiptRefreshRecovery:result.pendingReceiptRefreshRecovery===true,registrationObservationCas:result.registrationObservationCas===true,
+    productTransmissionHistory:result.productTransmissionHistory===true,historicalReceiptLookup:result.historicalReceiptLookup===true};
+}
+export async function getSupplierHubProductHistory(identity:PackageIdentity,signal:AbortSignal){
+  const capability=await exchange('PING',null,signal);
+  if(capability.productTransmissionHistory!==true)throw Error('상품 전체 전송 이력 확인을 지원하는 Chrome 확장 0.2.57으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  const reply=await exchange('HISTORY',identity,signal);
+  if(reply.productId!==identity.productId)throw Error('Chrome 전송 이력의 상품이 다릅니다.');
+  return validateSupplierHubLocalHistory(reply.records,window.location.origin,identity.productId);
+}
+/** Original server receipt is the sole source. Never export the editable draft
+ * or send uploads/agreements while looking up an earlier fingerprint. */
+export async function getHistoricalSupplierHubResult(productId:string,receipt:SupplierHubReceipt,signal:AbortSignal,registration=false){
+  const capability=await exchange('PING',null,signal);
+  if(capability.historicalReceiptLookup!==true||capability.productTransmissionHistory!==true)throw Error('원래 전송 견적서 조회를 지원하는 Chrome 확장 0.2.57으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  const identity={productId,categoryId:receipt.categoryId,fingerprint:receipt.fingerprint};
+  const reply=await exchange(registration?'REGISTRATION':'REFRESH',{...identity,historical:true},signal);
+  if(reply.fingerprint!==receipt.fingerprint||reply.registered!==false)throw new SupplierHubResultInvalid('원래 전송한 견적서의 조회 결과가 다릅니다.');
+  const result=readResultRecord(reply.record,identity);
+  if(!result)throw new SupplierHubResultInvalid('원래 전송한 견적서의 결과를 확인하지 못했습니다.');
+  validateSupplierHubResultForSource(result,{filename:receipt.result.filename,company:receipt.result.company!,includedOptions:receipt.result.includedOptions!,
+    ...(receipt.result.quotationId?{quotationId:receipt.result.quotationId}:{})});
+  if(registration&&!result.registration)throw new SupplierHubResultInvalid('원래 견적서의 상품별 조회 결과가 없습니다.');
+  return result;
 }
 export type SupplierHubRegistrationRow={title:string;submittedAt:string;category:string;barcode:string;sourceQuotation:string;skuId:string;status:string;stage:string};
 export type SupplierHubRegistration={quotationId:string;registered:false;observedAt:number;includedOptions?:number;rows:SupplierHubRegistrationRow[]}&(

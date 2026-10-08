@@ -39,6 +39,7 @@ test('package preview displays byte errors and editing uses its resolved categor
  const {SubmissionPackage}=load('app/components/submission-package.tsx',{
   react:{useState:initial=>[index<states.length?states[index++]:initial,()=>{}],useEffect:()=>{},useRef:()=>({current:null})},
   '@/app/components/legal-documents-editor':{LegalDocumentsEditor:()=>null},
+  '@/app/components/historical-supplier-hub-result':{HistoricalSupplierHubResult:()=>null},
   '@/app/components/quotation-review-issues':{QuotationReviewIssues:props=>{inspectProps=props;return createElement('p',null,props.issues.map(issue=>issue.message).join(' / '));}},
  });
  const calls=[];

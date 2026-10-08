@@ -24,14 +24,14 @@ import {hubCompanyMenuPage} from './helpers/hub-company-menu.mjs';
 const identity={productId:'product',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/'};
 const agreements={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
-async function packageBytes(changes={},patchFiles=()=>{}){
+async function packageBytes(changes={},patchFiles=()=>{},packageIdentity=identity){
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/exports/zip.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,Uint8Array,Uint32Array,DataView});
- const workbook=new Uint8Array([80,75,3,4,0,1]),filename=`YOOFAM-${identity.fingerprint}.xlsx`;
+ const workbook=new Uint8Array([80,75,3,4,0,1]),filename=`YOOFAM-${packageIdentity.fingerprint}.xlsx`;
  const digest=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
- const plan={format:'sourceflow-supplier-hub-upload-plan-v1',destination:'https://supplier.coupang.com/qvt/registration',profileId:'profile',company:{code:'A01464742',name:'와이홉'},productId:identity.productId,categoryId:identity.categoryId,inputFingerprint:identity.fingerprint,quotation:{file:{filename,byteLength:workbook.length,sha256:digest}},productImages:[{archivePath:'assets/photo.png',filename:'photo.png'}],labelImages:[{archivePath:'assets/label.png',filename:'label.png'}],missingLabels:[],...changes};
+ const plan={format:'sourceflow-supplier-hub-upload-plan-v1',destination:'https://supplier.coupang.com/qvt/registration',profileId:'profile',company:{code:'A01464742',name:'와이홉'},productId:packageIdentity.productId,categoryId:packageIdentity.categoryId,inputFingerprint:packageIdentity.fingerprint,quotation:{file:{filename,byteLength:workbook.length,sha256:digest}},productImages:[{archivePath:'assets/photo.png',filename:'photo.png'}],labelImages:[{archivePath:'assets/label.png',filename:'label.png'}],missingLabels:[],...changes};
  const image=new Uint8Array([137,80,78,71]),imageDigest=Buffer.from(await webcrypto.subtle.digest('SHA-256',image)).toString('hex');
  for(const entry of [...plan.productImages,...plan.labelImages])Object.assign(entry,{byteLength:image.length,sha256:imageDigest});
- const review={format:'sourceflow-quotation-review-v1',...identity,inputFingerprint:identity.fingerprint,submissionReady:false,transport:'not-connected',includedOptions:2,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]};
+ const review={format:'sourceflow-quotation-review-v1',...packageIdentity,inputFingerprint:packageIdentity.fingerprint,submissionReady:false,transport:'not-connected',includedOptions:2,errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]};
  const files=[{name:filename,data:workbook},{name:'assets/photo.png',data:image},{name:'assets/label.png',data:image},{name:'submission-review.json',data:JSON.stringify(review)},{name:'supplier-hub-upload-plan.json',data:JSON.stringify(plan)}];
  patchFiles(files);
  return Buffer.from(exports.zipFiles(files)).toString('base64');
@@ -43,6 +43,10 @@ async function fixture(options={}){
  const tabs=options.tabs??[tab];let fresh;
  if(options.previous)records.set('attempt:123',{origin:new URL(sender.url).origin,...identity,company:options.plan?.company??{code:'A01464742',name:'와이홉'},includedOptions:2});
  const api={tabs:{query:async query=>{calls.push(['query',query]);return tabs;},get:async id=>id===7?{id:7,windowId:17,url:sender.url}:options.getTab??(id===124?fresh:tab),sendMessage:async(id,message,frame)=>{
+   if(message.type==='YOOFAM_READ_PRODUCT_TRANSMISSION_HISTORY'){
+    calls.push(['history',id,frame]);if(options.receiptError)throw Error('history response lost');
+    return {ok:true,...message.expected,checkedAt:Date.now(),history:options.history??{schemaVersion:1,productId:identity.productId,blocked:false,receipts:[]}};
+   }
    if(message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'){
     calls.push(['receipt',id,frame]);if(options.receiptError)throw Error('receipt response lost');
     const present=options.serverReceipt&&(!options.receiptAfterPreflight||preflightChecked);
@@ -80,6 +84,7 @@ async function fixture(options={}){
  }}};
  const store=async(action,key,value)=>{
    calls.push(['store',action,key]);
+   if(action==='history')return [...records].filter(([name])=>name.startsWith(`transmission:${new URL(sender.url).origin}:${identity.productId}:`)||name.startsWith(`result:${new URL(sender.url).origin}:${identity.productId}:`)).map(([key,value])=>({key,value}));
    if(action==='claim'){if(records.has(key))return false;records.set(key,value);return true;}
    if(action==='register'){
     if(JSON.stringify(records.get(key))!==JSON.stringify(value.expected)||!canObserveSupplierHubRegistration(value.expected,value.observation))return false;
@@ -432,6 +437,28 @@ test('app and popup share the existing-window lock until the pending attachment 
   assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);
   const other=await fixture();assert.equal((await other.run()).state,'validation-requested','the window lock must release after either path');
  }
+});
+
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`a changed quotation fingerprint cannot replay an earlier uncertain native upload after the window lock releases (${company.code})`,async()=>{
+ let enter,release;const entered=new Promise(resolve=>enter=resolve),held=new Promise(resolve=>release=resolve);
+ const h=await fixture({plan:{company},onAttach:async()=>{enter();await held;},attachError:true});
+ const changed={...identity,fingerprint:'b'.repeat(64)},bytes=await packageBytes({company},()=>{},changed),beforeMessage=structuredClone(h.message);
+ const first=h.run();await entered;
+ await assert.rejects(h.run({...changed,base64:bytes}),/이 Chrome 창/,'the competing fingerprint must not inspect files while the first upload owns the window');
+ release();assert.equal((await first).state,'unconfirmed');
+ const originalKey=`transmission:${new URL(sender.url).origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`,original=structuredClone(h.records.get(originalKey)),beforeCalls=h.calls.length;
+ await assert.rejects(h.run({...changed,base64:bytes}),error=>error.code==='SUPPLIER_HUB_ALREADY_SUBMITTED');
+ const follow=h.calls.slice(beforeCalls);assert.ok(follow.some(([name,action])=>name==='store'&&action==='history'),'a stale empty server snapshot is checked against all durable Chrome claims after locking');
+ assert.equal(follow.some(([name])=>['attachToSupplierHub','requestSupplierHubValidation','create'].includes(name)),false);
+ assert.equal(h.calls.filter(([name,args])=>name==='attachToSupplierHub'&&args[1]!==true).length,1);assert.deepEqual(h.records.get(originalKey),original);assert.deepEqual(h.message,beforeMessage);
+ assert.equal(h.records.has(`transmission:${new URL(sender.url).origin}:${changed.productId}:${changed.categoryId}:${changed.fingerprint}`),false);
+});
+
+for(const state of ['validation-pending','validation-complete','validation-rejected'])test(`a server receipt from an older fingerprint preserves ${state} evidence and blocks another upload when it has assigned IDs`,async()=>{
+ const old={schemaVersion:1,evidence:'chrome-observation',profileId:'old-profile',categoryId:'69900',fingerprint:'c'.repeat(64),productVersion:'2026-10-01T00:00:00.000Z',recordedAt:'2026-10-01T00:00:01.000Z',result:{state,filename:`YOOFAM-${'c'.repeat(64)}.xlsx`,company:{code:'A01464742',name:'와이홉'},includedOptions:6,observedAt:Date.now(),registered:false,...(state==='validation-pending'?{}:{quotationId:'original-full-id'})}};
+ const h=await fixture({history:{schemaVersion:1,productId:identity.productId,blocked:true,receipts:[old]}}),before=JSON.stringify(old);
+ await assert.rejects(h.run(),error=>error.code==='SUPPLIER_HUB_ALREADY_SUBMITTED');
+ assert.equal(h.calls.some(([name])=>['attachToSupplierHub','requestSupplierHubValidation','create'].includes(name)),false);assert.equal(h.records.size,0);assert.equal(JSON.stringify(old),before);
 });
 
 test('previous-version claims recover their exact tab into validation and SKU lookup for both companies',async()=>{

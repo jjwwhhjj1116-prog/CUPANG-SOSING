@@ -28,18 +28,20 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},
   useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
  let lookupError=false;
- const bridge={getSupplierHubSubmission:async identity=>{calls.push({action:'chrome-recover'});return savedSubmissions.get(submissionKey(identity))||{attempt:null,result:null};},
+ const bridge={getSupplierHubProductHistory:async identity=>({records:[],blocked:[...savedSubmissions].some(([key,value])=>JSON.parse(key)[0]===identity.productId&&Boolean(value.attempt||value.result))}),
+  getSupplierHubSubmission:async identity=>{calls.push({action:'chrome-recover'});return savedSubmissions.get(submissionKey(identity))||{attempt:null,result:null};},
   getSupplierHubResult:async(identity,_signal,mode)=>{calls.push({action:'lookup',mode});if(lookupError)throw Error('SKU 조회 응답 유실');return lookupResults.length?lookupResults.shift():savedSubmissions.get(submissionKey(identity))?.result??null;},
   checkSupplierHubExtension:async()=>{},prepareSupplierHubHandoff:(blob,identity)=>connect('prepare',blob,identity),
   transmitSupplierHubPackage:(blob,identity,agreements)=>connect('transmit',blob,identity,agreements)};
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-   {exports,Error,AbortController,URL,setTimeout,fetch:fetcher,require(name){
+   {exports,Error,AbortController,URL,TextEncoder,setTimeout,fetch:fetcher,require(name){
     if(name==='react')return hooks;if(name==='@/app/supplier-hub-handoff')return bridge;
     if(name==='@/app/supplier-hub-tracking')return observations.length?trackingBridge:{followSupplierHubRegistration:async()=>({phase:'validation-pending',timedOut:true,registered:false})};
     if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};
     if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};
+    if(name==='@/app/components/historical-supplier-hub-result')return {HistoricalSupplierHubResult:'historical-result'};
     return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);
    }});return exports;
  }

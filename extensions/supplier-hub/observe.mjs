@@ -6,13 +6,16 @@ import {readSupplierHubRegistration} from './registration-result.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
 import {validateAppHubRequest,isHubRegistrationTab} from './app-request.mjs';
 import {recoverSupplierHubValidationTab,verifyRecoveredValidationSource,isRecoveredValidationBinding} from './validation-recovery.mjs';
+import {readAppHistoricalSupplierHubReceipt,verifyHistoricalSupplierHubReceipt} from './receipt-recovery.mjs';
 
 const activeTabs=new Set();
 export async function observeSupplierHubResult(message,sender,api=chrome,store=transferRecord){
   const appRequest=message?.type==='YOOFAM_REFRESH_RESULT';
-  let expected,recovered;
+  let expected,recovered,historicalSource;
   if(appRequest){
     expected=validateAppHubRequest(message,sender,'YOOFAM_REFRESH_RESULT');
+    if(message.historical!==undefined&&message.historical!==true)throw Error('원래 전송 조회 선택을 확인해주세요.');
+    if(message.historical===true){historicalSource=await readAppHistoricalSupplierHubReceipt(expected,{appTabId:sender.tab.id,windowId:sender.tab.windowId},api);if(!historicalSource)throw Error('원래 서버 전송 기록이 없습니다. 기존 Chrome 확장에서 결과를 확인해주세요.');}
     if(message.kind!=='validation')throw Error('앱에서는 현재 견적서의 검증 결과만 조회할 수 있습니다.');
     const tabs=(await api.tabs.query({windowId:sender.tab.windowId})).filter(tab=>!tab.pendingUrl&&isHubRegistrationTab(tab,sender.tab.windowId));
     const claim=await store('get',`transmission:${expected.origin}:${expected.productId}:${expected.categoryId}:${expected.fingerprint}`);
@@ -32,7 +35,7 @@ export async function observeSupplierHubResult(message,sender,api=chrome,store=t
       }
     }
     if(matching.length>1)throw Error('같은 Chrome 창에서 이 견적서를 전달한 Supplier Hub 등록 탭을 확인하지 못했습니다.');
-    if(!matching.length){const restored=await recoverSupplierHubValidationTab(expected,sender,api,store);recovered=restored.identity;message={...message,tabId:restored.tabId};}
+    if(!matching.length){const restored=await recoverSupplierHubValidationTab(expected,sender,api,store,message.historical===true);recovered=restored.identity;message={...message,tabId:restored.tabId};}
     else message={...message,tabId:matching[0].id};
   }else if(sender?.id!==api.runtime.id||sender?.url!==api.runtime.getURL('popup.html')||sender.tab)throw Error('확장 화면에서 결과를 확인해주세요.');
   if(!['validation','registration','registration-search'].includes(message.kind)||!Number.isSafeInteger(message.tabId)||message.tabId<0)throw Error('결과 조회 요청을 확인해주세요.');
@@ -49,7 +52,8 @@ export async function observeSupplierHubResult(message,sender,api=chrome,store=t
     if(identity&&!identity.company)throw Error('전송 기록에 회사정보가 없습니다. 기존 견적서는 Supplier Hub에서 직접 확인해주세요.');
     if(identity?.includedOptions!==undefined&&(!Number.isSafeInteger(identity.includedOptions)||identity.includedOptions<1||identity.includedOptions>200))throw Error('전송한 견적서의 옵션 수를 확인하지 못했습니다.');
     const readOnlyRecovery=Boolean(appRequest&&identity?.purpose==='validation-status');
-    const checkRecoveredSource=async()=>{if(readOnlyRecovery)await verifyRecoveredValidationSource(expected,identity,sender,api);};
+    const checkRecoveredSource=async()=>{if(historicalSource)await verifyHistoricalSupplierHubReceipt(expected,historicalSource,{appTabId:sender.tab.id,windowId:sender.tab.windowId},api);else if(readOnlyRecovery)await verifyRecoveredValidationSource(expected,identity,sender,api);};
+    if(historicalSource&&(identity.company.code!==historicalSource.company.code||identity.company.name!==historicalSource.company.name||identity.includedOptions!==historicalSource.includedOptions))throw Error('원래 전송과 Chrome 기록의 회사·옵션이 다릅니다.');
     await checkRecoveredSource();
     const checkCompany=async()=>{
       if(appRequest){const current=await api.tabs.get(tab.id);if(current?.pendingUrl||!isHubRegistrationTab(current,sender.tab.windowId))throw Error('Supplier Hub 등록 탭이 다른 창으로 이동되었습니다.');}
@@ -83,7 +87,7 @@ export async function observeSupplierHubResult(message,sender,api=chrome,store=t
       return registration;
     }
     const expectedFilename=identity&&/^[a-f0-9]{64}$/.test(identity.fingerprint)?`YOOFAM-${identity.fingerprint}.xlsx`:undefined;
-    const beforeResult=readOnlyRecovery?await store('get',resultKey(identity)):undefined;
+    const beforeResult=readOnlyRecovery||historicalSource?await store('get',resultKey(identity)):undefined;
     const [execution]=await api.scripting.executeScript({target:{tabId:tab.id},func:readSupplierHubValidation,args:expectedFilename?[expectedFilename]:[]});
     const result=execution?.result;
     if(!result||result.registered!==false||!['not-found','validation-complete','validation-rejected','validation-pending'].includes(result.state))throw Error('검증 결과를 확인하지 못했습니다.');
@@ -101,7 +105,7 @@ export async function observeSupplierHubResult(message,sender,api=chrome,store=t
           throw Error('조회 중 전송한 견적서가 변경되었습니다. 결과를 저장하지 않았습니다.');
       }
       const key=resultKey(identity),previous=await store('get',key);
-      if(readOnlyRecovery&&JSON.stringify(previous)!==JSON.stringify(beforeResult))throw Error('조회 중 더 최신 전송 결과가 저장되었습니다. 기존 결과를 유지했습니다.');
+      if((readOnlyRecovery||historicalSource)&&JSON.stringify(previous)!==JSON.stringify(beforeResult))throw Error('조회 중 더 최신 전송 결과가 저장되었습니다. 기존 결과를 유지했습니다.');
       // A row missing from the current file table does not revoke its accepted
       // quotation ID. Keep the exact receipt and its old observation times so
       // the separate SKU lookup can still query that ID without another upload.
@@ -117,8 +121,8 @@ export async function observeSupplierHubResult(message,sender,api=chrome,store=t
         &&previous.includedOptions===identity.includedOptions&&previous.registration?.includedOptions===identity.includedOptions
         &&previous.filename===result.filename&&typeof result.quotationId==='string'&&Boolean(result.quotationId.trim())
         &&previous.quotationId===result.quotationId&&previous.registration?.quotationId===result.quotationId;
-      const observation={...identity,...result,company:identity.company,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{})};
-      if(readOnlyRecovery){if(!await store('observe',key,{expected:beforeResult,observation}))throw Error('조회 중 더 최신 전송 결과가 저장되었습니다. 기존 결과를 유지했습니다.');}
+      const observation={...identity,...result,company:identity.company,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{}),...(historicalSource?{profileId:historicalSource.profileId,historicalReceipt:true,receiptProductVersion:historicalSource.receiptProductVersion,purpose:'validation-status',recoveredAt:identity.recoveredAt??Date.now()}:{} )};
+      if(readOnlyRecovery||historicalSource){if(!await store('observe',key,{expected:beforeResult,observation}))throw Error('조회 중 더 최신 전송 결과가 저장되었습니다. 기존 결과를 유지했습니다.');}
       else await store('put',key,observation);
     }
     return result;

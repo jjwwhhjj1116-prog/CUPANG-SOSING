@@ -88,6 +88,11 @@ export function canObserveSupplierHubRegistration(expected,observation){
     &&(!Number.isSafeInteger(expected.registration?.observedAt)||registration.observedAt>=expected.registration.observedAt));
 }
 export async function transferRecord(action,key,value){
+  if(action==='history'){
+    const origin=HANDOFF_ORIGINS.find(origin=>typeof key==='string'&&key.startsWith(`history:${origin}:`));
+    if(!origin||value!==undefined)throw Error('상품 전송 이력 요청을 확인해주세요.');
+    return productTransferRecords(origin,key.slice(`history:${origin}:`.length));
+  }
   if(!['get','put','claim','promote','observe','register'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
   if(action==='register'&&(!value||key!==resultKey(value.observation)||!canObserveSupplierHubRegistration(value.expected,value.observation)))throw Error('상품별 결과의 조건부 조회 기록을 확인해주세요.');
   if(action==='observe'&&(!value||key!==resultKey(value.observation)||!canObserveSupplierHubValidation(value.expected,value.observation)))throw Error('검증 결과의 조건부 조회 기록을 확인해주세요.');
@@ -116,6 +121,20 @@ export async function transferRecord(action,key,value){
         else{store.put(value.observation,key);result=true;}
       }
     };transaction.oncomplete=()=>resolve(result);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||Error('전송 기록 저장 실패'));
+  });}finally{db.close();}
+}
+/** Read every fingerprint for this app/product, including an upload whose
+ * acknowledgement was lost before a server receipt could be stored. */
+export async function productTransferRecords(origin,productId){
+  if(!HANDOFF_ORIGINS.includes(origin)||!/^\w[\w-]{0,99}$/.test(productId||''))throw Error('상품 전송 이력의 출처를 확인해주세요.');
+  const db=await database();try{return await new Promise((resolve,reject)=>{
+    const rows=[],prefixes=[`transmission:${origin}:${productId}:`,`result:${origin}:${productId}:`],transaction=db.transaction('pending','readonly');
+    const cursor=transaction.objectStore('pending').openCursor();
+    cursor.onsuccess=()=>{const current=cursor.result;if(!current)return;
+      if(typeof current.key==='string'&&prefixes.some(prefix=>current.key.startsWith(prefix))){rows.push({key:current.key,value:current.value});
+        if(rows.length>200||new TextEncoder().encode(JSON.stringify(rows)).length>512*1024){transaction.abort();return;}}
+      current.continue();
+    };transaction.oncomplete=()=>resolve(rows);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(Error('상품의 전체 Chrome 전송 이력을 확인하지 못했습니다. 기존 기록은 유지됩니다.'));
   });}finally{db.close();}
 }
 export async function pendingPackage(action,value){

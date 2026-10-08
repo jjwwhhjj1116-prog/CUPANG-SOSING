@@ -5,11 +5,12 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {webcrypto} from 'node:crypto';
 const code=ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-handoff.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+const localHistory={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-local-history.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:localHistory,TextEncoder});
 function harness(reply){
   const listeners=new Set(),timers=new Set(),sent=[];
   const win={location:{origin:'https://sourceflow.jjwwhhjj1116.workers.dev'},addEventListener:(_,cb)=>listeners.add(cb),removeEventListener:(_,cb)=>listeners.delete(cb),postMessage(message){sent.push(message);queueMicrotask(()=>reply?.(message,emit));}};
   const emit=(message,result,overrides={})=>{for(const listener of [...listeners])listener({source:win,origin:win.location.origin,data:{channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId:message.requestId,result},...overrides});};
-  const exports={};vm.runInNewContext(code,{exports,window:win,crypto:webcrypto,Uint8Array,btoa,Error,setTimeout:cb=>{timers.add(cb);return cb;},clearTimeout:cb=>timers.delete(cb)});
+  const exports={};vm.runInNewContext(code,{exports,window:win,crypto:webcrypto,Uint8Array,btoa,Error,require:name=>{assert.equal(name,'@/app/supplier-hub-local-history');return localHistory;},setTimeout:cb=>{timers.add(cb);return cb;},clearTimeout:cb=>timers.delete(cb)});
   return {api:exports,sent,listeners,timers,expire(){for(const cb of [...timers])cb();}};
 }
 const identity={productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
@@ -29,6 +30,7 @@ test('actual content PING reports the runtime manifest version while retaining i
   const {version:reportedVersion,...current}=JSON.parse(JSON.stringify(message.result));assert.equal(reportedVersion,manifest.version);
   assert.equal(current.ok,true);assert.equal(current.popupWindowBinding,true);assert.equal(current.serverReceiptReplayProtection,true);
   assert.equal(current.pendingReceiptRefreshRecovery,true);assert.equal(current.registrationObservationCas,true);
+  assert.equal(current.productTransmissionHistory,true);assert.equal(current.historicalReceiptLookup,true);
   if(capabilities)assert.deepEqual(current,capabilities);else capabilities=current;
  }
 });
@@ -36,12 +38,12 @@ test('actual content PING reports the runtime manifest version while retaining i
 test('installed-extension info uses only a read-only PING and reports the actual version and exact capability booleans',async()=>{
  for(const version of ['0.2.54','0.2.56','9.8.7','65535.65535.65535.65535']){
   const h=harness((message,emit)=>emit(message,{ok:true,version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true}));
-  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true});
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:false,historicalReceiptLookup:false});
   assert.deepEqual(h.sent.map(message=>message.type),['PING']);assert.equal(h.sent[0].payload,null);assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
  }
  for(const flag of [undefined,false,'true',1,null]){
   const h=harness((message,emit)=>emit(message,{ok:true,version:'0.2.54',pendingReceiptRefreshRecovery:flag,registrationObservationCas:flag}));
-  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version:'0.2.54',pendingReceiptRefreshRecovery:false,registrationObservationCas:false});
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version:'0.2.54',pendingReceiptRefreshRecovery:false,registrationObservationCas:false,productTransmissionHistory:false,historicalReceiptLookup:false});
   assert.deepEqual(h.sent.map(message=>message.type),['PING']);
  }
  for(const version of [undefined,null,56,'','latest','0.2.056','0.2.65536','0.2.56.1.2','0.2.56\n','0.2.56<script>']){
@@ -83,13 +85,35 @@ test('direct transmission checks both final-result capabilities before reading b
   assert.deepEqual(h.sent.map(message=>message.type),['PING'],'unsupported final steps do not prepare files, upload, or send consent selections');
   assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
  }
- const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:'0.2.56',pendingReceiptRefreshRecovery:true,registrationObservationCas:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',registered:false}}));
+ const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:'0.2.57',pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',registered:false}}));
  assert.equal((await start(current.api,new Blob(['reviewed ZIP']))).state,'validation-requested');
  assert.deepEqual(current.sent.map(message=>message.type),['PING','PREPARE','TRANSMIT']);
  for(const message of current.sent.filter(message=>message.type!=='PING')){
   assert.equal(message.payload.fingerprint,identity.fingerprint);assert.equal(Buffer.from(message.payload.base64,'base64').toString(),'reviewed ZIP');
  }
  assert.deepEqual(JSON.parse(JSON.stringify(current.sent[2].payload.reviewedAgreements)),reviewed);
+});
+
+test('both new delivery paths require whole-product history and original-receipt lookup before reading any bytes',async()=>{
+ const capability={ok:true,version:'0.2.56',companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,popupWindowBinding:true};
+ for(const direct of [false,true])for(const field of ['productTransmissionHistory','historicalReceiptLookup'])for(const missing of [undefined,false,'true',1,null]){
+  const h=harness((message,emit)=>emit(message,{...capability,productTransmissionHistory:true,historicalReceiptLookup:true,[field]:missing}));
+  await assert.rejects(h.api.checkSupplierHubExtension(new AbortController().signal,direct),/0\.2\.57/);assert.deepEqual(h.sent.map(message=>message.type),['PING']);
+ }
+});
+test('historical result requests pin original A metadata while new draft B is never exported or transmitted',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}]){
+  const receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'original-profile',categoryId:identity.categoryId,fingerprint:identity.fingerprint,productVersion:'2026-10-01T00:00:00.000Z',recordedAt:'2026-10-01T00:00:01.000Z',result:{...savedFixture(company).record,quotationId:'original-id'}},record={...receipt.result,registration:{quotationId:'original-id',scope:'visible-page',includedOptions:2,observedAt:Date.now(),registered:false,rows:[]}};
+  const h=harness((message,emit)=>emit(message,message.type==='PING'?{ok:true,productTransmissionHistory:true,historicalReceiptLookup:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,record}));
+  for(const registration of [false,true])assert.equal((await h.api.getHistoricalSupplierHubResult(identity.productId,receipt,new AbortController().signal,registration)).quotationId,'original-id');
+  assert.deepEqual(h.sent.map(message=>message.type),['PING','REFRESH','PING','REGISTRATION']);
+  for(const message of h.sent.filter(message=>message.type!=='PING')){assert.deepEqual(JSON.parse(JSON.stringify(message.payload)),{...identity,historical:true});assert.equal(message.payload.base64,undefined);assert.equal(message.payload.reviewedAgreements,undefined);}
+  for(const patch of [{company:{code:'A01526306',name:'유앤채'}},{includedOptions:1},{quotationId:'other-id'}]){
+   if(patch.company?.code===company.code)continue;
+   const bad=harness((message,emit)=>emit(message,message.type==='PING'?{ok:true,productTransmissionHistory:true,historicalReceiptLookup:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,record:{...record,...patch}}));
+   await assert.rejects(bad.api.getHistoricalSupplierHubResult(identity.productId,receipt,new AbortController().signal));assert.deepEqual(bad.sent.map(message=>message.type),['PING','REFRESH']);
+  }
+ }
 });
 
 test('only missing replies to read-only result requests have a retryable error type',async()=>{
@@ -154,7 +178,7 @@ test('company menu recovery is required for upload, validation resume and regist
    assert.deepEqual(old.sent.map(message=>message.type),['PING']);
    assert.equal(old.listeners.size,0);assert.equal(old.timers.size,0);
   }
-  const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:'0.2.56',companyMenuRecovery:true,attachmentLifecycleRecovery:true,resultTableRefreshObservation:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true}
+  const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:'0.2.57',companyMenuRecovery:true,attachmentLifecycleRecovery:true,resultTableRefreshObservation:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true}
    :{ok:true,fingerprint:identity.fingerprint,registered:false,record,result:{state:'validation-requested',registered:false}}));
   const result=await run(current.api);
   assert.equal(result.registered,false);assert.deepEqual(current.sent.map(message=>message.type),['PING',type]);
@@ -186,7 +210,7 @@ test('new package preparation, direct upload and validation resume require attac
    assert.deepEqual(old.sent.map(message=>message.type),['PING']);
    assert.equal(old.listeners.size,0);assert.equal(old.timers.size,0);
   }
-  const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:type==='TRANSMIT'?'0.2.56':'0.2.41',attachmentLifecycleRecovery:true,...(type==='PREPARE'?{popupWindowBinding:true}:{}),...(type==='TRANSMIT'?{pendingReceiptRefreshRecovery:true,registrationObservationCas:true}:{})}
+  const current=harness((message,emit)=>emit(message,message.type==='PING'?{...legacy,version:'0.2.57',attachmentLifecycleRecovery:true,productTransmissionHistory:true,historicalReceiptLookup:true,...(type==='PREPARE'?{popupWindowBinding:true}:{}),...(type==='TRANSMIT'?{pendingReceiptRefreshRecovery:true,registrationObservationCas:true}:{})}
    :{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',registered:false}}));
   await run(current.api);assert.deepEqual(current.sent.map(message=>message.type),['PING',type]);
   assert.equal(current.sent[1].payload.fingerprint,identity.fingerprint);
@@ -250,7 +274,7 @@ test('multi-page evidence validates actual coverage without treating it as regis
  for(const hasMore of [true,null])assert.equal(api.validateRegistrationResult({...value,hasMore},'123').hasMore,hasMore);
 });
 test('web package handoff sends exact reviewed identity and bytes, cleans listeners',async()=>{
-  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,attachmentLifecycleRecovery:true,popupWindowBinding:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
+  const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,attachmentLifecycleRecovery:true,popupWindowBinding:true,productTransmissionHistory:true,historicalReceiptLookup:true}:{ok:true,fingerprint:identity.fingerprint,registered:false}));
   await h.api.checkSupplierHubExtension(new AbortController().signal);
   await h.api.prepareSupplierHubHandoff(new Blob(['ZIP fixture']),identity,new AbortController().signal);
   assert.equal(h.sent[0].type,'PING');assert.equal(h.sent[1].payload.fingerprint,identity.fingerprint);
@@ -298,7 +322,7 @@ test('old extension without company binding cannot prepare a new handoff',async(
 
 test('direct transmission requires the new capability and sends the current reviewed choices once',async()=>{
  const reviewed={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true};
- const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',validated:false,registered:false}}));
+ const h=harness((m,emit)=>emit(m,m.type==='PING'?{ok:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,serverReceiptReplayProtection:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true}:{ok:true,fingerprint:identity.fingerprint,registered:false,result:{state:'validation-requested',validated:false,registered:false}}));
  await h.api.checkSupplierHubExtension(new AbortController().signal,true);
  assert.equal((await h.api.transmitSupplierHubPackage(new Blob(['zip']),identity,reviewed,new AbortController().signal)).state,'validation-requested');
  assert.equal(h.sent[1].type,'TRANSMIT');assert.equal(h.sent[1].payload.productId,identity.productId);assert.equal(h.sent[1].payload.reviewedAgreements,reviewed);

@@ -38,7 +38,7 @@ function fixture(options={}){
  const company=options.company??companies[0],store=memoryStore(),calls=[],pages=new Map();
  const key=resultKey(identity),filename=`YOOFAM-${identity.fingerprint}.xlsx`,observedAt=Date.now()-10000;
  const pending={...identity,profileId:'profile',company,includedOptions:6,filename,state:'validation-pending',observedAt,registered:false};
- const receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'profile',categoryId:identity.categoryId,fingerprint:identity.fingerprint,result:pending,...options.receipt};
+ const receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'profile',categoryId:identity.categoryId,fingerprint:identity.fingerprint,productVersion:'2026-10-01T00:00:00.000Z',recordedAt:'2026-10-01T00:01:00.000Z',result:pending,...options.receipt};
  const original={...identity,company,includedOptions:6};store.rows.set('attempt:123',original);
  if(options.local!==false)store.rows.set(key,{...pending,...options.local});
  const unrelated={id:999,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete'};
@@ -62,7 +62,7 @@ function fixture(options={}){
   update:async()=>{assert.fail('recovery cannot navigate an existing tab');},
   sendMessage:async(id,request,frame)=>{
    calls.push(['app-message',id,request,frame]);
-   if(['YOOFAM_READ_TRANSMISSION_RECEIPT','YOOFAM_READ_QUOTATION_RECEIPT'].includes(request.type))return {ok:true,...request.expected,checkedAt:Date.now(),receipt:options.noReceipt?null:receipt,...options.reply};
+   if(['YOOFAM_READ_TRANSMISSION_RECEIPT','YOOFAM_READ_QUOTATION_RECEIPT','YOOFAM_READ_HISTORICAL_TRANSMISSION_RECEIPT'].includes(request.type))return {ok:true,...request.expected,checkedAt:Date.now(),receipt:options.noReceipt?null:receipt,...options.reply};
    assert.equal(request.type,'YOOFAM_VERIFY_QUOTATION_SOURCE');sourceChecks++;
    return {ok:true,...request.expected,checkedAt:Date.now(),...((controls.failSource||sourceChecks===options.sourceChangedAt)?{fingerprint:'c'.repeat(64)}:{})};
   },
@@ -79,7 +79,7 @@ function fixture(options={}){
   return [{result}];
  }}};
  const record=async(action,name,value)=>{calls.push(['store',action,name]);if(action==='observe')await options.beforeAtomic?.({store,value,name});if(action==='register')await options.beforeRegistrationAtomic?.({store,value,name});return store.record(action,name,value);};
- return {calls,store,key,receipt,company,tabs,controls,original,unrelatedAttempt,pages,api,record,run:(who=sender)=>observeSupplierHubResult(message,who,api,record)};
+ return {calls,store,key,receipt,company,tabs,controls,original,unrelatedAttempt,pages,api,record,run:(who=sender,patch={})=>observeSupplierHubResult({...message,...patch},who,api,record)};
 }
 
 for(const company of companies)test(`a stored pending receipt recovers a closed upload tab into one read-only result tab (${company.code})`,async()=>{
@@ -107,6 +107,28 @@ for(const company of companies)test(`the recovered pending file can advance to a
  assert.deepEqual(follow.find(([name])=>name==='create'),['create',{windowId:17,url:'https://supplier.coupang.com/qvt/wims',active:false}]);
  assert.ok(follow.filter(([name])=>name==='script').every(([,name,id])=>id!==999&&!['attachToSupplierHub','requestSupplierHubValidation'].includes(name)));
  assert.deepEqual(h.store.rows.get('attempt:999'),other);assert.equal(h.tabs.find(tab=>tab.id===124).url,'https://supplier.coupang.com/qvt/registration');assert.equal(h.store.rows.get('attempt:124').purpose,'validation-status');assert.equal(h.store.rows.get('attempt:125').purpose,'registration-status');
+});
+
+for(const company of companies)test(`historical pending A stays readable after draft B changes and advances to six original SKUs without submitting again (${company.code})`,async()=>{
+ const h=fixture({company,withWork:true}),other=plain(h.store.rows.get('attempt:999')),original=plain(h.store.rows.get('attempt:123'));
+ h.controls.failSource=true;const bKey=resultKey({...identity,fingerprint:'b'.repeat(64)}),b={manualTitle:'수정본 B 보존',manualPrice:'',version:'2026-10-07T00:00:00.000Z'};h.store.rows.set(bKey,b);
+ const pending=await h.run(sender,{historical:true});assert.equal(pending.state,'validation-pending');assert.equal(h.store.rows.get(h.key).historicalReceipt,true);
+ assert.equal(h.store.rows.get('attempt:124').receiptProductVersion,h.receipt.productVersion);
+ h.controls.fileState='validation-complete';const accepted=await h.run(sender,{historical:true});assert.equal(accepted.quotationId,h.controls.quotationId);
+ h.receipt.result={...h.store.rows.get(h.key)};
+ const result=await refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION',historical:true},sender,h.api,h.record);
+ assert.equal(result.registration.rows.length,6);assert.equal(result.registration.includedOptions,6);assert.equal(result.quotationId,h.controls.quotationId);
+ assert.deepEqual(result.registration.rows.map(row=>row.skuId),Array.from({length:6},(_,index)=>'fresh-sku-'+index));assert.deepEqual(h.store.rows.get(bKey),b);
+ assert.deepEqual(h.store.rows.get('attempt:123'),original);assert.deepEqual(h.store.rows.get('attempt:999'),other);
+ assert.ok(h.calls.filter(([name])=>name==='app-message').every(([, ,request])=>request.type==='YOOFAM_READ_HISTORICAL_TRANSMISSION_RECEIPT'),'an original receipt read must never export or compare the current changed draft');
+ assert.ok(h.calls.filter(([name])=>name==='script').every(([,name,id])=>id!==999&&['verifySupplierHubCompany','supplierHubUploadReady','supplierHubStatusReady','readSupplierHubValidation','searchSupplierHubRegistration','readSupplierHubRegistration'].includes(name)));
+ assert.equal([...h.store.rows.keys()].some(key=>key.startsWith('transmission:')),false);
+});
+
+test('historical lookup rejects missing server anchor and original metadata mismatches before result writes',async()=>{
+ for(const options of [{noReceipt:true},{receipt:{productVersion:'bad clock'}},{receipt:{fingerprint:'b'.repeat(64)}},{receipt:{profileId:'../other'}},{local:{company:companies[1]}},{local:{includedOptions:5}},{appTab:{windowId:18}}]){
+  const h=fixture(options),before=plain([...h.store.rows]);h.controls.failSource=true;await assert.rejects(h.run(sender,{historical:true}));assert.deepEqual(plain([...h.store.rows]),before);assert.equal(h.store.writes.length,0);assert.equal(h.calls.some(([name])=>name==='create'),false);
+ }
 });
 
 test('recovery refuses missing, unreadable or changed pending receipt identity before opening any Hub tab',async()=>{

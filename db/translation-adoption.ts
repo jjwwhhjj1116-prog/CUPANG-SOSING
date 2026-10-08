@@ -2,12 +2,14 @@ import { env } from 'cloudflare:workers';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 import type { TranslationCategorySource } from '@/db/translation-category-source';
+import type { SeoRetrySourceGuard } from '@/db/translation-jobs';
 
 /** Existing tables are initialized by the source reads. D1 batch is atomic. */
 export async function saveIntegratedTranslation(owner: string, content: ProductContent, options: ProductOptions, source: {
   productVersion: string; imageKeys: string; contentRevision: number; optionRevision: number; jobId: string; jobProductVersion?: string; jobContentRevision?: number;
   categorySource?: TranslationCategorySource;
   attributeRules?: { categoryId: string; payload: string | null };
+  seoSource?:SeoRetrySourceGuard;
 }) {
   if (!env.DB || content.productId !== options.productId || !content.updatedAt || content.updatedAt !== options.updatedAt
     || content.revision !== source.contentRevision + 1 || options.revision !== source.optionRevision + 1) throw Error('통합 저장 자료가 일치하지 않습니다.');
@@ -21,6 +23,16 @@ export async function saveIntegratedTranslation(owner: string, content: ProductC
     rulesArgs.push(categoryId); if (payload !== null) rulesArgs.push(payload);
   }
   let categoryGuard = ''; const categoryArgs: string[] = [];
+  let seoGuard='';const seoArgs:string[]=[];
+  if(source.seoSource){
+    const {effectiveCollectionPayload}=await import('@/db/collection-results');
+    const captured=source.seoSource;
+    seoGuard=` AND EXISTS(SELECT 1 FROM collection_products cp JOIN collection_jobs j ON j.id=cp.job_id
+      JOIN collection_context c ON c.job_id=j.id JOIN collection_results r ON r.job_id=j.id
+      WHERE cp.product_id=products.id AND cp.owner_id=products.owner_id AND j.owner_id=cp.owner_id AND r.owner_id=cp.owner_id
+        AND j.id=? AND j.offer_id=? AND j.status='awaiting_connector' AND j.updated_at=? AND c.payload=? AND ${effectiveCollectionPayload}=?)`;
+    seoArgs.push(captured.jobId,captured.offerId,captured.jobUpdatedAt,captured.contextPayload,captured.resultPayload);
+  }
   if (source.categorySource) {
     const { offerId, snapshot } = source.categorySource;
     if (snapshot) {
@@ -39,8 +51,8 @@ export async function saveIntegratedTranslation(owner: string, content: ProductC
       AND COALESCE((SELECT revision FROM product_content WHERE product_id=? AND owner_id=?),0)=?
       AND COALESCE((SELECT revision FROM product_options WHERE product_id=? AND owner_id=?),0)=?
       AND EXISTS(SELECT 1 FROM translation_jobs WHERE id=? AND owner_id=? AND product_id=? AND status='completed' AND product_version=? AND content_revision=?)
-      ${categoryGuard} ${rulesGuard} RETURNING id`).bind(now, options.rows.filter(row => row.included).length, id, owner, source.productVersion, source.imageKeys,
-        id, owner, source.contentRevision, id, owner, source.optionRevision, source.jobId, owner, id, source.jobProductVersion??source.productVersion, source.jobContentRevision??source.contentRevision, ...categoryArgs, ...rulesArgs),
+      ${categoryGuard} ${rulesGuard} ${seoGuard} RETURNING id`).bind(now, options.rows.filter(row => row.included).length, id, owner, source.productVersion, source.imageKeys,
+        id, owner, source.contentRevision, id, owner, source.optionRevision, source.jobId, owner, id, source.jobProductVersion??source.productVersion, source.jobContentRevision??source.contentRevision, ...categoryArgs, ...rulesArgs,...seoArgs),
     env.DB.prepare(`INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at)
       SELECT ?,?,?,?,? WHERE changes()=1
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)

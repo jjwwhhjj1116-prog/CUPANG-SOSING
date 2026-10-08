@@ -13,6 +13,7 @@ import {readSupplierHubRegistration} from '../extensions/supplier-hub/registrati
 import {canPromoteSupplierHubReceipt,canObserveSupplierHubRegistration,resultKey} from '../extensions/supplier-hub/handoff-store.mjs';
 import {validateAppHubRequest} from '../extensions/supplier-hub/app-request.mjs';
 import {transmitSupplierHubPackage} from '../extensions/supplier-hub/transmit.mjs';
+import {readOwnedProductTransferHistory} from '../extensions/supplier-hub/product-history.mjs';
 import {hubCompanyMenuPage} from './helpers/hub-company-menu.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
@@ -242,14 +243,34 @@ test('receipt recovery rejects wrong Hub companies, source changes during search
 // synthetic fixture; no browser, supplier write or provider call is performed.
 function boundaryStore(){
  const rows=new Map();let serial=Promise.resolve();
- const db={close(){},transaction(_name,mode){const operations=[],tx={objectStore:()=>({
+ const db={close(){},transaction(_name,mode){const operations=[];let aborted=false;
+ const tx={abort(){aborted=true;},objectStore:()=>({
   get(key){const request={};operations.push(()=>{request.result=structuredClone(rows.get(key));request.onsuccess?.();});return request;},
   put(value,key){const request={};operations.push(()=>{assert.equal(mode,'readwrite');rows.set(key,structuredClone(value));request.result=key;request.onsuccess?.();});return request;},
- })};serial=serial.then(()=>{try{while(operations.length)operations.shift()();tx.oncomplete?.();}catch(error){tx.error=error;tx.onerror?.();}});return tx;}};
+  openCursor(){assert.equal(mode,'readonly');const request={};let entries,index=0;
+   const visit=()=>{entries??=[...rows].sort(([left],[right])=>left<right?-1:left>right?1:0);const entry=entries[index++];
+    request.result=entry?{key:entry[0],value:structuredClone(entry[1]),continue(){operations.push(visit);}}:null;request.onsuccess?.();};
+   operations.push(visit);return request;},
+ })};serial=serial.then(()=>{const before=new Map(rows);try{while(operations.length&&!aborted)operations.shift()();
+   if(aborted){if(mode==='readwrite'){rows.clear();for(const [key,value]of before)rows.set(key,value);}tx.onabort?.();}else tx.oncomplete?.();
+  }catch(error){if(mode==='readwrite'){rows.clear();for(const [key,value]of before)rows.set(key,value);}tx.error=error;tx.onerror?.();}});return tx;}};
  const indexedDB={open(){const request={};queueMicrotask(()=>{request.result=db;request.onsuccess?.();});return request;}};
- const context=vm.createContext({indexedDB,URL,Date});vm.runInContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-store.mjs',import.meta.url),'utf8').replace(/export (const|async function|function) /g,'$1 '),context);
- return {rows,record:(...args)=>context.transferRecord(...args)};
+ const context=vm.createContext({indexedDB,URL,Date,TextEncoder});vm.runInContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-store.mjs',import.meta.url),'utf8').replace(/export (const|async function|function) /g,'$1 '),context);
+ return {rows,record:(...args)=>context.transferRecord(...args),productRecords:(...args)=>context.productTransferRecords(...args)};
 }
+test('actual IndexedDB product cursor reads every matching fingerprint and aborts a bounded read without removing records',async()=>{
+ const store=boundaryStore(),origin=identity.origin;
+ const old={...identity,fingerprint:'b'.repeat(64),registered:false},current={...identity,registered:false};
+ store.rows.set(resultKey(old),old);store.rows.set(`transmission:${origin}:p:80719:${current.fingerprint}`,current);
+ store.rows.set(`result:${origin}:other:80719:${current.fingerprint}`,{...current,productId:'other'});store.rows.set('attempt:123',{keep:true});
+ const before=JSON.stringify([...store.rows]);
+ const records=await store.productRecords(origin,'p');assert.equal(records.length,2);
+ assert.deepEqual(new Set(records.map(row=>row.value.fingerprint)),new Set([old.fingerprint,current.fingerprint]));
+ assert.equal(JSON.stringify([...store.rows]),before,'history cursor is read-only across all fingerprints');
+ for(let index=0;index<201;index++){const record={...identity,productId:'bounded',fingerprint:index.toString(16).padStart(64,'0'),registered:false};store.rows.set(resultKey(record),record);}
+ const bounded=JSON.stringify([...store.rows]);await assert.rejects(store.productRecords(origin,'bounded'),/기존 기록은 유지/);
+ assert.equal(JSON.stringify([...store.rows]),bounded,'bounded cursor abort retains all local records');
+});
 function boundaryStatus(company,quotationId,filename){
  let menuOpen=false,observer,searches=0,visibleRows=[];
  const show=()=>[{}],headings=['상품명','상품 등록일','카테고리','바코드','원본 견적서','견적서 ID','SKU ID','상태','등록 진행 단계'];
@@ -283,7 +304,9 @@ for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}])test(`
   let contentListener,workerListener,dropPreflightReply=true,statusPage;
   const tabs=[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete'}];
   const win={location:{origin},addEventListener(type,listener){if(type==='message')listeners.add(listener);},removeEventListener(type,listener){if(type==='message')listeners.delete(listener);},postMessage(data){queueMicrotask(()=>{for(const listener of [...listeners])void listener({source:win,origin,data});});}};
-  const fetcher=async(path,init={})=>{calls.push(['api',path,init.method??'GET']);const response=await h.route(path,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});Object.defineProperty(response,'url',{value:origin+path});return response;};
+  const fetcher=async(path,init={})=>{calls.push(['api',path,init.method??'GET']);const response=path==='/api/supplier-hub/catalog-context'
+   ?await h.load('app/api/supplier-hub/catalog-context/route.ts').GET()
+   :await h.route(path,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});Object.defineProperty(response,'url',{value:origin+path});return response;};
   const api={tabs:{query:async query=>{calls.push(['tabs',query]);return tabs.filter(tab=>new URL(tab.url).pathname==='/qvt/registration'||new URL(tab.url).pathname==='/qvt/wims');},get:async id=>id===7?{id,windowId:17,url:origin+'/'}:tabs.find(tab=>tab.id===id),create:async value=>{const tab={id:124,status:'complete',...value};tabs.push(tab);return tab;},sendMessage:async(id,message,frame)=>{assert.equal(id,7);assert.deepEqual(frame,{frameId:0});return new Promise(resolve=>assert.equal(contentListener(message,{id:'extension'},resolve),true));}},scripting:{executeScript:async request=>{
    calls.push(['script',request.func.name]);
    if(new URL(tabs.find(tab=>tab.id===request.target.tabId).url).pathname==='/qvt/registration')return [{result:await vm.runInNewContext(`(${request.func.toString()})(...args)`,{args:request.args,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},document:{body:{innerText:'Company Code: '+(currentCompany.code===company.code?'A01526306':company.code)}}})}];
@@ -295,14 +318,18 @@ for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}])test(`
   }}}};
   vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),contentContext);
   vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-worker.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,''),{chrome:{runtime:{onMessage:{addListener(listener){workerListener=listener;}}}},resultKey,validateAppHubRequest,transferRecord:store.record,
+   readOwnedProductTransferHistory:(who,binding)=>readOwnedProductTransferHistory(who,binding,api,store.productRecords),
    transmitSupplierHubPackage:(message,who)=>transmitSupplierHubPackage(message,who,api,store.record),refreshSupplierHubRegistration:(message,who)=>refreshSupplierHubRegistration(message,who,api,store.record)});
   const native=createRequire(import.meta.url),slots=[],modules=new Map();let cursor=0;
   const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;if(!(index in slots))slots[index]={current:initial};return slots[index];},useEffect(){cursor++;}};
-  function load(file){if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,window:win,crypto:webcrypto,Uint8Array,btoa,Error,AbortController,URL,setTimeout,clearTimeout,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
+  function load(file){if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,window:win,crypto:webcrypto,Uint8Array,TextEncoder,btoa,Error,AbortController,URL,setTimeout,clearTimeout,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};if(name==='@/app/components/historical-supplier-hub-result')return {HistoricalSupplierHubResult:'historical-receipt'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
   const Component=load('app/components/submission-package.tsx').SubmissionPackage,nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[],render=()=>{cursor=0;return Component({productId:product.id,profileId:'cat',categoryId:'80719',onInspect(){}});},button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
   const click=async label=>{const target=button(label);assert.ok(target&&!target.props.disabled,label);target.props.onClick();const deadline=Date.now()+10000;while(render().props['aria-busy']){assert.ok(Date.now()<deadline,'fixture UI completion');await new Promise(resolve=>setTimeout(resolve,1));}};
   const choose=()=>{for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});};
   await click('견적서 + 첨부 파일 준비');choose();await click('등록 전송');
+  assert.ok(calls.some(([name,path])=>name==='api'&&path==='/api/supplier-hub/catalog-context'));
+  assert.ok(calls.some(([name,path])=>name==='api'&&path===base+'/supplier-hub-receipt?mode=history'));
+  assert.ok(calls.filter(([name,type])=>name==='worker'&&type==='YOOFAM_GET_PRODUCT_TRANSMISSIONS').every(([, ,reply])=>reply.ok===true&&reply.productId===product.id&&reply.records.length===0));
   assert.equal(calls.find(([name,type])=>name==='worker'&&type==='YOOFAM_TRANSMIT_PACKAGE')[2].result.state,'not-started');assert.equal(store.rows.size,0);assert.equal(button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
   await click('견적서 + 첨부 파일 준비');choose();const retriable=button('등록 전송');assert.ok(retriable,'a lost preflight acknowledgement must unlock after fresh source and two verified empty receipt stores');assert.equal(retriable.props.disabled,false);
   const quotationId='synthetic-accepted-'+currentCompany.code,accepted={state:'validation-complete',filename:preview.filename,company:currentCompany,includedOptions:6,quotationId,observedAt:Date.now(),registered:false};

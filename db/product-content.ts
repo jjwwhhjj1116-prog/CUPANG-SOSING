@@ -1,8 +1,26 @@
-import { registrationContentSummary } from '@/app/registration-content-summary';
+import { registrationContentSummary, type RegistrationQuotationLabels } from '@/app/registration-content-summary';
+import { validateCategoryProfile } from '@/app/category-profiles';
+import { validateCategoryIdentity } from '@/app/category-identity';
+import { parseCollectionRequest } from '@/app/sourcing';
 import { env } from 'cloudflare:workers';
 import { emptyProductContent, withCurrentLabelFields, type ProductContent } from '@/app/product-content';
 
 type ContentRow = { payload: string; revision: number };
+type ListingLabelRow={product_id:string;image_keys:string;source_url:string;content_revision:number|null;option_payload:string|null;option_revision:number|null;quotation_payload:string|null;quotation_revision:number|null;linked_job:string|null;valid_job:string|null;job_offer:string|null;context_payload:string|null};
+function listingLabels(ownerId:string,product:{id:string;image_keys:string},row:ListingLabelRow,contentRevision:number):RegistrationQuotationLabels{
+ if(row.product_id!==product.id||row.image_keys!==product.image_keys||(row.content_revision??0)!==contentRevision)throw Error('Listing source changed');
+ const options=row.option_payload?JSON.parse(row.option_payload):{schemaVersion:1,productId:product.id,revision:0,rows:[]};
+ if(options.schemaVersion!==1||options.productId!==product.id||options.revision!==(row.option_revision??0))throw Error('Invalid listing options');
+ const state=row.quotation_payload?JSON.parse(row.quotation_payload):{schemaVersion:1,productId:product.id,revision:0,overrides:{common:{},options:{}}};
+ if(state.schemaVersion!==1||state.productId!==product.id||state.revision!==(row.quotation_revision??0))throw Error('Invalid listing quotation');
+ let categoryId:string|null=null,categoryPath:string[]=[],hubSchema:RegistrationQuotationLabels['hubSchema'];
+ if(row.linked_job){
+  if(row.valid_job!==row.linked_job||!row.context_payload||parseCollectionRequest({urls:[row.source_url]})[0].offerId!==row.job_offer)throw Error('Invalid listing capture link');
+  const captured=JSON.parse(row.context_payload);
+  if(captured?.category){const category=validateCategoryProfile(captured.category);validateCategoryIdentity(category);categoryId=category.categoryId||null;categoryPath=category.categoryPath;hubSchema=category.hubSchema;}
+ }
+ return {ownerId,categoryId,categoryPath,...(hubSchema?{hubSchema}:{}),options:{revision:options.revision,rows:options.rows},state};
+}
 async function database() {
   if (!env.DB) throw new Error('D1 binding DB is unavailable.');
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_content (
@@ -51,12 +69,29 @@ export async function readRegistrationSummaries(ownerId: string, products: {id:s
     const chunk=products.slice(offset,offset+80);
     const rows=await db.prepare(`SELECT product_id, payload, revision FROM product_content WHERE owner_id=? AND product_id IN (${chunk.map(()=>'?').join(',')})`).bind(ownerId,...chunk.map(product=>product.id)).all<{product_id:string;payload:string;revision:number}>();
     const records=new Map(rows.results.map(row=>[row.product_id,row]));
+    // One owner-scoped metadata read per chunk, independent of SKU count. Only
+    // the exact linked intake supplies category scope; equal URLs are never a
+    // reason to borrow another job, company or product's quotation overrides.
+    let labelRecords:Map<string,ListingLabelRow>|null=null;
+    try{const source=await db.prepare(`SELECT p.id AS product_id,p.image_keys,p.source_url,pc.revision AS content_revision,
+      o.payload AS option_payload,o.revision AS option_revision,q.payload AS quotation_payload,q.revision AS quotation_revision,
+      cp.job_id AS linked_job,j.id AS valid_job,j.offer_id AS job_offer,c.payload AS context_payload
+      FROM products p LEFT JOIN product_options o ON o.product_id=p.id AND o.owner_id=p.owner_id
+      LEFT JOIN product_content pc ON pc.product_id=p.id AND pc.owner_id=p.owner_id
+      LEFT JOIN product_quotation_fields q ON q.product_id=p.id AND q.owner_id=p.owner_id
+      LEFT JOIN collection_products cp ON cp.product_id=p.id AND cp.owner_id=p.owner_id
+      LEFT JOIN collection_jobs j ON j.id=cp.job_id AND j.owner_id=p.owner_id AND j.status='awaiting_connector'
+      LEFT JOIN collection_context c ON c.job_id=j.id
+      WHERE p.owner_id=? AND p.id IN (${chunk.map(()=>'?').join(',')})`).bind(ownerId,...chunk.map(product=>product.id)).all<ListingLabelRow>();labelRecords=new Map(source.results.map(row=>[row.product_id,row]));}
+    catch{/* Older partial databases retain content counts with a connection warning. */}
     for(const product of chunk) {
       try {
         const row=records.get(product.id);
         const content=row?JSON.parse(row.payload) as ProductContent:null;
         if(row&&content?.revision!==row.revision)throw Error('Invalid content revision');
-        summaries[product.id]=registrationContentSummary(product,content);
+        let labels:RegistrationQuotationLabels|null=null;
+        if(labelRecords){const source=labelRecords.get(product.id);if(!source)throw Error('Unowned listing product');try{labels=listingLabels(ownerId,product,source,row?.revision??0);}catch{/* A corrupt source must not turn zero references into a verified count. */}}
+        summaries[product.id]=registrationContentSummary(product,content,labels);
       } catch { summaries[product.id]=null; }
     }
   }

@@ -3,17 +3,60 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {webcrypto} from 'node:crypto';
 
 const code=ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-tracking.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-function api(timers={setTimeout,clearTimeout}){
- const handoff={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-handoff.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:handoff,Error,Date,Set});
- const exports={};vm.runInNewContext(code,{exports,Error,Date,Set,...timers,require(name){return name==='@/app/supplier-hub-handoff'?handoff:{};}});return {...exports,LookupUnavailable:handoff.SupplierHubLookupUnavailable};
+function api(timers={setTimeout,clearTimeout},bridgeWindow){
+ const localHistory={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-local-history.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:localHistory,Error,Date,TextEncoder});
+ const handoff={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/supplier-hub-handoff.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:handoff,Error,Date,Set,TextEncoder,crypto:webcrypto,window:bridgeWindow,...timers,
+  require(name){assert.equal(name,'@/app/supplier-hub-local-history');return localHistory;}});
+ const exports={};vm.runInNewContext(code,{exports,Error,Date,Set,...timers,require(name){return name==='@/app/supplier-hub-handoff'?handoff:{};}});return {...exports,LookupUnavailable:handoff.SupplierHubLookupUnavailable,readHistory:handoff.getSupplierHubProductHistory};
 }
 const tracking=api();
 const source={productId:'p',categoryId:'80719',profileId:'profile',fingerprint:'a'.repeat(64),filename:`YOOFAM-${'a'.repeat(64)}.xlsx`,includedOptions:2,company:{code:'A01464742',name:'와이홉'}};
 const row=(skuId,patch={})=>({title:'상품',submittedAt:'date',category:'cat',barcode:'',sourceQuotation:source.filename,skuId,status:'상품 검수중',stage:'가격/정책',...patch});
 const record=(state='validation-pending',patch={})=>({state,filename:source.filename,company:source.company,includedOptions:2,quotationId:state==='validation-complete'?'quote-123':undefined,observedAt:Date.now(),registered:false,...patch});
 const registered=(rows,patch={})=>record('validation-complete',{registration:{quotationId:'quote-123',scope:'visible-page',includedOptions:2,observedAt:Date.now(),registered:false,rows},...patch});
+function historyBridge(records,patch={}){
+ const calls=[],listeners=new Set(),origin='http://localhost:3000';
+ const win={location:{origin},addEventListener(type,listener){assert.equal(type,'message');listeners.add(listener);},removeEventListener(type,listener){assert.equal(type,'message');listeners.delete(listener);},postMessage(request,target){
+  assert.equal(target,origin);assert.equal(request.channel,'YOOFAM_HUB_HANDOFF');calls.push(request);
+  assert.ok(['PING','HISTORY'].includes(request.type),'history lookup cannot prepare, transmit or validate a package');
+  const result=request.type==='PING'?{ok:true,productTransmissionHistory:true}:{ok:true,productId:source.productId,records:structuredClone(records),...patch};
+  queueMicrotask(()=>{for(const listener of [...listeners])listener({source:win,origin,data:{channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId:request.requestId,result}});});
+ }};
+ return {calls,listeners,win,read:()=>api(undefined,win).readHistory({productId:source.productId,categoryId:source.categoryId,fingerprint:source.fingerprint},new AbortController().signal)};
+}
+function localRecord(kind,value){return {key:`${kind}:http://localhost:3000:p:${value.categoryId}:${value.fingerprint}`,value};}
+
+test('actual HISTORY exchange validates rejected records and retains older accepted fingerprints for both companies without uploads',async()=>{
+ for(const company of [source.company,{code:'A01526306',name:'유앤채'}]){
+  const current={origin:'http://localhost:3000',productId:'p',categoryId:source.categoryId,fingerprint:source.fingerprint};
+  const rejected={...current,...record('validation-rejected',{company,quotationId:undefined,detail:'합성 파일 오류'})};
+  const rows=[localRecord('transmission',{...current,company,state:'started',registered:false}),localRecord('result',rejected)];
+  const h=historyBridge(rows),empty=await h.read();assert.equal(empty.blocked,false);assert.equal(empty.records.length,2);
+  const old={...current,fingerprint:'b'.repeat(64),...record('validation-complete',{company,filename:`YOOFAM-${'b'.repeat(64)}.xlsx`,quotationId:'old-accepted-quote'})};
+  rows.push(localRecord('result',old));const history=await h.read();assert.equal(history.blocked,true);assert.equal(history.records.length,3);
+  assert.equal(history.records.find(item=>item.value.fingerprint===old.fingerprint).value.quotationId,'old-accepted-quote');
+  assert.deepEqual(h.calls.map(request=>request.type),['PING','HISTORY','PING','HISTORY']);assert.equal(h.listeners.size,0);
+  assert.ok(h.calls.filter(request=>request.type==='HISTORY').every(request=>request.payload.productId==='p'&&request.payload.fingerprint===source.fingerprint));
+  assert.equal(rows[1].value.state,'validation-rejected');assert.equal(rows[2].value.registered,false);
+ }
+});
+
+test('actual HISTORY exchange refuses mismatched product/key, false registration claims and oversized history',async()=>{
+ const value={origin:'http://localhost:3000',productId:'p',categoryId:source.categoryId,fingerprint:source.fingerprint,...record('validation-complete')};
+ const current=localRecord('result',value);
+ for(const [rows,patch]of [
+  [[current],{productId:'other'}],
+  [[{...current,key:current.key.replace(':p:',':other:')}],{}],
+  [[{...current,value:{...value,productId:'other'}}],{}],
+  [[{...current,value:{...value,registered:true}}],{}],
+  [Array.from({length:201},()=>current),{}],
+ ]){
+  const h=historyBridge(rows,patch);await assert.rejects(h.read());assert.deepEqual(h.calls.map(request=>request.type),['PING','HISTORY']);assert.equal(h.listeners.size,0);
+ }
+});
 function fixture(replies,{prepared=source,verify,read,wait,maxDurationMs=180000,initialResult}={}){
  let index=0,time=0;const calls=[],progress=[],retries=[],controller=new AbortController();
  const options={signal:controller.signal,maxDurationMs,initialResult,now:()=>time,

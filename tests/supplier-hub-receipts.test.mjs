@@ -17,6 +17,7 @@ import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registra
 import {readSupplierHubRegistration} from '../extensions/supplier-hub/registration-result.mjs';
 import {assertAppSupplierHubNotSubmitted} from '../extensions/supplier-hub/receipt-recovery.mjs';
 import {readSupplierHubValidation} from '../extensions/supplier-hub/result.mjs';
+import {canObserveSupplierHubRegistration} from '../extensions/supplier-hub/handoff-store.mjs';
 
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
 const companies=[{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}];
@@ -52,7 +53,10 @@ function renderBoard(products){
  return renderToStaticMarkup(createElement(exports.RegistrationBoard,{products,selected:new Set(),onSelected(){},onOpen(){},loading:false,error:'',onArchive(){}}));
 }
 const bundleKeys=['bundleCriterion','bundleMinimumSupplyMargin','bundleMinimumCoupangMargin'];
-const oldSettings=value=>Object.fromEntries(Object.entries(value).filter(([key])=>!bundleKeys.includes(key)));
+// The legacy fixture omits newly normalized inactive flags too. Enabling an
+// integrated rate remains an explicit saved price policy change.
+const oldSettings=value=>Object.fromEntries(Object.entries(value).filter(([key])=>!bundleKeys.includes(key)
+ && !(value.useIntegratedRate!==true&&['useIntegratedRate','integratedRate'].includes(key))));
 async function legacyBundleSource(h){
  // Model a previously persisted request without rewriting its original facts.
  const context=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_context').get().payload);
@@ -169,7 +173,7 @@ for(const company of companies)test(`actual owner-scoped API blocks server-only 
   const api={tabs:{get:async id=>{assert.equal(id,7);return {id,windowId:17,url:origin+'/'};},sendMessage:async(id,message,frame)=>{
    assert.equal(id,7);assert.deepEqual(frame,{frameId:0});return new Promise(resolve=>assert.equal(listener(message,{id:'extension'},resolve),true));
   }}};
-  const store=async(action,key,value)=>{assert.equal(action,'claim');assert.ok(key.startsWith('result:'));if(records.has(key))return false;records.set(key,value);return true;};
+  const store=async(action,key,value)=>{if(action==='history')return [...records].map(([key,value])=>({key,value}));assert.equal(action,'claim');assert.ok(key.startsWith('result:'));if(records.has(key))return false;records.set(key,value);return true;};
   const preflight=()=>assertAppSupplierHubNotSubmitted(identity,prepared,binding,api,store);
   assert.equal(await preflight(),true);assert.equal(records.size,0);
   unavailable=true;await assert.rejects(preflight(),error=>error.code==='SUPPLIER_HUB_RECEIPT_UNCONFIRMED');assert.equal(records.size,0);unavailable=false;
@@ -179,9 +183,14 @@ for(const company of companies)test(`actual owner-scoped API blocks server-only 
    h.sqlite.prepare('DELETE FROM supplier_hub_receipts WHERE product_id=?').run(h.product.id);
    const result={...h.result,state,observedAt:h.result.observedAt+index,...(state!=='validation-complete'?{quotationId:undefined}:{})};
    await json(await h.write(result));records.clear();
-   await assert.rejects(preflight(),error=>error.code==='SUPPLIER_HUB_ALREADY_SUBMITTED');assert.equal(records.size,1);
-   const restored=[...records.values()][0];assert.equal(restored.state,state);assert.equal(restored.company.code,company.companyCode);assert.equal(restored.includedOptions,6);
-   assert.equal(restored.quotationId,result.quotationId);assert.equal(restored.registered,false);assert.equal(restored.registration,undefined);
+   const storedBefore=h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts WHERE product_id=?').get(h.product.id).payload;
+   await assert.rejects(preflight(),error=>error.code==='SUPPLIER_HUB_ALREADY_SUBMITTED');
+   assert.equal(records.size,state==='validation-rejected'?1:0,'whole-history pending/accepted checks block before creating a local receipt');
+   if(state==='validation-rejected'){
+    const restored=[...records.values()][0];assert.equal(restored.state,state);assert.equal(restored.company.code,company.companyCode);assert.equal(restored.includedOptions,6);
+    assert.equal(restored.quotationId,result.quotationId);assert.equal(restored.registered,false);assert.equal(restored.registration,undefined);
+   }
+   assert.equal(h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts WHERE product_id=?').get(h.product.id).payload,storedBefore);
    assert.equal([...records.keys()].some(key=>/^(attempt|transmission):/.test(key)),false);
   }
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM products').get(),before);
@@ -211,7 +220,9 @@ for(const company of companies)for(const noHubTabs of [false,true])test(`actual 
     if(request.func===readSupplierHubRegistration)return [{result:{quotationId:h.result.quotationId,scope:'visible-page',registered:false,rows:h.registration.rows,page:{current:1,hasNext:false,signature:JSON.stringify(h.registration.rows)}}}];
     throw Error('unexpected write to Supplier Hub');
    }}};
-  const store=async(action,key,value)=>{if(action==='get')return records.get(key);if(action==='claim'){if(records.has(key))return false;records.set(key,value);return true;}records.set(key,value);};
+  const store=async(action,key,value)=>{if(action==='get')return records.get(key);if(action==='claim'){if(records.has(key))return false;records.set(key,value);return true;}
+   if(action==='register'){if(JSON.stringify(records.get(key))!==JSON.stringify(value.expected)||!canObserveSupplierHubRegistration(value.expected,value.observation))return false;records.set(key,value.observation);return true;}
+   assert.equal(action,'put');records.set(key,value);};
   const record=await refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},{frameId:0,url:origin+'/',tab:{id:7,windowId:17}},api,store);
   assert.equal(record.registration.rows.length,6);assert.equal(record.quotationId,h.result.quotationId);assert.equal(record.company.code,company.companyCode);assert.equal(record.receiptRecovered,true);
   assert.equal(records.has('attempt:999'),false);assert.equal([...records.keys()].some(key=>key.startsWith('transmission:')),false);

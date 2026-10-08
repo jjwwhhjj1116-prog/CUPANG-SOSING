@@ -11,11 +11,11 @@ function harness(handler, readHandler, props={}){
  const state=[],refs=[],effects=[],cleanups=[],cache=new Map();let si=0,ri=0,first=true,saves=0;
  const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],v=>{state[i]=typeof v==='function'?v(state[i]):v;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useMemo:fn=>fn(),useCallback:fn=>fn,useEffect(fn){if(first)effects.push(fn);}};
  let body;
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>init?.method==='PATCH'?handler(url,init,body):readHandler?readHandler(body):Response.json(body),require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);const source=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8')+(file==='app/components/product-options-editor.tsx'?'\nexport {OptionsEditor as RegularOptionsEditor};':'');vm.runInNewContext(ts.transpileModule(source,{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>init?.method==='PATCH'?handler(url,init,body):readHandler?readHandler(body):Response.json(body),require(name){if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-options.ts');body={options:{...model.emptyProductOptions('p'),revision:1,rows:[{...model.emptyOptionInput('a'),unitCostCny:2,included:true,updatedAt:'before',provenance:{}}]},productVersion:'2026-09-24T00:00:00Z',pricing:{policy:{exchangeRate:100,supplyMargin:0,coupangMargin:0,minimumMargin:0,msrpMultiple:1,roundingUnit:1},policySource:'saved-product',rows:[]}};
- const component=load('app/components/product-options-editor.tsx').ProductOptionsEditor;
+ const component=load('app/components/product-options-editor.tsx').RegularOptionsEditor;
  const product={id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png"]',updated_at:body.productVersion};
- const render=()=>{si=0;ri=0;const root=component({...props,product,onSaved(){saves++;}});const tree=root.type(root.props);first=false;return tree;};
+ const render=()=>{si=0;ri=0;const tree=component({...props,product,onSaved(){saves++;}});first=false;return tree;};
  const button=()=>nodes(render()).find(n=>n.type==='button'&&n.props.children==='옵션 저장·가격 계산');
  const image=()=>nodes(render()).find(n=>n.type==='select'&&n.props['aria-label']==='옵션 1 이미지');
  return{render,button,image,product,get saves(){return saves;},async start(){render();effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
@@ -41,7 +41,6 @@ test('packaging review preserves a focused or explicitly selected option and nev
   assert.equal(review().props.disabled,focus==='deleted');review().props.onClick();assert.deepEqual(targets,focus==='b'?['b']:[]);
   if(focus==='deleted'){nodes(h.render()).find(node=>node.props?.['aria-label']==='가격 옵션 2 선택').props.onChange({target:{checked:true}});review().props.onClick();assert.deepEqual(targets,['b']);}
  }
- const h=harness(()=>{},undefined,{imageView:true,onReviewPackaging:()=>assert.fail('image view cannot route packaging')});await h.start();assert.ok(!nodes(h.render()).some(node=>node.props?.children==='견적서 포장값 확인'));
 });
 
 test('option image save is single-flight and next edit uses the returned revision and product version',async()=>{
@@ -128,7 +127,7 @@ test('targeted option image editing saves only that image and clearing restores 
  select().props.onChange({target:{value:''}});h.button().props.onClick();await settle();assert.equal(requests[1].rows[1].imageKey,null);
 });
 
-test('stage three saves image only while preserving unsaved price and name drafts',async()=>{
+test('normal option editing saves deliberate source-image, price and name edits under its original options contract',async()=>{
  let request;const props={imageView:false};
  const h=harness(async(_url,init,base)=>{request=JSON.parse(init.body);return Response.json({...base,options:{...base.options,revision:2,rows:request.rows.map(row=>({...row,provenance:{imageKey:'manual'}}))},productVersion:'2026-09-24T00:01:00Z'});},undefined,props);
  await h.start();
@@ -136,23 +135,15 @@ test('stage three saves image only while preserving unsaved price and name draft
  input('옵션 1 옵션명 원문').props.onChange({target:{value:'미저장 옵션명'}});
  const cost=nodes(h.render()).find(n=>n.type==='input'&&n.props.type==='number'&&n.props.value===2);
  cost.props.onChange({target:{value:'9',valueAsNumber:9}});
- props.imageView=true;
- nodes(h.render()).find(n=>n.props?.['aria-label']==='옵션 대표 이미지 2 선택').props.onClick();
- const save=nodes(h.render()).find(n=>n.type==='button'&&n.props.children==='옵션 대표 이미지 저장');
- save.props.onClick();await settle();
- assert.equal(request.rows[0].unitCostCny,2);assert.equal(request.rows[0].originalName,'');assert.equal(request.rows[0].imageKey,'owner/b.png');assert.equal(request.expectedRevision,1);
- props.imageView=false;
+ h.image().props.onChange({target:{value:'owner/b.png'}});h.button().props.onClick();await settle();
+ assert.equal(request.rows[0].unitCostCny,9);assert.equal(request.rows[0].originalName,'미저장 옵션명');assert.equal(request.rows[0].imageKey,'owner/b.png');assert.equal(request.expectedRevision,1);
  assert.equal(input('옵션 1 옵션명 원문').props.value,'미저장 옵션명');
  assert.equal(nodes(h.render()).find(n=>n.type==='input'&&n.props.type==='number'&&n.props.value===9).props.value,9);
  assert.equal(h.image().props.value,'owner/b.png');assert.equal(h.saves,1);
 });
 
-test('stage three missing target is not silently changed and explicit clear saves common fallback',async()=>{
- let request;const props={imageView:true,focusedOptionId:'deleted'};
+test('normal source-image clear preserves its exact source-options contract with an unavailable focused option',async()=>{
+ let request;const props={imageView:false,focusedOptionId:'deleted'};
  const h=harness(async(_url,init,base)=>{request=JSON.parse(init.body);return Response.json({...base,options:{...base.options,revision:2,rows:request.rows}});},body=>{body.options.rows[0].imageKey='owner/a.png';return Response.json(body);},props);
- await h.start();const choice=()=>nodes(h.render()).find(n=>n.props?.['aria-label']==='대표 이미지 옵션 선택');
- assert.equal(choice().props.value,'deleted');assert.equal(nodes(h.render()).some(n=>n.props?.['aria-label']==='옵션 대표 이미지 1 선택'),false);
- choice().props.onChange({target:{value:'a'}});
- nodes(h.render()).find(n=>n.type==='button'&&n.props.children==='옵션 이미지 해제·공통 이미지 사용').props.onClick();
- nodes(h.render()).find(n=>n.type==='button'&&n.props.children==='옵션 대표 이미지 저장').props.onClick();await settle();assert.equal(request.rows[0].imageKey,null);
+ await h.start();h.image().props.onChange({target:{value:''}});h.button().props.onClick();await settle();assert.equal(request.rows[0].imageKey,null);assert.equal(request.rows[0].id,'a');
 });

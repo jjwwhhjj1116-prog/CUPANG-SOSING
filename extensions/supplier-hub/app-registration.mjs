@@ -1,7 +1,7 @@
 import {validateAppHubRequest} from './app-request.mjs';
 import {isSupplierHubTab,waitForSupplierHubPage,supplierHubStatusReady} from './hub-tab.mjs';
 import {transferRecord,resultKey,isAcceptedResult,isRecoverableSupplierHubResult,canPromoteSupplierHubReceipt} from './handoff-store.mjs';
-import {readAppSupplierHubReceipt} from './receipt-recovery.mjs';
+import {readAppSupplierHubReceipt,readAppHistoricalSupplierHubReceipt,verifyHistoricalSupplierHubReceipt} from './receipt-recovery.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
 import {searchSupplierHubRegistration} from './registration-search.mjs';
@@ -16,10 +16,16 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
   activeWindows.add(windowId);
   try{
     const key=resultKey(identity),local=await store('get',key),binding={appTabId:sender.tab.id,windowId};
+    if(message.historical!==undefined&&message.historical!==true)throw Error('원래 전송 조회 선택을 확인해주세요.');
+    const historical=message.historical===true;
+    const readReceipt=()=>historical?readAppHistoricalSupplierHubReceipt(identity,binding,api,true):readAppSupplierHubReceipt(identity,binding,api);
+    const original=historical?await readReceipt():null;
+    if(historical&&!original)throw Error('원래 서버 접수 기록이 없습니다. 기존 Chrome 확장에서 결과를 확인해주세요.');
     const recovering=local!==undefined&&local!==null&&!isAcceptedResult(identity,local)&&isRecoverableSupplierHubResult(identity,local);
     if(local!==undefined&&local!==null&&!isAcceptedResult(identity,local)&&!recovering)
       throw Error('이 견적서의 파일 검증 완료 결과와 견적서 ID를 먼저 불러와주세요.');
-    let restored=!local||recovering?await readAppSupplierHubReceipt(identity,binding,api):null,saved=recovering?restored:local||restored;
+    let restored=!local||recovering?original??await readReceipt():null,saved=recovering?restored:local||restored;
+    if(historical&&saved){if(!['quotationId','filename','includedOptions'].every(field=>saved[field]===original[field])||saved.company.code!==original.company.code||saved.company.name!==original.company.name)throw Error('원래 접수 기록과 Chrome 결과가 다릅니다.');saved={...saved,historicalReceipt:true,receiptProductVersion:original.receiptProductVersion,profileId:original.profileId};}
     if(!saved)throw Error('이 견적서의 파일 검증 완료 결과와 견적서 ID를 먼저 불러와주세요.');
     if(recovering&&!canPromoteSupplierHubReceipt(identity,local,saved))throw Error('보관된 접수 결과와 이전 검증 기록의 회사·옵션·견적서가 다릅니다.');
     const tabs=(await api.tabs.query({windowId,url:['https://supplier.coupang.com/qvt/registration*','https://supplier.coupang.com/qvt/wims*']}))
@@ -39,7 +45,7 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
     }
     if(status.length>1||(!status.length&&source.length>1))throw Error('같은 Chrome 창에서 해당 견적서를 전송한 Supplier Hub 탭을 확인하지 못했습니다.');
     if(!status.length&&!source.length){
-      restored||=await readAppSupplierHubReceipt(identity,binding,api);
+      restored||=await readReceipt();
       if(!restored||!['quotationId','filename','includedOptions'].every(field=>restored[field]===saved[field])
         ||restored.company.code!==saved.company.code||restored.company.name!==saved.company.name)
         throw Error('Chrome 전송 기록과 앱에 보관된 접수 결과가 다릅니다.');
@@ -47,7 +53,7 @@ export async function refreshSupplierHubRegistration(message,sender,api=chrome,s
     }
     const tab=status[0]||source[0];
     let tabId=tab?.id;
-    const checkSource=()=>saved.receiptRecovered||recoveredValidationSource||isRecoveredValidationBinding(saved,identity)?verifyAppQuotationSource(identity,saved,binding,api):Promise.resolve(true);
+    const checkSource=()=>historical?verifyHistoricalSupplierHubReceipt(identity,saved,binding,api):saved.receiptRecovered||recoveredValidationSource||isRecoveredValidationBinding(saved,identity)?verifyAppQuotationSource(identity,saved,binding,api):Promise.resolve(true);
     const checkCompany=async(path)=>{
       if(!isSupplierHubTab(await api.tabs.get(tabId),windowId,path))throw Error('Supplier Hub 조회 탭의 창 또는 화면이 변경되었습니다.');
       const [execution]=await api.scripting.executeScript({target:{tabId},func:verifySupplierHubCompany,args:[saved.company]});

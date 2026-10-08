@@ -3,7 +3,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
-import { getTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, listTranslationJobs } from '@/db/translation-jobs';
+import { getTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, listTranslationJobs,readSeoRetrySource } from '@/db/translation-jobs';
 import { saveIntegratedTranslation } from '@/db/translation-adoption';
 import { integratedTranslationPlan, applyIntegratedOptions } from '@/app/translation-integrated-adoption';
 import { applyContentPatch } from '@/app/product-content';
@@ -17,6 +17,8 @@ import {capturedAttributeCategory,attributeCategorySchema} from '@/app/quotation
 import { intakeTranslationReplayContent, intakeTranslationReplayJob } from '@/app/intake-translation-replay';
 import { collectionSourceReference } from '@/app/sourcing';
 import { optionsRetryProof, optionsRetryApplicationFingerprint } from '@/app/options-translation-retry';
+import {seoRetryReviewProof} from '@/app/seo-translation-retry';
+import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -41,6 +43,17 @@ export async function POST(request: Request, context: Context) {
     const [content, options, job] = await Promise.all([readProductContent(owner, id), readProductOptions(owner, id), getTranslationJob(owner, id, body.jobId as string)]);
     if (!job) return json({ error: '번역 결과를 찾을 수 없습니다.' }, 404);
     const scope = body.scope === 'options' ? 'options' : 'all';
+    let seoSource;
+    try{
+      const seoProof=seoRetryReviewProof(job.review);
+      if(seoProof){
+        const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
+        if(scope!=='all'||!company||company.code!==seoProof.company.code||company.name!==seoProof.company.name||options.revision!==seoProof.optionRevision)throw Error('SEO 재시도의 승인 회사·옵션 버전·적용 범위가 다릅니다.');
+        const captured=await readSeoRetrySource(owner,id,product.source_url,company);
+        if(captured.sourceFingerprint!==seoProof.sourceFingerprint||JSON.stringify(captured.source)!==JSON.stringify(job.review.source))throw Error('SEO 재시도 이후 수집 원문 또는 카테고리가 변경되었습니다.');
+        seoSource=captured.guard;
+      }
+    }catch(error){return json({error:error instanceof Error?error.message:'SEO 재시도 원문을 확인하지 못했습니다.'},409);}
     let retryProof;
     try { retryProof = optionsRetryProof(job); }
     catch { return json({error:'옵션 재시도 원문 연결을 확인하지 못했습니다.'},409); }
@@ -109,7 +122,7 @@ export async function POST(request: Request, context: Context) {
     const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
     if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
-      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, jobProductVersion:job.productVersion, jobContentRevision:job.contentRevision, categorySource, attributeRules });
+      contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, jobProductVersion:job.productVersion, jobContentRevision:job.contentRevision, categorySource, attributeRules,seoSource });
     return saved ? json({ scope, productId: id, productVersion: now, contentRevision: nextContent.revision, optionRevision: nextOptions.revision, applied: plan.preview.length })
       : json({ error: '저장 중 자료가 변경되었습니다. 아무 항목도 함께 저장하지 않았습니다. 다시 검토해주세요.' }, 409);
   } catch { return json({ error: '통합 저장 상태를 확인하지 못했습니다. 저장본을 조회한 뒤 다시 검토해주세요. 자동 재저장하지 않았습니다.' }, 503); }

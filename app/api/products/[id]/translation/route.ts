@@ -3,9 +3,11 @@ import { NextResponse } from 'next/server';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
-import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, refreshUnstartedIntake, findOptionsRetryTranslation, createOptionsRetryTranslation, hasUnsettledTranslation } from '@/db/translation-jobs';
+import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, refreshUnstartedIntake, findOptionsRetryTranslation, createOptionsRetryTranslation, hasUnsettledTranslation,findSeoRetryTranslation,createSeoRetryTranslation,readSeoRetrySource } from '@/db/translation-jobs';
 import { fingerprint } from '@/app/automation/model';
 import { optionsRetryProof } from '@/app/options-translation-retry';
+import {seoRetryReviewProof} from '@/app/seo-translation-retry';
+import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
 
@@ -14,6 +16,7 @@ const json = (body: unknown, status = 200) => NextResponse.json(body, { status, 
 const configuration = () => translationConfiguration(env as TranslationSecrets);
 const unavailable = () => json({ error: '번역 요청 저장소에 연결하지 못했습니다. 실행 이력을 확인한 뒤 진행해주세요.' }, 503);
 const conflict = () => json({ error: '상품·콘텐츠·설정 또는 승인 상태가 변경되었습니다. 새 검토 요청을 만들어주세요.', code: 'TRANSLATION_CONFLICT' }, 409);
+async function seoCompany(owner:string){const user=await getChatGPTUser();return user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;}
 
 export async function GET(request: Request, context: Context) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({ error: '운영 인증 연결 후 사용할 수 있습니다.' }, 503);
@@ -22,6 +25,23 @@ export async function GET(request: Request, context: Context) {
     const product = await findProduct(owner, id);
     if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
     const retryKey = new URL(request.url).searchParams.get('retryKey');
+    const seoRetryKey=new URL(request.url).searchParams.get('seoRetryKey');
+    if(retryKey!==null&&seoRetryKey!==null)return json({error:'재시도 범위는 하나만 선택해주세요.'},400);
+    if(seoRetryKey!==null){
+      if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(seoRetryKey))return json({error:'SEO 재시도 키를 확인해주세요.'},400);
+      const company=await seoCompany(owner);if(!company)return json({error:'승인된 회원 회사정보가 필요합니다.'},403);
+      if(!await findProduct(owner,id,true))return json({error:'현재 상품을 찾을 수 없습니다.'},404);
+      const job=await findSeoRetryTranslation(owner,id,seoRetryKey),proof=job?seoRetryReviewProof(job.review):null;
+      if(job&&(!proof||proof.retryKey!==seoRetryKey||proof.company.code!==company.code||proof.company.name!==company.name))return conflict();
+      let sourceCurrent:boolean|null=null;
+      if(job&&proof){
+        try{const {readProductOptions}=await import('@/db/product-options');const [source,options,content]=await Promise.all([readSeoRetrySource(owner,id,product.source_url,company),readProductOptions(owner,id),readProductContent(owner,id)]);
+          sourceCurrent=source.sourceFingerprint===proof.sourceFingerprint&&JSON.stringify(source.source)===JSON.stringify(job.review.source)
+            &&options.revision===proof.optionRevision&&content.revision===job.contentRevision&&product.updated_at===job.productVersion;
+        }catch{sourceCurrent=false;}
+      }
+      return json({productId:id,productVersion:product.updated_at,retryKey:seoRetryKey,job,sourceCurrent,configuration:configuration()});
+    }
     if (retryKey !== null) {
       if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(retryKey)) return json({ error: '옵션 재시도 키를 확인해주세요.' }, 400);
       const job = await findOptionsRetryTranslation(owner, id, retryKey);
@@ -49,6 +69,28 @@ export async function POST(request: Request, context: Context) {
     const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
     const product = await findProduct(owner, id); if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
     const config = requireTranslationConfig(env as TranslationSecrets);
+    if(body.action==='prepare-seo-retry'){
+      if(Object.keys(body).some(key=>!['action','expectedVersion','retryKey'].includes(key))||typeof body.retryKey!=='string'
+        ||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(body.retryKey))throw new TranslationError('INVALID_REQUEST','SEO 재시도 범위와 중복 방지 키를 확인해주세요.');
+      if(config.provider!=='google-free'||config.model!=='google-translate-gtx'||body.expectedVersion!==product.updated_at||!await findProduct(owner,id,true))return conflict();
+      const company=await seoCompany(owner);if(!company)return json({error:'승인된 회원 회사정보가 필요합니다.'},403);
+      const {readProductOptions}=await import('@/db/product-options');
+      const [captured,options,content,previous]=await Promise.all([readSeoRetrySource(owner,id,product.source_url,company),readProductOptions(owner,id),readProductContent(owner,id),findSeoRetryTranslation(owner,id,body.retryKey)]);
+      if(previous){const proof=seoRetryReviewProof(previous.review);
+        if(!proof||proof.retryKey!==body.retryKey||proof.sourceFingerprint!==captured.sourceFingerprint||proof.optionRevision!==options.revision
+          ||previous.productVersion!==product.updated_at||previous.contentRevision!==content.revision||JSON.stringify(previous.review.source)!==JSON.stringify(captured.source)
+          ||previous.review.destination!==translationDestination(config)||previous.review.model!==config.model||previous.review.maxOutputTokens!==config.maxOutputTokens)return conflict();
+        return json({job:previous,replayed:true,configuration:configuration()});
+      }
+      if(await hasUnsettledTranslation(owner,id))return conflict();
+      const seoRetry={retryKey:body.retryKey,scope:'seo' as const,optionRevision:options.revision,sourceFingerprint:captured.sourceFingerprint,company};
+      const prepared=await prepareTranslationReview(captured.source,config),paidNotice='현재 상품에 저장된 수집 상품명·설명 텍스트만 사용자 지정 Google 번역 주소로 보냅니다. 옵션값·카테고리·참고 메모는 보내지 않습니다. 새 SEO 초안은 검토 후 원하는 항목만 적용하며 기존 입력은 자동으로 저장하지 않습니다.';
+      const review={...prepared,paidNotice,seoRetry,fingerprint:await fingerprint({review:prepared.fingerprint,seoRetry,paidNotice})};
+      const value:TranslationJob={id:crypto.randomUUID(),productId:id,productVersion:product.updated_at,contentRevision:content.revision,status:'prepared',review,result:null,error:null,createdAt:new Date().toISOString(),approvedAt:null,startedAt:null,finishedAt:null};
+      const requestFingerprint=await fingerprint({source:captured.source,productVersion:value.productVersion,contentRevision:value.contentRevision,seoRetry,model:config.model,maxOutputTokens:config.maxOutputTokens});
+      const saved=await createSeoRetryTranslation(owner,value,body.retryKey,requestFingerprint,options.revision,captured.guard);
+      if(!saved||saved.conflict)return conflict();return json({job:saved.job,replayed:saved.replayed,configuration:configuration()},saved.replayed?200:201);
+    }
     if (body.action === 'prepare-options-retry') {
       if (Object.keys(body).some(key => !['action','expectedVersion','retryKey'].includes(key))
         || typeof body.retryKey !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(body.retryKey))
@@ -148,7 +190,7 @@ export async function POST(request: Request, context: Context) {
         }
       }
       const requestFingerprint = await fingerprint({ source, productVersion: product.updated_at, contentRevision: content.revision, destination: translationDestination(config), model: config.model, maxOutputTokens: config.maxOutputTokens });
-      const previous = recoveryJobs.find(item => item.productVersion === product.updated_at && item.contentRevision === content.revision &&
+      const previous = recoveryJobs.find(item => !Object.hasOwn(item.review,'optionsRetry') && item.productVersion === product.updated_at && item.contentRevision === content.revision &&
         item.review.destination === translationDestination(config) && item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
         (!['prepared', 'approved'].includes(item.status) || Date.parse(item.review.expiresAt) > Date.now()));
       if (previous && !autoDraft) return json({ job: previous, replayed: true, remainingOptions, configuration: configuration() });
@@ -180,17 +222,26 @@ export async function POST(request: Request, context: Context) {
     const existing = await getTranslationJob(owner, id, body.jobId);
     if (!existing) return json({ error: '번역 요청을 찾을 수 없습니다.' }, 404);
     if (existing.review.destination !== translationDestination(config) || existing.review.model !== config.model || existing.review.maxOutputTokens !== config.maxOutputTokens) return conflict();
+    const seoProof=seoRetryReviewProof(existing.review);
+    let seoSource;
+    if(seoProof){
+      const company=await seoCompany(owner);if(!company||company.code!==seoProof.company.code||company.name!==seoProof.company.name)return conflict();
+      const {readProductOptions}=await import('@/db/product-options');
+      const [captured,options,content]=await Promise.all([readSeoRetrySource(owner,id,product.source_url,company),readProductOptions(owner,id),readProductContent(owner,id)]);
+      if(captured.sourceFingerprint!==seoProof.sourceFingerprint||JSON.stringify(captured.source)!==JSON.stringify(existing.review.source)||options.revision!==seoProof.optionRevision
+        ||content.revision!==existing.contentRevision||product.updated_at!==existing.productVersion)return conflict();seoSource=captured.guard;
+    }
     if (body.action === 'approve') {
       if (body.confirmPaid !== true || body.reviewFingerprint !== existing.review.fingerprint) return json({ error: '검토한 원문과 모델의 생성 요청 승인이 필요합니다.', code: 'PAID_APPROVAL_REQUIRED' }, 400);
       if (existing.status === 'approved') return json({ job: existing, replayed: true });
-      const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString(),optionsRetryProof(existing)?.optionRevision);
+      const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString(),seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision,seoSource);
       return approved ? json({ job: approved }) : conflict();
     }
     if (['completed', 'failed', 'uncertain'].includes(existing.status)) return json({ job: existing, replayed: true });
     if (existing.status === 'running') return json({ job: existing, replayed: true, message: '이미 실행 중이거나 결과 확인이 필요합니다. 중복 호출하지 않았습니다.' }, 202);
     if (existing.status !== 'approved') return json({ error: '먼저 검토한 생성 요청을 승인해주세요.', code: 'PAID_APPROVAL_REQUIRED' }, 409);
     const claim = crypto.randomUUID();
-    const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString(),optionsRetryProof(existing)?.optionRevision);
+    const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString(),seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision,seoSource);
     if (!claimed) {
       const current = await getTranslationJob(owner, id, existing.id);
       if (current && current.status !== 'approved') return json({ job: current, replayed: true }, current.status === 'running' ? 202 : 200);
