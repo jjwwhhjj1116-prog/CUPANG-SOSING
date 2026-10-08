@@ -14,6 +14,25 @@ export type FreeImageRegion = {
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[] };
+export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
+export function sameFreeImageQuotationRequest(actual: FreeImageSource['quotationTarget'] | FreeImageQuotationRequest | null | undefined, expected: FreeImageQuotationRequest | null | undefined): boolean {
+  if (!actual || !expected) return !actual && !expected;
+  return actual.kind === expected.kind && actual.profileId === expected.profileId && actual.optionId === expected.optionId && actual.input === expected.input
+    && actual.fieldKey === expected.fieldKey && actual.slotIndex === expected.slotIndex && actual.revision === expected.revision
+    && actual.inputFingerprint === expected.inputFingerprint && actual.optionRevision === expected.optionRevision && actual.value === expected.value;
+}
+function quotationSourceQuery(target: FreeImageQuotationRequest, role: FreeImageRole, sourceKey: string): Record<string, string> {
+  if (target.kind !== 'quotation' || !(target.profileId === null || typeof target.profileId === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(target.profileId))
+    || !/^[a-zA-Z0-9_-]{1,80}$/.test(target.optionId) || !['mainImage', 'additionalImages', 'detailImages'].includes(target.input)
+    || role !== (target.input === 'mainImage' ? 'main' : target.input === 'additionalImages' ? 'additional' : 'detail') || typeof target.fieldKey !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(target.fieldKey)
+    || !Number.isSafeInteger(target.slotIndex) || target.slotIndex < 0 || target.slotIndex > 29 || !Number.isSafeInteger(target.revision) || target.revision < 0
+    || !Number.isSafeInteger(target.optionRevision) || target.optionRevision < 0 || !/^[a-f0-9]{64}$/.test(target.inputFingerprint)
+    || typeof target.value !== 'string' || target.value.length > 16000 || target.value.split('\n').map(key => key.trim()).filter(Boolean)[target.slotIndex] !== sourceKey
+    || target.input === 'mainImage' && (target.slotIndex !== 0 || target.value.split('\n').map(key => key.trim()).filter(Boolean).length !== 1)) {
+    throw Error('선택 옵션의 최종 이미지 연결을 확인해주세요.');
+  }
+  return { target: 'quotation', optionId: target.optionId, fieldKey: target.fieldKey, slotIndex: String(target.slotIndex), ...(target.profileId ? { profileId: target.profileId } : {}) };
+}
 type OcrWorker = Pick<Worker, 'recognize' | 'terminate'>;
 export type OcrWorkerFactory = (languages: string[], oem: 1, options: Partial<WorkerOptions>) => Promise<OcrWorker>;
 // A cancelled initialization can finish after its view closes. Queue the next
@@ -61,13 +80,14 @@ function canvas(width: number, height: number) {
 /** Read only authenticated app files, and bind the decoded visible orientation
  * to the exact SHA-256 source proof returned by the current role's endpoint. */
 export async function readFreeImageSource(productId: string, version: string, sourceKey: string, role: FreeImageRole,
-  signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<FreeImageLoaded> {
+  signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest): Promise<FreeImageLoaded> {
   signal.throwIfAborted();
-  const response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ sourceKey, role })}`, { signal, cache: 'no-store' });
+  const response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ sourceKey, role, ...(quotationTarget ? quotationSourceQuery(quotationTarget, role, sourceKey) : {}) })}`, { signal, cache: 'no-store' });
   const body = await response.json() as { source?: unknown; error?: string }; signal.throwIfAborted();
   if (!response.ok) throw Error(body.error || '현재 역할의 이미지 원본을 확인하지 못했습니다.');
   const source = validateFreeImageSource(body.source);
-  if (source.productId !== productId || source.productVersion !== version || source.sourceKey !== sourceKey || source.role !== role) throw Error('상품·이미지·역할 또는 저장 버전이 변경됐습니다. 최신 저장본에서 다시 선택해주세요.');
+  if (source.productId !== productId || source.productVersion !== version || source.sourceKey !== sourceKey || source.role !== role
+    || !sameFreeImageQuotationRequest(source.quotationTarget, quotationTarget)) throw Error('상품·이미지·역할 또는 저장 버전이 변경됐습니다. 최신 저장본에서 다시 선택해주세요.');
   const file = await fetcher(`/api/files/${sourceKey.split('/').map(encodeURIComponent).join('/')}`, { signal, cache: 'no-store' });
   if (!file.ok) throw Error('번역할 원본 파일을 읽지 못했습니다.');
   const blob = await file.blob(); signal.throwIfAborted();
@@ -222,7 +242,7 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
 }
 
 export class FreeImageApplyError extends Error { constructor(message: string, public uncertain: boolean) { super(message); } }
-export type FreeImageApplyReply = { source: FreeImageSource; key: string; productVersion: string; contentRevision: number; applied: true; replayed?: boolean; optionImageIds?: string[]; optionRevision?: number };
+export type FreeImageApplyReply = { source: FreeImageSource; key: string; productVersion: string; contentRevision: number; applied: true; replayed?: boolean; optionImageIds?: string[]; optionRevision?: number; quotationRevision?: number; quotationInputFingerprint?: string };
 export async function expectedFreeImageOutputKey(image: FreeImageRendered): Promise<string> {
   const source = validateFreeImageSource(image.source), owner = source.sourceKey.split('/')[0];
   if (!isOwnedImageKey(owner, source.sourceKey)) throw new FreeImageApplyError('원본 이미지 저장 범위를 확인해주세요.', false);
@@ -234,7 +254,8 @@ export async function expectedFreeImageOutputKey(image: FreeImageRendered): Prom
 export function readFreeImageApplyReply(input: unknown, image: FreeImageRendered, expectedKey: string): FreeImageApplyReply {
   const body = input as FreeImageApplyReply, owner = image.source.sourceKey.split('/')[0];
   const ids = validateFreeImageOptionIds(image.source, image.optionImageIds ?? []);
-  const contentDelta = image.source.optionImages?.commonAssigned === false ? 0 : 1;
+  const quotationTarget = image.source.quotationTarget;
+  const contentDelta = quotationTarget || image.source.optionImages?.commonAssigned === false ? 0 : 1;
   if (!body || image.source.optionImages?.commonAssigned === false && !ids.length
     || !sameFreeImageSource(body.source, image.source) || body.applied !== true || !isOwnedImageKey(owner, body.key)
     || body.key === image.source.sourceKey || body.key !== expectedKey || typeof body.productVersion !== 'string' || !Number.isFinite(Date.parse(body.productVersion))
@@ -243,10 +264,35 @@ export function readFreeImageApplyReply(input: unknown, image: FreeImageRendered
     || body.replayed !== undefined && typeof body.replayed !== 'boolean'
     || ids.length === 0 && body.optionImageIds !== undefined && (!Array.isArray(body.optionImageIds) || body.optionImageIds.length > 0)
     || ids.length > 0 && (JSON.stringify(body.optionImageIds) !== JSON.stringify(ids) || !Number.isSafeInteger(body.optionRevision)
-      || (body.replayed === true ? body.optionRevision! < image.source.optionImages!.revision + 1 : body.optionRevision !== image.source.optionImages!.revision + 1))) {
+      || (body.replayed === true ? body.optionRevision! < image.source.optionImages!.revision + 1 : body.optionRevision !== image.source.optionImages!.revision + 1))
+    || quotationTarget && (ids.length > 0 || body.contentRevision !== image.source.contentRevision || body.optionRevision !== quotationTarget.optionRevision
+      || body.quotationRevision !== quotationTarget.revision + 1 || typeof body.quotationInputFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.quotationInputFingerprint))) {
     throw new FreeImageApplyError('저장 응답의 원본·결과 연결을 확인하지 못했습니다. 같은 미리보기의 저장 상태를 다시 확인해주세요.', true);
   }
   return body;
+}
+export type FreeImageRecoveryReply = FreeImageApplyReply | { source: FreeImageSource; key: string; applied: false };
+/** A quotation retry first checks the exact PNG digest without uploading it.
+ * Only a verified fresh, unapplied response permits a separate explicit save. */
+export async function recoverFreeImageTranslation(image: FreeImageRendered, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<FreeImageRecoveryReply> {
+  validateFreeImageSource(image.source); signal.throwIfAborted();
+  if (!image.source.quotationTarget || image.output.type !== 'image/png' || !image.output.size || image.output.size > MAX_IMAGE_BYTES) throw new FreeImageApplyError('저장 상태를 확인할 옵션 이미지 미리보기를 확인해주세요.', true);
+  const expectedKey = await expectedFreeImageOutputKey(image);
+  const outputSha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await image.output.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('');
+  signal.throwIfAborted();
+  let response: Response, body: unknown;
+  try {
+    response = await fetcher(`/api/products/${encodeURIComponent(image.source.productId)}/image-text`, { method: 'POST', signal,
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'recover', source: image.source, outputSha256, outputBytes: image.output.size }) });
+    body = await response.json();
+  } catch { throw new FreeImageApplyError('같은 미리보기의 저장 상태를 확인하지 못했습니다. 다시 확인해주세요.', true); }
+  signal.throwIfAborted();
+  if (!response.ok) throw new FreeImageApplyError((body as { error?: string })?.error || '같은 미리보기의 저장 상태를 확인하지 못했습니다.', true);
+  if ((body as FreeImageRecoveryReply)?.applied === true) return readFreeImageApplyReply(body, image, expectedKey);
+  const recovered = body as FreeImageRecoveryReply;
+  if (!recovered || recovered.applied !== false || !sameFreeImageSource(recovered.source, image.source) || recovered.key !== expectedKey
+    || Object.keys(recovered).some(key => !['source', 'key', 'applied'].includes(key))) throw new FreeImageApplyError('저장 상태 응답의 이미지 연결을 확인하지 못했습니다. 같은 미리보기로 다시 확인해주세요.', true);
+  return recovered;
 }
 /** Reuse the exact source proof and PNG on an explicit uncertain-outcome retry.
  * Never refetch, rerender, or perform an automatic second save. */

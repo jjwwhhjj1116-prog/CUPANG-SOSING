@@ -80,6 +80,18 @@ export async function quotationSourcesCurrent(owner: string, productId: string, 
 
 /** All option/common overrides are committed together; automatic values never overwrite them. */
 export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null = null): Promise<QuotationFieldsState | null> {
+  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId);
+}
+/** The translated PNG is appended and the selected final quotation overrides
+ * advance in the same batch. Common content and source SKU facts are untouched. */
+export async function attachQuotationImageTranslation(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys: string[]) {
+  const previous = JSON.parse(source.imageKeys) as unknown;
+  if (!Array.isArray(previous) || imageKeys.length !== previous.length + 1 || imageKeys.length > 50
+    || JSON.stringify(imageKeys.slice(0, -1)) !== JSON.stringify(previous) || new Set(imageKeys).size !== imageKeys.length)
+    throw Error('Invalid final quotation image attachment.');
+  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId, imageKeys);
+}
+async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[]): Promise<QuotationFieldsState | null> {
   const db = await database(); const guard = sourceGuard(owner, productId, source);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid quotation revision');
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
@@ -97,10 +109,11 @@ export async function saveQuotationFields(owner: string, productId: string, over
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at
         WHERE product_quotation_fields.owner_id=excluded.owner_id AND product_quotation_fields.revision=?
       RETURNING payload,revision`).bind(state.revision, payload, updatedAt, ...guard.args, expectedRevision, expectedRevision, expectedRevision),
-    db.prepare(`UPDATE products SET quote_status='대기',updated_at=?
-      WHERE id=? AND owner_id=? AND updated_at=? AND changes()=1
-      AND EXISTS(SELECT 1 FROM product_quotation_fields WHERE product_id=? AND owner_id=? AND revision=?)`)
-      .bind(updatedAt, productId, owner, source.productVersion, productId, owner, state.revision),
+    db.prepare(`UPDATE products SET ${imageKeys ? 'image_keys=?,' : ''}quote_status='대기',updated_at=?
+      WHERE id=? AND owner_id=? AND updated_at=? AND image_keys=? AND changes()=1
+      AND EXISTS(SELECT 1 FROM product_quotation_fields WHERE product_id=? AND owner_id=? AND revision=?) RETURNING updated_at`)
+      .bind(...(imageKeys ? [JSON.stringify(imageKeys)] : []), updatedAt, productId, owner, source.productVersion, source.imageKeys, productId, owner, state.revision),
   ]);
+  if (imageKeys && Boolean(result[0].results[0]) !== Boolean(result[1].results[0])) throw Error('Final quotation image attachment acknowledgement was incomplete.');
   return result[0].results[0] ? state : null;
 }

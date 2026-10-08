@@ -23,9 +23,9 @@ async function fixture(){
   return {backend,profile,product,endpoint,id,source,key,nextKey:view.imageKeys.find(value=>value!==key&&value!==source)??source,calls,request,read:()=>backend.route(endpoint).then(json),lost(){lose=true;},recover(){unavailable=false;},close(){backend.close();}};
  }catch(error){backend.close();throw error;}
 }
-function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true}={}){
+function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate}={}){
  const contexts=new Map(),cache=new Map(),effects=[],saved=[];let active,seen;
- const props={product:f.product,productId:f.product.id,profileId:f.profile.id,focusedOptionId,imageView,version:f.product.updated_at,onSaved(){saved.push(1);props.product.updated_at=f.backend.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.product.id).updated_at;props.version=props.product.updated_at;}};
+ const props={product:f.product,productId:f.product.id,profileId:f.profile.id,focusedOptionId,imageView,version:f.product.updated_at,onTranslate,onSaved(){saved.push(1);props.product.updated_at=f.backend.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.product.id).updated_at;props.version=props.product.updated_at;}};
  const hookEffect=(fn,deps)=>{const ctx=active,i=ctx.cursor++,old=ctx.slots[i];if(!old||!sameDeps(old.deps,deps)){ctx.slots[i]={deps,cleanup:old?.cleanup};effects.push({ctx,i,fn});}};
  const react={useState(initial){const ctx=active,i=ctx.cursor++;if(!(i in ctx.slots))ctx.slots[i]=typeof initial==='function'?initial():initial;return[ctx.slots[i],value=>{ctx.slots[i]=typeof value==='function'?value(ctx.slots[i]):value;}];},useRef(initial){const ctx=active,i=ctx.cursor++;return ctx.slots[i]??(ctx.slots[i]={current:initial});},useEffect:hookEffect,useLayoutEffect:hookEffect,useMemo(fn,deps){const ctx=active,i=ctx.cursor++,old=ctx.slots[i];if(!old||!sameDeps(old.deps,deps))ctx.slots[i]={deps,value:fn()};return ctx.slots[i].value;},useCallback(fn,deps){return react.useMemo(()=>fn,deps);}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,Date,URL,AbortController,TextEncoder,TextDecoder,structuredClone,crypto,fetch:f.request,require(name){if(name==='react')return react;if(name.startsWith('@/'))return name.includes('/components/')?load(name.slice(2)+'.tsx'):f.backend.load(name.slice(2)+'.ts');return native(name);}},{filename:file});return exports;}
@@ -36,6 +36,54 @@ function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true}={}){
  const button=label=>visible(render()).find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label)),input=label=>visible(render()).find(node=>node.props?.['aria-label']===label);
  return {props,saved,render,idle,button,input,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label);node.props.onClick();await idle();},close(){for(const ctx of contexts.values())for(const slot of ctx.slots)slot?.cleanup?.();}};
 }
+
+test('main translation toolbar uses final quotation A with exact saved binding and blocks stale drafts, focus and stage callbacks',async()=>{
+ const f=await fixture(),targets=[];let h;
+ try{
+  let view=await f.read();const model=f.backend.load('app/quotation-main-image.ts'),binding=model.verifyMainImageView(view);
+  const changed=await json(await f.backend.route(f.endpoint,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:model.mainImageChanges(view,f.id,f.key)}}));
+  Object.assign(f.product,plain(f.backend.sqlite.prepare('SELECT * FROM products').get()));view=changed;
+  h=editor(f,{wrapper:true,onTranslate(...args){targets.push(args);}});await h.idle();
+  assert.equal(targets.length,0);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
+  await h.click('최종 대표이미지 중국어 한국어 번역');await h.click('최종 대표이미지 영어 한국어 번역');
+  assert.deepEqual(plain(targets[0]),[f.key,'main','zh',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key}]);
+  assert.notEqual(targets[0][0],f.source,'translation must use final A rather than source option B');assert.equal(targets[1][2],'en');
+  const old=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick,index=view.imageKeys.indexOf(f.nextKey)+1;
+  await h.click(`최종 대표이미지 ${index} 선택`);old();await h.idle();assert.equal(targets.length,2);assert.equal(h.button('최종 대표이미지 영어 한국어 번역').props.disabled,true);
+  await h.click('선택 취소·저장 대표이미지 조회');const previousStage=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick;
+  h.props.imageView=false;await h.idle();previousStage();await h.idle();assert.equal(targets.length,2,'hidden main toolbar cannot start translation');
+  h.props.imageView=true;await h.idle();const previousFocus=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick;
+  h.props.focusedOptionId=view.resolved.rows.filter(row=>row.optionId)[1].optionId;await h.idle();previousFocus();await h.idle();assert.equal(targets.length,2);
+  h.props.focusedOptionId=f.id;await h.idle();const previousClock=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick;
+  f.product.updated_at=new Date(Date.parse(f.product.updated_at)+1).toISOString();h.render();previousClock();await h.idle();assert.equal(targets.length,2,'captured clock callback cannot use an older saved proof');
+  assert.equal(f.calls.some(call=>call.url.includes('/image-text')),false);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
+ }finally{h?.close();f.close();}
+});
+
+test('a manual final main-image blank offers no translation target and never falls back to raw source',async()=>{
+ const f=await fixture(),targets=[],h=editor(f,{wrapper:true,onTranslate(...args){targets.push(args);}});
+ try{await h.idle();const old=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick;
+  await h.click('최종 대표이미지 비우기');old();await h.idle();assert.equal(targets.length,0);assert.equal(h.button('최종 대표이미지 영어 한국어 번역'),undefined);
+  await h.click('최종 견적 대표이미지 저장');assert.equal((await f.read()).resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,'');
+  assert.equal(targets.length,0);assert.equal(h.button('최종 대표이미지 중국어 한국어 번역'),undefined);assert.equal(f.calls.some(call=>call.url.includes('/image-text')),false);
+ }finally{h.close();f.close();}
+});
+
+test('focused main editing keeps one SKU while unfocused global editing can select and save another SKU',async()=>{
+ const f=await fixture(),h=editor(f);try{
+  await h.idle();const initial=await f.read(),other=initial.resolved.rows.filter(row=>row.optionId)[1].optionId,selector=h.input('최종 대표이미지 옵션');
+  assert.equal(selector.props.disabled,true);assert.deepEqual(visible(selector).filter(node=>node.type==='option').map(node=>node.props.value),['',f.id]);
+  selector.props.onChange({target:{value:other}});await h.idle();assert.equal(h.input('최종 대표이미지 옵션').props.value,f.id,'programmatic disabled selector callbacks cannot change the focused row');
+  assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
+  h.props.focusedOptionId=undefined;await h.idle();assert.equal(h.input('최종 대표이미지 옵션').props.disabled,false);
+  h.input('최종 대표이미지 옵션').props.onChange({target:{value:other}});await h.idle();assert.equal(h.input('최종 대표이미지 옵션').props.value,other);
+  assert.equal(h.button('최종 대표이미지 중국어 한국어 번역'),undefined,'global editing does not display a translation callback without focused context');
+  await h.click('최종 대표이미지 비우기');await h.click('최종 견적 대표이미지 저장');const saved=await f.read();
+  assert.equal(saved.resolved.rows.find(row=>row.optionId===other).fields.mainImage.value,'');
+  assert.equal(saved.resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value,initial.resolved.rows.find(row=>row.optionId===f.id).fields.mainImage.value);
+  assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.equal(f.calls.filter(call=>call.method==='PATCH').length,0);
+ }finally{h.close();f.close();}
+});
 
 test('stage three edits final quotation A rather than source B; hidden normal drafts survive stage navigation and image-only product clocks',async()=>{
  const f=await fixture(),h=editor(f,{wrapper:true,imageView:false});try{

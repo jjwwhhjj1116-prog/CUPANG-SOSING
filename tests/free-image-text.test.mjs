@@ -14,6 +14,16 @@ const google=text=>Response.json([[[text,'fixture source']],null,'zh-CN']);
 const plain=value=>JSON.parse(JSON.stringify(value));
 const block=(q,values,reverse=false)=>{const rows=q.split('\n').map(line=>{const match=/^(\[\[YFTR\d{6}\]\]) (.+)$/u.exec(line);assert.ok(match);return`${match[1]} ${values.get(match[2])}`;});return google((reverse?rows.reverse():rows).join('\n'));};
 
+test('common and source-option identity bytes stay compatible with existing deterministic R2 records',()=>{
+ const source={productId:'p',productVersion:'2026-10-06T00:00:00.000Z',contentRevision:2,sourceKey:'owner/a.png',sourceSha256:'a'.repeat(64),role:'main',width:3,height:2};
+ const old='{"productId":"p","productVersion":"2026-10-06T00:00:00.000Z","contentRevision":2,"sourceKey":"owner/a.png","sourceSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","role":"main","width":3,"height":2}';
+ assert.equal(contract.freeImageSourceIdentity(source),old);assert.equal(contract.freeImageApplyIdentity(source),old);
+ const optionOnly={...source,optionImages:{commonAssigned:false,optionIds:['blue','red'],revision:3}};
+ const optionBytes=old.slice(0,-1)+',"optionImages":{"revision":3,"optionIds":["blue","red"],"commonAssigned":false}}';
+ assert.equal(contract.freeImageSourceIdentity(optionOnly),optionBytes);
+ assert.equal(contract.freeImageApplyIdentity(optionOnly,['red','blue']),JSON.stringify({source:optionBytes,optionImageIds:['blue','red']}));
+});
+
 test('image text uses the exact keyless Google GET and reordered regions retain their own numbers',async()=>{
  const input=[{id:'width',text:'宽度 10 cm'},{id:'height',text:'高度 20 cm'},{id:'other',text:'SIZE XL'}],before=JSON.stringify(input);let calls=0;
  const result=await translateImageRegions(input,'zh',async(url,init)=>{

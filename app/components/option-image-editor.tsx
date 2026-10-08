@@ -1,15 +1,16 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
+import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage;
-  disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage) => void };
+  disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
 export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, disabled = false, onSaved, onTranslate }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
-  const currentScope = useRef(scope), currentSource = useRef(sourceKey), request = useRef<AbortController | null>(null);
+  const currentScope = useRef(scope), currentSource = useRef(sourceKey), currentStage = useRef(stage), request = useRef<AbortController | null>(null);
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: QuotationFieldsView } | null>(null);
   const [pending, setPending] = useState<{ scope: string; values: OptionImageDraft }>({ scope, values: {} });
   const [preview, setPreview] = useState<{ scope: string; key: string } | null>(null);
@@ -19,6 +20,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     if (latestDraft.current.scope !== scope) latestDraft.current = { scope, values: {} };
     return () => { request.current?.abort(); request.current = null; };
   }, [scope, sourceKey]);
+  useLayoutEffect(() => { currentStage.current = stage; }, [stage]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
   const view = saved?.scope === scope ? saved.view : null, draft = pending.scope === scope ? pending.values : {};
   const dirty = Object.keys(draft).length > 0, input = stage === 'additional' ? 'additionalImages' : 'detailImages', label = stage === 'additional' ? '추가 이미지' : '상세 이미지';
@@ -106,15 +108,27 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || disabled || !!bindingError;
   const unavailable = selected.filter(key => !view?.imageKeys.includes(key));
   const activePreview = preview?.scope === scope && view?.imageKeys.includes(preview.key) ? preview.key : selected.find(key => view?.imageKeys.includes(key)) ?? view?.imageKeys[0] ?? null;
+  function translateSelected(key: string, slotIndex: number, sourceLanguage: 'zh' | 'en') {
+    const base = latestSaved.current;
+    if (!onTranslate || !base || base.view !== view || base.scope !== scope || base.sourceKey !== sourceKey || base.view.productVersion !== version
+      || !current() || currentStage.current !== stage || disabled || request.current || Object.keys(latestDraft.current.values).length || !base.view.imageKeys.includes(key)) return;
+    try {
+      const target = optionImageTargets(base.view.resolved.schema.fields)[input], value = optionImageValue(base.view, optionId, input);
+      if (quotationImageKeys(value)[slotIndex] !== key || target.linked.some(id => optionImageValue(base.view, optionId, input, {}, id) !== value)) return;
+      onTranslate(key, stage, sourceLanguage, { kind: 'quotation', profileId: profileId ?? null, optionId, input, fieldKey: target.primary, slotIndex,
+        revision: base.view.revision, inputFingerprint: base.view.inputFingerprint, optionRevision: base.view.optionRevision, value });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '번역할 이미지 연결을 확인해주세요.'); }
+  }
   const candidateCards = view?.imageKeys.map((key, index) => <figure className={`image-asset-card ${key === activePreview ? 'previewing' : ''} ${selected.includes(key) ? 'chosen' : ''}`} key={key}>
     <button type="button" className="image-asset-preview" aria-label={`상품 저장 이미지 ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (current() && !request.current && !disabled) setPreview({ scope, key }); }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={imageUrl(key)} alt={`상품 저장 이미지 ${index + 1}`} width={200} height={180} loading="lazy" /><span>이미지 {index + 1} · 확대</span>
     </button>
     <figcaption><label><input type="checkbox" aria-label={`선택 옵션 ${label} 후보 ${index + 1}`} checked={selected.includes(key)} disabled={locked || (!selected.includes(key) && selected.length >= limit)} onChange={() => toggle(key)} />이미지 {index + 1} 선택</label></figcaption>
-    {onTranslate && <button type="button" className="btn ghost" disabled={locked || dirty} onClick={() => { if (current() && !request.current && !disabled && !Object.keys(latestDraft.current.values).length) onTranslate(key, stage); }}>이 이미지 번역 편집</button>}
   </figure>);
   const selectedActions = (key: string, index: number) => <div className={stage === 'detail' ? 'option-detail-image-toolbar' : 'image-selected-actions'} role="group" aria-label={`${label} ${index + 1} 편집`}>
+    {onTranslate && <><button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 중국어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh')}>중국어 → 한국어</button>
+      <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 영어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'en')}>영어 → 한국어</button></>}
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 위로 이동`} disabled={locked || index === 0} onClick={() => move(key, -1)}>↑</button>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 아래로 이동`} disabled={locked || index === selected.length - 1} onClick={() => move(key, 1)}>↓</button>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked} onClick={() => updateImages(keys => keys.filter(item => item !== key))}>삭제</button>
@@ -147,7 +161,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         </details></>}
       <div><button type="button" className="btn ghost" disabled={locked} onClick={() => edit(input, '')}>{label} 선택 비우기</button><button type="button" className="btn ghost" disabled={locked} onClick={() => edit(input, null)}>{label} 공통·자동값 복원</button></div>
       {!!unavailable.length && <p role="alert">현재 상품에 없는 이미지 참조가 {unavailable.length}개 있습니다. <button type="button" className="btn ghost" disabled={locked} onClick={() => updateImages(keys => keys.filter(key => view.imageKeys.includes(key)))}>누락 이미지 참조 제거</button></p>}
-      <small>이미지 업로드·파일 편집·번역은 상품 공통 이미지 편집에서 진행합니다. 저장한 파일은 최신 이미지 조회 후 이 옵션의 후보 목록에서도 선택할 수 있습니다.</small>
+      <small>이미지 업로드·파일 편집은 상품 공통 이미지 편집에서 진행합니다. 저장한 파일은 최신 이미지 조회 후 이 옵션의 후보 목록에서도 선택할 수 있습니다.</small>
       {stage === 'detail' && <label className="field"><span>선택 옵션 상세 HTML</span><textarea aria-label="선택 옵션 상세 HTML" value={html} disabled={locked} onChange={event => edit('detailHtml', event.target.value)} />
         <small>이미지 순서 변경은 자동 상세 HTML에 반영됩니다. 기존 직접 작성한 HTML과 공란은 유지합니다. HTML은 텍스트로 편집하며 이 화면에서 실행하지 않습니다.</small>
         <button type="button" className="btn ghost" disabled={locked} onClick={() => edit('detailHtml', '')}>상세 HTML 비우기</button><button type="button" className="btn ghost" disabled={locked} onClick={() => edit('detailHtml', null)}>상세 HTML 공통·자동값 복원</button>

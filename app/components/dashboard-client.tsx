@@ -29,8 +29,9 @@ import { ProductRemovalDialog } from '@/app/components/product-removal-dialog';
 import { ProductSourceContext } from '@/app/components/product-source-context';
 import TranslationPanel from '@/app/components/translation-panel';
 import ImageGenerationPanel from '@/app/components/image-generation-panel';
-import FreeImageTranslationPanel from '@/app/components/free-image-translation-panel';
-import {validFreeImageRole,type FreeImageRole} from '@/app/free-image-translation';
+import FreeImageTranslationPanel, {type FreeImageTranslationTarget} from '@/app/components/free-image-translation-panel';
+import type {FreeImageQuotationRequest} from '@/app/free-image-translation-client';
+import {validFreeImageRole} from '@/app/free-image-translation';
 import { DocumentImagePanel } from '@/app/components/document-image-panel';
 import type { ProductContent } from '@/app/product-content';
 import type { RegistrationContentSummary } from '@/app/registration-content-summary';
@@ -520,7 +521,7 @@ function DetailPanel({ onBeforeFreeImageApply, onPrepareSubmission, onReviewPack
   const imageProcessingBusy=paidImageBusy||freeImageBusy;
   const changeImageProcessingBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.paid=busy;setPaidImageBusy(busy);},[]);
   const changeFreeImageBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.free=busy;setFreeImageBusy(busy);},[]);
-  const [imageTranslation,setImageTranslation]=useState<{productId:string;sourceKey:string;sequence:number;sourceLanguage?:'zh'|'en';role?:FreeImageRole}|null>(null);
+  const [imageTranslation,setImageTranslation]=useState<(FreeImageTranslationTarget&{productId:string})|null>(null);
   const [labelTranslationOpen,setLabelTranslationOpen]=useState(false);
   const [quotationScope,setQuotationScope] = useState<{requested?:string;selected?:string}>({requested:preferredProfileId,selected:preferredProfileId});
   const pricingProfileId=quotationScope.requested===preferredProfileId?quotationScope.selected:preferredProfileId;
@@ -529,9 +530,16 @@ function DetailPanel({ onBeforeFreeImageApply, onPrepareSubmission, onReviewPack
   const isImageStep=imageSteps.includes(tab);
   const contentSection = isImageStep ? '이미지' : tab==='표시사항' ? '표시사항' : 'SEO';
   const focusedAssetRole=tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='상세 이미지'?'detail':undefined;
-  const scopedContent=tab==='표시사항'||!!focusedOptionId&&['SEO','추가 이미지','상세 이미지'].includes(tab);
-  const commonContentLabel=tab==='추가 이미지'?'추가 이미지':tab==='상세 이미지'?'상세 이미지':tab==='표시사항'?'추가 표시사항·이전 자료':'SEO·설명';
+  const scopedContent=tab==='표시사항'||!!focusedOptionId&&['SEO','대표 이미지','추가 이미지','상세 이미지'].includes(tab);
+  const commonContentLabel=tab==='대표 이미지'?'대표 이미지':tab==='추가 이미지'?'추가 이미지':tab==='상세 이미지'?'상세 이미지':tab==='표시사항'?'추가 표시사항·이전 자료':'SEO·설명';
   let imageKeys:string[]=[];try{const keys:unknown=JSON.parse(product.image_keys);if(Array.isArray(keys))imageKeys=keys.filter((key):key is string=>typeof key==='string');}catch{/* The file and content APIs report invalid stored references. */}
+  const quotationImageContext=focusedOptionId&&isImageStep?{profileId:pricingProfileId??null,optionId:focusedOptionId,input:tab==='대표 이미지'?'mainImage' as const:tab==='추가 이미지'?'additionalImages' as const:'detailImages' as const}:undefined;
+  function translateFinalImage(sourceKey:string,role:'main'|'additional'|'detail',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest){
+    if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||!quotationImageContext
+      ||quotationTarget.optionId!==quotationImageContext.optionId||quotationTarget.profileId!==quotationImageContext.profileId
+      ||quotationTarget.input!==quotationImageContext.input||role!==(tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':'detail'))return;
+    setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,role,quotationTarget}));
+  }
   const contentEditor=<ProductContentEditor product={product} section={contentSection} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy} onTranslateImage={(sourceKey,sourceLanguage,role)=>{
     if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||(role!==undefined&&!validFreeImageRole(role)))return;
     setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,...(role?{role}:{})}));
@@ -540,12 +548,12 @@ function DetailPanel({ onBeforeFreeImageApply, onPrepareSubmission, onReviewPack
     <div hidden={!['SEO','표시사항',...imageSteps].includes(tab)} className="panel-stack">
       {isImageStep&&<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" onChange={onUpload}/></label>}
       <div hidden={tab!=='SEO'||!focusedOptionId}>{focusedOptionId&&<OptionSeoEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</div>
-      <div hidden={!focusedOptionId||tab!=='추가 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:additional`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="additional" disabled={imageProcessingBusy} onSaved={sourceSaved}/>}</div>
-      <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="detail" disabled={imageProcessingBusy} onSaved={sourceSaved}/>}</div>
+      <div hidden={!focusedOptionId||tab!=='추가 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:additional`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="additional" disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={translateFinalImage}/>}</div>
+      <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="detail" disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={translateFinalImage}/>}</div>
       <div hidden={tab!=='표시사항'}><ProductLabelEditor key={`${product.id}:${focusedOptionId??'common'}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId??null} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/></div>
       <details open={scopedContent?undefined:true}><summary hidden={!scopedContent}>상품 공통 {commonContentLabel} 편집</summary><p hidden={!scopedContent} className="panel-note">아래 수정값은 상품의 공통 자료에 저장됩니다. 옵션별로 직접 저장한 값은 해당 옵션의 값을 유지합니다.</p>{contentEditor}</details>
     </div>
-    <div hidden={!isImageStep} className="panel-stack"><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{})}:undefined}/><details><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
+    <div hidden={!isImageStep} className="panel-stack"><details open={!focusedOptionId||tab!=='대표 이미지'||imageTranslation?.quotationTarget?.input==='mainImage'}><summary hidden={!focusedOptionId||tab!=='대표 이미지'}>{imageTranslation?.quotationTarget?.input==='mainImage'?'선택 옵션 대표이미지 번역':'상품 공통 원본 이미지 번역'}</summary><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} quotationContext={quotationImageContext} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{})}:undefined}/></details><details><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
     <div hidden={tab!=='표시사항'}><button type="button" className="btn ghost" aria-expanded={labelTranslationOpen} aria-controls={`label-translation-${product.id}`} onClick={()=>setLabelTranslationOpen(open=>!open)}>한글 표시사항 번역</button><details><summary>이전 공통 표시사항 PNG·추가 항목 조판</summary><p className="panel-note">이전 공통 자료와 직접 추가한 항목을 조판합니다. 9항목 제품 라벨은 위 편집 영역에서 만들고, 카테고리별 상품고시는 7단계 견적서에서 확인하세요.</p><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></details></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div id={`label-translation-${product.id}`} hidden={tab!=='번역'&&!(tab==='표시사항'&&labelTranslationOpen)}>
@@ -554,7 +562,7 @@ function DetailPanel({ onBeforeFreeImageApply, onPrepareSubmission, onReviewPack
     </div>
     <div hidden={!['옵션','가격','대표 이미지'].includes(tab)} className={tab==='가격'?'pricing-workspace':'panel-stack'}>
       <section hidden={tab!=='가격'} className="pricing-policy-panel"><h3>가격 정책 설정</h3><PriceEditor refreshToken={String(quotationRefresh)} profileId={pricingProfileId} productId={product.id} version={product.updated_at} sourcePrice={product.source_price_cny} initial={savedPricePolicy(product,settings)} onSave={saveSourcePrice} onQuotationSaved={sourceSaved}/></section>
-      <section className="pricing-options-panel"><ProductOptionsEditor focusedOptionId={focusedOptionId} initialBulkAction={initialOptionAction} product={product} onSaved={sourceSaved} onReviewPackaging={onReviewPackaging} pricingView={tab==='가격'} imageView={tab==='대표 이미지'} profileId={pricingProfileId} refreshToken={String(quotationRefresh)}/><div hidden={tab!=='옵션'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={sourceSaved}/></div></section>
+      <section className="pricing-options-panel"><ProductOptionsEditor focusedOptionId={focusedOptionId} initialBulkAction={initialOptionAction} product={product} onSaved={sourceSaved} onReviewPackaging={onReviewPackaging} pricingView={tab==='가격'} imageView={tab==='대표 이미지'} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onTranslate={focusedOptionId?translateFinalImage:undefined}/><div hidden={tab!=='옵션'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={sourceSaved}/></div></section>
     </div>
     <div hidden={tab!=='견적서'||!focusedOptionId}>{focusedOptionId&&<OptionLabelEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</div>
     <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel onPrepareSubmission={onPrepareSubmission} onProfileChange={selected=>setQuotationScope({requested:preferredProfileId,selected})} onSaved={sourceSaved} productId={product.id} preferredProfileId={preferredProfileId} navigationTarget={quotationTarget ?? (focusedOptionId ? {optionId:focusedOptionId,fieldId:'title'} : undefined)} navigationSequence={quotationNavigationSequence} refreshToken={`${product.updated_at}:${quotationRefresh}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>

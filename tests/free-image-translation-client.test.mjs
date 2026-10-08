@@ -52,6 +52,63 @@ function image(h) { const value = h.document.createElement('canvas'); value.widt
 const region = (id, box, translated = '한국어') => ({ id, text: '中文', box, confidence: 90, selected: true, translated, issue: null, translationProvenance: 'generated', background: '#ffffff', foreground: '#000000', fontSize: 3 });
 const ocr = lines => ({ blocks: [{ paragraphs: [{ lines }] }] });
 const line = (text, confidence, bbox = { x0: 1, y0: 1, x1: 12, y1: 8 }) => ({ text, confidence, bbox });
+const quotationRequest = (input = 'detailImages') => ({ kind: 'quotation', profileId: null, optionId: 'sku-a', input, fieldKey: 'wire-' + input, slotIndex: input === 'mainImage' ? 0 : 1,
+  revision: 7, inputFingerprint: 'c'.repeat(64), optionRevision: 3, value: input === 'mainImage' ? 'owner/original.png' : 'owner/other.png\nowner/original.png' });
+
+test('saved final-slot source reads bind the exact quotation request before any file read', async () => {
+  const bytes = new TextEncoder().encode('authenticated original bytes'), sha256 = await hash(bytes);
+  for (const input of ['mainImage', 'additionalImages', 'detailImages']) {
+    const h = fixture(), target = quotationRequest(input), role = input === 'mainImage' ? 'main' : input === 'additionalImages' ? 'additional' : 'detail', calls = [];
+    const finalSource = { ...source, role, sourceSha256: sha256, quotationTarget: { ...target, bindingSha256: 'b'.repeat(64) } };
+    const loaded = await h.client.readFreeImageSource('product', version, source.sourceKey, role, new AbortController().signal, async url => {
+      calls.push(url); return calls.length === 1 ? Response.json({ source: finalSource }) : new Response(bytes);
+    }, target);
+    const query = new URL(calls[0], 'https://fixture.local').searchParams;
+    assert.equal(query.get('target'), 'quotation'); assert.equal(query.get('optionId'), 'sku-a'); assert.equal(query.get('fieldKey'), 'wire-' + input);
+    assert.equal(query.get('slotIndex'), input === 'mainImage' ? '0' : '1'); assert.equal(query.has('profileId'), false); assert.equal(query.has('value'), false);
+    assert.deepEqual(plain(loaded.source.quotationTarget), finalSource.quotationTarget);
+    for (const patch of [{ optionId: 'sku-b' }, { slotIndex: input === 'mainImage' ? 1 : 0 }, { fieldKey: input }, { revision: 8 }, { inputFingerprint: 'd'.repeat(64) }, { value: input === 'mainImage' ? 'owner/other.png' : 'owner/original.png' }, { profileId: 'profile' }]) {
+      let reads = 0; await assert.rejects(h.client.readFreeImageSource('product', version, source.sourceKey, role, new AbortController().signal, async () => {
+        reads++; return Response.json({ source: { ...finalSource, quotationTarget: { ...finalSource.quotationTarget, ...patch } } });
+      }, target)); assert.equal(reads, 1, 'a different final slot proof never reads source bytes');
+    }
+    let reads = 0; await assert.rejects(h.client.readFreeImageSource('product', version, source.sourceKey, role, new AbortController().signal, async () => {
+      reads++; return Response.json({ source: finalSource });
+    })); assert.equal(reads, 1, 'common-role source reads cannot silently accept a quotation target');
+  }
+});
+
+test('final-slot recovery submits only the identical PNG digest, verifies scope and does not upload or retry', async () => {
+  const h = fixture(), finalSource = { ...source, quotationTarget: { ...quotationRequest(), bindingSha256: 'b'.repeat(64) } };
+  const output = new Blob(['same final slot PNG'], { type: 'image/png' }), rendered = { source: finalSource, output, width: 20, height: 12 };
+  const key = await h.client.expectedFreeImageOutputKey(rendered), bytes = await output.arrayBuffer(), calls = [];
+  const good = { source: finalSource, key, productVersion: '2026-10-06T00:00:01Z', contentRevision: 2, optionRevision: 3,
+    quotationRevision: 8, quotationInputFingerprint: 'd'.repeat(64), applied: true, replayed: true };
+  for (const committed of [false, true]) {
+    const result = await h.client.recoverFreeImageTranslation(rendered, new AbortController().signal, async (url, init) => {
+      calls.push({ url, init }); assert.equal(init.method, 'POST'); assert.equal(init.headers['content-type'], 'application/json');
+      assert.deepEqual(JSON.parse(init.body), { action: 'recover', source: finalSource, outputSha256: await hash(bytes), outputBytes: output.size });
+      return Response.json(committed ? good : { source: finalSource, key, applied: false });
+    }); assert.equal(result.applied, committed);
+  }
+  assert.equal(calls.length, 2); assert.equal(rendered.output, output);
+  for (const bad of [{ source: { ...finalSource, quotationTarget: { ...finalSource.quotationTarget, slotIndex: 0 } }, key, applied: false },
+    { source: finalSource, key: 'owner/other.png', applied: false }, { source: finalSource, key, applied: false, optionRevision: 4 },
+    { ...good, contentRevision: 3 }, { ...good, optionRevision: 4 }, { ...good, quotationRevision: 7 }, { ...good, quotationInputFingerprint: undefined }]) {
+    await assert.rejects(h.client.recoverFreeImageTranslation(rendered, new AbortController().signal, async () => Response.json(bad)), error => error.uncertain === true);
+  }
+  await assert.rejects(h.client.recoverFreeImageTranslation(rendered, new AbortController().signal, async () => Response.json({ error: 'slot changed' }, { status: 409 })), error => error.uncertain === true);
+  let sent;
+  await h.client.applyFreeImageTranslation(rendered, new AbortController().signal, async (_url, init) => {
+    sent = init.body; return Response.json({ ...good, replayed: undefined });
+  });
+  assert.equal(sent.get('optionImageIds'), null); assert.deepEqual(JSON.parse(sent.get('source')), finalSource);
+  assert.deepEqual(new Uint8Array(await sent.get('file').arrayBuffer()), new Uint8Array(bytes));
+  for (const changes of [{ optionId: 'sku-b' }, { slotIndex: 0, value: 'owner/original.png\nowner/other.png' }, { fieldKey: 'detailImages' }]) {
+    const changed = { ...rendered, source: { ...finalSource, quotationTarget: { ...finalSource.quotationTarget, ...changes } } };
+    assert.notEqual(await h.client.expectedFreeImageOutputKey(changed), key, 'the same PNG is distinct for every final image binding');
+  }
+});
 
 test('owned source reads verify exact version, role, SHA-256 and raw/swapped visible dimensions before OCR', async () => {
   const bytes = new TextEncoder().encode('authenticated original bytes'), sha256 = await hash(bytes);
