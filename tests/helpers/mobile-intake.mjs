@@ -35,7 +35,7 @@ const translatedName=pair=>pair.name.startsWith('상품속성: ')?genericTransla
 
 /** Real handlers and SQLite, recorded public supplier facts; auth, AI and image
  * bytes are fixtures. Never contacts Supplier Hub or alters a real product. */
-export function mobileIntakeHarness({companyCode='A01464742',companyName='와이홉',sourceFetcher,translationFetcher,desktopStatus=200}={}){
+export function mobileIntakeHarness({companyCode='A01464742',companyName='와이홉',capturedCompany=true,sourceFetcher,translationFetcher,desktopStatus=200}={}){
  const sqlite=memoryDatabase();for(const statement of runtimeDDL())sqlite.exec(statement.sql);
  const db={prepare(sql){let args=[];const q={bind(...values){args=values;return q;},execute(){return sqlite.prepare(sql).all(...args);},async all(){return {results:q.execute()};},async first(){return q.execute()[0]??null;},async run(){return sqlite.prepare(sql).run(...args);}};return q;},async batch(statements){sqlite.exec('BEGIN');try{const results=statements.map(statement=>({results:statement.execute()}));sqlite.exec('COMMIT');return results;}catch(error){sqlite.exec('ROLLBACK');throw error;}}};
  const objects=new Map(),objectMetadata=new Map(),calls=[],network=[],cache=new Map(),aiSources=[];
@@ -77,17 +77,17 @@ export function mobileIntakeHarness({companyCode='A01464742',companyName='와이
  const now=new Date().toISOString(),settings=load('app/observed-price-preset.ts').applyObservedPricePreset({...load('app/workspace-settings.ts').defaultSettings,brand:'검토 브랜드',manufacturer:'검토 제조사',importer:companyName,boxSkuQuantity:50,tradeType:'제조사',importType:'수입상품',serviceContact:'쿠팡 고객센터 1577-7011'});
  // 80719 is an observed form contract only, deliberately not the commercial
  // classification for these sunglasses. No test performs a Hub submission.
- const context={category:{id:'cat',name:'바스켓',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],mappings:[],template:null},settings,features:'',keywords:'선글라스',capturedAt:now};
+ const context={category:{id:'cat',name:'바스켓',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],mappings:[],template:null},settings,features:'',keywords:'선글라스',capturedAt:now,...(capturedCompany?{company:{code:companyCode,name:companyName}}:{})};
  sqlite.prepare('INSERT INTO collection_jobs VALUES(?,?,?,?,?,?,?,?)').run('job','owner','813724060928',sourceUrl,'price','awaiting_connector',now,now);
  sqlite.prepare('INSERT INTO collection_context VALUES(?,?)').run('job',JSON.stringify(context));
  const route=async(path,{method='GET',body}={})=>{
   calls.push(path);let file,params;
   if(path.startsWith('/api/files?'))return load('app/api/files/route.ts')[method](new Request('https://app.test'+path,{method}));
-  if(path.startsWith('/api/collection-jobs/job/')){file='app/api/collection-jobs/[id]/'+path.split('/').at(-1)+'/route.ts';params={id:'job'};}
+  if(path.startsWith('/api/collection-jobs/')){file='app/api/collection-jobs/[id]/'+path.split('/').at(-1)+'/route.ts';params={id:path.split('/')[3]};}
   else{const parts=path.split('?')[0].split('/');file='app/api/products/[id]/'+parts.at(-1)+'/route.ts';params={id:parts[3]};}
   return load(file)[method](new Request('https://app.test'+path,{method,headers:{'content-type':'application/json'},...(body!==undefined?{body:typeof body==='string'?body:JSON.stringify(body)}:{})}),{params:Promise.resolve(params)});
  };
  let latest;
- const intake=async()=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner','job'),{signal:new AbortController().signal,fetcher:(path,init)=>route(path,{method:init?.method??'GET',body:init?.body}),onJob:job=>{latest=job;},onProgress:()=>{}});
- return {sqlite,db,objects,calls,network,aiSources,bindings,stats,settings,context,sourceUrl,load,route,intake,get latest(){return latest;},close(){sqlite.close();}};
+ const intake=async(id='job')=>load('app/intake-collection.ts').collectIntakeProduct(await load('db/collection-jobs.ts').findCollectionJob('owner',id),{signal:new AbortController().signal,fetcher:(path,init)=>route(path,{method:init?.method??'GET',body:init?.body}),onJob:job=>{latest=job;},onProgress:()=>{}});
+ return {sqlite,db,objects,calls,network,aiSources,bindings,stats,settings,context,sourceUrl,load,route,intake,setCompany(value){companyCode=value.code;companyName=value.name;},get latest(){return latest;},close(){sqlite.close();}};
 }

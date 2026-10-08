@@ -31,6 +31,7 @@ function companyRoutes(h, initialCompany) {
         if (name === '@/app/chatgpt-auth') return auth;
         if (name === 'cloudflare:workers') return { env: h.bindings };
         if (name === 'next/server') return { NextResponse: Response };
+        if (name === '@/app/quotation-fields-snapshot') return load('app/quotation-fields-snapshot.ts');
         assert.ok(name.startsWith('@/'), name);
         return h.load(name.slice(2) + '.ts');
       },
@@ -40,7 +41,7 @@ function companyRoutes(h, initialCompany) {
   const fields = load('app/api/products/[id]/quotation-fields/route.ts');
   const exporter = load('app/exports/quotation-source.ts');
   return {
-    setCompany(value) { company = value; },
+    setCompany(value) { company = value; h.setCompany(value); },
     exporter,
     request(productId, profileId, method = 'GET', body) {
       const url = `https://app.test/api/products/${productId}/quotation-fields${profileId ? '?profileId=' + profileId : ''}`;

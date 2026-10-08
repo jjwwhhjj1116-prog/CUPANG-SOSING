@@ -6,6 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
 import path from 'node:path';
 
+const fixtureCompany = { code: 'A01464742', name: '와이홉' };
+
 function load(file, dependencies = {}, mode = 'development') {
   const source = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -18,7 +20,8 @@ function load(file, dependencies = {}, mode = 'development') {
     if (name === '@/app/sourcing') return load('app/sourcing.ts');
     if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
     if (name === '@/app/pricing') return load('app/pricing.ts');
-    if (name === '@/app/chatgpt-auth') return {getChatGPTUser:async()=>null,getWorkspaceOwnerId:async()=>'local-demo'};
+    if (name === '@/app/chatgpt-auth') return {getChatGPTUser:async()=>mode==='production'?null:({userId:'local-demo',verifiedAccess:true,
+      membership:{id:'local-demo',email:'collection-fixture@example.test',role:'member',status:'approved',companyCode:fixtureCompany.code,companyName:fixtureCompany.name}}),getWorkspaceOwnerId:async()=>'local-demo'};
     if (name === '@/db/queries') return {getSettings:async()=>null};
     if (name === '@/db/category-profiles') return {getCategoryProfile:async()=>({id:'12345678-1234-1234-1234-123456789012',revision:1,categoryId:'80719',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath,verification:'draft'})};
     if (name === 'next/server') return { NextResponse: Response };
@@ -33,6 +36,9 @@ function load(file, dependencies = {}, mode = 'development') {
 // requests, real product data, credentials, or production storage are used.
 function storage() {
   const sqlite = new DatabaseSync(':memory:');
+  // Production workspace initialization supplies the product identity columns
+  // used by the owner-scoped company/offer-claim join before jobs are queued.
+  sqlite.exec('CREATE TABLE products (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL)');
   const db = {
     prepare(sql) {
       let values = [];
@@ -76,7 +82,7 @@ test('SQLite persists, deduplicates repeated and parallel requests, and preserve
     assert.equal(jobs.length, 1);
     assert.equal(jobs[0].status, 'awaiting_connector');
     assert.equal(jobs[0].owner_id, undefined);
-    assert.equal(sqlite.prepare("SELECT name FROM sqlite_master WHERE name='products'").get(), undefined);
+    assert.equal(sqlite.prepare('SELECT count(*) AS n FROM products').get().n, 0, 'queuing never creates a product');
   } finally { sqlite.close(); }
 });
 
@@ -220,7 +226,7 @@ test('intake preserves explicit registration facts without inventing missing fie
 });
 
 test('context comparison ignores capture time and object key order but reports settings and missing legacy evidence',()=>{
- const compare=load('app/sourcing.ts').preservedCollectionRequests;
+ const compare=load('app/collection-preservation.ts').preservedCollectionRequests;
  const context={category:{id:'a',categoryId:'80719'},settings:{exchangeRate:200,brand:'A'},features:'',keywords:'',capturedAt:'today'};
  const job={offer_id:'123456789',source_url:url,goal:'collect',context:{...context,capturedAt:'yesterday',settings:{brand:'A',exchangeRate:200}}};
  const before=JSON.stringify(job);
@@ -241,7 +247,7 @@ test('pre-bundle captured requests resume through the actual API and queue witho
    const current=settingsModule.savedRegistrationSettings(stored),legacy={...current};
    for(const key of keys)delete legacy[key];
    const category={id:payload.profileId,revision:1,categoryId:'80719',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath,template:null,mappings:[]};
-   const context={category,settings:legacy,features:'',keywords:'',capturedAt:'2026-10-04T00:00:00Z'};
+   const context={category,settings:legacy,features:'',keywords:'',capturedAt:'2026-10-04T00:00:00Z',company:fixtureCompany};
    const [original]=await queries.enqueueCollection('local-demo',parse(payload),context);
    const frozen=sqlite.prepare('SELECT payload FROM collection_context').get().payload;
    const api=load('app/api/collection-jobs/route.ts',{'@/db/collection-jobs':queries,'@/db/category-profiles':{getCategoryProfile:async()=>category},'@/db/queries':{getSettings:async()=>stored?{payload:JSON.stringify(stored)}:null}});
@@ -260,7 +266,7 @@ test('pre-bundle captured requests resume through the actual API and queue witho
 });
 
 test('bundle comparison ignores only inactive criteria or missing-versus-null legacy keys',()=>{
- const compare=load('app/sourcing.ts').preservedCollectionRequests;
+ const compare=load('app/collection-preservation.ts').preservedCollectionRequests;
  const context={category:{id:'a',categoryId:'80719'},settings:{exchangeRate:350,bundleEnabled:false},features:'',keywords:'',capturedAt:'today'};
  const criteria={bundleCriterion:'supplyMargin',bundleMinimumSupplyMargin:3000,bundleMinimumCoupangMargin:3000};
  const cases=[

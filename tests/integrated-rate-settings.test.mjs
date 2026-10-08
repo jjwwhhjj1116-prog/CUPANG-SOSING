@@ -24,10 +24,10 @@ test('fresh/legacy settings keep integration off until a confirmed rate is suppl
 });
 
 test('legacy and disabled captured intake settings have no false drift, while an active flag or rate change is reported without rewriting the capture',()=>{
- const load=modules(),settings=load('app/workspace-settings.ts'),source=load('app/sourcing.ts'),legacy={...settings.newWorkspaceSettings};delete legacy.useIntegratedRate;delete legacy.integratedRate;
+ const load=modules(),settings=load('app/workspace-settings.ts'),source=load('app/sourcing.ts'),compare=load('app/collection-preservation.ts').preservedCollectionRequests,legacy={...settings.newWorkspaceSettings};delete legacy.useIntegratedRate;delete legacy.integratedRate;
  const context={category:{id:'cat',name:'검토 분류',categoryId:'80719',categoryPath:['주방'],revision:1,mappings:[],template:null},settings:legacy,features:'',keywords:'',capturedAt:'2026-10-07T00:00:00.000Z'},requests=source.parseCollectionRequest({urls:['https://detail.1688.com/offer/813724060928.html'],goal:'price'}),jobs=[{id:'job',offer_id:requests[0].offerId,source_url:requests[0].sourceUrl,goal:'price',status:'awaiting_connector',context}],before=JSON.stringify(jobs);
- for(const rate of [null,350,450])assert.deepEqual(plain(source.preservedCollectionRequests(jobs,requests,{...context,settings:{...legacy,useIntegratedRate:false,integratedRate:rate}})),[]);
- const enabled={...context,settings:{...legacy,useIntegratedRate:true,integratedRate:350}};assert.deepEqual(plain(source.preservedCollectionRequests(jobs,requests,enabled)[0].differences),['기본설정']);const activeJobs=[{...jobs[0],context:enabled}];assert.deepEqual(plain(source.preservedCollectionRequests(activeJobs,requests,{...enabled,settings:{...enabled.settings,integratedRate:351}})[0].differences),['기본설정']);assert.equal(JSON.stringify(jobs),before);
+ for(const rate of [null,350,450])assert.deepEqual(plain(compare(jobs,requests,{...context,settings:{...legacy,useIntegratedRate:false,integratedRate:rate}})),[]);
+ const enabled={...context,settings:{...legacy,useIntegratedRate:true,integratedRate:350}};assert.deepEqual(plain(compare(jobs,requests,enabled)[0].differences),['기본설정']);const activeJobs=[{...jobs[0],context:enabled}];assert.deepEqual(plain(compare(activeJobs,requests,{...enabled,settings:{...enabled.settings,integratedRate:351}})[0].differences),['기본설정']);assert.equal(JSON.stringify(jobs),before);
 });
 
 function settingsAPI(){

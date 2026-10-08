@@ -8,6 +8,8 @@ import ts from 'typescript';
 import { webcrypto, createHash } from 'node:crypto';
 import { unzipSync, zipSync } from 'fflate';
 
+const fixtureCompany = { code: 'A01464742', name: '와이홉' };
+
 function load(file, overrides = {}, mode = 'development', cache = new Map()) {
   if (cache.has(file)) return cache.get(file);
   const output = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -17,7 +19,9 @@ function load(file, overrides = {}, mode = 'development', cache = new Map()) {
     if (name === 'parse5') return parse5;
       if (name in overrides) return overrides[name];
       if (name === 'next/server') return { NextResponse: Response };
-      if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
+      if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => mode === 'production' ? null : ({ userId: 'owner', verifiedAccess: true,
+        membership: { id: 'owner', email: 'quotation-api-fixture@example.test', role: 'member', status: 'approved', companyCode: fixtureCompany.code, companyName: fixtureCompany.name },
+      }), getWorkspaceOwnerId: async () => 'owner' };
       if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`, overrides, mode, cache);
       if (name.startsWith('./') || name.startsWith('../')) return load(path.posix.join(path.posix.dirname(file),name)+'.ts', overrides, mode, cache);
       throw Error(name);
@@ -546,7 +550,7 @@ test('all recorded category schemas preserve edited fields through actual XLSX e
 
 test('registration package uses the captured profile without asking for the category again',async()=>{
  const sourced={...product,source_url:'https://detail.1688.com/offer/813724060928.html'};
- const captured={id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})};
+ const captured={id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile,company:fixtureCompany})};
  let currentContent=content;
  const route=routeWith({find:async()=>sourced,readCollection:async()=>captured,readContent:async()=>currentContent});
  const response=await route.POST(request({action:'preview'}),context);assert.equal(response.status,200);
@@ -559,7 +563,7 @@ test('registration package uses the captured profile without asking for the cate
 
 test('collected product cannot preview or export under a different explicitly selected category profile',async()=>{
  const sourced={...product,source_url:'https://detail.1688.com/offer/813724060928.html'};
- const captured={id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})};
+ const captured={id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile,company:fixtureCompany})};
  const route=routeWith({find:async()=>sourced,readCollection:async()=>captured});
  const correct=await route.POST(request({...preview,profileId:profile.id}),context);
  assert.equal(correct.status,200);
@@ -575,7 +579,7 @@ test('collected product cannot preview or export under a different explicitly se
 
 test('automatic package refuses missing or repurposed captured profiles',async()=>{
  const find=async()=>({...product,source_url:'https://detail.1688.com/offer/813724060928.html'});
- const readCollection=async()=>({id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})});
+ const readCollection=async()=>({id:'collection',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile,company:fixtureCompany})});
  assert.equal((await routeWith().POST(request({action:'preview'}),context)).status,409);
  assert.equal((await routeWith({find,readCollection,readProfile:async()=>null}).POST(request({action:'preview'}),context)).status,404);
  assert.equal((await routeWith({find,readCollection,readProfile:async()=>({...profile,categoryId:'different'})}).POST(request({action:'preview'}),context)).status,409);
@@ -583,7 +587,7 @@ test('automatic package refuses missing or repurposed captured profiles',async()
 
 test('automatic package rejects a collection link changed between context and template reads',async()=>{
  let count=0;
- const route=routeWith({find:async()=>({...product,source_url:'https://detail.1688.com/offer/813724060928.html'}),readCollection:async()=>({id:++count===1?'collection':'replacement',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile})})});
+ const route=routeWith({find:async()=>({...product,source_url:'https://detail.1688.com/offer/813724060928.html'}),readCollection:async()=>({id:++count===1?'collection':'replacement',linked:true,updatedAt:product.updated_at,payload:JSON.stringify({category:profile,company:fixtureCompany})})});
  assert.equal((await route.POST(request({action:'preview'}),context)).status,409);
 });
 

@@ -5,12 +5,16 @@ import { readCollectionResult } from '@/db/collection-results';
 import { findCollectionProduct,promoteCollection } from '@/db/collection-products';
 import { prepareCollectionProduct } from '@/app/collection-product';
 import { findProduct } from '@/db/queries';
+import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
+import { CollectionCompanyError, verifyCapturedCollectionCompany } from '@/app/collection-company';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 export async function POST(_:Request,context:{params:Promise<{id:string}>}){
  try{
  if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return reply({error:'운영 인증 연결이 필요합니다.'},503);
  const owner=await getWorkspaceOwnerId();const {id}=await context.params;const job=await findCollectionJob(owner,id);
  if(!job)return reply({error:'수집 요청을 찾을 수 없습니다.'},404);
+ const user=await getChatGPTUser();
+ verifyCapturedCollectionCompany(job.context,user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null);
  const previous=await findCollectionProduct(owner,id);if(previous){
   if(!await findProduct(owner,previous.product_id,true))return reply({error:'삭제된 상품의 수집 요청입니다. 상품 추가에서 같은 URL로 새 초안을 만들거나 삭제된 상품을 복원해주세요.',code:'COLLECTION_PRODUCT_REMOVED'},409);
   return reply({productId:previous.product_id,reused:true,executionStarted:false});
@@ -20,5 +24,8 @@ export async function POST(_:Request,context:{params:Promise<{id:string}>}){
  try{prepareCollectionProduct(owner,job,receipt.result,'validation',new Date().toISOString());}catch(cause){return reply({error:cause instanceof Error?cause.message:'원문을 확인해주세요.'},400);}
  const product=await promoteCollection(owner,job,receipt.result);
  return reply({productId:product.product_id,executionStarted:false,message:'상품·옵션·가격 원문 반영 완료. 번역·이미지 다운로드·등록 전송은 실행되지 않았습니다.'});
- }catch{return reply({error:'상품 반영 결과를 확인하지 못했습니다. 다시 시도해도 같은 요청의 상품은 중복 생성되지 않습니다.'},503);}
+ }catch(error){
+  if(error instanceof CollectionCompanyError)return reply({error:error.message,code:error.code},409);
+  return reply({error:'상품 반영 결과를 확인하지 못했습니다. 다시 시도해도 같은 요청의 상품은 중복 생성되지 않습니다.'},503);
+ }
 }

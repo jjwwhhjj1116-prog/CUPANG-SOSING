@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+const fixtureCompany={code:'A01464742',name:'와이홉'};
 function api({verified=true,product=true,captured=null,fail=false}={}) {
  const calls=[];
  const deps={
  'next/server':{NextResponse:Response},
- '@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:verified}),getWorkspaceOwnerId:async()=> 'owner'},
+ '@/app/chatgpt-auth':{getChatGPTUser:async()=>({userId:'owner',verifiedAccess:verified,membership:{id:'owner',email:'registration-settings-fixture@example.test',role:'member',status:'approved',companyCode:fixtureCompany.code,companyName:fixtureCompany.name}}),getWorkspaceOwnerId:async()=> 'owner'},
  '@/db/queries':{findProduct:async(owner,id)=>{calls.push(['product',owner,id]);return product?{id,source_url:'https://detail.1688.com/offer/813724060928.html'}:null;},getSettings:async()=>({payload:JSON.stringify({manufacturer:'현재 제조사',importer:'현재 수입원',serviceContact:'현재 연락처',boxSkuQuantity:7})})},
  '@/db/quotation-fields':{readQuotationCollectionSource:async(...args)=>{calls.push(['source',...args]);if(fail)throw Error('unavailable');return captured;}},
  };
@@ -15,7 +16,7 @@ function api({verified=true,product=true,captured=null,fail=false}={}) {
  return {calls,get:()=>load('app/api/products/[id]/registration-settings/route.ts').GET(new Request('https://example.test'),{params:Promise.resolve({id:'p'})})};
 }
 test('product label settings prefer the linked snapshot including explicit blanks',async()=>{
- const h=api({captured:{linked:true,payload:JSON.stringify({settings:{manufacturer:'등록 당시 제조사',importer:'',serviceContact:'등록 당시 연락처',boxSkuQuantity:50}})}});
+ const h=api({captured:{linked:true,payload:JSON.stringify({company:fixtureCompany,settings:{manufacturer:'등록 당시 제조사',importer:'',serviceContact:'등록 당시 연락처',boxSkuQuantity:50}})}});
  const response=await h.get(),body=await response.json();
  assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(body.source,'collection');
  assert.deepEqual(body.settings,{manufacturer:'등록 당시 제조사',importer:'',serviceContact:'등록 당시 연락처',boxSkuQuantity:50,washingMethod:'',handlingPrecautions:'',manufactureDatePreviousMonth:false,shelfLifeDays:null,handlingReason:''});
@@ -23,7 +24,7 @@ test('product label settings prefer the linked snapshot including explicit blank
 });
 test('unlinked same-URL settings cannot overwrite this product and sparse snapshots keep missing registration facts blank',async()=>{
  for(const linked of [false,true]){
-  const h=api({captured:{linked,payload:JSON.stringify({settings:{manufacturer:'당시'}})}}),body=await(await h.get()).json();
+  const h=api({captured:{linked,payload:JSON.stringify({company:fixtureCompany,settings:{manufacturer:'당시'}})}}),body=await(await h.get()).json();
   assert.equal(body.settings.boxSkuQuantity,linked?1:7);assert.equal(body.settings.manufacturer,linked?'당시':'현재 제조사');assert.equal(body.settings.importer,linked?'':'현재 수입원');assert.equal(body.settings.serviceContact,linked?'':'현재 연락처');
  }
 });
@@ -35,7 +36,7 @@ test('authentication, ownership and unavailable source stop before misleading de
 
 test('label category defaults are scoped to this product linked context only',async()=>{
  for(const linked of [false,true]){
-  const body=await(await api({captured:{linked,payload:JSON.stringify({category:{categoryId:'80719'},settings:{}})}}).get()).json();
+  const body=await(await api({captured:{linked,payload:JSON.stringify({company:fixtureCompany,category:{categoryId:'80719'},settings:{}})}}).get()).json();
   assert.equal(body.categoryId,linked?'80719':null);
  }
  assert.equal((await(await api().get()).json()).categoryId,null);

@@ -23,7 +23,7 @@ import { quotationPriceTargets } from '@/app/quotation-price-targets';
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
 type Cell = Row['fields'][string];
-type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean; schemaChanged?: boolean };
+type Conflict = { key: string; change: QuotationEditorChange; before: string | null; saved: string | null; unavailable: boolean; schemaChanged?: boolean; linked?: string[] };
 type BulkPreview = { mode?: 'restore'; base: string; changes: QuotationEditorChange[]; skipped?: string[]; rows: { optionId: string; optionLabel: string; fieldKey: string; label: string; before: string; after: string; beforeDisplay: string; afterDisplay: string; manualBefore: boolean }[] };
 type Props = { navigationTarget?: QuotationNavigationTarget; productId: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void };
 const sections = [
@@ -142,22 +142,64 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
   return { ...fallback, value: resolvedValue, source, issues, validationIssues: errors, reviewMessages,
     needsReview: Boolean(definition?.reviewRequired) || issues.length > 0 };
 }
+function quotationEditorChangeFields(fields: readonly QuotationField[], change: QuotationEditorChange, changes: readonly QuotationEditorChange[]) {
+  const weights = quotationPackagedWeightEditFields(fields, change.fieldKey, change.value).filter(id =>
+    id === change.fieldKey || !changes.some(item => item.optionId === change.optionId && item.fieldKey === id && item.value === null));
+  return [...new Set(weights.flatMap(id => quotationPriceEditFields(fields, id)))];
+}
+/** A conflict decision covers the same stored fields that its eventual save
+ * addresses, including a former peer after the category binding changes.
+ * Weight resets remain independent when their peer has a literal draft. */
+export function resolveQuotationEditorConflict(view: QuotationFieldsView, changes: readonly QuotationEditorChange[], conflicts: readonly Conflict[], key: string, choice: 'draft' | 'saved') {
+  const selected = conflicts.find(conflict => conflict.key === key);
+  if (!selected) return { changes: changes.map(change => ({ ...change })), conflicts: [...conflicts] };
+  const linked = new Set(selected.linked ?? [selected.change.fieldKey]);
+  try { quotationEditorChangeFields(view.resolved.schema.fields, selected.change, changes).forEach(id => linked.add(id)); }
+  catch { /* Retain the reviewed peer identities when the new binding is ambiguous. */ }
+  const matches = (change: QuotationEditorChange) => change.optionId === selected.change.optionId && linked.has(change.fieldKey);
+  if (choice === 'saved') {
+    // Discarding an exact weight reset can make its retained literal peer pair
+    // again. Discard that dependent draft too, so it cannot recreate a value
+    // for which the user just chose the stored version.
+    let expanded: boolean;
+    do {
+      expanded = false;
+      const remaining = changes.filter(change => !matches(change));
+      for (const change of remaining.filter(change => change.optionId === selected.change.optionId)) {
+        try {
+          const peers = quotationEditorChangeFields(view.resolved.schema.fields, change, remaining);
+          if (!peers.some(id => linked.has(id))) continue;
+          for (const id of peers) if (!linked.has(id)) { linked.add(id); expanded = true; }
+        } catch { /* An ambiguous binding cannot introduce another saved peer. */ }
+      }
+    } while (expanded);
+  }
+  return {
+    changes: changes.filter(change => choice === 'draft' || !matches(change)).map(change => ({ ...change })),
+    conflicts: conflicts.filter(conflict => !matches(conflict.change)),
+  };
+}
 export function reconcileQuotationEditorDraft(previous: QuotationFieldsView, next: QuotationFieldsView, changes: readonly QuotationEditorChange[], pending: readonly Conflict[] = []) {
   const conflicts: Conflict[] = [];
   const retained = changes.filter(change => {
     const key = quotationEditorKey(change.optionId, change.fieldKey);
-    let linked = [change.fieldKey], nextLinked = linked, priceSchemaChanged = false;
-    try { linked = quotationPriceEditFields(previous.resolved.schema.fields, change.fieldKey); nextLinked = quotationPriceEditFields(next.resolved.schema.fields, change.fieldKey); }
-    catch { priceSchemaChanged = true; }
+    const prior = pending.find(conflict => conflict.key === key);
+    let linked = prior?.linked ?? [change.fieldKey], nextLinked = [change.fieldKey], bindingChanged = false;
+    try { linked = quotationEditorChangeFields(previous.resolved.schema.fields, change, changes); }
+    catch { bindingChanged = true; }
+    try { nextLinked = quotationEditorChangeFields(next.resolved.schema.fields, change, changes); }
+    catch { bindingChanged = true; }
     const definition = (view: QuotationFieldsView, id: string) => view.resolved.schema.fields.find(field => field.id === id);
-    const unavailable = linked.some(id => !next.resolved.schema.fields.some(field => field.id === id && !field.readOnly)) || !next.resolved.rows.some(row => row.optionId === change.optionId);
-    const schemaChanged = priceSchemaChanged || JSON.stringify(linked) !== JSON.stringify(nextLinked) || previous.resolved.schema.categoryId !== next.resolved.schema.categoryId ||
+    const reviewedLinked = [...new Set([...linked, ...nextLinked, ...(prior?.linked ?? [])])];
+    const unavailable = reviewedLinked.some(id => !next.resolved.schema.fields.some(field => field.id === id && !field.readOnly)) || !next.resolved.rows.some(row => row.optionId === change.optionId);
+    const schemaChanged = bindingChanged || JSON.stringify(linked) !== JSON.stringify(nextLinked) || previous.resolved.schema.categoryId !== next.resolved.schema.categoryId ||
       linked.some(id => JSON.stringify(definition(previous, id)) !== JSON.stringify(definition(next, id))) || pending.some(conflict => conflict.key === key && conflict.schemaChanged);
     const fulfilled = linked.every(id => manualValue(next.overrides, change.optionId, id) === change.value);
     if (!unavailable && !schemaChanged && fulfilled) return false;
     const changedId = linked.find(id => manualValue(previous.overrides, change.optionId, id) !== manualValue(next.overrides, change.optionId, id));
     const before = manualValue(previous.overrides, change.optionId, changedId ?? change.fieldKey), saved = manualValue(next.overrides, change.optionId, changedId ?? change.fieldKey);
-    if (unavailable || schemaChanged || changedId !== undefined || pending.some(conflict => conflict.key === key)) conflicts.push({ key, change, before, saved, unavailable, ...(schemaChanged ? { schemaChanged: true } : {}) });
+    if (unavailable || schemaChanged || changedId !== undefined || prior) conflicts.push({ key, change, before, saved, unavailable,
+      linked: reviewedLinked, ...(schemaChanged ? { schemaChanged: true } : {}) });
     return true;
   });
   return { changes: retained.map(change => ({ ...change })), conflicts };
@@ -228,13 +270,17 @@ export function previewQuotationEditorRestore(view: QuotationFieldsView, changes
       if (draftManual(view, changes, row.optionId, field.id) === null) continue;
       const reset = { optionId: row.optionId, fieldKey: field.id, value: null };
       const before = resolveQuotationEditorCell(view, changes, row.optionId, field.id);
-      const resets = quotationPriceEditFields(view.resolved.schema.fields, field.id).reduce((draft, key) => updateQuotationEditorDraft(view.overrides, draft, { ...reset, fieldKey: key }), [...changes]);
-      const after = resolveQuotationEditorCell(view, resets, row.optionId, field.id);
-      rows.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldKey: field.id, label: field.label, before: before.value, after: after.value,
-        beforeDisplay: quotationFieldDisplay(field, before), afterDisplay: quotationFieldDisplay(field, after), manualBefore: true });
+      rows.push({ optionId: row.optionId, optionLabel: row.optionLabel, fieldKey: field.id, label: field.label, before: before.value, after: '',
+        beforeDisplay: quotationFieldDisplay(field, before), afterDisplay: '', manualBefore: true });
       planned.push(reset);
       if (planned.length > 1000) throw new Error('한 번에 1,000개 값까지 복원할 수 있습니다. 항목 선택 범위를 줄여주세요.');
     }
+  }
+  const resets = quotationPriceEditChanges(view.resolved.schema.fields, planned).reduce((draft, change) => updateQuotationEditorDraft(view.overrides, draft, change), [...changes]);
+  for (const row of rows) {
+    const field = view.resolved.schema.fields.find(field => field.id === row.fieldKey)!;
+    const after = resolveQuotationEditorCell(view, resets, row.optionId, row.fieldKey);
+    row.after = after.value; row.afterDisplay = quotationFieldDisplay(field, after);
   }
   return { mode: 'restore', base: bulkBase(view, changes), changes: planned, rows };
 }
@@ -422,6 +468,11 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     setConflicts(previous => previous.filter(conflict => !fieldKeys.some(id => conflict.key === quotationEditorKey(optionId, id))));
     setBulk(null); setMessage('');
   }
+  function resolveConflict(key: string, choice: 'draft' | 'saved') {
+    if (!view || busy || loading) return;
+    const resolved = resolveQuotationEditorConflict(view, changes, conflicts, key, choice);
+    setChanges(resolved.changes); setConflicts(resolved.conflicts); setBulk(null);
+  }
   async function save() {
     if (!view || !changes.length || conflicts.length || busy || loading || activeWrite.current || !view.resolved.rows.some(row => row.optionId === selectedOption)) return;
     const controller = new AbortController(); activeWrite.current=controller;
@@ -476,7 +527,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       {!row && <p role="alert" className="quotation-fields-notice">선택한 옵션이 현재 상품에 없습니다. 공통값으로 자동 전환하지 않았습니다. 편집할 옵션을 다시 선택해주세요. 미저장 입력은 유지됩니다.</p>}
       <div className="quotation-fields-summary"><span>현재 옵션 필수 미입력 <b>{missingRequired}개</b></span><span>입력 확인 <b>{allIssues.length}건</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
       <nav className="quotation-fields-section-nav" aria-label="견적 입력 구역">{counts.map((section, index) => <button key={section.id} type="button" disabled={busy || loading} aria-pressed={active === section.id} onClick={() => openSection(section.id)}><b>{index + 1}</b><span>{section.title}</span><small>{section.complete}/{section.required} 필수 입력{section.invalid > 0 && ` · 확인 ${section.invalid}개`}</small></button>)}</nav>
-      {conflicts.length > 0 && <div className="quotation-fields-notice" role="alert"><strong>다시 검토할 항목 {conflicts.length}개</strong><ul className="quotation-fields-conflicts">{conflicts.map(conflict => <li key={conflict.key}><strong>{schema?.fields.find(field => field.id === conflict.change.fieldKey)?.label ?? conflict.change.fieldKey} · {view.resolved.rows.find(item => item.optionId === conflict.change.optionId)?.optionLabel ?? '삭제된 옵션'}</strong>{conflict.schemaChanged && <p>카테고리 또는 항목 규격이 변경되었습니다. 같은 값이라도 새 양식에 맞는지 확인해주세요.</p>}<p>{conflict.unavailable ? '현재 카테고리 또는 옵션에 없는 입력입니다.' : `현재 저장값: ${conflict.saved === null ? '자동값 사용' : conflict.saved || '(공란)'}`}</p><p>내 입력: {conflict.change.value === null ? '수동 수정 해제' : conflict.change.value || '(공란)'}</p><div className="quote-actions">{!conflict.unavailable && <button type="button" className="btn ghost" disabled={busy || loading} onClick={() => setConflicts(previous => previous.filter(item => item.key !== conflict.key))}>내 입력 유지</button>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => { setChanges(previous => previous.filter(change => quotationEditorKey(change.optionId, change.fieldKey) !== conflict.key)); setConflicts(previous => previous.filter(item => item.key !== conflict.key)); setBulk(null); }}>{conflict.unavailable ? '이 입력 제외' : '저장된 값 사용'}</button></div></li>)}</ul></div>}
+      {conflicts.length > 0 && <div className="quotation-fields-notice" role="alert"><strong>다시 검토할 항목 {conflicts.length}개</strong><ul className="quotation-fields-conflicts">{conflicts.map(conflict => <li key={conflict.key}><strong>{schema?.fields.find(field => field.id === conflict.change.fieldKey)?.label ?? conflict.change.fieldKey} · {view.resolved.rows.find(item => item.optionId === conflict.change.optionId)?.optionLabel ?? '삭제된 옵션'}</strong>{conflict.schemaChanged && <p>카테고리 또는 항목 규격이 변경되었습니다. 같은 값이라도 새 양식에 맞는지 확인해주세요.</p>}<p>{conflict.unavailable ? '현재 카테고리 또는 옵션에 없는 입력입니다.' : `현재 저장값: ${conflict.saved === null ? '자동값 사용' : conflict.saved || '(공란)'}`}</p><p>내 입력: {conflict.change.value === null ? '수동 수정 해제' : conflict.change.value || '(공란)'}</p>{(conflict.linked?.length ?? 0) > 1 && <p>연결된 항목에도 같은 선택을 적용합니다.</p>}<div className="quote-actions">{!conflict.unavailable && <button type="button" className="btn ghost" disabled={busy || loading} onClick={() => resolveConflict(conflict.key, 'draft')}>내 입력 유지</button>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => resolveConflict(conflict.key, 'saved')}>{conflict.unavailable ? '이 입력 제외' : '저장된 값 사용'}</button></div></li>)}</ul></div>}
       <div className="quotation-fields-actions">{selectedOption !== null && row?.included && optionCount > 1 && <label className="quotation-apply-all"><input type="checkbox" role="switch" checked={applyAll} disabled={busy || loading} onChange={event => setApplyAll(event.target.checked)}/>모든 포함 옵션에 적용</label>}<small>입력 v{view.revision} · 작성 중에도 저장할 수 있습니다.<br />수동 수정값은 기본값이 바뀌어도 유지됩니다.</small><div><button type="button" className="btn ghost" disabled={busy || loading || !dirty} onClick={() => void refresh(true)}>입력 버리고 저장본 불러오기</button><button type="button" className="btn primary" disabled={busy || loading || !dirty || !row || conflicts.length > 0 || hasInvalidDraft} onClick={() => void save()}>{operationBusy ? '저장 중…' : `견적 입력 저장${dirty ? ` (${savePlan.changes.length || changes.length})` : ''}`}</button></div></div>
       {applyAll && <div className="quotation-fields-bulk" role="status"><p>현재 옵션에서 수정한 항목만 다른 포함 옵션에 적용합니다. 대상의 같은 항목에 직접 입력한 값이 있으면 바뀝니다. 수정하지 않은 항목과 제외 옵션은 유지됩니다.</p><strong>다른 옵션 {new Set(savePlan.propagated.map(item => item.optionId)).size}개 · {savePlan.propagated.length}개 값 적용 예정</strong>{savePlan.propagated.length > 0 && <details><summary>함께 저장할 변경 내용</summary><div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션 / 항목</th><th>현재 입력</th><th>저장할 값</th></tr></thead><tbody>{savePlan.propagated.map(item => <tr key={quotationEditorKey(item.optionId,item.fieldKey)}><td>{item.optionLabel}<br/>{item.label}</td><td>{item.before}</td><td>{item.after}</td></tr>)}</tbody></table></div></details>}</div>}
       {row && sections.map((section, sectionIndex) => <fieldset key={section.id} id={`${prefix}-section-${section.id}`} data-section={section.id} className="quotation-fields-section" disabled={busy || loading} style={{ padding: 0, margin: 0, minWidth: 0 }}><header><h4>{sectionIndex + 1}. {section.english} Page ({section.title})</h4><small>* 필수 입력</small><p className="quotation-field-help" style={{ width: '100%' }}>{section.description}</p></header><div className="quotation-fields-grid">{quotationPriceVisibleFields(schema?.fields ?? []).filter(field => field.section === section.id).flatMap((field, fieldIndex, sectionFields) => {

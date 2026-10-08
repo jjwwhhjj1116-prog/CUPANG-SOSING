@@ -57,6 +57,7 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
   assert.equal(load('app/quotation-field-groups.ts').quotationFieldGroup(view.resolved.schema.fields.find(field=>field.id===target.fieldId),view.resolved.schema.fields),'가격 정보');
  }
  assert.ok(ui.control('wire-osrp'));assert.ok(ui.control('brand'));assert.equal(nodes(ui.render()).filter(node=>node.type==='input'&&/^stage7-price-(?:wire-(?:supplyPrice|salePrice|msrp|osrp))$/.test(node.props.id??'')).length,4);
+ assert.equal(load('app/quotation-field-groups.ts').quotationFieldGroup(view.resolved.schema.fields.find(field=>field.id==='wire-osrp'),view.resolved.schema.fields),'가격 정보','independent official price remains distinct but belongs in the price subsection');
  assert.match(JSON.stringify(ui.render()),/이전 요약 가격/);assert.match(JSON.stringify(ui.render()),/150/);
  assert.equal(editor.quotationSectionProgress(view,[],'red').find(section=>section.id==='product').required,2);
  const supply=ui.control('wire-supplyPrice');supply.props.onChange({target:{value:'160'}});

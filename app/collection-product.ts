@@ -12,9 +12,11 @@ import { emptyProductContent, type LabelField } from '@/app/product-content';
 import { initialStatuses } from '@/app/workflow';
 import { collectionKeywords, collectionSourceReference, type CollectionJob } from '@/app/sourcing';
 import type { ProductRecord } from '@/db/queries';
+import { capturedCollectionCompany } from '@/app/collection-company';
 
 export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:CollectionResult,id:string,now:string){
   if(!job.context?.category?.id)throw new Error('요청 당시 카테고리와 기본설정이 필요합니다.');
+  capturedCollectionCompany(job.context);
   const category = job.context.category;
   if (!usableCategoryCode(category.categoryId) || !Array.isArray(category.categoryPath)
     || !category.categoryPath.length || category.categoryPath.some(part => typeof part !== 'string' || !part.trim())) {

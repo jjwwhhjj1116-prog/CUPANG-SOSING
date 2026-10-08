@@ -15,7 +15,7 @@ const requests=h=>h.load('app/sourcing.ts').parseCollectionRequest({urls:[h.sour
 function currentCompanyRoutes(h,company){
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,Request,Response,TextEncoder,Uint8Array,Date,process:{env:{NODE_ENV:'production'}},require(name){
   if(name==='@/app/chatgpt-auth')return {getWorkspaceOwnerId:async()=>'owner',getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner',membership:{id:'owner',email:'private-company-fixture@example.test',role:'admin',status:'approved',companyCode:company.code,companyName:company.name}})};
-  if(name==='cloudflare:workers')return {env:h.bindings};if(name==='next/server')return {NextResponse:Response};assert.ok(name.startsWith('@/'),name);return h.load(name.slice(2)+'.ts');
+  if(name==='cloudflare:workers')return {env:h.bindings};if(name==='next/server')return {NextResponse:Response};if(name==='@/app/quotation-fields-snapshot')return load('app/quotation-fields-snapshot.ts');assert.ok(name.startsWith('@/'),name);return h.load(name.slice(2)+'.ts');
  }});return exports;}
  const jobs=load('app/api/collection-jobs/route.ts'),fields=load('app/api/products/[id]/quotation-fields/route.ts');
  return {enqueue(profile,settings,features='현재 회사 새 초안'){return jobs.POST(new Request('https://app.test/api/collection-jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({urls:[h.sourceUrl],goal:'price',profileId:profile.id,expectedProfileRevision:profile.revision,features,keywords:'현재 회사',expectedSettings:settings})}));},
@@ -68,7 +68,7 @@ for(const oldCompany of schemaCompanies)test(`different known linked company rel
 
 test('legacy backfill cannot resurrect the mismatched linked job after a lost new-claim acknowledgement',async()=>{
  const f=await historical(),{h}=f;try{
-  const selected=await profile(h,schemaCompanies[1]),context={...plain(h.context),category:selected,features:'현재회사 새 입력'},jobs=h.load('db/collection-jobs.ts'),before=oldSnapshot(h,f.product.id);
+  const selected=await profile(h,schemaCompanies[1]),context={...plain(h.context),category:selected,company:schemaCompanies[1],features:'현재회사 새 입력'},jobs=h.load('db/collection-jobs.ts'),before=oldSnapshot(h,f.product.id);
   assert.equal(h.sqlite.prepare('SELECT count(*) AS n FROM collection_offer_claims').get().n,0,'exercise legacy history without a claim');
   let next;await assert.rejects(async()=>{[next]=await jobs.enqueueCollection('owner',requests(h),context);throw Error('committed response lost');},/response lost/);
   assert.notEqual(next.id,'job');assert.equal((await jobs.enqueueCollection('owner',requests(h),context))[0].id,next.id);assert.equal(oldSnapshot(h,f.product.id),before);
@@ -88,7 +88,7 @@ test('same-company category and settings changes retain the original linked prod
 
 test('unknown or malformed old captured company does not release its owned linked product claim',async()=>{
  const f=await historical(),{h}=f;try{
-  const selected=await profile(h,schemaCompanies[1]),jobs=h.load('db/collection-jobs.ts'),context={...plain(h.context),category:selected};await jobs.enqueueCollection('owner',requests(h),h.context);
+  const selected=await profile(h,schemaCompanies[1]),jobs=h.load('db/collection-jobs.ts'),context={...plain(h.context),category:selected,company:schemaCompanies[1]};await jobs.enqueueCollection('owner',requests(h),h.context);
   for(const company of [null,{},'A01464742',{code:'A01464742',name:'유앤채'},{code:'unknown',name:'와이홉'},{code:1464742,name:'와이홉'}]){
    const original=plain(h.context);original.category.hubSchema.company=company;h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(original),'job');const before=oldSnapshot(h,f.product.id);
    const [retained]=await jobs.enqueueCollection('owner',requests(h),context);assert.equal(retained.id,'job');assert.equal(oldSnapshot(h,f.product.id),before);assert.equal(h.sqlite.prepare('SELECT count(*) AS n FROM collection_jobs').get().n,1);
@@ -103,14 +103,14 @@ test('unknown or malformed new context and receipt-only unlinked drafts preserve
    const context=plain(h.context);context.category.hubSchema.company=company;assert.equal((await jobs.enqueueCollection('owner',requests(h),context))[0].id,'job');assert.equal(oldSnapshot(h,f.product.id),before);
   }
   const pendingContext=plain(h.context),[pending]=await jobs.enqueueCollection('pending-owner',requests(h),pendingContext),receipt=await h.load('db/collection-results.ts').readCollectionResult('owner','job');await h.load('db/collection-results.ts').storeCollectionResult('pending-owner',pending.id,receipt.result);
-  const newContext={...plain(h.context),category:await profile(h,schemaCompanies[1])};const [retained]=await jobs.enqueueCollection('pending-owner',requests(h),newContext);assert.equal(retained.id,pending.id);assert.equal(retained.product_id,null);assert.ok(retained.received_at);assert.deepEqual(plain(retained.context),pendingContext);assert.equal(h.sqlite.prepare('SELECT count(*) AS n FROM collection_jobs WHERE owner_id=?').get('pending-owner').n,1);
+  const newContext={...plain(h.context),category:await profile(h,schemaCompanies[1]),company:schemaCompanies[1]};const [retained]=await jobs.enqueueCollection('pending-owner',requests(h),newContext);assert.equal(retained.id,pending.id);assert.equal(retained.product_id,null);assert.ok(retained.received_at);assert.deepEqual(plain(retained.context),pendingContext);assert.equal(h.sqlite.prepare('SELECT count(*) AS n FROM collection_jobs WHERE owner_id=?').get('pending-owner').n,1);
  }finally{h.close();}
 });
 
 test('company retirement stays owner-scoped and an inconsistent foreign product link cannot authorize it',async()=>{
  const f=await historical(),{h}=f;try{
   const jobs=h.load('db/collection-jobs.ts'),receipt=await h.load('db/collection-results.ts').readCollectionResult('owner','job'),oldContext=plain(h.context),[foreign]=await jobs.enqueueCollection('foreign-owner',requests(h),oldContext);await h.load('db/collection-results.ts').storeCollectionResult('foreign-owner',foreign.id,receipt.result);
-  const foreignProduct=await h.load('db/collection-products.ts').promoteCollection('foreign-owner',foreign,receipt.result),before=oldSnapshot(h,foreignProduct.product_id,foreign.id),context={...plain(h.context),category:await profile(h,schemaCompanies[1])};
+  const foreignProduct=await h.load('db/collection-products.ts').promoteCollection('foreign-owner',foreign,receipt.result),before=oldSnapshot(h,foreignProduct.product_id,foreign.id),context={...plain(h.context),category:await profile(h,schemaCompanies[1]),company:schemaCompanies[1]};
   const [next]=await jobs.enqueueCollection('owner',requests(h),context);assert.notEqual(next.id,'job');assert.equal(oldSnapshot(h,foreignProduct.product_id,foreign.id),before);assert.equal(h.sqlite.prepare('SELECT job_id FROM collection_offer_claims WHERE owner_id=? AND offer_id=?').get('foreign-owner','813724060928').job_id,foreign.id);
   // Corrupt fixture ownership must not count as a proven linked own product.
   h.sqlite.prepare('UPDATE products SET owner_id=? WHERE id=?').run('different-owner',foreignProduct.product_id);const inconsistent=oldSnapshot(h,foreignProduct.product_id,foreign.id);assert.equal((await jobs.enqueueCollection('foreign-owner',requests(h),context))[0].id,foreign.id);assert.equal(oldSnapshot(h,foreignProduct.product_id,foreign.id),inconsistent);

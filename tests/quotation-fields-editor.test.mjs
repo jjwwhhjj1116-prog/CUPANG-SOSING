@@ -441,7 +441,8 @@ test('overview preserves automatic validation failures, clears replaced values a
 
 test('section progress uses current dependent price validation and distinguishes optional errors from required completion',()=>{
  const view=fixture();view.resolved.schema.salePriceMustCoverSupply=true;
- view.resolved.schema.fields=view.resolved.schema.fields.filter(f=>['supplyPrice','salePrice','brand','mainImage'].includes(f.id));
+ // Production schemas retain all three canonical prices even without an MSRP wire.
+ view.resolved.schema.fields=view.resolved.schema.fields.filter(f=>['supplyPrice','salePrice','msrp','brand','mainImage'].includes(f.id));
  view.resolved.schema.fields.find(f=>f.id==='salePrice').required=true;
  view.resolved.schema.fields.find(f=>f.id==='supplyPrice').required=false;
  const before=JSON.stringify(view);

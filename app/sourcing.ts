@@ -1,10 +1,11 @@
 import { is1688ProductUrl } from '@/app/workflow';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { WorkspaceSettings } from '@/app/workspace-settings';
+import type { SupplierHubCompany } from '@/app/supplier-hub-company';
 
 export const collectionBlock = '상품 추가 시 URL의 공개 상품 정보를 가져옵니다. 페이지에서 옵션·원가를 확인할 수 없으면 입력을 유지합니다. 초안을 확인·수정한 뒤 등록전송을 진행하세요.';
 export type CollectionRequest = { offerId: string; sourceUrl: string; goal: string };
-export type CollectionContext = { category: CategoryProfile; settings: WorkspaceSettings; features: string; keywords: string; capturedAt: string };
+export type CollectionContext = { category: CategoryProfile; settings: WorkspaceSettings; features: string; keywords: string; capturedAt: string; company?: SupplierHubCompany };
 export type CollectionJob = {
   id: string; offer_id: string; source_url: string; goal: string;
   status: 'awaiting_connector' | 'cancelled'; created_at: string; updated_at: string;
@@ -19,44 +20,6 @@ export function collectionJobProgress(job: Pick<CollectionJob, 'status' | 'produ
 }
 
 export type PreservedCollectionRequest = { offerId: string; sourceUrl: string; differences: string[] };
-/** Compare the persisted result, so concurrent inserts and retries are reported truthfully. */
-export function preservedCollectionRequests(jobs: readonly CollectionJob[], requests: readonly CollectionRequest[], context: CollectionContext): PreservedCollectionRequest[] {
-  const canonical = (value: unknown): string => {
-    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-    if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
-    return JSON.stringify(value) ?? 'undefined';
-  };
-  const settingsForComparison = (value: unknown, inactiveBundle: boolean, inactiveIntegrated: boolean): unknown => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-    const compared = { ...value } as Record<string, unknown>;
-    // Old captures predate the three bundle criteria. Compare missing fields as
-    // legacy nulls; while both switches are off, criteria cannot affect intake.
-    // Never normalize the stored capture or hide an active policy difference.
-    for (const key of ['bundleCriterion','bundleMinimumSupplyMargin','bundleMinimumCoupangMargin']) {
-      if (inactiveBundle) delete compared[key];
-      else if (!Object.hasOwn(compared, key)) compared[key] = null;
-    }
-    if (inactiveIntegrated) { delete compared.useIntegratedRate; delete compared.integratedRate; }
-    else { if (!Object.hasOwn(compared, 'useIntegratedRate')) compared.useIntegratedRate = false; if (!Object.hasOwn(compared, 'integratedRate')) compared.integratedRate = null; }
-    return compared;
-  };
-  return jobs.flatMap(job => {
-    const request = requests.find(item => item.offerId === job.offer_id);
-    if (!request) return [];
-    const differences: string[] = [];
-    if (job.goal !== request.goal) differences.push('작업 목표');
-    if (!job.context) differences.push('카테고리·기본설정 기록 없음');
-    else {
-      if (canonical(job.context.category) !== canonical(context.category)) differences.push('카테고리·견적서 설정');
-      const inactiveBundle = job.context.settings?.bundleEnabled === false && context.settings?.bundleEnabled === false;
-      const inactiveIntegrated = [job.context.settings?.useIntegratedRate, context.settings?.useIntegratedRate].every(value => value === undefined || value === false);
-      if (canonical(settingsForComparison(job.context.settings, inactiveBundle, inactiveIntegrated)) !== canonical(settingsForComparison(context.settings, inactiveBundle, inactiveIntegrated))) differences.push('기본설정');
-      if (job.context.features !== context.features) differences.push('상품 특징');
-      if (job.context.keywords !== context.keywords) differences.push('타겟 키워드');
-    }
-    return differences.length ? [{ offerId: job.offer_id, sourceUrl: job.source_url, differences }] : [];
-  });
-}
 
 export function parseCollectionRequest(input: unknown): CollectionRequest[] {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('URL 목록이 필요합니다.');

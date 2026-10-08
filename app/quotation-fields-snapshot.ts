@@ -21,12 +21,15 @@ import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
 import { quotationNoticeBindingFingerprint } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightBindingFingerprint } from '@/app/quotation-packaged-weight';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
+import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 
 
 export class QuotationFieldsSnapshotError extends Error { constructor(message: string, public status: number, public code?: string) { super(message); } }
 const FieldsError = QuotationFieldsSnapshotError;
 const changed = () => new FieldsError('상품·옵션·설정·카테고리 또는 다른 편집 내용이 바뀌었습니다. 입력한 수정값을 보존한 채 최신 자료를 다시 불러와 비교해주세요.', 409, 'QUOTATION_FIELDS_CONFLICT');
 async function snapshot(owner: string, id: string, profileId: string | null) {
+  const user = await getChatGPTUser();
+  const company = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
   const product = await findProduct(owner, id);
   if (!product) throw new FieldsError('상품을 찾을 수 없습니다.', 404);
   const [content, options, savedSettings, state, profile] = await Promise.all([
@@ -46,6 +49,10 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     if (offerId) {
       const source = await readQuotationCollectionSource(owner, offerId, id); collection = { offerId, snapshot: source };
       const captured = source ? JSON.parse(source.payload) : null;
+      if (source?.linked) {
+        try { verifyCapturedCollectionCompany(captured, company); }
+        catch (error) { throw new FieldsError(error instanceof Error ? error.message : '수집 당시 회사를 확인해주세요.', 409, 'QUOTATION_COMPANY_MISMATCH'); }
+      }
       if (source?.linked) settings = collectionRegistrationSettings(settings, captured?.settings);
       if (source?.linked && profile) {
         const selected = captured?.category ? validateCategoryProfile(captured.category) : null;
@@ -65,8 +72,6 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   }
   // Editing and exporting must resolve the same approved company. Membership
   // reassignment cannot turn an older captured form into the new company's form.
-  const user = await getChatGPTUser();
-  const company = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
   if (company && [hubSchema, profile?.hubSchema].some(schema => schema && (schema.company.code !== company.code || schema.company.name !== company.name))) {
     throw new FieldsError('이 상품의 저장된 상세 양식 회사가 현재 로그인 회사와 다릅니다. 원래 회사의 상품과 양식을 사용해주세요.', 409, 'QUOTATION_COMPANY_MISMATCH');
   }

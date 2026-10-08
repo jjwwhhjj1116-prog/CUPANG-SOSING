@@ -16,9 +16,9 @@ async function template(h,company){
 }
 
 for(const company of schemaCompanies)test(`live category intake never repurposes another company's saved profile (${company.code})`,async()=>{
- const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});
+  const other=schemaCompanies.find(item=>item.code!==company.code),h=mobileIntakeHarness({companyCode:other.code,companyName:other.name});
  try{
-  const other=schemaCompanies.find(item=>item.code!==company.code),oldSchema=hubSchemaSnapshot(other),currentSchema={...hubSchemaSnapshot(company),draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'};
+  const oldSchema=hubSchemaSnapshot(other),currentSchema={...hubSchemaSnapshot(company),draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'};
   const previous=await template(h,other);
   // A prior approved-company profile can remain in the same owner's workspace
   // after a membership reassignment. Templates here are synthetic CSV fixtures.
@@ -26,6 +26,7 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
   h.context.category=old;h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
   await h.intake();
   const oldProduct=h.sqlite.prepare('SELECT * FROM products').get();
+  h.setCompany(company);
   const oldContent=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(oldProduct.id).payload);
   await json(await h.route(`/api/products/${oldProduct.id}/content`,{method:'PATCH',body:{expectedRevision:oldContent.revision,patch:{seo:{keywords:[]},label:{material:''}}}}));
   const existingWork=()=>JSON.stringify({product:h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(oldProduct.id),content:h.sqlite.prepare('SELECT * FROM product_content WHERE product_id=?').get(oldProduct.id),options:h.sqlite.prepare('SELECT * FROM product_options WHERE product_id=?').get(oldProduct.id),context:h.sqlite.prepare('SELECT * FROM collection_context WHERE job_id=?').get('job')});

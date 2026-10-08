@@ -1,7 +1,8 @@
 import { usableCategoryCode } from '@/app/category-profiles';
 import { validateCategoryIdentity } from '@/app/category-identity';
 import { NextResponse } from 'next/server';
-import { collectionBlock, collectionKeywords, parseCollectionRequest, preservedCollectionRequests } from '@/app/sourcing';
+import { collectionBlock, collectionKeywords, parseCollectionRequest } from '@/app/sourcing';
+import { preservedCollectionRequests } from '@/app/collection-preservation';
 import { enqueueCollection, listCollectionJobs } from '@/db/collection-jobs';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { getSettings } from '@/db/queries';
@@ -41,14 +42,16 @@ export async function POST(request: Request) {
     const category=await getCategoryProfile(owner,profileId);
     if(!category)return NextResponse.json({error:'선택한 카테고리 연결을 찾을 수 없습니다.'},{status:404});
     if(category.revision!==expectedProfileRevision)return NextResponse.json({error:'선택한 카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 최신 카테고리를 다시 선택해주세요.',code:'CATEGORY_PROFILE_CHANGED'},{status:409});
-    if(category.hubSchema){const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;if(!company||company.code!==category.hubSchema.company.code||company.name!==category.hubSchema.company.name)return NextResponse.json({error:'선택한 상세 양식의 회사가 현재 승인 회사와 다릅니다. 카테고리를 다시 선택해주세요.',code:'CATEGORY_COMPANY_CHANGED'},{status:409});}
+    const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
+    if(!company&&(process.env.NODE_ENV==='production'||user?.verifiedAccess))return NextResponse.json({error:'수집 요청에 기록할 승인 회사 코드·이름을 확인해주세요.',code:'COLLECTION_COMPANY_UNCONFIRMED'},{status:409});
+    if(category.hubSchema&&(!company||company.code!==category.hubSchema.company.code||company.name!==category.hubSchema.company.name))return NextResponse.json({error:'선택한 상세 양식의 회사가 현재 승인 회사와 다릅니다. 카테고리를 다시 선택해주세요.',code:'CATEGORY_COMPANY_CHANGED'},{status:409});
     if(!usableCategoryCode(category.categoryId))return NextResponse.json({error:'선택한 카테고리 번호가 없거나 형식이 올바르지 않습니다. 설정에서 실제 번호를 수정한 뒤 다시 선택해주세요.',code:'CATEGORY_CODE_INVALID'},{status:400});
     try { validateCategoryIdentity(category); }
     catch (error) { return NextResponse.json({error:error instanceof Error ? error.message : '카테고리 코드와 경로를 확인해주세요.',code:'CATEGORY_IDENTITY_MISMATCH'},{status:400}); }
     const savedSettings=await getSettings(owner);
     const settings=savedRegistrationSettings(savedSettings?JSON.parse(savedSettings.payload):null);
     if(expectedSettings&&JSON.stringify(expectedSettings)!==JSON.stringify(settings))return NextResponse.json({error:'기본설정이 변경되었습니다. 입력한 URL과 카테고리는 유지됩니다. 기본설정을 다시 불러온 뒤 시작해주세요.',code:'REGISTRATION_SETTINGS_CHANGED'},{status:409});
-    const context={category,settings,features,keywords,capturedAt:new Date().toISOString()};
+    const context={category,settings,features,keywords,capturedAt:new Date().toISOString(),...(company?{company}:{})};
     const jobs = await enqueueCollection(owner, entries, context);
     return NextResponse.json({ jobs, preservedRequests: preservedCollectionRequests(jobs, entries, context), message: collectionBlock, executionStarted: false }, { headers: { 'cache-control': 'no-store' } });
   } catch { return NextResponse.json({ error: '대기열 저장을 확인하지 못했습니다. 같은 URL로 다시 시도해도 대기 중인 요청은 중복되지 않습니다.' }, { status: 503 }); }

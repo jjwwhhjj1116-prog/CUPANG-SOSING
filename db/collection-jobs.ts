@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { collectionResultSchema } from '@/db/collection-results';
 import type { CollectionJob, CollectionRequest, CollectionContext } from '@/app/sourcing';
-import { SUPPLIER_HUB_COMPANIES, supplierHubCompany } from '@/app/supplier-hub-company';
+import { SUPPLIER_HUB_COMPANIES } from '@/app/supplier-hub-company';
+import { capturedCollectionCompany } from '@/app/collection-company';
 
 // Separate intake from products: without a provider response there is no product,
 // price, option count, or successful collection to persist.
@@ -62,20 +63,26 @@ export async function findCollectionJob(owner: string, id: string) {
 export async function enqueueCollection(owner: string, requests: CollectionRequest[], context: CollectionContext | null = null) {
   const db = await ensureCollectionDatabase();
   const now = new Date().toISOString();
-  const company=supplierHubCompany(context?.category?.hubSchema?.company?.code,context?.category?.hubSchema?.company?.name);
+  let company: ReturnType<typeof capturedCollectionCompany> = null;
+  try { company=capturedCollectionCompany(context); }
+  catch { /* Unconfirmed context identity cannot authorize claim retirement. */ }
   const otherCompanies=company?SUPPLIER_HUB_COMPANIES.filter(other=>other.code!==company.code||other.name!==company.name):[];
   // Only an explicitly known different company on an owned, already linked
   // product retires a claim. Missing/invalid company facts and pending drafts
   // keep their first form; historical sources themselves are never rewritten.
+  const recordedCompanyPath="CASE WHEN json_type(c.payload,'$.company') IS NOT NULL THEN '$.company' ELSE '$.category.hubSchema.company' END";
   const differentLinkedCompany=otherCompanies.length?`EXISTS(SELECT 1 FROM collection_products cp
     JOIN products p ON p.id=cp.product_id AND p.owner_id=cp.owner_id
     JOIN collection_context c ON c.job_id=cp.job_id
     WHERE cp.job_id=j.id AND cp.owner_id=j.owner_id AND CASE WHEN json_valid(c.payload) THEN
-      json_type(c.payload,'$.category.hubSchema.company')='object'
-      AND json_type(c.payload,'$.category.hubSchema.company.code')='text'
-      AND json_type(c.payload,'$.category.hubSchema.company.name')='text'
-      AND (${otherCompanies.map(()=>`(trim(json_extract(c.payload,'$.category.hubSchema.company.code'))=?
-        AND trim(json_extract(c.payload,'$.category.hubSchema.company.name'))=?)`).join(' OR ')})
+      json_type(c.payload,${recordedCompanyPath})='object'
+      AND json_type(c.payload,(${recordedCompanyPath})||'.code')='text'
+      AND json_type(c.payload,(${recordedCompanyPath})||'.name')='text'
+      AND (json_type(c.payload,'$.company') IS NULL OR json_type(c.payload,'$.category.hubSchema.company') IS NULL
+        OR (trim(json_extract(c.payload,'$.company.code'))=trim(json_extract(c.payload,'$.category.hubSchema.company.code'))
+          AND trim(json_extract(c.payload,'$.company.name'))=trim(json_extract(c.payload,'$.category.hubSchema.company.name'))))
+      AND (${otherCompanies.map(()=>`(trim(json_extract(c.payload,(${recordedCompanyPath})||'.code'))=?
+        AND trim(json_extract(c.payload,(${recordedCompanyPath})||'.name'))=?)`).join(' OR ')})
       ELSE 0 END)`:'0';
   const companyValues=otherCompanies.flatMap(other=>[other.code,other.name]);
   // Claim retirement, legacy backfill and new job/context creation happen in

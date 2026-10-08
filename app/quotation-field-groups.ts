@@ -7,7 +7,12 @@ export function quotationFieldGroup(field: QuotationField, fields?: readonly Quo
     if (field.visibility === 'hidden') return '비노출 속성';
     let exactPrice = false;
     if (fields) try { exactPrice = quotationPriceEditInput(fields, field.id) !== null; } catch { /* Ambiguous controls keep their original grouping. */ }
-    return exactPrice || ['supplyPrice','salePrice','msrp','barcodeMode','barcode'].includes(field.id) ? '가격 정보' : '기본 정보';
+    const osrp = fields?.filter(item => item.hubWire?.path.length === 3 && item.hubWire.path[0] === 'productPage'
+      && item.hubWire.path[1] === 'commonAttributes' && item.hubWire.path[2] === 'osrp'
+      && item.hubWire.name === undefined && item.hubWire.nameKey === undefined && item.hubWire.valueKey === undefined);
+    const independentPrice = osrp?.length === 1 && osrp[0].id === field.id && field.hubInput === 'msrp'
+      && (field.numericText || field.type === 'number') && !field.readOnly;
+    return exactPrice || independentPrice || ['supplyPrice','salePrice','msrp','barcodeMode','barcode'].includes(field.id) ? '가격 정보' : '기본 정보';
   }
   if (field.section === 'image') {
     if (field.id === 'labelImages') return '라벨 이미지';

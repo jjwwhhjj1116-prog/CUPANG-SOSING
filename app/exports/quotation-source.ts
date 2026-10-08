@@ -13,6 +13,7 @@ import { fingerprint } from '@/app/automation/model';
 import { validateCategoryIdentity } from '@/app/category-identity';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
+import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 import { publicDetailVersion, type PublicDetailConfig } from '@/app/quotation-public-detail';
 import { optionPriceCalculationRevision } from '@/app/product-options';
 import { readCollectionResult } from '@/db/collection-results';
@@ -32,7 +33,8 @@ export class QuotationExportError extends Error {
 /** A saved-source snapshot shared by both downloads. No automatic values are written back. */
 export async function readQuotationExportSource(owner: string, productId: string, profileId: string | null) {
   const user = await getChatGPTUser();
-  const company = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
+  const currentCompany = user?.verifiedAccess && user.userId === owner ? approvedSupplierHubCompany(user.membership) : null;
+  let company = currentCompany;
   const product = await findProduct(owner, productId);
   if (!product) throw new QuotationExportError('상품을 찾을 수 없습니다.', 404);
   const [content, options, savedSettings, state, profile] = await Promise.all([
@@ -52,6 +54,10 @@ export async function readQuotationExportSource(owner: string, productId: string
     if (offerId) {
       const captured = await readQuotationCollectionSource(owner, offerId, productId); collection = { offerId, snapshot: captured };
       const payload = captured ? JSON.parse(captured.payload) : null;
+      if (captured?.linked) {
+        try { company = verifyCapturedCollectionCompany(payload, currentCompany); }
+        catch (error) { throw new QuotationExportError(error instanceof Error ? error.message : '수집 당시 회사를 확인해주세요.', 409); }
+      }
       if (captured?.linked) {
         const receipt = await readCollectionResult(owner, captured.id);
         if (receipt && receipt.result.offerId !== offerId) throw new QuotationExportError('상품에 연결된 수집 원문의 상품번호가 다릅니다. 수집 기록을 확인해주세요.', 409);
@@ -76,7 +82,7 @@ export async function readQuotationExportSource(owner: string, productId: string
   }
   // Reassigning a login must not relabel an older company's captured proposal.
   // Keep the source and owned assets untouched; use the company that collected it.
-  if(company&&[hubSchema,profile?.hubSchema].some(schema=>schema&&(schema.company.code!==company.code||schema.company.name!==company.name))){
+  if(currentCompany&&[hubSchema,profile?.hubSchema].some(schema=>schema&&(schema.company.code!==currentCompany.code||schema.company.name!==currentCompany.name))){
     throw new QuotationExportError('이 상품의 저장된 상세 양식 회사가 현재 로그인 회사와 다릅니다. 원래 회사의 상품과 양식을 사용해주세요.',409);
   }
   if (categoryContext.categoryId) {
@@ -111,6 +117,7 @@ export async function readMappedQuotationSource(owner: string, productId: string
   const captured = await readQuotationExportSource(owner, productId, null);
   const context = captured.categoryContext;
   const linked = Boolean(captured.source.collection?.snapshot?.linked);
+  if (linked && !captured.company) throw new QuotationExportError('수집 당시 회사 코드·이름이 기록되지 않은 초안입니다. 기존 원문은 유지되며 승인 회사와 카테고리를 선택해 새 수집 요청을 시작해주세요.', 409);
   const selectedProfileId = profileId || context.profileId;
   if (!selectedProfileId || (!profileId && !context.categoryId)) throw new QuotationExportError('상품 추가 시 선택한 카테고리 양식이 없습니다. 견적서에서 사용할 양식을 선택해주세요.', 409);
   if (linked && selectedProfileId !== context.profileId) {

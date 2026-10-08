@@ -25,6 +25,6 @@ export function SupplierHubExtensionCheck(){
     {loading&&<p role="status">현재 Chrome의 확장을 확인하는 중입니다.</p>}
     {info&&<dl className="connection-list"><div><dt>설치된 버전</dt><dd>{info.version}</dd></div><div><dt>전송 결과 조회</dt><dd>{needsUpdate?'확장 업데이트 필요':'검증 결과 복구·SKU 결과 보존 지원'}</dd></div></dl>}
     {error&&<p role="status">{error}</p>}
-    <div className="modal-actions"><button type="button" className="btn ghost" disabled={loading} onClick={()=>{setLoading(true);setInfo(null);setError('');setAttempt(value=>value+1);}}>설치된 확장 다시 확인</button>{(needsUpdate||error)&&<a className="btn ghost" href="/downloads/yoofam-plus-supplier-hub-extension-0.2.57.zip" download>확장 0.2.57 다운로드</a>}</div>
+    <div className="modal-actions"><button type="button" className="btn ghost" disabled={loading} onClick={()=>{setLoading(true);setInfo(null);setError('');setAttempt(value=>value+1);}}>설치된 확장 다시 확인</button>{(needsUpdate||error)&&<a className="btn ghost" href="/downloads/yoofam-plus-supplier-hub-extension-0.2.58.zip" download>확장 0.2.58 다운로드</a>}</div>
   </section>;
 }

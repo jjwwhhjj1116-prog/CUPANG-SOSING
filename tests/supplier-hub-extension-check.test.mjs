@@ -23,7 +23,7 @@ test('settings shows the returned installed version and flags, not the download 
   const ui=fixture();ui.render();assert.equal(ui.calls.length,1);
   ui.calls[0].resolve({version:'0.2.54',pendingReceiptRefreshRecovery:false,registrationObservationCas:false});await settle();
   assert.match(ui.text(),/설치된 버전 0\.2\.54/);assert.match(ui.text(),/확장 업데이트 필요/);
-  assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,'/downloads/yoofam-plus-supplier-hub-extension-0.2.57.zip');
+  assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,'/downloads/yoofam-plus-supplier-hub-extension-0.2.58.zip');
   ui.retry();assert.equal(ui.calls.length,2);assert.equal(ui.calls[0].signal.aborted,true);
   ui.calls[1].resolve({version:'0.2.57',pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true});await settle();
   assert.match(ui.text(),/설치된 버전 0\.2\.57/);assert.doesNotMatch(ui.text(),/업데이트 필요/);assert.equal(nodes(ui.render()).some(node=>node.type==='a'),false);
