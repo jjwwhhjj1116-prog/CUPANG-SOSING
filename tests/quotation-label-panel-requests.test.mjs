@@ -12,8 +12,8 @@ function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{reso
 function harness(handlers={},batchCache={current:{signature:null,uploaded:new Map()}},uploadCache={current:{signature:null,uploadedKey:null,rendered:null}}){
  const slots=[],effects=[],cleanups=[],calls={render:0,attach:0,batch:0,attached:0,snapshots:[],busy:[]};let index=0,first=true;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
- const view={resolved:{rows:[{optionId:'one',included:true}]}};
- const props={productId:'p',endpoint:'/quotation',optionId:'one'};
+ const view={revision:1,inputFingerprint:'1'.repeat(64),productVersion:'2026-10-07T00:00:00.000Z',updatedAt:'2026-10-07T00:00:00.000Z',contentRevision:2,optionRevision:3,imageKeys:[],overrides:{common:{},options:{}},categoryContext:{source:'collection',profileId:null,categoryId:'80719',categoryPath:['주방용품']},resolved:{schema:{categoryId:'80719',categoryPath:['주방용품'],fields:[]},rows:[{optionId:'one',optionLabel:'옵션 1',included:true,fields:{}}]}};
+ const props={productId:'p',endpoint:'/api/products/p/quotation-fields',optionId:'one'};
  const exports={};const file='app/components/quotation-label-panel.tsx';
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL:{createObjectURL:()=> 'blob:preview',revokeObjectURL(){}},require(name){
   if(name==='react')return hooks;
@@ -69,7 +69,7 @@ test('option label retry invalidates uploaded images when saved quotation or cat
 
 
 test('stopping after a saved option publishes the latest quotation for continued editing',async()=>{
- const current={resolved:{rows:[{optionId:'one',included:true}]},revision:3,inputFingerprint:'saved-label'};
+ const current={resolved:{rows:[{optionId:'one',included:true}]},revision:3,inputFingerprint:'2'.repeat(64)};
  const h=harness({batch:async input=>{input.uploaded.set('one','saved.png');return{view:current,completed:1,total:2,stopped:true};}});
  h.buttons()[batch]();await settle();
  assert.equal(h.calls.attached,1,'the saved revision must reach the quotation editor after a stop');
@@ -85,7 +85,7 @@ test('a stopped label batch reuses its files after the quotation panel remounts 
  const first=harness({batch:async input=>{seen.push(input.uploaded.get('one'));input.uploaded.set('one','saved.png');return{view:input.view,completed:1,total:2,stopped:true};}},cache);
  first.buttons()[batch]();await settle();first.unmount();
  const second=harness({batch:async input=>{seen.push(input.uploaded.get('one'));return{view:input.view,completed:1,total:1,stopped:false};}},cache);
- second.view.revision=3;second.view.inputFingerprint='saved-label';second.buttons()[batch]();await settle();
+ second.view.revision=3;second.view.inputFingerprint='2'.repeat(64);second.buttons()[batch]();await settle();
  assert.deepEqual(seen,[undefined,'saved.png'],'a view refresh must not regenerate completed PNGs');
  assert.equal(second.calls.attached,1);
  second.unmount();

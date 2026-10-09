@@ -1,7 +1,7 @@
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import type { DocumentImagePlan } from '@/app/document-image';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
-import { attachQuotationLabel } from '@/app/quotation-label-attachment';
+import { attachQuotationLabel, quotationLabelReferenceSelection } from '@/app/quotation-label-attachment';
 import { findQuotationLabelUpload } from '@/app/quotation-label-upload';
 
 export type LabelBatchProgress = { completed: number; total: number; optionLabel: string };
@@ -34,15 +34,14 @@ export async function attachQuotationLabels(input: {
   const pendingKeys = new Set<string>();
   for (const [index, row] of rows.entries()) {
     if (JSON.stringify(quotationLabelPlan(latest.resolved, row.optionId)) !== JSON.stringify(plans[index])) throw new Error('표시사항 값이 변경되었습니다. 최신 견적을 불러와주세요.');
-    if (!input.uploaded.has(row.optionId)) {
-      if (input.shouldStop?.()) return result(0, true);
-      const stored = await findQuotationLabelUpload({ productId: input.productId, endpoint: input.endpoint, view: input.view, optionId: row.optionId }, request);
-      if (stored.key) input.uploaded.set(row.optionId, stored.key);
-    }
+    if (input.shouldStop?.()) return result(0, true);
+    const stored = await findQuotationLabelUpload({ productId: input.productId, endpoint: input.endpoint, view: input.view, optionId: row.optionId }, request);
+    if (input.uploaded.has(row.optionId) && input.uploaded.get(row.optionId) !== stored.key) throw Error('이 표시사항의 저장된 PNG 업로드 번호를 확인하지 못했습니다.');
+    if (stored.key) input.uploaded.set(row.optionId, stored.key);
     const key = input.uploaded.get(row.optionId);
-    const target = latest.resolved.rows.find(item => item.optionId === row.optionId)!;
-    const labels = (target.fields.labelImages?.value ?? '').split('\n').map(value => value.trim()).filter(Boolean);
-    if ((!key || !labels.includes(key)) && labels.length >= 30) throw new Error(`${row.optionLabel}: 라벨 30개 한도입니다. 기존 첨부를 확인해주세요.`);
+    const selection = await quotationLabelReferenceSelection({ productId: input.productId, view: latest, optionId: row.optionId }, key ?? null, request);
+    const limit = Math.min(...selection.target.fields.map(field => field.maxItems ?? 30));
+    if (selection.retained.length + (key && selection.retained.includes(key) ? 0 : 1) > limit) throw new Error(`${row.optionLabel}: 라벨 ${limit}개 한도입니다. 기존 첨부를 확인해주세요.`);
     if (!key) newFiles++;
     else if (!latest.imageKeys.includes(key)) pendingKeys.add(key);
   }

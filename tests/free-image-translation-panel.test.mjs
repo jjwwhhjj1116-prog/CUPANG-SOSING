@@ -102,6 +102,54 @@ test('explicit OCR and selected translation retain manual Korean/blanks and inva
   } finally { h.close(); }
 });
 
+test('a failed partial retry retains earlier generated Korean, reports failure and keeps manual blanks', async () => {
+  const h = fixture(); try {
+    h.setOcr(async () => [region('r1'), region('r2'), region('r3')]);
+    await h.click('원본 문구 읽기'); await h.change('문구 3 한국어', '');
+    h.setTranslate(async (source, rows) => ({ source, regions: rows.map(row => ({ id: row.id, original: row.text,
+      translated: row.id === 'r1' ? '먼저 성공한 한국어' : null, issue: row.id === 'r1' ? null : '미번역 영역' })),
+      requests: 1, stoppedHttpStatus: null, warnings: [] }));
+    await h.click('선택 문구 한국어 번역');
+    assert.equal(h.field('문구 1 한국어').props.value, '먼저 성공한 한국어'); assert.equal(h.field('문구 2 한국어').props.value, '');
+    const first = h.calls.filter(call => call.action === 'translate').at(-1);
+    assert.deepEqual(plain(first.rows), [{ id: 'r1', text: '中文 r1' }, { id: 'r2', text: '中文 r2' }]);
+    h.setTranslate(async (source, rows) => ({ source, regions: rows.map(row => ({ id: row.id, original: row.text,
+      translated: null, issue: 'Google 번역 HTTP 429' })), requests: 1, stoppedHttpStatus: 429,
+      warnings: ['Google HTTP 429 이후 요청을 중단했습니다. 자동 재시도하지 않습니다.'] }));
+    await h.click('선택 문구 한국어 번역');
+    assert.equal(h.field('문구 1 한국어').props.value, '먼저 성공한 한국어'); assert.equal(h.field('문구 2 한국어').props.value, '', 'the initially failed region remains untranslated');
+    assert.equal(h.field('문구 3 한국어').props.value, '', 'the explicit manual blank is never translated');
+    const status = nodes(h.render()).filter(node => node.props.role === 'status').map(text).join(' ');
+    assert.match(status, /0개 번역/); assert.match(status, /429.*자동 재시도하지 않습니다/);
+    assert.equal(nodes(h.render()).filter(node => node.type === 'p' && text(node) === 'Google 번역 HTTP 429').length, 2, 'failed returned regions still carry their failure issue');
+    const retried = h.calls.filter(call => call.action === 'translate').at(-1);
+    assert.deepEqual(plain(retried.source), plain(first.source)); assert.deepEqual(plain(retried.rows), plain(first.rows));
+    assert.equal(h.calls.filter(call => call.action === 'translate').length, 2, 'the failure never starts an automatic retry');
+    h.setTranslate(async (source, rows) => ({ source, regions: rows.map(row => ({ id: row.id, original: row.text,
+      translated: '다시 성공한 한국어 ' + row.id, issue: null })), requests: 1, stoppedHttpStatus: null, warnings: [] }));
+    await h.click('선택 문구 한국어 번역');
+    assert.equal(h.field('문구 1 한국어').props.value, '다시 성공한 한국어 r1', 'retained generated text can still be explicitly retranslated');
+    assert.equal(h.field('문구 2 한국어').props.value, '다시 성공한 한국어 r2'); assert.equal(h.field('문구 3 한국어').props.value, '');
+    assert.deepEqual(plain(h.calls.filter(call => call.action === 'translate').at(-1).rows), plain(first.rows), 'preserving a generated result never converts it to a manual value');
+    assert.equal(h.saved, 0); assert.equal(h.calls.filter(call => call.action === 'apply' || call.action === 'preview').length, 0);
+  } finally { h.close(); }
+});
+
+test('a failed retry after original text changes cannot restore the previous generated Korean', async () => {
+  const h = fixture(); try {
+    await translated(h); assert.equal(h.field('문구 1 한국어').props.value, '한국어 r1');
+    await h.change('문구 1 원문', '다른 원문'); assert.equal(h.field('문구 1 한국어').props.value, '');
+    await h.change('문구 2 선택', '', false);
+    h.setTranslate(async (source, rows) => ({ source, regions: rows.map(row => ({ id: row.id, original: row.text,
+      translated: null, issue: 'Google 번역 HTTP 503' })), requests: 1, stoppedHttpStatus: 503, warnings: [] }));
+    await h.click('선택 문구 한국어 번역');
+    assert.equal(h.field('문구 1 원문').props.value, '다른 원문'); assert.equal(h.field('문구 1 한국어').props.value, '');
+    assert.equal(h.field('문구 2 한국어').props.value, '한국어 r2', 'unselected translated regions stay unchanged');
+    assert.deepEqual(plain(h.calls.filter(call => call.action === 'translate').at(-1).rows), [{ id: 'r1', text: '다른 원문' }]);
+    assert.equal(h.saved, 0); assert.equal(h.calls.filter(call => call.action === 'apply' || call.action === 'preview').length, 0);
+  } finally { h.close(); }
+});
+
 test('apply requires reviewed preview and the parent guard, prevents double action, then notifies a single saved change', async () => {
   const h = fixture(); try {
     await translated(h); await h.click('번역 이미지 미리보기'); h.allowApply(false);

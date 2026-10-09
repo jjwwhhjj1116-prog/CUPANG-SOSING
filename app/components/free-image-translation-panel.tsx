@@ -219,8 +219,10 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       const returned = new Map(result.regions.map(row => [row.id, row])); setRendered(null);
       setRegions(rows => rows.map(row => {
         const translated = returned.get(row.id);
+        // A failed explicit retry reports its issue without erasing an earlier
+        // result for this same original. Editing the original clears that result.
         return translated && row.text === translated.original && row.translationProvenance !== 'manual'
-          ? { ...row, translated: translated.translated ?? '', issue: translated.issue, translationProvenance: translated.translated === null ? 'empty' : 'generated' } : row;
+          ? { ...row, translated: translated.translated ?? row.translated, issue: translated.issue, translationProvenance: translated.translated === null ? row.translationProvenance : 'generated' } : row;
       }));
       setNotice([`${result.regions.filter(row => row.translated !== null).length}개 번역을 받았습니다. 한국어와 적용 영역을 검토해주세요.`, ...result.warnings].join(' '));
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '문구 번역을 완료하지 못했습니다.'); }

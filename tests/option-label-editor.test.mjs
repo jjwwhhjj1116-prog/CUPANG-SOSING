@@ -16,6 +16,8 @@ const initialVersion='2026-10-07T00:00:00.000Z',advance=version=>new Date(Date.p
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 const png=new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'));
 const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+const contractModules=new Map();
+function contract(file){if(contractModules.has(file))return contractModules.get(file);const exports={};contractModules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,TextEncoder,Uint8Array,crypto:webcrypto,require:name=>name.startsWith('@/')?contract(name.slice(2)+'.ts'):native(name)});return exports;}
 
 function labelUI(fetcher,{productId='p',optionId='red',version=initialVersion,profileId,refreshToken='0',renderDocument}={}){
  const slots=[],effects=[],layouts=[],cache=new Map(),calls=[],plans=[],created=[],revoked=[];
@@ -50,9 +52,13 @@ function fixture(){
  const schema={categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],fields};
  const view={revision:1,inputFingerprint:'a'.repeat(64),productVersion:initialVersion,contentRevision:2,optionRevision:3,updatedAt:initialVersion,imageKeys:['owner/old.png'],categoryContext:{source:'profile',categoryId:'80719',categoryPath:schema.categoryPath,profileId:null},overrides,resolved:{schema,rows:rows(overrides)},automatic:{schema,rows:rows({common:{},options:{}})}};
  const uploads=new Map();let uploadCount=0;
- return{view,uploads,get uploadCount(){return uploadCount;},reply(url,init){
-  if(url.startsWith('/api/files?labelUploadId='))return Response.json({key:uploads.get(url.split('=')[1])??null});
-  if(url==='/api/files'){const id=init.body.get('labelUploadId'),key='owner/generated-'+(++uploadCount)+'.png';uploads.set(id,key);return Response.json({key});}
+ async function seed(id,proof=contract('app/quotation-label-proof.ts').quotationLabelProofRequest({productId:'p',endpoint:'/api/products/p/quotation-fields',view,optionId:'red'})){
+  const metadata=await contract('app/quotation-label-proof.ts').verifiedQuotationLabelMetadata(proof,view,id),key=`owner/quotation-label-${id}.png`;
+  const receipt={key,contentType:'image/png',size:png.length,sha256:'a'.repeat(64),quotationLabelProof:contract('app/quotation-label-proof.ts').quotationLabelReceiptFromMetadata({...metadata,labelUploadId:id,labelBlobSha256:'a'.repeat(64)})};uploads.set(id,receipt);return receipt;
+ }
+ return{view,uploads,seed,get generated(){return[...uploads.values()].map(value=>value.key);},get uploadCount(){return uploadCount;},async reply(url,init){
+  if(url.startsWith('/api/files?labelUploadId='))return Response.json(uploads.get(url.split('=')[1])??{key:null});
+  if(url==='/api/files'){const id=init.body.get('labelUploadId'),proof=JSON.parse(init.body.get('quotationLabelProof'));uploadCount++;const receipt=await seed(id,proof);return Response.json({key:receipt.key,contentType:'image/png',size:init.body.get('file').size,quotationLabelProof:receipt.quotationLabelProof},{status:201});}
   if(url.endsWith('/attachments')){const body=JSON.parse(init.body);assert.equal(body.role,null);assert.equal(body.expectedVersion,view.productVersion);assert.equal(body.expectedContentRevision,view.contentRevision);view.imageKeys.push(body.key);view.productVersion=advance(view.productVersion);view.inputFingerprint='b'.repeat(64);return Response.json({productVersion:view.productVersion});}
   if(init?.method==='PUT'){const body=JSON.parse(init.body);if(body.expectedRevision!==view.revision)return Response.json({error:'동시 수정'},{status:409});assert.equal(body.expectedInputFingerprint,view.inputFingerprint);for(const change of body.changes){const values=view.overrides.options[change.optionId]??={};if(change.value===null)delete values[change.fieldKey];else values[change.fieldKey]=change.value;if(!Object.keys(values).length)delete view.overrides.options[change.optionId];}view.revision++;view.productVersion=advance(view.productVersion);view.updatedAt=view.productVersion;view.resolved.rows=rows(view.overrides);}
   return Response.json(view);
@@ -151,9 +157,9 @@ test('a pending PNG render is cancelled on source change or unmount without leak
 });
 
 test('single label attachment preserves all old labels and other SKU/common overrides, and retry recovers a lost final acknowledgement without duplicate PNGs',async()=>{
- const f=fixture(),before=plain(f.view.overrides);let lost=true;const h=labelUI((url,init)=>{const response=f.reply(url,init);if(init?.method==='PUT'&&JSON.parse(init.body).changes[0].fieldKey==='labelImages'&&lost){lost=false;throw Error('라벨 저장 응답 유실');}return response;});try{
+ const f=fixture(),before=plain(f.view.overrides);let lost=true,recoveryUnavailable=false;const h=labelUI(async(url,init)=>{if(recoveryUnavailable&&!init?.method){recoveryUnavailable=false;return Response.json({error:'저장본 확인 일시 실패'},{status:503});}const response=await f.reply(url,init);if(init?.method==='PUT'&&JSON.parse(init.body).changes[0].fieldKey==='labelImages'&&lost){lost=false;recoveryUnavailable=true;throw Error('라벨 저장 응답 유실');}return response;});try{
   await h.idle();await h.click('선택 옵션 상품고시 PNG 미리보기');await h.click('PNG 업로드·선택 옵션 견적에 연결');assert.equal(h.saved,0);assert.equal(f.uploadCount,1);assert.match(text(h.render()),/기존 파일/);
-  assert.equal(f.view.overrides.options.red.labelImages,'owner/old.png\nowner/generated-1.png');assert.deepEqual(f.view.overrides.common,before.common);assert.deepEqual(f.view.overrides.options.blue,before.options.blue);
+  assert.equal(f.view.overrides.options.red.labelImages,'owner/old.png\n'+f.generated[0]);assert.deepEqual(f.view.overrides.common,before.common);assert.deepEqual(f.view.overrides.options.blue,before.options.blue);
   await h.click('PNG 업로드·선택 옵션 견적에 연결');assert.equal(h.saved,1);assert.equal(f.uploadCount,1);assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,1);assert.equal(h.plans.length,1);
   assert.deepEqual(f.view.overrides.common,before.common);assert.deepEqual(f.view.overrides.options.blue,before.options.blue);assert.equal(f.view.overrides.options.red.unrelated,'보존');
  }finally{h.close();}
@@ -161,18 +167,18 @@ test('single label attachment preserves all old labels and other SKU/common over
 
 test('explicit single-label retry recovers durable upload and product-attachment acknowledgements without generating or uploading again',async()=>{
  for(const failedStage of ['upload','attachment']){
-  const f=fixture();let lost=true;const h=labelUI((url,init)=>{const response=f.reply(url,init);if(lost&&(failedStage==='upload'?url==='/api/files':url.endsWith('/attachments'))){lost=false;throw Error('연결 응답 유실');}return response;});try{
+  const f=fixture();let lost=true,recoveryUnavailable=false;const h=labelUI(async(url,init)=>{if(recoveryUnavailable&&!init?.method){recoveryUnavailable=false;return Response.json({error:'저장본 확인 일시 실패'},{status:503});}const response=await f.reply(url,init);if(lost&&(failedStage==='upload'?url==='/api/files':url.endsWith('/attachments'))){lost=false;recoveryUnavailable=true;throw Error('연결 응답 유실');}return response;});try{
    await h.idle();await h.click('선택 옵션 상품고시 PNG 미리보기');await h.click('PNG 업로드·선택 옵션 견적에 연결');assert.equal(h.saved,0);assert.equal(f.uploadCount,1);
    await h.click('PNG 업로드·선택 옵션 견적에 연결');assert.equal(h.saved,1,text(h.render()));assert.equal(f.uploadCount,1);assert.equal(h.plans.length,1);assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,1);
-   assert.equal(f.view.overrides.options.red.labelImages,'owner/old.png\nowner/generated-1.png');assert.equal(f.view.imageKeys.filter(key=>key==='owner/generated-1.png').length,1);
+   assert.equal(f.view.overrides.options.red.labelImages,'owner/old.png\n'+f.generated[0]);assert.equal(f.view.imageKeys.filter(key=>key===f.generated[0]).length,1);
   }finally{h.close();}
  }
 });
 
 test('an identical reviewed PNG already inherited through a common label is acknowledged without creating a selected override or uploading again',async()=>{
  const f=fixture(),h=labelUI((url,init)=>f.reply(url,init));try{
-  await h.idle();const helper=h.load('app/quotation-label-upload.ts'),id=await helper.quotationLabelUploadId({productId:'p',endpoint:'/api/products/p/quotation-fields',view:f.view,optionId:'red'}),key='owner/already-common.png';
-  f.uploads.set(id,key);f.view.imageKeys.push(key);f.view.overrides.common.labelImages=key;
+  await h.idle();const helper=h.load('app/quotation-label-upload.ts'),id=await helper.quotationLabelUploadId({productId:'p',endpoint:'/api/products/p/quotation-fields',view:f.view,optionId:'red'}),{key}=await f.seed(id);
+  f.view.imageKeys.push(key);f.view.overrides.common.labelImages=key;
   for(const row of f.view.resolved.rows)row.fields.labelImages={...row.fields.labelImages,value:key,source:'manual-common'};
   const before=plain(f.view.overrides);await h.click('저장 상품고시 다시 조회');await h.click('선택 옵션 상품고시 PNG 미리보기');await h.click('PNG 업로드·선택 옵션 견적에 연결');
   assert.equal(h.saved,1,text(h.render()));assert.equal(f.uploadCount,0);assert.deepEqual(f.view.overrides,before);assert.equal(Object.hasOwn(f.view.overrides.options.red,'labelImages'),false);
