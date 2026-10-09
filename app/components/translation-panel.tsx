@@ -307,7 +307,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     } catch (reason) { if(!controller.signal.aborted)setError(reason instanceof Error ? reason.message : '적용 실패'); }
     finally { finishRequest(controller); }
   }
-  return <section className="translation-panel" aria-label="원문 번역과 SEO 초안">
+  return <section className="translation-panel" aria-label="원문 번역과 SEO 초안" data-workspace-saving={busy} data-quotation-source-step="SEO">
     <h4>원문 번역 · SEO 초안</h4>
     <button type="button" className="btn" disabled={busy} onClick={()=>void refreshState()}>작업 상태 다시 조회 · 무료</button>
     <p>저장된 원문으로 한국어 초안을 생성합니다. 아래 직접 입력 내용은 자동 수집 증빙으로 기록되지 않습니다.</p>

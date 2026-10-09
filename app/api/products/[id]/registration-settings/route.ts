@@ -39,8 +39,8 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
         source = 'collection';
       }
     }
-    // Only the fields needed by label autofill and option logistics leave this endpoint.
-    return json({ productId: id, source, categoryId, referenceTime, ...(dateNotice !== undefined ? { dateNotice } : {}), settings: { manufacturer: settings.manufacturer, importer: settings.importer, serviceContact: settings.serviceContact, boxSkuQuantity: settings.boxSkuQuantity,
+    // Only the fields needed by SEO, label autofill and option logistics leave this endpoint.
+    return json({ productId: id, source, categoryId, referenceTime, ...(dateNotice !== undefined ? { dateNotice } : {}), settings: { brand: settings.brand, manufacturer: settings.manufacturer, importer: settings.importer, serviceContact: settings.serviceContact, boxSkuQuantity: settings.boxSkuQuantity,
       washingMethod: settings.washingMethod, handlingPrecautions: settings.handlingPrecautions, manufactureDatePreviousMonth: settings.manufactureDatePreviousMonth,
       shelfLifeDays: settings.shelfLifeDays, handlingReason: settings.handlingReason } });
   } catch (error) {

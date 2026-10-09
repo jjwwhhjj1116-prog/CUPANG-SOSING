@@ -108,7 +108,7 @@ function harness({submission=false,batch,integration,packaging=false}={}){
   deferProduct(){holdProductRead=true;},
   settingsPanel:()=>nodes(render()).find(node=>node.props?.id==='workspace-settings-panel'),
   settingsForm:()=>nodes(render()).find(node=>node.type==='form'&&node.props.className==='settings-form couplus-settings'),
-  title:()=>nodes(render()).find(node=>node.type==='input'&&node.props.maxLength===500),
+  title:()=>nodes(render()).find(node=>node.type==='input'&&(node.props['aria-label']==='SEO 상품명'||node.props.maxLength===500)),
   workspace:()=>nodes(render()).find(node=>node.props?.['aria-label']==='상품 등록 작업 공간'),
   async click(label){const target=button(label);assert.ok(target&&!target.props.disabled,'available button: '+label);target.props.onClick();await settle();},
   async openBoardStage(label,step='SEO',optionId='sku-2'){

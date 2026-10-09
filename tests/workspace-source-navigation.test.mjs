@@ -26,13 +26,14 @@ function harness(){
  body={options:{...options.emptyProductOptions('p'),revision:1,rows:[{...options.emptyOptionInput('a'),originalName:'원문',unitCostCny:2,included:true,updatedAt:'before',provenance:{}}]},productVersion:'2026-10-03T00:00:00Z',pricing:{policy,policySource:'saved-product',rows:[]}};
  const product={id:'p',title:'상품',source_price_cny:2,image_keys:'["owner/a.png"]',pricing_policy:JSON.stringify(policy),updated_at:body.productVersion};
  const Detail=load('app/components/dashboard-client.tsx').DetailPanel,read=load('app/workspace-close.ts').quotationSourceState;
- function expand(tree){
-  if(Array.isArray(tree))return tree.map(expand);if(!tree||typeof tree!=='object')return tree;
+ function expand(tree,path='root'){
+  if(Array.isArray(tree))return tree.map((child,index)=>expand(child,path+'/'+(child?.key??index)));if(!tree||typeof tree!=='object')return tree;
   if(typeof tree.type==='function'){
-   const instance=instances.get(tree.type)??{slots:[],first:true};instances.set(tree.type,instance);instance.index=0;active=instance;
-   const child=tree.type(tree.props);instance.first=false;return expand(child);
+   const identity=path+':'+(tree.type.name||'component')+':'+(tree.key??'');
+   const instance=instances.get(identity)??{slots:[],first:true};instances.set(identity,instance);instance.index=0;active=instance;
+   const child=tree.type(tree.props);instance.first=false;return expand(child,path+'/component');
   }
-  return {...tree,props:{...tree.props,children:expand(tree.props?.children)}};
+  return {...tree,props:{...tree.props,children:expand(tree.props?.children,path+'/children')}};
  }
  const render=tab=>{const result=expand({type:Detail,props:{tab,product,settings,onUpload(){},onSaved(){},onManageCategories(){},onSavePrice:async()=>{}}});effects.splice(0).forEach(effect=>effect());return result;};
  const matches=(node,selector)=>{const [,key,value]=selector.match(/^\[([^=\]]+)(?:="([^"]+)")?\]$/);return value===undefined?node.props?.[key]!==undefined:String(node.props?.[key])===value;};

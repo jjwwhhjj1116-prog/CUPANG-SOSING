@@ -10,8 +10,9 @@ import { mergeOptionDraft, refreshOptionPriceBase } from '@/app/option-price-ref
 import { configuredBundlePolicy, type BundlePolicy } from '@/app/bundle-policy';
 import {OptionMainImageEditor} from '@/app/components/option-main-image-editor';
 import type {FreeImageQuotationRequest} from '@/app/free-image-translation-client';
+import { confirmOptionTranslationSave } from '@/app/option-translation';
 
-type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; pricingView?: boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
+type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; pricingView?: boolean; seoView?: boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
   onTranslate?: (sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 const originNames = { manual: '직접 입력', collected: '수집 원문', translated: '번역 결과', unverified: '미확인' };
@@ -26,7 +27,7 @@ export function ProductOptionsEditor(props: Props) {
   useEffect(()=>{if(!props.imageView)return;let active=true;void Promise.resolve().then(()=>{if(active)setMainOpened(true);});return()=>{active=false;};},[props.imageView]);
   return <><div hidden={props.imageView}><OptionsEditor key={props.product.id} {...props} imageView={false}/></div><div hidden={!props.imageView}>{(mainOpened||props.imageView)&&<OptionMainImageEditor key={`${props.product.id}:${props.profileId??''}`} productId={props.product.id} version={props.product.updated_at} profileId={props.profileId} refreshToken={props.refreshToken} focusedOptionId={props.focusedOptionId} onSaved={props.onSaved} translationEnabled={props.imageView===true} onTranslate={props.onTranslate}/>}</div></>;
 }
-function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = false, imageView = false, focusedOptionId, initialBulkAction }: Props) {
+function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = false, imageView = false, seoView = false, focusedOptionId, initialBulkAction }: Props) {
   const [saved, setSaved] = useState<ProductOptionsResponse | null>(null);
   const [rows, setRows] = useState<OptionInput[]>([]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -35,11 +36,12 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
   const [snapshotVersion, setSnapshotVersion] = useState(product.updated_at);
   const [refreshNotice, setRefreshNotice] = useState('');
   const [imageOptionId, setImageOptionId] = useState(focusedOptionId || '');
+  const [editedNames,setEditedNames]=useState<Set<string>>(()=>new Set());
   const editorRoot=useRef<HTMLDivElement>(null);
   const activeRequest=useRef<AbortController|null>(null);
   useEffect(()=>()=>{activeRequest.current?.abort();},[]);
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/options`;
-  const applyLoaded = useCallback((body: ProductOptionsResponse) => { setSaved(body); setRows(optionInputs(body.options)); setSnapshotVersion(body.productVersion); setSelected(new Set(focusedOptionId && body.options.rows.some(row=>row.id===focusedOptionId) ? [focusedOptionId] : [])); setError(''); setMessage(''); setConflict(false); }, [focusedOptionId]);
+  const applyLoaded = useCallback((body: ProductOptionsResponse) => { setSaved(body); setRows(optionInputs(body.options)); setEditedNames(new Set()); setSnapshotVersion(body.productVersion); setSelected(new Set(focusedOptionId && body.options.rows.some(row=>row.id===focusedOptionId) ? [focusedOptionId] : [])); setError(''); setMessage(''); setConflict(false); }, [focusedOptionId]);
   useEffect(() => {
     const controller = new AbortController();
     fetchOptions(endpoint, controller.signal).then(body => { if (!controller.signal.aborted) applyLoaded(body); })
@@ -54,11 +56,11 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
     target?.querySelector<HTMLElement>(pricingView?'input[type="number"]':'select')?.focus({preventScroll:true});
   },[loading,pricingView,focusedOptionId]);
   const calculations = useMemo(() => saved ? calculateOptionPrices(rows, saved.pricing.policy) : [], [rows, saved]);
-  const dirty = saved !== null && JSON.stringify(rows) !== JSON.stringify(optionInputs(saved.options));
+  const dirty = saved !== null && (JSON.stringify(rows) !== JSON.stringify(optionInputs(saved.options)) || seoView && editedNames.size>0);
   const imageDirty = rows.some(row => saved?.options.rows.some(option => option.id === row.id && option.imageKey !== row.imageKey));
   const otherDirty = saved !== null && JSON.stringify(rows.map(row=>({...row,imageKey:null}))) !== JSON.stringify(optionInputs(saved.options).map(row=>({...row,imageKey:null})));
   // Route to the stage that can save each draft, even when its editor is hidden.
-  const sourceMarkers = <><span hidden data-quotation-source-step="가격" data-workspace-dirty={otherDirty}/><span hidden data-quotation-source-step="대표 이미지" data-workspace-dirty={imageDirty}/></>;
+  const sourceMarkers = <><span hidden data-quotation-source-step={seoView?'SEO':'가격'} data-workspace-dirty={otherDirty||seoView&&editedNames.size>0}/><span hidden data-quotation-source-step="대표 이미지" data-workspace-dirty={imageDirty}/></>;
   const changedElsewhere = Boolean(product.updated_at && (!snapshotVersion || Date.parse(product.updated_at) > Date.parse(snapshotVersion)));
   useEffect(() => {
     if (!changedElsewhere || busy || loading || activeRequest.current) return;
@@ -102,15 +104,22 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
     try {
-      const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: saved.options.revision, expectedProductVersion: saved.productVersion, rows: imagesOnly ? optionImageSaveRows(saved.options, rows) : rows }) });
+      const changes=rows.filter(row=>editedNames.has(row.id)).map(row=>({optionId:row.id,value:row.translatedName}));
+      const response = await fetch(seoView?endpoint.replace(/\/options$/u,'/option-names'):endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: saved.options.revision, expectedProductVersion: saved.productVersion, ...(seoView?{changes}:{rows: imagesOnly ? optionImageSaveRows(saved.options, rows) : rows}) }) });
       const body = await response.json() as ProductOptionsResponse & { error?: string };
       if(controller.signal.aborted)return;
       if (!response.ok || !body.options) { if (response.status === 409) setConflict(true); throw new Error(body.error || '옵션을 저장하지 못했습니다.'); }
+      if(seoView){
+        const expected=optionInputs(saved.options).map(row=>editedNames.has(row.id)?{...row,translatedName:rows.find(value=>value.id===row.id)!.translatedName}:row);
+        confirmOptionTranslationSave(body,saved.options,saved.productVersion,expected);
+        if(changes.some(change=>body.options.rows.find(row=>row.id===change.optionId)?.provenance.translatedName!=='manual'))throw Error('옵션명 저장 결과를 확인하지 못했습니다. 입력을 유지합니다.');
+        applyLoaded(body);setMessage(`한국어 옵션명 ${changes.length}개 저장 완료`);onSaved?.();return;
+      }
       if (imagesOnly) { setSaved(body); setRows(previous => mergeSavedOptionImages(previous, body.options)); setSnapshotVersion(body.productVersion); setConflict(false); setMessage('옵션 대표 이미지를 저장했습니다. 다른 미저장 입력은 유지했습니다.'); onSaved?.(); return; }
       applyLoaded(body); setMessage(`옵션 ${body.options.rows.length}개 저장 완료 · 견적 포함 ${body.options.rows.filter(row => row.included).length}개`); onSaved?.();
     } catch (cause) { if(!controller.signal.aborted)setError(cause instanceof Error ? cause.message : '옵션을 저장하지 못했습니다.'); } finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }
-  function update<K extends OptionField>(id: string, key: K, value: OptionInput[K]) { setRows(previous => previous.map(row => row.id === id ? { ...row, [key]: value, ...(key === 'unitsPerPack' && value !== row.unitsPerPack ? {packagingConfirmed:false} : {}) } : row)); }
+  function update<K extends OptionField>(id: string, key: K, value: OptionInput[K]) { if(seoView&&key==='translatedName')setEditedNames(previous=>new Set([...previous,id]));setRows(previous => previous.map(row => row.id === id ? { ...row, [key]: value, ...(key === 'unitsPerPack' && value !== row.unitsPerPack ? {packagingConfirmed:false} : {}) } : row)); }
   function origin(row: OptionInput, key: OptionField) {
     const previous = saved?.options.rows.find(item => item.id === row.id);
     return previous && previous[key] === row[key] ? originNames[previous.provenance[key] ?? 'unverified'] : '미저장 수정';
@@ -148,6 +157,20 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
       {dirty && <small>대표 이미지 저장은 기존 옵션의 이미지 변경만 반영합니다. 옵션명·가격 등 다른 입력은 해당 단계에서 저장하세요.</small>}
     </div>;
   }
+
+  if (seoView) return <section ref={editorRoot} className="seo-option-names" aria-label="SEO 옵션명 편집" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+    {sourceMarkers}<h3>옵션명</h3><div className="seo-option-names-body">
+      {loading&&<p role="status">옵션명을 불러오는 중입니다.</p>}{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
+      {(refreshNotice||conflict||changedElsewhere)&&<p role="status">{refreshNotice||'상품이 변경되었습니다. 옵션명 입력은 유지했습니다. 최신 저장본을 확인해주세요.'}</p>}
+      {rows.map((row,index)=>{const key=row.imageKey??saved?.sourceImageKeys?.[row.id],thumbnail=key&&images.includes(key)?key:null;return <article key={row.id} className="seo-option-name" data-option-target={row.id===focusedOptionId}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- Use the same owned option image as the registration editor. */}
+        {thumbnail&&<img src={'/api/files/'+thumbnail.split('/').map(encodeURIComponent).join('/')} alt="" width={64} height={64} loading="lazy"/>}
+        <label><span>원본: {row.originalName||row.supplierSku||`옵션 ${index+1}`}</span><input aria-label={`${index+1}번째 한국어 옵션명`} value={row.translatedName} maxLength={500} disabled={busy||loading} onChange={event=>update(row.id,'translatedName',event.target.value)}/><small>{row.included?'견적 포함':'견적 제외'} · {origin(row,'translatedName')}</small></label>
+      </article>;})}
+      {!loading&&!rows.length&&<p>저장된 옵션이 없습니다.</p>}
+      <div className="seo-option-name-actions"><button type="button" className="btn primary" disabled={!saved||!dirty||busy||loading||conflict||changedElsewhere} onClick={()=>void save()}>옵션명 저장</button><button type="button" className="btn ghost" disabled={busy||loading} onClick={()=>void reload()}>저장본 다시 조회</button></div>
+    </div>
+  </section>;
 
   return <div ref={editorRoot} className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={dirty} data-workspace-saving={busy}>
     {sourceMarkers}

@@ -19,6 +19,7 @@ type Props = {
   onSaved?: () => void;
   onTranslateImage?: (sourceKey: string, sourceLanguage?: 'zh' | 'en', role?: 'detailTop' | 'detail' | 'detailBottom') => void;
   imageProcessingBusy?: boolean;
+  seoLayout?: boolean;
 };
 type Draft = {
   seo: { title: string; keywords: string; description: string };
@@ -56,7 +57,7 @@ async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<Pro
 
 export function ProductContentEditor(props: Props) { return <ContentEditor key={props.product.id} {...props} />; }
 
-function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false }: Props) {
+function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false }: Props) {
   const [content, setContent] = useState<ProductContent>(() => emptyProductContent(product.id));
   const [draft, setDraft] = useState<Draft>(() => draftFrom(emptyProductContent(product.id)));
   const [loading, setLoading] = useState(true);
@@ -286,7 +287,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     setDraft(previous => ({ ...previous, assets: { ...previous.assets, [role]: previous.assets[role].filter(value => value !== key) } }));
   }
 
-  return <div className="panel-stack" aria-busy={busy || loading} data-workspace-dirty={anyDirty} data-workspace-saving={busy}>
+  return <div className={seoLayout&&section==='SEO'?'panel-stack seo-common-editor':'panel-stack'} aria-busy={busy || loading} data-workspace-dirty={anyDirty} data-workspace-saving={busy}>
     {([
       ['SEO', JSON.stringify(draft.seo)!==JSON.stringify(initial.seo)],
       ['대표 이미지', JSON.stringify(draft.assets.main)!==JSON.stringify(initial.assets.main)],
@@ -295,7 +296,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
       ['표시사항', labelClearDirty||draft.labelProductNameLinked!==initial.labelProductNameLinked||JSON.stringify(draft.label)!==JSON.stringify(initial.label)||JSON.stringify(draft.labelLayout)!==JSON.stringify(initial.labelLayout)||JSON.stringify(draft.customLabels)!==JSON.stringify(initial.customLabels)],
       ['대표 이미지', JSON.stringify(draft.assets.size)!==JSON.stringify(initial.assets.size)||JSON.stringify(draft.assets.label)!==JSON.stringify(initial.assets.label)],
     ] as const).map(([step,changed],index)=><span hidden key={index} data-quotation-source-step={step} data-workspace-dirty={changed}/>)}
-    <div className="panel-note"><div><strong>{sectionTitle} 작업 자료</strong><p>{section === '표시사항' ? '필요한 표시사항을 기록하고 수정합니다. 빈 항목과 인증·법적 적합성은 카테고리 기준 확인이 필요합니다.' : section === '이미지' ? '업로드한 이미지를 역할과 순서에 맞게 배치합니다. 파일을 지정해도 번역·배경 제거가 실행되지는 않습니다.' : '수집·번역 결과를 검토하고 상품명, 검색어, 설명을 수정하는 작업 공간입니다. 작성하지 않은 내용은 자동으로 채우지 않습니다.'}</p></div></div>
+    {seoLayout&&section==='SEO'?<h3>상품명 / 검색태그</h3>:<div className="panel-note"><div><strong>{sectionTitle} 작업 자료</strong><p>{section === '표시사항' ? '필요한 표시사항을 기록하고 수정합니다. 빈 항목과 인증·법적 적합성은 카테고리 기준 확인이 필요합니다.' : section === '이미지' ? '업로드한 이미지를 역할과 순서에 맞게 배치합니다. 파일을 지정해도 번역·배경 제거가 실행되지는 않습니다.' : '수집·번역 결과를 검토하고 상품명, 검색어, 설명을 수정하는 작업 공간입니다. 작성하지 않은 내용은 자동으로 채우지 않습니다.'}</p></div></div>}
     {loading && <p role="status">저장한 작업 자료를 불러오는 중입니다.</p>}
     {error && <div role="alert" className="panel-note"><div><strong>{error}</strong>{conflict && <p>현재 입력을 복사해 보관한 뒤 저장본을 불러와 변경 내용을 확인해주세요.</p>}<button type="button" className="btn ghost" disabled={busy || loading} onClick={() => void load()}>{loaded ? '입력 버리고 저장본 불러오기' : '다시 불러오기'}</button></div></div>}
     {message && <p role="status">{message}</p>}
@@ -303,11 +304,13 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     {loaded && <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} disabled={busy || loading}>
       {section === '표시사항' && <button type="button" className="btn ghost" onClick={() => void fillLabel()}>상품명·저장 기본설정으로 빈 표시사항 채우기</button>}
       {section === 'SEO' && <div className="panel-stack">
-        <label className="field"><span>노출 상품명 <Origin field={content.seo.title} /></span><input maxLength={500} value={draft.seo.title} placeholder={product.title} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))} /></label>
+        <label className="field"><span>{seoLayout?'상품명':'노출 상품명'} <Origin field={content.seo.title} /></span><input aria-label={seoLayout?'SEO 상품명':undefined} maxLength={seoLayout?100:500} value={draft.seo.title} placeholder={product.title} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, title: event.target.value } }))} /></label>
+        {seoLayout&&<small className={draft.seo.title.length>100?'seo-input-count exceeded':'seo-input-count'}>{draft.seo.title.length}/100자{draft.seo.title.length>100?' · 기존 입력을 유지했습니다. 상품명을 검토해주세요.':''}</small>}
         {!draft.seo.title && <button type="button" className="btn ghost" onClick={() => setDraft(previous => ({ ...previous, seo: { ...previous.seo, title: product.title } }))}>현재 상품명 사용</button>}
-        <label className="field"><span>검색어 · 줄바꿈 또는 쉼표로 구분, 최대 50개 <Origin field={content.seo.keywords} /></span><textarea maxLength={5050} value={draft.seo.keywords} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, keywords: event.target.value } }))} /></label>
+        <label className="field"><span>{seoLayout?'검색태그 (쉼표로 구분)':'검색어 · 줄바꿈 또는 쉼표로 구분, 최대 50개'} <Origin field={content.seo.keywords} /></span><textarea aria-label={seoLayout?'SEO 검색태그':undefined} rows={5} maxLength={5050} value={draft.seo.keywords} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, keywords: event.target.value } }))} /></label>
+        {seoLayout&&<small className={draft.seo.keywords.split(/[\n,]/).map(value=>value.trim()).filter(Boolean).join(', ').length>150?'seo-input-count exceeded':'seo-input-count'}>{draft.seo.keywords.split(/[\n,]/).map(value=>value.trim()).filter(Boolean).join(', ').length}/150자 · 견적서 검색태그 기준</small>}
         <QuotationKeywordReview value={draft.seo.keywords} onApply={keywords => setDraft(previous => ({ ...previous, seo: { ...previous.seo, keywords } }))}/>
-        <label className="field"><span>상품 설명 · 텍스트 <Origin field={content.seo.description} /></span><textarea rows={8} maxLength={20000} value={draft.seo.description} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))} /></label>
+        <details open={seoLayout?undefined:true}><summary hidden={!seoLayout}>상품 설명</summary><label className="field"><span>상품 설명 · 텍스트 <Origin field={content.seo.description} /></span><textarea rows={8} maxLength={20000} value={draft.seo.description} onChange={event => setDraft(previous => ({ ...previous, seo: { ...previous.seo, description: event.target.value } }))} /></label></details>
       </div>}
       {section === '표시사항' && <>
         <label><input type="checkbox" checked={draft.labelProductNameLinked} onChange={event=>{const linked=event.target.checked;setDraft(previous=>({...previous,labelProductNameLinked:linked,labelClears:linked?previous.labelClears.filter(key=>key!=='productName'):previous.labelClears,label:{...previous.label,...(linked?{productName:content.seo.title.value}:{})}}));}}/> 품명을 SEO 상품명과 연동</label><small>연동해 저장하면 이후 1단계 상품명 변경도 반영됩니다. 품명을 직접 수정하면 연동이 해제됩니다.</small>

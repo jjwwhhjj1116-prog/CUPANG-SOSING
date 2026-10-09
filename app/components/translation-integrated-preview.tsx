@@ -3,17 +3,18 @@ import { useEffect, useRef, useState } from 'react';
 
 type Preview = { scope?: 'all' | 'options'; productId: string; productVersion: string; contentRevision: number; optionRevision: number; fingerprint: string; preview: { name: string; before: string; after: string }[]; skipped: string[] };
 type Props = {
-  scope?: 'all' | 'options'; productId: string; version: string; jobId: string; disabled: boolean; onSaved?: () => void;
+  scope?: 'all' | 'options'; productId: string; version: string; jobId: string; disabled: boolean; onSaved?: () => void; beforeApply?: () => boolean;
 };
 export function TranslationIntegratedPreview(props: Props) {
   return <TranslationIntegratedPreviewContent key={JSON.stringify([props.productId, props.version, props.jobId, props.scope ?? 'all'])} {...props} />;
 }
-function TranslationIntegratedPreviewContent({ productId, version, jobId, disabled, onSaved, scope = 'all' }: Props) {
+function TranslationIntegratedPreviewContent({ productId, version, jobId, disabled, onSaved, beforeApply, scope = 'all' }: Props) {
   const [plan, setPlan] = useState<Preview | null>(null), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [done, setDone] = useState(false);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => { active.current?.abort(); }, []);
   async function run(action: 'preview' | 'apply') {
     if (disabled || done || active.current || (action === 'apply' && !plan)) return;
+    if (action === 'apply' && beforeApply && !beforeApply()) return;
     const controller = new AbortController(); active.current = controller; setBusy(true); setMessage('');
     try {
       const response = await fetch(`/api/products/${encodeURIComponent(productId)}/translation-apply`, { method: 'POST', signal: controller.signal,
@@ -39,7 +40,7 @@ function TranslationIntegratedPreviewContent({ productId, version, jobId, disabl
     } catch (error) { if (!controller.signal.aborted) { setPlan(null); setMessage(error instanceof Error ? error.message : '저장 여부를 다시 조회해주세요.'); } }
     finally { if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
   }
-  return <fieldset disabled={disabled || busy || done} aria-label={scope === 'options' ? '옵션 번역 적용' : 'SEO 표시사항 옵션 통합 적용'}>
+  return <fieldset disabled={disabled || busy || done} data-workspace-saving={busy} data-quotation-source-step="SEO" aria-label={scope === 'options' ? '옵션 번역 적용' : 'SEO 표시사항 옵션 통합 적용'}>
     <legend>{scope === 'options' ? '옵션 번역 검토·저장' : 'SEO · 표시사항 · 옵션 함께 저장'}</legend>
     <p>완료된 같은 번역 결과를 한 번에 적용합니다. 직접 수정한 값과 공란은 보존합니다. 이미지와 Supplier Hub 전송은 포함하지 않습니다.</p>
     <button type="button" className="btn blue" onClick={() => void run('preview')}>{scope === 'options' ? '옵션 적용 미리보기 · 무료' : '통합 적용 미리보기 · 무료'}</button>
