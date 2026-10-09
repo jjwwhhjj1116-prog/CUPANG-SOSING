@@ -59,9 +59,11 @@ export function createSeoWorkspaceDraftState(input: {
   const source = validateTranslationSource(input.source), memo = memoInput(input.memo);
   const features = [source.guidance?.features && `저장된 특징 참고 메모:\n${source.guidance.features}`,
     memo.brand && `사용자가 입력한 브랜드 참고 · 판매자 사실로 미확인:\n${memo.brand}`,
-    memo.features && memo.features !== source.guidance?.features && `현재 사용자 특징 참고 메모 · 판매자 사실과 별도:\n${memo.features}`].filter(Boolean).join('\n\n');
-  const keywords = [source.guidance?.keywords && `저장된 검색어 참고 메모:\n${source.guidance.keywords}`,
-    memo.keywords && memo.keywords !== source.guidance?.keywords && `현재 사용자 검색어 참고 메모:\n${memo.keywords}`].filter(Boolean).join('\n\n');
+    memo.features && memo.features !== source.guidance?.features && `현재 사용자 특징 참고 메모 · 판매자 사실과 별도:\n${memo.features}`,
+    memo.keywords && memo.keywords !== source.guidance?.keywords && `현재 사용자 검색어 참고 메모 · 저장된 타겟 키워드와 별도:\n${memo.keywords}`].filter(Boolean).join('\n\n');
+  // Initial tags carry this exact canonical keyword list as their provenance.
+  // Display headings and newly edited memo must not impersonate that list.
+  const keywords = source.guidance?.keywords ?? '';
   const state: SeoWorkspaceDraftState = {
     schemaVersion: 1, productId: input.productId, productVersion: input.productVersion, contentRevision: input.contentRevision,
     source: validateTranslationSource({ ...source, guidance: { features, keywords } }), memo,

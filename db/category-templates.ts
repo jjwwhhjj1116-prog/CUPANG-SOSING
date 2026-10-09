@@ -15,18 +15,16 @@ export async function validateStoredTemplate(ownerId: string, template: Template
   const object = await env.FILES.get(template.storageKey);
   if (!object || object.customMetadata?.sha256 !== template.sha256 || object.customMetadata?.format !== template.format) throw new TemplateValidationError('저장된 견적서 원본과 파일 정보가 일치하지 않습니다.');
   const bytes = await object.arrayBuffer();
+  if(template.workbookEvidence){
+    if(!hubSchema)throw new TemplateValidationError('공식 파일 연결의 원본 Single 양식이 없습니다.');
+    try{
+      const {verifyOfficialWorkbookTemplateEvidence}=await import('@/app/official-hub-template');
+      await verifyOfficialWorkbookTemplateEvidence(bytes,template,hubSchema);
+    }catch{throw new TemplateValidationError('공식 파일 연결의 원본·Single 지문·식별값이 다릅니다. 다시 준비해주세요.');}
+    return;
+  }
   let headers: string[];
   if (template.format === 'xlsx') headers = xlsxHeaders(await inspectXlsx(bytes), template.sheetName, template.headerRow);
   else headers = parseTemplateText(new TextDecoder('utf-8', { fatal: true }).decode(bytes), template.format === 'tsv' ? '\t' : ',', template.headerRow);
   if (JSON.stringify(headers.map(value => value.trim())) !== JSON.stringify(template.headers)) throw new TemplateValidationError('견적서 머리글이 원본 파일과 일치하지 않습니다. 다시 연결해주세요.');
-  if(template.workbookEvidence){
-    if(!hubSchema)throw new TemplateValidationError('공식 파일 연결의 원본 Single 양식이 없습니다.');
-    try{
-      const {connectOfficialWorkbookTemplate}=await import('@/app/official-hub-template');
-      const checked=await connectOfficialWorkbookTemplate(bytes,hubSchema),expected=checked.template.workbookEvidence!;
-      if(template.sheetName!==checked.template.sheetName||template.headerRow!==checked.template.headerRow||template.dataStartRow!==checked.template.dataStartRow
-        ||Object.keys(expected).length!==Object.keys(template.workbookEvidence).length
-        ||Object.entries(expected).some(([key,value])=>JSON.stringify(value)!==JSON.stringify(template.workbookEvidence![key as keyof typeof expected])))throw Error('different evidence');
-    }catch{throw new TemplateValidationError('공식 파일 연결의 원본·Single 지문·식별값이 다릅니다. 다시 준비해주세요.');}
-  }
 }

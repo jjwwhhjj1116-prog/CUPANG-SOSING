@@ -59,17 +59,23 @@ export async function connectOfficialWorkbookTemplate(bytes:ArrayBuffer,raw:HubS
   report:{categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,company:snapshot.company,kanCategoryId:kan,noticeNumber:selected.noticeNumber,version:selected.version,categoryValue:selected.categoryValue,
    matchedColumns:selected.suggested.mappings.length,unmatchedColumns:selected.suggested.unmatchedColumns,ambiguousColumns:selected.suggested.ambiguousColumns,registered:false as const}};
 }
-export type VerifiedOfficialWorkbook={evidence:OfficialWorkbookEvidence;optionalUnmappedOsrpFieldId:string|null};
-/** Recheck saved evidence against the exact original bytes used for this export. */
-export async function verifyOfficialWorkbookTemplate(bytes:ArrayBuffer,profile:CategoryProfileInput):Promise<VerifiedOfficialWorkbook|undefined>{
- const template=profile.template,saved=template?.workbookEvidence;if(!saved)return undefined;
- if(!profile.hubSchema)throw Error('공식 파일 연결의 원본 Single 양식이 없습니다.');
- const checked=await connectOfficialWorkbookTemplate(bytes,profile.hubSchema),actual=checked.template.workbookEvidence!;
+/** Recheck original bytes, headers and saved evidence with one archive inspection. */
+export async function verifyOfficialWorkbookTemplateEvidence(bytes:ArrayBuffer,template:CategoryProfileInput['template'],hubSchema?:HubSchemaSnapshot){
+ const saved=template?.workbookEvidence;if(!saved)return undefined;
+ if(!hubSchema)throw Error('공식 파일 연결의 원본 Single 양식이 없습니다.');
+ const checked=await connectOfficialWorkbookTemplate(bytes,hubSchema),actual=checked.template.workbookEvidence!;
  if(template.format!=='xlsx'||template.sha256!==actual.templateSha256||template.sheetName!==checked.template.sheetName
   ||template.headerRow!==checked.template.headerRow||template.dataStartRow!==checked.template.dataStartRow
   ||JSON.stringify(template.headers)!==JSON.stringify(checked.template.headers.map(header=>header.trim()))
   ||Object.keys(saved).length!==Object.keys(actual).length
   ||Object.entries(actual).some(([key,value])=>JSON.stringify(value)!==JSON.stringify(saved[key as keyof typeof actual])))throw Error('공식 파일 연결의 원본·Single 지문·식별값이 다릅니다. 다시 준비해주세요.');
+ return checked;
+}
+export type VerifiedOfficialWorkbook={evidence:OfficialWorkbookEvidence;optionalUnmappedOsrpFieldId:string|null};
+/** Recheck saved evidence against the exact original bytes used for this export. */
+export async function verifyOfficialWorkbookTemplate(bytes:ArrayBuffer,profile:CategoryProfileInput):Promise<VerifiedOfficialWorkbook|undefined>{
+ const checked=await verifyOfficialWorkbookTemplateEvidence(bytes,profile.template,profile.hubSchema);if(!checked)return undefined;
+ const actual=checked.template.workbookEvidence!;
  const fields=getQuotationSchema(profile.categoryId,profile.categoryPath,profile.hubSchema).fields;
  const osrp=fields.find(field=>!field.required&&!field.hubWire?.name&&JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','commonAttributes','osrp']));
  // An absent column is not an alias for MSRP. Ambiguous or explicitly named

@@ -45,7 +45,8 @@ test('one Google draft action prepares/approves/executes once, keeps memos separ
   assert.deepEqual(f.actions,['prepare','approve','execute']);assert.equal(f.queries.length,2);assert.equal(f.h.aiSources.length,0);assert.equal(f.retained(),before);
   for(const field of ['title','description','attributes','reference','category'])assert.deepEqual(plain(f.state.source[field]),source[field]);
   assert.match(f.state.source.guidance.features,/저장된 특징 메모/u);assert.match(f.state.source.guidance.features,/입력 브랜드/u);assert.match(f.state.source.guidance.features,/현재 특징 검토 메모/u);
-  assert.match(f.state.source.guidance.keywords,/저장된 키워드/u);assert.match(f.state.source.guidance.keywords,/현재 키워드/u);
+  assert.equal(f.state.source.guidance.keywords,f.input.source.guidance.keywords);assert.match(f.state.source.guidance.features,/현재 키워드/u);
+  assert.ok(!f.state.source.guidance.keywords.includes('참고 메모'),'display headings never become a canonical target keyword');
   assert.ok(f.queries.every(q=>!q.includes('입력 브랜드')&&!q.includes('当前特点')&&!q.includes('현재 특징')&&!q.includes('현재 키워드')),'Google must not translate guidance as supplier facts');
   assert.equal(f.state.executeSubmitted,true);assert.ok(f.states.some(state=>state.executeSubmitted),'durable client flag is published before execute');
   await f.api.refreshSeoWorkspaceDraft(f.state,f.controls);await f.api.runSeoWorkspaceDraft(f.state,f.controls);
