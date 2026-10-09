@@ -24,6 +24,8 @@ test('wire identity round-trips manual columns and choice format without renamin
   const f=setup(h),mappings=[{column:1,field:f.at(f.legacy,'modelNumber').id,required:true},{column:0,field:f.at(f.legacy,'brand').id,required:false,choiceFormat:'label'},{column:2,field:'constant',constant:'직접 고정값',required:false},{column:3,field:'skuId',required:false}];
   const upgraded=f.translate(mappings,f.legacy,f.current);assert.deepEqual(clone(upgraded),[{...mappings[0],field:'model'},{...mappings[1],field:'brand'},mappings[2],mappings[3]]);
   assert.deepEqual(clone(f.translate(upgraded,f.current,f.legacy)),mappings);assert.notEqual(upgraded,mappings);assert.match(mappings[0].field,/^live_/);
+  const reordered={...f.current,metadata:Object.fromEntries(Object.entries(f.current.metadata).reverse())};
+  assert.deepEqual(clone(f.translate(mappings,f.legacy,reordered)),clone(upgraded));assert.deepEqual(clone(f.translate(upgraded,reordered,f.legacy)),mappings);
   for(const changed of [{schemaString:f.current.schemaString+' '},{metadata:{...f.current.metadata,version:999}},{categoryPath:['changed']},{company:schemaCompanies[1]},{categoryId:'999999'},{inputBindings:undefined}])assert.equal(f.translate(mappings,f.legacy,{...f.current,...changed}),mappings);
  }finally{h.close();}
 });
@@ -40,7 +42,7 @@ test('a missing exact target path fails before changing any mapping rather than 
  }finally{h.close();}
 });
 
-for(const company of schemaCompanies)test(`same-form rule upgrade preserves frozen manual CSV and enables the next URL draft (${company.code})`,async()=>{
+for(const company of schemaCompanies)test(`same-form rule upgrade with reordered metadata preserves frozen manual CSV and enables the next URL draft (${company.code})`,async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
   const f=setup(h,company),api=h.load('app/api/category-profiles/route.ts'),oldModel=f.at(f.legacy,'modelNumber').id,oldBrand=f.at(f.legacy,'brand').id;
   const bytes=new TextEncoder().encode('브랜드,모델,고정값\n'),sha256=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex'),storageKey=`owner/category-templates/${sha256}.csv`;
@@ -54,8 +56,8 @@ for(const company of schemaCompanies)test(`same-form rule upgrade preserves froz
   const render=async()=>{const source=await exporter.readMappedQuotationSource('owner',product.id,profile.id),resolved=exporter.resolveQuotationExport(source),assets=JSON.parse(source.product.image_keys).map((key,index)=>({key,name:`images/${index}.png`})),rows=h.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source,resolved,assets);return {source,fingerprint:await exporter.quotationExportFingerprint(source,2),mapped:await h.load('app/exports/mapped-quotation.ts').createMappedQuotation({originalBytes:bytes.buffer,profile:source.profile,rows,dataStartRow:2})};};
   const before=await render(),untouched={product:h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(product.id),content:h.sqlite.prepare('SELECT * FROM product_content WHERE product_id=?').get(product.id),options:h.sqlite.prepare('SELECT * FROM product_options WHERE product_id=?').get(product.id),quotation:h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get(product.id),context:h.sqlite.prepare('SELECT * FROM collection_context WHERE job_id=?').get('job')};
   assert.deepEqual(clone(before.mapped.values.map(row=>row.slice(0,3))),Array.from({length:6},(_,index)=>['검토 브랜드',index===1?'':'기존 수동 모델','계속 유지']));
-  const mappings=f.translate(profile.mappings,profile.hubSchema,f.current);
-  const {profile:upgraded}=await json(await api.PUT(new Request('https://app.test/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...input,hubSchema:f.current,mappings}})})));
+  const current={...f.current,metadata:Object.fromEntries(Object.entries(f.current.metadata).reverse())},mappings=f.translate(profile.mappings,profile.hubSchema,current);
+  const {profile:upgraded}=await json(await api.PUT(new Request('https://app.test/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...input,hubSchema:current,mappings}})})));
   assert.equal(upgraded.mappings[0].field,'model');assert.equal(upgraded.mappings[1].field,'brand');assert.deepEqual(upgraded.template,profile.template);
   const after=await render();assert.deepEqual(clone(after.source.profile.mappings),clone(profile.mappings));assert.deepEqual(after.mapped.values,before.mapped.values);assert.deepEqual(after.mapped.bytes,before.mapped.bytes);
   assert.notEqual(after.fingerprint,before.fingerprint);assert.equal(after.source.source.profile.revision,upgraded.revision);

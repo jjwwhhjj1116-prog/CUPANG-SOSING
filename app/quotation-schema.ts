@@ -581,7 +581,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       const validationIssues = [...quotationValueIssues(definition, value, ownedKeys, source), ...(!weightManual && !manualOption && !manualCommon ? automatic.issues ?? [] : [])];
       const reviewMessages: string[] = [];
       if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
-      if (definition.reviewRequired && (value.trim() || hasSelectedEmptyQuotationChoice(definition, { value, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
+      if (definition.workbookWire?.requirement === 'conditional') reviewMessages.push(['해당 상품에 조건이 적용되는지 확인해주세요.', definition.help].filter(Boolean).join('\n'));
+      else if (definition.reviewRequired && (value.trim() || hasSelectedEmptyQuotationChoice(definition, { value, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
       if (definition.type === 'images' && value) reviewMessages.push('견적서에는 연결한 첨부 이미지 파일명이 기록됩니다. 실제 상품과 이미지 구성을 확인해주세요.');
       const fieldIssues = [...validationIssues, ...reviewMessages];
       return [definition.id, { value, source, needsReview: Boolean(definition.reviewRequired) || fieldIssues.length > 0, issues: fieldIssues, validationIssues, reviewMessages } satisfies ResolvedQuotationField];

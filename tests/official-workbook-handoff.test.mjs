@@ -122,7 +122,11 @@ for(const company of schemaCompanies)test(`official workbook evidence can prepar
   forged.template.workbookEvidence.sourceSchemaSha256='0'.repeat(64);h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(JSON.stringify(forged),profile.id);
   const rejected=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}),400);assert.match(rejected.error,/원본·Single 지문/);
   h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(saved,profile.id);
-  const ordinary=JSON.parse(saved);delete ordinary.template.workbookEvidence;h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(JSON.stringify(ordinary),profile.id);
+  // An ordinary profile has neither file proof nor descriptors/mappings that
+  // require it. Removing only proof would create an invalid stored fixture.
+  const ordinary=JSON.parse(saved),workbookFieldIds=new Set((ordinary.template.workbookFields??[]).map(field=>field.id));
+  delete ordinary.template.workbookEvidence;delete ordinary.template.workbookFields;ordinary.mappings=ordinary.mappings.filter(mapping=>!workbookFieldIds.has(mapping.field));
+  h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(JSON.stringify(ordinary),profile.id);
   const noEvidence=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));assert.ok(noEvidence.submissionReview.issues.some(issue=>issue.fieldId===osrp.id&&issue.kind==='error'));
   h.sqlite.prepare('UPDATE category_profiles SET payload=? WHERE id=?').run(saved,profile.id);
   assert.deepEqual(h.objects.get(profile.template.storageKey),new Uint8Array(bytes));

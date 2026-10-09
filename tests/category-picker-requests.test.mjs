@@ -25,11 +25,15 @@ function harness(request,existing=false,{readProfiles=async()=>Response.json({pr
   if(name==='@/app/category-profiles')return{usableCategoryCode:()=>true};
   if(name==='@/app/quotation-schema')return{getQuotationSchema:()=>({fields:[],status:'observed'})};
   if(name==='@/app/hub-rule-version-mappings')return mappingHarness.load('app/hub-rule-version-mappings.ts');
+  if(name==='@/app/category-definition-refresh-client'){
+   const loaded={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/category-definition-refresh-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:loaded,Error,TextEncoder,crypto,fetch:fetcher,require:dependency=>mappingHarness.load(dependency.slice(2)+'.ts')});return loaded;
+  }
   if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};
   if(name==='@/app/components/category-quotation-preview')return{CategoryQuotationPreview:()=>null};
   if(name==='@/app/components/supplier-hub-category-browser')return{SupplierHubCategoryBrowser:()=>null};
   if(name==='@/app/supplier-hub-catalog')return{loadLiveHubCategorySchema:readSchema,loadLiveHubCategoryTemplate:readTemplate};
   if(name==='@/app/category-catalog')return{categoryChoices:profiles=>[...profiles.map(profile=>({...choice,key:profile.id,profileId:profile.id,path:profile.categoryPath,categoryId:profile.categoryId})),...(existing?[]:[choice])],canConfirmCategory:choice=>Boolean(choice),categoryAdvancedSeed:()=>({}),categoryChoicesAtPath:(choices,path)=>choices.filter(choice=>JSON.stringify(choice.path)===JSON.stringify(path)),categoryProfilesForChoice:(profiles,target)=>profiles.filter(profile=>profile.categoryId===target.categoryId&&JSON.stringify(profile.categoryPath)===JSON.stringify(target.path)),categoryLevel:()=>[],categoryObservationScope:{},categoryProfileForChoice:()=>({categoryId:'80719',template:null,mappings:[]}),searchCategoryChoices:choices=>choices};
+  if(name==='@/app/official-workbook-evidence')return mappingHarness.load('app/official-workbook-evidence.ts');
   return native(name);
  }});
  const render=()=>{index=0;const tree=exports.CategoryPicker({profiles:existing?[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1}]:[],selectedId:'saved',onSelected:p=>selected.push(p),onAdvanced(){}});first=false;return tree;};

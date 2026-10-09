@@ -16,6 +16,12 @@ function load(file,overrides={}){
  }});if(!Object.keys(overrides).length)cache.set(file,exports);return exports;
 }
 const profile={id:'saved',name:'주방 설정',categoryId:'80719',categoryPath:['주방용품','바스켓'],revision:2,template:null,mappings:[]};
+test('queue mapping condition preserves conditional workbook requirements without making blanks mandatory',()=>{
+ const field={id:'workbook_991234_'+'a'.repeat(64)+'_0',label:'설치지원방식',type:'select',required:false,workbookWire:{sha256:'a'.repeat(64),sheetName:'입력',column:0,requirement:'conditional'},choices:[{value:'고객직접설치',label:'고객직접설치'}]};
+ const {IntakeQuotationPreview}=load('app/components/intake-quotation-preview.tsx',{'@/app/quotation-schema':{getQuotationSchema:()=>({fields:[field]})},'@/app/components/category-quotation-preview':{CategoryQuotationPreview:()=>null}});
+ const data={...profile,categoryId:'991234',template:{name:'원본.xlsx',format:'xlsx',sheetName:'입력',headerRow:5,dataStartRow:9,headers:[field.label]},mappings:[{column:0,field:field.id,required:false,choiceFormat:'label'}]},before=JSON.stringify(data);
+ const html=renderToStaticMarkup(React.createElement(IntakeQuotationPreview,{profile:data}));assert.match(html,/조건부 필수 · 선택지 표시 이름/);assert.equal(JSON.stringify(data),before);assert.equal(data.mappings[0].required,false);
+});
 test('queue quotation preview shows actual mappings, missing columns and observed defaults without mutating settings',()=>{
  const {IntakeQuotationPreview}=load('app/components/intake-quotation-preview.tsx');
  const data={...profile,template:{name:'검토.xlsx',format:'xlsx',sheetName:'입력',headerRow:4,headers:['상품명','고정','미연결']},mappings:[{column:0,field:'title',required:true},{column:1,field:'constant',constant:'<script>내용</script>',required:false}]};

@@ -68,7 +68,7 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
           : '권장소비자가격: 직접 입력한 금액도 제조사 권장가·공식 판매처 가격의 근거와 가격 설정 권한을 확인해주세요. 저장은 Supplier Hub 약관 동의가 아닙니다.',
         optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
       else if (cell?.reviewMessages !== undefined) {
-        for (const message of new Set(cell.reviewMessages)) if (populated) add({kind:'review', code:'EVIDENCE_REVIEW',
+        for (const message of new Set(cell.reviewMessages)) if (populated || field.workbookWire?.requirement === 'conditional') add({kind:'review', code:'EVIDENCE_REVIEW',
           message: `${fieldLabel}: ${message}`, optionId:row.optionId, optionLabel:row.optionLabel, fieldId:field.id});
       }
       else if (!errors.size && cell?.needsReview && populated) add({kind:'review', code:'EVIDENCE_REVIEW',

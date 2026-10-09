@@ -3,6 +3,7 @@ import { getQuotationSchema } from '@/app/quotation-schema';
 import type { HubSchemaSnapshot, HubWireField } from '@/app/supplier-hub-schema';
 
 const wireIdentity = (wire: HubWireField) => JSON.stringify([wire.path, wire.nameKey ?? null, wire.valueKey ?? null, wire.name ?? null]);
+const metadataIdentity = (schema: HubSchemaSnapshot) => JSON.stringify(Object.entries(schema.metadata).sort(([left], [right]) => left.localeCompare(right)));
 
 /** Only an app rule-version change may rename a connection automatically.
  * Real form changes keep their existing validation/review behavior. */
@@ -10,7 +11,7 @@ export function translateHubRuleVersionMappings(mappings: ColumnMapping[], from?
   if (!from || !to || from.inputBindings === to.inputBindings || from.format !== to.format
     || from.categoryId !== to.categoryId || JSON.stringify(from.categoryPath) !== JSON.stringify(to.categoryPath)
     || from.company.code !== to.company.code || from.company.name !== to.company.name
-    || from.schemaString !== to.schemaString || JSON.stringify(from.metadata) !== JSON.stringify(to.metadata)) return mappings;
+    || from.schemaString !== to.schemaString || metadataIdentity(from) !== metadataIdentity(to)) return mappings;
   const before = getQuotationSchema(from.categoryId, from.categoryPath, from).fields;
   const after = getQuotationSchema(to.categoryId, to.categoryPath, to).fields;
   return mappings.map(mapping => {

@@ -49,3 +49,21 @@ export async function updateCategoryProfile(ownerId: string, id: string, expecte
     .bind(payload, new Date().toISOString(), ownerId, id, expectedRevision).first<Row>();
   return result ? profile(result) : null;
 }
+
+/** A refreshed definition is a new configuration. The source and every product
+ * linked to it remain unchanged. The receipt is internal, never client input. */
+export async function forkCategoryProfileDefinition(ownerId:string,sourceId:string,sourceRevision:number,input:CategoryProfileInput,requestId:string):Promise<CategoryProfile|null>{
+  const payload=JSON.stringify({...validateCategoryProfile(input),_definitionSource:{id:sourceId,revision:sourceRevision}});
+  const db=await database(),now=new Date().toISOString();
+  const result=await db.prepare(`INSERT INTO category_profiles(id,owner_id,payload,revision,created_at,updated_at)
+    SELECT ?,?,?,1,?,? WHERE EXISTS (SELECT 1 FROM category_profiles WHERE owner_id=? AND id=? AND revision=?)
+    ON CONFLICT(id) DO NOTHING RETURNING *`)
+    .bind(requestId,ownerId,payload,now,now,ownerId,sourceId,sourceRevision).first<Row>();
+  if(result)return profile(result);
+  const saved=await db.prepare(`SELECT * FROM category_profiles WHERE owner_id=? AND id=?
+    AND EXISTS (SELECT 1 FROM category_profiles WHERE owner_id=? AND id=? AND revision=?)`)
+    .bind(ownerId,requestId,ownerId,sourceId,sourceRevision).first<Row>();
+  if(saved&&saved.revision===1&&saved.payload===payload)return profile(saved);
+  if(saved)throw new CategoryProfileConflictError('이미 저장된 양식 갱신 요청의 내용이 변경되었습니다. 카테고리 목록을 다시 불러와주세요.');
+  return null;
+}

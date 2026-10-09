@@ -13,16 +13,12 @@ import { loadLiveHubCategorySchema } from '@/app/supplier-hub-catalog';
 import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
+import { categoryDefinitionRequiresFork, refreshCategoryDefinition, sameCategoryHubDefinition, type CategoryDefinitionRefreshRequest } from '@/app/category-definition-refresh-client';
 
 // Draft rules are part of the reusable form definition. A new observation time
 // alone does not change it; refreshing this profile leaves product snapshots intact.
 function sameHubDefinition(saved: HubSchemaSnapshot | undefined, captured: HubSchemaSnapshot) {
-  return saved?.format === captured.format && saved.categoryId === captured.categoryId
-    && JSON.stringify(saved.categoryPath) === JSON.stringify(captured.categoryPath)
-    && saved.schemaString === captured.schemaString && JSON.stringify(saved.metadata) === JSON.stringify(captured.metadata)
-    && saved.company?.code === captured.company.code && saved.company?.name === captured.company.name
-    && saved.draftInitialization === captured.draftInitialization && saved.inputBindings === captured.inputBindings
-    && saved.settingsInitialization === captured.settingsInitialization;
+  return sameCategoryHubDefinition(saved, captured);
 }
 
 /** Compile through the shared snapshot validator. A saved ID alone is not
@@ -60,6 +56,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
   const activeRequest = useRef<AbortController | null>(null);
   const completed = useRef(false);
   const createRequest = useRef<{ body: string; id: string } | null>(null);
+  const definitionRefreshRequest = useRef<CategoryDefinitionRefreshRequest | null>(null);
   useEffect(() => () => { activeRequest.current?.abort(); }, []);
   const selected = liveChoice?.key===selectedKey?liveChoice:choices.find(choice => choice.key === selectedKey);
   const selectedProfile = profiles.find(profile => profile.id === selected?.profileId);
@@ -89,6 +86,11 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       async function withSchema(profile:CategoryProfile){
         if(!hubSchema)return profile;
         if(sameHubDefinition(profile.hubSchema,hubSchema))return profile;
+        if(categoryDefinitionRequiresFork(profile,hubSchema)) {
+          const saved=await refreshCategoryDefinition(profile,hubSchema,definitionRefreshRequest,{signal:controller.signal});
+          if(!controller.signal.aborted)setRefreshedProfiles(current=>[saved,...(current??profiles).filter(value=>value.id!==saved.id)]);
+          return saved;
+        }
         const connection={template:profile.template,mappings:translateHubRuleVersionMappings(profile.mappings,profile.hubSchema,hubSchema)};
         if(controller.signal.aborted)return profile;
         const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...profile,hubSchema,...connection}}),signal:controller.signal});
@@ -123,7 +125,11 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       const latestProfiles = await loadCategoryProfiles(controller.signal);
       if (controller.signal.aborted) return;
       setRefreshedProfiles(latestProfiles);
-      const matching = categoryProfilesForChoice(latestProfiles, target);
+      let matching = categoryProfilesForChoice(latestProfiles, target);
+      if(matching.length>1&&hubSchema){
+        const exact=matching.filter(profile=>sameHubDefinition(profile.hubSchema,hubSchema));
+        if(exact.length===1)matching=exact;
+      }
       if (matching.length > 1) {
         setSelectedKey('');
         throw new Error('같은 카테고리의 견적서 설정이 여러 개입니다. 갱신된 목록에서 사용할 설정을 선택해주세요.');

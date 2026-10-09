@@ -8,14 +8,14 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 
 /** Actual picker, observed catalog and paginated reader. No real browser or Hub is used. */
 export function categoryPickerUI(request,{catalog}={}){
- const slots=[],modules=new Map(),selected=[],calls=[];let cursor=0;
+ const slots=[],modules=new Map(),selected=[],calls=[],cleanups=[];let cursor=0,firstRender=true;
  const fetcher=async(path,init)=>{calls.push({path,method:init?.method??'GET'});return request(path,init);};
  const hooks={useMemo:fn=>fn(),useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},
-  useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(){}};
+  useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(effect){if(firstRender){const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup);}}};
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,
-   {exports,Error,crypto,AbortController,TextDecoder,structuredClone,fetch:fetcher,require(name){
+   {exports,Error,crypto,AbortController,TextEncoder,TextDecoder,structuredClone,fetch:fetcher,require(name){
     if(name==='react')return hooks;if(name.endsWith('.css'))return {};
     if(name==='@/app/supplier-hub-catalog'&&catalog)return catalog;
     if(name.startsWith('../docs/')&&name.endsWith('.json'))return JSON.parse(fs.readFileSync(new URL('../../docs/'+name.slice(8),import.meta.url),'utf8'));
@@ -24,11 +24,12 @@ export function categoryPickerUI(request,{catalog}={}){
    }});return exports;
  }
  const Component=load('app/components/category-picker.tsx').CategoryPicker;
- const render=()=>{cursor=0;return Component({profiles:[],selectedId:'',onSelected:profile=>selected.push(profile),onAdvanced(){}});};
+ const render=()=>{cursor=0;const tree=Component({profiles:[],selectedId:'',onSelected:profile=>selected.push(profile),onAdvanced(){}});firstRender=false;return tree;};
+ const close=()=>{for(const cleanup of cleanups.splice(0))cleanup();};
  const settle=async()=>{const deadline=Date.now()+5000;while(nodes(render()).some(node=>node.props?.className==='category-picker'&&node.props['aria-busy'])){
   if(Date.now()>deadline)throw Error('Category lookup timeout');await new Promise(resolve=>setTimeout(resolve,1));
  }};
- return {render,selected,calls,reopen(){slots.length=0;},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async chooseLive(choice){
+ return {render,selected,calls,close,reopen(){close();slots.length=0;firstRender=true;},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async chooseLive(choice){
   nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice(choice);
   await settle();
  },async chooseCode(code){
