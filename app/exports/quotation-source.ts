@@ -46,6 +46,7 @@ export async function readQuotationExportSource(owner: string, productId: string
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
   let hubSchema=profile?.hubSchema;
+  let template=profile?.template;
   let sourceGaps: CollectionSourceGap[] = [];
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
   {
@@ -75,6 +76,7 @@ export async function readQuotationExportSource(owner: string, productId: string
       if (!profile && payload?.category) {
         const category = validateCategoryProfile(payload.category);
         hubSchema=category.hubSchema;
+        template=category.template;
         categoryContext = { source: 'collection', profileId: typeof payload.category.id === 'string' ? payload.category.id : null,
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };
       }
@@ -96,7 +98,7 @@ export async function readQuotationExportSource(owner: string, productId: string
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
   const generatedProductLabelIssues = await inspectGeneratedProductLabels({ownerId:owner,productId,profileId:categoryContext.profileId,
     resolved:resolveQuotationFields({categoryId:categoryContext.categoryId,categoryPath:categoryContext.categoryPath,product,content,options,settings,
-      overrides:scopedQuotationOverrides(state,categoryContext.categoryId),...(hubSchema?{hubSchema}:{})}),
+      overrides:scopedQuotationOverrides(state,categoryContext.categoryId),...(hubSchema?{hubSchema}:{}),...(template?{template}:{})}),
     head:async key=>env.FILES?.head?await env.FILES.head(key):null,
     readView:async selectedProfileId=>{
       const {GET:productLabelsGET}=await import('@/app/api/products/[id]/product-labels/route');
@@ -109,7 +111,7 @@ export async function readQuotationExportSource(owner: string, productId: string
     }});
   if(!await quotationSourcesCurrent(owner,productId,source))throw new QuotationExportError('표시사항 파일을 확인하는 동안 저장값이 변경되었습니다. 다시 검토해주세요.',409);
   return { product, content, options, settings, state: { ...state, overrides: scopedQuotationOverrides(state, categoryContext.categoryId) }, savedScopes: state, profile, categoryContext, source, company,
-    ...(sourceGaps.length ? { sourceGaps } : {}),...(hubSchema?{hubSchema}:{}),...(generatedProductLabelIssues.length?{generatedProductLabelIssues}:{}) };
+    ...(sourceGaps.length ? { sourceGaps } : {}),...(hubSchema?{hubSchema}:{}),...(template?{template}:{}),...(generatedProductLabelIssues.length?{generatedProductLabelIssues}:{}) };
 }
 export type QuotationExportSource = Awaited<ReturnType<typeof readQuotationExportSource>>;
 /** Resolve only the profile captured when this product was collected; never guess by label. */
@@ -138,7 +140,7 @@ export async function readMappedQuotationSource(owner: string, productId: string
 }
 export function resolveQuotationExport(saved: QuotationExportSource) {
   const resolved = resolveQuotationFields({ categoryId: saved.categoryContext.categoryId, categoryPath: saved.categoryContext.categoryPath,
-    product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides,...(saved.hubSchema?{hubSchema:saved.hubSchema}:{}) });
+    product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides,...(saved.hubSchema?{hubSchema:saved.hubSchema}:{}),...(saved.template?{template:saved.template}:{}) });
   if (saved.categoryContext.categoryId && saved.savedScopes && hasLegacyQuotationOverrides(saved.savedScopes)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   return resolved;
 }
@@ -147,7 +149,7 @@ export async function quotationExportFingerprint(saved: QuotationExportSource, d
   // override have different provenance, even when the visible cell is unchanged.
   const resolved = resolveQuotationExport(saved);
   return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...saved, settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,
-    schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath,saved.hubSchema),
+    schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath,saved.hubSchema,saved.template),
     ...quotationNoticeBindingFingerprint(saved, resolved),
     ...quotationPackagedWeightBindingFingerprint(saved.state.overrides, resolved, () => resolveQuotationExport({ ...saved, state: { ...saved.state, overrides: { common: {}, options: {} } } })),
     ...optionPriceCalculationRevision(saved.product, saved.options.rows, saved.settings, saved.state.overrides),

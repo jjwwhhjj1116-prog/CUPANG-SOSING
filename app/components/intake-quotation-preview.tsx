@@ -3,7 +3,7 @@ import { getQuotationSchema } from '@/app/quotation-schema';
 import { CategoryQuotationPreview } from '@/app/components/category-quotation-preview';
 
 export function IntakeQuotationPreview({ profile }: { profile: CategoryProfile }) {
-  const schema = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema);
+  const schema = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema,profile.template);
   const fieldLabels:Record<string,string>={...categoryFields,...Object.fromEntries(schema.fields.map(field=>[field.id,field.label]))};
   const template = profile.template;
   let mappingError = '';

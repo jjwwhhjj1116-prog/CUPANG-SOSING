@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     requestId = request.headers.get('Idempotency-Key') ?? undefined;
     if (requestId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new Error('카테고리 저장 요청 번호가 올바르지 않습니다.');
     requestId = requestId?.toLowerCase();
-    input = validateCategoryProfile(await body(request)); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); await validateSchemaCompany(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema).fields);
+    input = validateCategoryProfile(await body(request)); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); await validateSchemaCompany(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema,input.template).fields);
   }
   catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
@@ -59,7 +59,7 @@ export async function PUT(request: Request) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('설정 번호와 저장 버전을 확인해주세요.');
     const value = raw as Record<string, unknown>;
     if (typeof value.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(value.id) || typeof value.expectedRevision !== 'number' || !Number.isSafeInteger(value.expectedRevision) || value.expectedRevision < 1) throw new Error('설정 번호와 저장 버전을 확인해주세요.');
-    id = value.id; expectedRevision = value.expectedRevision; input = validateCategoryProfile(value.profile); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); await validateSchemaCompany(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema).fields);
+    id = value.id; expectedRevision = value.expectedRevision; input = validateCategoryProfile(value.profile); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); await validateSchemaCompany(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema,input.template).fields);
   } catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
     const ownerId = await owner();

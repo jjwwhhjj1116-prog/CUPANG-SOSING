@@ -5,6 +5,7 @@ import {suggestQuotationMappings,hasQuotationInputMappings} from '@/app/quotatio
 import {suggestQuotationChoiceFormats} from '@/app/quotation-choice-format';
 import {getQuotationSchema,type QuotationField} from '@/app/quotation-schema';
 import type {OfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
+import {deriveOfficialWorkbookFields} from '@/app/official-workbook-fields';
 
 export function hubTemplateKanId(snapshot:HubSchemaSnapshot):string{
  const meta=snapshot.metadata,kan=String(meta.kanCategoryId??meta.categoryId??'');
@@ -54,10 +55,13 @@ export async function connectOfficialWorkbookTemplate(bytes:ArrayBuffer,raw:HubS
   companyCode:snapshot.company.code,companyName:snapshot.company.name,categoryId:snapshot.categoryId,categoryPath:[...snapshot.categoryPath],
   kanCategoryId:kan,noticeNumber:selected.noticeNumber,version:selected.version};
  const formats=suggestQuotationChoiceFormats(files,inspection,selected.sheetName,selected.layout.dataStartRow,snapshot.categoryId,selected.suggested.mappings,snapshot);
- return {template:{format:'xlsx',sheetName:selected.sheetName,headerRow:5,dataStartRow:selected.layout.dataStartRow,headers:selected.headers,workbookEvidence} as Omit<NonNullable<CategoryProfileInput['template']>,'name'|'sha256'|'storageKey'>,
-  mappings:selected.suggested.mappings.map(mapping=>({...mapping,...(formats.find(format=>format.column===mapping.column)??{})})),
+ const workbookFields=deriveOfficialWorkbookFields(files,inspection,{categoryId:snapshot.categoryId,sha256:workbookEvidence.templateSha256,sheetName:selected.sheetName,headerRow:5,dataStartRow:selected.layout.dataStartRow,headers:selected.headers},selected.suggested.unmatchedColumns);
+ const mappings=[...selected.suggested.mappings.map(mapping=>({...mapping,...(formats.find(format=>format.column===mapping.column)??{})})),...workbookFields.map(field=>({column:field.column,field:field.id,required:field.requirement==='required'}))].sort((a,b)=>a.column-b.column);
+ const remaining=selected.suggested.unmatchedColumns.filter(column=>!workbookFields.some(field=>field.column===column));
+ return {template:{format:'xlsx',sheetName:selected.sheetName,headerRow:5,dataStartRow:selected.layout.dataStartRow,headers:selected.headers,workbookEvidence,workbookFields} as Omit<NonNullable<CategoryProfileInput['template']>,'name'|'sha256'|'storageKey'>,
+  mappings,
   report:{categoryId:snapshot.categoryId,categoryPath:snapshot.categoryPath,company:snapshot.company,kanCategoryId:kan,noticeNumber:selected.noticeNumber,version:selected.version,categoryValue:selected.categoryValue,
-   matchedColumns:selected.suggested.mappings.length,unmatchedColumns:selected.suggested.unmatchedColumns,ambiguousColumns:selected.suggested.ambiguousColumns,registered:false as const}};
+   matchedColumns:mappings.length,unmatchedColumns:remaining,ambiguousColumns:selected.suggested.ambiguousColumns,registered:false as const}};
 }
 /** Recheck original bytes, headers and saved evidence with one archive inspection. */
 export async function verifyOfficialWorkbookTemplateEvidence(bytes:ArrayBuffer,template:CategoryProfileInput['template'],hubSchema?:HubSchemaSnapshot){
@@ -69,6 +73,9 @@ export async function verifyOfficialWorkbookTemplateEvidence(bytes:ArrayBuffer,t
   ||JSON.stringify(template.headers)!==JSON.stringify(checked.template.headers.map(header=>header.trim()))
   ||Object.keys(saved).length!==Object.keys(actual).length
   ||Object.entries(actual).some(([key,value])=>JSON.stringify(value)!==JSON.stringify(saved[key as keyof typeof actual])))throw Error('공식 파일 연결의 원본·Single 지문·식별값이 다릅니다. 다시 준비해주세요.');
+ // Older mappings remain readable. New descriptors must be identical to the
+ // independently re-derived original; client-supplied options are not proof.
+ if(template.workbookFields!==undefined&&JSON.stringify(template.workbookFields)!==JSON.stringify(checked.template.workbookFields))throw Error('원본 Excel 추가 항목의 안내·선택값·열 연결이 실제 원본과 다릅니다. 다시 연결해주세요.');
  return checked;
 }
 export type VerifiedOfficialWorkbook={evidence:OfficialWorkbookEvidence;optionalUnmappedOsrpFieldId:string|null};

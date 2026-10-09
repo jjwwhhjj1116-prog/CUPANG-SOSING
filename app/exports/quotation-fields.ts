@@ -110,8 +110,11 @@ export function quotationAttachmentKeys(saved: QuotationExportSource, resolved: 
 
 /** Uses the resolver's one price calculation and final manual overrides. */
 export function resolvedQuotationRows(saved: QuotationExportSource, resolved: ResolvedQuotation, assets: BundleAsset[]): QuotationRowData[] {
+  const template=saved.template??saved.profile?.template;
   const unsupported = resolved.schema.fields.filter(field => !Object.hasOwn(categoryFields, field.id)
-    && !(field.hubWire && field.id.startsWith(`live_${resolved.schema.categoryId}_`)));
+    && !(field.hubWire && field.id.startsWith(`live_${resolved.schema.categoryId}_`))
+    && !(field.workbookWire&&template?.workbookEvidence?.categoryId===resolved.schema.categoryId&&template.workbookFields?.some(item=>item.id===field.id&&item.column===field.workbookWire!.column)
+      &&template.sha256===field.workbookWire.sha256&&template.sheetName===field.workbookWire.sheetName));
   if (unsupported.length) {
     throw new Error(`견적서 내보내기 연결이 없는 항목입니다: ${unsupported.map(field => field.label).join(', ')}. 항목 연결을 확인한 뒤 다시 내려받아주세요.`);
   }

@@ -2,6 +2,7 @@ import type { QuotationField } from '@/app/quotation-schema';
 import { quotationPriceEditInput } from '@/app/quotation-price-edits';
 /** Subsection names observed in the supplied Couplus quotation screens. */
 export function quotationFieldGroup(field: QuotationField, fields?: readonly QuotationField[]): string {
+  if(field.workbookWire)return '원본 Excel 추가 항목';
   if (field.section === 'product') {
     if (field.visibility === 'exposed') return '노출 속성';
     if (field.visibility === 'hidden') return '비노출 속성';

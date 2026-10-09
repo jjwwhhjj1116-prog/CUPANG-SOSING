@@ -19,6 +19,9 @@ import type {CouplusQuotationInput} from '@/app/couplus-quotation-inputs';
 import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
 import { isPackagedDimensionsMmField, isCanonicalPackagedDimensionsMm, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
+import type {TemplateDefinition} from '@/app/category-profiles';
+import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-descriptors';
+import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -45,6 +48,8 @@ export type QuotationField = {
   contentField?: 'material' | 'components' | 'model';
   optionDimension?: 'widthCm' | 'lengthCm' | 'heightCm';
   hubWire?: HubWireField; draftDefault?: string; schemaDefault?: string;
+  /** Exact original-file-only input; never a guessed Single/Excel API wire. */
+  workbookWire?: {sha256:string;sheetName:string;column:number;requirement:'required'|'conditional'|'optional'};
   hubInput?: CouplusQuotationInput;
   couplusSetting?: CouplusSettingRule;
 };
@@ -184,14 +189,25 @@ function productContentBinding(item: QuotationField): QuotationField {
   return key ? { ...item, optionDimension: key } : item;
 }
 
-export function getQuotationSchema(categoryId: string | null, categoryPath: readonly string[] = [], liveSnapshot?:HubSchemaSnapshot): QuotationSchema {
+export function getQuotationSchema(categoryId: string | null, categoryPath: readonly string[] = [], liveSnapshot?:HubSchemaSnapshot,template?:TemplateDefinition|null): QuotationSchema {
+  // Existing profiles without descriptors retain their original schema. File
+  // changes cannot reactivate manual values saved under another original SHA.
+  const appendWorkbook=(schema:QuotationSchema):QuotationSchema=>{
+    if(!template?.workbookFields)return schema;
+    if(!template.workbookEvidence||template.workbookEvidence.categoryId!==categoryId||template.workbookEvidence.templateSha256!==template.sha256)throw Error('원본 Excel 추가 항목의 카테고리·파일 연결을 확인해주세요.');
+    validateOfficialWorkbookEvidence(template.workbookEvidence,template.sha256,liveSnapshot);
+    const extra=validateOfficialWorkbookFields(template.workbookFields,{...template,categoryId:categoryId??'',dataStartRow:template.dataStartRow??template.headerRow+1});
+    return {...schema,fields:[...schema.fields,...extra.map(item=>({id:item.id,section:'logistics' as const,label:item.label,type:item.type,visibility:'common' as const,
+      required:item.requirement==='required',help:[item.requirement==='conditional'?'조건부 필수 항목입니다. 원본 안내의 해당 조건을 확인해주세요.':'',item.help].filter(Boolean).join('\n'),
+      ...(item.choices?{choices:item.choices.map(value=>({value,label:value}))}:{}),workbookWire:{sha256:template.sha256,sheetName:template.sheetName,column:item.column,requirement:item.requirement}}))]};
+  };
   if(liveSnapshot){
     const snapshot=validateHubSchemaSnapshot(liveSnapshot,categoryId??'',categoryPath);
     const base=getQuotationSchema(categoryId,categoryPath),live=compileHubQuotationSchema(snapshot,base.fields);
     const commonIds=new Set(commonFields.map(field=>field.id)),fields=base.fields.filter(field=>commonIds.has(field.id));
     for(const field of live.fields){const bound=productContentBinding(field),index=fields.findIndex(item=>item.id===field.id);if(index<0)fields.push(bound);else fields[index]=bound;}
-    return {...base,categoryPath:[...categoryPath],fields,status:live.unsupported.length?'unconfirmed':'observed',
-      evidence:'선택한 회사의 Supplier Hub 상세 양식을 읽어 입력 항목을 연결했습니다. 운영 초안·공식 Excel·최종 접수는 별도 대조가 필요합니다.',unsupportedFields:live.unsupported};
+    return appendWorkbook({...base,categoryPath:[...categoryPath],fields,status:live.unsupported.length?'unconfirmed':'observed',
+      evidence:'선택한 회사의 Supplier Hub 상세 양식을 읽어 입력 항목을 연결했습니다. 운영 초안·공식 Excel·최종 접수는 별도 대조가 필요합니다.',unsupportedFields:live.unsupported});
   }
   const hub = categoryId && Object.hasOwn(hubProductSchemas, categoryId) ? hubProductSchemas[categoryId] : undefined;
   const observed = Boolean(hub) || categoryId === '80719' || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || (categoryId === '77442' || categoryId === '81221');
@@ -224,10 +240,10 @@ export function getQuotationSchema(categoryId: string | null, categoryPath: read
     if (categoryId === '64497' || categoryId === '103495') { const model = fields.findIndex(item => item.id === 'model'); fields[model] = { ...fields[model], required: false }; }
   }
   const maxIncludedOptions = hub?.maxIncludedOptions ?? (categoryId === '80719' || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || (categoryId === '77442' || categoryId === '81221') ? 100 : undefined);
-  return { version: 1, categoryId, categoryPath: hub ? [...hub.path] : couplusPath ? [...couplusPath] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
+  return appendWorkbook({ version: 1, categoryId, categoryPath: hub ? [...hub.path] : couplusPath ? [...couplusPath] : categoryId === '80719' ? ['주방용품', '주방수납/정리', '주방수납바구니/바스켓'] : [...categoryPath],
     status: observed ? 'observed' : 'unconfirmed', evidence: categoryId === '81221' ? '81221 공식 상품정보에서 필수 모델명·노출 속성 3개·비노출 속성 13개·선택값·가격·바코드 규칙·옵션 100개 한도를 대조했습니다. 상품고시는 쿠플러스 관찰 기준이며 이미지·인증·물류·최종 접수는 미검증입니다.' : categoryId === '77442' ? '77442 코드·경로·노출 속성 2개·비노출 속성 16개·선택값·필수 모델명과 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 5개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '103495' ? '103495 코드·경로·노출 속성 3개·비노출 속성 23개·선택값·필수 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 9개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '64497' ? '64497 코드·경로·노출 속성 2개·비노출 속성 33개·선택값·필수 가격·바코드 규칙·옵션 100개 한도를 Supplier Hub 상품정보에서 대조했습니다. 상품고시 5개 이름은 공식 미리보기와 일치합니다. 이미지·인증·물류 및 최종 접수는 미검증입니다.' : categoryId === '81452' ? '81452 코드·경로·상품정보 필수 항목·선택값·옵션 100개 한도는 Supplier Hub에서 대조했습니다. 상품고시는 쿠플러스 관찰 기준이며 이미지·인증·물류·최종 접수는 미검증입니다.' : observed ? `${categoryId}의 상품 옵션·검색 속성·선택값은 Supplier Hub 공식 화면에서 대조했습니다. 상품고시 이름은 공식 미리보기 기준입니다. 이미지·인증·물류 입력 규격과 최종 접수는 추가 검증이 필요합니다.` : couplusFields ? '쿠플러스 견적 화면에서 속성·선택지·고시 항목을 확인했습니다. 자동 기본값과 Supplier Hub 공식 규격은 미확인입니다.' : '카테고리별 속성·상품고시 스키마 미확보. 관찰된 공통 입력만 표시합니다.',
     fields: structuredClone(observed ? fields.map(productContentBinding) : fields), submissionReady: false, ...(maxIncludedOptions ? { maxIncludedOptions } : {}),
-    ...(hub?.salePriceMustCoverSupply || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || (categoryId === '77442' || categoryId === '81221') ? { salePriceMustCoverSupply: true } : {}) };
+    ...(hub?.salePriceMustCoverSupply || categoryId === '81452' || categoryId === '64497' || categoryId === '103495' || (categoryId === '77442' || categoryId === '81221') ? { salePriceMustCoverSupply: true } : {}) });
 }
 export function emptyQuotationOverrides(): QuotationOverrides { return { common: {}, options: {} }; }
 
@@ -327,7 +343,7 @@ export function applyQuotationChanges(current: QuotationOverrides, changes: read
 }
 
 export type QuotationResolverInput = { categoryId: string | null; categoryPath?: readonly string[]; product: ProductRecord;
-  content: ProductContent; settings: WorkspaceSettings; options: ProductOptions | readonly ProductOption[]; overrides?: QuotationOverrides; hubSchema?:HubSchemaSnapshot };
+  content: ProductContent; settings: WorkspaceSettings; options: ProductOptions | readonly ProductOption[]; overrides?: QuotationOverrides; hubSchema?:HubSchemaSnapshot; template?:TemplateDefinition|null };
 type Automatic = { value: string; source: QuotationSource; issues?: string[] };
 const literal = (value: unknown, source: QuotationSource): Automatic => ({ value: value === null || value === undefined ? '' : String(value), source: value === '' || value === null || value === undefined ? 'empty' : source });
 const htmlEscape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -338,7 +354,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   const untouchedOptions = Array.isArray(input.options) || (input.options as ProductOptions).revision === 0;
   const includeCommonRow = options.length === 0 && untouchedOptions;
   const overrides = input.overrides ?? emptyQuotationOverrides();
-  const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema);
+  const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
   let ownedKeys: string[] = [];
   const reviewMessages = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
   const issues = [...reviewMessages], validationIssues: string[] = [];

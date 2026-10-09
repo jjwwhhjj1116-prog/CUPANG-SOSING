@@ -38,7 +38,7 @@ export function CategoryQuotationPreview({ schema }: { schema: QuotationSchema }
             const value = couplusQuotationDefault(schema.categoryId, field);
             const choice = field.choices?.find(item => item.value === value);
             return <tr key={field.id}><th scope="row">{field.label}{field.required ? ' *' : ''}</th>
-              <td>{field.required ? '필수' : '선택'} · {field.readOnly ? '연동값' : field.type === 'select' ? '선택형' : field.type === 'images' ? '이미지' : field.type === 'number' ? '숫자' : '직접 입력'}{field.unit ? ` · ${field.unit}` : ''}
+              <td>{field.required ? '필수' : field.workbookWire?.requirement==='conditional' ? '조건부 필수' : '선택'} · {field.readOnly ? '연동값' : field.type === 'select' ? '선택형' : field.type === 'images' ? '이미지' : field.type === 'number' ? '숫자' : '직접 입력'}{field.unit ? ` · ${field.unit}` : ''}
                 {field.choices && <details><summary>허용 선택지 {field.choices.length}개</summary><ul>{field.choices.map((item,index) => <li key={index}>{item.label}{item.value === '' ? ' (저장값: 공란)' : item.label !== item.value ? ` (저장값: ${item.value})` : ''}</li>)}</ul></details>}
                 {field.help && <small>{field.help}</small>}</td>
               <td>{quotationInputLink(field) ?? '직접 입력 또는 확인된 양식 기본값'}</td>

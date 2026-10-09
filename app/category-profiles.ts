@@ -1,5 +1,6 @@
 import {compileHubQuotationSchema,validateHubSchemaSnapshot} from '@/app/supplier-hub-schema';
 import {validateOfficialWorkbookEvidence,type OfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
+import {validateOfficialWorkbookFields,type OfficialWorkbookField} from '@/app/official-workbook-field-descriptors';
 // Aggregate UTF-8 JSON request limit; per-field character limits still apply.
 export const CATEGORY_PROFILE_BODY_LIMIT = 300_000;
 export class CategoryProfileConflictError extends Error {}
@@ -519,19 +520,20 @@ export const categoryFields = {
   material: '소재', countryOfOrigin: '제조국', mainImage: '대표 이미지', detailImage: '상세 이미지',
   label: '표시사항 파일', constant: '고정값',
 } as const;
-export type CategoryField = keyof typeof categoryFields | `live_${string}`;
+export type CategoryField = keyof typeof categoryFields | `live_${string}` | `workbook_${string}`;
 /** Resolver provenance distinguishes an explicit empty-code choice from no input. */
 export type QuotationRowValues = Partial<Record<Exclude<CategoryField, 'constant'>, string | number | null>> & {
   selectedEmptyChoices?: readonly string[];
 };
 export function categoryFieldScope(field: string): string | null {
-  return field.startsWith('glove_') ? '81221' : field.startsWith('marathon_') ? '103495' : field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^(?:hub|live)_(\d+)_/.exec(field)?.[1] ?? null;
+  return field.startsWith('glove_') ? '81221' : field.startsWith('marathon_') ? '103495' : field.startsWith('tooth_') ? '64497' : field.startsWith('brace_') ? '81452' : field.startsWith('board_') ? '77442' : /^(?:hub|live|workbook)_(\d+)_/.exec(field)?.[1] ?? null;
 }
 export type TemplateDefinition = {
   name: string; format: 'csv' | 'tsv' | 'xlsx'; sha256: string;
   sheetName: string; headerRow: number; headers: string[];
   storageKey?: string; dataStartRow?: number;
   workbookEvidence?:OfficialWorkbookEvidence;
+  workbookFields?:OfficialWorkbookField[];
 };
 /** Older profiles retain their original header-following default without rewriting stored payloads. */
 export function quotationStartRow(template?: TemplateDefinition | null): number {
@@ -581,6 +583,10 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
       if(template.format!=='xlsx'||template.headerRow!==5||template.dataStartRow!==9)throw Error('공식 파일 연결의 작성 시트 구성이 다릅니다.');
       template.workbookEvidence=validateOfficialWorkbookEvidence(value.workbookEvidence,template.sha256,hubSchema);
     }
+    if(value.workbookFields!==undefined){
+      if(!template.workbookEvidence)throw Error('원본 Excel 추가 항목에는 확인된 공식 파일 연결이 필요합니다.');
+      template.workbookFields=validateOfficialWorkbookFields(value.workbookFields,{...template,categoryId,dataStartRow:quotationStartRow(template)});
+    }
   }
   if (!Array.isArray(input.mappings) || input.mappings.length > 200) throw new Error('견적서 열 연결을 확인해주세요.');
   if (!template && input.mappings.length) throw new Error('견적서 파일을 먼저 연결해주세요.');
@@ -590,9 +596,11 @@ export function validateCategoryProfile(value: unknown): CategoryProfileInput {
     const column = Number(value.column);
     if (typeof value.column !== 'number' || !Number.isInteger(column) || column < 0 || !template || column >= template.headers.length || used.has(column)) throw new Error('견적서 열을 중복 없이 연결해주세요.');
     used.add(column);
-    if (typeof value.field !== 'string' || (!Object.hasOwn(categoryFields, value.field)&&!liveFields.some(field=>field.id===value.field)) || typeof value.required !== 'boolean') throw new Error('열 연결 항목을 확인해주세요.');
+    if (typeof value.field !== 'string' || (!Object.hasOwn(categoryFields, value.field)&&!liveFields.some(field=>field.id===value.field)&&!template?.workbookFields?.some(field=>field.id===value.field)) || typeof value.required !== 'boolean') throw new Error('열 연결 항목을 확인해주세요.');
     if (value.choiceFormat !== undefined && value.choiceFormat !== 'value' && value.choiceFormat !== 'label') throw new Error('선택값 출력 형식을 확인해주세요.');
     const field = value.field as CategoryField;
+    const workbookField=template?.workbookFields?.find(item=>item.id===field);
+    if(workbookField&&workbookField.column!==column)throw Error('원본 Excel 추가 항목은 확인된 원래 열에만 연결할 수 있습니다.');
     if (field === 'constant' && value.choiceFormat === 'label') throw new Error('고정값에는 선택 문구 변환을 적용할 수 없습니다.');
     const scopedCategory = categoryFieldScope(field);
     if (scopedCategory && scopedCategory !== categoryId) throw new Error('다른 카테고리의 고유 속성은 연결할 수 없습니다. 선택한 카테고리의 항목으로 다시 연결해주세요.');

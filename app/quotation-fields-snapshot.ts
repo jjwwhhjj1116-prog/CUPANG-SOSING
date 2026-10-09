@@ -42,6 +42,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   let categoryContext: QuotationFieldsView['categoryContext'] = { source: 'unknown', profileId: null, categoryId: null, categoryPath: [] };
   let collection: QuotationSourceGuard['collection'] = null;
   let hubSchema=profile?.hubSchema;
+  let template=profile?.template;
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
   {
     let offerId: string | null = null;
@@ -65,6 +66,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
       if (!profile && captured?.category) {
         const category = validateCategoryProfile(captured.category);
         hubSchema=category.hubSchema;
+        template=category.template;
         categoryContext = { source: 'collection', profileId: typeof captured.category.id === 'string' ? captured.category.id : null,
           categoryId: category.categoryId || null, categoryPath: [...category.categoryPath] };
       }
@@ -82,7 +84,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const source: QuotationSourceGuard = { productVersion: product.updated_at, imageKeys: product.image_keys, pricingPolicy: product.pricing_policy ?? null,
     contentRevision: content.revision, optionRevision: options.revision, settingsPayload: savedSettings?.payload ?? null,
     profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
-  const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings,...(hubSchema?{hubSchema}:{}) };
+  const inputs = { categoryId: categoryContext.categoryId, categoryPath: categoryContext.categoryPath, product, content, options, settings,...(hubSchema?{hubSchema}:{}),...(template?{template}:{}) };
   const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
   const automatic = (await resolvePublicDetail(resolveQuotationFields(inputs),content,owner,imageKeys,detailConfig)).resolved;
   const overrides = scopedQuotationOverrides(state, categoryContext.categoryId);

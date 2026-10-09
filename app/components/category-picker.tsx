@@ -12,6 +12,7 @@ import { SupplierHubCategoryBrowser } from '@/app/components/supplier-hub-catego
 import { loadLiveHubCategorySchema } from '@/app/supplier-hub-catalog';
 import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
+import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 
 // Draft rules are part of the reusable form definition. A new observation time
 // alone does not change it; refreshing this profile leaves product snapshots intact.
@@ -24,7 +25,23 @@ function sameHubDefinition(saved: HubSchemaSnapshot | undefined, captured: HubSc
     && saved.settingsInitialization === captured.settingsInitialization;
 }
 
-function codeEvidenceLabel(choice: CategoryChoice) {
+/** Compile through the shared snapshot validator. A saved ID alone is not
+ * evidence for another code, path, company or original workbook. */
+function savedChoiceDefinition(choice: CategoryChoice | undefined, profile: CategoryProfile | undefined) {
+  if (!choice?.categoryId || !profile || choice.profileId !== profile.id || choice.categoryId !== profile.categoryId
+    || JSON.stringify(choice.path) !== JSON.stringify(profile.categoryPath)) return null;
+  try {
+    const schema = getQuotationSchema(choice.categoryId, choice.path, profile.hubSchema, profile.template);
+    const workbookEvidence=profile.template?.workbookEvidence;
+    if(workbookEvidence)validateOfficialWorkbookEvidence(workbookEvidence,profile.template!.sha256,profile.hubSchema);
+    return { schema, profile, verifiedHub: Boolean(profile.hubSchema?.metadata.displayCategoryCode === choice.categoryId),verifiedWorkbook:Boolean(workbookEvidence) };
+  } catch { return null; }
+}
+
+function codeEvidenceLabel(choice: CategoryChoice, profile?: CategoryProfile) {
+  const saved=savedChoiceDefinition(choice,profile);
+  if (saved?.verifiedHub) return '저장된 Supplier Hub 상세 양식 · 코드·전체 경로 일치';
+  if (saved?.verifiedWorkbook) return '저장된 공식 Excel · 코드·전체 경로 일치';
   if (choice.codeEvidence === 'supplier-hub') return 'Supplier Hub 코드 확인 · 전체 경로 일치';
   if (choice.codeEvidence === 'couplus') return '쿠플러스 코드 관찰 · Supplier Hub 대조 미확인';
   if (choice.codeEvidence === 'saved') return '사용자가 저장한 코드 · Supplier Hub 경로·코드 미확인';
@@ -46,7 +63,10 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
   useEffect(() => () => { activeRequest.current?.abort(); }, []);
   const selected = liveChoice?.key===selectedKey?liveChoice:choices.find(choice => choice.key === selectedKey);
   const selectedProfile = profiles.find(profile => profile.id === selected?.profileId);
-  const schema = selected?.categoryId ? getQuotationSchema(selected.categoryId, selected.path) : null;
+  const savedDefinitions = useMemo(() => new Map(profiles.map(profile => [profile.id, savedChoiceDefinition(choices.find(choice => choice.profileId === profile.id), profile)])), [profiles, choices]);
+  const selectedDefinition = useMemo(() => savedChoiceDefinition(selected, selectedProfile), [selected, selectedProfile]);
+  const schema = selected?.categoryId ? selectedDefinition?.schema ?? getQuotationSchema(selected.categoryId, selected.path) : null;
+  const savedPreviewWarning = selectedProfile && !selectedDefinition ? '저장된 상세 양식의 회사·코드·전체 경로 또는 원본 연결을 확인하지 못했습니다. 카테고리·양식 설정에서 다시 확인해주세요.' : '';
   const visible = searchCategoryChoices(choices, query);
   const connections = categoryChoicesAtPath(choices, path).filter(choice => choice.isLeaf);
   const hasChildren = categoryLevel(choices, path, path.length).length > 0;
@@ -139,23 +159,24 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
     {path.length > 0 && <nav className="category-breadcrumb" aria-label="선택한 카테고리 경로">{path.map((name,index)=><button type="button" key={index} disabled={busy||catalogMode==='live'} onClick={()=>navigate(path.slice(0,index+1))}>{name}</button>)}</nav>}
     <div hidden={catalogMode!=='saved'}>
     <label className="field"><span>카테고리 검색</span><input type="search" placeholder="카테고리 이름 또는 번호" value={query} onChange={event => setQuery(event.target.value)} disabled={busy}/></label>
-    {profiles.length > 0 && <details className="category-saved"><summary>저장한 카테고리 설정에서 선택</summary><label className="field"><span>저장한 카테고리 설정</span><select value={selected?.profileId ?? ''} disabled={busy} onChange={event => { const found = choices.find(choice => choice.profileId === event.target.value); if (found) { choose(found); setQuery(''); } }}><option value="">저장한 설정 선택</option>{profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId || '코드 미입력'} · {profile.hubSchema ? `${profile.hubSchema.company.name} (${profile.hubSchema.company.code})` : '회사 미확인'} · {profile.categoryPath.join(' › ')}</option>)}</select></label></details>}
+    {profiles.length > 0 && <details className="category-saved"><summary>저장한 카테고리 설정에서 선택</summary><label className="field"><span>저장한 카테고리 설정</span><select value={selected?.profileId ?? ''} disabled={busy} onChange={event => { const found = choices.find(choice => choice.profileId === event.target.value); if (found) { choose(found); setQuery(''); } }}><option value="">저장한 설정 선택</option>{profiles.map(profile => { const company = savedDefinitions.get(profile.id)?.profile.hubSchema?.company; return <option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId || '코드 미입력'} · {company ? `${company.name} (${company.code})` : '회사 미확인'} · {profile.categoryPath.join(' › ')}</option>; })}</select></label></details>}
     {query.trim() ? <div className="category-search-results">{visible.map(choice => <button key={choice.key} type="button" className={selectedKey === choice.key ? 'selected' : ''} onClick={() => { if (activeRequest.current || completed.current) return; if (choice.isLeaf) { choose(choice); if (canConfirmCategory(choice)) void confirm(choice); } else { navigate(choice.path); setQuery(''); } }} disabled={busy}><span>{choice.path.join(' › ')}{choice.profileName && <em>{choice.profileName}</em>}</span><small className={canConfirmCategory(choice) ? 'ready' : 'unconfirmed'}>{choice.categoryId ? `${choice.evidence === 'saved' ? '저장 설정 · ' : ''}${choice.categoryId}` : choice.isLeaf ? '최종 · 코드 미확인' : choice.childrenObserved ? '하위 분류 보기' : '하위 목록 미확인'}</small></button>)}{!visible.length && <p>관찰한 목록과 저장 설정에서 일치하는 분류가 없습니다. 전체 목록에 없는 것으로 단정할 수는 없습니다.</p>}</div> : <div className="category-tree">{Array.from({ length: depths }, (_, depth) => <section key={depth}><h3>{depth + 1}단계 카테고리</h3><div className="category-tree-options">{categoryLevel(choices, path, depth).map(name => {
       const next = [...path.slice(0, depth), name]; const exact = categoryChoicesAtPath(choices, next); const leaves = exact.filter(choice => choice.isLeaf);
       const known = leaves.some(canConfirmCategory); const children = categoryLevel(choices, next, next.length).length > 0;
       return <button type="button" key={name} className={path[depth] === name ? 'selected' : ''} disabled={busy} onClick={() => navigate(next)}><span>{name}</span><small className={known ? 'ready' : 'unconfirmed'}>{known ? '설정 선택' : leaves.length ? '최종 · 코드 미확인' : children ? '›' : '하위 미확인'}</small></button>;
     })}</div></section>)}</div>}
     </div>
-    {connections.length > 1 && <div className="category-connections"><strong>이 경로에 연결된 설정을 선택해주세요.</strong>{connections.map(choice => <button key={choice.key} className={selectedKey === choice.key ? 'selected' : ''} type="button" disabled={busy} onClick={() => choose(choice)}><span>{choice.profileName || '화면에서 관찰한 분류'} · {choice.categoryId || '코드 미입력'}</span><small>{codeEvidenceLabel(choice)}</small></button>)}</div>}
+    {connections.length > 1 && <div className="category-connections"><strong>이 경로에 연결된 설정을 선택해주세요.</strong>{connections.map(choice => <button key={choice.key} className={selectedKey === choice.key ? 'selected' : ''} type="button" disabled={busy} onClick={() => choose(choice)}><span>{choice.profileName || '화면에서 관찰한 분류'} · {choice.categoryId || '코드 미입력'}</span><small>{codeEvidenceLabel(choice, profiles.find(profile => profile.id === choice.profileId))}</small></button>)}</div>}
     {unresolvedBranch && <div className="category-unconfirmed" role="status"><strong>{path.join(' › ')}</strong><p>이 가지의 하위 목록은 아직 확보하지 못했습니다. {path[0] === '기프트카드' ? '쿠플러스에서 다른 분류의 이전 목록이 남아 있어 해당 하위 목록을 가져오지 않았습니다.' : '최종 분류 이름과 실제 코드를 확인한 뒤 저장 설정으로 연결해주세요.'}</p></div>}
     {selected?.isLeaf && <div className={`category-summary ${canConfirmCategory(selected) ? '' : 'unconfirmed'}`}><strong>{selected.path.join(' › ')}</strong><span>{selected.categoryId ? `카테고리 ${selected.categoryId}` : '분류 코드 미확인'}</span><p>{canConfirmCategory(selected) ? '선택 완료를 누르면 1688 URL 입력으로 이동합니다. 수집한 상품정보와 기본설정을 이 카테고리의 견적 항목에 연결합니다.' : '이 분류는 코드 확인이 필요합니다. 확인된 최종 카테고리를 선택해주세요.'}</p>{schema?.status === 'unconfirmed' && <small>이 카테고리의 전체 견적 항목은 아직 대조되지 않았습니다.</small>}</div>}
     <details className="category-scope"><summary>현재 지원 범위와 확인 근거</summary><p>{categoryObservationScope.rootsWithSecondLevel}개 대분류의 2단계 {categoryObservationScope.secondLevel}개와 주방수납/정리 최종 {categoryObservationScope.completeSubtreeLeaves}개, 요가/필라테스용품 최종 {categoryObservationScope.yogaSubtreeLeaves}개 경로를 확인했습니다. 코드 {categoryObservationScope.knownCodes}개 중 {categoryObservationScope.supplierHubCodes}개는 {categoryObservationScope.supplierHubObservedDate} Supplier Hub 개별등록 화면과 대조했습니다. 전체 최종 분류·카테고리별 양식·공식 접수는 아직 모두 검증되지 않았습니다.</p></details>
     {error && <p role="alert" className="collection-error">{error}</p>}
     <div className="modal-actions"><button className="btn primary" type="button" disabled={!canConfirmCategory(selected) || busy} onClick={() => void confirm()}>{busy ? '설정 중…' : '선택 완료 · URL 입력'}</button></div>
     <details className="category-advanced" key={selected?.key ?? 'unselected'}><summary>견적 항목·Excel 출력 설정</summary>
-      {selected?.isLeaf && <p>{codeEvidenceLabel(selected)}{selected.codeObservedAt ? ` · ${selected.codeObservedAt.slice(0, 10)}` : ''}</p>}
+      {selected?.isLeaf && <p>{codeEvidenceLabel(selected, selectedProfile)}{selected.codeObservedAt ? ` · ${selected.codeObservedAt.slice(0, 10)}` : ''}</p>}
       <p>회사·카테고리 확인 후 URL을 입력해 초안을 작성합니다. 공식 Excel 파일은 7단계 견적서의 ‘공식 견적 양식 준비’에서 연결합니다. 기존에 연결한 양식은 유지합니다.</p>
-      {selected?.isLeaf && schema && (selectedProfile ? <IntakeQuotationPreview key={`${selected.key}:${selectedProfile.revision}`} profile={selectedProfile}/> : <CategoryQuotationPreview key={selected.key} schema={schema} />)}
+      {savedPreviewWarning && <p role="alert">{savedPreviewWarning}</p>}
+      {selected?.isLeaf && schema && (selectedDefinition ? <IntakeQuotationPreview key={`${selected.key}:${selectedDefinition.profile.revision}`} profile={selectedDefinition.profile}/> : <CategoryQuotationPreview key={selected.key} schema={schema} />)}
       <button className="btn ghost" type="button" disabled={busy} onClick={() => onAdvanced(categoryAdvancedSeed(selected, path))}>{selected?.categoryId ? '카테고리·Excel 양식 설정' : '선택 경로로 실제 코드·양식 연결'}</button>
     </details>
     {selected?.categoryId && !usableCategoryCode(selected.categoryId) && <p role="alert">저장된 카테고리 번호 형식이 올바르지 않습니다. 카테고리·Excel 양식 설정에서 영문·숫자·하이픈·밑줄 100자 이하의 실제 번호로 수정해주세요. 기존 설정은 보존되어 있습니다.</p>}

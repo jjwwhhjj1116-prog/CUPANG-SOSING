@@ -183,7 +183,7 @@ function delimitedCell(value: string | number): string { return `"${String(delim
 /** Check supported static constraints without evaluating workbook formulas. */
 function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection, rows: QuotationData[]): { warnings: string[]; issues: QuotationValidationIssue[]; count: number } {
   const root = spans(source);
-  const fields = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema).fields;
+  const fields = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema,profile.template).fields;
   const warnings: string[] = []; const issues: QuotationValidationIssue[] = []; let mismatches = 0; let blockingMismatches = 0; let unchecked = 0; let uncertainLengths = 0;
   const rules = root.children.filter(node => node.local === 'dataValidations').flatMap(node => node.children.filter(child => child.local === 'dataValidation'));
   for (const rule of rules) {
@@ -287,7 +287,7 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
   if (hash !== template.sha256) fail('선택한 견적서와 저장된 원본 파일 지문이 일치하지 않습니다.');
   const verifiedWorkbook=await verifyOfficialWorkbookTemplate(input.originalBytes,profile);
   const report: MappedQuotationReport = { verification: 'draft', rowCount: input.rows.length, dataStartRow: input.dataStartRow, validationIssues: [], validationIssueCount: 0, missingRequired: [], blankCells: [], warnings: ['생성 결과는 검토용입니다. Supplier Hub 접수·카테고리별 필수 정보 검증은 완료되지 않았습니다.'] };
-  const schemaFields = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema).fields;
+  const schemaFields = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema,profile.template).fields;
   let payloadSize = 0;
   const values = input.rows.map((data, index) => {
     if (!data || typeof data !== 'object' || Array.isArray(data)) fail('상품 자료 형식을 확인해주세요.');
