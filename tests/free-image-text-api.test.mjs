@@ -25,9 +25,13 @@ function png(width = 3, height = 2, color = 200) {
 }
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 function fixture() {
-  const sqlite = memoryDatabase(), objects = new Map(), cache = new Map(), translations = [], writes = [], deletions = [];
-  const document = { createElement(tag) {
+  const sqlite = memoryDatabase(), objects = new Map(), cache = new Map(), translations = [], writes = [], deletions = [], drawings = [], measurements = [], fontLoads = [];
+  const document = { fonts: {
+    async load(descriptor, sample) { fontLoads.push({ descriptor, sample }); return [{ family: 'Gmarket Sans', status: 'loaded' }]; }, check: () => true,
+  }, createElement(tag) {
     assert.equal(tag, 'canvas'); const canvas = { width: 0, height: 0, pixels: null }, clips = []; let clip = null;
+    const textWidth = (font, text) => Array.from(text).length * Number(/([0-9.]+)px/u.exec(font)?.[1]) / 2
+      * (/\bbold\b/u.test(font) ? 1.25 : 1) * (/\bitalic\b/u.test(font) ? 1.1 : 1);
     const context = {
       drawImage(image, x, y) { assert.equal(x, 0); assert.equal(y, 0); canvas.pixels = image.pixels.slice(); },
       save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() {}, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
@@ -38,7 +42,12 @@ function fixture() {
           canvas.pixels.set(color, (py * canvas.width + px) * 4);
         }
       },
-      measureText() { throw Error('erase must not measure wording'); }, fillText() { throw Error('erase must not draw wording'); },
+      measureText(text) { const width = textWidth(this.font, text); measurements.push({ text, font: this.font, width }); return { width }; },
+      fillText(text, x, y) {
+        drawings.push({ text, x, y, font: this.font, textAlign: this.textAlign });
+        const width = textWidth(this.font, text), left = Math.floor(x - (this.textAlign === 'center' ? width / 2 : this.textAlign === 'right' ? width : 0));
+        this.fillRect(left, Math.floor(y), 1, 1);
+      },
     };
     canvas.getContext = kind => { assert.equal(kind, '2d'); return context; };
     canvas.toBlob = (callback, type) => { assert.equal(type, 'image/png'); callback(new Blob([png(canvas.width, canvas.height, canvas.pixels)], { type })); };
@@ -109,7 +118,7 @@ function fixture() {
   const content = () => load('db/product-content.ts').readProductContent('owner', 'product');
   const product = () => sqlite.prepare('SELECT * FROM products WHERE id=?').get('product');
   const changeContent = async patch => { const current = await content(); await load('db/product-content.ts').saveProductContent('owner', load('app/product-content.ts').applyContentPatch(current, patch, '2026-10-06T10:00:01.000Z'), current.revision); };
-  return { prepare, sqlite, objects, controls, env, translations, writes, deletions, keys, key, load, request, source, applyBody, content, product, changeContent, close() { sqlite.close(); } };
+  return { prepare, sqlite, objects, controls, env, translations, writes, deletions, drawings, measurements, fontLoads, keys, key, load, request, source, applyBody, content, product, changeContent, close() { sqlite.close(); } };
 }
 async function ready() { const h = fixture(); await h.prepare(); return h; }
 const assertStatus = async (res, status) => assert.equal(res.status, status, await res.clone().text());
@@ -187,6 +196,7 @@ test('actual erase renderer PNG applies through the exact saved source, survives
     const output = new Uint8Array(await rendered.output.arrayBuffer()), expectedPixels = new Uint8Array(3 * 2 * 4).fill(200);
     for (let y = 0; y < 2; y++) expectedPixels.set([0x23, 0x45, 0x67, 255], (y * 3 + 1) * 4);
     assert.deepEqual(Buffer.from(output), png(3, 2, expectedPixels));
+    assert.equal(h.measurements.length, 0); assert.equal(h.drawings.length, 0, 'erase cannot measure or draw retained wording'); assert.equal(h.fontLoads.length, 0);
     const send = async (url, init) => {
       assert.equal(url, '/api/products/product/image-text'); assert.equal(init.method, 'POST');
       assert.deepEqual([...init.body.keys()], ['action', 'source', 'file']);
@@ -204,6 +214,38 @@ test('actual erase renderer PNG applies through the exact saved source, survives
     const replay = await client.applyFreeImageTranslation(rendered, new AbortController().signal, send);
     assert.equal(replay.replayed, true); assert.deepEqual(await h.content(), after); assert.equal(h.writes.length, 2, 'one failed storage attempt and one successful write');
     const fresh = await h.source({ key: saved.key }); assert.equal(fresh.sourceSha256, sha(output)); assert.equal(fresh.productVersion, saved.productVersion);
+  } finally { h.close(); }
+});
+
+for (const [fontFamily, css] of [['serif', 'Georgia, "Noto Serif KR", serif'], ['gmarket', '"Gmarket Sans", sans-serif']]) test(`styled renderer PNG (${fontFamily}) keeps exact bytes/source through route attachment and a different alignment cannot reuse its stale source`, async () => {
+  const h = await ready(); try {
+    const source = await h.source(), before = await h.content(), original = h.objects.get(h.key).bytes.slice(), client = h.load('app/free-image-translation-client.ts');
+    const loaded = { source, canvas: { pixels: new Uint8Array(3 * 2 * 4).fill(200) }, blob: new Blob([original], { type: 'image/png' }), width: 3, height: 2 };
+    const chosen = { id: 'style', text: 'A', translated: 'A', box: { x: 1, y: 0, width: 2, height: 2 }, confidence: 90, selected: true,
+      issue: null, translationProvenance: 'manual', background: '#abcdef', foreground: '#123456', fontSize: 1,
+      fontFamily, bold: true, italic: true, textAlign: 'right', lineHeight: 0.8 };
+    const rendered = await client.renderFreeImageTranslation(loaded, [chosen], new AbortController().signal);
+    const bytes = new Uint8Array(await rendered.output.arrayBuffer()), expectedPixels = new Uint8Array(3 * 2 * 4).fill(200);
+    for (let y = 0; y < 2; y++) for (let x = 1; x < 3; x++) expectedPixels.set([0xab, 0xcd, 0xef, 255], (y * 3 + x) * 4);
+    expectedPixels.set([0x12, 0x34, 0x56, 255], 2 * 4);
+    assert.deepEqual(Buffer.from(bytes), png(3, 2, expectedPixels));
+    assert.deepEqual(h.drawings, [{ text: 'A', x: 3, y: 0, font: `italic bold 1px ${css}`, textAlign: 'right' }]);
+    assert.ok(h.measurements.every(row => row.font === h.drawings[0].font));
+    assert.deepEqual(h.fontLoads, fontFamily === 'gmarket' ? [{ descriptor: 'italic bold 20px "Gmarket Sans"', sample: '가나다 ABC 123' }] : []);
+    const send = async (url, init) => {
+      assert.equal(url, '/api/products/product/image-text'); assert.deepEqual([...init.body.keys()], ['action', 'source', 'file']);
+      assert.deepEqual(JSON.parse(init.body.get('source')), source); return h.request('POST', init.body);
+    };
+    const saved = await client.applyFreeImageTranslation(rendered, new AbortController().signal, send), after = await h.content();
+    assert.deepEqual(h.objects.get(saved.key).bytes, bytes); assert.equal(h.objects.get(saved.key).customMetadata.freeImageOutputSha256, sha(bytes));
+    assert.deepEqual(Array.from(after.assets.detail.value), ['owner/first.png', saved.key, 'owner/last.png']);
+    assert.deepEqual(after.seo, before.seo); assert.deepEqual(after.label, before.label); assert.deepEqual(h.objects.get(h.key).bytes, original);
+    const different = await client.renderFreeImageTranslation(loaded, [{ ...chosen, textAlign: 'left' }], new AbortController().signal);
+    assert.notEqual(await client.expectedFreeImageOutputKey(different), saved.key, 'different reviewed style output has its own digest key');
+    await assert.rejects(client.applyFreeImageTranslation(different, new AbortController().signal, send), error => error.uncertain === false);
+    assert.deepEqual(await h.content(), after); assert.equal(h.writes.length, 1); assert.equal(h.translations.length, 0); assert.equal(h.deletions.length, 0);
+    assert.equal((await client.applyFreeImageTranslation(rendered, new AbortController().signal, send)).replayed, true);
+    assert.equal(h.writes.length, 1);
   } finally { h.close(); }
 });
 

@@ -11,8 +11,8 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const hash = async bytes => Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
 const pixels = (width, height) => Uint8Array.from({ length: width * height * 4 }, (_, index) => index % 4 === 3 ? 255 : (index * 13) % 200);
-function fixture({ imageWidth = 20, imageHeight = 12, decodeWait } = {}) {
-  const objects = new Map(), revoked = [], canvases = [], operations = []; let sequence = 0;
+function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts } = {}) {
+  const objects = new Map(), revoked = [], canvases = [], operations = [], measurements = []; let sequence = 0;
   class ObjectURL extends URL { static createObjectURL(blob) { const url = 'blob:fixture-' + ++sequence; objects.set(url, blob); return url; } static revokeObjectURL(url) { revoked.push(url); objects.delete(url); } }
   class Image { set src(url) { if (!url) return; Promise.resolve(decodeWait).then(() => { if (!objects.has(url)) return; this.naturalWidth = imageWidth; this.naturalHeight = imageHeight; this.pixels = pixels(imageWidth, imageHeight); this.onload?.(); }); } }
   const document = { createElement(tag) {
@@ -24,17 +24,24 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait } = {}) {
         output.pixels.set(color, (py * output.width + px) * 4);
       }
     };
-    const context = { font: '10px Arial', fillStyle: '#000000', textBaseline: 'top',
+    const textWidth = (font, text) => {
+      const size = Number(/([0-9.]+)px/u.exec(font)?.[1]);
+      return Array.from(text).length * size / 2 * (/\bbold\b/u.test(font) ? 1.25 : 1) * (/\bitalic\b/u.test(font) ? 1.1 : 1);
+    };
+    const context = { font: '10px Arial', fillStyle: '#000000', textBaseline: 'top', textAlign: 'left',
       drawImage(image, x, y) { assert.equal(x, 0); assert.equal(y, 0); output.pixels = image.pixels.slice(); operations.push(['draw', output.width, output.height]); },
-      measureText(text) { return { width: Array.from(text).length * Number.parseFloat(this.font) / 2 }; },
+      measureText(text) { const width = textWidth(this.font, text); measurements.push({ text, font: this.font, width }); return { width }; },
       save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() {}, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
       fillRect(x, y, width, height) { operations.push(['fill', x, y, width, height]); paint(x, y, width, height, rgba(this.fillStyle)); },
-      fillText(text, x, y) { operations.push(['text', text, x, y, this.font]); paint(x, y, 1, 1, rgba(this.fillStyle)); },
+      fillText(text, x, y) { operations.push(['text', text, x, y, this.font, this.textAlign]);
+        const width = textWidth(this.font, text), left = x - (this.textAlign === 'center' ? width / 2 : this.textAlign === 'right' ? width : 0);
+        paint(left, y, 1, 1, rgba(this.fillStyle)); },
     };
     output.getContext = kind => { assert.equal(kind, '2d'); return context; };
     output.toBlob = (callback, type) => { assert.equal(type, 'image/png'); callback(new Blob([output.pixels], { type })); };
     canvases.push(output); return output;
   } };
+  if (fonts !== undefined) document.fonts = fonts;
   const cache = new Map();
   function load(file) {
     if (cache.has(file)) return cache.get(file); const exports = {}; cache.set(file, exports);
@@ -46,7 +53,7 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait } = {}) {
     return exports;
   }
   const client = load('app/free-image-translation-client.ts');
-  return { client, canvases, operations, revoked, objects, document };
+  return { client, canvases, operations, measurements, revoked, objects, document };
 }
 function image(h) { const value = h.document.createElement('canvas'); value.width = source.width; value.height = source.height; value.pixels = pixels(source.width, source.height); return { source, canvas: value, blob: new Blob(['original']), width: source.width, height: source.height }; }
 const region = (id, box, translated = '한국어') => ({ id, text: '中文', box, confidence: 90, selected: true, translated, issue: null, translationProvenance: 'generated', background: '#ffffff', foreground: '#000000', fontSize: 3 });
@@ -198,6 +205,127 @@ test('render paints only selected clipped rectangles and keeps every outside pix
   }
   const stopped = new AbortController(); stopped.abort(); await assert.rejects(h.client.renderFreeImageTranslation(original, [selected], stopped.signal));
   assert.deepEqual(original.canvas.pixels, before);
+});
+
+test('unset text style keeps the original pixels, font string, left anchor and 1.2 line spacing', async () => {
+  const outputs = [];
+  for (const style of [{}, { fontFamily: 'sans', bold: false, italic: false, textAlign: 'left', lineHeight: 1.2 }]) {
+    const h = fixture(), original = image(h), chosen = { ...region('default', { x: 3, y: 2, width: 8, height: 6 }, 'A\nB'), fontSize: 2, ...style };
+    const rendered = await h.client.renderFreeImageTranslation(original, [chosen], new AbortController().signal);
+    assert.deepEqual(h.operations.filter(operation => operation[0] === 'text'),
+      [['text', 'A', 3, 2, '2px Arial, "Noto Sans KR", sans-serif', 'left'], ['text', 'B', 3, 4.4, '2px Arial, "Noto Sans KR", sans-serif', 'left']]);
+    const expected = original.canvas.pixels.slice();
+    for (let y = 2; y < 8; y++) for (let x = 3; x < 11; x++) expected.set([255, 255, 255, 255], (y * 20 + x) * 4);
+    for (const y of [2, 4, 5]) expected.set([0, 0, 0, 255], (y * 20 + 3) * 4);
+    const bytes = new Uint8Array(await rendered.output.arrayBuffer()); assert.deepEqual(bytes, expected);
+    outputs.push(bytes); assert.equal(rendered.source, source);
+  }
+  assert.deepEqual(outputs[0], outputs[1]);
+});
+
+test('text style validation rejects malformed selected styles before creating any output canvas and erase leaves unused styles intact', async () => {
+  const h = fixture(), original = image(h), chosen = region('valid', { x: 3, y: 2, width: 8, height: 6 });
+  for (const bad of [{ fontFamily: null }, { fontFamily: 'Sans' }, { fontFamily: '__proto__' }, { fontFamily: 'url(https://foreign.test/font)' },
+    { bold: 1 }, { bold: 'true' }, { italic: null }, { italic: 'false' }, { textAlign: null }, { textAlign: 'start' },
+    { lineHeight: null }, { lineHeight: '1.2' }, { lineHeight: 0.79 }, { lineHeight: 3.01 }, { lineHeight: NaN }, { lineHeight: Infinity }]) {
+    await assert.rejects(h.client.renderFreeImageTranslation(original, [chosen, { ...chosen, id: 'invalid', ...bad }], new AbortController().signal));
+    assert.equal(h.canvases.length, 1, 'invalid styles cannot start painting even when a valid row comes first');
+    assert.equal(h.operations.length, 0);
+  }
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [{ ...chosen, translated: '', bold: true }], new AbortController().signal));
+  const erased = { ...chosen, erase: true, translated: '보존한 번역', fontFamily: 'retained-unrecognized', bold: 'retained', italic: null, textAlign: 'start', lineHeight: NaN };
+  await h.client.renderFreeImageTranslation(original, [erased], new AbortController().signal);
+  assert.equal(h.measurements.length, 0); assert.equal(h.operations.filter(value => value[0] === 'text').length, 0);
+  assert.equal(erased.translated, '보존한 번역'); assert.equal(erased.fontFamily, 'retained-unrecognized'); assert.ok(Number.isNaN(erased.lineHeight));
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [{ ...erased, erase: false }], new AbortController().signal));
+  let fontLoads = 0;
+  const fontFixture = fixture({ fonts: { load: async () => { fontLoads++; return [{}]; }, check: () => true } }), fontImage = image(fontFixture);
+  await assert.rejects(fontFixture.client.renderFreeImageTranslation(fontImage,
+    [{ ...chosen, fontFamily: 'gmarket' }, { ...chosen, id: 'invalid-after-font', bold: 'true' }], new AbortController().signal));
+  assert.equal(fontLoads, 0, 'every selected style is validated before starting font loading'); assert.equal(fontFixture.canvases.length, 1);
+});
+
+test('styled text fits using bold/italic widths and line spacing, and tight spacing leaves room for the last glyph', async () => {
+  for (const [style, expectedFont, expectedLines] of [[{}, 4, ['ABCD']], [{ bold: true, italic: true }, 3, ['ABC', 'D']],
+    [{ bold: true, italic: true, lineHeight: 3 }, 2, ['ABCD']]]) {
+    const h = fixture(), original = image(h), chosen = { ...region('fit', { x: 3, y: 2, width: 8, height: 8 }, 'ABCD'), fontSize: 8, ...style };
+    await h.client.renderFreeImageTranslation(original, [chosen], new AbortController().signal);
+    const written = h.operations.filter(value => value[0] === 'text');
+    assert.deepEqual(written.map(value => value[1]), expectedLines);
+    assert.ok(written.every(value => value[4].includes(`${expectedFont}px `)));
+    assert.ok(h.measurements.some(value => value.font.includes('8px ')), 'font fitting starts from the reviewed size');
+    assert.ok(h.measurements.some(value => value.font.includes(`${expectedFont}px `)), 'final font is measured before drawing');
+  }
+  for (const [translated, expectedFont] of [['A', 8], ['A\nB', 4]]) {
+    const h = fixture(), original = image(h), chosen = { ...region('tight', { x: 1, y: 1, width: 18, height: 10 }, translated), fontSize: 20, lineHeight: 0.8 };
+    await h.client.renderFreeImageTranslation(original, [chosen], new AbortController().signal);
+    const written = h.operations.filter(value => value[0] === 'text');
+    assert.ok(written.every(value => value[4] === `${expectedFont}px Arial, "Noto Sans KR", sans-serif`));
+    assert.ok(written.at(-1)[3] + expectedFont <= chosen.box.y + chosen.box.height - 1, 'last glyph fits above the bottom padding');
+  }
+});
+
+test('Gmarket waits for the exact font before any canvas/measurement and loads identical styles only once', async () => {
+  const waiting = deferred(), loads = [], checks = []; let available = false;
+  const h = fixture({ fonts: { load(descriptor, sample) { loads.push({ descriptor, sample }); return waiting.promise; },
+    check(descriptor, sample) { checks.push({ descriptor, sample }); return available; } } }), original = image(h);
+  const chosen = { ...region('gmarket', { x: 1, y: 1, width: 8, height: 6 }, 'A'), fontFamily: 'gmarket', bold: true, italic: true };
+  const pending = h.client.renderFreeImageTranslation(original, [chosen, { ...chosen, id: 'same-font', box: { x: 10, y: 1, width: 8, height: 6 } },
+    { ...chosen, id: 'erase-font', erase: true, bold: false, italic: false }], new AbortController().signal);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.canvases.length, 1, 'no output canvas until requested font is loaded'); assert.equal(h.measurements.length, 0); assert.equal(h.operations.length, 0);
+  assert.deepEqual(loads, [{ descriptor: 'italic bold 20px "Gmarket Sans"', sample: '가나다 ABC 123' }]);
+  available = true; waiting.resolve([{ family: 'Gmarket Sans', status: 'loaded' }]); const rendered = await pending;
+  assert.equal(loads.length, 1, 'same font weight/style loads once despite multiple regions'); assert.deepEqual(checks, loads);
+  assert.equal(h.operations.filter(value => value[0] === 'text').length, 2);
+  assert.ok(h.measurements.every(value => value.font === 'italic bold 3px "Gmarket Sans", sans-serif'));
+  assert.equal(rendered.source, source); assert.equal(rendered.output.type, 'image/png');
+});
+
+test('Gmarket cancellation and unverified/unavailable fonts cannot draw fallback PNGs, while erase needs no text font', async () => {
+  const chosen = { ...region('gmarket', { x: 3, y: 2, width: 8, height: 6 }, 'A'), fontFamily: 'gmarket' };
+  const delayed = deferred(), stopped = new AbortController(), h = fixture({ fonts: { load: () => delayed.promise, check: () => true } }), original = image(h);
+  const pending = h.client.renderFreeImageTranslation(original, [chosen], stopped.signal); await new Promise(resolve => setImmediate(resolve));
+  stopped.abort(); await assert.rejects(pending); delayed.resolve([{ family: 'Gmarket Sans', status: 'loaded' }]); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.canvases.length, 1); assert.equal(h.measurements.length, 0); assert.equal(h.operations.length, 0);
+  for (const fonts of [undefined, { load: async () => [], check: () => true }, { load: async () => [{}], check: () => false },
+    { load: async () => { throw Error('font unavailable'); }, check: () => true }]) {
+    const failed = fixture({ fonts }), loaded = image(failed);
+    await assert.rejects(failed.client.renderFreeImageTranslation(loaded, [chosen], new AbortController().signal), /글꼴|Gmarket/u);
+    assert.equal(failed.canvases.length, 1); assert.equal(failed.operations.length, 0); assert.equal(failed.measurements.length, 0);
+  }
+  const erased = fixture(), loaded = image(erased); await erased.client.renderFreeImageTranslation(loaded, [{ ...chosen, erase: true }], new AbortController().signal);
+  assert.equal(erased.measurements.length, 0); assert.equal(erased.operations.filter(value => value[0] === 'text').length, 0);
+  assert.equal(chosen.translated, 'A'); assert.equal(chosen.fontFamily, 'gmarket');
+});
+
+test('Gmarket normal, bold and italic variants each verify their own font before drawing while repeated variants reuse the check', async () => {
+  const loads = [], h = fixture({ fonts: { load: async descriptor => { loads.push(descriptor); return [{}]; }, check: () => true } }), original = image(h);
+  const chosen = { ...region('normal', { x: 3, y: 2, width: 8, height: 6 }, 'A'), fontFamily: 'gmarket' };
+  await h.client.renderFreeImageTranslation(original, [chosen, { ...chosen, id: 'bold', bold: true }, { ...chosen, id: 'italic', italic: true },
+    { ...chosen, id: 'repeat-bold', bold: true }, { ...chosen, id: 'erased-variant', erase: true, bold: true, italic: true }], new AbortController().signal);
+  assert.deepEqual(loads, ['20px "Gmarket Sans"', 'bold 20px "Gmarket Sans"', 'italic 20px "Gmarket Sans"']);
+  assert.deepEqual(h.operations.filter(value => value[0] === 'text').map(value => value[4]),
+    ['3px "Gmarket Sans", sans-serif', 'bold 3px "Gmarket Sans", sans-serif', 'italic 3px "Gmarket Sans", sans-serif', 'bold 3px "Gmarket Sans", sans-serif']);
+});
+
+test('styled text uses its chosen font before fitting and keeps center/right anchors inside the selected clip', async () => {
+  for (const [fontFamily, css] of [['sans', 'Arial, "Noto Sans KR", sans-serif'], ['serif', 'Georgia, "Noto Serif KR", serif'], ['mono', '"Courier New", monospace'], ['gmarket', '"Gmarket Sans", sans-serif']]) {
+    for (const [textAlign, anchor] of [['left', 4], ['center', 9], ['right', 14]]) {
+      const h = fixture({ fonts: { load: async () => [{}], check: () => true } }), original = image(h), before = original.canvas.pixels.slice();
+      const chosen = { ...region('style', { x: 3, y: 1, width: 12, height: 10 }, 'AB\nCD'), fontSize: 4,
+        fontFamily, bold: true, italic: true, textAlign, lineHeight: 0.8 };
+      const rendered = await h.client.renderFreeImageTranslation(original, [chosen], new AbortController().signal);
+      const after = new Uint8Array(await rendered.output.arrayBuffer()), text = h.operations.filter(operation => operation[0] === 'text');
+      assert.deepEqual(text.map(operation => [operation[1], operation[2], operation[3], operation[4], operation[5]]),
+        [['AB', anchor, 2, `italic bold 4px ${css}`, textAlign], ['CD', anchor, 5.2, `italic bold 4px ${css}`, textAlign]]);
+      assert.ok(h.measurements.length); assert.ok(h.measurements.every(value => value.font === `italic bold 4px ${css}`), 'wrapping and fitting measure the selected font');
+      for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) if (!(x >= 3 && x < 15 && y >= 1 && y < 11)) {
+        const offset = (y * 20 + x) * 4; assert.deepEqual(after.slice(offset, offset + 4), before.slice(offset, offset + 4), `outside ${fontFamily}/${textAlign}: ${x},${y}`);
+      }
+      assert.deepEqual(original.canvas.pixels, before); assert.equal(rendered.source, source);
+    }
+  }
 });
 
 test('explicit erase renders only the chosen background rectangle without text or outside pixel changes', async () => {

@@ -1,0 +1,5 @@
+Official source: https://corp.gmarket.com/fonts/
+Download: https://corp.gmarket.com/fonts/GmarketSansTTF.zip
+Original unmodified TTF files. License/copyright retained in name metadata and LICENSE.txt.
+Medium SHA256: c6b9a2c10bfdb55975948ce191f9cf638955b5cfdc99149969add5b579262fc1
+Bold SHA256: ff7c354dd1a324e4cecc1223c4f71e74fa81be7027e0c7f6324c475909cacefc

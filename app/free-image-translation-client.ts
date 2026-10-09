@@ -4,10 +4,11 @@ import {
   type FreeImageRole, type FreeImageSource, type ImageTextRegion, type ImageTextTranslation,
 } from '@/app/free-image-translation';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
+import { resolveFreeImageTextStyle, ensureFreeImageTextFont, type FreeImageTextStyle } from '@/app/free-image-text-style';
 import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
 
 export type OcrBox = { x: number; y: number; width: number; height: number };
-export type FreeImageRegion = {
+export type FreeImageRegion = FreeImageTextStyle & {
   id: string; text: string; box: OcrBox; confidence: number; selected: boolean;
   translated: string; issue: string | null; translationProvenance: 'empty' | 'generated' | 'manual';
   background: string; foreground: string; fontSize: number;
@@ -211,7 +212,7 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   if (!chosen.length || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
   const textRegions = chosen.filter(region => region.erase !== true);
   if (textRegions.length) validateImageTextRegions(textRegions.map(region => ({ id: region.id, text: region.translated })));
-  const ids = new Set<string>();
+  const ids = new Set<string>(), styles = new Map<string, ReturnType<typeof resolveFreeImageTextStyle>>();
   for (const region of chosen) {
     validateOcrBox(region.box, image.width, image.height);
     if (typeof region.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(region.id) || ids.has(region.id)
@@ -219,7 +220,15 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
       || region.erase !== true && (!/^#[a-f0-9]{6}$/iu.test(region.foreground)
         || !Number.isInteger(region.fontSize) || region.fontSize < 1 || region.fontSize > 200)) throw Error('선택한 번역 문구·색상·글자 크기를 확인해주세요.');
     ids.add(region.id);
+    if (region.erase !== true) styles.set(region.id, resolveFreeImageTextStyle(region));
   }
+  const loadedFonts = new Set<string>();
+  for (const style of styles.values()) {
+    const identity = JSON.stringify([style.fontFamily, style.bold, style.italic]);
+    if (loadedFonts.has(identity)) continue;
+    await ensureFreeImageTextFont(style, signal); loadedFonts.add(identity);
+  }
+  signal.throwIfAborted();
   const output = canvas(image.width, image.height); output.context.drawImage(image.canvas, 0, 0);
   for (const region of chosen) {
     signal.throwIfAborted(); const { x, y, width, height } = region.box;
@@ -228,18 +237,21 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
       output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height); output.context.restore();
       continue;
     }
+    const style = styles.get(region.id)!;
     const padding = Math.min(3, Math.floor(Math.min(width, height) / 10)), maximumWidth = Math.max(1, width - padding * 2), maximumHeight = Math.max(1, height - padding * 2);
     let fontSize = region.fontSize, lines: string[] = [], lineHeight = 0;
     for (; fontSize >= 1; fontSize--) {
-      output.context.font = `${fontSize}px Arial, "Noto Sans KR", sans-serif`;
-      lines = wrappedLines(output.context, region.translated, maximumWidth); lineHeight = fontSize * 1.2;
-      if (lines.length * lineHeight <= maximumHeight && lines.every(line => output.context.measureText(line).width <= maximumWidth)) break;
+      output.context.font = `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}${fontSize}px ${style.fontFamily}`;
+      lines = wrappedLines(output.context, region.translated, maximumWidth); lineHeight = fontSize * style.lineHeight;
+      const fittedHeight = lines.length * lineHeight + Math.max(0, fontSize - lineHeight);
+      if (fittedHeight <= maximumHeight && lines.every(line => output.context.measureText(line).width <= maximumWidth)) break;
     }
     if (fontSize < 1) throw Error('문구가 선택 영역에 들어가지 않습니다. 문구를 줄이거나 영역 크기를 조절해주세요.');
     output.context.save(); output.context.beginPath(); output.context.rect(x, y, width, height); output.context.clip();
     output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height);
-    output.context.fillStyle = region.foreground; output.context.textBaseline = 'top';
-    lines.forEach((line, index) => output.context.fillText(line, x + padding, y + padding + index * lineHeight));
+    output.context.fillStyle = region.foreground; output.context.textBaseline = 'top'; output.context.textAlign = style.textAlign;
+    const textX = x + padding + (style.textAlign === 'center' ? maximumWidth / 2 : style.textAlign === 'right' ? maximumWidth : 0);
+    lines.forEach((line, index) => output.context.fillText(line, textX, y + padding + index * lineHeight));
     output.context.restore();
   }
   const blob = await abortable(new Promise<Blob>((resolve, reject) => output.canvas.toBlob(value => value ? resolve(value) : reject(Error('번역 이미지 미리보기를 만들지 못했습니다.')), 'image/png')), signal);

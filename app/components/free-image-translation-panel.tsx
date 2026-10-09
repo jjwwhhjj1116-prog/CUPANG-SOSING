@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FREE_IMAGE_ROLES, MAX_OCR_REGIONS, type FreeImageRole } from '@/app/free-image-translation';
+import { freeImageFontFamilies } from '@/app/free-image-text-style';
 import {
   applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, recognizeFreeImage, recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageQuotationRequest, translateFreeImageRegions,
   type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,
@@ -180,6 +181,10 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (locked || active.current || !focusedTarget() || !editorCurrent()) return; setRendered(null);
     setRegions(rows => rows.map(row => row.id === id ? { ...row, ...patch } : row));
   }
+  function editTextStyle(id: string, patch: Partial<Pick<FreeImageRegion, 'fontFamily' | 'bold' | 'italic' | 'textAlign' | 'lineHeight'>>) {
+    if (!mounted.current || liveUncertain.current || liveReadyRetry.current || liveRegions.current.find(row => row.id === id)?.erase === true) return;
+    editRegion(id, patch);
+  }
   async function recognize() {
     if (!sourceKey || !imageKeys.includes(sourceKey) || liveUncertain.current || liveReadyRetry.current || !focusedTarget() || !editorCurrent()) return;
     if (liveRegions.current.length || liveRendered.current || liveOptionImageIds.current.length || pendingSave.current) { setNotice('작성한 문구와 옵션 선택을 유지했습니다. 원본 문구를 다시 읽으려면 먼저 이미지 번역 편집 초안을 지워주세요.'); return; }
@@ -330,6 +335,17 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         <div className="form-row"><label>배경색<input aria-label={`문구 ${index + 1} 배경색`} type="color" value={region.background} onChange={event => editRegion(region.id, { background: event.target.value })} /></label>
           <label>글자색<input aria-label={`문구 ${index + 1} 글자색`} type="color" disabled={region.erase === true} value={region.foreground} onChange={event => editRegion(region.id, { foreground: event.target.value })} /></label>
           <label>글자 크기<input aria-label={`문구 ${index + 1} 글자 크기`} type="number" disabled={region.erase === true} min={1} max={200} step={1} value={region.fontSize} onChange={event => editRegion(region.id, { fontSize: Number(event.target.value) })} /></label></div>
+        <div className="form-row">
+          <label>글꼴<select aria-label={`문구 ${index + 1} 글꼴`} disabled={region.erase === true} value={region.fontFamily ?? 'sans'} onChange={event => editTextStyle(region.id, { fontFamily: event.target.value as NonNullable<FreeImageRegion['fontFamily']> })}>
+            {Object.entries(freeImageFontFamilies).map(([value, font]) => <option key={value} value={value}>{font.label}</option>)}
+          </select></label>
+          <label><input aria-label={`문구 ${index + 1} 굵게`} type="checkbox" disabled={region.erase === true} checked={region.bold ?? false} onChange={event => editTextStyle(region.id, { bold: event.target.checked })} />굵게</label>
+          <label><input aria-label={`문구 ${index + 1} 기울임`} type="checkbox" disabled={region.erase === true} checked={region.italic ?? false} onChange={event => editTextStyle(region.id, { italic: event.target.checked })} />기울임</label>
+          <label>정렬<select aria-label={`문구 ${index + 1} 정렬`} disabled={region.erase === true} value={region.textAlign ?? 'left'} onChange={event => editTextStyle(region.id, { textAlign: event.target.value as NonNullable<FreeImageRegion['textAlign']> })}>
+            <option value="left">왼쪽</option><option value="center">가운데</option><option value="right">오른쪽</option>
+          </select></label>
+          <label>행간<input aria-label={`문구 ${index + 1} 행간`} type="number" disabled={region.erase === true} min={0.8} max={3} step={0.1} value={region.lineHeight ?? 1.2} onChange={event => editTextStyle(region.id, { lineHeight: Number(event.target.value) })} /></label>
+        </div>
         <button type="button" className="btn" onClick={() => { if (locked || active.current) return; setRendered(null); setRegions(rows => rows.filter(row => row.id !== region.id)); }}>문구 {index + 1} 영역 삭제</button>
       </fieldset>)}</div>
       <div className="actions"><button type="button" className="btn blue" disabled={locked || !currentImage || !regions.some(row => row.selected && row.erase !== true && row.translationProvenance !== 'manual')} onClick={() => void translate()}>선택 문구 한국어 번역</button>

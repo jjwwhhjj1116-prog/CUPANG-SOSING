@@ -12,6 +12,12 @@ const text = value => Array.isArray(value) ? value.map(text).join('') : value &&
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const region = (id, translated = '') => ({ id, text: '中文 ' + id, box: { x: 1, y: 1, width: 18, height: 8 }, confidence: 90,
   selected: true, translated, issue: null, translationProvenance: translated ? 'generated' : 'empty', background: '#ffffff', foreground: '#111111', fontSize: 4 });
+const styleFields = ['글꼴', '굵게', '기울임', '정렬', '행간'];
+const manualStyle = { fontFamily: 'serif', bold: true, italic: true, textAlign: 'center', lineHeight: 1.7 };
+const regionStyle = row => Object.fromEntries(Object.keys(manualStyle).map(key => [key, row[key]]));
+const styleModule = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-text-style.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: styleModule });
 class ApplyError extends Error { constructor(message, uncertain) { super(message); this.uncertain = uncertain; } }
 
 function fixture() {
@@ -56,6 +62,7 @@ function fixture() {
     { exports, Error, Date, URL: ObjectURL, Blob, AbortController, console, require(name) {
       if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return native(name);
       if (name === '@/app/free-image-translation') return { FREE_IMAGE_ROLES: ['main', 'additional', 'detailTop', 'detail', 'detailBottom'], MAX_OCR_REGIONS: 100 };
+      if (name === '@/app/free-image-text-style') return styleModule;
       assert.equal(name, '@/app/free-image-translation-client'); return client;
     } });
   const render = () => { cursor = 0; const outer = exports.default(props), tree = outer.type(outer.props); effects.splice(0).forEach(fn => fn()); return tree; };
@@ -71,6 +78,13 @@ function fixture() {
     close() { if (closed) return; states.forEach(state => state?.cleanup?.()); closed = true; } };
 }
 async function translated(h) { await h.click('원본 문구 읽기'); await h.click('선택 문구 한국어 번역'); }
+async function styleRegion(h, index = 1, values = manualStyle) {
+  await h.change(`문구 ${index} 글꼴`, values.fontFamily);
+  await h.change(`문구 ${index} 굵게`, '', values.bold);
+  await h.change(`문구 ${index} 기울임`, '', values.italic);
+  await h.change(`문구 ${index} 정렬`, values.textAlign);
+  await h.change(`문구 ${index} 행간`, String(values.lineHeight));
+}
 
 test('toolbar source/language/role selection does not automatically run OCR, Google or save and marks only its own source stage', async () => {
   const h = fixture(); try {
@@ -401,6 +415,7 @@ test('focused option scope and full manual controls reach only the explicitly re
     await h.change('문구 2 한국어', ''); await h.change('문구 2 선택', '', false);
     for (const [field, value] of [['x', 2], ['y', 2], ['width', 12], ['height', 8]]) await h.change('문구 1 ' + field, String(value));
     await h.change('문구 1 배경색', '#ddeeff'); await h.change('문구 1 글자색', '#223344'); await h.change('문구 1 글자 크기', '6');
+    await styleRegion(h);
     await h.click('번역 이미지 미리보기');
     let previews = h.calls.filter(call => call.action === 'preview'); assert.deepEqual(previews[0].optionImageIds, ['sku-b']);
     assert.equal(h.calls.filter(call => call.action === 'apply').length, 0);
@@ -417,6 +432,7 @@ test('focused option scope and full manual controls reach only the explicitly re
     assert.deepEqual(last.optionImageIds, ['sku-a', 'sku-b']);
     assert.deepEqual(plain({ text: row.text, translated: row.translated, box: row.box, background: row.background, foreground: row.foreground, fontSize: row.fontSize }),
       { text: '검토한 원문', translated: '직접 확인한 한국어', box: { x: 2, y: 2, width: 12, height: 8 }, background: '#ddeeff', foreground: '#223344', fontSize: 6 });
+    assert.deepEqual(plain(regionStyle(row)), manualStyle);
     assert.equal(last.rows[1].translated, ''); assert.equal(last.rows[1].selected, false);
     assert.match(text(h.render()), /선택 옵션 2개 개별 대표 이미지/);
     assert.match(text(h.render()), /공통 대표 이미지 사용 옵션 포함/);
@@ -556,4 +572,146 @@ test('individual-only source keeps common/fallback images outside its reviewed s
       assert.equal(h.calls.filter(call => call.action === 'apply').length, 1); assert.equal(h.calls.filter(call => call.action === 'translate').length, 0);
     } finally { h.close(); }
   }
+});
+
+test('region text-style controls retain legacy defaults and independently pass reviewed styles without refilling manual blanks', async () => {
+  const h = fixture(); try {
+    await h.click('원본 문구 읽기');
+    assert.equal(h.field('문구 1 글꼴').props.value, 'sans');
+    assert.deepEqual(nodes(h.field('문구 1 글꼴')).filter(node => node.type === 'option').map(node => [node.props.value, text(node)]), [['sans', '고딕'], ['serif', '명조'], ['mono', '고정폭'], ['gmarket', 'Gmarket Sans Medium']]);
+    assert.equal(h.field('문구 1 굵게').props.checked, false); assert.equal(h.field('문구 1 기울임').props.checked, false);
+    assert.equal(h.field('문구 1 정렬').props.value, 'left'); assert.equal(h.field('문구 1 행간').props.value, 1.2);
+    assert.deepEqual(['min', 'max', 'step'].map(key => h.field('문구 1 행간').props[key]), [0.8, 3, 0.1]);
+    await h.change('문구 1 한국어', '직접 검토한 두 줄\n문구'); await h.change('문구 2 한국어', '');
+    const count = h.calls.length; await styleRegion(h);
+    assert.equal(h.calls.length, count, 'changing presentation never reads/translates/previews/saves automatically');
+    assert.equal(h.render().props['data-workspace-dirty'], 'true');
+    await h.click('번역 이미지 미리보기');
+    const preview = h.calls.filter(call => call.action === 'preview').at(-1);
+    assert.deepEqual(plain(regionStyle(preview.rows[0])), manualStyle);
+    assert.equal(preview.rows[0].translated, '직접 검토한 두 줄\n문구'); assert.equal(preview.rows[1].translated, '');
+    assert.ok(Object.keys(manualStyle).every(key => !Object.hasOwn(preview.rows[1], key)), 'the untouched region remains an older style-free draft');
+    assert.equal(h.field('문구 2 글꼴').props.value, 'sans'); assert.equal(h.field('문구 2 행간').props.value, 1.2);
+    assert.equal(h.calls.filter(call => call.action === 'translate' || call.action === 'apply').length, 0);
+  } finally { h.close(); }
+});
+
+test('erase disables every text-style control while retaining styles, Korean text and stale-control protection', async () => {
+  const h = fixture(); try {
+    await translated(h); await styleRegion(h); await h.change('문구 1 한국어', '지우기 해제 후 유지할 문구');
+    const priorFont = h.field('문구 1 글꼴').props.onChange, priorBold = h.field('문구 1 굵게').props.onChange;
+    await h.change('문구 1 영역 지우기', '', true);
+    for (const label of styleFields) assert.equal(h.field('문구 1 ' + label).props.disabled, true, label);
+    priorFont({ target: { value: 'mono' } }); priorBold({ target: { checked: false } }); await h.settle();
+    assert.equal(h.field('문구 1 글꼴').props.value, 'serif'); assert.equal(h.field('문구 1 굵게').props.checked, true);
+    await h.click('번역 이미지 미리보기');
+    const erased = h.calls.filter(call => call.action === 'preview').at(-1);
+    assert.equal(erased.rows[0].erase, true); assert.deepEqual(plain(regionStyle(erased.rows[0])), manualStyle);
+    assert.equal(erased.rows[0].translated, '지우기 해제 후 유지할 문구');
+    await h.change('문구 1 영역 지우기', '', false);
+    assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
+    for (const label of styleFields) assert.equal(h.field('문구 1 ' + label).props.disabled, false, label);
+    assert.equal(h.field('문구 1 한국어').props.value, '지우기 해제 후 유지할 문구');
+    await h.click('번역 이미지 미리보기'); assert.deepEqual(plain(regionStyle(h.calls.filter(call => call.action === 'preview').at(-1).rows[0])), manualStyle);
+    assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('each style change invalidates the reviewed PNG and blocks an earlier apply callback until a new preview', async () => {
+  const h = fixture(); try {
+    await translated(h);
+    for (const [label, value, checked] of [['글꼴', 'mono'], ['굵게', '', true], ['기울임', '', true], ['정렬', 'right'], ['행간', '2.2']]) {
+      await h.click('번역 이미지 미리보기');
+      const before = h.calls.filter(call => call.action === 'preview').at(-1), apply = h.button('검토한 번역 이미지 적용').props.onClick;
+      const count = h.calls.length; await h.change('문구 1 ' + label, value, checked); apply(); await h.settle();
+      assert.equal(h.button('검토한 번역 이미지 적용'), undefined, label);
+      assert.equal(h.calls.length, count, 'stale apply performs no upload or mutation: ' + label);
+      await h.click('번역 이미지 미리보기');
+      const next = h.calls.filter(call => call.action === 'preview').at(-1);
+      assert.notEqual(next, before); assert.deepEqual(plain(next.image.source), plain(before.image.source));
+    }
+    await h.click('검토한 번역 이미지 적용'); assert.equal(h.saved, 1);
+    assert.equal(h.calls.filter(call => call.action === 'apply').length, 1);
+  } finally { h.close(); }
+});
+
+test('failed saves retain styled drafts and an unknown save retries the exact PNG without accepting old style handlers', async () => {
+  for (const uncertain of [false, true]) {
+    const h = fixture(); try {
+      await translated(h); await styleRegion(h); await h.change('문구 2 한국어', ''); await h.click('번역 이미지 미리보기');
+      const fontChange = h.field('문구 1 글꼴').props.onChange;
+      h.setApply(async () => { throw new ApplyError('격리 저장 실패', uncertain); });
+      await h.click('검토한 번역 이미지 적용');
+      const first = h.calls.filter(call => call.action === 'apply')[0].image;
+      assert.equal(h.saved, 0); assert.equal(h.field('문구 1 글꼴').props.value, 'serif');
+      assert.equal(h.field('문구 2 한국어').props.value, ''); assert.equal(h.render().props['data-workspace-dirty'], 'true');
+      if (uncertain) {
+        fontChange({ target: { value: 'mono' } }); await h.settle();
+        assert.equal(h.field('문구 1 글꼴').props.value, 'serif', 'unconfirmed save retains its exact reviewed style');
+      }
+      h.setApply(async image => ({ source: image.source, applied: true, replayed: true }));
+      await h.click(uncertain ? '같은 결과의 저장 상태 다시 확인' : '검토한 번역 이미지 적용');
+      const attempts = h.calls.filter(call => call.action === 'apply');
+      assert.equal(attempts.length, 2); assert.equal(attempts[1].image, first); assert.equal(attempts[1].image.output, first.output);
+      assert.equal(h.saved, 1); assert.equal(h.calls.filter(call => call.action === 'preview').length, 1);
+    } finally { h.close(); }
+  }
+});
+
+test('styled final-slot drafts survive option navigation and late preview replies cannot enable the old quotation target', async () => {
+  const h = fixture(); try {
+    const { quotationTarget, quotationContext } = finalImageSelection(h, 'additionalImages'); await translated(h); await styleRegion(h);
+    await h.change('문구 2 한국어', '');
+    const pending = deferred(); let reviewedRows;
+    h.setRender((image, rows, signal) => { assert.equal(signal.aborted, false); reviewedRows = plain(rows); return pending.promise; });
+    const oldStyle = h.field('문구 1 정렬').props.onChange;
+    h.button('번역 이미지 미리보기').props.onClick(); await h.settle();
+    const request = h.calls.filter(call => call.action === 'preview').at(-1);
+    h.setProps({ quotationContext: { ...quotationContext, optionId: 'sku-b' }, focusedOptionId: 'sku-b' }); await h.settle();
+    oldStyle({ target: { value: 'right' } }); await h.settle();
+    assert.equal(request.signal.aborted, true); assert.equal(h.field('문구 1 정렬').props.value, 'center');
+    pending.resolve({ source: request.image.source, output: new Blob(['late styled PNG'], { type: 'image/png' }), width: 20, height: 12 }); await h.settle();
+    assert.equal(h.button('검토한 번역 이미지 적용'), undefined); assert.equal(h.saved, 0);
+    assert.deepEqual(regionStyle(reviewedRows[0]), manualStyle); assert.equal(reviewedRows[1].translated, '');
+    h.setProps({ quotationContext, focusedOptionId: 'sku-a' }); await h.settle(); h.setRender(null);
+    await h.click('번역 이미지 미리보기');
+    const next = h.calls.filter(call => call.action === 'preview').at(-1);
+    assert.deepEqual(plain(regionStyle(next.rows[0])), manualStyle); assert.deepEqual(plain(next.image.source.quotationTarget), { ...quotationTarget, bindingSha256: 'b'.repeat(64) });
+    assert.deepEqual(next.optionImageIds, []);
+    await h.click('검토한 번역 이미지 적용'); assert.equal(h.saved, 1);
+  } finally { h.close(); }
+});
+
+test('closing a styled draft blocks previously captured controls without late state updates or processing', async () => {
+  const h = fixture();
+  await translated(h); await styleRegion(h);
+  const fontChange = h.field('문구 1 글꼴').props.onChange, lineChange = h.field('문구 1 행간').props.onChange;
+  const count = h.calls.length; h.close();
+  fontChange({ target: { value: 'mono' } }); lineChange({ target: { value: '2' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.late, 0); assert.equal(h.calls.length, count); assert.equal(h.saved, 0);
+});
+
+test('Gmarket style selection changes only the reviewed text presentation and retains the exact final main-image slot', async () => {
+  const h = fixture(); try {
+    const { quotationTarget } = finalImageSelection(h, 'mainImage'); await translated(h);
+    assert.ok(nodes(h.field('문구 1 글꼴')).some(node => node.type === 'option' && node.props.value === 'gmarket' && text(node) === 'Gmarket Sans Medium'));
+    await h.change('문구 1 한국어', '직접 검토한 Gmarket 문구'); await h.change('문구 2 한국어', '');
+    await h.click('번역 이미지 미리보기');
+    const before = h.calls.filter(call => call.action === 'preview').at(-1), priorApply = h.button('검토한 번역 이미지 적용').props.onClick;
+    const count = h.calls.length, style = { fontFamily: 'gmarket', bold: true, italic: true, textAlign: 'right', lineHeight: 1.8 };
+    await styleRegion(h, 1, style); priorApply(); await h.settle();
+    assert.equal(h.calls.length, count, 'font and style selection never reloads the source, translates, renders or saves implicitly');
+    assert.equal(h.button('검토한 번역 이미지 적용'), undefined); assert.equal(h.field('번역할 원본 이미지').props.value, 'owner/original.png');
+    assert.equal(h.field('번역할 이미지 역할').props.value, 'main'); assert.equal(h.field('문구 2 한국어').props.value, '');
+    await h.click('번역 이미지 미리보기');
+    const next = h.calls.filter(call => call.action === 'preview').at(-1);
+    assert.deepEqual(plain(regionStyle(next.rows[0])), style); assert.equal(next.rows[0].translated, '직접 검토한 Gmarket 문구');
+    assert.deepEqual(plain(next.image.source), plain(before.image.source));
+    assert.deepEqual(plain(next.image.source.quotationTarget), { ...quotationTarget, bindingSha256: 'b'.repeat(64) });
+    assert.deepEqual(next.optionImageIds, []); assert.ok(Object.keys(style).every(key => !Object.hasOwn(next.rows[1], key)));
+    await h.click('검토한 번역 이미지 적용');
+    const applied = h.calls.filter(call => call.action === 'apply'); assert.equal(applied.length, 1); assert.equal(applied[0].image.source, next.image.source);
+    assert.equal(h.saved, 1); assert.equal(h.calls.filter(call => call.action === 'source').length, 1); assert.equal(h.calls.filter(call => call.action === 'translate').length, 1);
+  } finally { h.close(); }
 });

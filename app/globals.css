@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+@font-face { font-family:'Gmarket Sans'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/gmarket/GmarketSansTTFMedium.ttf') format('truetype'); }
+@font-face { font-family:'Gmarket Sans'; font-style:normal; font-weight:700; font-display:swap; src:url('/fonts/gmarket/GmarketSansTTFBold.ttf') format('truetype'); }
+
 :root { --ink:#172033; --muted:#778199; --line:#e7eaf0; --blue:#3778ff; --surface:#f5f7fb; }
 * { box-sizing: border-box; }
 html { background:#f5f7fb; }
