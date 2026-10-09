@@ -48,6 +48,19 @@ function mappedQuotationFields(resolved: ResolvedQuotation, profile: CategoryPro
     if(direct.has(wireId)&&included.length&&included.every(row=>row.fields[input]
       &&row.fields[wireId]&&row.fields[input].value===row.fields[wireId].value))represented.add(input);
   }
+  // The observed Single modelNumber also feeds the official hidden model
+  // column. Represent it only while that one exact mapped wire agrees in every
+  // included row; independent quotation edits and blanks stay unconnected.
+  const model=resolved.schema.fields.find(field=>field.id==='model'&&field.section==='product'&&field.visibility==='common'
+    &&field.type==='text'&&!field.readOnly&&field.hubInput==='model'&&!field.hubWire?.name&&!field.hubWire?.nameKey&&!field.hubWire?.valueKey
+    &&JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','modelNumber']));
+  const modelColumns=resolved.schema.fields.filter(field=>field.section==='product'&&field.visibility==='hidden'
+    &&field.type==='text'&&!field.readOnly&&field.contentField==='model'&&field.label==='모델명/품번'
+    &&JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','unexposedAttributes'])
+    &&field.hubWire?.name==='모델명/품번'&&field.hubWire.nameKey==='attributeName'&&field.hubWire.valueKey==='attributeValue');
+  const modelColumn=modelColumns.length===1?modelColumns[0]:null;
+  if(model&&modelColumn&&direct.has(modelColumn.id)&&included.length&&included.every(row=>row.fields.model
+    &&row.fields[modelColumn.id]&&row.fields.model.value===row.fields[modelColumn.id].value))represented.add('model');
   return {direct,represented};
 }
 /** Check required and populated final fields against explicit mappings. */
