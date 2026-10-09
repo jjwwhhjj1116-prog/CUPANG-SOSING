@@ -5,14 +5,15 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { DatabaseSync } from 'node:sqlite';
 
-function load(file, overrides = {}, mode = 'development') {
+function load(file, overrides = {}, mode = 'development', cache = new Map()) {
+  if (cache.has(file)) return cache.get(file);
   const source = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(source, { exports, Response, TextDecoder, Uint8Array, structuredClone, process: { env: { NODE_ENV: mode } }, require(name) {
+  cache.set(file, exports);
+  vm.runInNewContext(source, { exports, Response, TextDecoder, TextEncoder, Uint8Array, structuredClone, process: { env: { NODE_ENV: mode } }, require(name) {
     if (name in overrides) return overrides[name];
-    if (name === '@/app/registration-content-summary') return load('app/registration-content-summary.ts');
-    if (name === '@/app/product-content') return load('app/product-content.ts');
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
+    if (name.startsWith('@/app/')) return load(name.slice(2) + '.ts', overrides, mode, cache);
     if (name === 'next/server') return { NextResponse: Response };
     throw new Error(name);
   } });

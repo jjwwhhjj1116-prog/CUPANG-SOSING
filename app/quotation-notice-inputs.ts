@@ -16,6 +16,12 @@ const inputs: Readonly<Record<string,string>> = {
 const fashionInputs: Readonly<Record<string,string>> = {
   '종류':'noticeKind', '소재':'noticeMaterial', '치수':'noticeDimensions', '취급시 주의사항':'noticeCaution',
 };
+// Exact other-goods notice headings recorded in 64455 Single v188. These
+// already have the same source meanings in the recorded board/toothbrush forms.
+const otherGoodsInputs: Readonly<Record<string, string>> = {
+  '인증/허가 사항': 'noticePermission', '제조국(원산지)': 'noticeCountryOfOrigin',
+  '소비자상담 관련 전화번호': 'noticeServiceContact',
+};
 // Exact 80719 notice meanings used by the former label-only fallback. This
 // identity list retires only packages potentially affected by that shortcut.
 const basketInputs: Readonly<Record<string, string>> = {
@@ -28,6 +34,7 @@ const recordedNoticeSources = new Set([...Object.values(inputs), ...Object.value
 type NoticeBindingIdentity = {
   noticeBindingRevision?: 'exact-legal-notices-v1';
   noticeSourceBindingRevision?: 'exact-legal-notice-sources-v1';
+  noticeOtherGoodsSourceBindingRevision?: 'exact-other-goods-notice-sources-v1';
 };
 
 /** Recorded static notices retain their meanings. A captured form must carry
@@ -43,7 +50,8 @@ export function isQuotationLegalNotice(field: QuotationField): boolean {
 /** Date/washing corrections change identity only for a changed automatic value.
  * The narrow former sports/basket source scope conservatively requests fresh
  * review, including equal automatic values. Proper notices and manual cells
- * keep their existing fingerprint contract; earlier receipts are not rewritten. */
+ * keep their existing fingerprint contract. Newly linked other-goods sources
+ * refresh only changed automatic cells; earlier receipts are not rewritten. */
 export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverInput, 'content' | 'settings' | 'product'>, resolved: ResolvedQuotation): NoticeBindingIdentity {
   const identity: NoticeBindingIdentity = {};
   for (const field of resolved.schema.fields) {
@@ -83,6 +91,20 @@ export function quotationNoticeBindingFingerprint(input: Pick<QuotationResolverI
       break;
     }
   }
+  for (const field of resolved.schema.fields) {
+    if (!field.hubWire || !isQuotationLegalNotice(field) || field.hubInput
+      || !Object.hasOwn(otherGoodsInputs, field.label) || field.id === otherGoodsInputs[field.label]) continue;
+    // The former unresolved live ID fell through to the captured form default.
+    // Existing canonical IDs already used the correct source and stay stable.
+    const previousValue = field.draftDefault ?? field.schemaDefault ?? '';
+    const previousSource = field.draftDefault !== undefined ? 'couplus-default' : field.schemaDefault !== undefined ? 'schema' : 'empty';
+    if (resolved.rows.some(row => row.included && row.fields[field.id]
+      && !row.fields[field.id].source.startsWith('manual-')
+      && (row.fields[field.id].value !== previousValue || row.fields[field.id].source !== previousSource))) {
+      identity.noticeOtherGoodsSourceBindingRevision = 'exact-other-goods-notice-sources-v1';
+      break;
+    }
+  }
   return identity;
 }
 
@@ -90,5 +112,5 @@ export function quotationNoticeInput(field: QuotationField): string | undefined 
   // Only the named legal notice array has this meaning. Same-labelled product
   // attributes, scalar controls and similar notice names keep their own rules.
   if (!field.hubWire || !isQuotationLegalNotice(field)) return undefined;
-  return inputs[field.label] ?? fashionInputs[field.label];
+  return inputs[field.label] ?? fashionInputs[field.label] ?? (Object.hasOwn(otherGoodsInputs, field.label) ? otherGoodsInputs[field.label] : undefined);
 }

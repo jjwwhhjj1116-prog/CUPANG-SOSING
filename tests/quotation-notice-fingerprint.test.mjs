@@ -35,8 +35,9 @@ async function setup(company, actualNotices = false) {
   return { ...h, base, product, source, profile };
 }
 
-// The deployed fingerprint contract before the notice predicate correction.
-// Its payload intentionally has no global version or new normalized defaults.
+// The persisted source payload without the notice predicate correction.
+// Keep the captured template input added by the source-context contract; the
+// only omitted identity is the notice correction under test.
 async function legacyExportFingerprint(h, source = h.source) {
   return h.load('app/automation/model.ts').fingerprint({ format: 'sourceflow-quotation-fields-v1',
     saved: { ...source, settings: h.load('app/settings-fingerprint.ts').savedProductFingerprintSettings(source.settings) }, dataStartRow: 2,
@@ -46,7 +47,7 @@ async function legacyExportFingerprint(h, source = h.source) {
 }
 async function legacyEditorFingerprint(h, view, source = h.source) {
   const inputs = { categoryId: source.categoryContext.categoryId, categoryPath: source.categoryContext.categoryPath,
-    product: source.product, content: source.content, options: source.options, settings: source.settings, hubSchema: source.hubSchema };
+    product: source.product, content: source.content, options: source.options, settings: source.settings, hubSchema: source.hubSchema, template: source.profile.template };
   return h.load('app/automation/model.ts').fingerprint({ inputs: { ...inputs,
     settings: h.load('app/settings-fingerprint.ts').savedProductFingerprintSettings(inputs.settings) }, schema: view.automatic.schema,
     categoryContext: view.categoryContext, profileRevision: source.profile.revision, settingsPayload: source.source.settingsPayload, collection: source.source.collection,

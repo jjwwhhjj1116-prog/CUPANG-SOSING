@@ -38,7 +38,9 @@ function noticeField(view, name) {
 for (const [index, company] of schemaCompanies.entries()) test(`captured category date stays identical in stage six, stage seven and quotation bytes (${company.code})`, async () => {
   const h = mobileIntakeHarness({ companyCode: company.code, companyName: company.name });
   try {
-    const name = index ? '출시년월' : '제조년월', f = await setup(h, snapshot(company, name));
+    const name = index ? '출시년월' : '제조년월', captured = snapshot(company, name);
+    captured.metadata.scopeType = 'Retail_Categorized_Single';
+    const f = await setup(h, captured);
     const read = suffix => h.route(f.base + '/' + suffix).then(json);
     const content = (await read('content')).content;
     assert.equal(content.label.releaseDate.value, '2024.02');
@@ -53,10 +55,28 @@ for (const [index, company] of schemaCompanies.entries()) test(`captured categor
     for (const row of view.resolved.rows) assert.equal(row.fields[field.id].value, '2024.02');
     // The original snapshot, not an edited profile or current workspace, drives
     // later label review. A GET must not write to the working product.
-    const updated = snapshot(company, '다른 항목');
-    await json(await f.api.PUT(new Request('https://app.test/api/category-profiles', {
+    const updated = { ...snapshot(company, '다른 항목'), metadata: { ...captured.metadata } };
+    const originalProfile = h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(f.profile.id);
+    const originalContext = h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload;
+    const rejected = await f.api.PUT(new Request('https://app.test/api/category-profiles', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: f.profile.id, expectedRevision: f.profile.revision, profile: { ...f.input, hubSchema: updated } }),
-    })));
+    }));
+    assert.equal(rejected.status, 409, await rejected.clone().text());
+    assert.deepEqual(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(f.profile.id), originalProfile);
+    const requestId = crypto.randomUUID(), refresh = h.load('app/api/category-profiles/[id]/refresh-definition/route.ts');
+    const forked = await refresh.POST(new Request(`https://app.test/api/category-profiles/${f.profile.id}/refresh-definition`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': requestId },
+      body: JSON.stringify({ expectedRevision: f.profile.revision, hubSchema: updated }),
+    }), { params: Promise.resolve({ id: f.profile.id }) });
+    assert.equal(forked.status, 201, await forked.clone().text()); const fork = await forked.json();
+    assert.equal(fork.sourceProfileId, f.profile.id); assert.equal(fork.sourceRevision, f.profile.revision); assert.equal(fork.profile.id, requestId);
+    const child = await h.load('db/category-profiles.ts').getCategoryProfile('owner', fork.profile.id);
+    assert.equal(child.hubSchema.schemaString, updated.schemaString);
+    const childSchema = h.load('app/quotation-schema.ts').getQuotationSchema(child.categoryId, child.categoryPath, child.hubSchema);
+    assert.ok(childSchema.fields.some(field => field.section === 'legal' && field.label === '다른 항목'));
+    assert.ok(!childSchema.fields.some(field => field.section === 'legal' && field.label === name));
+    assert.deepEqual(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(f.profile.id), originalProfile);
+    assert.equal(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload, originalContext);
     await h.load('db/queries.ts').saveSettings('owner', JSON.stringify({ ...h.settings, manufactureDatePreviousMonth: false }));
     const stored = JSON.stringify((await read('content')).content);
     assert.equal((await read('registration-settings')).dateNotice, true);
@@ -82,6 +102,8 @@ for (const [index, company] of schemaCompanies.entries()) test(`captured categor
       assert.equal(new TextDecoder().decode(output.bytes), '"제조년월"\r\n' + (`"${value}"\r\n`).repeat(6));
     }
     assert.ok(!h.network.includes('supplier.coupang.com'));
+    assert.deepEqual(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(f.profile.id), originalProfile);
+    assert.equal(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload, originalContext);
   } finally { h.close(); }
 });
 

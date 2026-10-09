@@ -233,7 +233,21 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
   // must not fill it just because its value was already empty when reviewed.
   for (const key of Object.keys(patch.assets ?? {}) as AssetRole[]) next.assets[key] = { value: patch.assets![key]!, provenance: 'manual', updatedAt: now };
   const keys = Object.values(next.assets).flatMap(field => field.value);
-  if (keys.length > 50 || new Set(keys).size !== keys.length) throw new Error('이미지는 최대 50개이며 한 파일에는 한 역할만 지정할 수 있습니다.');
+  const imageRoleError = () => new Error('이미지는 최대 50개이며 한 파일에는 한 역할만 지정할 수 있습니다.');
+  if (keys.length > 50 || Object.values(next.assets).some(field => new Set(field.value).size !== field.value.length)) throw imageRoleError();
+  const assignments = (assets: ProductContent['assets']) => {
+    const result = new Map<string, Set<AssetRole>>();
+    for (const role of Object.keys(assets) as AssetRole[]) for (const key of assets[role].value) {
+      if (!result.has(key)) result.set(key, new Set());
+      result.get(key)!.add(role);
+    }
+    return result;
+  };
+  // Existing shared legacy roles may be retained or reduced while another
+  // field is edited. Every newly shared role pair still requires correction;
+  // a duplicate elsewhere never authorizes sharing a different file or role.
+  const previous = assignments(current.assets);
+  for (const [key, roles] of assignments(next.assets)) if (roles.size > 1 && [...roles].some(role => !previous.get(key)?.has(role))) throw imageRoleError();
   next.revision = current.revision + 1;
   next.updatedAt = now;
   return next;

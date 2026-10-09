@@ -11,6 +11,7 @@ export type FreeImageRegion = {
   id: string; text: string; box: OcrBox; confidence: number; selected: boolean;
   translated: string; issue: string | null; translationProvenance: 'empty' | 'generated' | 'manual';
   background: string; foreground: string; fontSize: number;
+  erase?: boolean;
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[] };
@@ -208,19 +209,25 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
   const chosen = regions.filter(row => row.selected);
   if (!chosen.length || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
-  validateImageTextRegions(chosen.map(region => ({ id: region.id, text: region.translated })));
-  const ids = new Set<string>(); let total = 0;
+  const textRegions = chosen.filter(region => region.erase !== true);
+  if (textRegions.length) validateImageTextRegions(textRegions.map(region => ({ id: region.id, text: region.translated })));
+  const ids = new Set<string>();
   for (const region of chosen) {
     validateOcrBox(region.box, image.width, image.height);
-    if (ids.has(region.id) || typeof region.translated !== 'string' || !region.translated.trim() || region.translated.length > 5000
-      || !/^#[a-f0-9]{6}$/iu.test(region.background) || !/^#[a-f0-9]{6}$/iu.test(region.foreground)
-      || !Number.isInteger(region.fontSize) || region.fontSize < 1 || region.fontSize > 200) throw Error('선택한 번역 문구·색상·글자 크기를 확인해주세요.');
-    ids.add(region.id); total += region.translated.length;
+    if (typeof region.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(region.id) || ids.has(region.id)
+      || region.erase !== undefined && typeof region.erase !== 'boolean' || !/^#[a-f0-9]{6}$/iu.test(region.background)
+      || region.erase !== true && (!/^#[a-f0-9]{6}$/iu.test(region.foreground)
+        || !Number.isInteger(region.fontSize) || region.fontSize < 1 || region.fontSize > 200)) throw Error('선택한 번역 문구·색상·글자 크기를 확인해주세요.');
+    ids.add(region.id);
   }
-  if (total > MAX_OCR_TEXT) throw Error('적용할 문구는 총 20,000자 이내로 입력해주세요.');
   const output = canvas(image.width, image.height); output.context.drawImage(image.canvas, 0, 0);
   for (const region of chosen) {
     signal.throwIfAborted(); const { x, y, width, height } = region.box;
+    if (region.erase === true) {
+      output.context.save(); output.context.beginPath(); output.context.rect(x, y, width, height); output.context.clip();
+      output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height); output.context.restore();
+      continue;
+    }
     const padding = Math.min(3, Math.floor(Math.min(width, height) / 10)), maximumWidth = Math.max(1, width - padding * 2), maximumHeight = Math.max(1, height - padding * 2);
     let fontSize = region.fontSize, lines: string[] = [], lineHeight = 0;
     for (; fontSize >= 1; fontSize--) {

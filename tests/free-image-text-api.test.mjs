@@ -16,12 +16,34 @@ function png(width = 3, height = 2, color = 200) {
     return Buffer.concat([size, joined, check]);
   };
   const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6;
-  const rows = Buffer.alloc(height * (width * 4 + 1), color); for (let row = 0; row < height; row++) rows[row * (width * 4 + 1)] = 0;
+  const rows = Buffer.alloc(height * (width * 4 + 1), typeof color === 'number' ? color : 0);
+  for (let row = 0; row < height; row++) {
+    rows[row * (width * 4 + 1)] = 0;
+    if (color instanceof Uint8Array) rows.set(color.subarray(row * width * 4, (row + 1) * width * 4), row * (width * 4 + 1) + 1);
+  }
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
 }
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 function fixture() {
   const sqlite = memoryDatabase(), objects = new Map(), cache = new Map(), translations = [], writes = [], deletions = [];
+  const document = { createElement(tag) {
+    assert.equal(tag, 'canvas'); const canvas = { width: 0, height: 0, pixels: null }, clips = []; let clip = null;
+    const context = {
+      drawImage(image, x, y) { assert.equal(x, 0); assert.equal(y, 0); canvas.pixels = image.pixels.slice(); },
+      save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() {}, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
+      fillRect(x, y, width, height) {
+        const color = [parseInt(this.fillStyle.slice(1, 3), 16), parseInt(this.fillStyle.slice(3, 5), 16), parseInt(this.fillStyle.slice(5, 7), 16), 255];
+        for (let py = y; py < y + height; py++) for (let px = x; px < x + width; px++) {
+          if (clip && (px < clip.x || py < clip.y || px >= clip.x + clip.width || py >= clip.y + clip.height)) continue;
+          canvas.pixels.set(color, (py * canvas.width + px) * 4);
+        }
+      },
+      measureText() { throw Error('erase must not measure wording'); }, fillText() { throw Error('erase must not draw wording'); },
+    };
+    canvas.getContext = kind => { assert.equal(kind, '2d'); return context; };
+    canvas.toBlob = (callback, type) => { assert.equal(type, 'image/png'); callback(new Blob([png(canvas.width, canvas.height, canvas.pixels)], { type })); };
+    return canvas;
+  } };
   const controls = { verified: true, owner: 'owner', nodeEnv: 'production', putFailure: null, dbFailure: null, beforeAttachment: null, duringTranslation: null };
   const db = {
     prepare(sql) { let args = []; const q = { sql, bind(...values) { args = values; return q; }, execute() { return sqlite.prepare(sql).all(...args); },
@@ -59,7 +81,7 @@ function fixture() {
   const load = file => {
     if (cache.has(file)) return cache.get(file); const exports = {}; cache.set(file, exports);
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-      { exports, Error, URL, URLSearchParams, Request, Response, File, Blob, FormData, Headers, TextEncoder, TextDecoder, Uint8Array, DataView,
+      { exports, Error, URL, URLSearchParams, Request, Response, File, Blob, FormData, Headers, TextEncoder, TextDecoder, Uint8Array, DataView, document,
         Date, structuredClone, AbortController, AbortSignal, setTimeout, clearTimeout, crypto: webcrypto, process: { env: { get NODE_ENV() { return controls.nodeEnv; } } },
         fetch: async () => { throw Error('fixture route must not make an unstubbed external request'); },
         require(name) { if (name in deps) return deps[name]; return load(name.startsWith('@/') ? name.slice(2) + '.ts' : path.posix.join(path.posix.dirname(file), name) + '.ts'); } });
@@ -156,6 +178,35 @@ test('image size, pixels, unsupported bytes and dishonest storage length are bou
     assert.equal(h.translations.length, 0); assert.equal(h.writes.length, 0);
   } finally { h.close(); }
 });
+test('actual erase renderer PNG applies through the exact saved source, survives failed storage and retries without translating or removing originals', async () => {
+  const h = await ready(); try {
+    const source = await h.source(), before = await h.content(), original = h.objects.get(h.key).bytes.slice(), client = h.load('app/free-image-translation-client.ts');
+    const loaded = { source, canvas: { pixels: new Uint8Array(3 * 2 * 4).fill(200) }, blob: new Blob([original], { type: 'image/png' }), width: 3, height: 2 };
+    const rendered = await client.renderFreeImageTranslation(loaded, [{ id: 'manual-clear', text: '', translated: '', erase: true,
+      box: { x: 1, y: 0, width: 1, height: 2 }, confidence: 0, selected: true, issue: null, translationProvenance: 'empty', background: '#234567', foreground: '#111111', fontSize: 1 }], new AbortController().signal);
+    const output = new Uint8Array(await rendered.output.arrayBuffer()), expectedPixels = new Uint8Array(3 * 2 * 4).fill(200);
+    for (let y = 0; y < 2; y++) expectedPixels.set([0x23, 0x45, 0x67, 255], (y * 3 + 1) * 4);
+    assert.deepEqual(Buffer.from(output), png(3, 2, expectedPixels));
+    const send = async (url, init) => {
+      assert.equal(url, '/api/products/product/image-text'); assert.equal(init.method, 'POST');
+      assert.deepEqual([...init.body.keys()], ['action', 'source', 'file']);
+      assert.deepEqual(JSON.parse(init.body.get('source')), source); return h.request('POST', init.body);
+    };
+    h.controls.putFailure = 'before';
+    await assert.rejects(client.applyFreeImageTranslation(rendered, new AbortController().signal, send), error => error.uncertain === true);
+    assert.deepEqual(await h.content(), before); assert.deepEqual(h.objects.get(h.key).bytes, original); assert.equal(h.objects.size, h.keys.length);
+    const saved = await client.applyFreeImageTranslation(rendered, new AbortController().signal, send), after = await h.content();
+    assert.deepEqual(h.objects.get(saved.key).bytes, output); assert.equal(h.objects.get(saved.key).customMetadata.freeImageOutputSha256, sha(output));
+    assert.deepEqual(Array.from(after.assets.detail.value), ['owner/first.png', saved.key, 'owner/last.png']);
+    for (const role of ['main', 'additional', 'detailTop', 'detailBottom', 'size', 'label']) assert.deepEqual(after.assets[role], before.assets[role]);
+    assert.deepEqual(after.seo, before.seo); assert.deepEqual(after.label, before.label); assert.deepEqual(h.objects.get(h.key).bytes, original);
+    assert.ok(JSON.parse(h.product().image_keys).includes(h.key)); assert.equal(h.deletions.length, 0); assert.equal(h.translations.length, 0);
+    const replay = await client.applyFreeImageTranslation(rendered, new AbortController().signal, send);
+    assert.equal(replay.replayed, true); assert.deepEqual(await h.content(), after); assert.equal(h.writes.length, 2, 'one failed storage attempt and one successful write');
+    const fresh = await h.source({ key: saved.key }); assert.equal(fresh.sourceSha256, sha(output)); assert.equal(fresh.productVersion, saved.productVersion);
+  } finally { h.close(); }
+});
+
 test('manual PNG adoption replaces the exact detail slot atomically and preserves original, SEO, labels, other roles and status', async () => {
   const h = await ready(); try {
     const source = await h.source(), before = await h.content(), res = await h.request('POST', h.applyBody(source)); await assertStatus(res, 200);

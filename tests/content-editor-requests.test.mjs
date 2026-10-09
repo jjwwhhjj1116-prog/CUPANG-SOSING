@@ -30,6 +30,33 @@ test('image save sends once, retains another tab draft and reaches resolved quot
  assert.equal(resolved.rows[0].fields.mainImage.value,'owner/a.png');assert.equal(calls[0].patch.seo,undefined);
 });
 
+test('stage-five component saves shared legacy detail without deleting main or unrelated stage input',async()=>{
+ let saved;const requests=[];
+ const h=harness((_url,init,content)=>{
+  if(init?.method!=='PATCH')return;
+  const request=JSON.parse(init.body);requests.push(request);
+  saved=h.model.applyContentPatch(saved??content,request.patch,'2026-10-10T01:00:00Z');
+  return Response.json({content:saved});
+ },'detail',true,content=>{
+  content.assets.main={value:['owner/a.png'],provenance:'collected',updatedAt:'source'};
+  content.assets.detail={value:['owner/a.png','owner/b.png'],provenance:'manual',updatedAt:'reviewed'};
+ });
+ await h.start();
+ nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.onChange({target:{value:'다른 단계 미저장 상품명'}});
+ const detail=()=>nodes(h.render()).find(n=>n.props?.['aria-label']==='상세페이지 설명');
+ detail().props.onChange({target:{value:'직접 확인한 상세 설명'}});
+ h.button('상세 설명·이미지 저장').props.onClick();await settle();
+ assert.equal(requests.length,1);assert.deepEqual(requests[0].patch.assets,{});
+ assert.equal(requests[0].patch.seo,undefined);assert.equal(saved.assets.main.value[0],'owner/a.png');
+ assert.equal(saved.assets.main.provenance,'collected');assert.equal(saved.assets.main.updatedAt,'source');
+ assert.equal(nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.value,'다른 단계 미저장 상품명');
+ detail().props.onChange({target:{value:''}});h.button('상세 설명·이미지 저장').props.onClick();await settle();
+ assert.deepEqual(requests[1].patch.assets,{});assert.equal(saved.detail.description.provenance,'manual');assert.equal(saved.detail.description.value,'');
+ const resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:{id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png","owner/c.png"]',source_price_cny:1,supply_price:1,sale_price:2,msrp:3},content:saved,options:h.load('app/product-options.ts').emptyProductOptions('p'),settings:h.load('app/workspace-settings.ts').defaultSettings});
+ assert.equal(resolved.rows[0].fields.mainImage.value,'owner/a.png');assert.equal(resolved.rows[0].fields.detailImages.value,'owner/a.png\nowner/b.png');
+ h.unmount();
+});
+
 test('label fill and save cannot overlap; unmount ignores late fill and write responses',async()=>{
  for(const operation of ['fill','save']){
   let finish,signal;const pending=new Promise(resolve=>{finish=resolve;});let count=0;

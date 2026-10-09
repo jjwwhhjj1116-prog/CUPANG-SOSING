@@ -210,7 +210,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   }
   async function translate() {
     if (!currentImage || uncertain || readyRetry || !focusedTarget()) return;
-    const selected = regions.filter(row => row.selected && row.translationProvenance !== 'manual');
+    const selected = regions.filter(row => row.selected && row.erase !== true && row.translationProvenance !== 'manual');
     if (!selected.length) { setNotice('번역할 문구를 선택해주세요. 직접 수정한 번역 문구와 공란은 유지합니다.'); return; }
     const work = begin('translate'); if (!work) return;
     try {
@@ -221,7 +221,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         const translated = returned.get(row.id);
         // A failed explicit retry reports its issue without erasing an earlier
         // result for this same original. Editing the original clears that result.
-        return translated && row.text === translated.original && row.translationProvenance !== 'manual'
+        return translated && row.erase !== true && row.text === translated.original && row.translationProvenance !== 'manual'
           ? { ...row, translated: translated.translated ?? row.translated, issue: translated.issue, translationProvenance: translated.translated === null ? row.translationProvenance : 'generated' } : row;
       }));
       setNotice([`${result.regions.filter(row => row.translated !== null).length}개 번역을 받았습니다. 한국어와 적용 영역을 검토해주세요.`, ...result.warnings].join(' '));
@@ -233,7 +233,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     const work = begin('preview'); if (!work) return;
     try {
       const result = await renderFreeImageTranslation(currentImage, liveRegions.current, work.controller.signal, liveOptionImageIds.current);
-      if (current(work)) { setRendered(result); setNotice('선택한 영역에만 배경색과 한국어 문구를 적용했습니다. 원본과 비교한 뒤 저장해주세요.'); }
+      if (current(work)) { setRendered(result); setNotice('선택한 영역에 배경색을 적용하고, 지우기 영역을 제외한 문구만 덧씌웠습니다. 원본과 비교한 뒤 저장해주세요.'); }
     } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '번역 이미지 미리보기를 만들지 못했습니다.'); }
     finally { finish(work); }
   }
@@ -318,20 +318,21 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       <p>선택 옵션 {optionImageIds.length}개 · 옵션 범위를 바꾸면 미리보기를 다시 만들어주세요.</p>
     </fieldset>}
     {regions.length > 0 && <>
-      <p>체크한 문구만 번역·미리보기에 사용합니다. 인식 정확도가 낮은 영역은 기본 선택하지 않습니다. 직접 수정한 번역 문구는 다시 번역해도 유지합니다.</p>
+      <p>체크한 문구만 번역·미리보기에 사용합니다. 영역 지우기를 선택하면 문구 없이 배경색만 덮어씁니다. 인식 정확도가 낮은 영역은 기본 선택하지 않습니다. 직접 수정한 번역 문구는 다시 번역해도 유지합니다.</p>
       <div style={{ maxHeight: 480, overflowY: 'auto' }}>{regions.map((region, index) => <fieldset key={region.id} className="translation-field" disabled={locked}>
         <legend><label><input type="checkbox" aria-label={`문구 ${index + 1} 선택`} checked={region.selected} onChange={event => editRegion(region.id, { selected: event.target.checked })} />문구 {index + 1} · 인식 {Math.round(region.confidence)}%</label></legend>
-        <label>원문<textarea aria-label={`문구 ${index + 1} 원문`} rows={2} maxLength={5000} value={region.text} onChange={event => editRegion(region.id, { text: event.target.value,
+        <label><input type="checkbox" aria-label={`문구 ${index + 1} 영역 지우기`} checked={region.erase === true} onChange={event => editRegion(region.id, { erase: event.target.checked })} />영역 지우기 · 배경색만 적용</label>
+        <label>원문<textarea aria-label={`문구 ${index + 1} 원문`} rows={2} maxLength={5000} disabled={region.erase === true} value={region.text} onChange={event => editRegion(region.id, { text: event.target.value,
           ...(region.translationProvenance === 'manual' ? { issue: '원문을 수정했습니다. 직접 작성한 번역을 다시 확인해주세요.' } : { translated: '', issue: null, translationProvenance: 'empty' }) })} /></label>
-        <label>한국어<textarea aria-label={`문구 ${index + 1} 한국어`} rows={2} maxLength={5000} value={region.translated} onChange={event => editRegion(region.id, { translated: event.target.value, translationProvenance: 'manual', issue: null })} /></label>
-        {region.issue && <p className="form-error">{region.issue}</p>}
+        <label>한국어<textarea aria-label={`문구 ${index + 1} 한국어`} rows={2} maxLength={5000} disabled={region.erase === true} value={region.translated} onChange={event => editRegion(region.id, { translated: event.target.value, translationProvenance: 'manual', issue: null })} /></label>
+        {region.issue && region.erase !== true && <p className="form-error">{region.issue}</p>}
         <div className="form-row">{(['x', 'y', 'width', 'height'] as const).map(field => <label key={field}>{({ x: '왼쪽', y: '위쪽', width: '영역 가로', height: '영역 세로' })[field]} px<input type="number" aria-label={`문구 ${index + 1} ${field}`} min={field === 'x' || field === 'y' ? 0 : 1} max={field === 'x' || field === 'width' ? loaded?.width : loaded?.height} step={1} value={region.box[field]} onChange={event => editRegion(region.id, { box: { ...region.box, [field]: Number(event.target.value) } })} /></label>)}</div>
         <div className="form-row"><label>배경색<input aria-label={`문구 ${index + 1} 배경색`} type="color" value={region.background} onChange={event => editRegion(region.id, { background: event.target.value })} /></label>
-          <label>글자색<input aria-label={`문구 ${index + 1} 글자색`} type="color" value={region.foreground} onChange={event => editRegion(region.id, { foreground: event.target.value })} /></label>
-          <label>글자 크기<input aria-label={`문구 ${index + 1} 글자 크기`} type="number" min={1} max={200} step={1} value={region.fontSize} onChange={event => editRegion(region.id, { fontSize: Number(event.target.value) })} /></label></div>
+          <label>글자색<input aria-label={`문구 ${index + 1} 글자색`} type="color" disabled={region.erase === true} value={region.foreground} onChange={event => editRegion(region.id, { foreground: event.target.value })} /></label>
+          <label>글자 크기<input aria-label={`문구 ${index + 1} 글자 크기`} type="number" disabled={region.erase === true} min={1} max={200} step={1} value={region.fontSize} onChange={event => editRegion(region.id, { fontSize: Number(event.target.value) })} /></label></div>
         <button type="button" className="btn" onClick={() => { if (locked || active.current) return; setRendered(null); setRegions(rows => rows.filter(row => row.id !== region.id)); }}>문구 {index + 1} 영역 삭제</button>
       </fieldset>)}</div>
-      <div className="actions"><button type="button" className="btn blue" disabled={locked || !currentImage || !regions.some(row => row.selected && row.translationProvenance !== 'manual')} onClick={() => void translate()}>선택 문구 한국어 번역</button>
+      <div className="actions"><button type="button" className="btn blue" disabled={locked || !currentImage || !regions.some(row => row.selected && row.erase !== true && row.translationProvenance !== 'manual')} onClick={() => void translate()}>선택 문구 한국어 번역</button>
         <button type="button" className="btn" disabled={locked || !currentImage || !regions.some(row => row.selected) || currentImage.source.optionImages?.commonAssigned === false && !optionImageIds.length} onClick={() => void preview()}>번역 이미지 미리보기</button></div>
     </>}
     {previewUrl && <div><h5>선택 영역 적용 미리보기</h5><img src={previewUrl} alt="한국어 문구 적용 미리보기" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /></div>}

@@ -7,7 +7,8 @@ export function imageStageRoles(stage:ImageStage):AssetRole[] {
 /** Moving a file into this stage also removes its saved assignment elsewhere,
  * without saving unrelated edits made in another stage. */
 export function imageStagePatch(initial:ImageDraft,draft:ImageDraft,stage:ImageStage):Partial<ImageDraft> {
- const roles=imageStageRoles(stage);const claimed=new Set(roles.flatMap(role=>draft[role]));const patch:Partial<ImageDraft>={};
+ const roles=imageStageRoles(stage);
+ const claimed=new Set(roles.flatMap(role=>draft[role].filter(key=>!initial[role].includes(key))));const patch:Partial<ImageDraft>={};
  for(const role of Object.keys(assetRoles) as AssetRole[]){
   const next=roles.includes(role)?draft[role]:initial[role].filter(key=>!claimed.has(key));
   if(JSON.stringify(next)!==JSON.stringify(initial[role]))patch[role]=[...next];

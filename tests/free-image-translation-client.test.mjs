@@ -200,6 +200,50 @@ test('render paints only selected clipped rectangles and keeps every outside pix
   assert.deepEqual(original.canvas.pixels, before);
 });
 
+test('explicit erase renders only the chosen background rectangle without text or outside pixel changes', async () => {
+  const h = fixture(), original = image(h), before = original.canvas.pixels.slice();
+  const cleared = { ...region('erase', { x: 3, y: 2, width: 8, height: 6 }, ''), text: '', erase: true, background: '#234567' };
+  const ignored = { ...region('ignored', { x: 14, y: 1, width: 4, height: 4 }, ''), selected: false, erase: true };
+  const rendered = await h.client.renderFreeImageTranslation(original, [cleared, ignored], new AbortController().signal);
+  const after = new Uint8Array(await rendered.output.arrayBuffer());
+  for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) {
+    const offset = (y * 20 + x) * 4, inside = x >= 3 && x < 11 && y >= 2 && y < 8;
+    assert.deepEqual(after.slice(offset, offset + 4), inside ? Uint8Array.of(0x23, 0x45, 0x67, 255) : before.slice(offset, offset + 4), `pixel ${x},${y}`);
+  }
+  assert.deepEqual(h.operations.filter(operation => operation[0] === 'fill'), [['fill', 3, 2, 8, 6]]);
+  assert.equal(h.operations.filter(operation => operation[0] === 'text').length, 0);
+  assert.deepEqual(original.canvas.pixels, before); assert.equal(rendered.source, source);
+  assert.equal(rendered.width, original.width); assert.equal(rendered.height, original.height);
+});
+
+test('mixed erase and text preserve retained wording and require explicit boolean mode with the same geometry bounds', async () => {
+  const h = fixture(), original = image(h), before = original.canvas.pixels.slice();
+  const cleared = { ...region('erase', { x: 1, y: 1, width: 5, height: 5 }, '보존한 문구'), erase: true, background: '#abcdef' };
+  const written = region('text', { x: 10, y: 2, width: 8, height: 7 }, '문구');
+  const rendered = await h.client.renderFreeImageTranslation(original, [cleared, written], new AbortController().signal);
+  const after = new Uint8Array(await rendered.output.arrayBuffer());
+  assert.deepEqual(h.operations.filter(operation => operation[0] === 'text').map(operation => operation[1]), ['문구']);
+  for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) {
+    const offset = (y * 20 + x) * 4, erased = x >= 1 && x < 6 && y >= 1 && y < 6, text = x >= 10 && x < 18 && y >= 2 && y < 9;
+    if (erased) assert.deepEqual(after.slice(offset, offset + 4), Uint8Array.of(0xab, 0xcd, 0xef, 255));
+    else if (!text) assert.deepEqual(after.slice(offset, offset + 4), before.slice(offset, offset + 4));
+  }
+  assert.equal(cleared.translated, '보존한 문구'); assert.deepEqual(original.canvas.pixels, before);
+  h.operations.length = 0;
+  await h.client.renderFreeImageTranslation(original, [{ ...cleared, erase: false }], new AbortController().signal);
+  assert.equal(h.operations.some(operation => operation[0] === 'text'), true, 'turning erase off uses retained wording');
+  for (const patch of [{ erase: 'true' }, { erase: 1 }, { erase: null }, { id: 'bad/id' }, { background: '#fff' },
+    { box: { x: 19, y: 1, width: 5, height: 5 } }]) {
+    await assert.rejects(h.client.renderFreeImageTranslation(original, [{ ...cleared, ...patch }], new AbortController().signal));
+  }
+  for (const erase of [undefined, false]) await assert.rejects(h.client.renderFreeImageTranslation(original,
+    [{ ...written, erase, translated: '' }], new AbortController().signal), 'normal text cannot be blank');
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [cleared, { ...written, id: cleared.id }], new AbortController().signal));
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [{ ...cleared, erase: false, translated: 'bad\u0000text' }], new AbortController().signal));
+  await assert.rejects(h.client.renderFreeImageTranslation(original, Array.from({ length: 101 }, (_, i) => ({ ...cleared, id: 'erase-' + i })), new AbortController().signal));
+  const stopped = new AbortController(); stopped.abort(); await assert.rejects(h.client.renderFreeImageTranslation(original, [cleared], stopped.signal));
+});
+
 test('uncertain apply keeps exact PNG/proof for explicit retry, binds the deterministic key and accepts only proven replay revision advances', async () => {
   const h = fixture(), output = new Blob(['same PNG bytes'], { type: 'image/png' }), rendered = { source, output, width: 20, height: 12 };
   const expected = await h.client.expectedFreeImageOutputKey(rendered), sent = []; let calls = 0;

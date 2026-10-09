@@ -102,6 +102,60 @@ test('explicit OCR and selected translation retain manual Korean/blanks and inva
   } finally { h.close(); }
 });
 
+test('explicit region erase skips translation, preserves blank/manual text, invalidates preview and sends only reviewed output', async () => {
+  const h = fixture(); try {
+    await h.click('원본 문구 읽기');
+    await h.change('문구 1 영역 지우기', '', true); await h.change('문구 1 배경색', '#234567');
+    assert.equal(h.field('문구 1 한국어').props.value, ''); assert.equal(h.field('문구 1 한국어').props.disabled, true);
+    assert.equal(h.field('문구 1 원문').props.disabled, true); assert.equal(h.field('문구 1 글자 크기').props.disabled, true);
+    await h.click('선택 문구 한국어 번역');
+    assert.deepEqual(plain(h.calls.find(call => call.action === 'translate').rows), [{ id: 'r2', text: '中文 r2' }]);
+    assert.equal(h.field('문구 1 한국어').props.value, ''); assert.equal(h.field('문구 2 한국어').props.value, '한국어 r2');
+    await h.click('번역 이미지 미리보기');
+    const mixed = h.calls.filter(call => call.action === 'preview').at(-1);
+    assert.equal(mixed.rows[0].erase, true); assert.equal(mixed.rows[0].background, '#234567');
+    assert.equal(mixed.rows[0].translated, ''); assert.equal(mixed.rows[1].translated, '한국어 r2');
+    await h.change('문구 1 영역 지우기', '', false); assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
+    assert.equal(h.field('문구 1 한국어').props.disabled, false); assert.equal(h.field('문구 1 원문').props.value, '中文 r1');
+    await h.change('문구 1 한국어', '직접 보존한 문구'); await h.change('문구 1 영역 지우기', '', true);
+    await h.change('문구 2 선택', '', false);
+    assert.equal(h.button('선택 문구 한국어 번역').props.disabled, true);
+    await h.click('번역 이미지 미리보기'); h.allowApply(false); await h.click('검토한 번역 이미지 적용');
+    assert.equal(h.calls.filter(call => call.action === 'apply').length, 0);
+    await h.change('문구 1 영역 지우기', '', false);
+    assert.equal(h.field('문구 1 한국어').props.value, '직접 보존한 문구'); assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
+    await h.change('문구 1 영역 지우기', '', true); await h.click('번역 이미지 미리보기'); h.allowApply(true);
+    const preview = h.calls.filter(call => call.action === 'preview').at(-1); await h.click('검토한 번역 이미지 적용');
+    const applied = h.calls.find(call => call.action === 'apply');
+    assert.equal(applied.image.source, preview.image.source); assert.equal(applied.image.output, h.urls.at(-1).blob);
+    assert.equal(h.calls.filter(call => call.action === 'translate').length, 1); assert.equal(h.saved, 1);
+  } finally { h.close(); }
+});
+
+test('a manually added erase rectangle needs no OCR wording and retains scope through cancel and lost apply acknowledgement', async () => {
+  const h = fixture(); try {
+    h.setOcr(async () => { throw Error('OCR found no words'); }); await h.click('원본 문구 읽기');
+    await h.click('문구 영역 직접 추가'); await h.change('문구 1 영역 지우기', '', true);
+    assert.equal(h.field('문구 1 원문').props.value, ''); assert.equal(h.field('문구 1 한국어').props.value, '');
+    assert.equal(h.button('선택 문구 한국어 번역').props.disabled, true);
+    const rendering = deferred(); h.setRender(() => rendering.promise);
+    await h.click('번역 이미지 미리보기'); await h.click('이미지 작업 취소');
+    const old = h.calls.filter(call => call.action === 'preview').at(-1);
+    assert.equal(old.signal.aborted, true);
+    rendering.resolve({ source: old.image.source, output: new Blob(['late PNG'], { type: 'image/png' }), width: 20, height: 12 }); await h.settle();
+    assert.equal(h.button('검토한 번역 이미지 적용'), undefined); assert.equal(h.field('문구 1 영역 지우기').props.checked, true);
+    h.setRender(null); await h.click('번역 이미지 미리보기');
+    h.setApply(async () => { throw new ApplyError('save acknowledgement lost', true); }); await h.click('검토한 번역 이미지 적용');
+    const first = h.calls.find(call => call.action === 'apply'); assert.equal(h.saved, 0);
+    h.setProps({ version: '2026-10-06T00:00:02.000Z' }); await h.settle();
+    h.setApply(async () => ({ applied: true, replayed: true })); await h.click('같은 결과의 저장 상태 다시 확인');
+    const second = h.calls.filter(call => call.action === 'apply').at(-1);
+    assert.equal(second.image, first.image); assert.equal(second.image.output, first.image.output);
+    assert.equal(second.image.source.productVersion, version); assert.equal(h.saved, 1);
+    assert.equal(h.calls.filter(call => call.action === 'translate').length, 0);
+  } finally { h.close(); }
+});
+
 test('a failed partial retry retains earlier generated Korean, reports failure and keeps manual blanks', async () => {
   const h = fixture(); try {
     h.setOcr(async () => [region('r1'), region('r2'), region('r3')]);
