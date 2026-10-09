@@ -123,7 +123,7 @@ export async function fingerprint(value: unknown) {
 function currentTranslation(product: ProductRecord, content: ProductContent | null, job: TranslationJob | null) {
   // The reserved server marker identifies an option-only operation, including
   // partial/no-op results. Its empty SEO is never new SEO draft evidence.
-  return job?.status === 'completed' && job.result && !Object.hasOwn(job.review,'optionsRetry') && job.productId === product.id && job.productVersion === product.updated_at && job.contentRevision === (content?.revision ?? 0) ? job : null;
+  return job?.status === 'completed' && job.result && !Object.hasOwn(job.review,'optionsRetry') && !Object.hasOwn(job.review,'intakeOptions') && job.productId === product.id && job.productVersion === product.updated_at && job.contentRevision === (content?.revision ?? 0) ? job : null;
 }
 
 export function automationInputFingerprint(product: ProductRecord, settings: WorkspaceSettings, content: ProductContent | null, translation: TranslationJob | null = null, options: ProductOptions | null = null, quotation: QuotationFieldsState | null = null) {

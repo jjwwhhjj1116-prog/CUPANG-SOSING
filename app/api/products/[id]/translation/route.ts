@@ -6,6 +6,7 @@ import { readProductContent } from '@/db/product-content';
 import { listTranslationJobs, getTranslationJob, createTranslationJob, approveTranslationJob, claimTranslationJob, finishTranslationJob, findIntakeTranslation, findIntakeOptionsTranslation, refreshUnstartedIntake, findOptionsRetryTranslation, createOptionsRetryTranslation, hasUnsettledTranslation,findSeoRetryTranslation,createSeoRetryTranslation,readSeoRetrySource } from '@/db/translation-jobs';
 import { fingerprint } from '@/app/automation/model';
 import { optionsRetryProof } from '@/app/options-translation-retry';
+import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
@@ -194,7 +195,12 @@ export async function POST(request: Request, context: Context) {
         item.review.destination === translationDestination(config) && item.review.model === config.model && item.review.maxOutputTokens === config.maxOutputTokens && JSON.stringify(item.review.source) === JSON.stringify(source) &&
         (!['prepared', 'approved'].includes(item.status) || Date.parse(item.review.expiresAt) > Date.now()));
       if (previous && !autoDraft) return json({ job: previous, replayed: true, remainingOptions, configuration: configuration() });
-      const review = await prepareTranslationReview(source, config);
+      const prepared = await prepareTranslationReview(source, config);
+      const intakeOptions = optionsOnly && config.provider === 'google-free'
+        ? { initialJobId: initialIntake!.id, optionRevision: options.revision, scope: 'options' as const } : null;
+      const paidNotice = '저장된 최초 SEO 초안을 유지하고 수집 원문에 연결된 미번역 옵션값만 사용자 지정 Google 번역 주소로 보냅니다. 상품명·설명은 검토 문맥으로만 보존하며 번역에 전송하지 않습니다. 참고 메모·카테고리·옵션 ID도 보내지 않습니다. API 키나 유료 AI는 사용하지 않으며 실패 후 자동 재시도하지 않습니다.';
+      const review = intakeOptions ? { ...prepared, paidNotice, intakeOptions,
+        fingerprint: await fingerprint({ review: prepared.fingerprint, intakeOptions, paidNotice }) } : prepared;
       const job: TranslationJob = { id: crypto.randomUUID(), productId: id, productVersion: product.updated_at, contentRevision: content.revision,
         status: 'prepared', review, result: null, error: null, createdAt: new Date().toISOString(), approvedAt: null, startedAt: null, finishedAt: null };
       // Reopening/retrying the same source does not create another paid job.
@@ -222,6 +228,34 @@ export async function POST(request: Request, context: Context) {
     const existing = await getTranslationJob(owner, id, body.jobId);
     if (!existing) return json({ error: '번역 요청을 찾을 수 없습니다.' }, 404);
     if (existing.review.destination !== translationDestination(config) || existing.review.model !== config.model || existing.review.maxOutputTokens !== config.maxOutputTokens) return conflict();
+    let intakeProof;
+    try { intakeProof = intakeOptionsReviewProof(existing.review); }
+    catch { return conflict(); }
+    if (intakeProof && (body.action === 'approve' || ['prepared','approved'].includes(existing.status))) {
+      const { findProductCollection } = await import('@/db/collection-products');
+      const { readCollectionResult } = await import('@/db/collection-results');
+      const { findCollectionJob } = await import('@/db/collection-jobs');
+      const { readProductOptions } = await import('@/db/product-options');
+      const { collectedSeoSource } = await import('@/app/collected-seo-source');
+      const link = await findProductCollection(owner,id); if (!link) return conflict();
+      const [initial, batch, receipt, collection, options, content, recoveryJobs] = await Promise.all([
+        findIntakeTranslation(owner,id), findIntakeOptionsTranslation(owner,id,await fingerprint(existing.review.source.attributes)),
+        readCollectionResult(owner,link.job_id), findCollectionJob(owner,link.job_id), readProductOptions(owner,id),
+        readProductContent(owner,id), listTranslationJobs(owner,id),
+      ]);
+      if (!initial || initial.id !== intakeProof.initialJobId || initial.id === existing.id || initial.status !== 'completed' || !initial.result
+        || batch?.id !== existing.id || !receipt || !collection || options.productId !== id || options.revision !== intakeProof.optionRevision
+        || existing.productVersion !== product.updated_at || existing.contentRevision !== content.revision
+        || initial.result.model !== initial.review.model
+        || ![initial.result.draft?.title,initial.result.draft?.description].some(value => typeof value === 'string' && value.trim())
+        || ['intakeOptions','optionsRetry','seoRetry'].some(key => Object.hasOwn(initial.review,key))) return conflict();
+      const contextSource = (source: typeof existing.review.source) => ({ title: source.title, description: source.description,
+        reference: source.reference, category: source.category, guidance: source.guidance });
+      if (JSON.stringify(contextSource(initial.review.source)) !== JSON.stringify(contextSource(existing.review.source))) return conflict();
+      if (!recoveryJobs.some(job => job.id === initial.id)) recoveryJobs.push(initial);
+      const current = collectedSeoSource(receipt.result,collection,options,true,recoveryJobs).source;
+      if (JSON.stringify(current) !== JSON.stringify(existing.review.source)) return conflict();
+    }
     const seoProof=seoRetryReviewProof(existing.review);
     let seoSource;
     if(seoProof){
@@ -234,14 +268,14 @@ export async function POST(request: Request, context: Context) {
     if (body.action === 'approve') {
       if (body.confirmPaid !== true || body.reviewFingerprint !== existing.review.fingerprint) return json({ error: '검토한 원문과 모델의 생성 요청 승인이 필요합니다.', code: 'PAID_APPROVAL_REQUIRED' }, 400);
       if (existing.status === 'approved') return json({ job: existing, replayed: true });
-      const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString(),seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision,seoSource);
+      const approved = await approveTranslationJob(owner, id, existing.id, existing.review.fingerprint, new Date().toISOString(),seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision,seoSource);
       return approved ? json({ job: approved }) : conflict();
     }
     if (['completed', 'failed', 'uncertain'].includes(existing.status)) return json({ job: existing, replayed: true });
     if (existing.status === 'running') return json({ job: existing, replayed: true, message: '이미 실행 중이거나 결과 확인이 필요합니다. 중복 호출하지 않았습니다.' }, 202);
     if (existing.status !== 'approved') return json({ error: '먼저 검토한 생성 요청을 승인해주세요.', code: 'PAID_APPROVAL_REQUIRED' }, 409);
     const claim = crypto.randomUUID();
-    const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString(),seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision,seoSource);
+    const claimed = await claimTranslationJob(owner, id, existing.id, existing.review.fingerprint, claim, new Date().toISOString(),seoProof?.optionRevision??optionsRetryProof(existing)?.optionRevision??intakeProof?.optionRevision,seoSource);
     if (!claimed) {
       const current = await getTranslationJob(owner, id, existing.id);
       if (current && current.status !== 'approved') return json({ job: current, replayed: true }, current.status === 'running' ? 202 : 200);

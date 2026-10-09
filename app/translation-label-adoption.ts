@@ -3,6 +3,7 @@ import type { TranslationJob } from '@/app/automation/translation';
 import { collectionLabelField } from '@/app/collection-label-attributes';
 import { translationLabelSourceScope } from '@/app/translation-label-source-scope';
 import { translationAttributeIssue } from '@/app/translation-attribute-evidence';
+import { assertContentTranslationScope } from '@/app/translation-adoption';
 
 export type TranslationLabelMapping = { sourceIndex: number; field: LabelField };
 // Explicit equivalent headings only. Do not collapse component materials, product
@@ -61,6 +62,7 @@ export function suggestTranslationLabels(content: ProductContent, job: Translati
 }
 /** Explicit reviewed connections only. Manual values, including blanks, are protected. */
 export function translationLabelAdoption(content: ProductContent, job: TranslationJob, productVersion: string, mappings: readonly TranslationLabelMapping[]) {
+  assertContentTranslationScope(job);
   if (job.productId !== content.productId || job.productVersion !== productVersion || job.status !== 'completed' || !job.result) throw Error('현재 상품의 완료된 번역 결과를 선택해주세요.');
   if (!mappings.length || mappings.length > Object.keys(labelFields).length || new Set(mappings.map(item => item.field)).size !== mappings.length || new Set(mappings.map(item => item.sourceIndex)).size !== mappings.length) throw Error('상품 속성과 표시사항 항목을 중복 없이 연결해주세요.');
   const label: Partial<Record<LabelField, string>> = {};

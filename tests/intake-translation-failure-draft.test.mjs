@@ -115,7 +115,7 @@ test('an acknowledged running job can resolve to the same saved Google failure w
  }finally{f.close();}
 });
 
-test('a completed initial draft plus a failed Google options-only batch opens a manual draft but a later stale batch remains a hard conflict',async()=>{
+test('a completed initial draft plus a Google options-only quota stop keeps a reusable partial draft after image saves',async()=>{
  let failOptions=false;
  const f=await fixture(companies[0],'price',true,target=>failOptions?new Response('upstream fixture body is private',{status:429})
   :Response.json([[['원문 기준 선글라스',new URL(target).searchParams.get('q'),null,null]],null,'zh-CN']));try{
@@ -134,19 +134,20 @@ test('a completed initial draft plus a failed Google options-only batch opens a 
    return null;
   };
   await f.start();
-  assert.equal(f.rows[0].status,'saved');assert.match(f.rows[0].message,/번역 미완료/);assert.equal(f.opened.length,1);
+  assert.equal(f.rows[0].status,'saved');assert.match(f.rows[0].message,/검토 필요/);assert.equal(f.opened.length,1);
   const jobs=f.h.sqlite.prepare('SELECT * FROM translation_jobs ORDER BY created_at,id').all();assert.equal(jobs.length,2);
   const initial=jobs.find(job=>job.idempotency_key==='intake-auto-v1'),options=jobs.find(job=>job.idempotency_key.startsWith('intake-options-'));
-  assert.equal(initial.status,'completed');assert.equal(options.status,'failed');assert.equal(options.result,null);assert.match(options.error,/HTTP 429/);
+  assert.equal(initial.status,'completed');assert.equal(options.status,'completed');assert.equal(options.error,null);
+  assert.equal(JSON.parse(options.result).googleStoppedHttpStatus,429);assert.equal(JSON.parse(options.result).draft.attributes.length,0);
   assert.equal(f.h.aiSources.length,0);const googleCalls=f.googleCalls;assert.ok(googleCalls>=2);assert.equal(f.opened[0].options.rows.length,6);
   assert.ok(f.opened[0].options.rows.every(row=>row.provenance.translatedName!=='translated'));
   assert.equal(f.calls.filter(call=>call.body?.action==='execute').length,2);
-  assert.ok(f.calls.filter(call=>call.path.endsWith('/translation-apply')).every(call=>call.body.jobId===initial.id&&call.body.scope===undefined));
-  // Image import follows draft preparation and advances the product clock.
-  // A forced requeue must keep that stale options job as a conflict, rather
-  // than infer readiness from an unrelated successful initial translation.
+  assert.ok(f.calls.filter(call=>call.body?.action==='apply').every(call=>call.body.jobId===initial.id&&call.body.scope===undefined));
+  assert.ok(f.calls.some(call=>call.body?.action==='preview'&&call.body.jobId===options.id&&call.body.scope==='options'));
+  // Image import advances the product clock. The acknowledged partial result
+  // remains reviewable and reusable without requesting the service again.
   const before=preserved(f.h),callCount=f.calls.length;f.restorePending();await f.start();
-  assert.equal(f.rows[0].status,'error');assert.match(f.rows[0].message,/변경되었습니다/);assert.equal(f.opened.length,1);
+  assert.equal(f.rows[0].status,'saved');assert.match(f.rows[0].message,/검토 필요/);assert.equal(f.opened.length,2);
   assert.equal(f.h.aiSources.length,0);assert.equal(f.googleCalls,googleCalls);assert.equal(f.calls.filter(call=>call.body?.action==='execute').length,2);
   assert.equal(f.calls.slice(callCount).filter(call=>call.body?.action==='apply').length,0);
   assert.equal(preserved(f.h),before);assert.equal(product(f.h).supplier_hub_status,'미전송');

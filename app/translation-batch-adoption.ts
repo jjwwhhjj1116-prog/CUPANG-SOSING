@@ -1,5 +1,5 @@
 import { validateContentInput, type ProductContent, type ContentPatch } from '@/app/product-content';
-import { translationSeoFields } from '@/app/translation-adoption';
+import { assertContentTranslationScope, translationSeoFields } from '@/app/translation-adoption';
 import { suggestTranslationLabels, translationLabelAdoption } from '@/app/translation-label-adoption';
 import type { TranslationJob } from '@/app/automation/translation';
 import { collectionKeywords } from '@/app/sourcing';
@@ -31,6 +31,7 @@ function untouchedIntakeKeywords(content: ProductContent, job: TranslationJob): 
 /** A reviewed, single-revision save. Only untouched intake guidance can replace
  * a manual keyword field; actual edits and all legacy values stay protected. */
 export function translationBatchAdoption(content: ProductContent, job: TranslationJob, version: string, intakeBrand?: string) {
+  assertContentTranslationScope(job);
   if (job.productId !== content.productId || job.productVersion !== version || job.status !== 'completed' || !job.result) {
     throw Error('현재 상품의 완료된 번역 결과를 선택해주세요.');
   }

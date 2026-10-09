@@ -10,6 +10,7 @@ export type TranslationReview = {
   paidNotice: string; pricingUrl: string; expiresAt: string; fingerprint: string;
   reviewId?: string; // Older persisted reviews remain valid without this field.
   optionsRetry?: { retryKey: string; optionRevision: number; scope: 'options' }; // Server-created, option-only free retry proof.
+  intakeOptions?: { initialJobId: string; optionRevision: number; scope: 'options' }; // Server-created automatic continuation, distinct from an explicit retry.
   seoRetry?: {retryKey:string;scope:'seo';optionRevision:number;sourceFingerprint:string;company:{code:string;name:string}};
 };
 export type TranslationResult = { draft: TranslationDraft; responseId: string; model: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null; generatedAt: string; provenance: 'generated'; appliedToContent: false; detectedSourceLanguages?: string[]; translationRequests?: number; googleStoppedHttpStatus?: number };
@@ -251,6 +252,11 @@ export async function executeTranslation(review: TranslationReview, config: Tran
     const {optionsRetryReviewProof}=await import('@/app/options-translation-retry');
     optionsOnly=!!optionsRetryReviewProof(review);
     if(config.provider!=='google-free')throw new TranslationError('CONFIGURATION_CHANGED','옵션 재시도는 검토한 무료 Google 번역만 사용할 수 있습니다.');
+  }
+  if(Object.hasOwn(review,'intakeOptions')){
+    const {intakeOptionsReviewProof}=await import('@/app/intake-options-translation');
+    optionsOnly=!!intakeOptionsReviewProof(review);
+    if(config.provider!=='google-free')throw new TranslationError('CONFIGURATION_CHANGED','자동 옵션 번역은 검토한 무료 Google 번역만 사용할 수 있습니다.');
   }
   if (config.provider === 'google-free') {
     if (config.model !== GOOGLE_TEXT_MODEL || review.instructionsVersion !== 'sourceflow-translation-v6') throw new TranslationError('CONFIGURATION_CHANGED','Google 번역 방식으로 새 요청을 준비해주세요.');

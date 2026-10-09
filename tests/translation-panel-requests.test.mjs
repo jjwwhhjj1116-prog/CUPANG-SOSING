@@ -32,6 +32,17 @@ const prepare='번역 요청 검토하기 · 무료';
 const execute='승인한 SEO 초안 작성 계속';
 const adopt='검토한 초안을 이 항목에 적용 · 기존 내용 교체';
 
+test('automatic Google option continuation history shows its scope without exposing SEO or label adoption actions',async()=>{
+ const h=harness(async()=>Response.json({error:'조회 시험 결과'},{status:503}),'completed',false,false,'v',1,'2099-09-24',
+  {model:'google-translate-gtx',destination:'Google 번역',intakeOptions:{initialJobId:crypto.randomUUID(),optionRevision:1,scope:'options'}});
+ try{
+  await settle();const tree=h.render(),text=JSON.stringify(tree),buttons=nodes(tree).filter(node=>node.type==='button').map(node=>label(node.props.children));
+  assert.match(text,/자동 옵션 번역/);assert.match(text,/상품명·설명은 검토 자료로 보관하며 전송하지/);
+  assert.ok(!buttons.includes(adopt));assert.ok(!buttons.some(name=>/SEO 초안 작성|항목 함께 저장/.test(name)));
+  assert.equal(h.saved,0);assert.ok(h.calls.every(call=>!call.init.method));
+ }finally{h.close();}
+});
+
 test('explicit free options button retains one nonce across duplicate clicks and uncertain recovery without changing typed source',async()=>{
  const pending=deferred(),seen=[];let attempt=0;
  const h=harness(()=>{throw Error('unexpected direct API call');},'completed',false,false,'v',1,'2099-09-24',{model:'google-translate-gtx',destination:'Google 번역'},

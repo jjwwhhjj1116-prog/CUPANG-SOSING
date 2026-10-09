@@ -104,7 +104,8 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
     if(activeRequest.current===controller){activeRequest.current=null;if(mounted.current)setBusy(false);}
   }
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
-  const optionsOnlyJob = Boolean(job && Object.hasOwn(job.review,'optionsRetry'));
+  const intakeOptionsJob = Boolean(job && Object.hasOwn(job.review,'intakeOptions'));
+  const optionsOnlyJob = Boolean(job && (Object.hasOwn(job.review,'optionsRetry') || intakeOptionsJob));
   const seoRetryJob=Boolean(job&&Object.hasOwn(job.review,'seoRetry'));
   const googleSource = view?.configuration.model === 'google-translate-gtx';
   const stale = Boolean(job && (job.productVersion !== version || (content && job.contentRevision !== content.revision)));
@@ -333,7 +334,7 @@ function TranslationContent({ productId, version, title, onContentSaved }: Props
         {stale && <p className="form-error">이 요청 이후 상품 또는 콘텐츠가 변경되었습니다. 새 실행에는 새 검토 요청이 필요합니다. 기존 결과는 확인할 수 있습니다.</p>}
         {expired&&!stale&&!optionsOnlyJob&&!seoRetryJob&&<><p>검토 기한이 지났습니다. 같은 원문·옵션으로 검토 기한을 갱신할 수 있습니다.</p><button type="button" className="btn" disabled={busy||!view.configuration.configured} onClick={()=>void action({action:'prepare',expectedVersion:version,idempotencyKey:crypto.randomUUID(),source:job.review.source})}>같은 원문으로 검토 기한 갱신</button></>}
         {stale&&!optionsOnlyJob&&!googleSource&&<button type="button" className="btn" disabled={busy||!view.configuration.configured} onClick={()=>void action({action:'prepare-collected'})}>현재 상품 원문으로 SEO 요청 다시 준비</button>}
-        {optionsOnlyJob&&<p>미번역 옵션 전용 재시도입니다. 위 옵션 번역 버튼에서 같은 작업을 확인하며 SEO·표시사항에는 적용하지 않습니다.</p>}
+        {optionsOnlyJob&&<p>{intakeOptionsJob?'자동 옵션 번역의 이어서 처리한 작업입니다. 저장한 상품명·설명은 유지하며 남은 옵션은 위 옵션 번역 버튼에서 확인해주세요.':'미번역 옵션 전용 재시도입니다. 위 옵션 번역 버튼에서 같은 작업을 확인하며 SEO·표시사항에는 적용하지 않습니다.'}</p>}
         {job.status === 'prepared' && !optionsOnlyJob && <><label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || stale || expired} />{job.review.destination==='Google 번역'?'위 원문·Google 번역 서비스의 사용 조건과 번역 요청 묶음을 검토하고 승인합니다.':'위 모델·원문·위 서비스의 사용 조건과 생성 요청 1회를 검토하고 승인합니다.'}</label><button type="button" className="btn blue" disabled={busy || stale || expired || !confirmed} onClick={() => void writeReviewedDraft()}>SEO 초안 작성</button></>}
         {job.status === 'approved' && !optionsOnlyJob && <button type="button" className="btn blue" disabled={busy || stale || expired} onClick={() => void writeReviewedDraft()}>승인한 SEO 초안 작성 계속</button>}
         {job.status === 'running' && <p>이미 시작된 요청을 다시 호출하지 않습니다. 장시간 상태가 유지되면 생성 서비스 사용량과 서버 실행 이력을 확인해주세요.</p>}

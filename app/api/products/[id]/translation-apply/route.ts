@@ -17,6 +17,7 @@ import {capturedAttributeCategory,attributeCategorySchema} from '@/app/quotation
 import { intakeTranslationReplayContent, intakeTranslationReplayJob } from '@/app/intake-translation-replay';
 import { collectionSourceReference } from '@/app/sourcing';
 import { optionsRetryProof, optionsRetryApplicationFingerprint } from '@/app/options-translation-retry';
+import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 
@@ -43,6 +44,11 @@ export async function POST(request: Request, context: Context) {
     const [content, options, job] = await Promise.all([readProductContent(owner, id), readProductOptions(owner, id), getTranslationJob(owner, id, body.jobId as string)]);
     if (!job) return json({ error: '번역 결과를 찾을 수 없습니다.' }, 404);
     const scope = body.scope === 'options' ? 'options' : 'all';
+    try {
+      const intakeProof = intakeOptionsReviewProof(job.review);
+      if (intakeProof && (scope !== 'options' || job.productVersion === product.updated_at && intakeProof.optionRevision !== options.revision))
+        return json({ error: '자동 옵션 번역은 검토한 미번역 옵션에만 적용할 수 있습니다. 현재 옵션을 다시 확인해주세요.' },409);
+    } catch { return json({ error: '자동 옵션 번역 원문 연결을 확인하지 못했습니다.' },409); }
     let seoSource;
     try{
       const seoProof=seoRetryReviewProof(job.review);
