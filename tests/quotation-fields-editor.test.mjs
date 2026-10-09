@@ -94,6 +94,24 @@ test('owned image references are reviewable attachments in both editor and resol
  assert.ok(invalid.validationIssues.length>0);
 });
 
+test('conditional original-workbook guidance remains visible for edited or explicitly cleared cells',()=>{
+ const view=fixture();
+ const guidance='설치 대상일 때 지원 방식과 설치 일정을 확인합니다.';
+ for(const schema of [view.resolved.schema,view.automatic.schema]){
+  const field=schema.fields.find(field=>field.id==='brand');field.required=false;field.reviewRequired=false;field.help=guidance;
+  field.workbookWire={sha256:'a'.repeat(64),sheetName:'견적서',column:44,requirement:'conditional'};
+ }
+ const before=JSON.stringify(view);
+ for(const value of ['수정한 표시값','',null]){
+  const cell=editor.resolveQuotationEditorCell(view,[change('brand',value,'red')],'red','brand');
+  assert.equal(cell.validationIssues.length,0);assert.equal(cell.needsReview,true);
+  assert.equal(cell.reviewMessages.filter(message=>message.includes(guidance)).length,1);
+  assert.ok(cell.reviewMessages.some(message=>message.includes('조건이 적용되는지')));
+  assert.equal(cell.value,value===null?'기본 브랜드':value);
+ }
+ assert.equal(JSON.stringify(view),before);
+});
+
 test('required captured empty choices stay selected through editor validation, propagation and review',()=>{
  const snapshot=hubSchemaSnapshot();
  const view=fixture(undefined,undefined,source=>{source.categoryId=snapshot.categoryId;source.categoryPath=snapshot.categoryPath;source.hubSchema=snapshot;});

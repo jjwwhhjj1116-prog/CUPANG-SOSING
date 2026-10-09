@@ -68,9 +68,28 @@ function ui(kind,initialOverride={}){
 }
 
 test('workspace integration toggle keeps a blank rate invalid, retains edited fields across parent changes and saves only by explicit submission',async()=>{
- const h=ui('settings'),before=JSON.stringify(h.initial);h.edit('통합통관 환율 사용',true);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'');assert.equal(h.control('적용환율 (CNY → KRW)'),undefined);await h.save();assert.equal(h.saves.length,0);assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));h.edit('통합통관 적용환율 (CNY → KRW)',350);h.edit('미리보기 원가 (CNY)',3.6);const preview=nodes(h.render()).find(node=>node.props?.['aria-label']==='기본 가격 미리보기');assert.ok(text(preview).includes('4,720원'));assert.equal(h.saves.length,0);h.update({...h.initial,useIntegratedRate:true,integratedRate:450});assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'350');h.edit('통합통관 환율 사용',false);assert.equal(h.control('적용환율 (CNY → KRW)').props.value,'350');h.edit('통합통관 환율 사용',true);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'350');await h.save();assert.equal(h.saves.length,1);assert.equal(h.saves[0].useIntegratedRate,true);assert.equal(h.saves[0].integratedRate,350);assert.equal(h.external,0);assert.notEqual(JSON.stringify(h.initial),before,'only the supplied parent value was deliberately changed by this test');
+ const h=ui('settings'),before=JSON.stringify(h.initial);h.edit('통합통관 환율 사용',true);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'');assert.equal(h.control('적용환율 (CNY → KRW)').props.value,'350');await h.save();assert.equal(h.saves.length,0);assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));h.edit('통합통관 적용환율 (CNY → KRW)',350);h.edit('미리보기 원가 (CNY)',3.6);const preview=nodes(h.render()).find(node=>node.props?.['aria-label']==='기본 가격 미리보기');assert.ok(text(preview).includes('4,720원'));assert.equal(h.saves.length,0);h.update({...h.initial,useIntegratedRate:true,integratedRate:450});assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'350');h.edit('통합통관 환율 사용',false);assert.equal(h.control('적용환율 (CNY → KRW)').props.value,'350');h.edit('통합통관 환율 사용',true);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'350');await h.save();assert.equal(h.saves.length,1);assert.equal(h.saves[0].useIntegratedRate,true);assert.equal(h.saves[0].integratedRate,350);assert.equal(h.external,0);assert.notEqual(JSON.stringify(h.initial),before,'only the supplied parent value was deliberately changed by this test');
 });
 
 test('PriceEditor treats active flag/rate as dirty, blocks a missing rate and preserves it until an explicit reload or save',async()=>{
  const h=ui('price');h.edit('통합통관 환율 사용',true);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'');await h.save();assert.equal(h.saves.length,0);h.edit('통합통관 적용환율 (CNY → KRW)',350);assert.match(text(h.render()),/2,344원/);assert.match(text(h.render()),/4,690원/);const next={...h.initial,useIntegratedRate:true,integratedRate:500};h.update(next);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,350);assert.match(text(h.render()),/수정 중인 입력은 유지/);assert.equal(h.saves.length,0);h.button('수정 취소·최신 가격 정책 불러오기').props.onClick();assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,500);assert.equal(h.render().props['data-workspace-dirty'],false);h.edit('통합통관 적용환율 (CNY → KRW)',350);await h.save();assert.equal(h.saves.length,1);assert.equal(h.saves[0].integratedRate,350);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(h.external,0);
+});
+
+test('ordinary and integrated rates stay independently editable for bundle selection and final pack prices',async()=>{
+ const h=ui('settings',{useIntegratedRate:true,integratedRate:290,exchangeRate:100,minimumMarginEnabled:false,bundleEnabled:true,bundleCriterion:'supplyMargin',bundleMinimumSupplyMargin:3000,bundleMinimumCoupangMargin:3000});
+ const original=JSON.stringify(h.initial);h.edit('미리보기 원가 (CNY)',3.6);
+ const quantity=()=>text(nodes(h.render()).find(node=>node.props?.['aria-label']==='신규 상품 판매 구성 수량'));
+ assert.match(quantity(),/9개/);assert.equal(h.control('적용환율 (CNY → KRW)').props.value,'100');assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'290');
+ h.edit('적용환율 (CNY → KRW)',350);assert.match(quantity(),/3개/);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,'290');assert.equal(h.saves.length,0);assert.equal(JSON.stringify(h.initial),original);
+ const preview=()=>text(nodes(h.render()).find(node=>node.props?.['aria-label']==='기본 가격 미리보기'));
+ assert.match(preview(),/원가: 3,775원/);h.edit('통합통관 적용환율 (CNY → KRW)',300);assert.match(quantity(),/3개/);assert.match(preview(),/원가: 3,894원/);assert.equal(h.control('적용환율 (CNY → KRW)').props.value,'350');
+ await h.save();assert.equal(h.saves.length,1);assert.equal(h.saves[0].exchangeRate,350);assert.equal(h.saves[0].integratedRate,300);assert.equal(h.external,0);
+});
+
+test('product price policy retains an edited ordinary rate while integrated cost and manual-save boundaries stay unchanged',async()=>{
+ const h=ui('price',{exchangeRate:350,useIntegratedRate:true,integratedRate:290});
+ assert.equal(h.control('환율 (원/CNY)').props.value,350);const initial=text(h.render());assert.match(initial,/1,998원/);
+ h.edit('환율 (원/CNY)',400);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)').props.value,290);assert.match(text(h.render()),/1,998원/);assert.equal(h.saves.length,0);
+ await h.save();assert.equal(h.saves.length,1);assert.equal(h.saves[0].exchangeRate,400);assert.equal(h.saves[0].integratedRate,290);assert.equal(h.external,0);assert.equal(h.render().props['data-workspace-dirty'],false);
+ h.edit('통합통관 환율 사용',false);assert.equal(h.control('환율 (원/CNY)').props.value,400);assert.equal(h.control('통합통관 적용환율 (CNY → KRW)'),undefined);assert.equal(h.saves.length,1);
 });

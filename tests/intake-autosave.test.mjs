@@ -160,6 +160,58 @@ for(const [code,name] of [['A01526306','유앤채'],['A01464742','와이홉']])t
 
 function sqliteRows(sqlite){return sqlite.prepare('SELECT COUNT(*) AS count FROM intake_drafts').get().count;}
 
+for(const [code,name] of [['A01526306','유앤채'],['A01464742','와이홉']])for(const renderBeforeSave of [false,true])test(`${code}: retained save writes the latest URL and goal ${renderBeforeSave?'after':'before'} rendering and only then clears dirty state`,async()=>{
+  const api=draftApiFixture(code,name),f=fixture();
+  try{
+    f.render();await f.settle();f.requests[0].resolve(await api.request());await f.settle();
+    const save=f.value.save,row={id:'latest-row',profile:api.profile,url:'https://detail.1688.com/offer/813724060928.html',features:'최신 특징',keywords:'직접 입력',status:'draft',message:''};
+    f.value.setRows(()=>[row]);f.value.setGoal('work');
+    if(renderBeforeSave)f.render();
+    const pending=save();f.render();
+    const body=JSON.parse(f.requests[1].options.body);assert.equal(body.goal,'work');assert.equal(body.rows.length,1);assert.equal(body.rows[0].url,row.url);assert.equal(body.rows[0].features,row.features);
+    assert.equal(f.value.dirty,true,'starting the current snapshot write is not a save acknowledgement');
+    f.requests[1].resolve(await api.request(f.requests[1].options));await pending;await f.settle();
+    const stored=await api.read();assert.equal(stored.goal,f.value.goal);assert.equal(stored.rows[0].url,f.value.rows[0].url);assert.equal(stored.rows[0].keywords,f.value.rows[0].keywords);
+    assert.equal(f.value.dirty,false);assert.equal(f.timers.size,0);assert.equal(sqliteRows(api.sqlite),1);
+  }finally{f.stop();api.sqlite.close();}
+});
+
+test('a previously queued debounce saves current input while later edits remain dirty through lost-ACK recovery',async()=>{
+  const api=draftApiFixture('A01464742','와이홉'),f=fixture();
+  try{
+    f.render();await f.settle();f.requests[0].resolve(await api.request());await f.settle();
+    const row={id:'timer-row',profile:api.profile,url:'https://detail.1688.com/offer/1.html',features:'이전 특징',keywords:'태그',status:'draft',message:''};
+    f.value.setRows(()=>[row]);f.render();const queued=[...f.timers.values()][0];assert.ok(queued);
+    f.value.setRows(rows=>rows.map(row=>({...row,url:'https://detail.1688.com/offer/2.html',features:'타이머 실행 시 최신 특징'})));f.value.setGoal('work');f.render();
+    queued();f.render();assert.equal(JSON.parse(f.requests[1].options.body).rows[0].url,'https://detail.1688.com/offer/2.html');assert.equal(JSON.parse(f.requests[1].options.body).goal,'work');
+    const committed=await api.request(f.requests[1].options);assert.equal(committed.status,200);
+    f.value.setRows(rows=>rows.map(row=>({...row,url:'https://detail.1688.com/offer/3.html',features:'응답 유실 중 추가 편집'})));f.render();
+    f.requests[1].reject(Error('committed response lost'));await f.settle();assert.equal(f.requests[2].options.method,undefined);
+    f.requests[2].resolve(await api.request());await f.settle();
+    assert.equal(f.value.dirty,true);assert.equal(f.value.rows[0].url,'https://detail.1688.com/offer/3.html');assert.equal((await api.read()).rows[0].url,'https://detail.1688.com/offer/2.html');
+    assert.match(f.value.message,/최신 변경을 이어서 저장/);
+    await f.tick();assert.equal(JSON.parse(f.requests[3].options.body).expectedRevision,1);
+    f.requests[3].resolve(await api.request(f.requests[3].options));await f.settle();
+    assert.equal((await api.read()).revision,2);assert.equal((await api.read()).rows[0].url,f.value.rows[0].url);assert.equal(f.value.dirty,false);assert.equal(f.requests.length,4);
+  }finally{f.stop();api.sqlite.close();}
+});
+
+test('an unmounted account cannot use retained save, timer or setters to overwrite a later account draft',async()=>{
+  const firstApi=draftApiFixture('A01464742','와이홉'),secondApi=draftApiFixture('A01526306','유앤채'),first=fixture(),second=fixture();
+  try{
+    first.render();await first.settle();first.requests[0].resolve(await firstApi.request());await first.settle();
+    const row={id:'first-account',profile:firstApi.profile,url:'https://detail.1688.com/offer/1.html',features:'첫 계정',keywords:'태그',status:'draft',message:''};
+    first.value.setRows(()=>[row]);first.render();const save=first.value.save,setRows=first.value.setRows,setGoal=first.value.setGoal,timer=[...first.timers.values()][0];first.stop();
+    second.render();await second.settle();second.requests[0].resolve(await secondApi.request());await second.settle();
+    second.value.setRows(()=>[{...row,id:'second-account',profile:secondApi.profile,url:'https://detail.1688.com/offer/2.html',features:'두 번째 계정'}]);second.value.setGoal('collect');second.render();
+    await save();timer();setRows(()=>[]);setGoal('work');await first.settle();await second.settle();
+    assert.equal(first.requests.length,1,'closed-account callbacks start no new request');assert.equal(second.requests.length,1);assert.equal(second.value.dirty,true);
+    assert.equal((await firstApi.read()).revision,0);assert.equal((await secondApi.read()).revision,0);
+    const pending=second.value.save();second.render();second.requests[1].resolve(await secondApi.request(second.requests[1].options));await pending;await second.settle();
+    assert.equal((await firstApi.read()).revision,0);const saved=await secondApi.read();assert.equal(saved.goal,'collect');assert.equal(saved.rows[0].id,'second-account');assert.equal(saved.rows[0].features,'두 번째 계정');assert.equal(second.value.dirty,false);
+  }finally{first.stop();second.stop();firstApi.sqlite.close();secondApi.sqlite.close();}
+});
+
 test('confirmed persisted acknowledgement with no newer edit avoids any duplicate PUT',async()=>{
   const api=draftApiFixture('A01464742','와이홉'),f=fixture();
   try{

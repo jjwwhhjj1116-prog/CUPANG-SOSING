@@ -13,11 +13,12 @@ export function useIntakeDraft() {
   const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState('상품 대기열 초안을 불러오는 중…');
   const revision = useRef<number | null>(null);
-  const generation = useRef(0);
+  const currentInput = useRef<{ rows: IntakeRow[]; goal: string; generation: number }>({ rows: [], goal: 'price', generation: 0 });
+  const mounted = useRef(false);
   const request = useRef<AbortController | null>(null);
   const unconfirmed = useRef<{ body: ReturnType<typeof intakeDraftBody>; generation: number } | null>(null);
   const load = useCallback(async () => {
-    if (request.current) return;
+    if (!mounted.current || request.current) return;
     const controller = new AbortController(); request.current = controller;
     try {
       const response = await fetch('/api/intake-draft', { cache: 'no-store', signal: controller.signal });
@@ -25,16 +26,18 @@ export function useIntakeDraft() {
       if (controller.signal.aborted) return;
       if (!response.ok) throw Error(result?.error || '초안을 불러오지 못했습니다.');
       const draft = readIntakeDraftResponse(result);
-      revision.current = draft.revision; unconfirmed.current = null; setRows(draft.rows); setGoal(draft.goal); setDirty(false); setReady(true); setAutoPaused(false);
-      generation.current++;
+      revision.current = draft.revision; unconfirmed.current = null;
+      currentInput.current = { rows: draft.rows, goal: draft.goal, generation: currentInput.current.generation + 1 };
+      setRows(draft.rows); setGoal(draft.goal); setDirty(false); setReady(true); setAutoPaused(false);
       setMessage(draft.updatedAt ? `임시저장 복구 · ${new Date(draft.updatedAt).toLocaleString('ko-KR')}` : '입력을 마치면 대기열이 자동 저장됩니다.');
     } catch (cause) { if (!controller.signal.aborted) setMessage(cause instanceof Error ? cause.message : '초안 조회 실패'); }
     finally { if (request.current === controller) request.current = null; if (!controller.signal.aborted) { setSaving(false); setLoading(false); } }
   }, []);
   useEffect(() => {
+    mounted.current = true;
     let active = true;
     void Promise.resolve().then(() => { if (active) void load(); });
-    return () => { active = false; request.current?.abort(); request.current = null; };
+    return () => { active = false; mounted.current = false; request.current?.abort(); request.current = null; };
   }, [load]);
   useEffect(() => {
     if (!dirty) return;
@@ -42,14 +45,17 @@ export function useIntakeDraft() {
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
   const save = useCallback(async () => {
-    if (request.current || revision.current === null) return;
+    if (!mounted.current || request.current || revision.current === null) return;
     const controller = new AbortController(); request.current = controller; setSaving(true);
-    const started = generation.current;
+    // Old callbacks and queued timers still save the latest input. Capture its
+    // values and generation together so a later edit cannot be acknowledged by
+    // a request that stored an earlier snapshot.
+    const snapshot = currentInput.current, started = snapshot.generation;
     let reconciling = false;
     const acknowledge = (savedGeneration: number, recovered = false) => {
       setAutoPaused(false);
-      if (savedGeneration === generation.current) setDirty(false);
-      setMessage(savedGeneration !== generation.current ? '이전 입력 저장 완료 · 최신 변경을 이어서 저장합니다.'
+      if (savedGeneration === currentInput.current.generation) setDirty(false);
+      setMessage(savedGeneration !== currentInput.current.generation ? '이전 입력 저장 완료 · 최신 변경을 이어서 저장합니다.'
         : recovered ? '서버의 저장 결과를 확인해 복구했습니다.' : '자동저장 완료 · 접수 완료 행은 기존 수집 요청에 보관됩니다.');
     };
     const reconcile = async () => {
@@ -73,7 +79,7 @@ export function useIntakeDraft() {
         if (controller.signal.aborted) return;
         if (recovered && recovered.generation === started) { acknowledge(recovered.generation, true); return; }
       }
-      const body = intakeDraftBody(rows, goal, revision.current);
+      const body = intakeDraftBody(snapshot.rows, snapshot.goal, revision.current);
       unconfirmed.current = { body, generation: started };
       const response = await fetch('/api/intake-draft', { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const result = await response.json() as { error?: string };
@@ -95,14 +101,23 @@ export function useIntakeDraft() {
       if (!controller.signal.aborted) { setAutoPaused(true); setMessage(`자동저장 일시중지 · ${failure instanceof Error ? failure.message : '임시저장 실패'}`); }
     }
     finally { if (request.current === controller) request.current = null; if (!controller.signal.aborted) setSaving(false); }
-  }, [rows, goal]);
+  }, []);
   useEffect(() => {
     if (!ready || !dirty || saving || autoPaused) return;
     const timer = window.setTimeout(() => { void save(); }, 1000);
     return () => window.clearTimeout(timer);
-  }, [ready, dirty, saving, autoPaused, save]);
-  return { rows, goal, ready, saving, loading, dirty, autoPaused, message, load: () => { if (!request.current) { setSaving(true); setLoading(true); void load(); } }, save,
-    setRows: (update: (rows: IntakeRow[]) => IntakeRow[]) => { generation.current++; setDirty(true); setRows(update); },
-    setGoal: (value: string) => { generation.current++; setDirty(true); setGoal(value); },
+  }, [ready, dirty, saving, autoPaused, rows, goal, save]);
+  return { rows, goal, ready, saving, loading, dirty, autoPaused, message, load: () => { if (mounted.current && !request.current) { setSaving(true); setLoading(true); void load(); } }, save,
+    setRows: (update: (rows: IntakeRow[]) => IntakeRow[]) => {
+      if (!mounted.current) return;
+      const rows = update(currentInput.current.rows);
+      currentInput.current = { ...currentInput.current, rows, generation: currentInput.current.generation + 1 };
+      setDirty(true); setRows(rows);
+    },
+    setGoal: (goal: string) => {
+      if (!mounted.current) return;
+      currentInput.current = { ...currentInput.current, goal, generation: currentInput.current.generation + 1 };
+      setDirty(true); setGoal(goal);
+    },
   };
 }

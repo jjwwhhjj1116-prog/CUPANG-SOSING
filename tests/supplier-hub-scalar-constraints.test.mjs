@@ -127,7 +127,9 @@ test('both companies preserve URL drafts and manual overrides while save/export 
   for (const company of schemaCompanies) {
     const local = mobileIntakeHarness({ companyCode: company.code, companyName: company.name });
     try {
-      const snap = snapshot(company), input = { name: '시험 최종분류', categoryId: snap.categoryId, categoryPath: schemaPath, template: null, mappings: [], hubSchema: snap };
+      const snap = snapshot(company);
+      snap.metadata.scopeType = 'Retail_Categorized_Single';
+      const input = { name: '시험 최종분류', categoryId: snap.categoryId, categoryPath: schemaPath, template: null, mappings: [], hubSchema: snap };
       const api = local.load('app/api/category-profiles/route.ts');
       const post = await api.POST(new Request('https://app.test/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(input) }));
       assert.equal(post.status, 201, await post.clone().text()); const { profile } = await post.json();
@@ -149,13 +151,41 @@ test('both companies preserve URL drafts and manual overrides while save/export 
       const rows = local.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source, resolved, []);
       assert.equal(rows.length, 6); assert.equal(rows[0][brand.id], '가😀나');
       assert.equal(rows[0][number.id], -0.3); assert.equal(rows[0][choice.id], 0.3); assert.equal(typeof rows[0][choice.id], 'number');
-      const next = snapshot(company, raw => { raw.properties.logisticsPage.properties.calibrationOffset.multipleOf = 0.2; });
+      const next = { ...snapshot(company, raw => { raw.properties.logisticsPage.properties.calibrationOffset.multipleOf = 0.2; }), metadata: { ...snap.metadata } };
+      const originalProfile = plain(local.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(profile.id));
       const update = await api.PUT(new Request('https://app.test/api/category-profiles', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: profile.id, expectedRevision: profile.revision, profile: { ...input, hubSchema: next } }) }));
-      assert.equal(update.status, 200, await update.clone().text());
+      assert.equal(update.status, 409, await update.clone().text());
+      assert.deepEqual(plain(local.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(profile.id)), originalProfile);
+      const refresh = local.load('app/api/category-profiles/[id]/refresh-definition/route.ts'), requestId = crypto.randomUUID();
+      const forked = await refresh.POST(new Request(`https://app.test/api/category-profiles/${profile.id}/refresh-definition`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': requestId }, body: JSON.stringify({ expectedRevision: profile.revision, hubSchema: next }),
+      }), { params: Promise.resolve({ id: profile.id }) });
+      assert.equal(forked.status, 201, await forked.clone().text()); const fork = await forked.json();
+      assert.equal(fork.sourceProfileId, profile.id); assert.equal(fork.sourceRevision, profile.revision); assert.equal(fork.profile.id, requestId);
+      assert.equal(byLabel(schemaFor(fork.profile.hubSchema), '보정값').multipleOf, 0.2);
+      assert.deepEqual(plain(local.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(profile.id)), originalProfile);
       const unchanged = await (await local.route(path)).json();
       assert.equal(byLabel(unchanged.resolved.schema, '보정값').multipleOf, 0.1);
       assert.equal(unchanged.resolved.rows[0].fields[number.id].value, '-3e-1');
       assert.deepEqual(unchanged.resolved.rows[0].fields[number.id].validationIssues, []);
+      // Clone a local recorded receipt under a synthetic fixture identity;
+      // no new seller page is fetched to create the future child-profile view.
+      const fixtureUrl = 'https://detail.1688.com/offer/813724060929.html', jobs = local.load('app/api/collection-jobs/route.ts');
+      const queued = await jobs.POST(new Request('https://app.test/api/collection-jobs', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ urls: [fixtureUrl], goal: 'collect', profileId: fork.profile.id, expectedProfileRevision: fork.profile.revision }) }));
+      assert.equal(queued.status, 200, await queued.clone().text()); const job = (await queued.json()).jobs[0];
+      const receipts = local.load('db/collection-results.ts'), receipt = await receipts.readCollectionResult('owner', 'job');
+      await receipts.storeCollectionResult('owner', job.id, { ...receipt.result, offerId: '813724060929', sourceUrl: fixtureUrl });
+      const products = local.load('app/api/collection-jobs/[id]/product/route.ts');
+      const created = await products.POST(new Request(`https://app.test/api/collection-jobs/${job.id}/product`, { method: 'POST' }), { params: Promise.resolve({ id: job.id }) });
+      assert.equal(created.status, 200, await created.clone().text()); const childPath = `/api/products/${(await created.json()).productId}/quotation-fields?profileId=${fork.profile.id}`;
+      const childResponse = await local.route(childPath); assert.equal(childResponse.status, 200, await childResponse.clone().text()); const child = await childResponse.json();
+      const childNumber = byLabel(child.resolved.schema, '보정값'); assert.equal(childNumber.multipleOf, 0.2); assert.equal(child.categoryContext.profileId, fork.profile.id);
+      const childInvalid = await local.route(childPath, { method: 'PUT', body: { expectedRevision: child.revision, expectedInputFingerprint: child.inputFingerprint, changes: change(childNumber, '-3e-1') } });
+      assert.equal(childInvalid.status, 400); assert.match((await childInvalid.json()).error, /0.2의 배수/);
+      assert.equal((await (await local.route(childPath)).json()).revision, child.revision);
+      assert.deepEqual(plain((await (await local.route(path)).json()).resolved), plain(unchanged.resolved));
+      assert.deepEqual(plain(local.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(profile.id)), originalProfile);
       assert.ok(!local.network.includes('supplier.coupang.com'));
     } finally { local.close(); }
   }

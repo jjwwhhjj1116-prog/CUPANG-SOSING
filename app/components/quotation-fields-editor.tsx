@@ -132,15 +132,19 @@ export function resolveQuotationEditorCell(view: QuotationFieldsView, changes: r
     if (mode === 'existing' && !resolvedValue.trim()) validationIssues.push('실제 바코드 번호를 입력해주세요.');
     if (mode === 'request-coupang' && resolvedValue.trim()) validationIssues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.');
   }
-  const reviewMessages: string[] = [];
+  // Keep server source reviews for an unchanged saved cell. A pending quantity
+  // edit invalidates the saved pack-price review; saving refreshes that evidence.
+  const quantityDraft = source === 'pricing' && changes.some(change => change.fieldKey === 'quantity' && (change.optionId === optionId || change.optionId === null));
+  const reviewMessages: string[] = saved?.value === resolvedValue && saved.source === source && !quantityDraft ? [...(saved.reviewMessages ?? [])] : [];
   if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
-  if (definition?.reviewRequired && (resolvedValue.trim() || hasSelectedEmptyQuotationChoice(definition, { value: resolvedValue, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
+  if (definition?.workbookWire?.requirement === 'conditional') reviewMessages.push(['해당 상품에 조건이 적용되는지 확인해주세요.', definition.help].filter(Boolean).join('\n'));
+  else if (definition?.reviewRequired && (resolvedValue.trim() || hasSelectedEmptyQuotationChoice(definition, { value: resolvedValue, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');
   if (definition?.type === 'images' && resolvedValue) reviewMessages.push('견적서에는 연결한 첨부 이미지 파일명이 기록됩니다. 실제 상품과 이미지 구성을 확인해주세요.');
   const errors = [...new Set(validationIssues)];
   const issues = [...new Set([...errors, ...reviewMessages,
     ...(fieldKey === 'detailImages' ? quotationImageRoleIssues(resolveQuotationEditorCell(view, changes, optionId, 'mainImage').value, resolvedValue) : []),
   ])];
-  return { ...fallback, value: resolvedValue, source, issues, validationIssues: errors, reviewMessages,
+  return { ...fallback, value: resolvedValue, source, issues, validationIssues: errors, reviewMessages: [...new Set(reviewMessages)],
     needsReview: Boolean(definition?.reviewRequired) || issues.length > 0 };
 }
 function quotationEditorChangeFields(fields: readonly QuotationField[], change: QuotationEditorChange, changes: readonly QuotationEditorChange[]) {

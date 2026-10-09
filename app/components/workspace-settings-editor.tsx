@@ -44,7 +44,9 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
       <div className="settings-price-inputs"><div className="settings-price-basis">
         {toggle('useIntegratedRate','통합통관 환율 사용')}
         <small>켜면 매입가 = (위안가 × 통합통관 환율 + 포장검수 200원 + 바코드 100원) × 1.1, 원 단위 반올림</small>
-        {draft.useIntegratedRate ? <>{field('integratedRate','통합통관 적용환율 (CNY → KRW)','number')}<small>확인한 통합통관 환율을 입력하세요. 일반 적용환율과 별도로 저장합니다.</small></> : field('exchangeRate','적용환율 (CNY → KRW)','number')}
+        {draft.useIntegratedRate && <>{field('integratedRate','통합통관 적용환율 (CNY → KRW)','number')}<small>확인한 통합통관 환율을 입력하세요. 일반 적용환율과 별도로 저장합니다.</small></>}
+        {field('exchangeRate','적용환율 (CNY → KRW)','number')}
+        {draft.useIntegratedRate && <small>통합통관 환율 사용 중 — 일반 적용환율은 묶음 수량 자동 계산에 쓰입니다.</small>}
         <label className="field"><span>가격 처리 단위</span><select value={draft.roundingUnit} disabled={busy} onChange={event=>update('roundingUnit',Number(event.target.value))}>{[1,10,100,1000].map(unit=><option key={unit} value={unit}>{unit.toLocaleString('ko-KR')}원 단위</option>)}</select></label>
         {field('msrpMultiple','시장가격(MSRP) 배수','number')}
         <label className="field"><span>가격 처리 방식</span><select value={draft.roundingMode} disabled={busy} onChange={event=>update('roundingMode',event.target.value as 'up'|'nearest')}><option value="up">올림 (기존 방식)</option><option value="nearest">반올림</option></select></label>

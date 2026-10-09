@@ -22,6 +22,7 @@ import { isPackagedDimensionsMmField, isCanonicalPackagedDimensionsMm, normalize
 import type {TemplateDefinition} from '@/app/category-profiles';
 import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-descriptors';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
+import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -259,9 +260,22 @@ export function quotationOptionLimitIssue(schema: QuotationSchema, includedCount
     ? `현재 견적 포함 옵션 ${includedCount}개가 Supplier Hub ${schema.categoryId}의 ${schema.maxIncludedOptions}개 한도를 초과했습니다. 로컬 옵션은 모두 보존됩니다. 포함 범위를 조정한 후 등록 자료를 검토해주세요.` : null;
 }
 export function quotationPriceIssues(schema: QuotationSchema, supply: string, sale: string): string[] {
-  if (!schema.salePriceMustCoverSupply || !/^\d+$/.test(supply) || !/^\d+$/.test(sale)) return [];
-  const supplyValue = Number(supply); const saleValue = Number(sale);
-  return Number.isSafeInteger(supplyValue) && Number.isSafeInteger(saleValue) && supplyValue > 0 && saleValue > 0 && saleValue < supplyValue
+  if (!schema.salePriceMustCoverSupply) return [];
+  const fields = schema.fields ?? commonFields;
+  const numeric = (input: string, path: string, value: string) => {
+    const wires = fields.filter(field => field.hubInput === input && !field.hubWire?.name
+      && JSON.stringify(field.hubWire?.path) === JSON.stringify(['productPage','commonAttributes',path])
+      && (field.type === 'number' || field.numericText || field.numericValue));
+    const field = wires.length === 1 ? wires[0] : wires.length ? undefined
+      : fields.find(field => field.id === input) ?? commonFields.find(field => field.id === input);
+    // Compare the same supported scalar and Number value that reaches export.
+    // Invalid syntax/ranges keep their separate field errors and saved text.
+    if (!field || !value.trim() || quotationScalarValueIssues(field,value).length) return undefined;
+    const amount = Number(value);
+    return Number.isFinite(amount) ? amount : undefined;
+  };
+  const supplyValue = numeric('supplyPrice','purchasePrice',supply), saleValue = numeric('salePrice','coupangSalePrice',sale);
+  return supplyValue !== undefined && saleValue !== undefined && saleValue < supplyValue
     ? ['판매가는 공급가보다 작을 수 없습니다.'] : [];
 }
 
@@ -593,6 +607,24 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     if (fields.barcodeMode.value === 'request-coupang' && fields.barcode.value.trim()) { fields.barcode.needsReview = true; fields.barcode.issues.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); fields.barcode.validationIssues!.push('바코드 생성 요청 방식과 입력된 번호가 충돌합니다.'); }
     const priceIssues = quotationPriceIssues(schema, fields.supplyPrice.value, fields.salePrice.value);
     if (priceIssues.length) { fields.salePrice.needsReview = true; fields.salePrice.issues.push(...priceIssues); fields.salePrice.validationIssues!.push(...priceIssues); }
+    const quantity = fields.quantity, quantityDefinition = schema.fields.find(field => field.id === 'quantity');
+    if (option && !quantityDefinition?.hubWire?.name && Number.isSafeInteger(option.unitsPerPack) && option.unitsPerPack > 0 && quantity?.source.startsWith('manual-')
+      && /^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu.test(quantity.value.trim())) {
+      const manualQuantity = Number(quantity.value.trim());
+      if (Number.isFinite(manualQuantity) && manualQuantity > 0 && manualQuantity !== option.unitsPerPack) {
+        // The canonical quantity explicitly follows the option's selling pack.
+        // Named Hub attributes may describe another quantity and are not compared.
+        try {
+          const targets = quotationPriceTargets(schema.fields);
+          const message = `자동 계산 가격은 2단계 옵션의 판매 구성 수량 ${option.unitsPerPack}개입 기준입니다. 견적 수량을 ${quantity.value}로 직접 수정했습니다. 구성 수량과 가격을 함께 확인해주세요.`;
+          for (const id of new Set(quotationPriceInputs.flatMap(input => targets[input].linked))) {
+            const cell = fields[id];
+            if (cell?.source !== 'pricing') continue;
+            cell.needsReview = true; cell.reviewMessages!.push(message); cell.issues.push(message);
+          }
+        } catch { /* Existing diagnostics retain unconfirmed price bindings. */ }
+      }
+    }
     if (option && option.packagingUnitsPerPack !== undefined && option.packagingUnitsPerPack !== option.unitsPerPack) {
       for (const id of ['packagedWeightG','packagedDimensionsMm']) {
         const cell = fields[id];
