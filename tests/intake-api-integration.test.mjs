@@ -36,7 +36,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
   if(automatic==='browser-source')deps['cloudflare:workers'].env.ALIBABA_PRODUCT_API_ENABLED='false';
   const now=new Date().toISOString();
   const settings=load('app/observed-price-preset.ts').applyObservedPricePreset({...load('app/workspace-settings.ts').defaultSettings,brand:'저장 브랜드',hiddenAttributes:automatic===true});
-  const context={category:{id:'cat',name:'바스켓',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],mappings:[],template:null},settings,features:'',keywords:'수납,바스켓',capturedAt:now};
+  const context={company:{code:'A01464742',name:'와이홉'},category:{id:'cat',name:'바스켓',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓'],mappings:[],template:null},settings,features:'',keywords:'수납,바스켓',capturedAt:now};
   sqlite.prepare('INSERT INTO collection_jobs VALUES (?,?,?,?,?,?,?,?)').run('job','owner','813724060928',sourceUrl,'price','awaiting_connector',now,now);
   sqlite.prepare('INSERT INTO collection_context VALUES (?,?)').run('job',JSON.stringify(context));
   let interruptOptions=false;

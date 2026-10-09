@@ -8,7 +8,7 @@ import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
 import { inspectSubmission } from '@/app/submission-review';
 import { collectionSourceReview } from '@/app/collection-source-review';
-import { publicDetailConfig, resolvePublicDetail, PublicDetailError } from '@/app/quotation-public-detail';
+import { publicDetailConfig, resolvePublicDetail, PublicDetailError, type PublicDetailImage } from '@/app/quotation-public-detail';
 import {readLegalDocuments,inspectLegalDocumentStorage} from '@/app/legal-documents';
 
 const json = (body: unknown, status=200) => NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
@@ -20,9 +20,9 @@ export async function GET(request: Request, context: {params:Promise<{id:string}
     const owner = await getWorkspaceOwnerId(); const {id} = await context.params;
     const saved = await readQuotationExportSource(owner,id,profileId);
     const detailConfig = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
-    const resolved: ReturnType<typeof resolveQuotationExport> = (await resolvePublicDetail(resolveQuotationExport(saved),saved.content,owner,productImageKeys(saved.product.image_keys),detailConfig)).resolved;
+    const { resolved, images: publicDetails }: {resolved:ReturnType<typeof resolveQuotationExport>;images:PublicDetailImage[]} = await resolvePublicDetail(resolveQuotationExport(saved),saved.content,owner,productImageKeys(saved.product.image_keys),detailConfig);
     const keys = productImageKeys(saved.product.image_keys).filter(key=>isOwnedImageKey(owner,key));
-    const checks = await inspectQuotationImages(resolved,keys,env.FILES ? key=>env.FILES.head(key) : undefined);
+    const checks = await inspectQuotationImages(resolved,keys,env.FILES ? key=>env.FILES.head(key) : undefined,publicDetails);
     const documents=readLegalDocuments(saved.content.legalDocuments,owner,id);
     const legalIssues=await inspectLegalDocumentStorage(documents,id,env.FILES?.head ? key=>env.FILES.head(key) : undefined);
     const report = inspectSubmission(resolved,keys,checks,'storage-metadata',undefined,[

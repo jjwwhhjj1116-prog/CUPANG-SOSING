@@ -1,4 +1,5 @@
 import type { IntakeRow } from '@/app/intake-queue';
+import type { CategoryProfile } from '@/app/category-profiles';
 export type IntakeDraft = { revision: number; rows: IntakeRow[]; goal: string; updatedAt: string | null };
 export function validateIntakeDraft(input: unknown) {
   const body = input as Record<string, unknown>;
@@ -20,6 +21,20 @@ export function validateIntakeDraft(input: unknown) {
 }
 export function intakeDraftBody(rows: readonly IntakeRow[], goal: string, expectedRevision: number) {
   return validateIntakeDraft({ expectedRevision, goal, rows: rows.filter(row => row.status !== 'saved').map(row => ({ id: row.id, profileId: row.profile.id, profileRevision: row.profile.revision, url: row.url, features: row.features, keywords: row.keywords })) });
+}
+
+/** Only server-owned current or previously verified snapshots can acknowledge a
+ * selected revision. Never attach current category/company to an old revision. */
+export function intakeDraftProfileSnapshot(row: ReturnType<typeof validateIntakeDraft>['rows'][number], current: CategoryProfile, previous?: IntakeRow): Pick<IntakeRow, 'profile' | 'message' | 'profileSnapshotVerified'> | null {
+  if (current.id === row.profileId && current.revision === row.profileRevision) {
+    return { profile: current, message: '', profileSnapshotVerified: true };
+  }
+  if (previous?.id === row.id && previous.status === 'draft'
+    && previous.profile?.id === row.profileId && previous.profile.revision === row.profileRevision
+    && (previous.profileSnapshotVerified === true || previous.message === '')) {
+    return { profile: previous.profile, message: '카테고리 설정 변경됨 · 다시 선택해주세요.', profileSnapshotVerified: true };
+  }
+  return null;
 }
 
 /** Saved input is confirmed by its contents, not an HTTP status or revision alone. */

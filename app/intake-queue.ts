@@ -5,6 +5,7 @@ import type { CategoryProfile } from '@/app/category-profiles';
 export type IntakeRow = {
   id: string; profile: CategoryProfile; url: string; features: string; keywords: string;
   status: 'draft' | 'saved' | 'error'; message: string; productId?: string;
+  profileSnapshotVerified?: true;
 };
 export function intakeRow(profile: CategoryProfile, id: string): IntakeRow {
   return { id, profile, url: '', features: '', keywords: '', status: 'draft', message: '' };
