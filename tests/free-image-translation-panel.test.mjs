@@ -18,6 +18,9 @@ const regionStyle = row => Object.fromEntries(Object.keys(manualStyle).map(key =
 const styleModule = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-text-style.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: styleModule });
+const historyModule = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-edit-history.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: historyModule });
 class ApplyError extends Error { constructor(message, uncertain) { super(message); this.uncertain = uncertain; } }
 
 function fixture() {
@@ -63,6 +66,7 @@ function fixture() {
       if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return native(name);
       if (name === '@/app/free-image-translation') return { FREE_IMAGE_ROLES: ['main', 'additional', 'detailTop', 'detail', 'detailBottom'], MAX_OCR_REGIONS: 100 };
       if (name === '@/app/free-image-text-style') return styleModule;
+      if (name === '@/app/free-image-edit-history') return historyModule;
       assert.equal(name, '@/app/free-image-translation-client'); return client;
     } });
   const render = () => { cursor = 0; const outer = exports.default(props), tree = outer.type(outer.props); effects.splice(0).forEach(fn => fn()); return tree; };
@@ -74,6 +78,7 @@ function fixture() {
     setSource(fn) { sourceIntercept = fn; }, setOcr(fn) { ocrIntercept = fn; }, setTranslate(fn) { translateIntercept = fn; }, setRender(fn) { renderIntercept = fn; }, setApply(fn) { applyIntercept = fn; }, setRecover(fn) { recoverIntercept = fn; },
     setProps(update) { props = { ...props, ...update }; render(); render(); }, allowApply(value) { allowApply = value; },
     async click(label) { await settle(); const control = button(label); assert.ok(control && !control.props.disabled, 'available control: ' + label); control.props.onClick(); await settle(); },
+    async clickField(label) { await settle(); const control = field(label); assert.ok(control && !control.props.disabled, 'available control: ' + label); control.props.onClick(); await settle(); },
     async change(label, value, checked) { const control = field(label); assert.ok(control, label); control.props.onChange({ target: { value, checked } }); await settle(); },
     close() { if (closed) return; states.forEach(state => state?.cleanup?.()); closed = true; } };
 }
@@ -84,6 +89,10 @@ async function styleRegion(h, index = 1, values = manualStyle) {
   await h.change(`문구 ${index} 기울임`, '', values.italic);
   await h.change(`문구 ${index} 정렬`, values.textAlign);
   await h.change(`문구 ${index} 행간`, String(values.lineHeight));
+}
+async function snapshotRegions(h) {
+  await h.click('번역 이미지 미리보기');
+  return plain(h.calls.filter(call => call.action === 'preview').at(-1).rows);
 }
 
 test('toolbar source/language/role selection does not automatically run OCR, Google or save and marks only its own source stage', async () => {
@@ -713,5 +722,162 @@ test('Gmarket style selection changes only the reviewed text presentation and re
     await h.click('검토한 번역 이미지 적용');
     const applied = h.calls.filter(call => call.action === 'apply'); assert.equal(applied.length, 1); assert.equal(applied[0].image.source, next.image.source);
     assert.equal(h.saved, 1); assert.equal(h.calls.filter(call => call.action === 'source').length, 1); assert.equal(h.calls.filter(call => call.action === 'translate').length, 1);
+  } finally { h.close(); }
+});
+
+test('manual region edits, additions, deletions and layer order undo and redo exact arrays without changing source or option selection', async () => {
+  const h = fixture(); try {
+    mainImageOptions(h, 'sku-b'); await translated(h);
+    const states = [await snapshotRegions(h)];
+    const edits = [
+      () => h.change('문구 1 원문', '검토한 새 원문'), () => h.change('문구 1 한국어', '직접 확인한 문구'),
+      () => h.change('문구 2 한국어', ''), () => h.change('문구 1 x', '2'),
+      () => h.change('문구 1 글꼴', 'gmarket'), () => h.change('문구 2 영역 지우기', '', true),
+      () => h.change('문구 1 선택', '', false), () => h.click('문구 영역 직접 추가'),
+      () => h.change('문구 3 한국어', '새 수동 영역'), () => h.clickField('문구 2 앞으로'),
+      () => h.click('문구 1 영역 삭제'),
+    ];
+    for (const edit of edits) { await edit(); states.push(await snapshotRegions(h)); }
+    assert.deepEqual(states.at(-2).map(row => row.id), ['r1', 'manual-1', 'r2']);
+    assert.deepEqual(states.at(-1).map(row => row.id), ['manual-1', 'r2']);
+    const source = plain(h.calls.find(call => call.action === 'source'));
+    for (let index = states.length - 2; index >= 0; index--) {
+      const count = h.calls.length; await h.click('되돌리기');
+      assert.equal(h.button('검토한 번역 이미지 적용'), undefined); assert.equal(h.calls.length, count, 'undo performs no processing');
+      assert.deepEqual(await snapshotRegions(h), states[index]); assert.equal(h.field(optionLabel('sku-b')).props.checked, true);
+    }
+    for (let index = 1; index < states.length; index++) {
+      const count = h.calls.length; await h.click('다시 실행'); assert.equal(h.calls.length, count, 'redo performs no processing');
+      assert.equal(h.button('검토한 번역 이미지 적용'), undefined); assert.deepEqual(await snapshotRegions(h), states[index]);
+    }
+    assert.equal(h.button('다시 실행').props.disabled, true);
+    await h.click('되돌리기'); await h.change('문구 1 배경색', '#123456'); assert.equal(h.button('다시 실행').props.disabled, true, 'a new manual edit removes only the redo branch');
+    assert.deepEqual(plain(h.calls.find(call => call.action === 'source')), source);
+    assert.equal(h.calls.filter(call => call.action === 'source').length, 1); assert.equal(h.calls.filter(call => call.action === 'translate').length, 1); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('textarea typing coalesces within one focus session and a new focus starts another reversible edit', async () => {
+  const h = fixture(); try {
+    await translated(h); const baseline = await snapshotRegions(h);
+    h.field('문구 1 한국어').props.onFocus();
+    for (const value of ['가', '가나', '가나다']) await h.change('문구 1 한국어', value);
+    h.field('문구 1 한국어').props.onBlur(); await h.settle();
+    const first = await snapshotRegions(h); await h.click('되돌리기'); assert.deepEqual(await snapshotRegions(h), baseline);
+    await h.click('다시 실행'); assert.deepEqual(await snapshotRegions(h), first);
+    h.field('문구 1 한국어').props.onFocus();
+    for (const value of ['새', '새 문구']) await h.change('문구 1 한국어', value);
+    h.field('문구 1 한국어').props.onBlur(); await h.settle();
+    await h.click('되돌리기'); assert.deepEqual(await snapshotRegions(h), first, 'blur/focus ends the previous typing group');
+    assert.equal(h.saved, 0); assert.equal(h.calls.filter(call => call.action === 'translate').length, 1);
+  } finally { h.close(); }
+});
+
+test('layer bounds and erase layers follow the exact renderer order; deleting all layers remains undoable', async () => {
+  const h = fixture(); try {
+    await translated(h); await h.change('문구 1 영역 지우기', '', true);
+    assert.equal(h.field('문구 1 뒤로').props.disabled, true); assert.equal(h.field('문구 2 앞으로').props.disabled, true);
+    const before = await snapshotRegions(h), apply = h.button('검토한 번역 이미지 적용').props.onClick, count = h.calls.length;
+    await h.clickField('문구 1 앞으로'); apply(); await h.settle();
+    assert.equal(h.calls.length, count); assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
+    assert.deepEqual((await snapshotRegions(h)).map(row => row.id), ['r2', 'r1']);
+    assert.equal(h.field('문구 2 앞으로').props.disabled, true); assert.match(text(h.render()), /나중.*위/);
+    await h.click('되돌리기'); assert.deepEqual(await snapshotRegions(h), before);
+    await h.click('문구 2 영역 삭제'); await h.click('문구 1 영역 삭제');
+    assert.equal(h.field('문구 1 원문'), undefined); assert.equal(h.button('되돌리기').props.disabled, false);
+    await h.click('되돌리기'); assert.equal(h.field('문구 1 원문').props.value, before[0].text);
+    await h.click('되돌리기'); assert.deepEqual(await snapshotRegions(h), before);
+    assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('same-byte refresh preserves edit history, while discard, new OCR and acknowledged save reset its baseline and reject old handlers', async () => {
+  const h = fixture(); try {
+    await translated(h); const before = await snapshotRegions(h);
+    await h.change('문구 1 한국어', '새 버전에서도 보관');
+    const edited = await snapshotRegions(h), regionFieldsets = () => nodes(h.render()).filter(node => node.type === 'fieldset' && node.props.className === 'translation-field');
+    assert.ok(regionFieldsets().every(node => node.props.disabled === false));
+    const oldUndo = h.button('되돌리기').props.onClick, oldText = h.field('문구 1 한국어').props.onChange;
+    h.setProps({ version: '2026-10-06T00:00:03.000Z' }); await h.settle(); oldUndo(); await h.settle();
+    assert.equal(h.field('문구 1 한국어').props.value, '새 버전에서도 보관');
+    assert.ok(regionFieldsets().every(node => node.props.disabled === true), 'the retained old-version draft visibly locks until its source is checked');
+    assert.equal(h.button('원본 저장 상태 다시 확인').props.disabled, false, 'source refresh remains usable');
+    await h.click('원본 저장 상태 다시 확인');
+    assert.ok(regionFieldsets().every(node => node.props.disabled === false));
+    assert.deepEqual(await snapshotRegions(h), edited, 'same bytes preserve every draft field');
+    await h.click('되돌리기'); assert.deepEqual(await snapshotRegions(h), before);
+    await h.click('다시 실행'); assert.deepEqual(await snapshotRegions(h), edited, 'same-byte refresh preserves the exact undo and redo history');
+    await h.click('이미지 번역 편집 초안 지우기'); await h.click('원본 문구 읽기');
+    assert.equal(h.button('되돌리기').props.disabled, true); assert.equal(h.button('다시 실행').props.disabled, true);
+    oldText({ target: { value: 'old draft cannot overwrite new OCR r1' } }); oldUndo(); await h.settle();
+    assert.equal(h.field('문구 1 한국어').props.value, '');
+    await h.change('문구 1 한국어', '새 OCR 기준 문구'); await h.click('번역 이미지 미리보기'); await h.click('검토한 번역 이미지 적용');
+    assert.equal(h.saved, 1); assert.equal(h.field('문구 1 원문'), undefined);
+    await h.click('원본 문구 읽기'); assert.equal(h.button('되돌리기').props.disabled, true); assert.equal(h.button('다시 실행').props.disabled, true);
+  } finally { h.close(); }
+});
+
+test('busy, unknown save and ready-retry states block retained undo/reorder handlers and keep the exact reviewed PNG', async () => {
+  const h = fixture(); try {
+    const { quotationTarget } = finalImageSelection(h); await translated(h); await h.change('문구 1 한국어', '보관 문구');
+    const undo = h.button('되돌리기').props.onClick, reorder = h.field('문구 1 앞으로').props.onClick;
+    await h.click('번역 이미지 미리보기'); const pending = deferred(); h.setApply(() => pending.promise);
+    h.button('검토한 번역 이미지 적용').props.onClick(); await h.settle();
+    undo(); reorder(); await h.settle(); assert.equal(h.field('문구 1 한국어').props.value, '보관 문구');
+    assert.equal(h.button('되돌리기').props.disabled, true); assert.equal(h.field('문구 1 앞으로').props.disabled, true);
+    pending.reject(new ApplyError('응답 유실', true)); await h.settle(); undo(); reorder(); await h.settle();
+    assert.equal(h.field('문구 1 한국어').props.value, '보관 문구'); assert.equal(h.button('되돌리기').props.disabled, true);
+    const saved = h.calls.find(call => call.action === 'apply').image;
+    h.setRecover(async image => ({ source: image.source, applied: false })); await h.click('같은 결과의 저장 상태 다시 확인');
+    undo(); reorder(); await h.settle(); assert.equal(h.field('문구 1 한국어').props.value, '보관 문구');
+    assert.equal(h.button('다시 실행').props.disabled, true); assert.equal(h.field('문구 1 앞으로').props.disabled, true);
+    h.setApply(async image => ({ source: image.source, applied: true })); await h.click('같은 미리보기 다시 적용');
+    assert.equal(h.calls.filter(call => call.action === 'apply').at(-1).image, saved);
+    assert.deepEqual(plain(saved.source.quotationTarget), { ...quotationTarget, bindingSha256: 'b'.repeat(64) }); assert.equal(h.saved, 1);
+  } finally { h.close(); }
+});
+
+test('accepted translation is one reversible edit and stale slot or closed callbacks cannot move its history', async () => {
+  const h = fixture(); try {
+    const { quotationContext } = finalImageSelection(h); await h.click('원본 문구 읽기');
+    await h.change('문구 1 배경색', '#ddeeff'); const before = await snapshotRegions(h);
+    await h.click('선택 문구 한국어 번역'); const after = await snapshotRegions(h);
+    assert.notDeepEqual(after, before); await h.click('되돌리기'); assert.deepEqual(await snapshotRegions(h), before);
+    await h.click('다시 실행'); assert.deepEqual(await snapshotRegions(h), after);
+    const undo = h.button('되돌리기').props.onClick, reorder = h.field('문구 1 앞으로').props.onClick;
+    const count = h.calls.length;
+    h.setProps({ quotationContext: { ...quotationContext, optionId: 'sku-b' }, focusedOptionId: 'sku-b' }); await h.settle(); undo(); reorder(); await h.settle();
+    assert.equal(h.field('문구 1 한국어').props.value, '한국어 r1'); assert.equal(h.calls.length, count);
+    h.setProps({ quotationContext, focusedOptionId: 'sku-a' }); await h.settle(); await h.click('되돌리기'); assert.equal(h.field('문구 1 한국어').props.value, '');
+    const currentUndo = h.button('되돌리기').props.onClick; h.close(); currentUndo(); reorder();
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(h.late, 0); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('undo supersedes captured translate, preview, reorder and delete callbacks without processing or changing restored arrays', async () => {
+  const h = fixture(); try {
+    await h.click('원본 문구 읽기'); await h.change('문구 1 선택', '', false);
+    const restored = await snapshotRegions(h); await h.change('문구 1 선택', '', true);
+    const translate = h.button('선택 문구 한국어 번역').props.onClick, preview = h.button('번역 이미지 미리보기').props.onClick;
+    const reorder = h.field('문구 1 앞으로').props.onClick, remove = h.button('문구 1 영역 삭제').props.onClick;
+    await h.click('되돌리기'); const count = h.calls.length;
+    translate(); preview(); reorder(); remove(); await h.settle();
+    assert.equal(h.calls.length, count, 'superseded draft callbacks cannot send Google, render or save requests');
+    assert.equal(h.field('문구 1 선택').props.checked, false); assert.equal(h.field('문구 1 한국어').props.value, '');
+    assert.deepEqual(await snapshotRegions(h), restored); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('an earlier translate callback reads the latest selected originals after ordinary edits and cannot fill an unchecked region', async () => {
+  const h = fixture(); try {
+    await h.click('원본 문구 읽기'); const translate = h.button('선택 문구 한국어 번역').props.onClick;
+    await h.change('문구 1 선택', '', false); await h.change('문구 2 원문', '현재 검토한 두 번째 원문');
+    translate(); await h.settle();
+    const request = h.calls.filter(call => call.action === 'translate').at(-1);
+    assert.deepEqual(plain(request.rows), [{ id: 'r2', text: '현재 검토한 두 번째 원문' }]);
+    assert.equal(h.field('문구 1 한국어').props.value, ''); assert.equal(h.field('문구 1 선택').props.checked, false);
+    assert.equal(h.field('문구 2 한국어').props.value, '한국어 r2'); assert.equal(h.saved, 0);
+    await h.change('문구 2 선택', '', false); const count = h.calls.length; translate(); await h.settle();
+    assert.equal(h.calls.length, count, 'an earlier enabled control cannot translate a now empty selection');
   } finally { h.close(); }
 });

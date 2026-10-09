@@ -249,6 +249,63 @@ for (const [fontFamily, css] of [['serif', 'Georgia, "Noto Serif KR", serif'], [
   } finally { h.close(); }
 });
 
+for (const top of ['erase', 'text']) test(`reviewed overlapping layer order (${top} on top) saves its exact PNG and retries without changing source roles or manual quotation values`, async () => {
+  const h = await ready(); try {
+    const quotation = h.load('app/api/products/[id]/quotation-fields/route.ts'), context = { params: Promise.resolve({ id: 'product' }) };
+    const quoteRequest = (method = 'GET', body) => new Request('https://app.test/api/products/product/quotation-fields', {
+      method, ...(body ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
+    });
+    const initialResponse = await quotation.GET(quoteRequest(), context); await assertStatus(initialResponse, 200); const initialView = await initialResponse.json();
+    const manualHtml = '<p>이미지 레이어 저장 뒤에도 보존할 수동 상세 내용</p>';
+    const manualResponse = await quotation.PUT(quoteRequest('PUT', { expectedRevision: initialView.revision, expectedInputFingerprint: initialView.inputFingerprint,
+      changes: [{ fieldKey: 'mainImage', optionId: null, value: 'owner/main.png' }, { fieldKey: 'additionalImages', optionId: null, value: 'owner/first.png' },
+        { fieldKey: 'detailImages', optionId: null, value: '' }, { fieldKey: 'detailHtml', optionId: null, value: manualHtml }] }), context);
+    await assertStatus(manualResponse, 200);
+    const beforeQuote = h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get('product');
+    const source = await h.source(), before = await h.content(), original = h.objects.get(h.key).bytes.slice(), client = h.load('app/free-image-translation-client.ts');
+    const loaded = { source, canvas: { pixels: new Uint8Array(3 * 2 * 4).fill(200) }, blob: new Blob([original], { type: 'image/png' }), width: 3, height: 2 };
+    const text = { id: 'text', text: 'A', translated: 'A', box: { x: 1, y: 0, width: 2, height: 2 }, confidence: 90, selected: true,
+      issue: null, translationProvenance: 'manual', background: '#abcdef', foreground: '#112233', fontSize: 1 };
+    const erase = { ...text, id: 'erase', text: '', translated: '', erase: true, box: { x: 1, y: 0, width: 1, height: 2 }, background: '#234567' };
+    const reviewed = top === 'erase' ? [text, erase] : [erase, text], reversed = [...reviewed].reverse();
+    const rendered = await client.renderFreeImageTranslation(loaded, reviewed, new AbortController().signal);
+    const otherOrder = await client.renderFreeImageTranslation(loaded, reversed, new AbortController().signal);
+    const output = new Uint8Array(await rendered.output.arrayBuffer()), expectedPixels = new Uint8Array(3 * 2 * 4).fill(200);
+    for (let y = 0; y < 2; y++) for (let x = 1; x < 3; x++) expectedPixels.set([0xab, 0xcd, 0xef, 255], (y * 3 + x) * 4);
+    if (top === 'erase') for (let y = 0; y < 2; y++) expectedPixels.set([0x23, 0x45, 0x67, 255], (y * 3 + 1) * 4);
+    else expectedPixels.set([0x11, 0x22, 0x33, 255], 4);
+    assert.deepEqual(Buffer.from(output), png(3, 2, expectedPixels));
+    assert.notEqual(sha(output), sha(new Uint8Array(await otherOrder.output.arrayBuffer())), 'forward/back ordering changes actual pixels and PNG digest');
+    assert.notEqual(await client.expectedFreeImageOutputKey(rendered), await client.expectedFreeImageOutputKey(otherOrder));
+    const sent = [], send = async (url, init) => {
+      assert.equal(url, '/api/products/product/image-text'); assert.deepEqual([...init.body.keys()], ['action', 'source', 'file']);
+      assert.deepEqual(JSON.parse(init.body.get('source')), source);
+      sent.push({ source: init.body.get('source'), bytes: new Uint8Array(await init.body.get('file').arrayBuffer()) }); return h.request('POST', init.body);
+    };
+    h.controls.dbFailure = 'before';
+    await assert.rejects(client.applyFreeImageTranslation(rendered, new AbortController().signal, send), error => error.uncertain === true);
+    assert.deepEqual(await h.content(), before); assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get('product'), beforeQuote);
+    const saved = await client.applyFreeImageTranslation(rendered, new AbortController().signal, send), after = await h.content();
+    assert.deepEqual(sent[0], sent[1], 'retry sends the identical reviewed PNG and source proof');
+    assert.equal(saved.key, await client.expectedFreeImageOutputKey(rendered)); assert.deepEqual(h.objects.get(saved.key).bytes, output);
+    assert.equal(h.objects.get(saved.key).customMetadata.freeImageOutputSha256, sha(output));
+    assert.deepEqual(Array.from(after.assets.detail.value), ['owner/first.png', saved.key, 'owner/last.png']);
+    for (const role of ['main', 'additional', 'detailTop', 'detailBottom', 'size', 'label']) assert.deepEqual(after.assets[role], before.assets[role]);
+    assert.deepEqual(after.seo, before.seo); assert.deepEqual(after.label, before.label); assert.deepEqual(h.objects.get(h.key).bytes, original);
+    assert.ok(JSON.parse(h.product().image_keys).includes(h.key)); assert.equal(h.deletions.length, 0); assert.equal(h.translations.length, 0);
+    assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get('product'), beforeQuote);
+    const finalResponse = await quotation.GET(quoteRequest(), context); await assertStatus(finalResponse, 200); const finalView = await finalResponse.json();
+    const fields = finalView.resolved.rows[0].fields;
+    assert.equal(fields.mainImage.value, 'owner/main.png'); assert.equal(fields.additionalImages.value, 'owner/first.png');
+    assert.equal(fields.detailImages.value, ''); assert.equal(fields.detailHtml.value, manualHtml);
+    for (const id of ['mainImage', 'additionalImages', 'detailImages', 'detailHtml']) assert.equal(fields[id].source, 'manual-common');
+    assert.equal(finalView.automatic.rows[0].fields.detailImages.value, ['owner/first.png', saved.key, 'owner/last.png'].join('\n'));
+    assert.equal((await client.applyFreeImageTranslation(rendered, new AbortController().signal, send)).replayed, true);
+    assert.equal(h.writes.length, 1); assert.deepEqual(await h.content(), after);
+    const fresh = await h.source({ key: saved.key }); assert.equal(fresh.sourceSha256, sha(output));
+  } finally { h.close(); }
+});
+
 test('manual PNG adoption replaces the exact detail slot atomically and preserves original, SEO, labels, other roles and status', async () => {
   const h = await ready(); try {
     const source = await h.source(), before = await h.content(), res = await h.request('POST', h.applyBody(source)); await assertStatus(res, 200);

@@ -207,6 +207,58 @@ test('render paints only selected clipped rectangles and keeps every outside pix
   assert.deepEqual(original.canvas.pixels, before);
 });
 
+test('overlapping text layers visibly follow forward/back order and removing or readding a layer restores the expected pixels', async () => {
+  const h = fixture(), original = image(h), before = original.canvas.pixels.slice();
+  const back = { ...region('back', { x: 3, y: 2, width: 8, height: 6 }, 'A'), background: '#abcdef', foreground: '#112233', fontSize: 2 };
+  const front = { ...region('front', { x: 3, y: 2, width: 4, height: 4 }, 'B'), background: '#987654', foreground: '#334455', fontSize: 2 };
+  const untouched = JSON.stringify([back, front]);
+  const render = async rows => {
+    const output = await h.client.renderFreeImageTranslation(original, rows, new AbortController().signal);
+    assert.equal(output.source, source); const bytes = new Uint8Array(await output.output.arrayBuffer());
+    for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) if (!(x >= 3 && x < 11 && y >= 2 && y < 8)) {
+      const offset = (y * 20 + x) * 4; assert.deepEqual(bytes.slice(offset, offset + 4), before.slice(offset, offset + 4), `outside layers ${x},${y}`);
+    }
+    assert.deepEqual(original.canvas.pixels, before); return bytes;
+  };
+  const pixel = (bytes, x, y) => Array.from(bytes.slice((y * 20 + x) * 4, (y * 20 + x + 1) * 4));
+  const forward = await render([back, front]);
+  assert.deepEqual(pixel(forward, 3, 2), [0x33, 0x44, 0x55, 255], 'front text covers back text');
+  assert.deepEqual(pixel(forward, 4, 3), [0x98, 0x76, 0x54, 255], 'front background covers the overlap');
+  assert.deepEqual(pixel(forward, 9, 6), [0xab, 0xcd, 0xef, 255], 'back layer is visible outside the front rectangle');
+  const backward = await render([front, back]);
+  assert.deepEqual(pixel(backward, 3, 2), [0x11, 0x22, 0x33, 255]); assert.deepEqual(pixel(backward, 4, 3), [0xab, 0xcd, 0xef, 255]);
+  assert.notDeepEqual(forward, backward);
+  assert.deepEqual(await render([back]), backward, 'removing the top layer reveals the bottom layer');
+  assert.deepEqual(await render([back, front]), forward, 'readding it at the front restores its pixels');
+  const frontOnly = await render([front]); assert.deepEqual(pixel(frontOnly, 9, 6), pixel(before, 9, 6), 'removing the back layer restores source pixels');
+  assert.deepEqual(await render([back, front]), forward, 'moving back behind the existing front restores the original composition');
+  const created = h.canvases.length;
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [back, { ...front, id: back.id }], new AbortController().signal));
+  assert.equal(h.canvases.length, created, 'readding cannot introduce duplicate selected IDs'); assert.equal(JSON.stringify([back, front]), untouched);
+});
+
+test('overlapping erase and text layers clear or restore the same wording according to their selected order', async () => {
+  const h = fixture(), original = image(h), before = original.canvas.pixels.slice();
+  const text = { ...region('text', { x: 3, y: 2, width: 8, height: 6 }, 'A'), background: '#ffffff', foreground: '#cc1122', fontSize: 2 };
+  const erase = { ...region('erase', { x: 3, y: 2, width: 4, height: 4 }, ''), text: '', erase: true, background: '#234567' };
+  const render = async rows => new Uint8Array(await (await h.client.renderFreeImageTranslation(original, rows, new AbortController().signal)).output.arrayBuffer());
+  const pixel = (bytes, x, y) => Array.from(bytes.slice((y * 20 + x) * 4, (y * 20 + x + 1) * 4));
+  const covered = await render([text, erase]), visible = await render([erase, text]);
+  assert.deepEqual(pixel(covered, 3, 2), [0x23, 0x45, 0x67, 255], 'erase on top removes the lower text');
+  assert.deepEqual(pixel(covered, 4, 3), [0x23, 0x45, 0x67, 255]);
+  assert.deepEqual(pixel(visible, 3, 2), [0xcc, 0x11, 0x22, 255], 'text on top restores visible wording');
+  assert.deepEqual(pixel(visible, 4, 3), [255, 255, 255, 255]);
+  assert.deepEqual(await render([text]), visible); assert.deepEqual(await render([text, erase]), covered);
+  assert.deepEqual(await render([text, { ...erase, selected: false }]), visible, 'an unselected erase layer cannot cover text');
+  const eraseOnly = await render([erase]); assert.deepEqual(pixel(eraseOnly, 9, 6), pixel(before, 9, 6));
+  for (const bytes of [covered, visible, eraseOnly]) for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) if (!(x >= 3 && x < 11 && y >= 2 && y < 8)) {
+    assert.deepEqual(pixel(bytes, x, y), pixel(before, x, y), `outside selected layers ${x},${y}`);
+  }
+  const created = h.canvases.length;
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [text, { ...erase, id: text.id }], new AbortController().signal));
+  assert.equal(h.canvases.length, created); assert.deepEqual(original.canvas.pixels, before); assert.equal(text.translated, 'A'); assert.equal(erase.translated, '');
+});
+
 test('unset text style keeps the original pixels, font string, left anchor and 1.2 line spacing', async () => {
   const outputs = [];
   for (const style of [{}, { fontFamily: 'sans', bold: false, italic: false, textAlign: 'left', lineHeight: 1.2 }]) {
