@@ -21,6 +21,8 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  if(job.product_id&&!job.received_at){reportJob(job);return '기존 상품 열기 · 저장된 수정값 유지';}
  let received=job;
  let supplementNotice='';
+ let source:ReturnType<typeof validateCollectionReceiptResponse>=null;
+ let repairedExistingSource=false;
  if(!job.received_at){
   reportProgress('상품 페이지에서 정보 가져오는 중');
   let response=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/collect`,{method:'POST',signal:options.signal});
@@ -36,15 +38,39 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(!response.ok)throw Error(body?.error||'상품 정보를 가져오지 못했습니다.');
   const result=validateCollectionReceiptResponse(body,job.id,job.offer_id);
   if(!result)throw Error('수집 원문을 확인하지 못했습니다.');
+  source=result;
   const receivedAt=body.receipt?.receivedAt;
   if(typeof receivedAt!=='string'||!Number.isFinite(Date.parse(receivedAt)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
   received={...job,received_at:receivedAt};
-  if(canSupplementCollection(result)&&options.captureFromBrowser){
-   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
-   try{await captureCollectionSupplement(job.id,job.offer_id,job.source_url,{fetcher,signal:options.signal,captureFromBrowser:options.captureFromBrowser});}
-   catch(cause){if(options.signal.aborted)return;supplementNotice=`상세 원문 보완 미완료: ${cause instanceof Error?cause.message:'Chrome 응답을 확인하지 못했습니다.'} 저장된 상품에서 다시 보완할 수 있습니다.`;}
-  }
  } else if(!Number.isFinite(Date.parse(job.received_at)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
+ else if(options.captureFromBrowser){
+  // A saved SKU-only receipt can outlive a temporarily unavailable Chrome.
+  // Read that same persisted job before deciding whether to repair its source.
+  const response=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/result`,{cache:'no-store',signal:options.signal});
+  const body=await response.json() as {error?:string;receipt?:{receivedAt?:unknown}};
+  if(options.signal.aborted)return;
+  if(!response.ok)throw Error(body.error||'저장된 수집 원문을 확인하지 못했습니다.');
+  source=validateCollectionReceiptResponse(body,job.id,job.offer_id);
+  if(!source||body.receipt?.receivedAt!==job.received_at)throw Error('저장된 수집 원문이 현재 요청과 일치하지 않습니다.');
+ }
+ if(source&&canSupplementCollection(source)&&options.captureFromBrowser){
+  reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
+  try{
+   let expectedProductVersion:string|undefined;
+   if(job.product_id){
+    const response=await fetcher(`/api/products/${encodeURIComponent(job.product_id)}/translation-source`,{cache:'no-store',signal:options.signal});
+    const current=await response.json() as {productId?:string;jobId?:string;sourceUrl?:string;productVersion?:string;error?:string};
+    if(options.signal.aborted)return;
+    if(!response.ok||current.productId!==job.product_id||current.jobId!==job.id||current.sourceUrl!==job.source_url
+     ||typeof current.productVersion!=='string'||!Number.isFinite(Date.parse(current.productVersion)))throw Error(current.error||'보완할 원문과 현재 상품 연결을 확인하지 못했습니다.');
+    expectedProductVersion=current.productVersion;
+   }
+   await captureCollectionSupplement(job.id,job.offer_id,job.source_url,{fetcher,signal:options.signal,captureFromBrowser:options.captureFromBrowser,...(expectedProductVersion?{expectedProductVersion}:{})});
+   repairedExistingSource=!!job.product_id;
+   if(repairedExistingSource)supplementNotice='저장된 상세 원문·상품 속성을 보완했습니다. 추가한 원문은 각 단계에서 검토해주세요.';
+  }
+  catch(cause){if(options.signal.aborted)return;supplementNotice=`상세 원문 보완 미완료: ${cause instanceof Error?cause.message:'Chrome 응답을 확인하지 못했습니다.'} 저장된 상품에서 다시 보완할 수 있습니다.`;}
+ }
  if(options.signal.aborted)return;
  reportJob(received);
  const outcomes:CollectionImportOutcome[]=[];
@@ -53,6 +79,12 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(options.signal.aborted)return;
   reportJob({...received,product_id:productId});
   if(job.goal==='collect'||seo)return;
+  if(repairedExistingSource){
+   // The old canonical translation has no evidence for the new attributes.
+   // Preserve it and every saved edit; new source needs explicit review.
+   seo={completed:false,reviewRequired:true,manualReady:false,message:'검토 필요 · 상세 원문·상품 속성을 추가했습니다. 기존 번역 이력과 수정값은 유지했습니다. 새 원문은 1단계에서 확인하고 필요한 번역을 검토해주세요. 자동으로 번역을 다시 호출하지 않았습니다.'};
+   return;
+  }
   reportProgress('저장 원문으로 SEO·옵션 초안 작성 중');
   seo=await prepareIntakeSeoOutcome(productId,fetcher,options.signal);
  };

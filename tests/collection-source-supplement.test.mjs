@@ -67,6 +67,73 @@ test('new explicit intake supplements SKU-only server response before creating t
  }
 });
 
+for(const goal of ['collect','work'])test(`URL retry can supplement a saved sparse receipt when Chrome becomes available without replacing existing edits or translation history (${goal})`,async()=>{
+ let googleCalls=0;
+ const h=mobileIntakeHarness({sourceFetcher:async target=>new URL(target).hostname==='h5api.m.1688.com'?Response.json(sku):new Response('<html>Public data unavailable</html>',{headers:{'content-type':'text/html'}}),
+  translationFetcher:async()=>{googleCalls++;return new Response('local quota fixture',{status:429});}});
+ try{
+  h.sqlite.prepare('UPDATE collection_jobs SET goal=? WHERE id=?').run(goal,'job');h.bindings.SOURCEFLOW_TEXT_PROVIDER='google-free';delete h.bindings.AI;
+  let available=false,captureCalls=0,currentJob;
+  const run=()=>h.load('app/intake-collection.ts').collectIntakeProduct(currentJob,{fetcher:request(h),signal:new AbortController().signal,onJob(){},onProgress(){},
+   captureFromBrowser:async()=>{captureCalls++;if(!available)throw Error('Chrome temporarily unavailable');return capture(h.sourceUrl);}});
+  currentJob=await h.load('db/collection-jobs.ts').findCollectionJob('owner','job');await run();
+  const saved=h.sqlite.prepare('SELECT * FROM products').get(),id=saved.id,raw=h.sqlite.prepare('SELECT * FROM collection_results').get();
+  assert.equal(captureCalls,1);assert.equal(h.objects.size,4);
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  const edit=await h.route(`/api/products/${id}/content`,{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'검토한 상품명',description:''},label:{material:''},assets:{main:[]}}}});
+  assert.equal(edit.status,200,await edit.clone().text());
+  const state=await (await h.route(`/api/products/${id}/options`)).json(),inputs=h.load('app/product-options.ts').optionInputs(state.options);
+  inputs[0].unitsPerPack=3;inputs[1].included=false;
+  const optionEdit=await h.route(`/api/products/${id}/options`,{method:'PATCH',body:{expectedRevision:state.options.revision,expectedProductVersion:state.productVersion,rows:inputs}});
+  assert.equal(optionEdit.status,200,await optionEdit.clone().text());
+  const editedOptions=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload),history=JSON.stringify(h.sqlite.prepare('SELECT * FROM translation_jobs').all()),requests=googleCalls;
+  available=true;captureCalls=0;currentJob=await h.load('db/collection-jobs.ts').findCollectionJob('owner','job');
+  const message=await run();
+  assert.equal(captureCalls,1,'saved receipt retries must repair sparse sources when the authorized Chrome capture becomes available');
+  const effective=await h.load('db/collection-results.ts').readCollectionResult('owner','job');
+  assert.equal(effective.result.provider,'chrome-public-mobile-supplement-v1');assert.equal(effective.result.attributes.length,24);assert.equal(effective.result.images.length,19);
+  assert.deepEqual(h.sqlite.prepare('SELECT * FROM collection_results').get(),raw);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
+  const after=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload),options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
+  assert.equal(after.seo.title.value,'검토한 상품명');assert.equal(after.seo.description.value,'');assert.equal(after.label.material.value,'');assert.deepEqual(after.assets.main.value,[]);
+  assert.equal(options.rows[0].unitsPerPack,3);assert.equal(options.rows[1].included,false);
+  for(let i=0;i<options.rows.length;i++)for(const field of ['originalName','translatedName','color','size','unitCostCny','minimumOrderQuantity'])assert.equal(options.rows[i][field],editedOptions.rows[i][field]);
+  assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM translation_jobs').all()),history);assert.equal(googleCalls,requests);
+  if(goal==='work'){assert.equal(after.assets.detail.value.length,11);assert.match(message,/검토 필요/);}
+  assert.equal(h.calls.filter(path=>path==='/api/collection-jobs/job/collect').length,1);
+  const source=await (await h.route(`/api/products/${id}/translation-source`)).json();assert.equal(source.attributes.length,24);
+  currentJob=await h.load('db/collection-jobs.ts').findCollectionJob('owner','job');captureCalls=0;await run();
+  assert.equal(captureCalls,0);assert.equal(googleCalls,requests);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM translation_jobs').all()),history);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_source_supplements').get().n,1);
+ }finally{h.close();}
+});
+
+for(const initiallyAvailable of [false,true])test(`completed canonical source coverage survives receipt supplementation correctly (full source before original draft: ${initiallyAvailable})`,async()=>{
+ const h=mobileIntakeHarness({sourceFetcher:async target=>new URL(target).hostname==='h5api.m.1688.com'?Response.json(sku):new Response('<html>Public data unavailable</html>',{headers:{'content-type':'text/html'}})});
+ try{
+  h.sqlite.prepare("UPDATE collection_jobs SET goal='work' WHERE id='job'").run();let available=initiallyAvailable,captureCalls=0;
+  const run=async()=>h.load('app/intake-collection.ts').collectIntakeProduct(await h.load('db/collection-jobs.ts').findCollectionJob('owner','job'),{
+   fetcher:request(h),signal:new AbortController().signal,onJob(){},onProgress(){},captureFromBrowser:async()=>{captureCalls++;if(!available)throw Error('Chrome temporarily unavailable');return capture(h.sourceUrl);}});
+  await run();const product=h.sqlite.prepare('SELECT * FROM products').get(),basePath=`/api/products/${product.id}`;
+  const canonical=h.sqlite.prepare("SELECT * FROM translation_jobs WHERE idempotency_key='intake-auto-v1'").get();
+  assert.equal(canonical.status,'completed');assert.equal(h.aiSources.length,1);
+  if(!initiallyAvailable){available=true;assert.match(await run(),/검토 필요/);}
+  const history=JSON.stringify(h.sqlite.prepare('SELECT * FROM translation_jobs').all()),content=h.sqlite.prepare('SELECT payload FROM product_content').get().payload,
+   options=h.sqlite.prepare('SELECT payload FROM product_options').get().payload,providerCalls=h.aiSources.length,captured=captureCalls;
+  const response=await h.route(basePath+'/translation',{method:'POST',body:{action:'prepare-collected',intake:true}});
+  assert.equal(response.status,200,await response.clone().text());const prepared=await response.json();assert.equal(prepared.job.id,canonical.id);assert.equal(prepared.replayed,true);
+  if(initiallyAvailable){assert.equal(prepared.intakeSourceChanged,undefined);assert.equal(prepared.autoDraft,true);}
+  else{assert.equal(prepared.intakeSourceChanged,true);assert.equal(prepared.autoDraft,false);}
+  const beforeCalls=h.calls.length,outcome=await h.load('app/intake-seo.ts').prepareIntakeSeoOutcome(product.id,request(h),new AbortController().signal);
+  assert.equal(outcome.completed,initiallyAvailable);assert.equal(outcome.reviewRequired,!initiallyAvailable);
+  if(!initiallyAvailable){assert.match(outcome.message,/새 원문|원문.*변경/);assert.ok(h.calls.slice(beforeCalls).every(path=>path===basePath+'/translation'),'changed canonical source must stop before preview, apply or execute');}
+  const replay=await run();assert.equal(captureCalls,captured);assert.equal(h.aiSources.length,providerCalls);
+  if(!initiallyAvailable)assert.match(replay,/검토 필요/);
+  assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM translation_jobs').all()),history);
+  assert.equal(h.sqlite.prepare('SELECT payload FROM product_content').get().payload,content);assert.equal(h.sqlite.prepare('SELECT payload FROM product_options').get().payload,options);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_source_supplements').get().n,1);
+ }finally{h.close();}
+});
+
 test('mismatched offer/SKU/price and incomplete Chrome captures cannot supplement; owner/version/cancellation still guard writes',async()=>{
  const h=mobileIntakeHarness();
  try{

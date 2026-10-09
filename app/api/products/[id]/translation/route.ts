@@ -155,6 +155,18 @@ export async function POST(request: Request, context: Context) {
           // The completed canonical result remains reusable after an unrelated
           // edit. Apply recomputes a selective plan against current revisions.
           const resumeCompleted=prior.status==='completed' && !!prior.result;
+          if(resumeCompleted){
+            const {findProductCollection}=await import('@/db/collection-products');
+            const {readCollectionResult}=await import('@/db/collection-results');
+            const {findCollectionJob}=await import('@/db/collection-jobs');
+            const {parseCollectionRequest}=await import('@/app/sourcing');
+            const {intakeSupplierSourceMatches}=await import('@/app/intake-supplier-source');
+            const link=await findProductCollection(owner,id);if(!link)return conflict();
+            const [receipt,collection]=await Promise.all([readCollectionResult(owner,link.job_id),findCollectionJob(owner,link.job_id)]);
+            if(!receipt||!collection||parseCollectionRequest({urls:[product.source_url]})[0].offerId!==receipt.result.offerId)return conflict();
+            if(!intakeSupplierSourceMatches(prior.review.source,receipt.result,collection))
+              return json({job:prior,replayed:true,intakeSourceChanged:true,autoDraft:false,productVersion:product.updated_at,configuration:configuration()});
+          }
           return json({job:prior,replayed:true,autoDraft:resumeCompleted||prior.productVersion===product.updated_at,intakePreserved:!resumeCompleted&&prior.productVersion!==product.updated_at,
             ...(resumeCompleted?{applyVersion:product.updated_at}:{}),productVersion:product.updated_at,configuration:configuration()});
         }

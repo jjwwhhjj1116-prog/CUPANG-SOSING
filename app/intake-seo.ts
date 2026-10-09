@@ -43,7 +43,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     const response = await fetcher(`${base}/translation`, {
       method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(next),
     });
-    const body = await response.json() as { job?: TranslationJob; error?: string; remainingOptions?: number; autoDraft?: boolean; intakePreserved?: boolean; productVersion?:string; productId?:string; done?:boolean; optionsOnly?:boolean; applyVersion?:string };
+    const body = await response.json() as { job?: TranslationJob; error?: string; remainingOptions?: number; autoDraft?: boolean; intakePreserved?: boolean; intakeSourceChanged?:boolean; productVersion?:string; productId?:string; done?:boolean; optionsOnly?:boolean; applyVersion?:string };
     if (signal.aborted) return '';
     if(response.ok && body.done === true && next.action==='prepare-intake-options' && typeof next.expectedVersion==='string'
       && body.productId===productId && body.productVersion===next.expectedVersion){
@@ -52,6 +52,10 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     }
     if (!response.ok || body.job?.productId !== productId) return withWarnings(`상품은 저장됐지만 SEO 요청 준비는 완료되지 않았습니다. ${body.error ?? 'SEO 단계에서 다시 확인해주세요.'}`);
     rememberWarnings(body.job);
+    if(body.intakeSourceChanged===true&&body.autoDraft===false&&body.job.status==='completed'&&body.job.result){
+      onReviewRequired();
+      return withWarnings('검토 필요 · 저장된 상품 원문이 기존 SEO 초안의 원문과 달라졌습니다. 기존 번역 이력과 수정값은 유지했습니다. 1단계에서 새 원문 전체로 번역 요청을 준비하고 검토해주세요. 자동으로 번역을 실행하거나 이전 결과를 다시 반영하지 않았습니다.');
+    }
     // A failed canonical job can predate manual edits. Reuse its saved failure
     // without attempting another options request or changing current content.
     const previousFailure = failedGoogleDraft(body.job);
