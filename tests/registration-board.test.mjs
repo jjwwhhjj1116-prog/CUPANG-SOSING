@@ -112,6 +112,27 @@ test('column picker hides and restores purchase links in requested order and pin
  assert.equal(elements(tree,node=>node.type==='td').length,columnLabels.length+1);
 });
 
+test('100-product pages preserve off-page selection and never modify registration records',()=>{
+ const seed=boardHarness().product;
+ const products=Array.from({length:120},(_,index)=>({...seed,id:`page-product-${index}`,content_summary:{...seed.content_summary,seoTitle:`상품 ${index}`}}));
+ const before=JSON.stringify(products),h=boardHarness({products,selected:new Set(['page-product-110'])});
+ const rows=tree=>elements(elements(tree,node=>node.type==='tbody')[0],node=>node.type==='tr');
+ let tree=h.render();assert.equal(rows(tree).length,10);
+ elements(tree,node=>node.type==='select'&&node.props['aria-label']==='페이지당 상품 수')[0].props.onChange({target:{value:'100'}});
+ tree=h.render();assert.deepEqual(rows(tree).map(row=>row.key),products.slice(0,100).map(product=>product.id));
+ elements(tree,node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0].props.onChange({target:{checked:true}});
+ assert.deepEqual([...h.selections.at(-1)].sort(),['page-product-110',...products.slice(0,100).map(product=>product.id)].sort());
+ elements(tree,node=>node.type==='button'&&nodeText(node)==='다음')[0].props.onClick();
+ tree=h.render();assert.deepEqual(rows(tree).map(row=>row.key),products.slice(100).map(product=>product.id));
+ assert.equal(elements(tree,node=>node.type==='button'&&nodeText(node)==='다음')[0].props.disabled,true);
+ elements(tree,node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0].props.onChange({target:{checked:false}});
+ assert.equal(h.selections.at(-1).size,0);
+ elements(tree,node=>node.type==='input'&&node.props['aria-label']==='상품 검색')[0].props.onChange({target:{value:'상품 119'}});
+ tree=h.render();assert.deepEqual(rows(tree).map(row=>row.key),['page-product-119']);
+ assert.equal(elements(tree,node=>node.type==='button'&&nodeText(node)==='이전')[0].props.disabled,true);
+ assert.equal(h.calls.length,0);assert.equal(h.options.length,0);assert.equal(h.confirmations.length,0);assert.equal(JSON.stringify(products),before);
+});
+
 test('purchase link cell leaves missing or unsupported URLs inert',()=>{
  const h=boardHarness();for(const value of ['', 'javascript:alert(1)', 'file:///secret', 'broken-url']){
   h.product.source_url=value;const source=elements(h.render(),node=>node.type==='td'&&node.props['data-column']==='source')[0];

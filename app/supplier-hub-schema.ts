@@ -203,18 +203,22 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     if(!object(node))return issue(path);
     if(['$ref','oneOf','anyOf','if','not','dependentRequired','dependencies','patternProperties'].some(key=>Object.hasOwn(node,key)))issue(path);
     if(object(node.properties)){
-      if(Object.hasOwn(node,'allOf')||Object.hasOwn(node,'additionalProperties')&&node.additionalProperties!==false)issue(path);
+      // Flattening children cannot enforce whole-object choices or constants.
+      // Keep the editable fields, but never confirm their combined constraint.
+      if(['allOf','enum','const'].some(key=>Object.hasOwn(node,key))||Object.hasOwn(node,'additionalProperties')&&node.additionalProperties!==false)issue(path);
       const required=requiredKeys(node,path);
       for(const [key,value] of Object.entries(node.properties))visit(value,[...path,key],section,required.includes(key),initialize&&required.includes(key));return;
     }
     const group=path.at(-1)!;
     if(Array.isArray(node.allOf)&&node.type==='array'){
-      if(['minItems','maxItems','uniqueItems'].some(key=>Object.hasOwn(node,key))
+      if(['minItems','maxItems','uniqueItems','enum','const'].some(key=>Object.hasOwn(node,key))
         ||Object.hasOwn(node,'items')&&(!object(node.items)||Object.keys(node.items).length!==0))issue(path);
       if(node.allOf.length>400)throw Error('상세 견적 배열의 항목 수가 너무 많습니다.');
-      for(const entry of node.allOf){
-        const properties=object(entry)&&object(entry.contains)&&object(entry.contains.properties)?entry.contains.properties:null;
+      for(const [index,entry] of node.allOf.entries()){
+        const contained=object(entry)&&object(entry.contains)?entry.contains:null;
+        const properties=contained&&object(contained.properties)?contained.properties:null;
         if(!properties||Object.keys(properties).length!==2){issue(path);continue;}
+        if(['enum','const'].some(key=>Object.hasOwn(contained!,key)))issue([...path,'allOf',String(index),'contains']);
         const pairs=Object.entries(properties);
         const isName=(value:unknown):value is Record<string,unknown>&{enum:[string]}=>object(value)
           &&Array.isArray(value.enum)&&value.enum.length===1&&safeText(value.enum[0],500);
@@ -238,7 +242,7 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     const label=typeof node.title==='string'?node.title:group;
     scalar(node,path,section,'common',{path},label,required,undefined,initialize);
   }
-  if(['$ref','oneOf','anyOf','allOf','if','not','dependentRequired','dependencies','patternProperties'].some(key=>Object.hasOwn(raw,key)))issue(['schema']);
+  if(['$ref','oneOf','anyOf','allOf','if','not','const','enum','dependentRequired','dependencies','patternProperties'].some(key=>Object.hasOwn(raw,key)))issue(['schema']);
   const requiredPages=requiredKeys(raw,[]);
   for(const [page,node] of Object.entries(raw.properties as Record<string,unknown>)){if(Object.hasOwn(pages,page))visit(node,[page],pages[page],false,snapshot.draftInitialization==='couplus-required-v1'&&requiredPages.includes(page));else if(page!=='sourcingPage'||!hiddenSourcingPage(node))issue([page]);}
   if(!fields.length)throw Error('상세 견적 양식의 입력 항목이 없습니다.');

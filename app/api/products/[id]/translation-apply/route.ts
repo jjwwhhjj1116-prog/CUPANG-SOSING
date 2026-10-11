@@ -20,6 +20,7 @@ import { optionsRetryProof, optionsRetryApplicationFingerprint } from '@/app/opt
 import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
+import {GOOGLE_TEXT_MODEL} from '@/app/automation/translation';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -119,7 +120,16 @@ export async function POST(request: Request, context: Context) {
     const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null });
     const optionsRetry = retryProof ? {applicationFingerprint:await optionsRetryApplicationFingerprint(job,
       applyContentPatch(content,plan.patch??{},'options-retry-application'),applyIntegratedOptions(options,plan,'options-retry-application'),'options-retry-application')} : null;
+    let intakeSeoCoverage;
+    if(scope==='all'&&job.status==='completed'&&job.result&&job.review.destination==='Google 번역'
+      &&job.review.model===GOOGLE_TEXT_MODEL&&job.result.model===GOOGLE_TEXT_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'
+      &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry')
+      &&job.review.source.description.trim()&&!job.result.draft.description.trim()){
+      const initial=await findIntakeTranslation(owner,id);
+      if(initial?.id===job.id)intakeSeoCoverage={jobId:job.id,contentRevision:content.revision,missingDescription:content.seo.description.provenance!=='manual'};
+    }
     const preview = { scope, productId: id, productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, fingerprint: digest, preview: plan.preview, skipped: plan.skipped,
+      ...(intakeSeoCoverage?{intakeSeoCoverage}:{}),
       ...(optionsRetry?{optionsRetry}:{}) };
     if (body.action === 'preview') return json(preview);
     if (body.fingerprint !== digest) return json({ error: '검토 이후 자료가 변경되었습니다. 통합 미리보기를 다시 확인해주세요.' }, 409);

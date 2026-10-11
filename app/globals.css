@@ -379,6 +379,16 @@ html,body{background:#fff}
 .couplus-work-table th{position:sticky;top:0;z-index:2}.couplus-work-table .registration-pinned{position:sticky;left:0;z-index:1;background:#fff;box-shadow:3px 0 5px #15254712}
 .couplus-work-table th.registration-pinned{z-index:3;background:#f7f7f9}.registration-scroll:focus-visible{outline:2px solid #25b9df;outline-offset:2px}
 
+/* Keep quotation, receipt and management columns visible with the image steps. */
+.couplus-work-table{table-layout:fixed}
+.couplus-work-table th{height:54px;padding:10px 7px;white-space:nowrap}
+.couplus-work-table td{padding:12px 7px}
+.couplus-work-table .registration-product{width:auto;min-width:0;max-width:none;overflow-wrap:anywhere}
+.couplus-work-table .registration-title{overflow-wrap:anywhere}
+.couplus-work-table .registration-cell-button{max-width:100%;padding:4px 5px}
+.couplus-work-table td[data-column=status]{overflow-wrap:anywhere}
+.couplus-work-table td[data-column=status] small{display:block;font-size:10px;line-height:1.5}
+
 /* Keep the chosen intake field visible while comparing wide product rows. */
 .intake-queue-tools label.intake-pin-control{flex:0 1 230px;min-width:180px}
 .intake-pin-control select{width:100%;padding:10px 12px;border:1px solid #aeb6c7;border-radius:4px;background:#fff;color:#526079;font:inherit}

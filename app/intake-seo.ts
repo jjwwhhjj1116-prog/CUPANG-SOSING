@@ -86,23 +86,36 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     const serviceStopped=job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
       &&job.review.instructionsVersion==='sourceflow-translation-v6'&&job.result.model===GOOGLE_TEXT_MODEL
       &&Number.isInteger(stoppedStatus)&&(stoppedStatus===429||(stoppedStatus??0)>=500&&(stoppedStatus??0)<=599);
-    const partial=!!coverage?.missingSourceIndexes.length||serviceStopped;
+    const googleDescriptionAbsent=!body.optionsOnly&&job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
+      &&job.result.model===GOOGLE_TEXT_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'
+      &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry')
+      &&typeof job.review.source.description==='string'&&!!job.review.source.description.trim()
+      &&typeof job.result.draft.description==='string'&&!job.result.draft.description.trim();
+    let descriptionMissing=false;
+    let partial=!!coverage?.missingSourceIndexes.length||serviceStopped;
     const reviewRequired=()=>{
       onReviewRequired();
       const missing=coverage?.missingSourceIndexes.length??0;
-      const reason=serviceStopped?`Google 번역 HTTP ${stoppedStatus} 응답으로 남은 자동 요청을 중단했습니다.${missing?` 속성·옵션 번역 ${missing}개가 누락됐습니다.`:''}`
-        :`생성 결과에서 속성·옵션 번역 ${missing}개가 누락됐습니다.`;
+      const reason=(serviceStopped?`Google 번역 HTTP ${stoppedStatus} 응답으로 남은 자동 요청을 중단했습니다.${missing?` 속성·옵션 번역 ${missing}개가 누락됐습니다.`:''}`
+        :missing?`생성 결과에서 속성·옵션 번역 ${missing}개가 누락됐습니다.`:'')+(descriptionMissing?' 상품 설명 번역을 받지 못했습니다.':'');
       return withWarnings(`검토 필요 · 상품 초안을 저장했습니다. ${reason} 미완료 항목은 번역 완료로 처리하지 않았으며 원문과 직접 수정한 값은 유지합니다. 1~7단계에서 확인·수정해주세요.${remainder}`);
     };
     const applyVersion=body.applyVersion??job.productVersion;
     const send=async(action:'preview'|'apply',fingerprint?:string)=>{
       const response=await fetcher(`${base}/translation-apply`,{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,jobId:job.id,expectedVersion:applyVersion,...(body.optionsOnly?{scope:'options'}:{}),...(fingerprint?{fingerprint}:{})})});
-      const value=await response.json() as {error?:string;productId?:string;productVersion?:string;preview?:unknown[];fingerprint?:string;applied?:number};
+      const value=await response.json() as {error?:string;productId?:string;productVersion?:string;contentRevision?:number;preview?:unknown[];fingerprint?:string;applied?:number;
+        intakeSeoCoverage?:{jobId?:unknown;contentRevision?:unknown;missingDescription?:unknown}};
       if(!response.ok)throw Error(value.error||'SEO 초안 반영 상태를 확인해주세요.');
       return value;
     };
     const preview=await send('preview');if(signal.aborted)return '';
     if(preview.productId!==productId||preview.productVersion!==applyVersion||!Array.isArray(preview.preview)||typeof preview.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(preview.fingerprint))throw Error('초안 반영 대상이 일치하지 않습니다.');
+    if(googleDescriptionAbsent){
+      const proof=preview.intakeSeoCoverage;
+      if(!proof||proof.jobId!==job.id||!Number.isSafeInteger(preview.contentRevision)||(preview.contentRevision??-1)<0
+        ||proof.contentRevision!==preview.contentRevision||typeof proof.missingDescription!=='boolean')throw Error('현재 저장된 상품 설명과 번역 누락 상태를 확인하지 못했습니다.');
+      descriptionMissing=proof.missingDescription;partial||=descriptionMissing;
+    }
     if(!preview.preview.length){
       // A completed partial response remains reusable, but is not evidence that
       // every option is translated. A verified no-op also preserves manual edits.

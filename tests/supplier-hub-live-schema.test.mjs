@@ -7,6 +7,8 @@ import {readSupplierHubSchema} from '../extensions/supplier-hub/schema-page.mjs'
 import {readAppSupplierHubCatalog} from '../extensions/supplier-hub/catalog.mjs';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
+import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
+import {prepareAttachments,readPackageZip} from '../extensions/supplier-hub/package.mjs';
 const plain=value=>JSON.parse(JSON.stringify(value));
 const h=mobileIntakeHarness(),model=h.load('app/supplier-hub-schema.ts'),quotes=h.load('app/quotation-schema.ts');
 test.after(()=>h.close());
@@ -93,6 +95,113 @@ test('new schema constraints replace stale recorded choices and unsupported cond
   const unsupported=quotes.getQuotationSchema(snap.categoryId,schemaPath,modify(snap,change));assert.equal(unsupported.status,'unconfirmed');assert.ok(unsupported.unsupportedFields.length);
  }
 });
+
+// Synthetic JSON Schema contract; no captured official form is claimed to use
+// compound object choices. Independent scalar choices cannot enforce a pair.
+function compoundSnapshot(company,keyword,scope=['productPage','careChoice']) {
+ const snapshot={...hubSchemaSnapshot(company),draftInitialization:'couplus-required-v1'};
+ return modify(snapshot,raw=>{
+  raw.required=['productPage','legalPage'];raw.properties.productPage.required=['careChoice'];
+  raw.properties.productPage.properties.careChoice={type:'object',required:['method','material'],properties:{
+   method:{type:'string',title:'관리 방식',enum:['물세탁','드라이'],default:'드라이'},
+   material:{type:'string',title:'전용 재질',enum:['면','울'],default:'울'},
+   note:{type:'string',title:'사용자 메모',default:'원본 기본값'},
+  }};
+  if(keyword){
+   const choices=[{method:'물세탁',material:'면'},{method:'드라이',material:'울'}];
+   let target=raw;for(const key of scope)target=target.properties[key];
+   target[keyword]=keyword==='enum'?choices:choices[0];
+  }
+ });
+}
+
+test('root, page and nested object enum/const constraints remain unsupported without losing scalar fields',()=>{
+ for(const company of schemaCompanies){
+  const baseline=compoundSnapshot(company),expected=quotes.getQuotationSchema(baseline.categoryId,schemaPath,baseline);
+  assert.equal(expected.status,'observed');
+  for(const keyword of ['enum','const'])for(const scope of [[],['productPage'],['productPage','careChoice']]){
+   const snapshot=compoundSnapshot(company,keyword,scope),before=JSON.stringify(snapshot),schema=quotes.getQuotationSchema(snapshot.categoryId,schemaPath,snapshot);
+   assert.equal(schema.status,'unconfirmed',`${company.code}/${keyword}/${scope.join('/')||'root'}`);
+   assert.ok(schema.unsupportedFields.includes(scope.join(' / ')||'schema'));
+   assert.deepEqual(plain(schema.fields),plain(expected.fields),'unsupported compound rules never infer or remove scalar choices/defaults');
+   assert.equal(JSON.stringify(snapshot),before);
+  }
+ }
+});
+
+test('named array aggregate and contains enum/const cannot confirm values outside their whole-structure choices',()=>{
+ for(const company of schemaCompanies){
+  const baseline=hubSchemaSnapshot(company),expected=quotes.getQuotationSchema(baseline.categoryId,schemaPath,baseline);
+  assert.equal(expected.status,'observed');
+  for(const scope of ['array','contains'])for(const keyword of ['enum','const']){
+   const snapshot=modify(baseline,raw=>{
+    const array=raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes;
+    const allowed=scope==='array'?[{name:'색상',value:'허용된 색상'},{name:'렌즈 유형',value:'UV'}]:{name:'색상',value:'허용된 색상'};
+    (scope==='array'?array:array.allOf[0].contains)[keyword]=keyword==='enum'?[allowed]:allowed;
+   });
+   const before=JSON.stringify(snapshot),schema=quotes.getQuotationSchema(snapshot.categoryId,schemaPath,snapshot),field=schema.fields.find(field=>field.label==='색상');
+   const originalPath='productPage / commonAttributes / exposedAttributes'+(scope==='contains'?' / allOf / 0 / contains':'');
+   assert.equal(schema.status,'unconfirmed',`${company.code}/${scope}/${keyword}`);assert.ok(schema.unsupportedFields.includes(originalPath));
+   assert.deepEqual(plain(schema.fields),plain(expected.fields),'ordinary named-array item enums/defaults and editable IDs are retained');
+   const changes=quotes.validateQuotationChanges([{optionId:null,fieldKey:field.id,value:'금지된 색상'}],{schema,optionIds:[]});
+   const input={categoryId:snapshot.categoryId,categoryPath:schemaPath,hubSchema:snapshot,product:{id:'p',title:'상품',image_keys:'[]',pricing_policy:JSON.stringify(h.settings)},content:h.load('app/product-content.ts').emptyProductContent('p'),settings:h.settings,options:h.load('app/product-options.ts').emptyProductOptions('p'),overrides:quotes.applyQuotationChanges(quotes.emptyQuotationOverrides(),changes)};
+   const resolved=quotes.resolveQuotationFields(input),review=h.load('app/submission-review.ts').inspectSubmission(resolved,[]);
+   assert.equal(resolved.rows[0].fields[field.id].value,'금지된 색상','unsupported constraints do not infer a replacement value');
+   assert.deepEqual(plain(resolved.rows[0].fields[field.id].validationIssues),[],'the scalar string alone remains valid');
+   assert.ok(review.issues.some(issue=>issue.kind==='error'&&issue.code==='SCHEMA_UNCONFIRMED'));
+   assert.ok(review.issues.some(issue=>issue.kind==='error'&&issue.code==='QUOTATION_CONSTRAINT'&&issue.message.includes(originalPath)));
+   assert.equal(JSON.stringify(snapshot),before);
+  }
+ }
+});
+
+test('ordinary nested scalar enums/defaults and named array defaults remain supported and manual blanks retain priority',()=>{
+ const snapshot=compoundSnapshot(schemaCompanies[0]),schema=quotes.getQuotationSchema(snapshot.categoryId,schemaPath,snapshot);
+ const find=label=>schema.fields.find(field=>field.label===label),method=find('관리 방식'),material=find('전용 재질'),note=find('사용자 메모');
+ assert.equal(schema.status,'observed');assert.deepEqual(plain(schema.unsupportedFields),[]);
+ assert.deepEqual(plain(method.choices),[{value:'물세탁',label:'물세탁'},{value:'드라이',label:'드라이'}]);
+ assert.equal(method.schemaDefault,'드라이');assert.equal(method.draftDefault,'물세탁');assert.equal(material.draftDefault,'면');assert.equal(note.schemaDefault,'원본 기본값');
+ assert.equal(find('렌즈 유형').draftDefault,'');assert.equal(find('표면 처리').draftDefault,'');
+ const input={categoryId:snapshot.categoryId,categoryPath:schemaPath,hubSchema:snapshot,product:{id:'p',title:'상품',image_keys:'[]',pricing_policy:JSON.stringify(h.settings)},content:h.load('app/product-content.ts').emptyProductContent('p'),settings:h.settings,options:h.load('app/product-options.ts').emptyProductOptions('p')};
+ const before=JSON.stringify(input),initial=quotes.resolveQuotationFields(input).rows[0];
+ assert.equal(initial.fields[method.id].value,'물세탁');assert.equal(initial.fields[method.id].source,'couplus-default');assert.equal(initial.fields[note.id].value,'원본 기본값');
+ const cleared=quotes.resolveQuotationFields({...input,overrides:{common:{[method.id]:'',[note.id]:''},options:{}}}).rows[0];
+ assert.equal(cleared.fields[method.id].value,'');assert.equal(cleared.fields[method.id].source,'manual-common');assert.equal(cleared.fields[note.id].value,'');assert.equal(cleared.fields[note.id].source,'manual-common');
+ assert.ok(cleared.fields[method.id].validationIssues.some(message=>message.includes('필수')),'a saved blank never disables the ordinary required-field check');
+ assert.equal(JSON.stringify(input),before);
+});
+
+for(const company of schemaCompanies)for(const keyword of ['enum','const'])test(`unsupported compound ${keyword} survives profile/intake/manual review and blocks transmission readiness (${company.code})`,async()=>{
+ const local=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const snapshot=compoundSnapshot(company,keyword),schema=local.load('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId,schemaPath,snapshot),labels=['관리 방식','전용 재질','사용자 메모'];
+  const fields=labels.map(label=>schema.fields.find(field=>field.label===label));
+  const bytes=quotationWorkbook(labels),sha256=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex'),storageKey=`owner/category-templates/${sha256}.xlsx`;
+  await local.bindings.FILES.put(storageKey,bytes,{customMetadata:{sha256,format:'xlsx'},httpMetadata:{contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}});
+  const input={name:'복합 객체 조건 회귀',categoryId:snapshot.categoryId,categoryPath:schemaPath,hubSchema:snapshot,template:{name:'test.xlsx',format:'xlsx',sheetName:'견적서',headerRow:1,dataStartRow:2,headers:labels,sha256,storageKey},mappings:fields.map((field,column)=>({column,field:field.id,required:field.required}))};
+  const post=await local.load('app/api/category-profiles/route.ts').POST(new Request('https://app.test/api/category-profiles',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)}));
+  assert.equal(post.status,201,await post.clone().text());const {profile}=await post.json();
+  local.context.category=profile;local.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(local.context),'job');assert.match(await local.intake(),/상품 초안 저장됨/);
+  const product=local.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  let view=await(await local.route(base+'/quotation-fields')).json();
+  assert.equal(view.resolved.schema.status,'unconfirmed');assert.ok(view.resolved.schema.unsupportedFields.includes('productPage / careChoice'));
+  const selected=view.resolved.rows.find(row=>row.included),changes=[{optionId:null,fieldKey:fields[0].id,value:'물세탁'},{optionId:null,fieldKey:fields[1].id,value:'울'},{optionId:selected.optionId,fieldKey:fields[2].id,value:''}];
+  const put=await local.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}});assert.equal(put.status,200,await put.clone().text());
+  view=await(await local.route(base+'/quotation-fields')).json();
+  const current=view.resolved.rows.find(row=>row.optionId===selected.optionId);assert.deepEqual(fields.slice(0,2).map(field=>current.fields[field.id].value),['물세탁','울']);
+  assert.equal(current.fields[fields[2].id].value,'');assert.equal(current.fields[fields[2].id].source,'manual-option');assert.equal(view.resolved.rows.find(row=>row.included&&row.optionId!==selected.optionId).fields[fields[2].id].value,'원본 기본값');
+  const retained=()=>JSON.stringify(['products','product_content','product_options','product_quotation_fields','collection_context','category_profiles'].map(table=>local.sqlite.prepare('SELECT * FROM '+table).all())),before=retained();
+  const previewResponse=await local.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}});assert.equal(previewResponse.status,200,await previewResponse.clone().text());const preview=await previewResponse.json();
+  assert.ok(preview.submissionReview.issues.some(issue=>issue.kind==='error'&&issue.code==='SCHEMA_UNCONFIRMED'));
+  assert.ok(preview.submissionReview.issues.some(issue=>issue.kind==='error'&&issue.code==='QUOTATION_CONSTRAINT'&&issue.message.includes('productPage / careChoice')));
+  assert.deepEqual(preview.rows[0],['물세탁','울','']);assert.deepEqual(preview.rows[1],['물세탁','울','원본 기본값']);
+  const exportResponse=await local.route(base+'/quotation',{method:'POST',body:{action:'export',profileId:profile.id,fingerprint:preview.fingerprint}});assert.equal(exportResponse.status,200,await exportResponse.clone().text());
+  const packageBytes=new Uint8Array(await exportResponse.arrayBuffer()),archive=readPackageZip(packageBytes),review=JSON.parse(new TextDecoder().decode(archive.get('submission-review.json')));
+  assert.ok(review.issues.some(issue=>issue.kind==='error'&&issue.code==='SCHEMA_UNCONFIRMED'));await assert.rejects(prepareAttachments(packageBytes),/수정이 필요한 오류/);
+  const reader=local.load('app/xlsx-template.ts'),output=reader.inspectXlsxArchive(await reader.readXlsxArchive(archive.get(preview.filename).slice().buffer));
+  assert.deepEqual(plain(reader.xlsxHeaders(output,'견적서',2)),['물세탁','울','']);assert.deepEqual(plain(reader.xlsxHeaders(output,'견적서',3)),['물세탁','울','원본 기본값']);
+  assert.deepEqual(Buffer.from(local.objects.get(storageKey)),Buffer.from(bytes));assert.equal(retained(),before);assert.equal(product.supplier_hub_status,'미전송');assert.ok(!local.network.includes('supplier.coupang.com'));
+ }finally{local.close();}
+});
 function schemaPage(snapshot,{body,after,path='/qvt/registration',response}={}){
  const calls=[],document={body:{innerText:'Company Code: '+snapshot.company.code}},location={origin:'https://supplier.coupang.com',pathname:path};
  return {calls,run:()=>vm.runInNewContext(`(${readSupplierHubSchema.toString()})(categoryId,path,company)`,{categoryId:snapshot.categoryId,path:snapshot.categoryPath,company:snapshot.company,location,document,Date,setTimeout,clearTimeout,AbortController,TextEncoder,TextDecoder,Uint8Array,fetch:async(url,init)=>{calls.push({url,...init});const result=response?response(url):Response.json(body??{schemaString:snapshot.schemaString,...snapshot.metadata});Object.defineProperty(result,'url',{value:url});after?.(document,location);return result;}})};
@@ -140,7 +249,10 @@ test('new category schema links URL draft, defaults, manual blanks, Excel values
   const saved=await local.load('app/exports/quotation-source.ts').readQuotationExportSource('owner',product.id,profile.id),resolved=local.load('app/exports/quotation-source.ts').resolveQuotationExport(saved),rows=local.load('app/exports/quotation-fields.ts').resolvedQuotationRows(saved,resolved,[]);
   assert.equal(rows[0][lens.id],'UV');assert.equal(rows[0][notice.id],'');assert.equal(rows[0].title,'사용자 검토 상품명');
   const next=modify(snap,raw=>{raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf[1].contains.properties.value.enum=[null,'NEW'];});
-  const update=await api.PUT(new Request('https://app.test/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...input,hubSchema:next}})}));assert.equal(update.status,200,await update.clone().text());
+  const update=await api.PUT(new Request('https://app.test/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...input,hubSchema:next}})}));assert.equal(update.status,409,await update.clone().text());
+  const replacement=await api.POST(new Request('https://app.test/api/category-profiles',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...input,hubSchema:next})}));assert.equal(replacement.status,201,await replacement.clone().text());
+  const replacementProfile=(await replacement.json()).profile;assert.notEqual(replacementProfile.id,profile.id);assert.equal(replacementProfile.hubSchema.schemaString,next.schemaString);
+  await assert.rejects(local.load('app/exports/quotation-source.ts').readQuotationExportSource('owner',product.id,replacementProfile.id),error=>error.status===409,'a new form cannot silently retarget the original URL draft');
   const unchanged=await(await local.route(path)).json();assert.deepEqual(unchanged.resolved.schema.fields.find(field=>field.id===lens.id).choices,lens.choices);assert.equal(unchanged.resolved.rows[0].fields[lens.id].value,'UV');assert.equal(unchanged.resolved.rows[0].fields[notice.id].source,'manual-common');
   const frozen=await local.load('app/exports/quotation-source.ts').readQuotationExportSource('owner',product.id,profile.id);assert.equal(frozen.hubSchema.schemaString,snap.schemaString);assert.ok(!local.network.includes('supplier.coupang.com'));
   const mapped=await local.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',product.id,profile.id);assert.equal(mapped.profile.hubSchema.schemaString,snap.schemaString);

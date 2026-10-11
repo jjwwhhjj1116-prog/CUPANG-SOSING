@@ -25,13 +25,13 @@ export function registrationStepLabel(product: BoardProduct, step: string) {
 const steps=[['SEO','SEO설정'],['가격','가격설정'],['대표 이미지','대표이미지'],['추가 이미지','추가이미지'],['상세 이미지','상세이미지'],['옵션','사이즈표'],['표시사항','한글표시사항'],['견적서','견적서']];
 type RegistrationColumn = {id:string;label:string;step?:string;width:number};
 const columns:RegistrationColumn[]=[
-  {id:'id',label:'등록번호',width:130},
-  {id:'image',label:'상품이미지',width:90},
-  {id:'product',label:'상품명',width:300},
-  {id:'source',label:'구매링크',width:90},
-  ...steps.map(([step,label])=>({id:step,label,step,width:100})),
-  {id:'status',label:'등록상태',width:180},
-  {id:'management',label:'관리',width:80},
+  {id:'id',label:'등록번호',width:112},
+  {id:'image',label:'상품이미지',width:72},
+  {id:'product',label:'상품명',width:238},
+  {id:'source',label:'구매링크',width:62},
+  ...steps.map(([step,label])=>({id:step,label,step,width:step==='표시사항'?88:['대표 이미지','추가 이미지','상세 이미지'].includes(step)?78:72})),
+  {id:'status',label:'등록상태',width:112},
+  {id:'management',label:'관리',width:54},
 ];
 const dateTime=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'});
 export function registrationThumbnail(product:BoardProduct) {
@@ -78,7 +78,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
     </div>
     {dateError&&<p role="alert">{dateError}</p>}
     {deleteError&&<p role="alert" className="collection-error">{deleteError}</p>}
-    <div className="registration-table-tools"><select aria-label="등록 상태 필터" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}>{['전체','등록대기','작업 중','검토 대기','전송 가능','파일 검증 중','견적서 접수','SKU ID 확인','파일 반려','상품 반려'].map(value=><option key={value}>{value}</option>)}</select><label className="search"><input type="search" aria-label="상품 검색" placeholder="상품명 · 원본 URL 검색" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><label>페이지당 <select aria-label="페이지당 상품 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(0);}}>{[10,25,50].map(count=><option key={count}>{count}</option>)}</select></label><span>{filtered.length}건 · 선택 {selected.size}건</span><small>최근 불러온 최대 200건 · 전체 기록은 상품 관리</small></div>
+    <div className="registration-table-tools"><select aria-label="등록 상태 필터" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}>{['전체','등록대기','작업 중','검토 대기','전송 가능','파일 검증 중','견적서 접수','SKU ID 확인','파일 반려','상품 반려'].map(value=><option key={value}>{value}</option>)}</select><label className="search"><input type="search" aria-label="상품 검색" placeholder="상품명 · 원본 URL 검색" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><label>페이지당 <select aria-label="페이지당 상품 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(0);}}>{[10,25,50,100].map(count=><option key={count}>{count}</option>)}</select></label><span>{filtered.length}건 · 선택 {selected.size}건</span><small>최근 불러온 최대 200건 · 전체 기록은 상품 관리</small></div>
     <div className="registration-view-tools">
       <details className="registration-column-picker"><summary>선택 컬럼 보기 · {displayedColumns.length}/{columns.length}</summary><div role="group" aria-label="표시할 컬럼">
         <button type="button" className="btn ghost" onClick={()=>setVisibleColumns(columns.map(column=>column.id))}>전체 표시</button>
@@ -87,7 +87,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
       <label>고정할 열 선택 <select aria-label="고정할 열 선택" value={pinnedColumn} onChange={event=>setPinnedColumn(event.target.value)}><option value="">고정 안 함</option>{displayedColumns.map(column=><option key={column.id} value={column.id}>{column.label}</option>)}</select></label>
       <fieldset><legend>높이 고정</legend><label><input type="radio" name="registration-height" checked={fixedHeight} onChange={()=>setFixedHeight(true)}/>Y</label><label><input type="radio" name="registration-height" checked={!fixedHeight} onChange={()=>setFixedHeight(false)}/>N</label></fieldset>
     </div>
-    <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,40+displayedColumns.reduce((width,column)=>width+column.width,0))}}><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.length>0&&rows.every(product=>selected.has(product.id))} onChange={event=>toggle(rows.map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)}>{column.label}</th>)}</tr></thead><tbody>
+    <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,36+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:36}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.length>0&&rows.every(product=>selected.has(product.id))} onChange={event=>toggle(rows.map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)}>{column.label}</th>)}</tr></thead><tbody>
     {rows.map(product=>{const image=registrationThumbnail(product);const title=registrationTitle(product);const removal=productRemovalDecision(product);return <tr key={product.id}>
       <td><input type="checkbox" aria-label={`${title} 선택`} checked={selected.has(product.id)} onChange={event=>toggle([product.id],event.target.checked)}/></td>
       {displayedColumns.map(column=><td key={column.id} data-column={column.id} className={`${column.id==='product'?'registration-product':''}${pinned(column.id)}`}>

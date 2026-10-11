@@ -4,6 +4,7 @@ import { CategoryPicker } from '@/app/components/category-picker';
 import { intakeProductId, intakeRow, submitIntakeQueue, visibleIntakeRows, type IntakeRow } from '@/app/intake-queue';
 import { collectionBlock, parseCollectionRequest, type CollectionJob } from '@/app/sourcing';
 import { savedRegistrationSettings, type WorkspaceSettings } from '@/app/workspace-settings';
+import { parseWorkspaceSettingsScope, type WorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { CategoryAdvancedSeed } from '@/app/category-catalog';
 import { collectIntakeProduct } from '@/app/intake-collection';
@@ -11,10 +12,11 @@ import { capture1688FromChrome } from '@/app/browser-product-bridge';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 
 export type IntakeSourceSeed={id:string;sourceUrl:string};
-export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed }: {
+export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed }: {
   sourceSeed?:IntakeSourceSeed;onSourceConsumed?:(id:string)=>void;
   jobs?:CollectionJob[]; onOpenProduct?:(id:string,signal:AbortSignal)=>Promise<void>;
-  settings:WorkspaceSettings; onSettingsReloaded:(settings:WorkspaceSettings)=>void;
+  workspaceOwnerId?:string; onSettingsReloadStarted?:()=>number;
+  settings:WorkspaceSettings; onSettingsReloaded:(settings:WorkspaceSettings,scope?:WorkspaceSettingsScope,epoch?:number)=>void;
   rows: IntakeRow[]; onRows: (update: (rows: IntakeRow[]) => IntakeRow[]) => void;
   profiles: CategoryProfile[]; onProfile: (profile: CategoryProfile) => void;
   onAdvanced: (seed?: CategoryAdvancedSeed) => void; onJobs: (jobs: CollectionJob[]) => void; onBusy: (busy: boolean) => void;
@@ -24,6 +26,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const pendingSeed=useRef(sourceSeed?.id??null);
   const sourceMounted=useRef(true);
   useEffect(()=>{sourceMounted.current=true;return()=>{sourceMounted.current=false;};},[]);
+  const reloadOwnerRef=useRef(workspaceOwnerId);
+  useEffect(()=>{reloadOwnerRef.current=workspaceOwnerId;},[workspaceOwnerId]);
   const [query, setQuery] = useState('');
   const [pinnedColumn, setPinnedColumn] = useState('none');
   const [excluded, setExcluded] = useState<string[]>([]);
@@ -77,15 +81,21 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     finally { finish(controller); }
   }
   async function reloadSettings() {
-    if(running.current)return;
+    if(!sourceMounted.current||reloadOwnerRef.current!==workspaceOwnerId||running.current)return;
     const controller=new AbortController();running.current=controller;setBusy(true);onBusy(true);setError('');setSettingsMessage('');
     try {
+      const epoch=onSettingsReloadStarted?.();
+      if(onSettingsReloadStarted&&(!Number.isSafeInteger(epoch)||(epoch??-1)<0))throw Error('현재 기본설정 조회 작업을 확인하지 못했습니다. 입력은 유지됩니다.');
       const response=await fetch('/api/settings',{cache:'no-store',signal:controller.signal});
       const body:unknown=await response.json();
-      if(controller.signal.aborted)return;
+      if(controller.signal.aborted||!sourceMounted.current||running.current!==controller)return;
+      if(reloadOwnerRef.current!==workspaceOwnerId)throw Error('로그인 계정이 변경되었습니다. 상품 대기열을 다시 열어주세요.');
       if(!response.ok||!body||typeof body!=='object'||!Object.hasOwn(body,'settings'))throw Error('최신 기본설정을 불러오지 못했습니다. 입력은 유지됩니다.');
+      const scope=parseWorkspaceSettingsScope((body as {scope?:unknown}).scope);
+      if(workspaceOwnerId&&scope?.ownerId!==workspaceOwnerId)throw Error('기본설정을 조회한 로그인 계정이 다릅니다. 상품 대기열을 다시 열어주세요.');
+      if(Object.hasOwn(body,'scope')&&!scope)throw Error('기본설정의 계정 정보를 확인하지 못했습니다. 입력은 유지됩니다.');
       const settings=savedRegistrationSettings((body as {settings:unknown}).settings);
-      onSettingsReloaded(settings);setSettingsChanged(false);setSettingsMessage('최신 기본설정을 불러왔습니다. URL·카테고리와 처리할 상품 선택은 유지됩니다. 시작을 누르면 남은 상품을 처리합니다.');
+      onSettingsReloaded(settings,scope??undefined,epoch);setSettingsChanged(false);setSettingsMessage('최신 기본설정을 불러왔습니다. URL·카테고리와 처리할 상품 선택은 유지됩니다. 시작을 누르면 남은 상품을 처리합니다.');
     }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'기본설정 조회 실패');}
     finally { finish(controller); }
   }

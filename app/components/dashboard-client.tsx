@@ -127,6 +127,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const changeRemovalBusy=useCallback((value:boolean)=>{removalBusy.current=value;},[]);
   const settingsBusyRef=useRef(false);
   const changeSettingsBusy=useCallback((value:boolean)=>{settingsBusyRef.current=value;setSettingsBusy(value);},[]);
+  const settingsOperationRef=useRef({ownerId:workspaceOwnerId,mounted:false,epoch:0,saving:false});
+  useEffect(()=>{
+    const operation=settingsOperationRef.current;
+    operation.ownerId=workspaceOwnerId;operation.mounted=true;operation.saving=false;operation.epoch++;
+    return()=>{operation.mounted=false;operation.saving=false;operation.epoch++;};
+  },[workspaceOwnerId]);
   const [transmitOpen, setTransmitOpen] = useState(false);
   const [submissionTarget,setSubmissionTarget]=useState<{product:Product;profileId:string}|null>(null);
   const [detail, setDetail] = useState<Product | null>(null);
@@ -292,26 +298,32 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     finally { setCheckingConnections(false); }
   }
 
-  const applyWorkspace = useCallback((results: Awaited<ReturnType<typeof fetchWorkspace>>) => {
+  const applyWorkspace = useCallback((results: Awaited<ReturnType<typeof fetchWorkspace>>, settingsEpoch:number) => {
+    const operation=settingsOperationRef.current;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
     const [productData, settingData, collectionData, categoriesData] = results;
     if(workspaceOwnerId&&settingData.status==='fulfilled'&&parseWorkspaceSettingsScope((settingData.value as {scope?:unknown}).scope)?.ownerId!==workspaceOwnerId){
       setLoadError('로그인 계정이 변경되었습니다. 페이지를 새로고침해주세요.');setLoading(false);return;
     }
     if (productData.status === 'fulfilled') setProducts(productData.value.products);
     if (productData.status === 'fulfilled') setDetail(current=>current?productData.value.products.find(product=>product.id===current.id)??current:null);
-    if (settingData.status === 'fulfilled') setSettings(savedRegistrationSettings(settingData.value.settings));
+    if (settingData.status === 'fulfilled'&&settingsEpoch===operation.epoch&&!operation.saving) setSettings(savedRegistrationSettings(settingData.value.settings));
     if (collectionData.status === 'fulfilled') setCollectionJobs(collectionData.value.jobs);
     if (categoriesData.status === 'fulfilled') setCategoryProfiles(categoriesData.value.profiles);
     setLoadError(results.filter(r => r.status === 'rejected').map(r => String(r.reason instanceof Error ? r.reason.message : r.reason)).join(' '));
     setLoading(false);
   }, [workspaceOwnerId]);
   async function loadWorkspace() {
+    const operation=settingsOperationRef.current;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
+    const settingsEpoch=operation.epoch;
     const detailId=detail?.id;
     const [workspace,currentDetail]=await Promise.all([
       fetchWorkspace(),
       detailId?readJson<{product:Product}>(`/api/products/${encodeURIComponent(detailId)}`).catch(()=>null):Promise.resolve(null),
     ]);
-    applyWorkspace(workspace);
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
+    applyWorkspace(workspace,settingsEpoch);
     if(currentDetail)setDetail(current=>current?.id===detailId?currentDetail.product:current);
   }
   async function openArchivedProduct(id: string) {
@@ -323,7 +335,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
   useEffect(() => {
     let active = true;
-    fetchWorkspace().then(results => { if (active) applyWorkspace(results); });
+    const settingsEpoch=settingsOperationRef.current.epoch;
+    fetchWorkspace().then(results => { if (active) applyWorkspace(results,settingsEpoch); });
     return () => { active = false; };
   }, [applyWorkspace]);
 
@@ -355,10 +368,34 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
 
   async function saveWorkspaceSettings(value: Settings, scope?:WorkspaceSettingsScope) {
+    const operation=settingsOperationRef.current;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId)throw Error('로그인 계정이 변경되었습니다. 기본설정을 다시 열어주세요.');
+    if(operation.saving)throw Error('기본설정을 저장 중입니다. 저장 결과를 먼저 확인해주세요.');
     if(workspaceOwnerId&&scope?.ownerId!==workspaceOwnerId)throw Error('기본설정을 불러온 계정을 확인하지 못했습니다. 페이지를 새로고침해주세요.');
-    const result = await readJson<{settings:Settings;scope?:unknown}>('/api/settings', {method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({...value,...(scope?{expectedOwnerId:scope.ownerId}:{})})});
-    if(scope&&parseWorkspaceSettingsScope(result.scope)?.ownerId!==scope.ownerId)throw Error('저장한 기본설정의 계정을 확인하지 못했습니다. 페이지를 새로고침해주세요.');
-    setSettings(result.settings);setSettingsOpen(false);showToast('기본 설정을 저장했습니다.');
+    const settingsEpoch=++operation.epoch;operation.saving=true;
+    try{
+      const result = await readJson<{settings:Settings;scope?:unknown}>('/api/settings', {method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({...value,...(scope?{expectedOwnerId:scope.ownerId}:{})})});
+      if(!operation.mounted||operation.ownerId!==workspaceOwnerId||operation.epoch!==settingsEpoch)throw Error('저장 중 로그인 계정이 변경되었습니다. 기본설정을 다시 열어주세요.');
+      if(scope&&parseWorkspaceSettingsScope(result.scope)?.ownerId!==scope.ownerId)throw Error('저장한 기본설정의 계정을 확인하지 못했습니다. 페이지를 새로고침해주세요.');
+      setSettings(result.settings);setSettingsOpen(false);showToast('기본 설정을 저장했습니다.');
+    }finally{
+      // Reads started while saving must also expire when the operation ends.
+      if(operation.mounted&&operation.ownerId===workspaceOwnerId&&operation.epoch===settingsEpoch){operation.saving=false;operation.epoch++;}
+    }
+  }
+
+  function startSettingsReload() {
+    const operation=settingsOperationRef.current;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId)throw Error('로그인 계정이 변경되었습니다. 상품 대기열을 다시 열어주세요.');
+    if(operation.saving)throw Error('기본설정을 저장 중입니다. 저장 결과를 먼저 확인해주세요.');
+    return ++operation.epoch;
+  }
+  function applyReloadedSettings(value:Settings,scope?:WorkspaceSettingsScope,epoch?:number) {
+    const operation=settingsOperationRef.current,parsedScope=parseWorkspaceSettingsScope(scope);
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId||operation.saving||epoch!==operation.epoch
+      ||workspaceOwnerId&&parsedScope?.ownerId!==workspaceOwnerId||scope!==undefined&&!parsedScope)
+      throw Error('계정 또는 기본설정 저장 작업이 변경되었습니다. 최신 기본설정을 다시 불러와주세요.');
+    operation.epoch++;setSettings(value);
   }
 
   async function removeWorkspaceProduct(product:Product){
@@ -456,7 +493,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
       {addOpen&&<Modal wide title="상품 대기열" subtitle="상품마다 카테고리·URL·특징·키워드를 지정합니다." onClose={()=>{if(!busy&&!intakeDraft.loading){setIntakeSourceSeed(undefined);setAddOpen(false);}}}>
         <div className="intake-draft-actions"><p role="status">{intakeDraft.message}{intakeDraft.dirty?' · 저장하지 않은 변경 있음':''}</p><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving||!intakeDraft.ready} onClick={()=>void intakeDraft.save()}>{intakeDraft.autoPaused?'저장 다시 시도':intakeDraft.saving?'저장 중…':'지금 저장'}</button><button type="button" className="btn ghost" disabled={busy||intakeDraft.saving} onClick={()=>{if(!intakeDraft.dirty||window.confirm('현재 미저장 입력을 서버 초안으로 교체할까요?'))void intakeDraft.load();}}>{intakeDraft.ready?'서버 초안으로 교체':'초안 다시 불러오기'}</button></div>
-        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel sourceSeed={intakeSourceSeed} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloaded={setSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
+        {intakeDraft.ready&&!intakeDraft.loading&&<IntakeQueuePanel workspaceOwnerId={workspaceOwnerId} sourceSeed={intakeSourceSeed} onSourceConsumed={id=>setIntakeSourceSeed(current=>current?.id===id?undefined:current)} jobs={collectionJobs} onOpenProduct={async(id,signal)=>{await openCollectedProduct(id,'SEO',signal);if(!signal.aborted)setAddOpen(false);}} settings={settings} onSettingsReloadStarted={startSettingsReload} onSettingsReloaded={applyReloadedSettings} goal={intakeGoal} onGoal={setIntakeGoal} rows={intakeRows} onRows={setIntakeRows} profiles={categoryProfiles} onBusy={setBusy}
           onProfile={profile=>setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)])}
           onJobs={jobs=>{setCollectionJobs(current=>[...jobs,...current.filter(job=>!jobs.some(saved=>saved.id===job.id))]);if(jobs.some(job=>job.product_id))void loadWorkspace();}}
           onAdvanced={seed=>{setEditingCategory(seed?.profileId?categoryProfiles.find(profile=>profile.id===seed.profileId)??null:null);setCategorySeed(seed?{name:seed.categoryPath.at(-1)??'',categoryId:seed.categoryId,categoryPath:seed.categoryPath,template:null,mappings:[]}:undefined);setAddOpen(false);setCategoryOpen(true);}}/>}
