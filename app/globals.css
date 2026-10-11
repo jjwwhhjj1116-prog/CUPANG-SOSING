@@ -388,6 +388,10 @@ html,body{background:#fff}
 .couplus-work-table .registration-cell-button{max-width:100%;padding:4px 5px}
 .couplus-work-table td[data-column=status]{overflow-wrap:anywhere}
 .couplus-work-table td[data-column=status] small{display:block;font-size:10px;line-height:1.5}
+.registration-sort{display:inline-flex;align-items:center;justify-content:center;gap:3px;max-width:100%;padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;white-space:normal}
+.registration-sort span{white-space:nowrap}.registration-sort svg{flex:0 0 9px}
+.registration-sort path{opacity:.35}.registration-sort path.active{opacity:1;stroke:#159fca;stroke-width:2}
+.registration-sort:focus-visible{outline:2px solid #25b9df;outline-offset:4px;border-radius:2px}
 
 /* Keep the chosen intake field visible while comparing wide product rows. */
 .intake-queue-tools label.intake-pin-control{flex:0 1 230px;min-width:180px}

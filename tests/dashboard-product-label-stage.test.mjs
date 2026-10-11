@@ -92,6 +92,28 @@ test('the exact product-label editor belongs to step 6, retains its hidden draft
   } finally { h.close(); }
 });
 
+test('step 6 opens saved option label editing with its exact source/slot and holds the same panel across stages', () => {
+  const h = harness(); try {
+    const target = { kind: 'quotation', profileId: 'profile-a', optionId: 'red', input: 'labelImages', fieldKey: 'labelImages', slotIndex: 0, revision: 4, inputFingerprint: 'a'.repeat(64), optionRevision: 3, value: 'owner/p/a.png' };
+    const label = h.record('product-label-editor'), panel = h.record('free-image-translation-panel');
+    assert.equal(h.visible(panel), false); assert.equal(typeof label.props.onTranslate, 'function');
+    for (const patch of [{ optionId: 'blue' }, { profileId: 'profile-b' }, { input: 'detailImages' }]) {
+      label.props.onTranslate('owner/p/a.png', 'label', 'zh', { ...target, ...patch }); assert.equal(h.record('free-image-translation-panel').props.translationTarget, undefined);
+    }
+    label.props.onTranslate('foreign/p/a.png', 'label', 'zh', target); assert.equal(h.record('free-image-translation-panel').props.translationTarget, undefined);
+    label.props.onTranslate('owner/p/a.png', 'label', 'en', target);
+    const opened = h.record('free-image-translation-panel'); assert.equal(opened.instance, panel.instance); assert.equal(h.visible(opened), true);
+    assert.equal(opened.props.translationTarget.sourceKey, 'owner/p/a.png'); assert.equal(opened.props.translationTarget.role, 'label'); assert.equal(opened.props.translationTarget.sourceLanguage, 'en'); assert.deepEqual(opened.props.translationTarget.quotationTarget, target);
+    assert.deepEqual(JSON.parse(JSON.stringify(opened.props.quotationContext)), { profileId: 'profile-a', optionId: 'red', input: 'labelImages' });
+    h.edit('free-image-translation-panel', 'reviewed label region'); opened.props.onBusyChange(true); assert.equal(h.record('product-label-editor').props.disabled, true);
+    label.props.onTranslate('owner/p/a.png', 'label', 'zh', target); assert.equal(h.record('free-image-translation-panel').props.translationTarget.sequence, 1); opened.props.onBusyChange(false);
+    for (const tab of ['견적서', '표시사항']) { h.render({ tab }); const retained = h.record('free-image-translation-panel'); assert.equal(retained.instance, panel.instance); assert.equal(retained.draft, 'reviewed label region'); assert.equal(h.visible(retained), tab === '표시사항'); }
+    h.render({ focusedOptionId: 'blue' }); assert.equal(h.visible(h.record('free-image-translation-panel')), false);
+    h.render({ focusedOptionId: undefined }); assert.equal(h.record('product-label-editor').props.onTranslate, undefined); assert.equal(h.visible(h.record('free-image-translation-panel')), false);
+    assert.equal(h.calls, 0); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
 test('product/option/profile scope resets the nine-row editor, while source clocks and successful saves retain its instance', () => {
   const h = harness(); try {
     const initial = h.record('product-label-editor'); h.edit('product-label-editor', 'red-only label');

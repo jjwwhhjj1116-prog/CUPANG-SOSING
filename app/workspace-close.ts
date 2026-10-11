@@ -1,5 +1,6 @@
-export function workspaceEditState(root: Pick<ParentNode, 'querySelector'> | null, ignoreFreeImageEditor = false) {
-  const otherEditors = ignoreFreeImageEditor ? ':not([data-free-image-editor])' : '';
+export function workspaceEditState(root: Pick<ParentNode, 'querySelector'> | null, ignoreFreeImageEditor = false, ignoreSeoGenerationInput = false) {
+  const otherEditors = (ignoreFreeImageEditor ? ':not([data-free-image-editor])' : '')
+    + (ignoreSeoGenerationInput ? ':not([data-seo-generation-input])' : '');
   return {
     busy: !!root?.querySelector(`[data-workspace-saving="true"]${otherEditors}`),
     dirty: !!root?.querySelector(`[data-workspace-dirty="true"]${otherEditors}`),

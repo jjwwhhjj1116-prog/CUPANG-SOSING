@@ -197,6 +197,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [collectionJobs, setCollectionJobs] = useState<CollectionJob[]>([]);
   const [showCancelled, setShowCancelled] = useState(false);
   const [categoryProfiles, setCategoryProfiles] = useState<CategoryProfile[]>([]);
+  const categoryProfilesEpochRef=useRef(0);
   const intakeDraft = useIntakeDraft();
   const { rows: intakeRows, setRows: setIntakeRows, goal: intakeGoal, setGoal: setIntakeGoal } = intakeDraft;
   const [categoryOpen, setCategoryOpen] = useState(false);
@@ -291,6 +292,22 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
   const detailStepIndex = registrationSteps.indexOf(tab);
   const detailNavigation = productNavigation.current;
+  function adoptPreparedProfile(profile:CategoryProfile,source:CategoryProfile) {
+    const operation=settingsOperationRef.current;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId||productNavigation.current!==detailNavigation
+      ||!detail||workspaceOwnerId&&detail.owner_id!==workspaceOwnerId)throw Error('현재 계정과 상품을 확인하지 못했습니다. 저장한 양식을 다시 불러와주세요.');
+    const sameSource=(current:CategoryProfile)=>current.id===source.id&&current.revision===source.revision
+      &&JSON.stringify(current)===JSON.stringify(source);
+    const current=categoryProfiles.find(item=>item.id===source.id);
+    if(!current||!source.hubSchema||source.template||source.mappings.length||profile.id!==source.id
+      ||!Number.isSafeInteger(source.revision)||profile.revision!==source.revision+1||profile.verification!=='draft'
+      ||profile.name!==source.name||profile.categoryId!==source.categoryId||JSON.stringify(profile.categoryPath)!==JSON.stringify(source.categoryPath)
+      ||JSON.stringify(profile.hubSchema)!==JSON.stringify(source.hubSchema)||!profile.template||profile.template.format!=='xlsx'
+      ||workspaceOwnerId&&profile.template.storageKey!==`${encodeURIComponent(workspaceOwnerId)}/category-templates/${profile.template.sha256}.xlsx`
+      ||!sameSource(current)&&JSON.stringify(current)!==JSON.stringify(profile))throw Error('공식 양식 연결의 저장 결과와 현재 카테고리가 다릅니다. 저장한 양식을 다시 불러와주세요.');
+    categoryProfilesEpochRef.current++;
+    setCategoryProfiles(items=>items.map(item=>sameSource(item)?profile:item));
+  }
   async function checkConnections() {
     setConnectionsOpen(true); setCheckingConnections(true); setConnectionError(''); setConnections(null);
     try { setConnections(await readJson<IntegrationStatus>('/api/integrations')); }
@@ -298,7 +315,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     finally { setCheckingConnections(false); }
   }
 
-  const applyWorkspace = useCallback((results: Awaited<ReturnType<typeof fetchWorkspace>>, settingsEpoch:number) => {
+  const applyWorkspace = useCallback((results: Awaited<ReturnType<typeof fetchWorkspace>>, settingsEpoch:number,categoryProfilesEpoch:number) => {
     const operation=settingsOperationRef.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
     const [productData, settingData, collectionData, categoriesData] = results;
@@ -309,7 +326,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     if (productData.status === 'fulfilled') setDetail(current=>current?productData.value.products.find(product=>product.id===current.id)??current:null);
     if (settingData.status === 'fulfilled'&&settingsEpoch===operation.epoch&&!operation.saving) setSettings(savedRegistrationSettings(settingData.value.settings));
     if (collectionData.status === 'fulfilled') setCollectionJobs(collectionData.value.jobs);
-    if (categoriesData.status === 'fulfilled') setCategoryProfiles(categoriesData.value.profiles);
+    if (categoriesData.status === 'fulfilled'&&categoryProfilesEpoch===categoryProfilesEpochRef.current) setCategoryProfiles(categoriesData.value.profiles);
     setLoadError(results.filter(r => r.status === 'rejected').map(r => String(r.reason instanceof Error ? r.reason.message : r.reason)).join(' '));
     setLoading(false);
   }, [workspaceOwnerId]);
@@ -317,13 +334,14 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     const operation=settingsOperationRef.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
     const settingsEpoch=operation.epoch;
+    const categoryProfilesEpoch=categoryProfilesEpochRef.current;
     const detailId=detail?.id;
     const [workspace,currentDetail]=await Promise.all([
       fetchWorkspace(),
       detailId?readJson<{product:Product}>(`/api/products/${encodeURIComponent(detailId)}`).catch(()=>null):Promise.resolve(null),
     ]);
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
-    applyWorkspace(workspace,settingsEpoch);
+    applyWorkspace(workspace,settingsEpoch,categoryProfilesEpoch);
     if(currentDetail)setDetail(current=>current?.id===detailId?currentDetail.product:current);
   }
   async function openArchivedProduct(id: string) {
@@ -336,7 +354,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   useEffect(() => {
     let active = true;
     const settingsEpoch=settingsOperationRef.current.epoch;
-    fetchWorkspace().then(results => { if (active) applyWorkspace(results,settingsEpoch); });
+    const categoryProfilesEpoch=categoryProfilesEpochRef.current;
+    fetchWorkspace().then(results => { if (active) applyWorkspace(results,settingsEpoch,categoryProfilesEpoch); });
     return () => { active = false; };
   }, [applyWorkspace]);
 
@@ -510,7 +529,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         <nav className="registration-tools" aria-label="상품 보조 작업"><span>보조 작업</span>{supportingTabs.map(item=><button key={item.value} type="button" onClick={()=>selectDetailTab(item.value)} aria-pressed={tab===item.value} className={tab===item.value?'active':''}>{item.label}</button>)}<small>단계 이동 시 입력 유지 · 각 단계에서 저장</small></nav>
         <div className="detail-body" ref={detailBody} inert={sourceSupplementBusy}><DetailPanel key={detail.id} onBeforeSeoGenerate={()=>{
           if(sourceSupplementBusyRef.current||busyRef.current||detailNavigation!==productNavigation.current)return false;
-          const pending=workspaceEditState(detailBody.current);
+          const pending=workspaceEditState(detailBody.current,false,true);
           if(pending.busy||pending.dirty){setCloseNotice('저장하지 않은 수정이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 SEO 초안을 작성해주세요.');return false;}
           return true;
         }} onBeforeFreeImageApply={()=>{
@@ -524,7 +543,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
           if(pending.busy || detailBody.current?.querySelector('[aria-busy="true"]')){setCloseNotice('작업이 진행 중입니다. 작업이 끝나면 견적서를 확인해주세요.');return;}
           if(pending.dirty){if(selectDetailTab('견적서'))setCloseNotice('견적서에 저장하지 않은 입력이 있습니다. 먼저 저장해주세요.');return;}
           if(selectDetailTab('견적서')){setQuotationTarget({...quotationTarget,optionId,fieldId:'packagedWeightG'});setQuotationNavigationSequence(value=>value+1);}
-        }} focusedOptionId={focusedOptionId} initialOptionAction={initialOptionAction} preferredProfileId={detailProfileId} quotationTarget={quotationTarget} quotationNavigationSequence={quotationNavigationSequence} onSaved={()=>void loadWorkspace()} onManageCategories={()=>closeWorkspace(true)} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div>
+        }} focusedOptionId={focusedOptionId} initialOptionAction={initialOptionAction} preferredProfileId={detailProfileId} quotationTarget={quotationTarget} quotationNavigationSequence={quotationNavigationSequence} onProfilePrepared={adoptPreparedProfile} onSaved={()=>void loadWorkspace()} onManageCategories={()=>closeWorkspace(true)} onSavePrice={savePrice} tab={tab} product={detail} settings={settings} onUpload={uploadImage}/></div>
         <footer className="registration-navigation">{detailStepIndex>=0?<><button type="button" className="btn ghost" disabled={detailStepIndex===0} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex-1])}>← 이전{detailStepIndex>0?` · ${registrationSteps[detailStepIndex-1]}`:''}</button><div><strong>{detailStepIndex+1} / {registrationSteps.length} · {tab}</strong><small>입력 단계이며 자동화 완료 상태를 뜻하지 않습니다.</small></div><button type="button" className="btn primary" disabled={detailStepIndex===registrationSteps.length-1} onClick={()=>selectDetailTab(registrationSteps[detailStepIndex+1])}>{detailStepIndex===registrationSteps.length-1?'마지막 단계':`다음 · ${registrationSteps[detailStepIndex+1]} →`}</button></>:<><span>보조 작업 · {supportingTabs.find(item=>item.value===tab)?.label}</span><button type="button" className="btn primary" onClick={()=>selectDetailTab(lastRegistrationStep)}>{registrationSteps.indexOf(lastRegistrationStep)+1}. {lastRegistrationStep} 단계로 돌아가기 →</button></>}</footer>
       </aside></div>}
 
@@ -556,7 +575,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 function Modal({ title, subtitle, onClose, children, wide=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" onClick={onClose}>×</button></header>{children}</section></div>;
 }
-function DetailPanel({ onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSubmission, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId:string)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
+function DetailPanel({ onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSubmission, onProfilePrepared, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
   const [paidImageBusy,setPaidImageBusy]=useState(false);
   const [freeImageBusy,setFreeImageBusy]=useState(false);
@@ -576,11 +595,13 @@ function DetailPanel({ onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSub
   const scopedContent=tab==='표시사항'||!!focusedOptionId&&['대표 이미지','추가 이미지','상세 이미지'].includes(tab);
   const commonContentLabel=tab==='대표 이미지'?'대표 이미지':tab==='추가 이미지'?'추가 이미지':tab==='상세 이미지'?'상세 이미지':tab==='표시사항'?'추가 표시사항·이전 자료':'SEO·설명';
   let imageKeys:string[]=[];try{const keys:unknown=JSON.parse(product.image_keys);if(Array.isArray(keys))imageKeys=keys.filter((key):key is string=>typeof key==='string');}catch{/* The file and content APIs report invalid stored references. */}
-  const quotationImageContext=focusedOptionId&&isImageStep?{profileId:pricingProfileId??null,optionId:focusedOptionId,input:tab==='대표 이미지'?'mainImage' as const:tab==='추가 이미지'?'additionalImages' as const:'detailImages' as const}:undefined;
-  function translateFinalImage(sourceKey:string,role:'main'|'additional'|'detail',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest){
+  const quotationImageContext=focusedOptionId&&(isImageStep||tab==='표시사항')?{profileId:pricingProfileId??null,optionId:focusedOptionId,input:tab==='대표 이미지'?'mainImage' as const:tab==='추가 이미지'?'additionalImages' as const:tab==='표시사항'?'labelImages' as const:'detailImages' as const}:undefined;
+  const showLabelImageEditing=tab==='표시사항'&&!!quotationImageContext&&imageTranslation?.productId===product.id&&imageTranslation.quotationTarget?.input==='labelImages'
+    &&imageTranslation.quotationTarget.optionId===quotationImageContext.optionId&&imageTranslation.quotationTarget.profileId===quotationImageContext.profileId;
+  function translateFinalImage(sourceKey:string,role:'main'|'additional'|'detail'|'label',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest){
     if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||!quotationImageContext
       ||quotationTarget.optionId!==quotationImageContext.optionId||quotationTarget.profileId!==quotationImageContext.profileId
-      ||quotationTarget.input!==quotationImageContext.input||role!==(tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':'detail'))return;
+      ||quotationTarget.input!==quotationImageContext.input||role!==(tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='표시사항'?'label':'detail'))return;
     setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,role,quotationTarget}));
   }
   const contentEditor=<ProductContentEditor product={product} section={contentSection} seoLayout={tab==='SEO'} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy} onTranslateImage={(sourceKey,sourceLanguage,role)=>{
@@ -593,11 +614,11 @@ function DetailPanel({ onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSub
       {isImageStep&&<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" onChange={onUpload}/></label>}
       <div hidden={!focusedOptionId||tab!=='추가 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:additional`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="additional" disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={translateFinalImage}/>}</div>
       <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="detail" disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={translateFinalImage}/>}</div>
-      <div hidden={tab!=='표시사항'}><ProductLabelEditor key={`${product.id}:${focusedOptionId??'common'}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId??null} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/></div>
+      <div hidden={tab!=='표시사항'}><ProductLabelEditor key={`${product.id}:${focusedOptionId??'common'}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId??null} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={focusedOptionId?translateFinalImage:undefined}/></div>
       <details open={scopedContent?undefined:true}><summary hidden={!scopedContent}>상품 공통 {commonContentLabel} 편집</summary><p hidden={!scopedContent} className="panel-note">아래 수정값은 상품의 공통 자료에 저장됩니다. 옵션별로 직접 저장한 값은 해당 옵션의 값을 유지합니다.</p><div hidden={tab!=='SEO'||!focusedOptionId}>{focusedOptionId&&<OptionSeoEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</div>{contentEditor}</details>
       <div hidden={tab!=='SEO'}><ProductOptionsEditor product={product} seoView focusedOptionId={focusedOptionId} onSaved={sourceSaved}/></div>
     </div>
-    <div hidden={!isImageStep} className="panel-stack"><details open={!focusedOptionId||tab!=='대표 이미지'||imageTranslation?.quotationTarget?.input==='mainImage'}><summary hidden={!focusedOptionId||tab!=='대표 이미지'}>{imageTranslation?.quotationTarget?.input==='mainImage'?'선택 옵션 대표이미지 번역':'상품 공통 원본 이미지 번역'}</summary><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} quotationContext={quotationImageContext} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{})}:undefined}/></details><details><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
+    <div hidden={!isImageStep&&!showLabelImageEditing} className="panel-stack"><details open={!focusedOptionId||tab!=='대표 이미지'||imageTranslation?.quotationTarget?.input==='mainImage'}><summary hidden={!focusedOptionId||tab!=='대표 이미지'}>{imageTranslation?.quotationTarget?.input==='mainImage'?'선택 옵션 대표이미지 번역':'상품 공통 원본 이미지 번역'}</summary><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} quotationContext={quotationImageContext} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{})}:undefined}/></details><details hidden={!isImageStep}><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
     <div hidden={tab!=='표시사항'}><button type="button" className="btn ghost" aria-expanded={labelTranslationOpen} aria-controls={`label-translation-${product.id}`} onClick={()=>setLabelTranslationOpen(open=>!open)}>한글 표시사항 번역</button><details><summary>이전 공통 표시사항 PNG·추가 항목 조판</summary><p className="panel-note">이전 공통 자료와 직접 추가한 항목을 조판합니다. 9항목 제품 라벨은 위 편집 영역에서 만들고, 카테고리별 상품고시는 7단계 견적서에서 확인하세요.</p><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></details></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div id={`label-translation-${product.id}`} hidden={tab!=='SEO'&&tab!=='번역'&&!(tab==='표시사항'&&labelTranslationOpen)}>
@@ -609,7 +630,7 @@ function DetailPanel({ onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSub
       <section className="pricing-options-panel"><ProductOptionsEditor focusedOptionId={focusedOptionId} initialBulkAction={initialOptionAction} product={product} onSaved={sourceSaved} onReviewPackaging={onReviewPackaging} pricingView={tab==='가격'} imageView={tab==='대표 이미지'} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onTranslate={focusedOptionId?translateFinalImage:undefined}/><div hidden={tab!=='옵션'}><DocumentImagePanel productId={product.id} version={product.updated_at} section="size" onSaved={sourceSaved}/></div></section>
     </div>
     <div hidden={tab!=='견적서'||!focusedOptionId}>{focusedOptionId&&<OptionLabelEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</div>
-    <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel onPrepareSubmission={onPrepareSubmission} onProfileChange={selected=>setQuotationScope({requested:preferredProfileId,selected})} onSaved={sourceSaved} productId={product.id} preferredProfileId={preferredProfileId} navigationTarget={quotationTarget ?? (focusedOptionId ? {optionId:focusedOptionId,fieldId:'title'} : undefined)} navigationSequence={quotationNavigationSequence} refreshToken={`${product.updated_at}:${quotationRefresh}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
+    <div hidden={tab!=='견적서'} className="panel-stack"><QuotationPanel onPrepareSubmission={onPrepareSubmission} onProfilePrepared={onProfilePrepared} onProfileChange={selected=>setQuotationScope({requested:preferredProfileId,selected})} onSaved={sourceSaved} productId={product.id} preferredProfileId={preferredProfileId} navigationTarget={quotationTarget ?? (focusedOptionId ? {optionId:focusedOptionId,fieldId:'title'} : undefined)} navigationSequence={quotationNavigationSequence} refreshToken={`${product.updated_at}:${quotationRefresh}:${JSON.stringify(settings)}`} onManageCategories={onManageCategories}/><details><summary>대표 상품 가격·내부 CSV 참고</summary><LegacyQuotePanel product={product} settings={settings}/></details></div>
   </>;
 }
 function LegacyQuotePanel({ product, settings }: {product:Product;settings:Settings}) {

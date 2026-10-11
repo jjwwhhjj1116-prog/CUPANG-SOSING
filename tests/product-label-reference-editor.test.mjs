@@ -8,7 +8,7 @@ const plain=value=>JSON.parse(JSON.stringify(value)),nodes=value=>Array.isArray(
 const version='2026-10-07T00:00:00.000Z';
 class SaveError extends Error{constructor(message,uncertain){super(message);this.uncertain=uncertain;}}
 function fixture(){
- const calls=[],writes=[],keys=['owner/old.png','owner/new.png','owner/manual.png'];let value={view:{productVersion:version,imageKeys:keys},quotation:{revision:0},keys:[keys[0],keys[2]]},lose=false,unavailable=false;
+ const calls=[],writes=[],keys=['owner/old.png','owner/new.png','owner/manual.png'];let value={view:{productVersion:version,imageKeys:keys},quotation:{revision:0,productVersion:version,inputFingerprint:'a'.repeat(64),optionRevision:2,imageKeys:keys,resolved:{schema:{fields:[{id:'labelImages',type:'images'}]},rows:[{optionId:'red',fields:{labelImages:{value:[keys[0],keys[2]].join('\n')}}}]}},keys:[keys[0],keys[2]]},lose=false,unavailable=false;
  const read=()=>plain(value),helpers={ProductLabelReferenceSaveError:SaveError,
   async readProductLabelReferences(input,request){const response=await request(input.quotationEndpoint,{cache:'no-store'});if(!response.ok)throw Error('private read unavailable');return response.json();},
   verifyProductLabelReferenceSave(input,before,latest,selected){if(latest.quotation.revision!==before.quotation.revision+1||JSON.stringify(latest.keys)!==JSON.stringify(selected))throw Error('save not confirmed');},
@@ -27,8 +27,26 @@ function editor(f,initial={}){
  const render=()=>{index=0;tree=Component({...props,onSaved:()=>saved.push(1)});const effects=pending;pending=[];effects.forEach(run=>run());return tree;};
  const idle=async()=>{for(let i=0;i<16;i++){render();await new Promise(resolve=>setImmediate(resolve));}return render();};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label));
- render();return {render,idle,button,saved,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label+' should be enabled');node.props.onClick();await idle();},select(key){const node=nodes(render()).find(node=>node.type==='select');node.props.onChange({target:{value:key}});render();},source(value){props.version=value;render();},option(value){props.optionId=value;render();},close(){closed=true;for(const slot of slots)slot?.cleanup?.();},get lateWrites(){return lateWrites;}};
+ render();return {render,idle,button,saved,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label+' should be enabled');node.props.onClick();await idle();},select(key){const node=nodes(render()).find(node=>node.type==='select');node.props.onChange({target:{value:key}});render();},source(value){props.version=value;render();},option(value){props.optionId=value;render();},patch(value){Object.assign(props,value);render();},close(){closed=true;for(const slot of slots)slot?.cleanup?.();},get lateWrites(){return lateWrites;}};
 }
+
+test('saved option label cards open the exact selected translation slot without saving or touching nine-row values',async()=>{
+ const f=fixture(),opened=[],h=editor(f,{profileId:'profile',onTranslate:(...args)=>opened.push(args)});try{await h.idle();
+  await h.click('최종 라벨 2 중국어 한국어 번역');await h.click('최종 라벨 1 영어 한국어 번역');
+  assert.equal(opened.length,2);assert.deepEqual(plain(opened[0]),['owner/manual.png','label','zh',{kind:'quotation',profileId:'profile',optionId:'red',input:'labelImages',fieldKey:'labelImages',slotIndex:1,revision:0,inputFingerprint:'a'.repeat(64),optionRevision:2,value:'owner/old.png\nowner/manual.png'}]);
+  assert.equal(opened[1][0],'owner/old.png');assert.equal(opened[1][2],'en');assert.equal(opened[1][3].slotIndex,0);assert.equal(f.writes.length,0);assert.equal(h.saved.length,0);
+ }finally{h.close();}
+});
+
+test('retained label translation buttons cannot bypass dirty refs, source changes, busy or nine-row editing guards',async()=>{
+ const f=fixture(),opened=[],h=editor(f,{onTranslate:(...args)=>opened.push(args)});try{await h.idle();const old=h.button('최종 라벨 2 중국어 한국어 번역').props.onClick;
+  h.patch({disabled:true});old();await h.idle();assert.equal(opened.length,0);h.patch({disabled:false,beforeSave:()=>false});old();assert.equal(opened.length,0);
+  h.patch({beforeSave:()=>true});await h.click('최종 라벨 1 견적에서 제외');old();assert.equal(opened.length,0);assert.equal(h.button('최종 라벨 1 중국어 한국어 번역').props.disabled,true);
+  await h.click('선택 취소·저장 라벨 조회');h.source(f.touch());old();await h.idle();assert.equal(opened.length,0);assert.equal(f.writes.length,0);
+  h.option('blue');old();assert.equal(opened.length,0);
+ }finally{h.close();}
+ const common=fixture(),c=editor(common,{optionId:null,onTranslate:()=>assert.fail('common translation is outside this scope')});try{await c.idle();assert.equal(nodes(c.render()).filter(node=>node.type==='button'&&/한국어 번역/.test(node.props['aria-label']??'')).length,0);}finally{c.close();}
+});
 
 test('stage six displays final-reference thumbnails, stages exclusion and explicit whole replacement without auto saving',async()=>{
  const f=fixture(),h=editor(f);try{await h.idle();assert.equal(nodes(h.render()).filter(node=>node.type==='img').length,2);assert.equal(f.writes.length,0);

@@ -53,7 +53,7 @@ async function readImage(key: string) {
   if (dimensions.width * dimensions.height > MAX_OCR_PIXELS) throw new ImageTextError(413, '이미지 번역은 1,200만 픽셀 이하에서 사용할 수 있습니다.');
   return { object, bytes, dimensions };
 }
-async function original(owner: string, id: string, sourceKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, requireRole: boolean, includeOptions = false) {
+async function original(owner: string, id: string, sourceKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, requireRole: boolean, includeOptions = false, quotationTarget?: FreeImageQuotationTarget) {
   if (!isOwnedImageKey(owner, sourceKey) || !current.keys.includes(sourceKey)) throw new ImageTextError(404, '이 상품에 저장된 본인 소유 이미지를 선택해주세요.');
   const options = role === 'main' && includeOptions ? await readProductOptions(owner, id) : null;
   const optionIds = options?.rows.filter(row => row.imageKey === sourceKey).map(row => row.id).sort() ?? [];
@@ -62,7 +62,7 @@ async function original(owner: string, id: string, sourceKey: string, role: Free
   const { bytes, dimensions } = await readImage(sourceKey);
   const source: FreeImageSource = { productId: id, productVersion: current.product.updated_at, contentRevision: current.content.revision,
     sourceKey, sourceSha256: await digest(bytes), role, width: dimensions.width, height: dimensions.height,
-    ...(options ? { optionImages: { revision: options.revision, optionIds, ...(!commonAssigned ? { commonAssigned: false as const } : {}) } } : {}) };
+    ...(options ? { optionImages: { revision: options.revision, optionIds, ...(!commonAssigned ? { commonAssigned: false as const } : {}) } } : {}), ...(quotationTarget ? { quotationTarget } : {}) };
   try { return validateFreeImageSource(source); }
   catch { throw new ImageTextError(409, '대표 이미지에 연결된 옵션 정보를 다시 확인해주세요.'); }
 }
@@ -90,9 +90,8 @@ async function quotationOriginal(owner: string, id: string, sourceKey: string, r
   if (selection.fieldKey !== target.primary || target.fields.some(field => field.readOnly) || rows.length !== 1) throw changed();
   const value = rows[0].fields[target.primary]?.value;
   if (typeof value !== 'string' || target.linked.some(id => rows[0].fields[id]?.value !== value) || quotationImageKeys(value)[selection.slotIndex] !== sourceKey) throw changed();
-  const source = await original(owner, id, sourceKey, role, current, false);
-  return validateFreeImageSource({ ...source, quotationTarget: { kind: 'quotation', ...selection, revision: view.revision, inputFingerprint: view.inputFingerprint,
-    optionRevision: view.optionRevision, bindingSha256: await quotationBinding(saved, selection.input), value } });
+  return original(owner, id, sourceKey, role, current, false, false, { kind: 'quotation', ...selection, revision: view.revision, inputFingerprint: view.inputFingerprint,
+    optionRevision: view.optionRevision, bindingSha256: await quotationBinding(saved, selection.input), value });
 }
 async function freshSource(owner: string, id: string, source: FreeImageSource) {
   if (source.productId !== id) throw new ImageTextError(400, '번역한 상품과 저장할 상품이 다릅니다.');
@@ -146,7 +145,7 @@ async function quotationReplay(owner: string, id: string, source: FreeImageSourc
     || await quotationBinding(saved, target.input, key) !== target.bindingSha256) return null;
   const exact = exactPrimaryQuotationTarget(view.resolved.schema.fields, target.input), rows = view.resolved.rows.filter(row => row.optionId === target.optionId), value = quotationValue(source, key);
   if (exact.primary !== target.fieldKey || rows.length !== 1 || exact.linked.some(id => rows[0].fields[id]?.value !== value || view.overrides.options[target.optionId]?.[id] !== value)) return null;
-  const observed = await original(owner, id, source.sourceKey, source.role, current, false);
+  const observed = await original(owner, id, source.sourceKey, source.role, current, false, false, source.quotationTarget);
   if (observed.sourceSha256 !== source.sourceSha256 || observed.width !== source.width || observed.height !== source.height || !await storedOutput(key, source, [], sha256, size)) return null;
   const stored = await env.FILES.get(key), overrideHash = await digest(new TextEncoder().encode(JSON.stringify(view.overrides)));
   if (stored?.customMetadata?.freeImageQuotationOverridesSha256 !== overrideHash) throw changed();
@@ -172,15 +171,15 @@ export async function GET(request: Request, context: Context) {
     const quotation = params.get('target') === 'quotation';
     const allowed = quotation ? ['sourceKey', 'role', 'target', 'profileId', 'optionId', 'fieldKey', 'slotIndex'] : ['sourceKey', 'role'];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1) || params.getAll('sourceKey').length !== 1 || params.getAll('role').length !== 1
-      || !validFreeImageRole(params.get('role'))) throw new ImageTextError(400, '원본 이미지와 역할을 선택해주세요.');
+      || !validFreeImageRole(params.get('role')) || params.get('role') === 'label' && !quotation) throw new ImageTextError(400, '원본 이미지와 역할을 선택해주세요.');
     const current = await state(owner, id), role = params.get('role') as FreeImageSource['role'];
     let selection: QuotationSelection | undefined;
     if (quotation) {
       const profileId = params.get('profileId'), optionId = params.get('optionId'), fieldKey = params.get('fieldKey'), slotIndex = params.get('slotIndex');
-      if (!['main', 'additional', 'detail'].includes(role) || profileId !== null && !/^[A-Za-z0-9_-]{1,100}$/.test(profileId)
+      if (!['main', 'additional', 'detail', 'label'].includes(role) || profileId !== null && !/^[A-Za-z0-9_-]{1,100}$/.test(profileId)
         || !optionId || !/^[A-Za-z0-9_-]{1,80}$/.test(optionId) || !fieldKey || !/^[A-Za-z0-9_-]{1,100}$/.test(fieldKey)
         || slotIndex === null || !/^(?:0|[1-9][0-9]?)$/.test(slotIndex) || Number(slotIndex) > 29 || role === 'main' && Number(slotIndex) !== 0) throw new ImageTextError(400, '최종 견적 이미지의 옵션과 선택 위치를 확인해주세요.');
-      selection = { profileId, optionId, fieldKey, slotIndex: Number(slotIndex), input: role === 'main' ? 'mainImage' : role === 'additional' ? 'additionalImages' : 'detailImages' };
+      selection = { profileId, optionId, fieldKey, slotIndex: Number(slotIndex), input: role === 'main' ? 'mainImage' : role === 'additional' ? 'additionalImages' : role === 'label' ? 'labelImages' : 'detailImages' };
     }
     const source = selection ? await quotationOriginal(owner, id, params.get('sourceKey')!, role, current, selection)
       : await original(owner, id, params.get('sourceKey')!, role, current, true, true);

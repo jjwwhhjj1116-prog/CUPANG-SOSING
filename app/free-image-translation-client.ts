@@ -27,8 +27,8 @@ export function sameFreeImageQuotationRequest(actual: FreeImageSource['quotation
 }
 function quotationSourceQuery(target: FreeImageQuotationRequest, role: FreeImageRole, sourceKey: string): Record<string, string> {
   if (target.kind !== 'quotation' || !(target.profileId === null || typeof target.profileId === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(target.profileId))
-    || !/^[a-zA-Z0-9_-]{1,80}$/.test(target.optionId) || !['mainImage', 'additionalImages', 'detailImages'].includes(target.input)
-    || role !== (target.input === 'mainImage' ? 'main' : target.input === 'additionalImages' ? 'additional' : 'detail') || typeof target.fieldKey !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(target.fieldKey)
+    || !/^[a-zA-Z0-9_-]{1,80}$/.test(target.optionId) || !['mainImage', 'additionalImages', 'detailImages', 'labelImages'].includes(target.input)
+    || role !== (target.input === 'mainImage' ? 'main' : target.input === 'additionalImages' ? 'additional' : target.input === 'labelImages' ? 'label' : 'detail') || typeof target.fieldKey !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(target.fieldKey)
     || !Number.isSafeInteger(target.slotIndex) || target.slotIndex < 0 || target.slotIndex > 29 || !Number.isSafeInteger(target.revision) || target.revision < 0
     || !Number.isSafeInteger(target.optionRevision) || target.optionRevision < 0 || !/^[a-f0-9]{64}$/.test(target.inputFingerprint)
     || typeof target.value !== 'string' || target.value.length > 16000 || target.value.split('\n').map(key => key.trim()).filter(Boolean)[target.slotIndex] !== sourceKey
@@ -86,6 +86,7 @@ function canvas(width: number, height: number) {
 export async function readFreeImageSource(productId: string, version: string, sourceKey: string, role: FreeImageRole,
   signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest): Promise<FreeImageLoaded> {
   signal.throwIfAborted();
+  if (role === 'label' && !quotationTarget) throw Error('선택 옵션에 저장된 최종 라벨 이미지를 선택해주세요.');
   const response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ sourceKey, role, ...(quotationTarget ? quotationSourceQuery(quotationTarget, role, sourceKey) : {}) })}`, { signal, cache: 'no-store' });
   const body = await response.json() as { source?: unknown; error?: string }; signal.throwIfAborted();
   if (!response.ok) throw Error(body.error || '현재 역할의 이미지 원본을 확인하지 못했습니다.');

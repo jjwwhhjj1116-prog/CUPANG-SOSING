@@ -8,10 +8,11 @@ import { useRef, useState } from 'react';
 import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
 
 type BoardProduct = {removal_policy?:ProductRemovalDecision|null;hub_receipt?:SupplierHubReceiptSummary|null;content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
+export function registrationNumber(product:Pick<BoardProduct,'id'>){return `YP-${product.id.slice(0,8).toUpperCase()}`;}
 export function filterRegistrationProducts<T extends BoardProduct>(products:T[],query:string,from:string|null,to:string|null) {
   return products.filter(product=>{
     const time=Date.parse(product.created_at);
-    return `${product.title} ${product.content_summary?.seoTitle??''} ${product.source_url}`.toLowerCase().includes(query.trim().toLowerCase())
+    return `${registrationNumber(product)} ${product.id} ${product.title} ${product.content_summary?.seoTitle??''} ${product.source_url}`.toLowerCase().includes(query.trim().toLowerCase())
       &&(!from||(Number.isFinite(time)&&time>=Date.parse(from)))&&(!to||(Number.isFinite(time)&&time<Date.parse(to)));
   });
 }
@@ -45,6 +46,27 @@ export function registrationThumbnail(product:BoardProduct) {
 export function registrationTitle(product:BoardProduct) {return (product.content_summary?.seoTitle??product.title)||'상품명 미입력';}
 export function registrationTransmissionLabel(product:BoardProduct) {return product.hub_receipt?.label??'등록대기';}
 
+type RegistrationSort={column:string;direction:'ascending'|'descending'}|null;
+const registrationCollator=new Intl.Collator('ko-KR',{numeric:true,sensitivity:'base'});
+export function sortRegistrationProducts<T extends BoardProduct>(products:T[],sort:RegistrationSort):T[]{
+  const column=sort&&columns.find(column=>column.id===sort.column);
+  if(!sort||!column||['image','management'].includes(column.id))return products;
+  const value=(product:T):string|number=>{
+    if(column.id==='id')return registrationNumber(product);
+    if(column.id==='product')return registrationTitle(product);
+    if(column.id==='source')return product.source_url;
+    if(column.id==='status')return registrationTransmissionLabel(product);
+    const roles:Record<string,'main'|'additional'|'detail'|'label'>={'대표 이미지':'main','추가 이미지':'additional','상세 이미지':'detail','표시사항':'label'};
+    if(roles[column.id]&&product.content_summary)return product.content_summary[roles[column.id]];
+    return registrationStepLabel(product,column.step??'');
+  };
+  return products.map((product,index)=>({product,index})).sort((a,b)=>{
+    const first=value(a.product),second=value(b.product);
+    const comparison=typeof first==='number'&&typeof second==='number'?first-second:registrationCollator.compare(String(first),String(second));
+    return comparison*(sort.direction==='ascending'?1:-1)||a.index-b.index;
+  }).map(row=>row.product);
+}
+
 function sourceUrl(value:string) {try{const url=new URL(value);return ['https:','http:'].includes(url.protocol)?url.href:undefined;}catch{return undefined;}}
 
 export function RegistrationBoard<T extends BoardProduct>({products,selected,onSelected,onOpen,onOptions,onDelete,loading,error,onArchive}:{products:T[];selected:Set<string>;onSelected:(value:Set<string>)=>void;onOpen:(product:T,step?:string)=>void;onOptions?:(product:T)=>void;onDelete?:(product:T)=>Promise<void>;loading:boolean;error:string;onArchive:()=>void}) {
@@ -52,6 +74,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
   const [status,setStatus]=useState('전체'); const [query,setQuery]=useState('');const [page,setPage]=useState(0);const [pageSize,setPageSize]=useState(10);
   const [visibleColumns,setVisibleColumns]=useState(()=>columns.map(column=>column.id));
   const [pinnedColumn,setPinnedColumn]=useState('');
+  const [sort,setSort]=useState<RegistrationSort>(null);
   const [fixedHeight,setFixedHeight]=useState(true);
   const [deleting,setDeleting]=useState<string|null>(null);const [deleteError,setDeleteError]=useState('');
   const deleteInFlight=useRef(false);
@@ -59,10 +82,11 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
   const pinned=(column:string)=>pinnedColumn===column?' registration-pinned':'';
   let bounds:{startUtc:string|null;endUtc:string|null}={startUtc:null,endUtc:null};let dateError='';
   try{bounds=archiveDateBounds(range,from,to);}catch(cause){dateError=cause instanceof Error?cause.message:'날짜를 확인해주세요.';}
-  const filtered=dateError?[]:filterRegistrationProducts(products,query,bounds.startUtc,bounds.endUtc).filter(product=>status==='전체'||(status==='작업 중'?!['전송 가능','전송완료'].includes(product.registration_status):['검토 대기','전송 가능'].includes(status)?product.registration_status===status:registrationTransmissionLabel(product)===status));
+  const filtered=sortRegistrationProducts(dateError?[]:filterRegistrationProducts(products,query,bounds.startUtc,bounds.endUtc).filter(product=>status==='전체'||(status==='작업 중'?!['전송 가능','전송완료'].includes(product.registration_status):['검토 대기','전송 가능'].includes(status)?product.registration_status===status:registrationTransmissionLabel(product)===status)),sort);
   const pages=Math.max(1,Math.ceil(filtered.length/pageSize));const currentPage=Math.min(page,pages-1);
   const rows=filtered.slice(currentPage*pageSize,(currentPage+1)*pageSize);
   const toggle=(ids:string[],include:boolean)=>{const next=new Set(selected);for(const id of ids){if(include)next.add(id);else next.delete(id);}onSelected(next);};
+  const changeSort=(column:string)=>{setSort(current=>current?.column!==column?{column,direction:'ascending'}:current.direction==='ascending'?{column,direction:'descending'}:null);setPage(0);};
   const deleteProduct=async(product:T)=>{
     if(deleteInFlight.current||!onDelete||productRemovalDecision(product).blocked||!window.confirm(`“${registrationTitle(product)}” 상품을 삭제된 상품으로 이동할까요? 저장된 이미지와 편집 내용은 복원할 수 있습니다.`))return;
     deleteInFlight.current=true;
@@ -78,7 +102,7 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
     </div>
     {dateError&&<p role="alert">{dateError}</p>}
     {deleteError&&<p role="alert" className="collection-error">{deleteError}</p>}
-    <div className="registration-table-tools"><select aria-label="등록 상태 필터" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}>{['전체','등록대기','작업 중','검토 대기','전송 가능','파일 검증 중','견적서 접수','SKU ID 확인','파일 반려','상품 반려'].map(value=><option key={value}>{value}</option>)}</select><label className="search"><input type="search" aria-label="상품 검색" placeholder="상품명 · 원본 URL 검색" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><label>페이지당 <select aria-label="페이지당 상품 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(0);}}>{[10,25,50,100].map(count=><option key={count}>{count}</option>)}</select></label><span>{filtered.length}건 · 선택 {selected.size}건</span><small>최근 불러온 최대 200건 · 전체 기록은 상품 관리</small></div>
+    <div className="registration-table-tools"><select aria-label="등록 상태 필터" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}>{['전체','등록대기','작업 중','검토 대기','전송 가능','파일 검증 중','견적서 접수','SKU ID 확인','파일 반려','상품 반려'].map(value=><option key={value}>{value}</option>)}</select><label className="search"><input type="search" aria-label="상품 검색" placeholder="상품명 · 등록번호 · 원본 URL 검색" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><label>페이지당 <select aria-label="페이지당 상품 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(0);}}>{[10,25,50,100].map(count=><option key={count}>{count}</option>)}</select></label><span>{filtered.length}건 · 선택 {selected.size}건</span><small>최근 불러온 최대 200건 · 전체 기록은 상품 관리</small></div>
     <div className="registration-view-tools">
       <details className="registration-column-picker"><summary>선택 컬럼 보기 · {displayedColumns.length}/{columns.length}</summary><div role="group" aria-label="표시할 컬럼">
         <button type="button" className="btn ghost" onClick={()=>setVisibleColumns(columns.map(column=>column.id))}>전체 표시</button>
@@ -87,11 +111,11 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
       <label>고정할 열 선택 <select aria-label="고정할 열 선택" value={pinnedColumn} onChange={event=>setPinnedColumn(event.target.value)}><option value="">고정 안 함</option>{displayedColumns.map(column=><option key={column.id} value={column.id}>{column.label}</option>)}</select></label>
       <fieldset><legend>높이 고정</legend><label><input type="radio" name="registration-height" checked={fixedHeight} onChange={()=>setFixedHeight(true)}/>Y</label><label><input type="radio" name="registration-height" checked={!fixedHeight} onChange={()=>setFixedHeight(false)}/>N</label></fieldset>
     </div>
-    <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,36+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:36}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.length>0&&rows.every(product=>selected.has(product.id))} onChange={event=>toggle(rows.map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)}>{column.label}</th>)}</tr></thead><tbody>
+    <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,36+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:36}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.length>0&&rows.every(product=>selected.has(product.id))} onChange={event=>toggle(rows.map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)} aria-sort={['image','management'].includes(column.id)?undefined:sort?.column===column.id?sort.direction:'none'}>{['image','management'].includes(column.id)?column.label:<button type="button" className="registration-sort" aria-label={`${column.label} 정렬`} title={sort?.column===column.id?sort.direction==='ascending'?'오름차순 · 클릭하여 내림차순':'내림차순 · 클릭하여 정렬 해제':'클릭하여 오름차순'} onClick={()=>changeSort(column.id)}><span>{column.label}</span><svg aria-hidden="true" width="9" height="12" viewBox="0 0 10 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path className={sort?.column===column.id&&sort.direction==='ascending'?'active':''} d="M2 5 5 2l3 3"/><path className={sort?.column===column.id&&sort.direction==='descending'?'active':''} d="m2 9 3 3 3-3"/></svg></button>}</th>)}</tr></thead><tbody>
     {rows.map(product=>{const image=registrationThumbnail(product);const title=registrationTitle(product);const removal=productRemovalDecision(product);return <tr key={product.id}>
       <td><input type="checkbox" aria-label={`${title} 선택`} checked={selected.has(product.id)} onChange={event=>toggle([product.id],event.target.checked)}/></td>
       {displayedColumns.map(column=><td key={column.id} data-column={column.id} className={`${column.id==='product'?'registration-product':''}${pinned(column.id)}`}>
-        {column.id==='id'&&<><span className="registration-id">YP-{product.id.slice(0,8).toUpperCase()}</span><time dateTime={product.created_at}>{Number.isFinite(Date.parse(product.created_at))?dateTime.format(new Date(product.created_at)):'날짜 미확인'}</time></>}
+        {column.id==='id'&&<><span className="registration-id">{registrationNumber(product)}</span><time dateTime={product.created_at}>{Number.isFinite(Date.parse(product.created_at))?dateTime.format(new Date(product.created_at)):'날짜 미확인'}</time></>}
         {column.id==='image'&&<button type="button" className="registration-thumbnail" onClick={()=>onOptions?onOptions(product):onOpen(product,'대표 이미지')} aria-label={`${title} 대표 이미지 열기`}>{image?<img src={image} width={56} height={56} alt="상품 이미지"/>:<span>이미지<br/>없음</span>}</button>}
         {column.id==='product'&&<><button type="button" className="registration-title" onClick={()=>onOptions?onOptions(product):onOpen(product)}>{title}</button><button type="button" className="registration-options" onClick={()=>onOptions?onOptions(product):onOpen(product,'옵션')}>옵션 {product.options_count}개</button><small>공급 {product.supply_price.toLocaleString('ko-KR')}원 · 판매 {product.sale_price.toLocaleString('ko-KR')}원</small>{product.content_summary?.missingImages&&<small className="collection-error">이미지 연결 확인 필요</small>}</>}
         {column.id==='source'&&(sourceUrl(product.source_url)?<a className="registration-source-link" href={sourceUrl(product.source_url)} target="_blank" rel="noopener noreferrer" aria-label={`${title} 구매링크 새 창에서 열기`} title={product.source_url}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7"/></svg></a>:<span className="registration-source-empty">{product.source_url?'링크 확인 필요':'미입력'}</span>)}

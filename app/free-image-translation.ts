@@ -1,6 +1,6 @@
-export const FREE_IMAGE_ROLES=['main','additional','detailTop','detail','detailBottom'] as const;
+export const FREE_IMAGE_ROLES=['main','additional','detailTop','detail','detailBottom','label'] as const;
 export type FreeImageRole=typeof FREE_IMAGE_ROLES[number];
-export type FreeImageQuotationTarget={kind:'quotation';profileId:string|null;optionId:string;input:'mainImage'|'additionalImages'|'detailImages';fieldKey:string;slotIndex:number;
+export type FreeImageQuotationTarget={kind:'quotation';profileId:string|null;optionId:string;input:'mainImage'|'additionalImages'|'detailImages'|'labelImages';fieldKey:string;slotIndex:number;
  revision:number;inputFingerprint:string;optionRevision:number;bindingSha256:string;value:string};
 export type FreeImageSource={productId:string;productVersion:string;contentRevision:number;sourceKey:string;sourceSha256:string;role:FreeImageRole;width:number;height:number;
  optionImages?:{revision:number;optionIds:string[];commonAssigned?:false};quotationTarget?:FreeImageQuotationTarget};
@@ -18,7 +18,7 @@ export function validateFreeImageSource(value:unknown):FreeImageSource{
   ||typeof source.productVersion!=='string'||!Number.isFinite(Date.parse(source.productVersion))
   ||!Number.isSafeInteger(source.contentRevision)||(source.contentRevision as number)<0
   ||typeof source.sourceKey!=='string'||!source.sourceKey||source.sourceKey.length>512
-  ||typeof source.sourceSha256!=='string'||!/^[a-f0-9]{64}$/.test(source.sourceSha256)||!validFreeImageRole(source.role)
+  ||typeof source.sourceSha256!=='string'||!/^[a-f0-9]{64}$/.test(source.sourceSha256)||!validFreeImageRole(source.role)||source.role==='label'&&source.quotationTarget===undefined
   ||![source.width,source.height].every(n=>Number.isSafeInteger(n)&&(n as number)>0&&(n as number)<=16000)
   ||(source.width as number)*(source.height as number)>MAX_OCR_PIXELS)throw Error('이미지 원본·역할·저장 버전을 확인해주세요.');
  if(source.optionImages!==undefined){
@@ -34,7 +34,7 @@ export function validateFreeImageSource(value:unknown):FreeImageSource{
   if(!target||typeof target!=='object'||Array.isArray(target)||Object.keys(target).some(key=>!['kind','profileId','optionId','input','fieldKey','slotIndex','revision','inputFingerprint','optionRevision','bindingSha256','value'].includes(key))
    ||target.kind!=='quotation'||target.profileId!==null&&(typeof target.profileId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(target.profileId))
    ||typeof target.optionId!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(target.optionId)||typeof target.fieldKey!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(target.fieldKey)
-   ||!['mainImage','additionalImages','detailImages'].includes(String(target.input))||source.role!==(target.input==='mainImage'?'main':target.input==='additionalImages'?'additional':'detail')||source.optionImages!==undefined
+   ||!['mainImage','additionalImages','detailImages','labelImages'].includes(String(target.input))||source.role!==(target.input==='mainImage'?'main':target.input==='additionalImages'?'additional':target.input==='labelImages'?'label':'detail')||source.optionImages!==undefined
    ||![target.slotIndex,target.revision,target.optionRevision].every(n=>Number.isSafeInteger(n)&&(n as number)>=0)||(target.slotIndex as number)>29
    ||![target.inputFingerprint,target.bindingSha256].every(hash=>typeof hash==='string'&&/^[a-f0-9]{64}$/.test(hash))
    ||typeof target.value!=='string'||target.value.length>16000||target.value.split('\n').map(key=>key.trim()).filter(Boolean)[target.slotIndex as number]!==source.sourceKey

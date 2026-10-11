@@ -16,7 +16,7 @@ export type FreeImageQuotationContext = Pick<FreeImageQuotationRequest, 'profile
 type Props = { productId: string; version: string; imageKeys: string[]; translationTarget?: FreeImageTranslationTarget;
   focusedOptionId?: string; quotationContext?: FreeImageQuotationContext;
   onProductChanged?: () => void; onBusyChange?: (busy: boolean) => void; beforeApply?: () => boolean };
-const roleNames: Record<FreeImageRole, string> = { main: '대표 이미지', additional: '추가 이미지', detailTop: '상단 이미지', detail: '상세 이미지', detailBottom: '하단 이미지' };
+const roleNames: Record<FreeImageRole, string> = { main: '대표 이미지', additional: '추가 이미지', detailTop: '상단 이미지', detail: '상세 이미지', detailBottom: '하단 이미지', label: '최종 라벨 이미지' };
 type RequestWork = { controller: AbortController; epoch: number; kind: 'ocr' | 'refresh' | 'translate' | 'preview' | 'save' | 'recover' };
 const sameQuotationSlot = (left: FreeImageQuotationRequest | null | undefined, right: FreeImageQuotationRequest | null | undefined) => !left || !right ? !left && !right
   : left.profileId === right.profileId && left.optionId === right.optionId && left.input === right.input && left.fieldKey === right.fieldKey && left.slotIndex === right.slotIndex;
@@ -373,7 +373,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <div className="form-row">
       <label>이미지 역할<select aria-label="번역할 이미지 역할" value={role} disabled={locked || !!quotationTarget} onChange={event => { if (!liveQuotationTarget.current) selectSource(sourceKey, event.target.value as FreeImageRole); }}>
-        {FREE_IMAGE_ROLES.map(value => <option key={value} value={value}>{roleNames[value]}</option>)}
+        {FREE_IMAGE_ROLES.filter(value => value !== 'label' || quotationTarget?.input === 'labelImages').map(value => <option key={value} value={value}>{roleNames[value]}</option>)}
       </select></label>
       <label>원본 이미지<select ref={sourceControl} aria-label="번역할 원본 이미지" value={sourceKey} disabled={locked || !!quotationTarget} onChange={event => { if (!liveQuotationTarget.current) selectSource(event.target.value); }}>
         <option value="">원본 선택</option>{sourceKey && !imageKeys.includes(sourceKey) && <option value={sourceKey}>현재 목록에 없는 편집 원본</option>}{imageKeys.map((key, index) => <option key={key} value={key}>이미지 {index + 1} · {key.split('/').at(-1)}</option>)}

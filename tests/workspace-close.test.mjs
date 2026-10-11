@@ -31,6 +31,15 @@ test('free-image apply ignores only its own reviewed draft while closing still g
  flags.otherDirty=true;flags.otherBusy=true;assert.equal(exports.workspaceEditState(element,true).dirty,true);assert.equal(exports.workspaceEditState(element,true).busy,true);
 });
 
+test('SEO generation ignores only its memo marker while close, quotation and image operations retain its dirty guard',()=>{
+ const flags={seoDirty:true,seoBusy:false,freeDirty:false,otherDirty:false,otherBusy:false};
+ const element={querySelector:selector=>{const busy=selector.includes('saving');const own=busy?flags.seoBusy:flags.seoDirty,other=busy?flags.otherBusy:flags.otherDirty;
+  return other||own&&!selector.includes(':not([data-seo-generation-input])')||!busy&&flags.freeDirty&&!selector.includes(':not([data-free-image-editor])')?{}:null;}};
+ assert.equal(exports.workspaceEditState(element).dirty,true);assert.equal(exports.workspaceEditState(element,false,true).dirty,false);assert.equal(exports.workspaceEditState(element,true).dirty,true);assert.equal(exports.requestWorkspaceClose(element,()=>false),'cancel');
+ flags.seoBusy=true;assert.equal(exports.workspaceEditState(element).busy,true);assert.equal(exports.requestWorkspaceClose(element,()=>{throw Error('must not discard a request');}),'busy');flags.seoBusy=false;
+ flags.otherDirty=true;assert.equal(exports.workspaceEditState(element,false,true).dirty,true);flags.otherDirty=false;flags.freeDirty=true;assert.equal(exports.workspaceEditState(element,false,true).dirty,true);flags.freeDirty=false;flags.otherBusy=true;assert.equal(exports.workspaceEditState(element,false,true).busy,true);
+});
+
 test('quotation entry finds hidden source drafts, deduplicates steps and excludes unrelated quotation drafts',()=>{
  const element=(step,own=false,nested=false)=>({getAttribute:key=>key==='data-quotation-source-step'?step:own?'true':'false',querySelector:()=>nested?{}:null});
  const elements=[element('SEO',true),element('가격',false,true),element('SEO',true),element('대표 이미지')];

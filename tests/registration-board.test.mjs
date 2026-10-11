@@ -6,7 +6,7 @@ import ts from 'typescript';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,Error,window:overrides.window,require:name=>name in overrides?overrides[name]:name.startsWith('@/')?load(name.slice(2)+'.ts',overrides):require(name)});return exports;}
-const {registrationTitle,registrationThumbnail,registrationStepLabel,registrationTransmissionLabel,RegistrationBoard,filterRegistrationProducts}=load('app/components/registration-board.tsx');
+const {registrationTitle,registrationNumber,registrationThumbnail,registrationStepLabel,registrationTransmissionLabel,RegistrationBoard,filterRegistrationProducts,sortRegistrationProducts}=load('app/components/registration-board.tsx');
 const columnLabels=['등록번호','상품이미지','상품명','구매링크','SEO설정','가격설정','대표이미지','추가이미지','상세이미지','사이즈표','한글표시사항','견적서','등록상태','관리'];
 function elements(tree,predicate){const found=[];function visit(node){if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(predicate(node))found.push(node);visit(node.props?.children);}visit(tree);return found;}
 function nodeText(node){return Array.isArray(node)?node.map(nodeText).join(''):node&&typeof node==='object'?nodeText(node.props?.children):typeof node==='boolean'?'':String(node??'');}
@@ -131,6 +131,53 @@ test('100-product pages preserve off-page selection and never modify registratio
  tree=h.render();assert.deepEqual(rows(tree).map(row=>row.key),['page-product-119']);
  assert.equal(elements(tree,node=>node.type==='button'&&nodeText(node)==='이전')[0].props.disabled,true);
  assert.equal(h.calls.length,0);assert.equal(h.options.length,0);assert.equal(h.confirmations.length,0);assert.equal(JSON.stringify(products),before);
+});
+
+test('registration header sorting cycles through natural ascending, descending and original order without writes',()=>{
+ const seed=boardHarness().product,products=['10','2','1'].map(id=>({...seed,id})),before=JSON.stringify(products),h=boardHarness({products});
+ const ids=()=>elements(elements(h.render(),node=>node.type==='tbody')[0],node=>node.type==='tr').map(node=>node.key);
+ const sort=()=>elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='등록번호 정렬')[0].props.onClick();
+ const direction=()=>elements(h.render(),node=>node.type==='th'&&node.props['data-column']==='id')[0].props['aria-sort'];
+ assert.equal(direction(),'none');assert.deepEqual(ids(),['10','2','1']);
+ sort();assert.equal(direction(),'ascending');assert.deepEqual(ids(),['1','2','10']);
+ sort();assert.equal(direction(),'descending');assert.deepEqual(ids(),['10','2','1']);
+ sort();assert.equal(direction(),'none');assert.deepEqual(ids(),['10','2','1']);
+ assert.equal(h.calls.length,0);assert.equal(h.options.length,0);assert.equal(h.selections.length,0);assert.equal(h.confirmations.length,0);assert.equal(JSON.stringify(products),before);
+});
+
+test('sorting uses edited names, numeric image counts and verified receipt labels with stable equal rows',()=>{
+ const seed=boardHarness().product;
+ const products=[{...seed,id:'third',title:'가',content_summary:{...seed.content_summary,seoTitle:'상품 11',main:11}},
+  {...seed,id:'first',title:'다',content_summary:{...seed.content_summary,seoTitle:'상품 2',main:2}},
+  {...seed,id:'second',title:'나',content_summary:{...seed.content_summary,seoTitle:'상품 2',main:2},hub_receipt:{label:'SKU ID 확인'}},
+  {...seed,id:'last',registration_status:'전송완료',quote_status:'완료',content_summary:{...seed.content_summary,seoTitle:'상품 1',main:0}}];
+ const before=JSON.stringify(products),ids=(column,direction='ascending')=>sortRegistrationProducts(products,{column,direction}).map(product=>product.id);
+ assert.deepEqual(ids('product'),['last','first','second','third']);assert.deepEqual(ids('product','descending'),['third','first','second','last']);
+ assert.deepEqual(ids('대표 이미지'),['last','first','second','third']);assert.deepEqual(ids('대표 이미지','descending'),['third','first','second','last']);
+ assert.deepEqual(ids('status'),['third','first','last','second']);assert.deepEqual(ids('status','descending'),['second','third','first','last']);
+ for(const column of ['image','management','unknown'])assert.deepEqual(ids(column),products.map(product=>product.id));
+ assert.equal(JSON.stringify(products),before);
+});
+
+test('a new sort resets pagination and page selection follows displayed IDs while retaining off-page selection',()=>{
+ const seed=boardHarness().product,products=Array.from({length:23},(_,index)=>({...seed,id:String(index+1),content_summary:{...seed.content_summary,seoTitle:`상품 ${23-index}`}}));
+ const before=JSON.stringify(products),h=boardHarness({products,selected:new Set(['23'])});
+ elements(h.render(),node=>node.type==='button'&&nodeText(node)==='다음')[0].props.onClick();
+ assert.equal(elements(elements(h.render(),node=>node.type==='tbody')[0],node=>node.type==='tr')[0].key,'11');
+ elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='상품명 정렬')[0].props.onClick();
+ let tree=h.render();assert.equal(elements(tree,node=>node.type==='button'&&nodeText(node)==='이전')[0].props.disabled,true);
+ const visible=elements(elements(tree,node=>node.type==='tbody')[0],node=>node.type==='tr').map(node=>node.key);assert.deepEqual(visible,products.slice(13).reverse().map(product=>product.id));
+ elements(tree,node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0].props.onChange({target:{checked:true}});assert.deepEqual([...h.selections.at(-1)].sort(),[...new Set(['23',...visible])].sort());
+ elements(tree,node=>node.type==='input'&&node.props['aria-label']==='상품명 컬럼 표시')[0].props.onChange({target:{checked:false}});tree=h.render();
+ assert.deepEqual(elements(elements(tree,node=>node.type==='tbody')[0],node=>node.type==='tr').map(node=>node.key),visible);
+ assert.equal(h.calls.length,0);assert.equal(h.options.length,0);assert.equal(JSON.stringify(products),before);
+});
+
+test('the displayed registration number and full saved ID are searchable without replacing edited names or purchase URLs',()=>{
+ const product=boardHarness().product,before=JSON.stringify(product);
+ assert.equal(registrationNumber(product),'YP-12345678');
+ for(const query of ['yp-12345678','12345678-abcd','수정한 상품명','813724060928'])assert.equal(filterRegistrationProducts([product],query,null,null).length,1);
+ assert.equal(filterRegistrationProducts([product],'YP-99999999',null,null).length,0);assert.equal(JSON.stringify(product),before);
 });
 
 test('purchase link cell leaves missing or unsupported URLs inert',()=>{

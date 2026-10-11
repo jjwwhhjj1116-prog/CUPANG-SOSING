@@ -78,7 +78,7 @@ async function fixture({ linkedWire = false, withMain = false, company = schemaC
     const imageRoute = h.load('app/api/products/[id]/image-text/route.ts'), context = { params: Promise.resolve({ id }) };
     const source = async (input = 'additionalImages', changes = {}) => {
       const view = await read(), target = h.load('app/quotation-seo-targets.ts').exactPrimaryQuotationTarget(view.resolved.schema.fields, input);
-      const params = new URLSearchParams({ sourceKey: keys[0], role: input === 'mainImage' ? 'main' : input === 'additionalImages' ? 'additional' : 'detail', target: 'quotation', profileId: profile.id, optionId: selected, fieldKey: target.primary, slotIndex: input === 'mainImage' ? '0' : '1', ...changes });
+      const params = new URLSearchParams({ sourceKey: keys[0], role: input === 'mainImage' ? 'main' : input === 'additionalImages' ? 'additional' : input === 'labelImages' ? 'label' : 'detail', target: 'quotation', profileId: profile.id, optionId: selected, fieldKey: target.primary, slotIndex: input === 'mainImage' ? '0' : '1', ...changes });
       return imageRoute.GET(new Request('https://app.test' + base + '/image-text?' + params), context);
     };
     const apply = (proof, extras = {}) => {
@@ -88,11 +88,83 @@ async function fixture({ linkedWire = false, withMain = false, company = schemaC
     };
     const post = body => imageRoute.POST(new Request('https://app.test' + base + '/image-text', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), context);
     const recover = proof => post({ action: 'recover', source: proof, outputSha256: sha(png(90)), outputBytes: png(90).length });
-    const sourceRows = () => JSON.stringify(Object.fromEntries(['product_content', 'product_options', 'product_price_policy', 'collection_context', 'collection_products', 'collection_results'].map(table => [table, h.sqlite.prepare('SELECT * FROM ' + table).all()])));
+    const sourceRows = () => JSON.stringify(Object.fromEntries(['product_content', 'product_options', 'product_price_policy', 'product_labels', 'collection_context', 'collection_products', 'collection_results'].map(table => [table, h.sqlite.prepare('SELECT * FROM ' + table).all()])));
     const snapshot = () => JSON.stringify({ product: product(), quote: h.sqlite.prepare('SELECT * FROM product_quotation_fields').all(), source: sourceRows() });
     return { h, id, base, qurl, keys, profile, selected, other, before, source, apply, post, recover, product, read, sourceRows, snapshot, close() { h.close(); } };
   } catch (error) { h.close(); throw error; }
 }
+
+async function labelFixture(company = schemaCompanies[0]) {
+  const f = await fixture({ company });
+  try {
+    const options = await json(await f.h.route(f.base + '/options')), rows = f.h.load('app/product-options.ts').optionInputs(options.options);
+    Object.assign(rows.find(row => row.id === f.selected), { packagedWeightG: 480, packagedWidthMm: 140, packagedLengthMm: 220, packagedHeightMm: 90, packagingConfirmed: true });
+    await json(await f.h.route(f.base + '/options', { method: 'PATCH', body: { expectedRevision: options.options.revision, expectedProductVersion: options.productVersion, rows } }));
+    const labelUrl = f.base + '/product-labels?profileId=' + f.profile.id, labels = await json(await f.h.route(labelUrl));
+    await json(await f.h.route(labelUrl, { method: 'PUT', body: { expectedRevision: labels.revision, expectedInputFingerprint: labels.inputFingerprint,
+      changes: [{ optionId: f.selected, fieldKey: 'material', value: '직접 확인한 재질' }, { optionId: null, fieldKey: 'usageStandard', value: '' }] } }));
+    const quote = await f.read(), notice = quote.resolved.schema.fields.find(field => field.hubWire?.name === '렌즈 관리방법');
+    await json(await f.h.route(f.qurl, { method: 'PUT', body: { expectedRevision: quote.revision, expectedInputFingerprint: quote.inputFingerprint,
+      changes: [{ optionId: null, fieldKey: 'labelImages', value: f.keys[1] }, { optionId: f.selected, fieldKey: 'labelImages', value: [f.keys[2], f.keys[0], f.keys[3]].join('\n') },
+        { optionId: f.other, fieldKey: 'labelImages', value: '' }, { optionId: f.selected, fieldKey: 'searchTags', value: '' },
+        ...(notice ? [{ optionId: f.selected, fieldKey: notice.id, value: '보존할 수동 상품고시' }] : [])] } }));
+    return { ...f, labelUrl };
+  } catch (error) { f.close(); throw error; }
+}
+
+for (const company of schemaCompanies) test(`saved option label image edits replace one slot, recover a lost response and reach the same workbook/ZIP (${company.code})`, async () => {
+  const f = await labelFixture(company); try {
+    const source = (await json(await f.source('labelImages'))).source, before = await f.read(), raw = f.sourceRows(), oldObjects = new Map([...f.h.objects].map(([key, bytes]) => [key, bytes.slice()]));
+    const client = f.h.load('app/free-image-translation-client.ts'), request = { ...source.quotationTarget }; delete request.bindingSha256;
+    const reads = [];
+    await assert.rejects(client.readFreeImageSource(f.id, source.productVersion, f.keys[0], 'label', new AbortController().signal, async url => {
+      reads.push(url); if (reads.length === 1) return f.h.route(url); throw Error('stop before browser decoding');
+    }, request), /stop before browser decoding/);
+    assert.equal(new URL(reads[0], 'https://app.test').searchParams.get('role'), 'label'); assert.match(reads[1], /^\/api\/files\//);
+    assert.equal(source.quotationTarget.input, 'labelImages'); assert.equal(source.quotationTarget.slotIndex, 1);
+    const image = { source, output: new Blob([png(90)], { type: 'image/png' }), width: source.width, height: source.height }, writes = [], batch = f.h.db.batch;
+    f.h.db.batch = async statements => { const result = await batch(statements); if (statements.length === 2) writes.push(1); return result; };
+    let posts = 0;
+    await assert.rejects(client.applyFreeImageTranslation(image, new AbortController().signal, async (_url, init) => {
+      posts++; await json(await f.apply(JSON.parse(init.body.get('source')))); throw Error('fixture committed HTTP response lost');
+    }), error => error.uncertain === true);
+    const committed = f.snapshot(), objectCount = f.h.objects.size;
+    const saved = await client.recoverFreeImageTranslation(image, new AbortController().signal, async (_url, init) => f.post(JSON.parse(init.body)));
+    assert.equal(saved.applied, true); assert.equal(saved.replayed, true); assert.equal(posts, 1); assert.equal(writes.length, 1);
+    assert.equal(f.snapshot(), committed); assert.equal(f.h.objects.size, objectCount);
+    const latest = await f.read(), expected = [f.keys[2], saved.key, f.keys[3]].join('\n'), expectedOverrides = plain(before.overrides);
+    expectedOverrides.options[f.selected].labelImages = expected;
+    assert.deepEqual(plain(latest.overrides), expectedOverrides); assert.equal(latest.resolved.rows.find(row => row.optionId === f.selected).fields.labelImages.value, expected);
+    assert.equal(latest.revision, before.revision + 1); assert.equal(latest.contentRevision, before.contentRevision); assert.equal(latest.optionRevision, before.optionRevision); assert.equal(f.sourceRows(), raw);
+    assert.deepEqual(latest.imageKeys, [...before.imageKeys, saved.key]); for (const [key, bytes] of oldObjects) assert.deepEqual(f.h.objects.get(key), bytes);
+    assert.deepEqual(Buffer.from(f.h.objects.get(saved.key)), png(90));
+    const repeat = await json(await f.apply(source)); assert.equal(repeat.key, saved.key); assert.equal(repeat.replayed, true); assert.equal(writes.length, 1); assert.equal(f.snapshot(), committed);
+    const preview = await json(await f.h.route(f.base + '/quotation', { method: 'POST', body: { action: 'preview', profileId: f.profile.id } }));
+    const response = await f.h.route(f.base + '/quotation', { method: 'POST', body: { action: 'export', profileId: f.profile.id, fingerprint: preview.fingerprint } }); await status(response, 200);
+    const reader = f.h.load('app/xlsx-template.ts'), archive = await reader.readXlsxArchive(await response.arrayBuffer()), document = JSON.parse(new TextDecoder().decode(archive.get('quotation-fields.json'))), plan = JSON.parse(new TextDecoder().decode(archive.get('supplier-hub-upload-plan.json')));
+    const rowIndex = document.rows.findIndex(row => row.optionId === f.selected), sheet = reader.inspectXlsxArchive(await reader.readXlsxArchive(archive.get(plan.quotation.file.filename)));
+    assert.equal(document.rows[rowIndex].fields.labelImages.value, expected);
+    assert.equal(reader.xlsxHeaders(sheet, '견적서', rowIndex + 2)[f.profile.template.headers.indexOf('labelImages')], [f.keys[2], saved.key, f.keys[3]].map(key => document.uploadFilenames[key]).join('\n'));
+    const media = plan.labelImages.find(entry => entry.key === saved.key); assert.ok(media); assert.equal(media.sha256, sha(png(90))); assert.deepEqual(Buffer.from(archive.get(media.archivePath)), png(90));
+    assert.equal(f.sourceRows(), raw); assert.equal(f.product().supplier_hub_status, '미전송'); assert.ok(!f.h.network.some(host => /supplier\.coupang|couplus/.test(host)));
+  } finally { f.close(); }
+});
+
+test('label editing rejects unscoped content, foreign files, wrong slot/field/option and stale nine-row source before writes', async () => {
+  const f = await labelFixture(); try {
+    const route = f.h.load('app/api/products/[id]/image-text/route.ts'), context = { params: Promise.resolve({ id: f.id }) };
+    const source = (await json(await f.source('labelImages'))).source, baseline = f.snapshot(), objectCount = f.h.objects.size, model = f.h.load('app/free-image-translation.ts');
+    const unscoped = plain(source); delete unscoped.quotationTarget; assert.throws(() => model.validateFreeImageSource(unscoped)); await status(await f.apply(unscoped), 400);
+    await status(await route.GET(new Request('https://app.test' + f.base + '/image-text?' + new URLSearchParams({ sourceKey: f.keys[0], role: 'label' })), context), 400);
+    for (const changes of [{ sourceKey: 'foreign/not-owned.png' }, { slotIndex: '0' }, { optionId: f.other }, { fieldKey: 'detailImages' }]) {
+      const response = await f.source('labelImages', changes); assert.ok([404, 409].includes(response.status), await response.text());
+    }
+    const mixed = plain(source); mixed.quotationTarget.input = 'detailImages'; assert.throws(() => model.validateFreeImageSource(mixed)); await status(await f.apply(mixed), 400);
+    assert.equal(f.snapshot(), baseline); assert.equal(f.h.objects.size, objectCount);
+    const labels = await json(await f.h.route(f.labelUrl)); await json(await f.h.route(f.labelUrl, { method: 'PUT', body: { expectedRevision: labels.revision, expectedInputFingerprint: labels.inputFingerprint, changes: [{ optionId: f.selected, fieldKey: 'material', value: '동시 수정한 재질' }] } }));
+    const changed = f.snapshot(); await status(await f.apply(source), 409); await status(await f.recover(source), 409); assert.equal(f.snapshot(), changed); assert.equal(f.h.objects.size, objectCount);
+  } finally { f.close(); }
+});
 
 for (const input of ['additionalImages', 'detailImages']) test('final ' + input + ' translation replaces only the saved selected slot and exact canonical/wire in one commit', async () => {
   const f = await fixture({ linkedWire: true }); try {

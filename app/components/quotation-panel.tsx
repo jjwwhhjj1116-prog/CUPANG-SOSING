@@ -18,11 +18,11 @@ type Preview = {
   submissionReview?: QuotationPreviewReviewData;
   report:{dataStartRow:number;mappingCoverage?:QuotationMappingFinding[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {onPrepareSubmission?:(profileId:string)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+type QuotationPanelProps = {onPrepareSubmission?:(profileId:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
   return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId])} {...props}/>;
 }
-function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
+function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [useSavedRow,setUseSavedRow]=useState(true);
@@ -97,6 +97,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfileChange,onSaved,prod
     try {
       const saved=await prepareOfficialHubProfileTemplate(selected,controller.signal,mode);
       if(controller.signal.aborted)return;
+      onProfilePrepared?.(saved,selected);
       setProfiles(current=>current.map(profile=>profile.id===saved.id?saved:profile));
       setStartRow(quotationStartRow(saved.template));setUseSavedRow(true);setProfileVersion(version=>version+1);
       setTemplateMessage(mode==='workbook'?'공식 파일의 열·선택값 기준으로 연결했습니다. 별도 Excel JSON 양식은 미확인입니다. 견적 자료와 미연결 항목을 검토한 뒤 파일을 내려받아주세요.':'선택한 회사·카테고리의 공식 양식을 연결했습니다. 견적 자료와 필수 서류를 검토한 뒤 전송해주세요.');

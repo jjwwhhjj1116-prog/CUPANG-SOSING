@@ -117,7 +117,7 @@ test('separate selected image stages retain independent drafts while hidden acro
       h.render({ tab }); assert.equal(h.all('option-image-editor').length, 2);
       for (const [stage, original, draft, visibleTab] of [['additional', additional, 'additional order', '추가 이미지'], ['detail', detail, 'detail order and manual blank HTML', '상세 이미지']]) {
         const image = byStage(stage); assert.equal(image.instance, original.instance); assert.equal(image.instance.mounted, true); assert.equal(image.draft, draft);
-        assert.equal(image.props.stage, stage); assert.equal(h.visible(image), tab === visibleTab); assert.ok(!Object.hasOwn(image.props, 'onTranslate'));
+        assert.equal(image.props.stage, stage); assert.equal(h.visible(image), tab === visibleTab); assert.equal(typeof image.props.onTranslate, 'function');
       }
       assert.equal(h.closeResult(), 'cancel'); assert.ok(h.pending().includes('추가 이미지')); assert.ok(h.pending().includes('상세 이미지'));
     }
@@ -152,7 +152,7 @@ test('common content keeps its draft across scoped image collapses and advanced 
     for (const [tab, section, role, label] of [['추가 이미지', '이미지', 'additional', '추가 이미지'], ['상세 이미지', '이미지', 'detail', '상세 이미지'], ['표시사항', '표시사항', undefined, '추가 표시사항·이전 자료'], ['SEO', 'SEO', undefined, 'SEO·설명']]) {
       h.render({ tab }); const current = h.record('product-content-editor'), collapse = current.ancestors.findLast(element => element.type === 'details');
       assert.equal(current.instance, common.instance); assert.equal(current.draft, 'shared content draft'); assert.equal(current.props.product.id, 'product-a');
-      const scoped = true;
+      const scoped = tab !== 'SEO';
       assert.equal(current.props.section, section); assert.equal(current.props.focusedAssetRole, role); assert.equal(collapse.props.open, scoped ? undefined : true);
       assert.ok(nodes(collapse).some(node => node.type === 'summary' && node.props.hidden === !scoped && text(node) === '상품 공통 ' + label + ' 편집'));
     }
@@ -179,14 +179,32 @@ test('step 6 keeps common label tools separate from the selected Supplier Hub no
   } finally { h.close(); }
 });
 
-test('scoped stage editors inherit image-processing exclusion without receiving an unsupported quote-only translation action', () => {
+test('scoped stage editors retain their supported final-slot translation action while image processing excludes other edits', () => {
   const h = harness(); try {
     const additional = h.record('option-image-editor', received => received.stage === 'additional'), detail = h.record('option-image-editor', received => received.stage === 'detail');
     assert.ok(h.all('option-image-editor').every(image => image.props.disabled === false)); assert.equal(h.record('product-content-editor').props.imageProcessingBusy, false);
     h.record('free-image-translation-panel').props.onBusyChange(true); assert.ok(h.all('option-image-editor').every(image => image.props.disabled === true)); assert.equal(h.record('product-content-editor').props.imageProcessingBusy, true);
     h.render({ tab: '상세 이미지' }); assert.equal(h.record('option-image-editor', received => received.stage === 'additional').instance, additional.instance); assert.equal(h.record('option-image-editor', received => received.stage === 'detail').instance, detail.instance); assert.ok(h.all('option-image-editor').every(image => image.props.disabled === true));
     h.record('image-generation-panel').props.onBusyChange(true); h.record('free-image-translation-panel').props.onBusyChange(false); assert.ok(h.all('option-image-editor').every(image => image.props.disabled === true));
-    h.record('image-generation-panel').props.onBusyChange(false); assert.ok(h.all('option-image-editor').every(image => image.props.disabled === false && !Object.hasOwn(image.props, 'onTranslate')));
+    h.record('image-generation-panel').props.onBusyChange(false); assert.ok(h.all('option-image-editor').every(image => image.props.disabled === false && typeof image.props.onTranslate === 'function'));
     assert.deepEqual(plain(h.record('free-image-translation-panel').props.imageKeys), ['owner/product-a/a.png']); assert.equal(h.calls.reads, 0); assert.equal(h.calls.saved, 0);
   } finally { h.close(); }
+});
+
+test('existing additional/detail translation callbacks bind the exact saved option slot and reject a different source or scope', () => {
+  for (const [tab, stage, input] of [['추가 이미지', 'additional', 'additionalImages'], ['상세 이미지', 'detail', 'detailImages']]) {
+    const h = harness({ tab }); try {
+      const image = h.record('option-image-editor', received => received.stage === stage), key = 'owner/product-a/a.png';
+      const target = { kind: 'quotation', profileId: 'profile-a', optionId: 'red', input, fieldKey: input, slotIndex: 1, revision: 2, inputFingerprint: 'a'.repeat(64), optionRevision: 1, value: 'first.png\n' + key + '\nlast.png' };
+      for (const patch of [{ optionId: 'blue' }, { profileId: 'profile-b' }, { input: input === 'additionalImages' ? 'detailImages' : 'additionalImages' }]) {
+        image.props.onTranslate(key, stage, 'zh', { ...target, ...patch }); assert.equal(h.record('free-image-translation-panel').props.translationTarget, undefined);
+      }
+      image.props.onTranslate('foreign/a.png', stage, 'zh', target); assert.equal(h.record('free-image-translation-panel').props.translationTarget, undefined);
+      h.record('free-image-translation-panel').props.onBusyChange(true); image.props.onTranslate(key, stage, 'zh', target); assert.equal(h.record('free-image-translation-panel').props.translationTarget, undefined);
+      h.record('free-image-translation-panel').props.onBusyChange(false); image.props.onTranslate(key, stage, 'en', target);
+      const panel = h.record('free-image-translation-panel'); assert.equal(h.visible(panel), true); assert.equal(panel.props.translationTarget.sourceKey, key); assert.equal(panel.props.translationTarget.role, stage); assert.equal(panel.props.translationTarget.sourceLanguage, 'en');
+      assert.deepEqual(plain(panel.props.translationTarget.quotationTarget), target); assert.deepEqual(plain(panel.props.quotationContext), { profileId: 'profile-a', optionId: 'red', input });
+      assert.deepEqual(h.calls, { saved: 0, reads: 0, uploads: 0, submission: 0 });
+    } finally { h.close(); }
+  }
 });

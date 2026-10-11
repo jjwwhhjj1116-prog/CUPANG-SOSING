@@ -4,23 +4,29 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
+import {workbookArchive} from './helpers/quotation-workbook.mjs';
+import {prepareAttachments} from '../extensions/supplier-hub/package.mjs';
 const native=createRequire(import.meta.url);
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 const scope=(ownerId='test-owner',code='A01526306')=>({ownerId,company:{code,name:code==='A01526306'?'유앤채':'와이홉'}});
 const plain=value=>JSON.parse(JSON.stringify(value));
+const settleUntil=async(h,ready)=>{const deadline=Date.now()+10000;while(!ready()){assert.ok(Date.now()<deadline,text(h.render()));await h.settle();await new Promise(resolve=>setTimeout(resolve,5));}};
 const version='2026-10-06T00:00:00.000Z';
 const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://source.example.test/product/'+id,created_at:version,updated_at:version,image_keys:JSON.stringify(['test-owner/'+id+'/source.png','test-owner/'+id+'/second.png']),options_count:1,source_price_cny:2,exchange_rate:350,supply_margin:50,coupang_margin:40,supply_price:1400,sale_price:2340,msrp:3050,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',removal_policy:{blocked:false,code:null,reason:'',receipt:null},goal_stage:'work'});
 
 /** Actual DashboardClient, its private DetailPanel and settings dialog. Child
  * renderers record their received props; every tested callback is the real
  * parent callback, and requests run through its real fetch/readJson code. */
-function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false}={}){
+function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,profiles=[],officialFlow}={}){
  const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
  let currentSettings=settingsBody,replyDelete=deleteReply,nextDelete=null,nextSettings=null,replySettingsPut=null,nextProduct=null,replyProduct=null;
+ let currentProfiles=profiles,nextProfiles;
  const workspaceEdits={dirty:false,busy:false,freeDirty:false,freeBusy:false};
- const products=[product('product-a'),product('product-b')];
+ const products=officialFlow?.products??[product('product-a'),product('product-b')];
  const draft={rows:[],setRows(){},goal:'work',setGoal(){},ready:true,loading:false,saving:false,dirty:false,message:'',save(){},load(){}};
  const hooks={
   useState(initial){const instance=active,slot=instance.index++;if(!(slot in instance.slots))instance.slots[slot]=typeof initial==='function'?initial():initial;return[instance.slots[slot],value=>{if(!instance.mounted){lateWrites++;return;}instance.slots[slot]=typeof value==='function'?value(instance.slots[slot]):value;}];},
@@ -31,6 +37,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  };
  async function request(url,init={}){
   requests.push({url,init,method:init.method??'GET'});
+  if(officialFlow&&url.includes('/quotation')||officialFlow&&url.includes('/submission-review')||officialFlow&&url.includes('/supplier-hub-receipt'))return officialFlow.request(url,init);
   if(url==='/api/products')return Response.json({products});
   if(url==='/api/collection-jobs')return Response.json({jobs:[]});
   if(url==='/api/settings'){
@@ -70,7 +77,14 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
    if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
    if(name.endsWith('.css'))return{};
    if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>draft};
-   if(name==='@/app/load-category-profiles')return{loadCategoryProfiles:async()=>[]};
+   if(name==='@/app/load-category-profiles')return{loadCategoryProfiles:async()=>{
+    if(nextProfiles){const pending=nextProfiles;nextProfiles=null;return pending.promise;}
+    return officialFlow?(await (await officialFlow.request('/api/category-profiles')).json()).profiles:currentProfiles;
+   }};
+   if(officialFlow&&name==='@/app/supplier-hub-catalog')return officialFlow.catalog;
+   if(officialFlow&&name==='@/app/supplier-hub-handoff')return officialFlow.bridge;
+   if(officialFlow&&name==='@/app/supplier-hub-tracking')return officialFlow.tracking(load('app/supplier-hub-tracking.ts'));
+   if(officialFlow&&['quotation-panel','submission-review-panel','submission-package'].some(component=>name==='@/app/components/'+component))return load(name.slice(2)+'.tsx');
    if(name==='@/app/components/workspace-settings-dialog')return load('app/components/workspace-settings-dialog.tsx');
    if(realRegistrationBoard&&name==='@/app/components/registration-board')return load('app/components/registration-board.tsx');
    if(name.startsWith('@/app/components/'))return componentModule(name.split('/').at(-1));
@@ -84,6 +98,8 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
   if(typeof value.type==='function'){
    const key=path+'/'+(value.type.displayName??value.type.name)+':'+(value.key??'');let instance=instances.get(key);
    if(!instance){instance={slots:[],mounted:true};instances.set(key,instance);}seen.add(key);instance.index=0;instance.ancestors=ancestors;active=instance;
+   const realName={QuotationPanel:'quotation-panel',SubmissionReviewPanel:'submission-review-panel',SubmissionPackage:'submission-package'}[value.type.name];
+   if(realName){components.set(realName,value.props);componentMounts.set(realName,instance);}
    return expand(value.type(value.props),key,seen,ancestors);
   }
   const next={...value,props:{...value.props,children:expand(value.props?.children,path+'/children',seen,[...ancestors,value])}};
@@ -101,8 +117,115 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  const settle=async()=>{for(let i=0;i<10;i++){if(!closed)render();await new Promise(resolve=>setImmediate(resolve));}};
  const component=name=>{render();return components.get(name);};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
- return{products,requests,render,settle,component,button,componentVisible(name){render();const instance=componentMounts.get(name);return!!instance&&instance.ancestors.every(node=>!node.props.hidden&&(node.type!=='details'||node.props.open===true));},componentMount(name){render();return componentMounts.get(name);},componentCount(name){render();return componentCounts.get(name)??0;},async click(label){const found=button(label);assert.ok(found,'Missing button '+label);found.props.onClick();await settle();},deferDelete(){return nextDelete=deferred();},deferSettings(){return nextSettings=deferred();},deferProduct(id){return nextProduct={...deferred(),id};},setProductReply(fn){replyProduct=fn;},setWorkspaceEdits(value){Object.assign(workspaceEdits,value);},setSettingsBody(value){currentSettings=value;},switchOwner(value){workspaceOwnerId=value;return render();},setDeleteReply(fn){replyDelete=fn;},setSettingsPutReply(fn){replySettingsPut=fn;},close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},get lateWrites(){return lateWrites;}};
+ return{products,requests,render,settle,component,button,componentVisible(name){render();const instance=componentMounts.get(name);return!!instance&&instance.ancestors.every(node=>!node.props.hidden&&(node.type!=='details'||node.props.open===true));},componentMount(name){render();return componentMounts.get(name);},instance(name){render();return [...instances].find(([key])=>key.includes('/'+name+':'))?.[1];},componentCount(name){render();return componentCounts.get(name)??0;},async click(label){const found=button(label);assert.ok(found,'Missing button '+label);found.props.onClick();await settle();},deferDelete(){return nextDelete=deferred();},deferSettings(){return nextSettings=deferred();},deferProfiles(){return nextProfiles=deferred();},setProfiles(value){currentProfiles=value;},deferProduct(id){return nextProduct={...deferred(),id};},setProductReply(fn){replyProduct=fn;},setWorkspaceEdits(value){Object.assign(workspaceEdits,value);},setSettingsBody(value){currentSettings=value;},switchOwner(value){workspaceOwnerId=value;return render();},setDeleteReply(fn){replyDelete=fn;},setSettingsPutReply(fn){replySettingsPut=fn;},close(){closed=true;for(const instance of instances.values()){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());}},get lateWrites(){return lateWrites;}};
 }
+
+async function officialSubmissionFlow(company){
+ const api=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),events=[],modules=new Map(),pause=deferred();
+ const snapshot={...hubSchemaSnapshot(company),metadata:{displayCategoryCode:'991234',categoryId:3000,scope:'Retail_Categorized_Single',productNoticeNumber:17,version:73}};
+ const raw=JSON.parse(snapshot.schemaString),common=raw.properties.productPage.properties.commonAttributes;
+ common.properties.purchasePrice={type:'integer',title:'공급가',minimum:1};common.properties.coupangSalePrice={type:'integer',title:'판매가',minimum:1};common.required=['purchasePrice','coupangSalePrice'];delete raw.properties.productPage.properties.price;snapshot.schemaString=JSON.stringify(raw);
+ const fields=api.load('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId,schemaPath,snapshot).fields;
+ const headers=fields.map(field=>field.label),category=schemaPath.join('>')+' (991234)',sheetName='QF_3000_시험분류';
+ const categoryColumn=columnIndex=>{let result='';for(let value=columnIndex+1;value;value=Math.floor((value-1)/26))result=String.fromCharCode(65+(value-1)%26)+result;return result;};
+ const column=index=>{let result='';for(let value=index+1;value;value=Math.floor((value-1)/26))result=String.fromCharCode(65+(value-1)%26)+result;return result;};
+ const row=(number,values)=>`<row r="${number}">${values.map((value,index)=>`<c r="${column(index)}${number}" t="inlineStr"><is><t>${value.replaceAll('&','&amp;').replaceAll('<','&lt;')}</t></is></c>`).join('')}</row>`;
+ // Synthetic official OOXML exercises the actual download, verification, R2,
+ // profile CAS and receipt API; it contains no private supplier workbook.
+ const bytes=workbookArchive([
+  ['[Content_Types].xml','<Types><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>'],
+  ['_rels/.rels','<Relationships><Relationship Id="main" Type="x/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+  ['xl/workbook.xml',`<workbook xmlns:r="relationship"><sheets><sheet name="${sheetName}" r:id="one"/></sheets></workbook>`],
+  ['xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="one" Type="x/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
+  ['xl/worksheets/sheet1.xml',`<worksheet><sheetData>${row(1,['','Retail_Categorized_Excel:Kan:3000:Notice17:Version190'])}${row(5,headers)}${row(6,fields.map(field=>field.required?'필수':'선택'))}${row(7,headers.map(()=>'작성 안내'))}${row(8,headers.map((_value,index)=>index===1?category:'예시'))}${row(9,headers.map(()=>''))}</sheetData><dataValidations><dataValidation type="list" allowBlank="true" sqref="B9:B1008"><formula1>"${category}"</formula1></dataValidation><dataValidation type="list" allowBlank="true" sqref="${categoryColumn(headers.indexOf('렌즈 유형'))}9:${categoryColumn(headers.indexOf('렌즈 유형'))}1008"><formula1>"해당사항없음,UV"</formula1></dataValidation></dataValidations></worksheet>`],
+ ]);
+ const request=async(url,init={})=>{
+  events.push({url,method:init.method??'GET',body:typeof init.body==='string'?JSON.parse(init.body):undefined});
+  if(url==='/api/category-profiles')return api.load('app/api/category-profiles/route.ts')[init.method??'GET'](new Request('https://app.test'+url,init));
+  if(url==='/api/category-profiles/official-template')return api.load('app/api/category-profiles/official-template/route.ts').POST(new Request('https://app.test'+url,init));
+  return api.route(url,{method:init.method??'GET',body:init.body});
+ };
+ const parent={categoryId:'100',name:schemaPath[0],isLeaf:false},leaf={categoryId:snapshot.categoryId,name:schemaPath[1],isLeaf:true};
+ const exchange=async(type,payload)=>{
+  events.push({type});if(type==='PING')return{categoryCatalog:true,categorySchema:true,categoryTemplate:true};
+  const branch={source:'supplier-hub-category-api',ownerId:'owner',company,observedAt:Date.now(),fullCatalogVerified:false,trail:payload.trail,children:payload.trail.length?[leaf]:[parent]};
+  if(type==='CATEGORIES')return{branch};if(type==='SCHEMA')return{branch:{...branch,schema:snapshot}};
+  assert.equal(type,'TEMPLATE');return{branch:{...branch,schema:snapshot,template:{format:'supplier-hub-template-v1',categoryId:snapshot.categoryId,categoryPath:schemaPath,company,kanCategoryId:'3000',sourceUrl:'https://supplier.coupang.com/qvt/v3/kan-categories/download-quotation?leafKanCategoryIds=3000&locale=ko',observedAt:Date.now(),name:`SupplierHub-${company.code}-Kan3000.xlsx`,size:bytes.length,base64:Buffer.from(bytes).toString('base64'),sha256:Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex'),registered:false}}};
+ };
+ function loadCatalog(file){
+  if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,Date,AbortController,File,FormData,TextEncoder,TextDecoder,Uint8Array,crypto,atob,btoa,fetch:request,require(name){if(name==='@/app/supplier-hub-handoff')return{exchange};if(name==='@/app/load-category-profiles')return loadCatalog(name.slice(2)+'.ts');return name.startsWith('@/')?api.load(name.slice(2)+'.ts'):native(name);}});return exports;
+ }
+ const profile=await api.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'접수 추적 합성 시험',categoryId:snapshot.categoryId,categoryPath:schemaPath,hubSchema:snapshot,template:null,mappings:[]});
+ api.context.category=profile;api.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(api.context));await api.intake();
+ const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();},product=api.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+ const content=(await json(await api.route(base+'/content'))).content,images=api.sqlite.prepare('SELECT object_key FROM collection_images ORDER BY image_index').all().map(item=>item.object_key);
+ await json(await api.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'검토한 합성 상품명',description:''},assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]}}}}));
+ const view=await json(await api.route(base+'/quotation-fields'));
+ const manual=field=>field.id==='title'?'검토한 합성 상품명':field.id==='salePrice'?'200':field.id==='packagedDimensionsMm'?'10*20*30':field.type==='number'?'100':field.type==='select'?field.choices.find(choice=>choice.value!=='')?.value:'합성 검토값';
+ await json(await api.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[...view.resolved.schema.fields.filter(field=>field.required&&field.id!=='category').map(field=>({fieldKey:field.id,optionId:null,value:manual(field)})),{fieldKey:'detailHtml',optionId:null,value:'<p>검토한 합성 설명</p>'}]}}));
+ const validators=api.load('app/supplier-hub-handoff.ts');let prepared,lookup=0,trackSignal;
+ const observation=(registration=false)=>({state:lookup++===0?'validation-pending':'validation-complete',filename:prepared.filename,company,includedOptions:prepared.includedOptions,observedAt:Date.now(),registered:false,
+  ...(lookup>1?{quotationId:'synthetic-quotation'}:{}),...(registration?{registration:{quotationId:'synthetic-quotation',scope:'visible-page',includedOptions:prepared.includedOptions,observedAt:Date.now(),registered:false,rows:Array.from({length:prepared.includedOptions},(_,index)=>({title:'합성 옵션 '+index,submittedAt:'2026-10-11',category:schemaPath.join('>'),barcode:'',sourceQuotation:prepared.filename,skuId:'synthetic-sku-'+index,status:'상품 검수중',stage:'가격/정책'}))}}:{})});
+ const bridge={...validators,checkSupplierHubExtension:async()=>{},getSupplierHubProductHistory:async()=>({records:[],blocked:false}),getSupplierHubSubmission:async()=>({attempt:null,result:null}),
+  transmitSupplierHubPackage:async(blob,identity)=>{const files=await prepareAttachments(new Uint8Array(await blob.arrayBuffer()));events.push({type:'TRANSMIT',identity,files});assert.deepEqual(files.company,company);return{state:'validation-requested',registered:false};},
+  getSupplierHubResult:async(_identity,_signal,mode)=>observation(mode==='registration')};
+ return{api,profile,bytes,events,request,catalog:loadCatalog('app/supplier-hub-catalog.ts'),bridge,products:[api.sqlite.prepare('SELECT * FROM products').get()],
+  tracking:tracker=>({...tracker,followSupplierHubRegistration:(source,options)=>{prepared=source;trackSignal=options.signal;events.push({type:'TRACK',source});return tracker.followSupplierHubRegistration(source,{...options,maxDurationMs:10000,wait:async(_ms,signal)=>{if(!lookup)return;await Promise.race([pause.promise,new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}))]);}});}}),
+  get signal(){return trackSignal;},continue(){pause.resolve();},close(){pause.resolve();api.close();}};
+}
+
+for(const company of schemaCompanies)for(const laterChange of [false,true])test(`official preparation and first receipt refresh retain one live tracker; ${laterChange?'a later profile save cancels it':'the same tracker reaches SKU receipt'} (${company.code})`,async()=>{
+ const flow=await officialSubmissionFlow(company),h=harness({workspaceOwnerId:'owner',settingsBody:{settings:flow.api.settings,scope:scope('owner',company.code)},officialFlow:flow});
+ try{
+  await h.settle();h.component('registration-board').onOpen(h.products[0],'견적서');await h.settle();
+  const originalProduct=flow.api.sqlite.prepare('SELECT * FROM products').get(),frozen=flow.api.sqlite.prepare('SELECT payload FROM collection_context').get().payload;
+  const stale=h.deferProfiles();h.component('product-content-editor').onSaved();await h.settle();
+  await h.click('공식 파일 기준으로 연결');for(let i=0;i<30&&h.button('공식 파일 기준으로 연결');i++)await h.settle();
+  const saved=await flow.api.load('db/category-profiles.ts').getCategoryProfile('owner',flow.profile.id);assert.equal(saved.revision,2);assert.equal(saved.template.workbookEvidence.templateSha256,saved.template.sha256);assert.deepEqual(flow.api.objects.get(saved.template.storageKey),flow.bytes);
+  stale.resolve([flow.profile]);await h.settle();await h.click('저장한 견적 전송 준비');await h.settle();
+  const mount=h.instance('SubmissionPackage');assert.ok(mount);await h.click('견적서 + 첨부 파일 준비');
+  await settleUntil(h,()=>h.button('확장에 첨부 파일 준비')&&!nodes(h.render()).find(node=>node.props?.['aria-label']==='견적서와 첨부 파일 준비').props['aria-busy']);
+  assert.ok(h.button('확장에 첨부 파일 준비'),text(h.render()));
+  for(const input of nodes(h.render()).filter(node=>node.type==='input'&&node.props.type==='checkbox'))input.props.onChange({target:{checked:true}});
+  const transmit=nodes(h.render()).filter(node=>node.type==='button'&&text(node)==='등록 전송').at(-1);assert.ok(transmit&&!transmit.props.disabled,text(h.render()));transmit.props.onClick();await h.settle();
+  await settleUntil(h,()=>Boolean(flow.api.sqlite.prepare('SELECT * FROM supplier_hub_receipts').get()));await h.settle();
+  assert.ok(flow.signal,text(h.render()));assert.equal(flow.signal.aborted,false);assert.equal(h.instance('SubmissionPackage'),mount);assert.ok(flow.api.sqlite.prepare('SELECT * FROM supplier_hub_receipts').get());
+  assert.equal(flow.events.filter(event=>event.type==='TRACK').length,1);assert.equal(flow.events.filter(event=>event.type==='TRANSMIT').length,1);assert.equal(flow.events.filter(event=>event.body?.action==='export').length,1);
+  assert.equal(flow.api.sqlite.prepare('SELECT updated_at FROM products').get().updated_at,originalProduct.updated_at);assert.equal(flow.api.sqlite.prepare('SELECT payload FROM collection_context').get().payload,frozen);
+  const sourceReads=flow.events.filter(event=>event.body?.action==='source').length;
+  if(laterChange){
+   const changed=await flow.api.load('db/category-profiles.ts').updateCategoryProfile('owner',saved.id,saved.revision,{...saved,name:'나중에 변경한 설정'});assert.equal(changed.revision,3);
+   // A subsequent reload carries a genuine later revision and retains the
+   // existing unmount/cancel guard rather than hiding an actual source change.
+   h.component('submission-review-panel').onReceiptSaved();await h.settle();assert.equal(flow.signal.aborted,true);assert.notEqual(h.instance('SubmissionPackage'),mount);
+  }else{
+   flow.continue();await settleUntil(h,()=>text(h.render()).includes('6개의 SKU ID'));
+   assert.equal(h.instance('SubmissionPackage'),mount);assert.equal(flow.signal.aborted,false);assert.match(text(h.render()),/6개의 SKU ID/);
+   const receipt=JSON.parse(flow.api.sqlite.prepare('SELECT payload FROM supplier_hub_receipts').get().payload);assert.equal(receipt.result.registration.rows.length,6);assert.ok(receipt.result.registration.rows.every(row=>row.skuId));assert.equal(receipt.result.registered,false);
+  }
+  assert.equal(flow.events.filter(event=>event.type==='TRANSMIT').length,1);assert.equal(flow.events.filter(event=>event.body?.action==='export').length,1);assert.ok(flow.events.filter(event=>event.body?.action==='source').length>=sourceReads);
+ }finally{h.close();flow.close();}
+});
+
+test('prepared-profile adoption rejects changed owner, navigation, identity, revision and original storage scope without changing products',async()=>{
+ const source={id:'official',name:'검증 양식',categoryId:'991234',categoryPath:schemaPath,revision:1,verification:'draft',createdAt:version,updatedAt:version,template:null,mappings:[],hubSchema:hubSchemaSnapshot(schemaCompanies[1])};
+ const saved={...source,revision:2,template:{name:'original.xlsx',format:'xlsx',sha256:'a'.repeat(64),storageKey:'test-owner/category-templates/'+ 'a'.repeat(64)+'.xlsx',sheetName:'QF_3000',headerRow:5,dataStartRow:9,headers:['상품명','카테고리']}};
+ for(const patch of [{id:'different'},{revision:3},{categoryId:'different'},{categoryPath:['다른 분류']},{hubSchema:hubSchemaSnapshot(schemaCompanies[0])},{template:{...saved.template,storageKey:'other-owner/category-templates/'+ 'a'.repeat(64)+'.xlsx'}}]){
+  const h=harness({profiles:[source]});try{
+   await h.settle();h.component('registration-board').onOpen(h.products[0],'견적서');await h.settle();const callback=h.component('quotation-panel').onProfilePrepared,before=JSON.stringify(h.products),reads=h.requests.length;
+   assert.equal(typeof callback,'function');assert.throws(()=>callback({...saved,...patch},source),/저장 결과/);assert.equal(h.requests.length,reads);assert.equal(JSON.stringify(h.products),before);
+   h.component('quotation-panel').onPrepareSubmission(source.id);await h.settle();assert.equal(h.component('submission-review-panel').profiles[0].revision,1);
+  }finally{h.close();}
+ }
+ for(const change of ['owner','navigation','unmount']){
+  const h=harness({profiles:[source]});try{
+   await h.settle();h.component('registration-board').onOpen(h.products[0],'견적서');await h.settle();const callback=h.component('quotation-panel').onProfilePrepared;
+   if(change==='owner')h.switchOwner('another-owner');else if(change==='navigation')h.component('registration-board').onOpen(h.products[1],'견적서');else h.close();
+   const reads=h.requests.length;assert.throws(()=>callback(saved,source),/현재 계정과 상품/);assert.equal(h.requests.length,reads);assert.equal(h.lateWrites,0);
+  }finally{h.close();}
+ }
+});
 
 test('actual dashboard deletion sends the saved version and removes only its row and selection after confirmation',async()=>{
  const h=harness();try{

@@ -47,6 +47,7 @@ async function requestHarness(options={}){
   '@/app/components/quotation-fields-editor':{QuotationFieldsEditor:Editor},
   '@/app/components/quotation-preview-review':{QuotationPreviewReview:()=>null},
   '@/app/components/quotation-mapping-review':{QuotationMappingReview:()=>null},
+  ...(options.prepareOfficial?{'@/app/supplier-hub-catalog':{prepareOfficialHubProfileTemplate:options.prepareOfficial}}:{}),
   URL:{createObjectURL(){downloads++;return'blob:test';},revokeObjectURL(){}},document:{createElement(){return{click(){}};}},
   fetch:async(url,init)=>{if(init?.method==='POST'){calls.push(init);return await new Promise(resolve=>pending.push(resolve));}if(url==='/api/category-profiles'&&profileReads++>0&&refreshResponse)return await refreshResponse(init);return Response.json(url==='/api/category-profiles'?{profiles:options.profiles??[{id:'saved',name:'원본',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본',headerRow:1}}]}:{categoryContext:options.categoryContext??{profileId:'saved',categoryId:'80719'}});},
  });
@@ -57,6 +58,31 @@ async function requestHarness(options={}){
 }
 const previewBody={fingerprint:'f',filename:'quote.csv',headers:['상품명'],rows:[['이전 상품']],report:{dataStartRow:2,rowCount:1,missingRequired:[],warnings:[],contentRevision:1,optionRevision:1,profileRevision:1}};
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&n.props.children===label);
+
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`official preparation notifies the parent before submission becomes available (${company.code})`,async()=>{
+ const source={id:'saved',name:'공식 준비',revision:1,categoryId:'80719',categoryPath:['바스켓'],template:null,mappings:[],hubSchema:{company,metadata:{scopeType:'Retail_Categorized_Single'}}};
+ const saved={...source,revision:2,template:{name:'original.xlsx',headerRow:5,dataStartRow:9}},calls=[],prepared=[];
+ const h=await requestHarness({profiles:[source],prepareOfficial:async(value,signal,mode)=>{assert.deepEqual(value,source);assert.equal(signal.aborted,false);assert.equal(mode,'workbook');return saved;}});
+ h.render({onProfilePrepared:(value,prior)=>{calls.push([value,prior]);assert.equal(button(h.render(),'저장한 견적 전송 준비').props.disabled,true);},onPrepareSubmission:id=>prepared.push(id)});
+ button(h.render(),'공식 파일 기준으로 연결').props.onClick();await h.settle();
+ assert.deepEqual(calls,[[saved,source]]);assert.equal(button(h.render(),'공식 파일 기준으로 연결'),undefined);
+ button(h.render(),'저장한 견적 전송 준비').props.onClick();assert.deepEqual(prepared,['saved']);assert.equal(h.calls.length,0);assert.equal(h.downloads(),0);h.unmount();
+});
+
+test('aborted official preparation cannot notify the parent or restore a prepared local profile',async()=>{
+ const source={id:'saved',name:'공식 준비',revision:1,categoryId:'80719',categoryPath:['바스켓'],template:null,mappings:[],hubSchema:{metadata:{scopeType:'Retail_Categorized_Single'}}};
+ let release,signal,notifications=0;
+ const h=await requestHarness({profiles:[source],prepareOfficial:async(_profile,current)=>{signal=current;return new Promise(resolve=>{release=resolve;});}});
+ h.render({onProfilePrepared(){notifications++;}});button(h.render(),'공식 파일 기준으로 연결').props.onClick();h.unmount();assert.equal(signal.aborted,true);
+ release({...source,revision:2,template:{name:'original.xlsx',headerRow:5,dataStartRow:9}});await h.settle();assert.equal(notifications,0);assert.ok(button(h.render(),'공식 파일 기준으로 연결'));assert.equal(h.calls.length,0);
+});
+
+test('a parent scope rejection leaves official preparation unavailable for the stale local profile',async()=>{
+ const source={id:'saved',name:'공식 준비',revision:1,categoryId:'80719',categoryPath:['바스켓'],template:null,mappings:[],hubSchema:{metadata:{scopeType:'Retail_Categorized_Single'}}};
+ const h=await requestHarness({profiles:[source],prepareOfficial:async()=>({...source,revision:2,template:{name:'original.xlsx',headerRow:5,dataStartRow:9}})});
+ h.render({onProfilePrepared(){throw Error('현재 계정이 변경되었습니다.');}});button(h.render(),'공식 파일 기준으로 연결').props.onClick();await h.settle();
+ assert.match(JSON.stringify(h.render()),/현재 계정이 변경/);assert.ok(button(h.render(),'공식 파일 기준으로 연결'));assert.equal(h.calls.length,0);h.unmount();
+});
 
 test('explicit source navigation reopens the same field without resetting the selected workbook or manual start row',async()=>{
  const h=await requestHarness(),editor=tree=>nodes(tree).find(node=>node.type===h.Editor);
