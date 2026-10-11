@@ -5,6 +5,7 @@ import {
 } from '@/app/free-image-translation';
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
 import { resolveFreeImageTextStyle, ensureFreeImageTextFont, type FreeImageTextStyle } from '@/app/free-image-text-style';
+import { validateFreeImageBrush, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeImageBrush } from '@/app/free-image-brush';
 import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
 
 export type OcrBox = { x: number; y: number; width: number; height: number };
@@ -13,6 +14,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
   translated: string; issue: string | null; translationProvenance: 'empty' | 'generated' | 'manual';
   background: string; foreground: string; fontSize: number;
   erase?: boolean;
+  brush?: FreeImageBrush;
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[] };
@@ -202,17 +204,18 @@ function wrappedLines(context: CanvasRenderingContext2D, value: string, maximumW
   }
   return lines;
 }
-/** Only chosen rectangles are painted. This preserves every pixel outside
- * them; a flat fill is a reviewed text replacement, not AI reconstruction. */
+/** Paint only selected rectangles or brush paths, preserving outside pixels.
+ * Flat fills and strokes are reviewed edits, not AI reconstruction. */
 export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = []): Promise<FreeImageRendered> {
   dimensions(image.width, image.height); signal.throwIfAborted();
   const selectedOptions = validateFreeImageOptionIds(image.source, [...optionImageIds]);
   if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
-  const chosen = regions.filter(row => row.selected);
+  const chosen = regions.filter(row => row.selected).map(row => ({ ...row, box: { ...row.box } }));
   if (!chosen.length || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
   const textRegions = chosen.filter(region => region.erase !== true);
   if (textRegions.length) validateImageTextRegions(textRegions.map(region => ({ id: region.id, text: region.translated })));
-  const ids = new Set<string>(), styles = new Map<string, ReturnType<typeof resolveFreeImageTextStyle>>();
+  const ids = new Set<string>(), styles = new Map<string, ReturnType<typeof resolveFreeImageTextStyle>>(), brushes = new Map<string, ReturnType<typeof validateFreeImageBrush>>();
+  let brushPoints = 0;
   for (const region of chosen) {
     validateOcrBox(region.box, image.width, image.height);
     if (typeof region.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(region.id) || ids.has(region.id)
@@ -220,6 +223,13 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
       || region.erase !== true && (!/^#[a-f0-9]{6}$/iu.test(region.foreground)
         || !Number.isInteger(region.fontSize) || region.fontSize < 1 || region.fontSize > 200)) throw Error('선택한 번역 문구·색상·글자 크기를 확인해주세요.');
     ids.add(region.id);
+    if (region.brush !== undefined) {
+      if (region.erase !== true) throw Error('브러시 영역은 배경색 지우기로만 적용할 수 있습니다.');
+      const validated = validateFreeImageBrush(region.brush, region.box, image.width, image.height);
+      brushPoints += validated.brush.points.length;
+      if (brushPoints > MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS) throw Error('선택한 브러시 경로가 너무 깁니다. 일부 영역의 선택을 해제해주세요.');
+      brushes.set(region.id, validated);
+    }
     if (region.erase !== true) styles.set(region.id, resolveFreeImageTextStyle(region));
   }
   const loadedFonts = new Set<string>();
@@ -231,7 +241,23 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   signal.throwIfAborted();
   const output = canvas(image.width, image.height); output.context.drawImage(image.canvas, 0, 0);
   for (const region of chosen) {
-    signal.throwIfAborted(); const { x, y, width, height } = region.box;
+    signal.throwIfAborted();
+    const reviewedBrush = brushes.get(region.id);
+    if (reviewedBrush) {
+      const { brush, box } = reviewedBrush;
+      output.context.save(); output.context.beginPath(); output.context.rect(box.x, box.y, box.width, box.height); output.context.clip();
+      output.context.beginPath();
+      const first = brush.points[0];
+      if (brush.points.length === 1) {
+        output.context.fillStyle = region.background; output.context.arc(first.x, first.y, brush.size / 2, 0, Math.PI * 2); output.context.fill();
+      } else {
+        output.context.strokeStyle = region.background; output.context.lineWidth = brush.size; output.context.lineCap = 'round'; output.context.lineJoin = 'round';
+        output.context.moveTo(first.x, first.y); for (const point of brush.points.slice(1)) output.context.lineTo(point.x, point.y);
+        output.context.stroke();
+      }
+      output.context.restore(); continue;
+    }
+    const { x, y, width, height } = region.box;
     if (region.erase === true) {
       output.context.save(); output.context.beginPath(); output.context.rect(x, y, width, height); output.context.clip();
       output.context.fillStyle = region.background; output.context.fillRect(x, y, width, height); output.context.restore();

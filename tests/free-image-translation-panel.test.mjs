@@ -19,8 +19,13 @@ const styleModule = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-text-style.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: styleModule });
 const historyModule = {};
+const brushModule = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-brush.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
+  { exports: brushModule, require(name) { assert.equal(name, '@/app/free-image-translation'); return { MAX_OCR_PIXELS: 12000000 }; } });
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-edit-history.ts', import.meta.url), 'utf8'),
-  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: historyModule });
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
+  { exports: historyModule, require(name) { assert.equal(name, '@/app/free-image-brush'); return brushModule; } });
 class ApplyError extends Error { constructor(message, uncertain) { super(message); this.uncertain = uncertain; } }
 
 function fixture() {
@@ -67,14 +72,17 @@ function fixture() {
       if (name === '@/app/free-image-translation') return { FREE_IMAGE_ROLES: ['main', 'additional', 'detailTop', 'detail', 'detailBottom'], MAX_OCR_REGIONS: 100 };
       if (name === '@/app/free-image-text-style') return styleModule;
       if (name === '@/app/free-image-edit-history') return historyModule;
+      if (name === '@/app/free-image-brush') return brushModule;
+      if (name === '@/app/components/free-image-brush-canvas') return { FreeImageBrushCanvas: 'FreeImageBrushCanvas' };
       assert.equal(name, '@/app/free-image-translation-client'); return client;
     } });
   const render = () => { cursor = 0; const outer = exports.default(props), tree = outer.type(outer.props); effects.splice(0).forEach(fn => fn()); return tree; };
   const settle = async () => { for (let index = 0; index < 6; index++) { render(); await new Promise(resolve => setImmediate(resolve)); } };
   const button = label => nodes(render()).find(node => node.type === 'button' && text(node) === label);
   const field = label => nodes(render()).find(node => node.props['aria-label'] === label);
+  const brush = () => nodes(render()).find(node => node.type === 'FreeImageBrushCanvas');
   render(); render();
-  return { render, settle, calls, busy, urls, revoked, button, field, get saved() { return saved; }, get late() { return late; },
+  return { render, settle, calls, busy, urls, revoked, button, field, brush, get saved() { return saved; }, get late() { return late; },
     setSource(fn) { sourceIntercept = fn; }, setOcr(fn) { ocrIntercept = fn; }, setTranslate(fn) { translateIntercept = fn; }, setRender(fn) { renderIntercept = fn; }, setApply(fn) { applyIntercept = fn; }, setRecover(fn) { recoverIntercept = fn; },
     setProps(update) { props = { ...props, ...update }; render(); render(); }, allowApply(value) { allowApply = value; },
     async click(label) { await settle(); const control = button(label); assert.ok(control && !control.props.disabled, 'available control: ' + label); control.props.onClick(); await settle(); },
@@ -310,12 +318,12 @@ test('cancel, new target and unmount abort active work and ignore late OCR/trans
 test('repeated same-image targets retain manual drafts; different image/role and OCR reset require explicit draft clearing', async () => {
   const h = fixture(); try {
     await translated(h); await h.change('문구 1 한국어', '직접 검토한 번역'); await h.change('문구 2 한국어', '');
-    const originalUrl = nodes(h.render()).find(node => node.type === 'img' && node.props.alt === '문구 번역 원본').props.src;
+    const originalUrl = h.brush().props.sourceUrl;
     const count = h.calls.length;
     h.setProps({ translationTarget: { sourceKey: 'owner/original.png', sequence: 2, role: 'detail', sourceLanguage: 'en' } }); await h.settle();
     assert.equal(h.field('문구 1 한국어').props.value, '직접 검토한 번역'); assert.equal(h.field('문구 2 한국어').props.value, '');
     assert.equal(h.field('이미지 원문 언어').props.value, 'en'); assert.equal(h.calls.length, count);
-    assert.equal(nodes(h.render()).find(node => node.type === 'img' && node.props.alt === '문구 번역 원본').props.src, originalUrl);
+    assert.equal(h.brush().props.sourceUrl, originalUrl);
     assert.equal(h.button('원본 문구 읽기').props.disabled, true);
     h.button('원본 문구 읽기').props.onClick(); await h.settle(); assert.equal(h.calls.length, count, 'even an old handler cannot reset an edited OCR draft');
     h.setProps({ translationTarget: { sourceKey: 'owner/second.png', sequence: 3, role: 'main', sourceLanguage: 'zh' } }); await h.settle();
@@ -879,5 +887,106 @@ test('an earlier translate callback reads the latest selected originals after or
     assert.equal(h.field('문구 2 한국어').props.value, '한국어 r2'); assert.equal(h.saved, 0);
     await h.change('문구 2 선택', '', false); const count = h.calls.length; translate(); await h.settle();
     assert.equal(h.calls.length, count, 'an earlier enabled control cannot translate a now empty selection');
+  } finally { h.close(); }
+});
+
+test('a completed brush gesture appends one immutable layer and one undo step while pending drawing blocks all processing', async () => {
+  const h = fixture(); try {
+    mainImageOptions(h, 'sku-b'); await translated(h); await h.change('문구 2 한국어', '');
+    const before = await snapshotRegions(h), oldApply = h.button('검토한 번역 이미지 적용').props.onClick;
+    const oldTranslate = h.button('선택 문구 한국어 번역').props.onClick, oldPreview = h.button('번역 이미지 미리보기').props.onClick;
+    const oldUndo = h.button('되돌리기').props.onClick, oldOption = h.field(optionLabel('sku-a')).props.onChange;
+    await h.change('색상 브러시 모드', '', true); await h.change('브러시 지름', '6'); await h.change('브러시 색상', '#13579b');
+    const canvas = h.brush().props, count = h.calls.length, id = canvas.onBegin(); assert.ok(id); await h.settle();
+    assert.equal(h.brush().props.disabled, false, 'the active draw surface stays enabled during its own gesture');
+    assert.equal(h.button('번역 이미지 미리보기').props.disabled, true); assert.equal(h.button('검토한 번역 이미지 적용').props.disabled, true);
+    assert.equal(h.render().props['data-workspace-saving'], 'true'); assert.equal(h.busy.at(-1), true);
+    oldTranslate(); oldPreview(); oldApply(); oldUndo(); oldOption({ target: { checked: true } }); await h.change('문구 1 한국어', 'blocked'); await h.settle();
+    assert.equal(h.calls.length, count); assert.equal(h.field(optionLabel('sku-a')).props.checked, false); assert.equal(h.field('문구 1 한국어').props.value, '한국어 r1');
+    assert.equal(h.field('문구 3 원문'), undefined, 'no partial gesture is installed as a region');
+    const points = [{ x: 2, y: 3 }, { x: 9, y: 5 }]; canvas.onComplete(id, points); await h.settle(); points[0].x = 19;
+    assert.equal(h.calls.length, count); assert.equal(h.button('검토한 번역 이미지 적용'), undefined); assert.equal(h.busy.at(-1), false);
+    const after = await snapshotRegions(h), brush = after.at(-1);
+    assert.deepEqual(brush.brush, { size: 6, points: [{ x: 2, y: 3 }, { x: 9, y: 5 }] }); assert.deepEqual(brush.box, { x: 0, y: 0, width: 12, height: 8 });
+    assert.equal(brush.erase, true); assert.equal(brush.background, '#13579b'); assert.deepEqual(after.slice(0, -1), before);
+    await h.click('되돌리기'); assert.deepEqual(await snapshotRegions(h), before);
+    await h.click('다시 실행'); assert.deepEqual(await snapshotRegions(h), after);
+    assert.equal(h.field(optionLabel('sku-b')).props.checked, true); assert.equal(h.field('문구 2 한국어').props.value, ''); assert.equal(h.saved, 0);
+    for (const label of ['원문', '한국어', '영역 지우기', 'x', 'y', 'width', 'height', '글자 크기', ...styleFields]) assert.equal(h.field('문구 3 ' + label).props.disabled, true, label);
+    await h.change('문구 3 x', '8'); await h.change('문구 3 한국어', 'not a text layer'); await h.change('문구 3 영역 지우기', '', false);
+    assert.deepEqual(await snapshotRegions(h), after, 'disabled geometry/text handlers cannot alter a fixed brush path');
+    await h.change('문구 3 배경색', '#ff0000'); await h.clickField('문구 3 뒤로');
+    const moved = await snapshotRegions(h); assert.equal(moved[1].id, brush.id); assert.equal(moved[1].background, '#ff0000'); assert.deepEqual(moved[1].brush, brush.brush);
+    await h.change('문구 2 선택', '', false); assert.equal(h.brush().props.strokes.length, 0);
+    await h.click('문구 2 영역 삭제'); assert.equal((await snapshotRegions(h)).some(row => row.brush), false);
+  } finally { h.close(); }
+});
+
+test('cancel and discard create no brush history, and same-source OCR replacement rejects the old completed gesture', async () => {
+  const h = fixture(); try {
+    await translated(h); const before = await snapshotRegions(h);
+    await h.change('색상 브러시 모드', '', true); const first = h.brush().props, id = first.onBegin(); await h.settle();
+    first.onCancel(id); await h.settle(); assert.deepEqual(await snapshotRegions(h), before); assert.equal(h.busy.at(-1), false);
+    const second = h.brush().props, discarded = second.onBegin(); await h.settle(); await h.click('이미지 번역 편집 초안 지우기');
+    second.onComplete(discarded, [{ x: 5, y: 5 }]); second.onCancel(discarded); await h.settle();
+    assert.equal(h.brush(), undefined); assert.equal(h.field('문구 1 원문'), undefined);
+    await h.click('원본 문구 읽기'); assert.equal(h.field('색상 브러시 모드').props.checked, false); assert.equal(h.button('되돌리기').props.disabled, true);
+    assert.equal(second.onBegin(), null); second.onComplete(discarded, [{ x: 5, y: 5 }]); await h.settle();
+    assert.equal((await snapshotRegions(h)).some(row => row.brush), false); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('new product version, toolbar source or quotation slot cancels parent brush scope before any late completion can append', async () => {
+  for (const change of ['version', 'toolbar', 'slot']) {
+    const h = fixture(); try {
+      const { quotationContext } = finalImageSelection(h); await translated(h); const before = await snapshotRegions(h);
+      await h.change('색상 브러시 모드', '', true); const canvas = h.brush().props, id = canvas.onBegin(); await h.settle();
+      if (change === 'version') h.setProps({ version: '2026-10-06T00:00:02.000Z' });
+      if (change === 'toolbar') h.setProps({ translationTarget: { sourceKey: 'owner/second.png', role: 'detail', sourceLanguage: 'zh', sequence: 3 } });
+      if (change === 'slot') h.setProps({ quotationContext: { ...quotationContext, optionId: 'sku-b' }, focusedOptionId: 'sku-b' });
+      await h.settle(); assert.equal(h.render().props['data-workspace-saving'], undefined); assert.equal(h.busy.at(-1), false);
+      const count = h.calls.length; canvas.onComplete(id, [{ x: 2, y: 3 }, { x: 9, y: 5 }]); canvas.onCancel(id); await h.settle();
+      assert.equal(h.calls.length, count); assert.equal(h.field('문구 3 원문'), undefined); assert.equal(h.field('문구 1 한국어').props.value, before[0].translated); assert.equal(h.saved, 0);
+    } finally { h.close(); }
+  }
+  const h = fixture(); await translated(h); await h.change('색상 브러시 모드', '', true);
+  const canvas = h.brush().props, id = canvas.onBegin(); await h.settle(); h.close();
+  canvas.onComplete(id, [{ x: 2, y: 3 }]); canvas.onCancel(id); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.late, 0); assert.equal(h.saved, 0);
+});
+
+test('all stored brush paths count toward the total budget, including unselected layers, and rejected gestures add no undo entry', async () => {
+  for (const full of [false, true]) {
+    const h = fixture(); try {
+      const rows = Array.from({ length: 4 }, (_, index) => {
+        const length = index === 3 && !full ? 2047 : 2048;
+        const drawn = brushModule.createFreeImageBrush(1, Array.from({ length }, (_, i) => ({ x: i % 2, y: 0 })), 20, 12);
+        return { ...region('existing-' + index), selected: false, erase: true, ...drawn };
+      });
+      h.setOcr(async () => rows); await h.click('원본 문구 읽기'); await h.change('색상 브러시 모드', '', true);
+      assert.equal(h.brush().props.maxPoints, full ? 0 : 1); assert.equal(h.brush().props.disabled, full);
+      const canvas = h.brush().props, id = canvas.onBegin();
+      if (full) assert.equal(id, null);
+      else { assert.ok(id); canvas.onComplete(id, [{ x: 2, y: 3 }, { x: 9, y: 5 }]); }
+      await h.settle(); assert.equal(h.button('되돌리기').props.disabled, true); assert.equal(h.field('문구 5 원문'), undefined); assert.equal(h.saved, 0);
+      assert.equal(h.calls.filter(call => ['translate', 'preview', 'apply'].includes(call.action)).length, 0);
+    } finally { h.close(); }
+  }
+});
+
+test('a reviewed brush PNG retains exact quotation and option proof through lost save acknowledgement and explicit retry', async () => {
+  const h = fixture(); try {
+    const { quotationTarget } = finalImageSelection(h, 'additionalImages'); await translated(h); await h.change('문구 2 한국어', '');
+    await h.change('색상 브러시 모드', '', true); const canvas = h.brush().props, id = canvas.onBegin();
+    canvas.onComplete(id, [{ x: 4, y: 5 }]); await h.settle(); await h.click('번역 이미지 미리보기');
+    const preview = h.calls.filter(call => call.action === 'preview').at(-1); assert.ok(preview.rows.at(-1).brush);
+    assert.deepEqual(plain(preview.image.source.quotationTarget), { ...quotationTarget, bindingSha256: 'b'.repeat(64) }); assert.deepEqual(preview.optionImageIds, []);
+    const begin = h.brush().props.onBegin; h.setApply(async () => { throw new ApplyError('ACK 유실', true); }); await h.click('검토한 번역 이미지 적용');
+    assert.equal(begin(), null); assert.equal(h.field('색상 브러시 모드').props.disabled, true);
+    const first = h.calls.filter(call => call.action === 'apply')[0].image;
+    h.setRecover(async image => ({ source: image.source, applied: false })); await h.click('같은 결과의 저장 상태 다시 확인');
+    assert.equal(begin(), null); h.setApply(async image => ({ source: image.source, applied: true })); await h.click('같은 미리보기 다시 적용');
+    assert.equal(h.calls.filter(call => call.action === 'apply').at(-1).image, first); assert.equal(h.saved, 1);
+    assert.equal(h.calls.filter(call => call.action === 'source').length, 1); assert.equal(h.calls.filter(call => call.action === 'preview').length, 1);
   } finally { h.close(); }
 });

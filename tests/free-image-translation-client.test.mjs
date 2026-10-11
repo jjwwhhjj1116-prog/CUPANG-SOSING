@@ -16,7 +16,7 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts } = {}) 
   class ObjectURL extends URL { static createObjectURL(blob) { const url = 'blob:fixture-' + ++sequence; objects.set(url, blob); return url; } static revokeObjectURL(url) { revoked.push(url); objects.delete(url); } }
   class Image { set src(url) { if (!url) return; Promise.resolve(decodeWait).then(() => { if (!objects.has(url)) return; this.naturalWidth = imageWidth; this.naturalHeight = imageHeight; this.pixels = pixels(imageWidth, imageHeight); this.onload?.(); }); } }
   const document = { createElement(tag) {
-    assert.equal(tag, 'canvas'); const output = { width: 0, height: 0, pixels: null }, clips = []; let clip = null;
+    assert.equal(tag, 'canvas'); const output = { width: 0, height: 0, pixels: null }, clips = []; let clip = null, path = [], dot = null;
     const rgba = hex => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16), 255];
     const paint = (x, y, width, height, color) => {
       for (let py = Math.floor(y); py < y + height; py++) for (let px = Math.floor(x); px < x + width; px++) {
@@ -28,10 +28,26 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts } = {}) 
       const size = Number(/([0-9.]+)px/u.exec(font)?.[1]);
       return Array.from(text).length * size / 2 * (/\bbold\b/u.test(font) ? 1.25 : 1) * (/\bitalic\b/u.test(font) ? 1.1 : 1);
     };
+    const paintPath = (points, radius, color) => {
+      for (let y = 0; y < output.height; y++) for (let x = 0; x < output.width; x++) {
+        const px = x + 0.5, py = y + 0.5;
+        let distance = Math.hypot(px - points[0].x, py - points[0].y);
+        for (let index = 1; index < points.length; index++) {
+          const a = points[index - 1], b = points[index], dx = b.x - a.x, dy = b.y - a.y, length = dx * dx + dy * dy;
+          const fraction = length ? Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / length)) : 0;
+          distance = Math.min(distance, Math.hypot(px - a.x - fraction * dx, py - a.y - fraction * dy));
+        }
+        if (distance <= radius) paint(x, y, 1, 1, color);
+      }
+    };
     const context = { font: '10px Arial', fillStyle: '#000000', textBaseline: 'top', textAlign: 'left',
       drawImage(image, x, y) { assert.equal(x, 0); assert.equal(y, 0); output.pixels = image.pixels.slice(); operations.push(['draw', output.width, output.height]); },
       measureText(text) { const width = textWidth(this.font, text); measurements.push({ text, font: this.font, width }); return { width }; },
-      save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() {}, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
+      save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() { path = []; dot = null; }, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
+      moveTo(x, y) { path.push({ x, y }); }, lineTo(x, y) { path.push({ x, y }); },
+      stroke() { operations.push(['stroke', plain(path), this.lineWidth, this.lineCap, this.lineJoin]); paintPath(path, this.lineWidth / 2, rgba(this.strokeStyle)); },
+      arc(x, y, radius, start, end) { assert.equal(start, 0); assert.equal(end, Math.PI * 2); dot = { x, y, radius }; },
+      fill() { assert.ok(dot); operations.push(['dot', dot.x, dot.y, dot.radius]); paintPath([dot], dot.radius, rgba(this.fillStyle)); },
       fillRect(x, y, width, height) { operations.push(['fill', x, y, width, height]); paint(x, y, width, height, rgba(this.fillStyle)); },
       fillText(text, x, y) { operations.push(['text', text, x, y, this.font, this.textAlign]);
         const width = textWidth(this.font, text), left = x - (this.textAlign === 'center' ? width / 2 : this.textAlign === 'right' ? width : 0);
@@ -53,7 +69,7 @@ function fixture({ imageWidth = 20, imageHeight = 12, decodeWait, fonts } = {}) 
     return exports;
   }
   const client = load('app/free-image-translation-client.ts');
-  return { client, canvases, operations, measurements, revoked, objects, document };
+  return { client, brush: load('app/free-image-brush.ts'), canvases, operations, measurements, revoked, objects, document };
 }
 function image(h) { const value = h.document.createElement('canvas'); value.width = source.width; value.height = source.height; value.pixels = pixels(source.width, source.height); return { source, canvas: value, blob: new Blob(['original']), width: source.width, height: source.height }; }
 const region = (id, box, translated = '한국어') => ({ id, text: '中文', box, confidence: 90, selected: true, translated, issue: null, translationProvenance: 'generated', background: '#ffffff', foreground: '#000000', fontSize: 3 });
@@ -257,6 +273,77 @@ test('overlapping erase and text layers clear or restore the same wording accord
   const created = h.canvases.length;
   await assert.rejects(h.client.renderFreeImageTranslation(original, [text, { ...erase, id: text.id }], new AbortController().signal));
   assert.equal(h.canvases.length, created); assert.deepEqual(original.canvas.pixels, before); assert.equal(text.translated, 'A'); assert.equal(erase.translated, '');
+});
+
+test('brush strokes draw only round paths and dots, preserve source/off-path pixels and never load retained text fonts', async () => {
+  const h = fixture({ fonts: { load() { throw Error('brush cannot load text font'); }, check() { throw Error('brush cannot check text font'); } } }), original = image(h), before = original.canvas.pixels.slice();
+  const path = h.brush.createFreeImageBrush(2, [{ x: 3, y: 3 }, { x: 9, y: 9 }], 20, 12);
+  const selected = { ...region('stroke', path.box, ''), ...path, erase: true, text: '', background: '#234567', fontFamily: 'gmarket' };
+  const bytes = new Uint8Array(await (await h.client.renderFreeImageTranslation(original, [selected], new AbortController().signal)).output.arrayBuffer());
+  const pixel = (data, x, y) => Array.from(data.slice((y * 20 + x) * 4, (y * 20 + x + 1) * 4));
+  for (const [x, y] of [[2, 2], [3, 3], [6, 6], [9, 9]]) assert.deepEqual(pixel(bytes, x, y), [0x23, 0x45, 0x67, 255]);
+  for (const [x, y] of [[2, 9], [9, 2], [1, 1], [10, 10]]) assert.deepEqual(pixel(bytes, x, y), pixel(before, x, y), 'off-path pixels remain source pixels even inside the bounding rectangle');
+  for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) if (x < path.box.x || y < path.box.y || x >= path.box.x + path.box.width || y >= path.box.y + path.box.height) {
+    assert.deepEqual(pixel(bytes, x, y), pixel(before, x, y));
+  }
+  assert.deepEqual(h.operations.filter(value => value[0] === 'stroke'), [['stroke', [{ x: 3, y: 3 }, { x: 9, y: 9 }], 2, 'round', 'round']]);
+  assert.equal(h.operations.filter(value => value[0] === 'fill').length, 0); assert.equal(h.measurements.length, 0); assert.deepEqual(original.canvas.pixels, before);
+  const dot = h.brush.createFreeImageBrush(4, [{ x: 0, y: 0 }], 20, 12);
+  const dotted = new Uint8Array(await (await h.client.renderFreeImageTranslation(original, [{ ...selected, ...dot }], new AbortController().signal)).output.arrayBuffer());
+  assert.deepEqual(pixel(dotted, 0, 0), [0x23, 0x45, 0x67, 255]); assert.deepEqual(pixel(dotted, 1, 1), pixel(before, 1, 1));
+  assert.deepEqual(h.operations.filter(value => value[0] === 'dot'), [['dot', 0, 0, 2]]); assert.deepEqual(original.canvas.pixels, before);
+});
+
+test('reviewed region IDs, colors, text, modes and geometry stay fixed while a different layer waits for its font', async () => {
+  for (const mutation of ['brush-as-rectangle', 'brush-as-text', 'text-as-erase']) {
+  const loading = deferred(), h = fixture({ fonts: { load: () => loading.promise, check: () => true } }), original = image(h);
+  const stroke = h.brush.createFreeImageBrush(2, [{ x: 3, y: 3 }, { x: 9, y: 9 }], 20, 12);
+  const brush = { ...region('brush', stroke.box, ''), ...stroke, erase: true, background: '#234567' };
+  const text = { ...region('font', { x: 14, y: 1, width: 4, height: 4 }, 'A'), fontFamily: 'gmarket', fontSize: 1 };
+  const pending = h.client.renderFreeImageTranslation(original, [brush, text], new AbortController().signal);
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(h.canvases.length, 1);
+  brush.brush.points[0].x = 15; brush.id = 'changed-brush'; brush.background = '#ffffff';
+  brush.box = { x: 0, y: 0, width: 20, height: 12 }; brush.translated = '검토하지 않은 문구'; brush.text = 'changed original';
+  brush.erase = mutation !== 'brush-as-text'; brush.fontSize = 200;
+  if (mutation === 'text-as-erase') {
+    text.id = 'changed-text'; text.background = '#ff00ff'; text.foreground = '#0000ff'; text.translated = '검토하지 않은 번역';
+    text.text = 'unreviewed source'; text.fontSize = 200; text.erase = true; text.selected = false;
+    text.box = { x: 0, y: 0, width: 20, height: 12 };
+  }
+  loading.resolve([{}]); const rendered = await pending, bytes = new Uint8Array(await rendered.output.arrayBuffer());
+  assert.deepEqual(Array.from(bytes.slice((3 * 20 + 3) * 4, (3 * 20 + 4) * 4)), [0x23, 0x45, 0x67, 255]);
+  assert.deepEqual(h.operations.filter(value => value[0] === 'stroke')[0][1], [{ x: 3, y: 3 }, { x: 9, y: 9 }]);
+  assert.deepEqual(h.operations.filter(value => value[0] === 'fill'), [['fill', 14, 1, 4, 4]], 'the original text rectangle alone is filled');
+  assert.deepEqual(h.operations.filter(value => value[0] === 'text'), [['text', 'A', 14, 1, '1px "Gmarket Sans", sans-serif', 'left']]);
+  const before = pixels(20, 12);
+  for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) if (!(x >= 2 && x < 10 && y >= 2 && y < 10) && !(x >= 14 && x < 18 && y >= 1 && y < 5)) {
+    const offset = (y * 20 + x) * 4; assert.deepEqual(bytes.slice(offset, offset + 4), before.slice(offset, offset + 4), `outside reviewed regions ${mutation}: ${x},${y}`);
+  }
+  assert.equal(rendered.source, source); assert.deepEqual(original.canvas.pixels, pixels(20, 12));
+  }
+});
+
+test('brush selection and layer order preserve other text, while false erase, wrong bounds, duplicate IDs and oversized point budgets fail before painting', async () => {
+  const h = fixture(), original = image(h), dot = h.brush.createFreeImageBrush(4, [{ x: 3, y: 3 }], 20, 12);
+  const brush = { ...region('brush', dot.box, ''), ...dot, erase: true, background: '#234567' };
+  const text = { ...region('text', { x: 3, y: 3, width: 8, height: 6 }, 'A'), fontSize: 2, foreground: '#cc1122' };
+  const render = async rows => new Uint8Array(await (await h.client.renderFreeImageTranslation(original, rows, new AbortController().signal)).output.arrayBuffer());
+  const pixel = data => Array.from(data.slice((3 * 20 + 3) * 4, (3 * 20 + 4) * 4));
+  assert.deepEqual(pixel(await render([text, brush])), [0x23, 0x45, 0x67, 255]);
+  assert.deepEqual(pixel(await render([brush, text])), [0xcc, 0x11, 0x22, 255]);
+  assert.deepEqual(await render([text, { ...brush, selected: false }]), await render([text]));
+  for (const changed of [{ erase: false, translated: 'A' }, { erase: undefined, translated: 'A' }, { brush: null },
+    { box: { ...brush.box, width: brush.box.width + 1 } }, { brush: { ...brush.brush, extra: true } }, { brush: { size: 201, points: [{ x: 3, y: 3 }] } }]) {
+    const created = h.canvases.length; await assert.rejects(render([{ ...brush, ...changed }])); assert.equal(h.canvases.length, created);
+  }
+  await assert.rejects(render([brush, { ...text, id: brush.id }]));
+  const stopped = new AbortController(); stopped.abort(); const created = h.canvases.length;
+  await assert.rejects(h.client.renderFreeImageTranslation(original, [brush], stopped.signal)); assert.equal(h.canvases.length, created);
+  const maximum = Array.from({ length: 4 }, (_, index) => ({ ...brush, id: 'large-' + index, brush: { size: 4, points: Array.from({ length: 2048 }, () => ({ x: 3, y: 3 })) } }));
+  await render(maximum); const capacity = h.canvases.length;
+  await assert.rejects(render([...maximum, { ...brush, id: 'overflow' }])); assert.equal(h.canvases.length, capacity);
+  await render([...maximum, { ...brush, id: 'ignored-overflow', selected: false }]);
+  assert.deepEqual(original.canvas.pixels, pixels(20, 12));
 });
 
 test('unset text style keeps the original pixels, font string, left anchor and 1.2 line spacing', async () => {

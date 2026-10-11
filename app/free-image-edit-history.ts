@@ -8,10 +8,24 @@ export type FreeImageEditHistory = {
 };
 export type FreeImageEditMovement = { history: FreeImageEditHistory; regions: FreeImageRegion[] };
 
-// Copy the mutable geometry while sharing immutable text. Neither image blobs
+// Copy mutable geometry and brush paths while sharing immutable text. Neither image blobs
 // nor source/save proofs belong to the region editing history.
+function copyBrushValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(copyBrushValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyBrushValue(item)]));
+  return value;
+}
+function sameBrushValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b) && a.length !== b.length) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(key => Object.prototype.hasOwnProperty.call(b, key)
+    && sameBrushValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
+}
 function snapshot(rows: readonly FreeImageRegion[]): FreeImageRegion[] {
-  return rows.map(row => ({ ...row, box: { ...row.box } }));
+  return rows.map(row => ({ ...row, box: { ...row.box }, ...(Object.prototype.hasOwnProperty.call(row, 'brush')
+    ? { brush: copyBrushValue(row.brush) as FreeImageRegion['brush'] } : {}) }));
 }
 function sameObject(a: object, b: object): boolean {
   const keys = Object.keys(a);
@@ -22,9 +36,11 @@ function sameObject(a: object, b: object): boolean {
 function sameRows(a: readonly FreeImageRegion[], b: readonly FreeImageRegion[]): boolean {
   return a.length === b.length && a.every((row, index) => {
     const other = b[index];
-    const { box: firstBox, ...first } = row;
-    const { box: secondBox, ...second } = other;
-    return sameObject(first, second) && sameObject(firstBox, secondBox);
+    const { box: firstBox, brush: firstBrush, ...first } = row;
+    const { box: secondBox, brush: secondBrush, ...second } = other;
+    return sameObject(first, second) && sameObject(firstBox, secondBox)
+      && Object.prototype.hasOwnProperty.call(row, 'brush') === Object.prototype.hasOwnProperty.call(other, 'brush')
+      && sameBrushValue(firstBrush, secondBrush);
   });
 }
 

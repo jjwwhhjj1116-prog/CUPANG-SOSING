@@ -51,6 +51,36 @@ test('typing in one focus session is one undo action and blur starts a separate 
   assert.equal(history.past.length, 2); assert.equal(undo(history, next).regions[0].translated, '수정 완료');
 });
 
+test('brush history owns every point array/object and undo/redo never share mutable paths with callers', () => {
+  const before = [region('stroke', { erase: true, brush: { size: 4, points: [{ x: 2, y: 3 }, { x: 8, y: 9 }] } })];
+  const next = [region('stroke', { erase: true, brush: { size: 8, points: [{ x: 4, y: 5 }, { x: 10, y: 11 }] } })];
+  const history = record(create(), before, next);
+  before[0].brush.points[0].x = 999; before[0].brush.points.push({ x: 100, y: 100 }); before[0].brush.size = 99;
+  const restored = undo(history, next);
+  assert.deepEqual(plain(restored.regions[0].brush), { size: 4, points: [{ x: 2, y: 3 }, { x: 8, y: 9 }] });
+  restored.regions[0].brush.points[0].y = 777; next[0].brush.points[0].x = 888; next[0].brush.points.length = 0;
+  const replay = redo(restored.history, restored.regions);
+  assert.deepEqual(plain(replay.regions[0].brush), { size: 8, points: [{ x: 4, y: 5 }, { x: 10, y: 11 }] });
+  replay.regions[0].brush.points[1].x = 555;
+  assert.equal(restored.history.future[0][0].brush.points[1].x, 10); assert.equal(history.past[0][0].brush.points[0].y, 3);
+});
+
+test('brush structural no-ops preserve redo while point order/diameter changes and invalid drafts remain distinct', () => {
+  const before = [region('stroke', { erase: true, brush: { size: 4, points: [{ x: -0, y: NaN }, { x: Infinity, y: 9 }] } })];
+  const next = [region('stroke', { erase: true, brush: { size: 8, points: [{ x: 4, y: 5 }] } })];
+  const restored = undo(record(create(), before, next), next), copied = [region('stroke', { ...restored.regions[0], brush: { size: 4, points: [{ x: -0, y: NaN }, { x: Infinity, y: 9 }] } })];
+  assert.equal(record(restored.history, restored.regions, copied), restored.history, 'fresh point objects with equal values are a no-op');
+  assert.equal(restored.history.future.length, 1); assert.ok(Object.is(restored.regions[0].brush.points[0].x, -0)); assert.ok(Number.isNaN(restored.regions[0].brush.points[0].y));
+  for (const brush of [{ size: 5, points: copied[0].brush.points }, { size: 4, points: [...copied[0].brush.points].reverse() },
+    { size: 4, points: [{ x: 0, y: NaN }, { x: Infinity, y: 9 }] }, { size: 4, points: [{ x: -0, y: null }, { x: Infinity, y: 9 }] }]) {
+    assert.equal(record(restored.history, restored.regions, [region('stroke', { ...copied[0], brush })]).future.length, 0);
+  }
+  const noBrush = [region('old')], explicitUndefined = [region('old', { brush: undefined })];
+  assert.equal(record(create(), noBrush, explicitUndefined).past.length, 1, 'unset property shape remains distinct from explicit undefined');
+  const nullBrush = [region('old', { brush: null })], nullHistory = record(create(), nullBrush, noBrush);
+  assert.equal(undo(nullHistory, noBrush).regions[0].brush, null);
+});
+
 test('different field, discrete operation and accepted translation each separate the history group', () => {
   const initial = [region('a')], text = [region('a', { text: '다른 원문' })], translated = [region('a', { text: '다른 원문', translated: '다른 번역' })];
   let history = record(create(), initial, text, 'source'); history = record(history, text, translated, 'translated');

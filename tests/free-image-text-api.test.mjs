@@ -29,12 +29,19 @@ function fixture() {
   const document = { fonts: {
     async load(descriptor, sample) { fontLoads.push({ descriptor, sample }); return [{ family: 'Gmarket Sans', status: 'loaded' }]; }, check: () => true,
   }, createElement(tag) {
-    assert.equal(tag, 'canvas'); const canvas = { width: 0, height: 0, pixels: null }, clips = []; let clip = null;
+    assert.equal(tag, 'canvas'); const canvas = { width: 0, height: 0, pixels: null }, clips = []; let clip = null, circle = null;
     const textWidth = (font, text) => Array.from(text).length * Number(/([0-9.]+)px/u.exec(font)?.[1]) / 2
       * (/\bbold\b/u.test(font) ? 1.25 : 1) * (/\bitalic\b/u.test(font) ? 1.1 : 1);
     const context = {
       drawImage(image, x, y) { assert.equal(x, 0); assert.equal(y, 0); canvas.pixels = image.pixels.slice(); },
-      save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() {}, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
+      save() { clips.push(clip); }, restore() { clip = clips.pop(); }, beginPath() { circle = null; }, rect(x, y, width, height) { clip = { x, y, width, height }; }, clip() {},
+      arc(x, y, radius, start, end) { assert.equal(start, 0); assert.equal(end, Math.PI * 2); circle = { x, y, radius }; },
+      fill() {
+        assert.ok(circle, 'this fixture paints only a single circular brush dab');
+        for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+          if (Math.hypot(x + 0.5 - circle.x, y + 0.5 - circle.y) <= circle.radius) this.fillRect(x, y, 1, 1);
+        }
+      },
       fillRect(x, y, width, height) {
         const color = [parseInt(this.fillStyle.slice(1, 3), 16), parseInt(this.fillStyle.slice(3, 5), 16), parseInt(this.fillStyle.slice(5, 7), 16), 255];
         for (let py = y; py < y + height; py++) for (let px = x; px < x + width; px++) {
@@ -303,6 +310,74 @@ for (const top of ['erase', 'text']) test(`reviewed overlapping layer order (${t
     assert.equal((await client.applyFreeImageTranslation(rendered, new AbortController().signal, send)).replayed, true);
     assert.equal(h.writes.length, 1); assert.deepEqual(await h.content(), after);
     const fresh = await h.source({ key: saved.key }); assert.equal(fresh.sourceSha256, sha(output));
+  } finally { h.close(); }
+});
+
+for (const failure of ['R2', 'DB']) test(`reviewed round brush PNG survives ${failure} lost acknowledgement with identical retry and manual quotation values intact`, async () => {
+  const h = await ready(); try {
+    h.objects.get(h.key).bytes = png(9, 7);
+    const quotation = h.load('app/api/products/[id]/quotation-fields/route.ts'), context = { params: Promise.resolve({ id: 'product' }) };
+    const quoteRequest = (method = 'GET', body) => new Request('https://app.test/api/products/product/quotation-fields', {
+      method, ...(body ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
+    });
+    const initialResponse = await quotation.GET(quoteRequest(), context); await assertStatus(initialResponse, 200); const initialView = await initialResponse.json();
+    const manualHtml = '<p>브러시 적용 뒤에도 유지할 수동 상세 내용</p>';
+    await assertStatus(await quotation.PUT(quoteRequest('PUT', { expectedRevision: initialView.revision, expectedInputFingerprint: initialView.inputFingerprint,
+      changes: [{ fieldKey: 'mainImage', optionId: null, value: 'owner/main.png' }, { fieldKey: 'additionalImages', optionId: null, value: 'owner/first.png' },
+        { fieldKey: 'detailImages', optionId: null, value: '' }, { fieldKey: 'detailHtml', optionId: null, value: manualHtml }] }), context), 200);
+    const beforeQuote = h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get('product');
+    const source = await h.source(), before = await h.content(), original = h.objects.get(h.key).bytes.slice(), client = h.load('app/free-image-translation-client.ts');
+    const shape = h.load('app/free-image-brush.ts').createFreeImageBrush(4, [{ x: 4, y: 3 }], 9, 7);
+    assert.deepEqual(JSON.parse(JSON.stringify(shape.box)), { x: 2, y: 1, width: 4, height: 4 });
+    const loaded = { source, canvas: { pixels: new Uint8Array(9 * 7 * 4).fill(200) }, blob: new Blob([original], { type: 'image/png' }), width: 9, height: 7 };
+    const brush = { ...shape, id: 'manual-brush', text: '', translated: '', erase: true, confidence: 0, selected: true,
+      issue: null, translationProvenance: 'empty', background: '#234567', foreground: '#111111', fontSize: 2, fontFamily: 'gmarket' };
+    const unchangedBrush = JSON.stringify(brush), rendered = await client.renderFreeImageTranslation(loaded, [brush], new AbortController().signal);
+    const output = new Uint8Array(await rendered.output.arrayBuffer()), expectedPixels = new Uint8Array(9 * 7 * 4).fill(200);
+    // Independent circle samples: the bounding box's four corners stay original.
+    for (const [x, y] of [[3, 1], [4, 1], [2, 2], [3, 2], [4, 2], [5, 2], [2, 3], [3, 3], [4, 3], [5, 3], [3, 4], [4, 4]]) {
+      expectedPixels.set([0x23, 0x45, 0x67, 255], (y * 9 + x) * 4);
+    }
+    assert.deepEqual(Buffer.from(output), png(9, 7, expectedPixels));
+    assert.deepEqual(loaded.canvas.pixels, new Uint8Array(9 * 7 * 4).fill(200)); assert.equal(JSON.stringify(brush), unchangedBrush);
+    assert.equal(h.drawings.length, 0); assert.equal(h.measurements.length, 0); assert.equal(h.fontLoads.length, 0, 'brush never loads retained text styles');
+    const rectangle = await client.renderFreeImageTranslation(loaded, [{ ...brush, brush: undefined }], new AbortController().signal);
+    assert.notEqual(sha(output), sha(new Uint8Array(await rectangle.output.arrayBuffer())), 'a round brush is not its filled bounding rectangle');
+    const expectedKey = await client.expectedFreeImageOutputKey(rendered), sent = [], send = async (url, init) => {
+      assert.equal(url, '/api/products/product/image-text'); assert.deepEqual([...init.body.keys()], ['action', 'source', 'file']);
+      assert.deepEqual(JSON.parse(init.body.get('source')), source);
+      sent.push({ source: init.body.get('source'), bytes: new Uint8Array(await init.body.get('file').arrayBuffer()) });
+      const response = await h.request('POST', init.body);
+      if (sent.length === 1) {
+        await assertStatus(response, 200);
+        throw Error('fixture loses the HTTP acknowledgement after verified storage recovery');
+      }
+      return response;
+    };
+    if (failure === 'R2') h.controls.putFailure = 'after'; else h.controls.dbFailure = 'after';
+    await assert.rejects(client.applyFreeImageTranslation(rendered, new AbortController().signal, send), error => error.uncertain === true);
+    const afterUnknown = await h.content();
+    assert.deepEqual(Array.from(afterUnknown.assets.detail.value), ['owner/first.png', expectedKey, 'owner/last.png']);
+    assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get('product'), beforeQuote);
+    assert.deepEqual(h.objects.get(h.key).bytes, original); assert.deepEqual(h.objects.get(expectedKey).bytes, output);
+    const saved = await client.applyFreeImageTranslation(rendered, new AbortController().signal, send), after = await h.content();
+    assert.deepEqual(sent[0], sent[1], 'lost-ACK recovery resubmits only the exact reviewed PNG and source proof');
+    assert.equal(saved.key, expectedKey); assert.equal(saved.replayed, true);
+    assert.deepEqual(Array.from(after.assets.detail.value), ['owner/first.png', expectedKey, 'owner/last.png']);
+    assert.equal(h.objects.get(expectedKey).customMetadata.freeImageOutputSha256, sha(output));
+    for (const role of ['main', 'additional', 'detailTop', 'detailBottom', 'size', 'label']) assert.deepEqual(after.assets[role], before.assets[role]);
+    assert.deepEqual(after.seo, before.seo); assert.deepEqual(after.label, before.label); assert.deepEqual(h.objects.get(h.key).bytes, original);
+    assert.ok(JSON.parse(h.product().image_keys).includes(h.key)); assert.equal(h.deletions.length, 0); assert.equal(h.translations.length, 0);
+    const finalResponse = await quotation.GET(quoteRequest(), context); await assertStatus(finalResponse, 200); const finalView = await finalResponse.json();
+    const fields = finalView.resolved.rows[0].fields;
+    for (const [id, value] of [['mainImage', 'owner/main.png'], ['additionalImages', 'owner/first.png'], ['detailImages', ''], ['detailHtml', manualHtml]]) {
+      assert.equal(fields[id].value, value); assert.equal(fields[id].source, 'manual-common');
+    }
+    assert.equal(finalView.automatic.rows[0].fields.detailImages.value, ['owner/first.png', expectedKey, 'owner/last.png'].join('\n'));
+    assert.deepEqual(h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get('product'), beforeQuote);
+    assert.equal((await client.applyFreeImageTranslation(rendered, new AbortController().signal, send)).replayed, true);
+    assert.equal(h.writes.length, 1); assert.deepEqual(await h.content(), after);
+    const fresh = await h.source({ key: expectedKey }); assert.equal(fresh.sourceSha256, sha(output));
   } finally { h.close(); }
 });
 

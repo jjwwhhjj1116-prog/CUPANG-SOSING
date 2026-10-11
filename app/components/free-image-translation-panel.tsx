@@ -4,6 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { FREE_IMAGE_ROLES, MAX_OCR_REGIONS, type FreeImageRole } from '@/app/free-image-translation';
 import { freeImageFontFamilies } from '@/app/free-image-text-style';
 import { createFreeImageEditHistory, endFreeImageEditGroup, moveFreeImageEditRegion, recordFreeImageEdit, redoFreeImageEdit, undoFreeImageEdit } from '@/app/free-image-edit-history';
+import { createFreeImageBrush, MAX_FREE_IMAGE_BRUSH_POINTS, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeImageBrushPoint } from '@/app/free-image-brush';
+import { FreeImageBrushCanvas } from '@/app/components/free-image-brush-canvas';
 import {
   applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, recognizeFreeImage, recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageQuotationRequest, translateFreeImageRegions,
   type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,
@@ -49,6 +51,10 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [loaded, setLoaded] = useState<FreeImageLoaded | null>(null);
   const [regions, setRegions, liveRegions] = useLiveDraft<FreeImageRegion[]>([]);
   const [regionHistory, setRegionHistory, liveRegionHistory] = useLiveDraft(createFreeImageEditHistory());
+  const [brushMode, setBrushMode, liveBrushModeRef] = useLiveDraft(false);
+  const [brushSize, setBrushSize, liveBrushSizeRef] = useLiveDraft(20);
+  const [brushColor, setBrushColor, liveBrushColorRef] = useLiveDraft('#ffffff');
+  const [brushDrawing, setBrushDrawing, liveBrushDrawingRef] = useLiveDraft(false);
   const [optionImageIds, setOptionImageIds, liveOptionImageIds] = useLiveDraft<string[]>([]);
   const [rendered, setRendered, liveRenderedRef] = useLiveDraft<FreeImageRendered | null>(null);
   const originalUrl = useScopedBlobUrl(loaded?.blob ?? null);
@@ -63,7 +69,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const recoveredScope = useRef<string | null>(null);
   const pendingTarget = useRef<{ epoch: number } | null>(null);
   const manualId = useRef(0), panel = useRef<HTMLElement | null>(null), sourceControl = useRef<HTMLSelectElement | null>(null);
-  const regionGeneration = useRef(0), renderedRegionGeneration = regionGeneration.current;
+  const [renderedRegionGeneration, setRegionGeneration, regionGenerationRef] = useLiveDraft(0);
+  const brushSerialRef = useRef(0), pendingBrushRef = useRef<{ id: string; editorKey: string; scopeKey: string; generation: number; size: number; color: string } | null>(null);
   const selectionKey = JSON.stringify(quotationContext ?? null), liveSelection = useRef(selectionKey);
   const editorKey = JSON.stringify([productId, version, sourceKey, role, quotationTarget]), liveEditor = useRef(editorKey);
   const busyCallback = useRef(onBusyChange);
@@ -107,7 +114,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   function editorCurrent() { return liveEditor.current === editorKey; }
   function current(work: RequestWork) { return mounted.current && active.current === work && work.epoch === epoch.current && !work.controller.signal.aborted && focusedTarget() && editorCurrent(); }
   function begin(kind: RequestWork['kind']) {
-    if (!mounted.current || active.current || !focusedTarget() || !editorCurrent()) return null;
+    if (!mounted.current || active.current || liveBrushDrawingRef.current || !focusedTarget() || !editorCurrent()) return null;
     const work = { kind, epoch: epoch.current, controller: new AbortController() }; active.current = work;
     setBusy(true); busyCallback.current?.(true); setError(''); setNotice(''); return work;
   }
@@ -124,10 +131,16 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (work?.kind === 'save' && pendingSave.current) { setUncertain(true); setNotice('저장 응답을 기다리던 작업을 취소했습니다. 같은 미리보기로 저장 상태를 다시 확인해주세요.'); }
     else if (showNotice) setNotice('이미지 작업을 취소했습니다. 원본과 저장된 이미지 역할은 유지됩니다.');
   }
-  function resetRegions(rows: FreeImageRegion[]) { regionGeneration.current++; setRegionHistory(createFreeImageEditHistory()); setRegions(rows); }
-  function discardDraft() { setLoaded(null); resetRegions([]); setOptionImageIds([]); setRendered(null); pendingSave.current = null; recoveredScope.current = null; setReadyRetry(false); setUncertain(false); setError(''); }
+  function resetRegions(rows: FreeImageRegion[]) { setRegionGeneration(value => value + 1); setRegionHistory(createFreeImageEditHistory()); setRegions(rows); }
+  function cancelBrush(id = pendingBrushRef.current?.id) {
+    if (!id || pendingBrushRef.current?.id !== id) return;
+    pendingBrushRef.current = null;
+    if (mounted.current) { setBrushDrawing(false); busyCallback.current?.(false); }
+    else liveBrushDrawingRef.current = false;
+  }
+  function discardDraft() { cancelBrush(); setBrushMode(false); setLoaded(null); resetRegions([]); setOptionImageIds([]); setRendered(null); pendingSave.current = null; recoveredScope.current = null; setReadyRetry(false); setUncertain(false); setError(''); }
   function selectSource(key: string, nextRole = role, nextLanguage = language, nextQuotationTarget: FreeImageQuotationRequest | null = liveQuotationTarget.current) {
-    if (!focusedTarget(nextQuotationTarget) || !editorCurrent()) return;
+    if (liveBrushDrawingRef.current || !focusedTarget(nextQuotationTarget) || !editorCurrent()) return;
     // A transmitted save may finish after cancellation. Keep its exact PNG
     // until the user explicitly discards it or acknowledges the saved result.
     if (pendingSave.current) { cancel(false); setUncertain(true); setNotice('먼저 같은 결과의 저장 상태를 확인하거나 편집 초안을 지운 뒤 다른 원본을 선택해주세요.'); return; }
@@ -177,22 +190,23 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageKeys, sourceKey]);
-  const dirty = regions.length > 0 || optionImageIds.length > 0 || rendered !== null || uncertain;
+  const dirty = regions.length > 0 || optionImageIds.length > 0 || rendered !== null || uncertain || brushDrawing;
   const matchingQuotationContext = !quotationTarget || !!quotationContext && quotationContext.profileId === quotationTarget.profileId
     && quotationContext.optionId === quotationTarget.optionId && quotationContext.input === quotationTarget.input;
-  const locked = busy || uncertain || readyRetry || !matchingQuotationContext;
+  const locked = busy || brushDrawing || uncertain || readyRetry || !matchingQuotationContext;
   const currentImage = loaded && matchingQuotationContext && loaded.source.productId === productId && loaded.source.productVersion === version && loaded.source.sourceKey === sourceKey && loaded.source.role === role
     && sameFreeImageQuotationRequest(loaded.source.quotationTarget, quotationTarget) && imageKeys.includes(sourceKey) ? loaded : null;
   function canEditRegions() {
-    return mounted.current && !active.current && !pendingSave.current && !liveUncertain.current && !liveReadyRetry.current
-      && regionGeneration.current === renderedRegionGeneration && focusedTarget() && editorCurrent() && Boolean(currentImage);
+    return mounted.current && !active.current && !pendingSave.current && !liveBrushDrawingRef.current && !liveUncertain.current && !liveReadyRetry.current
+      && regionGenerationRef.current === renderedRegionGeneration && focusedTarget() && editorCurrent() && Boolean(currentImage);
   }
   function recordRegions(next: FreeImageRegion[], group: string | null = null) {
     setRegionHistory(recordFreeImageEdit(liveRegionHistory.current, liveRegions.current, next, group));
     setRegions(next); setRendered(null);
   }
   function editRegion(id: string, patch: Partial<FreeImageRegion>, group: string | null = null) {
-    if (!canEditRegions() || !liveRegions.current.some(row => row.id === id)) return;
+    const region = liveRegions.current.find(row => row.id === id);
+    if (!canEditRegions() || !region || region.brush && Object.keys(patch).some(key => key !== 'background' && key !== 'selected')) return;
     recordRegions(liveRegions.current.map(row => row.id === id ? { ...row, ...patch } : row), group);
   }
   function endRegionEditGroup() {
@@ -202,7 +216,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (!canEditRegions()) return;
     const result = direction === 'undo' ? undoFreeImageEdit(liveRegionHistory.current, liveRegions.current) : redoFreeImageEdit(liveRegionHistory.current, liveRegions.current);
     if (!result) return;
-    regionGeneration.current++; setRegionHistory(result.history); setRegions(result.regions); setRendered(null);
+    setRegionGeneration(value => value + 1); setRegionHistory(result.history); setRegions(result.regions); setRendered(null);
   }
   function reorderRegion(id: string, direction: -1 | 1) {
     if (!canEditRegions()) return;
@@ -215,6 +229,39 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   function editTextStyle(id: string, patch: Partial<Pick<FreeImageRegion, 'fontFamily' | 'bold' | 'italic' | 'textAlign' | 'lineHeight'>>) {
     if (!mounted.current || liveUncertain.current || liveReadyRetry.current || liveRegions.current.find(row => row.id === id)?.erase === true) return;
     editRegion(id, patch);
+  }
+  const brushPoints = regions.reduce((total, region) => total + (region.brush?.points.length ?? 0), 0);
+  const remainingBrushPoints = Math.max(0, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS - brushPoints);
+  const brushScopeKey = JSON.stringify([editorKey, language, renderedRegionGeneration, selectionKey, focusedOptionId ?? null, translationTarget?.sequence, loaded?.source.sourceSha256, loaded?.width, loaded?.height]);
+  const brushScopeRef = useRef(brushScopeKey);
+  useLayoutEffect(() => {
+    brushScopeRef.current = brushScopeKey;
+    if (!pendingBrushRef.current || pendingBrushRef.current.scopeKey === brushScopeKey) return;
+    pendingBrushRef.current = null; liveBrushDrawingRef.current = false;
+    void Promise.resolve().then(() => {
+      if (mounted.current && brushScopeRef.current === brushScopeKey && !pendingBrushRef.current) { setBrushDrawing(false); busyCallback.current?.(false); }
+    });
+  }, [brushScopeKey, liveBrushDrawingRef, setBrushDrawing]);
+  function beginBrush() {
+    if (!canEditRegions() || brushScopeRef.current !== brushScopeKey || !liveBrushModeRef.current || liveRegions.current.length >= MAX_OCR_REGIONS
+      || liveRegions.current.reduce((total, region) => total + (region.brush?.points.length ?? 0), 0) >= MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS
+      || !Number.isSafeInteger(liveBrushSizeRef.current) || liveBrushSizeRef.current < 1 || liveBrushSizeRef.current > 200 || !/^#[a-f0-9]{6}$/iu.test(liveBrushColorRef.current)) return null;
+    const id = `brush-gesture-${++brushSerialRef.current}`;
+    pendingBrushRef.current = { id, editorKey, scopeKey: brushScopeKey, generation: renderedRegionGeneration, size: liveBrushSizeRef.current, color: liveBrushColorRef.current };
+    setBrushDrawing(true); busyCallback.current?.(true); return id;
+  }
+  function completeBrush(id: string, points: FreeImageBrushPoint[]) {
+    const pending = pendingBrushRef.current;
+    if (!pending || pending.id !== id) return;
+    cancelBrush(id);
+    if (!canEditRegions() || !currentImage || pending.scopeKey !== brushScopeRef.current || pending.scopeKey !== brushScopeKey
+      || pending.editorKey !== editorKey || pending.generation !== renderedRegionGeneration || liveRegions.current.length >= MAX_OCR_REGIONS) return;
+    try {
+      const drawn = createFreeImageBrush(pending.size, points, currentImage.width, currentImage.height);
+      if (liveRegions.current.reduce((total, region) => total + (region.brush?.points.length ?? 0), 0) + drawn.brush.points.length > MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS) throw Error('브러시 점 수 한도를 넘었습니다. 기존 획을 정리한 뒤 그려주세요.');
+      recordRegions([...liveRegions.current, { id: `brush-${++manualId.current}`, text: '', translated: '', issue: null, confidence: 0, selected: true,
+        translationProvenance: 'manual', erase: true, background: pending.color, foreground: '#111111', fontSize: 1, ...drawn }]);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '브러시 획을 완료하지 못했습니다.'); }
   }
   async function recognize() {
     if (!sourceKey || !imageKeys.includes(sourceKey) || liveUncertain.current || liveReadyRetry.current || !focusedTarget() || !editorCurrent()) return;
@@ -276,7 +323,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   }
   async function save(retry = false) {
     const image = retry ? pendingSave.current : rendered;
-    if (!image || !focusedTarget() || !editorCurrent() || image.source.productId !== productId || image.source.quotationTarget && retry && (!liveReadyRetry.current || recoveredScope.current !== editorKey)
+    if (!image || liveBrushDrawingRef.current || !focusedTarget() || !editorCurrent() || image.source.productId !== productId || image.source.quotationTarget && retry && (!liveReadyRetry.current || recoveredScope.current !== editorKey)
       || !retry && (pendingSave.current !== null || liveUncertain.current || liveReadyRetry.current)
       || !retry && (image !== liveRenderedRef.current || image.source.productVersion !== version || image.source.sourceKey !== sourceKey || image.source.role !== role
         || !sameFreeImageQuotationRequest(image.source.quotationTarget, liveQuotationTarget.current) || !imageKeys.includes(sourceKey))) return;
@@ -320,9 +367,9 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   }
   return <section ref={panel} className="translation-panel free-image-translation-panel" aria-label="이미지 문구 무료 번역"
     data-free-image-editor="true" data-quotation-source-step={role === 'main' ? '대표 이미지' : role === 'additional' ? '추가 이미지' : '상세 이미지'}
-    data-workspace-dirty={dirty ? 'true' : undefined} data-workspace-saving={busy ? 'true' : undefined}>
+    data-workspace-dirty={dirty ? 'true' : undefined} data-workspace-saving={busy || brushDrawing ? 'true' : undefined}>
     <h4>이미지 문구 번역</h4>
-    <p>원본의 문구를 읽고 한국어로 수정합니다. 선택한 사각 영역에 배경색과 문구를 덧씌우므로 상품 사진과 배경이 겹치는 영역은 미리보기에서 확인해주세요.</p>
+    <p>원본의 문구를 읽고 한국어로 수정합니다. 선택한 사각 영역에 배경색과 문구를 덧씌우므로 상품 사진과 배경이 겹치는 영역은 미리보기에서 확인해주세요. 브러시는 그린 경로에 선택한 색상을 적용합니다. 최종 겹침 순서는 미리보기에서 확인해주세요.</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <div className="form-row">
       <label>이미지 역할<select aria-label="번역할 이미지 역할" value={role} disabled={locked || !!quotationTarget} onChange={event => { if (!liveQuotationTarget.current) selectSource(sourceKey, event.target.value as FreeImageRole); }}>
@@ -340,7 +387,18 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       <button type="button" className="btn" disabled={locked || !currentImage || regions.length >= MAX_OCR_REGIONS} onClick={addRegion}>문구 영역 직접 추가</button>
       {busy && <button type="button" className="btn" onClick={() => cancel()}>이미지 작업 취소</button>}
     </div>
-    {originalUrl && <div><h5>원본 {loaded?.width}×{loaded?.height}px</h5><img src={originalUrl} alt="문구 번역 원본" style={{ maxWidth: '100%', maxHeight: 420, objectFit: 'contain' }} /></div>}
+    {originalUrl && loaded && <div><h5>원본 {loaded.width}×{loaded.height}px</h5>
+      <div className="form-row">
+        <label><input type="checkbox" aria-label="색상 브러시 모드" disabled={locked || !currentImage || regions.length >= MAX_OCR_REGIONS || !remainingBrushPoints} checked={brushMode} onChange={event => { if (canEditRegions()) setBrushMode(event.target.checked); }} />색상 브러시 모드</label>
+        <label>브러시 지름 · 원본 px<input type="number" aria-label="브러시 지름" min={1} max={200} step={1} disabled={locked || !currentImage} value={brushSize} onChange={event => { if (canEditRegions()) setBrushSize(Number(event.target.value)); }} /></label>
+        <label>브러시 색상<input type="color" aria-label="브러시 색상" disabled={locked || !currentImage} value={brushColor} onChange={event => { if (canEditRegions()) setBrushColor(event.target.value); }} /></label>
+      </div>
+      <FreeImageBrushCanvas sourceUrl={originalUrl} width={loaded.width} height={loaded.height} scopeKey={brushScopeKey} enabled={brushMode}
+        disabled={busy || uncertain || readyRetry || !currentImage || regions.length >= MAX_OCR_REGIONS || !remainingBrushPoints}
+        size={brushSize} color={brushColor} maxPoints={Math.min(MAX_FREE_IMAGE_BRUSH_POINTS, remainingBrushPoints)}
+        strokes={regions.flatMap(region => region.brush && region.selected ? [{ id: region.id, background: region.background, brush: region.brush }] : [])}
+        onBegin={beginBrush} onComplete={completeBrush} onCancel={cancelBrush} />
+    </div>}
     {loaded && <div className="actions">
       <button type="button" className="btn" disabled={locked || !currentImage || !regionHistory.past.length} onClick={() => moveRegionHistory('undo')}>되돌리기</button>
       <button type="button" className="btn" disabled={locked || !currentImage || !regionHistory.future.length} onClick={() => moveRegionHistory('redo')}>다시 실행</button>
@@ -351,7 +409,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       {[...new Set([...loaded.source.optionImages.optionIds, ...optionImageIds])].map(id => {
         const available = loaded.source.optionImages!.optionIds.includes(id);
         return <label key={id}><input type="checkbox" aria-label={`옵션 ${id} 번역 대표 이미지 적용`} checked={optionImageIds.includes(id)}
-          onChange={event => { if (locked || active.current) return; setRendered(null); setOptionImageIds(ids => event.target.checked ? [...new Set([...ids, id])] : ids.filter(value => value !== id)); }}
+          onChange={event => { if (locked || active.current || liveBrushDrawingRef.current) return; setRendered(null); setOptionImageIds(ids => event.target.checked ? [...new Set([...ids, id])] : ids.filter(value => value !== id)); }}
           disabled={!available && !optionImageIds.includes(id)} />옵션 {id}{!available ? ' · 현재 같은 원본 연결에 없음, 선택 해제 필요' : ''}</label>;
       })}
       {!loaded.source.optionImages.optionIds.length && <p>이 원본을 개별 대표 이미지로 지정한 옵션이 없습니다. 공통 대표 이미지와 그 이미지를 사용하는 옵션에 적용합니다.</p>}
@@ -360,13 +418,14 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     {regions.length > 0 && <>
       <p>체크한 문구만 번역·미리보기에 사용합니다. 영역 지우기를 선택하면 문구 없이 배경색만 덮어씁니다. 인식 정확도가 낮은 영역은 기본 선택하지 않습니다. 직접 수정한 번역 문구는 다시 번역해도 유지합니다. 목록에서 나중에 오는 영역이 위에 그려집니다. 앞으로·뒤로 버튼으로 겹치는 순서를 조정할 수 있습니다.</p>
       <div style={{ maxHeight: 480, overflowY: 'auto' }}>{regions.map((region, index) => <fieldset key={region.id} className="translation-field" disabled={locked || !currentImage}>
-        <legend><label><input type="checkbox" aria-label={`문구 ${index + 1} 선택`} checked={region.selected} onChange={event => editRegion(region.id, { selected: event.target.checked })} />문구 {index + 1} · 인식 {Math.round(region.confidence)}%</label></legend>
-        <label><input type="checkbox" aria-label={`문구 ${index + 1} 영역 지우기`} checked={region.erase === true} onChange={event => editRegion(region.id, { erase: event.target.checked })} />영역 지우기 · 배경색만 적용</label>
-        <label>원문<textarea aria-label={`문구 ${index + 1} 원문`} rows={2} maxLength={5000} disabled={region.erase === true} value={region.text} onFocus={endRegionEditGroup} onBlur={endRegionEditGroup} onChange={event => editRegion(region.id, { text: event.target.value,
+        <legend><label><input type="checkbox" aria-label={`문구 ${index + 1} 선택`} checked={region.selected} onChange={event => editRegion(region.id, { selected: event.target.checked })} />문구 {index + 1} · {region.brush ? '브러시 획' : `인식 ${Math.round(region.confidence)}%`}</label></legend>
+        {region.brush && <p>색상 브러시 획입니다. 경로와 지름은 고정되며 색상·선택·겹치는 순서를 수정할 수 있습니다. 문구와 겹치는 최종 모습은 PNG 미리보기에서 확인해주세요.</p>}
+        <label><input type="checkbox" aria-label={`문구 ${index + 1} 영역 지우기`} disabled={!!region.brush} checked={region.erase === true} onChange={event => editRegion(region.id, { erase: event.target.checked })} />영역 지우기 · 배경색만 적용</label>
+        <label>원문<textarea aria-label={`문구 ${index + 1} 원문`} rows={2} maxLength={5000} disabled={region.erase === true || !!region.brush} value={region.text} onFocus={endRegionEditGroup} onBlur={endRegionEditGroup} onChange={event => editRegion(region.id, { text: event.target.value,
           ...(region.translationProvenance === 'manual' ? { issue: '원문을 수정했습니다. 직접 작성한 번역을 다시 확인해주세요.' } : { translated: '', issue: null, translationProvenance: 'empty' }) }, `${region.id}:text`)} /></label>
-        <label>한국어<textarea aria-label={`문구 ${index + 1} 한국어`} rows={2} maxLength={5000} disabled={region.erase === true} value={region.translated} onFocus={endRegionEditGroup} onBlur={endRegionEditGroup} onChange={event => editRegion(region.id, { translated: event.target.value, translationProvenance: 'manual', issue: null }, `${region.id}:translated`)} /></label>
+        <label>한국어<textarea aria-label={`문구 ${index + 1} 한국어`} rows={2} maxLength={5000} disabled={region.erase === true || !!region.brush} value={region.translated} onFocus={endRegionEditGroup} onBlur={endRegionEditGroup} onChange={event => editRegion(region.id, { translated: event.target.value, translationProvenance: 'manual', issue: null }, `${region.id}:translated`)} /></label>
         {region.issue && region.erase !== true && <p className="form-error">{region.issue}</p>}
-        <div className="form-row">{(['x', 'y', 'width', 'height'] as const).map(field => <label key={field}>{({ x: '왼쪽', y: '위쪽', width: '영역 가로', height: '영역 세로' })[field]} px<input type="number" aria-label={`문구 ${index + 1} ${field}`} min={field === 'x' || field === 'y' ? 0 : 1} max={field === 'x' || field === 'width' ? loaded?.width : loaded?.height} step={1} value={region.box[field]} onChange={event => editRegion(region.id, { box: { ...region.box, [field]: Number(event.target.value) } })} /></label>)}</div>
+        <div className="form-row">{(['x', 'y', 'width', 'height'] as const).map(field => <label key={field}>{({ x: '왼쪽', y: '위쪽', width: '영역 가로', height: '영역 세로' })[field]} px<input type="number" aria-label={`문구 ${index + 1} ${field}`} disabled={!!region.brush} min={field === 'x' || field === 'y' ? 0 : 1} max={field === 'x' || field === 'width' ? loaded?.width : loaded?.height} step={1} value={region.box[field]} onChange={event => editRegion(region.id, { box: { ...region.box, [field]: Number(event.target.value) } })} /></label>)}</div>
         <div className="form-row"><label>배경색<input aria-label={`문구 ${index + 1} 배경색`} type="color" value={region.background} onChange={event => editRegion(region.id, { background: event.target.value })} /></label>
           <label>글자색<input aria-label={`문구 ${index + 1} 글자색`} type="color" disabled={region.erase === true} value={region.foreground} onChange={event => editRegion(region.id, { foreground: event.target.value })} /></label>
           <label>글자 크기<input aria-label={`문구 ${index + 1} 글자 크기`} type="number" disabled={region.erase === true} min={1} max={200} step={1} value={region.fontSize} onChange={event => editRegion(region.id, { fontSize: Number(event.target.value) })} /></label></div>
@@ -391,7 +450,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         <button type="button" className="btn" disabled={locked || !currentImage || !regions.some(row => row.selected) || currentImage.source.optionImages?.commonAssigned === false && !optionImageIds.length} onClick={() => void preview()}>번역 이미지 미리보기</button></div>
     </>}
     {previewUrl && <div><h5>선택 영역 적용 미리보기</h5><img src={previewUrl} alt="한국어 문구 적용 미리보기" style={{ maxWidth: '100%', maxHeight: 480, objectFit: 'contain' }} /></div>}
-    {rendered && !uncertain && !readyRetry && <><p>적용 범위: {rendered.source.quotationTarget ? `선택 옵션 ${rendered.source.quotationTarget.optionId} · ${roleNames[rendered.source.role]} ${rendered.source.quotationTarget.slotIndex + 1}` : <>{roleNames[rendered.source.role]}{rendered.source.role === 'main' ? rendered.source.optionImages?.commonAssigned === false ? ' · 공통 대표 이미지 유지' : ' · 공통 대표 이미지 사용 옵션 포함' : ''}{rendered.optionImageIds?.length ? ` + 선택 옵션 ${rendered.optionImageIds.length}개 개별 대표 이미지` : ' · 개별 옵션 이미지 유지'} · 견적서의 직접 수정값은 유지됩니다.</>}</p><button type="button" className="btn green" disabled={busy || !currentImage} onClick={() => void save()}>검토한 번역 이미지 적용</button></>}
+    {rendered && !uncertain && !readyRetry && <><p>적용 범위: {rendered.source.quotationTarget ? `선택 옵션 ${rendered.source.quotationTarget.optionId} · ${roleNames[rendered.source.role]} ${rendered.source.quotationTarget.slotIndex + 1}` : <>{roleNames[rendered.source.role]}{rendered.source.role === 'main' ? rendered.source.optionImages?.commonAssigned === false ? ' · 공통 대표 이미지 유지' : ' · 공통 대표 이미지 사용 옵션 포함' : ''}{rendered.optionImageIds?.length ? ` + 선택 옵션 ${rendered.optionImageIds.length}개 개별 대표 이미지` : ' · 개별 옵션 이미지 유지'} · 견적서의 직접 수정값은 유지됩니다.</>}</p><button type="button" className="btn green" disabled={locked || !currentImage} onClick={() => void save()}>검토한 번역 이미지 적용</button></>}
     {uncertain && <button type="button" className="btn blue" disabled={busy || !matchingQuotationContext} onClick={() => { if (pendingSave.current?.source.quotationTarget) void recover(); else void save(true); }}>같은 결과의 저장 상태 다시 확인</button>}
     {readyRetry && <button type="button" className="btn green" disabled={busy || !matchingQuotationContext} onClick={() => void save(true)}>같은 미리보기 다시 적용</button>}
     {(dirty || loaded) && <button type="button" className="btn" disabled={busy} onClick={() => { cancel(false); discardDraft(); setNotice('편집 초안을 지웠습니다. 서버에 보관된 원본과 이미지 역할은 변경하지 않았습니다.'); }}>이미지 번역 편집 초안 지우기</button>}
