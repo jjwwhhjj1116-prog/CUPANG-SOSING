@@ -6,6 +6,8 @@ import type { SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
 import { productRemovalDecision, type ProductRemovalDecision } from '@/app/product-removal-policy';
 import { useRef, useState } from 'react';
 import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
+import {matchesRegistrationColumnFilter,registrationFilterChoices,type RegistrationColumnFilter} from '@/app/registration-column-filter';
+import {RegistrationFilterPopover} from '@/app/components/registration-filter-popover';
 
 type BoardProduct = {removal_policy?:ProductRemovalDecision|null;hub_receipt?:SupplierHubReceiptSummary|null;content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
 export function registrationNumber(product:Pick<BoardProduct,'id'>){return `YP-${product.id.slice(0,8).toUpperCase()}`;}
@@ -45,6 +47,15 @@ export function registrationThumbnail(product:BoardProduct) {
 }
 export function registrationTitle(product:BoardProduct) {return (product.content_summary?.seoTitle??product.title)||'상품명 미입력';}
 export function registrationTransmissionLabel(product:BoardProduct) {return product.hub_receipt?.label??'등록대기';}
+export function registrationColumnText(product:BoardProduct,columnId:string):string {
+  if(columnId==='id')return registrationNumber(product);
+  if(columnId==='product')return registrationTitle(product);
+  if(columnId==='source')return product.source_url;
+  if(columnId==='image')return registrationThumbnail(product)??'';
+  if(columnId==='status')return registrationTransmissionLabel(product);
+  if(columnId==='management')return productRemovalDecision(product).blocked?'삭제 보호':'삭제';
+  const column=columns.find(item=>item.id===columnId);return column?.step?registrationStepLabel(product,column.step):'';
+}
 
 type RegistrationSort={column:string;direction:'ascending'|'descending'}|null;
 const registrationCollator=new Intl.Collator('ko-KR',{numeric:true,sensitivity:'base'});
@@ -75,6 +86,8 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
   const [visibleColumns,setVisibleColumns]=useState(()=>columns.map(column=>column.id));
   const [pinnedColumn,setPinnedColumn]=useState('');
   const [sort,setSort]=useState<RegistrationSort>(null);
+  const [columnFilters,setColumnFilters]=useState<Record<string,RegistrationColumnFilter>>({});
+  const [filterPopup,setFilterPopup]=useState<{columnId:string;position:{left:number;top:number};trigger:HTMLElement}|null>(null);
   const [fixedHeight,setFixedHeight]=useState(true);
   const [deleting,setDeleting]=useState<string|null>(null);const [deleteError,setDeleteError]=useState('');
   const deleteInFlight=useRef(false);
@@ -82,7 +95,12 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
   const pinned=(column:string)=>pinnedColumn===column?' registration-pinned':'';
   let bounds:{startUtc:string|null;endUtc:string|null}={startUtc:null,endUtc:null};let dateError='';
   try{bounds=archiveDateBounds(range,from,to);}catch(cause){dateError=cause instanceof Error?cause.message:'날짜를 확인해주세요.';}
-  const filtered=sortRegistrationProducts(dateError?[]:filterRegistrationProducts(products,query,bounds.startUtc,bounds.endUtc).filter(product=>status==='전체'||(status==='작업 중'?!['전송 가능','전송완료'].includes(product.registration_status):['검토 대기','전송 가능'].includes(status)?product.registration_status===status:registrationTransmissionLabel(product)===status)),sort);
+  const baseFiltered=dateError?[]:filterRegistrationProducts(products,query,bounds.startUtc,bounds.endUtc).filter(product=>status==='전체'||(status==='작업 중'?!['전송 가능','전송완료'].includes(product.registration_status):['검토 대기','전송 가능'].includes(status)?product.registration_status===status:registrationTransmissionLabel(product)===status));
+  const imageCounts=['대표 이미지','추가 이미지','상세 이미지','표시사항'];
+  const matches=(product:T,except?:string)=>columns.every(column=>column.id===except||matchesRegistrationColumnFilter(registrationColumnText(product,column.id),columnFilters[column.id],imageCounts.includes(column.id)));
+  const filtered=sortRegistrationProducts(baseFiltered.filter(product=>matches(product)),sort);
+  const popupColumn=filterPopup&&columns.find(column=>column.id===filterPopup.columnId);
+  const popupChoices=popupColumn?registrationFilterChoices(baseFiltered.filter(product=>matches(product,popupColumn.id)).map(product=>registrationColumnText(product,popupColumn.id))):[];
   const pages=Math.max(1,Math.ceil(filtered.length/pageSize));const currentPage=Math.min(page,pages-1);
   const rows=filtered.slice(currentPage*pageSize,(currentPage+1)*pageSize);
   const toggle=(ids:string[],include:boolean)=>{const next=new Set(selected);for(const id of ids){if(include)next.add(id);else next.delete(id);}onSelected(next);};
@@ -106,12 +124,13 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
     <div className="registration-view-tools">
       <details className="registration-column-picker"><summary>선택 컬럼 보기 · {displayedColumns.length}/{columns.length}</summary><div role="group" aria-label="표시할 컬럼">
         <button type="button" className="btn ghost" onClick={()=>setVisibleColumns(columns.map(column=>column.id))}>전체 표시</button>
-        {columns.map(column=><label key={column.id}><input type="checkbox" aria-label={`${column.label} 컬럼 표시`} checked={visibleColumns.includes(column.id)} onChange={event=>setVisibleColumns(current=>event.target.checked?[...current,column.id]:current.filter(value=>value!==column.id))}/>{column.label}</label>)}
+        {columns.map(column=><label key={column.id}><input type="checkbox" aria-label={`${column.label} 컬럼 표시`} checked={visibleColumns.includes(column.id)} onChange={event=>{setVisibleColumns(current=>event.target.checked?[...current,column.id]:current.filter(value=>value!==column.id));setFilterPopup(null);}}/>{column.label}</label>)}
       </div></details>
       <label>고정할 열 선택 <select aria-label="고정할 열 선택" value={pinnedColumn} onChange={event=>setPinnedColumn(event.target.value)}><option value="">고정 안 함</option>{displayedColumns.map(column=><option key={column.id} value={column.id}>{column.label}</option>)}</select></label>
       <fieldset><legend>높이 고정</legend><label><input type="radio" name="registration-height" checked={fixedHeight} onChange={()=>setFixedHeight(true)}/>Y</label><label><input type="radio" name="registration-height" checked={!fixedHeight} onChange={()=>setFixedHeight(false)}/>N</label></fieldset>
+      {!!Object.keys(columnFilters).length&&<button type="button" className="btn ghost registration-filter-clear" onClick={()=>{setColumnFilters({});setFilterPopup(null);setPage(0);}}>열 필터 모두 해제 · {Object.keys(columnFilters).length}개</button>}
     </div>
-    <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,36+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:36}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.length>0&&rows.every(product=>selected.has(product.id))} onChange={event=>toggle(rows.map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)} aria-sort={['image','management'].includes(column.id)?undefined:sort?.column===column.id?sort.direction:'none'}>{['image','management'].includes(column.id)?column.label:<button type="button" className="registration-sort" aria-label={`${column.label} 정렬`} title={sort?.column===column.id?sort.direction==='ascending'?'오름차순 · 클릭하여 내림차순':'내림차순 · 클릭하여 정렬 해제':'클릭하여 오름차순'} onClick={()=>changeSort(column.id)}><span>{column.label}</span><svg aria-hidden="true" width="9" height="12" viewBox="0 0 10 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path className={sort?.column===column.id&&sort.direction==='ascending'?'active':''} d="M2 5 5 2l3 3"/><path className={sort?.column===column.id&&sort.direction==='descending'?'active':''} d="m2 9 3 3 3-3"/></svg></button>}</th>)}</tr></thead><tbody>
+    <div className={`table-wrap registration-scroll${fixedHeight?' registration-height-fixed':''}`} tabIndex={0} aria-label="상품 등록 작업 표"><table className="couplus-work-table" style={{minWidth:Math.max(480,36+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:36}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={rows.length>0&&rows.every(product=>selected.has(product.id))} onChange={event=>toggle(rows.map(product=>product.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)} aria-sort={['image','management'].includes(column.id)?undefined:sort?.column===column.id?sort.direction:'none'}><div className="registration-header-tools">{['image','management'].includes(column.id)?<span>{column.label}</span>:<button type="button" className="registration-sort" aria-label={`${column.label} 정렬`} title={sort?.column===column.id?sort.direction==='ascending'?'오름차순 · 클릭하여 내림차순':'내림차순 · 클릭하여 정렬 해제':'클릭하여 오름차순'} onClick={()=>changeSort(column.id)}><span>{column.label}</span><svg aria-hidden="true" width="9" height="12" viewBox="0 0 10 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path className={sort?.column===column.id&&sort.direction==='ascending'?'active':''} d="M2 5 5 2l3 3"/><path className={sort?.column===column.id&&sort.direction==='descending'?'active':''} d="m2 9 3 3 3-3"/></svg></button>}<button type="button" className={`registration-filter-trigger${columnFilters[column.id]?' active':''}`} aria-label={`${column.label} 열 필터`} aria-expanded={filterPopup?.columnId===column.id} title={columnFilters[column.id]?'필터 적용 중':'이 열 필터'} onClick={event=>{const trigger=event.currentTarget,rect=trigger.getBoundingClientRect();setFilterPopup(current=>current?.columnId===column.id?null:{columnId:column.id,trigger,position:{left:Math.max(8,Math.min(rect.left,window.innerWidth-328)),top:Math.max(8,Math.min(rect.bottom+6,window.innerHeight-440))}});}}><svg aria-hidden="true" width="10" height="12" viewBox="0 0 12 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M1 2h10L7.2 6.5v5L4.8 10v-3.5Z"/></svg></button></div></th>)}</tr></thead><tbody>
     {rows.map(product=>{const image=registrationThumbnail(product);const title=registrationTitle(product);const removal=productRemovalDecision(product);return <tr key={product.id}>
       <td><input type="checkbox" aria-label={`${title} 선택`} checked={selected.has(product.id)} onChange={event=>toggle([product.id],event.target.checked)}/></td>
       {displayedColumns.map(column=><td key={column.id} data-column={column.id} className={`${column.id==='product'?'registration-product':''}${pinned(column.id)}`}>
@@ -126,5 +145,8 @@ export function RegistrationBoard<T extends BoardProduct>({products,selected,onS
     </tr>;})}
     </tbody></table>{!rows.length&&<div className="empty"><strong>{loading?'상품을 불러오는 중입니다.':error?'상품 조회 오류를 확인해주세요.':'조건에 맞는 상품이 없습니다.'}</strong><small>상품을 추가하거나 조회 기간·검색어를 변경하세요.</small></div>}</div>
     <footer className="registration-pagination"><button type="button" disabled={currentPage===0} onClick={()=>setPage(currentPage-1)}>이전</button><span>{currentPage+1} / {pages}</span><button type="button" disabled={currentPage>=pages-1} onClick={()=>setPage(currentPage+1)}>다음</button></footer>
+    {popupColumn&&filterPopup&&<RegistrationFilterPopover key={popupColumn.id} label={popupColumn.label} choices={popupChoices} allValues={registrationFilterChoices(products.map(product=>registrationColumnText(product,popupColumn.id))).map(choice=>choice.value)} filter={columnFilters[popupColumn.id]} position={filterPopup.position} trigger={filterPopup.trigger}
+      onClose={()=>setFilterPopup(null)} onSort={direction=>{setSort({column:popupColumn.id,direction});setPage(0);setFilterPopup(null);}}
+      onApply={filter=>{setColumnFilters(current=>{const next={...current};if(filter)next[popupColumn.id]=filter;else delete next[popupColumn.id];return next;});setPage(0);setFilterPopup(null);}}/>}
   </section>;
 }

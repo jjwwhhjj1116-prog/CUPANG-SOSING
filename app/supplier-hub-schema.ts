@@ -224,10 +224,14 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
           &&Array.isArray(value.enum)&&value.enum.length===1&&safeText(value.enum[0],500);
         // JSON property order has no meaning. Hub's explicit name/value keys
         // also disambiguate a value dropdown containing one permitted choice.
-        // Preserve other observed keys only when exactly one property can be
+        // Public Hub product attributes and notices use their own exact pairs.
+        // Preserve other keys only when exactly one property can be
         // the name; two singleton enums without explicit keys are ambiguous.
-        const explicit=Object.hasOwn(properties,'name')&&Object.hasOwn(properties,'value');
-        const names=explicit?pairs.filter(([key])=>key==='name'):pairs.filter(([,value])=>isName(value));
+        const explicit=[['name','value'],
+          ...(section==='product'&&['exposedAttributes','unexposedAttributes'].includes(group)?[['attributeName','attributeValue']]:[]),
+          ...(section==='legal'&&group==='notices'?[['noticeItemName','noticeItemValue']]:[])]
+          .find(([nameKey,valueKey])=>Object.hasOwn(properties,nameKey)&&Object.hasOwn(properties,valueKey));
+        const names=explicit?pairs.filter(([key])=>key===explicit[0]):pairs.filter(([,value])=>isName(value));
         if(names.length!==1){issue(path);continue;}
         const namePair=names[0],valuePair=pairs.find(([key])=>key!==namePair[0])!;
         if(!isName(namePair[1])||!object(valuePair[1])){issue(path);continue;}

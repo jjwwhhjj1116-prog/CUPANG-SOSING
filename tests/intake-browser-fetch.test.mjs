@@ -25,8 +25,8 @@ async function queue(h,interrupted){
  h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
  h.sqlite.prepare("UPDATE collection_jobs SET goal='work' WHERE id='job'").run();
  let rows=[{id:'pending-row',profile,url:h.sourceUrl,features:h.context.features,keywords:h.context.keywords,status:'draft',message:''}];
- const slots=[],busy=[],opened=[],calls=[],published=[];let cursor=0,finish,resolve,fail=interrupted;
- const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(){}};
+ const slots=[],layouts=[],busy=[],opened=[],calls=[],published=[];let cursor=0,finish,resolve,fail=interrupted;
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
  const fetcher=windowFetch(async(path,init)=>{
   calls.push(path);
   const response=path==='/api/collection-jobs'
@@ -43,7 +43,7 @@ async function queue(h,interrupted){
   if(name==='@/app/browser-product-bridge')return{capture1688FromChrome:()=>assert.fail('recorded public source needs no browser')};
   return name.startsWith('@/')?h.load(name.slice(2)+'.ts'):native(name);
  }});
- const render=()=>{cursor=0;return exports.IntakeQueuePanel({rows,settings:h.settings,profiles:[profile],jobs:published,goal:'work',onRows:update=>{rows=update(rows);},onGoal(){},onProfile(){},onAdvanced(){},onJobs:jobs=>published.push(...jobs),onBusy:value=>{busy.push(value);if(!value)resolve();},onSettingsReloaded(){assert.fail('unchanged settings');},onOpenProduct:async id=>opened.push(id)});};
+ const render=()=>{cursor=0;const tree=exports.IntakeQueuePanel({rows,settings:h.settings,profiles:[profile],jobs:published,goal:'work',onRows:update=>{rows=update(rows);},onGoal(){},onProfile(){},onAdvanced(){},onJobs:jobs=>published.push(...jobs),onBusy:value=>{busy.push(value);if(!value)resolve();},onSettingsReloaded(){assert.fail('unchanged settings');},onOpenProduct:async id=>opened.push(id)});layouts.splice(0).forEach(fn=>fn());return tree;};
  return{calls,opened,busy,published,get row(){return rows[0];},async start(){finish=new Promise(done=>{resolve=done;});const click=nodes(render()).find(node=>node.type==='button'&&String(node.props.children).includes('시작 (')).props.onClick;click();click();await finish;}};
 }
 

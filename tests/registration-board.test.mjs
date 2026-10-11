@@ -5,14 +5,14 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,Error,window:overrides.window,require:name=>name in overrides?overrides[name]:name.startsWith('@/')?load(name.slice(2)+'.ts',overrides):require(name)});return exports;}
+function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,Error,window:overrides.window,require:name=>name in overrides?overrides[name]:name.startsWith('@/')?load(name.slice(2)+(fs.existsSync(new URL('../'+name.slice(2)+'.ts',import.meta.url))?'.ts':'.tsx'),overrides):require(name)});return exports;}
 const {registrationTitle,registrationNumber,registrationThumbnail,registrationStepLabel,registrationTransmissionLabel,RegistrationBoard,filterRegistrationProducts,sortRegistrationProducts}=load('app/components/registration-board.tsx');
 const columnLabels=['등록번호','상품이미지','상품명','구매링크','SEO설정','가격설정','대표이미지','추가이미지','상세이미지','사이즈표','한글표시사항','견적서','등록상태','관리'];
 function elements(tree,predicate){const found=[];function visit(node){if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(predicate(node))found.push(node);visit(node.props?.children);}visit(tree);return found;}
 function nodeText(node){return Array.isArray(node)?node.map(nodeText).join(''):node&&typeof node==='object'?nodeText(node.props?.children):typeof node==='boolean'?'':String(node??'');}
 function boardHarness(props={}){
  const values=[],confirmations=[];let cursor=0;
- const {RegistrationBoard:Board}=load('app/components/registration-board.tsx',{window:{confirm(message){confirmations.push(message);return props.confirm!==false;}},react:{...require('react'),useRef(initial){const index=cursor++;if(!(index in values))values[index]={current:initial};return values[index];},useState(initial){const index=cursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],value=>{values[index]=typeof value==='function'?value(values[index]):value;}];}}});
+ const {RegistrationBoard:Board}=load('app/components/registration-board.tsx',{window:{innerWidth:1600,innerHeight:900,confirm(message){confirmations.push(message);return props.confirm!==false;}},react:{...require('react'),useRef(initial){const index=cursor++;if(!(index in values))values[index]={current:initial};return values[index];},useState(initial){const index=cursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],value=>{values[index]=typeof value==='function'?value(values[index]):value;}];}}});
  const product={id:'12345678-abcd',title:'수집한 상품명',source_url:'https://detail.1688.com/offer/813724060928.html',created_at:'2026-09-26T00:00:00Z',image_keys:'["owner/source","owner/main"]',source_image_key:'owner/source',options_count:3,registration_status:'작업 중',seo_status:'대기',quote_status:'대기',supply_price:1000,sale_price:2000,removal_policy:{blocked:false,code:null,reason:'',receipt:null},content_summary:{seoTitle:'수정한 상품명',mainImageKey:'owner/main',seo:true,main:1,additional:0,detail:0,label:0,missingImages:false}};
  const calls=[],options=[],selections=[];
  const base={products:[product],selected:new Set(),onSelected:value=>selections.push(value),onOpen:(...args)=>calls.push(args),onOptions:value=>options.push(value),loading:false,error:'',onArchive:()=>{},...props};
@@ -281,4 +281,40 @@ test('real collected draft renders a product preview while quotation image field
   const fields=await h.route('/api/products/'+product.id+'/quotation-fields');assert.equal(fields.status,200);
   for(const row of (await fields.json()).resolved.rows)for(const key of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[key].value,'');
  }finally{h.close();}
+});
+
+function openColumnFilter(h,label){const trigger=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']===`${label} 열 필터`)[0];trigger.props.onClick({currentTarget:{getBoundingClientRect:()=>({left:100,bottom:220}),contains:()=>false}});return elements(h.render(),node=>node.type?.name==='RegistrationFilterPopover')[0];}
+const boardRowIds=h=>elements(elements(h.render(),node=>node.type==='tbody')[0],node=>node.type==='tr').map(row=>row.key);
+test('column values and AND bounds operate before pagination and preserve off-page selections and source records',()=>{
+ const seed=boardHarness().product,products=Array.from({length:36},(_,index)=>({...seed,id:`f-${index}`,content_summary:{...seed.content_summary,seoTitle:index%2?'나':'가',additional:index%13}})),before=JSON.stringify(products),h=boardHarness({products,selected:new Set(['f-35'])});
+ elements(h.render(),node=>node.type==='button'&&nodeText(node)==='다음')[0].props.onClick();
+ openColumnFilter(h,'상품명').props.onApply({mode:'values',values:['가']});
+ openColumnFilter(h,'추가이미지').props.onApply({mode:'conditions',conditions:[{operator:'gte',value:'2'},{operator:'lte',value:'10'}]});
+ const expected=products.filter(product=>product.content_summary.seoTitle==='가'&&product.content_summary.additional>=2&&product.content_summary.additional<=10);
+ assert.deepEqual(boardRowIds(h),expected.slice(0,10).map(product=>product.id));
+ assert.equal(elements(h.render(),node=>node.type==='button'&&nodeText(node)==='이전')[0].props.disabled,true);
+ elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0].props.onChange({target:{checked:true}});
+ assert.deepEqual([...h.selections.at(-1)],['f-35',...expected.slice(0,10).map(product=>product.id)]);
+ assert.equal(h.calls.length,0);assert.equal(h.options.length,0);assert.equal(h.confirmations.length,0);assert.equal(JSON.stringify(products),before);
+});
+test('column filter draft close is inert and clearing one column retains other filters and editable title handlers',()=>{
+ const seed=boardHarness().product,products=[{...seed,id:'a',content_summary:{...seed.content_summary,seoTitle:'가',additional:2}},{...seed,id:'b',content_summary:{...seed.content_summary,seoTitle:'나',additional:2}},{...seed,id:'c',content_summary:{...seed.content_summary,seoTitle:'가',additional:0}}],h=boardHarness({products});
+ openColumnFilter(h,'상품명').props.onClose();assert.deepEqual(boardRowIds(h),['a','b','c']);
+ openColumnFilter(h,'상품명').props.onApply({mode:'values',values:['가']});openColumnFilter(h,'추가이미지').props.onApply({mode:'values',values:['2장']});assert.deepEqual(boardRowIds(h),['a']);
+ openColumnFilter(h,'상품명').props.onApply(undefined);assert.deepEqual(boardRowIds(h),['a','b']);
+ const row=elements(elements(h.render(),node=>node.type==='tbody')[0],node=>node.type==='tr')[0];elements(row,node=>node.type==='button'&&node.props.className==='registration-title')[0].props.onClick();assert.equal(h.options.at(-1),products[0]);
+ elements(h.render(),node=>node.type==='button'&&nodeText(node).startsWith('열 필터 모두 해제'))[0].props.onClick();assert.deepEqual(boardRowIds(h),['a','b','c']);
+});
+test('filters use edited names and receipt evidence, and hidden columns keep their selected filters',()=>{
+ const seed=boardHarness().product,receipt={label:'SKU ID 확인',company:{name:'유앤채'},issuedSkus:2,includedOptions:2,quotationId:'q-2',observedAt:Date.parse('2026-10-11T00:00:00Z')};
+ const products=[{...seed,id:'a',registration_status:'전송완료',content_summary:{...seed.content_summary,seoTitle:'새 이름'}},{...seed,id:'b',registration_status:'작업 중',hub_receipt:receipt,content_summary:{...seed.content_summary,seoTitle:'새 이름'}}],h=boardHarness({products});
+ const name=openColumnFilter(h,'상품명');assert.deepEqual(JSON.parse(JSON.stringify(name.props.choices)),[{value:'새 이름',count:2}]);name.props.onApply({mode:'values',values:['새 이름']});
+ const status=openColumnFilter(h,'등록상태');assert.deepEqual(Array.from(status.props.choices,choice=>choice.value),['등록대기','SKU ID 확인']);status.props.onApply({mode:'values',values:['SKU ID 확인']});assert.deepEqual(boardRowIds(h),['b']);
+ elements(h.render(),node=>node.type==='input'&&node.props['aria-label']==='등록상태 컬럼 표시')[0].props.onChange({target:{checked:false}});assert.deepEqual(boardRowIds(h),['b']);
+ elements(h.render(),node=>node.type==='button'&&nodeText(node).startsWith('열 필터 모두 해제'))[0].props.onClick();assert.deepEqual(boardRowIds(h),['a','b']);
+});
+test('the open filter trigger toggles closed and popup sorting preserves existing filters',()=>{
+ const seed=boardHarness().product,h=boardHarness({products:['10','2','1'].map(id=>({...seed,id}))});let popup=openColumnFilter(h,'등록번호');assert.ok(popup);
+ const trigger=elements(h.render(),node=>node.type==='button'&&node.props['aria-label']==='등록번호 열 필터')[0];trigger.props.onClick({currentTarget:{getBoundingClientRect:()=>({left:100,bottom:220})}});assert.equal(elements(h.render(),node=>node.type?.name==='RegistrationFilterPopover').length,0);
+ popup=openColumnFilter(h,'등록번호');popup.props.onApply({mode:'values',values:['YP-10','YP-2']});openColumnFilter(h,'등록번호').props.onSort('ascending');assert.deepEqual(boardRowIds(h),['2','10']);openColumnFilter(h,'등록번호').props.onSort('descending');assert.deepEqual(boardRowIds(h),['10','2']);assert.equal(h.options.length,0);assert.equal(h.confirmations.length,0);
 });

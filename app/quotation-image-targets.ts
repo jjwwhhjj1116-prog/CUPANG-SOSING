@@ -23,6 +23,13 @@ export function optionImageTargets(fields: readonly QuotationField[]) {
   return { additionalImages: exactPrimaryQuotationTarget(fields, 'additionalImages'), detailImages: exactPrimaryQuotationTarget(fields, 'detailImages'), detailHtml: exactDetailHtmlTarget(fields) };
 }
 export const quotationImageKeys = (value: string) => value.split('\n').map(key => key.trim()).filter(Boolean);
+/** Move one selected image to another selected position; never add or remove
+ * references or reinterpret an ambiguous duplicate list. */
+export function reorderOptionImageKeys(keys: readonly string[], from: string, to: string): string[] {
+  const ordered = [...keys], source = ordered.indexOf(from), target = ordered.indexOf(to);
+  if (source < 0 || target < 0 || source === target || new Set(ordered).size !== ordered.length) return ordered;
+  ordered.splice(source, 1); ordered.splice(target, 0, from); return ordered;
+}
 export function optionImageValue(view: QuotationFieldsView, optionId: string, input: OptionImageInput, draft: OptionImageDraft = {}, fieldId?: string): string {
   const target = optionImageTargets(view.resolved.schema.fields)[input], id = fieldId ?? target.primary;
   if (Object.hasOwn(draft, input)) {
@@ -97,4 +104,19 @@ export function verifyOptionImageRestored(acknowledged: QuotationFieldsView, con
   const before = acknowledged.resolved.rows.find(row => row.optionId === optionId)!, after = confirmed.resolved.rows.find(row => row.optionId === optionId)!;
   if (changes.some(change => change.value === null && (before.fields[change.fieldKey]?.value !== after.fields[change.fieldKey]?.value || before.fields[change.fieldKey]?.source !== after.fields[change.fieldKey]?.source)))
     throw Error('이미지 복원 응답의 최종값이 최신 저장본과 다릅니다. 입력은 유지했습니다.');
+}
+
+/** A read can confirm only the one attempted quote commit. Keep the original
+ * draft basis, source-derived defaults and any received ACK until it is proved. */
+export function verifyOptionImageRecovery(before: QuotationFieldsView, confirmed: QuotationFieldsView, optionId: string, changes: readonly QuotationChange[], acknowledged?: QuotationFieldsView) {
+  verifyOptionImageSave(before, confirmed, optionId, changes);
+  if (JSON.stringify(before.automatic) !== JSON.stringify(confirmed.automatic)
+    || JSON.stringify(before.resolved.schema) !== JSON.stringify(confirmed.resolved.schema))
+    throw Error('이미지 저장 후 원본 또는 입력 양식이 변경되었습니다. 입력은 유지했습니다.');
+  if (acknowledged) {
+    verifyOptionImageRestored(acknowledged, confirmed, optionId, changes);
+    if (JSON.stringify(acknowledged.overrides) !== JSON.stringify(confirmed.overrides)
+      || JSON.stringify(acknowledged.resolved) !== JSON.stringify(confirmed.resolved))
+      throw Error('이미지 저장 응답과 최신 저장본이 다릅니다. 입력은 유지했습니다.');
+  }
 }

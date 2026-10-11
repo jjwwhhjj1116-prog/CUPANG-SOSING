@@ -28,13 +28,13 @@ test('single completed URL draft opens editing after collection; failures and ba
  }
 });
 function harness(open, collect){
- const slots=[],cleanups=[],calls=[],changes=[],busy=[],jobs=[];let index=0,first=true,settings,rows,jobContext;
- const hooks={useState(v){const i=index++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return[slots[i],v=>slots[i]=typeof v==='function'?v(slots[i]):v];},useRef(v){const i=index++;return slots[i]??(slots[i]={current:v});},useEffect(fn){if(first){const cleanup=fn();if(cleanup)cleanups.push(cleanup);}}};
+ const slots=[],layouts=[],cleanups=[],calls=[],changes=[],busy=[],jobs=[];let index=0,first=true,settings,rows,jobContext;
+ const hooks={useState(v){const i=index++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return[slots[i],v=>slots[i]=typeof v==='function'?v(slots[i]):v];},useRef(v){const i=index++;return slots[i]??(slots[i]={current:v});},useLayoutEffect(fn){layouts.push(fn);},useEffect(fn){if(first){const cleanup=fn();if(cleanup)cleanups.push(cleanup);}}};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,crypto,fetch:async(url,init)=>{calls.push({url,init});if(collect){const body=JSON.parse(init.body);return Response.json({jobs:[{id:'job-'+body.urls[0],source_url:body.urls[0],offer_id:body.urls[0].match(/offer\/(\d+)/)[1],status:'awaiting_connector'}],preservedRequests:[]});}return url==='/api/settings'?Promise.reject(Error('unexpected request')):Response.json({code:'REGISTRATION_SETTINGS_CHANGED',error:'기본설정 변경'},{status:409});},require(name){if(name==='react')return hooks;if(name==='@/app/components/category-picker')return{CategoryPicker:()=>null};if(name==='@/app/components/intake-quotation-preview')return{IntakeQuotationPreview:()=>null};if(name==='@/app/intake-collection')return{collectIntakeProduct:collect??(async()=>{throw Error('must not collect');})};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  settings=load('app/workspace-settings.ts').savedRegistrationSettings({brand:'이전',exchangeRate:190});
  rows=[1,2].map(n=>({id:String(n),profile:{id:'00000000-0000-0000-0000-000000000001',revision:1,categoryId:'80719',categoryPath:['주방','바스켓']},url:`https://detail.1688.com/offer/${n}.html`,features:'입력 특징',keywords:'입력 키워드',status:n===1?'saved':'draft',productId:n===1?'p1':undefined,message:''}));
  const Component=load('app/components/intake-queue-panel.tsx').IntakeQueuePanel;
- const render=()=>{index=0;const tree=Component({rows,settings,profiles:[],jobs:[{source_url:rows[0].url,product_id:'p1',status:'awaiting_connector',context:jobContext}],onOpenProduct:open,onRows:update=>rows=update(rows),onProfile(){},onAdvanced(){},onJobs:values=>jobs.push(...values),onBusy:value=>busy.push(value),goal:'price',onGoal(){},onSettingsReloaded:value=>{settings=value;changes.push(value);}});first=false;return tree;};
+ const render=()=>{index=0;const tree=Component({rows,settings,profiles:[],jobs:[{source_url:rows[0]?.url,product_id:'p1',status:'awaiting_connector',context:jobContext}],onOpenProduct:open,onRows:update=>rows=update(rows),onProfile(){},onAdvanced(){},onJobs:values=>jobs.push(...values),onBusy:value=>busy.push(value),goal:'price',onGoal(){},onSettingsReloaded:value=>{settings=value;changes.push(value);}});layouts.splice(0).forEach(fn=>fn());first=false;return tree;};
  const button=text=>nodes(render()).find(n=>n.type==='button'&&String(n.props.children).includes(text));
  return{render,button,calls,changes,busy,jobs,setJobContext(value){jobContext=value;},get rows(){return rows;},get settings(){return settings;},close(){cleanups.forEach(fn=>fn());}};
 }
@@ -69,6 +69,18 @@ test('partially saved row opens for editing and editing its URL clears the confi
  h.button('1~7단계 확인').props.onClick();await settle();assert.deepEqual(opened,['partial-product']);assert.equal(h.rows[0].status,'error');
  nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 1688 링크').props.onChange({target:{value:'https://detail.1688.com/offer/999.html'}});
  assert.equal(h.rows[0].productId,undefined);assert.equal(h.button('1~7단계 확인'),undefined);assert.equal(h.rows[0].status,'draft');
+});
+
+test('a retained draft-open callback cannot open its old product after the row source is edited, deleted or the queue closes',async()=>{
+ for(const change of ['url','features','category','deleted','unmounted']){
+  const opened=[],h=harness(async id=>opened.push(id));h.rows[0].status='error';h.rows[0].message='이미지 반영 실패';const oldClick=h.button('1~7단계 확인').props.onClick;
+  if(change==='url')nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 1688 링크').props.onChange({target:{value:'https://detail.1688.com/offer/999.html'}});
+  if(change==='features')nodes(h.render()).find(n=>n.props?.['aria-label']==='1번째 특징').props.onChange({target:{value:'새 상품 특징'}});
+  if(change==='category'){h.rows[0].profile={...h.rows[0].profile,categoryId:'81221',categoryPath:['스포츠/레져','스포츠 잡화','스포츠 장갑']};h.rows[0].productId=undefined;}
+  if(change==='deleted')h.button('행 삭제').props.onClick();
+  if(change==='unmounted')h.close();
+  const before=JSON.stringify(h.rows);oldClick();await settle();assert.deepEqual(opened,[],change);assert.equal(h.calls.length,0,change);assert.equal(JSON.stringify(h.rows),before,change);assert.deepEqual(h.busy,[],change);
+ }
 });
 
 test('restored pending row opens matching server product without collecting or submitting again',async()=>{

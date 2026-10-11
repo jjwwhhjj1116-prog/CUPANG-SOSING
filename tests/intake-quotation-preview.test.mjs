@@ -51,21 +51,21 @@ test('quotation preview filters required and observed defaults, searches choice 
 });
 test('opening preview and changing category preserves row URL and notes and displays the newly selected profile',()=>{
  let rows=[{id:'row',profile,url:'https://detail.1688.com/offer/1.html',features:'특징',keywords:'검색어',status:'error',message:'이전 오류'}];
- const slots=[];let cursor=0;const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(){}};
+ const slots=[],layouts=[];let cursor=0;const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
  function Picker(){}function Preview(){}
  const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{'react':hooks,'@/app/components/category-picker':{CategoryPicker:Picker},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:Preview}});
- const render=()=>{cursor=0;return IntakeQueuePanel({rows,onRows:update=>{rows=update(rows);},profiles:[profile],onProfile(){},onJobs(){},onBusy(){},goal:'price',onGoal(){}});};
+ const render=()=>{cursor=0;const tree=IntakeQueuePanel({rows,onRows:update=>{rows=update(rows);},profiles:[profile],onProfile(){},onJobs(){},onBusy(){},goal:'price',onGoal(){}});layouts.splice(0).forEach(fn=>fn());return tree;};
  let tree=render();nodes(tree).find(n=>n.type==='button'&&n.props.children==='견적 항목·양식 확인').props.onClick();tree=render();assert.equal(nodes(tree).find(n=>n.type===Preview).props.profile,profile);
  nodes(tree).find(n=>n.props?.className==='intake-category-button').props.onClick();tree=render();const next={...profile,categoryId:'77442',revision:3};nodes(tree).find(n=>n.type===Picker).props.onSelected(next);
  tree=render();assert.equal(nodes(tree).find(n=>n.type===Preview).props.profile,next);assert.equal(rows[0].url,'https://detail.1688.com/offer/1.html');assert.equal(rows[0].features,'특징');assert.equal(rows[0].keywords,'검색어');assert.equal(rows[0].status,'draft');
 });
 
 test('queue starts with add button and retains selection while filtering rows',()=>{
- let rows=[];const slots=[];let cursor=0;
- const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(){}};
+ let rows=[];const slots=[],layouts=[];let cursor=0;
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
  function Picker(){}function Preview(){}
  const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{'react':hooks,'@/app/components/category-picker':{CategoryPicker:Picker},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:Preview}});
- const render=()=>{cursor=0;return IntakeQueuePanel({rows,onRows:update=>{rows=update(rows);},profiles:[profile],onProfile(){},onJobs(){},onBusy(){},goal:'price',onGoal(){}});};
+ const render=()=>{cursor=0;const tree=IntakeQueuePanel({rows,onRows:update=>{rows=update(rows);},profiles:[profile],onProfile(){},onJobs(){},onBusy(){},goal:'price',onGoal(){}});layouts.splice(0).forEach(fn=>fn());return tree;};
  let tree=render();assert.ok(!nodes(tree).some(n=>n.type===Picker));
  nodes(tree).find(n=>n.type==='button'&&n.props.children==='＋ 상품 추가').props.onClick();tree=render();assert.ok(nodes(tree).some(n=>n.type===Picker));
  nodes(tree).find(n=>n.type==='button').props.onClick();
@@ -79,11 +79,11 @@ test('queue starts with add button and retains selection while filtering rows',(
 });
 
 test('image-draft goal is explicit, restores as work and carries unchanged URL/category into the intake request',()=>{
- const slots=[];let cursor=0,goal='work';
- const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(){}};
+ const slots=[],layouts=[];let cursor=0,goal='work';
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useLayoutEffect(fn){layouts.push(fn);},useEffect(){}};
  const {IntakeQueuePanel}=load('app/components/intake-queue-panel.tsx',{react:hooks,'@/app/components/category-picker':{CategoryPicker:()=>null},'@/app/components/intake-quotation-preview':{IntakeQuotationPreview:()=>null}});
  const rows=[{id:'input',profile:{...profile,id:'00000000-0000-4000-8000-000000000001'},url:'https://detail.1688.com/offer/813724060928.html',features:'수동 특징',keywords:'',status:'draft',message:''}],before=JSON.stringify(rows);
- const render=()=>{cursor=0;return IntakeQueuePanel({rows,onRows(){},profiles:[rows[0].profile],onProfile(){},onJobs(){},onBusy(){},goal,onGoal:value=>{goal=value;}});};
+ const render=()=>{cursor=0;const tree=IntakeQueuePanel({rows,onRows(){},profiles:[rows[0].profile],onProfile(){},onJobs(){},onBusy(){},goal,onGoal:value=>{goal=value;}});layouts.splice(0).forEach(fn=>fn());return tree;};
  const choices=()=>nodes(render()).filter(node=>node.type==='label'&&node.props.className==='goal-card');
  const control=id=>nodes(choices().find(node=>node.key===id)).find(node=>node.type==='input');
  assert.equal(choices().length,3);assert.equal(control('work').props.checked,true);assert.equal(control('price').props.checked,false);

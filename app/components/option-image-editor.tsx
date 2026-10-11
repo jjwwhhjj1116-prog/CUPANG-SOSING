@@ -1,30 +1,37 @@
 'use client';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { QuotationFieldsView } from '@/app/quotation-schema';
+import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react';
+import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
-import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
+import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage;
   disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
+const dragMime = 'application/x-yoofam-option-image-order';
+type ImageDrag = { scope: string; sourceKey: string; stage: OptionImageStage; view: QuotationFieldsView; keys: string[]; key: string; token: string; element: HTMLElement };
 export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, disabled = false, onSaved, onTranslate }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope), currentSource = useRef(sourceKey), currentStage = useRef(stage), request = useRef<AbortController | null>(null);
+  const mounted = useRef(true), pendingSave = useRef<{ scope: string; before: QuotationFieldsView; changes: QuotationChange[]; acknowledged?: QuotationFieldsView } | null>(null);
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: QuotationFieldsView } | null>(null);
   const [pending, setPending] = useState<{ scope: string; values: OptionImageDraft }>({ scope, values: {} });
   const [preview, setPreview] = useState<{ scope: string; key: string } | null>(null);
+  const activeDrag = useRef<ImageDrag | null>(null), liveDisabled = useRef(disabled);
+  const [dragging, setDragging] = useState<{ token: string; key: string; target: string | null } | null>(null);
   const latestSaved = useRef<typeof saved>(null), latestDraft = useRef({ scope, values: {} as OptionImageDraft });
   useLayoutEffect(() => {
-    currentScope.current = scope; currentSource.current = sourceKey;
+    mounted.current = true; currentScope.current = scope; currentSource.current = sourceKey;
     if (latestDraft.current.scope !== scope) latestDraft.current = { scope, values: {} };
-    return () => { request.current?.abort(); request.current = null; };
+    if (pendingSave.current?.scope !== scope) pendingSave.current = null;
+    return () => { mounted.current = false; activeDrag.current = null; request.current?.abort(); request.current = null; };
   }, [scope, sourceKey]);
-  useLayoutEffect(() => { currentStage.current = stage; }, [stage]);
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
+  useLayoutEffect(() => { currentStage.current = stage; activeDrag.current = null; }, [stage]);
+  useLayoutEffect(() => { liveDisabled.current = disabled; if (disabled) activeDrag.current = null; }, [disabled]);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [uncertain, setUncertain] = useState(false);
   const view = saved?.scope === scope ? saved.view : null, draft = pending.scope === scope ? pending.values : {};
   const dirty = Object.keys(draft).length > 0, input = stage === 'additional' ? 'additionalImages' : 'detailImages', label = stage === 'additional' ? '추가 이미지' : '상세 이미지';
-  const current = () => currentScope.current === scope && currentSource.current === sourceKey;
+  const current = () => mounted.current && currentScope.current === scope && currentSource.current === sourceKey;
   function verify(body: QuotationFieldsView, saveResponse = false, explicitLatest = false) {
     if (!body || (!saveResponse && !explicitLatest && body.productVersion !== version) || !Number.isFinite(Date.parse(body.productVersion)) || !Number.isSafeInteger(body.revision) || body.revision < 0
       || !Number.isSafeInteger(body.contentRevision) || body.contentRevision < 0 || !Number.isSafeInteger(body.optionRevision) || body.optionRevision < 0
@@ -39,30 +46,45 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       throw Error('선택 옵션의 이미지 입력 연결을 확인하지 못했습니다. 견적서 상세 항목을 확인해주세요.');
   }
   async function load(keepDraft = false) {
-    if (request.current || !current()) return;
+    if (disabled || request.current || !current()) return;
+    clearDrag();
     const controller = new AbortController(); request.current = controller; setBusy(true); setError('');
     try {
       const response = await fetch(endpoint, { cache: 'no-store', signal: controller.signal }), body = await response.json() as QuotationFieldsView & { error?: string };
       if (controller.signal.aborted || !current()) return;
-      if (!response.ok) throw Error(body.error || '옵션 이미지를 불러오지 못했습니다.'); verify(body, false, keepDraft);
+      const attempt = pendingSave.current?.scope === scope ? pendingSave.current : null;
+      if (!response.ok) throw Error(body.error || '옵션 이미지를 불러오지 못했습니다.'); verify(body, false, keepDraft || !!attempt);
       const editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
-      if (keepDraft) { const before = latestSaved.current?.scope === scope ? latestSaved.current.view : null; if (!before) throw Error('이전 이미지 입력 기준을 확인하지 못했습니다.'); verifyOptionImageRefresh(before, body, optionId, editing); }
+      let recovered = false;
+      if (keepDraft) {
+        const before = attempt?.before ?? (latestSaved.current?.scope === scope ? latestSaved.current.view : null); if (!before) throw Error('이전 이미지 입력 기준을 확인하지 못했습니다.');
+        if (attempt) {
+          try { verifyOptionImageRecovery(before, body, optionId, attempt.changes, attempt.acknowledged); recovered = true; }
+          catch (cause) {
+            if (JSON.stringify(body) !== JSON.stringify(before)) throw cause;
+            verifyOptionImageRefresh(before, body, optionId, editing);
+          }
+        } else verifyOptionImageRefresh(before, body, optionId, editing);
+      } else if (attempt) verifyOptionImageRefresh(attempt.before, body, optionId, {});
       latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current);
-      if (!keepDraft) { latestDraft.current = { scope, values: {} }; setPending(latestDraft.current); }
-      setMessage(keepDraft ? '입력을 유지하고 최신 이미지를 읽었습니다. 확인 후 선택 옵션 이미지를 저장해주세요.' : '');
+      pendingSave.current = null; setUncertain(false);
+      if (!keepDraft || recovered) { latestDraft.current = { scope, values: {} }; setPending(latestDraft.current); }
+      setMessage(recovered ? '저장된 선택 옵션 이미지를 확인했습니다. 견적서에 반영됩니다.' : keepDraft ? '입력을 유지하고 최신 이미지를 읽었습니다. 확인 후 선택 옵션 이미지를 저장해주세요.' : '');
+      if (recovered) onSaved?.();
     } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '옵션 이미지 조회 실패'); }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
   useEffect(() => {
     let active = true;
-    void Promise.resolve().then(() => { if (!active || !current()) return; setBusy(false); setError(''); if (dirty && view) return; void load(); });
+    void Promise.resolve().then(() => { if (!active || !current()) return; setBusy(false); setError(''); setUncertain(pendingSave.current?.scope === scope); if (dirty && view) return; void load(); });
     return () => { active = false; request.current?.abort(); request.current = null; };
     // Source identity governs reads. Stage changes retain the same option's
     // pending image/HTML edits; local editing never starts an automatic write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, sourceKey]);
   function edit(field: OptionImageInput, value: string | null) {
-    if (!view || disabled || request.current || !current()) return;
+    if (!view || disabled || pendingSave.current?.scope === scope || request.current || !current()) return;
+    clearDrag();
     latestDraft.current = { scope, values: { ...(latestDraft.current.scope === scope ? latestDraft.current.values : {}), [field]: value } };
     setPending(latestDraft.current); setMessage('');
   }
@@ -81,14 +103,19 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   async function save() {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
     if (!base || base.scope !== scope || !Object.keys(editing).length || disabled || request.current || !current()) return;
+    if (pendingSave.current?.scope === scope) { await load(true); return; }
     if (base.sourceKey !== sourceKey) { setError('상품 저장 상태가 변경됐습니다. 입력을 유지하고 최신 이미지를 조회한 뒤 저장해주세요.'); return; }
     let changes; try { changes = optionImageChanges(base.view, optionId, editing); } catch (cause) { setError(cause instanceof Error ? cause.message : '이미지 입력을 확인해주세요.'); return; }
-    const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage('');
+    clearDrag();
+    const attempt = { scope, before: base.view, changes: changes.map(change => ({ ...change })) } as NonNullable<typeof pendingSave.current>;
+    pendingSave.current = attempt; setUncertain(true);
+    const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); let response: Response | undefined;
     try {
-      const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: base.view.revision, expectedInputFingerprint: base.view.inputFingerprint, changes }) });
+      response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: base.view.revision, expectedInputFingerprint: base.view.inputFingerprint, changes }) });
       let body = await response.json() as QuotationFieldsView & { error?: string };
       if (controller.signal.aborted || !current()) return;
       if (!response.ok) throw Error(body.error || '옵션 이미지를 저장하지 못했습니다. 입력은 유지됩니다.'); verify(body, true); verifyOptionImageSave(base.view, body, optionId, changes);
+      attempt.acknowledged = body;
       if (changes.some(change => change.value === null)) {
         const confirmation = await fetch(endpoint, { cache: 'no-store', signal: controller.signal }), latest = await confirmation.json() as QuotationFieldsView & { error?: string };
         if (controller.signal.aborted || !current()) return;
@@ -96,8 +123,12 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         verify(latest, true); verifyOptionImageSave(base.view, latest, optionId, changes); verifyOptionImageRestored(body, latest, optionId, changes); body = latest;
       }
       latestSaved.current = { scope, sourceKey, view: body }; latestDraft.current = { scope, values: {} };
+      pendingSave.current = null; setUncertain(false);
       setSaved(latestSaved.current); setPending(latestDraft.current); setMessage('선택 옵션 이미지 저장 완료 · 견적서에 반영됩니다.'); onSaved?.();
-    } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '옵션 이미지 저장 실패'); }
+    } catch (cause) { if (!controller.signal.aborted && current()) {
+      if (response && !response.ok && response.status < 500) { pendingSave.current = null; setUncertain(false); }
+      setError(cause instanceof Error ? cause.message : '옵션 이미지 저장 실패');
+    } }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
   let selected: string[] = [], html = '', limit = 30, issues: string[] = [], bindingError = '';
@@ -105,13 +136,70 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     const targets = optionImageTargets(view.resolved.schema.fields); selected = quotationImageKeys(optionImageValue(view, optionId, input, draft)); html = optionImageValue(view, optionId, 'detailHtml', draft);
     limit = Math.min(...targets[input].fields.map(field => field.maxItems ?? 30)); issues = optionImageDraftIssues(view, optionId, draft);
   } catch (cause) { bindingError = cause instanceof Error ? cause.message : '이미지 연결 확인 필요'; }
-  const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || disabled || !!bindingError;
+  const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || disabled || uncertain || !!bindingError;
   const unavailable = selected.filter(key => !view?.imageKeys.includes(key));
   const activePreview = preview?.scope === scope && view?.imageKeys.includes(preview.key) ? preview.key : selected.find(key => view?.imageKeys.includes(key)) ?? view?.imageKeys[0] ?? null;
+  function clearDrag() { activeDrag.current = null; setDragging(null); }
+  function dragSelection(key: string) {
+    const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
+    if (!base || base.scope !== scope || base.sourceKey !== sourceKey || !current() || currentStage.current !== stage
+      || liveDisabled.current || request.current || pendingSave.current?.scope === scope || bindingError) return null;
+    try {
+      const keys = quotationImageKeys(optionImageValue(base.view, optionId, input, editing));
+      if (!keys.includes(key) || keys.some(value => !base.view.imageKeys.includes(value)) || new Set(keys).size !== keys.length) return null;
+      return { view: base.view, keys };
+    } catch { return null; }
+  }
+  function currentDrag(key: string) {
+    const attempt = activeDrag.current, selection = dragSelection(key);
+    return attempt && selection && attempt.scope === scope && attempt.sourceKey === sourceKey && attempt.stage === stage
+      && attempt.view === selection.view && JSON.stringify(attempt.keys) === JSON.stringify(selection.keys) ? attempt : null;
+  }
+  function startDrag(key: string, event: DragEvent<HTMLElement>) {
+    const selection = dragSelection(key);
+    if (!selection || !event.dataTransfer) { event.preventDefault(); return; }
+    const attempt = { scope, sourceKey, stage, ...selection, key, token: crypto.randomUUID(), element: event.currentTarget };
+    try {
+      event.dataTransfer.clearData(); event.dataTransfer.setData(dragMime, attempt.token); event.dataTransfer.effectAllowed = 'move';
+      activeDrag.current = attempt; setDragging({ token: attempt.token, key, target: null });
+    } catch { clearDrag(); event.preventDefault(); }
+  }
+  function dragOver(key: string, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+    const attempt = currentDrag(key);
+    // Browser drag data is protected until drop. Check the private format here;
+    // the exact token is checked only when the payload becomes readable.
+    if (!attempt || !event.dataTransfer?.types.includes(dragMime)) return;
+    event.dataTransfer.dropEffect = 'move';
+    setDragging({ token: attempt.token, key: attempt.key, target: key });
+  }
+  function dropImage(key: string, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    const attempt = currentDrag(key);
+    if (!attempt || !event.dataTransfer || event.dataTransfer.getData(dragMime) !== attempt.token) return;
+    event.stopPropagation();
+    const ordered = reorderOptionImageKeys(attempt.keys, attempt.key, key); clearDrag();
+    if (JSON.stringify(ordered) !== JSON.stringify(attempt.keys)) edit(input, ordered.join('\n'));
+  }
+  function endDrag(key: string, event: DragEvent<HTMLElement>) {
+    const attempt = currentDrag(key);
+    // Native dragend data can be protected. Ending our current source gesture
+    // only cancels its private state; it never changes the selected references.
+    if (attempt?.key === key && attempt.element === event.currentTarget) clearDrag();
+  }
+  function sortableProps(key: string, index: number, className = '') {
+    const visible = !!activeDrag.current && activeDrag.current.token === dragging?.token && activeDrag.current.stage === stage
+      && activeDrag.current.scope === scope && activeDrag.current.sourceKey === sourceKey && !locked;
+    return { 'data-image-sort-key': key, 'aria-label': `${label} ${index + 1} 순서 이동`, draggable: !locked && !!dragSelection(key),
+      className: `${className} option-image-sortable${visible && dragging?.key === key ? ' dragging' : ''}${visible && dragging?.target === key ? ' drag-over' : ''}`.trim(),
+      onDragStart: (event: DragEvent<HTMLElement>) => startDrag(key, event), onDragOver: (event: DragEvent<HTMLElement>) => dragOver(key, event),
+      onDrop: (event: DragEvent<HTMLElement>) => dropImage(key, event), onDragEnd: (event: DragEvent<HTMLElement>) => endDrag(key, event) };
+  }
   function translateSelected(key: string, slotIndex: number, sourceLanguage: 'zh' | 'en') {
     const base = latestSaved.current;
     if (!onTranslate || !base || base.view !== view || base.scope !== scope || base.sourceKey !== sourceKey || base.view.productVersion !== version
-      || !current() || currentStage.current !== stage || disabled || request.current || Object.keys(latestDraft.current.values).length || !base.view.imageKeys.includes(key)) return;
+      || !current() || currentStage.current !== stage || disabled || pendingSave.current?.scope === scope || request.current || Object.keys(latestDraft.current.values).length || !base.view.imageKeys.includes(key)) return;
     try {
       const target = optionImageTargets(base.view.resolved.schema.fields)[input], value = optionImageValue(base.view, optionId, input);
       if (quotationImageKeys(value)[slotIndex] !== key || target.linked.some(id => optionImageValue(base.view, optionId, input, {}, id) !== value)) return;
@@ -135,7 +223,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   </div>;
   return <section className="panel-stack" aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy}>
     <h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3><p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
-    <p>선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
+    <p>드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요. 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
     {view && <>{stage === 'additional' ? <div className="image-edit-workspace">
@@ -143,13 +231,13 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <section className="image-edit-canvas" aria-label="선택 옵션 이미지 미리보기"><h4>현재 {label} · {selected.length}/{limit}개</h4>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {activePreview ? <figure className="image-large-preview"><figcaption>이미지 {view.imageKeys.indexOf(activePreview) + 1} 미리보기</figcaption><img src={imageUrl(activePreview)} alt={`선택 옵션 ${label} 큰 미리보기`} /></figure> : <p>이미지 목록에서 미리볼 자료를 선택하세요.</p>}
-        <div className="image-selected-strip option-additional-image-strip" aria-label={`선택 옵션 ${label} 순서`}>{selected.map((key, index) => <figure className="image-selected-item" key={key}>
+        <div className="image-selected-strip option-additional-image-strip" aria-label={`선택 옵션 ${label} 순서`}>{selected.map((key, index) => <figure key={key} {...sortableProps(key, index, 'image-selected-item')}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {view.imageKeys.includes(key) ? <button type="button" aria-label={`${label} ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (current() && !request.current && !disabled) setPreview({ scope, key }); }}><img src={imageUrl(key)} alt={`${label} ${index + 1}`} width={64} height={64} /><span>{index + 1}</span></button> : <p>현재 상품에 없는 이미지</p>}
       <figcaption>{index + 1} · {key.split('/').at(-1)}</figcaption>
       {selectedActions(key, index)}
     </figure>)}</div>{!selected.length && <p>이 옵션에 선택한 {label}가 없습니다.</p>}
-      </section></div> : <><section className="option-detail-image-stack" aria-label="선택 옵션 상세 이미지 순서"><h4>현재 상세 이미지 · {selected.length}/{limit}개</h4>{selected.map((key, index) => <figure className="option-detail-image-item" key={key}>
+      </section></div> : <><section className="option-detail-image-stack" aria-label="선택 옵션 상세 이미지 순서"><h4>현재 상세 이미지 · {selected.length}/{limit}개</h4>{selected.map((key, index) => <figure key={key} {...sortableProps(key, index, 'option-detail-image-item')}>
         <figcaption>상세 이미지 {index + 1} · {key.split('/').at(-1)}</figcaption>{selectedActions(key, index)}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {view.imageKeys.includes(key) ? <img src={imageUrl(key)} alt={`상세 이미지 ${index + 1}`} loading="lazy" /> : <p>현재 상품에 없는 이미지</p>}
@@ -168,7 +256,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       </label>}
     </>}
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
-    <button type="button" className="btn primary" disabled={!view || locked || !dirty || !!issues.length} onClick={() => void save()}>선택 옵션 이미지 저장</button>
+    <button type="button" className="btn primary" disabled={!view || busy || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : '선택 옵션 이미지 저장'}</button>
     {dirty && <button type="button" className="btn ghost" disabled={busy || disabled} onClick={() => void load(true)}>입력 유지·최신 이미지 조회</button>}
     <button type="button" className="btn ghost" disabled={busy || disabled} onClick={() => void load()}>{dirty ? '입력 취소·저장 이미지 다시 조회' : '저장 이미지 다시 조회'}</button>
   </section>;

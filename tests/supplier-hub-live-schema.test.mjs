@@ -64,7 +64,7 @@ test('explicit name/value keys distinguish a single permitted value and preserve
  const changed=quotes.applyQuotationChanges(quotes.emptyQuotationOverrides(),[{fieldKey:lens.id,optionId:'SKU',value:'UV'}]);
  assert.equal(changed.options.SKU[lens.id],'UV');assert.equal(before.fields.find(field=>field.hubWire.name==='렌즈 유형').id,lens.id);
 });
-test('nonstandard named-array keys require one unambiguous name schema and never infer singleton-enum order',()=>{
+test('documented attribute keys support singleton choices while unknown pairs never infer singleton-enum order',()=>{
  const snapshot=hubSchemaSnapshot();
  const replace=properties=>modify(snapshot,raw=>{
   raw.properties.productPage.properties.commonAttributes.properties.exposedAttributes.allOf=[{contains:{type:'object',properties}}];
@@ -76,7 +76,13 @@ test('nonstandard named-array keys require one unambiguous name schema and never
  assert.deepEqual(plain(reverse.fields.find(field=>field.hubWire.name==='시험 속성').hubWire),{
   path:['productPage','commonAttributes','exposedAttributes'],nameKey:'attributeName',valueKey:'attributeValue',name:'시험 속성',
  });
- for(const properties of [{attributeName:named,attributeValue:{type:'string',enum:['한 값']}},{attributeValue:{type:'string',enum:['한 값']},attributeName:named},
+ // Public extractSchemaInfoForQuotation (outputs/step546-public-methods.json)
+ // identifies attributeName/attributeValue explicitly, including one choice.
+ for(const properties of [{attributeName:named,attributeValue:{type:'string',enum:['한 값']}},{attributeValue:{type:'string',enum:['한 값']},attributeName:named}]){
+  const result=model.compileHubQuotationSchema(replace(properties));assert.equal(result.unsupported.length,0);
+  const selected=result.fields.find(field=>field.hubWire.name==='시험 속성');assert.equal(selected.hubWire.nameKey,'attributeName');assert.equal(selected.hubWire.valueKey,'attributeValue');assert.deepEqual(plain(selected.choices),[{value:'한 값',label:'한 값'}]);
+ }
+ for(const properties of [{customName:named,customValue:{type:'string',enum:['한 값']}},{customValue:{type:'string',enum:['한 값']},customName:named},
   {name:{type:'string'},value:{type:'string',enum:['잘못된 이름 후보']}}]){
   const result=model.compileHubQuotationSchema(replace(properties));
   assert.ok(result.unsupported.includes('productPage / commonAttributes / exposedAttributes'));

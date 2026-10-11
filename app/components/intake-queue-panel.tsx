@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CategoryPicker } from '@/app/components/category-picker';
 import { intakeProductId, intakeRow, submitIntakeQueue, visibleIntakeRows, type IntakeRow } from '@/app/intake-queue';
 import { collectionBlock, parseCollectionRequest, type CollectionJob } from '@/app/sourcing';
@@ -38,6 +38,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const [previewId, setPreviewId] = useState<string | null>(null);
   const previewRow = rows.find(row => row.id === previewId);
   const running = useRef<AbortController | null>(null);
+  const navigation = useRef({rows,jobs,onOpenProduct});
+  useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct};},[rows,jobs,onOpenProduct]);
   const focusRow = useRef<string | null>(null);
   const urlInputs = useRef(new Map<string, HTMLInputElement>());
   useEffect(() => {
@@ -71,12 +73,20 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   }
   function edit(id: string, patch: Partial<IntakeRow>) {
     if (running.current) return;
-    onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft', message: '', productId: undefined } : row));
+    const update=(previous:IntakeRow[])=>previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft' as const, message: '', productId: undefined } : row);
+    navigation.current.rows=update(navigation.current.rows);
+    onRows(update);
   }
-  async function openSavedProduct(id:string) {
-    if(running.current || !onOpenProduct)return;
+  function removeRow(id:string){
+    if(running.current)return;
+    const update=(previous:IntakeRow[])=>previous.filter(row=>row.id!==id);
+    navigation.current.rows=update(navigation.current.rows);onRows(update);
+  }
+  async function openSavedProduct(rowId:string,id:string) {
+    const current=navigation.current,row=current.rows.find(value=>value.id===rowId);
+    if(!sourceMounted.current||reloadOwnerRef.current!==workspaceOwnerId||running.current||!current.onOpenProduct||!row||intakeProductId(row,current.jobs)!==id)return;
     const controller=new AbortController();running.current=controller;setBusy(true);onBusy(true);setError('');
-    try { await onOpenProduct(id,controller.signal); }
+    try { await current.onOpenProduct(id,controller.signal); }
     catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'저장된 상품을 열지 못했습니다. 다시 시도해주세요.');}
     finally { finish(controller); }
   }
@@ -151,8 +161,8 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
         <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
-        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(productId)}>1~7단계 확인·수정</button>}</td>
-        <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => { const id = crypto.randomUUID(); focusRow.current = id; setQuery(''); onRows(previous => previous.length < 50 ? [...previous, { ...intakeRow(row.profile, id), features: row.features, keywords: row.keywords }] : previous); }}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => onRows(previous => previous.filter(item => item.id !== row.id))}>행 삭제</button></td>
+        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>1~7단계 확인·수정</button>}</td>
+        <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => { const id = crypto.randomUUID(); focusRow.current = id; setQuery(''); onRows(previous => previous.length < 50 ? [...previous, { ...intakeRow(row.profile, id), features: row.features, keywords: row.keywords }] : previous); }}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => removeRow(row.id)}>행 삭제</button></td>
       </tr>; })}
     </tbody></table>{rows.length > 0 && !visible.length && <p className="collection-empty">검색 결과가 없습니다. 검색을 해제하면 입력한 상품을 다시 볼 수 있습니다.</p>}{!rows.length && <p className="collection-empty">대기열이 비어있습니다. [+ 상품 추가] 버튼으로 카테고리를 선택해주세요.</p>}</div>
     {previewRow && <div><button type="button" className="btn ghost" onClick={() => setPreviewId(null)}>견적 연결 미리보기 닫기</button><IntakeQuotationPreview profile={previewRow.profile}/></div>}
