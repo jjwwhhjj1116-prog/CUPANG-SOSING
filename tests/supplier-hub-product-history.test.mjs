@@ -39,6 +39,53 @@ test('actual IndexedDB history scans only this app and product and leaves origin
  assert.deepEqual(plain(await ctx.transferRecord('history',`history:${origin}:${productId}`)),own);assert.equal(transactions,1);assert.equal(closed,1);assert.deepEqual(plain([...rows]),before);assert.deepEqual(writes,[]);
  await assert.rejects(ctx.transferRecord('history','history:https://foreign.test:product'));assert.equal(transactions,1);
 });
+function storedHistoryFixture(entries){
+ const rows=new Map(entries.map(row=>[row.key,structuredClone(row.value)])),before=plain([...rows]);let transactions=0,closed=0;
+ const db={close(){closed++;},transaction(_table,mode){transactions++;assert.equal(mode,'readonly');const snapshot=[...rows];let index=0,aborted=false;
+  const tx={abort(){aborted=true;tx.onabort?.();},objectStore:()=>({openCursor(){const request={};const advance=()=>queueMicrotask(()=>{
+   if(aborted)return;const row=snapshot[index++];request.result=row?{key:row[0],value:structuredClone(row[1]),continue:advance}:null;
+   request.onsuccess?.();if(!row&&!aborted)tx.oncomplete?.();
+  });advance();return request;},put(){assert.fail('history may not write');},delete(){assert.fail('history may not delete');}})};return tx;
+ }};
+ const indexedDB={open(){const request={};queueMicrotask(()=>{request.result=db;request.onsuccess?.();});return request;}},ctx=vm.createContext({indexedDB,URL,Date,TextEncoder});
+ vm.runInContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-store.mjs',import.meta.url),'utf8').replace(/export (const|async function|function) /g,'$1 '),ctx);
+ return {read:()=>ctx.transferRecord('history',`history:${origin}:${productId}`),preserved(){assert.deepEqual(plain([...rows]),before);assert.equal(closed,transactions);},get transactions(){return transactions;}};
+}
+const validationLock=(parent,state='started')=>({key:parent.key+':validation',value:{origin:parent.value.origin,productId:parent.value.productId,categoryId:parent.value.categoryId,
+ fingerprint:parent.value.fingerprint,state,registered:false,startedAt:Date.now()-1000}});
+function storedTransmission(patch={}){
+ const parent=record('transmission',{state:'attached',profileId:'original-profile',validationResume:true,windowId:17,tabId:123,...patch});
+ parent.value.filename=`YOOFAM-${parent.value.fingerprint}.xlsx`;parent.value.attachmentNames=[parent.value.filename];return parent;
+}
+
+test('actual IndexedDB separates only bound validation locks and keeps canonical pending history blocking for both companies',async()=>{
+ for(const company of companies)for(const state of ['started','not-started','validation-requested']){
+  const parent=storedTransmission({company}),result=record('result',{company}),lock=validationLock(parent,state);
+  for(const entries of [[parent,lock,result],[lock,result,parent]]){
+   const h=storedHistoryFixture(entries),canonical=plain(await h.read());
+   assert.deepEqual(canonical,entries.filter(row=>row.key!==lock.key));assert.equal(productTransferHistoryBlocked(origin,productId,canonical),true);
+   assert.equal(ui.validateSupplierHubLocalHistory(canonical,origin,productId).blocked,true);h.preserved();
+  }
+ }
+});
+
+test('orphan, mismatched and malformed validation locks or unknown suffixes fail closed without changing IndexedDB',async()=>{
+ const parent=storedTransmission(),lock=validationLock(parent);
+ const cases=[[lock],[record('result'),lock],[{...parent,value:{...parent.value,fingerprint:'b'.repeat(64)}},lock],
+  ...[{origin:'https://foreign.test'},{productId:'other'},{categoryId:'81221'},{fingerprint:'b'.repeat(64)},{registered:true},{state:'unconfirmed'},{state:'attached'},
+   {state:'registered'},{startedAt:0},{startedAt:Infinity},{startedAt:Date.now()+120000}].map(patch=>[parent,{...lock,value:{...lock.value,...patch}}]),
+  [parent,{...lock,key:parent.key+':validation:other'}],[parent,{...lock,key:parent.key+':unknown'}],
+  [parent,{...lock,key:parent.key.replace('transmission:','result:')+':validation'}],
+ ];
+ for(const entries of cases){const h=storedHistoryFixture(entries);await assert.rejects(h.read(),undefined,JSON.stringify(entries.map(row=>row.key)));h.preserved();}
+});
+
+test('internal locks do not consume the public 200-record capacity and oversized canonical history still rejects',async()=>{
+ const canonical=Array.from({length:200},(_,index)=>storedTransmission({fingerprint:index.toString(16).padStart(64,'0')}));
+ const h=storedHistoryFixture([...canonical,validationLock(canonical[0])]);assert.deepEqual(plain(await h.read()),canonical);h.preserved();
+ const over=storedHistoryFixture([...canonical,storedTransmission({fingerprint:'f'.repeat(64)})]);await assert.rejects(over.read());over.preserved();
+});
+
 test('actual content history command is an owner-scoped read and rejects an understated block flag',async()=>{
  const listeners=[],calls=[];let current={schemaVersion:1,productId,blocked:true,receipts:[serverReceipt()]};
  const ctx={location:{origin},window:{addEventListener(){},postMessage(){}},chrome:{runtime:{id:'extension',onMessage:{addListener:listener=>listeners.push(listener)}}},URL,Date,AbortController,setTimeout,clearTimeout,fetch:async(path,init)=>{calls.push({path,init});const response=Response.json({history:current});Object.defineProperty(response,'url',{value:origin+path});return response;}};

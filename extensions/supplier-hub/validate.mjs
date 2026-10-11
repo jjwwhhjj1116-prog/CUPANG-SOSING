@@ -23,10 +23,8 @@ export function requestSupplierHubValidation(reviewedAgreements = {}, waitForBut
     const matches=document.querySelectorAll('input[type="checkbox"][id="'+id+'"]');
     if(matches.length!==1||matches[0].disabled)throw Error('Supplier Hub의 동의 항목을 확인해주세요.');
     const input=matches[0];
-    if(!input.checked){
-      const labels=Array.from(input.labels||[]).map(label=>(label.innerText||'').replace(/\s+/g,' ').trim());
-      if(reviewedAgreements[key]!==true||!labels.includes(text))throw Error('Supplier Hub의 가격 정보 약관과 라벨 연락처 확인 내용을 읽고 해당하는 동의 항목을 체크해주세요.');
-    }
+    const labels=Array.from(input.labels||[]).map(label=>(label.innerText||'').replace(/\s+/g,' ').trim());
+    if(!labels.includes(text)||!input.checked&&reviewedAgreements[key]!==true)throw Error('Supplier Hub의 가격 정보 약관과 라벨 연락처 확인 내용을 읽고 해당하는 동의 항목을 체크해주세요.');
     return input;
   };
   // Check every required choice before changing any checkbox. Values are only

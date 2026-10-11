@@ -125,6 +125,33 @@ export async function transferRecord(action,key,value){
 }
 /** Read every fingerprint for this app/product, including an upload whose
  * acknowledgement was lost before a server receipt could be stored. */
+/** Internal validation locks stay in IndexedDB but are not upload receipts.
+ * An orphan or malformed lock is uncertain evidence and must fail closed. */
+export function separateSupplierHubValidationLocks(rows,origin,productId){
+  if(!Array.isArray(rows)||rows.length>400||new TextEncoder().encode(JSON.stringify(rows)).length>512*1024)throw Error('상품의 전체 Chrome 전송 이력을 확인하지 못했습니다.');
+  const fields=['origin','productId','categoryId','fingerprint','state','registered','startedAt'];
+  const canonical=rows.filter(row=>{
+    if(typeof row.key!=='string'||!row.key.endsWith(':validation'))return true;
+    const parentKey=row.key.slice(0,-':validation'.length),parents=rows.filter(other=>other.key===parentKey);
+    const parent=parents[0]?.value,lock=row.value;
+    if(parents.length!==1||!parent||!lock||typeof lock!=='object'||Array.isArray(lock)
+      ||Object.keys(lock).length!==fields.length||Object.keys(lock).some(key=>!fields.includes(key))
+      ||!['origin','productId','categoryId','fingerprint'].every(field=>lock[field]===parent[field])
+      ||parent.origin!==origin||parent.productId!==productId||!/^\d{1,20}$/.test(parent.categoryId||'')||!/^[a-f0-9]{64}$/.test(parent.fingerprint||'')
+      ||parentKey!==`transmission:${origin}:${productId}:${parent.categoryId}:${parent.fingerprint}`
+      ||parent.registered!==false||!['attached','unconfirmed','validation-requested'].includes(parent.state)||parent.validationResume!==true
+      ||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},parent.company?.code)||({A01526306:'유앤채',A01464742:'와이홉'})[parent.company.code]!==parent.company.name
+      ||parent.filename!==`YOOFAM-${parent.fingerprint}.xlsx`||!/^\w[\w-]{0,99}$/.test(parent.profileId||'')
+      ||!Number.isSafeInteger(parent.includedOptions)||parent.includedOptions<1||parent.includedOptions>200
+      ||!Number.isSafeInteger(parent.startedAt)||parent.startedAt<=0||!Number.isSafeInteger(lock.startedAt)||lock.startedAt<parent.startedAt||lock.startedAt>Date.now()+60000
+      ||lock.registered!==false||!['started','not-started','validation-requested'].includes(lock.state))throw Error('상품의 검증 요청 기록과 원래 전송 기록을 확인하지 못했습니다.');
+    return false;
+  });
+  if(canonical.length>200||canonical.some(row=>!row?.value||!['result','transmission'].some(kind=>row.key===`${kind}:${origin}:${productId}:${row.value.categoryId}:${row.value.fingerprint}`)
+    ||row.value.origin!==origin||row.value.productId!==productId||!/^\d{1,20}$/.test(row.value.categoryId||'')||!/^[a-f0-9]{64}$/.test(row.value.fingerprint||'')||row.value.registered!==false))throw Error('이전 전송 기록을 확인하지 못해 새 첨부를 중단했습니다.');
+  return canonical;
+}
+
 export async function productTransferRecords(origin,productId){
   if(!HANDOFF_ORIGINS.includes(origin)||!/^\w[\w-]{0,99}$/.test(productId||''))throw Error('상품 전송 이력의 출처를 확인해주세요.');
   const db=await database();try{return await new Promise((resolve,reject)=>{
@@ -132,9 +159,9 @@ export async function productTransferRecords(origin,productId){
     const cursor=transaction.objectStore('pending').openCursor();
     cursor.onsuccess=()=>{const current=cursor.result;if(!current)return;
       if(typeof current.key==='string'&&prefixes.some(prefix=>current.key.startsWith(prefix))){rows.push({key:current.key,value:current.value});
-        if(rows.length>200||new TextEncoder().encode(JSON.stringify(rows)).length>512*1024){transaction.abort();return;}}
+        if(rows.length>400||new TextEncoder().encode(JSON.stringify(rows)).length>512*1024){transaction.abort();return;}}
       current.continue();
-    };transaction.oncomplete=()=>resolve(rows);transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(Error('상품의 전체 Chrome 전송 이력을 확인하지 못했습니다. 기존 기록은 유지됩니다.'));
+    };transaction.oncomplete=()=>{try{resolve(separateSupplierHubValidationLocks(rows,origin,productId));}catch(error){reject(error);}};transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(Error('상품의 전체 Chrome 전송 이력을 확인하지 못했습니다. 기존 기록은 유지됩니다.'));
   });}finally{db.close();}
 }
 export async function pendingPackage(action,value){

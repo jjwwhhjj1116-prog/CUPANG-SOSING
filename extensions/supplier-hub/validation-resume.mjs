@@ -2,6 +2,7 @@ import {validateAppHubRequest,isHubRegistrationTab} from './app-request.mjs';
 import {transferRecord,resultKey} from './handoff-store.mjs';
 import {verifyAppQuotationSource} from './source-check.mjs';
 import {assertAppSupplierHubNotSubmitted} from './receipt-recovery.mjs';
+import {validateProductTransferRecords} from './product-history.mjs';
 import {claimSupplierHubTransmissionWindow} from './transmission-window.mjs';
 import {requestSupplierHubValidation} from './validate.mjs';
 import {verifySupplierHubCompany} from './company.mjs';
@@ -22,6 +23,9 @@ export async function resumeSupplierHubValidation(message,sender,api=chrome,stor
     const record=await store('get',key);
     if(!record||!['origin','productId','categoryId','fingerprint'].every(field=>record[field]===identity[field])
       ||!['attached','unconfirmed','validation-requested'].includes(record.state)||record.registered!==false
+      ||!Number.isSafeInteger(record.includedOptions)||record.includedOptions<1||record.includedOptions>200
+      ||!Number.isSafeInteger(record.startedAt)||record.startedAt<=0||record.startedAt>Date.now()+60000
+      ||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},record.company?.code)||({A01526306:'유앤채',A01464742:'와이홉'})[record.company.code]!==record.company.name
       ||record.windowId!==sender.tab.windowId||!Number.isSafeInteger(record.tabId)||record.tabId<0
       ||record.filename!==`YOOFAM-${identity.fingerprint}.xlsx`||!/^\w[\w-]{0,99}$/.test(record.profileId||'')
       ||!Array.isArray(record.attachmentNames)||record.attachmentNames.length<1||record.attachmentNames.length>200
@@ -33,13 +37,17 @@ export async function resumeSupplierHubValidation(message,sender,api=chrome,stor
     const binding=await store('get',`attempt:${record.tabId}`);
     if(!binding||!['origin','productId','categoryId','fingerprint','includedOptions'].every(field=>binding[field]===record[field])
       ||binding.company?.code!==record.company?.code||binding.company?.name!==record.company?.name)throw Error('다른 견적서가 연결된 탭에서는 검증을 재개할 수 없습니다.');
+    const recordSnapshot=JSON.stringify(record),bindingSnapshot=JSON.stringify(binding);
+    const unchangedRecord=async()=>{
+      if(JSON.stringify(await store('get',key))!==recordSnapshot||JSON.stringify(await store('get',`attempt:${record.tabId}`))!==bindingSnapshot)
+        throw Error('원래 첨부한 견적서 기록이 변경되었습니다. 다시 요청하지 않고 전송 결과를 확인해주세요.');
+    };
     const current=async()=>{
       const tab=await api.tabs.get(record.tabId);
       if(tab.id!==record.tabId||!isHubRegistrationTab(tab,record.windowId))throw Error('처음 파일을 첨부한 Supplier Hub 등록 탭을 확인해주세요.');
       await verifyAppQuotationSource(identity,record,{appTabId:sender.tab.id,windowId:record.windowId},api);
       const cached=await store('get',resultKey(identity));
       if(cached&&cached.state!=='not-found')throw Error('이미 검증 결과가 있습니다. 전송 결과 계속 확인으로 조회해주세요.');
-      await assertAppSupplierHubNotSubmitted(identity,record,{appTabId:sender.tab.id,windowId:record.windowId},api,store);
     };
     const checkCompany=async()=>{
       if(!isHubRegistrationTab(await api.tabs.get(record.tabId),record.windowId))throw Error('처음 파일을 첨부한 Supplier Hub 등록 탭을 확인해주세요.');
@@ -51,13 +59,35 @@ export async function resumeSupplierHubValidation(message,sender,api=chrome,stor
     await checkCompany();
     const [inspection]=await api.scripting.executeScript({target:{tabId:record.tabId},func:readAttachedSupplierHubPackage,args:[record]});
     const attached=inspection?.result;
-    if(!attached||attached.registered!==false||!['dispatched','upload-pending','validation-requested'].includes(attached.state))throw Error('첨부 목록을 확인하지 못했습니다. Supplier Hub에서 확인해주세요.');
+    if(!attached||attached.registered!==false||typeof attached.marker!=='string'||!attached.marker||!['dispatched','upload-pending','validation-requested'].includes(attached.state))throw Error('첨부 목록을 확인하지 못했습니다. Supplier Hub에서 확인해주세요.');
+    // Only this verified attachment may be excluded from the upload-history
+    // guard. Other attempts and all server receipts keep their normal checks.
+    const resumeStore=async(action,recordKey,value)=>{
+      if(action!=='history')return store(action,recordKey,value);
+      const history=await store(action,recordKey,value);
+      await current();
+      await checkCompany();
+      await unchangedRecord();
+      const [latest]=await api.scripting.executeScript({target:{tabId:record.tabId},func:readAttachedSupplierHubPackage,args:[record]});
+      if(latest?.result?.registered!==false||latest.result.marker!==attached.marker||latest.result.state!==attached.state)
+        throw Error('원래 첨부한 파일 화면이 변경되었습니다. 다시 요청하지 않고 전송 결과를 확인해주세요.');
+      await unchangedRecord();
+      validateProductTransferRecords(identity.origin,identity.productId,history);
+      const own=history.filter(row=>row?.key===key);
+      if(own.length!==1||JSON.stringify(own[0].value)!==recordSnapshot)
+        throw Error('원래 첨부한 전송 기록을 확인하지 못했습니다.');
+      return history.filter(row=>row.key!==key);
+    };
+    const checkHistory=()=>assertAppSupplierHubNotSubmitted(identity,record,{appTabId:sender.tab.id,windowId:record.windowId},api,resumeStore);
+    await checkHistory();
     const save=async outcome=>{await store('put',key,{...record,error:undefined,...outcome});return outcome;};
     if(attached.state==='validation-requested')return save({state:'validation-requested',registered:false});
     if(record.state==='validation-requested')throw Error('검증 요청 기록이 있습니다. 다시 요청하지 않고 결과를 조회해주세요.');
     if(attached.state==='upload-pending')return save({state:'attached',registered:false,error:'첨부 파일 업로드가 아직 완료되지 않았습니다. 파일을 유지하고 잠시 후 검증을 재개해주세요.'});
     await current();
     await checkCompany();
+    await checkHistory();
+    await unchangedRecord();
     const claimKey=key+':validation',claim=await store('get',claimKey);
     // An unanswered execution may still be running. Only an explicit response
     // proving no click occurred permits another user-initiated validation.
@@ -92,7 +122,7 @@ export function readAttachedSupplierHubPackage(expected){
   const tables=Array.from(document.querySelectorAll('table')).filter(table=>table.getClientRects().length&&Array.from(table.querySelectorAll('thead th')).map(cell=>normalize(cell.innerText)).join('|')===headers.join('|'));
   if(tables.length>1)throw Error('검증 결과 표가 중복되어 있습니다. Supplier Hub에서 결과를 확인해주세요.');
   const submitted=tables.some(table=>Array.from(table.querySelectorAll('tbody tr')).some(row=>normalize(row.querySelectorAll('td')[0]?.innerText)===expected.filename));
-  if(attempt.state==='validation-requested'||submitted)return {state:'validation-requested',registered:false};
+  if(attempt.state==='validation-requested'||submitted)return {state:'validation-requested',marker,registered:false};
   const names=(document.body.innerText||'').split(/[\s<>"'(),;]+/);
   return {state:attempt.files.every(name=>names.includes(name))?'dispatched':'upload-pending',marker,registered:false};
 }

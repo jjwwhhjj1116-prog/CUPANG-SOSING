@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import {resumeSupplierHubValidation,readAttachedSupplierHubPackage} from '../extensions/supplier-hub/validation-resume.mjs';
 import {requestSupplierHubValidation} from '../extensions/supplier-hub/validate.mjs';
 import {verifySupplierHubCompany} from '../extensions/supplier-hub/company.mjs';
+import {separateSupplierHubValidationLocks} from '../extensions/supplier-hub/handoff-store.mjs';
 
 const identity={origin:'https://sourceflow.jjwwhhjj1116.workers.dev',productId:'p',categoryId:'80719',fingerprint:'a'.repeat(64)};
 const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}];
@@ -13,7 +14,7 @@ const key=`transmission:${identity.origin}:${identity.productId}:${identity.cate
 function harness(company=companies[0],required=false){
  const names=[`YOOFAM-${identity.fingerprint}.xlsx`,'photo.png','label.png',...(required?['legal-001.pdf']:[])];
  const record={...identity,company,includedOptions:2,profileId:'profile',filename:names[0],attachmentNames:names,legalDocuments:required?['legal-001.pdf']:[],legalDocumentsRequired:required,validationResume:true,windowId:17,tabId:123,state:'attached',startedAt:Date.now(),registered:false};
- const records=new Map([[key,record],['attempt:123',{...identity,company,includedOptions:2}]]),events=[],calls=[],dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company,files:names,...(required?{legalDocumentsRequired:true,legalDocuments:record.legalDocuments}:{})})};
+ const records=new Map([[key,record],['attempt:123',{...identity,company,includedOptions:2}]]),events=[],calls=[],histories=[],dataset={yoofamAttachmentAttempt:JSON.stringify({state:'dispatched',company,files:names,...(required?{legalDocumentsRequired:true,legalDocuments:record.legalDocuments}:{})})};
  const controls={code:company.code,names,disabled:false,markerChange:false,executeError:false,lostReply:false,receiptError:false,sourceError:false,wrongWindow:false,wrongTab:false,submitted:false,menuVisible:true,menuClicks:0};
  const legalArea={innerText:'상품 개별법령에 따른 필수 서류\n'+(required?'legal-001.pdf':''),parentElement:null,querySelectorAll(selector){return selector.includes('radio')?[legal,{}]:required?[{files:[{name:'legal-001.pdf'}]}]:[];}};
  const legal={checked:required,disabled:false,parentElement:legalArea,labels:[{innerText:required?'해당함':'해당없음'}],click(){this.checked=true;events.push('legal');}};
@@ -31,11 +32,19 @@ function harness(company=companies[0],required=false){
  const context=vm.createContext({document,location:{origin:'https://supplier.coupang.com',pathname:'/qvt/registration'},setTimeout});
  let held,resumeHeld,sourceCalls=0;
  const api={tabs:{get:async id=>({id,windowId:controls.wrongWindow?18:17,url:id===7?sender.url:controls.wrongTab?'https://supplier.coupang.com/qvt/other':'https://supplier.coupang.com/qvt/registration'}),
-  query(){assert.fail('Resume must not enumerate or select other tabs');},create(){assert.fail('Resume must not create a tab');},sendMessage:async(id,message)=>{
+  query(){assert.fail('Resume must not enumerate or select other tabs');},create(){assert.fail('Resume must not create a tab');},sendMessage:async(id,message,frame)=>{
+   assert.equal(id,sender.tab.id);assert.deepEqual(frame,{frameId:0});
+   if(message.type==='YOOFAM_READ_PRODUCT_TRANSMISSION_HISTORY'){
+    assert.deepEqual(message.expected,{origin:identity.origin,productId:identity.productId});
+    calls.push(['message',id,message.type]);
+    if(controls.historyError)throw Error('history unavailable');
+    return {ok:true,...message.expected,checkedAt:Date.now(),history:controls.serverHistory??{schemaVersion:1,productId:identity.productId,blocked:false,receipts:[]}};
+   }
+   assert.deepEqual(message.expected,message.type==='YOOFAM_VERIFY_QUOTATION_SOURCE'?{...identity,profileId:record.profileId,filename:record.filename,company,includedOptions:record.includedOptions}:identity);
    calls.push(['message',id,message.type]);if(message.type==='YOOFAM_VERIFY_QUOTATION_SOURCE'&&controls.sourceError)throw Error('latest source changed');
    if(message.type==='YOOFAM_VERIFY_QUOTATION_SOURCE'&&++sourceCalls===controls.closeOnSource)controls.menuVisible=false;
    if(message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'&&controls.receiptError)throw Error('server unavailable');
-   return {ok:true,...message.expected,checkedAt:Date.now(),...(message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'?{receipt:null}:{})};
+   return {ok:true,...message.expected,checkedAt:Date.now(),...(message.type==='YOOFAM_READ_TRANSMISSION_RECEIPT'?{receipt:controls.receipt??null}:{})};
   }},scripting:{executeScript:async({target,func,args})=>{
    assert.equal(target.tabId,123);assert.ok([verifySupplierHubCompany,readAttachedSupplierHubPackage,requestSupplierHubValidation].includes(func),'no upload/attachment script');calls.push(['script',func.name]);
    if(held&&func===readAttachedSupplierHubPackage)await new Promise(resolve=>{resumeHeld=resolve;});
@@ -44,16 +53,27 @@ function harness(company=companies[0],required=false){
    if(func===requestSupplierHubValidation&&controls.lostReply)throw Error('click reply lost');
    return [{result}];
   }}};
- const store=async(action,recordKey,value)=>{calls.push(['store',action,recordKey]);if(action==='get')return records.get(recordKey)??null;if(action==='claim'){if(records.has(recordKey))return false;records.set(recordKey,value);return true;}records.set(recordKey,value);return value;};
+ const store=async(action,recordKey,value)=>{calls.push(['store',action,recordKey]);if(action==='get')return records.get(recordKey)??null;
+  if(action==='history'){
+   assert.equal(recordKey,`history:${identity.origin}:${identity.productId}`);
+   if(controls.localHistoryError)throw Error('local history unavailable');
+   const prefixes=[`transmission:${identity.origin}:${identity.productId}:`,`result:${identity.origin}:${identity.productId}:`];
+   const rows=Array.from(records,([key,value])=>({key,value})).filter(row=>prefixes.some(prefix=>row.key.startsWith(prefix)));
+   const history=separateSupplierHubValidationLocks(rows,identity.origin,identity.productId);
+   histories.push(structuredClone(history));controls.afterHistory?.();
+   return controls.transformHistory?controls.transformHistory(history):history;
+  }
+  if(action==='claim'){if(records.has(recordKey))return false;records.set(recordKey,value);return true;}records.set(recordKey,value);return value;};
  const reviewedAgreements={priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:!required,...(required?{legalDocumentsRequired:true}:{})};
  const message={...identity,type:'YOOFAM_RESUME_VALIDATION',reviewedAgreements};
- return {records,record,controls,events,calls,dataset,checkboxes,legal,run:(patch={},who=sender)=>resumeSupplierHubValidation({...message,...patch},who,api,store),hold(){held=true;},release(){held=false;resumeHeld?.();}};
+ return {records,record,controls,events,calls,histories,dataset,checkboxes,legal,run:(patch={},who=sender)=>resumeSupplierHubValidation({...message,...patch},who,api,store),hold(){held=true;},release(){held=false;resumeHeld?.();}};
 }
 
 test('both companies resume the original XLSX, images and required/exempt evidence without uploading again',async()=>{
  for(const company of companies)for(const required of [false,true]){
   const h=harness(company,required),before=h.dataset.yoofamAttachmentAttempt;
   const result=await h.run();assert.equal(result.state,'validation-requested');assert.equal(result.registered,false);
+  assert.deepEqual(h.histories[0],[{key,value:h.record}]);assert.equal(h.histories[0][0].value.state,'attached');
   assert.equal(h.events.filter(event=>event==='validate').length,1);assert.notEqual(h.dataset.yoofamAttachmentAttempt,before);
   assert.equal(h.records.get(key).state,'validation-requested');assert.equal(h.records.get(key+':validation').state,'validation-requested');
   assert.deepEqual(h.record.attachmentNames,JSON.parse(h.dataset.yoofamAttachmentAttempt).files);
@@ -120,6 +140,57 @@ test('changed company, file names, legal originals or partial/legacy claims neve
 test('latest-source mismatch, saved receipt and unavailable server prevent remote changes',async()=>{
  for(const flag of ['sourceError','receiptError']){const h=harness();h.controls[flag]=true;await assert.rejects(h.run());assert.deepEqual(h.events,[]);assert.equal(h.records.has(key+':validation'),false);}
  for(const state of ['validation-pending','validation-complete','validation-rejected']){const h=harness();h.records.set(key.replace('transmission:','result:'),{state});await assert.rejects(h.run(),/이미 검증 결과/);assert.deepEqual(h.events,[]);}
+});
+
+test('only the exact original claim is exempt while other pending, accepted and uncertain histories still block both companies',async()=>{
+ for(const company of companies)for(const kind of ['transmission','result'])for(const state of ['attached','unconfirmed','validation-requested','validation-pending','validation-complete']){
+  const h=harness(company),fingerprint='b'.repeat(64),other={...h.record,categoryId:'69900',fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,state};
+  h.records.set(`${kind}:${identity.origin}:${identity.productId}:69900:${fingerprint}`,other);
+  await assert.rejects(h.run(),error=>error.code==='SUPPLIER_HUB_ALREADY_SUBMITTED');
+  assert.deepEqual(h.events,[]);assert.equal(h.records.has(key+':validation'),false);assert.equal(h.records.get(key).state,'attached');
+  assert.equal(h.histories[0].length,2);assert.deepEqual(h.histories[0].find(row=>row.key===key).value,h.record);
+ }
+});
+
+function savedReceipt(company,state='validation-pending'){
+ return {schemaVersion:1,evidence:'chrome-observation',profileId:'profile',categoryId:identity.categoryId,fingerprint:identity.fingerprint,
+  productVersion:'2026-10-01T00:00:00.000Z',recordedAt:'2026-10-01T00:00:01.000Z',
+  result:{company,includedOptions:2,filename:`YOOFAM-${identity.fingerprint}.xlsx`,state,registered:false,observedAt:Date.now(),...(state==='validation-complete'?{quotationId:'accepted-full-id'}:{})}};
+}
+test('the original claim exemption never bypasses server history, a saved receipt or unavailable history',async()=>{
+ for(const company of companies)for(const mode of ['pending','accepted','receipt','historyError','localHistoryError','malformed-history']){
+  const h=harness(company),before=JSON.stringify(h.records.get(key));
+  if(mode==='pending'||mode==='accepted')h.controls.serverHistory={schemaVersion:1,productId:identity.productId,blocked:true,receipts:[savedReceipt(company,mode==='accepted'?'validation-complete':'validation-pending')]};
+  else if(mode==='receipt')h.controls.receipt=savedReceipt(company);
+  else if(mode==='malformed-history')h.controls.serverHistory={schemaVersion:1,productId:identity.productId,blocked:false,receipts:[savedReceipt(company)]};
+  else h.controls[mode]=true;
+  await assert.rejects(h.run());assert.deepEqual(h.events,[]);assert.equal(h.records.has(key+':validation'),false);assert.equal(JSON.stringify(h.records.get(key)),before);
+ }
+});
+
+test('missing, duplicated, changed and out-of-scope original history rows cannot use the exemption',async()=>{
+ for(const company of companies)for(const transform of [rows=>rows.filter(row=>row.key!==key),rows=>[...rows,rows[0]],
+  rows=>rows.map(row=>({...row,value:{...row.value,includedOptions:1}})),rows=>rows.map(row=>({...row,value:{...row.value,company:companies.find(value=>value.code!==company.code)}})),
+  rows=>rows.map(row=>({...row,key:row.key+':other'})),rows=>[...rows,...Array.from({length:200},(_,index)=>({key:`transmission:${identity.origin}:${identity.productId}:69900:${index.toString(16).padStart(64,'0')}`,value:{...rows[0].value,categoryId:'69900',fingerprint:index.toString(16).padStart(64,'0')}}))]]){
+  const h=harness(company);h.controls.transformHistory=transform;
+  await assert.rejects(h.run());assert.deepEqual(h.events,[]);assert.equal(h.records.has(key+':validation'),false);
+ }
+});
+
+test('changes during history checks invalidate the original source, record, window, company and DOM claim before validation',async()=>{
+ for(const company of companies)for(const change of [h=>h.records.set(key,{...h.record,includedOptions:1}),h=>h.records.set(key,{...h.record,state:'unconfirmed'}),
+  h=>h.records.set('attempt:123',{...h.records.get('attempt:123'),fingerprint:'b'.repeat(64)}),h=>h.dataset.yoofamAttachmentAttempt+=' ',
+  h=>h.controls.code=companies.find(value=>value.code!==company.code).code,h=>h.controls.wrongWindow=true,h=>h.controls.wrongTab=true,h=>h.controls.sourceError=true]){
+  const h=harness(company);let calls=0;h.controls.afterHistory=()=>{if(++calls===2)change(h);};
+  await assert.rejects(h.run());assert.deepEqual(h.events,[]);assert.equal(h.records.has(key+':validation'),false);assert.equal(h.histories.length,2);
+ }
+});
+
+test('original claim count and start identity are required even when both stored bindings omit them',async()=>{
+ for(const patch of [{includedOptions:undefined},{includedOptions:0},{includedOptions:201},{startedAt:undefined},{startedAt:0},{startedAt:Date.now()+120000},{company:{code:'A01464742',name:'유앤채'}}]){
+  const h=harness();h.records.set(key,{...h.record,...patch});h.records.set('attempt:123',{...h.records.get('attempt:123'),...patch});
+  await assert.rejects(h.run());assert.deepEqual(h.events,[]);assert.equal(h.records.has(key+':validation'),false);assert.equal(h.calls.filter(call=>call[0]==='script').length,0);
+ }
 });
 test('visible existing validation row resumes result tracking without accepting agreements or requesting twice',async()=>{
  const h=harness();h.controls.submitted=true;assert.equal((await h.run()).state,'validation-requested');assert.deepEqual(h.events,[]);assert.equal(h.records.has(key+':validation'),false);

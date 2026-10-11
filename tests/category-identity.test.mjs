@@ -44,11 +44,11 @@ test('unknown codes are not guessed from familiar category labels',()=>{
  assert.equal(schemas.getQuotationSchema(input.categoryId).status,'unconfirmed');
 });
 
-test('collection route rejects a mismatched saved category before enqueueing or fetching supplier data',async()=>{
+async function collectionCategoryResponse(user){
  const profileId='11111111-1111-4111-8111-111111111111';let queued=0,settingsRead=0;
  const deps={
   'next/server':{NextResponse:Response},
-  '@/app/chatgpt-auth':{getChatGPTUser:async()=>({verifiedAccess:true}),getWorkspaceOwnerId:async()=>'test-owner'},
+  '@/app/chatgpt-auth':{getChatGPTUser:async()=>user,getWorkspaceOwnerId:async()=>'test-owner'},
   '@/db/category-profiles':{getCategoryProfile:async()=>({id:profileId,revision:1,categoryId:'81472',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']})},
   '@/db/queries':{getSettings:async()=>{settingsRead++;return null;}},
   '@/db/collection-jobs':{enqueueCollection:async()=>{queued++;return[];},listCollectionJobs:async()=>[]},
@@ -57,9 +57,28 @@ test('collection route rejects a mismatched saved category before enqueueing or 
  const code=ts.transpileModule(fs.readFileSync(new URL('../app/api/collection-jobs/route.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
  vm.runInNewContext(code,{exports,Response,Request,URL,process:{env:{NODE_ENV:'production'}},require(name){return deps[name]??load(name.slice(2)+'.ts');}});
  const response=await exports.POST(new Request('https://app.test/api/collection-jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({urls:['https://detail.1688.com/offer/813724060928.html'],goal:'price',profileId,expectedProfileRevision:1})}));
+ return {response,queued,settingsRead};
+}
+
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`collection route rejects a mismatched saved category before enqueueing or reading settings (${company.code})`,async()=>{
+ const {response,queued,settingsRead}=await collectionCategoryResponse({verifiedAccess:true,userId:'test-owner',
+  membership:{id:'test-owner',status:'approved',companyCode:company.code,companyName:company.name}});
  assert.equal(response.status,400);
- const body=await response.json(); assert.equal(body.code,'CATEGORY_IDENTITY_MISMATCH',JSON.stringify(body));
+ const body=await response.json();assert.equal(body.code,'CATEGORY_IDENTITY_MISMATCH',JSON.stringify(body));
  assert.equal(queued,0);assert.equal(settingsRead,0);
+});
+
+test('collection route rejects unconfirmed or foreign-owner company authentication before category validation',async()=>{
+ for(const user of [
+  {verifiedAccess:true},
+  {verifiedAccess:true,userId:'different-owner',membership:{status:'approved',companyCode:'A01464742',companyName:'와이홉'}},
+  {verifiedAccess:true,userId:'test-owner',membership:{status:'pending',companyCode:'A01526306',companyName:'유앤채'}},
+ ]){
+  const {response,queued,settingsRead}=await collectionCategoryResponse(user);
+  assert.equal(response.status,409);
+  const body=await response.json();assert.equal(body.code,'COLLECTION_COMPANY_UNCONFIRMED',JSON.stringify(body));
+  assert.equal(queued,0);assert.equal(settingsRead,0);
+ }
 });
 
 

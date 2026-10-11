@@ -3,16 +3,26 @@ import type { TranslationJob } from '@/app/automation/translation';
 import { collectionLabelField } from '@/app/collection-label-attributes';
 import type { ProductOptions } from '@/app/product-options';
 
-/** The canonical saved intake result can outlive an explicit option deletion.
- * Drop only those result bindings in its planning view, without changing the
- * saved job or source indexes. Other/manual translation jobs stay strict. */
+/** The canonical saved intake result can outlive an explicit option deletion
+ * or a manually corrected source name with an already reviewed translation.
+ * Drop only those obsolete result bindings in its planning view, without
+ * changing the saved job or source indexes. Other translation jobs stay strict. */
 export function intakeTranslationReplayJob(job: TranslationJob, options: ProductOptions): TranslationJob {
   if (job.productId !== options.productId || job.status !== 'completed' || !job.result) throw Error('저장된 상품 초안과 옵션 연결을 확인해주세요.');
-  const ids = new Set(options.rows.map(row => row.id));
+  const rows = new Map(options.rows.map(row => [row.id, row]));
   const attributes = job.result.draft.attributes.filter(attribute => {
     const source = job.review.source.attributes[attribute.sourceIndex];
-    const binding = source?.name.match(/^option(?:-(?:color|size))?:([A-Za-z0-9_-]{1,80})$/u);
-    return !binding || ids.has(binding[1]);
+    const binding = source?.name.match(/^option(?:-(color|size))?:([A-Za-z0-9_-]{1,80})$/u);
+    if (!binding) return true;
+    const row = rows.get(binding[2]);
+    if (!row) return false;
+    // Current pending-option selection excludes a saved name and an explicit
+    // manual blank. Its old name result must not block unrelated intake work.
+    // A changed name still awaiting translation and color/size bindings retain
+    // their existing exact-source adoption checks.
+    return binding[1] !== undefined || row.originalName === source!.value
+      || row.provenance.originalName !== 'manual'
+      || !row.translatedName.trim() && row.provenance.translatedName !== 'manual';
   });
   if (attributes.length === job.result.draft.attributes.length) return job;
   return { ...job, result: { ...job.result, draft: { ...job.result.draft, attributes } } };

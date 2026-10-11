@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import path from 'node:path';
+import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
 
 const moduleCache = new Map();
 function load(file) {
@@ -68,6 +69,72 @@ async function inputFrom(files = entries(), updates = {}) {
     rows: [{ title: '테스트 상품 & <안전>', supplyPrice: 12500, skuName: '검정', brand: '브랜드' }, { title: '=HYPERLINK("test")', supplyPrice: 13000, skuName: '흰색', brand: '' }], dataStartRow: 5, ...updates,
   };
 }
+
+// An official-layout contract fixture, never a downloaded seller workbook.
+async function officialInputFrom(company, dataRows, {dataStartRow=9,count=1}={}) {
+  const snapshot={...hubSchemaSnapshot(company),metadata:{displayCategoryCode:'991234',kanCategoryId:3000,scopeType:'Retail_Categorized_Single',noticeNumber:17,version:189}};
+  const headers=['상품명','카테고리','공급가',...Array.from({length:17},(_,index)=>`선택 시험 ${index}`)],sheetName='QF_3000_시험';
+  const category=schemaPath.join('>')+' (991234)';
+  const column=index=>String.fromCharCode(65+index);
+  const row=(number,values)=>`<row r="${number}">${values.map((value,index)=>`<c r="${column(index)}${number}" t="inlineStr"><is><t>${value}</t></is></c>`).join('')}</row>`;
+  const sheet=`<worksheet><sheetData>${row(1,['','Retail_Categorized_Excel:Kan:3000:Notice17:Version190'])}${row(5,headers)}${row(6,headers.map((_,index)=>index<3?'필수':'선택'))}${row(7,headers.map(()=> '작성 안내'))}${row(8,headers.map((_,index)=>index===1?category:'예시'))}${dataRows}</sheetData><dataValidations><dataValidation type="list" sqref="B9:B1008"><formula1>"${category}"</formula1></dataValidation></dataValidations></worksheet>`;
+  const files=entries().map(([name,value])=>[name,name==='xl/workbook.xml'?value.replace('name="견적서"',`name="${sheetName}"`):name==='xl/worksheets/sheet1.xml'?sheet:name==='xl/sharedStrings.xml'?'<sst><si><t>상품명</t></si><si><t>  </t></si><si><r><t>원본</t></r><r><t> 이전 상품</t></r></si></sst>':value]);
+  const originalBytes=zip(files),connected=await load('app/official-hub-template.ts').connectOfficialWorkbookTemplate(originalBytes,snapshot);
+  const profile={name:'공식 잔여행 회귀',categoryId:snapshot.categoryId,categoryPath:[...schemaPath],hubSchema:snapshot,template:{...connected.template,name:'official.xlsx',sha256:connected.template.workbookEvidence.templateSha256},mappings:connected.mappings};
+  const rows=Array.from({length:count},(_,index)=>Object.fromEntries(profile.mappings.map(mapping=>[mapping.field,mapping.column===0?`현재 선택 상품 ${index+1}`:mapping.column===1?category:mapping.column===2?1000+index:''])));
+  return {originalBytes,profile,rows,dataStartRow};
+}
+
+for(const company of schemaCompanies)test(`official workbook rejects leftover product rows outside the selected output (${company.code})`,async()=>{
+  const cases=[
+    {row:10,start:9,count:1,title:'<is><t>원본 이전 상품</t></is>',type:'inlineStr'},
+    {row:9,start:10,count:1,title:'<is><t>원본 이전 상품</t></is>',type:'inlineStr'},
+    {row:11,start:9,count:2,title:'<v>2</v>',type:'s'},
+    {row:1008,start:9,count:1,title:'<v>2</v>',type:'s'},
+    {row:1048576,start:9,count:1,title:'<is><t>원본 이전 상품</t></is>',type:'inlineStr'},
+    {row:10,start:9,count:1,title:'<is><t>원본 이전 상품</t></is>',type:'inlineStr',manualTitleColumn:3},
+    {row:1010,start:9,count:1,title:'<v>2</v>',type:'s',blankRows:1001},
+    {row:10,start:9,count:1,title:'<f>"이전 상품명"</f><v>이전 상품명</v>',type:'str'},
+    {row:10,start:9,count:1,title:'<f>"이전 상품명"</f><v></v>',type:'str'},
+    {row:1008,start:9,count:1,title:'<f>"이전 상품명"</f>',type:'str'},
+  ];
+  for(const item of cases){
+    const blanks=Array.from({length:item.blankRows??0},(_,index)=>`<row r="${9+index}"><c r="A${9+index}" t="s"><v>1</v></c></row>`).join('');
+    const input=await officialInputFrom(company,blanks+`<row r="${item.row}"><c r="A${item.row}" t="${item.type}">${item.title}</c></row>`,{dataStartRow:item.start,count:item.count});
+    if(item.manualTitleColumn!==undefined)input.profile.mappings=[...input.profile.mappings.filter(mapping=>mapping.field!=='title'&&mapping.column!==item.manualTitleColumn),{column:item.manualTitleColumn,field:'title',required:true}].sort((a,b)=>a.column-b.column);
+    const beforeBytes=Buffer.from(input.originalBytes),beforeProfile=JSON.stringify(input.profile),beforeRows=JSON.stringify(input.rows);
+    await assert.rejects(createMappedQuotation(input),error=>new RegExp(`A${item.row}.*출력 범위 밖.*상품`).test(error.message),`old row ${item.row}, selected ${item.start}..${item.start+item.count-1}`);
+    assert.deepEqual(Buffer.from(input.originalBytes),beforeBytes);
+    assert.equal(JSON.stringify(input.profile),beforeProfile);assert.equal(JSON.stringify(input.rows),beforeRows);
+  }
+});
+
+for(const company of schemaCompanies)test(`official workbook preserves guides, blank prefills and formulas while replacing selected rows (${company.code})`,async()=>{
+  const originalRows='<row r="9"><c r="A9" t="s"><v>1</v></c><c r="B9" t="inlineStr"><is><t>원본 기본 분류</t></is></c><c r="C9"><v>999</v></c></row>'
+    +'<row r="10"><c r="A10" t="inlineStr"><is><t>덮어쓸 이전 상품 1</t></is></c></row>'
+    +'<row r="11"><c r="A11" t="inlineStr"><is><t>덮어쓸 이전 상품 2</t></is></c></row>'
+    +'<row r="12"><c r="A12" t="s"><v>1</v></c><c r="C12"><f>IF(D12="","",1000)</f><v>1000</v></c><c r="T12" t="inlineStr"><is><t>기본 고시</t></is></c></row>'
+    +'<row r="1008"><c r="A1008" t="s"><v>1</v></c><c r="C1008"><v>0</v></c></row>'
+    +'<row r="1048576"><c r="C1048576"><f>1+1</f><v>2</v></c></row>';
+  const input=await officialInputFrom(company,originalRows,{dataStartRow:10,count:2});
+  const beforeBytes=Buffer.from(input.originalBytes),beforeProfile=JSON.stringify(input.profile),beforeRows=JSON.stringify(input.rows);
+  const result=await createMappedQuotation(input),archive=await reader.readXlsxArchive(result.bytes.buffer),inspection=reader.inspectXlsxArchive(archive);
+  assert.equal(result.report.rowCount,2);assert.equal(result.report.validationIssueCount,0);assert.equal(result.report.missingRequired.length,0);
+  for(const [index,value]of ['현재 선택 상품 1','현재 선택 상품 2'].entries())assert.equal(reader.xlsxHeaders(inspection,input.profile.template.sheetName,10+index)[0],value);
+  const original=await reader.readXlsxArchive(input.originalBytes),source=decode(original.get('xl/worksheets/sheet1.xml')),output=decode(archive.get('xl/worksheets/sheet1.xml'));
+  for(const number of [1,5,6,7,8,9,12,1008,1048576])assert.ok(output.includes(source.match(new RegExp(`<row r="${number}">[\\s\\S]*?<\\/row>`))[0]),`preserved row ${number}`);
+  for(const [name,bytes]of original)if(name!=='xl/worksheets/sheet1.xml')assert.deepEqual(Buffer.from(archive.get(name)),Buffer.from(bytes),name);
+  assert.deepEqual(Buffer.from(input.originalBytes),beforeBytes);assert.equal(JSON.stringify(input.profile),beforeProfile);assert.equal(JSON.stringify(input.rows),beforeRows);
+});
+
+for(const company of schemaCompanies)test(`official selected title formulas retain the existing overwrite refusal (${company.code})`,async()=>{
+  for(const cached of ['<v>이전 상품명</v>','<v></v>','']){
+    const input=await officialInputFrom(company,`<row r="9"><c r="A9" t="str"><f>"이전 상품명"</f>${cached}</c></row>`);
+    const beforeBytes=Buffer.from(input.originalBytes),beforeProfile=JSON.stringify(input.profile);
+    await assert.rejects(createMappedQuotation(input),/A9 수식 영역은 덮어쓸 수 없습니다/);
+    assert.deepEqual(Buffer.from(input.originalBytes),beforeBytes);assert.equal(JSON.stringify(input.profile),beforeProfile);
+  }
+});
 
 test('official annotated quotation starts after guide/example rows and rejects a different registration category', async () => {
   const sheetName = 'QF_6269_주방수납';

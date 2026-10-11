@@ -1,5 +1,6 @@
 import { getQuotationSchema } from '@/app/quotation-schema';
 import {verifyOfficialWorkbookTemplate,type VerifiedOfficialWorkbook} from '@/app/official-hub-template';
+import {suggestQuotationMappings} from '@/app/quotation-mapping';
 import { mapQuotationRow, parseTemplateText, validateCategoryProfile, type QuotationRowValues, type CategoryProfileInput } from '@/app/category-profiles';
 import { inspectXlsxArchive, readXlsxArchive, supplierHubEntryLayout, supplierHubRequirementRow, supplierHubSheetSignature, xlsxChoiceLists, xlsxHeaders, xlsxWorksheetPath, xlsxStaticListValues, type XlsxInspection } from '@/app/xlsx-template';
 
@@ -151,6 +152,38 @@ function verifyOfficialUnmappedRequired(source: string, inspection: XlsxInspecti
       const hasFormula = Boolean(formula && !formula.selfClosing && source.slice(formula.openEnd, formula.closeStart).trim());
       const matchingNotice = header.trim() === '고시명' && value === profile.categoryPath[0];
       if (!matchingNotice && !hasFormula) fail(`공식 견적서 ${columnName(column)}${rowNumber} (${header})은 필수 열인데 연결되지 않았고 원본 자동값도 확인되지 않았습니다. 양식에서 열을 연결해주세요.`);
+    }
+  }
+}
+
+/** Original product names outside this export would remain uploadable rows.
+ * Decode only those cells in bounded inspection copies, including rows beyond
+ * the inspector's normal 1000-row preview. Never delete or alter the original. */
+function verifyOfficialRemainingProducts(files: Map<string, Uint8Array>, path: string, source: string, inspection: XlsxInspection, profile: CategoryProfileInput, firstInputRow: number, startRow: number, count: number): void {
+  const template=profile.template!;
+  // Use the original title column, independent of saved manual connections.
+  const titles=suggestQuotationMappings(template.headers,profile.categoryId,supplierHubRequirementRow(inspection,template.sheetName,template.headerRow),profile.hubSchema).mappings.filter(mapping=>mapping.field==='title');
+  if(titles.length!==1)fail('공식 견적서 원본의 상품명 열을 하나로 확인하지 못했습니다.');
+  const column=titles[0].column,data=spans(source).children.find(node=>node.local==='sheetData');
+  if(!data)fail('공식 견적서의 상품 행을 확인하지 못했습니다.');
+  const cells=data.children.filter(node=>node.local==='row').flatMap(row=>{
+    const number=Number(row.attributes.r);
+    if(number<firstInputRow||number>=startRow&&number<startRow+count)return [];
+    const cell=row.children.find(node=>node.local==='c'&&coordinate(node.attributes.r).column===column);
+    // A title formula can later calculate another product even without a
+    // cached value. Refuse the export without evaluating or deleting it.
+    if(cell?.children.some(node=>node.local==='f'))fail(`공식 견적서 ${template.sheetName}!${columnName(column)}${number}에 선택한 출력 범위 밖의 상품명 수식이 있어 실제 상품 행 수를 확인할 수 없습니다. 상품 입력이 없는 원본 양식으로 다시 준비해주세요.`);
+    return cell?[{number,cell}]:[];
+  });
+  const prefix=data.name.includes(':')?`${data.name.split(':')[0]}:`:'';
+  for(let offset=0;offset<cells.length;offset+=1000){
+    const batch=cells.slice(offset,offset+1000),copies=new Map(files);
+    const rows=batch.map(({cell},index)=>`<${prefix}row r="${index+1}">${source.slice(cell.start,cell.end).replace(/(\sr\s*=\s*)(?:"[^"]*"|'[^']*')/,`$1"${columnName(column)}${index+1}"`)}</${prefix}row>`).join('');
+    copies.set(path,encoder.encode(source.slice(0,data.openEnd)+rows+source.slice(data.closeStart)));
+    const decoded=inspectXlsxArchive(copies).sheets.find(sheet=>sheet.name===template.sheetName)!;
+    for(const row of decoded.rows)if(row.values[column]?.trim()){
+      const original=batch[row.rowNumber-1];
+      fail(`공식 견적서 ${template.sheetName}!${columnName(column)}${original.number}에 선택한 출력 범위 밖의 이전 상품이 남아 있습니다. 상품 입력이 없는 원본 양식으로 다시 준비해주세요.`);
     }
   }
 }
@@ -335,7 +368,10 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     }
     const path = xlsxWorksheetPath(files, template.sheetName); const original = files.get(path); if (!original) fail('원본 시트를 찾을 수 없습니다.');
     const source = decoder.decode(original);
-    if (layout) verifyOfficialUnmappedRequired(source, inspection, profile, input.dataStartRow, values.length);
+    if (layout) {
+      verifyOfficialRemainingProducts(files,path,source,inspection,profile,layout.dataStartRow,input.dataStartRow,values.length);
+      verifyOfficialUnmappedRequired(source, inspection, profile, input.dataStartRow, values.length);
+    }
     const updated = encoder.encode(writeWorksheet(source, template.sheetName, profile, values, input.dataStartRow));
     if (updated.byteLength > 10_000_000) fail('생성한 워크시트가 10MB를 초과합니다.');
     files.set(path, updated); const updatedInspection = inspectXlsxArchive(files);
