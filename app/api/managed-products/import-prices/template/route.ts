@@ -1,0 +1,10 @@
+import {env} from 'cloudflare:workers';
+import {NextResponse} from 'next/server';
+import {managedProductAccess} from '@/app/managed-product-access';
+import {managedProductAccountContext} from '@/app/managed-products';
+import {managedImportPriceTemplates,managedImportPriceSha,type ManagedImportMatching} from '@/app/managed-import-prices';
+const headers={'cache-control':'no-store'},fail=(error:string,status:number)=>NextResponse.json({error},{status,headers});
+export async function GET(request:Request){
+ const access=await managedProductAccess();if(!access)return fail('로그인 회원의 승인된 회사정보가 필요합니다.',403);const params=new URL(request.url).searchParams,matching=params.get('matching')??'sku',expected=params.get('expectedAccountContext');if(!['sku','barcode'].includes(matching)||expected!==null&&!/^[a-f0-9]{64}$/.test(expected))return fail('SKUID·바코드 양식과 현재 계정을 확인해주세요.',400);
+ try{const accountContext=await managedProductAccountContext(access.ownerId,access.company);if(expected!==null&&expected!==accountContext)return fail('현재 계정 또는 회사가 변경되었습니다. 다시 확인해주세요.',409);const template=managedImportPriceTemplates[matching as ManagedImportMatching],assets=(env as typeof env&{ASSETS?:{fetch(request:Request):Promise<Response>}}).ASSETS;if(!assets)throw Error('Missing assets');const response=await assets.fetch(new Request(new URL(template.path,request.url))),bytes=await response.arrayBuffer();if(!response.ok||bytes.byteLength!==template.bytes||await managedImportPriceSha(bytes)!==template.sha256)throw Error('Template changed');const current=await managedProductAccess();if(!current||await managedProductAccountContext(current.ownerId,current.company)!==accountContext)return fail('다운로드 중 계정 또는 회사가 변경되었습니다.',409);return new Response(bytes,{headers:{...headers,'content-type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','content-disposition':`attachment; filename="YOOFAM-${access.company.code}-import-prices-${matching}.xlsx"`,'x-managed-account-context':accountContext}});}catch{return fail('원본 매입정보 양식 파일을 확인하지 못했습니다.',503);}
+}

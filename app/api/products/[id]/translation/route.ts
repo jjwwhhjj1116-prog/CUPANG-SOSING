@@ -9,6 +9,7 @@ import { optionsRetryProof } from '@/app/options-translation-retry';
 import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
+import {CollectionCompanyError} from '@/app/collection-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
 
@@ -301,6 +302,7 @@ export async function POST(request: Request, context: Context) {
       return finished ? json({ job: finished }) : json({ error: '호출 후 결과 저장 상태가 불확실합니다. 다시 생성 요청을 만들기 전에 실행 이력을 확인해주세요.', code: 'RESULT_PERSISTENCE_UNCERTAIN' }, 503);
     } catch { return json({ error: '호출 후 결과 저장에 실패했습니다. 비용이 발생했을 수 있으며 중복 호출을 차단했습니다.', code: 'RESULT_PERSISTENCE_UNCERTAIN' }, 503); }
   } catch (error) {
+    if (error instanceof CollectionCompanyError) return json({ error: error.message, code: error.code },409);
     if (error instanceof TranslationError) return json({ error: error.message, code: error.code, configuration: configuration() }, error.code === 'TRANSLATION_NOT_CONFIGURED' ? 503 : 400);
     return unavailable();
   }

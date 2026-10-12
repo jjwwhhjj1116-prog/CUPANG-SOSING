@@ -21,6 +21,7 @@ import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {GOOGLE_TEXT_MODEL} from '@/app/automation/translation';
+import {intakeSupplierSourceMatches} from '@/app/intake-supplier-source';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -72,6 +73,23 @@ export async function POST(request: Request, context: Context) {
     } catch (error) { return json({ error: error instanceof Error ? error.message : '상품 카테고리를 확인하지 못했습니다.' }, 409); }
     let plan;
     try {
+      // A completed canonical intake job can outlive source supplementation.
+      // Check its current receipt even when product/content clocks still match;
+      // then carry this exact effective payload into the atomic save guard.
+      // Independent manual jobs and options-only plans keep their own scopes.
+      if(scope==='all'&&categorySource?.snapshot?.linked){
+        const initial=await findIntakeTranslation(owner,id);
+        if(initial?.id===job.id){
+          const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
+          if(!company)throw Error('현재 승인된 회사와 수집 원문을 확인한 뒤 번역 요청을 다시 준비해주세요.');
+          const {findCollectionJob}=await import('@/db/collection-jobs');
+          const current=await readSeoRetrySource(owner,id,product.source_url,company),collection=await findCollectionJob(owner,current.guard.jobId);
+          if(!collection||collection.updated_at!==current.guard.jobUpdatedAt||JSON.stringify(collection.context)!==current.guard.contextPayload
+            ||!intakeSupplierSourceMatches(job.review.source,JSON.parse(current.guard.resultPayload),collection))
+            throw Error('수집 원문이 변경되었습니다. 기존 번역 이력과 수정값은 유지합니다. 새 원문으로 번역 요청을 다시 준비하고 검토해주세요.');
+          seoSource=current.guard;
+        }
+      }
       let applicationJob=job;
       let intakeReplay=false;
       // Content saves can advance their revision within the same product clock
@@ -117,7 +135,7 @@ export async function POST(request: Request, context: Context) {
         } catch (error) { return json({ error: error instanceof Error ? error.message : '카테고리 연결 규칙을 확인해주세요.' }, 409); }
       }
     }
-    const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null });
+    const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null, seoSource:seoSource??null });
     const optionsRetry = retryProof ? {applicationFingerprint:await optionsRetryApplicationFingerprint(job,
       applyContentPatch(content,plan.patch??{},'options-retry-application'),applyIntegratedOptions(options,plan,'options-retry-application'),'options-retry-application')} : null;
     let intakeSeoCoverage;

@@ -33,6 +33,7 @@ export function productionConfig(environment, hosting) {
     name, account_id: accountId, main: 'vinext/server/app-router-entry',
     compatibility_date: COMPATIBILITY_DATE, compatibility_flags: ['nodejs_compat'],
     workers_dev: !domain, preview_urls: false,
+    assets: { binding: 'ASSETS' },
     ...(domain ? { routes: [{ pattern: domain, custom_domain: true }] } : {}),
     d1_databases: [{ binding: 'DB', database_name: databaseName, database_id: databaseId, migrations_dir: 'db/migrations' }],
     r2_buckets: [{ binding: 'FILES', bucket_name: bucket }],
@@ -52,6 +53,7 @@ export function assertProductionArtifactConfig(config, hosting) {
   const bucket = config.r2_buckets?.find(value => value.binding === 'FILES');
   if (config.vars?.SOURCEFLOW_DEPLOYMENT_MODE !== 'production' || config.vars?.SOURCEFLOW_SITES_PROJECT_ID !== SITES_PROJECT_ID || config.vars?.NODE_ENV !== 'production') throw new Error('배포할 수 없는 로컬 산출물입니다. 운영 설정으로 build-cloudflare.mjs를 실행해주세요.');
   if (config.d1_databases.length !== 1 || config.r2_buckets?.length !== 1 || database?.remote || bucket?.remote) throw new Error('운영 DB/FILES 바인딩이 예상 구성과 다릅니다.');
+  if (config.assets?.binding !== 'ASSETS') throw new Error('원본 다운로드 양식을 제공할 ASSETS 바인딩이 운영 구성과 다릅니다.');
   const domain = config.routes?.[0]?.custom_domain ? config.routes[0].pattern : undefined;
   const expected = productionConfig({
     SOURCEFLOW_WORKER_NAME: config.name, CLOUDFLARE_ACCOUNT_ID: config.account_id,

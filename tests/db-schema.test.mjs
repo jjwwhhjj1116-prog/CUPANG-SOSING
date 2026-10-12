@@ -40,7 +40,7 @@ function seedCompanions(db) {
 
 test('ordered migrations match every runtime table, constraint, column and named index on fresh SQLite', () => {
   const result = checkDatabaseSchema();
-  assert.equal(result.tables, 30); assert.equal(result.indexes, 14); assert.equal(result.runtimeModules, 19);
+  assert.equal(result.tables, 31); assert.equal(result.indexes, 14); assert.equal(result.runtimeModules, 20);
 });
 
 test('legacy Drizzle schema upgrade preserves product/settings rows, defaults, PK declarations and indexes', () => {
@@ -82,12 +82,13 @@ test('reapplying bootstrap preserves every current table including uncertain/run
     db.prepare('INSERT INTO member_audit VALUES (?,?,?,?,?)').run('synthetic-audit','test-admin','test-admin','company',now);
       db.prepare('INSERT INTO supplier_hub_receipts(owner_id,product_id,fingerprint,observed_at,evidence_order,payload) VALUES (?,?,?,?,?,?)').run(owner,productId,'synthetic-hub-fingerprint',Date.parse(now),1,json);
     db.prepare('INSERT INTO managed_products VALUES(?,?,?,?,?,?,?,?,?,?)').run(owner,'test-company','synthetic-sku','보존 상품',json,'fixture.xlsx','a'.repeat(64),2,now,now);
+    db.prepare('INSERT INTO managed_import_prices VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(owner,'test-company','synthetic-sku','2026-10-12','0.00',1,'prices.xlsx','c'.repeat(64),2,now,now);
     db.prepare('INSERT INTO historical_ai_records VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(owner,'test-company','registration','synthetic-registration','','보존 등록',1,'https://example.invalid/synthetic','원본 상태',json,'fixture.json','b'.repeat(64),1,now);
     db.prepare('INSERT INTO product_removals(product_id,owner_id,removed_at,product_version) VALUES(?,?,?,?)').run(productId,owner,now,now);
     db.prepare('INSERT INTO product_labels(product_id,owner_id,revision,payload,updated_at) VALUES(?,?,?,?,?)').run(productId,owner,2,json,now);
     db.prepare('INSERT INTO collection_offer_claims(owner_id,offer_id,job_id) VALUES(?,?,?)').run(owner,'synthetic-offer','synthetic-job');
     const before = tableData(db); const schema = schemaSnapshot(db);
-    assert.equal(before.length, 30); assert.ok(before.every(table => table.rows.length === 1));
+    assert.equal(before.length, 31); assert.ok(before.every(table => table.rows.length === 1));
     db.exec(migrations); db.exec(migrations);
     assert.deepEqual(tableData(db), before); assert.deepEqual(schemaSnapshot(db), schema);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
@@ -135,7 +136,7 @@ test('schema checker detects missing indexes, changed CHECK/default/unique defin
 });
 
 test('quotation-fields migration adds one guarded table without changing the existing thirteen tables or rows', () => {
-  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql','0009_members.sql','0010_category_profile_pagination.sql','0011_supplier_hub_receipts.sql','0012_collection_source_supplements.sql','0013_managed_products.sql','0014_historical_ai_records.sql','0015_product_removals.sql','0016_product_labels.sql','0017_collection_offer_claims.sql']);
+  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql','0009_members.sql','0010_category_profile_pagination.sql','0011_supplier_hub_receipts.sql','0012_collection_source_supplements.sql','0013_managed_products.sql','0014_historical_ai_records.sql','0015_product_removals.sql','0016_product_labels.sql','0017_collection_offer_claims.sql','0018_managed_import_prices.sql']);
   const db=memoryDatabase();
   try {
     db.exec(bootstrap);seedLegacy(db);seedCompanions(db);

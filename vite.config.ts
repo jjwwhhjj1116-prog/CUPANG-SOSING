@@ -16,6 +16,7 @@ const localBindingConfig = {
   compatibility_flags: ['nodejs_compat'],
   workers_dev: false,
   preview_urls: false,
+  assets: { binding: 'ASSETS' },
   vars: { SOURCEFLOW_DEPLOYMENT_MODE: 'local-preview', SOURCEFLOW_SITES_PROJECT_ID: SITES_PROJECT_ID },
   d1_databases: d1
     ? [

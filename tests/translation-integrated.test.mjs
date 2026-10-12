@@ -223,7 +223,7 @@ test('category-aware integrated preview rejects wrong category and invalidates c
    '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=> 'owner'},
    '@/db/queries':{findProduct:async()=>({id:'p',updated_at:version,image_keys:'[]',source_url:'https://detail.1688.com/offer/813724060928.html'})},
    '@/db/product-content':{readProductContent:async()=>h.data.content},'@/db/product-options':{readProductOptions:async()=>h.data.options},
-   '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job},'@/db/translation-category-source':reader,
+   '@/db/translation-jobs':{getTranslationJob:async()=>h.data.job,findIntakeTranslation:async()=>null},'@/db/translation-category-source':reader,
    '@/db/translation-adoption':{saveIntegratedTranslation:async(...args)=>{saves++;return h.store.saveIntegratedTranslation(...args);}},
   });
   const call=body=>route.POST(new Request('https://local/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,expectedVersion:version,...body})}),{params:Promise.resolve({id:'p'})});
@@ -322,7 +322,7 @@ test('completed option batches retain edited content and manual blanks with atom
    h.data.content=cm.applyContentPatch(h.data.content,{seo:{title:'직접 고친 상품명'},label:{material:'직접 확인한 재질'}},nextVersion);
    h.sqlite.prepare('INSERT INTO product_content VALUES (?,?,?,?,?)').run('p','owner',1,JSON.stringify(h.data.content),nextVersion);
    h.data.options.rows[0].translatedName='';h.data.options.rows[0].provenance.translatedName='manual';
-   if(variant==='original')h.data.options.rows[0].originalName='不同';
+   if(variant==='original'){h.data.options.rows[0].originalName='不同';h.data.options.rows[0].provenance.translatedName='unverified';}
    const originalJob=JSON.stringify(h.data.job);
    const route=load('app/api/products/[id]/translation-apply/route.ts',{
     '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=> 'owner'},

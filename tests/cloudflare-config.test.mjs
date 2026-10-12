@@ -13,16 +13,29 @@ const hosting = { project_id: SITES_PROJECT_ID, d1: 'DB', r2: 'FILES' };
 const input = { SOURCEFLOW_WORKER_NAME: 'synthetic-sourceflow', CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), SOURCEFLOW_D1_DATABASE_NAME: 'synthetic-database',
   SOURCEFLOW_D1_DATABASE_ID: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', SOURCEFLOW_R2_BUCKET_NAME: 'synthetic-bucket',
   CLOUDFLARE_ACCESS_TEAM_DOMAIN: 'https://synthetic-team.cloudflareaccess.com', CLOUDFLARE_ACCESS_AUD: 'b'.repeat(64) };
-const compiled = provider => ({ ...productionConfig({ ...input, ...(provider ? { SOURCEFLOW_TEXT_PROVIDER: provider } : {}) }, hosting), main: 'index.js', no_bundle: true, assets: { directory: '../client' } });
+const compiled = provider => {
+  const config = productionConfig({ ...input, ...(provider ? { SOURCEFLOW_TEXT_PROVIDER: provider } : {}) }, hosting);
+  return { ...config, main: 'index.js', no_bundle: true, assets: { ...config.assets, directory: '../client' } };
+};
 
 test('production config preserves project/bindings and only packages approved nonsecret variables', () => {
   const config = productionConfig({ ...input, CLOUDFLARE_API_TOKEN: 'must-never-be-in-artifact', OPENAI_API_KEY: 'also-not-packaged' }, hosting);
   assert.equal(config.d1_databases[0].binding, 'DB'); assert.equal(config.r2_buckets[0].binding, 'FILES');
+  assert.equal(config.assets.binding, 'ASSETS');
   assert.equal(config.d1_databases[0].migrations_dir, 'db/migrations'); assert.equal(config.preview_urls, false); assert.equal(config.workers_dev, true);
   assert.equal(config.vars.SOURCEFLOW_SITES_PROJECT_ID, SITES_PROJECT_ID); assert.ok(!JSON.stringify(config).includes('must-never')); assert.ok(!JSON.stringify(config).includes('also-not'));
   assert.doesNotThrow(() => assertProductionArtifactConfig(compiled(), hosting));
   const custom = productionConfig({ ...input, SOURCEFLOW_CUSTOM_DOMAIN: 'sourceflow.example.com' }, hosting);
   assert.equal(custom.workers_dev, false); assert.deepEqual(custom.routes, [{ pattern: 'sourceflow.example.com', custom_domain: true }]);
+});
+
+test('deployment rejects missing or renamed static asset bindings before original-template downloads can fail', () => {
+  const config = compiled();
+  assert.equal(config.assets.directory, '../client');
+  assert.doesNotThrow(() => assertProductionArtifactConfig(config, hosting));
+  for (const assets of [undefined, { directory: '../client' }, { binding: 'OTHER', directory: '../client' }]) {
+    assert.throws(() => assertProductionArtifactConfig({ ...config, assets }, hosting), /ASSETS 바인딩/);
+  }
 });
 
 test('missing settings, local placeholders, identity changes and invalid Access origins fail closed', () => {
@@ -112,7 +125,7 @@ test('authenticated runtime GET distinguishes unconfigured translation from expl
     if (modules.has(file)) return modules.get(file);
     const exports = {}; modules.set(file, exports);
     const code = ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-    vm.runInNewContext(code, { exports, Response, process: { env: { NODE_ENV: 'production' } }, fetch: forbidden, require(name) {
+    vm.runInNewContext(code, { exports, Response, URL, process: { env: { NODE_ENV: 'production' } }, fetch: forbidden, require(name) {
       if (name === 'cloudflare:workers') return { env };
       if (name === 'next/server') return { NextResponse: Response };
       if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ verifiedAccess: true }), getWorkspaceOwnerId: async () => 'owner' };

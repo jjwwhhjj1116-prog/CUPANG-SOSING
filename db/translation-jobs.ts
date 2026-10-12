@@ -5,6 +5,7 @@ import { validateCategoryProfile } from '@/app/category-profiles';
 import { collectionSourceReference, parseCollectionRequest } from '@/app/sourcing';
 import type { SupplierHubCompany } from '@/app/supplier-hub-company';
 import { fingerprint } from '@/app/automation/model';
+import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 
 export type SeoRetrySourceGuard = { jobId:string; offerId:string; jobUpdatedAt:string; contextPayload:string; resultPayload:string };
 async function seoSourceGuard(source:SeoRetrySourceGuard|undefined) {
@@ -29,6 +30,7 @@ export async function readSeoRetrySource(owner:string,productId:string,sourceUrl
     .bind(productId,owner).first<{id:string;offer_id:string;updated_at:string;context_payload:string;result_payload:string}>();
   if(!row)throw Error('상품에 연결된 현재 수집 원문을 찾지 못했습니다.');
   const captured=JSON.parse(row.context_payload),receipt=JSON.parse(row.result_payload),category=validateCategoryProfile(captured.category);
+  verifyCapturedCollectionCompany(captured,company);
   const offer=parseCollectionRequest({urls:[sourceUrl]})[0];
   if(offer.offerId!==row.offer_id||receipt.offerId!==offer.offerId||parseCollectionRequest({urls:[receipt.sourceUrl]})[0].offerId!==offer.offerId
     || category.hubSchema && (category.hubSchema.company.code!==company.code||category.hubSchema.company.name!==company.name))throw Error('상품·수집 카테고리·승인 회사가 일치하지 않습니다.');

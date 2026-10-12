@@ -262,6 +262,27 @@ export function xlsxWorksheetPath(files: Map<string, Uint8Array>, sheetName: str
   return relationshipPath(workbookPath, relation.Target);
 }
 
+export type XlsxDateCellProof={rowNumber:number;type:string;raw:string;formatId:number|null;formatCode:string|null};
+/** Date evidence only. Existing inspection values/importers remain unchanged. */
+export function xlsxDateCells(files:Map<string,Uint8Array>,sheetName:string,column='B'):{date1904:boolean;cells:XlsxDateCellProof[]}{
+  if(!/^[A-Z]{1,3}$/.test(column))fail('날짜 열을 확인해주세요.');
+  const main=relationships(files,'_rels/.rels').find(value=>/\/officeDocument$/.test(value.Type));if(!main||main.TargetMode==='External')fail('통합문서 연결을 확인해주세요.');
+  const workbookPath=relationshipPath('',main.Target),workbook=xml(files.get(workbookPath)),properties=children(workbook,'workbookPr');if(properties.length>1)fail('통합문서 날짜 체계가 중복되었습니다.');
+  const dateFlag=properties[0]?.attributes.date1904;if(dateFlag!==undefined&&!['0','1','false','true'].includes(dateFlag))fail('통합문서 날짜 체계를 확인해주세요.');
+  const slash=workbookPath.lastIndexOf('/'),rels=relationships(files,`${workbookPath.slice(0,slash+1)}_rels/${workbookPath.slice(slash+1)}.rels`),style=rels.filter(value=>/\/styles$/.test(value.Type));if(style.length>1||style[0]?.TargetMode==='External')fail('날짜 셀의 스타일 연결을 확인해주세요.');
+  const formats=new Map<number,string>();let definitions:XmlNode[]=[];
+  if(style[0]){const styles=xml(files.get(relationshipPath(workbookPath,style[0].Target)));if(localName(styles.name)!=='styleSheet')fail('셀 스타일 문서를 확인해주세요.');
+    for(const item of children(styles,'numFmts').flatMap(value=>children(value,'numFmt'))){const id=Number(item.attributes.numFmtId);if(!Number.isSafeInteger(id)||id<0||formats.has(id)||item.attributes.formatCode===undefined)fail('숫자 형식의 날짜 근거를 확인해주세요.');formats.set(id,item.attributes.formatCode);}
+    definitions=children(styles,'cellXfs').flatMap(value=>children(value,'xf'));
+  }
+  const worksheet=xml(files.get(xlsxWorksheetPath(files,sheetName))),cells:XlsxDateCellProof[]=[];
+  for(const row of children(worksheet,'sheetData').flatMap(value=>children(value,'row')))for(const cell of children(row,'c')){const reference=new RegExp(`^${column}([1-9]\\d*)$`).exec(cell.attributes.r??'');if(!reference||Number(reference[1])===1)continue;
+    const index=Number(cell.attributes.s??0),definition=Number.isSafeInteger(index)&&index>=0?definitions[index]:undefined,id=definition?Number(definition.attributes.numFmtId):NaN,formatId=Number.isSafeInteger(id)&&id>=0?id:null;
+    cells.push({rowNumber:Number(reference[1]),type:cell.attributes.t??'n',raw:children(cell,'v').map(allText).join(''),formatId,formatCode:formatId===null?null:formats.get(formatId)??null});
+  }
+  return{date1904:dateFlag==='1'||dateFlag==='true',cells};
+}
+
 export function xlsxHeaders(inspection: XlsxInspection, sheetName: string, headerRow: number): string[] {
   const sheet = inspection.sheets.find(value => value.name === sheetName);
   const row = sheet?.rows.find(value => value.rowNumber === headerRow);
