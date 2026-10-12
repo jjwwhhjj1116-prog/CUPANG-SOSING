@@ -44,7 +44,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const {offerId:originalOffer,...originalBody}=original;assert.equal(originalOffer,'813724060928');
   const replay=await h.route('/api/collection-jobs/job/result',{method:'POST',body:originalBody});assert.equal(replay.status,200,await replay.clone().text());assert.equal((await replay.json()).receipt.result.images.length,19);
   assert.equal((await h.route('/api/collection-jobs/job/result',{method:'POST',body:{...originalBody,title:'different original'}})).status,409);
-  const source=await (await h.route(`/api/products/${id}/translation-source`)).json();assert.equal(source.attributes.length,24);assert.equal(source.jobId,'job');assert.equal(source.sourceGaps.length,0);
+  const source=await (await h.route(`/api/products/${id}/translation-source`)).json();assert.equal(source.attributes.length,24);assert.equal(source.jobId,'job');assert.equal(source.description,'');assert.deepEqual(source.sourceGaps.map(gap=>gap.fieldId),['detailHtml']);
   await h.load('app/collection-supplement-client.ts').completeCollectionSupplement({jobId:'job',offerId:'813724060928',sourceUrl:h.sourceUrl,productId:id,productVersion:after.updated_at,provider:effective.result.provider},
     {fetcher:request(h),signal:new AbortController().signal,captureFromBrowser:async()=>assert.fail('stored supplement is reused'),onProgress(){}});
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_source_supplements').get().n,1);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,1);assert.equal(h.objects.size,19);
@@ -65,6 +65,35 @@ test('new explicit intake supplements SKU-only server response before creating t
    else assert.match(result,/Chrome unavailable/);
   }finally{h.close();}
  }
+});
+
+test('a Chrome SKU-only fallback can still obtain one full capture before draft creation',async()=>{
+ const h=mobileIntakeHarness({sourceFetcher:async()=>new Response('',{status:302})});
+ try{
+  h.sqlite.prepare("UPDATE collection_jobs SET goal='collect' WHERE id='job'").run();let captures=0;
+  await h.load('app/intake-collection.ts').collectIntakeProduct(await h.load('db/collection-jobs.ts').findCollectionJob('owner','job'),{
+   fetcher:request(h),signal:new AbortController().signal,onJob(){},onProgress(){},captureFromBrowser:async()=>++captures===1
+    ?{format:'1688-public-sku-capture-v1',sourceUrl:h.sourceUrl,skuPayload:sku}:capture(h.sourceUrl)});
+  assert.equal(captures,2,'the SKU capture lacks details, so one distinct full capture remains necessary');
+  const original=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload),effective=await h.load('db/collection-results.ts').readCollectionResult('owner','job');
+  assert.equal(original.provider,'chrome-public-sku-v1');assert.equal(effective.result.provider,'chrome-public-mobile-supplement-v1');assert.equal(effective.result.images.length,19);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_source_supplements').get().n,1);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,1);
+ }finally{h.close();}
+});
+
+for(const provider of ['chrome-public-mobile-v1','1688-public-mobile-v1'])test(`an image-only full receipt retries media from saved source without automatic recapture (${provider})`,async()=>{
+ const h=mobileIntakeHarness();
+ try{
+  h.sqlite.prepare("UPDATE collection_jobs SET goal='collect' WHERE id='job'").run();const result=h.load('app/browser-product-capture.ts').parseBrowserProductCapture(capture(h.sourceUrl),h.sourceUrl);
+  assert.equal(result.description,'');result.provider=provider;await h.load('db/collection-results.ts').storeCollectionResult('owner','job',result);
+  let captures=0;
+  await h.load('app/intake-collection.ts').collectIntakeProduct(await h.load('db/collection-jobs.ts').findCollectionJob('owner','job'),{
+   fetcher:request(h),signal:new AbortController().signal,onJob(){},onProgress(){},captureFromBrowser:async()=>{captures++;return capture(h.sourceUrl);}});
+  assert.equal(captures,0,'saved full sources remain editable even when a seller publishes no description text');
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),source=await (await h.route(`/api/products/${product.id}/translation-source`)).json();
+  assert.deepEqual(source.sourceGaps.map(gap=>gap.fieldId),['detailHtml']);assert.equal(h.load('app/collection-source-supplement.ts').canSupplementCollection(result),true,'explicit manual enrichment is still available');
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_source_supplements').get().n,0);assert.equal(h.objects.size,19);
+ }finally{h.close();}
 });
 
 for(const goal of ['collect','work'])test(`URL retry can supplement a saved sparse receipt when Chrome becomes available without replacing existing edits or translation history (${goal})`,async()=>{

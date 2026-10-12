@@ -188,12 +188,13 @@ test('Cloudflare source failure -> Chrome public raw capture -> owner receipt ->
 
 test('Chrome mobile draft retries a failed image without recollection, duplicate files or lost manual edits',async()=>{
  const h=mobileIntakeHarness({sourceFetcher:async()=>new Response('',{status:302})});
+ let captured=0;
  const run=async()=>h.load('app/intake-collection.ts').collectIntakeProduct(await h.load('db/collection-jobs.ts').findCollectionJob('owner','job'),{
   signal:new AbortController().signal,fetcher:(path,init)=>h.route(path,{method:init?.method??'GET',body:init?.body}),onJob:()=>{},onProgress:()=>{},
-  captureFromBrowser:async()=>fixture().run(),
+  captureFromBrowser:async()=>{captured++;return fixture().run();},
  });
  try{
-  h.stats.failImageIndex=4;await assert.rejects(run(),/원본 5번/);
+  h.stats.failImageIndex=4;await assert.rejects(run(),/원본 5번/);assert.equal(captured,1,'the first full raw Chrome receipt must not recapture its image-only description');
   const product=h.sqlite.prepare('SELECT * FROM products').get();assert.equal(product.options_count,6);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,18);
   const base='/api/products/'+product.id,content=await (await h.route(base+'/content')).json();
@@ -203,6 +204,7 @@ test('Chrome mobile draft retries a failed image without recollection, duplicate
   assert.equal(updatedQuote.status,200);assert.equal((await updatedQuote.json()).resolved.rows.find(row=>row.optionId==='collected-1').fields.salePrice.value,'9900');
   const downloads=h.stats.downloads,sourceRequests=h.network.filter(host=>host==='detail.1688.com').length;
   h.stats.failImageIndex=null;assert.match(await run(),/상품 초안 저장됨/);
+  assert.equal(captured,1,'image retry must reuse the full saved source without another Chrome capture');
   assert.equal(h.stats.downloads-downloads,1);assert.equal(h.stats.maxDownloads,3);
   assert.equal(h.network.filter(host=>host==='detail.1688.com').length,sourceRequests);
   assert.equal(h.aiSources.length,1);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM collection_images').get().n,19);

@@ -1,6 +1,7 @@
 import {env} from 'cloudflare:workers';
-import type {ManagedProduct,ManagedProductFilter,ManagedProductImport,ManagedProductImportCounts,ManagedProductList} from '@/app/managed-products';
+import type {ManagedProduct,ManagedProductFilter,ManagedProductImport,ManagedProductImportCounts,ManagedProductList,ManagedProductQuery} from '@/app/managed-products';
 import {ManagedProductContextChanged} from '@/app/managed-products';
+import {managedTableSql} from '@/app/managed-product-table';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 
 export const managedProductSchema=`CREATE TABLE IF NOT EXISTS managed_products (
@@ -42,17 +43,27 @@ export async function importManagedProducts(ownerId:string,source:ManagedProduct
 }
 const filters:Record<ManagedProductFilter,string>={all:'1',unavailable:`json_extract(source_payload,'$."발주가능상태"')='품절'`,loser:`json_extract(source_payload,'$.winner')='LOSER'`,
  'no-purchase':`COALESCE(json_extract(source_payload,'$."구매정보"'),'') IN ('','[]','null')`,'no-import':`COALESCE(json_extract(source_payload,'$."매입정보"'),'') IN ('','[]','null')`};
-export async function listManagedProducts(ownerId:string,company:SupplierHubCompany,query:{page:number;pageSize:number;search:string;filter:ManagedProductFilter}):Promise<ManagedProductList>{
- const db=await database(),search='%'+query.search.replace(/[\\%_]/g,value=>'\\'+value)+'%',where=`owner_id=? AND company_code=? AND ${filters[query.filter]} AND (title LIKE ? ESCAPE '\\' OR sku_id LIKE ? ESCAPE '\\' OR json_extract(source_payload,'$."바코드"') LIKE ? ESCAPE '\\')`;
+function listingQuery(ownerId:string,company:SupplierHubCompany,query:ManagedProductQuery){
+ const search='%'+query.search.replace(/[\\%_]/g,value=>'\\'+value)+'%',table=managedTableSql({sort:query.sort??null,columnFilters:query.columnFilters??[]}),where=`owner_id=? AND company_code=? AND ${filters[query.filter]} AND (title LIKE ? ESCAPE '\\' OR sku_id LIKE ? ESCAPE '\\' OR json_extract(source_payload,'$."바코드"') LIKE ? ESCAPE '\\')${table.where}`;
+ return{where,args:[ownerId,company.code,search,search,search,...table.args],orderBy:table.orderBy};
+}
+export async function listManagedProducts(ownerId:string,company:SupplierHubCompany,query:ManagedProductQuery):Promise<ManagedProductList>{
+ const db=await database(),{where,args,orderBy}=listingQuery(ownerId,company,query);
  const result=await db.batch([
   db.prepare(`SELECT COUNT(*) AS total,SUM(CASE WHEN ${filters.unavailable} THEN 1 ELSE 0 END) AS unavailable,SUM(CASE WHEN ${filters.loser} THEN 1 ELSE 0 END) AS loser,
    SUM(CASE WHEN ${filters['no-purchase']} THEN 1 ELSE 0 END) AS noPurchase,SUM(CASE WHEN ${filters['no-import']} THEN 1 ELSE 0 END) AS noImport,
    MAX(imported_at) AS lastImportedAt,MIN(NULLIF(json_extract(source_payload,'$."판매가기준일"'),'')) AS priceDate
    FROM managed_products WHERE owner_id=? AND company_code=?`).bind(ownerId,company.code),
-  db.prepare(`SELECT COUNT(*) AS total FROM managed_products WHERE ${where}`).bind(ownerId,company.code,search,search,search),
-  db.prepare(`SELECT * FROM managed_products WHERE ${where} ORDER BY first_imported_at DESC,source_row,sku_id LIMIT ? OFFSET ?`).bind(ownerId,company.code,search,search,search,query.pageSize,(query.page-1)*query.pageSize),
+  db.prepare(`SELECT COUNT(*) AS total FROM managed_products WHERE ${where}`).bind(...args),
+  db.prepare(`SELECT * FROM managed_products WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`).bind(...args,query.pageSize,(query.page-1)*query.pageSize),
  ]);
  const summary=result[0].results[0] as ManagedProductList['summary'];
  return {company,products:(result[2].results as Stored[]).map(toProduct),total:Number((result[1].results[0] as {total:number}).total),page:query.page,pageSize:query.pageSize,
   summary:{...summary,unavailable:summary.unavailable??0,loser:summary.loser??0,noPurchase:summary.noPurchase??0,noImport:summary.noImport??0}};
+}
+/** One bounded owned read of the complete filtered result, never a page export. */
+export async function readManagedProductsForExport(ownerId:string,company:SupplierHubCompany,query:ManagedProductQuery){
+ const db=await database(),{where,args,orderBy}=listingQuery(ownerId,company,query),result=await db.prepare(`SELECT * FROM managed_products WHERE ${where} ORDER BY ${orderBy} LIMIT 5001`).bind(...args).all<Stored>();
+ if(result.results.length>5000)throw new RangeError('다운로드는 필터 결과 5000개 이하만 지원합니다. 조건을 좁혀주세요.');
+ return result.results.map(toProduct);
 }

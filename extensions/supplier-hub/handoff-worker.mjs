@@ -9,9 +9,11 @@ import {validateAppHubRequest} from './app-request.mjs';
 import {refreshSupplierHubRegistration} from './app-registration.mjs';
 import {readAppSupplierHubCatalog} from './catalog.mjs';
 import {readOwnedProductTransferHistory} from './product-history.mjs';
+import {readAppCompanyRegistrations} from './company-registration.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
-  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_GET_PRODUCT_TRANSMISSIONS','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_RESUME_VALIDATION','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION','YOOFAM_READ_CATEGORY_BRANCH','YOOFAM_READ_CATEGORY_SCHEMA','YOOFAM_READ_CATEGORY_TEMPLATE'].includes(message?.type))return;
+  if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_GET_PRODUCT_TRANSMISSIONS','YOOFAM_QUERY_COMPANY_REGISTRATIONS','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_RESUME_VALIDATION','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION','YOOFAM_READ_CATEGORY_BRANCH','YOOFAM_READ_CATEGORY_SCHEMA','YOOFAM_READ_CATEGORY_TEMPLATE'].includes(message?.type))return;
   (async()=>{try{
+    if(message.type==='YOOFAM_QUERY_COMPANY_REGISTRATIONS'){const observation=await readAppCompanyRegistrations(message,sender);respond({ok:true,observation});return;}
     if(message.type==='YOOFAM_GET_PRODUCT_TRANSMISSIONS'){
       const identity=validateAppHubRequest(message,sender,'YOOFAM_GET_PRODUCT_TRANSMISSIONS');
       const records=await readOwnedProductTransferHistory(identity,{appTabId:sender.tab.id,windowId:sender.tab.windowId});respond({ok:true,productId:identity.productId,records});return;

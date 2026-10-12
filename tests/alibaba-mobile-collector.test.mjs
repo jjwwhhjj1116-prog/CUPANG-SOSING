@@ -63,7 +63,9 @@ test('observed public SKU-only response yields exact six options and four images
   for(let index=0;index<6;index+=2)assert.equal(result.options[index].imageIndex,result.options[index+1].imageIndex);
   assert.equal(result.description, ''); assert.equal('attributes' in result, false);
   assert.match(load('app/collection-result.ts').collectionSourceWarnings(result).join(' '), /상세 설명·상세 이미지·일반 상품 속성/);
-  assert.deepEqual(Array.from(load('app/collection-result.ts').collectionSourceWarnings(receipt())), []);
+  assert.equal(receipt().description, '', 'the recorded full source contains detail images but no textual description');
+  const fullWarnings=Array.from(load('app/collection-result.ts').collectionSourceWarnings(receipt()));
+  assert.equal(fullWarnings.length,1);assert.match(fullWarnings[0],/상세 설명/);assert.doesNotMatch(fullWarnings[0],/상세 이미지|일반 상품 속성/);
 });
 
 test('public SKU-only parser rejects wrong offer, private facts, missing main image, invalid cost and invented SKU combinations', () => {

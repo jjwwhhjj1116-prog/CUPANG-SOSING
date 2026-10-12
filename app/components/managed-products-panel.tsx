@@ -1,11 +1,9 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import type {ManagedProductList,ManagedProductFilter,ManagedProductImportCounts,ManagedProductInput,ManagedProductAccountContext} from '@/app/managed-products';
+import {managedTableColumns,managedVisibleColumns,managedCell,managedColumn,managedTableParams,parseManagedTableQuery,type ManagedTableQuery,type ManagedTableFilter} from '@/app/managed-product-table';
 import './managed-products-panel.css';
 
-const columns=['SKUID','바코드','제품분류','노출ID','옵션ID','vendorItemId','productId','판매링크','발주가능상태','재고','판매가','판매가기준일','공급가','리뷰평점','리뷰수','구매링크','옵션1_중국어','옵션2_중국어','판매구성수량','매입단가','공급가액','부가세액','총매입가','구매정보','매입정보','latestImportPrice','구매정보여부','winner','productIdHistory','priceHistory','otherSellers','쿠팡마진','쿠팡마진율','마진','마진율','ROI','최소ROAS'];
-const jsonColumns=['구매정보','매입정보','productIdHistory','priceHistory','otherSellers'];
-const initialColumns=['SKUID','바코드','노출ID','옵션ID','판매링크','발주가능상태','재고','판매가','판매가기준일','공급가','리뷰평점','리뷰수','구매정보','매입정보'];
 type List=ManagedProductList&ManagedProductAccountContext;
 type Preview={preview:true;sha256:string;company:ManagedProductList['company'];counts:ManagedProductImportCounts;sample:ManagedProductInput[]}&ManagedProductAccountContext;
 type ImportResult=Omit<Preview,'preview'>&{preview:boolean;error?:string};
@@ -14,8 +12,10 @@ function thumbnail(value:string){const url=link(value);if(!url)return;return new
 
 export function ManagedProductsPanel(){
  const [data,setData]=useState<List|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[refresh,setRefresh]=useState(0);
- const [page,setPage]=useState(1),[pageSize,setPageSize]=useState(25),[search,setSearch]=useState(''),[searchDraft,setSearchDraft]=useState(''),[filter,setFilter]=useState<ManagedProductFilter>('all');
- const [visible,setVisible]=useState(initialColumns),[file,setFile]=useState<File|null>(null),[preview,setPreview]=useState<Preview|null>(null),[confirmed,setConfirmed]=useState(false),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+ const [page,setPage]=useState(1),[pageSize,setPageSize]=useState(10),[search,setSearch]=useState(''),[searchDraft,setSearchDraft]=useState(''),[filter,setFilter]=useState<ManagedProductFilter>('all');
+ const [visible,setVisible]=useState(()=>managedVisibleColumns.map(column=>column.id)),[file,setFile]=useState<File|null>(null),[preview,setPreview]=useState<Preview|null>(null),[confirmed,setConfirmed]=useState(false),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+ const [table,setTable]=useState<ManagedTableQuery>({sort:null,columnFilters:[]}),[pinned,setPinned]=useState('상품명'),[fixedHeight,setFixedHeight]=useState(true),[selection,setSelection]=useState<{accountContext:string;ids:Set<string>}>({accountContext:'',ids:new Set()}),[filterDraft,setFilterDraft]=useState<ManagedTableFilter|null>(null),[filterError,setFilterError]=useState('');
+ const tableKey=JSON.stringify(table),displayed=managedTableColumns.filter(column=>visible.includes(column.id)),selected=selection.accountContext===data?.accountContext?selection.ids:new Set<string>();
  const active=useRef<AbortController|null>(null);
  const importContext=useRef<List|null>(null),latestList=useRef<List|null>(null);
  const currentPreview=preview&&data&&preview.accountContext===data.accountContext&&preview.company.code===data.company.code&&preview.company.name===data.company.name?preview:null;
@@ -25,7 +25,7 @@ export function ManagedProductsPanel(){
   importContext.current=null;
   queueMicrotask(()=>{if(!controller.signal.aborted){setLoading(true);setError('');}});
   void(async()=>{try{
-   const params=new URLSearchParams({page:String(page),pageSize:String(pageSize),search,filter}),response=await fetch('/api/managed-products?'+params,{signal:controller.signal,cache:'no-store'}),body=await response.json() as List&{error?:string};
+   const query=JSON.parse(tableKey) as ManagedTableQuery,params=new URLSearchParams({page:String(page),pageSize:String(pageSize),search,filter,...managedTableParams(query)}),response=await fetch('/api/managed-products?'+params,{signal:controller.signal,cache:'no-store'}),body=await response.json() as List&{error?:string};
    if(!response.ok)throw Error(body.error??'상품 목록을 읽지 못했습니다.');
    if(!Array.isArray(body.products)||!body.company||!Number.isSafeInteger(body.total)||!/^[a-f0-9]{64}$/.test(body.accountContext))throw Error('상품 목록 응답을 확인하지 못했습니다.');
    if(!controller.signal.aborted){
@@ -36,7 +36,7 @@ export function ManagedProductsPanel(){
   }catch(cause){if(!controller.signal.aborted){importContext.current=null;setData(null);setPreview(null);setConfirmed(false);setError(cause instanceof Error?cause.message:'상품 목록을 읽지 못했습니다.');}}
   finally{if(!controller.signal.aborted)setLoading(false);}})();
   return()=>controller.abort();
- },[page,pageSize,search,filter,refresh]);
+ },[page,pageSize,search,filter,refresh,tableKey]);
  async function upload(commit:boolean){
   const context=importContext.current;
   if(active.current||!file||!data||!context||context.accountContext!==data.accountContext||context.company.code!==data.company.code||context.company.name!==data.company.name||commit&&(!currentPreview||!confirmed))return;
@@ -55,6 +55,15 @@ export function ManagedProductsPanel(){
   finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
  }
  function refreshList(){importContext.current=null;setLoading(true);setRefresh(value=>value+1);}
+ const toggle=(ids:string[],checked:boolean)=>{if(!data)return;const next=new Set(selected);for(const id of ids){if(checked)next.add(id);else next.delete(id);}setSelection({accountContext:data.accountContext,ids:next});};
+ const sort=(column:string)=>{setTable(current=>({...current,sort:current.sort?.column!==column?{column,direction:'ascending'}:current.sort.direction==='ascending'?{column,direction:'descending'}:null}));setPage(1);};
+ function applyFilter(){if(!filterDraft)return;try{const columnFilters=[...table.columnFilters.filter(value=>value.column!==filterDraft.column),...((filterDraft.operator==='contains'&&!filterDraft.value)?[]:[filterDraft])];parseManagedTableQuery(new URLSearchParams({columnFilters:JSON.stringify(columnFilters)}));setTable(current=>({...current,columnFilters}));setPage(1);setFilterDraft(null);setFilterError('');}catch(cause){setFilterError(cause instanceof Error?cause.message:'필터 값을 확인해주세요.');}}
+ async function download(){const context=importContext.current;if(active.current||loading||!context||context!==data)return;const controller=new AbortController();active.current=controller;setBusy(true);setMessage('');try{
+  const params=new URLSearchParams({search,filter,...managedTableParams(table),expectedAccountContext:context.accountContext}),response=await fetch('/api/managed-products/export?'+params,{signal:controller.signal,cache:'no-store'});
+  if(!response.ok){const body=await response.json() as {error?:string};throw Error(body.error||'상품 DB 다운로드를 확인하지 못했습니다.');}
+  const filename=`YOOFAM-${context.company.code}-products.xlsx`;if(response.headers.get('content-type')?.split(';')[0]!=='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'||response.headers.get('x-managed-account-context')!==context.accountContext||response.headers.get('content-disposition')!==`attachment; filename="${filename}"`)throw Error('현재 회사의 상품 DB 파일을 확인하지 못했습니다.');
+  const blob=await response.blob();if(controller.signal.aborted||importContext.current?.accountContext!==context.accountContext)return;const url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download=filename;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);setMessage('현재 검색·열 필터·정렬을 적용한 상품 DB 파일을 내려받았습니다. 저장된 상품은 변경되지 않았습니다.');
+ }catch(cause){if(!controller.signal.aborted)setMessage(cause instanceof Error?cause.message:'상품 DB 다운로드 실패');}finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}}
  const summary=data?.summary,filters:{id:ManagedProductFilter;name:string;count:number}[]=[{id:'all',name:'전체',count:summary?.total??0},{id:'unavailable',name:'발주불가(품절)',count:summary?.unavailable??0},{id:'loser',name:'아이템루저',count:summary?.loser??0},{id:'no-purchase',name:'구매정보없음',count:summary?.noPurchase??0},{id:'no-import',name:'매입정보없음',count:summary?.noImport??0}];
  return <section className="managed-products" aria-label="로켓배송 상품관리 신규">
   <header><div><h2>로켓배송 상품관리 (신규)</h2><p>쿠플러스 상품 DB를 가져와 구매정보·매입정보·가격을 확인합니다.</p></div><button className="btn ghost" disabled={loading||busy} onClick={refreshList}>목록 새로고침</button></header>
@@ -69,18 +78,22 @@ export function ManagedProductsPanel(){
     <p>가격·재고는 파일 기준입니다. AI 초안이나 Supplier Hub 전송 이력으로 표시하지 않습니다.</p>
     <button className="btn primary" disabled={!confirmed||busy||loading} onClick={()=>void upload(true)}>상품 DB {currentPreview.counts.total.toLocaleString()}개 가져오기</button>
    </div>}
-   {message&&<p role="status">{message}</p>}
   </details>
+  {message&&<p role="status">{message}</p>}
   <nav className="managed-filters" aria-label="등록 상품 필터">{filters.map(item=><button key={item.id} className={filter===item.id?'active':''} onClick={()=>{setFilter(item.id);setPage(1);}}>{item.name} <strong>{item.count.toLocaleString()}</strong></button>)}</nav>
   <p className="managed-source">{data?.company.name} · {summary?.priceDate?`판매가 기준일 ${summary.priceDate} · 원본 파일 값`:'판매가 기준일 없음'}{summary?.lastImportedAt&&` · 마지막 가져오기 ${new Date(summary.lastImportedAt).toLocaleString('ko-KR')}`}</p>
   <div className="managed-toolbar"><form onSubmit={event=>{event.preventDefault();setSearch(searchDraft.trim());setPage(1);}}><label>상품명·SKU·바코드 검색 <input value={searchDraft} onChange={event=>setSearchDraft(event.target.value)} maxLength={200}/></label><button className="btn ghost">검색</button></form>
-   <label>페이지당 <select value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(1);}}>{[10,25,50].map(value=><option key={value} value={value}>{value}개</option>)}</select></label>
-   <details><summary>표시할 열 ({visible.length}개)</summary><div className="managed-columns">{columns.map(name=><label key={name}><input type="checkbox" checked={visible.includes(name)} onChange={event=>setVisible(current=>event.target.checked?[...current,name]:current.filter(value=>value!==name))}/>{name}</label>)}</div></details>
+   <button type="button" className="btn ghost" disabled={loading||busy||!data} onClick={()=>void download()}>상품DB 다운로드</button>
+   <label>페이지당 <select aria-label="상품관리 페이지당 상품 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(1);}}>{[10,25,50,100].map(value=><option key={value} value={value}>{value}개</option>)}</select></label>
+   <details><summary>선택 컬럼 보기 ({displayed.length}개)</summary><div className="managed-columns"><button type="button" className="btn ghost" onClick={()=>setVisible(managedVisibleColumns.map(column=>column.id))}>기본 22열</button>{managedTableColumns.map(column=><label key={column.id}><input type="checkbox" data-column-field={column.field} aria-label={`${column.label} 컬럼 표시`} checked={visible.includes(column.id)} onChange={event=>{setVisible(current=>event.target.checked?[...new Set([...current,column.id])]:current.filter(value=>value!==column.id));if(pinned===column.id&&!event.target.checked)setPinned('');}}/>{column.label}</label>)}</div></details>
+   <label>고정할 열 선택 <select aria-label="상품관리 고정할 열 선택" value={pinned} onChange={event=>setPinned(event.target.value)}><option value="">고정 안 함</option>{displayed.map(column=><option key={column.id} value={column.id}>{column.label}</option>)}</select></label><fieldset className="managed-height"><legend>높이 고정</legend><label><input type="radio" name="managed-height" checked={fixedHeight} onChange={()=>setFixedHeight(true)}/>Y</label><label><input type="radio" name="managed-height" checked={!fixedHeight} onChange={()=>setFixedHeight(false)}/>N</label></fieldset>
+   <span>전체 결과 {data?.total??0}개 · 선택 {selected.size}개</span>{table.columnFilters.length>0&&<button type="button" className="btn ghost" onClick={()=>{setTable(current=>({...current,columnFilters:[]}));setPage(1);setFilterDraft(null);}}>열 필터 모두 해제</button>}
   </div>
-  <div className="table-wrap" aria-busy={loading}><table><thead><tr><th>이미지</th><th>상품명</th>{visible.map(name=><th key={name}>{name==='SKUID'?'SKU ID':name}</th>)}</tr></thead><tbody>
+  {filterDraft&&<form className="managed-filter-editor" role="dialog" aria-label={`${managedColumn(filterDraft.column)?.label} 열 필터`} onSubmit={event=>{event.preventDefault();applyFilter();}}><strong>{managedColumn(filterDraft.column)?.label} · 전체 결과에 적용</strong><select aria-label="상품관리 열 필터 조건" value={filterDraft.operator} onChange={event=>setFilterDraft({...filterDraft,operator:event.target.value as ManagedTableFilter['operator']})}><option value="contains">포함</option><option value="eq">같음</option><option value="ne">같지 않음</option>{managedColumn(filterDraft.column)?.numeric&&<><option value="gte">이상</option><option value="lte">이하</option></>}</select><input aria-label="상품관리 열 필터 값" value={filterDraft.value} maxLength={2000} onChange={event=>setFilterDraft({...filterDraft,value:event.target.value})}/><button className="btn primary">적용</button><button type="button" className="btn ghost" onClick={()=>{setTable(current=>({...current,columnFilters:current.columnFilters.filter(value=>value.column!==filterDraft.column)}));setPage(1);setFilterDraft(null);}}>해제</button><button type="button" className="icon-close" aria-label="상품관리 열 필터 닫기" onClick={()=>setFilterDraft(null)}>×</button>{filterError&&<p role="alert">{filterError}</p>}</form>}
+  <div className={`table-wrap managed-table-scroll${fixedHeight?' managed-height-fixed':''}`} aria-busy={loading}><table><thead><tr><th><input type="checkbox" aria-label="상품관리 현재 페이지 전체 선택" checked={Boolean(data?.products.length)&&data!.products.every(product=>selected.has(product.skuId))} onChange={event=>toggle(data?.products.map(product=>product.skuId)??[],event.target.checked)}/></th>{displayed.map(column=><th key={column.id} data-column={column.id} className={pinned===column.id?'managed-pinned':''} aria-sort={table.sort?.column===column.id?table.sort.direction:'none'}><div className="managed-header-tools"><button type="button" aria-label={`${column.label} 정렬`} onClick={()=>sort(column.id)}>{column.label}{table.sort?.column===column.id?table.sort.direction==='ascending'?' ↑':' ↓':''}</button><button type="button" className={table.columnFilters.some(value=>value.column===column.id)?'active':''} aria-label={`${column.label} 열 필터`} aria-expanded={filterDraft?.column===column.id} onClick={()=>{setFilterError('');setFilterDraft(current=>current?.column===column.id?null:table.columnFilters.find(value=>value.column===column.id)??{column:column.id,operator:'contains',value:''});}}>⌕</button></div></th>)}</tr></thead><tbody>
    {/* eslint-disable-next-line @next/next/no-img-element -- Read the original CDN thumbnail directly without an image-provider request. */}
-   {data?.products.map(product=><tr key={product.skuId}><td>{thumbnail(product.values['썸네일']??'')?<img src={thumbnail(product.values['썸네일'])} alt="" loading="lazy" referrerPolicy="no-referrer"/>:'—'}</td><td className="managed-title">{product.title}</td>{visible.map(name=><td key={name} title={product.values[name]??''}>{name.endsWith('링크')&&link(product.values[name]??'')?<a href={link(product.values[name])} target="_blank" rel="noopener noreferrer">열기</a>:jsonColumns.includes(name)&&product.values[name]?<details><summary>원문 보기</summary><pre>{product.values[name]}</pre></details>:product.values[name]||'—'}</td>)}</tr>)}
-   {!loading&&!data?.products.length&&<tr><td colSpan={visible.length+2}>등록 상품이 없습니다. 상품 DB 파일을 가져오거나 검색 조건을 확인해주세요.</td></tr>}
+   {data?.products.map(product=><tr key={product.skuId} data-sku-id={product.skuId}><td><input type="checkbox" aria-label={`SKU ${product.skuId} 선택`} checked={selected.has(product.skuId)} onChange={event=>toggle([product.skuId],event.target.checked)}/></td>{displayed.map(column=>{const value=managedCell(product,column.id);return <td key={column.id} data-column={column.id} className={`${column.kind==='title'?'managed-title ':''}${pinned===column.id?'managed-pinned':''}`} title={value}>{column.kind==='image'?thumbnail(value)?<img src={thumbnail(value)} alt="" loading="lazy" referrerPolicy="no-referrer"/>:'—':column.kind==='link'&&link(value)?<a href={link(value)} target="_blank" rel="noopener noreferrer">열기</a>:column.kind==='json'&&value?<details><summary>원문 보기</summary><pre>{value}</pre></details>:value||'—'}</td>;})}</tr>)}
+   {!loading&&!data?.products.length&&<tr><td colSpan={displayed.length+1}>등록 상품이 없습니다. 상품 DB 파일을 가져오거나 검색 조건을 확인해주세요.</td></tr>}
   </tbody></table></div>
   <footer><button className="btn ghost" disabled={loading||page===1} onClick={()=>setPage(value=>value-1)}>이전</button><span>{page} / {Math.max(1,Math.ceil((data?.total??0)/pageSize))} 페이지 · {(data?.total??0).toLocaleString()}개</span><button className="btn ghost" disabled={loading||page*pageSize>=(data?.total??0)} onClick={()=>setPage(value=>value+1)}>다음</button></footer>
  </section>;

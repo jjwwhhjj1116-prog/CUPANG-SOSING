@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { CollectionSourceGap } from '@/app/collection-source-gaps';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { capture1688FromChrome } from '@/app/browser-product-bridge';
-import { canSupplementCollection } from '@/app/collection-source-supplement';
 import { completeCollectionSupplement } from '@/app/collection-supplement-client';
 
 type SourceContext = { productId: string; sourceUrl: string; sourceGaps: CollectionSourceGap[];
@@ -80,7 +79,7 @@ export function ProductSourceContext({ productId, productVersion, sourceUrl, ste
   if (!context) return null;
   const gaps = context.sourceGaps.filter(gap=>step==='견적서'||gap.step===step||(step==='SEO'&&gap.fieldId==='detailHtml'));
   const canSupplement=typeof context.jobId==='string'&&!!context.jobId&&typeof context.productVersion==='string'&&Number.isFinite(Date.parse(context.productVersion))
-    &&typeof context.provider==='string'&&(canSupplementCollection({provider:context.provider})||context.provider==='chrome-public-mobile-supplement-v1');
+    &&typeof context.provider==='string'&&(context.sourceGaps.length>0||context.provider==='chrome-public-mobile-supplement-v1');
   return <section className="product-source-context" aria-label="상품 추가 시 선택한 카테고리">
     {context.requestContext && <p><strong>카테고리</strong> {context.requestContext.categoryPath.join(' › ')} <small>({context.requestContext.categoryId})</small></p>}
     {canSupplement&&<div><button type="button" className="btn ghost" disabled={busy} onClick={()=>void supplement(context)}>{busy?'상세 원문 보완 중…':context.provider==='chrome-public-mobile-supplement-v1'?'보완 원본 이미지 연결 재시도':'Chrome에서 상세 원문 보완'}</button><small>기존 원문·가격·직접 수정한 값은 보존하고, 같은 상품의 상세 이미지와 속성을 보완합니다.</small></div>}

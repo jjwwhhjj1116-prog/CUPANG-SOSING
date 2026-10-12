@@ -4,6 +4,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
 import { readProductContent, saveProductContent } from '@/db/product-content';
 import { CONTENT_BODY_LIMIT, applyContentPatch, productImageKeys, validateContentInput } from '@/app/product-content';
+import { verifiedGeneratedImageReplacements } from '@/app/generated-image-adoption-proof';
 
 type Context = { params: Promise<{ id: string }> };
 function unavailable() { return NextResponse.json({ error: '운영 인증 연결 후 콘텐츠 편집을 사용할 수 있습니다.' }, { status: 503 }); }
@@ -55,7 +56,11 @@ export async function PATCH(request: Request, context: Context) {
     const current = await readProductContent(owner, id);
     if (current.revision !== validated.expectedRevision) return response({ error: '다른 편집 내용이 저장되었습니다. 입력 내용을 복사한 후 저장본을 다시 불러와주세요.', code: 'CONTENT_CONFLICT' }, 409);
     let next;
-    try { next = applyContentPatch(current, validated.patch, new Date().toISOString()); }
+    try {
+      if (validated.reviewedImageJobIds && !env.FILES) return response({ error: '이미지 저장소가 연결되지 않았습니다.' }, 503);
+      const replacements = validated.reviewedImageJobIds ? await verifiedGeneratedImageReplacements(owner, current, productImageKeys(product.image_keys), validated.reviewedImageJobIds, validated.patch, env.FILES) : [];
+      next = applyContentPatch(current, validated.patch, new Date().toISOString(), replacements);
+    }
     catch (error) { return response({ error: error instanceof Error ? error.message : '편집 내용을 확인해주세요.' }, 400); }
     const assigned = Object.values(next.assets).flatMap(field => field.value);
     const ownedKeys = productImageKeys(product.image_keys);

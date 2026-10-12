@@ -88,7 +88,7 @@ test('reviewed image adoption preserves manual names, prices, stock and label ro
  for(const label of [roles,options]){const h=harness(async(url,init,data)=>Response.json(url.endsWith('/content')?{content:data.content}:data.currentOptions));
   try{await settle();h.click(label)();await settle();assert.equal(h.calls.length,2);assert.equal(h.calls[0].init.cache,'no-store');assert.equal(h.calls[1].init.method,'PATCH');assert.equal(h.changed,1);
    const body=JSON.parse(h.calls[1].init.body);
-   if(label===roles){assert.equal(body.expectedRevision,1);assert.deepEqual(body.patch.assets,{main:['owner/edited']});assert.equal(h.content.assets.label.value[0],'owner/label');}
+   if(label===roles){assert.equal(body.expectedRevision,1);assert.deepEqual(body.patch.assets,{main:['owner/edited']});assert.deepEqual(body.reviewedImageJobIds,[h.job.id]);assert.equal(h.content.assets.label.value[0],'owner/label');}
    else{assert.equal(body.expectedRevision,4);assert.equal(body.expectedProductVersion,'current');assert.equal(body.rows[0].imageKey,'owner/edited');assert.equal(body.rows[0].translatedName,'수동 옵션명');assert.equal(body.rows[0].unitCostCny,12);assert.equal(body.rows[0].stock,0);}
   }finally{h.close();}
  }
@@ -133,6 +133,7 @@ test('history cannot restore removed images or use another product snapshot to r
 for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])for(const sourceRole of ['main','detailTop','detailBottom'])test(`stored image completion after a lost reply reaches reviewed ${sourceRole}, options and exact XLSX/ZIP bytes (${company.code})`,async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};let ui;
  try{
+  const readObject=h.bindings.FILES.get;h.bindings.FILES.get=async key=>{const object=await readObject(key);return object?{...object,body:new Response(await object.arrayBuffer()).body}:null;};
   const headers=['categoryId','mainImage','additionalImages','detailImages'],workbook=quotationWorkbook(headers),sha256=Buffer.from(await crypto.subtle.digest('SHA-256',workbook)).toString('hex'),storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,workbook);
   const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'SYNTHETIC image linkage test',categoryId:'80719',categoryPath:h.context.category.categoryPath,
    template:{name:'synthetic-image.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers},mappings:headers.map((field,column)=>({field,column,required:false}))},'cat');
@@ -159,7 +160,7 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
    if(url.endsWith('/image-generation')){
     if(init?.method==='POST'){
      executionAttempts++;const claimed=await store.claimImageJob('owner',p.id,job.id,review.fingerprint,'LOCAL-FIXTURE-CLAIM',new Date().toISOString());assert.equal(claimed.status,'running');
-     await h.bindings.FILES.put(outputKey,output,{httpMetadata:{contentType:'image/png'},customMetadata:{sha256:metadata.sha256}});
+     await h.bindings.FILES.put(outputKey,output,{httpMetadata:{contentType:'image/png'},customMetadata:{imageJobId:job.id,provenance:'generated',sha256:metadata.sha256}});
      const completed=await store.finishImageSuccess('owner',claimed,'LOCAL-FIXTURE-CLAIM',{...metadata,storageKey:outputKey,model:review.model,purpose:review.purpose,generatedAt:new Date().toISOString(),providerRequestId:null,usage:null,attached:false,assignedRole:false,provenance:'generated',reviewRequired:true});assert.equal(completed.result.attached,true);
      throw Error('SYNTHETIC execution reply lost');
     }

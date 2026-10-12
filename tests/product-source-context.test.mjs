@@ -78,3 +78,18 @@ test('saving manual product edits refreshes the supplement version without losin
  nodes(h.render('SEO','one',version)).find(node=>node.type==='button'&&node.props.children==='Chrome에서 상세 원문 보완').props.onClick();await h.flush();
  assert.equal(received.productVersion,version);assert.equal(received.productId,'one');assert.equal(received.jobId,'job');h.unmount();
 });
+
+test('sparse JSON-LD enables explicit enrichment from verified gaps; complete sources need no capture and saved supplements retain image retry',async()=>{
+ let captures=0;
+ const value={...context(),jobId:'job',provider:'public-product-jsonld-v1',productVersion:'2026-10-12T01:00:00.000Z'};
+ const h=ui(async()=>Response.json(value),{supplement:async input=>{assert.equal(input.provider,value.provider);assert.equal(input.productVersion,value.productVersion);captures++;return '원문 보완됨';}});
+ h.render();await h.flush();assert.equal(captures,0,'reading source evidence never starts capture');
+ const button=nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='Chrome에서 상세 원문 보완');
+ assert.ok(button,'the complete-provider name cannot hide missing seller facts');button.props.onClick();await h.flush();assert.equal(captures,1);h.unmount();
+ for(const provider of ['public-product-jsonld-v1','chrome-public-mobile-supplement-v1']){
+  const complete=ui(async()=>Response.json({...value,provider,sourceGaps:[]}));complete.render();await complete.flush();
+  const buttons=nodes(complete.render()).filter(node=>node.type==='button');
+  assert.equal(buttons.length,provider==='chrome-public-mobile-supplement-v1'?1:0);
+  if(buttons.length)assert.equal(buttons[0].props.children,'보완 원본 이미지 연결 재시도');complete.unmount();
+ }
+});

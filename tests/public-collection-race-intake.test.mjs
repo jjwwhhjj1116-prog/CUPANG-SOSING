@@ -54,7 +54,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const sourceView=await json(await h.route(base+'/translation-source'));
   assert.equal(sourceView.productId,product.id);assert.equal(sourceView.requestContext.categoryId,'80719');
   assert.deepEqual(sourceView.requestContext.categoryPath,h.context.category.categoryPath);
-  assert.equal(sourceView.sourceGaps.length,mode==='sku'?3:0);
+  assert.deepEqual(sourceView.sourceGaps.map(gap=>gap.fieldId),mode==='sku'?['detailHtml','detailImages','noticeMaterial']:['detailHtml']);
   assert.equal(product.supplier_hub_status,'미전송');assert.equal(h.aiSources.length,1);
   assert.equal(h.aiSources[0].category.id,'80719');assert.equal(h.stats.downloads,mode==='sku'?4:19);
   const content=(await json(await h.route(base+'/content'))).content;
@@ -98,7 +98,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
   const sourceIssues=preview.submissionReview.issues.filter(issue=>issue.code==='COLLECTION_SOURCE_GAP');
-  assert.equal(sourceIssues.length,mode==='sku'?3:0);
+  assert.equal(sourceIssues.length,mode==='sku'?3:1);
   assert.ok(sourceIssues.every(issue=>issue.kind==='review'&&issue.optionId===null));
   const review=await json(await h.route(base+'/submission-review'));
   assert.equal(review.issues.filter(issue=>issue.code==='COLLECTION_SOURCE_GAP').length,sourceIssues.length);
@@ -113,7 +113,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    assert.equal(document.rows[0].fields.noticeMaterial.value,'검토한 재질');
    assert.equal(document.rows[0].fields.additionalImages.value,'');
    assert.match(document.rows[0].fields.detailHtml.value,/직접 확인한 설명/);
-   assert.equal(document.warnings.filter(message=>message.includes('1688 옵션 조회 원문')).length,3);
+   assert.equal(document.warnings.filter(message=>message.includes('1688 수집 원문')).length,3);
   }
   assert.equal(preview.rows.length,5);assert.equal(preview.submissionReview.errorCount,0,JSON.stringify(preview.submissionReview.issues.filter(issue=>issue.kind==='error')));
   assert.deepEqual(preview.report.company,{code:company.companyCode,name:company.companyName});

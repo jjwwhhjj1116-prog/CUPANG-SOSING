@@ -1,4 +1,4 @@
-import type { ProductContent, ContentPatch } from '@/app/product-content';
+import type { ProductContent, ContentPatch, ReviewedImageReplacement } from '@/app/product-content';
 import type { ImageEditJob } from '@/app/automation/image-edit';
 /** User-reviewed replacement only, using the content revision captured before generation. */
 export function generatedImageRolePatch(content:ProductContent,job:ImageEditJob,imageKeys:readonly string[]):ContentPatch {
@@ -35,4 +35,11 @@ export function generatedImagesRolePatch(content:ProductContent,jobs:readonly Im
   if(current.some(key=>replacements.has(key)))assets[role]=current.map(key=>replacements.get(key)??key);
  }
  return {assets};
+}
+
+/** The submitted action must be the complete, unchanged-position plan. */
+export function reviewedImageRoleReplacements(content:ProductContent,jobs:readonly ImageEditJob[],imageKeys:readonly string[],patch:ContentPatch):ReviewedImageReplacement[] {
+ const expected=generatedImagesRolePatch(content,jobs,imageKeys).assets!;
+ if(Object.keys(patch).length!==1||!patch.assets||Object.keys(expected).length!==Object.keys(patch.assets).length||Object.entries(expected).some(([role,keys])=>JSON.stringify(keys)!==JSON.stringify(patch.assets![role as keyof typeof expected])))throw new Error('검토한 결과는 원본이 있던 모든 대표·추가·상세 위치에 그대로 적용해주세요.');
+ return jobs.map(job=>({sourceKey:job.review.sourceKey,resultKey:job.result!.storageKey}));
 }

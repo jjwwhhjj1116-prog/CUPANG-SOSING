@@ -262,7 +262,7 @@ test('review bundle retains only the linked receipt source gaps and rejects anot
  const captured={id:'exact-job',payload:JSON.stringify({category:profile}),updatedAt:product.updated_at,linked:true};
  const reads=[];
  const route=routeWith({find:async()=>sourceProduct,readCollection:async()=>captured,readReceipt:async(...args)=>{
-  reads.push(args);return{result:{offerId:'100001',provider:'1688-public-sku-v1'}};
+  reads.push(args);return{result:{offerId:'100001',provider:'1688-public-sku-v1',description:'',images:[]}};
  }});
  const response=await route.GET(getRequest(),context);assert.equal(response.status,200,await response.clone().text());
  const files=readArchive(new Uint8Array(await response.arrayBuffer()));

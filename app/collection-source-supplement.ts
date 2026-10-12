@@ -1,7 +1,10 @@
 import { COLLECTION_RESULT_LIMIT, validateCollectionResult, type CollectionResult } from '@/app/collection-result';
+import { collectionSourceGaps } from '@/app/collection-source-gaps';
 
-export function canSupplementCollection(result: Pick<CollectionResult, 'provider'>) {
-  return ['1688-public-sku-v1', 'chrome-public-sku-v1'].includes(result.provider);
+export function canSupplementCollection(result: Pick<CollectionResult, 'provider' | 'description' | 'images' | 'attributes'>) {
+  // Supplements are append-only. Remaining optional gaps still show in review,
+  // but retrying their image import must reuse the stored capture, not recapture.
+  return result.provider !== 'chrome-public-mobile-supplement-v1' && collectionSourceGaps(result).length > 0;
 }
 
 /** Keep the first receipt's SKU facts and image indices. Only a separately
@@ -17,7 +20,11 @@ export function supplementCollectionSource(original: CollectionResult, captured:
       throw Error('원문 SKU·옵션·가격이 달라 보완하지 않았습니다. 기존 가격과 수정값은 유지됩니다.');
     }
   }
-  if (!captured.description && !captured.attributes?.length && !captured.images.some(image => image.role === 'detail')) {
+  const addsDescription = !original.description.trim() && !!captured.description.trim();
+  const addsAttributes = !original.attributes?.length && !!captured.attributes?.length;
+  const addsDetails = captured.images.some(image => image.role === 'detail'
+    && !original.images.some(previous => previous.role === 'detail' && previous.url === image.url));
+  if (!addsDescription && !addsAttributes && !addsDetails) {
     throw Error('Chrome에서도 상세 이미지·설명·상품 속성을 받지 못했습니다. 기존 원문은 유지됩니다.');
   }
   const images = original.images.map(image => ({ ...image }));

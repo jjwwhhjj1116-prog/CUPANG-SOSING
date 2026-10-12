@@ -1,5 +1,6 @@
 import {readXlsxArchive,inspectXlsxArchive} from '@/app/xlsx-template';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
+import type {ManagedTableFilter,ManagedTableSort} from '@/app/managed-product-table';
 
 export const MANAGED_PRODUCT_FILE_LIMIT=5_000_000;
 export type ManagedProductInput={skuId:string;title:string;sourceRow:number;values:Record<string,string>};
@@ -14,6 +15,7 @@ export async function managedProductAccountContext(ownerId:string,company:Suppli
  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),value=>value.toString(16).padStart(2,'0')).join('');
 }
 export type ManagedProductFilter='all'|'unavailable'|'loser'|'no-purchase'|'no-import';
+export type ManagedProductQuery={page:number;pageSize:number;search:string;filter:ManagedProductFilter;sort?:ManagedTableSort|null;columnFilters?:ManagedTableFilter[]};
 export type ManagedProductList={products:ManagedProduct[];total:number;page:number;pageSize:number;company:SupplierHubCompany;summary:{total:number;unavailable:number;loser:number;noPurchase:number;noImport:number;lastImportedAt:string|null;priceDate:string|null}};
 const required=['상품명','SKUID','바코드','발주가능상태','판매가','판매가기준일','공급가','구매정보','매입정보'];
 

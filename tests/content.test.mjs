@@ -13,7 +13,7 @@ function load(file, overrides = {}, mode = 'development', cache = new Map()) {
   vm.runInNewContext(source, { exports, Response, TextDecoder, TextEncoder, Uint8Array, structuredClone, process: { env: { NODE_ENV: mode } }, require(name) {
     if (name in overrides) return overrides[name];
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
-    if (name.startsWith('@/app/')) return load(name.slice(2) + '.ts', overrides, mode, cache);
+    if (name.startsWith('@/app/') || name.startsWith('@/db/')) return load(name.slice(2) + '.ts', overrides, mode, cache);
     if (name === 'next/server') return { NextResponse: Response };
     throw new Error(name);
   } });

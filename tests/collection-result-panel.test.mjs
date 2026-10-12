@@ -12,7 +12,7 @@ const capacity={usedSlots:0,totalImages:2,reusableIndices:[]};
 
 test('SKU-only receipts show missing detail and attribute facts after reload without claiming all data was collected',async()=>{
  for(const provider of ['1688-public-sku-v1','chrome-public-sku-v1']){
-  const source={...result,provider,description:''};
+  const source={...result,provider,description:'',images:result.images.filter(image=>image.role==='main')};
   const h=harness(async url=>Response.json(url.endsWith('/result')?{jobId:'job',offerId:'123',receipt:{result:source},message:'수신됨'}:{capacity}));
   await h.click('수신 결과 조회');assert.match(JSON.stringify(h.render()),/상세 설명·상세 이미지·일반 상품 속성/);
   await h.click('수신 결과 조회');assert.match(JSON.stringify(h.render()),/직접 확인·입력/);assert.equal(h.saved,0);

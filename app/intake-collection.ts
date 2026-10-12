@@ -23,6 +23,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  let supplementNotice='';
  let source:ReturnType<typeof validateCollectionReceiptResponse>=null;
  let repairedExistingSource=false;
+ let capturedFromChrome=false;
  if(!job.received_at){
   reportProgress('상품 페이지에서 정보 가져오는 중');
   let response=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/collect`,{method:'POST',signal:options.signal});
@@ -30,6 +31,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(!response.ok&&body.code==='SOURCE_NOT_COLLECTED'&&options.captureFromBrowser&&!options.signal.aborted){
    reportProgress('현재 Chrome에서 1688 상품 원문 확인 중');
    const captured=await options.captureFromBrowser(job.source_url,options.signal);
+   capturedFromChrome=true;
    if(options.signal.aborted)return;
    response=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/browser-capture`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(captured),signal:options.signal});
    body=await response.json() as typeof body;
@@ -53,7 +55,12 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   source=validateCollectionReceiptResponse(body,job.id,job.offer_id);
   if(!source||body.receipt?.receivedAt!==job.received_at)throw Error('저장된 수집 원문이 현재 요청과 일치하지 않습니다.');
  }
- if(source&&canSupplementCollection(source)&&options.captureFromBrowser){
+ // A full mobile capture may legitimately contain images but no description
+ // text. Do not capture it twice in one intake or on a saved image retry. Its
+ // optional gaps and explicit source-repair action remain available to review.
+ const fullMobileSource=source&&['chrome-public-mobile-v1','1688-public-mobile-v1'].includes(source.provider);
+ const reuseFullMobileSource=fullMobileSource&&(capturedFromChrome||!!job.received_at||source?.provider==='chrome-public-mobile-v1');
+ if(source&&!reuseFullMobileSource&&canSupplementCollection(source)&&options.captureFromBrowser){
   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
   try{
    let expectedProductVersion:string|undefined;

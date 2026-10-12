@@ -129,7 +129,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
       if(controller.signal.aborted)return;
       if(!response.ok)throw Error(current.error??'이미지 역할을 읽지 못했습니다.');
       const patch=generatedImagesRolePatch(current.content,selected,imageKeys);
-      const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/content`,{signal:controller.signal,method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.content.revision,patch})});
+      const saved=await fetch(`/api/products/${encodeURIComponent(productId)}/content`,{signal:controller.signal,method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:current.content.revision,patch,reviewedImageJobIds:selected.map(item=>item.id)})});
       const value=await saved.json() as {error?:string};if(controller.signal.aborted)return;if(!saved.ok)throw Error(value.error??'이미지 역할 저장 실패');
       setReviewedIds([]);
       setNotice('원본이 있던 대표·추가·상세 위치에 검토한 결과를 적용했습니다. 다른 이미지 순서와 라벨·사이즈표는 유지했습니다. 원본 파일도 보관되어 있습니다.');onProductChanged?.();

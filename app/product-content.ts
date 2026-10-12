@@ -111,8 +111,9 @@ function plainText(value: unknown, max: number, name: string) {
   return value.trim();
 }
 
-export function validateContentInput(input: unknown, ownedKeys: readonly string[], ownerId: string): { expectedRevision: number; patch: ContentPatch } {
-  const body = object(input, ['expectedRevision', 'patch'], '콘텐츠 요청');
+export type ReviewedImageReplacement = { sourceKey: string; resultKey: string };
+export function validateContentInput(input: unknown, ownedKeys: readonly string[], ownerId: string): { expectedRevision: number; patch: ContentPatch; reviewedImageJobIds?: string[] } {
+  const body = object(input, ['expectedRevision', 'patch', 'reviewedImageJobIds'], '콘텐츠 요청');
   if (!Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0) throw new Error('저장 버전을 다시 불러와주세요.');
   const raw = object(body.patch, ['seo', 'detail', 'label', 'assets', 'labelLayout', 'customLabels', 'labelProductNameLinked', 'labelClears'], '편집 내용');
   const patch: ContentPatch = {};
@@ -184,10 +185,17 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
     }
   }
   if (!Object.hasOwn(patch,'labelProductNameLinked')&&!Object.hasOwn(patch,'customLabels')&&!Object.values(patch).some(value => Object.keys(value).length)) throw new Error('저장할 편집 내용이 없습니다.');
-  return { expectedRevision: body.expectedRevision as number, patch };
+  let reviewedImageJobIds: string[] | undefined;
+  if ('reviewedImageJobIds' in body) {
+    const ids = body.reviewedImageJobIds;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 50 || new Set(ids).size !== ids.length || ids.some(id => typeof id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))) throw new Error('검토한 완료 이미지 작업을 1~50개 선택해주세요.');
+    if (Object.keys(patch).length !== 1 || !patch.assets) throw new Error('검토한 이미지 적용에는 원본 위치의 이미지 교체만 저장할 수 있습니다.');
+    reviewedImageJobIds = [...ids];
+  }
+  return { expectedRevision: body.expectedRevision as number, patch, ...(reviewedImageJobIds ? { reviewedImageJobIds } : {}) };
 }
 
-export function applyContentPatch(current: ProductContent, patch: ContentPatch, now: string): ProductContent {
+export function applyContentPatch(current: ProductContent, patch: ContentPatch, now: string, reviewedReplacements: readonly ReviewedImageReplacement[] = []): ProductContent {
   current = withCurrentLabelFields(current);
   const next = structuredClone(current);
   if(patch.labelLayout)next.labelLayout=structuredClone(patch.labelLayout);
@@ -247,6 +255,21 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
   // field is edited. Every newly shared role pair still requires correction;
   // a duplicate elsewhere never authorizes sharing a different file or role.
   const previous = assignments(current.assets);
+  // Only the server's verified completed jobs may carry an original's existing
+  // sharing to its replacement. Ordinary role edits cannot create sharing.
+  if (reviewedReplacements.length) {
+    const eligible = ['main', 'additional', 'detailTop', 'detail', 'detailBottom'] as const;
+    const replacements = new Map(reviewedReplacements.map(value => [value.sourceKey, value.resultKey]));
+    const outputs = new Set(reviewedReplacements.map(value => value.resultKey));
+    if (Object.keys(patch).length !== 1 || !patch.assets || replacements.size !== reviewedReplacements.length || outputs.size !== reviewedReplacements.length || [...outputs].some(key => replacements.has(key) || previous.has(key))) throw imageRoleError();
+    const expected = Object.fromEntries(eligible.filter(role => current.assets[role].value.some(key => replacements.has(key))).map(role => [role, current.assets[role].value.map(key => replacements.get(key) ?? key)]));
+    if (Object.keys(expected).length !== Object.keys(patch.assets).length || Object.entries(expected).some(([role, values]) => JSON.stringify(values) !== JSON.stringify(patch.assets![role as AssetRole]))) throw imageRoleError();
+    for (const { sourceKey, resultKey } of reviewedReplacements) {
+      const roles = new Set(eligible.filter(role => previous.get(sourceKey)?.has(role)));
+      if (!roles.size) throw imageRoleError();
+      previous.set(resultKey, roles);
+    }
+  }
   for (const [key, roles] of assignments(next.assets)) if (roles.size > 1 && [...roles].some(role => !previous.get(key)?.has(role))) throw imageRoleError();
   next.revision = current.revision + 1;
   next.updatedAt = now;

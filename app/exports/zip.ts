@@ -31,7 +31,7 @@ export function zipFiles(files: { name: string; data: Uint8Array | string }[]) {
   // Validate the entire plan, including headers, before encoding text, CRC work
   // or allocating the archive. Each string is later encoded directly in-place.
   const plan = files.map(file => {
-    if (!/^[a-zA-Z0-9_./-]+$/.test(file.name) || file.name.startsWith('/') || file.name.split('/').some(part => part === '..' || !part) || names.has(file.name)) throw new Error('잘못되거나 중복된 파일명입니다.');
+    if ((!/^[a-zA-Z0-9_./-]+$/.test(file.name) && file.name !== '[Content_Types].xml') || file.name.startsWith('/') || file.name.split('/').some(part => part === '..' || !part) || names.has(file.name)) throw new Error('잘못되거나 중복된 파일명입니다.');
     names.add(file.name);
     const name = encoder.encode(file.name);
     if (name.length > 65535) throw new Error('첨부 파일명이 너무 깁니다.');

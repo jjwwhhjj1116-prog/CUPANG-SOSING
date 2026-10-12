@@ -37,13 +37,13 @@ test('actual content PING reports the runtime manifest version while retaining i
 
 test('installed-extension info uses only a read-only PING and reports the actual version and exact capability booleans',async()=>{
  for(const version of ['0.2.54','0.2.56','9.8.7','65535.65535.65535.65535']){
-  const h=harness((message,emit)=>emit(message,{ok:true,version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,exactAgreementLabels:true,publicSingleSkuCapture:true}));
-  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:false,historicalReceiptLookup:false,exactAgreementLabels:true,publicSingleSkuCapture:true});
+  const h=harness((message,emit)=>emit(message,{ok:true,version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true}));
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:false,historicalReceiptLookup:false,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true});
   assert.deepEqual(h.sent.map(message=>message.type),['PING']);assert.equal(h.sent[0].payload,null);assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);
  }
  for(const flag of [undefined,false,'true',1,null,{},[]]){
-  const h=harness((message,emit)=>emit(message,{ok:true,version:'0.2.54',pendingReceiptRefreshRecovery:flag,registrationObservationCas:flag,exactAgreementLabels:flag,publicSingleSkuCapture:flag}));
-  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version:'0.2.54',pendingReceiptRefreshRecovery:false,registrationObservationCas:false,productTransmissionHistory:false,historicalReceiptLookup:false,exactAgreementLabels:false,publicSingleSkuCapture:false});
+  const h=harness((message,emit)=>emit(message,{ok:true,version:'0.2.54',pendingReceiptRefreshRecovery:flag,registrationObservationCas:flag,exactAgreementLabels:flag,publicSingleSkuCapture:flag,companyRegistrationStatus:flag}));
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.readSupplierHubExtensionInfo(new AbortController().signal))),{version:'0.2.54',pendingReceiptRefreshRecovery:false,registrationObservationCas:false,productTransmissionHistory:false,historicalReceiptLookup:false,exactAgreementLabels:false,publicSingleSkuCapture:false,companyRegistrationStatus:false});
   assert.deepEqual(h.sent.map(message=>message.type),['PING']);
  }
  for(const version of [undefined,null,56,'','latest','0.2.056','0.2.65536','0.2.56.1.2','0.2.56\n','0.2.56<script>']){
