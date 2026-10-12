@@ -6,6 +6,7 @@ import type {CollectionEditorTab} from '@/app/registration-navigation';
 import {quotationMainImageKeys,optionQuotationName,type ProductOption,type ProductOptionsResponse} from '@/app/product-options';
 import type {QuotationField} from '@/app/quotation-schema';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
+import {quotationPriceTargets} from '@/app/quotation-price-targets';
 
 type Props={productId:string;sourceUrl:string;imageKeys:string;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
 type CommonContentStep='추가 이미지'|'상세 이미지'|'표시사항';
@@ -56,12 +57,15 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   if(quote.resolved.rows.some(row=>!record(row)||(row.optionId!==null&&typeof row.optionId!=='string')||!record(row.fields)))throw Error('옵션별 견적 가격 응답을 확인하지 못했습니다.');
   if(!Array.isArray(quote.resolved.schema?.fields)||quote.resolved.schema.fields.some(field=>!record(field)||typeof field.id!=='string'||typeof field.type!=='string'))throw Error('상품의 견적 항목 연결을 확인하지 못했습니다.');
   const targets=Object.fromEntries((['title','mainImage','additionalImages','detailImages','labelImages'] as const).map(input=>[input,exactPrimaryQuotationTarget(quote.resolved!.schema!.fields,input).primary]));
+  const priceTargets=quotationPriceTargets(quote.resolved.schema.fields);
   const quotationPrices:NonNullable<OptionBoardData['quotationPrices']>=Object.create(null);
   const quotationContent:NonNullable<OptionBoardData['quotationContent']>=Object.create(null);
   for(const option of body.options.rows){
     const rows=quote.resolved.rows.filter(row=>row.optionId===option.id),row=rows[0];
-    if(rows.length!==1||typeof row.fields?.supplyPrice?.value!=='string'||typeof row.fields?.salePrice?.value!=='string')throw Error('옵션별 견적 가격 응답을 확인하지 못했습니다.');
-    quotationPrices[option.id]={supplyPrice:row.fields.supplyPrice.value,salePrice:row.fields.salePrice.value};
+    if(rows.length!==1||typeof row.fields?.[priceTargets.supplyPrice.primary]?.value!=='string'||typeof row.fields?.[priceTargets.salePrice.primary]?.value!=='string')throw Error('옵션별 견적 가격 응답을 확인하지 못했습니다.');
+    // Display the same exact Hub prices used by stage two/seven and XLSX.
+    // Retained summary aliases, including divergent saved drafts, stay intact.
+    quotationPrices[option.id]={supplyPrice:row.fields[priceTargets.supplyPrice.primary].value,salePrice:row.fields[priceTargets.salePrice.primary].value};
     if(typeof row.fields[targets.title]?.value!=='string')throw Error('옵션별 견적 상품명 응답을 확인하지 못했습니다.');
     const imageIssues:OptionBoardQuotationContent['imageIssues']={};
     const images=(id:'mainImage'|'additionalImages'|'detailImages'|'labelImages',role:'main'|'additional'|'detail'|'label')=>{

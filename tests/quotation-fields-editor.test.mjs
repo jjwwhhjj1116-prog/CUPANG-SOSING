@@ -38,6 +38,12 @@ const optionsModel = load('app/product-options.ts');
 const settingsModel = load('app/workspace-settings.ts');
 const clone = value => JSON.parse(JSON.stringify(value));
 const change = (fieldKey, value, optionId = null) => ({ fieldKey, value, optionId });
+function acknowledgedView(view,changes){
+ const next=clone(view);next.revision=view.revision+1;next.overrides=model.applyQuotationChanges(view.overrides,changes);next.inputFingerprint='b'.repeat(64);
+ next.productVersion=new Date(Date.parse(view.productVersion)+1).toISOString();next.updatedAt=next.productVersion;
+ next.resolved.rows.forEach(row=>Object.keys(row.fields).forEach(key=>{row.fields[key]=editor.resolveQuotationEditorCell(next,[],row.optionId,key);}));
+ return next;
+}
 
 test('category choices distinguish unfilled cells from explicit empty N/A and never save UI tokens',()=>{
  const {QuotationChoiceInput}=load('app/components/quotation-choice-input.tsx');
@@ -80,7 +86,7 @@ function fixture(overrides = model.emptyQuotationOverrides(), brand = '기본 �
   const source = { categoryId: '80719', product: { id: 'p1', title: '원문 제목', supply_price: 2000, sale_price: 3000, msrp: 4000, exchange_rate: 200, supply_margin: 0, coupang_margin: 0, image_keys: JSON.stringify(['owner/main.png', 'owner/second.png']) },
     content, settings: { ...settingsModel.defaultSettings, brand }, options: optionsModel.applyOptionRows(optionsModel.emptyProductOptions('p1'), rows, '2026-09-24T00:00:00.000Z') };
   updateSource(source);
-  return { revision: 1, inputFingerprint: 'fingerprint-1', overrides, resolved: model.resolveQuotationFields({ ...source, overrides }), automatic: model.resolveQuotationFields(source), imageKeys: JSON.parse(source.product.image_keys), submissionReady: false,
+  return { revision: 1, inputFingerprint: 'a'.repeat(64), overrides, resolved: model.resolveQuotationFields({ ...source, overrides }), automatic: model.resolveQuotationFields(source), imageKeys: JSON.parse(source.product.image_keys), submissionReady: false,
     categoryContext: { source: 'collection', profileId: null, categoryId: '80719', categoryPath: [] }, productVersion: '2026-09-24T00:00:00.000Z', contentRevision: 0, optionRevision: 1, updatedAt: null };
 }
 
@@ -963,7 +969,7 @@ test('all-option save sends expanded edits in one revision-checked request',asyn
  const view=fixture(),edits=[change('brand','전체 적용 브랜드','red')],calls=[];
  const states=[view,edits,[],false,false,'','','start','red',[],true,null,true];let slot=0;
  const hooks={useState(initial){const i=slot++;return [i<states.length?states[i]:initial,()=>{}];},useEffect(){},useCallback:f=>f,useRef:value=>({current:value}),useId:()=> 'save-test'};
- const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init)=>{calls.push({url,...JSON.parse(init.body)});return Response.json({...view,revision:2});}});
+ const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init)=>{const body=JSON.parse(init.body);calls.push({url,...body});return Response.json(acknowledgedView(view,body.changes));}});
  const wrapper=loaded.QuotationFieldsEditor({productId:'p1'});const tree=wrapper.type(wrapper.props);
  function nodes(value){if(!value||typeof value!=='object')return[];if(Array.isArray(value))return value.flatMap(nodes);return[value,...nodes(value.props?.children)];}
  const button=nodes(tree).find(n=>n.type==='button'&&typeof n.props.children==='string'&&n.props.children.startsWith('견적 입력 저장'));
@@ -993,7 +999,7 @@ test('all-option save ignores duplicate clicks and aborted late responses withou
   const view=fixture(),edits=[change('brand','전체 브랜드','red')];const states=[view,edits,[],false,false,'','','start','red',[],true,null,true];let slot=0,calls=0,notices=0,finish,signal;const effects=[];
   const pending=new Promise(resolve=>finish=resolve);
   const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,v=>states[i]=typeof v==='function'?v(states[i]):v];},useEffect(fn){effects.push(fn);},useCallback:f=>f,useRef:v=>({current:v}),useId:()=> 'save-race'};
-  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{if(init?.method!=='PUT')return Response.json(view);calls++;signal=init.signal;await pending;return Response.json({...view,revision:2});}});
+  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{if(init?.method!=='PUT')return Response.json(view);calls++;signal=init.signal;await pending;return Response.json(acknowledgedView(view,JSON.parse(init.body).changes));}});
   const root=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});const tree=root.type(root.props);
   const nodes=v=>Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[];
   const click=nodes(tree).find(n=>n.type==='button'&&String(n.props.children).startsWith('견적 입력 저장')).props.onClick;
@@ -1003,6 +1009,136 @@ test('all-option save ignores duplicate clicks and aborted late responses withou
   finish();await new Promise(resolve=>setTimeout(resolve,20));assert.equal(notices,abort?0:1);
   assert.equal(states[1].length,abort?1:0);
  }
+});
+
+test('a successful stale quotation reply cannot discard direct edits and deliberate blanks',async()=>{
+ const view=fixture({common:{model:'기존 모델'},options:{blue:{brand:'다른 옵션 브랜드'}}});
+ const edits=[change('brand','직접 검토한 브랜드','red'),change('manufacturer','')];
+ const states=[view,edits,[],false,false,'','','start','red',[],true,null,false];let slot=0,notices=0,calls=0;
+ const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(){},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'unconfirmed-save'};
+ const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async()=>{calls++;return Response.json({...view,revision:view.revision+1});}});
+ const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
+ const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
+ const save=nodes(tree).find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장'));
+ assert.equal(save.props.disabled,false);save.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
+ assert.equal(calls,1);assert.equal(notices,0,'unconfirmed direct values must never announce a save');
+ assert.equal(JSON.stringify(states[1]),JSON.stringify(edits),'preserve every local edit, including its explicit empty-string intent');
+ assert.equal(states[0],view,'do not absorb a stale reply as the saved view');assert.match(states[5],/저장|입력/);
+});
+
+test('save confirmation requires exact manual layers, next revision and captured source identity while preserving resets',()=>{
+ const {confirmQuotationFieldsSave}=load('app/quotation-fields-confirmation.ts');
+ const view=fixture({common:{model:'이전 공통 모델',manufacturer:'공통 제조사'},options:{red:{model:'옵션 모델'},blue:{brand:'보존 브랜드'}}});
+ const changes=[change('brand','직접 브랜드','red'),change('manufacturer',''),change('model',null,'red')];
+ const saved=acknowledgedView(view,changes),before=JSON.stringify({view,changes,saved});
+ assert.equal(confirmQuotationFieldsSave(view,saved,changes),saved);
+ assert.equal(saved.resolved.rows.find(row=>row.optionId==='red').fields.model.value,'이전 공통 모델');
+ const reordered=clone(saved);reordered.overrides={options:reordered.overrides.options,common:Object.fromEntries(Object.entries(reordered.overrides.common).reverse())};
+ assert.equal(confirmQuotationFieldsSave(view,reordered,changes),reordered,'record key order is not a saved-value change');
+ const invalid=[
+  {...saved,revision:view.revision},{...saved,revision:saved.revision+1},{...saved,overrides:view.overrides},
+  {...saved,overrides:{common:{...saved.overrides.common,model:'다른 공통 값'},options:saved.overrides.options}},
+  {...saved,categoryContext:{...saved.categoryContext,categoryId:'77442'}},
+  {...saved,categoryContext:{...saved.categoryContext,categoryPath:['다른 분류']}},
+  {...saved,contentRevision:saved.contentRevision+1},{...saved,optionRevision:saved.optionRevision+1},
+  {...saved,imageKeys:[]},{...saved,inputFingerprint:''},{...saved,inputFingerprint:'not-a-hash'},
+  {...saved,productVersion:view.productVersion},{...saved,updatedAt:view.productVersion},
+ ];
+ for(const mutate of [value=>value.resolved.rows.splice(1,1),value=>{value.automatic.rows[1].fields.brand.value='다른 자동 브랜드';},value=>{value.resolved.rows[1].fields.brand.value='다른 옵션 값';},value=>{value.resolved.schema.fields[0].readOnly=true;},value=>{value.overrides.common.manufacturer=null;},value=>{value.resolved.rows[1].fields.model.value='수정 해제 전 옵션 모델';},value=>{value.resolved.rows[2].fields.manufacturer.value='수정 전 공통 제조사';},value=>{value.resolved.rows[2].fields.category.value='다른 카테고리';},value=>{value.resolved.rows[2].fields.supplyPrice.value='99999';}]){const value=clone(saved);mutate(value);invalid.push(value);}
+ for(const value of invalid)assert.throws(()=>confirmQuotationFieldsSave(view,value,changes),/입력.*다릅니다/);
+ assert.equal(JSON.stringify({view,changes,saved}),before,'checking responses never rewrites the original sources or the draft');
+});
+
+test('confirmed common and option resets restore each inherited value and reject stale resolved cells',()=>{
+ const {confirmQuotationFieldsSave}=load('app/quotation-fields-confirmation.ts');
+ const view=fixture({common:{brand:'이전 공통 브랜드',manufacturer:'공통 제조사'},options:{red:{manufacturer:'빨강 제조사'},blue:{brand:'직접 파랑 브랜드'}}});
+ const changes=[change('brand',null),change('manufacturer',null,'red')],saved=acknowledgedView(view,changes);
+ assert.equal(confirmQuotationFieldsSave(view,saved,changes),saved);
+ assert.equal(saved.resolved.rows[1].fields.brand.value,'기본 브랜드');assert.equal(saved.resolved.rows[1].fields.brand.source,'settings');
+ assert.equal(saved.resolved.rows[1].fields.manufacturer.value,'공통 제조사');assert.equal(saved.resolved.rows[1].fields.manufacturer.source,'manual-common');
+ assert.equal(saved.resolved.rows[2].fields.brand.value,'직접 파랑 브랜드');assert.equal(saved.resolved.rows[2].fields.brand.source,'manual-option');
+ for(const [index,key] of [[0,'brand'],[1,'brand'],[1,'manufacturer'],[3,'brand']]){const stale=clone(saved);stale.resolved.rows[index].fields[key]=clone(view.resolved.rows[index].fields[key]);assert.throws(()=>confirmQuotationFieldsSave(view,stale,changes),/다릅니다/);}
+});
+
+test('save confirmation respects exact packaged-weight peers after a one-field reset',()=>{
+ const {confirmQuotationFieldsSave}=load('app/quotation-fields-confirmation.ts'),snapshot=hubSchemaSnapshot();snapshot.inputBindings='couplus-paths-v1';
+ const raw=JSON.parse(snapshot.schemaString);raw.properties.logisticsPage.properties.skuUnitBoxWeight={type:'string',title:'한 개 단품 포장 무게',minLength:1};snapshot.schemaString=JSON.stringify(raw);
+ const schema=model.getQuotationSchema(snapshot.categoryId,snapshot.categoryPath,snapshot),wire=schema.fields.find(field=>field.numericText&&field.hubInput==='packagedWeightG');assert.ok(wire);
+ const view=fixture({common:{packagedWeightG:'420',[wire.id]:'500'},options:{red:{packagedWeightG:'600',[wire.id]:'610'}}},undefined,source=>{source.categoryId=snapshot.categoryId;source.categoryPath=snapshot.categoryPath;source.hubSchema=snapshot;});
+ const changes=[change('packagedWeightG',null,'red')],saved=acknowledgedView(view,changes);
+ assert.equal(confirmQuotationFieldsSave(view,saved,changes),saved);assert.equal(saved.resolved.rows[1].fields.packagedWeightG.value,'610');
+ const stale=clone(saved);stale.resolved.rows[1].fields.packagedWeightG.value='600';assert.throws(()=>confirmQuotationFieldsSave(view,stale,changes),/다릅니다/);
+});
+
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`generated public detail HTML changes and resets confirm by readback without altering source images (${company.companyCode})`,async()=>{
+ const h=mobileIntakeHarness(company),json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+ try{
+  h.bindings.YOOFAM_DETAIL_IMAGE_SECRET='a1'.repeat(32);h.bindings.YOOFAM_DETAIL_IMAGE_ORIGIN='https://example.test';await h.intake();
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id,images=JSON.parse(product.image_keys);
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
+  await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{assets:{detail:images.slice(0,2)}}}}));
+  const {confirmQuotationFieldsSave,quotationFieldsSaveNeedsReadback}=load('app/quotation-fields-confirmation.ts');
+  let view=await json(await h.route(base+'/quotation-fields'));
+  const retained=()=>JSON.stringify(['collection_context','product_content','product_options'].map(table=>h.sqlite.prepare('SELECT * FROM '+table).all())),before=retained(),objectBytes=JSON.stringify([...h.objects].map(([key,bytes])=>[key,Array.from(bytes)])),network=h.network.length;
+  const write=async changes=>{const saved=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}}));return saved;};
+  let changes=[change('detailImages',images[2],'collected-1'),change('altText','직접 검토한 대체 텍스트','collected-1')];
+  assert.equal(quotationFieldsSaveNeedsReadback(view,changes),true);let saved=await write(changes);
+  assert.throws(()=>confirmQuotationFieldsSave(view,saved,changes),/다릅니다/);let readback=await json(await h.route(base+'/quotation-fields'));assert.equal(confirmQuotationFieldsSave(view,saved,changes,readback),saved);
+  assert.match(saved.resolved.rows[1].fields.detailHtml.value,/직접 검토한 대체 텍스트 1/);assert.notEqual(saved.resolved.rows[1].fields.detailHtml.value,view.resolved.rows[1].fields.detailHtml.value);view=saved;
+  changes=[change('detailHtml','<p>직접 편집한 HTML</p>','collected-1')];assert.equal(quotationFieldsSaveNeedsReadback(view,changes),false);saved=await write(changes);assert.equal(confirmQuotationFieldsSave(view,saved,changes),saved);view=saved;
+  changes=[change('detailHtml',null,'collected-1')];assert.equal(quotationFieldsSaveNeedsReadback(view,changes),true);saved=await write(changes);readback=await json(await h.route(base+'/quotation-fields'));
+  const stale=clone(saved);stale.resolved.rows[1].fields.detailHtml=clone(view.resolved.rows[1].fields.detailHtml);assert.throws(()=>confirmQuotationFieldsSave(view,stale,changes,readback),/다릅니다/);
+  assert.equal(confirmQuotationFieldsSave(view,saved,changes,readback),saved);assert.match(saved.resolved.rows[1].fields.detailHtml.value,/직접 검토한 대체 텍스트 1/);assert.equal(saved.resolved.rows[1].fields.detailHtml.source,'content');
+  const changedReadback=clone(readback);changedReadback.inputFingerprint='c'.repeat(64);assert.throws(()=>confirmQuotationFieldsSave(view,saved,changes,changedReadback),/다릅니다/);
+  const badSource=clone(saved),badReadback=clone(readback);badSource.resolved.rows[1].fields.detailHtml.source='manual-option';badReadback.resolved.rows[1].fields.detailHtml.source='manual-option';assert.throws(()=>confirmQuotationFieldsSave(view,badSource,changes,badReadback),/다릅니다/);
+  view=saved;changes=[change('brand','검토 브랜드','collected-1')];assert.equal(quotationFieldsSaveNeedsReadback(view,changes),false,'unchanged generated dependencies need no additional confirmation read');saved=await write(changes);assert.equal(confirmQuotationFieldsSave(view,saved,changes),saved);
+  assert.equal(retained(),before);assert.equal(JSON.stringify([...h.objects].map(([key,bytes])=>[key,Array.from(bytes)])),objectBytes);assert.equal(h.network.length,network);
+ }finally{h.close();}
+});
+
+for(const failed of [false,true])test(`quotation form ${failed?'preserves HTML reset after failed':'confirms HTML reset after successful'} dependency readback`,async()=>{
+ const view=fixture({common:{},options:{red:{detailImages:'owner/second.png',detailHtml:'직접 HTML'}}}),changes=[change('detailHtml',null,'red')],saved=acknowledgedView(view,changes);
+ const states=[view,changes,[],false,false,'','','image','red',[],true,null,false];let slot=0,notices=0;const calls=[];
+ const hooks={useState(initial){const i=slot++;return[i<states.length?states[i]:initial,value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(){},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'html-readback'};
+ const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init={})=>{calls.push({url,init});if(init.method==='PUT')return Response.json(saved);if(failed)throw Error('readback interrupted');return Response.json(saved);}});
+ const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
+ const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
+ const save=nodes(tree).find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장'));assert.equal(save.props.disabled,false);save.props.onClick();await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(calls.length,2);assert.equal(calls[0].init.method,'PUT');assert.equal(calls[1].init.method,undefined);assert.equal(calls[0].init.signal,calls[1].init.signal);
+ assert.equal(notices,failed?0:1);assert.equal(states[1].length,failed?1:0);assert.equal(states[4],false);
+ if(failed){assert.equal(states[0],view);assert.match(states[5],/interrupted/);}else assert.equal(JSON.stringify(states[0]),JSON.stringify(saved));
+});
+
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`manual quotation blanks and option edits survive content/default changes and use captured category/company sources (${company.companyCode})`,async()=>{
+ const h=mobileIntakeHarness(company),json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+ try{
+  await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  const capturedBefore=h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload;
+  let content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
+  await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'1단계에서 직접 검토한 상품명',keywords:['직접 태그']},label:{model:'확인한 모델'}}}}));
+  let view=await json(await h.route(base+'/quotation-fields'));
+  assert.equal(view.automatic.rows[1].fields.title.value,'1단계에서 직접 검토한 상품명');
+  const changes=[change('title',company.companyName+' 최종 견적서 상품명'),change('manufacturer',''),change('brand','이 옵션의 검토 브랜드','collected-1'),change('lidIncluded','','collected-1')];
+  const {confirmQuotationFieldsSave}=load('app/quotation-fields-confirmation.ts');
+  const saved=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}}));
+  assert.equal(confirmQuotationFieldsSave(view,saved,changes),saved);
+  const overridesBefore=JSON.stringify(saved.overrides),assetsBefore=JSON.stringify([...h.objects].map(([key,bytes])=>[key,Array.from(bytes)]));
+  content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
+  await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'나중에 수정한 SEO 상품명'},label:{manufacturer:'나중에 확인한 제조사'}}}}));
+  await h.load('db/queries.ts').saveSettings('owner',JSON.stringify({...h.settings,brand:'나중 기본 브랜드',manufacturer:'나중 기본 제조사',importer:'나중 기본 수입자'}));
+  view=await json(await h.route(base+'/quotation-fields'));
+  assert.equal(JSON.stringify(view.overrides),overridesBefore);
+  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,company.companyName+' 최종 견적서 상품명');assert.equal(row.fields.manufacturer.value,'');assert.equal(row.fields.manufacturer.source,'manual-common');}
+  assert.equal(view.automatic.rows[1].fields.title.value,'나중에 수정한 SEO 상품명');assert.equal(view.automatic.rows[1].fields.manufacturer.value,'나중에 확인한 제조사');
+  assert.equal(view.resolved.rows[1].fields.brand.value,'이 옵션의 검토 브랜드');assert.equal(view.resolved.rows[2].fields.brand.value,h.settings.brand,'unmodified options keep this product captured registration settings');
+  assert.equal(view.resolved.rows[1].fields.lidIncluded.value,'');assert.equal(view.resolved.rows[1].fields.lidIncluded.source,'manual-option');
+  assert.deepEqual(view.categoryContext.categoryPath,h.context.category.categoryPath);assert.equal(view.categoryContext.categoryId,'80719');
+  assert.equal(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload,capturedBefore);assert.equal(JSON.stringify([...h.objects].map(([key,bytes])=>[key,Array.from(bytes)])),assetsBefore);
+  const source=h.load('app/exports/quotation-source.ts'),exported=await source.readQuotationExportSource('owner',product.id,null),resolved=source.resolveQuotationExport(exported);
+  assert.deepEqual(clone(exported.company),{code:company.companyCode,name:company.companyName});assert.deepEqual(clone(resolved),view.resolved,'the editor and exported quotation use the same captured category and exact manual values');
+  const original=JSON.stringify(h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get(product.id));
+  const requests=h.network.length;await h.intake();assert.equal(h.network.length,requests);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM product_quotation_fields WHERE product_id=?').get(product.id)),original,'reusing the collected URL cannot overwrite reviewed quotation edits');
+ }finally{h.close();}
 });
 
 test('saved category rules also suggest new exact attributes without replacing explicit connections',async()=>{

@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {renderToStaticMarkup} from 'react-dom/server';
 const native=createRequire(import.meta.url);
 function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,fetch,AbortController,require(name){if(name in overrides)return overrides[name];if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;}
-const boardFields=['title','mainImage','additionalImages','detailImages','labelImages'].map(id=>({id,section:id==='title'?'start':'image',visibility:'common',type:id==='title'?'text':'images',required:false}));
+const boardFields=[...['title','mainImage','additionalImages','detailImages','labelImages'].map(id=>({id,section:id==='title'?'start':'image',visibility:'common',type:id==='title'?'text':'images',required:false})),...['supplyPrice','salePrice','msrp'].map(id=>({id,section:'product',visibility:'common',type:'number',required:false}))];
 function quotation(contentRevision=undefined,imageKeys=['owner/red.png','owner/shared.png','owner/source.png','owner/size.png'],content={},options=data){const assets=content.assets??{},keys=role=>assets[role]?.value??[];return {productVersion:options.productVersion,optionRevision:options.options.revision,contentRevision,imageKeys,resolved:{schema:{categoryId:'80719',categoryPath:['바스켓'],fields:boardFields},rows:options.options.rows.map(row=>({optionId:row.id,fields:{supplyPrice:{value:'4100'},salePrice:{value:'6200'},title:{value:content.seo?.title.value??''},mainImage:{value:(row.imageKey?[row.imageKey]:keys('main')).join('\n')},additionalImages:{value:keys('additional').join('\n')},detailImages:{value:[...keys('detailTop'),...keys('detail'),...keys('detailBottom')].join('\n')},labelImages:{value:keys('label').join('\n')}}}))}};}
 const model=load('app/components/product-option-board.tsx');
 const data={productVersion:'v1',options:{schemaVersion:1,productId:'p1',revision:1,rows:[{id:'red',originalName:'Red',translatedName:'빨강',supplierSku:'sku-red',unitCostCny:4.5,unitsPerPack:2,stock:0,included:true,imageKey:'owner/red.png',provenance:{}},{id:'blue',originalName:'Blue',translatedName:'',supplierSku:'sku-blue',unitCostCny:null,unitsPerPack:1,stock:null,included:false,imageKey:'other/private.png',provenance:{translatedName:'manual'}}]},pricing:{rows:[{optionId:'red',calculation:{supplyPrice:4000,salePrice:6000},error:null}]}};
@@ -274,6 +274,39 @@ test('exact live title/image wires drive board cells instead of same-named legac
  assert.equal(text(byLabel(result.tree,'옵션 blue 대표이미지 편집')),'1장');assert.doesNotMatch(renderToStaticMarkup(result.tree),/src="\/api\/files\/owner\/shared.png"/);
 });
 
+const priceAliases=['supplyPrice','salePrice'].map((input,index)=>({id:'live_80719_price_'+input,label:'공식 가격',type:'text',numericText:true,required:false,
+ hubInput:input,hubWire:{path:['productPage','commonAttributes',['purchasePrice','coupangSalePrice'][index]]}}));
+test('exact primary Hub prices and manual blanks drive badges and amounts without reconciling retained summaries',async()=>{
+ const f=finalContentFixture();f.quote.resolved.schema.fields=[...boardFields,...priceAliases];
+ Object.assign(f.red.fields,{[priceAliases[0].id]:{value:''},[priceAliases[1].id]:{value:'7654'}});
+ Object.assign(f.blue.fields,{[priceAliases[0].id]:{value:'1234'},[priceAliases[1].id]:{value:''}});
+ const before=JSON.stringify(f.quote),board=await model.readOptionBoard('p1',new AbortController().signal,f.fetcher);
+ assert.deepEqual(plain(board.quotationPrices),{red:{supplyPrice:'',salePrice:'7654'},blue:{supplyPrice:'1234',salePrice:''}});
+ const result=tree('',undefined,board,f.keys,undefined,0,{stage:true}),html=renderToStaticMarkup(result.tree);
+ for(const id of ['red','blue'])assert.equal(text(byLabel(result.tree,`옵션 ${id} 가격설정 편집`)),'미입력');
+ assert.match(html,/미입력 \(견적 공급가\)/);assert.match(html,/7,654원 \(견적 판매가\)/);assert.match(html,/1,234원 \(견적 공급가\)/);assert.match(html,/미입력 \(견적 판매가\)/);
+ assert.doesNotMatch(html,/4,100원|6,200원/);assert.equal(JSON.stringify(f.quote),before);
+});
+
+test('missing, ambiguous or invalid primary price bindings fail instead of falling back to populated summaries',async()=>{
+ const variants=[
+  fields=>[...fields,{...priceAliases[0],id:'duplicate-price'}],
+  fields=>fields.map(field=>field.id===priceAliases[0].id?{...field,hubInput:undefined}:field),
+  fields=>fields.map(field=>field.id===priceAliases[1].id?{...field,readOnly:true}:field),
+  fields=>fields.map(field=>field.id===priceAliases[0].id?{...field,numericText:false}:field),
+ ];
+ for(const change of variants){const f=finalContentFixture();f.quote.resolved.schema.fields=change([...boardFields,...priceAliases]);
+  for(const row of f.quote.resolved.rows)for(const field of priceAliases)row.fields[field.id]={value:'3210'};
+  const before=JSON.stringify(f.quote);await assert.rejects(model.readOptionBoard('p1',new AbortController().signal,f.fetcher),/가격 항목.*연결|가격 항목.*입력 규칙/);assert.equal(JSON.stringify(f.quote),before);
+ }
+ for(const input of ['supplyPrice','salePrice'])for(const cell of [undefined,null,{value:null},{value:1200}]){
+  const f=finalContentFixture();f.quote.resolved.schema.fields=[...boardFields,...priceAliases];
+  for(const row of f.quote.resolved.rows)for(const field of priceAliases)row.fields[field.id]={value:'3210'};
+  f.red.fields[priceAliases.find(field=>field.hubInput===input).id]=cell;
+  await assert.rejects(model.readOptionBoard('p1',new AbortController().signal,f.fetcher),/옵션별 견적 가격 응답/);
+ }
+});
+
 test('real validation failures and missing/foreign final keys remain visible without using another assigned image',async()=>{
  const f=finalContentFixture();f.red.fields.mainImage={value:'foreign/private.png',validationIssues:[],issues:[]};
  f.red.fields.additionalImages={value:'owner/final-add.png\nowner/missing.png',validationIssues:[],issues:[]};
@@ -348,5 +381,54 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.match(html,new RegExp('src="/api/files/'+keys[6].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'"'));
   assert.ok(!html.includes('연결 확인 필요'),'ordinary final image review messages never mark valid saved attachments broken');
   assert.equal(h.network.filter(host=>host==='supplier.coupang.com').length,0);assert.equal(product.supplier_hub_status,'미전송');
+ }finally{h.close();}
+});
+
+// Synthetic exact Hub price paths and XLSX bytes, real owner-scoped API handlers
+// and ephemeral SQLite/R2. A direct primary edit deliberately retains the old
+// summary, as a legacy saved draft can; reading the board must never repair it.
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`saved primary prices agree across the option board, preview and packaged XLSX without rewriting divergent drafts (${company.code})`,async()=>{
+ const {mobileIntakeHarness}=await import('./helpers/mobile-intake.mjs'),{hubSchemaSnapshot,schemaPath}=await import('./helpers/hub-schema.mjs'),{quotationWorkbook}=await import('./helpers/quotation-workbook.mjs');
+ const {readPackageZip,prepareAttachments}=await import('../extensions/supplier-hub/package.mjs'),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});
+ const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+ try{
+  const snapshot={...hubSchemaSnapshot(company),inputBindings:'couplus-paths-v1'},raw=JSON.parse(snapshot.schemaString);
+  delete raw.properties.productPage.properties.price;
+  Object.assign(raw.properties.productPage.properties.commonAttributes.properties,{purchasePrice:{type:'string',title:'공급가'},coupangSalePrice:{type:'string',title:'판매가'},msrp:{type:['string','null'],title:'권장소비자가격'}});
+  snapshot.schemaString=JSON.stringify(raw);
+  const schema=h.load('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId,schemaPath,snapshot),inputs=['supplyPrice','salePrice','msrp'],fields=schema.fields.filter(field=>!inputs.includes(field.id));
+  const bytes=new Uint8Array(quotationWorkbook(fields.map(field=>field.id))),sha256=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex'),storageKey=`owner/category-templates/${sha256}.xlsx`;
+  await h.bindings.FILES.put(storageKey,bytes,{customMetadata:{sha256,format:'xlsx'}});
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'옵션 보드 primary 가격 연결 시험',categoryId:snapshot.categoryId,categoryPath:schemaPath,hubSchema:snapshot,
+   template:{name:'synthetic-board-primary.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields.map(field=>field.id)},mappings:fields.map((field,column)=>({field:field.id,column,required:field.required}))},'cat');
+  h.context.category=profile;h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');await h.intake();
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id,qurl=base+'/quotation-fields';let view=await json(await h.route(qurl));
+  const targets=h.load('app/quotation-price-targets.ts').quotationPriceTargets(view.resolved.schema.fields),options=view.resolved.rows.filter(row=>row.optionId),[first,second]=options;
+  assert.notEqual(targets.supplyPrice.primary,'supplyPrice');assert.notEqual(targets.salePrice.primary,'salePrice');
+  const save=async changes=>view=await json(await h.route(qurl,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}}));
+  await save([{fieldKey:'supplyPrice',optionId:null,value:'1000'},{fieldKey:'salePrice',optionId:null,value:'2000'},
+   {fieldKey:targets.supplyPrice.primary,optionId:first.optionId,value:'12345'},{fieldKey:targets.salePrice.primary,optionId:first.optionId,value:'23456'},
+   {fieldKey:targets.supplyPrice.primary,optionId:second.optionId,value:''},{fieldKey:targets.salePrice.primary,optionId:second.optionId,value:'34567'}]);
+  const firstSaved=view.resolved.rows.find(row=>row.optionId===first.optionId);assert.equal(firstSaved.fields.supplyPrice.value,'1000');assert.equal(firstSaved.fields[targets.supplyPrice.primary].value,'12345');
+  const stored=()=>JSON.stringify(['products','product_content','product_options','product_quotation_fields','collection_context','category_profiles'].map(table=>h.sqlite.prepare('SELECT * FROM '+table).all())),before=stored();
+  const board=await model.readOptionBoard(product.id,new AbortController().signal,(url,init)=>h.route(url,{method:init?.method??'GET'}));
+  for(const row of view.resolved.rows.filter(row=>row.optionId))assert.deepEqual(plain(board.quotationPrices[row.optionId]),{supplyPrice:row.fields[targets.supplyPrice.primary].value,salePrice:row.fields[targets.salePrice.primary].value});
+  assert.deepEqual(plain(board.quotationPrices[first.optionId]),{supplyPrice:'12345',salePrice:'23456'});assert.deepEqual(plain(board.quotationPrices[second.optionId]),{supplyPrice:'',salePrice:'34567'});
+  const shown=tree('',h.sourceUrl,board,board.imageKeys,undefined,0,{stage:true}),html=renderToStaticMarkup(shown.tree);
+  assert.equal(text(byLabel(shown.tree,`옵션 ${first.optionId} 가격설정 편집`)),'입력됨');assert.equal(text(byLabel(shown.tree,`옵션 ${second.optionId} 가격설정 편집`)),'미입력');assert.match(html,/12,345원 \(견적 공급가\)/);assert.match(html,/34,567원 \(견적 판매가\)/);
+  const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));
+  assert.ok(preview.report.mappingCoverage.some(field=>field.fieldId==='supplyPrice'),'reading does not silently reconcile a divergent manual summary or declare it ready');
+  assert.ok(preview.submissionReview.issues.some(issue=>issue.code==='EXCEL_FIELD_UNMAPPED'&&issue.fieldId==='supplyPrice'));assert.equal(preview.report.submissionReady,false);
+  const supplyColumn=fields.findIndex(field=>field.id===targets.supplyPrice.primary),saleColumn=fields.findIndex(field=>field.id===targets.salePrice.primary);
+  assert.deepEqual(plain(preview.rows.slice(0,2).map(row=>[row[supplyColumn],row[saleColumn]])),[['12345','23456'],['','34567']]);
+  const exported=await h.route(base+'/quotation',{method:'POST',body:{action:'export',profileId:profile.id,fingerprint:preview.fingerprint}});assert.equal(exported.status,200,await exported.clone().text());
+  const packageBytes=new Uint8Array(await exported.arrayBuffer()),zip=readPackageZip(packageBytes),reader=h.load('app/xlsx-template.ts'),inspection=reader.inspectXlsxArchive(await reader.readXlsxArchive(zip.get(preview.filename).slice().buffer));
+  for(const [index,option]of [first,second].entries()){const row=reader.xlsxHeaders(inspection,'견적서',index+2);assert.equal(row[supplyColumn]??'',board.quotationPrices[option.optionId].supplyPrice);assert.equal(row[saleColumn]??'',board.quotationPrices[option.optionId].salePrice);}
+  await assert.rejects(prepareAttachments(packageBytes),/수정이 필요한 오류/);assert.equal(stored(),before);assert.deepEqual(h.objects.get(storageKey),bytes);
+  const untouched=plain(view.resolved.rows.filter(row=>row.optionId!==first.optionId)),common=plain(view.overrides.common),sourceOptions=h.sqlite.prepare('SELECT payload FROM product_options').get().payload;
+  await save(h.load('app/quotation-price-edits.ts').quotationPriceEditChanges(view.resolved.schema.fields,[{fieldKey:targets.supplyPrice.primary,optionId:first.optionId,value:'12345'},{fieldKey:targets.salePrice.primary,optionId:first.optionId,value:'23456'}]));
+  const repaired=await model.readOptionBoard(product.id,new AbortController().signal,(url,init)=>h.route(url,{method:init?.method??'GET'}));assert.deepEqual(plain(repaired.quotationPrices[first.optionId]),plain(board.quotationPrices[first.optionId]));
+  assert.equal(view.resolved.rows.find(row=>row.optionId===first.optionId).fields.supplyPrice.value,'12345');assert.deepEqual(plain(view.resolved.rows.filter(row=>row.optionId!==first.optionId)),untouched);assert.deepEqual(plain(view.overrides.common),common);assert.equal(h.sqlite.prepare('SELECT payload FROM product_options').get().payload,sourceOptions);
+  assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products WHERE id=?').get(product.id).supplier_hub_status,'미전송');assert.ok(!h.network.includes('supplier.coupang.com'));
  }finally{h.close();}
 });

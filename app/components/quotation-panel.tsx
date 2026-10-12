@@ -5,7 +5,7 @@ import { QuotationMappingReview, type QuotationMappingFinding } from '@/app/comp
 
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { quotationStartRow, type CategoryProfile } from '@/app/category-profiles';
 import { QuotationFieldsEditor } from '@/app/components/quotation-fields-editor';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
@@ -27,8 +27,11 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [useSavedRow,setUseSavedRow]=useState(true);
   const [previewState,setPreviewState]=useState<{data:Preview;version?:string}|null>(null);const [busy,setBusy]=useState(false);
+  const previewRef=useRef<Preview|null>(null);
+  const versionRef=useRef(refreshToken);
+  useLayoutEffect(()=>{versionRef.current=refreshToken;},[refreshToken]);
   const preview=previewState?.version===refreshToken?previewState?.data??null:null;
-  const setPreview=(data:Preview|null)=>setPreviewState(data?{data,version:refreshToken}:null);
+  const setPreview=(data:Preview|null)=>{previewRef.current=data;setPreviewState(data?{data,version:refreshToken}:null);};
   const [reviewTarget,setReviewTarget]=useState<{target:QuotationNavigationTarget;sequence:number;navigationSequence:number}|null>(null);
   const currentReviewTarget=reviewTarget?.navigationSequence===navigationSequence?reviewTarget:null;
   const editorRef=useRef<HTMLDivElement>(null);
@@ -73,7 +76,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
     return()=>controller.abort();
   },[productId,preferredProfileId,loadAttempt,navigationTarget?.categoryId]);
   async function request(action:'preview'|'export'|'download') {
-    if(activeRequest.current||profileRequest.current||dirty||!contextLoaded||!selected?.template||(action!=='preview'&&!preview))return;
+    if(activeRequest.current||profileRequest.current||dirtyRef.current||versionRef.current!==refreshToken||!contextLoaded||!selected?.template||(action!=='preview'&&(!preview||previewRef.current!==preview)))return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true);setError('');setMessage('');
     try {
@@ -108,7 +111,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
     }
   }
   async function refreshProfiles() {
-    if(profileRequest.current||activeRequest.current||dirty||!contextLoaded)return;
+    if(profileRequest.current||activeRequest.current||dirtyRef.current||!contextLoaded)return;
     const controller=new AbortController();profileRequest.current=controller;
     setRefreshingProfiles(true);setProfileRefreshError('');setPreview(null);
     try {
@@ -124,6 +127,11 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
       setProfileVersion(version=>version+1);
     }catch(cause){if(!controller.signal.aborted)setProfileRefreshError(cause instanceof Error?cause.message:'양식 새로고침 실패');}
     finally{if(profileRequest.current===controller){profileRequest.current=null;setRefreshingProfiles(false);}}
+  }
+  function inspectPreviewTarget(target:QuotationNavigationTarget) {
+    if(dirtyRef.current||activeRequest.current||profileRequest.current||versionRef.current!==refreshToken||!preview||previewRef.current!==preview)return;
+    setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1,navigationSequence}));
+    editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});
   }
   if(contextError)return <section className="panel-stack"><p role="alert">{contextError}</p><button type="button" className="btn primary" onClick={()=>{setContextError('');setContextLoaded(false);setLoadAttempt(value=>value+1);}}>카테고리 연결 다시 확인</button><button type="button" className="btn ghost" onClick={onManageCategories}>카테고리·양식 설정 확인</button></section>;
   return <section className="panel-stack" aria-busy={busy}>
@@ -141,7 +149,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
       if(dirtyRef.current||activeRequest.current||profileRequest.current||!contextLoaded||!selected)return;
       onPrepareSubmission(selected.id);
     }}>저장한 견적 전송 준비</button><small>현재 상품과 선택한 양식의 저장 자료를 검사합니다. 첨부 파일과 필수 동의를 확인한 뒤 등록 전송을 실행하세요.</small></div>}
-    <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
+    <a className={`btn primary${dirty||!contextLoaded?' disabled':''}`} aria-disabled={dirty||!contextLoaded} tabIndex={dirty||!contextLoaded?-1:undefined} onClick={event=>{if(dirtyRef.current||!contextLoaded||versionRef.current!==refreshToken)event.preventDefault();}} href={dirty||!contextLoaded?undefined:`/api/products/${encodeURIComponent(productId)}/bundle${overrideProfileId?`?profileId=${encodeURIComponent(overrideProfileId)}`:''}`}>견적 입력 내용 + 첨부 자료 다운로드</a>
     <p className="panel-note">ZIP 압축을 푼 뒤 supplier-hub-upload.html을 열면 상품 이미지와 라벨을 구분해서 확인할 수 있습니다. 옵션별 연결과 누락 라벨을 확인한 뒤, 공식 견적서 및 서류를 별도로 검토해주세요.</p>
     {dirty&&<small>편집 내용을 저장하면 다운로드에 반영됩니다.</small>}
     <details><summary>Excel 원본 양식에 출력하기</summary>
@@ -166,10 +174,10 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
     {preview&&<>
       <h3>출력 미리보기 · {preview.report.rowCount}행</h3><p>실제 상품 입력 시작: {preview.report.dataStartRow}행 · {useSavedRow?'카테고리 저장 설정':'이번 출력 지정값'}</p>
       <p style={{overflowWrap:'anywhere'}}>견적서 파일명: {preview.filename}</p>
-      {preview.submissionReview && <QuotationPreviewReview review={preview.submissionReview} disabled={busy||dirty} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1,navigationSequence}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />}
+      {preview.submissionReview && <QuotationPreviewReview review={preview.submissionReview} disabled={busy||dirty} onInspect={inspectPreviewTarget} />}
       <div className="table-wrap quote-preview"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((value,column)=><td key={column}>{String(value)||'—'}</td>)}</tr>)}</tbody></table></div>
       {preview.report.missingRequired.length>0&&<div className="panel-note"><div><strong>필수 연결 값 {preview.report.missingRequired.length}개 미입력</strong><ul>{preview.report.missingRequired.map((field,index)=><li key={index}>{field.row}행 · {field.header||`${field.column}열`}</li>)}</ul></div></div>}
-      <QuotationMappingReview findings={preview.report.mappingCoverage ?? []} disabled={busy||dirty} onManage={onManageCategories} onInspect={target=>{if(busy||dirty)return;setReviewTarget(previous=>({target,sequence:(previous?.sequence??0)+1,navigationSequence}));editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'});}} />
+      <QuotationMappingReview findings={preview.report.mappingCoverage ?? []} disabled={busy||dirty} onManage={onManageCategories} onInspect={inspectPreviewTarget} />
       <ul className="quote-warnings">{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>
       <small>콘텐츠 v{preview.report.contentRevision} · 옵션 v{preview.report.optionRevision} · 카테고리 연결 v{preview.report.profileRevision}</small>
       <button className="btn primary" type="button" disabled={busy||dirty} onClick={()=>void request('download')}>채운 견적서 파일 다운로드</button>

@@ -14,7 +14,7 @@ test('deleted inspection profile keeps quotation editor and explicit replacement
  const profiles=[{id:'saved',name:'수집 설정',categoryId:'80719',categoryPath:['바스켓'],template:{name:'원본',headerRow:1}},{id:'replacement',name:'대체 설정',categoryId:'80719',categoryPath:['바스켓'],template:{name:'새 원본',headerRow:2}}];
  const selector=load('app/quotation-profile-selection.ts',{});
  const panel=load('app/components/quotation-panel.tsx',{
-  react:{useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(){return{current:null};},useEffect(fn){if(first)effects.push(fn);}},
+  react:{useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(){return{current:null};},useEffect(fn){if(first)effects.push(fn);},useLayoutEffect(fn){if(first)effects.push(fn);}},
   '@/app/category-profiles':{quotationStartRow:template=>(template?.headerRow??1)+1},
   '@/app/quotation-profile-selection':selector,
   '@/app/components/quotation-fields-editor':{QuotationFieldsEditor:Editor},
@@ -41,7 +41,7 @@ async function requestHarness(options={}){
  const Editor=()=>null;
  let profileReads=0;let refreshResponse;
  const panel=load('app/components/quotation-panel.tsx',{
-  react:{useState(initial){const slot=index++;if(!(slot in slots))slots[slot]=initial;return[slots[slot],next=>{slots[slot]=typeof next==='function'?next(slots[slot]):next;}];},useRef(initial){const slot=index++;return slots[slot]??(slots[slot]={current:initial});},useEffect(fn,deps){const slot=index++;const old=slots[slot];if(!old||deps.some((dep,i)=>!Object.is(dep,old.deps[i])))effects.push(()=>{old?.cleanup?.();slots[slot]={deps,cleanup:fn()};});}},
+  react:{useState(initial){const slot=index++;if(!(slot in slots))slots[slot]=initial;return[slots[slot],next=>{slots[slot]=typeof next==='function'?next(slots[slot]):next;}];},useRef(initial){const slot=index++;return slots[slot]??(slots[slot]={current:initial});},useEffect(fn,deps){const slot=index++;const old=slots[slot];if(!old||deps.some((dep,i)=>!Object.is(dep,old.deps[i])))effects.push(()=>{old?.cleanup?.();slots[slot]={deps,cleanup:fn()};});},useLayoutEffect(fn,deps){const slot=index++;const old=slots[slot];if(!old||deps.some((dep,i)=>!Object.is(dep,old.deps[i])))effects.push(()=>{old?.cleanup?.();slots[slot]={deps,cleanup:fn()};});}},
   '@/app/category-profiles':{quotationStartRow:template=>template?.dataStartRow??2},
   '@/app/quotation-profile-selection':load('app/quotation-profile-selection.ts',{}),
   '@/app/components/quotation-fields-editor':{QuotationFieldsEditor:Editor},
@@ -237,4 +237,56 @@ test('quotation profile changes notify price scope, including fallback after a c
  h.setRefresh(async()=>Response.json({profiles:[{id:'saved',name:'다른 분류',categoryId:'other',categoryPath:['다름'],template:{name:'다른 원본'}}]}));
  button(h.render(),'저장한 양식 새로고침').props.onClick();await h.settle();
  assert.equal(selected.at(-1),undefined);assert.equal(h.calls.length,0);
+});
+
+for(const company of ['A01464742','A01526306'])for(const [action,label] of [
+ ['preview','견적 자료 검토'],['download','채운 견적서 파일 다운로드'],['export','채운 견적서 + 첨부 자료 ZIP 다운로드'],
+])test(`unsaved edits block an already rendered ${action} action before React commits (${company})`,async()=>{
+ const h=await requestHarness({profiles:[{id:'saved',name:company,categoryId:'80719',categoryPath:['바스켓'],template:{name:'original.xlsx',headerRow:1},hubSchema:{company:{code:company}}}]});
+ if(action!=='preview'){button(h.render(),'견적 자료 검토').props.onClick();h.pending.shift()(Response.json(previewBody));await h.settle();}
+ const tree=h.render(),oldClick=button(tree,label).props.onClick,before=h.calls.length;
+ nodes(tree).find(node=>node.type===h.Editor).props.onDirtyChange(true);
+ oldClick();assert.equal(h.calls.length,before,'must not request an older saved draft while an edit is pending');
+ assert.equal(h.downloads(),0);assert.equal(button(h.render(),label)?.props.disabled??true,true);
+ if(action!=='preview'){
+  nodes(h.render()).find(node=>node.type===h.Editor).props.onDirtyChange(false);
+  nodes(h.render()).find(node=>node.type===h.Editor).props.onSaved();
+  oldClick();assert.equal(h.calls.length,before,'saving edits also invalidates an already rendered export');
+ }
+ h.unmount();
+});
+
+for(const company of ['A01464742','A01526306'])test(`unsaved edits block the bundle link and profile refresh before React commits (${company})`,async()=>{
+ const h=await requestHarness({profiles:[{id:'saved',name:company,categoryId:'80719',categoryPath:['바스켓'],template:{name:'original.xlsx',headerRow:1}}]});
+ let reads=0,prevented=0;h.setRefresh(async()=>{reads++;return Response.json({profiles:[]});});
+ const tree=h.render(),link=nodes(tree).find(node=>node.type==='a'&&String(node.props.href).includes('/bundle')),oldRefresh=button(tree,'저장한 양식 새로고침').props.onClick;
+ nodes(tree).find(node=>node.type===h.Editor).props.onDirtyChange(true);
+ link.props.onClick?.({preventDefault(){prevented++;}});oldRefresh();await h.settle();
+ assert.equal(prevented,1,'prevent native navigation to the prior saved bundle');assert.equal(reads,0,'do not replace the edited form with a refreshed schema');
+ const dirtyTree=h.render();assert.equal(nodes(dirtyTree).find(node=>node.type==='a'&&node.props.children==='견적 입력 내용 + 첨부 자료 다운로드').props.href,undefined);
+ assert.equal(nodes(dirtyTree).find(node=>node.type==='select').props.value,'saved');assert.equal(h.calls.length,0);h.unmount();
+});
+
+for(const company of ['A01464742','A01526306'])test(`invalidated previews cannot reopen an old field or download after a saved change (${company})`,async()=>{
+ const h=await requestHarness({profiles:[{id:'saved',name:company,categoryId:'80719',categoryPath:['바스켓'],template:{name:'original.xlsx',headerRow:1}}]});
+ button(h.render(),'견적 자료 검토').props.onClick();h.pending.shift()(Response.json({...previewBody,submissionReview:{}}));await h.settle();
+ const tree=h.render(),mapping=nodes(tree).find(node=>Array.isArray(node.props?.findings)),oldDownload=button(tree,'채운 견적서 파일 다운로드').props.onClick;
+ const editor=nodes(tree).find(node=>node.type===h.Editor);
+ editor.props.onSaved();mapping.props.onInspect({optionId:'old-option',fieldId:'salePrice'});oldDownload();
+ const next=h.render();assert.equal(nodes(next).find(node=>node.type===h.Editor).props.navigationTarget,undefined);
+ assert.doesNotMatch(JSON.stringify(next),/출력 미리보기/);assert.equal(h.calls.length,1);assert.equal(h.downloads(),0);h.unmount();
+});
+
+for(const company of ['A01464742','A01526306'])test(`a revised product requires a fresh preview and exports the newly reviewed fingerprint (${company})`,async()=>{
+ const h=await requestHarness({profiles:[{id:'saved',name:company,categoryId:'80719',categoryPath:['바스켓'],template:{name:'original.xlsx',headerRow:1}}]});
+ button(h.render(),'견적 자료 검토').props.onClick();h.pending.shift()(Response.json(previewBody));await h.settle();
+ const old=button(h.render(),'채운 견적서 + 첨부 자료 ZIP 다운로드').props.onClick;
+ h.render({refreshToken:'v2'});old();assert.equal(h.calls.length,1);assert.equal(h.downloads(),0);
+ const revised={...previewBody,fingerprint:'saved-edit-'+company,rows:[['직접 수정한 상품명']],report:{...previewBody.report,contentRevision:2}};
+ button(h.render(),'견적 자료 검토').props.onClick();h.pending.shift()(Response.json(revised));await h.settle();
+ const next=h.render();assert.match(JSON.stringify(next),/직접 수정한 상품명/);
+ button(next,'채운 견적서 + 첨부 자료 ZIP 다운로드').props.onClick();
+ assert.equal(JSON.parse(h.calls.at(-1).body).fingerprint,revised.fingerprint);
+ h.pending.shift()(new Response(new Blob(['revised quotation ZIP'])));await h.settle();
+ assert.equal(h.downloads(),1);assert.match(JSON.stringify(h.render()),/내려받았습니다/);h.unmount();
 });

@@ -32,6 +32,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const view = saved?.scope === scope ? saved.view : null, draft = pending.scope === scope ? pending.values : {};
   const dirty = Object.keys(draft).length > 0, input = stage === 'additional' ? 'additionalImages' : 'detailImages', label = stage === 'additional' ? '추가 이미지' : '상세 이미지';
   const current = () => mounted.current && currentScope.current === scope && currentSource.current === sourceKey;
+  const interactive = () => current() && currentStage.current === stage && !liveDisabled.current;
   function verify(body: QuotationFieldsView, saveResponse = false, explicitLatest = false) {
     if (!body || (!saveResponse && !explicitLatest && body.productVersion !== version) || !Number.isFinite(Date.parse(body.productVersion)) || !Number.isSafeInteger(body.revision) || body.revision < 0
       || !Number.isSafeInteger(body.contentRevision) || body.contentRevision < 0 || !Number.isSafeInteger(body.optionRevision) || body.optionRevision < 0
@@ -46,7 +47,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       throw Error('선택 옵션의 이미지 입력 연결을 확인하지 못했습니다. 견적서 상세 항목을 확인해주세요.');
   }
   async function load(keepDraft = false) {
-    if (disabled || request.current || !current()) return;
+    if (!interactive() || request.current) return;
     clearDrag();
     const controller = new AbortController(); request.current = controller; setBusy(true); setError('');
     try {
@@ -83,14 +84,14 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, sourceKey]);
   function edit(field: OptionImageInput, value: string | null) {
-    if (!view || disabled || pendingSave.current?.scope === scope || request.current || !current()) return;
+    if (!view || latestSaved.current?.view !== view || !interactive() || pendingSave.current?.scope === scope || request.current) return;
     clearDrag();
     latestDraft.current = { scope, values: { ...(latestDraft.current.scope === scope ? latestDraft.current.values : {}), [field]: value } };
     setPending(latestDraft.current); setMessage('');
   }
   function updateImages(update: (keys: string[]) => string[]) {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
-    if (!base || base.scope !== scope || disabled || request.current || !current()) return;
+    if (!base || base.scope !== scope || !interactive() || request.current) return;
     edit(input, update(quotationImageKeys(optionImageValue(base.view, optionId, input, editing))).join('\n'));
   }
   function toggle(key: string) {
@@ -102,7 +103,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   }
   async function save() {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
-    if (!base || base.scope !== scope || !Object.keys(editing).length || disabled || request.current || !current()) return;
+    if (!base || base.scope !== scope || !Object.keys(editing).length || !interactive() || request.current) return;
     if (pendingSave.current?.scope === scope) { await load(true); return; }
     if (base.sourceKey !== sourceKey) { setError('상품 저장 상태가 변경됐습니다. 입력을 유지하고 최신 이미지를 조회한 뒤 저장해주세요.'); return; }
     let changes; try { changes = optionImageChanges(base.view, optionId, editing); } catch (cause) { setError(cause instanceof Error ? cause.message : '이미지 입력을 확인해주세요.'); return; }
@@ -199,7 +200,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   function translateSelected(key: string, slotIndex: number, sourceLanguage: 'zh' | 'en') {
     const base = latestSaved.current;
     if (!onTranslate || !base || base.view !== view || base.scope !== scope || base.sourceKey !== sourceKey || base.view.productVersion !== version
-      || !current() || currentStage.current !== stage || disabled || pendingSave.current?.scope === scope || request.current || Object.keys(latestDraft.current.values).length || !base.view.imageKeys.includes(key)) return;
+      || !interactive() || pendingSave.current?.scope === scope || request.current || Object.keys(latestDraft.current.values).length || !base.view.imageKeys.includes(key)) return;
     try {
       const target = optionImageTargets(base.view.resolved.schema.fields)[input], value = optionImageValue(base.view, optionId, input);
       if (quotationImageKeys(value)[slotIndex] !== key || target.linked.some(id => optionImageValue(base.view, optionId, input, {}, id) !== value)) return;
@@ -208,7 +209,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     } catch (cause) { setError(cause instanceof Error ? cause.message : '번역할 이미지 연결을 확인해주세요.'); }
   }
   const candidateCards = view?.imageKeys.map((key, index) => <figure className={`image-asset-card ${key === activePreview ? 'previewing' : ''} ${selected.includes(key) ? 'chosen' : ''}`} key={key}>
-    <button type="button" className="image-asset-preview" aria-label={`상품 저장 이미지 ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (current() && !request.current && !disabled) setPreview({ scope, key }); }}>
+    <button type="button" className="image-asset-preview" aria-label={`상품 저장 이미지 ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (interactive() && !request.current) setPreview({ scope, key }); }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={imageUrl(key)} alt={`상품 저장 이미지 ${index + 1}`} width={200} height={180} loading="lazy" /><span>이미지 {index + 1} · 확대</span>
     </button>
@@ -233,7 +234,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         {activePreview ? <figure className="image-large-preview"><figcaption>이미지 {view.imageKeys.indexOf(activePreview) + 1} 미리보기</figcaption><img src={imageUrl(activePreview)} alt={`선택 옵션 ${label} 큰 미리보기`} /></figure> : <p>이미지 목록에서 미리볼 자료를 선택하세요.</p>}
         <div className="image-selected-strip option-additional-image-strip" aria-label={`선택 옵션 ${label} 순서`}>{selected.map((key, index) => <figure key={key} {...sortableProps(key, index, 'image-selected-item')}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      {view.imageKeys.includes(key) ? <button type="button" aria-label={`${label} ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (current() && !request.current && !disabled) setPreview({ scope, key }); }}><img src={imageUrl(key)} alt={`${label} ${index + 1}`} width={64} height={64} /><span>{index + 1}</span></button> : <p>현재 상품에 없는 이미지</p>}
+      {view.imageKeys.includes(key) ? <button type="button" aria-label={`${label} ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (interactive() && !request.current) setPreview({ scope, key }); }}><img src={imageUrl(key)} alt={`${label} ${index + 1}`} width={64} height={64} /><span>{index + 1}</span></button> : <p>현재 상품에 없는 이미지</p>}
       <figcaption>{index + 1} · {key.split('/').at(-1)}</figcaption>
       {selectedActions(key, index)}
     </figure>)}</div>{!selected.length && <p>이 옵션에 선택한 {label}가 없습니다.</p>}
