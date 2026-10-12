@@ -1,4 +1,4 @@
-import { usableCategoryCode, type CategoryProfile } from '@/app/category-profiles';
+import { usableCategoryCode, type CategoryProfile, type CategoryProfileInput } from '@/app/category-profiles';
 import type { CategoryChoice } from '@/app/category-catalog';
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { validateHubSchemaSnapshot, type HubSchemaSnapshot } from '@/app/supplier-hub-schema';
@@ -59,4 +59,11 @@ export function sameCategorySelectionDefinition(previous: CategoryProfile, curre
   return (!previous.hubSchema && !current.hubSchema || Boolean(current.hubSchema && sameCategoryHubDefinition(previous.hubSchema, current.hubSchema)))
     && canonical(previous.template ?? null) === canonical(current.template ?? null)
     && canonical(previous.mappings ?? []) === canonical(current.mappings ?? []);
+}
+
+/** A newly prepared official workbook must acknowledge its exact bytes,
+ * descriptors and column connections before URL intake can capture it. */
+export function sameCategorySelectionConnection(saved: Pick<CategoryProfile, 'template' | 'mappings'>, prepared: Pick<CategoryProfileInput, 'template' | 'mappings'>): boolean {
+  return canonical(saved.template ?? null) === canonical(prepared.template ?? null)
+    && canonical(saved.mappings ?? []) === canonical(prepared.mappings ?? []);
 }

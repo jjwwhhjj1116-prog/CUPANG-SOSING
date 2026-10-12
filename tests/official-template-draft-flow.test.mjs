@@ -59,6 +59,7 @@ function harness(api){
  };
  const Editor=()=>null;
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){const i=cursor++,old=slots[i];if(!old||deps.some((value,j)=>!Object.is(value,old.deps[j]))){slots[i]={deps,cleanup:old?.cleanup};effects.push(()=>{slots[i].cleanup?.();slots[i].cleanup=fn();});}}};
+ hooks.useLayoutEffect=hooks.useEffect;
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
@@ -78,8 +79,9 @@ function harness(api){
  return {calls,downloads,catalog,choice,snapshot,workbook,request,Editor,render,settle,setMode(value){mode=value;},async open(id){productId=id;render();await settle();},button(label){return nodes(render()).find(node=>node.type==='button'&&node.props.children===label);},close(){slots.forEach(slot=>slot?.cleanup?.());}};
 }
 
-test('live category enters URL drafts without XLSX, then explicit stage 7 preparation preserves frozen/manual values and produces the official workbook',async()=>{
+test('an existing schema-only category retains its draft and explicit stage 7 preparation preserves frozen/manual values',async()=>{
  const api=mobileIntakeHarness(),ui=harness(api);try{
+  await api.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'이전 상세 양식만 저장한 설정',categoryId:ui.snapshot.categoryId,categoryPath:schemaPath,hubSchema:{...ui.snapshot,draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'},template:null,mappings:[]});
   ui.setMode('download');
   const picker=categoryPickerUI(ui.request,{catalog:ui.catalog});await picker.chooseLive(ui.choice);
   assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));const selected=picker.selected[0];

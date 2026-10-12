@@ -9,12 +9,12 @@ import { CategoryQuotationPreview } from '@/app/components/category-quotation-pr
 import './category-picker.css';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 import { SupplierHubCategoryBrowser } from '@/app/components/supplier-hub-category-browser';
-import { loadLiveHubCategorySchema } from '@/app/supplier-hub-catalog';
+import { loadLiveHubCategorySchema, loadLiveHubCategoryTemplate } from '@/app/supplier-hub-catalog';
 import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { categoryDefinitionRequiresFork, refreshCategoryDefinition, sameCategoryHubDefinition, type CategoryDefinitionRefreshRequest } from '@/app/category-definition-refresh-client';
-import { confirmCategorySelectionList, confirmCategorySelectionProfile, confirmLiveCategorySelectionSchema, sameCategorySelectionDefinition } from '@/app/category-selection-confirmation';
+import { confirmCategorySelectionList, confirmCategorySelectionProfile, confirmLiveCategorySelectionSchema, sameCategorySelectionConnection, sameCategorySelectionDefinition } from '@/app/category-selection-confirmation';
 import { parseWorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 
 const useAccountEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -185,7 +185,13 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         confirmCategorySelectionProfile({...target,supplierHub:undefined},latest,undefined,scope?.company);
         const saved=hubSchema?await withSchema(latest):latest;if(cancelled())return;await select(saved);return;
       }
-      const body = JSON.stringify({...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{})});
+      // A new live category needs both its frozen editable form and the exact
+      // official workbook. Existing custom profiles above keep their original
+      // template and mappings; selecting them never downloads a replacement.
+      const connection=hubSchema?await loadLiveHubCategoryTemplate(target,hubSchema,controller.signal):undefined;
+      if(cancelled())return;
+      const prepared={...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{}),...(connection??{})};
+      const body = JSON.stringify(prepared);
       if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
       const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': createRequest.current.id, ...(scope?{'X-YOOFAM-Workspace-Owner':scope.ownerId}:{}) }, body, signal: controller.signal });
       const result = await response.json() as { profile: CategoryProfile; error?: string };
@@ -197,7 +203,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         || saved.categoryId !== target.categoryId
         || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(target.path)
         || hubSchema&&!sameHubDefinition(saved.hubSchema,hubSchema)
-        ||hubSchema&&(saved.template!==null||!Array.isArray(saved.mappings)||saved.mappings.length!==0)) {
+        ||hubSchema&&(!Array.isArray(saved.mappings)||!sameCategorySelectionConnection(saved,prepared))) {
         throw new Error('저장된 카테고리 코드·경로·버전이 선택한 분류와 일치하지 않습니다. URL 입력을 중단했습니다. 카테고리 설정을 다시 확인해주세요.');
       }
       await select(saved);

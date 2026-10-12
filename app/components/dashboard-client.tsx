@@ -16,6 +16,7 @@ import { ProductContentEditor } from '@/app/components/product-content-editor';
 import { OptionSeoEditor } from '@/app/components/option-seo-editor';
 import { SeoWorkspaceGenerator } from '@/app/components/seo-workspace-generator';
 import { OptionImageEditor } from '@/app/components/option-image-editor';
+import { DetailImageBatchPanel } from '@/app/components/detail-image-batch-panel';
 import { OptionLabelEditor } from '@/app/components/option-label-editor';
 import { ProductLabelEditor } from '@/app/components/product-label-editor';
 import { AutomationPanel } from '@/app/components/automation-panel';
@@ -579,10 +580,12 @@ function DetailPanel({ onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSub
   const [quotationRefresh, setQuotationRefresh] = useState(0);
   const [paidImageBusy,setPaidImageBusy]=useState(false);
   const [freeImageBusy,setFreeImageBusy]=useState(false);
-  const imageProcessingRefs=useRef({paid:false,free:false});
-  const imageProcessingBusy=paidImageBusy||freeImageBusy;
+  const [detailBatchBusy,setDetailBatchBusy]=useState(false);
+  const imageProcessingRefs=useRef({paid:false,free:false,batch:false});
+  const imageProcessingBusy=paidImageBusy||freeImageBusy||detailBatchBusy;
   const changeImageProcessingBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.paid=busy;setPaidImageBusy(busy);},[]);
   const changeFreeImageBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.free=busy;setFreeImageBusy(busy);},[]);
+  const changeDetailBatchBusy=useCallback((busy:boolean)=>{imageProcessingRefs.current.batch=busy;setDetailBatchBusy(busy);},[]);
   const [imageTranslation,setImageTranslation]=useState<(FreeImageTranslationTarget&{productId:string})|null>(null);
   const [labelTranslationOpen,setLabelTranslationOpen]=useState(false);
   const [quotationScope,setQuotationScope] = useState<{requested?:string;selected?:string}>({requested:preferredProfileId,selected:preferredProfileId});
@@ -599,13 +602,13 @@ function DetailPanel({ onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSub
   const showLabelImageEditing=tab==='표시사항'&&!!quotationImageContext&&imageTranslation?.productId===product.id&&imageTranslation.quotationTarget?.input==='labelImages'
     &&imageTranslation.quotationTarget.optionId===quotationImageContext.optionId&&imageTranslation.quotationTarget.profileId===quotationImageContext.profileId;
   function translateFinalImage(sourceKey:string,role:'main'|'additional'|'detail'|'label',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest){
-    if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||!quotationImageContext
+    if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||imageProcessingRefs.current.batch||!imageKeys.includes(sourceKey)||!quotationImageContext
       ||quotationTarget.optionId!==quotationImageContext.optionId||quotationTarget.profileId!==quotationImageContext.profileId
       ||quotationTarget.input!==quotationImageContext.input||role!==(tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='표시사항'?'label':'detail'))return;
     setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,role,quotationTarget}));
   }
   const contentEditor=<ProductContentEditor product={product} section={contentSection} seoLayout={tab==='SEO'} focusedAssetRole={focusedAssetRole} onSaved={sourceSaved} imageProcessingBusy={imageProcessingBusy} onTranslateImage={(sourceKey,sourceLanguage,role)=>{
-    if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||!imageKeys.includes(sourceKey)||(role!==undefined&&!validFreeImageRole(role)))return;
+    if(imageProcessingRefs.current.paid||imageProcessingRefs.current.free||imageProcessingRefs.current.batch||!imageKeys.includes(sourceKey)||(role!==undefined&&!validFreeImageRole(role)))return;
     setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,...(role?{role}:{})}));
   }}/>;
   return <>
@@ -614,11 +617,12 @@ function DetailPanel({ onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSub
       {isImageStep&&<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" onChange={onUpload}/></label>}
       <div hidden={!focusedOptionId||tab!=='추가 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:additional`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="additional" disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={translateFinalImage}/>}</div>
       <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="detail" disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={translateFinalImage}/>}</div>
+      <div hidden={!focusedOptionId||tab!=='상세 이미지'}>{focusedOptionId&&<DetailImageBatchPanel key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:detail-batch`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} active={tab==='상세 이미지'} disabled={paidImageBusy||freeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&onBeforeFreeImageApply()} onBusyChange={changeDetailBatchBusy} onSaved={sourceSaved}/>}</div>
       <div hidden={tab!=='표시사항'}><ProductLabelEditor key={`${product.id}:${focusedOptionId??'common'}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId??null} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={focusedOptionId?translateFinalImage:undefined}/></div>
       <details open={scopedContent?undefined:true}><summary hidden={!scopedContent}>상품 공통 {commonContentLabel} 편집</summary><p hidden={!scopedContent} className="panel-note">아래 수정값은 상품의 공통 자료에 저장됩니다. 옵션별로 직접 저장한 값은 해당 옵션의 값을 유지합니다.</p><div hidden={tab!=='SEO'||!focusedOptionId}>{focusedOptionId&&<OptionSeoEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} onSaved={sourceSaved}/>}</div>{contentEditor}</details>
       <div hidden={tab!=='SEO'}><ProductOptionsEditor product={product} seoView focusedOptionId={focusedOptionId} onSaved={sourceSaved}/></div>
     </div>
-    <div hidden={!isImageStep&&!showLabelImageEditing} className="panel-stack"><details open={!focusedOptionId||tab!=='대표 이미지'||imageTranslation?.quotationTarget?.input==='mainImage'}><summary hidden={!focusedOptionId||tab!=='대표 이미지'}>{imageTranslation?.quotationTarget?.input==='mainImage'?'선택 옵션 대표이미지 번역':'상품 공통 원본 이미지 번역'}</summary><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} quotationContext={quotationImageContext} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{})}:undefined}/></details><details hidden={!isImageStep}><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
+    <div hidden={!isImageStep&&!showLabelImageEditing} inert={detailBatchBusy} className="panel-stack"><details open={!focusedOptionId||tab!=='대표 이미지'||imageTranslation?.quotationTarget?.input==='mainImage'}><summary hidden={!focusedOptionId||tab!=='대표 이미지'}>{imageTranslation?.quotationTarget?.input==='mainImage'?'선택 옵션 대표이미지 번역':'상품 공통 원본 이미지 번역'}</summary><FreeImageTranslationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} focusedOptionId={focusedOptionId} quotationContext={quotationImageContext} onProductChanged={sourceSaved} onBusyChange={changeFreeImageBusy} beforeApply={()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.batch&&onBeforeFreeImageApply()} translationTarget={imageTranslation?.productId===product.id?{sourceKey:imageTranslation.sourceKey,sequence:imageTranslation.sequence,sourceLanguage:imageTranslation.sourceLanguage,...(imageTranslation.role?{role:imageTranslation.role}:{}),...(imageTranslation.quotationTarget?{quotationTarget:imageTranslation.quotationTarget}:{})}:undefined}/></details><details hidden={!isImageStep}><summary>추가 AI 이미지 가공</summary><ImageGenerationPanel productId={product.id} version={product.updated_at} imageKeys={imageKeys} onProductChanged={sourceSaved} onBusyChange={changeImageProcessingBusy}/></details></div>
     <div hidden={tab!=='표시사항'}><button type="button" className="btn ghost" aria-expanded={labelTranslationOpen} aria-controls={`label-translation-${product.id}`} onClick={()=>setLabelTranslationOpen(open=>!open)}>한글 표시사항 번역</button><details><summary>이전 공통 표시사항 PNG·추가 항목 조판</summary><p className="panel-note">이전 공통 자료와 직접 추가한 항목을 조판합니다. 9항목 제품 라벨은 위 편집 영역에서 만들고, 카테고리별 상품고시는 7단계 견적서에서 확인하세요.</p><DocumentImagePanel productId={product.id} version={product.updated_at} section="label" onSaved={sourceSaved}/></details></div>
     {tab==='작업'&&<AutomationPanel productId={product.id} version={product.updated_at}/>}
     <div id={`label-translation-${product.id}`} hidden={tab!=='SEO'&&tab!=='번역'&&!(tab==='표시사항'&&labelTranslationOpen)}>
