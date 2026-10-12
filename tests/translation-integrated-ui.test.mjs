@@ -11,7 +11,7 @@ const version='2026-09-25T01:00:00.000Z';
 const plan={productId:'p',productVersion:version,contentRevision:0,optionRevision:1,fingerprint:'a'.repeat(64),preview:[{name:'상품명',before:'',after:'한국어'}],skipped:[]};
 function harness(handler) {
  let slots=[],cleanups=[]; const calls=[]; let index=0,first=true,saved=0,closed=false,late=0,key; let props={productId:'p',version,jobId:'j',disabled:false,onSaved:()=>saved++};
- const hooks={useState(v){const i=index++;if(!(i in slots))slots[i]=v;return[slots[i],x=>{if(closed)late++;slots[i]=x;}];},useRef(v){const i=index++;return slots[i]??(slots[i]={current:v});},useEffect(fn){if(first)cleanups.push(fn());}};
+ const hooks={useState(v){const i=index++;if(!(i in slots))slots[i]=v;return[slots[i],x=>{if(closed)late++;slots[i]=x;}];},useRef(v){const i=index++;return slots[i]??(slots[i]={current:v});},useEffect(fn){if(first)cleanups.push(fn());},useLayoutEffect(fn,deps){const i=index++,previous=slots[i];if(!previous||JSON.stringify(previous.deps)!==JSON.stringify(deps)){previous?.cleanup?.();slots[i]={deps,cleanup:fn()};if(!previous)cleanups.push(()=>slots[i]?.cleanup?.());}}};
  const exports={};
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/translation-integrated-preview.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,fetch:async(url,init)=>{calls.push({url,init});return handler(init);},require:n=>n==='react'?hooks:native(n)});
  const render=(updates={})=>{props={...props,...updates};const root=exports.TranslationIntegratedPreview(props);if(key!==root.key){cleanups.forEach(fn=>fn?.());slots=[];cleanups=[];first=true;key=root.key;}index=0;const tree=root.type(root.props);first=false;return tree;};
@@ -66,4 +66,18 @@ test('option scope is included in requests and rejects mismatched preview or rec
   else{h.click(1);await settle();assert.equal(JSON.parse(h.calls[1].init.body).scope,'options');}
   assert.equal(h.saved,mode==='success'?1:0);
  }
+});
+
+test('composition preview and save carry the same exact guidance/flags and report a bounded parent lock',async()=>{
+ const changes=[],seoComposition={brand:'현재 브랜드',features:'메모'.repeat(1000),keywords:'가리개',title:'현재 브랜드 투명 가리개',replaceTitle:true,replaceKeywords:true};
+ const h=harness(async init=>JSON.parse(init.body).action==='preview'?Response.json(plan):Response.json({productId:'p',productVersion:'2026-09-25T01:00:01.000Z',contentRevision:1,optionRevision:2,applied:1}));try{
+  h.render({seoComposition,onBusyChange:value=>changes.push(value)});h.click(0);await settle();h.click(1);await settle();
+  for(const call of h.calls)assert.deepEqual(JSON.parse(call.init.body).seoComposition,seoComposition);assert.deepEqual(changes,[true,false,true,false]);assert.equal(h.saved,1);
+ }finally{h.close();}
+});
+test('editing composition after preview remounts the proof and an old held save action cannot submit its old input',async()=>{
+ const seoComposition={brand:'브랜드',features:'특징',keywords:'타겟',title:'브랜드 특징 타겟'};const h=harness(async()=>Response.json(plan));try{
+  h.render({seoComposition});h.click(0);await settle();const old=nodes(h.render()).filter(n=>n.type==='button')[1].props.onClick;
+  const tree=h.render({seoComposition:{...seoComposition,title:'직접 수정한 상품명'}});assert.equal(nodes(tree).filter(n=>n.type==='button').length,1);old();await settle();assert.equal(h.calls.length,1);assert.equal(h.saved,0);
+ }finally{h.close();}
 });

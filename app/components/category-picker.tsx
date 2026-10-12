@@ -2,19 +2,19 @@
 import { loadCategoryProfiles, readCategoryJsonResponse } from '@/app/load-category-profiles';
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { usableCategoryCode, type CategoryProfile } from '@/app/category-profiles';
+import { usableCategoryCode, type CategoryProfile, type CategoryProfileInput } from '@/app/category-profiles';
 import { canConfirmCategory, categoryAdvancedSeed, categoryChoices, categoryChoicesAtPath, categoryLevel, categoryObservationScope, categoryProfileForChoice, categoryProfilesForChoice, searchCategoryChoices, type CategoryAdvancedSeed, type CategoryChoice } from '@/app/category-catalog';
 import { getQuotationSchema } from '@/app/quotation-schema';
 import { CategoryQuotationPreview } from '@/app/components/category-quotation-preview';
 import './category-picker.css';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 import { SupplierHubCategoryBrowser } from '@/app/components/supplier-hub-category-browser';
-import { loadLiveHubCategorySchema, loadLiveHubCategoryTemplate } from '@/app/supplier-hub-catalog';
+import { loadLiveHubCategorySchema, loadLiveHubCategoryTemplate, resolveSavedHubCategoryChoice } from '@/app/supplier-hub-catalog';
 import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { categoryDefinitionRequiresFork, refreshCategoryDefinition, sameCategoryHubDefinition, type CategoryDefinitionRefreshRequest } from '@/app/category-definition-refresh-client';
-import { confirmCategorySelectionList, confirmCategorySelectionProfile, confirmLiveCategorySelectionSchema, sameCategorySelectionConnection, sameCategorySelectionDefinition } from '@/app/category-selection-confirmation';
+import { confirmCategorySelectionList, confirmCategorySelectionProfile, confirmLiveCategorySelectionSchema, confirmPreparedCategorySelectionProfile, sameCategorySelectionDefinition } from '@/app/category-selection-confirmation';
 import { parseWorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 
 const useAccountEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -134,6 +134,28 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         if(!saved||saved.id!==profile.id||saved.revision!==profile.revision+1||saved.categoryId!==target!.categoryId||JSON.stringify(saved.categoryPath)!==JSON.stringify(target!.path)||!sameHubDefinition(saved.hubSchema,hubSchema)||JSON.stringify(saved.template)!==JSON.stringify(connection.template)||JSON.stringify(saved.mappings)!==JSON.stringify(connection.mappings))throw Error('저장된 상세 양식과 기존 견적서 연결을 확인하지 못했습니다.');
         return saved;
       }
+      async function createPrepared(choice:CategoryChoice,prepared:CategoryProfileInput,captured?:HubSchemaSnapshot,sourceId?:string){
+        const body=JSON.stringify(prepared);
+        if(createRequest.current?.body!==body)createRequest.current={body,id:crypto.randomUUID()};
+        const response=await fetch('/api/category-profiles',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':createRequest.current.id,...(scope?{'X-YOOFAM-Workspace-Owner':scope.ownerId}:{})},body,signal:controller.signal});
+        const result=await response.json() as {profile:CategoryProfile;error?:string};
+        if(cancelled())throw Error('카테고리 선택을 취소했습니다.');
+        if(!response.ok)throw Error(result.error??'카테고리를 저장하지 못했습니다.');
+        return confirmPreparedCategorySelectionProfile(choice,result.profile,prepared,captured,scope?.company,sourceId);
+      }
+      async function prepareSelection(profile:CategoryProfile){
+        // A live leaf or saved detailed Hub identity may prepare a new official
+        // connection. Old profiles, captured products and drafts stay frozen;
+        // a saved manual code without Hub proof retains its manual path.
+        if(profile.template||!hubSchema&&!profile.hubSchema)return hubSchema?withSchema(profile):profile;
+        const choice=target!.supplierHub?target!:await resolveSavedHubCategoryChoice(profile,controller.signal);
+        if(cancelled())return profile;
+        const captured=hubSchema??confirmLiveCategorySelectionSchema(choice,await loadLiveHubCategorySchema(choice,controller.signal),scope?.company);
+        if(cancelled())return profile;
+        const connection=await loadLiveHubCategoryTemplate(choice,captured,controller.signal);
+        if(cancelled())return profile;
+        return createPrepared(choice,{...categoryProfileForChoice(choice),hubSchema:captured,...connection},captured,profile.id);
+      }
       const existing = profiles.find(profile => profile.id === target.profileId);
       if (existing) {
         const result = { profiles: await loadCategoryProfiles(controller.signal) };
@@ -158,7 +180,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         if (!sameCategorySelectionDefinition(existing,latest)) throw Error('동일한 카테고리 버전의 회사·상세 양식·견적서 연결이 다릅니다. 기존 선택은 유지하며 목록 응답을 다시 확인해주세요.');
         confirmCategorySelectionProfile({...target,supplierHub:undefined},latest,undefined,scope?.company);
         setRefreshedProfiles(result.profiles);
-        const saved=hubSchema?await withSchema(latest):latest;if(cancelled())return;await select(saved);return;
+        const saved=await prepareSelection(latest);if(cancelled())return;await select(saved);return;
       }
       // The picker may have been opened before this category's template was saved.
       // Read every current page before creating another empty configuration.
@@ -173,7 +195,9 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       let matching = categoryProfilesForChoice(latestProfiles, target);
       if(matching.length>1&&hubSchema){
         const exact=matching.filter(profile=>sameHubDefinition(profile.hubSchema,hubSchema));
+        const connected=exact.filter(profile=>profile.template);
         if(exact.length===1)matching=exact;
+        else if(connected.length===1&&matching.every(profile=>!profile.template||profile.id===connected[0].id))matching=connected;
       }
       if (matching.length > 1) {
         setSelectedKey('');
@@ -183,7 +207,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         const latest = matching[0];
         if (!Number.isSafeInteger(latest.revision) || latest.revision < 1) throw new Error('카테고리 설정 응답이 올바르지 않습니다. 다시 시도해주세요.');
         confirmCategorySelectionProfile({...target,supplierHub:undefined},latest,undefined,scope?.company);
-        const saved=hubSchema?await withSchema(latest):latest;if(cancelled())return;await select(saved);return;
+        const saved=await prepareSelection(latest);if(cancelled())return;await select(saved);return;
       }
       // A new live category needs both its frozen editable form and the exact
       // official workbook. Existing custom profiles above keep their original
@@ -191,21 +215,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       const connection=hubSchema?await loadLiveHubCategoryTemplate(target,hubSchema,controller.signal):undefined;
       if(cancelled())return;
       const prepared={...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{}),...(connection??{})};
-      const body = JSON.stringify(prepared);
-      if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
-      const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': createRequest.current.id, ...(scope?{'X-YOOFAM-Workspace-Owner':scope.ownerId}:{}) }, body, signal: controller.signal });
-      const result = await response.json() as { profile: CategoryProfile; error?: string };
-      if (cancelled()) return;
-      if (!response.ok) throw new Error(result.error ?? '카테고리를 저장하지 못했습니다.');
-      const saved = result.profile;
-      if (!saved || typeof saved.id !== 'string' || !saved.id.trim()
-        || !Number.isSafeInteger(saved.revision) || saved.revision < 1
-        || saved.categoryId !== target.categoryId
-        || !Array.isArray(saved.categoryPath) || JSON.stringify(saved.categoryPath) !== JSON.stringify(target.path)
-        || hubSchema&&!sameHubDefinition(saved.hubSchema,hubSchema)
-        ||hubSchema&&(!Array.isArray(saved.mappings)||!sameCategorySelectionConnection(saved,prepared))) {
-        throw new Error('저장된 카테고리 코드·경로·버전이 선택한 분류와 일치하지 않습니다. URL 입력을 중단했습니다. 카테고리 설정을 다시 확인해주세요.');
-      }
+      const saved=await createPrepared(target,prepared,hubSchema);
+      if(cancelled())return;
       await select(saved);
     } catch (cause) { if(!cancelled()){completed.current = false;setError(cause instanceof Error ? cause.message : '카테고리 선택 실패');} }
     finally { if (activeRequest.current === controller) activeRequest.current = null; if (!cancelled()) setBusy(false); }
@@ -232,7 +243,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     <div className="modal-actions"><button className="btn primary" type="button" disabled={!canConfirmCategory(selected) || busy} onClick={() => void confirm()}>{busy ? '설정 중…' : '선택 완료 · URL 입력'}</button></div>
     <details className="category-advanced" key={selected?.key ?? 'unselected'}><summary>견적 항목·Excel 출력 설정</summary>
       {selected?.isLeaf && <p>{codeEvidenceLabel(selected, selectedProfile)}{selected.codeObservedAt ? ` · ${selected.codeObservedAt.slice(0, 10)}` : ''}</p>}
-      <p>회사·카테고리 확인 후 URL을 입력해 초안을 작성합니다. 공식 Excel 파일은 7단계 견적서의 ‘공식 견적 양식 준비’에서 연결합니다. 기존에 연결한 양식은 유지합니다.</p>
+      <p>Supplier Hub 카테고리를 선택하면 상세 양식과 공식 Excel을 함께 준비한 뒤 URL을 입력합니다. 기존에 연결한 양식은 유지하며, 비어 있는 Hub 설정은 새 공식 설정으로 준비합니다. 수동 코드만 저장한 설정은 직접 연결한 양식을 사용합니다.</p>
       {savedPreviewWarning && <p role="alert">{savedPreviewWarning}</p>}
       {selected?.isLeaf && schema && (selectedDefinition ? <IntakeQuotationPreview key={`${selected.key}:${selectedDefinition.profile.revision}`} profile={selectedDefinition.profile}/> : <CategoryQuotationPreview key={selected.key} schema={schema} />)}
       <button className="btn ghost" type="button" disabled={busy} onClick={() => onAdvanced(categoryAdvancedSeed(selected, path))}>{selected?.categoryId ? '카테고리·Excel 양식 설정' : '선택 경로로 실제 코드·양식 연결'}</button>

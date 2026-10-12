@@ -140,8 +140,27 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
   return {template:saved.template,mappings:saved.mappings};
 }
 
-/** Official files are prepared explicitly after draft review. Resolve every
- * saved path segment exactly; never infer a different branch from a leaf name. */
+/** Resolve every saved path segment without modifying its configuration.
+ * A saved code or matching leaf name alone is never live category evidence. */
+export async function resolveSavedHubCategoryChoice(profile:Pick<CategoryProfile,'categoryId'|'categoryPath'|'hubSchema'>,signal:AbortSignal):Promise<CategoryChoice>{
+  signal.throwIfAborted();
+  if(!profile.hubSchema)throw Error('확인된 Supplier Hub 상세 양식이 없습니다. 카테고리·양식 관리에서 먼저 확인해주세요.');
+  const snapshot=validateHubSchemaSnapshot(profile.hubSchema,profile.categoryId,profile.categoryPath),trail:HubCategoryNode[]=[];
+  let ownerId:string|undefined,choice:CategoryChoice|undefined;
+  for(let depth=0;depth<profile.categoryPath.length;depth++){
+    const branch=await loadSupplierHubCategoryBranch(trail,signal);signal.throwIfAborted();
+    if(branch.company.code!==snapshot.company.code||branch.company.name!==snapshot.company.name||ownerId!==undefined&&branch.ownerId!==ownerId)throw Error('선택한 양식의 회원·회사와 현재 Supplier Hub가 다릅니다.');
+    ownerId=branch.ownerId;
+    const matches=branch.children.filter(node=>node.name===profile.categoryPath[depth]),last=depth===profile.categoryPath.length-1;
+    if(matches.length!==1||matches[0].isLeaf!==last||last&&matches[0].categoryId!==profile.categoryId)throw Error('저장한 전체 카테고리 경로·최종 코드를 하나로 확인하지 못했습니다. 양식 연결을 중단했습니다.');
+    if(last)choice=hubCategoryChoice(branch,matches[0]);else trail.push(matches[0]);
+  }
+  if(!choice)throw Error('저장한 카테고리 경로를 확인해주세요.');
+  return choice;
+}
+
+/** Official files for an existing working profile are connected only by this
+ * explicit review action. New category selections use a separate profile. */
 export async function prepareOfficialHubProfileTemplate(profile:CategoryProfile,signal:AbortSignal,mode:'schema'|'workbook'='schema'):Promise<CategoryProfile>{
   signal.throwIfAborted();
   if(profile.template)throw Error('이미 연결된 견적 양식은 유지합니다. 변경은 카테고리·양식 관리에서 확인해주세요.');
@@ -150,18 +169,7 @@ export async function prepareOfficialHubProfileTemplate(profile:CategoryProfile,
   if(!current||current.revision!==profile.revision||current.categoryId!==profile.categoryId
     ||JSON.stringify(current.categoryPath)!==JSON.stringify(profile.categoryPath)||JSON.stringify(current.hubSchema)!==JSON.stringify(profile.hubSchema)
     ||current.template||current.mappings.length)throw Error('카테고리·양식 설정이 변경되었습니다. 저장한 양식을 새로고침한 뒤 다시 준비해주세요.');
-  if(!current.hubSchema)throw Error('확인된 Supplier Hub 상세 양식이 없습니다. 카테고리·양식 관리에서 먼저 확인해주세요.');
-  const snapshot=current.hubSchema,trail:HubCategoryNode[]=[];
-  let ownerId:string|undefined,choice:CategoryChoice|undefined;
-  for(let depth=0;depth<current.categoryPath.length;depth++){
-    const branch=await loadSupplierHubCategoryBranch(trail,signal);signal.throwIfAborted();
-    if(branch.company.code!==snapshot.company.code||branch.company.name!==snapshot.company.name||ownerId!==undefined&&branch.ownerId!==ownerId)throw Error('선택한 양식의 회원·회사와 현재 Supplier Hub가 다릅니다.');
-    ownerId=branch.ownerId;
-    const matches=branch.children.filter(node=>node.name===current.categoryPath[depth]),last=depth===current.categoryPath.length-1;
-    if(matches.length!==1||matches[0].isLeaf!==last||last&&matches[0].categoryId!==current.categoryId)throw Error('저장한 전체 카테고리 경로·최종 코드를 하나로 확인하지 못했습니다. 양식 연결을 중단했습니다.');
-    if(last)choice=hubCategoryChoice(branch,matches[0]);else trail.push(matches[0]);
-  }
-  if(!choice)throw Error('저장한 카테고리 경로를 확인해주세요.');
+  const choice=await resolveSavedHubCategoryChoice(current,signal),snapshot=current.hubSchema!;
   const live=await loadLiveHubCategorySchema(choice,signal);signal.throwIfAborted();
   if(live.schemaString!==snapshot.schemaString||!sameMetadata(live.metadata,snapshot.metadata))throw Error('현재 상세 양식이 저장 당시와 다릅니다. 기존 초안은 유지하며 카테고리·양식 관리에서 확인해주세요.');
   const connection=await loadLiveHubCategoryTemplate(choice,snapshot,signal,mode);signal.throwIfAborted();

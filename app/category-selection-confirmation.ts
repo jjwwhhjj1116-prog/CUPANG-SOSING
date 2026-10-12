@@ -67,3 +67,12 @@ export function sameCategorySelectionConnection(saved: Pick<CategoryProfile, 'te
   return canonical(saved.template ?? null) === canonical(prepared.template ?? null)
     && canonical(saved.mappings ?? []) === canonical(prepared.mappings ?? []);
 }
+
+/** Creating a new official connection must not acknowledge the original empty
+ * profile or lose the exact compiled workbook and mappings in the response. */
+export function confirmPreparedCategorySelectionProfile(choice:CategoryChoice,saved:CategoryProfile,prepared:CategoryProfileInput,liveSchema?:HubSchemaSnapshot,approvedCompany?:SupplierHubCompany|null,sourceId?:string):CategoryProfile{
+  if(!saved||saved.id===sourceId||saved.revision!==1||saved.name!==prepared.name
+    ||!sameCategorySelectionConnection(saved,prepared)
+    ||liveSchema&&(!saved.template||!saved.hubSchema||!sameCategoryHubDefinition(saved.hubSchema,liveSchema)))throw invalid();
+  return confirmCategorySelectionProfile(choice,saved,liveSchema,approvedCompany);
+}

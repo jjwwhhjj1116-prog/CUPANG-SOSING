@@ -16,7 +16,7 @@ function brandedIntakeTitle(title: string, brand = ''): string {
   return `${prefix} ${name}`;
 }
 
-function untouchedIntakeKeywords(content: ProductContent, job: TranslationJob): boolean {
+export function untouchedIntakeKeywords(content: ProductContent, job: TranslationJob): boolean {
   const seed = content.intakeKeywordSeed;
   const current = content.seo.keywords;
   if (!seed || !Array.isArray(seed.value) || !seed.value.length || !seed.updatedAt ||

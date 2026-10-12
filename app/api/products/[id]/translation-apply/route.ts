@@ -15,28 +15,35 @@ import { applyIntakeAttributeRules } from '@/app/intake-attribute-rules';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import {capturedAttributeCategory,attributeCategorySchema} from '@/app/quotation-attribute-schema';
 import { intakeTranslationReplayContent, intakeTranslationReplayJob } from '@/app/intake-translation-replay';
-import { collectionSourceReference } from '@/app/sourcing';
+import { collectionSourceReference, parseCollectionRequest } from '@/app/sourcing';
 import { optionsRetryProof, optionsRetryApplicationFingerprint } from '@/app/options-translation-retry';
 import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {GOOGLE_TEXT_MODEL} from '@/app/automation/translation';
 import {intakeSupplierSourceMatches} from '@/app/intake-supplier-source';
+import { applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
+import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 export async function POST(request: Request, context: Context) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({ error: '운영 인증 연결이 필요합니다.' }, 503);
   let body: Record<string, unknown>;
+  let seoComposition: SeoGuidanceComposition | undefined;
   try {
     if (request.headers.get('origin') && request.headers.get('origin') !== new URL(request.url).origin) throw Error('같은 사이트에서 요청해주세요.');
-    const value = await readBoundedJson(request, 4096);
+    const value = await readBoundedJson(request, 16 * 1024);
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('요청 객체가 필요합니다.');
     body = value as Record<string, unknown>;
-    if (Object.keys(body).some(key => !['action','jobId','expectedVersion','fingerprint','scope'].includes(key)) || !['preview','apply'].includes(String(body.action))
+    if (Object.keys(body).some(key => !['action','jobId','expectedVersion','fingerprint','scope','seoComposition'].includes(key)) || !['preview','apply'].includes(String(body.action))
       || (body.scope !== undefined && body.scope !== 'all' && body.scope !== 'options')
       || typeof body.jobId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.jobId) || typeof body.expectedVersion !== 'string'
       || (body.action === 'apply' && (typeof body.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.fingerprint)))) throw Error('검토 요청과 저장 지문을 확인해주세요.');
+    if (body.seoComposition !== undefined) {
+      if (body.scope === 'options') throw Error('옵션 전용 적용에는 SEO 구성안을 사용할 수 없습니다.');
+      seoComposition = validateSeoGuidanceComposition(body.seoComposition);
+    }
   } catch (error) { return json({ error: error instanceof Error ? error.message : '잘못된 요청입니다.' }, 400); }
   try {
     const owner = await getWorkspaceOwnerId(), { id } = await context.params;
@@ -73,6 +80,18 @@ export async function POST(request: Request, context: Context) {
     } catch (error) { return json({ error: error instanceof Error ? error.message : '상품 카테고리를 확인하지 못했습니다.' }, 409); }
     let plan;
     try {
+      if(seoComposition){
+        // An ordinary/manual review may omit category metadata; an existing
+        // captured company must still be checked and guarded with the save.
+        if(!categorySource){
+          let offerId:string|null=null;try{offerId=parseCollectionRequest({urls:[product.source_url]})[0].offerId;}catch{ /* Legacy non-1688 manual product. */ }
+          if(offerId){const {readQuotationCollectionSource}=await import('@/db/quotation-fields');categorySource={offerId,snapshot:await readQuotationCollectionSource(owner,offerId,id)};}
+        }
+        if(categorySource?.snapshot?.linked){
+          const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
+          verifyCapturedCollectionCompany(JSON.parse(categorySource.snapshot.payload),company);
+        }
+      }
       // A completed canonical intake job can outlive source supplementation.
       // Check its current receipt even when product/content clocks still match;
       // then carry this exact effective payload into the atomic save guard.
@@ -120,6 +139,7 @@ export async function POST(request: Request, context: Context) {
       }
       plan = integratedTranslationPlan(intakeReplay ? intakeTranslationReplayContent(content,job) : content, options, applicationJob, product.updated_at, scope, hiddenAttributes, intakeBrand,
         intakeReplay && !!content.categoryAttributes,optionRecoveryJobs);
+      if (seoComposition) plan = applySeoGuidanceComposition(plan,content,applicationJob,seoComposition);
     }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }
     let attributeRules;
@@ -135,7 +155,8 @@ export async function POST(request: Request, context: Context) {
         } catch (error) { return json({ error: error instanceof Error ? error.message : '카테고리 연결 규칙을 확인해주세요.' }, 409); }
       }
     }
-    const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null, seoSource:seoSource??null });
+    const digest = await fingerprint({ productId: id, productVersion: product.updated_at, imageKeys: product.image_keys, content, options, job, plan, scope, categorySource: categorySource ?? null, seoSource:seoSource??null,
+      ...(seoComposition ? {seoComposition} : {}) });
     const optionsRetry = retryProof ? {applicationFingerprint:await optionsRetryApplicationFingerprint(job,
       applyContentPatch(content,plan.patch??{},'options-retry-application'),applyIntegratedOptions(options,plan,'options-retry-application'),'options-retry-application')} : null;
     let intakeSeoCoverage;

@@ -9,9 +9,9 @@ import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema
 
 const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
 const plain=value=>JSON.parse(JSON.stringify(value));
-async function template(h,company){
+async function template(h,company,owner='owner'){
  const bytes=new TextEncoder().encode('상품명,회사별 검토값 '+company.code+'\n');
- const sha256=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex'),storageKey=`owner/category-templates/${sha256}.csv`;
+ const sha256=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex'),storageKey=`${owner}/category-templates/${sha256}.csv`;
  await h.bindings.FILES.put(storageKey,bytes,{customMetadata:{sha256,format:'csv'}});
  const {template,mappings}=h.load('app/category-profiles.ts').validateCategoryProfile({name:'회사 연결 시험',categoryId:'991234',categoryPath:schemaPath,
   template:{name:'synthetic-'+company.code+'.csv',format:'csv',sheetName:'',headerRow:1,headers:['상품명','회사별 검토값 '+company.code],sha256,storageKey},
@@ -136,7 +136,7 @@ for(const company of schemaCompanies)test(`saved category belonging to the other
 
 function scopedRoutes(h,state){
  const auth={getWorkspaceOwnerId:async()=>state.owner,getChatGPTUser:async()=>{const email=state.company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com';return{userId:state.owner,email,verifiedAccess:true,membership:{id:state.owner,email,status:'approved',role:state.company.code==='A01526306'?'admin':'member',companyCode:state.company.code,companyName:state.company.name}};}};
- function route(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Response,Request,Date,TextEncoder,TextDecoder,Uint8Array,process:{env:{NODE_ENV:'production'}},require(name){if(name==='@/app/chatgpt-auth')return auth;if(name==='next/server')return{NextResponse:Response};if(name==='cloudflare:workers')return{env:h.bindings};assert.ok(name.startsWith('@/'),name);return h.load(name.slice(2)+'.ts');}});return exports;}
+ function route(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Response,Request,Date,TextEncoder,TextDecoder,Uint8Array,crypto,process:{env:{NODE_ENV:'production'}},require(name){if(name==='@/app/chatgpt-auth')return auth;if(name==='next/server')return{NextResponse:Response};if(name==='cloudflare:workers')return{env:h.bindings};assert.ok(name.startsWith('@/'),name);return h.load(name.slice(2)+'.ts');}});return exports;}
  return{profiles:route('app/api/category-profiles/route.ts'),settings:route('app/api/settings/route.ts'),fork:route('app/api/category-profiles/[id]/refresh-definition/route.ts')};
 }
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
@@ -144,7 +144,7 @@ const waitFor=async predicate=>{const deadline=Date.now()+5000;while(!predicate(
 
 for(const company of schemaCompanies)test(`an owner prop change aborts the previous category request and excludes its retained callbacks (${company.code})`,async()=>{
  const other=schemaCompanies.find(value=>value.code!==company.code),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
-  const store=h.load('db/category-profiles.ts'),first=await store.createCategoryProfile('first-owner',{name:'첫 회사 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),template:null,mappings:[]}),second=await store.createCategoryProfile('second-owner',{name:'두 번째 회사 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(other),template:null,mappings:[]});
+  const store=h.load('db/category-profiles.ts'),first=await store.createCategoryProfile('first-owner',{name:'첫 회사 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),...await template(h,company,'first-owner')}),second=await store.createCategoryProfile('second-owner',{name:'두 번째 회사 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(other),...await template(h,other,'second-owner')});
   const state={owner:'first-owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles ORDER BY id').all());let held,oldSignal,pause=true;
   const choice=(owner,company)=>({key:'live-'+owner,categoryId:'991234',path:schemaPath,isLeaf:true,supplierHub:{trail:[],ownerId:owner,company}});
   const picker=categoryPickerUI(async(path,init)=>{
@@ -163,7 +163,7 @@ for(const company of schemaCompanies)test(`an owner prop change aborts the previ
 
 for(const company of schemaCompanies)test(`the approved company is rechecked after a delayed saved-profile lookup (${company.code})`,async()=>{
  const other=schemaCompanies.find(value=>value.code!==company.code),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
-  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'저장된 현재 회사 양식',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),template:null,mappings:[]}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());let release;
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'저장된 현재 회사 양식',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),...await template(h,company)}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());let release;
   const picker=categoryPickerUI(async(path,init)=>{if(path==='/api/settings')return api.settings.GET();const result=await api.profiles.GET(new Request('https://app.test'+path,init));return new Promise(resolve=>{release=()=>resolve(result);});},{profiles:[profile],selectedId:profile.id,workspaceOwnerId:'owner'});
   const pending=picker.confirm();await waitFor(()=>Boolean(release));state.company=other;release();await pending;
   assert.equal(picker.selected.length,0);assert.ok(picker.alerts().some(message=>String(message).includes('승인 회사가 변경')));assert.equal(picker.calls.filter(call=>call.path==='/api/settings').length,2);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all()),before);picker.close();
@@ -172,7 +172,7 @@ for(const company of schemaCompanies)test(`the approved company is rechecked aft
 
 for(const company of schemaCompanies)test(`strict effect replay retains current owner selection while rejecting callbacks from the previous mount (${company.code})`,async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
-  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'현재 회사 검토 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),template:null,mappings:[]}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'현재 회사 검토 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),...await template(h,company)}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());
   const picker=categoryPickerUI((path,init)=>path==='/api/settings'?api.settings.GET():api.profiles[init?.method??'GET'](new Request('https://app.test'+path,init)),{workspaceOwnerId:'owner',profiles:[profile],selectedId:profile.id});
   const oldConfirm=nodes(picker.render()).find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick;
   picker.replayEffects();oldConfirm();await new Promise(resolve=>setImmediate(resolve));assert.equal(picker.calls.length,0,'cleanup invalidates a retained callback even when the owner does not change');
@@ -183,7 +183,7 @@ for(const company of schemaCompanies)test(`strict effect replay retains current 
 
 for(const company of schemaCompanies)test(`missing or malformed account scope cannot promote a saved Hub form into a URL draft (${company.code})`,async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
-  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'보존할 현재 회사 양식',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),template:null,mappings:[]}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'보존할 현재 회사 양식',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),...await template(h,company)}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());
   for(const scope of [undefined,{ownerId:'other-owner',company},{ownerId:'owner',company:{code:company.code,name:'잘못된 회사명'}},{ownerId:'owner',company:null}]){
    let corrupt=true;
    const picker=categoryPickerUI(async(path,init)=>{if(path==='/api/settings'){const response=await api.settings.GET();if(!corrupt)return response;return Response.json({...await response.json(),scope});}return api.profiles[init?.method??'GET'](new Request('https://app.test'+path,init));},{workspaceOwnerId:'owner',profiles:[profile],selectedId:profile.id});
@@ -206,7 +206,7 @@ for(const company of schemaCompanies)for(const operation of ['PUT','fork'])test(
  const other=schemaCompanies.find(value=>value.code!==company.code),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
   const snapshot={...hubSchemaSnapshot(company),metadata:{displayCategoryCode:'991234',kanCategoryId:3000,scopeType:'Retail_Categorized_Single',version:190}},raw=JSON.parse(snapshot.schemaString);raw.properties.productPage.properties.basicAttributes.properties.modelNumber.maxLength=12;
   const target=operation==='PUT'?{...snapshot,draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'}:{...snapshot,schemaString:JSON.stringify(raw),metadata:{...snapshot.metadata,version:191}};
-  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('first-owner',{name:'원래 회사 수동 검토 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:snapshot,template:null,mappings:[]}),state={owner:'first-owner',company},api=scopedRoutes(h,state);
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('first-owner',{name:'원래 회사 수동 검토 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:snapshot,...await template(h,company,'first-owner')}),state={owner:'first-owner',company},api=scopedRoutes(h,state);
   const stored=()=>JSON.stringify({profiles:h.sqlite.prepare('SELECT * FROM category_profiles ORDER BY id').all(),jobs:h.sqlite.prepare('SELECT * FROM collection_jobs').all(),context:h.sqlite.prepare('SELECT * FROM collection_context').all()}),before=stored();let release,pause=true;
   const picker=categoryPickerUI(async(path,init)=>{
    if(path==='/api/settings')return api.settings.GET();if(!init?.method)return api.profiles.GET(new Request('https://app.test'+path,init));

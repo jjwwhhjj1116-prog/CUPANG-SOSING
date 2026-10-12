@@ -5,7 +5,6 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
-import {categoryPickerUI} from './helpers/category-picker.mjs';
 import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
 import {workbookArchive} from './helpers/quotation-workbook.mjs';
 
@@ -81,11 +80,11 @@ function harness(api){
 
 test('an existing schema-only category retains its draft and explicit stage 7 preparation preserves frozen/manual values',async()=>{
  const api=mobileIntakeHarness(),ui=harness(api);try{
-  await api.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'이전 상세 양식만 저장한 설정',categoryId:ui.snapshot.categoryId,categoryPath:schemaPath,hubSchema:{...ui.snapshot,draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'},template:null,mappings:[]});
+  const selected=await api.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'이전 상세 양식만 저장한 설정',categoryId:ui.snapshot.categoryId,categoryPath:schemaPath,hubSchema:{...ui.snapshot,draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'},template:null,mappings:[]});
   ui.setMode('download');
-  const picker=categoryPickerUI(ui.request,{catalog:ui.catalog});await picker.chooseLive(ui.choice);
-  assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));const selected=picker.selected[0];
-  assert.equal(selected.template,null);assert.deepEqual(selected.mappings,[]);assert.equal(ui.calls.some(call=>call.type==='TEMPLATE'),false);
+  // This is an already captured working draft, not a new category selection.
+  // It retains the old explicit stage-seven preparation path unchanged.
+  assert.equal(selected.template,null);assert.deepEqual(plain(selected.mappings),[]);assert.equal(ui.calls.some(call=>call.type==='TEMPLATE'),false);
   assert.equal(selected.hubSchema.metadata.scope,'Retail_Categorized_Single');assert.equal(selected.hubSchema.metadata.version,73);
   api.context.category=selected;api.sqlite.prepare("UPDATE collection_context SET payload=? WHERE job_id='job'").run(JSON.stringify(api.context));
   await api.intake();const product=api.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
@@ -99,7 +98,7 @@ test('an existing schema-only category retains its draft and explicit stage 7 pr
   prepare.props.onClick();await ui.settle();assert.match(JSON.stringify(ui.render()),/공식 원본 다운로드 실패/);assert.equal(retained(),before);assert.equal((await api.load('db/category-profiles.ts').getCategoryProfile('owner',selected.id)).template,null);
   ui.setMode('');ui.button('공식 견적 양식 준비').props.onClick();await ui.settle();
   const saved=await api.load('db/category-profiles.ts').getCategoryProfile('owner',selected.id);
-  assert.equal(saved.revision,selected.revision+1,JSON.stringify(nodes(ui.render()).filter(node=>node.props?.role==='alert')));assert.ok(saved.template);assert.deepEqual(plain(saved.hubSchema),selected.hubSchema);assert.equal(retained(),before);
+  assert.equal(saved.revision,selected.revision+1,JSON.stringify(nodes(ui.render()).filter(node=>node.props?.role==='alert')));assert.ok(saved.template);assert.deepEqual(plain(saved.hubSchema),plain(selected.hubSchema));assert.equal(retained(),before);
   assert.equal(ui.button('공식 견적 양식 준비'),undefined,JSON.stringify(nodes(ui.render()).filter(node=>node.props?.role==='alert')));assert.equal(ui.button('견적 자료 검토').props.disabled,false);
   const source=await api.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',product.id,selected.id),resolved=api.load('app/exports/quotation-source.ts').resolveQuotationExport(source);
   const rows=api.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source,resolved,[]);

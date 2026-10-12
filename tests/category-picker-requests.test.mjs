@@ -115,10 +115,10 @@ test('category create and refresh reject a saved response that drops any capture
  }
 });
 
-test('empty live profile enters URL intake without an official workbook or a profile rewrite',async()=>{
+test('empty live profile prepares a new official selection without rewriting the old profile',async()=>{
  const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test']},profile={id:'empty',categoryId:'80719',categoryPath:['test'],revision:3,hubSchema:snapshot,template:null,mappings:[]};
- const h=harness(async()=>{throw Error('Unchanged profile must not be written');},false,{readProfiles:async()=>Response.json({profiles:[profile]}),readSchema:async()=>snapshot,readTemplate:async()=>{throw Error('Official workbook is prepared at quotation review');}});
- h.chooseLive();h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].revision,3);assert.equal(h.selected[0].template,null);assert.ok(h.calls.every(call=>!call.method));
+ const h=harness(async(_url,init)=>{assert.equal(init.method,'POST');return Response.json({profile:{...JSON.parse(init.body),id:'new',categoryPath:['test'],revision:1}});},false,{readProfiles:async()=>Response.json({profiles:[profile]}),readSchema:async()=>snapshot});
+ h.chooseLive();h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].revision,1);assert.notEqual(h.selected[0].id,profile.id);assert.equal(h.selected[0].template.name,'auto.xlsx');assert.equal(profile.template,null);assert.equal(profile.revision,3);assert.equal(h.calls.filter(call=>call.method==='PUT').length,0);
 });
 
 test('failed or cancelled detailed schema retrieval never writes a profile or enters URL intake',async()=>{
