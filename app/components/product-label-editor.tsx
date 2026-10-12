@@ -132,7 +132,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
       if (controller.signal.aborted || !current()) return;
       verify(result.view);
       if (productLabelPreviewSignature({ productId, endpoint, view: result.view, optionId }) !== chosen.signature || !result.key || !result.view.imageKeys.includes(result.key)) throw Error('연결한 PNG와 현재 제품 표시사항 저장값을 확인하지 못했습니다.');
-      store(result.view); clearPreview(); setMessage(`${caption} 표시사항 PNG를 견적서에 연결했습니다. 기존 라벨은 유지했습니다.`, result.view); onSaved?.();
+      store(result.view); clearPreview(); setMessage(`${caption} 표시사항 PNG를 견적서에 연결했습니다. 같은 범위의 이전 생성 라벨 참조는 교체하고 원본 파일은 보관했습니다.`, result.view); onSaved?.();
     } catch (cause) { if (!controller.signal.aborted && current()) setError(`${cause instanceof Error ? cause.message : '제품 표시사항 PNG 연결 실패'}${cache.uploadedKey ? ' 업로드한 파일은 보존됩니다. 같은 저장값으로 다시 연결하면 기존 파일을 확인해 사용합니다.' : ''}`); }
     finally { finish(controller); }
   }

@@ -50,12 +50,38 @@ const officialSnapshot={format:'supplier-hub-schema-v1',categoryId:'69900',categ
  startPage:{type:'object',properties:{productName:{type:'string',title:'상품명'},categoryPath:{type:'string',title:'카테고리'}}},
  productPage:{type:'object',properties:{commonAttributes:{type:'object',properties:{purchasePrice:{type:'string',title:'공급가'}}}}},legalPage:{type:'object',properties:{}}}})};
 const officialProfile={...profile,name:'선글라스 원본 연결',categoryId:'69900',categoryPath:officialPath,hubSchema:officialSnapshot,template:null,mappings:[]};
-function officialWorkbook({allowed=officialPath.join('>')+' (69900)',kan='2624',scope='Retail_Categorized_Excel'}={}){
+function officialWorkbook({allowed=officialPath.join('>')+' (69900)',kan='2624',scope='Retail_Categorized_Excel',requirements}={}){
  const headers=['상품명','카테고리','공급가',...Array.from({length:22},(_,i)=>`추가 열 ${i}`)],column=index=>{let result='';for(let value=index+1;value;value=Math.floor((value-1)/26))result=String.fromCharCode(65+(value-1)%26)+result;return result;};
  const escape=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;'),row=(number,values)=>`<row r="${number}">${values.map((value,index)=>`<c r="${column(index)}${number}" t="inlineStr"><is><t>${escape(value)}</t></is></c>`).join('')}</row>`,sheetName=`QF_${kan}_시험분류`;
- const sheet=`<worksheet><sheetData>${row(1,['',`${scope}:Kan:${kan}:Notice4:Version191`])}${row(5,headers)}${row(6,headers.map(()=> '필수'))}${row(7,headers.map(()=> '작성 안내'))}${row(8,headers.map((_,i)=>i===1?officialPath.slice(0,-1).join('>')+'>남녀공용스포츠선글라스 (69901)':'예시'))}${row(9,headers.map(()=>''))}</sheetData><dataValidations><dataValidation type="list" sqref="B9:B1008"><formula1>"${allowed}"</formula1></dataValidation></dataValidations></worksheet>`;
+ const sheet=`<worksheet><sheetData>${row(1,['',`${scope}:Kan:${kan}:Notice4:Version191`])}${row(5,headers)}${row(6,headers.map((_,i)=>requirements?.[i]??'필수'))}${row(7,headers.map(()=> '작성 안내'))}${row(8,headers.map((_,i)=>i===1?officialPath.slice(0,-1).join('>')+'>남녀공용스포츠선글라스 (69901)':'예시'))}${row(9,headers.map(()=>''))}</sheetData><dataValidations><dataValidation type="list" sqref="B9:B1008"><formula1>"${allowed}"</formula1></dataValidation></dataValidations></worksheet>`;
  return workbookArchive([['[Content_Types].xml','<Types><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>'],['_rels/.rels','<Relationships><Relationship Id="main" Type="x/officeDocument" Target="xl/workbook.xml"/></Relationships>'],['xl/workbook.xml',`<workbook xmlns:r="relationship"><sheets><sheet name="${sheetName}" r:id="one"/></sheets></workbook>`],['xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="one" Type="x/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],['xl/worksheets/sheet1.xml',sheet]]);
 }
+
+test('restored original mandatory markers stay checked without rewriting a saved optional mapping',async()=>{
+ const api=mobileIntakeHarness();try{
+  const bytes=officialWorkbook(),xlsx=api.load('app/xlsx-template.ts'),inspection=xlsx.inspectXlsxArchive(await xlsx.readXlsxArchive(bytes));
+  const value={...officialProfile,template:{name:'official.xlsx',format:'xlsx',sha256:createHash('sha256').update(bytes).digest('hex'),sheetName:inspection.sheets[0].name,headerRow:5,dataStartRow:9,headers:xlsx.xlsxHeaders(inspection,inspection.sheets[0].name,5),storageKey:'owner/category-templates/original.xlsx'},mappings:[{column:0,field:'title',required:false}]};
+  const before=JSON.stringify(value),h=harness(value,async()=>new Response(bytes),undefined,undefined,{'@/app/xlsx-template':xlsx});
+  assert.equal(h.find(node=>node.props['aria-label']==='1열 필수').props.checked,false);
+  h.startEffects();for(let i=0;i<200&&!h.find(node=>node.props['aria-label']==='1열 필수').props.checked;i++)await new Promise(resolve=>setTimeout(resolve,1));
+  const required=h.find(node=>node.props['aria-label']==='1열 필수');assert.equal(required.props.checked,true);assert.equal(required.props.disabled,true);
+  required.props.onChange({target:{checked:false}});assert.equal(h.find(node=>node.props['aria-label']==='1열 필수').props.checked,true);
+  const unmapped=h.find(node=>node.props['aria-label']==='4열 필수');assert.equal(unmapped.props.checked,true);assert.equal(unmapped.props.disabled,true);
+  assert.equal(h.saved.length,0);assert.equal(h.uploads.length,0);assert.equal(JSON.stringify(value),before);
+  const saved=await h.save();assert.equal(saved.mappings.find(mapping=>mapping.column===0).required,false);assert.equal(JSON.stringify(value),before);
+ }finally{api.close();}
+});
+
+test('optional and conditional original columns and generic templates retain user requirement toggles',async()=>{
+ const api=mobileIntakeHarness();try{
+  const bytes=officialWorkbook({requirements:['필수','필수','필수','선택','조건부 필수']}),xlsx=api.load('app/xlsx-template.ts'),inspection=xlsx.inspectXlsxArchive(await xlsx.readXlsxArchive(bytes));
+  const value={...officialProfile,template:{name:'official.xlsx',format:'xlsx',sha256:createHash('sha256').update(bytes).digest('hex'),sheetName:inspection.sheets[0].name,headerRow:5,dataStartRow:9,headers:xlsx.xlsxHeaders(inspection,inspection.sheets[0].name,5),storageKey:'owner/category-templates/original.xlsx'},mappings:[{column:3,field:'constant',required:false,constant:''},{column:4,field:'constant',required:false,constant:''}]};
+  const h=harness(value,async()=>new Response(bytes),undefined,undefined,{'@/app/xlsx-template':xlsx});h.startEffects();for(let i=0;i<200&&!h.find(node=>node.props['aria-label']==='1열 필수').props.checked;i++)await new Promise(resolve=>setTimeout(resolve,1));
+  for(const column of [4,5]){const checkbox=h.find(node=>node.props['aria-label']===`${column}열 필수`);assert.equal(checkbox.props.disabled,false);assert.equal(checkbox.props.checked,false);checkbox.props.onChange({target:{checked:true}});assert.equal(h.find(node=>node.props['aria-label']===`${column}열 필수`).props.checked,true);h.find(node=>node.props['aria-label']===`${column}열 필수`).props.onChange({target:{checked:false}});}
+  assert.equal(h.saved.length,0);assert.equal(h.uploads.length,0);
+  const generic=harness();const checkbox=generic.find(node=>node.props['aria-label']==='1열 필수');assert.equal(checkbox.props.disabled,false);checkbox.props.onChange({target:{checked:false}});assert.equal(generic.find(node=>node.props['aria-label']==='1열 필수').props.checked,false);
+ }finally{api.close();}
+});
 
 test('advanced official upload accepts allowed 69900 even when row eight illustrates 69901 and preserves the original example',async()=>{
  const api=mobileIntakeHarness();try{

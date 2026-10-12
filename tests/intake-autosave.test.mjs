@@ -5,9 +5,9 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { DatabaseSync } from 'node:sqlite';
 
-function fixture() {
+function fixture(initialOwner='alice') {
   const slots=[], pending=[], timers=new Map(), requests=[];
-  let cursor=0, changed=true, timerId=0, value;
+  let cursor=0, changed=true, timerId=0, value, ownerId=initialOwner;
   const same=(a,b)=>a && b && a.length===b.length && a.every((v,i)=>Object.is(v,b[i]));
   const react={
     useState(initial){const i=cursor++;slots[i]??={value:initial};return[slots[i].value,v=>{const next=typeof v==='function'?v(slots[i].value):v;if(!Object.is(next,slots[i].value)){slots[i].value=next;changed=true;}}];},
@@ -15,6 +15,7 @@ function fixture() {
     useCallback(fn,deps){const i=cursor++;if(!same(slots[i]?.deps,deps))slots[i]={deps,fn};return slots[i].fn;},
     useEffect(fn,deps){const i=cursor++;if(!same(slots[i]?.deps,deps)){const previous=slots[i];slots[i]={deps,cleanup:previous?.cleanup};pending.push(()=>{previous?.cleanup?.();slots[i].cleanup=fn();});}},
   };
+  react.useLayoutEffect=react.useEffect;
   const exports={};
   const draftModule={};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/intake-draft.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:draftModule,Error,Date});
@@ -24,15 +25,16 @@ function fixture() {
     window:{setTimeout(fn){timers.set(++timerId,fn);return timerId;},clearTimeout(id){timers.delete(id);},addEventListener(){},removeEventListener(){}},
     fetch(url,options={}){return new Promise((resolve,reject)=>requests.push({options,resolve,reject}));},
   });
-  function render(){while(changed){changed=false;cursor=0;value=exports.useIntakeDraft();while(pending.length)pending.shift()();}}
+  function render(){while(changed){changed=false;cursor=0;value=exports.useIntakeDraft(ownerId);while(pending.length)pending.shift()();}}
   async function settle(){for(let i=0;i<8;i++){await Promise.resolve();render();}await new Promise(setImmediate);render();}
   function respond(index,status=200,revision=1){
     const body=requests[index].options.body?JSON.parse(requests[index].options.body):{rows:[],goal:'price'};
     const rows=body.rows.map(row=>({id:row.id,profile:{id:row.profileId,revision:row.profileRevision},url:row.url,features:row.features,keywords:row.keywords,status:'draft',message:''}));
-    requests[index].resolve({ok:status===200,json:async()=>status===200?{draft:{revision,rows,goal:body.goal,updatedAt:null}}:{error:'revision conflict'}});
+    requests[index].resolve({ok:status===200,json:async()=>status===200?{ownerId,draft:{revision,rows,goal:body.goal,updatedAt:null}}:{error:'revision conflict'}});
   }
   return{requests,timers,get value(){return value;},render,settle,respond,
-    respondBody(index,body,status=200){requests[index].resolve({ok:status===200,json:async()=>body});},
+    respondBody(index,body,status=200){requests[index].resolve({ok:status===200,json:async()=>({ownerId,...body})});},
+    setOwner(owner){ownerId=owner;changed=true;render();},
     async start(){render();await settle();respond(0,200,0);await settle();},
     async tick(){const callbacks=[...timers.values()];timers.clear();callbacks.forEach(fn=>fn());await settle();},
     stop(){slots.forEach(s=>s?.cleanup?.());},
@@ -118,7 +120,7 @@ test('malformed server reload cannot replace edited input',async()=>{
 });
 
 function draftApiFixture(companyCode,companyName){
-  const sqlite=new DatabaseSync(':memory:'),cache=new Map(),owner=companyCode;
+  const sqlite=new DatabaseSync(':memory:'),cache=new Map(),state={owner:companyCode};
   const profile={id:'00000000-0000-0000-0000-000000000001',revision:3,categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']};
   const DB={prepare(sql){let args=[];const query={bind(...values){args=values;return query;},async run(){return sqlite.exec(sql);},async first(){return sqlite.prepare(sql).get(...args)??null;}};return query;}};
   function load(file){
@@ -126,18 +128,18 @@ function draftApiFixture(companyCode,companyName){
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file+'.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
       exports,Error,Response,TextDecoder,TextEncoder,Uint8Array,Date,process:{env:{NODE_ENV:'production'}},require(name){
         if(name==='cloudflare:workers')return{env:{DB}};
-        if(name==='@/app/chatgpt-auth')return{getWorkspaceOwnerId:async()=>owner,getChatGPTUser:async()=>({verifiedAccess:true,membership:{companyCode,companyName}})};
-        if(name==='@/db/category-profiles')return{getCategoryProfile:async(requestedOwner,id)=>requestedOwner===owner&&id===profile.id?profile:null};
+        if(name==='@/app/chatgpt-auth')return{getWorkspaceOwnerId:async()=>state.owner,getChatGPTUser:async()=>({verifiedAccess:true,membership:{companyCode,companyName}})};
+        if(name==='@/db/category-profiles')return{getCategoryProfile:async(requestedOwner,id)=>requestedOwner===state.owner&&id===profile.id?{...profile,hubSchema:{company:{code:requestedOwner,name:requestedOwner==='A01526306'?'유앤채':'와이홉'}}}:null};
         return load(name.slice(2));
       },
     });return exports;
   }
   const api=load('app/api/intake-draft/route');
-  return{sqlite,profile,async request(options={}){return options.method==='PUT'?api.PUT(new Request('https://example.test/api/intake-draft',{...options,body:options.body})):api.GET();},read:()=>load('db/intake-draft').readIntakeDraft(owner)};
+  return{sqlite,profile,state,async request(options={}){return options.method==='PUT'?api.PUT(new Request('https://example.test/api/intake-draft',{...options,body:options.body})):api.GET();},read:(owner=state.owner)=>load('db/intake-draft').readIntakeDraft(owner)};
 }
 
 for(const [code,name] of [['A01526306','유앤채'],['A01464742','와이홉']])test(`${code}: actual draft API and SQLite recover lost save/read replies before saving later URL edits`,async()=>{
-  const api=draftApiFixture(code,name),f=fixture();
+  const api=draftApiFixture(code,name),f=fixture(code);
   try{
     f.render();await f.settle();f.requests[0].resolve(await api.request());await f.settle();
     const row={id:'input-1',profile:api.profile,url:'https://detail.1688.com/offer/813724060928.html',features:'우드 다리',keywords:'선글라스',status:'draft',message:''};
@@ -161,7 +163,7 @@ for(const [code,name] of [['A01526306','유앤채'],['A01464742','와이홉']])t
 function sqliteRows(sqlite){return sqlite.prepare('SELECT COUNT(*) AS count FROM intake_drafts').get().count;}
 
 for(const [code,name] of [['A01526306','유앤채'],['A01464742','와이홉']])for(const renderBeforeSave of [false,true])test(`${code}: retained save writes the latest URL and goal ${renderBeforeSave?'after':'before'} rendering and only then clears dirty state`,async()=>{
-  const api=draftApiFixture(code,name),f=fixture();
+  const api=draftApiFixture(code,name),f=fixture(code);
   try{
     f.render();await f.settle();f.requests[0].resolve(await api.request());await f.settle();
     const save=f.value.save,row={id:'latest-row',profile:api.profile,url:'https://detail.1688.com/offer/813724060928.html',features:'최신 특징',keywords:'직접 입력',status:'draft',message:''};
@@ -177,7 +179,7 @@ for(const [code,name] of [['A01526306','유앤채'],['A01464742','와이홉']])f
 });
 
 test('a previously queued debounce saves current input while later edits remain dirty through lost-ACK recovery',async()=>{
-  const api=draftApiFixture('A01464742','와이홉'),f=fixture();
+  const api=draftApiFixture('A01464742','와이홉'),f=fixture('A01464742');
   try{
     f.render();await f.settle();f.requests[0].resolve(await api.request());await f.settle();
     const row={id:'timer-row',profile:api.profile,url:'https://detail.1688.com/offer/1.html',features:'이전 특징',keywords:'태그',status:'draft',message:''};
@@ -197,7 +199,7 @@ test('a previously queued debounce saves current input while later edits remain 
 });
 
 test('an unmounted account cannot use retained save, timer or setters to overwrite a later account draft',async()=>{
-  const firstApi=draftApiFixture('A01464742','와이홉'),secondApi=draftApiFixture('A01526306','유앤채'),first=fixture(),second=fixture();
+  const firstApi=draftApiFixture('A01464742','와이홉'),secondApi=draftApiFixture('A01526306','유앤채'),first=fixture('A01464742'),second=fixture('A01526306');
   try{
     first.render();await first.settle();first.requests[0].resolve(await firstApi.request());await first.settle();
     const row={id:'first-account',profile:firstApi.profile,url:'https://detail.1688.com/offer/1.html',features:'첫 계정',keywords:'태그',status:'draft',message:''};
@@ -213,7 +215,7 @@ test('an unmounted account cannot use retained save, timer or setters to overwri
 });
 
 test('confirmed persisted acknowledgement with no newer edit avoids any duplicate PUT',async()=>{
-  const api=draftApiFixture('A01464742','와이홉'),f=fixture();
+  const api=draftApiFixture('A01464742','와이홉'),f=fixture('A01464742');
   try{
     await f.start();f.value.setGoal('work');f.render();await f.tick();
     await api.request(f.requests[1].options);f.requests[1].reject(Error('response lost'));await f.settle();
@@ -222,4 +224,89 @@ test('confirmed persisted acknowledgement with no newer edit avoids any duplicat
     assert.equal(f.value.dirty,false);assert.equal(f.requests.length,4);assert.equal((await api.read()).revision,1);
     assert.equal(f.timers.size,0);
   }finally{f.stop();api.sqlite.close();}
+});
+
+test('an absent workspace owner cannot infer an account from the current cookie or start draft operations',async()=>{
+ const f=fixture(undefined);f.setOwner(undefined);try{
+  f.render();await f.settle();assert.equal(f.requests.length,0);assert.equal(f.value.ready,false);assert.equal(f.value.loading,false);
+  f.value.setRows(()=>[{id:'unbound'}]);f.value.setGoal('work');f.value.load();await f.value.save();await f.tick();
+  assert.equal(f.requests.length,0);assert.equal(f.value.rows.length,0);assert.equal(f.value.dirty,false);assert.match(f.value.message,/계정/);
+ }finally{f.stop();}
+});
+
+for(const responseOwner of ['A01526306',undefined])test(`an initial response with ${responseOwner?'another':'no'} owner cannot restore its pending URL into the old account view`,async()=>{
+ const f=fixture('A01464742');try{
+  const row={id:'other-input',profile:{id:'00000000-0000-0000-0000-000000000001',revision:3},url:'https://detail.1688.com/offer/2.html',features:'다른 회사 입력',keywords:'직접 입력',status:'draft',message:''};
+  f.render();await f.settle();f.respondBody(0,{ownerId:responseOwner,draft:{revision:1,goal:'collect',rows:[row],updatedAt:null}});await f.settle();
+  assert.equal(f.value.ready,false);assert.equal(f.value.goal,'price');assert.equal(f.value.rows.length,0);assert.equal(f.value.autoPaused,true);assert.match(f.value.message,/계정/);
+  await f.value.save();await f.tick();assert.equal(f.requests.length,1);
+ }finally{f.stop();}
+});
+
+const companies=[['A01526306','유앤채'],['A01464742','와이홉']];
+async function seedApiDraft(api,owner,goal='price',rows=[]){
+ api.state.owner=owner;const response=await api.request({method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedOwnerId:owner,expectedRevision:0,goal,rows})});
+ assert.equal(response.status,200);return(await response.json()).draft;
+}
+function draftStorageBytes(api){return JSON.stringify(api.sqlite.prepare('SELECT * FROM intake_drafts ORDER BY owner_id').all());}
+
+for(const [owner,name] of companies)test(`${owner}: a queued removal of completed input cannot overwrite the other company when both saved drafts have revision 1`,async()=>{
+ const other=companies.find(([id])=>id!==owner)[0],api=draftApiFixture(owner,name),f=fixture(owner);try{
+  const first={id:'first-input',profileId:api.profile.id,profileRevision:3,url:'https://detail.1688.com/offer/1.html',features:'첫 회사 입력',keywords:'직접 태그'};
+  const second={...first,id:'second-input',url:'https://detail.1688.com/offer/2.html',features:'다른 회사 입력'};
+  await seedApiDraft(api,other,'collect',[second]);await seedApiDraft(api,owner,'price',[first]);
+  f.render();await f.settle();f.requests[0].resolve(await api.request());await f.settle();
+  f.value.setRows(rows=>rows.map(row=>({...row,status:'saved'})));f.render();const timer=[...f.timers.values()][0];assert.ok(timer);
+  const before=draftStorageBytes(api);api.state.owner=other;timer();f.render();
+  const body=JSON.parse(f.requests[1].options.body);assert.equal(body.expectedOwnerId,owner);assert.equal(body.expectedRevision,1);assert.equal(body.rows.length,0);
+  const rejected=await api.request(f.requests[1].options);assert.equal(rejected.status,409);f.requests[1].resolve(rejected);await f.settle();
+  assert.equal(f.requests[2].options.method,undefined);f.requests[2].resolve(await api.request());await f.settle();
+  assert.equal(draftStorageBytes(api),before,'a stale completed-row removal must preserve both drafts byte for byte');
+  assert.equal(f.value.dirty,true);assert.equal(f.value.autoPaused,true);assert.equal(f.value.rows[0].id,'first-input');assert.equal(f.value.rows[0].status,'saved');assert.match(f.value.message,/계정/);
+  f.value.load();f.render();f.requests[3].resolve(await api.request());await f.settle();
+  assert.equal(f.value.rows[0].id,'first-input');assert.equal(f.value.dirty,true);assert.equal(f.requests.filter(request=>request.options.method==='PUT').length,1);
+ }finally{f.stop();api.sqlite.close();}
+});
+
+for(const [owner,name] of companies)test(`${owner}: lost save ACK cannot reconcile against identical contents belonging to the other company`,async()=>{
+ const other=companies.find(([id])=>id!==owner)[0],api=draftApiFixture(owner,name),f=fixture(owner);try{
+  await seedApiDraft(api,other,'work');api.state.owner=owner;
+  f.render();await f.settle();f.requests[0].resolve(await api.request());await f.settle();
+  f.value.setGoal('work');f.render();await f.tick();const committed=await api.request(f.requests[1].options);assert.equal(committed.status,200);
+  const before=draftStorageBytes(api);api.state.owner=other;f.requests[1].reject(Error('saved response lost'));await f.settle();f.requests[2].resolve(await api.request());await f.settle();
+  assert.equal(f.value.dirty,true);assert.equal(f.value.autoPaused,true);assert.match(f.value.message,/계정/);assert.equal(f.timers.size,0);
+  const retry=f.value.save();f.render();assert.equal(f.requests[3].options.method,undefined);f.requests[3].resolve(await api.request());await retry;await f.settle();
+  assert.equal(f.value.dirty,true);assert.equal(draftStorageBytes(api),before);assert.equal(f.requests.filter(request=>request.options.method==='PUT').length,1);
+  api.state.owner=owner;const recover=f.value.save();f.render();f.requests[4].resolve(await api.request());await recover;await f.settle();
+  assert.equal(f.value.dirty,false);assert.equal(f.value.autoPaused,false);assert.equal(f.requests.filter(request=>request.options.method==='PUT').length,1,'restoring the original account confirms the existing commit without another write');assert.equal(draftStorageBytes(api),before);
+ }finally{f.stop();api.sqlite.close();}
+});
+
+for(const phase of ['load','save','reconcile'])test(`owner prop change aborts a pending ${phase} and ignores late replies and retained handlers`,async()=>{
+ const f=fixture('A01464742');try{
+  f.render();await f.settle();
+  let pendingIndex=0,save,setRows,setGoal,load,timer;
+  if(phase!=='load'){
+   f.respond(0,200,0);await f.settle();f.value.setGoal('work');f.render();timer=[...f.timers.values()][0];
+   ({save,setRows,setGoal,load}=f.value);await f.tick();pendingIndex=1;
+   if(phase==='reconcile'){f.requests[1].reject(Error('lost save response'));await f.settle();pendingIndex=2;}
+  }else({save,setRows,setGoal,load}=f.value);
+  f.setOwner('A01526306');await f.settle();assert.equal(f.requests[pendingIndex].options.signal.aborted,true);
+  const newIndex=f.requests.length-1;assert.notEqual(newIndex,pendingIndex);f.respondBody(newIndex,{ownerId:'A01526306',draft:{revision:0,rows:[],goal:'collect',updatedAt:null}});await f.settle();
+  const count=f.requests.length;await save();setRows(()=>[]);setGoal('transmit');load();timer?.();await f.settle();assert.equal(f.requests.length,count);
+  f.respondBody(pendingIndex,{ownerId:'A01464742',draft:{revision:1,rows:[],goal:'work',updatedAt:null}});await f.settle();
+  assert.equal(f.value.goal,'collect');assert.equal(f.value.dirty,false);assert.equal(f.value.ready,true);assert.equal(f.value.saving,false);
+  f.value.setGoal('work');f.render();await f.tick();const body=JSON.parse(f.requests[count].options.body);assert.equal(body.expectedOwnerId,'A01526306');assert.equal(body.expectedRevision,0);
+  f.respond(count,200,1);await f.settle();assert.equal(f.value.dirty,false);
+ }finally{f.stop();}
+});
+
+test('returning to the original owner still invalidates callbacks from its earlier draft epoch',async()=>{
+ const f=fixture('A01464742');try{
+  await f.start();f.value.setGoal('work');f.render();const old={...f.value},timer=[...f.timers.values()][0];
+  f.setOwner('A01526306');await f.settle();f.respond(1,200,0);await f.settle();
+  f.setOwner('A01464742');await f.settle();f.respond(2,200,0);await f.settle();
+  const count=f.requests.length;old.setGoal('transmit');old.setRows(()=>[]);old.load();await old.save();timer();await f.settle();
+  assert.equal(f.requests.length,count);assert.equal(f.value.goal,'price');assert.equal(f.value.dirty,false);
+ }finally{f.stop();}
 });

@@ -198,7 +198,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [showCancelled, setShowCancelled] = useState(false);
   const [categoryProfiles, setCategoryProfiles] = useState<CategoryProfile[]>([]);
   const categoryProfilesEpochRef=useRef(0);
-  const intakeDraft = useIntakeDraft();
+  const intakeDraft = useIntakeDraft(workspaceOwnerId);
   const { rows: intakeRows, setRows: setIntakeRows, goal: intakeGoal, setGoal: setIntakeGoal } = intakeDraft;
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CategoryProfile|null>(null);

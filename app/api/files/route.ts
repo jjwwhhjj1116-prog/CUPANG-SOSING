@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { imageFileType, imageObjectName, isOwnedImageKey, MAX_IMAGE_BYTES, MAX_IMAGE_MULTIPART_BYTES } from '@/app/image-files';
 import { readBoundedBytes, RequestBodyError } from '@/app/request-body';
 import { labelUploadDigest, labelUploadKey } from '@/app/label-upload-key';
-import { parseProductLabelProofRequest, verifiedProductLabelMetadata } from '@/app/product-label-proof';
+import { parseProductLabelProofRequest, productLabelReceiptFromMetadata, verifiedProductLabelMetadata } from '@/app/product-label-proof';
 import type { ProductLabelsView } from '@/app/product-label';
 import { parseQuotationLabelProofRequest, quotationLabelReceiptFromMetadata, verifiedQuotationLabelMetadata } from '@/app/quotation-label-proof';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
@@ -18,8 +18,9 @@ async function savedLabel(ownerId: string, uploadId: string) {
   if (object.size < 1 || object.size > MAX_IMAGE_BYTES || object.httpMetadata?.contentType !== 'image/png'
     || object.customMetadata?.labelUploadId !== uploadId || !/^[a-f0-9]{64}$/.test(object.customMetadata?.labelBlobSha256 ?? '')) throw new Error('Invalid saved label');
   const quotationLabelProof = quotationLabelReceiptFromMetadata(object.customMetadata);
+  const productLabelProof = productLabelReceiptFromMetadata(object.customMetadata);
   return { key, contentType: 'image/png', size: object.size, sha256: object.customMetadata!.labelBlobSha256,
-    ...(quotationLabelProof ? { quotationLabelProof } : {}) };
+    ...(quotationLabelProof ? { quotationLabelProof } : {}), ...(productLabelProof ? { productLabelProof } : {}) };
 }
 
 export async function GET(request: Request) {
@@ -91,9 +92,11 @@ export async function POST(request: Request) {
     try{proofMetadata=await verifyProof();}catch(cause){return NextResponse.json({error:cause instanceof Error?cause.message:'제품 표시사항 원천이 변경되었습니다.'},{status:409});}
     const sha256 = uploadId === null ? null : await labelUploadDigest(bytes);
     const quotationLabelProof = quotationProof ? quotationLabelReceiptFromMetadata({...proofMetadata,labelUploadId:uploadId,labelBlobSha256:sha256}) : null;
+    const productLabelProof = proof ? productLabelReceiptFromMetadata({...proofMetadata,labelUploadId:uploadId,labelBlobSha256:sha256}) : null;
     const reuse = async (saved: Awaited<ReturnType<typeof savedLabel>>) => {
       if (!saved || saved.sha256 !== sha256 || saved.size !== bytes.byteLength
-        || quotationLabelProof && JSON.stringify(saved.quotationLabelProof) !== JSON.stringify(quotationLabelProof)) {
+        || quotationLabelProof && JSON.stringify(saved.quotationLabelProof) !== JSON.stringify(quotationLabelProof)
+        || productLabelProof && JSON.stringify(saved.productLabelProof) !== JSON.stringify(productLabelProof)) {
         return NextResponse.json({ error: '같은 라벨 번호에 다른 PNG가 저장되어 있습니다. 저장한 라벨을 다시 확인해주세요.' }, { status: 409, headers: { 'cache-control': 'no-store' } });
       }
       // The object lookup is another async step. Reusing its bytes does not
@@ -109,7 +112,7 @@ export async function POST(request: Request) {
     if (!object) throw new Error('R2 did not confirm the upload.');
     if(proof||quotationProof)try{await verifyProof();}catch(cause){return NextResponse.json({error:cause instanceof Error?cause.message:'이미지를 저장하는 동안 표시사항이 변경되었습니다. 원본 파일은 보존됩니다.'},{status:409});}
     return NextResponse.json({ key, url: `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`, contentType: actual.contentType, size: bytes.byteLength,
-      ...(quotationLabelProof ? {quotationLabelProof} : {}) }, { status: 201, headers: { 'cache-control': 'no-store' } });
+      ...(quotationLabelProof ? {quotationLabelProof} : {}), ...(productLabelProof ? {productLabelProof} : {}) }, { status: 201, headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof RequestBodyError) return NextResponse.json({ error: error.message }, { status: error.status });
     return NextResponse.json({ error: '이미지를 저장하지 못했습니다. 저장소 연결을 확인한 후 다시 시도해주세요.' }, { status: 503 });

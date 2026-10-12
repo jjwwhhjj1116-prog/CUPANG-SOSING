@@ -8,7 +8,10 @@ import type { SubmissionIssue } from '@/app/submission-review';
 
 export const PRODUCT_LABEL_PROOF_RECIPE = 'product-label-png-v1';
 export type ProductLabelProofRequest = { productId: string; optionId: string | null; endpoint: string; expectedProductVersion: string; expectedInputFingerprint: string; expectedRevision: number };
+export type ProductLabelReceipt = { recipe: typeof PRODUCT_LABEL_PROOF_RECIPE; productId: string; optionId: string | null; profileId: string | null; planSha256: string; categorySha256: string };
 const digest = (value: unknown) => labelUploadDigest(new TextEncoder().encode(JSON.stringify(value)));
+const identifier = (value: unknown, length: number): value is string => typeof value === 'string' && new RegExp(`^[A-Za-z0-9_-]{1,${length}}$`).test(value);
+const sha256 = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 export function productLabelProofRequest(input: ProductLabelUploadContext): ProductLabelProofRequest {
   return { productId: input.productId, optionId: input.optionId, endpoint: input.endpoint,
     expectedProductVersion: input.view.productVersion, expectedInputFingerprint: input.view.inputFingerprint, expectedRevision: input.view.revision };
@@ -27,13 +30,58 @@ export function parseProductLabelProofRequest(value: unknown): ProductLabelProof
 }
 export async function verifiedProductLabelMetadata(proof: ProductLabelProofRequest, view: ProductLabelsView, uploadId: string): Promise<Record<string,string>> {
   parseProductLabelProofRequest(proof);
+  const selectedProfile = new URL(proof.endpoint, 'https://label.invalid').searchParams.get('profileId');
   if (view.productId !== proof.productId || view.productVersion !== proof.expectedProductVersion || view.inputFingerprint !== proof.expectedInputFingerprint
-    || view.revision !== proof.expectedRevision || await productLabelUploadId({ productId: proof.productId, optionId: proof.optionId, endpoint: proof.endpoint, view }) !== uploadId) throw Error('PNG 생성 후 제품 표시사항 저장값이 변경되었습니다. 최신 값으로 다시 만들어주세요.');
+    || view.revision !== proof.expectedRevision || view.categoryContext.profileId !== null && !identifier(view.categoryContext.profileId,100)
+    || selectedProfile !== null && selectedProfile !== view.categoryContext.profileId
+    || await productLabelUploadId({ productId: proof.productId, optionId: proof.optionId, endpoint: proof.endpoint, view }) !== uploadId) throw Error('PNG 생성 후 제품 표시사항 저장값이 변경되었습니다. 최신 값으로 다시 만들어주세요.');
   return { productLabelRecipe: PRODUCT_LABEL_PROOF_RECIPE, productLabelProductId: proof.productId, productLabelOptionId: proof.optionId ?? '',
-    productLabelProfileId: new URL(proof.endpoint, 'https://label.invalid').searchParams.get('profileId') ?? '',
+    productLabelProfileId: view.categoryContext.profileId ?? '',
     productLabelPlanSha256: await digest(productLabelPlan(view, proof.optionId)),
     productLabelCategorySha256: await digest([view.categoryContext.categoryId,view.categoryContext.categoryPath]),
     productLabelProductVersion: view.productVersion, productLabelSourceFingerprint: view.inputFingerprint, productLabelRevision: String(view.revision) };
+}
+
+/** Only complete, server-marked nine-row PNG evidence grants replacement.
+ * Legacy and manual objects are preserved without guessing their filenames. */
+export function productLabelReceiptFromMetadata(value: unknown): ProductLabelReceipt | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const metadata = value as Record<string,unknown>;
+  if (metadata.productLabelRecipe !== PRODUCT_LABEL_PROOF_RECIPE) return null;
+  if (!identifier(metadata.productLabelProductId,100)
+    || metadata.productLabelOptionId !== '' && !identifier(metadata.productLabelOptionId,80)
+    || metadata.productLabelProfileId !== '' && !identifier(metadata.productLabelProfileId,100)
+    || !sha256(metadata.productLabelPlanSha256) || !sha256(metadata.productLabelCategorySha256)
+    || typeof metadata.productLabelProductVersion !== 'string' || metadata.productLabelProductVersion.length > 30 || !Number.isFinite(Date.parse(metadata.productLabelProductVersion))
+    || !sha256(metadata.productLabelSourceFingerprint)
+    || typeof metadata.productLabelRevision !== 'string' || !/^(?:0|[1-9]\d*)$/.test(metadata.productLabelRevision) || !Number.isSafeInteger(Number(metadata.productLabelRevision))
+    || !sha256(metadata.labelUploadId) || !sha256(metadata.labelBlobSha256)) throw Error('제품 표시사항 PNG의 저장 원천을 확인하지 못했습니다.');
+  return { recipe: PRODUCT_LABEL_PROOF_RECIPE, productId: metadata.productLabelProductId,
+    optionId: metadata.productLabelOptionId === '' ? null : metadata.productLabelOptionId as string,
+    profileId: metadata.productLabelProfileId === '' ? null : metadata.productLabelProfileId as string,
+    planSha256: metadata.productLabelPlanSha256, categorySha256: metadata.productLabelCategorySha256 };
+}
+
+/** The authenticated file route supplies evidence for this owner's exact
+ * upload key. A filename is only a lookup locator, never a replacement proof. */
+export async function readProductLabelReceipt(uploadId: string, request: typeof fetch = fetch) {
+  if (!sha256(uploadId)) throw Error('라벨 업로드 번호를 확인해주세요.');
+  const response = await request(`/api/files?labelUploadId=${uploadId}`, { cache: 'no-store' });
+  const body = await response.json() as { key?: unknown; error?: string; contentType?: unknown; size?: unknown; sha256?: unknown; productLabelProof?: unknown } | null;
+  if (!response.ok) throw Error(body?.error || '저장한 제품 표시사항 파일을 확인하지 못했습니다.');
+  if (!body || Array.isArray(body) || body.key !== null && (typeof body.key !== 'string' || !/^[^/\\\s%?#]+\/quotation-label-[a-f0-9]{64}\.png$/.test(body.key) || body.key.length > 512)) throw Error('저장한 제품 표시사항 파일의 응답을 확인하지 못했습니다.');
+  const key = body.key as string | null;
+  if (key && (!key.endsWith(`/quotation-label-${uploadId}.png`) || body.contentType !== 'image/png' || !Number.isSafeInteger(body.size)
+    || (body.size as number) < 1 || (body.size as number) > 10 * 1024 * 1024 || !sha256(body.sha256))) throw Error('저장한 제품 표시사항 파일의 응답을 확인하지 못했습니다.');
+  let proof: ProductLabelReceipt | null = null;
+  if (Object.hasOwn(body,'productLabelProof')) {
+    const value = body.productLabelProof as ProductLabelReceipt;
+    if (!key || !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(name => !['recipe','productId','optionId','profileId','planSha256','categorySha256'].includes(name))
+      || value.recipe !== PRODUCT_LABEL_PROOF_RECIPE || !identifier(value.productId,100) || value.optionId !== null && !identifier(value.optionId,80)
+      || value.profileId !== null && !identifier(value.profileId,100) || !sha256(value.planSha256) || !sha256(value.categorySha256)) throw Error('제품 표시사항 PNG의 저장 원천 응답을 확인하지 못했습니다.');
+    proof = value;
+  }
+  return { uploadId, key, proof };
 }
 
 /** Compare only server-marked NEW nine-row label plans. Unmarked legacy images,

@@ -41,6 +41,10 @@ for(const [code,name] of [['A01464742','와이홉'],['A01526306','유앤채']])t
   const attach=async()=>attachment.attachProductLabel({...f.input,renderedView:await f.label(),blob:new Blob([png],{type:'image/png'}),uploadedKey:null,onUploaded(){}},f.request);
   await f.saveLabel([{optionId:f.selected,fieldKey:'material',value:'직접 확인한 최초 원료'}]);const old=await attach();await f.saveLabel([{optionId:f.selected,fieldKey:'material',value:'직접 확인한 수정 원료'}]);const fresh=await attach();assert.notEqual(old.key,fresh.key);
   const report=()=>f.h.route(f.base+'/submission-review?profileId='+f.profile.id).then(json),stale=value=>value.issues.filter(issue=>issue.code==='GENERATED_PRODUCT_LABEL_STALE');
+  assert.equal(stale(await report()).length,0);assert.deepEqual(plain((await f.read()).keys),[fresh.key],'same-scope explicit regeneration replaces its old reference immediately');
+  // A user can still deliberately reconnect an older file. Manual exclusion
+  // remains a separate CAS operation, and neither action deletes its history.
+  await f.saveQuote([{optionId:f.selected,fieldKey:'labelImages',value:[old.key,fresh.key].join('\n')}]);
   assert.equal(stale(await report()).length,1);const before=await f.read(),source=plain(f.source()),overrides=plain(before.quotation.overrides);assert.ok(before.keys.includes(old.key));assert.ok(before.keys.includes(fresh.key));
   const saved=await helper.saveProductLabelReferences(f.input,before,before.keys.filter(key=>key!==old.key),f.request);assert.deepEqual(plain(saved.keys),[fresh.key]);assert.equal(stale(await report()).length,0);
   assert.deepEqual(plain(f.source()),source);assert.deepEqual(plain(saved.quotation.overrides.common),overrides.common);for(const [id,values] of Object.entries(overrides.options))if(id!==f.selected)assert.deepEqual(plain(saved.quotation.overrides.options[id]),values);

@@ -349,6 +349,16 @@ export async function createMappedQuotation(input: MappedQuotationInput): Promis
     const headers = xlsxHeaders(inspection, template.sheetName, template.headerRow);
     if (JSON.stringify(headers.map(value => value.trim())) !== JSON.stringify(template.headers)) fail('견적서 원본 머리글과 열 연결이 일치하지 않습니다.');
     if (layout) {
+      // Original required markers remain authoritative when a saved mapping
+      // checkbox is false. Preserve the blank draft and report the violation.
+      const markers = supplierHubRequirementRow(inspection, template.sheetName, template.headerRow);
+      if (!markers) fail('공식 견적서의 필수 항목 표시를 확인하지 못했습니다.');
+      const missing = new Set(report.missingRequired.map(cell => `${cell.row}:${cell.column}`));
+      for (const cell of report.blankCells) if (markers[cell.column - 1]?.trim() === '필수' && !missing.has(`${cell.row}:${cell.column}`)) {
+        report.missingRequired.push(cell); missing.add(`${cell.row}:${cell.column}`);
+      }
+    }
+    if (layout) {
       const categoryColumns = profile.mappings.filter(mapping => mapping.field === 'category').map(mapping => mapping.column);
       if (categoryColumns.length !== 1) fail('공식 견적서는 카테고리 열을 정확히 하나 연결해야 합니다. 카테고리 코드가 빠진 초안은 출력할 수 없습니다.');
       const lists = xlsxChoiceLists(files, inspection, template.sheetName, categoryColumns, input.dataStartRow);

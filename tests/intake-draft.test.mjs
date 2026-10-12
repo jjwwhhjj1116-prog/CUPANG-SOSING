@@ -18,7 +18,8 @@ function fixture(){
   return load(name.slice(2));
  }});cache.set(file,exports);return exports;}
  const api=load('app/api/intake-draft/route');
- return{sqlite,state,api,load,put:body=>api.PUT(new Request('https://example.test/api/intake-draft',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)}))};
+ const rawPut=body=>api.PUT(new Request('https://example.test/api/intake-draft',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)}));
+ return{sqlite,state,api,load,rawPut,put:body=>rawPut({expectedOwnerId:state.owner,...body})};
 }
 const profileId='00000000-0000-0000-0000-000000000001';
 const row={id:'draft-1',profileId,profileRevision:3,url:'아직 입력 중',features:'특징',keywords:'키워드'};
@@ -79,16 +80,16 @@ test('save confirmation requires every input row, category revision and exact ne
  const f=fixture();try{
  const model=f.load('app/intake-draft');
  const savedRow={id:row.id,profile:{id:profileId,revision:row.profileRevision},url:row.url,features:row.features,keywords:row.keywords,status:'draft',message:''};
- const requested=model.intakeDraftBody([savedRow],'price',2);
+ const requested=model.intakeDraftBody([savedRow],'price',2,'alice');
  const draft={revision:3,rows:[savedRow],goal:'price',updatedAt:'2026-10-01T00:00:00.000Z'};
- assert.equal(model.confirmIntakeDraftSave({draft},requested).revision,3);
+ assert.equal(model.confirmIntakeDraftSave({ownerId:'alice',draft},requested).revision,3);
  for(const mismatch of [
   {...draft,revision:2},{...draft,revision:4},{...draft,rows:[]},{...draft,goal:'work'},
   ...['id','url','features','keywords'].map(key=>({...draft,rows:[{...savedRow,[key]:savedRow[key]+'changed'}]})),
   {...draft,rows:[{...savedRow,profile:{id:'00000000-0000-0000-0000-000000000002',revision:2}}]},
   {...draft,rows:[{...savedRow,profile:{id:profileId,revision:4}}]},
   {...draft,rows:[{...savedRow,status:'saved'}]},
- ])assert.throws(()=>model.confirmIntakeDraftSave({draft:mismatch},requested));
+ ])assert.throws(()=>model.confirmIntakeDraftSave({ownerId:'alice',draft:mismatch},requested));
  }finally{f.sqlite.close();}
 });
 
@@ -111,5 +112,30 @@ test('verified prior and exact legacy snapshots preserve their identity; hybrid 
  assert.equal(select(requested,f.state.profile,{...previous,message:'카테고리 설정 변경됨',profileSnapshotVerified:true}).profile.categoryId,'old-code');
  for(const bad of [{...previous,message:'카테고리 설정 변경됨'},{...previous,message:undefined},{...previous,id:'different'},{...previous,status:'saved'},{...previous,profile:{...previous.profile,revision:1}},{...previous,profile:{...previous.profile,id:'other'}}])assert.equal(select(requested,f.state.profile,bad),null);
  assert.equal(JSON.stringify(previous),before);
+ }finally{f.sqlite.close();}
+});
+
+test('draft ownership is explicit in responses and a missing or changed proof rejects an otherwise valid empty-row save before touching storage',async()=>{
+ const f=fixture();try{
+ const initial=await(await f.api.GET()).json();assert.equal(initial.ownerId,'alice');
+ const saved=await f.put({expectedRevision:0,goal:'price',rows:[row]});assert.equal(saved.status,200);assert.equal((await saved.json()).ownerId,'alice');
+ const before=JSON.stringify(f.sqlite.prepare('SELECT * FROM intake_drafts ORDER BY owner_id').all());
+ for(const proof of [undefined,'bob']){
+  const reads=f.state.reads;const response=await f.rawPut({expectedRevision:1,goal:'price',rows:[],...(proof===undefined?{}:{expectedOwnerId:proof})});
+  assert.equal(response.status,409);assert.equal((await response.json()).code,'INTAKE_DRAFT_OWNER_CHANGED');assert.equal(f.state.reads,reads);
+ }
+ for(const proof of [null,'',' alice','alice\u0000',1])assert.equal((await f.rawPut({expectedOwnerId:proof,expectedRevision:1,goal:'price',rows:[]})).status,400);
+ assert.equal(JSON.stringify(f.sqlite.prepare('SELECT * FROM intake_drafts ORDER BY owner_id').all()),before);
+ }finally{f.sqlite.close();}
+});
+
+test('matching draft contents and next revision cannot acknowledge a missing, malformed or different account',()=>{
+ const f=fixture();try{
+ const model=f.load('app/intake-draft');const requested=model.intakeDraftBody([],'price',1,'alice');
+ const draft={revision:2,rows:[],goal:'price',updatedAt:null};
+ assert.equal(model.confirmIntakeDraftSave({ownerId:'alice',draft},requested).revision,2);
+ for(const ownerId of [undefined,null,'','bob','alice ','alice\u0000'])assert.throws(()=>model.confirmIntakeDraftSave({ownerId,draft},requested),/계정/);
+ assert.throws(()=>model.confirmIntakeDraftSave({ownerId:'alice',draft},model.intakeDraftBody([],'price',1)),/계정/);
+ assert.throws(()=>model.readIntakeDraftResponse({ownerId:'bob',draft},'alice'),/계정/);
  }finally{f.sqlite.close();}
 });
