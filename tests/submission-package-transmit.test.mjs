@@ -13,12 +13,36 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 const settle=async()=>{for(let index=0;index<8;index++)await new Promise(resolve=>setImmediate(resolve));};
 const fingerprint='a'.repeat(64);
 const companies=[{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}];
+
+// An isolated complete synthetic draft through the real API/SQLite/R2 and ZIP
+// preparation bridge. No browser is opened and no bytes are delivered to Hub.
+async function reviewedPackageFixture(company){
+ const api=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
+ try{
+  const fields=['skuId','categoryId',...api.load('app/quotation-schema.ts').getQuotationSchema('80719').fields.map(field=>field.id)],workbook=new Uint8Array(quotationWorkbook(fields)),sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex'),storageKey=api.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');
+  await api.bindings.FILES.put(storageKey,workbook,{customMetadata:{sha256,format:'xlsx'}});
+  const profile=await api.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'최종 수동 검토 전송 시험',categoryId:'80719',categoryPath:api.context.category.categoryPath,
+   template:{name:'synthetic-explicit-transmit.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
+  api.context.category=profile;api.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(api.context),'job');await api.intake();
+  const product=api.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id,images=JSON.parse(product.image_keys),content=(await json(await api.route(base+'/content'))).content;
+  await json(await api.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{label:{model:'SYNTHETIC-MANUAL-MODEL',material:'검토한 합성 재질'},assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]}}}}));
+  const view=await json(await api.route(base+'/quotation-fields'));
+  await json(await api.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
+   {fieldKey:'handlingReason',optionId:null,value:'해당사항없음'},{fieldKey:'packagedWeightG',optionId:null,value:'420'},{fieldKey:'packagedDimensionsMm',optionId:null,value:'100*200*300'},{fieldKey:'storageMaterial',optionId:null,value:''},
+  ]}}));
+  const documents=await json(await api.route(base+'/legal-documents'));await json(await api.route(base+'/legal-documents',{method:'PATCH',body:{expectedRevision:documents.revision,applicability:'not-applicable'}}));
+  const preview=await json(await api.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));assert.equal(preview.submissionReview.errorCount,0,JSON.stringify(preview.submissionReview.issues));
+  const retained=()=>JSON.stringify(['products','product_content','product_options','product_quotation_fields','collection_context','category_profiles'].map(table=>api.sqlite.prepare('SELECT * FROM '+table).all()));
+  const ui=submissionPackageUI({route:api.route,productId:product.id,profileId:profile.id});await ui.click('견적서 + 첨부 파일 준비');ui.choose();assert.equal(ui.button('등록 전송').props.disabled,false);
+  return{api,product,base,profile,preview,ui,retained,json,workbook,storageKey};
+ }catch(cause){api.close();throw cause;}
+}
 function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=false,receiptStoreError=false,conflict=false,uncertain=false,preflightRejected=false,validationComplete=false,notStarted=false,manualWait=false,issued=false,registrationPatch,editDuringExport=false,company={code:'A01464742',name:'와이홉'},savedSubmission,resultPatch,recoveryError=false,legalDocuments,attached=false,resumeStates=[],missedLookup=false,holdRetry=false,history,localHistoryBlocked=false,historyLookupError=false}={}){
  const slots=[],calls=[],modules=new Map();let cursor=0,sourceChanged=false;
  let clock=0,editNext=false,resumeRetry;
  const preview={fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],report:{company,productId:'p',categoryId:'80719',profileId:'profile',rowCount:1,warnings:[],submissionReady:false,...(legalDocuments?{legalDocuments}:{})},submissionReview:{productId:'p',categoryId:'80719',inputFingerprint:fingerprint,submissionReady:false,transport:'not-connected',errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]}};
- const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
- let editRecovery=false,lookupError=false,holdLookup=false,resumeLookup;
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(effect,deps){const i=cursor++;if(!(i in slots)||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){slots[i]?.cleanup?.();slots[i]={deps,cleanup:effect()};}}};
+ let editRecovery=false,lookupError=false,holdLookup=false,resumeLookup,historyReadError=false;
  const bridge={getSupplierHubProductHistory:async()=>{if(historyLookupError)throw Error('이전 Chrome 이력 조회 실패');return {records:[],blocked:localHistoryBlocked};},
   checkSupplierHubExtension:async(_signal,direct)=>calls.push(['check',direct]),prepareSupplierHubHandoff:async()=>calls.push(['prepare']),
   getSupplierHubSubmission:async identity=>{calls.push(['recover',identity]);if(recoveryError)throw Error('전송 기록 읽기 실패');if(editRecovery)sourceChanged=true;return savedSubmission||{attempt:null,result:null};},
@@ -43,7 +67,7 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
    if(url.includes('supplier-hub-receipt')){
     if(init?.method!=='POST'&&receiptReadNetworkError)throw Error('network disconnected');
     if(init?.method!=='POST'&&receiptReadStatus!==200)return Response.json({error:'결과 조회 실패',code:receiptReadCode},{status:receiptReadStatus});
-    if(url.includes('mode=history'))return Response.json({history:history??{schemaVersion:1,productId:'p',blocked:false,receipts:[]}});
+    if(url.includes('mode=history'))return historyReadError?Response.json({error:'상품 전체 이력 조회 실패'},{status:503}):Response.json({history:history??{schemaVersion:1,productId:'p',blocked:false,receipts:[]}});
     return receiptStoreError&&init?.method==='POST'?Response.json({error:'결과 보관 일시 실패'},{status:503}):Response.json(init?.method==='POST'?{saved:true,fingerprint,registered:false}:{receipt:null});
    }
    const body=JSON.parse(init.body);calls.push(['fetch',url,body]);
@@ -66,8 +90,99 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
  const Component=load('app/components/submission-package.tsx').SubmissionPackage;
  const render=()=>{cursor=0;return Component({productId:'p',profileId:'profile',categoryId:'80719',onInspect(){}});};
  const button=text=>nodes(render()).find(node=>node.type==='button'&&node.props.children===text);
- return {render,calls,button,resumeRetry(){resumeRetry?.();},remount(){slots.length=0;},changeSource(){sourceChanged=true;},editDuringNextLookup(){editNext=true;},editDuringRecovery(){editRecovery=true;},recover(){recoveryError=false;receiptReadStatus=200;receiptReadNetworkError=false;},failReceiptRead(){receiptReadStatus=503;},failChromeRecovery(){recoveryError=true;},setSavedSubmission(value){savedSubmission=value;},failLookup(){lookupError=true;},holdLookup(){holdLookup=true;},resumeLookup(){holdLookup=false;resumeLookup?.();},setResultPatch(value){resultPatch=value;},complete(){validationComplete=true;issued=true;},hideSkus(){issued=false;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
+ const unmount=()=>{for(const slot of slots)slot?.cleanup?.();};
+ return {render,calls,button,unmount,resumeRetry(){resumeRetry?.();},remount(){unmount();slots.length=0;},changeSource(){sourceChanged=true;},editDuringNextLookup(){editNext=true;},editDuringRecovery(){editRecovery=true;},recover(){recoveryError=false;receiptReadStatus=200;receiptReadNetworkError=false;},failReceiptRead(){receiptReadStatus=503;},failWholeHistory(){historyReadError=true;},recoverWholeHistory(){historyReadError=false;},failChromeRecovery(){recoveryError=true;},setSavedSubmission(value){savedSubmission=value;},failLookup(){lookupError=true;},holdLookup(){holdLookup=true;},resumeLookup(){holdLookup=false;resumeLookup?.();},setResultPatch(value){resultPatch=value;},complete(){validationComplete=true;issued=true;},hideSkus(){issued=false;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});}};
 }
+
+for(const company of companies)test(`agreements withdrawn during the final source await prevent dispatch of the reviewed package (${company.code})`,async()=>{
+ for(const index of [0,1,2]){
+  const f=await reviewedPackageFixture(company);try{
+   const before=f.retained(),tree=f.ui.render(),checkbox=nodes(tree).filter(node=>node.type==='input')[index],gate=f.ui.deferNext('source');
+   f.ui.button('등록 전송').props.onClick();await gate.arrived;
+   checkbox.props.onChange({target:{checked:false}});gate.release();await f.ui.idle();
+   assert.equal(f.ui.dispatches.length,0,'a valid source response cannot authorize withdrawn current agreements');assert.equal(f.retained(),before);
+   f.ui.choose();await f.ui.click('등록 전송');assert.equal(f.ui.dispatches.length,1,'fresh manual consent and click can send the unchanged quotation once');
+   const sent=f.ui.calls.find(call=>call.action==='transmit');assert.deepEqual(sent.files.company,company);assert.equal(sent.identity.fingerprint,f.preview.fingerprint);assert.equal(f.retained(),before);assert.ok(!f.api.network.includes('supplier.coupang.com'));
+  }finally{f.api.close();}
+ }
+});
+
+for(const company of companies)test(`document saves during the final source await block stale transmission and handoff dispatch (${company.code})`,async()=>{
+ for(const label of ['등록 전송','확장에 첨부 파일 준비']){
+  const f=await reviewedPackageFixture(company);try{
+   const tree=f.ui.render(),gate=f.ui.deferNext('source');f.ui.button(label).props.onClick();await gate.arrived;
+   const documents=await f.json(await f.api.route(f.base+'/legal-documents'));await f.json(await f.api.route(f.base+'/legal-documents',{method:'PATCH',body:{expectedRevision:documents.revision,applicability:'not-applicable'}}));
+   const retained=f.retained();nodes(tree).find(node=>node.type==='legal-documents').props.onSaved();gate.release();await f.ui.idle();
+   assert.equal(f.ui.dispatches.length,0,'an old source response cannot dispatch after the document save invalidates the preview');assert.equal(f.retained(),retained);
+   await f.ui.click('견적서 + 첨부 파일 준비');assert.equal(f.ui.button('등록 전송').props.disabled,true);f.ui.choose();await f.ui.click('등록 전송');
+   const sent=f.ui.calls.filter(call=>call.action==='transmit');assert.equal(sent.length,1);assert.notEqual(sent[0].identity.fingerprint,f.preview.fingerprint);assert.deepEqual(sent[0].files.company,company);assert.equal(f.retained(),retained);assert.ok(!f.api.network.includes('supplier.coupang.com'));
+  }finally{f.api.close();}
+ }
+});
+
+for(const company of companies)test(`withdrawn current agreements block a retained send handler before any export or dispatch (${company.code})`,async()=>{
+ const f=await reviewedPackageFixture(company);try{
+  const before=f.retained();
+  for(const index of [0,1,2]){
+   f.ui.choose();const rendered=f.ui.render(),send=nodes(rendered).find(node=>node.type==='button'&&node.props.children==='등록 전송').props.onClick,checkbox=nodes(rendered).filter(node=>node.type==='input')[index],start=f.ui.calls.length;
+   checkbox.props.onChange({target:{checked:false}});send();await f.ui.idle();
+   assert.ok(f.ui.calls.slice(start).every(call=>!['export','transmit','prepare'].includes(call.action)),'a captured checked choice does not override the current unchecked intent');
+   assert.equal(f.retained(),before);assert.equal(f.ui.button('등록 전송').props.disabled,true);
+  }
+  f.ui.choose();await f.ui.click('등록 전송');const sent=f.ui.calls.filter(call=>call.action==='transmit');assert.equal(sent.length,1);assert.deepEqual(sent[0].files.company,company);assert.equal(sent[0].files.profileId,f.profile.id);assert.equal(sent[0].identity.fingerprint,f.preview.fingerprint);assert.equal(sent[0].identity.productId,f.product.id);assert.equal(sent[0].identity.categoryId,'80719');assert.equal(sent[0].files.quotation[0].name,f.preview.filename);assert.equal(sent[0].files.includedOptions,6);
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0].agreements)),{priceData:true,labelBusinessContact:true,legalDocumentsNotApplicable:true});assert.equal(f.retained(),before);assert.deepEqual(f.api.objects.get(f.storageKey),f.workbook);assert.ok(!f.api.network.includes('supplier.coupang.com'));
+ }finally{f.api.close();}
+});
+
+for(const company of companies)test(`document saves invalidate old package actions and issue navigation before React commits (${company.code})`,async()=>{
+ const f=await reviewedPackageFixture(company);try{
+  const tree=f.ui.render(),oldActions=['등록 전송','확장에 첨부 파일 준비','견적서 파일 다운로드','확인한 견적서 + 첨부 ZIP 다운로드'].map(label=>nodes(tree).find(node=>node.type==='button'&&node.props.children===label).props.onClick),oldInspect=nodes(tree).find(node=>node.type==='issues').props.onInspect;
+  const documents=await f.json(await f.api.route(f.base+'/legal-documents'));await f.json(await f.api.route(f.base+'/legal-documents',{method:'PATCH',body:{expectedRevision:documents.revision,applicability:'not-applicable'}}));
+  const before=f.retained(),start=f.ui.calls.length;nodes(tree).find(node=>node.type==='legal-documents').props.onSaved();
+  for(const action of oldActions){action();await f.ui.idle();}oldInspect({optionId:null,fieldId:'handlingReason'});
+  assert.equal(f.ui.calls.length,start,'invalidated preview callbacks do not export, query receipt stores, transmit, or reopen an obsolete field');assert.equal(f.retained(),before);
+  assert.equal(f.ui.button('등록 전송'),undefined);await f.ui.click('견적서 + 첨부 파일 준비');assert.equal(f.ui.button('등록 전송').props.disabled,true,'a new document revision requires fresh manual consent');
+  const changed=await f.json(await f.api.route(f.base+'/quotation',{method:'POST',body:{action:'preview',profileId:f.profile.id}}));assert.notEqual(changed.fingerprint,f.preview.fingerprint);
+  f.ui.choose();await f.ui.click('등록 전송');const sent=f.ui.calls.filter(call=>call.action==='transmit');assert.equal(sent.length,1);assert.equal(sent[0].identity.fingerprint,changed.fingerprint);assert.equal(sent[0].files.quotation[0].name,changed.filename);assert.deepEqual(sent[0].files.company,company);assert.equal(f.retained(),before);assert.ok(!f.api.network.includes('supplier.coupang.com'));
+ }finally{f.api.close();}
+});
+
+for(const company of companies)test(`pausing a dispatched quotation cannot reactivate a retained send or preparation handler (${company.code})`,async()=>{
+ const h=harness({company,manualWait:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();
+ const oldSend=h.button('등록 전송').props.onClick,oldPrepare=h.button('확장에 첨부 파일 준비').props.onClick;oldSend();await settle();assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+ h.button('결과 확인 일시정지').props.onClick();await settle();const start=h.calls.length;
+ oldPrepare();await settle();oldSend();await settle();
+ assert.equal(h.calls.length,start,'the original attempt remains locked after result tracking is paused');assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);assert.equal(h.button('전송 시도됨 · 검증 결과 확인').props.disabled,true);
+ h.button('전송 결과 계속 확인').props.onClick();await settle();h.button('결과 확인 일시정지').props.onClick();await settle();assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+});
+
+for(const company of companies)test(`failed receipt recovery invalidates an earlier checked send handler even with the same rebuilt fingerprint (${company.code})`,async()=>{
+ const h=harness({company});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();const oldSend=h.button('등록 전송').props.onClick;
+ h.failReceiptRead();h.failChromeRecovery();const tree=h.render();
+ // Recovery is the same explicit action used when the cached checked flag is
+ // invalidated. A retained callback must not keep its old successful check.
+ const prepare=nodes(tree).find(node=>node.type==='button'&&node.props.children==='견적서 + 첨부 파일 준비');prepare.props.onClick();await settle();
+ const start=h.calls.length;oldSend();await settle();assert.equal(h.calls.length,start);assert.equal(h.calls.some(([name])=>name==='transmit'||name==='prepare'),false);
+});
+
+for(const company of companies)test(`closed package handlers stay inactive after reopening the same company draft (${company.code})`,async()=>{
+ const h=harness({company});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();
+ const oldSend=h.button('등록 전송').props.onClick,oldPrepare=h.button('확장에 첨부 파일 준비').props.onClick,start=h.calls.length;
+ h.unmount();oldSend();oldPrepare();await settle();assert.equal(h.calls.length,start);
+ h.remount();h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();const restored=h.calls.length;
+ oldSend();oldPrepare();await settle();assert.equal(h.calls.length,restored,'remounting never revives callbacks from the previous component');
+ assert.equal(h.button('등록 전송').props.disabled,true);h.choose();h.button('등록 전송').props.onClick();await settle();assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);h.unmount();
+});
+
+for(const company of companies)test(`failed whole-history recheck never reuses an earlier verified history for a new send (${company.code})`,async()=>{
+ const h=harness({company,recoveryError:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();
+ const retainedRecover=h.button('전송 기록 다시 확인').props.onClick;h.recover();retainedRecover();await settle();h.choose();assert.equal(h.button('등록 전송').props.disabled,false);
+ const retainedSend=h.button('등록 전송').props.onClick;h.failWholeHistory();retainedRecover();await settle();
+ assert.equal(h.button('등록 전송').props.disabled,true,'individual empty receipt stores cannot replace an unavailable whole-product history');
+ const start=h.calls.length;retainedSend();await settle();assert.ok(h.calls.slice(start).every(([name,,body])=>name!=='transmit'&&!(name==='fetch'&&body.action==='export')));assert.equal(h.calls.some(([name])=>name==='transmit'),false);
+ h.recoverWholeHistory();retainedRecover();await settle();assert.equal(h.button('등록 전송').props.disabled,false,'a fresh complete history scan permits an explicit manual send');
+ h.button('등록 전송').props.onClick();await settle();assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+});
 
 test('rejected files and SKU rows unlock document correction while the original quotation stays blocked from retransmission',async()=>{
  for(const company of companies)for(const rejectedFile of [true,false]){

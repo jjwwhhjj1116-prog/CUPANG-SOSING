@@ -13,7 +13,8 @@ const profile=(id='a',revision=1,categoryId='80719')=>({id,revision,categoryId,n
 function harness(){
  const slots=[],effects=[],calls=[];let cursor=0,pending=[];
  let props={products:[product],profiles:[profile(),profile('b')],onEdit(){}};
- const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useEffect(fn,deps){const i=cursor++;if(!effects[i]||deps.some((value,n)=>!Object.is(value,effects[i].deps[n])))pending.push(()=>{effects[i]?.cleanup?.();effects[i]={deps,cleanup:fn()};});}};
+ const effect=(fn,deps)=>{const i=cursor++;if(!effects[i]||deps.some((value,n)=>!Object.is(value,effects[i].deps[n])))pending.push(()=>{effects[i]?.cleanup?.();effects[i]={deps,cleanup:fn()};});};
+ const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useMemo(fn,deps){const i=cursor++,old=slots[i];if(!old||deps.some((value,n)=>!Object.is(value,old.deps[n])))slots[i]={deps,value:fn()};return slots[i].value;},useEffect:effect,useLayoutEffect:effect};
  function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,AbortController,fetch:(url,init)=>new Promise(resolve=>calls.push({url,signal:init.signal,resolve})),require(name){if(name==='react')return hooks;if(name==='@/app/components/submission-package')return{SubmissionPackage:'package'};if(name==='@/app/components/quotation-review-issues')return{QuotationReviewIssues:'issues'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
  const Component=load('app/components/submission-review-panel.tsx').SubmissionReviewPanel;
  function render(changes={}){props={...props,...changes};cursor=0;pending=[];const tree=Component(props);pending.forEach(fn=>fn());return tree;}
@@ -98,4 +99,46 @@ test('explicit category ignores unrelated profile changes but invalidates on its
 test('product save invalidates review; equivalent reordered profile lists do not restart requests',async()=>{
  const h=harness();h.render();h.respond(0);await settle();h.render({profiles:[profile('b'),profile()]});assert.equal(h.calls.length,1);
  assert.equal(packages(h.render({products:[{...product,updated_at:'v2'}]})).length,0);assert.equal(h.calls.length,2);
+});
+
+for(const company of ['A01464742','A01526306'])test(`selecting another category immediately invalidates old inspection and edit callbacks (${company})`,async()=>{
+ const h=harness(),edits=[];
+ h.render({initialProfileId:'a',profiles:[{...profile(),name:company},{...profile('b',1,'77442'),name:company+' 다른 분류'}],onEdit:(...args)=>edits.push(args)});
+ h.respond(0);await settle();const tree=h.render();
+ const inspect=nodes(tree).find(node=>node.type==='issues').props.onInspect;
+ const packageInspect=packages(tree)[0].props.onInspect;
+ const edit=nodes(tree).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick;
+ nodes(tree).find(node=>node.type==='select').props.onChange({target:{value:'b'}});
+ inspect({optionId:'old-option',fieldId:'material'});packageInspect('a',{optionId:'old-option',fieldId:'mainImage',categoryId:'80719'});edit();
+ assert.equal(edits.length,0,'the old category must not reopen after a different category was selected');
+ const pending=h.render();assert.equal(packages(pending).length,0);assert.equal(h.calls.length,2);
+ h.respond(1,'77442');await settle();const next=h.render();assert.equal(packages(next).length,1);
+ nodes(next).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick();
+ assert.equal(JSON.stringify(edits),JSON.stringify([['p1','b',{optionId:null,fieldId:'category',categoryId:'77442'}]]));
+});
+
+for(const company of ['A01464742','A01526306'])test(`rechecking, changing product version or returning to the old category never revives an old inspection (${company})`,async()=>{
+ const h=harness(),edits=[];h.render({initialProfileId:'a',onEdit:(...args)=>edits.push(args)});h.respond(0);await settle();
+ const old=nodes(h.render()).find(node=>node.type==='issues').props.onInspect;
+ h.select('b');h.respond(1);await settle();h.select('a');h.respond(2);await settle();
+ old({optionId:'old-option',fieldId:'salePrice'});assert.equal(edits.length,0,'A → B → A requires the newly checked A result');
+ const checked=h.render(),oldEdit=nodes(checked).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick;
+ const currentInspect=nodes(checked).find(node=>node.type==='issues').props.onInspect;
+ nodes(checked).find(node=>node.type==='button'&&node.props.children==='저장된 자료 다시 검사').props.onClick();
+ currentInspect({optionId:'old-option',fieldId:'brand'});oldEdit();assert.equal(edits.length,0,'rechecking immediately invalidates earlier findings');
+ h.render();h.respond(3);await settle();
+ const latestEdit=nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick;
+ h.render({products:[{...product,updated_at:'saved-edit-'+company}]});latestEdit();assert.equal(edits.length,0);
+ h.respond(4);await settle();nodes(h.render()).find(node=>node.type==='issues').props.onInspect({optionId:'current-option',fieldId:'material'});
+ assert.equal(JSON.stringify(edits),JSON.stringify([['p1','a',{optionId:'current-option',fieldId:'material',categoryId:'80719'}]]));
+});
+
+for(const company of ['A01464742','A01526306'])test(`a rapid A to B to A selection keeps the last choice and obtains a fresh review (${company})`,async()=>{
+ const h=harness(),edits=[];h.render({initialProfileId:'a',onEdit:(...args)=>edits.push(args)});h.respond(0);await settle();
+ const tree=h.render(),change=nodes(tree).find(node=>node.type==='select').props.onChange,inspect=nodes(tree).find(node=>node.type==='issues').props.onInspect;
+ change({target:{value:'b'}});change({target:{value:'a'}});inspect({optionId:'old-option',fieldId:'material'});
+ const next=h.render();assert.equal(nodes(next).find(node=>node.type==='select').props.value,'a');assert.equal(packages(next).length,0);
+ assert.equal(edits.length,0);assert.equal(new URL(h.calls.at(-1).url,'https://example.com').searchParams.get('profileId'),'a');
+ h.respond(h.calls.length-1);await settle();nodes(h.render()).find(node=>node.type==='button'&&node.props.children==='견적서 수정하기').props.onClick();
+ assert.equal(JSON.stringify(edits),JSON.stringify([['p1','a',{optionId:null,fieldId:'category',categoryId:'80719'}]]));
 });

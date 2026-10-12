@@ -31,16 +31,16 @@ const digest = async (value: string) => Array.from(new Uint8Array(await crypto.s
 /** The server rederives proof from owned bytes. The client verifies the ACK
  * before a caller may replace a queue row's original category selection. */
 export async function refreshCategoryDefinition(source: CategoryProfile, captured: HubSchemaSnapshot, cache: CategoryDefinitionRefreshRequestCache,
-  options: { signal: AbortSignal; fetcher?: typeof fetch; newKey?: () => string }): Promise<CategoryProfile> {
+  options: { signal: AbortSignal; fetcher?: typeof fetch; newKey?: () => string; expectedOwnerId?: string }): Promise<CategoryProfile> {
   const { signal } = options; signal.throwIfAborted();
   const schema = validateHubSchemaSnapshot(captured, source.categoryId, source.categoryPath);
   if (!categoryDefinitionRequiresFork(source, schema)) throw Error('상세 양식 정의가 변경되지 않았습니다. 저장한 설정을 다시 확인해주세요.');
-  const signature = canonical([source.id, source.revision, definition(schema)]);
+  const signature = canonical([source.id, source.revision, definition(schema), options.expectedOwnerId ?? null]);
   if (cache.current?.signature !== signature) cache.current = { signature, id: (options.newKey ?? (() => crypto.randomUUID()))(),
     url: `/api/category-profiles/${encodeURIComponent(source.id)}/refresh-definition`, body: JSON.stringify({ expectedRevision: source.revision, hubSchema: schema }) };
   const pending = cache.current;
   const response = await (options.fetcher ?? fetch)(pending.url, { method: 'POST', signal,
-    headers: { 'content-type': 'application/json', 'Idempotency-Key': pending.id }, body: pending.body });
+    headers: { 'content-type': 'application/json', 'Idempotency-Key': pending.id, ...(options.expectedOwnerId !== undefined ? { 'X-YOOFAM-Workspace-Owner': options.expectedOwnerId } : {}) }, body: pending.body });
   const body = await readCategoryJsonResponse<{ profile?: CategoryProfile; sourceProfileId?: string; sourceRevision?: number; error?: string }>(response, '새 상세 양식 연결');
   signal.throwIfAborted();
   if (!response.ok) throw Error(body.error || '새 상세 양식 연결을 확인하지 못했습니다. 기존 선택과 입력은 유지됩니다.');

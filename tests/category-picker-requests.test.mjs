@@ -12,7 +12,7 @@ const native=createRequire(import.meta.url);
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));};
 const pending=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve};};
-function harness(request,existing=false,{readProfiles=async()=>Response.json({profiles:[]}),readSchema=async()=>undefined,readTemplate=async()=>({template:{name:'auto.xlsx'},mappings:[{column:0,field:'title'}]})}={}){
+function harness(request,existing=false,{initialProfiles,readProfiles=async()=>Response.json({profiles:[]}),readSchema=async()=>undefined,readTemplate=async()=>({template:{name:'auto.xlsx'},mappings:[{column:0,field:'title'}]})}={}){
  const slots=[],cleanup=[],calls=[],selected=[];let index=0,first=true,closed=false,late=0;
  const choice={key:'saved',profileId:existing?'saved':null,path:['test'],categoryId:'80719',isLeaf:true};
  const fetcher=(url,init)=>{calls.push({...init,url});return !existing&&!init?.method?readProfiles(url,init):request(url,init);};
@@ -34,9 +34,11 @@ function harness(request,existing=false,{readProfiles=async()=>Response.json({pr
   if(name==='@/app/supplier-hub-catalog')return{loadLiveHubCategorySchema:readSchema,loadLiveHubCategoryTemplate:readTemplate};
   if(name==='@/app/category-catalog')return{categoryChoices:profiles=>[...profiles.map(profile=>({...choice,key:profile.id,profileId:profile.id,path:profile.categoryPath,categoryId:profile.categoryId})),...(existing?[]:[choice])],canConfirmCategory:choice=>Boolean(choice),categoryAdvancedSeed:()=>({}),categoryChoicesAtPath:(choices,path)=>choices.filter(choice=>JSON.stringify(choice.path)===JSON.stringify(path)),categoryProfilesForChoice:(profiles,target)=>profiles.filter(profile=>profile.categoryId===target.categoryId&&JSON.stringify(profile.categoryPath)===JSON.stringify(target.path)),categoryLevel:()=>[],categoryObservationScope:{},categoryProfileForChoice:()=>({categoryId:'80719',template:null,mappings:[]}),searchCategoryChoices:choices=>choices};
   if(name==='@/app/official-workbook-evidence')return mappingHarness.load('app/official-workbook-evidence.ts');
+  if(name==='@/app/category-selection-confirmation')return mappingHarness.load('app/category-selection-confirmation.ts');
+  if(name==='@/app/workspace-settings-scope')return mappingHarness.load('app/workspace-settings-scope.ts');
   return native(name);
  }});
- const render=()=>{index=0;const tree=exports.CategoryPicker({profiles:existing?[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1}]:[],selectedId:'saved',onSelected:p=>selected.push(p),onAdvanced(){}});first=false;return tree;};
+ const render=()=>{index=0;const tree=exports.CategoryPicker({profiles:initialProfiles??(existing?[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1}]:[]),selectedId:'saved',onSelected:p=>selected.push(p),onAdvanced(){}});first=false;return tree;};
  const confirm=()=>nodes(nodes(render()).find(n=>n.props?.className==='modal-actions')).find(n=>n.type==='button').props.onClick;
  return{calls,selected,render,confirm,chooseLive(){nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice({...choice,key:'live',supplierHub:{trail:[],ownerId:'owner',company:{code:'A01464742',name:'와이홉'}}});},close(){closed=true;cleanup.forEach(fn=>fn?.());},get late(){return late;}};
 }
@@ -126,7 +128,8 @@ test('failed or cancelled detailed schema retrieval never writes a profile or en
 test('category confirmation creates one profile and reports one selection despite repeated clicks',async()=>{
  const wait=pending(),h=harness(()=>wait.promise),click=h.confirm();click();click();assert.equal(h.calls.length,1);
  wait.resolve(Response.json({profile:{id:'new',categoryId:'80719',categoryPath:['test'],revision:1}}));await settle();click();assert.equal(h.calls.length,2);assert.equal(h.calls.filter(call=>call.method==='POST').length,1);assert.equal(h.selected.length,1);
- const saved=harness(async()=>Response.json({profiles:[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1,template:{id:'latest-template'}}]}),true),choose=saved.confirm();choose();choose();await settle();assert.equal(saved.selected.length,1);assert.equal(saved.calls.length,1);assert.equal(saved.calls[0].method,undefined);assert.equal(saved.selected[0].revision,1);assert.equal(saved.selected[0].template.id,'latest-template');
+ const savedProfile={id:'saved',categoryId:'80719',categoryPath:['test'],revision:1,template:{id:'latest-template'}};
+ const saved=harness(async()=>Response.json({profiles:[savedProfile]}),true,{initialProfiles:[savedProfile]}),choose=saved.confirm();choose();choose();await settle();assert.equal(saved.selected.length,1);assert.equal(saved.calls.length,1);assert.equal(saved.calls[0].method,undefined);assert.equal(saved.selected[0].revision,1);assert.equal(saved.selected[0].template.id,'latest-template');
 });
 
 test('a newly available exact category profile retains its linked quotation instead of creating a blank replacement',async()=>{
@@ -233,4 +236,37 @@ test('failed, malformed or cancelled fresh lookup never creates a replacement',a
  const wait=pending(),h=harness(async()=>{throw Error('No new profile should be written');},false,{readProfiles:()=>wait.promise});
  h.confirm()();h.close();assert.equal(h.calls[0].signal.aborted,true);
  wait.resolve(Response.json({profiles:[ready]}));await settle();assert.equal(h.selected.length,0);assert.equal(h.late,0);assert.equal(h.calls.length,1);
+});
+
+test('invalid saved Hub definitions cannot fall back to a code-only category and open URL intake',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test'],...currentDraftRules},original={id:'saved',name:'검토 설정',categoryId:'80719',categoryPath:['test'],revision:1,hubSchema:snapshot,template:null,mappings:[]};
+ for(const corrupt of [value=>{value.hubSchema.categoryId='77442';},value=>{value.hubSchema.categoryPath=['different'];},value=>{value.hubSchema.metadata.displayCategoryCode='77442';},value=>{value.hubSchema.company={code:'A01464742',name:'유앤채'};},value=>{value.hubSchema.schemaString='{invalid';}]){
+  const broken=structuredClone(original);corrupt(broken);const before=JSON.stringify(original);
+  const h=harness(async()=>Response.json({profiles:[broken]}),true,{initialProfiles:[original]});h.confirm()();await settle();
+  assert.equal(h.selected.length,0,'a malformed saved schema cannot become a code-only draft');h.confirm()();await settle();assert.equal(h.selected.length,0);
+  assert.equal(h.calls.filter(call=>call.method).length,0);assert.equal(JSON.stringify(original),before);
+ }
+});
+
+test('same-revision saved definition drift cannot silently replace selected company defaults or a reviewed workbook',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test'],...currentDraftRules},original={id:'saved',name:'검토 설정',categoryId:'80719',categoryPath:['test'],revision:1,hubSchema:snapshot,template:{name:'original.xlsx'},mappings:[{column:0,field:'constant',constant:'직접 검토값',required:false}]};
+ for(const corrupt of [value=>{value.hubSchema.company={code:'A01526306',name:'유앤채'};},value=>{delete value.hubSchema;},value=>{delete value.hubSchema.settingsInitialization;},value=>{value.hubSchema.metadata.version++;},value=>{value.template.name='replacement.xlsx';},value=>{value.mappings[0].constant='다른 기본값';}]){
+  const changed=structuredClone(original);corrupt(changed);const before=JSON.stringify(original);
+  const h=harness(async()=>Response.json({profiles:[changed]}),true,{initialProfiles:[original]});h.confirm()();await settle();
+  assert.equal(h.selected.length,0,'same revision is not proof of an unchanged saved form');h.confirm()();await settle();assert.equal(h.selected.length,0,'an unacknowledged replacement must not become the next selection source');
+  assert.equal(h.calls.filter(call=>call.method).length,0);assert.equal(JSON.stringify(original),before);
+ }
+});
+
+test('a live leaf requires its schema response and cannot create a generic fallback profile',async()=>{
+ const h=harness(async(_url,init)=>Response.json({profile:{...JSON.parse(init.body),id:'new',categoryPath:['test'],revision:1}}),false,{readSchema:async()=>undefined});
+ h.chooseLive();await settle();assert.equal(h.selected.length,0);assert.equal(h.calls.length,0,'do not POST a code-only replacement when the official schema is absent');
+});
+
+test('malformed fresh profile identities are not absence evidence for a blank replacement',async()=>{
+ const valid={id:'ready',categoryId:'80719',categoryPath:['test'],revision:1};
+ for(const profile of [{...valid,categoryPath:null},{...valid,categoryPath:[]},{...valid,categoryPath:[' test']},{...valid,categoryId:null},{...valid,revision:0}]){
+  const h=harness(async()=>Response.json({profile:{id:'new',categoryId:'80719',categoryPath:['test'],revision:1}}),false,{readProfiles:async()=>Response.json({profiles:[profile]})});
+  h.confirm()();await settle();assert.equal(h.selected.length,0);assert.equal(h.calls.filter(call=>call.method==='POST').length,0);assert.doesNotThrow(()=>h.render());
+ }
 });

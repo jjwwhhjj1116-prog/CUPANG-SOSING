@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {categoryPickerUI} from './helpers/category-picker.mjs';
 import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
@@ -82,5 +85,138 @@ test('a legacy profile without a recorded company retains its manually connected
   assert.equal(picker.selected[0].id,old.id);assert.equal(picker.selected[0].revision,old.revision+1);
   assert.deepEqual(picker.selected[0].template,connection.template);assert.deepEqual(picker.selected[0].mappings,connection.mappings);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM category_profiles').get().n,1);
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)test(`malformed cached category identities cannot create replacement profiles or new URL jobs (${company.code})`,async()=>{
+ const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const snapshot={...hubSchemaSnapshot(company),draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'},connection=await template(h,company);
+  const original=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'원래 검토 설정',categoryId:snapshot.categoryId,categoryPath:schemaPath,hubSchema:snapshot,...connection});
+  const api=h.load('app/api/category-profiles/route.ts'),choice={key:'selected-live',categoryId:snapshot.categoryId,path:schemaPath,isLeaf:true,supplierHub:{trail:[],ownerId:'owner',company}};
+  const stored=()=>JSON.stringify({profiles:h.sqlite.prepare('SELECT * FROM category_profiles').all(),jobs:h.sqlite.prepare('SELECT * FROM collection_jobs').all(),context:h.sqlite.prepare('SELECT * FROM collection_context').all(),objects:[...h.objects].map(([key,bytes])=>[key,Array.from(bytes)])});
+  const before=stored();
+  for(const corrupt of [value=>{value.hubSchema.categoryPath=['다른 시험 분류'];},value=>{value.hubSchema.metadata.displayCategoryCode='991235';},value=>{value.hubSchema.company={code:company.code,name:'잘못된 회사명'};},value=>{value.categoryPath=null;}]){
+   const picker=categoryPickerUI(async(path,init)=>{
+    const response=await api[init?.method??'GET'](new Request('https://app.test'+path,init));
+    if(init?.method)return response;const result=await response.json();result.profiles=result.profiles.map(profile=>profile.id===original.id?structuredClone(original):profile);corrupt(result.profiles[0]);return Response.json(result);
+   },{catalog:{loadLiveHubCategorySchema:async()=>snapshot}});
+   await picker.chooseLive(choice);assert.equal(picker.selected.length,0,JSON.stringify(picker.alerts()));assert.ok(picker.calls.every(call=>call.method==='GET'));
+   assert.equal(stored(),before,'malformed list data cannot overwrite or replace the owned profile, company context or original template bytes');picker.close();
+  }
+  const picker=categoryPickerUI((path,init)=>api[init?.method??'GET'](new Request('https://app.test'+path,init)),{catalog:{loadLiveHubCategorySchema:async()=>snapshot}});
+  await picker.chooseLive(choice);assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));assert.equal(picker.selected[0].id,original.id);assert.equal(stored(),before);
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)test(`manual saved category without Hub evidence retains its template and captured company when entering URL draft (${company.code})`,async()=>{
+ const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const connection=await template(h,company),categoryPath=['주방용품','주방수납/정리','주방수납바구니/바스켓'];
+  const original=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'직접 연결한 수동 설정',categoryId:'80719',categoryPath,...connection});
+  const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(original.id)),objects=JSON.stringify([...h.objects].map(([key,bytes])=>[key,Array.from(bytes)])),api=h.load('app/api/category-profiles/route.ts'),settingsApi=h.load('app/api/settings/route.ts');
+  const picker=categoryPickerUI((path,init)=>path==='/api/settings'?settingsApi.GET():api[init?.method??'GET'](new Request('https://app.test'+path,init)),{workspaceOwnerId:'owner',catalog:{loadLiveHubCategorySchema:async()=>assert.fail('a manually saved choice does not invent live Hub evidence')}});
+  await picker.chooseCode('80719');assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));const selected=picker.selected[0];assert.equal(selected.id,original.id);assert.equal(selected.hubSchema,undefined);assert.deepEqual(selected.template,connection.template);assert.deepEqual(selected.mappings,connection.mappings);assert.ok(picker.calls.every(call=>call.method==='GET'));
+  const queued=await json(await h.load('app/api/collection-jobs/route.ts').POST(new Request('https://app.test/api/collection-jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({urls:['https://detail.1688.com/offer/813724060929.html'],goal:'price',profileId:selected.id,expectedProfileRevision:selected.revision})})));
+  const context=queued.jobs[0].context;assert.equal(context.category.id,original.id);assert.equal(context.category.categoryId,'80719');assert.deepEqual(context.category.categoryPath,categoryPath);assert.deepEqual(context.company,company);assert.equal(context.category.hubSchema,undefined);assert.deepEqual(context.category.template,connection.template);assert.deepEqual(context.category.mappings,connection.mappings);
+  assert.equal(picker.calls.filter(call=>call.path==='/api/settings').length,2,'manual drafts remain usable with a verified current owner and approved company');
+  assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(original.id)),before);assert.equal(JSON.stringify([...h.objects].map(([key,bytes])=>[key,Array.from(bytes)])),objects);picker.close();
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)test(`saved category belonging to the other approved company cannot open a URL draft (${company.code})`,async()=>{
+ const other=schemaCompanies.find(item=>item.code!==company.code),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const old=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'기존 회사 저장 양식',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(other),...await template(h,other)});
+  const profilesApi=h.load('app/api/category-profiles/route.ts'),settingsApi=h.load('app/api/settings/route.ts'),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());
+  assert.deepEqual((await json(await settingsApi.GET())).scope,{ownerId:'owner',company},'this failure case must have a valid current approved account, not an authentication failure');
+  const picker=categoryPickerUI((path,init)=>path==='/api/settings'?settingsApi.GET():profilesApi[init?.method??'GET'](new Request('https://app.test'+path,init)),{profiles:[old],selectedId:old.id,workspaceOwnerId:'owner'});
+  await picker.confirm();assert.equal(picker.selected.length,0,'a valid stored schema from the old company cannot be selected under the current approved company');
+  assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all()),before);assert.ok(picker.calls.every(call=>call.method==='GET'));picker.close();
+ }finally{h.close();}
+});
+
+function scopedRoutes(h,state){
+ const auth={getWorkspaceOwnerId:async()=>state.owner,getChatGPTUser:async()=>{const email=state.company.code==='A01526306'?'jwhj1116@kakao.com':'unari8484@gmail.com';return{userId:state.owner,email,verifiedAccess:true,membership:{id:state.owner,email,status:'approved',role:state.company.code==='A01526306'?'admin':'member',companyCode:state.company.code,companyName:state.company.name}};}};
+ function route(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,URL,URLSearchParams,Response,Request,Date,TextEncoder,TextDecoder,Uint8Array,process:{env:{NODE_ENV:'production'}},require(name){if(name==='@/app/chatgpt-auth')return auth;if(name==='next/server')return{NextResponse:Response};if(name==='cloudflare:workers')return{env:h.bindings};assert.ok(name.startsWith('@/'),name);return h.load(name.slice(2)+'.ts');}});return exports;}
+ return{profiles:route('app/api/category-profiles/route.ts'),settings:route('app/api/settings/route.ts'),fork:route('app/api/category-profiles/[id]/refresh-definition/route.ts')};
+}
+const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
+const waitFor=async predicate=>{const deadline=Date.now()+5000;while(!predicate()){if(Date.now()>deadline)throw Error('Scoped category request timeout');await new Promise(resolve=>setTimeout(resolve,1));}};
+
+for(const company of schemaCompanies)test(`an owner prop change aborts the previous category request and excludes its retained callbacks (${company.code})`,async()=>{
+ const other=schemaCompanies.find(value=>value.code!==company.code),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const store=h.load('db/category-profiles.ts'),first=await store.createCategoryProfile('first-owner',{name:'첫 회사 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),template:null,mappings:[]}),second=await store.createCategoryProfile('second-owner',{name:'두 번째 회사 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(other),template:null,mappings:[]});
+  const state={owner:'first-owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles ORDER BY id').all());let held,oldSignal,pause=true;
+  const choice=(owner,company)=>({key:'live-'+owner,categoryId:'991234',path:schemaPath,isLeaf:true,supplierHub:{trail:[],ownerId:owner,company}});
+  const picker=categoryPickerUI(async(path,init)=>{
+   if(path==='/api/settings'){const result=await api.settings.GET();if(pause){pause=false;oldSignal=init.signal;return new Promise(resolve=>{held=()=>resolve(result);});}return result;}
+   return api.profiles[init?.method??'GET'](new Request('https://app.test'+path,init));
+  },{workspaceOwnerId:'first-owner',profiles:[first],selectedId:first.id,catalog:{loadLiveHubCategorySchema:async value=>value.supplierHub.company.code===company.code?first.hubSchema:second.hubSchema}});
+  const oldTree=nodes(picker.render()),oldConfirm=oldTree.find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick,oldChoose=oldTree.find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice;
+  const pending=picker.chooseLive(choice('first-owner',company));await waitFor(()=>Boolean(held));state.owner='second-owner';state.company=other;picker.setProps({workspaceOwnerId:'second-owner',profiles:[second],selectedId:second.id});
+  assert.equal(oldSignal.aborted,true);held();await pending;assert.equal(picker.selected.length,0);
+  const count=picker.calls.length;oldConfirm();oldChoose(choice('first-owner',company));await new Promise(resolve=>setImmediate(resolve));assert.equal(picker.calls.length,count);
+  await picker.chooseLive(choice('second-owner',other));assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));assert.equal(picker.selected[0].id,second.id);assert.deepEqual(picker.selected[0].hubSchema.company,other);
+  state.owner='first-owner';state.company=company;picker.setProps({workspaceOwnerId:'first-owner',profiles:[first],selectedId:first.id});const backCount=picker.calls.length;oldConfirm();oldChoose(choice('first-owner',company));await new Promise(resolve=>setImmediate(resolve));assert.equal(picker.calls.length,backCount,'returning to the previous owner cannot reactivate its older selection epoch');
+  await picker.chooseLive(choice('first-owner',company));assert.equal(picker.selected.length,2);assert.equal(picker.selected[1].id,first.id);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles ORDER BY id').all()),before);picker.close();
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)test(`the approved company is rechecked after a delayed saved-profile lookup (${company.code})`,async()=>{
+ const other=schemaCompanies.find(value=>value.code!==company.code),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'저장된 현재 회사 양식',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),template:null,mappings:[]}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());let release;
+  const picker=categoryPickerUI(async(path,init)=>{if(path==='/api/settings')return api.settings.GET();const result=await api.profiles.GET(new Request('https://app.test'+path,init));return new Promise(resolve=>{release=()=>resolve(result);});},{profiles:[profile],selectedId:profile.id,workspaceOwnerId:'owner'});
+  const pending=picker.confirm();await waitFor(()=>Boolean(release));state.company=other;release();await pending;
+  assert.equal(picker.selected.length,0);assert.ok(picker.alerts().some(message=>String(message).includes('승인 회사가 변경')));assert.equal(picker.calls.filter(call=>call.path==='/api/settings').length,2);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all()),before);picker.close();
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)test(`strict effect replay retains current owner selection while rejecting callbacks from the previous mount (${company.code})`,async()=>{
+ const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'현재 회사 검토 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),template:null,mappings:[]}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());
+  const picker=categoryPickerUI((path,init)=>path==='/api/settings'?api.settings.GET():api.profiles[init?.method??'GET'](new Request('https://app.test'+path,init)),{workspaceOwnerId:'owner',profiles:[profile],selectedId:profile.id});
+  const oldConfirm=nodes(picker.render()).find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick;
+  picker.replayEffects();oldConfirm();await new Promise(resolve=>setImmediate(resolve));assert.equal(picker.calls.length,0,'cleanup invalidates a retained callback even when the owner does not change');
+  await picker.confirm();assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));assert.equal(picker.selected[0].id,profile.id);assert.deepEqual(picker.selected[0].hubSchema.company,company);
+  assert.equal(picker.calls.filter(call=>call.path==='/api/settings').length,2);assert.ok(picker.calls.every(call=>call.method==='GET'));assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all()),before);picker.close();
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)test(`missing or malformed account scope cannot promote a saved Hub form into a URL draft (${company.code})`,async()=>{
+ const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'보존할 현재 회사 양식',categoryId:'991234',categoryPath:schemaPath,hubSchema:hubSchemaSnapshot(company),template:null,mappings:[]}),state={owner:'owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());
+  for(const scope of [undefined,{ownerId:'other-owner',company},{ownerId:'owner',company:{code:company.code,name:'잘못된 회사명'}},{ownerId:'owner',company:null}]){
+   let corrupt=true;
+   const picker=categoryPickerUI(async(path,init)=>{if(path==='/api/settings'){const response=await api.settings.GET();if(!corrupt)return response;return Response.json({...await response.json(),scope});}return api.profiles[init?.method??'GET'](new Request('https://app.test'+path,init));},{workspaceOwnerId:'owner',profiles:[profile],selectedId:profile.id});
+   await picker.confirm();assert.equal(picker.selected.length,0,JSON.stringify(scope));assert.ok(picker.calls.every(call=>call.method==='GET'));assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all()),before);
+   corrupt=false;await picker.confirm();assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));assert.equal(picker.selected[0].id,profile.id);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all()),before);picker.close();
+  }
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)test(`a changed auth scope after the lookup cannot create a generic profile in another workspace (${company.code})`,async()=>{
+ const other=schemaCompanies.find(value=>value.code!==company.code),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const state={owner:'first-owner',company},api=scopedRoutes(h,state),before=JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all());let release;
+  const picker=categoryPickerUI(async(path,init)=>{if(path==='/api/settings')return api.settings.GET();if(!init?.method){const result=await api.profiles.GET(new Request('https://app.test'+path,init));return new Promise(resolve=>{release=()=>resolve(result);});}assert.equal(init.headers['X-YOOFAM-Workspace-Owner'],'first-owner');return api.profiles[init.method](new Request('https://app.test'+path,init));},{workspaceOwnerId:'first-owner'});
+  const pending=picker.chooseCode('80719');await waitFor(()=>Boolean(release));state.owner='second-owner';state.company=other;release();await pending;
+  assert.equal(picker.selected.length,0);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles').all()),before,'the server must reject a changed owner before a category write as well as before URL intake');assert.deepEqual(picker.calls.filter(call=>call.method!=='GET').map(call=>call.method),['POST']);picker.close();
+ }finally{h.close();}
+});
+
+for(const company of schemaCompanies)for(const operation of ['PUT','fork'])test(`picker ${operation} carries the selected owner through an auth change at mutation dispatch (${company.code})`,async()=>{
+ const other=schemaCompanies.find(value=>value.code!==company.code),h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
+  const snapshot={...hubSchemaSnapshot(company),metadata:{displayCategoryCode:'991234',kanCategoryId:3000,scopeType:'Retail_Categorized_Single',version:190}},raw=JSON.parse(snapshot.schemaString);raw.properties.productPage.properties.basicAttributes.properties.modelNumber.maxLength=12;
+  const target=operation==='PUT'?{...snapshot,draftInitialization:'couplus-required-v1',inputBindings:'couplus-paths-v1',settingsInitialization:'couplus-options-v1'}:{...snapshot,schemaString:JSON.stringify(raw),metadata:{...snapshot.metadata,version:191}};
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('first-owner',{name:'원래 회사 수동 검토 설정',categoryId:'991234',categoryPath:schemaPath,hubSchema:snapshot,template:null,mappings:[]}),state={owner:'first-owner',company},api=scopedRoutes(h,state);
+  const stored=()=>JSON.stringify({profiles:h.sqlite.prepare('SELECT * FROM category_profiles ORDER BY id').all(),jobs:h.sqlite.prepare('SELECT * FROM collection_jobs').all(),context:h.sqlite.prepare('SELECT * FROM collection_context').all()}),before=stored();let release,pause=true;
+  const picker=categoryPickerUI(async(path,init)=>{
+   if(path==='/api/settings')return api.settings.GET();if(!init?.method)return api.profiles.GET(new Request('https://app.test'+path,init));
+   assert.equal(init.headers['X-YOOFAM-Workspace-Owner'],'first-owner','both refresh paths must send the scope captured before reading the form');
+   if(pause){pause=false;await new Promise(resolve=>{release=resolve;});}
+   const request=new Request('https://app.test'+path,init);return operation==='PUT'?api.profiles.PUT(request):api.fork.POST(request,{params:Promise.resolve({id:profile.id})});
+  },{workspaceOwnerId:'first-owner',profiles:[profile],catalog:{loadLiveHubCategorySchema:async()=>target}});
+  const choice={key:'live-current',categoryId:'991234',path:schemaPath,isLeaf:true,supplierHub:{trail:[],ownerId:'first-owner',company}},pending=picker.chooseLive(choice);await waitFor(()=>Boolean(release));state.owner='second-owner';state.company=other;release();await pending;
+  assert.equal(picker.selected.length,0);assert.equal(stored(),before,'owner mismatch must preserve both companies and original queued contexts');
+  state.owner='first-owner';state.company=company;await picker.chooseLive(choice);assert.equal(picker.selected.length,1,JSON.stringify(picker.alerts()));assert.deepEqual(picker.selected[0].hubSchema.company,company);assert.equal(picker.selected[0].hubSchema.schemaString,target.schemaString);
+  assert.equal(picker.selected[0].id===profile.id,operation==='PUT');if(operation==='fork')assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(profile.id)),JSON.stringify(JSON.parse(before).profiles[0]));
+  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM category_profiles WHERE owner_id='second-owner'").get().n,0);picker.close();
  }finally{h.close();}
 });

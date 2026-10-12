@@ -7,11 +7,12 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 
 /** Actual picker, observed catalog and paginated reader. No real browser or Hub is used. */
-export function categoryPickerUI(request,{catalog}={}){
- const slots=[],modules=new Map(),selected=[],calls=[],cleanups=[];let cursor=0,firstRender=true;
+export function categoryPickerUI(request,{catalog,profiles=[],selectedId='',workspaceOwnerId}={}){
+ const slots=[],modules=new Map(),selected=[],calls=[],effects=[];let cursor=0,changed=true,props={profiles,selectedId,workspaceOwnerId};
  const fetcher=async(path,init)=>{calls.push({path,method:init?.method??'GET'});return request(path,init);};
- const hooks={useMemo:fn=>fn(),useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},
-  useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(effect){if(firstRender){const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup);}}};
+ const hooks={useMemo:fn=>fn(),useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>{const next=typeof value==='function'?value(slots[index]):value;if(!Object.is(next,slots[index])){slots[index]=next;changed=true;}}];},
+  useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useEffect(effect,deps){const index=cursor++,previous=slots[index];if(!previous||!deps||deps.some((value,i)=>!Object.is(value,previous.deps?.[i]))){slots[index]={deps,effect,cleanup:previous?.cleanup};effects.push(()=>{previous?.cleanup?.();slots[index].cleanup=effect();});}}};
+ hooks.useLayoutEffect=hooks.useEffect;
  function load(file){
   if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,
@@ -24,12 +25,12 @@ export function categoryPickerUI(request,{catalog}={}){
    }});return exports;
  }
  const Component=load('app/components/category-picker.tsx').CategoryPicker;
- const render=()=>{cursor=0;const tree=Component({profiles:[],selectedId:'',onSelected:profile=>selected.push(profile),onAdvanced(){}});firstRender=false;return tree;};
- const close=()=>{for(const cleanup of cleanups.splice(0))cleanup();};
+ const render=()=>{let tree,turns=0;do{changed=false;cursor=0;tree=Component({...props,onSelected:profile=>selected.push(profile),onAdvanced(){}});while(effects.length)effects.shift()();if(++turns>20)throw Error('Category fixture render loop');}while(changed);return tree;};
+ const close=()=>{for(const slot of slots)slot?.cleanup?.();};
  const settle=async()=>{const deadline=Date.now()+5000;while(nodes(render()).some(node=>node.props?.className==='category-picker'&&node.props['aria-busy'])){
   if(Date.now()>deadline)throw Error('Category lookup timeout');await new Promise(resolve=>setTimeout(resolve,1));
  }};
- return {render,selected,calls,close,reopen(){close();slots.length=0;firstRender=true;},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async chooseLive(choice){
+ return {render,selected,calls,close,replayEffects(){for(const slot of slots)if(slot?.effect){slot.cleanup?.();slot.cleanup=slot.effect();}return render();},reopen(){close();slots.length=0;},setProps(patch){props={...props,...patch};render();},alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children),async confirm(){nodes(render()).find(node=>node.type==='button'&&node.props.children==='선택 완료 · URL 입력').props.onClick();await settle();},async chooseLive(choice){
   nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice(choice);
   await settle();
  },async chooseCode(code){

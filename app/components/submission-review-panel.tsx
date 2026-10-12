@@ -2,7 +2,7 @@
 
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CategoryProfile } from '@/app/category-profiles';
 import type { SubmissionReview } from '@/app/submission-review';
 import { QuotationReviewIssues } from '@/app/components/quotation-review-issues';
@@ -22,6 +22,9 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
     .map(profile=>[profile.id,profile.revision,profile.categoryId]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
   const productKey=JSON.stringify(products.map(product=>[product.id,product.updated_at]));
   const requestKey=JSON.stringify([targetKey,productKey,profileId,profileKey,run]);
+  const context=useMemo(()=>({key:requestKey}),[requestKey]);
+  const currentContext=useRef<typeof context|null>(context);
+  useLayoutEffect(()=>{currentContext.current=context;return()=>{currentContext.current=null;};},[context]);
   const results=snapshot.key===requestKey?snapshot.results:[];
   const busy=products.length>0&&(snapshot.key!==requestKey||!snapshot.finished);
   useEffect(()=>{
@@ -36,20 +39,24 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
           if(!response.ok)throw new Error(body && typeof body === 'object' && 'error' in body && typeof body.error === 'string' ? body.error : '검사 실패');
           result={id,report:validateSubmissionReviewResponse(body,id,profileId||null)};
         }catch(error){result={id,error:error instanceof Error?error.message:'검사 실패'};}
-        if(!controller.signal.aborted)setSnapshot(current=>({key:requestKey,results:[...(current.key===requestKey?current.results:[]),result],finished:false}));
+        if(!controller.signal.aborted&&currentContext.current===context)setSnapshot(current=>({key:requestKey,results:[...(current.key===requestKey?current.results:[]),result],finished:false}));
       }
     }
-    void Promise.all(Array.from({length:Math.min(3,ids.length)},()=>worker())).finally(()=>{if(!controller.signal.aborted)setSnapshot(current=>({key:requestKey,results:current.key===requestKey?current.results:[],finished:true}));});
+    void Promise.all(Array.from({length:Math.min(3,ids.length)},()=>worker())).finally(()=>{if(!controller.signal.aborted&&currentContext.current===context)setSnapshot(current=>({key:requestKey,results:current.key===requestKey?current.results:[],finished:true}));});
     return()=>controller.abort();
-  },[targetKey,profileId,requestKey]);
+  },[targetKey,profileId,requestKey,context]);
+  function editCurrent(id:string,selectedProfileId?:string,target?:QuotationNavigationTarget) {
+    if(currentContext.current!==context||!products.some(product=>product.id===id))return;
+    onEdit(id,selectedProfileId,target);
+  }
   const safeUrl=(value:string)=>{try{const url=new URL(value);return ['http:','https:'].includes(url.protocol)?url.href:undefined;}catch{return undefined;}};
   return <section className="panel-stack" aria-busy={busy}>
     <p>선택한 상품 {products.length}건의 저장된 견적 자료를 검사합니다. 수정·확인 후 각 상품의 등록 전송을 실행하세요.</p>
     <details><summary>Supplier Hub 실제 등록 순서</summary><ol><li>최신 공식 견적 Excel을 준비합니다.</li><li>견적서에 적힌 파일명과 일치하는 상품 이미지, 제품 필수 표시사항 라벨을 각각 첨부합니다.</li><li>상품에 필요한 법적 서류와 동의 내용을 확인한 뒤 파일 검증을 진행합니다.</li><li>검증 결과를 확인하고 등록 상태를 추적합니다.</li></ol><p>2026-09-23 로그인된 대량 등록 화면 기준입니다. 앱에 저장한 이미지 참조가 Supplier Hub에 업로드되었다는 뜻은 아닙니다.</p><a href="https://supplier.coupang.com/qvt/registration" target="_blank" rel="noreferrer">Supplier Hub 대량 등록 화면 열기</a></details>
     {!products.length&&<p role="status">작업 보드에서 검사할 상품을 선택한 뒤 등록 전송을 눌러주세요.</p>}
-    <label className="field"><span>검사에 적용할 카테고리</span><select value={profileId} onChange={event=>setProfileId(event.target.value)}><option value="">상품 수집 시 선택한 카테고리</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId||'코드 미입력'}</option>)}</select></label>
+    <label className="field"><span>검사에 적용할 카테고리</span><select value={profileId} onChange={event=>{currentContext.current=null;setProfileId(event.target.value);setRun(value=>value+1);}}><option value="">상품 수집 시 선택한 카테고리</option>{profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name} · {profile.categoryId||'코드 미입력'}</option>)}</select></label>
     <small>검사에 선택한 카테고리를 견적 수정 화면에도 이어서 적용합니다.</small>
-    <button type="button" className="btn ghost" disabled={busy||!products.length} onClick={()=>setRun(value=>value+1)}>저장된 자료 다시 검사</button>
+    <button type="button" className="btn ghost" disabled={busy||!products.length} onClick={()=>{if(busy||!products.length||currentContext.current!==context)return;currentContext.current=null;setRun(value=>value+1);}}>저장된 자료 다시 검사</button>
     {busy&&<p role="status">검사 중 · {results.length}/{products.length}건</p>}
     {products.map(product=>{
       const result=results.find(item=>item.id===product.id); const report=result?.report;
@@ -60,11 +67,11 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
           <p>{report.categoryPath.join(' › ')||'카테고리 미선택'} · 포함 옵션 {report.includedOptions}개</p>
           <strong>입력 오류 {report.errorCount}개 · 증빙 확인 {report.reviewCount}개</strong>
           <small>검사 시각: {new Date(report.checkedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} (한국시간)</small>
-          <details><summary>수정·확인할 항목 보기</summary><QuotationReviewIssues key={requestKey} issues={report.issues} omittedIssueCount={report.omittedIssueCount} disabled={false} onInspect={target=>onEdit(product.id,profileId||undefined,{...target,categoryId:report.categoryId})}/></details>
+          <details><summary>수정·확인할 항목 보기</summary><QuotationReviewIssues key={requestKey} issues={report.issues} omittedIssueCount={report.omittedIssueCount} disabled={false} onInspect={target=>editCurrent(product.id,profileId||undefined,{...target,categoryId:report.categoryId})}/></details>
           <details><summary>검사 범위</summary><ul>{report.limits.map(limit=><li key={limit}>{limit}</li>)}</ul></details>
-          <SubmissionPackage key={JSON.stringify([requestKey,report.fingerprint])} productId={product.id} profileId={profileId} categoryId={report.categoryId} onReceiptSaved={onReceiptSaved} onInspect={(resolvedProfileId,target)=>onEdit(product.id,resolvedProfileId,target)}/>
+          <SubmissionPackage key={JSON.stringify([requestKey,report.fingerprint])} productId={product.id} profileId={profileId} categoryId={report.categoryId} onReceiptSaved={onReceiptSaved} onInspect={(resolvedProfileId,target)=>editCurrent(product.id,resolvedProfileId,target)}/>
         </>}
-        <button type="button" className="btn primary" onClick={()=>onEdit(product.id,profileId||undefined,report?{optionId:null,fieldId:'category',categoryId:report.categoryId}:undefined)}>견적서 수정하기</button>
+        <button type="button" className="btn primary" onClick={()=>editCurrent(product.id,profileId||undefined,report?{optionId:null,fieldId:'category',categoryId:report.categoryId}:undefined)}>견적서 수정하기</button>
       </article>;
     })}
   </section>;

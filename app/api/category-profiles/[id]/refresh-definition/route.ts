@@ -11,6 +11,7 @@ import {templateKey,TemplateValidationError} from '@/db/category-templates';
 import {inspectXlsx,xlsxHeaders} from '@/app/xlsx-template';
 import {getCategoryProfile,forkCategoryProfileDefinition} from '@/db/category-profiles';
 import {readBoundedJson,RequestBodyError} from '@/app/request-body';
+import {CategoryProfileOwnerProofError,validateCategoryProfileOwnerProof} from '@/app/category-profile-owner-proof';
 
 const headers={'cache-control':'no-store'};
 const failure=(error:string,status:number)=>NextResponse.json({error},{status,headers});
@@ -56,6 +57,9 @@ async function refreshedTemplate(ownerId:string,source:CategoryProfileInput,snap
 export async function POST(request:Request,context:{params:Promise<{id:string}>}){
  const user=await getChatGPTUser(),company=user?.verifiedAccess?approvedSupplierHubCompany(user.membership):null;
  if(!company)return failure('로그인 회원의 승인된 회사정보가 필요합니다.',403);
+ let ownerId:string;
+ try{ownerId=await getWorkspaceOwnerId();validateCategoryProfileOwnerProof(request,ownerId);}
+ catch(error){return failure(error instanceof CategoryProfileOwnerProofError?error.message:'카테고리 설정 계정을 확인하지 못했습니다.',error instanceof CategoryProfileOwnerProofError?error.status:503);}
  let id:string,expectedRevision:number,snapshot:HubSchemaSnapshot,requestId:string;
  try{
   id=(await context.params).id;if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(id))throw Error('카테고리 설정 번호를 확인해주세요.');
@@ -72,7 +76,7 @@ export async function POST(request:Request,context:{params:Promise<{id:string}>}
   if((snapshot.metadata.scopeType??snapshot.metadata.scope)!=='Retail_Categorized_Single')throw Error('갱신할 화면용 Single 상세 양식이 필요합니다.');
  }catch(error){return failure(error instanceof SyntaxError?'올바른 JSON이 필요합니다.':error instanceof Error?error.message:'양식 갱신 입력을 확인해주세요.',error instanceof RequestBodyError?error.status:400);}
  try{
-  const ownerId=await getWorkspaceOwnerId(),source=await getCategoryProfile(ownerId,id);
+  const source=await getCategoryProfile(ownerId,id);
   if(!source)return failure('카테고리 설정을 찾을 수 없습니다.',404);
   if(source.revision!==expectedRevision)return failure('다른 화면에서 카테고리 설정이 변경되었습니다. 목록을 다시 불러와주세요.',409);
   if(!source.hubSchema||source.hubSchema.company.code!==company.code||source.hubSchema.company.name!==company.name

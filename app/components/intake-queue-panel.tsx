@@ -134,7 +134,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if(id)onSourceConsumed?.(id);
     setCategoryTarget(null);
   }
-  if (categoryTarget) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={cancelCategory}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker profiles={profiles} selectedId={rows.find(row => row.id === categoryTarget)?.profile.id ?? ''} onAdvanced={onAdvanced} onSelected={profile => {
+  if (categoryTarget) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={cancelCategory}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker workspaceOwnerId={workspaceOwnerId} profiles={profiles} selectedId={rows.find(row => row.id === categoryTarget)?.profile.id ?? ''} onAdvanced={onAdvanced} onSelected={profile => {
     if(!sourceMounted.current)return;
     if(sourceSeed&&categoryTarget==='new'&&pendingSeed.current!==sourceSeed.id)return;
     if (categoryTarget === 'new') {

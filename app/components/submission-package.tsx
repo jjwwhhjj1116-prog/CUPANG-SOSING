@@ -19,21 +19,36 @@ type Preview = {
   submissionReview:PackageReview;
   report:{company?:{code:string;name:string}|null;productId:string;categoryId:string|null;profileId:string;rowCount:number;warnings:string[];legalDocuments?:{applicability:'unconfirmed'|'required'|'not-applicable';count:number};publicDetailImages?:{count:number;publishedByThisRequest:false};submissionReady:false};
 };
+type ProductHistorySnapshot={fingerprint:string;history:SupplierHubTransmissionHistory;localBlocked:boolean;verified:boolean};
 
 /** Reuses the reviewed XLSX exporter. Preparing or downloading never marks a product submitted. */
 export function SubmissionPackage({productId,profileId,categoryId,onInspect,onReceiptSaved}:{productId:string;profileId:string;categoryId:string|null;onInspect:(profileId:string,target:QuotationNavigationTarget)=>void;onReceiptSaved?:()=>void}) {
-  const [preview,setPreview]=useState<Preview|null>(null);
+  const [preview,setPreviewState]=useState<Preview|null>(null);
+  const previewRef=useRef<Preview|null>(null);
+  const setPreview=(value:Preview|null)=>{previewRef.current=value;setPreviewState(value);};
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const [receiptError,setReceiptError]=useState('');
   const [message,setMessage]=useState('');
-  const [hubResult,setHubResult]=useState<SupplierHubResult|null>(null);
-  const [agreements,setAgreements]=useState<SupplierHubAgreements>({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});
-  const [attemptedFingerprint,setAttemptedFingerprint]=useState('');
-  const [checkedFingerprint,setCheckedFingerprint]=useState('');
+  const [hubResult,setHubResultState]=useState<SupplierHubResult|null>(null);
+  const hubResultRef=useRef<SupplierHubResult|null>(null);
+  const setHubResult=(value:SupplierHubResult|null)=>{hubResultRef.current=value;setHubResultState(value);};
+  const [agreements,setAgreementsState]=useState<SupplierHubAgreements>({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});
+  const agreementsRef=useRef(agreements);
+  const setAgreements=(update:SupplierHubAgreements|((value:SupplierHubAgreements)=>SupplierHubAgreements))=>{const value=typeof update==='function'?update(agreementsRef.current):update;agreementsRef.current=value;setAgreementsState(value);};
+  const [attemptedFingerprint,setAttemptedFingerprintState]=useState('');
+  const attemptedFingerprintRef=useRef('');
+  const setAttemptedFingerprint=(value:string)=>{attemptedFingerprintRef.current=value;setAttemptedFingerprintState(value);};
+  const [checkedFingerprint,setCheckedFingerprintState]=useState('');
+  const checkedFingerprintRef=useRef('');
+  const setCheckedFingerprint=(value:string)=>{checkedFingerprintRef.current=value;setCheckedFingerprintState(value);};
   const [tracking,setTracking]=useState(false);
-  const [resumableFingerprint,setResumableFingerprint]=useState('');
-  const [productHistory,setProductHistory]=useState<{fingerprint:string;history:SupplierHubTransmissionHistory;localBlocked:boolean;verified:boolean}|null>(null);
+  const [resumableFingerprint,setResumableFingerprintState]=useState('');
+  const resumableFingerprintRef=useRef('');
+  const setResumableFingerprint=(value:string)=>{resumableFingerprintRef.current=value;setResumableFingerprintState(value);};
+  const [productHistory,setProductHistoryState]=useState<ProductHistorySnapshot|null>(null);
+  const productHistoryRef=useRef<ProductHistorySnapshot|null>(null);
+  const setProductHistory=(value:ProductHistorySnapshot|null)=>{productHistoryRef.current=value;setProductHistoryState(value);};
   const historyChecked=Boolean(preview&&productHistory?.fingerprint===preview.fingerprint&&productHistory.verified);
   const productTransmissionBlocked=!historyChecked||Boolean(productHistory?.history.blocked||productHistory?.localBlocked);
   const transferAttempted=Boolean(preview&&preview.fingerprint===attemptedFingerprint);
@@ -44,14 +59,18 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
   const requiresDocuments=preview?.report.legalDocuments?.applicability==='required';
   const canResumeValidation=Boolean(transferAttempted&&submissionChecked&&preview?.fingerprint===resumableFingerprint&&(!hubResult||hubResult.state==='not-found'));
   const active=useRef<AbortController|null>(null);
+  const mounted=useRef(true);
   const receiptNotice=useRef('');
-  useEffect(()=>()=>active.current?.abort(),[]);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;active.current?.abort();};},[]);
   function pauseTracking(){
     active.current?.abort();active.current=null;setBusy(false);setTracking(false);
     setMessage('결과 확인을 일시정지했습니다. 전달한 파일은 유지됩니다.');
   }
   async function restoreSubmission(value:Preview,controller:AbortController){
     if(!categoryId||!value.report.company||!value.filename.endsWith('.xlsx'))return;
+    // An earlier successful scan cannot prove absence during this fresh lookup.
+    // Receipt recovery remains readable even if the whole history is unavailable.
+    setProductHistory(null);
     const source={productId,categoryId,profileId:value.report.profileId,fingerprint:value.fingerprint,filename:value.filename};
     await verifyQuotationResultSource(source,controller.signal);
     if(controller.signal.aborted)return;
@@ -117,7 +136,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
       setReceiptError(cause instanceof Error?cause.message:'전송 결과 보관에 실패했습니다. 파일 재전송 없이 결과 조회를 다시 실행해주세요.');
     }
   }
-  async function followResults(controller:AbortController,initialResult:SupplierHubResult|null=hubResult){
+  async function followResults(controller:AbortController,initialResult:SupplierHubResult|null=hubResultRef.current){
     if(!preview?.report.company||!categoryId)throw new Error('등록할 회사와 카테고리를 확인해주세요.');
     setTracking(true);
     try{
@@ -140,18 +159,26 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     }finally{if(!controller.signal.aborted)setTracking(false);}
   }
   async function run(action:'preview'|'export'|'download'|'handoff'|'transmit'|'resume-validation'|'result'|'registration'|'track'|'recover') {
-    if(active.current || (action!=='preview'&&!preview))return;
+    if(!mounted.current||active.current||(action!=='preview'&&(!preview||previewRef.current!==preview)))return;
+    // React may still hold an earlier handler after consent changes, a preview
+    // reset or a paused result lookup. Recheck current intent before dispatch.
+    if((action==='transmit'||action==='handoff')&&attemptedFingerprintRef.current===preview!.fingerprint)return;
+    const reviewedAgreements=agreementsRef.current;
     const controller=new AbortController();active.current=controller;
+    const currentOperation=()=>mounted.current&&active.current===controller&&!controller.signal.aborted&&(action==='preview'||previewRef.current===preview);
+    const confirmCurrentAgreements=()=>{if(agreementsRef.current!==reviewedAgreements||!supplierHubAgreementsReady(agreementsRef.current,requiresDocuments))throw Error('필수 선택값이 변경되었습니다. 현재 견적서를 확인하고 등록 전송을 다시 눌러주세요.');};
     setBusy(true);setError('');setReceiptError('');setMessage('');
     if(action==='preview'){setPreview(null);setProductHistory(null);setCheckedFingerprint('');setHubResult(null);setResumableFingerprint('');setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});}
     try {
       if(action==='recover'){setCheckedFingerprint('');await restoreSubmission(preview!,controller);return;}
       if(action==='track'){await followResults(controller);return;}
       if(action==='resume-validation'){
-        if(!canResumeValidation||!categoryId||!preview!.report.company||!supplierHubAgreementsReady(agreements,requiresDocuments))throw Error('원래 첨부한 견적서와 필수 선택값을 확인해주세요.');
+        if(attemptedFingerprintRef.current!==preview!.fingerprint||checkedFingerprintRef.current!==preview!.fingerprint||resumableFingerprintRef.current!==preview!.fingerprint
+          ||hubResultRef.current&&hubResultRef.current.state!=='not-found'||!categoryId||!preview!.report.company||!supplierHubAgreementsReady(reviewedAgreements,requiresDocuments))throw Error('원래 첨부한 견적서와 필수 선택값을 확인해주세요.');
         await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
-        if(controller.signal.aborted)return;
-        const outcome=await resumeSupplierHubValidation({productId,categoryId,fingerprint:preview!.fingerprint},agreements,controller.signal);
+        if(!currentOperation())return;
+        confirmCurrentAgreements();
+        const outcome=await resumeSupplierHubValidation({productId,categoryId,fingerprint:preview!.fingerprint},reviewedAgreements,controller.signal);
         if(controller.signal.aborted)return;
         if(outcome.state!=='validation-requested'){
           if(outcome.state==='unconfirmed')setResumableFingerprint('');
@@ -182,12 +209,15 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         return;
       }
       if(action==='handoff'||action==='transmit'){
-        if(productTransmissionBlocked)throw Error('이 상품의 이전 전송 또는 미확정 시도가 있습니다. 원래 견적서 결과를 먼저 확인해주세요. 수정본을 다시 첨부하지 않습니다.');
+        const history=productHistoryRef.current;
+        if(!history||history.fingerprint!==preview!.fingerprint||!history.verified||history.history.blocked||history.localBlocked)throw Error('이 상품의 이전 전송 또는 미확정 시도가 있습니다. 원래 견적서 결과를 먼저 확인해주세요. 수정본을 다시 첨부하지 않습니다.');
         if(!categoryId||!preview?.filename.endsWith('.xlsx'))throw new Error('선택한 카테고리의 Excel 양식으로 견적서를 준비해주세요.');
-        if(action==='transmit'&&(transferAttempted||!supplierHubAgreementsReady(agreements,requiresDocuments)))throw new Error('전송 시도와 필수 선택값을 확인해주세요.');
-        if(!submissionChecked)throw new Error('이 견적서의 이전 전송 기록을 먼저 확인해주세요.');
+        if(action==='transmit'&&!supplierHubAgreementsReady(reviewedAgreements,requiresDocuments))throw new Error('전송 시도와 필수 선택값을 확인해주세요.');
+        if(checkedFingerprintRef.current!==preview!.fingerprint)throw new Error('이 견적서의 이전 전송 기록을 먼저 확인해주세요.');
         await checkSupplierHubExtension(controller.signal,action==='transmit');
       }
+      if(!currentOperation())return;
+      if(action==='transmit')confirmCurrentAgreements();
       const response=await fetch(`/api/products/${encodeURIComponent(productId)}/quotation`,{
         method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},
         body:JSON.stringify({action:action==='handoff'||action==='transmit'?'export':action,...(profileId?{profileId}:{}),...(action!=='preview'?{fingerprint:preview!.fingerprint}:{})}),
@@ -218,15 +248,16 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
             || response.headers.get('x-quotation-fingerprint')!==preview!.fingerprint
             || response.headers.get('content-disposition')!==`attachment; filename="${preview!.filename}"`)throw new Error('검토한 견적서와 다운로드 파일이 일치하지 않습니다. 다시 준비해주세요.');
         }else if(!response.headers.get('content-type')?.startsWith('application/zip'))throw new Error('견적서 ZIP 응답을 확인하지 못했습니다.');
-        const blob=await response.blob();if(controller.signal.aborted)return;
+        const blob=await response.blob();if(!currentOperation())return;
         if(action==='transmit'||action==='handoff'){
           await verifyQuotationResultSource({productId,categoryId:categoryId!,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
-          if(controller.signal.aborted)return;
+          if(!currentOperation())return;
         }
         if(action==='transmit'){
+          confirmCurrentAgreements();
           setAttemptedFingerprint(preview!.fingerprint);setHubResult(null);
           const identity={productId,categoryId:categoryId!,fingerprint:preview!.fingerprint};
-          const outcome=await transmitSupplierHubPackage(blob,identity,agreements,controller.signal);
+          const outcome=await transmitSupplierHubPackage(blob,identity,reviewedAgreements,controller.signal);
           if(controller.signal.aborted)return;
           setResumableFingerprint(['attached','unconfirmed'].includes(outcome.state)?preview!.fingerprint:'');
           if(outcome.state==='not-started'){
@@ -264,7 +295,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
       <strong>저장된 양식으로 작성한 견적서 · {preview.report.rowCount}행</strong>
       <p style={{overflowWrap:'anywhere'}}>견적서 파일명: {preview.filename}</p>
       <strong>첨부 파일 검사 · 수정 필요 {preview.submissionReview.errorCount}개 · 확인 {preview.submissionReview.reviewCount}개</strong>
-      <QuotationReviewIssues key={preview.fingerprint} issues={preview.submissionReview.issues} omittedIssueCount={preview.submissionReview.omittedIssueCount} disabled={busy} onInspect={target=>onInspect(preview.report.profileId,{...target,categoryId})}/>
+      <QuotationReviewIssues key={preview.fingerprint} issues={preview.submissionReview.issues} omittedIssueCount={preview.submissionReview.omittedIssueCount} disabled={busy} onInspect={target=>{if(mounted.current&&!active.current&&previewRef.current===preview)onInspect(preview.report.profileId,{...target,categoryId});}}/>
       <details><summary>Excel 입력값 확인</summary><div className="table-wrap"><table><thead><tr>{preview.headers.map((header,index)=><th key={index}>{header||`${index+1}열`}</th>)}</tr></thead><tbody>{preview.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{String(cell)||'—'}</td>)}</tr>)}</tbody></table></div></details>
       <details><summary>양식·첨부 확인 항목 ({preview.report.warnings.length})</summary><ul>{preview.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>
       <p>ZIP에는 작성된 Excel/CSV, 상품 이미지, 라벨과 업로드 준비 목록이 포함됩니다. 검토 후 저장값이 바뀌면 다시 준비해야 합니다.</p>

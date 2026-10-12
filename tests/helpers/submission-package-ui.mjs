@@ -12,18 +12,19 @@ const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='o
 /** Actual component, API, ZIP parser and source verifier. The final Hub transport
  * is captured locally: these tests never upload synthetic data to Supplier Hub. */
 export function submissionPackageUI({route,productId,profileId='cat',categoryId='80719',observations=[],lookupResults=[],requestTimeoutMs=5000}){
- const slots=[],modules=new Map(),calls=[],savedSubmissions=new Map();let cursor=0;
+ const slots=[],modules=new Map(),calls=[],dispatches=[],savedSubmissions=new Map();let cursor=0,deferred=null;
  const submissionKey=identity=>JSON.stringify([identity.productId,identity.categoryId,identity.fingerprint]);
- const fetcher=async(path,init)=>{const body=init?.body?JSON.parse(init.body):undefined;calls.push({action:body?.action??'receipt-read'});return route(path,{method:init?.method??'GET',body});};
+ const fetcher=async(path,init)=>{const body=init?.body?JSON.parse(init.body):undefined;calls.push({action:body?.action??'receipt-read'});const response=await route(path,{method:init?.method??'GET',body});if(deferred&&deferred.action===body?.action){const held=deferred;deferred=null;held.arrive();await held.wait;}return response;};
  const content={window:{addEventListener(){}},location:{origin},chrome:{runtime:{id:'extension',onMessage:{addListener(){}}}},URL,Date,AbortController,setTimeout,clearTimeout,
   fetch:async(path,init)=>{const response=await fetcher(path,init);Object.defineProperty(response,'url',{value:origin+path});return response;}};
  vm.runInNewContext(fs.readFileSync(new URL('../../extensions/supplier-hub/handoff-content.js',import.meta.url),'utf8'),content);
  const api={tabs:{get:async()=>({id:7,windowId:17,url:origin+'/'}),sendMessage:async(_id,message)=>content.verifyCurrentQuotationSource(message.expected)}};
  async function connect(action,blob,identity,agreements){
+  dispatches.push({action,identity,agreements});
   const files=await prepareAttachments(new Uint8Array(await blob.arrayBuffer()));
   await verifyAppQuotationSource({...identity,origin},files,{appTabId:7,windowId:17},api);
   if(action==='transmit')savedSubmissions.set(submissionKey(identity),{attempt:{state:'validation-requested',company:files.company,includedOptions:files.includedOptions,startedAt:Date.now(),registered:false},result:null});
-  calls.push({action,files,agreements});return {state:'validation-requested',registered:false};
+  calls.push({action,files,identity,agreements});return {state:'validation-requested',registered:false};
  }
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},
   useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
@@ -54,12 +55,12 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
  const trackingBridge={...tracker,followSupplierHubRegistration:(source,options)=>tracker.followSupplierHubRegistration(source,{...options,
   read:async(identity,_signal,mode)=>{calls.push({action:'lookup',mode});if(lookupError)throw Error('SKU 조회 응답 유실');const result=observations[Math.min(observationIndex++,observations.length-1)];const saved=savedSubmissions.get(submissionKey(identity));if(saved)savedSubmissions.set(submissionKey(identity),{...saved,result});return result;},maxDurationMs:1000,wait:async()=>{}})};
  const Component=load('app/components/submission-package.tsx').SubmissionPackage;
- const render=()=>{cursor=0;return Component({productId,profileId,categoryId,onInspect(){}});};
+ const render=()=>{cursor=0;return Component({productId,profileId,categoryId,onInspect(resolvedProfileId,target){calls.push({action:'inspect',profileId:resolvedProfileId,target});}});};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
- async function click(label){
-  const target=button(label);if(!target||target.props.disabled)throw Error('Button unavailable: '+label);target.props.onClick();
+ async function idle(){
   const deadline=Date.now()+requestTimeoutMs;while(render().props['aria-busy']){if(Date.now()>deadline)throw Error('UI request timeout');await new Promise(resolve=>setTimeout(resolve,1));}
  }
- return {calls,button,click,render,remount(){slots.length=0;},setLookupError(value){lookupError=value;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
+ async function click(label){const target=button(label);if(!target||target.props.disabled)throw Error('Button unavailable: '+label);target.props.onClick();await idle();}
+ return {calls,dispatches,button,click,idle,render,deferNext(action){let arrive,release;const arrived=new Promise(resolve=>{arrive=resolve;}),wait=new Promise(resolve=>{release=resolve;});deferred={action,arrive,wait};return{arrived,release};},remount(){slots.length=0;},setLookupError(value){lookupError=value;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
   alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children)};
 }

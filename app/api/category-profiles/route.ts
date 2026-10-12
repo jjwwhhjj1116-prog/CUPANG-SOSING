@@ -8,6 +8,7 @@ import { createCategoryProfile, getCategoryProfile, listCategoryProfiles, update
 import { TemplateValidationError, validateStoredTemplate } from '@/db/category-templates';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {sameCategoryFormDefinition} from '@/app/category-definition-refresh';
+import {CategoryProfileOwnerProofError,validateCategoryProfileOwnerProof} from '@/app/category-profile-owner-proof';
 
 const options = { headers: { 'cache-control': 'no-store' } };
 const unavailable = () => NextResponse.json({ error: '운영 인증이 연결되기 전에는 카테고리 설정을 공개할 수 없습니다.' }, { status: 503, ...options });
@@ -33,6 +34,9 @@ export async function GET(request?: Request) {
 }
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
+  let ownerId: string;
+  try { ownerId = await owner(); validateCategoryProfileOwnerProof(request, ownerId); }
+  catch (error) { return error instanceof CategoryProfileOwnerProofError ? NextResponse.json({ error: error.message }, { status: error.status, ...options }) : unavailable(); }
   let input; let requestId: string | undefined;
   try {
     requestId = request.headers.get('Idempotency-Key') ?? undefined;
@@ -42,7 +46,6 @@ export async function POST(request: Request) {
   }
   catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
-    const ownerId = await owner();
     try { await validateStoredTemplate(ownerId, input.template,input.hubSchema); } catch (error) { if (error instanceof TemplateValidationError) return NextResponse.json({ error: errorText(error) }, { status: 400, ...options }); throw error; }
     const profile = await createCategoryProfile(ownerId, input, requestId);
     if (!profile) return NextResponse.json({ error: '카테고리 저장 요청이 충돌했습니다. 목록을 다시 불러온 뒤 저장해주세요.' }, { status: 409, ...options });
@@ -54,6 +57,9 @@ export async function POST(request: Request) {
 }
 export async function PUT(request: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
+  let ownerId: string;
+  try { ownerId = await owner(); validateCategoryProfileOwnerProof(request, ownerId); }
+  catch (error) { return error instanceof CategoryProfileOwnerProofError ? NextResponse.json({ error: error.message }, { status: error.status, ...options }) : unavailable(); }
   let id: string; let expectedRevision: number; let input;
   try {
     const raw = await body(request);
@@ -63,7 +69,6 @@ export async function PUT(request: Request) {
     id = value.id; expectedRevision = value.expectedRevision; input = validateCategoryProfile(value.profile); validateCategoryCodeForSave(input.categoryId); validateCategoryIdentity(input); await validateSchemaCompany(input); validateQuotationChoiceFormats(input, getQuotationSchema(input.categoryId,input.categoryPath,input.hubSchema,input.template).fields);
   } catch (error) { return NextResponse.json({ error: errorText(error) }, { status: inputStatus(error), ...options }); }
   try {
-    const ownerId = await owner();
     const existing=await getCategoryProfile(ownerId,id);
     if (!existing) return NextResponse.json({ error: '카테고리 설정을 찾을 수 없습니다.' }, { status: 404, ...options });
     if(existing.hubSchema&&existing.categoryId===input.categoryId&&JSON.stringify(existing.categoryPath)===JSON.stringify(input.categoryPath)

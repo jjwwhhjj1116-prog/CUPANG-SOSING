@@ -1,7 +1,7 @@
 'use client';
-import { loadCategoryProfiles } from '@/app/load-category-profiles';
+import { loadCategoryProfiles, readCategoryJsonResponse } from '@/app/load-category-profiles';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usableCategoryCode, type CategoryProfile } from '@/app/category-profiles';
 import { canConfirmCategory, categoryAdvancedSeed, categoryChoices, categoryChoicesAtPath, categoryLevel, categoryObservationScope, categoryProfileForChoice, categoryProfilesForChoice, searchCategoryChoices, type CategoryAdvancedSeed, type CategoryChoice } from '@/app/category-catalog';
 import { getQuotationSchema } from '@/app/quotation-schema';
@@ -14,6 +14,10 @@ import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { categoryDefinitionRequiresFork, refreshCategoryDefinition, sameCategoryHubDefinition, type CategoryDefinitionRefreshRequest } from '@/app/category-definition-refresh-client';
+import { confirmCategorySelectionList, confirmCategorySelectionProfile, confirmLiveCategorySelectionSchema, sameCategorySelectionDefinition } from '@/app/category-selection-confirmation';
+import { parseWorkspaceSettingsScope } from '@/app/workspace-settings-scope';
+
+const useAccountEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 // Draft rules are part of the reusable form definition. A new observation time
 // alone does not change it; refreshing this profile leaves product snapshots intact.
@@ -44,7 +48,7 @@ function codeEvidenceLabel(choice: CategoryChoice, profile?: CategoryProfile) {
   return '분류 코드 미확인';
 }
 
-export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelected, onAdvanced }: { profiles: CategoryProfile[]; selectedId: string; onSelected: (profile: CategoryProfile) => void; onAdvanced: (seed?: CategoryAdvancedSeed) => void }) {
+export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspaceOwnerId, onSelected, onAdvanced }: { profiles: CategoryProfile[]; selectedId: string; workspaceOwnerId?: string; onSelected: (profile: CategoryProfile) => void; onAdvanced: (seed?: CategoryAdvancedSeed) => void }) {
   const [refreshedProfiles, setRefreshedProfiles] = useState<CategoryProfile[] | null>(null);
   const [liveChoice,setLiveChoice]=useState<CategoryChoice|null>(null);
   const [catalogMode,setCatalogMode]=useState<'live'|'saved'>('live');
@@ -53,11 +57,23 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
   const [path, setPath] = useState<string[]>(profiles.find(profile => profile.id === selectedId)?.categoryPath ?? []);
   const [selectedKey, setSelectedKey] = useState(selectedId);
   const [query, setQuery] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [accountEpoch,setAccountEpoch]=useState(0);
+  const account=useRef({ownerId:workspaceOwnerId,epoch:0,mounted:true});
   const activeRequest = useRef<AbortController | null>(null);
   const completed = useRef(false);
   const createRequest = useRef<{ body: string; id: string } | null>(null);
   const definitionRefreshRequest = useRef<CategoryDefinitionRefreshRequest | null>(null);
-  useEffect(() => () => { activeRequest.current?.abort(); }, []);
+  useAccountEffect(() => {
+    if(account.current.ownerId!==workspaceOwnerId){
+      account.current.ownerId=workspaceOwnerId;account.current.epoch++;
+      activeRequest.current?.abort();activeRequest.current=null;completed.current=false;createRequest.current=null;definitionRefreshRequest.current=null;
+      setRefreshedProfiles(null);setLiveChoice(null);setSelectedKey('');setPath([]);setQuery('');setCatalogMode('live');setBusy(false);setError('');
+    }
+    setAccountEpoch(account.current.epoch);
+    account.current.mounted=true;
+    return()=>{account.current.mounted=false;account.current.epoch++;activeRequest.current?.abort();activeRequest.current=null;};
+  },[workspaceOwnerId]);
+  const current=()=>account.current.mounted&&account.current.ownerId===workspaceOwnerId&&account.current.epoch===accountEpoch;
   const selected = liveChoice?.key===selectedKey?liveChoice:choices.find(choice => choice.key === selectedKey);
   const selectedProfile = profiles.find(profile => profile.id === selected?.profileId);
   const savedDefinitions = useMemo(() => new Map(profiles.map(profile => [profile.id, savedChoiceDefinition(choices.find(choice => choice.profileId === profile.id), profile)])), [profiles, choices]);
@@ -69,31 +85,49 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
   const hasChildren = categoryLevel(choices, path, path.length).length > 0;
   const depths = Math.max(1, path.length + (hasChildren ? 1 : 0));
   const unresolvedBranch = catalogMode==='saved'&&path.length > 0 && !hasChildren && connections.length === 0;
-  function choose(choice: CategoryChoice) { if (activeRequest.current) return; completed.current = false;setLiveChoice(null);setCatalogMode('saved');setPath(choice.path); setSelectedKey(choice.key); setError(''); }
+  function choose(choice: CategoryChoice) { if (!current()||activeRequest.current) return; completed.current = false;setLiveChoice(null);setCatalogMode('saved');setPath(choice.path); setSelectedKey(choice.key); setError(''); }
   function navigate(next: string[]) {
-    if (activeRequest.current) return;
+    if (!current()||activeRequest.current) return;
     completed.current = false;
     setPath(next); const leaves = categoryChoicesAtPath(choices, next).filter(choice => choice.isLeaf);
     setSelectedKey(leaves.length === 1 ? leaves[0].key : leaves.some(choice => choice.key === selectedKey) ? selectedKey : ''); setError('');
   }
   async function confirm(target = selected) {
-    if (!target || !canConfirmCategory(target) || busy || activeRequest.current || completed.current) return;
+    if (!current()||!target || !canConfirmCategory(target) || busy || activeRequest.current || completed.current) return;
     const controller = new AbortController(); activeRequest.current = controller;
     setBusy(true); setError('');
+    const cancelled=()=>controller.signal.aborted||!current();
+    const readScope=async()=>{
+      const response=await fetch('/api/settings',{cache:'no-store',signal:controller.signal});
+      const result=await readCategoryJsonResponse<{scope?:unknown;error?:string}>(response,'카테고리 선택 계정 확인');
+      if(cancelled())throw Error('카테고리 선택을 취소했습니다.');
+      const scope=parseWorkspaceSettingsScope(result.scope);
+      if(!response.ok||!scope||scope.ownerId!==workspaceOwnerId)throw Error('카테고리를 선택한 로그인 계정이 다릅니다. 기존 입력은 유지되며 현재 계정에서 카테고리를 다시 선택해주세요.');
+      return scope;
+    };
     try {
-      const hubSchema=target.supplierHub?await loadLiveHubCategorySchema(target,controller.signal):undefined;
-      if(controller.signal.aborted)return;
+      const scope=workspaceOwnerId?await readScope():undefined;
+      if(cancelled())return;
+      if(target.supplierHub&&scope&&(!scope.company||scope.company.code!==target.supplierHub.company.code||scope.company.name!==target.supplierHub.company.name))throw Error('현재 로그인 계정의 승인 회사와 선택한 Supplier Hub 회사가 다릅니다. 같은 회사의 카테고리를 다시 선택해주세요.');
+      const hubSchema=target.supplierHub?confirmLiveCategorySelectionSchema(target,await loadLiveHubCategorySchema(target,controller.signal),scope?.company):undefined;
+      if(cancelled())return;
+      const select=async(profile:CategoryProfile)=>{
+        confirmCategorySelectionProfile(target,profile,hubSchema,scope?.company);
+        if(scope){const latest=await readScope();if(JSON.stringify(latest)!==JSON.stringify(scope))throw Error('카테고리를 확인하는 동안 승인 회사가 변경되었습니다. 기존 입력은 유지되며 현재 회사의 카테고리를 다시 선택해주세요.');}
+        if(cancelled())return;
+        completed.current=true;onSelected(profile);
+      };
       async function withSchema(profile:CategoryProfile){
         if(!hubSchema)return profile;
         if(sameHubDefinition(profile.hubSchema,hubSchema))return profile;
         if(categoryDefinitionRequiresFork(profile,hubSchema)) {
-          const saved=await refreshCategoryDefinition(profile,hubSchema,definitionRefreshRequest,{signal:controller.signal});
-          if(!controller.signal.aborted)setRefreshedProfiles(current=>[saved,...(current??profiles).filter(value=>value.id!==saved.id)]);
+          const saved=await refreshCategoryDefinition(profile,hubSchema,definitionRefreshRequest,{signal:controller.signal,expectedOwnerId:scope?.ownerId});
+          if(!cancelled())setRefreshedProfiles(current=>[saved,...(current??profiles).filter(value=>value.id!==saved.id)]);
           return saved;
         }
         const connection={template:profile.template,mappings:translateHubRuleVersionMappings(profile.mappings,profile.hubSchema,hubSchema)};
-        if(controller.signal.aborted)return profile;
-        const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...profile,hubSchema,...connection}}),signal:controller.signal});
+        if(cancelled())return profile;
+        const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json',...(scope?{'X-YOOFAM-Workspace-Owner':scope.ownerId}:{})},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...profile,hubSchema,...connection}}),signal:controller.signal});
         const result=await response.json() as {profile?:CategoryProfile;error?:string};
         if(!response.ok)throw Error(result.error??'상세 견적 양식을 저장하지 못했습니다.');
         const saved=result.profile;
@@ -103,27 +137,38 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       const existing = profiles.find(profile => profile.id === target.profileId);
       if (existing) {
         const result = { profiles: await loadCategoryProfiles(controller.signal) };
-        if (controller.signal.aborted) return;
+        if (cancelled()) return;
+        confirmCategorySelectionList(result.profiles);
         const latest = result.profiles.find(profile => profile.id === existing.id);
         if (latest && (!Number.isSafeInteger(latest.revision) || latest.revision < 1 || !Array.isArray(latest.categoryPath))) throw new Error('카테고리 설정 응답이 올바르지 않습니다. 다시 시도해주세요.');
-        setRefreshedProfiles(result.profiles);
         if (!latest) {
+          setRefreshedProfiles(result.profiles);
           setSelectedKey('');
           throw new Error('선택한 카테고리 설정이 삭제되었습니다. 갱신된 목록에서 사용할 분류를 선택해주세요.');
         }
         if (latest.categoryId !== existing.categoryId || JSON.stringify(latest.categoryPath) !== JSON.stringify(existing.categoryPath)) {
+          setRefreshedProfiles(result.profiles);
           setPath(latest.categoryPath);
           throw new Error('다른 화면에서 이 설정의 카테고리가 변경되었습니다. 갱신된 분류와 견적 항목을 확인한 뒤 선택 완료를 눌러주세요.');
         }
         if (latest.revision !== existing.revision) {
+          setRefreshedProfiles(result.profiles);
           throw new Error('선택한 카테고리의 견적 설정이 변경되었습니다. 아래 갱신된 양식과 열 연결을 확인한 뒤 선택 완료를 눌러주세요.');
         }
-        const saved=hubSchema?await withSchema(latest):latest;if(controller.signal.aborted)return;completed.current = true; onSelected(saved); return;
+        if (!sameCategorySelectionDefinition(existing,latest)) throw Error('동일한 카테고리 버전의 회사·상세 양식·견적서 연결이 다릅니다. 기존 선택은 유지하며 목록 응답을 다시 확인해주세요.');
+        confirmCategorySelectionProfile({...target,supplierHub:undefined},latest,undefined,scope?.company);
+        setRefreshedProfiles(result.profiles);
+        const saved=hubSchema?await withSchema(latest):latest;if(cancelled())return;await select(saved);return;
       }
       // The picker may have been opened before this category's template was saved.
       // Read every current page before creating another empty configuration.
       const latestProfiles = await loadCategoryProfiles(controller.signal);
-      if (controller.signal.aborted) return;
+      if (cancelled()) return;
+      confirmCategorySelectionList(latestProfiles);
+      // A malformed form at this exact path is not evidence that there is no
+      // saved form. Validate before company filtering can hide that record.
+      latestProfiles.filter(profile=>profile.categoryId===target.categoryId&&JSON.stringify(profile.categoryPath)===JSON.stringify(target.path))
+        .forEach(profile=>confirmCategorySelectionProfile({...target,supplierHub:undefined},profile));
       setRefreshedProfiles(latestProfiles);
       let matching = categoryProfilesForChoice(latestProfiles, target);
       if(matching.length>1&&hubSchema){
@@ -137,13 +182,14 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
       if (matching.length === 1) {
         const latest = matching[0];
         if (!Number.isSafeInteger(latest.revision) || latest.revision < 1) throw new Error('카테고리 설정 응답이 올바르지 않습니다. 다시 시도해주세요.');
-        const saved=hubSchema?await withSchema(latest):latest;if(controller.signal.aborted)return;completed.current = true; onSelected(saved); return;
+        confirmCategorySelectionProfile({...target,supplierHub:undefined},latest,undefined,scope?.company);
+        const saved=hubSchema?await withSchema(latest):latest;if(cancelled())return;await select(saved);return;
       }
       const body = JSON.stringify({...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{})});
       if (createRequest.current?.body !== body) createRequest.current = { body, id: crypto.randomUUID() };
-      const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': createRequest.current.id }, body, signal: controller.signal });
+      const response = await fetch('/api/category-profiles', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': createRequest.current.id, ...(scope?{'X-YOOFAM-Workspace-Owner':scope.ownerId}:{}) }, body, signal: controller.signal });
       const result = await response.json() as { profile: CategoryProfile; error?: string };
-      if (controller.signal.aborted) return;
+      if (cancelled()) return;
       if (!response.ok) throw new Error(result.error ?? '카테고리를 저장하지 못했습니다.');
       const saved = result.profile;
       if (!saved || typeof saved.id !== 'string' || !saved.id.trim()
@@ -154,14 +200,14 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, onSelec
         ||hubSchema&&(saved.template!==null||!Array.isArray(saved.mappings)||saved.mappings.length!==0)) {
         throw new Error('저장된 카테고리 코드·경로·버전이 선택한 분류와 일치하지 않습니다. URL 입력을 중단했습니다. 카테고리 설정을 다시 확인해주세요.');
       }
-      completed.current = true; onSelected(result.profile);
-    } catch (cause) { completed.current = false; if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '카테고리 선택 실패'); }
-    finally { if (activeRequest.current === controller) activeRequest.current = null; if (!controller.signal.aborted) setBusy(false); }
+      await select(saved);
+    } catch (cause) { if(!cancelled()){completed.current = false;setError(cause instanceof Error ? cause.message : '카테고리 선택 실패');} }
+    finally { if (activeRequest.current === controller) activeRequest.current = null; if (!cancelled()) setBusy(false); }
   }
   return <div className="category-picker" aria-busy={busy}>
     <p className="category-instructions">등록할 상품의 카테고리를 선택해주세요. 단계별로 선택하면 하위 카테고리가 표시됩니다.</p>
     <div className="workspace-actions" role="group" aria-label="카테고리 목록 선택"><button type="button" className={`btn ${catalogMode==='live'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('live')}>Supplier Hub 카테고리</button><button type="button" className={`btn ${catalogMode==='saved'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('saved')}>저장된 목록</button></div>
-    {catalogMode==='live'&&<SupplierHubCategoryBrowser disabled={busy} onNavigating={()=>{if(activeRequest.current)return;completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(activeRequest.current||completed.current)return;setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>}
+    {catalogMode==='live'&&<SupplierHubCategoryBrowser disabled={busy} onNavigating={()=>{if(!current()||activeRequest.current)return;completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(!current()||activeRequest.current||completed.current)return;setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>}
     {path.length > 0 && <nav className="category-breadcrumb" aria-label="선택한 카테고리 경로">{path.map((name,index)=><button type="button" key={index} disabled={busy||catalogMode==='live'} onClick={()=>navigate(path.slice(0,index+1))}>{name}</button>)}</nav>}
     <div hidden={catalogMode!=='saved'}>
     <label className="field"><span>카테고리 검색</span><input type="search" placeholder="카테고리 이름 또는 번호" value={query} onChange={event => setQuery(event.target.value)} disabled={busy}/></label>
