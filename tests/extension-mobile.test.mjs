@@ -65,6 +65,22 @@ test('Chrome anonymous public transport collects six real SKUs without creating 
  }finally{server.close();}
 });
 
+for(const mode of ['full-mobile','sku-only'])test(`generated Chrome collection retains one explicit SKU without variant axes before server draft creation (${mode})`,async()=>{
+ // A synthetic no-variant contract, not a live claim about this fixture offer.
+ const skuPayload=JSON.parse(read('1688-public-sku-813724060928.json')),data=skuPayload.data.result.data;
+ data.skuModel.skuProps=[];data.skuModel.skuInfoMap={'':{skuId:'622000000010',specAttrs:'',price:'12.5',canBookCount:0}};data.orderParamModel.orderParam.beginNum=3;data.orderParamModel.orderParam.skuParam.skuPriceType='skuPrice';
+ const chrome=fixture({skuPayload,mobileBody:mode==='full-mobile'?html:'<html>No initial data</html>'}),capture=await chrome.run();
+ assert.equal(capture.format,mode==='full-mobile'?'1688-public-mobile-capture-v1':'1688-public-sku-capture-v1');assert.equal(capture.sourceUrl,sourceUrl);assert.deepEqual(capture.skuPayload,skuPayload);assert.equal(capture.receipt,undefined);
+ assert.deepEqual(chrome.calls.filter(value=>typeof value==='string'),['m.1688.com','h5api.m.1688.com','h5api.m.1688.com',...(mode==='full-mobile'?['itemcdn.tmall.com']:[])]);assert.equal(chrome.rules.size,0);assert.equal(chrome.listeners.size,0);assert.ok(!JSON.stringify(capture).includes('anonymousOnly'));
+ const h=mobileIntakeHarness({sourceFetcher:async()=>{throw Error('accepted browser source cannot recollect');}});try{
+  const parsed=h.load('app/browser-product-capture.ts').parseBrowserProductCapture(capture,sourceUrl);assert.equal(parsed.provider,mode==='full-mobile'?'chrome-public-mobile-v1':'chrome-public-sku-v1');assert.equal(parsed.options.length,1);
+  assert.deepEqual(JSON.parse(JSON.stringify(parsed.options[0])),{sku:'622000000010',name:data.offerBaseInfo.title,unitPriceCny:12.5,minimumOrder:3,stock:0});assert.equal(parsed.images.length,mode==='full-mobile'?16:1,'gallery and detail remain, while removed variant axes cannot supply three extra SKU images');
+  const saved=await h.route('/api/collection-jobs/job/browser-capture',{method:'POST',body:capture});assert.equal(saved.status,200,await saved.clone().text());const productResponse=await h.route('/api/collection-jobs/job/product',{method:'POST'});assert.equal(productResponse.status,200,await productResponse.clone().text());const productId=(await productResponse.json()).productId;
+  const options=(await (await h.route(`/api/products/${productId}/options`)).json()).options.rows;assert.equal(options.length,1);assert.equal(options[0].supplierSku,'622000000010');assert.equal(options[0].unitCostCny,12.5);assert.equal(options[0].minimumOrderQuantity,3);assert.equal(options[0].stock,0);
+  const view=await (await h.route(`/api/products/${productId}/quotation-fields`)).json(),fields=view.resolved.rows.find(row=>row.optionId===options[0].id).fields;assert.deepEqual(['supplyPrice','salePrice','msrp'].map(key=>fields[key].value),['8750','14580','18950']);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM products').get().n,1);assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');assert.deepEqual(h.network,[]);
+ }finally{h.close();}
+});
+
 test('bundled Chrome collector sends raw SKU-only evidence through server validation into one editable draft',async()=>{
  const skuPayload=JSON.parse(read('1688-public-sku-813724060928.json'));
  const chrome=fixture({mobileBody:'<html>No initial product data</html>',skuPayload}),capture=await chrome.run();

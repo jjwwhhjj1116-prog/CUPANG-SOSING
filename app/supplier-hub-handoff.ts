@@ -39,7 +39,7 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(result.productTransmissionHistory!==true||result.historicalReceiptLookup!==true)throw new Error('수정 전 견적서의 전체 전송 이력 확인을 지원하는 Chrome 확장 0.2.57으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(result.exactAgreementLabels!==true)throw new Error('동의 문구 확인을 지원하는 Chrome 확장 0.2.59로 업데이트하고 앱 페이지를 새로고침해주세요.');
 }
-export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean;productTransmissionHistory:boolean;historicalReceiptLookup:boolean;exactAgreementLabels:boolean};
+export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean;productTransmissionHistory:boolean;historicalReceiptLookup:boolean;exactAgreementLabels:boolean;publicSingleSkuCapture:boolean};
 /** Reports the installed manifest reply in this app tab. Does not inspect Hub,
  * create a browser tab, prepare files, or change any transmission record. */
 export async function readSupplierHubExtensionInfo(signal:AbortSignal):Promise<SupplierHubExtensionInfo>{
@@ -47,7 +47,7 @@ export async function readSupplierHubExtensionInfo(signal:AbortSignal):Promise<S
   if(typeof version!=='string'||version!==version.trim()||!/^(?:0|[1-9]\d{0,4})(?:\.(?:0|[1-9]\d{0,4})){1,3}$/.test(version)
     ||version.split('.').some(part=>Number(part)>65535))throw Error('설치된 Chrome 확장의 버전을 확인하지 못했습니다. 앱 페이지를 새로고침한 뒤 다시 확인해주세요.');
   return {version,pendingReceiptRefreshRecovery:result.pendingReceiptRefreshRecovery===true,registrationObservationCas:result.registrationObservationCas===true,
-    productTransmissionHistory:result.productTransmissionHistory===true,historicalReceiptLookup:result.historicalReceiptLookup===true,exactAgreementLabels:result.exactAgreementLabels===true};
+    productTransmissionHistory:result.productTransmissionHistory===true,historicalReceiptLookup:result.historicalReceiptLookup===true,exactAgreementLabels:result.exactAgreementLabels===true,publicSingleSkuCapture:result.publicSingleSkuCapture===true};
 }
 export async function getSupplierHubProductHistory(identity:PackageIdentity,signal:AbortSignal){
   const capability=await exchange('PING',null,signal);

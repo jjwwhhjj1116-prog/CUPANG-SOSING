@@ -215,6 +215,7 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
     {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{dirty&&!fresh&&<p role="status">저장 상태가 변경되었습니다. 라벨 선택은 유지했습니다.</p>}
     {/* eslint-disable-next-line @next/next/no-img-element -- Private reference thumbnails require the authenticated same-origin file route. */}
     <div className="image-selected-strip">{selected.map((key,index)=><figure key={key}>{pool.includes(key)?<><img src={url(key)} alt={`최종 라벨 ${index+1}`} width={120} height={120}/><figcaption>{index+1} · {key.split('/').at(-1)}</figcaption></>:<p>현재 상품에 없는 라벨 참조 · {key.split('/').at(-1)}</p>}
+      {pool.includes(key)&&<a className="btn ghost" aria-label={`최종 라벨 ${index+1} 이미지 다운로드`} href={url(key)} download={key.split('/').at(-1)}>이미지 다운로드</a>}
       {optionId!==null&&onTranslate&&<><button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 중국어 한국어 번역`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'zh')}>중국어 → 한국어</button>
         <button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 영어 한국어 번역`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'en')}>영어 → 한국어</button>
         <button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 문구 영역 편집`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'zh')}>문구·영역 편집</button></>}

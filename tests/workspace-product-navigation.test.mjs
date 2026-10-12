@@ -15,7 +15,7 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);re
  * primary cell -> option -> stage flow. HTTP is held at the response boundary;
  * no browser, remote product or operating storage is used. */
 function harness({submission=false,batch,integration,packaging=false}={}){
- const instances=new Map(),cache=new Map(),effects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[],productReads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,holdProductRead=false,intakeSettings;
+ const instances=new Map(),cache=new Map(),effects=[],layoutEffects=[],requests=[],archiveReads=[],settingsReads=[],settingsWrites=[],bannerUploads=[],productReads=[];let active,tree,closed=false,lateDashboardWrites=0,storedSettings=null,holdSettings=false,holdSettingsWrite=false,holdProductRead=false,intakeSettings;
  const now='2026-10-05T00:00:00.000Z';
  const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:1,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
  const products=[batch?.product??product('b')];
@@ -24,9 +24,10 @@ function harness({submission=false,batch,integration,packaging=false}={}){
  const hooks={
   useState(initial){const instance=active,index=instance.index++;if(!(index in instance.slots))instance.slots[index]=typeof initial==='function'?initial():initial;return[instance.slots[index],value=>{if(!instance.mounted){if(instance.name==='DashboardClient')lateDashboardWrites++;return;}instance.slots[index]=typeof value==='function'?value(instance.slots[index]):value;}];},
   useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},
-  useMemo(fn){return fn();},
+  useMemo(fn,deps){const instance=active,index=instance.index++,old=instance.slots[index];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i])))instance.slots[index]={value:fn(),deps};return instance.slots[index].value;},
   useCallback(fn,deps){const index=active.index++,old=active.slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))active.slots[index]={fn,deps};return active.slots[index].fn;},
   useEffect(fn,deps){const instance=active,index=instance.index++,old=instance.slots[index];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:old?.cleanup};instance.slots[index]=next;effects.push(()=>{next.cleanup?.();next.cleanup=fn();});}},
+  useLayoutEffect(fn,deps){const instance=active,index=instance.index++,old=instance.slots[index];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:old?.cleanup};instance.slots[index]=next;layoutEffects.push({cleanup:old?.cleanup,commit:()=>{next.cleanup=fn();}});}},
   useId(){const index=active.index++;return 'test-'+index;},
  };
  const implemented=new Set(['dashboard-client','product-archive','registration-board','product-content-editor','workspace-settings-dialog','workspace-settings-editor','settings-price-preview']);
@@ -98,6 +99,9 @@ function harness({submission=false,batch,integration,packaging=false}={}){
  function render(){
   if(closed)return tree;const seen=new Set();tree=expand({type:Dashboard,props:{userName:'검토자'}},'root',seen);
   for(const [key,instance]of instances)if(!seen.has(key)){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());instances.delete(key);}
+  // Commit layout cleanup/setup before passive effects. Child layout setups
+  // run first, as they do after React finishes attaching the rendered refs.
+  const layouts=layoutEffects.splice(0);layouts.forEach(effect=>effect.cleanup?.());layouts.reverse().forEach(effect=>effect.commit());
   effects.splice(0).forEach(effect=>effect());return tree;
  }
  const settle=async()=>{for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}};

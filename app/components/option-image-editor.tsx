@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 're
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
+import { downloadImageSelection } from '@/app/image-selection-download';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage;
   disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void };
@@ -208,6 +209,14 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
         revision: base.view.revision, inputFingerprint: base.view.inputFingerprint, optionRevision: base.view.optionRevision, value });
     } catch (cause) { setError(cause instanceof Error ? cause.message : '번역할 이미지 연결을 확인해주세요.'); }
   }
+  async function downloadSelection() {
+    const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
+    if (!base || base.scope !== scope || !interactive() || request.current || pendingSave.current?.scope === scope) return;
+    const controller = new AbortController(); request.current = controller; setBusy(true); setError('');
+    try { await downloadImageSelection(quotationImageKeys(optionImageValue(base.view, optionId, input, editing)), base.view.imageKeys, `YOOFAM-${stage}-images.zip`, controller.signal); }
+    catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '선택 이미지 다운로드 실패'); }
+    finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
+  }
   const candidateCards = view?.imageKeys.map((key, index) => <figure className={`image-asset-card ${key === activePreview ? 'previewing' : ''} ${selected.includes(key) ? 'chosen' : ''}`} key={key}>
     <button type="button" className="image-asset-preview" aria-label={`상품 저장 이미지 ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (interactive() && !request.current) setPreview({ scope, key }); }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -225,6 +234,8 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   return <section className="panel-stack" aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy}>
     <h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3><p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
     <p>드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요. 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
+    <button type="button" className="btn ghost" disabled={!view || locked || !selected.length || !!unavailable.length} onClick={() => void downloadSelection()}>{label} ZIP 다운로드</button>
+    <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. 미저장 선택을 견적서에 반영하려면 이미지 저장을 눌러주세요.</small>
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
     {view && <>{stage === 'additional' ? <div className="image-edit-workspace">

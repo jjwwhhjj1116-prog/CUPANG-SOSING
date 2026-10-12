@@ -27,6 +27,25 @@ const pageHtml = data => '<script>window.__GLOBAL_DADA={"isLogin":false};window.
 const parser = load('app/alibaba-mobile-product.ts');
 const receipt = () => parser.parseAlibabaMobileProduct(parser.parseAlibabaMobilePage(pageHtml(mobile), sourceUrl), skus, parser.parseAlibabaMobileDescription(detail));
 
+test('one explicit public SKU without variant axes preserves its title, price, MOQ and nullable inventory',()=>{
+ for(const priceType of ['skuPrice','rangePrice'])for(const stock of [0,null]){
+  const payload=structuredClone(publicSkus),data=payload.data.result.data,order=data.orderParamModel.orderParam;
+  data.skuModel.skuProps=[];data.skuModel.skuInfoMap={'':{skuId:'622000000010',specAttrs:'',price:'12.5',canBookCount:stock}};order.beginNum=3;order.skuParam.skuPriceType=priceType;
+  if(priceType==='rangePrice')order.skuParam.skuRangePrices=[{beginAmount:3,price:'12.5'},{beginAmount:100,price:'11'}];
+  const before=JSON.stringify(payload),page=parser.parseAlibabaMobilePage(pageHtml(mobile),sourceUrl),result=parser.parseAlibabaMobileProduct(page,payload,parser.parseAlibabaMobileDescription(detail));
+  assert.equal(result.options.length,1);assert.deepEqual(JSON.parse(JSON.stringify(result.options[0])),{sku:'622000000010',name:page.title,unitPriceCny:12.5,minimumOrder:3,stock});
+  assert.equal(result.attributes.length,24);assert.ok(result.images.some(image=>image.role==='detail'));assert.equal(JSON.stringify(payload),before);
+  const publicResult=parser.parseAlibabaPublicSkuProduct(payload,sourceUrl);assert.equal(publicResult.options[0].name,page.title);assert.equal(publicResult.options[0].stock,stock);assert.equal(publicResult.options[0].unitPriceCny,12.5);
+ }
+});
+
+test('empty variant axes require exactly one identified SKU with explicit empty combination and price',()=>{
+ const original=structuredClone(publicSkus),data=original.data.result.data;data.skuModel.skuProps=[];data.skuModel.skuInfoMap={'':{skuId:'622000000010',specAttrs:'',price:'12.5',canBookCount:0}};
+ for(const corrupt of [d=>delete d.skuModel.skuProps,d=>d.skuModel.skuProps=null,d=>d.skuModel.skuInfoMap.extra={skuId:'622000000011',specAttrs:'',price:'15',canBookCount:1},d=>d.skuModel.skuInfoMap={'unknown':d.skuModel.skuInfoMap['']},d=>delete d.skuModel.skuInfoMap[''].specAttrs,d=>d.skuModel.skuInfoMap[''].specAttrs='invented default',d=>delete d.skuModel.skuInfoMap[''].skuId,d=>delete d.skuModel.skuInfoMap[''].price,d=>d.skuModel.skuInfoMap[''].canBookCount=-1]){
+  const payload=structuredClone(original);corrupt(payload.data.result.data);assert.throws(()=>parser.parseAlibabaPublicSkuProduct(payload,sourceUrl));
+ }
+});
+
 test('observed public SKU-only response yields exact six options and four images without inventing missing description or attributes', () => {
   const result = parser.parseAlibabaPublicSkuProduct(publicSkus, sourceUrl);
   assert.equal(result.provider, '1688-public-sku-v1'); assert.equal(result.offerId, '813724060928');

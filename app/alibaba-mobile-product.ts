@@ -168,7 +168,7 @@ function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; tit
     }
     if (commonPrice === undefined) throw Error('최소 주문 수량에 적용되는 원가가 없습니다.');
   }
-  if (!Array.isArray(sku.skuProps) || !sku.skuProps.length || sku.skuProps.length > 5) throw Error('옵션 속성을 확인하지 못했습니다.');
+  if (!Array.isArray(sku.skuProps) || sku.skuProps.length > 5) throw Error('옵션 속성을 확인하지 못했습니다.');
   const props = sku.skuProps.map(value => {
     const prop = row(value);
     if (!Array.isArray(prop.value) || !prop.value.length || prop.value.length > 200) throw Error('옵션 속성 값을 확인하지 못했습니다.');
@@ -178,6 +178,10 @@ function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; tit
   });
   const entries = Object.entries(row(sku.skuInfoMap));
   if (!entries.length || entries.length > 200) throw Error('실제 옵션 1~200개가 필요합니다.');
+  // A product without variant axes can still publish one explicit SKU. Its
+  // empty combination must be recorded; missing axes never collapse several
+  // SKUs or authorize a fabricated default SKU, price or image reference.
+  if (!props.length && (entries.length !== 1 || entries[0][0] !== '' || row(entries[0][1]).specAttrs !== '')) throw Error('단일 상품 SKU와 빈 옵션 조합을 확인하지 못했습니다.');
   const images: {url: string; role: 'main' | 'additional' | 'detail'}[] = [];
   const image = (value: unknown, role: 'main' | 'additional' | 'detail') => {
     const original = text(value), url = new URL(original.startsWith('//') ? 'https:' + original : original);
@@ -189,7 +193,7 @@ function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; tit
   source.gallery.forEach((value, index) => image(value, index === 0 ? 'main' : 'additional'));
   const combinations = new Set<string>();
   const options = entries.map(([key, value]) => {
-    const item = row(value), parts = entities(text(item.specAttrs)).split('>');
+    const item = row(value), parts = props.length ? entities(text(item.specAttrs)).split('>') : [];
     if (parts.length !== props.length || entities(key) !== parts.join('>')) throw Error('옵션 SKU와 속성 값이 일치하지 않습니다.');
     const positions = parts.map((part, index) => props[index].values.findIndex(option => option.name === part));
     if (positions.some(position => position < 0)) throw Error('옵션 SKU의 속성 값을 확인하지 못했습니다.');
@@ -201,7 +205,7 @@ function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; tit
     const references = positions.map((position, index) => props[index].values[position].imageUrl).filter(value => value != null && value !== '');
     const attribute = (names: string[]) => { const values = props.flatMap((prop, index) => names.includes(prop.name) ? [parts[index]] : []); if (new Set(values).size > 1) throw Error('옵션 속성 값이 충돌합니다.'); return values[0]; };
     const color = attribute(['颜色', '色彩', '색상', 'color', 'colour']), size = attribute(['尺码', '尺寸', '사이즈', 'size']);
-    return {positions, option: {sku: identity(item.skuId), name: parts.join(' / '), unitPriceCny, minimumOrder, stock: item.canBookCount == null ? null : numeric(item.canBookCount),
+    return {positions, option: {sku: identity(item.skuId), name: parts.length ? parts.join(' / ') : source.title, unitPriceCny, minimumOrder, stock: item.canBookCount == null ? null : numeric(item.canBookCount),
       ...(references.length ? {imageIndex: image(references[0], 'additional')} : {}), ...(color ? {color} : {}), ...(size ? {size} : {})}};
   }).sort((left, right) => { for (let index = 0; index < props.length; index++) { const difference = left.positions[index] - right.positions[index]; if (difference) return difference; } return 0; });
   const details = parseAlibabaDescription(description);
