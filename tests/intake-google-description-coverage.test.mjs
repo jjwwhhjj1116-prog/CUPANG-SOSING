@@ -14,10 +14,10 @@ const translatedOption = value => value.replaceAll('亮黑', '유광 검정').re
 // Actual intake/translation/content/quotation APIs and queue, with recorded SKU
 // facts and isolated Google/R2 fixtures. No supplier or Google request is sent.
 async function fixture(company, mode = '400') {
-  const description = mode === 'length' ? '原'.repeat(5001) : '原文商品说明\n第二行原文说明', queries = [], calls = [], previews = [];
+  const description = mode === 'chunk' ? '原'.repeat(5001) : '原文商品说明\n第二行原文说明', queries = [], calls = [], previews = [];
   const h = mobileIntakeHarness({ companyCode: company.code, companyName: company.name, translationFetcher: target => {
     const query = new URL(target).searchParams.get('q'); queries.push(query);
-    if (query === description) {
+    if (query === description || mode === 'chunk' && /^原+$/u.test(query)) {
       if (mode === 'network') throw Error('synthetic description transport failure');
       if (mode === 'invalid') return Response.json({ unsupported: 'synthetic description response' });
       return new Response('synthetic description HTTP error', { status: 400 });
@@ -57,7 +57,7 @@ async function fixture(company, mode = '400') {
   } catch (error) { h.close(); throw error; }
 }
 
-for (const company of schemaCompanies) for (const mode of ['400', 'network', 'invalid', 'length']) test(`missing Google description remains review-required after successful title/options (${company.code}, ${mode})`, async () => {
+for (const company of schemaCompanies) for (const mode of ['400', 'network', 'invalid', 'chunk']) test(`missing Google description remains review-required after successful title/options (${company.code}, ${mode})`, async () => {
   const f = await fixture(company, mode), { h } = f;
   try {
     await f.run();
@@ -67,8 +67,8 @@ for (const company of schemaCompanies) for (const mode of ['400', 'network', 'in
     assert.equal(content.seo.description.value, f.description); assert.equal(content.seo.description.provenance, 'collected');
     assert.ok(content.seo.title.value.includes('원문 기준 선글라스')); assert.equal(content.categoryAttributes.values[0].value, 'PC');
     assert.ok(options.rows.every(row => row.translatedName && row.provenance.translatedName === 'translated'));
-    assert.equal(h.stats.downloads, 19); assert.equal(h.objects.size, 19); assert.equal(f.queries.length, mode === 'length' ? 2 : 3);
-    assert.equal(f.queries.filter(query => query === f.description).length, mode === 'length' ? 0 : 1);
+    assert.equal(h.stats.downloads, 19); assert.equal(h.objects.size, 19); assert.equal(f.queries.length, 3);
+    assert.equal(f.queries.filter(query => query === f.description).length, mode === 'chunk' ? 0 : 1);
     assert.equal(f.calls.filter(call => call.body?.action === 'prepare-intake-options').length, 0);
     assert.ok(f.previews.length); assert.equal(f.previews[0].intakeSeoCoverage.missingDescription, true);
     assert.equal(f.previews[0].intakeSeoCoverage.contentRevision, f.previews[0].contentRevision);

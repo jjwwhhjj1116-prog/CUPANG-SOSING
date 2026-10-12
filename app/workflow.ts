@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 // No executor has yet produced verifiable SEO, image, quotation or submission results.
 export const integrationBlock = {
   code: 'SUPPLIER_HUB_NOT_VERIFIED',
@@ -30,7 +31,7 @@ export function validateProductPatch(body: unknown): Record<string, string | num
       if (typeof value !== 'string') return null;
       try {
         const keys: unknown = JSON.parse(value);
-        if (!Array.isArray(keys) || keys.length > 50 || keys.some(k => typeof k !== 'string' || !k)) return null;
+        if (!Array.isArray(keys) || keys.length > PRODUCT_IMAGE_POOL_LIMIT || keys.some(k => typeof k !== 'string' || !k)) return null;
       } catch { return null; }
     } else return null;
   }

@@ -1,4 +1,4 @@
-import { imageFileType, MAX_IMAGE_BYTES, isOwnedImageKey } from '@/app/image-files';
+import { imageFileType, MAX_IMAGE_BYTES, isOwnedImageKey, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { readBoundedStream } from '@/app/request-body';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
@@ -44,7 +44,7 @@ export async function downloadCollectionImage(source:string,owner:string,fetcher
 }
 
 export function attachCollectedImage(current:ProductContent,keys:string[],key:string,role:'main'|'additional'|'detail',now:string,assignToStage = true){
- if(!keys.includes(key)&&keys.length>=50)throw new Error('상품 이미지 50개 제한입니다. 이미지를 정리해주세요.');
+ if(!keys.includes(key)&&keys.length>=PRODUCT_IMAGE_POOL_LIMIT)throw new Error(`상품 이미지 ${PRODUCT_IMAGE_POOL_LIMIT}개 제한입니다. 이미지를 정리해주세요.`);
  const next=structuredClone(current);const target=next.assets[role];
  // Manual selections (including deliberately empty ones) and translated/generated work survive imports.
  const usedElsewhere=Object.entries(next.assets).some(([name,field])=>name!==role&&field.value.includes(key));

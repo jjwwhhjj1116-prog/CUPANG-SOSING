@@ -15,7 +15,7 @@ import { PublicDetailError } from '@/app/quotation-public-detail';
 import { applyContentPatch, productImageKeys } from '@/app/product-content';
 import { inspectImage } from '@/app/automation/image-edit';
 import { translateImageRegions } from '@/app/automation/free-image-text';
-import { isOwnedImageKey, MAX_IMAGE_BYTES, MAX_IMAGE_MULTIPART_BYTES } from '@/app/image-files';
+import { isOwnedImageKey, MAX_IMAGE_BYTES, MAX_IMAGE_MULTIPART_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { MAX_OCR_PIXELS, validFreeImageRole, validateFreeImageSource, validateImageTextRegions,
   freeImageSourceIdentity, freeImageApplyIdentity, validateFreeImageOptionIds, type FreeImageSource, type FreeImageQuotationTarget } from '@/app/free-image-translation';
 import { readBoundedBytes, readBoundedJson, readBoundedStream, RequestBodyError } from '@/app/request-body';
@@ -261,7 +261,7 @@ export async function POST(request: Request, context: Context) {
     const options = optionImageIds.length ? await readProductOptions(owner, id) : null;
     if (options && (options.revision !== source.optionImages!.revision || optionImageIds.some(id => options.rows.filter(row => row.id === id && row.imageKey === source.sourceKey).length !== 1))) throw changed();
     const imageKeys = [...new Set([...current.keys, key])];
-    if (imageKeys.length > 50) throw new ImageTextError(400, '원본을 보존하려면 상품 이미지 50개 한도에 여유가 필요합니다.');
+    if (imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT) throw new ImageTextError(400, `원본을 보존하려면 상품 이미지 ${PRODUCT_IMAGE_POOL_LIMIT}개 한도에 여유가 필요합니다.`);
     if (!quotation && !optionOnly && Object.entries(current.content.assets).some(([role, field]) => role !== source.role && field.value.includes(key))) throw changed();
     const now = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
     let next;

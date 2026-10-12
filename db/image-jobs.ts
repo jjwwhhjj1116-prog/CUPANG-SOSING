@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { env } from 'cloudflare:workers';
 import type { ImageEditJob, ImageEditResult } from '@/app/automation/image-edit';
 import { defaultSettings, newWorkspaceSettings } from '@/app/workspace-settings';
@@ -60,7 +61,7 @@ export async function createImageJob(owner: string, value: ImageEditJob, imageKe
   return previous ? { job: job(previous), replayed: true, conflict: previous.request_fingerprint !== requestFingerprint } : null;
 }
 const unchanged = `AND EXISTS(SELECT 1 FROM products WHERE id=image_jobs.product_id AND owner_id=image_jobs.owner_id
-  AND updated_at=image_jobs.product_version AND image_keys=image_jobs.product_image_keys AND json_array_length(image_keys)<50)
+  AND updated_at=image_jobs.product_version AND image_keys=image_jobs.product_image_keys AND json_array_length(image_keys)<${PRODUCT_IMAGE_POOL_LIMIT})
   AND COALESCE((SELECT revision FROM product_content WHERE product_id=image_jobs.product_id AND owner_id=image_jobs.owner_id),0)=content_revision
   ${settingsGuard('image_jobs.owner_id', 'image_jobs.review')}`;
 export async function approveImageJob(owner: string, productId: string, id: string, reviewFingerprint: string, now: string) {
@@ -87,7 +88,7 @@ export async function finishImageSuccess(owner: string, value: ImageEditJob, cla
   const db = await database(); const updatedAt = new Date(Math.max(Date.now(), Date.parse(value.productVersion) + 1)).toISOString();
   const rows = await db.batch<Row>([
     db.prepare(`UPDATE products SET image_keys=json_insert(image_keys,'$[#]',?),quote_status='대기',updated_at=?
-      WHERE owner_id=? AND id=? AND updated_at=? AND json_array_length(image_keys)<50
+      WHERE owner_id=? AND id=? AND updated_at=? AND json_array_length(image_keys)<${PRODUCT_IMAGE_POOL_LIMIT}
       AND NOT EXISTS(SELECT 1 FROM json_each(products.image_keys) WHERE value=?)
       AND EXISTS(SELECT 1 FROM image_jobs WHERE id=? AND owner_id=? AND product_id=products.id AND status='running' AND claim_token=? AND product_image_keys=products.image_keys)
       AND COALESCE((SELECT revision FROM product_content WHERE product_id=products.id AND owner_id=products.owner_id),0)=?`)
@@ -105,7 +106,7 @@ export async function attachImageResult(owner: string, value: ImageEditJob, expe
   const db = await database(); const updatedAt = new Date(Math.max(Date.now(), Date.parse(expectedVersion) + 1)).toISOString();
   const rows = await db.batch<Row>([
     db.prepare(`UPDATE products SET image_keys=json_insert(image_keys,'$[#]',?),quote_status='대기',updated_at=?
-      WHERE owner_id=? AND id=? AND updated_at=? AND image_keys=? AND json_array_length(image_keys)<50
+      WHERE owner_id=? AND id=? AND updated_at=? AND image_keys=? AND json_array_length(image_keys)<${PRODUCT_IMAGE_POOL_LIMIT}
       AND NOT EXISTS(SELECT 1 FROM json_each(products.image_keys) WHERE value=?)
       AND EXISTS(SELECT 1 FROM image_jobs WHERE id=? AND owner_id=? AND product_id=products.id AND status='completed' AND json_extract(result,'$.storageKey')=?)`)
       .bind(value.result.storageKey, updatedAt, owner, value.productId, expectedVersion, imageKeys, value.result.storageKey, value.id, owner, value.result.storageKey),

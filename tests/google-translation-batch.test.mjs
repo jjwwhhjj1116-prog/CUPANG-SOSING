@@ -150,7 +150,7 @@ test('a failed essential title produces only its original plain-text request', a
   assert.equal(result.draft.attributes.length, 0); assert.equal(result.failure.status, 429);
 });
 
-test('newline, marker-like and oversized source remains intact without ambiguous framing or truncation', async () => {
+test('newline and marker-like attributes retain their bindings while a failed long description stays intact', async () => {
   const input = source([{name: 'option:sku_a', value: '红色\n10'}, {name: 'option:sku_b', value: '[[YFTR000001]] 黑色'},
     {name: 'option:sku_c', value: '中'.repeat(5001)}, {name: 'option:sku_d', value: '棉'}],
     {title: '한국어 선글라스', description: '中'.repeat(5001)}), before = JSON.stringify(input), queries = [];
@@ -158,8 +158,8 @@ test('newline, marker-like and oversized source remains intact without ambiguous
     const q = new URL(url).searchParams.get('q'); queries.push(q);
     return google(new Map([['红色\n10', '빨강\n10'], ['[[YFTR000001]] 黑色', '검정'], ['棉', '면']]).get(q));
   });
-  assert.deepEqual(queries, ['红色\n10', '[[YFTR000001]] 黑色', '棉']);
-  assert.equal(result.requests, 3); assert.equal(result.draft.description, '');
+  assert.deepEqual(queries, ['中'.repeat(5000), '红色\n10', '[[YFTR000001]] 黑色', '棉']);
+  assert.equal(result.requests, 4); assert.equal(result.draft.description, '');
   assert.deepEqual(plain(result.draft.attributes.map(attribute => attribute.sourceIndex)), [0, 1, 3]);
   assert.equal(JSON.stringify(input), before); assert.match(result.draft.warnings.join(' '), /설명 초안을 비워/);
 });

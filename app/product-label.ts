@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
@@ -123,7 +124,7 @@ export function verifyProductLabelsView(view: ProductLabelsView, optionId: strin
   if (!view || typeof view.productId !== 'string' || !/^\w[\w-]{0,99}$/.test(view.productId) || !Number.isSafeInteger(view.revision) || view.revision < 0
     || !Number.isFinite(Date.parse(view.productVersion)) || !/^[a-f0-9]{64}$/.test(view.inputFingerprint)
     || !/^[a-f0-9]{64}$/.test(view.quotationInputFingerprint) || ![view.contentRevision, view.optionRevision, view.quotationRevision].every(value => Number.isSafeInteger(value) && value >= 0)
-    || !Array.isArray(view.imageKeys) || view.imageKeys.length > 50 || new Set(view.imageKeys).size !== view.imageKeys.length
+    || !Array.isArray(view.imageKeys) || view.imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(view.imageKeys).size !== view.imageKeys.length
     || view.imageKeys.some(key => typeof key !== 'string' || !key || key.length > 512 || /[\u0000-\u001f\u007f]/u.test(key))
     || !category || !['profile', 'collection', 'unknown'].includes(category.source) || !/^\d{1,20}$/.test(category.categoryId ?? '')
     || category.profileId !== null && (typeof category.profileId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(category.profileId))

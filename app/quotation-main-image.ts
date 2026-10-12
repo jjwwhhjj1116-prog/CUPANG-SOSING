@@ -1,10 +1,11 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { validateQuotationChanges, type QuotationFieldsView } from '@/app/quotation-schema';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { verifyOptionImageSave, verifyOptionImageRestored } from '@/app/quotation-image-targets';
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 export function verifyMainImageView(view:QuotationFieldsView){
  if(!view||!Number.isSafeInteger(view.revision)||view.revision<0||!/^[a-f0-9]{64}$/.test(view.inputFingerprint)||!Number.isFinite(Date.parse(view.productVersion))
-  ||![view.contentRevision,view.optionRevision].every(n=>Number.isSafeInteger(n)&&n>=0)||!Array.isArray(view.imageKeys)||view.imageKeys.length>50||view.imageKeys.some(key=>typeof key!=='string'||!key)||new Set(view.imageKeys).size!==view.imageKeys.length
+  ||![view.contentRevision,view.optionRevision].every(n=>Number.isSafeInteger(n)&&n>=0)||!Array.isArray(view.imageKeys)||view.imageKeys.length>PRODUCT_IMAGE_POOL_LIMIT||view.imageKeys.some(key=>typeof key!=='string'||!key)||new Set(view.imageKeys).size!==view.imageKeys.length
   ||!view.categoryContext||!Array.isArray(view.resolved?.schema?.fields)||!Array.isArray(view.resolved.rows)||!Array.isArray(view.automatic?.rows)||!view.overrides?.common||!view.overrides.options
   ||view.resolved.rows.filter(row=>row.optionId===null).length!==1||new Set(view.resolved.rows.map(row=>row.optionId)).size!==view.resolved.rows.length)throw Error('최종 견적 대표이미지 저장본을 확인하지 못했습니다.');
  const target=exactPrimaryQuotationTarget(view.resolved.schema.fields,'mainImage');

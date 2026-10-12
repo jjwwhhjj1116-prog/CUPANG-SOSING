@@ -1,6 +1,6 @@
 import { currentDetailContent, type ProductContent } from '@/app/product-content';
 import { quotationValueIssues, type ResolvedQuotation } from '@/app/quotation-schema';
-import { isOwnedImageKey, imageFileType, MAX_IMAGE_BYTES } from '@/app/image-files';
+import { isOwnedImageKey, imageFileType, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 import type { SubmissionIssue } from '@/app/submission-review';
 
@@ -60,7 +60,7 @@ export async function resolvePublicDetail(resolved: ResolvedQuotation, content: 
       images.push(image);
       if (row.included) includedKeys.add(key);
     }
-    if (byKey.size > 50) throw new PublicDetailError('상세 이미지가 허용 개수를 초과했습니다.', 413);
+    if (byKey.size > PRODUCT_IMAGE_POOL_LIMIT) throw new PublicDetailError('상세 이미지가 허용 개수를 초과했습니다.', 413);
     const alt = row.fields.altText?.value ?? '';
     const imageHtml = images.map((image, index) => `<img src="${escape(image.url)}" alt="${escape(alt ? `${alt} ${index + 1}` : '')}" style="display:block;width:100%;height:auto">`).join('');
     const value = images.length ? `<div style="width:800px;max-width:100%;margin:0;padding:0;background-color:#ffffff;box-sizing:border-box">${paragraph}${imageHtml}</div>` : paragraph;

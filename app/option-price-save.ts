@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { applyQuotationChanges, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
 
@@ -20,7 +21,7 @@ export function verifyOptionPriceView(view: QuotationFieldsView, profileId?: str
   if (!view || !Number.isSafeInteger(view.revision) || view.revision < 0 || !/^[a-f0-9]{64}$/.test(view.inputFingerprint)
     || !Number.isFinite(Date.parse(view.productVersion)) || ![view.contentRevision, view.optionRevision].every(value => Number.isSafeInteger(value) && value >= 0)
     || view.updatedAt !== null && !Number.isFinite(Date.parse(view.updatedAt))
-    || !Array.isArray(view.imageKeys) || view.imageKeys.length > 50 || new Set(view.imageKeys).size !== view.imageKeys.length
+    || !Array.isArray(view.imageKeys) || view.imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(view.imageKeys).size !== view.imageKeys.length
     || view.imageKeys.some(key => typeof key !== 'string' || !key || key.length > 512 || /[\u0000-\u001f\u007f]/u.test(key))
     || !category || !['profile', 'collection', 'unknown'].includes(category.source)
     || category.categoryId !== null && !/^\d{1,20}$/.test(category.categoryId)

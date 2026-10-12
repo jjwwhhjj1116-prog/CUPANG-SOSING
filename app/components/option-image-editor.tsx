@@ -1,4 +1,5 @@
 'use client';
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
@@ -37,7 +38,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   function verify(body: QuotationFieldsView, saveResponse = false, explicitLatest = false) {
     if (!body || (!saveResponse && !explicitLatest && body.productVersion !== version) || !Number.isFinite(Date.parse(body.productVersion)) || !Number.isSafeInteger(body.revision) || body.revision < 0
       || !Number.isSafeInteger(body.contentRevision) || body.contentRevision < 0 || !Number.isSafeInteger(body.optionRevision) || body.optionRevision < 0
-      || !/^[a-f0-9]{64}$/.test(body.inputFingerprint) || !Array.isArray(body.imageKeys) || body.imageKeys.length > 50
+      || !/^[a-f0-9]{64}$/.test(body.inputFingerprint) || !Array.isArray(body.imageKeys) || body.imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT
       || new Set(body.imageKeys).size !== body.imageKeys.length || body.imageKeys.some(key => typeof key !== 'string' || !key || key.length > 512 || /[\u0000-\u001f]/u.test(key))
       || !body.overrides?.common || !body.overrides.options || !Array.isArray(body.resolved?.schema?.fields)
       || !Array.isArray(body.resolved.rows) || !Array.isArray(body.automatic?.rows)

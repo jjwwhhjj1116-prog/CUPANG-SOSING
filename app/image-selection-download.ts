@@ -1,4 +1,4 @@
-import { imageFileType, isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
+import { imageFileType, isOwnedImageKey, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { readBoundedStream } from '@/app/request-body';
 import { MAX_ZIP_BYTES, zipFiles } from '@/app/exports/zip';
 
@@ -6,7 +6,7 @@ import { MAX_ZIP_BYTES, zipFiles } from '@/app/exports/zip';
 export async function imageSelectionArchive(selected: readonly string[], pool: readonly string[], signal: AbortSignal, request: typeof fetch = fetch) {
   // A preserved legacy top/body sharing layout can display the same file in
   // two positions. Indexed names retain both positions without deleting a copy.
-  if (!Array.isArray(selected) || !selected.length || selected.length > 50
+  if (!Array.isArray(selected) || !selected.length || selected.length > PRODUCT_IMAGE_POOL_LIMIT
     || selected.some(key => typeof key !== 'string' || !pool.includes(key) || !isOwnedImageKey(key.split('/')[0], key)))
     throw Error('현재 상품에 연결된 이미지를 선택해주세요. 누락된 파일은 먼저 확인해주세요.');
   const files: { name: string; data: Uint8Array }[] = []; let bytes = 22;

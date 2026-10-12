@@ -4,7 +4,7 @@ import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct, getSettings } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
 import { productImageKeys } from '@/app/product-content';
-import { isOwnedImageKey } from '@/app/image-files';
+import { isOwnedImageKey, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { newWorkspaceSettings } from '@/app/workspace-settings';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { fingerprint } from '@/app/automation/model';
@@ -60,7 +60,7 @@ export async function POST(request: Request, context: Context) {
       const allowed = ['action', 'expectedVersion', 'sourceKey', 'prompt', 'purpose', 'size', 'quality', 'idempotencyKey'];
       if (Object.keys(body).some(key => !allowed.includes(key)) || typeof body.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.idempotencyKey)) throw new ImageEditError('INVALID_REQUEST', '검토 요청과 중복 방지 키를 확인해주세요.');
       if (body.expectedVersion !== product.updated_at) return conflict();
-      if (keys.length >= 50) throw new ImageEditError('IMAGE_LIMIT', '상품 이미지 50개 제한입니다. 이미지를 정리한 뒤 생성해주세요.');
+      if (keys.length >= PRODUCT_IMAGE_POOL_LIMIT) throw new ImageEditError('IMAGE_LIMIT', `상품 이미지 ${PRODUCT_IMAGE_POOL_LIMIT}개 제한입니다. 이미지를 정리한 뒤 생성해주세요.`);
       const input = validateImageEditInput(body, owner, keys);
       if (!isOwnedImageKey(owner, input.sourceKey)) throw new ImageEditError('IMAGE_NOT_OWNED', '이미지 저장 경로를 확인해주세요.');
       const original = await sourceFile(input.sourceKey);

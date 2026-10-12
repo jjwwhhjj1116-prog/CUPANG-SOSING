@@ -1,5 +1,6 @@
 import { applyQuotationChanges, type QuotationFieldsView } from '@/app/quotation-schema';
 import { exactDetailHtmlTarget, optionImageTargets, quotationImageKeys } from '@/app/quotation-image-targets';
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import {
   applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, recognizeFreeImage,
   recoverFreeImageTranslation, renderFreeImageTranslation, sameFreeImageSource, translateFreeImageRegions,
@@ -13,6 +14,7 @@ export type DetailBatchItem = {
 };
 export type DetailImageBatch = {
   productId: string; optionId: string; profileId: string | null; language: 'zh' | 'en';
+  stage?: 'detail' | 'additional';
   view: QuotationFieldsView; items: DetailBatchItem[];
 };
 type Dependencies = {
@@ -25,19 +27,23 @@ type Dependencies = {
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 const same = (left: unknown, right: unknown) => canonical(left) === canonical(right);
-const changed = () => Error('상품·카테고리·옵션 또는 상세 이미지가 변경됐습니다. 검토 결과는 보존했습니다. 저장 상태를 확인한 뒤 최신 상세 목록으로 다시 준비해주세요.');
+const changed = () => Error('상품·카테고리·옵션 또는 이미지가 변경됐습니다. 검토 결과는 보존했습니다. 저장 상태를 확인한 뒤 최신 이미지 목록으로 다시 준비해주세요.');
 const endpoint = (batch: Pick<DetailImageBatch, 'productId' | 'profileId'>) => `/api/products/${encodeURIComponent(batch.productId)}/quotation-fields${batch.profileId ? `?profileId=${encodeURIComponent(batch.profileId)}` : ''}`;
 export const DETAIL_BATCH_BYTES = 30 * 1024 * 1024;
+export function detailBatchCapacity(view: Pick<QuotationFieldsView, 'imageKeys'>) {
+  if (!Array.isArray(view?.imageKeys) || view.imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(view.imageKeys).size !== view.imageKeys.length) throw changed();
+  return PRODUCT_IMAGE_POOL_LIMIT - view.imageKeys.length;
+}
 
-export function detailBatchSelection(view: QuotationFieldsView, optionId: string, profileId: string | null) {
+export function detailBatchSelection(view: QuotationFieldsView, optionId: string, profileId: string | null, stage: 'detail' | 'additional' = 'detail') {
   if (!view || !Number.isFinite(Date.parse(view.productVersion)) || !/^[a-f0-9]{64}$/.test(view.inputFingerprint)
     || ![view.revision, view.contentRevision, view.optionRevision].every(value => Number.isSafeInteger(value) && value >= 0)
-    || !Array.isArray(view.imageKeys) || view.imageKeys.length > 50 || new Set(view.imageKeys).size !== view.imageKeys.length
+    || !Array.isArray(view.imageKeys) || view.imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(view.imageKeys).size !== view.imageKeys.length
     || !view.overrides?.common || !view.overrides.options || !Array.isArray(view.resolved?.schema?.fields)
     || !Array.isArray(view.resolved.rows) || !Array.isArray(view.automatic?.rows)
     || !/^[A-Za-z0-9_-]{1,80}$/.test(optionId) || !view.categoryContext
-    || profileId !== null && view.categoryContext.profileId !== profileId) throw changed();
-  const target = optionImageTargets(view.resolved.schema.fields).detailImages;
+    || profileId !== null && view.categoryContext.profileId !== profileId || !['detail', 'additional'].includes(stage)) throw changed();
+  const target = optionImageTargets(view.resolved.schema.fields)[stage === 'additional' ? 'additionalImages' : 'detailImages'];
   const rows = view.resolved.rows.filter(row => row.optionId === optionId), value = rows[0]?.fields[target.primary]?.value;
   if (rows.length !== 1 || rows[0].included !== true || typeof value !== 'string' || target.fields.some(field => field.readOnly)
     || target.linked.some(id => rows[0].fields[id]?.value !== value)) throw changed();
@@ -45,34 +51,36 @@ export function detailBatchSelection(view: QuotationFieldsView, optionId: string
   if (keys.length > limit || new Set(keys).size !== keys.length || keys.some(key => !view.imageKeys.includes(key))) throw changed();
   return { target, value, keys };
 }
-export async function readDetailBatchView(batch: Pick<DetailImageBatch, 'productId' | 'optionId' | 'profileId'>, signal: AbortSignal, fetcher: typeof fetch = fetch) {
+export async function readDetailBatchView(batch: Pick<DetailImageBatch, 'productId' | 'optionId' | 'profileId' | 'stage'>, signal: AbortSignal, fetcher: typeof fetch = fetch) {
   signal.throwIfAborted();
   const response = await fetcher(endpoint(batch), { cache: 'no-store', signal }), body = await response.json() as QuotationFieldsView & { error?: string };
   signal.throwIfAborted();
-  if (!response.ok) throw Error(body.error || '저장한 상세 이미지 목록을 읽지 못했습니다.');
-  detailBatchSelection(body, batch.optionId, batch.profileId); return body;
+  if (!response.ok) throw Error(body.error || '저장한 이미지 목록을 읽지 못했습니다.');
+  detailBatchSelection(body, batch.optionId, batch.profileId, batch.stage); return body;
 }
 function targetFor(batch: DetailImageBatch, slotIndex: number) {
-  const selected = detailBatchSelection(batch.view, batch.optionId, batch.profileId);
-  return { kind: 'quotation' as const, profileId: batch.profileId, optionId: batch.optionId, input: 'detailImages' as const,
+  const selected = detailBatchSelection(batch.view, batch.optionId, batch.profileId, batch.stage);
+  return { kind: 'quotation' as const, profileId: batch.profileId, optionId: batch.optionId, input: batch.stage === 'additional' ? 'additionalImages' as const : 'detailImages' as const,
     fieldKey: selected.target.primary, slotIndex, revision: batch.view.revision, inputFingerprint: batch.view.inputFingerprint,
     optionRevision: batch.view.optionRevision, value: selected.value };
 }
 const replace = (batch: DetailImageBatch, item: DetailBatchItem) => ({ ...batch, items: batch.items.map(row => row.slotIndex === item.slotIndex ? item : row) });
 const note = (cause: unknown) => cause instanceof Error ? cause.message : '이 이미지의 번역 결과를 준비하지 못했습니다.';
 
-/** Prepare only the saved option's ordered detail slots. OCR canvases are
+/** Prepare only the saved option's ordered stage slots. OCR canvases are
  * released between images; no uploads or product writes occur here. */
 export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'items'>, signal: AbortSignal,
   onProgress: (batch: DetailImageBatch, message: string) => void = () => {}, deps: Dependencies = {}): Promise<DetailImageBatch> {
-  const selected = detailBatchSelection(input.view, input.optionId, input.profileId);
-  if (!selected.keys.length) throw Error('저장한 선택 옵션의 상세 이미지를 먼저 선택해주세요.');
+  const selected = detailBatchSelection(input.view, input.optionId, input.profileId, input.stage);
+  const label = input.stage === 'additional' ? '추가 이미지' : '상세 이미지', role = input.stage === 'additional' ? 'additional' : 'detail';
+  if (!selected.keys.length) throw Error(`저장한 선택 옵션의 ${label}를 먼저 선택해주세요.`);
+  if (!detailBatchCapacity(input.view)) throw Error('새 번역 결과를 저장할 이미지 공간이 없습니다. 원본을 유지했으며 일괄 번역을 시작하지 않았습니다.');
   let batch: DetailImageBatch = { ...input, items: selected.keys.map((sourceKey, slotIndex) => ({ slotIndex, sourceKey, status: 'pending', message: '', texts: [] })) };
   let bytes = 0;
   for (const entry of batch.items) {
-    signal.throwIfAborted(); onProgress(batch, `${entry.slotIndex + 1}/${batch.items.length} 상세 이미지 번역 준비 중…`);
+    signal.throwIfAborted(); onProgress(batch, `${entry.slotIndex + 1}/${batch.items.length} ${label} 번역 준비 중…`);
     try {
-      const image = await (deps.readSource ?? readFreeImageSource)(batch.productId, batch.view.productVersion, entry.sourceKey, 'detail', signal, deps.fetcher, targetFor(batch, entry.slotIndex));
+      const image = await (deps.readSource ?? readFreeImageSource)(batch.productId, batch.view.productVersion, entry.sourceKey, role, signal, deps.fetcher, targetFor(batch, entry.slotIndex));
       const regions = await (deps.recognize ?? recognizeFreeImage)(image, batch.language, signal, message => onProgress(batch, `${entry.slotIndex + 1}/${batch.items.length} · ${message}`));
       const chosen = regions.filter(region => region.selected && (batch.language === 'zh'
         ? /\p{Script=Han}/u.test(region.text) : !/\p{Script=Han}/u.test(region.text) && /[a-z]{2}/iu.test(region.text)));
@@ -91,13 +99,13 @@ export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'ite
     } catch (cause) {
       signal.throwIfAborted(); batch = replace(batch, { ...entry, status: 'failed', message: note(cause) });
     }
-    onProgress(batch, `${entry.slotIndex + 1}/${batch.items.length} 상세 이미지 준비 완료`);
+    onProgress(batch, `${entry.slotIndex + 1}/${batch.items.length} ${label} 준비 완료`);
   }
   return batch;
 }
 
 function verifyCommit(batch: DetailImageBatch, before: QuotationFieldsView, after: QuotationFieldsView, slotIndex: number, reply: FreeImageApplyReply) {
-  const prior = detailBatchSelection(before, batch.optionId, batch.profileId), next = detailBatchSelection(after, batch.optionId, batch.profileId);
+  const prior = detailBatchSelection(before, batch.optionId, batch.profileId, batch.stage), next = detailBatchSelection(after, batch.optionId, batch.profileId, batch.stage);
   const value = prior.value.split('\n').map((line, index, lines) => {
     const position = lines.slice(0, index + 1).filter(part => part.trim()).length - 1;
     return line.trim() && position === slotIndex ? reply.key : line;
@@ -117,7 +125,7 @@ function verifyCommit(batch: DetailImageBatch, before: QuotationFieldsView, afte
     for (const [id, field] of Object.entries(row.fields)) {
       if (row.optionId === batch.optionId && prior.target.linked.includes(id)) {
         if (stored.fields[id]?.value !== value || stored.fields[id]?.source !== 'manual-option') throw changed();
-      } else if (!(row.optionId === batch.optionId && html.includes(id) && !['manual-common', 'manual-option'].includes(field.source))
+      } else if (!(batch.stage !== 'additional' && row.optionId === batch.optionId && html.includes(id) && !['manual-common', 'manual-option'].includes(field.source))
         && !same(stored.fields[id], field)) throw changed();
     }
   }
@@ -131,12 +139,16 @@ export async function applyDetailBatchResult(batch: DetailImageBatch, slotIndex:
   if (!entry?.rendered || entry.status !== 'ready' || batch.items.some(row => row.status === 'uncertain')) throw Error('검토한 미적용 번역 결과를 선택해주세요.');
   const current = await readDetailBatchView(batch, signal, deps.fetcher);
   if (!same(current, batch.view)) throw changed();
-  const selected = detailBatchSelection(current, batch.optionId, batch.profileId);
+  if (!detailBatchCapacity(current)) throw Error('새 번역 결과를 저장할 이미지 공간이 없습니다. 원본을 유지했으며 업로드하지 않았습니다.');
+  const selected = detailBatchSelection(current, batch.optionId, batch.profileId, batch.stage);
   if (selected.keys[slotIndex] !== entry.sourceKey) throw changed();
-  const refreshed = await (deps.readSource ?? readFreeImageSource)(batch.productId, current.productVersion, entry.sourceKey, 'detail', signal, deps.fetcher, targetFor(batch, slotIndex));
+  const refreshed = await (deps.readSource ?? readFreeImageSource)(batch.productId, current.productVersion, entry.sourceKey, batch.stage === 'additional' ? 'additional' : 'detail', signal, deps.fetcher, targetFor(batch, slotIndex));
   const old = entry.rendered.source, fresh = refreshed.source;
-  if (old.sourceKey !== fresh.sourceKey || old.sourceSha256 !== fresh.sourceSha256 || old.width !== fresh.width || old.height !== fresh.height
+  const oldTarget = old.quotationTarget, freshTarget = fresh.quotationTarget;
+  if (old.productId !== fresh.productId || old.role !== fresh.role || old.sourceKey !== fresh.sourceKey || old.sourceSha256 !== fresh.sourceSha256 || old.width !== fresh.width || old.height !== fresh.height
     || old.contentRevision !== fresh.contentRevision || old.quotationTarget?.optionRevision !== fresh.quotationTarget?.optionRevision
+    || !oldTarget || !freshTarget || oldTarget.profileId !== freshTarget.profileId || oldTarget.optionId !== freshTarget.optionId
+    || oldTarget.input !== freshTarget.input || oldTarget.fieldKey !== freshTarget.fieldKey || oldTarget.slotIndex !== freshTarget.slotIndex
     || !batch.items.some(row => row.status === 'applied') && !sameFreeImageSource(old, fresh)) throw changed();
   const image = { ...entry.rendered, source: fresh }, attempt = { image, before: current } as NonNullable<DetailBatchItem['attempt']>;
   // Publish the exact retry proof before dispatch. Even a user cancellation

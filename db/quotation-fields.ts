@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { quotationScope } from '@/app/quotation-scopes';
 import { env } from 'cloudflare:workers';
 import { emptyQuotationOverrides, type QuotationOverrides } from '@/app/quotation-schema';
@@ -86,7 +87,7 @@ export async function saveQuotationFields(owner: string, productId: string, over
  * advance in the same batch. Common content and source SKU facts are untouched. */
 export async function attachQuotationImageTranslation(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys: string[]) {
   const previous = JSON.parse(source.imageKeys) as unknown;
-  if (!Array.isArray(previous) || imageKeys.length !== previous.length + 1 || imageKeys.length > 50
+  if (!Array.isArray(previous) || imageKeys.length !== previous.length + 1 || imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT
     || JSON.stringify(imageKeys.slice(0, -1)) !== JSON.stringify(previous) || new Set(imageKeys).size !== imageKeys.length)
     throw Error('Invalid final quotation image attachment.');
   return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId, imageKeys);

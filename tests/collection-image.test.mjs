@@ -58,7 +58,7 @@ test('role import preserves manual blank, existing selections and translated wor
  const current=empty('p');current.assets.main={value:[],provenance:'manual',updatedAt:null};current.assets.detail={value:['owner/translated.png'],provenance:'translated',updatedAt:null};
  for(const role of ['main','detail']){const next=model.attachCollectedImage(current,[],'owner/raw.png',role,'now');assert.deepEqual(JSON.parse(JSON.stringify(next.content.assets[role])),current.assets[role]);assert.equal(next.keys.length,1);}
  const added=model.attachCollectedImage(current,[],'owner/raw.png','additional','now');assert.equal(added.content.assets.additional.provenance,'collected');assert.equal(current.assets.additional.value.length,0);
- assert.throws(()=>model.attachCollectedImage(current,Array.from({length:50},(_,i)=>'owner/'+i),'owner/new','detail','now'));
+ assert.throws(()=>model.attachCollectedImage(current,Array.from({length:150},(_,i)=>'owner/'+i),'owner/new','detail','now'));
 });
 function storage(){const sqlite=memoryDatabase();for(const s of runtimeDDL())sqlite.exec(s.sql);
  const now='2026-09-23T00:00:00.000Z';sqlite.prepare(`INSERT INTO products(id,owner_id,source_url,title,source_price_cny,exchange_rate,supply_margin,coupang_margin,supply_price,sale_price,msrp,created_at,updated_at) VALUES('p','owner','url','test',1,1,0,0,1,1,1,?,?)`).run(now,now);

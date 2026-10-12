@@ -6,7 +6,7 @@ import { readProductContent } from '@/db/product-content';
 import { readProductOptions } from '@/db/product-options';
 import { attachProductDocument } from '@/db/product-attachments';
 import { applyContentPatch, productImageKeys } from '@/app/product-content';
-import { imageFileType, isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
+import { imageFileType, isOwnedImageKey, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { readBoundedJson, readBoundedStream, RequestBodyError } from '@/app/request-body';
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -31,7 +31,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const previousKeys = productImageKeys(product.image_keys);
     const imageKeys = [...new Set([...previousKeys, key])];
     const roleKeys = role === null ? [] : [...new Set([...content.assets[role].value, key])];
-    if (imageKeys.length > 50 || roleKeys.length > 30) return json({ error: '상품 이미지는 최대 50개, 표시사항·사이즈표는 역할마다 최대 30개입니다.' }, 400);
+    if (imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || roleKeys.length > 30) return json({ error: `상품 이미지는 최대 ${PRODUCT_IMAGE_POOL_LIMIT}개, 표시사항·사이즈표는 역할마다 최대 30개입니다.` }, 400);
     if (role !== null && Object.entries(content.assets).some(([name, field]) => name !== role && field.value.includes(key))) return json({ error: '이미 다른 역할에 연결한 파일입니다.' }, 400);
     if (!env.FILES) return json({ error: '이미지 저장소가 연결되지 않았습니다.' }, 503);
     const object = await env.FILES.get(key, { range: { offset: 0, length: 1024 } });

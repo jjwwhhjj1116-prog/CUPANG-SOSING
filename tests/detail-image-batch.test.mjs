@@ -16,13 +16,14 @@ function png(color = 200) {
  const rows = Buffer.alloc(26, color); rows[0] = 0; rows[13] = 0;
  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
 }
-async function fixture(company) {
+async function fixture(company, { stage = 'detail', poolSize } = {}) {
  const google = [], h = mobileIntakeHarness({ companyCode: company.code, companyName: company.name, translationFetcher: async url => {
   google.push(new URL(url).searchParams.get('q')); return Response.json([[['번역 문구', '中文']]]);
  } });
  try {
   const live = { ...hubSchemaSnapshot(company), inputBindings: 'couplus-paths-v1' }, raw = JSON.parse(live.schemaString);
   raw.properties.imagePage.properties.details = { type:'object', properties:{ detailedImage:{type:'string',title:'상세 이미지'}, htmlProductDetailContent:{type:'string',title:'HTML 상세 내용'} } };
+  raw.properties.imagePage.properties.images = {type:'object',properties:{additionalImage:{type:'string',title:'추가 이미지'}}};
   live.schemaString = JSON.stringify(raw);
   const fields = h.load('app/quotation-schema.ts').getQuotationSchema(live.categoryId, schemaPath, live).fields.map(field => field.id);
   const workbook = quotationWorkbook(fields), hash = sha(workbook), storageKey = h.load('db/category-templates.ts').templateKey('owner', hash, 'xlsx'); h.objects.set(storageKey, workbook);
@@ -30,16 +31,18 @@ async function fixture(company) {
    template:{name:'synthetic-detail-batch.xlsx',format:'xlsx',sha256:hash,storageKey,sheetName:'견적서',headerRow:1,headers:fields},mappings:fields.map((field,column)=>({field,column,required:false})) }, 'cat');
   h.context.category = profile; h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context), 'job'); await h.intake();
   const product = () => h.sqlite.prepare('SELECT * FROM products').get(), id = product().id, base = '/api/products/'+id, qurl = base+'/quotation-fields?profileId='+profile.id;
-  const keys = JSON.parse(product().image_keys); keys.forEach((key,index) => h.objects.set(key, new Uint8Array(png(index))));
+  const keys = JSON.parse(product().image_keys);
+  if (poolSize) { while(keys.length<poolSize)keys.push(`owner/fixture-source-${keys.length}.png`);h.sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify(keys),id); }
+  keys.forEach((key,index) => h.objects.set(key, new Uint8Array(png(index))));
   const get = h.bindings.FILES.get; h.bindings.FILES.get = async (key, options) => { const object = await get(key,options); if (!object) return null;
    const bytes = new Uint8Array(h.objects.get(key)); return {...object,body:new Response(bytes).body,arrayBuffer:async()=>bytes.slice().buffer}; };
   const read = () => h.route(qurl).then(json); let view = await read();
   const selected = view.resolved.rows.find(row=>row.optionId).optionId, other = view.resolved.rows.filter(row=>row.optionId)[1].optionId;
-  const target = h.load('app/quotation-image-targets.ts').optionImageTargets(view.resolved.schema.fields).detailImages;
+  const inputName=stage==='additional'?'additionalImages':'detailImages',target = h.load('app/quotation-image-targets.ts').optionImageTargets(view.resolved.schema.fields)[inputName];
   const order = [keys[2], keys[0], keys[3]];
   await json(await h.route(qurl,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
    ...target.linked.map(fieldKey=>({optionId:selected,fieldKey,value:order.join('\n')})), {optionId:selected,fieldKey:'detailHtml',value:'<p>보존할 수동 HTML</p>'},
-   {optionId:other,fieldKey:'detailImages',value:''},{optionId:selected,fieldKey:'searchTags',value:''}]}})); view = await read();
+   {optionId:other,fieldKey:inputName,value:''},{optionId:selected,fieldKey:'searchTags',value:''}]}})); view = await read();
   const imageRoute = h.load('app/api/products/[id]/image-text/route.ts'), context = {params:Promise.resolve({id})}, calls = [];
   let intercept = null;
   const fetcher = async (url, init={}) => {
@@ -54,7 +57,7 @@ async function fixture(company) {
   },recognize:async(image,language)=>[{id:'line',text:language==='zh'?'中文':'English',confidence:95,selected:true,box:{x:0,y:0,width:3,height:2},translated:'',issue:null,translationProvenance:'empty',background:'#ffffff',foreground:'#000000',fontSize:1},
    {id:'foreign',text:language==='zh'?'English':'中文',confidence:99,selected:true,box:{x:0,y:0,width:3,height:2},translated:'',issue:null,translationProvenance:'empty',background:'#ffffff',foreground:'#000000',fontSize:1}],
    render:async(image,regions)=>{assert.equal(regions.find(row=>row.id==='foreign').selected,false,'other language remains original');return{source:image.source,output:new Blob([png(90+image.source.quotationTarget.slotIndex)],{type:'image/png'}),width:image.width,height:image.height};}};
-  const model = h.load('app/detail-image-batch.ts'), input = {productId:id,optionId:selected,profileId:profile.id,language:'zh',view};
+  const model = h.load('app/detail-image-batch.ts'), input = {productId:id,optionId:selected,profileId:profile.id,stage,language:'zh',view};
   const sourceRows = () => JSON.stringify(Object.fromEntries(['product_content','product_options','product_price_policy','product_labels','collection_context','collection_products','collection_results'].map(table=>[table,h.sqlite.prepare('SELECT * FROM '+table).all()])));
   const prepare = (extra={}) => model.prepareDetailImageBatch(input,new AbortController().signal,()=>{},{...deps,...extra});
   return {h,model,input,view,keys,order,id,base,qurl,profile,selected,other,read,google,calls,deps,prepare,product,sourceRows,intercept(value){intercept=value;},close(){h.close();}};
@@ -62,6 +65,48 @@ async function fixture(company) {
 }
 
 for (const company of schemaCompanies) {
+ test(`stage-four batch crosses the old 50-file boundary while preserving source/main/detail/manual values and exact XLSX/ZIP (${company.code})`,async()=>{
+  const f=await fixture(company,{stage:'additional',poolSize:49});try{
+   const before=f.sourceRows(),original=plain(f.product()),sourceBytes=new Map(f.keys.map(key=>[key,Buffer.from(f.h.objects.get(key))]));
+   let batch=await f.prepare();assert.equal(f.model.detailBatchCapacity(batch.view),101);assert.ok(batch.items.every(row=>row.status==='ready'&&row.rendered.source.role==='additional'&&row.rendered.source.quotationTarget.input==='additionalImages'));
+   const overrides=plain(batch.view.overrides),applied=[];for(const index of [0,2]){batch=await f.model.applyDetailBatchResult(batch,index,new AbortController().signal,()=>{},f.deps);applied.push(batch.items[index].appliedKey);}
+   assert.equal(batch.view.imageKeys.length,51);assert.equal(f.model.detailBatchCapacity(batch.view),99);const target=f.h.load('app/quotation-image-targets.ts').optionImageTargets(batch.view.resolved.schema.fields).additionalImages;
+   assert.equal(batch.view.resolved.rows.find(row=>row.optionId===f.selected).fields[target.primary].value,[applied[0],f.order[1],applied[1]].join('\n'));
+   const final=plain(batch.view.overrides);for(const field of target.linked){delete final.options[f.selected][field];delete overrides.options[f.selected][field];}assert.deepEqual(final,overrides);
+   assert.equal(f.sourceRows(),before);for(const [key,bytes]of sourceBytes)assert.deepEqual(Buffer.from(f.h.objects.get(key)),bytes);for(const field of Object.keys(original).filter(key=>!['image_keys','quote_status','updated_at'].includes(key)))assert.equal(f.product()[field],original[field]);
+   const preview=await json(await f.h.route(f.base+'/quotation',{method:'POST',body:{action:'preview',profileId:f.profile.id}})),response=await f.h.route(f.base+'/quotation',{method:'POST',body:{action:'export',profileId:f.profile.id,fingerprint:preview.fingerprint}});assert.equal(response.status,200,await response.clone().text());
+   const reader=f.h.load('app/xlsx-template.ts'),archive=await reader.readXlsxArchive(await response.arrayBuffer()),document=JSON.parse(new TextDecoder().decode(archive.get('quotation-fields.json'))),plan=JSON.parse(new TextDecoder().decode(archive.get('supplier-hub-upload-plan.json'))),rowIndex=document.rows.findIndex(row=>row.optionId===f.selected);
+   const sheet=reader.inspectXlsxArchive(await reader.readXlsxArchive(archive.get(plan.quotation.file.filename))),cell=reader.xlsxHeaders(sheet,'견적서',rowIndex+2)[f.profile.template.headers.indexOf(target.primary)];
+   assert.equal(cell,[applied[0],f.order[1],applied[1]].map(key=>document.uploadFilenames[key]).join('\n'));
+   for(const [index,key]of [[0,applied[0]],[2,applied[1]]]){const image=plan.productImages.find(value=>value.key===key);assert.ok(image);assert.deepEqual(Buffer.from(archive.get(image.archivePath)),png(90+index));}
+   assert.equal(f.product().supplier_hub_status,'미전송');
+  }finally{f.close();}
+ });
+ test(`stage-four ACK loss recovers only the exact additional slot and preserves the pending original (${company.code})`,async()=>{
+  const f=await fixture(company,{stage:'additional'});try{let batch=await f.prepare(),uploads=0;const route=f.h.load('app/api/products/[id]/image-text/route.ts');
+   f.intercept(async(url,init)=>{if(init.body instanceof FormData){uploads++;await route.POST(new Request('https://app.test'+url,init),{params:Promise.resolve({id:f.id})});throw Error('fixture additional ACK lost');}});
+   await assert.rejects(f.model.applyDetailBatchResult(batch,1,new AbortController().signal,value=>{batch=value;},f.deps));assert.equal(batch.items[1].status,'uncertain');assert.equal(uploads,1);
+   await assert.rejects(f.model.applyDetailBatchResult(batch,0,new AbortController().signal,()=>{},f.deps));f.intercept(null);batch=await f.model.recoverDetailBatchResult(batch,new AbortController().signal,()=>{},f.deps);
+   assert.equal(batch.items[1].status,'applied');assert.equal(uploads,1);assert.equal(batch.view.resolved.rows.find(row=>row.optionId===f.selected).fields.additionalImages.value,[f.order[0],batch.items[1].appliedKey,f.order[2]].join('\n'));assert.ok(batch.items[0].rendered);assert.ok(batch.items[2].rendered);
+  }finally{f.close();}
+ });
+ test(`batch capacity150 and current schema item limits reject before OCR or upload without removing originals (${company.code})`,async()=>{
+  const f=await fixture(company,{stage:'additional',poolSize:150});try{const snapshot=plain(f.product()),objects=[...f.h.objects.keys()];assert.equal(f.model.detailBatchCapacity(f.view),0);let ocr=0;
+   await assert.rejects(f.prepare({recognize:async()=>{ocr++;return[];}}),/공간/);assert.equal(ocr,0);assert.equal(f.google.length,0);assert.deepEqual(plain(f.product()),snapshot);assert.deepEqual([...f.h.objects.keys()],objects);
+   const limited=plain(f.view);for(const field of f.h.load('app/quotation-image-targets.ts').optionImageTargets(limited.resolved.schema.fields).additionalImages.fields)field.maxItems=2;
+   assert.throws(()=>f.model.detailBatchSelection(limited,f.selected,f.profile.id,'additional'));assert.ok(!f.calls.some(row=>row.init.body instanceof FormData));
+  }finally{f.close();}
+  const final=await fixture(company,{stage:'additional',poolSize:149});try{let batch=await final.prepare();batch=await final.model.applyDetailBatchResult(batch,0,new AbortController().signal,()=>{},final.deps);assert.equal(batch.view.imageKeys.length,150);
+   const objects=[...final.h.objects.keys()],source=final.sourceRows(),uploads=final.calls.filter(row=>row.init.body instanceof FormData).length;
+   await assert.rejects(final.model.applyDetailBatchResult(batch,1,new AbortController().signal,()=>{},final.deps),/공간/);assert.equal(final.calls.filter(row=>row.init.body instanceof FormData).length,uploads);assert.deepEqual([...final.h.objects.keys()],objects);assert.equal(final.sourceRows(),source);
+  }finally{final.close();}
+ });
+ test(`a prepared additional result cannot be retargeted to detail after its preceding self-commit (${company.code})`,async()=>{
+  const f=await fixture(company,{stage:'additional'});try{let batch=await f.prepare();batch=await f.model.applyDetailBatchResult(batch,0,new AbortController().signal,()=>{},f.deps);const before=plain(f.product()),objects=[...f.h.objects.keys()],uploads=f.calls.filter(row=>row.init.body instanceof FormData).length;
+   const view=await f.read();await json(await f.h.route(f.qurl,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{optionId:f.selected,fieldKey:'detailImages',value:f.order.join('\n')}]}}));
+   const retargeted={...batch,stage:'detail',view:await f.read()};await assert.rejects(f.model.applyDetailBatchResult(retargeted,1,new AbortController().signal,()=>{},f.deps));assert.equal(f.calls.filter(row=>row.init.body instanceof FormData).length,uploads);assert.deepEqual([...f.h.objects.keys()],objects);assert.equal(f.product().image_keys,before.image_keys);
+  }finally{f.close();}
+ });
  test(`English detail batch preserves Chinese pixels and applies only an explicitly reviewed result (${company.code})`,async()=>{
   const f=await fixture(company);try{const before=f.sourceRows();let batch=await f.model.prepareDetailImageBatch({...f.input,language:'en'},new AbortController().signal,()=>{},f.deps);
    assert.ok(batch.items.every(row=>row.status==='ready'));assert.ok(f.google.every(value=>value==='English'));assert.ok(batch.items.every(row=>row.texts.length===1&&row.texts[0].original==='English'));

@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { applyQuotationChanges, validateQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
 import { findQuotationLabelUpload, readQuotationLabelReceipt } from '@/app/quotation-label-upload';
@@ -76,7 +77,7 @@ export async function attachQuotationLabel(input: Input, request: typeof fetch =
   if (key) input.onUploaded(key);
   const limit = Math.min(...current.target.fields.map(field => field.maxItems ?? 30));
   if (current.retained.length + (key && current.retained.includes(key) ? 0 : 1) > limit
-    || view.imageKeys.length >= 50 && (!key || !view.imageKeys.includes(key))) throw Error('라벨 또는 상품 이미지 한도입니다. 기존 첨부를 확인해주세요.');
+    || view.imageKeys.length >= PRODUCT_IMAGE_POOL_LIMIT && (!key || !view.imageKeys.includes(key))) throw Error('라벨 또는 상품 이미지 한도입니다. 기존 첨부를 확인해주세요.');
   if (!key) {
     if (!input.blob || input.blob.type !== 'image/png' || input.blob.size < 1 || input.blob.size > 10 * 1024 * 1024) throw Error('내용이 있는 PNG를 먼저 생성해주세요.');
     const form = new FormData(); form.set('file', new File([input.blob], 'sourceflow-quotation-label.png', { type: 'image/png' }));

@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import type { DocumentImagePlan } from '@/app/document-image';
 import { quotationLabelPlan } from '@/app/quotation-label-plan';
@@ -46,7 +47,7 @@ export async function attachQuotationLabels(input: {
     else if (!latest.imageKeys.includes(key)) pendingKeys.add(key);
   }
   const required = newFiles + pendingKeys.size;
-  if (latest.imageKeys.length + required > 50) throw new Error(`상품 이미지 50개 한도입니다. 현재 ${latest.imageKeys.length}개이며 라벨 연결에 ${required}개 공간이 더 필요합니다.`);
+  if (latest.imageKeys.length + required > PRODUCT_IMAGE_POOL_LIMIT) throw new Error(`상품 이미지 ${PRODUCT_IMAGE_POOL_LIMIT}개 한도입니다. 현재 ${latest.imageKeys.length}개이며 라벨 연결에 ${required}개 공간이 더 필요합니다.`);
   for (const [index, row] of rows.entries()) {
     if (input.shouldStop?.()) return result(index, true);
     input.onProgress({ completed: index, total: rows.length, optionLabel: row.optionLabel });

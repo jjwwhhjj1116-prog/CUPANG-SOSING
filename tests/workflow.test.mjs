@@ -18,6 +18,7 @@ function load(relative, overrides = {}) {
       if (name === '@/db/collection-images') return {readRegistrationSourceImages: async()=>({})};
       if (name === '@/db/supplier-hub-receipts') return {readSupplierHubReceiptSummaries: async()=>({})};
       if (name === '@/db/product-removals') return {
+        readProductRemovalPolicies: async (_owner, products) => { assert.equal(products.length, 0); return {}; },
         removeProduct: async()=>{assert.fail('PATCH workflow must not remove a product.');},
         restoreProduct: async()=>{assert.fail('PATCH workflow must not restore a product.');},
       };

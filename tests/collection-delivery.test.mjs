@@ -70,7 +70,7 @@ test('stop after receipt and retry after image failure preserve confirmed progre
 });
 
 test('delivery retains receipt confirmation when capacity rejects the selected images',async()=>{
- const calls=[];const outcome=await actualDeliver('job','123456789',input,{imageIndices:[0],fetcher:async(url,init)=>{calls.push(url);if(url.endsWith('/result'))return reply({jobId:'job',offerId:'123456789',receipt:{result:receipt(init.body)}});return reply({capacity:{usedSlots:50,totalImages:1,reusableIndices:[]}});}});
+ const calls=[];const outcome=await actualDeliver('job','123456789',input,{imageIndices:[0],fetcher:async(url,init)=>{calls.push(url);if(url.endsWith('/result'))return reply({jobId:'job',offerId:'123456789',receipt:{result:receipt(init.body)}});return reply({capacity:{usedSlots:150,totalImages:1,reusableIndices:[]}});}});
  assert.equal(outcome.status,'failed');assert.equal(outcome.receiptConfirmed,true);assert.equal(outcome.productId,null);assert.equal(outcome.completedImages,0);
  assert.deepEqual(calls,['/api/collection-jobs/job/result','/api/collection-jobs/job/capacity']);
 });
@@ -111,7 +111,7 @@ test('automatic delivery prioritizes option images, reuses saved originals and p
  const saved=[];let reads=0;
  const outcome=await actualDeliver('job','123456789',source,{fetcher:async(url,init)=>{
   if(url.endsWith('/result'))return reply({jobId:'job',offerId:'123456789',receipt:{result:receipt(init.body)}});
-  if(url.endsWith('/capacity')){reads++;return reply({capacity:{usedSlots:49,totalImages:5,reusableIndices:[4],blockedIndices:[0]}});}
+  if(url.endsWith('/capacity')){reads++;return reply({capacity:{usedSlots:149,totalImages:5,reusableIndices:[4],blockedIndices:[0]}});}
   if(url.endsWith('/product'))return reply({productId:'p'});
   saved.push(JSON.parse(init.body).index);return reply({key:'saved'});
  }});
@@ -123,7 +123,7 @@ test('automatic delivery reports no room without dropping the product and stops 
   let reads=0,stop=false;const writes=[];
   const outcome=await actualDeliver('job','123456789',input,{retryAttempts:1,shouldStop:()=>stop,fetcher:async(url,init)=>{
    if(url.endsWith('/result'))return reply({jobId:'job',offerId:'123456789',receipt:{result:receipt(init.body)}});
-   if(url.endsWith('/capacity')){reads++;if(mode==='stop')stop=true;return reply({capacity:{usedSlots:mode==='full'||(mode==='race'&&reads===2)?50:0,totalImages:mode==='invalid'?99:1,reusableIndices:[]}});}
+   if(url.endsWith('/capacity')){reads++;if(mode==='stop')stop=true;return reply({capacity:{usedSlots:mode==='full'||(mode==='race'&&reads===2)?150:0,totalImages:mode==='invalid'?99:1,reusableIndices:[]}});}
    writes.push(url);return reply({productId:'p',key:'image'});
   }});
   assert.equal(outcome.receiptConfirmed,true);

@@ -96,7 +96,7 @@ test('product button stops retry after in-flight failure and never reports an un
 
 test('large receipts recommend main and option images, preserve manual choice on refresh and apply only selected indices',async()=>{
  const source={...result,images:Array.from({length:60},(_,i)=>({url:`https://cbu01.alicdn.com/${i}.png`,role:i===55?'main':i===30?'additional':'detail'})),options:[{...result.options[0],imageIndex:59}]};
- const cap={usedSlots:47,totalImages:60,reusableIndices:[0],blockedIndices:[1]};let applied;const requests=[];
+ const cap={usedSlots:147,totalImages:60,reusableIndices:[0],blockedIndices:[1]};let applied;const requests=[];
  const h=harness(async(url,init)=>{requests.push([url,init?.method]);return url.endsWith('/result')?Response.json({jobId:'job',offerId:'123',receipt:{result:source},message:'수신됨'}):Response.json({capacity:cap});},async(_job,_total,options)=>{applied=Array.from(options.imageIndices);return{status:'completed',productId:'p',completedImages:applied.length};});
  const selected=()=>nodes(h.render()).filter(n=>n.type==='input').flatMap((n,i)=>n.props.checked?[i]:[]);
  await h.click('수신 결과 조회');assert.deepEqual(selected(),[0,30,55,59]);assert.equal(requests.filter(([,method])=>method==='POST').length,0);

@@ -6,6 +6,7 @@ export const requiredDatabaseTables = [
   'translation_jobs', 'image_jobs', 'product_quotation_fields', 'collection_results',
   'collection_products', 'collection_images', 'quotation_attribute_rules', 'intake_drafts',
   'members', 'member_sessions', 'member_rate_limits', 'member_audit', 'supplier_hub_receipts', 'collection_source_supplements', 'managed_products', 'historical_ai_records', 'product_removals',
+  'collection_offer_claims', 'product_labels', 'managed_import_prices',
 ] as const;
 
 export async function inspectDatabaseTables(database: D1Database) {

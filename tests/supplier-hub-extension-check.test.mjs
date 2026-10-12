@@ -23,7 +23,7 @@ test('settings shows the returned installed version and flags, not the download 
   const ui=fixture();ui.render();assert.equal(ui.calls.length,1);
   ui.calls[0].resolve({version:'0.2.54',pendingReceiptRefreshRecovery:false,registrationObservationCas:false});await settle();
   assert.match(ui.text(),/설치된 버전 0\.2\.54/);assert.match(ui.text(),/확장 업데이트 필요/);
-  assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,'/downloads/yoofam-plus-supplier-hub-extension-0.2.61.zip');
+  assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,'/downloads/yoofam-plus-supplier-hub-extension-0.2.62.zip');
   ui.retry();assert.equal(ui.calls.length,2);assert.equal(ui.calls[0].signal.aborted,true);
   ui.calls[1].resolve({version:'0.2.60',publicSingleSkuCapture:true,companyRegistrationStatus:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true});await settle();
   assert.match(ui.text(),/설치된 버전 0\.2\.60/);assert.doesNotMatch(ui.text(),/업데이트 필요/);assert.equal(nodes(ui.render()).some(node=>node.type==='a'),false);
@@ -42,12 +42,12 @@ test('matching download version alone does not claim current agreement checks ar
     const ui=fixture();ui.render();
     ui.calls[0].resolve({version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:false});await settle();
     assert.ok(ui.text().includes('설치된 버전 '+version));assert.match(ui.text(),/확장 업데이트 필요/);
-    assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,'/downloads/yoofam-plus-supplier-hub-extension-0.2.61.zip');
+    assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,'/downloads/yoofam-plus-supplier-hub-extension-0.2.62.zip');
     ui.unmount();
   }
 });
 
  test('legacy result capabilities remain usable while missing single-SKU capture requires the current package',async()=>{
  const ui=fixture();ui.render();ui.calls[0].resolve({version:'0.2.59',pendingReceiptRefreshRecovery:true,registrationObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true});await settle();
- assert.match(ui.text(),/설치된 버전 0\.2\.59/);assert.match(ui.text(),/검증 결과 복구·SKU 결과 보존 지원/);assert.match(ui.text(),/단일 SKU 수집은 확장 업데이트 필요/);assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,'/downloads/yoofam-plus-supplier-hub-extension-0.2.61.zip');ui.unmount();
+ assert.match(ui.text(),/설치된 버전 0\.2\.59/);assert.match(ui.text(),/검증 결과 복구·SKU 결과 보존 지원/);assert.match(ui.text(),/단일 SKU 수집은 확장 업데이트 필요/);assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,'/downloads/yoofam-plus-supplier-hub-extension-0.2.62.zip');ui.unmount();
  });

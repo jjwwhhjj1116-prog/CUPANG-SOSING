@@ -61,9 +61,9 @@ test('full storage still imports the product and reports preserved but omitted o
   const calls = [], results = [];
   await importReceivedJobs([job('a')], { shouldStop: () => false, onProgress: () => {}, onResult: (_id, r) => results.push(r), fetcher: async url => {
     calls.push(url);
-    return Response.json(url.endsWith('/result') ? { jobId: 'a', offerId: '123', receipt: { result: { ...source, images: [{ url: 'https://cbu01.alicdn.com/a.jpg', role: 'main' }] } } } : url.endsWith('/capacity') ? { capacity: { usedSlots: 50, totalImages: 1, reusableIndices: [] } } : { productId: 'p' });
+    return Response.json(url.endsWith('/result') ? { jobId: 'a', offerId: '123', receipt: { result: { ...source, images: [{ url: 'https://cbu01.alicdn.com/a.jpg', role: 'main' }] } } } : url.endsWith('/capacity') ? { capacity: { usedSlots: 150, totalImages: 1, reusableIndices: [] } } : { productId: 'p' });
   } });
-  assert.equal(results[0].status, 'completed'); assert.equal(results[0].completedImages, 0); assert.match(results[0].warnings[0], /1개/);
+  assert.equal(results[0].status, 'completed'); assert.equal(results[0].completedImages, 0); assert.ok(results[0].warnings.some(warning=>/1개/.test(warning)));
   assert.equal(calls.some(url => url.endsWith('/images')), false);
 });
 
@@ -77,9 +77,9 @@ test('automatic import of a large SKU gallery includes details and reports the o
   if(url.endsWith('/product'))return Response.json({productId:'p'});
   const index=JSON.parse(init.body).index;saved.push(index);return Response.json({key:`owner/${index}.jpg`});
  }});
- assert.equal(results[0].status,'completed');assert.equal(results[0].completedImages,48);
- assert.ok(saved.includes(0));assert.ok(saved.includes(61));assert.equal(saved.length,48);
- assert.deepEqual(saved,[...saved].sort((a,b)=>a-b));assert.match(results[0].warnings.at(-1),/17개/);
+ assert.equal(results[0].status,'completed');assert.equal(results[0].completedImages,50);
+ assert.ok(saved.includes(0));assert.ok(saved.includes(61));assert.equal(saved.length,50);
+ assert.deepEqual(saved,[...saved].sort((a,b)=>a-b));assert.match(results[0].warnings.at(-1),/15개/);
 });
 
 test('linked recovery survives reload and excludes cancelled or unreceived jobs',()=>{
@@ -100,7 +100,7 @@ test('linked recovery reuses the saved product, excludes removed originals and r
  }});
  assert.equal(results[0].productId,'existing');assert.equal(results[0].status,'completed');assert.equal(results[0].completedImages,2);
  assert.deepEqual(calls.filter(([url])=>url.endsWith('/images')).map(([,body])=>JSON.parse(body).index),[0,2]);
- assert.match(results[0].warnings[0],/1개/);
+ assert.ok(results[0].warnings.some(warning=>/1개/.test(warning)));
 });
 
 test('batch recovers transient receipt, capacity, product and image errors with identical requests',async()=>{
@@ -172,8 +172,8 @@ test('intake image reservation survives batch selection and still creates the sa
   if(url.endsWith('/product'))return Response.json({productId:'p'});
   assert.equal(prepared,true);const index=JSON.parse(init.body).index;saved.push(index);return Response.json({key:`owner/${index}.jpg`});
  }});
- assert.equal(results[0].status,'completed');assert.equal(saved.length,47);assert.ok(saved.includes(0)&&saved.includes(59));
- assert.match(results[0].warnings.at(-1),/13개/);assert.equal(saved.length+2+1,50);
+ assert.equal(results[0].status,'completed');assert.equal(saved.length,49);assert.ok(saved.includes(0)&&saved.includes(59));
+ assert.match(results[0].warnings.at(-1),/11개/);assert.equal(saved.length+2+1,52);
 });
 
 test('network and HTML capacity outages retain source-based draft preparation without image writes',async()=>{

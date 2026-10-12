@@ -9,6 +9,25 @@ const MAX_CHARACTERS = 5000;
 const marker = /^\[\[YFTR\d{6}\]\]$/u;
 const ambiguousSource = /[\r\n\u2028\u2029]|\[\[|\]\]/u;
 
+/** Long descriptions retain every source character. Prefer paragraph endings
+ * and never divide a surrogate pair or CRLF at the request boundary. */
+export function splitGoogleTranslationText(text: string): string[] {
+  if (text.length <= MAX_CHARACTERS) return [text];
+  const parts: string[] = [];
+  for (let start = 0; start < text.length;) {
+    let end = Math.min(start + MAX_CHARACTERS, text.length);
+    if (end < text.length) {
+      if (/[\uD800-\uDBFF]/u.test(text[end - 1]) && /[\uDC00-\uDFFF]/u.test(text[end])) end--;
+      if (text[end - 1] === '\r' && text[end] === '\n') end--;
+      for (let index = end - 1; index >= start + Math.floor(MAX_CHARACTERS / 2); index--) {
+        if (/[\n\u2028\u2029]/u.test(text[index])) { end = index + 1; break; }
+      }
+    }
+    parts.push(text.slice(start, end)); start = end;
+  }
+  return parts;
+}
+
 /** Plain text only: IDs identify independent source strings, not instructions.
  * Keep ambiguous or large source text intact as an individual request. */
 export function planGoogleTranslationRequests(texts: readonly string[]): GoogleTranslationRequest[] {

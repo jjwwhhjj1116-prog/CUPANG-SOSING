@@ -67,7 +67,9 @@ test('legacy sharing authorizes only the same file and role pairs, never within-
   const extra=legacy();extra.assets.oldSlot={value:['owner/old-slot.png'],provenance:'unverified',updatedAt:null};
   assert.throws(()=>contentModel.applyContentPatch(extra,{assets:{detail:['owner/shared.png','owner/old-slot.png']}},now),/한 역할/,'an old extra slot cannot authorize a new shared role pair');
  const full=legacy();full.assets.detail.value=Array.from({length:30},(_,index)=>`owner/detail-${index}.png`);full.assets.detail.value[0]='owner/shared.png';full.assets.additional.value=Array.from({length:20},(_,index)=>`owner/additional-${index}.png`);
- assert.throws(()=>contentModel.applyContentPatch(full,{detail:{description:'51 role occurrences'}},now),/최대 50개/);
+ assert.equal(contentModel.applyContentPatch(full,{detail:{description:'51 role occurrences'}},now).detail.description.value,'51 role occurrences');
+ const oversized=structuredClone(full);oversized.assets.additional.value=Array.from({length:120},(_,index)=>`owner/additional-${index}.png`);
+ assert.throws(()=>contentModel.applyContentPatch(oversized,{detail:{description:'151 role occurrences'}},now),/최대 150개/);
  assert.deepEqual(plain(content),before);
 });
 

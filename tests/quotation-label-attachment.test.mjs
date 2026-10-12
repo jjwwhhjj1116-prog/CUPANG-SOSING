@@ -101,7 +101,7 @@ test('read-only, non-image or newly restricted canonical label controls refuse a
  }
 });
 test('limits are checked before uploading and latest existing labels are retained', async () => {
-  const full = harness(); full.view.imageKeys = ['owner/old.png',...Array.from({ length: 49 }, (_, i) => `owner/${i}.png`)]; await assert.rejects(full.run(), /한도/);
+  const full = harness(); full.view.imageKeys = ['owner/old.png',...Array.from({ length: 149 }, (_, i) => `owner/${i}.png`)]; await assert.rejects(full.run(), /한도/);
   assert.equal(full.calls.filter(call=>call.method!=='GET').length, 0);
   const labels = harness();labels.view.imageKeys.push(...Array.from({length:30},(_,i)=>`owner/${i}.png`)); labels.view.resolved.rows[0].fields.labelImages.value = Array.from({ length: 30 }, (_, i) => `owner/${i}.png`).join('\n'); await assert.rejects(labels.run(), /한도/);
   const h = harness(); h.view.resolved.rows[0].fields.labelImages.value += '\nowner/another.png'; h.view.imageKeys.push('owner/another.png');
@@ -112,12 +112,12 @@ test('server-recovered keys finish single and batch retries even at full image a
   for (const method of ['single', 'batch']) {
     const h = harness(true); let renders = 0;
     const rows = method === 'single' ? [h.view.resolved.rows[0]] : h.view.resolved.rows;
-    const keys=await seedSaved(h);h.view.imageKeys=[...keys.values(),...Array.from({length:48},(_,i)=>`owner/${i}.png`)];
+    const keys=await seedSaved(h);h.view.imageKeys=[...keys.values(),...Array.from({length:148},(_,i)=>`owner/${i}.png`)];
     for(const row of rows){row.fields.labelImages.value=h.view.imageKeys.slice(0,30).join('\n');h.view.overrides.options[row.optionId].labelImages=row.fields.labelImages.value;}
     const request=h.fetcher;
     if (method === 'single') {
       const saved = await attach({ productId: 'p1', endpoint, renderedView: h.initial, optionId: 'red', blob: null, uploadedKey: null, onUploaded() {} }, request);
-      assert.equal(saved.imageKeys.length, 50);
+      assert.equal(saved.imageKeys.length, 150);
     } else {
       const result = await batch({ productId: 'p1', endpoint, view: h.initial, uploaded: new Map(), render: async () => { renders++; return { blob: new Blob(['png'],{type:'image/png'}) }; }, onProgress() {} }, request);
       assert.equal(result.completed, 2); assert.equal(result.stopped, false);
@@ -187,16 +187,16 @@ test('batch validates all plans before mutation and stops if later option change
 });
 
 test('batch capacity preflight stops before rendering or uploading and counts retained retry keys', async () => {
-  const h = harness(true); h.view.imageKeys = ['owner/old.png',...Array.from({ length: 48 }, (_, i) => `owner/${i}.png`)];
+  const h = harness(true); h.view.imageKeys = ['owner/old.png',...Array.from({ length: 148 }, (_, i) => `owner/${i}.png`)];
   let renders = 0;
   const input = { productId: 'p1', endpoint, view: h.initial, uploaded: new Map(), render: async () => { renders++; return { blob: new Blob(['png'],{type:'image/png'}) }; }, onProgress() {} };
-  await assert.rejects(batch(input, h.fetcher), /49개.*2개/);
+  await assert.rejects(batch(input, h.fetcher), /149개.*2개/);
   assert.equal(renders, 0); assert.equal(h.calls.filter(call => call.method !== 'GET').length, 0);
   h.view.imageKeys = ['owner/old.png'];
   h.view.imageKeys.push(...Array.from({length:30},(_,i)=>`owner/${i}.png`));
   h.view.resolved.rows[1].fields.labelImages.value = Array.from({ length: 30 }, (_, i) => `owner/${i}.png`).join('\n');
   await assert.rejects(batch(input, h.fetcher), /blue.*30개/); assert.equal(renders, 0);
-  const full = harness(true),uploaded=await seedSaved(full);full.view.imageKeys=[...uploaded.values(),...Array.from({length:48},(_,i)=>`owner/${i}.png`)];
+  const full = harness(true),uploaded=await seedSaved(full);full.view.imageKeys=[...uploaded.values(),...Array.from({length:148},(_,i)=>`owner/${i}.png`)];
   for(const row of full.view.resolved.rows){row.fields.labelImages.value=uploaded.get(row.optionId);full.view.overrides.options[row.optionId].labelImages=row.fields.labelImages.value;}
   const result = await batch({ ...input, view: full.initial, uploaded }, full.fetcher);
   assert.equal(result.completed, 2); assert.equal(result.stopped, false); assert.equal(renders, 0);

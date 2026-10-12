@@ -32,9 +32,9 @@ test('unauthenticated, missing and cancelled requests do not expose capacity',as
 test('role and SKU image selections obey capacity, reuse and exclusions without mixing groups',()=>{
  const {recommendCollectionImages:select}=load('app/collection-capacity.ts');
  const source={images:[{role:'main'},{role:'detail'},{role:'additional'},{role:'detail'},{role:'main'}],options:[{imageIndex:3},{imageIndex:3},{imageIndex:4}]};
- const cap={usedSlots:49,totalImages:5,reusableIndices:[3],blockedIndices:[4]};const before=JSON.stringify({source,cap});
+ const cap={usedSlots:149,totalImages:5,reusableIndices:[3],blockedIndices:[4]};const before=JSON.stringify({source,cap});
  for(const [group,expected] of [['main',[0]],['options',[3]],['additional',[2]],['detail',[1,3]]])assert.deepEqual(Array.from(select(source,cap,group)),expected);
- assert.deepEqual(Array.from(select(source,{...cap,usedSlots:50},'detail')),[3]);assert.deepEqual(Array.from(select({...source,options:[]},cap,'options')),[]);
+ assert.deepEqual(Array.from(select(source,{...cap,usedSlots:150},'detail')),[3]);assert.deepEqual(Array.from(select({...source,options:[]},cap,'options')),[]);
  assert.equal(JSON.stringify({source,cap}),before);
 });
 
@@ -43,14 +43,14 @@ test('large option galleries preserve a detail image in the draft without restor
  const source={images:Array.from({length:65},(_,i)=>({role:i===0?'main':i<61?'additional':'detail'})),options:Array.from({length:60},(_,i)=>({imageIndex:i+1}))};
  const cap={usedSlots:2,totalImages:65,reusableIndices:[],blockedIndices:[]};
  const picked=Array.from(select(source,cap));
- assert.equal(picked.length,48);assert.ok(picked.includes(0));assert.ok(picked.includes(61));assert.equal(fits(cap,picked),true);
+ assert.equal(picked.length,50);assert.ok(picked.includes(0));assert.ok(picked.includes(61));assert.equal(fits(cap,picked),true);
  const reused=Array.from(select(source,{...cap,usedSlots:3,reusableIndices:[64],blockedIndices:[61]}));
  assert.ok(reused.includes(64));assert.ok(!reused.includes(61));assert.ok(!reused.includes(62));
- assert.equal(reused.length,48);
+ assert.equal(reused.length,50);
  const excluded=Array.from(select(source,{...cap,blockedIndices:[61,62,63,64]}));
- assert.ok(excluded.every(index=>index<61));assert.equal(excluded.length,48);
- assert.deepEqual(Array.from(select(source,{...cap,usedSlots:49})),[0]);
- assert.deepEqual(Array.from(select(source,{...cap,usedSlots:48})),[0,61]);
+ assert.ok(excluded.every(index=>index<61));assert.equal(excluded.length,50);
+ assert.deepEqual(Array.from(select(source,{...cap,usedSlots:149})),[0]);
+ assert.deepEqual(Array.from(select(source,{...cap,usedSlots:148})),[0,61]);
  assert.ok(Array.from(select(source,cap,'options')).every(index=>index>0&&index<61));
  assert.ok(Array.from(select(source,cap,'detail')).every(index=>index>=61));
 });
@@ -58,16 +58,17 @@ test('large option galleries preserve a detail image in the draft without restor
 test('image recommendations prioritize main and option images within actual remaining capacity',()=>{
  const {recommendCollectionImages:recommend,collectionSelectionFits:fits}=load('app/collection-capacity.ts');
  const source={images:Array.from({length:200},(_,i)=>({role:i===150?'main':i===100?'additional':'detail'})),options:[{imageIndex:180},{imageIndex:180},{imageIndex:199}]};
- const cap={usedSlots:47,totalImages:200,reusableIndices:[0,120],blockedIndices:[199]};
+ const cap={usedSlots:147,totalImages:200,reusableIndices:[0,120],blockedIndices:[199]};
  const before=JSON.stringify({source,cap});const selected=Array.from(recommend(source,cap));
  assert.deepEqual(selected,[0,100,120,150,180]);assert.equal(fits(cap,selected),true);assert.equal(JSON.stringify({source,cap}),before);
- const empty=Array.from(recommend(source,{...cap,usedSlots:50,reusableIndices:[]}));assert.deepEqual(empty,[]);
- assert.deepEqual(Array.from(recommend(source,{...cap,usedSlots:50})),[0,120]);
+ const empty=Array.from(recommend(source,{...cap,usedSlots:150,reusableIndices:[]}));assert.deepEqual(empty,[]);
+ assert.deepEqual(Array.from(recommend(source,{...cap,usedSlots:150})),[0,120]);
  const many=Array.from(recommend(source,{...cap,usedSlots:0,reusableIndices:[],blockedIndices:[]}));
  assert.equal(many.length,50);assert.ok(many.includes(150)&&many.includes(180)&&many.includes(199)&&many.includes(100));
  assert.equal(new Set(many).size,50);assert.deepEqual(many,[...many].sort((a,b)=>a-b));
  assert.throws(()=>recommend(source,{...cap,totalImages:199}),/확인/);
- assert.deepEqual(Array.from(recommend({images:[],options:[]},{usedSlots:50,totalImages:0,reusableIndices:[]})),[]);
+ assert.deepEqual(Array.from(recommend({images:[],options:[]},{usedSlots:150,totalImages:0,reusableIndices:[]})),[]);
+ assert.throws(()=>recommend(source,{...cap,usedSlots:151}),/확인/);
 });
 
 test('automatic image selection leaves label capacity while preserving existing and excluded originals',()=>{
@@ -75,11 +76,11 @@ test('automatic image selection leaves label capacity while preserving existing 
  const source={images:Array.from({length:60},(_,i)=>({role:i===0?'main':i===59?'detail':'additional'})),options:[{imageIndex:1}]};
  for(const usedSlots of [0,2]){
   const picked=Array.from(select(source,{usedSlots,totalImages:60,reusableIndices:[]},'all',1));
-  assert.equal(picked.length,49-usedSlots);assert.ok(picked.includes(0)&&picked.includes(1)&&picked.includes(59));
+  assert.equal(picked.length,49);assert.ok(picked.includes(0)&&picked.includes(1)&&picked.includes(59));
  }
- const cap={usedSlots:49,totalImages:60,reusableIndices:[0,1,59],blockedIndices:[2]};
+ const cap={usedSlots:149,totalImages:60,reusableIndices:[0,1,59],blockedIndices:[2]};
  assert.deepEqual(Array.from(select(source,cap,'all',1)),[0,1,59]);
- assert.deepEqual(Array.from(select(source,{...cap,usedSlots:50},'all',1)),[0,1,59]);
+ assert.deepEqual(Array.from(select(source,{...cap,usedSlots:150},'all',1)),[0,1,59]);
  assert.equal(Array.from(select(source,{usedSlots:0,totalImages:60,reusableIndices:[]})).length,50);
  for(const reserved of [-1,0.5,50])assert.throws(()=>select(source,cap,'all',reserved),/예약 공간/);
 });

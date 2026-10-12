@@ -1,8 +1,9 @@
 import type { CollectionResult } from '@/app/collection-result';
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 export type CollectionCapacity = { usedSlots: number; totalImages: number; reusableIndices: number[]; blockedIndices?: number[] };
 export function validateCollectionCapacity(input: unknown, totalImages: number): CollectionCapacity {
   const value = input as CollectionCapacity | null;
-  if (!value || !Number.isInteger(value.usedSlots) || value.usedSlots < 0 || value.usedSlots > 50
+  if (!value || !Number.isInteger(value.usedSlots) || value.usedSlots < 0 || value.usedSlots > PRODUCT_IMAGE_POOL_LIMIT
     || value.totalImages !== totalImages || !Array.isArray(value.reusableIndices)
     || value.reusableIndices.length > 200 || new Set(value.reusableIndices).size !== value.reusableIndices.length
     || value.reusableIndices.some(index => !Number.isInteger(index) || index < 0 || index >= totalImages))
@@ -15,7 +16,7 @@ export function validateCollectionCapacity(input: unknown, totalImages: number):
 }
 export function collectionSelectionFits(capacity: CollectionCapacity, indices: readonly number[]): boolean {
   const fresh = new Set(indices.filter(index => !capacity.reusableIndices.includes(index)));
-  return !indices.some(index => capacity.blockedIndices?.includes(index)) && capacity.usedSlots + fresh.size <= 50;
+  return !indices.some(index => capacity.blockedIndices?.includes(index)) && capacity.usedSlots + fresh.size <= PRODUCT_IMAGE_POOL_LIMIT;
 }
 
 /** Suggest a bounded selection; never downloads, restores excluded images, or changes source order. */
@@ -46,7 +47,7 @@ export function recommendCollectionImages(result: Pick<CollectionResult, 'images
     // Never remove already attached originals to make room. Reserve space only
     // when selecting new files, including when resuming a partially saved draft.
     if (collectionSelectionFits(capacity, candidate) &&
-      (capacity.reusableIndices.includes(index) || capacity.usedSlots + fresh <= 50 - reservedSlots)) selected.push(index);
+      (capacity.reusableIndices.includes(index) || (fresh <= 50 - reservedSlots && capacity.usedSlots + fresh <= PRODUCT_IMAGE_POOL_LIMIT - reservedSlots))) selected.push(index);
   }
   return selected.sort((a, b) => a - b);
 }

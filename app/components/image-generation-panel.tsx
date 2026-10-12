@@ -1,4 +1,5 @@
 'use client';
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 
 /* Authenticated R2 previews use the existing file route without a public image optimizer. */
 /* eslint-disable @next/next/no-img-element */
@@ -81,7 +82,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     const snapshot=next.product;
     if(!snapshot)return ''; // Existing histories without a source snapshot remain readable.
     if(snapshot.id!==productId||typeof snapshot.version!=='string'||!snapshot.version||snapshot.version.length>200
-      ||!Array.isArray(snapshot.imageKeys)||snapshot.imageKeys.length>50||new Set(snapshot.imageKeys).size!==snapshot.imageKeys.length
+      ||!Array.isArray(snapshot.imageKeys)||snapshot.imageKeys.length>PRODUCT_IMAGE_POOL_LIMIT||new Set(snapshot.imageKeys).size!==snapshot.imageKeys.length
       ||snapshot.imageKeys.some(key=>typeof key!=='string'||!key||key.length>512))throw Error('현재 상품의 이미지 저장본을 확인하지 못했습니다.');
     const recovered=next.jobs.some(item=>item.productId===productId&&item.status==='completed'&&item.result?.attached===true
       &&snapshot.imageKeys.includes(item.result.storageKey)&&!imageKeys.includes(item.result.storageKey));

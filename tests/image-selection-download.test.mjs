@@ -44,9 +44,9 @@ for(const company of companies)test(`an interrupted image download never produce
  }finally{ui?.close();f.api.close();}
 });
 
-test('selection archives preserve all 50 indexed entries and reject missing, foreign, unsupported or oversized reads',async()=>{
+test('selection archives preserve all 150 indexed entries and reject missing, foreign, unsupported or oversized reads',async()=>{
  const f=await downloadFixture(companies[0]);let ui;try{ui=downloadUI('app/components/product-content-editor.tsx','ProductContentEditor',{product:f.product,section:'이미지',focusedAssetRole:'detail'},f.request);await ui.idle();const archive=ui.load('app/image-selection-download.ts').imageSelectionArchive,signal=new AbortController().signal,before=f.retained(),bytes=f.originals();
-  const maximum=Array(50).fill(f.keys[3]);assert.equal(unzip(await archive(maximum,f.keys,signal,f.request)).size,50);let reads=0;await assert.rejects(archive([...maximum,f.keys[3]],f.keys,signal,async()=>{reads++;throw Error('must not fetch');}));assert.equal(reads,0);
+  const maximum=Array(150).fill(f.keys[3]);assert.equal(unzip(await archive(maximum,f.keys,signal,f.request)).size,150);let reads=0;await assert.rejects(archive([...maximum,f.keys[3]],f.keys,signal,async()=>{reads++;throw Error('must not fetch');}));assert.equal(reads,0);
   await assert.rejects(archive([f.keys[3],'owner/absent.png'],f.keys,signal,async()=>{reads++;throw Error('must not fetch');}));assert.equal(reads,0);
   await assert.rejects(archive(['other/image.png'],['other/image.png'],signal,f.request),/내려받지/);assert.equal(f.calls.at(-1).url,'/api/files/other/image.png');
   await assert.rejects(archive([f.keys[3]],f.keys,signal,async()=>new Response('<html>login screen</html>',{headers:{'content-type':'text/html'}})),/이미지/);

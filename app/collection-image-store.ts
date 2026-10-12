@@ -9,7 +9,7 @@ import {readProductContent} from '@/db/product-content';
 import {readProductOptions} from '@/db/product-options';
 import {readCollectionImage,saveCollectionImage,CollectionImageCancelledError} from '@/db/collection-images';
 import {productImageKeys} from '@/app/product-content';
-import {MAX_IMAGE_BYTES} from '@/app/image-files';
+import {MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import {downloadCollectionImage,collectedImageWarnings} from '@/app/collection-image';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 
@@ -32,7 +32,7 @@ export async function storeCollectedImage(owner:string,id:string,index:number,as
    return reply({key:previous.object_key,reused:true,warnings:await warnings(previous.object_key)});
   }
   const current=await readProductContent(owner,product.id);
-  if(JSON.parse(product.image_keys).length>=50)return reply({error:'상품 이미지 50개 제한입니다. 이미지를 정리해주세요.'},409);
+  if(JSON.parse(product.image_keys).length>=PRODUCT_IMAGE_POOL_LIMIT)return reply({error:`상품 이미지 ${PRODUCT_IMAGE_POOL_LIMIT}개 제한입니다. 이미지를 정리해주세요.`},409);
   if(!env.FILES)return reply({error:'이미지 저장소 연결이 필요합니다.'},503);
   let downloaded;
   try{downloaded=download ? await download() : await downloadCollectionImage(image.url,owner,undefined,image.role);}

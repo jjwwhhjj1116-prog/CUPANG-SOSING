@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 export const CONTENT_BODY_LIMIT = 96 * 1024;
 export const labelFields = {
   productName: '품명', model: '모델명', material: '재질', dimensions: '크기·중량',
@@ -241,8 +242,8 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
   // must not fill it just because its value was already empty when reviewed.
   for (const key of Object.keys(patch.assets ?? {}) as AssetRole[]) next.assets[key] = { value: patch.assets![key]!, provenance: 'manual', updatedAt: now };
   const keys = Object.values(next.assets).flatMap(field => field.value);
-  const imageRoleError = () => new Error('이미지는 최대 50개이며 한 파일에는 한 역할만 지정할 수 있습니다.');
-  if (keys.length > 50 || Object.values(next.assets).some(field => new Set(field.value).size !== field.value.length)) throw imageRoleError();
+  const imageRoleError = () => new Error(`이미지는 최대 ${PRODUCT_IMAGE_POOL_LIMIT}개이며 한 파일에는 한 역할만 지정할 수 있습니다.`);
+  if (keys.length > PRODUCT_IMAGE_POOL_LIMIT || Object.values(next.assets).some(field => new Set(field.value).size !== field.value.length)) throw imageRoleError();
   const assignments = (assets: ProductContent['assets']) => {
     const result = new Map<string, Set<AssetRole>>();
     for (const role of Object.keys(assets) as AssetRole[]) for (const key of assets[role].value) {

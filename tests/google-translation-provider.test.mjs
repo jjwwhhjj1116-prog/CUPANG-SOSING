@@ -54,7 +54,7 @@ test('429, malformed or unchanged Chinese product names fail before sending attr
 test('missing attributes stay missing, long descriptions are not truncated, and invented numbers cannot be adopted',async()=>{
  const review=await model.prepareTranslationReview({...source,description:'中'.repeat(5001)},config);let calls=0;
  const result=await model.executeTranslation(review,config,async url=>{calls++;return replyForQuery(new URL(url).searchParams.get('q'),q=>q==='材质'?new Response('error',{status:429}):translated.get(q));});
- assert.equal(result.draft.description,'');assert.deepEqual(plain(result.draft.attributes.map(pair=>pair.sourceIndex)),[2]);assert.match(result.draft.warnings.join(' '),/누락 3개/);assert.match(result.draft.warnings.join(' '),/HTTP 429.*중단/);assert.equal(calls,2);
+ assert.equal(result.draft.description,'');assert.deepEqual(plain(result.draft.attributes.map(pair=>pair.sourceIndex)),[2]);assert.match(result.draft.warnings.join(' '),/누락 3개/);assert.match(result.draft.warnings.join(' '),/HTTP 429.*중단/);assert.equal(calls,3);
  let inventedCalls=0;const inventedReview=await model.prepareTranslationReview({...source,attributes:[]},config);await assert.rejects(()=>model.executeTranslation(inventedReview,config,async url=>{inventedCalls++;return googleReply(new URL(url).searchParams.get('q')===source.title?'면 주머니 999':'크기 10 cm');}),error=>error.code==='UNSUPPORTED_FACT'&&!error.mayHaveBeenCharged);assert.equal(inventedCalls,2);
 });
 

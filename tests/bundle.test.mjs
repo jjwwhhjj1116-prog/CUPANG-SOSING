@@ -208,7 +208,7 @@ test('bundle limits cover cumulative image bytes and role reference count before
   assert.equal((await route.GET(getRequest(), context)).status, 413);
   assert.equal(arraysRead, 1);
   const content = model.emptyProductContent(product.id);
-  content.assets.detail.value = Array.from({ length: 51 }, (_, index) => `owner/${index}.png`);
+  content.assets.detail.value = Array.from({ length: 151 }, (_, index) => `owner/${index}.png`);
   const tooMany = routeWith({ find: async () => ({ ...product, image_keys: JSON.stringify(content.assets.detail.value) }), read: async () => content,
     get: async () => { throw Error('must not fetch oversized image list'); },
   });

@@ -1,6 +1,7 @@
 import { imageExtension } from '@/app/exports/review-bundle';
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 export const MAX_IMAGE_MULTIPART_BYTES = MAX_IMAGE_BYTES + 64 * 1024;
 const types = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif' } as const;
 export function imageFileType(bytes: Uint8Array) {

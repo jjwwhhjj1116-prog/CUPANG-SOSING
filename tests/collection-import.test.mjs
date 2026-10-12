@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-const exports={};
-vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/collection-import.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,require:name=>{const capacity={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL(name.slice(2)==='app/collection-retry'?'../app/collection-retry.ts':'../app/collection-capacity.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:capacity});return capacity;}});
+function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,require:name=>load(name.slice(2)+'.ts')});return exports;}
+const exports=load('app/collection-import.ts');
 const actualImport=exports.runCollectionImport;
 // Legacy flow fixtures have no existing files; capacity failures are covered separately below.
 const runCollectionImport=(job,total,options={})=>actualImport(job,total,{...options,fetcher:async(url,init)=>url.endsWith('/capacity')?reply({capacity:{usedSlots:0,totalImages:total,reusableIndices:[]}}):options.fetcher(url,init)});
@@ -66,13 +66,13 @@ test('missing image acknowledgment and connection loss retain only confirmed cou
 
 
 test('fresh server capacity stops all writes when banners and selected originals exceed the limit',async()=>{
- for(const capacity of [{usedSlots:2,totalImages:49,reusableIndices:[]},{usedSlots:0,totalImages:48,reusableIndices:[]},null]){
+ for(const capacity of [{usedSlots:102,totalImages:49,reusableIndices:[]},{usedSlots:0,totalImages:48,reusableIndices:[]},null]){
   const calls=[];const result=await actualImport('job',49,{fetcher:async(url,init)=>{calls.push([url,init]);return reply({capacity});}});
   assert.equal(result.status,'failed');assert.equal(result.productId,null);assert.equal(calls.length,1);assert.equal(calls[0][0],'/api/collection-jobs/job/capacity');assert.equal(calls[0][1].method,undefined);
  }
 });
 test('full storage can retry confirmed originals without counting them twice',async()=>{
- const calls=[];const outcome=await actualImport('job',2,{fetcher:async(url)=>{calls.push(url);if(url.endsWith('/capacity'))return reply({capacity:{usedSlots:50,totalImages:2,reusableIndices:[0,1]}});return reply(url.endsWith('/product')?{productId:'p'}:{key:'owner/reused'});}});
+ const calls=[];const outcome=await actualImport('job',2,{fetcher:async(url)=>{calls.push(url);if(url.endsWith('/capacity'))return reply({capacity:{usedSlots:150,totalImages:2,reusableIndices:[0,1]}});return reply(url.endsWith('/product')?{productId:'p'}:{key:'owner/reused'});}});
  assert.equal(outcome.status,'completed');assert.equal(outcome.completedImages,2);assert.equal(calls.length,4);
 });
 test('capacity errors and cancellation after the read never create a product',async()=>{
