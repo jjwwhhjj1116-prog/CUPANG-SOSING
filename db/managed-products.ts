@@ -1,6 +1,6 @@
 import {env} from 'cloudflare:workers';
 import type {ManagedProduct,ManagedProductFilter,ManagedProductImport,ManagedProductImportCounts,ManagedProductList,ManagedProductQuery} from '@/app/managed-products';
-import {ManagedProductContextChanged} from '@/app/managed-products';
+import {ManagedProductContextChanged,MANAGED_ORDER_STATUS_LIMIT,validManagedOrderStatus} from '@/app/managed-products';
 import {managedTableSql} from '@/app/managed-product-table';
 import {managedImportPriceSchema,managedImportHistorySql} from '@/db/managed-import-prices';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
@@ -50,8 +50,9 @@ export async function importManagedProducts(ownerId:string,source:ManagedProduct
 function filterSql(cutoff:number):Record<ManagedProductFilter,string>{if(!Number.isSafeInteger(cutoff))throw Error('Invalid history cutoff');const noImport=`COALESCE((SELECT CAST(price AS REAL)<=0 FROM managed_import_prices i WHERE i.owner_id=managed_products.owner_id AND i.company_code=managed_products.company_code AND i.sku_id=managed_products.sku_id ORDER BY import_date DESC LIMIT 1),${managedHistorySql('managed_products','source_no_import')},0)=1`;return{all:'1',unavailable:`COALESCE(json_extract(source_payload,'$."발주가능상태"'),'')<>'정상'`,loser:`json_extract(source_payload,'$.winner')='LOSER'`,
  'no-purchase':`NOT ${managedPurchaseInfoCompleteSql('managed_products')}`,'no-import':noImport,'product-id-changed':`${managedHistorySql('managed_products','product_id_latest_at')}>=${cutoff}`,'price-changed':`${managedHistorySql('managed_products','price_latest_at')}>=${cutoff}`,'other-sellers':`${managedHistorySql('managed_products','other_sellers')}=1`};}
 function listingQuery(ownerId:string,company:SupplierHubCompany,query:ManagedProductQuery,cutoff:number){
- const filters=filterSql(cutoff),search='%'+query.search.replace(/[\\%_]/g,value=>'\\'+value)+'%',table=managedTableSql({sort:query.sort??null,columnFilters:query.columnFilters??[]}),where=`owner_id=? AND company_code=? AND ${filters[query.filter]} AND (title LIKE ? ESCAPE '\\' OR sku_id LIKE ? ESCAPE '\\' OR json_extract(source_payload,'$."바코드"') LIKE ? ESCAPE '\\')${table.where}`;
- return{where,args:[ownerId,company.code,search,search,search,...table.args],orderBy:table.orderBy};
+ if(query.orderStatus!==undefined&&!validManagedOrderStatus(query.orderStatus))throw new RangeError('발주가능상태의 원본 값을 확인해주세요.');
+ const filters=filterSql(cutoff),search='%'+query.search.replace(/[\\%_]/g,value=>'\\'+value)+'%',table=managedTableSql({sort:query.sort??null,columnFilters:query.columnFilters??[]}),where=`owner_id=? AND company_code=? AND ${filters[query.filter]} AND (title LIKE ? ESCAPE '\\' OR sku_id LIKE ? ESCAPE '\\' OR json_extract(source_payload,'$."바코드"') LIKE ? ESCAPE '\\')${table.where}${query.orderStatus===undefined?'':` AND COALESCE(CAST(json_extract(source_payload,'$."발주가능상태"') AS TEXT),'')=?`}`;
+ return{where,args:[ownerId,company.code,search,search,search,...table.args,...(query.orderStatus===undefined?[]:[query.orderStatus])],orderBy:table.orderBy};
 }
 export async function listManagedProducts(ownerId:string,company:SupplierHubCompany,query:ManagedProductQuery):Promise<ManagedProductList>{
  const db=await database(true);await prepareManagedProductHistory(ownerId,company);const cutoff=managedHistoryCutoff(),filters=filterSql(cutoff),{where,args,orderBy}=listingQuery(ownerId,company,query,cutoff),pending=`SELECT COUNT(*) AS pending FROM managed_products m WHERE m.owner_id=? AND m.company_code=? AND ${managedHistoryPendingSql('m')}`,ready=`((${pending.replace('COUNT(*) AS pending','COUNT(*)')})=0)`;
@@ -64,10 +65,18 @@ export async function listManagedProducts(ownerId:string,company:SupplierHubComp
    FROM managed_products WHERE owner_id=? AND company_code=? AND ${ready}`).bind(ownerId,company.code,ownerId,company.code),
   db.prepare(`SELECT COUNT(*) AS total FROM managed_products WHERE ${where} AND ${ready}`).bind(...args,ownerId,company.code),
   db.prepare(`SELECT managed_products.*,${managedImportHistorySql('managed_products')} AS import_history,${purchaseProjection},${managedHistorySql('managed_products','payload')} AS history_payload FROM managed_products WHERE ${where} AND ${ready} ORDER BY ${orderBy} LIMIT ? OFFSET ?`).bind(...args,ownerId,company.code,query.pageSize,(query.page-1)*query.pageSize),
+  // Available states describe this complete company snapshot, independently of
+  // search/page filters. The extra row detects overflow instead of publishing
+  // a partial menu as if it described the entire saved DB.
+  db.prepare(`SELECT COALESCE(CAST(json_extract(source_payload,'$."발주가능상태"') AS TEXT),'') AS value,COUNT(*) AS count FROM managed_products WHERE owner_id=? AND company_code=? AND ${ready} GROUP BY value ORDER BY value COLLATE BINARY LIMIT ?`).bind(ownerId,company.code,ownerId,company.code,MANAGED_ORDER_STATUS_LIMIT+1),
  ]);
  if((result[0].results[0] as {pending:number}).pending)throw new ManagedProductContextChanged('조회 중 상품 원본이 변경되었습니다. 변경내역을 다시 조회해주세요.');const summary=result[1].results[0] as ManagedProductList['summary'];
+ const orderStatuses=result[4].results as ManagedProductList['summary']['orderStatuses'];
+ if(orderStatuses.length>MANAGED_ORDER_STATUS_LIMIT||orderStatuses.some(status=>!validManagedOrderStatus(status.value)||!Number.isSafeInteger(status.count)||status.count<1)
+  ||new Set(orderStatuses.map(status=>status.value)).size!==orderStatuses.length||orderStatuses.reduce((total,status)=>total+status.count,0)!==summary.total)
+  throw new RangeError('발주가능상태 목록의 크기나 원본 값을 확인해주세요. 최대 200가지 상태를 지원하며 부분 목록은 표시하지 않습니다.');
  return {company,products:(result[3].results as Stored[]).map(row=>toProduct(row,cutoff)),total:Number((result[2].results[0] as {total:number}).total),page:query.page,pageSize:query.pageSize,
-  summary:{...summary,unavailable:summary.unavailable??0,loser:summary.loser??0,noPurchase:summary.noPurchase??0,noImport:summary.noImport??0,productIdChanged:summary.productIdChanged??0,priceChanged:summary.priceChanged??0,otherSellers:summary.otherSellers??0}};
+  summary:{...summary,orderStatuses,unavailable:summary.unavailable??0,loser:summary.loser??0,noPurchase:summary.noPurchase??0,noImport:summary.noImport??0,productIdChanged:summary.productIdChanged??0,priceChanged:summary.priceChanged??0,otherSellers:summary.otherSellers??0}};
 }
 /** One bounded owned read of the complete filtered result, never a page export. */
 export async function readManagedProductsForExport(ownerId:string,company:SupplierHubCompany,query:ManagedProductQuery){

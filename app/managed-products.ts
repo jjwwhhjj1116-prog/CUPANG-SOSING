@@ -17,8 +17,18 @@ export async function managedProductAccountContext(ownerId:string,company:Suppli
  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),value=>value.toString(16).padStart(2,'0')).join('');
 }
 export type ManagedProductFilter='all'|'unavailable'|'loser'|'no-purchase'|'no-import'|'product-id-changed'|'price-changed'|'other-sellers';
-export type ManagedProductQuery={page:number;pageSize:number;search:string;filter:ManagedProductFilter;sort?:ManagedTableSort|null;columnFilters?:ManagedTableFilter[]};
-export type ManagedProductList={products:ManagedProduct[];total:number;page:number;pageSize:number;company:SupplierHubCompany;summary:{total:number;unavailable:number;loser:number;noPurchase:number;noImport:number;productIdChanged:number;priceChanged:number;otherSellers:number;lastImportedAt:string|null;priceDate:string|null}};
+export type ManagedProductQuery={page:number;pageSize:number;search:string;filter:ManagedProductFilter;sort?:ManagedTableSort|null;columnFilters?:ManagedTableFilter[];orderStatus?:string};
+export const MANAGED_ORDER_STATUS_LIMIT=200,MANAGED_ORDER_STATUS_LENGTH_LIMIT=2000;
+export type ManagedOrderStatusCount={value:string;count:number};
+export function validManagedOrderStatus(value:unknown):value is string{return typeof value==='string'&&value.length<=MANAGED_ORDER_STATUS_LENGTH_LIMIT&&!/[\u0000\ud800-\udfff]/u.test(value);}
+/** Absence means all statuses; an explicitly supplied empty string means the
+ * original blank cell. Never trim, rename or infer a supplier status. */
+export function parseManagedOrderStatus(params:URLSearchParams):string|undefined{
+ const values=params.getAll('orderStatus');if(!values.length)return undefined;
+ if(values.length!==1||!validManagedOrderStatus(values[0]))throw Error('발주가능상태는 원본의 한 가지 값을 그대로 선택해주세요.');
+ return values[0];
+}
+export type ManagedProductList={products:ManagedProduct[];total:number;page:number;pageSize:number;company:SupplierHubCompany;summary:{total:number;unavailable:number;loser:number;noPurchase:number;noImport:number;productIdChanged:number;priceChanged:number;otherSellers:number;lastImportedAt:string|null;priceDate:string|null;orderStatuses:ManagedOrderStatusCount[]}};
 const required=['상품명','SKUID','바코드','발주가능상태','판매가','판매가기준일','공급가','구매정보','매입정보'];
 
 /** Import only the seller's exported rows. No registration or pricing state is inferred. */
