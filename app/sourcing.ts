@@ -5,7 +5,7 @@ import type { SupplierHubCompany } from '@/app/supplier-hub-company';
 
 export const collectionBlock = '상품 추가 시 URL의 공개 상품 정보를 가져옵니다. 페이지에서 옵션·원가를 확인할 수 없으면 입력을 유지합니다. 초안을 확인·수정한 뒤 등록전송을 진행하세요.';
 export type CollectionRequest = { offerId: string; sourceUrl: string; goal: string };
-export type CollectionContext = { category: CategoryProfile; settings: WorkspaceSettings; features: string; keywords: string; capturedAt: string; company?: SupplierHubCompany };
+export type CollectionContext = { category: CategoryProfile; settings: WorkspaceSettings; features: string; keywords: string; capturedAt: string; company?: SupplierHubCompany;forkedFrom?:{kind:'stored-source-new-draft-v1';sourceJobId:string;sourceProductId:string;baseFingerprint:string;requestId:string;collectedAt:string} };
 export type CollectionJob = {
   id: string; offer_id: string; source_url: string; goal: string;
   status: 'awaiting_connector' | 'cancelled'; created_at: string; updated_at: string;

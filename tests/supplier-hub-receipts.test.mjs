@@ -48,7 +48,10 @@ async function setup(company=companies[0]){
 }
 function renderBoard(products){
  const native=createRequire(import.meta.url),exports={};
- function load(file){const value={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports:value,require:name=>name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name)});return value;}
+ function load(file){const value={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports:value,require:name=>{
+  if(!name.startsWith('@/'))return native(name);
+  const dependency=['.ts','.tsx'].map(extension=>name.slice(2)+extension).find(candidate=>fs.existsSync(new URL('../'+candidate,import.meta.url)));assert.ok(dependency,'Actual source module: '+name);return load(dependency);
+ }});return value;}
  Object.assign(exports,load('app/components/registration-board.tsx'));
  return renderToStaticMarkup(createElement(exports.RegistrationBoard,{products,selected:new Set(),onSelected(){},onOpen(){},loading:false,error:'',onArchive(){}}));
 }
@@ -68,9 +71,13 @@ for(const company of companies)test(`new bundle defaults preserve legacy accepte
  const h=await setup(company);try{
   const source=await legacyBundleSource(h),model=h.load('app/automation/model.ts');
   const legacy={...source,settings:oldSettings(source.settings)},dataStartRow=h.load('app/category-profiles.ts').quotationStartRow(source.profile.template);
-  // Exact pre-bundle deployment fingerprint contract, with no new normalized keys.
+  // Only inactive price-policy defaults are absent. Template, packaging and
+  // legal/weight binding proofs retain the current immutable source contract.
+  const resolved=h.load('app/exports/quotation-source.ts').resolveQuotationExport(legacy);
   const fingerprint=await model.fingerprint({format:'sourceflow-quotation-fields-v1',saved:legacy,dataStartRow,
-   schema:h.load('app/quotation-schema.ts').getQuotationSchema(source.categoryContext.categoryId,source.categoryContext.categoryPath,source.hubSchema),
+   schema:h.load('app/quotation-schema.ts').getQuotationSchema(source.categoryContext.categoryId,source.categoryContext.categoryPath,source.hubSchema,source.template),
+   ...h.load('app/quotation-notice-inputs.ts').quotationNoticeBindingFingerprint(legacy,resolved),
+   ...h.load('app/quotation-packaged-weight.ts').quotationPackagedWeightBindingFingerprint(legacy.state.overrides,resolved,()=>h.load('app/exports/quotation-source.ts').resolveQuotationExport({...legacy,state:{...legacy.state,overrides:{common:{},options:{}}}})),
    ...h.load('app/product-options.ts').optionPriceCalculationRevision(source.product,source.options.rows,legacy.settings,source.state.overrides)});
   const result={...h.result,filename:`YOOFAM-${fingerprint}.xlsx`,registration:{...h.registration,rows:h.registration.rows.map(row=>({...row,sourceQuotation:`YOOFAM-${fingerprint}.xlsx`}))}};
   const receipt={schemaVersion:1,evidence:'chrome-observation',profileId:'cat',categoryId:'80719',fingerprint,productVersion:source.product.updated_at,recordedAt:new Date().toISOString(),result};
@@ -101,11 +108,19 @@ for(const company of companies)test(`bundle criteria do not stale legacy quotati
   await legacyBundleSource(h);
   const exporter=h.load('app/exports/quotation-source.ts'),source=await exporter.readQuotationExportSource('owner',h.product.id,null),model=h.load('app/automation/model.ts');
   const settings=oldSettings(source.settings),view=await json(await h.route(h.base+'/quotation-fields'));
-  const inputs={categoryId:source.categoryContext.categoryId,categoryPath:source.categoryContext.categoryPath,product:source.product,content:source.content,options:source.options,settings,...(source.hubSchema?{hubSchema:source.hubSchema}:{})};
+  const quotation=await h.load('db/quotation-fields.ts').readQuotationFields('owner',h.product.id);
+  const packagingBasis=h.load('app/quotation-packaging-basis.ts').scopedQuotationPackagingBasis(quotation,source.categoryContext.categoryId),overrides=h.load('app/quotation-scopes.ts').scopedQuotationOverrides(quotation,source.categoryContext.categoryId);
+  const inputs={categoryId:source.categoryContext.categoryId,categoryPath:source.categoryContext.categoryPath,product:source.product,content:source.content,options:source.options,settings,...(source.hubSchema?{hubSchema:source.hubSchema}:{}),...(source.template?{template:source.template}:{})};
+  const automatic=h.load('app/quotation-schema.ts').resolveQuotationFields(inputs),resolved=h.load('app/quotation-schema.ts').resolveQuotationFields({...inputs,overrides,...(packagingBasis?{packagingBasis}:{})});
+  assert.equal(JSON.stringify(packagingBasis),JSON.stringify(view.packagingBasis),'actual manual package-quantity proof is not dropped from the compatibility input');
+  assert.equal(JSON.stringify(automatic),JSON.stringify(view.automatic),'inactive bundle flags leave automatic values and the captured template schema identical');
+  assert.equal(JSON.stringify(resolved),JSON.stringify(view.resolved),'manual values, blanks, template and packaging proof remain identical');
   const legacyFingerprint=await model.fingerprint({inputs,schema:view.automatic.schema,categoryContext:source.categoryContext,profileRevision:null,settingsPayload:source.source.settingsPayload,collection:source.source.collection,
+   ...(packagingBasis?{packagingBasis}:{}),
+   ...h.load('app/quotation-notice-inputs.ts').quotationNoticeBindingFingerprint(inputs,resolved),
+   ...h.load('app/quotation-packaged-weight.ts').quotationPackagedWeightBindingFingerprint(overrides,resolved,()=>automatic),
    ...h.load('app/product-options.ts').optionPriceCalculationRevision(source.product,source.options.rows,settings)});
   assert.equal(view.inputFingerprint,legacyFingerprint,'an unchanged stage-seven editor remains saveable across deployment');
-  const quotation=await h.load('db/quotation-fields.ts').readQuotationFields('owner',h.product.id);
   const currentSettings=h.load('app/workspace-settings.ts').savedRegistrationSettings(null),legacySettings=oldSettings(currentSettings);
   const workflow=await model.planAutomation(source.product,legacySettings,null,source.content,null,undefined,source.options,quotation);
   const command={action:'run',expectedVersion:source.product.updated_at,idempotencyKey:crypto.randomUUID(),stages:['pricing']};

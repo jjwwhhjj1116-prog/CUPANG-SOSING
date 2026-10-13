@@ -10,6 +10,7 @@ import type { CategoryAdvancedSeed } from '@/app/category-catalog';
 import { collectIntakeProduct } from '@/app/intake-collection';
 import { capture1688FromChrome } from '@/app/browser-product-bridge';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
+import {createIntakeNewDraft,recoverIntakeNewDraft,previewIntakeNewDraft,intakeNewDraftInputKey,IntakeNewDraftSettingsChanged,type IntakeNewDraftPreview,type IntakeNewDraftCreated} from '@/app/intake-new-draft';
 
 export type IntakeSourceSeed={id:string;sourceUrl:string};
 export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed }: {
@@ -36,10 +37,13 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const [settingsChanged,setSettingsChanged]=useState(false);
   const [settingsMessage,setSettingsMessage]=useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [forkPreview,setForkPreview]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;preview:IntakeNewDraftPreview;requestId:string;pending:boolean;created?:IntakeNewDraftCreated}|null>(null);
   const previewRow = rows.find(row => row.id === previewId);
   const running = useRef<AbortController | null>(null);
-  const navigation = useRef({rows,jobs,onOpenProduct});
-  useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct};},[rows,jobs,onOpenProduct]);
+  const forkRunning=useRef<AbortController|null>(null),forkOwner=useRef(workspaceOwnerId);
+  const navigation = useRef({rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings});
+  useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings};},[rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings]);
+  useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;setForkPreview(null);const controller=forkRunning.current;if(!controller)return;forkRunning.current=null;controller.abort();if(running.current===controller){running.current=null;setBusy(false);onBusy(false);}},[workspaceOwnerId,onBusy]);
   const focusRow = useRef<string | null>(null);
   const urlInputs = useRef(new Map<string, HTMLInputElement>());
   useEffect(() => {
@@ -58,6 +62,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     // A closed queue may already have released its parent lock. A late result
     // must not unlock another operation started since then.
     if (running.current !== controller) return;
+    if(forkRunning.current===controller)forkRunning.current=null;
     running.current = null;
     onBusy(false);
     if (!controller.signal.aborted) setBusy(false);
@@ -73,12 +78,14 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   }
   function edit(id: string, patch: Partial<IntakeRow>) {
     if (running.current) return;
-    const update=(previous:IntakeRow[])=>previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft' as const, message: '', productId: undefined } : row);
+    if(forkPreview?.rowId===id)setForkPreview(null);
+    const update=(previous:IntakeRow[])=>previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft' as const, message: '', productId: undefined,forkJobId:undefined } : row);
     navigation.current.rows=update(navigation.current.rows);
     onRows(update);
   }
   function removeRow(id:string){
     if(running.current)return;
+    if(forkPreview?.rowId===id)setForkPreview(null);
     const update=(previous:IntakeRow[])=>previous.filter(row=>row.id!==id);
     navigation.current.rows=update(navigation.current.rows);onRows(update);
   }
@@ -129,6 +136,50 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { finish(controller); }
   }
+  async function inspectNewDraft(rowId:string){
+    const current=navigation.current,row=current.rows.find(value=>value.id===rowId);
+    if(!sourceMounted.current||running.current||!row?.forkJobId||current.workspaceOwnerId!==workspaceOwnerId||settingsChanged)return;
+    const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');setForkPreview(null);
+    const inputKey=intakeNewDraftInputKey(row,current.goal,current.settings),ownerId=current.workspaceOwnerId;
+    try{
+      const preview=await previewIntakeNewDraft(row,current.goal,current.settings,controller.signal);
+      const latest=navigation.current,updated=latest.rows.find(value=>value.id===rowId);
+      if(controller.signal.aborted||!sourceMounted.current||running.current!==controller)return;
+      if(latest.workspaceOwnerId!==ownerId||!updated||intakeNewDraftInputKey(updated,latest.goal,latest.settings)!==inputKey)throw Error('확인 중 입력이나 로그인 계정이 변경되었습니다. 새 초안을 다시 확인해주세요.');
+      setForkPreview({rowId,inputKey,ownerId,preview,requestId:crypto.randomUUID(),pending:false});
+    }catch(cause){if(!controller.signal.aborted){if(cause instanceof IntakeNewDraftSettingsChanged)setSettingsChanged(true);setError(cause instanceof Error?cause.message:'저장된 원문을 확인하지 못했습니다.');}}
+    finally{finish(controller);}
+  }
+  async function makeNewDraft(){
+    const confirmed=forkPreview,current=navigation.current,row=confirmed&&current.rows.find(value=>value.id===confirmed.rowId);
+    if(!confirmed||running.current||!sourceMounted.current||!row||current.workspaceOwnerId!==confirmed.ownerId)return;
+    if(intakeNewDraftInputKey({...row,forkJobId:confirmed.preview.source.jobId},current.goal,current.settings)!==confirmed.inputKey){setForkPreview(null);setError('입력이 변경되었습니다. 새 초안을 다시 확인해주세요.');return;}
+    const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');
+    const active=()=>running.current===controller&&!controller.signal.aborted&&sourceMounted.current&&navigation.current.workspaceOwnerId===confirmed.ownerId;
+    let created=confirmed.created;
+    try{
+      if(!created){
+        setForkPreview({...confirmed,pending:true});
+        created=confirmed.pending?await recoverIntakeNewDraft(confirmed.preview,confirmed.requestId,controller.signal):await createIntakeNewDraft(confirmed.preview,confirmed.requestId,controller.signal);
+        if(!active())return;setForkPreview({...confirmed,pending:false,created});
+      }
+      if(!active())return;
+      const createdProduct=created.productId;
+      onJobs([created.job]);
+      onRows(previous=>previous.map(value=>value.id===confirmed.rowId?{...value,status:'draft',message:'새 초안 저장됨 · 1~7단계 작성 중',productId:createdProduct,forkJobId:undefined}:value));
+      const message=await collectIntakeProduct(created.job,{signal:controller.signal,fetcher:fetch,captureFromBrowser:capture1688FromChrome,
+        onJob:job=>{if(active())onJobs([job]);},onProgress:message=>{if(active())onRows(previous=>previous.map(value=>value.id===confirmed.rowId?{...value,message}:value));}});
+      if(!active())return;if(!message)throw Error('새 초안 작성 결과를 확인하지 못했습니다.');
+      onRows(previous=>previous.map(value=>value.id===confirmed.rowId?{...value,status:'saved',message,productId:createdProduct,forkJobId:undefined}:value));setForkPreview(null);
+      if(navigation.current.onOpenProduct&&active())await navigation.current.onOpenProduct(createdProduct,controller.signal);
+    }catch(cause){
+      if(active()){
+        const message=cause instanceof Error?cause.message:'새 초안 결과를 확인하지 못했습니다.';
+        setError(created?`새 상품 초안은 저장됐습니다. 작성 결과를 확인한 뒤 다시 이어가세요. ${message}`:`새 초안 생성 결과를 확인해주세요. 같은 요청의 결과 조회만 진행합니다. ${message}`);
+        if(created)onRows(previous=>previous.map(value=>value.id===confirmed.rowId?{...value,status:'error',message,productId:created!.productId,forkJobId:undefined}:value));
+      }
+    }finally{finish(controller);}
+  }
   function cancelCategory(){
     const id=pendingSeed.current;pendingSeed.current=null;
     if(id)onSourceConsumed?.(id);
@@ -161,11 +212,18 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
         <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
-        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>1~7단계 확인·수정</button>}</td>
+        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>1~7단계 확인·수정</button>}{row.status==='error'&&row.forkJobId&&row.profile.template&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>저장 원문으로 새 초안</button>}</td>
         <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => { const id = crypto.randomUUID(); focusRow.current = id; setQuery(''); onRows(previous => previous.length < 50 ? [...previous, { ...intakeRow(row.profile, id), features: row.features, keywords: row.keywords }] : previous); }}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => removeRow(row.id)}>행 삭제</button></td>
       </tr>; })}
     </tbody></table>{rows.length > 0 && !visible.length && <p className="collection-empty">검색 결과가 없습니다. 검색을 해제하면 입력한 상품을 다시 볼 수 있습니다.</p>}{!rows.length && <p className="collection-empty">대기열이 비어있습니다. [+ 상품 추가] 버튼으로 카테고리를 선택해주세요.</p>}</div>
     {previewRow && <div><button type="button" className="btn ghost" onClick={() => setPreviewId(null)}>견적 연결 미리보기 닫기</button><IntakeQuotationPreview profile={previewRow.profile}/></div>}
+    {forkPreview&&<section role="dialog" aria-label="저장 원문으로 새 초안" className="panel-note"><h3>저장 원문으로 새 초안</h3>
+      <p>{forkPreview.preview.source.company.name} · {forkPreview.preview.target.categoryPath.join(' > ')} · 코드 {forkPreview.preview.target.categoryId}</p>
+      <p>원문 수집 시각: {forkPreview.preview.source.collectedAt}</p><p>선택한 카테고리와 현재 기본설정으로 별도 상품을 작성합니다. 기존 상품의 수정 내용과 전송 기록은 보존합니다.</p>
+      {forkPreview.preview.warnings.map((warning,index)=><p key={index}>{warning}</p>)}
+      <button type="button" className="btn primary" disabled={busy} onClick={()=>void makeNewDraft()}>{forkPreview.created?'새 초안 작성 이어가기':forkPreview.pending?'새 초안 저장 결과 확인':'새 초안 생성'}</button>
+      <button type="button" className="btn ghost" disabled={busy} onClick={()=>setForkPreview(null)}>닫기</button>
+    </section>}
     <fieldset className="goal-list" disabled={busy}><legend>상품 초안 작성</legend>{[
       ['price', 'SEO·가격 초안 작성', '상품정보를 가져와 초안을 작성합니다. 저장 후 1~7단계에서 확인·수정하세요.'],
       ['work', 'SEO·가격 + 이미지 초안', '원본을 대표·추가·상세·옵션 이미지에 배치합니다. 번역·편집 후 확인하세요.'],

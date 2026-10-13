@@ -64,7 +64,8 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  // The user's explicit source-repair action still uses the full source proof.
  const partialMobileSource=source&&['chrome-public-mobile-partial-v1','1688-public-mobile-partial-v1'].includes(source.provider);
  const reuseCapturedMobileSource=partialMobileSource||fullMobileSource&&(capturedFromChrome||!!job.received_at||source?.provider==='chrome-public-mobile-v1');
- if(source&&!reuseCapturedMobileSource&&canSupplementCollection(source)&&options.captureFromBrowser){
+ const storedSourceFork=job.context?.forkedFrom?.kind==='stored-source-new-draft-v1'&&job.context.forkedFrom.requestId===job.id&&job.context.forkedFrom.sourceJobId!==job.id;
+ if(source&&!storedSourceFork&&!reuseCapturedMobileSource&&canSupplementCollection(source)&&options.captureFromBrowser){
   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
   try{
    let expectedProductVersion:string|undefined;

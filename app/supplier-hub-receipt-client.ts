@@ -1,8 +1,8 @@
 import { QuotationResultSourceChanged } from '@/app/quotation-result-source';
 import { validateSupplierHubResultForSource, type SupplierHubResult } from '@/app/supplier-hub-handoff';
-import type { SupplierHubReceipt } from '@/app/supplier-hub-receipt';
+import { validateSupplierHubReceiptResult, type SupplierHubReceipt } from '@/app/supplier-hub-receipt';
 
-type Source={productId:string;profileId:string;categoryId:string;fingerprint:string;filename:string;company:{code:string;name:string};includedOptions:number};
+type Source={productId:string;profileId:string;categoryId:string;fingerprint:string;filename:string;company:{code:string;name:string};includedOptions:number;productVersion?:string;quotationId?:string};
 export class SupplierHubReceiptUnavailable extends Error {}
 async function receiptResponse(response:Response,signal:AbortSignal){
   const body=await response.json() as Record<string,unknown>|null;
@@ -38,7 +38,9 @@ export async function readStoredSupplierHubResult(source:Source,signal:AbortSign
   if(body?.receipt===null)return null;
   const receipt=body?.receipt as SupplierHubReceipt;
   if(!receipt||receipt.schemaVersion!==1||receipt.evidence!=='chrome-observation'||receipt.profileId!==source.profileId
-    ||receipt.categoryId!==source.categoryId||receipt.fingerprint!==source.fingerprint)throw new Error('현재 견적서의 보관된 결과인지 확인하지 못했습니다.');
+    ||receipt.categoryId!==source.categoryId||receipt.fingerprint!==source.fingerprint
+    ||source.productVersion!==undefined&&receipt.productVersion!==source.productVersion)throw new Error('현재 견적서의 보관된 결과인지 확인하지 못했습니다.');
   validateSupplierHubResultForSource(receipt.result,source);
+  if(source.productVersion!==undefined)validateSupplierHubReceiptResult(receipt.result,source);
   return receipt.result;
 }

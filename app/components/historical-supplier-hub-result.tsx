@@ -2,23 +2,40 @@
 import {useEffect,useRef,useState} from 'react';
 import type {SupplierHubReceipt} from '@/app/supplier-hub-receipt';
 import {getHistoricalSupplierHubResult,type SupplierHubResult} from '@/app/supplier-hub-handoff';
+import {readStoredSupplierHubResult} from '@/app/supplier-hub-receipt-client';
 
-export function HistoricalSupplierHubResult({productId,receipt,onSaved}:{productId:string;receipt:SupplierHubReceipt;onSaved?:()=>void}){
+type Props={productId:string;receipt:SupplierHubReceipt;onSaved?:()=>void};
+export function HistoricalSupplierHubResult(props:Props){
+  return <HistoricalSupplierHubResultContent key={JSON.stringify([props.productId,props.receipt])} {...props}/>;
+}
+function HistoricalSupplierHubResultContent({productId,receipt,onSaved}:Props){
   const [result,setResult]=useState<SupplierHubResult>(receipt.result),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  const active=useRef<AbortController|null>(null);
-  useEffect(()=>()=>active.current?.abort(),[]);
+  const active=useRef<AbortController|null>(null),mounted=useRef(true);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;active.current?.abort();};},[]);
   async function read(registration:boolean){
-    if(active.current)return;const controller=new AbortController();active.current=controller;setBusy(true);setError('');
+    if(!mounted.current||active.current)return;const controller=new AbortController();active.current=controller;setBusy(true);setError('');
     try{
-      const found=await getHistoricalSupplierHubResult(productId,{...receipt,result},controller.signal,registration);if(controller.signal.aborted)return;
-      setResult(found);
+      const found=await getHistoricalSupplierHubResult(productId,{...receipt,result},controller.signal,registration);if(controller.signal.aborted||!mounted.current)return;
+      // File validation does not advance the separate SKU observation clock.
+      const sameSource=found.state==='validation-complete'&&result.state==='validation-complete'
+        &&found.filename===result.filename&&found.company?.code===result.company?.code&&found.company?.name===result.company?.name
+        &&found.includedOptions===result.includedOptions&&!!result.quotationId&&found.quotationId===result.quotationId;
+      const next=!registration&&sameSource&&result.registration
+        &&(!found.registration||found.registration.observedAt<result.registration.observedAt)
+        ?{...found,registration:result.registration}:found;
       const response=await fetch(`/api/products/${encodeURIComponent(productId)}/supplier-hub-receipt`,{method:'POST',signal:controller.signal,headers:{'content-type':'application/json'},
-        body:JSON.stringify({action:'observe-history',profileId:receipt.profileId,categoryId:receipt.categoryId,fingerprint:receipt.fingerprint,result:found})});
-      const body=await response.json() as {saved?:boolean;fingerprint?:string;error?:string};if(controller.signal.aborted)return;
-      if(!response.ok||body.saved!==true||body.fingerprint!==receipt.fingerprint)throw Error(body.error||'원래 전송 결과 보관을 확인하지 못했습니다. Chrome 조회 결과는 유지됩니다.');
-      onSaved?.();
-    }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'원래 전송 결과를 확인하지 못했습니다.');}
-    finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted)setBusy(false);}}
+        body:JSON.stringify({action:'observe-history',profileId:receipt.profileId,categoryId:receipt.categoryId,fingerprint:receipt.fingerprint,result:next})});
+      const body=await response.json() as {saved?:boolean;fingerprint?:string;registered?:boolean;error?:string}|null;if(controller.signal.aborted||!mounted.current)return;
+      if(!response.ok||body?.saved!==true||body.fingerprint!==receipt.fingerprint||body.registered!==false)
+        throw Error(body?.error||'원래 전송 결과 보관을 확인하지 못했습니다. 기존 접수 결과를 유지했습니다.');
+      const stored=await readStoredSupplierHubResult({productId,profileId:receipt.profileId,categoryId:receipt.categoryId,
+        fingerprint:receipt.fingerprint,productVersion:receipt.productVersion,filename:receipt.result.filename,
+        company:receipt.result.company!,includedOptions:receipt.result.includedOptions!,...(next.quotationId?{quotationId:next.quotationId}:{})},controller.signal);
+      if(controller.signal.aborted||!mounted.current)return;
+      if(!stored)throw Error('원래 전송 결과의 보관 내용을 확인하지 못했습니다. 기존 접수 결과를 유지했습니다.');
+      setResult(stored);onSaved?.();
+    }catch(cause){if(!controller.signal.aborted&&mounted.current)setError(cause instanceof Error?cause.message:'원래 전송 결과를 확인하지 못했습니다.');}
+    finally{if(active.current===controller){active.current=null;if(!controller.signal.aborted&&mounted.current)setBusy(false);}}
   }
   return <section className="panel-stack" aria-label="원래 전송한 견적서 결과" aria-busy={busy}>
     <strong>이전 전송 · {receipt.result.company?.name} · 포함 옵션 {receipt.result.includedOptions}개</strong><small style={{overflowWrap:'anywhere'}}>{receipt.result.filename}</small>
