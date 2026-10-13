@@ -1,10 +1,11 @@
 import {readXlsxArchive,inspectXlsxArchive} from '@/app/xlsx-template';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import type {ManagedTableFilter,ManagedTableSort} from '@/app/managed-product-table';
+import type {ManagedPurchaseInfoEntry} from '@/app/managed-purchase-info';
 
 export const MANAGED_PRODUCT_FILE_LIMIT=5_000_000;
 export type ManagedProductInput={skuId:string;title:string;sourceRow:number;values:Record<string,string>};
-export type ManagedProduct=ManagedProductInput&{companyCode:string;sourceName:string;importedAt:string;firstImportedAt:string;importPrices?:{date:string;price:string}[];latestImportedPrice?:{date:string;price:string}};
+export type ManagedProduct=ManagedProductInput&{companyCode:string;sourceName:string;importedAt:string;firstImportedAt:string;importPrices?:{date:string;price:string}[];latestImportedPrice?:{date:string;price:string};purchaseInfo?:ManagedPurchaseInfoEntry[];purchaseInfoRevision?:number;purchaseInfoUpdatedAt?:string};
 export type ManagedProductImport={rows:ManagedProductInput[];headers:string[];sha256:string;company:SupplierHubCompany};
 export type ManagedProductImportCounts={total:number;added:number;updated:number;unchanged:number};
 export type ManagedProductAccountContext={accountContext:string};
@@ -28,7 +29,7 @@ export async function parseManagedProductWorkbook(bytes:ArrayBuffer,company:Supp
  const sheet=inspection.sheets[0],header=sheet.rows.find(row=>row.rowNumber===1),headers=header?.values??[];
  if(headers.length<required.length||headers.length>80||headers.some(name=>!name||name!==name.trim()||name.length>100||['__proto__','constructor','prototype'].includes(name))
   ||new Set(headers).size!==headers.length||required.some(name=>!headers.includes(name)))throw Error('상품 DB 머리글을 확인해주세요. 상품명·SKUID·가격·구매 및 매입정보 열이 필요합니다.');
- if(['YOOFAM 매입내역','YOOFAM 적용 매입일자','YOOFAM 적용 매입가'].some(key=>headers.includes(key)))throw Error('YOOFAM 매입내역이 포함된 내보내기는 조회·보관용입니다. 상품 DB 가져오기에는 쿠플러스 원본 DB를 사용하고, 매입가 업로드는 별도 3열 양식을 사용해주세요.');
+ if(['YOOFAM 매입내역','YOOFAM 적용 매입일자','YOOFAM 적용 매입가','YOOFAM 적용 구매정보','YOOFAM 구매정보 기준시각'].some(key=>headers.includes(key)))throw Error('YOOFAM 매입내역·구매정보가 포함된 내보내기는 조회·보관용입니다. 상품 DB 가져오기에는 쿠플러스 원본 DB를 사용하고, 매입가 업로드는 별도 3열 양식을 사용해주세요.');
  const rows:ManagedProductInput[]=[],skus=new Set<string>();let totalBytes=0;
  for(const row of sheet.rows.filter(row=>row.rowNumber>1)){
   if(row.values.length>headers.length)throw Error(`${row.rowNumber}행에 머리글이 없는 값이 있습니다.`);

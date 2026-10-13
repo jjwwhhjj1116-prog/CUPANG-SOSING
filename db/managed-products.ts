@@ -4,6 +4,8 @@ import {ManagedProductContextChanged} from '@/app/managed-products';
 import {managedTableSql} from '@/app/managed-product-table';
 import {managedImportPriceSchema,managedImportHistorySql} from '@/db/managed-import-prices';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
+import {managedPurchaseInfoSchema,managedPurchaseInfoSql,managedPurchaseInfoCompleteSql} from '@/db/managed-purchase-info';
+import {validateManagedPurchaseInfo} from '@/app/managed-purchase-info';
 
 export const managedProductSchema=`CREATE TABLE IF NOT EXISTS managed_products (
  owner_id TEXT NOT NULL, company_code TEXT NOT NULL, sku_id TEXT NOT NULL,
@@ -13,9 +15,10 @@ export const managedProductSchema=`CREATE TABLE IF NOT EXISTS managed_products (
  PRIMARY KEY(owner_id,company_code,sku_id)
 )`;
 export const managedProductImportAuthorization=`EXISTS(SELECT 1 FROM members WHERE id=? AND status='approved' AND company_code=? AND company_name=?)`;
-async function database(includeImportPrices=false){if(!env.DB)throw Error('D1 unavailable');await env.DB.prepare(managedProductSchema).run();if(includeImportPrices)await env.DB.prepare(managedImportPriceSchema).run();return env.DB;}
-type Stored={sku_id:string;title:string;source_payload:string;company_code:string;source_name:string;source_row:number;first_imported_at:string;imported_at:string;import_history?:string};
-const toProduct=(row:Stored):ManagedProduct=>{const records=(JSON.parse(row.import_history??'[]') as {date:string;price:string}[]).map(({date,price})=>({date,price}));return {skuId:row.sku_id,title:row.title,values:JSON.parse(row.source_payload),companyCode:row.company_code,sourceName:row.source_name,sourceRow:row.source_row,firstImportedAt:row.first_imported_at,importedAt:row.imported_at,...(records.length?{importPrices:records,latestImportedPrice:records.at(-1)}:{})};};
+async function database(includeImportPrices=false){if(!env.DB)throw Error('D1 unavailable');await env.DB.prepare(managedProductSchema).run();if(includeImportPrices)await env.DB.batch([env.DB.prepare(managedImportPriceSchema),env.DB.prepare(managedPurchaseInfoSchema)]);return env.DB;}
+type Stored={sku_id:string;title:string;source_payload:string;company_code:string;source_name:string;source_row:number;first_imported_at:string;imported_at:string;import_history?:string;purchase_info?:string|null;purchase_revision?:number|null;purchase_updated_at?:string|null};
+const toProduct=(row:Stored):ManagedProduct=>{const records=(JSON.parse(row.import_history??'[]') as {date:string;price:string}[]).map(({date,price})=>({date,price}));return {skuId:row.sku_id,title:row.title,values:JSON.parse(row.source_payload),companyCode:row.company_code,sourceName:row.source_name,sourceRow:row.source_row,firstImportedAt:row.first_imported_at,importedAt:row.imported_at,...(records.length?{importPrices:records,latestImportedPrice:records.at(-1)}:{}),...(row.purchase_info!=null?{purchaseInfo:validateManagedPurchaseInfo(JSON.parse(row.purchase_info)),purchaseInfoRevision:row.purchase_revision??undefined,purchaseInfoUpdatedAt:row.purchase_updated_at??undefined}:{})};};
+const purchaseProjection=`${managedPurchaseInfoSql('managed_products')} AS purchase_info,(SELECT revision FROM managed_purchase_info i WHERE i.owner_id=managed_products.owner_id AND i.company_code=managed_products.company_code AND i.sku_id=managed_products.sku_id) AS purchase_revision,(SELECT updated_at FROM managed_purchase_info i WHERE i.owner_id=managed_products.owner_id AND i.company_code=managed_products.company_code AND i.sku_id=managed_products.sku_id) AS purchase_updated_at`;
 function chunks(source:ManagedProductImport){
  const result:string[]=[],encoder=new TextEncoder();let group:unknown[]=[],size=2;
  for(const row of source.rows){const entry={sku:row.skuId,title:row.title,row:row.sourceRow,payload:JSON.stringify(row.values)},length=encoder.encode(JSON.stringify(entry)).length;
@@ -43,7 +46,7 @@ export async function importManagedProducts(ownerId:string,source:ManagedProduct
  counts.updated=counts.total-counts.added-counts.unchanged;return counts;
 }
 const filters:Record<ManagedProductFilter,string>={all:'1',unavailable:`json_extract(source_payload,'$."발주가능상태"')='품절'`,loser:`json_extract(source_payload,'$.winner')='LOSER'`,
- 'no-purchase':`COALESCE(json_extract(source_payload,'$."구매정보"'),'') IN ('','[]','null')`,'no-import':`COALESCE(json_extract(source_payload,'$."매입정보"'),'') IN ('','[]','null') AND NOT EXISTS(SELECT 1 FROM managed_import_prices i WHERE i.owner_id=managed_products.owner_id AND i.company_code=managed_products.company_code AND i.sku_id=managed_products.sku_id)`};
+ 'no-purchase':`NOT ${managedPurchaseInfoCompleteSql('managed_products')}`,'no-import':`COALESCE(json_extract(source_payload,'$."매입정보"'),'') IN ('','[]','null') AND NOT EXISTS(SELECT 1 FROM managed_import_prices i WHERE i.owner_id=managed_products.owner_id AND i.company_code=managed_products.company_code AND i.sku_id=managed_products.sku_id)`};
 function listingQuery(ownerId:string,company:SupplierHubCompany,query:ManagedProductQuery){
  const search='%'+query.search.replace(/[\\%_]/g,value=>'\\'+value)+'%',table=managedTableSql({sort:query.sort??null,columnFilters:query.columnFilters??[]}),where=`owner_id=? AND company_code=? AND ${filters[query.filter]} AND (title LIKE ? ESCAPE '\\' OR sku_id LIKE ? ESCAPE '\\' OR json_extract(source_payload,'$."바코드"') LIKE ? ESCAPE '\\')${table.where}`;
  return{where,args:[ownerId,company.code,search,search,search,...table.args],orderBy:table.orderBy};
@@ -56,7 +59,7 @@ export async function listManagedProducts(ownerId:string,company:SupplierHubComp
    MAX(imported_at) AS lastImportedAt,MIN(NULLIF(json_extract(source_payload,'$."판매가기준일"'),'')) AS priceDate
    FROM managed_products WHERE owner_id=? AND company_code=?`).bind(ownerId,company.code),
   db.prepare(`SELECT COUNT(*) AS total FROM managed_products WHERE ${where}`).bind(...args),
-  db.prepare(`SELECT managed_products.*,${managedImportHistorySql('managed_products')} AS import_history FROM managed_products WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`).bind(...args,query.pageSize,(query.page-1)*query.pageSize),
+  db.prepare(`SELECT managed_products.*,${managedImportHistorySql('managed_products')} AS import_history,${purchaseProjection} FROM managed_products WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`).bind(...args,query.pageSize,(query.page-1)*query.pageSize),
  ]);
  const summary=result[0].results[0] as ManagedProductList['summary'];
  return {company,products:(result[2].results as Stored[]).map(toProduct),total:Number((result[1].results[0] as {total:number}).total),page:query.page,pageSize:query.pageSize,
@@ -64,7 +67,17 @@ export async function listManagedProducts(ownerId:string,company:SupplierHubComp
 }
 /** One bounded owned read of the complete filtered result, never a page export. */
 export async function readManagedProductsForExport(ownerId:string,company:SupplierHubCompany,query:ManagedProductQuery){
- const db=await database(true),{where,args,orderBy}=listingQuery(ownerId,company,query),result=await db.prepare(`SELECT managed_products.*,${managedImportHistorySql('managed_products')} AS import_history FROM managed_products WHERE ${where} ORDER BY ${orderBy} LIMIT 5001`).bind(...args).all<Stored>();
- if(result.results.length>5000)throw new RangeError('다운로드는 필터 결과 5000개 이하만 지원합니다. 조건을 좁혀주세요.');
- return result.results.map(toProduct);
+ const db=await database(true),{where,args,orderBy}=listingQuery(ownerId,company,query);
+ const scope=`SELECT managed_products.*,${managedImportHistorySql('managed_products')} AS import_history,${purchaseProjection} FROM managed_products WHERE ${where}`;
+ // Bound original JSON and both manual sidecars in SQL before sending rows to
+ // the Worker. The XLSX serializer retains its stricter output-content bound.
+ const stats=`SELECT COUNT(*) AS total,COALESCE(SUM(length(CAST(source_payload AS BLOB))+length(CAST(import_history AS BLOB))+length(CAST(COALESCE(purchase_info,'') AS BLOB))+length(CAST(title AS BLOB))+length(CAST(source_name AS BLOB))+256),0) AS bytes FROM export_scope`;
+ const results=await db.batch([
+  db.prepare(`WITH export_scope AS (${scope}) ${stats}`).bind(...args),
+  db.prepare(`WITH export_scope AS (${scope}),export_stats AS (${stats}) SELECT managed_products.* FROM export_scope managed_products WHERE (SELECT total<=5000 AND bytes<=8000000 FROM export_stats) ORDER BY ${orderBy} LIMIT 5000`).bind(...args),
+ ]);
+ const bounds=results[0].results[0] as {total:number;bytes:number};
+ if(bounds.total>5000)throw new RangeError('다운로드는 필터 결과 5000개 이하만 지원합니다. 조건을 좁혀주세요.');
+ if(bounds.bytes>8000000)throw new RangeError('원문·구매정보·매입내역의 다운로드 용량이 한도를 초과했습니다. 필터 조건을 좁혀주세요.');
+ return (results[1].results as Stored[]).map(toProduct);
 }
