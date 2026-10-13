@@ -7,6 +7,9 @@ export type IntakeRow = {
   status: 'draft' | 'saved' | 'error'; message: string; productId?: string;
   profileSnapshotVerified?: true;
   forkJobId?: string;
+  pendingJobId?: string;
+  pendingSourceMode?: 'pending-source-urls-v1';
+  pendingSourceHash?: string;
 };
 export function intakeRow(profile: CategoryProfile, id: string): IntakeRow {
   return { id, profile, url: '', features: '', keywords: '', status: 'draft', message: '' };
@@ -50,7 +53,7 @@ export function intakeQueueRequests(rows: readonly IntakeRow[], goal: string) {
 /** Existing endpoint keeps owner checks, profile revision checks and offer deduplication. */
 export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string, options: {
   signal: AbortSignal; fetcher: typeof fetch;
-  onRow: (id: string, state: Pick<IntakeRow, 'status' | 'message'> & Pick<Partial<IntakeRow>, 'productId' | 'forkJobId'>) => void;
+  onRow: (id: string, state: Pick<IntakeRow, 'status' | 'message'> & Pick<Partial<IntakeRow>, 'productId' | 'forkJobId' | 'pendingJobId'>) => void;
   onJobs: (jobs: CollectionJob[]) => void;
   selectedIds?: ReadonlySet<string>;
   expectedSettings?: WorkspaceSettings;
@@ -85,7 +88,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
         options.onRow(request.id,{status:'saved',message});continue;
       }
       options.onRow(request.id, differences.length ? { status: 'error', message: `기존 요청 유지 · ${[...new Set(differences)].join(', ')} 불일치. 기존 요청을 확인해주세요.`,
-        ...(result.jobs[0].product_id ? {forkJobId:result.jobs[0].id}: {}) } : { status: 'saved', message: `요청 저장됨 · ${collectionJobProgress(result.jobs[0]).label}`,forkJobId:undefined });
+        ...(result.jobs[0].product_id ? {forkJobId:result.jobs[0].id,pendingJobId:undefined}: result.jobs[0].status === 'awaiting_connector' && /^[a-f0-9-]{36}$/.test(result.jobs[0].id) ? {pendingJobId:result.jobs[0].id,forkJobId:undefined} : {}) } : { status: 'saved', message: `요청 저장됨 · ${collectionJobProgress(result.jobs[0]).label}`,forkJobId:undefined,pendingJobId:undefined });
     } catch (cause) {
       if (options.signal.aborted) break;
       const message=cause instanceof Error ? cause.message : '저장 확인 실패 · 입력 유지';

@@ -28,11 +28,11 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image
   { exports: historyModule, require(name) { assert.equal(name, '@/app/free-image-brush'); return brushModule; } });
 class ApplyError extends Error { constructor(message, uncertain) { super(message); this.uncertain = uncertain; } }
 
-function fixture() {
+function fixture(initialProps = {}, clientOverrides = {}) {
   const calls = [], busy = [], states = [], effects = [], urls = [], revoked = []; let cursor = 0, closed = false, late = 0, saved = 0, allowApply = true;
   let props = { productId: 'product', version, imageKeys: ['owner/original.png', 'owner/second.png'],
     translationTarget: { sourceKey: 'owner/original.png', sequence: 1, sourceLanguage: 'zh', role: 'detail' },
-    onProductChanged: () => saved++, onBusyChange: value => busy.push(value), beforeApply: () => allowApply };
+    onProductChanged: () => saved++, onBusyChange: value => busy.push(value), beforeApply: () => allowApply, ...initialProps };
   let sourceIntercept = null, ocrIntercept = null, translateIntercept = null, renderIntercept = null, applyIntercept = null, recoverIntercept = null;
   class ObjectURL extends URL { static createObjectURL(blob) { const url = 'blob:fixture-' + urls.length; urls.push({ url, blob }); return url; } static revokeObjectURL(url) { revoked.push(url); } }
   const hooks = {
@@ -64,6 +64,7 @@ function fixture() {
       return applyIntercept ? applyIntercept(image, signal) : { source: image.source, key: 'owner/generated.png', applied: true, productVersion: '2026-10-06T00:00:01Z', contentRevision: 3 }; },
     async recoverFreeImageTranslation(image, signal) { calls.push({ action: 'recover', image, signal }); return recoverIntercept ? recoverIntercept(image, signal) : { source: image.source, key: 'owner/generated.png', applied: true, replayed: true }; },
   };
+  Object.assign(client, clientOverrides);
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/free-image-translation-panel.tsx', import.meta.url), 'utf8'),
     { fileName: 'panel.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
@@ -113,6 +114,44 @@ test('toolbar source/language/role selection does not automatically run OCR, Goo
     assert.equal(h.render().props['data-quotation-source-step'], '대표 이미지');
     await h.change('번역할 이미지 역할', 'additional'); assert.equal(h.calls.length, 0); assert.equal(h.render().props['data-quotation-source-step'], '추가 이미지');
   } finally { h.close(); }
+});
+
+test('manual source preparation enables region and brush editing without OCR, translation or automatic writes', async () => {
+ const h=fixture();try{
+  assert.equal(h.button('문구 영역 직접 추가').props.disabled,true);
+  h.setProps({translationTarget:{sourceKey:'owner/original.png',sequence:2,role:'detail',intent:'manual'}});await h.settle();assert.deepEqual(h.calls.map(call=>call.action),['source']);
+  assert.match(text(h.render()),/이미지 편집/);assert.equal(h.button('문구 영역 직접 추가').props.disabled,false);assert.equal(h.render().props['data-workspace-dirty'],undefined);
+  await h.click('문구 영역 직접 추가');await h.change('문구 1 한국어','직접 쓴 한국어');assert.equal(h.render().props['data-workspace-dirty'],'true');assert.equal(h.field('색상 브러시 모드').props.disabled,false);
+  const stale=h.button('원본 불러오기 · 수동 편집').props.onClick;stale();await h.settle();assert.deepEqual(h.calls.map(call=>call.action),['source']);assert.equal(h.field('문구 1 한국어').props.value,'직접 쓴 한국어');
+  await h.click('번역 이미지 미리보기');assert.deepEqual(h.calls.map(call=>call.action),['source','preview']);assert.equal(h.calls.at(-1).rows[0].translationProvenance,'manual');
+ }finally{h.close();}
+});
+
+test('late manual source success/failure, cancellation and changed final option contexts cannot enable stale edits', async () => {
+ for(const mode of ['option','version','cancel','close','failure']){
+  const h=fixture(),wait=deferred();let arrived;
+  const target={kind:'quotation',profileId:null,optionId:'red',input:'detailImages',fieldKey:'detailImages',slotIndex:0,revision:1,inputFingerprint:'c'.repeat(64),optionRevision:1,value:'owner/original.png'};
+  try{h.setSource((image,signal)=>{arrived={image,signal};return wait.promise;});h.setProps({quotationContext:{profileId:null,optionId:'red',input:'detailImages'},translationTarget:{sourceKey:'owner/original.png',sequence:2,role:'detail',intent:'manual',quotationTarget:target}});
+   await h.settle();assert.ok(arrived);
+   if(mode==='option')h.setProps({quotationContext:{profileId:null,optionId:'blue',input:'detailImages'}});
+   if(mode==='version')h.setProps({version:'2026-10-06T00:00:02.000Z'});
+   if(mode==='cancel')await h.click('이미지 작업 취소');if(mode==='close')h.close();
+   if(mode==='failure')wait.reject(Error('manual source unavailable'));else wait.resolve(arrived.image);await h.settle();
+   assert.deepEqual(h.calls.map(call=>call.action),['source']);assert.equal(h.button('문구 영역 직접 추가').props.disabled,true);assert.equal(h.render().props['data-workspace-dirty'],undefined);assert.equal(h.saved,0);assert.equal(h.late,0);
+   if(mode==='failure')assert.match(text(h.render()),/manual source unavailable/);else assert.equal(arrived.signal.aborted,true);
+  }finally{h.close();}
+ }
+});
+
+test('manual card preparation preserves an existing draft and a failed initial GET needs only an explicit source retry',async()=>{
+ const h=fixture();try{
+  let attempts=0;h.setSource(image=>{if(++attempts===1)throw Error('first synthetic GET failed');return image;});
+  h.setProps({translationTarget:{sourceKey:'owner/original.png',sequence:2,role:'detail',intent:'manual'}});await h.settle();assert.equal(attempts,1);assert.match(text(h.render()),/first synthetic GET failed/);
+  await h.click('원본 불러오기 · 수동 편집');assert.equal(attempts,2);await h.click('문구 영역 직접 추가');await h.change('문구 1 한국어','직접 보존');
+  h.setProps({translationTarget:{sourceKey:'owner/original.png',sequence:3,role:'detail',intent:'manual'}});await h.settle();assert.equal(attempts,2);assert.equal(h.field('문구 1 한국어').props.value,'직접 보존');
+  h.setProps({translationTarget:{sourceKey:'owner/second.png',sequence:4,role:'detail',intent:'manual'}});await h.settle();assert.equal(attempts,2);assert.equal(h.field('번역할 원본 이미지').props.value,'owner/original.png');assert.equal(h.field('문구 1 한국어').props.value,'직접 보존');
+  assert.deepEqual(h.calls.map(call=>call.action),['source','source']);assert.equal(h.saved,0);
+ }finally{h.close();}
 });
 
 test('explicit OCR and selected translation retain manual Korean/blanks and invalidate previews on further edits', async () => {

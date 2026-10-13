@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers';
-import {CollectionForkError,type CollectionNewDraftTargetRequest,type CollectionNewDraftPreview,type CollectionNewDraftCreated} from '@/app/collection-fork';
+import {CollectionForkError,CollectionPendingSourceAvailable,type CollectionNewDraftTargetRequest,type CollectionNewDraftPreview,type CollectionNewDraftCreated} from '@/app/collection-fork';
 import {ensureCollectionDatabase,findCollectionJob} from '@/db/collection-jobs';
-import {ensureDatabase,getSettings} from '@/db/queries';
+import {ensureDatabase,getSettings,findProduct} from '@/db/queries';
 import {readCollectionResult,effectiveCollectionPayload} from '@/db/collection-results';
 import {getCategoryProfile} from '@/db/category-profiles';
 import {validateStoredTemplate} from '@/db/category-templates';
@@ -21,6 +21,7 @@ import {isOwnedImageKey,MAX_IMAGE_BYTES,PRODUCT_IMAGE_POOL_LIMIT} from '@/app/im
 import {verifyWorkspaceBannerFiles} from '@/db/workspace-banners';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import type {CollectionContext,CollectionJob} from '@/app/sourcing';
+import {ensureSupplierHubReceiptDatabase} from '@/db/supplier-hub-receipts';
 
 type SourceImage={index:number;key:string;operationId:string;createdAt:string};
 type SourceRow={id:string;owner_id:string;offer_id:string;source_url:string;goal:string;status:string;created_at:string;updated_at:string;source_context:string;original_receipt:string;receipt_payload:string;received_at:string;product_id:string;product_version:string;image_keys:string;pricing_policy:string|null;content_revision:number;content_payload:string|null;option_revision:number;option_payload:string|null;quotation_revision:number;quotation_payload:string|null;source_images:string;busy:number};
@@ -32,6 +33,22 @@ const select=`SELECT j.*,c.payload AS source_context,r.payload AS original_recei
  COALESCE((SELECT revision FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id),0) AS option_revision,(SELECT payload FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id) AS option_payload,
  COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0) AS quotation_revision,(SELECT payload FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id) AS quotation_payload,${sourceImagesSql} AS source_images,${busySql} AS busy ${joins}`;
 const conflict=(message='자료·기본설정·카테고리가 변경되었습니다. 기존 상품은 유지되며 새 초안 내용을 다시 확인해주세요.')=>new CollectionForkError(409,message);
+const pendingActivitySql=`(EXISTS(SELECT 1 FROM translation_jobs t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id)
+ OR EXISTS(SELECT 1 FROM image_jobs t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id)
+ OR EXISTS(SELECT 1 FROM supplier_hub_receipts t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id))`;
+/** Only the unchanged initial promotion can leave its seller URLs unstored.
+ * This compares the exact initializer, including owner settings and deliberate
+ * defaults; a permission flag cannot authorize edits to a working product. */
+async function pristinePendingSource(owner:string,job:CollectionJob,source:SourceRow,result:CollectionResult,images:SourceImage[]){
+ if(images.length||source.content_revision!==1||source.option_revision!==1||source.quotation_revision!==0||source.original_receipt!==source.receipt_payload)return false;
+ const product=await findProduct(owner,source.product_id,true);if(!product||product.created_at!==product.updated_at||product.updated_at!==source.product_version)return false;
+ const initial=prepareCollectionProduct(owner,job,result,product.id,product.created_at);
+ if(Object.entries(initial.product).some(([key,value])=>product[key as keyof typeof product]!==value)
+  ||source.pricing_policy!==JSON.stringify(initial.policy)||source.content_payload!==JSON.stringify(initial.content)||source.option_payload!==JSON.stringify(initial.options))return false;
+ if(source.quotation_payload){const fields=JSON.parse(source.quotation_payload);if(fields.revision!==0||Object.keys(fields.common??{}).length||Object.values(fields.options??{}).some(value=>value&&Object.keys(value as object).length))return false;}
+ await ensureSupplierHubReceiptDatabase();
+ const activity=await env.DB!.prepare(`SELECT ${pendingActivitySql} AS busy ${joins} WHERE j.owner_id=? AND j.id=?`).bind(owner,job.id).first<{busy:number}>();return activity?.busy===0;
+}
 async function database(owner:string,jobId:string){
  const db=await ensureCollectionDatabase();await ensureDatabase();await readCollectionResult(owner,jobId);
  const link=await db.prepare('SELECT product_id FROM collection_products WHERE owner_id=? AND job_id=?').bind(owner,jobId).first<{product_id:string}>();
@@ -57,10 +74,15 @@ export async function prepareCollectionNewDraft(owner:string,company:SupplierHub
  const profileRow=await db.prepare('SELECT payload,revision FROM category_profiles WHERE owner_id=? AND id=?').bind(owner,input.profileId).first<{payload:string;revision:number}>();if(!profileRow||profileRow.revision!==profile.revision)throw conflict();
  const saved=await getSettings(owner),settings=savedRegistrationSettings(saved?JSON.parse(saved.payload):null);
  const images=JSON.parse(source.source_images) as SourceImage[];
- if(images.length!==result.images.length||images.some((image,index)=>image.index!==index||!isOwnedImageKey(owner,image.key)))throw conflict('기존 원본 이미지의 저장이 아직 완료되지 않았습니다. 기존 이미지 반영을 완료한 뒤 새 초안을 만들어주세요.');
+ const rawSource=input.sourceMode==='pending-source-urls-v1',sourceReceiptHash=await fingerprint(result);
+ if(rawSource){if(input.sourceReceiptHash!==sourceReceiptHash||!await pristinePendingSource(owner,job,source,result,images))throw conflict('최초 원문 상품이 수정되었거나 준비 상태가 변경되었습니다. 기존 상품을 유지하고 새 초안을 다시 확인해주세요.');}
+ else if(images.length!==result.images.length||images.some((image,index)=>image.index!==index||!isOwnedImageKey(owner,image.key))){
+  if(await pristinePendingSource(owner,job,source,result,images))throw new CollectionPendingSourceAvailable({format:'pending-source-urls-available-v1',jobId,productId:source.product_id,productVersion:source.product_version,sourceReceiptHash});
+  throw conflict('기존 원본 이미지의 저장이 아직 완료되지 않았습니다. 기존 이미지 반영을 완료한 뒤 새 초안을 만들어주세요.');
+ }
  const imageObjects=[];for(const image of images){const object=await env.FILES?.head(image.key);if(!object||object.size<1||object.size>MAX_IMAGE_BYTES)throw conflict('저장된 원본 이미지 파일을 확인하지 못했습니다. 기존 원본 파일을 확인해주세요.');imageObjects.push({key:image.key,size:object.size,etag:object.etag??null});}
- const proof={owner,company,source,profile:profileRow,settings:saved?.payload??null,imageObjects},baseFingerprint=await fingerprint(proof);
- const preview:CollectionNewDraftPreview={format:'collection-new-draft-v1',baseFingerprint,source:{jobId,productId:source.product_id,sourceUrl:source.source_url,offerId:source.offer_id,company,collectedAt:result.collectedAt,receivedAt:source.received_at,productVersion:source.product_version,contentRevision:source.content_revision,optionRevision:source.option_revision,quotationRevision:source.quotation_revision,imageCount:images.length},target:{profileId:profile.id,profileRevision:profile.revision,categoryId:profile.categoryId,categoryPath:profile.categoryPath,category:profile,goal:input.goal,features:input.features,keywords:input.keywords,settings},warnings:['저장된 수집 원문을 재사용합니다. 기존 상품의 수정값과 전송 이력은 새 초안에 복사하지 않습니다.',...collectionSourceWarnings(result)],executionStarted:false};
+ const proof={owner,company,source,profile:profileRow,settings:saved?.payload??null,imageObjects,...(rawSource?{sourceMode:input.sourceMode,sourceReceiptHash,rawImageDescriptors:result.images}: {})},baseFingerprint=await fingerprint(proof);
+ const preview:CollectionNewDraftPreview={format:'collection-new-draft-v1',baseFingerprint,source:{jobId,productId:source.product_id,sourceUrl:source.source_url,offerId:source.offer_id,company,collectedAt:result.collectedAt,receivedAt:source.received_at,productVersion:source.product_version,contentRevision:source.content_revision,optionRevision:source.option_revision,quotationRevision:source.quotation_revision,imageCount:images.length},target:{profileId:profile.id,profileRevision:profile.revision,categoryId:profile.categoryId,categoryPath:profile.categoryPath,category:profile,goal:input.goal,features:input.features,keywords:input.keywords,settings,...(rawSource?{sourceMode:input.sourceMode,sourceReceiptHash}: {})},warnings:['저장된 수집 원문을 재사용합니다. 기존 상품의 수정값과 전송 이력은 새 초안에 복사하지 않습니다.',...(rawSource&&result.images.length?[`저장 안 된 사진 ${result.images.length}개는 새 초안에서 가져옵니다. 원래 상품의 사진과 입력은 변경하지 않습니다.`]:[]),...collectionSourceWarnings(result)],executionStarted:false};
  // Target input and defaults participate in the reviewed proof as well.
  preview.baseFingerprint=await fingerprint({proof,target:preview.target});
  return{preview,source,result,images,profileRow,settingsPayload:saved?.payload??null};
@@ -73,18 +95,18 @@ export async function recoverCollectionNewDraft(owner:string,company:SupplierHub
  return{format:'collection-new-draft-created-v1',requestId,baseFingerprint,job,productId:job.product_id,source:{jobId:sourceJobId,productId:origin.sourceProductId,collectedAt:origin.collectedAt},reused:true,executionStarted:false};
 }
 export async function createCollectionNewDraft(owner:string,company:SupplierHubCompany,jobId:string,input:CollectionNewDraftTargetRequest,requestId:string,baseFingerprint:string):Promise<CollectionNewDraftCreated>{
- const previous=await recoverCollectionNewDraft(owner,company,jobId,requestId,baseFingerprint);if(previous){const category=previous.job.context?.category;if(category?.id!==input.profileId||category.revision!==input.expectedProfileRevision||previous.job.goal!==input.goal||previous.job.context?.features!==input.features||previous.job.context.keywords!==input.keywords)throw conflict('같은 요청번호에 다른 새 초안 입력값을 적용하지 않았습니다.');return previous;}
+ const previous=await recoverCollectionNewDraft(owner,company,jobId,requestId,baseFingerprint);if(previous){const category=previous.job.context?.category;if(category?.id!==input.profileId||category.revision!==input.expectedProfileRevision||previous.job.goal!==input.goal||previous.job.context?.features!==input.features||previous.job.context.keywords!==input.keywords||previous.job.context.forkedFrom?.sourceMode!==input.sourceMode||previous.job.context.forkedFrom?.sourceReceiptHash!==input.sourceReceiptHash)throw conflict('같은 요청번호에 다른 새 초안 입력값을 적용하지 않았습니다.');return previous;}
  if(requestId===jobId)throw new CollectionForkError(400,'새 초안에는 새로운 요청번호가 필요합니다.');
  const prepared=await prepareCollectionNewDraft(owner,company,jobId,input);if(prepared.preview.baseFingerprint!==baseFingerprint)throw conflict();
  const {source,result,images,profileRow,settingsPayload,preview}=prepared,db=env.DB!;
- const now=new Date(Math.max(Date.now(),Date.parse(source.created_at)+1)).toISOString(),productId=crypto.randomUUID(),context:CollectionContext={category:preview.target.category,settings:preview.target.settings,features:input.features,keywords:input.keywords,capturedAt:now,company,forkedFrom:{kind:'stored-source-new-draft-v1',sourceJobId:jobId,sourceProductId:source.product_id,baseFingerprint,requestId,collectedAt:result.collectedAt}},contextPayload=JSON.stringify(context);
+ const now=new Date(Math.max(Date.now(),Date.parse(source.created_at)+1)).toISOString(),productId=crypto.randomUUID(),context:CollectionContext={category:preview.target.category,settings:preview.target.settings,features:input.features,keywords:input.keywords,capturedAt:now,company,forkedFrom:{kind:'stored-source-new-draft-v1',sourceJobId:jobId,sourceProductId:source.product_id,baseFingerprint,requestId,collectedAt:result.collectedAt,...(input.sourceMode?{sourceMode:input.sourceMode,sourceReceiptHash:input.sourceReceiptHash}:{})}},contextPayload=JSON.stringify(context);
  const job:CollectionJob={id:requestId,offer_id:source.offer_id,source_url:source.source_url,goal:input.goal,status:'awaiting_connector',created_at:now,updated_at:now,context},draft=prepareCollectionProduct(owner,job,result,productId,now);
  await verifyWorkspaceBannerFiles(owner,context.settings,true);draft.product.image_keys=JSON.stringify([...new Set([...JSON.parse(draft.product.image_keys) as string[],...images.map(image=>image.key)])]);if(JSON.parse(draft.product.image_keys).length>PRODUCT_IMAGE_POOL_LIMIT)throw conflict('공통 이미지와 원본 이미지가 새 초안의 이미지 수 제한을 초과합니다. 새 기본설정의 이미지를 확인해주세요.');
  const guard=`${joins} WHERE j.owner_id=? AND j.id=? AND j.status='awaiting_connector' AND j.updated_at=? AND c.payload=? AND r.payload=? AND ${effectiveCollectionPayload}=? AND r.received_at=? AND cp.product_id=? AND p.updated_at=? AND p.image_keys=? AND (SELECT payload FROM product_price_policy WHERE product_id=p.id) IS ?
  AND COALESCE((SELECT revision FROM product_content WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND (SELECT payload FROM product_content WHERE product_id=p.id AND owner_id=p.owner_id) IS ?
  AND COALESCE((SELECT revision FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND (SELECT payload FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id) IS ?
  AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND (SELECT payload FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id) IS ? AND ${sourceImagesSql}=? AND NOT ${busySql}
- AND NOT EXISTS(SELECT 1 FROM product_removals x WHERE x.product_id=p.id AND x.owner_id=p.owner_id) AND EXISTS(SELECT 1 FROM collection_offer_claims k WHERE k.owner_id=j.owner_id AND k.offer_id=j.offer_id AND k.job_id=j.id)
+ AND NOT EXISTS(SELECT 1 FROM product_removals x WHERE x.product_id=p.id AND x.owner_id=p.owner_id) ${input.sourceMode?`AND NOT ${pendingActivitySql}`:''} AND EXISTS(SELECT 1 FROM collection_offer_claims k WHERE k.owner_id=j.owner_id AND k.offer_id=j.offer_id AND k.job_id=j.id)
  AND EXISTS(SELECT 1 FROM category_profiles q WHERE q.owner_id=j.owner_id AND q.id=? AND q.revision=? AND q.payload=?) AND (SELECT payload FROM workspace_settings WHERE owner_id=j.owner_id) IS ? AND EXISTS(SELECT 1 FROM members m WHERE m.id=j.owner_id AND m.status='approved' AND m.company_code=? AND m.company_name=?)`;
  const guardArgs=[owner,jobId,source.updated_at,source.source_context,source.original_receipt,source.receipt_payload,source.received_at,source.product_id,source.product_version,source.image_keys,source.pricing_policy,source.content_revision,source.content_payload,source.option_revision,source.option_payload,source.quotation_revision,source.quotation_payload,source.source_images,input.profileId,input.expectedProfileRevision,profileRow.payload,settingsPayload,company.code,company.name];
  const created=`EXISTS(SELECT 1 FROM collection_jobs n JOIN collection_context nc ON nc.job_id=n.id JOIN collection_offer_claims k ON k.job_id=n.id AND k.owner_id=n.owner_id AND k.offer_id=n.offer_id WHERE n.id=? AND n.owner_id=? AND n.created_at=? AND nc.payload=?)`,createdArgs=[requestId,owner,now,contextPayload],entries=Object.entries(draft.product);

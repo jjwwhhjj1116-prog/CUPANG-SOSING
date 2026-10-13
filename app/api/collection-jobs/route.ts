@@ -3,24 +3,36 @@ import { validateCategoryIdentity } from '@/app/category-identity';
 import { NextResponse } from 'next/server';
 import { collectionBlock, collectionKeywords, parseCollectionRequest } from '@/app/sourcing';
 import { preservedCollectionRequests } from '@/app/collection-preservation';
-import { enqueueCollection, listCollectionJobs } from '@/db/collection-jobs';
+import { enqueueCollection, listCollectionJobs, findCollectionJob } from '@/db/collection-jobs';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { getSettings } from '@/db/queries';
 import { savedRegistrationSettings, validateSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
+import {CollectionCompanyError,verifyCapturedCollectionCompany} from '@/app/collection-company';
 
 // Production requests require a verified Access assertion; ownership never falls
 // back to the local workspace if authentication changes during the request.
 function unavailable() {
   return NextResponse.json({ error: '운영 인증이 연결되기 전에는 수집 대기열을 공개할 수 없습니다.' }, { status: 503 });
 }
-export async function GET() {
-  if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
+export async function GET(request?: Request) {
+  const targeted=Boolean(request&&new URL(request.url).searchParams.has('id'));
+  const user=process.env.NODE_ENV==='production'||targeted?await getChatGPTUser():undefined;
+  if (process.env.NODE_ENV === 'production' && !user?.verifiedAccess) return unavailable();
   try {
     const owner=await getWorkspaceOwnerId();
+    const query=request?new URL(request.url).searchParams:null;
+    if(query?.has('id')){
+      if(query.getAll('id').length!==1||[...query.keys()].some(key=>key!=='id')||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(query.get('id')??''))return NextResponse.json({error:'기존 수집 요청 번호를 확인해주세요.'},{status:400});
+      if(process.env.NODE_ENV==='production'&&user?.userId!==owner)return unavailable();
+      const job=await findCollectionJob(owner,query.get('id')!);
+      if(!job)return NextResponse.json({error:'기존 수집 요청을 찾을 수 없습니다.'},{status:404});
+      verifyCapturedCollectionCompany(job.context,user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null);
+      return NextResponse.json({job},{headers:{'cache-control':'no-store'}});
+    }
     return NextResponse.json({ jobs: await listCollectionJobs(owner), message: collectionBlock }, { headers: { 'cache-control': 'no-store' } });
-  } catch { return NextResponse.json({ error: '수집 대기열을 읽지 못했습니다. 다시 불러와주세요.' }, { status: 503 }); }
+  } catch(error) { if(error instanceof CollectionCompanyError)return NextResponse.json({error:error.message,code:error.code},{status:409});return NextResponse.json({ error: '수집 대기열을 읽지 못했습니다. 다시 불러와주세요.' }, { status: 503 }); }
 }
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();

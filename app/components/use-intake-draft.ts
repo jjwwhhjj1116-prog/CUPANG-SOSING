@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { confirmIntakeDraftSave, intakeDraftBody, intakeDraftOwnerId, readIntakeDraftResponse } from '@/app/intake-draft';
+import { confirmIntakeDraftSave, intakeDraftBody, intakeDraftOwnerId, newIntakeDraftGoal, readIntakeDraftResponse } from '@/app/intake-draft';
 import type { IntakeRow } from '@/app/intake-queue';
 
 export function useIntakeDraft(workspaceOwnerId?: string) {
@@ -8,7 +8,7 @@ export function useIntakeDraft(workspaceOwnerId?: string) {
   const [accountEpoch, setAccountEpoch] = useState(0);
   const operation = useRef<{ ownerId: string | null; epoch: number; mounted: boolean }>({ ownerId: null, epoch: 0, mounted: false });
   const [rows, setRows] = useState<IntakeRow[]>([]);
-  const [goal, setGoal] = useState('price');
+  const [goal, setGoal] = useState<string>(newIntakeDraftGoal);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -16,16 +16,16 @@ export function useIntakeDraft(workspaceOwnerId?: string) {
   const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState('상품 대기열 초안을 불러오는 중…');
   const revision = useRef<number | null>(null);
-  const currentInput = useRef<{ rows: IntakeRow[]; goal: string; generation: number }>({ rows: [], goal: 'price', generation: 0 });
+  const currentInput = useRef<{ rows: IntakeRow[]; goal: string; generation: number }>({ rows: [], goal: newIntakeDraftGoal, generation: 0 });
   const request = useRef<AbortController | null>(null);
   const unconfirmed = useRef<{ body: ReturnType<typeof intakeDraftBody>; generation: number } | null>(null);
   useLayoutEffect(() => {
     request.current?.abort(); request.current = null;
     revision.current = null; unconfirmed.current = null;
-    currentInput.current = { rows: [], goal: 'price', generation: 0 };
+    currentInput.current = { rows: [], goal: newIntakeDraftGoal, generation: 0 };
     const epoch = operation.current.epoch + 1;
     operation.current = { ownerId, epoch, mounted: true };
-    setAccountEpoch(epoch); setRows([]); setGoal('price'); setDirty(false); setReady(false);
+    setAccountEpoch(epoch); setRows([]); setGoal(newIntakeDraftGoal); setDirty(false); setReady(false);
     setSaving(Boolean(ownerId)); setLoading(Boolean(ownerId)); setAutoPaused(!ownerId);
     setMessage(ownerId ? '상품 대기열 초안을 불러오는 중…' : '로그인 계정을 확인하지 못했습니다. 페이지를 새로고침해주세요.');
     return () => {

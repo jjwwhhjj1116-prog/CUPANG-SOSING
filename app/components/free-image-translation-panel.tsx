@@ -11,13 +11,13 @@ import {
   type FreeImageLoaded, type FreeImageQuotationRequest, type FreeImageRegion, type FreeImageRendered,
 } from '@/app/free-image-translation-client';
 
-export type FreeImageTranslationTarget = { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en'; role?: FreeImageRole; quotationTarget?: FreeImageQuotationRequest };
+export type FreeImageTranslationTarget = { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en'; role?: FreeImageRole; quotationTarget?: FreeImageQuotationRequest; intent?: 'manual' };
 export type FreeImageQuotationContext = Pick<FreeImageQuotationRequest, 'profileId' | 'optionId' | 'input'>;
 type Props = { productId: string; version: string; imageKeys: string[]; translationTarget?: FreeImageTranslationTarget;
   focusedOptionId?: string; quotationContext?: FreeImageQuotationContext;
   onProductChanged?: () => void; onBusyChange?: (busy: boolean) => void; beforeApply?: () => boolean };
 const roleNames: Record<FreeImageRole, string> = { main: '대표 이미지', additional: '추가 이미지', detailTop: '상단 이미지', detail: '상세 이미지', detailBottom: '하단 이미지', label: '최종 라벨 이미지' };
-type RequestWork = { controller: AbortController; epoch: number; kind: 'ocr' | 'refresh' | 'translate' | 'preview' | 'save' | 'recover' };
+type RequestWork = { controller: AbortController; epoch: number; kind: 'manual' | 'ocr' | 'refresh' | 'translate' | 'preview' | 'save' | 'recover' };
 const sameQuotationSlot = (left: FreeImageQuotationRequest | null | undefined, right: FreeImageQuotationRequest | null | undefined) => !left || !right ? !left && !right
   : left.profileId === right.profileId && left.optionId === right.optionId && left.input === right.input && left.fieldKey === right.fieldKey && left.slotIndex === right.slotIndex;
 
@@ -64,11 +64,13 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   const [readyRetry, setReadyRetry, liveReadyRetry] = useLiveDraft(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [manualPreparation, setManualPreparation] = useState<FreeImageTranslationTarget | null>(null);
   const mounted = useRef(true), epoch = useRef(0), active = useRef<RequestWork | null>(null);
   const pendingSave = useRef<FreeImageRendered | null>(null), lastVersion = useRef(version), handledTarget = useRef<number | null>(null);
   const recoveredScope = useRef<string | null>(null);
   const pendingTarget = useRef<{ epoch: number } | null>(null);
   const manualId = useRef(0), panel = useRef<HTMLElement | null>(null), sourceControl = useRef<HTMLSelectElement | null>(null);
+  const handledManualTarget = useRef<number | null>(null);
   const [renderedRegionGeneration, setRegionGeneration, regionGenerationRef] = useLiveDraft(0);
   const brushSerialRef = useRef(0), pendingBrushRef = useRef<{ id: string; editorKey: string; scopeKey: string; generation: number; size: number; color: string } | null>(null);
   const selectionKey = JSON.stringify(quotationContext ?? null), liveSelection = useRef(selectionKey);
@@ -149,10 +151,11 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
       cancel(false); setLanguage(nextLanguage); setQuotationTarget(nextQuotationTarget);
       if (nextLanguage !== language || !sameProof) setRendered(null);
       setNotice(loaded && loaded.source.productVersion !== version ? '같은 원본의 작성 문구는 유지했습니다. 원본 저장 상태를 다시 확인해주세요.' : '같은 원본의 작성 문구와 선택 영역을 유지했습니다.');
-      return;
+      return true;
     }
     if (liveRegions.current.length || liveRenderedRef.current || liveOptionImageIds.current.length) { cancel(false); setNotice('작성한 문구와 옵션 선택을 유지했습니다. 다른 원본이나 역할을 사용하려면 먼저 이미지 번역 편집 초안을 지워주세요.'); return; }
     cancel(false); discardDraft(); setSourceKey(key); setRole(nextRole); setLanguage(nextLanguage); setQuotationTarget(nextQuotationTarget); setNotice('');
+    return true;
   }
   useEffect(() => {
     if (!translationTarget || handledTarget.current === translationTarget.sequence) return;
@@ -166,7 +169,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         if (pendingSave.current) setUncertain(true);
         setError('선택한 원본이 현재 상품 이미지 목록에 없습니다. 저장본을 확인해주세요.'); return;
       }
-      selectSource(target.sourceKey, target.role ?? 'detail', target.sourceLanguage ?? 'zh', target.quotationTarget ?? null);
+      const selected = selectSource(target.sourceKey, target.role ?? 'detail', target.sourceLanguage ?? 'zh', target.quotationTarget ?? null);
+      if (selected && target.intent === 'manual') setManualPreparation(target);
       panel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); sourceControl.current?.focus({ preventScroll: true });
     });
     return () => {
@@ -263,6 +267,31 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
         translationProvenance: 'manual', erase: true, background: pending.color, foreground: '#111111', fontSize: 1, ...drawn }]);
     } catch (cause) { setError(cause instanceof Error ? cause.message : '브러시 획을 완료하지 못했습니다.'); }
   }
+  async function prepareManualSource() {
+    if (!sourceKey || !imageKeys.includes(sourceKey) || liveUncertain.current || liveReadyRetry.current || !focusedTarget() || !editorCurrent()) return;
+    if (liveRegions.current.length || liveRenderedRef.current || liveOptionImageIds.current.length || pendingSave.current) { setNotice('작성한 문구와 옵션 선택을 유지했습니다. 다른 원본을 불러오려면 먼저 편집 초안을 지워주세요.'); return; }
+    const work = begin('manual'); if (!work) return;
+    discardDraft();
+    try {
+      const image = await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined);
+      if (!current(work)) return; setLoaded(image);
+      setOptionImageIds(focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : []);
+      setNotice('원본을 불러왔습니다. 문구 영역을 직접 추가하거나 브러시로 편집한 뒤 미리보기를 확인해주세요.');
+    } catch (cause) { if (current(work)) setError(cause instanceof Error ? cause.message : '수동 편집 원본을 불러오지 못했습니다.'); }
+    finally { finish(work); }
+  }
+  useEffect(() => {
+    const target = manualPreparation;
+    if (!target || target.sequence !== translationTarget?.sequence || handledManualTarget.current === target.sequence
+      || target.sourceKey !== sourceKey || (target.role ?? 'detail') !== role || !sameFreeImageQuotationRequest(target.quotationTarget, quotationTarget)
+      || !focusedTarget() || !editorCurrent()) return;
+    handledManualTarget.current = target.sequence;
+    // Card editing prepares authenticated bytes only. OCR, translation,
+    // preview and writes still require their own explicit actions.
+    void prepareManualSource();
+    // The committed exact editor identity controls this one read-only load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualPreparation, translationTarget, editorKey, selectionKey]);
   async function recognize() {
     if (!sourceKey || !imageKeys.includes(sourceKey) || liveUncertain.current || liveReadyRetry.current || !focusedTarget() || !editorCurrent()) return;
     if (liveRegions.current.length || liveRenderedRef.current || liveOptionImageIds.current.length || pendingSave.current) { setNotice('작성한 문구와 옵션 선택을 유지했습니다. 원본 문구를 다시 읽으려면 먼저 이미지 번역 편집 초안을 지워주세요.'); return; }
@@ -368,7 +397,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
   return <section ref={panel} className="translation-panel free-image-translation-panel" aria-label="이미지 문구 무료 번역"
     data-free-image-editor="true" data-quotation-source-step={role === 'main' ? '대표 이미지' : role === 'additional' ? '추가 이미지' : '상세 이미지'}
     data-workspace-dirty={dirty ? 'true' : undefined} data-workspace-saving={busy || brushDrawing ? 'true' : undefined}>
-    <h4>이미지 문구 번역</h4>
+    <h4>{translationTarget?.intent === 'manual' ? '이미지 편집' : '이미지 문구 번역'}</h4>
     <p>원본의 문구를 읽고 한국어로 수정합니다. 선택한 사각 영역에 배경색과 문구를 덧씌우므로 상품 사진과 배경이 겹치는 영역은 미리보기에서 확인해주세요. 브러시는 그린 경로에 선택한 색상을 적용합니다. 최종 겹침 순서는 미리보기에서 확인해주세요.</p>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <div className="form-row">
@@ -382,6 +411,7 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     </div>
     <p>{quotationTarget ? `선택 옵션 ${quotationTarget.optionId} · ${roleNames[role]} ${quotationTarget.slotIndex + 1}의 최종 이미지` : '선택한 역할에 저장된 원본을 사용합니다. 다른 단계에서 이미지 역할이나 순서를 수정했다면 먼저 저장해주세요.'}</p>
     <div className="actions">
+      <button type="button" className="btn blue" disabled={locked || !sourceKey || !imageKeys.includes(sourceKey) || regions.length > 0 || optionImageIds.length > 0 || rendered !== null} onClick={() => void prepareManualSource()}>원본 불러오기 · 수동 편집</button>
       <button type="button" className="btn blue" disabled={locked || !sourceKey || !imageKeys.includes(sourceKey) || regions.length > 0 || optionImageIds.length > 0 || rendered !== null} onClick={() => void recognize()}>원본 문구 읽기</button>
       {loaded && <button type="button" className="btn" disabled={locked || !imageKeys.includes(sourceKey)} onClick={() => void refreshSource()}>원본 저장 상태 다시 확인</button>}
       <button type="button" className="btn" disabled={locked || !currentImage || regions.length >= MAX_OCR_REGIONS} onClick={addRegion}>문구 영역 직접 추가</button>

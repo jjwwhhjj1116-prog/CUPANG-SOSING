@@ -26,7 +26,9 @@ for (const company of [{ companyCode: 'A01464742', companyName: '와이홉' }, {
   test(`URL intake links recorded originals to editable image and SKU drafts (${company.companyCode})`, async () => {
     const h = mobileIntakeHarness(company);
     try {
-      h.sqlite.prepare("UPDATE collection_jobs SET goal='work'").run();
+      const initial = await h.load('db/intake-draft.ts').readIntakeDraft('owner');
+      assert.equal(initial.goal, 'work', 'fresh URL intake must also prepare editable image roles');
+      h.sqlite.prepare('UPDATE collection_jobs SET goal=?').run(initial.goal);
       await h.intake();
       const source = receipt(h), keys = originals(h), saved = content(h), rows = options(h).rows;
       for (const role of ['main', 'additional', 'detail']) {

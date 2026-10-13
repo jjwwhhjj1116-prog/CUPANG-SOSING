@@ -604,6 +604,11 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       const source: QuotationSource = weightManual?.source ?? (manualOption ? 'manual-option' : manualCommon ? 'manual-common' : automatic.source);
       const validationIssues = [...quotationValueIssues(definition, value, ownedKeys, source), ...(!weightManual && !manualOption && !manualCommon ? automatic.issues ?? [] : [])];
       const reviewMessages: string[] = [];
+      if (definition.id === 'detailHtml' && source === 'content') {
+        const description = currentDetailContent(content).description;
+        if (description.provenance === 'collected' && /\p{Script=Han}/u.test(description.value))
+          reviewMessages.push('수집 원문의 중국어 상세 설명이 남아 있습니다. 1단계 또는 5단계에서 설명을 확인하고 번역·수정해주세요.');
+      }
       if (source === 'couplus-default') reviewMessages.push('쿠플러스 참조 화면의 양식 기본값입니다. 실제 상품의 해당 여부를 확인해주세요.');
       if (definition.workbookWire?.requirement === 'conditional') reviewMessages.push(['해당 상품에 조건이 적용되는지 확인해주세요.', definition.help].filter(Boolean).join('\n'));
       else if (definition.reviewRequired && (value.trim() || hasSelectedEmptyQuotationChoice(definition, { value, source }))) reviewMessages.push('실제 상품·증빙과 일치하는지 확인해주세요.');

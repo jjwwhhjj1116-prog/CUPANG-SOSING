@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import type { IntakeDraft } from '@/app/intake-draft';
+import { newIntakeDraftGoal } from '@/app/intake-draft';
 export const intakeDraftSchema = `CREATE TABLE IF NOT EXISTS intake_drafts (
   owner_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0),
   payload TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -16,7 +17,7 @@ function decode(row: Row): IntakeDraft {
 }
 export async function readIntakeDraft(owner: string): Promise<IntakeDraft> {
   const db = await database(); const row = await db.prepare('SELECT revision,payload,updated_at FROM intake_drafts WHERE owner_id=?').bind(owner).first<Row>();
-  return row ? decode(row) : { revision: 0, rows: [], goal: 'price', updatedAt: null };
+  return row ? decode(row) : { revision: 0, rows: [], goal: newIntakeDraftGoal, updatedAt: null };
 }
 export async function saveIntakeDraft(owner: string, expectedRevision: number, value: Pick<IntakeDraft, 'rows' | 'goal'>) {
   const db = await database(); const now = new Date().toISOString();

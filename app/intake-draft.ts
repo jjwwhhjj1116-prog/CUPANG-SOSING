@@ -1,6 +1,9 @@
 import type { IntakeRow } from '@/app/intake-queue';
 import type { CategoryProfile } from '@/app/category-profiles';
 export type IntakeDraft = { revision: number; rows: IntakeRow[]; goal: string; updatedAt: string | null };
+/** New URL intake prepares editable SEO, pricing and source image roles.
+ * Persisted draft goals remain authoritative; this never triggers transmission. */
+export const newIntakeDraftGoal = 'work' as const;
 export function intakeDraftOwnerId(value:unknown):string|null {
   return typeof value==='string'&&value.length>0&&value.length<=200&&value===value.trim()&&!/[\u0000-\u001f\u007f]/u.test(value)?value:null;
 }

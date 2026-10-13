@@ -1,4 +1,4 @@
-import { GOOGLE_TEXT_MODEL, translationAttributeCoverage, type TranslationJob } from '@/app/automation/translation';
+import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, translationAttributeCoverage, type TranslationJob } from '@/app/automation/translation';
 import { runReviewedTranslation } from '@/app/reviewed-translation';
 import { awaitIntakeTranslation } from '@/app/intake-translation-result';
 
@@ -86,8 +86,10 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     const serviceStopped=job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
       &&job.review.instructionsVersion==='sourceflow-translation-v6'&&job.result.model===GOOGLE_TEXT_MODEL
       &&Number.isInteger(stoppedStatus)&&(stoppedStatus===429||(stoppedStatus??0)>=500&&(stoppedStatus??0)<=599);
-    const googleDescriptionAbsent=!body.optionsOnly&&job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
-      &&job.result.model===GOOGLE_TEXT_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'
+    const descriptionAbsent=!body.optionsOnly&&job.result.model===job.review.model
+      &&(job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
+        ||job.review.destination==='Cloudflare Workers AI'&&job.review.model===WORKERS_TEXT_MODEL)
+      &&job.review.instructionsVersion==='sourceflow-translation-v6'
       &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry')
       &&typeof job.review.source.description==='string'&&!!job.review.source.description.trim()
       &&typeof job.result.draft.description==='string'&&!job.result.draft.description.trim();
@@ -129,7 +131,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
       guidanceMissing=proof.needsReview;partial||=guidanceMissing;
       for(const value of proof.warnings as string[])warnings.add(`SEO 입력 검토: ${value}`);
     }
-    if(googleDescriptionAbsent){
+    if(descriptionAbsent){
       const proof=preview.intakeSeoCoverage;
       if(!proof||proof.jobId!==job.id||!Number.isSafeInteger(preview.contentRevision)||(preview.contentRevision??-1)<0
         ||proof.contentRevision!==preview.contentRevision||typeof proof.missingDescription!=='boolean')throw Error('현재 저장된 상품 설명과 번역 누락 상태를 확인하지 못했습니다.');

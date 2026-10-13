@@ -20,7 +20,7 @@ import { optionsRetryProof, optionsRetryApplicationFingerprint } from '@/app/opt
 import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
-import {GOOGLE_TEXT_MODEL} from '@/app/automation/translation';
+import {GOOGLE_TEXT_MODEL,WORKERS_TEXT_MODEL} from '@/app/automation/translation';
 import {intakeSupplierSourceMatches} from '@/app/intake-supplier-source';
 import { applyInitialIntakeSeoGuidance, initialIntakeSeoGuidancePending, applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
@@ -176,8 +176,10 @@ export async function POST(request: Request, context: Context) {
     const optionsRetry = retryProof ? {applicationFingerprint:await optionsRetryApplicationFingerprint(job,
       applyContentPatch(content,plan.patch??{},'options-retry-application'),applyIntegratedOptions(options,plan,'options-retry-application'),'options-retry-application')} : null;
     let intakeSeoCoverage;
-    if(scope==='all'&&job.status==='completed'&&job.result&&job.review.destination==='Google 번역'
-      &&job.review.model===GOOGLE_TEXT_MODEL&&job.result.model===GOOGLE_TEXT_MODEL&&job.review.instructionsVersion==='sourceflow-translation-v6'
+    if(scope==='all'&&job.status==='completed'&&job.result&&job.result.model===job.review.model
+      &&(job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
+        ||job.review.destination==='Cloudflare Workers AI'&&job.review.model===WORKERS_TEXT_MODEL)
+      &&job.review.instructionsVersion==='sourceflow-translation-v6'
       &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry')
       &&job.review.source.description.trim()&&!job.result.draft.description.trim()){
       const initial=await findIntakeTranslation(owner,id);

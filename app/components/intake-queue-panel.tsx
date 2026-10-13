@@ -10,7 +10,8 @@ import type { CategoryAdvancedSeed } from '@/app/category-catalog';
 import { collectIntakeProduct } from '@/app/intake-collection';
 import { capture1688FromChrome } from '@/app/browser-product-bridge';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
-import {createIntakeNewDraft,recoverIntakeNewDraft,previewIntakeNewDraft,intakeNewDraftInputKey,IntakeNewDraftSettingsChanged,type IntakeNewDraftPreview,type IntakeNewDraftCreated} from '@/app/intake-new-draft';
+import {createIntakeNewDraft,recoverIntakeNewDraft,previewIntakeNewDraft,intakeNewDraftInputKey,IntakeNewDraftSettingsChanged,IntakeNewDraftSourceUrlsAvailable,type IntakeNewDraftPreview,type IntakeNewDraftCreated} from '@/app/intake-new-draft';
+import {previewPendingIntakeSource,preparePendingIntakeSource,type PendingIntakeSourcePreview} from '@/app/intake-pending-source';
 
 export type IntakeSourceSeed={id:string;sourceUrl:string};
 export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed }: {
@@ -37,13 +38,19 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const [settingsChanged,setSettingsChanged]=useState(false);
   const [settingsMessage,setSettingsMessage]=useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
-  const [forkPreview,setForkPreview]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;preview:IntakeNewDraftPreview;requestId:string;pending:boolean;created?:IntakeNewDraftCreated}|null>(null);
+  const [forkPreview,setForkPreviewState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;preview:IntakeNewDraftPreview;requestId:string;pending:boolean;created?:IntakeNewDraftCreated}|null>(null);
+  const [pendingPreview,setPendingPreviewState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;preview:PendingIntakeSourcePreview;pending:boolean}|null>(null);
+  const [sourceUrlsCandidate,setSourceUrlsCandidateState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;candidate:IntakeNewDraftSourceUrlsAvailable['candidate']}|null>(null);
+  const forkPreviewRef=useRef<typeof forkPreview>(null),pendingPreviewRef=useRef<typeof pendingPreview>(null),sourceUrlsCandidateRef=useRef<typeof sourceUrlsCandidate>(null);
+  function setForkPreview(value:typeof forkPreview){forkPreviewRef.current=value;setForkPreviewState(value);}
+  function setPendingPreview(value:typeof pendingPreview|((previous:typeof pendingPreview)=>typeof pendingPreview)){const next=typeof value==='function'?value(pendingPreviewRef.current):value;pendingPreviewRef.current=next;setPendingPreviewState(next);}
+  function setSourceUrlsCandidate(value:typeof sourceUrlsCandidate){sourceUrlsCandidateRef.current=value;setSourceUrlsCandidateState(value);}
   const previewRow = rows.find(row => row.id === previewId);
   const running = useRef<AbortController | null>(null);
   const forkRunning=useRef<AbortController|null>(null),forkOwner=useRef(workspaceOwnerId);
   const navigation = useRef({rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings});
   useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings};},[rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings]);
-  useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;setForkPreview(null);const controller=forkRunning.current;if(!controller)return;forkRunning.current=null;controller.abort();if(running.current===controller){running.current=null;setBusy(false);onBusy(false);}},[workspaceOwnerId,onBusy]);
+  useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;forkPreviewRef.current=null;pendingPreviewRef.current=null;sourceUrlsCandidateRef.current=null;setForkPreviewState(null);setPendingPreviewState(null);setSourceUrlsCandidateState(null);const controller=forkRunning.current;if(!controller)return;forkRunning.current=null;controller.abort();if(running.current===controller){running.current=null;setBusy(false);onBusy(false);}},[workspaceOwnerId,onBusy]);
   const focusRow = useRef<string | null>(null);
   const urlInputs = useRef(new Map<string, HTMLInputElement>());
   useEffect(() => {
@@ -79,13 +86,17 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   function edit(id: string, patch: Partial<IntakeRow>) {
     if (running.current) return;
     if(forkPreview?.rowId===id)setForkPreview(null);
-    const update=(previous:IntakeRow[])=>previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft' as const, message: '', productId: undefined,forkJobId:undefined } : row);
+    if(pendingPreview?.rowId===id)setPendingPreview(null);
+    if(sourceUrlsCandidate?.rowId===id)setSourceUrlsCandidate(null);
+    const update=(previous:IntakeRow[])=>previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft' as const, message: '', productId: undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined } : row);
     navigation.current.rows=update(navigation.current.rows);
     onRows(update);
   }
   function removeRow(id:string){
     if(running.current)return;
     if(forkPreview?.rowId===id)setForkPreview(null);
+    if(pendingPreview?.rowId===id)setPendingPreview(null);
+    if(sourceUrlsCandidate?.rowId===id)setSourceUrlsCandidate(null);
     const update=(previous:IntakeRow[])=>previous.filter(row=>row.id!==id);
     navigation.current.rows=update(navigation.current.rows);onRows(update);
   }
@@ -139,7 +150,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   async function inspectNewDraft(rowId:string){
     const current=navigation.current,row=current.rows.find(value=>value.id===rowId);
     if(!sourceMounted.current||running.current||!row?.forkJobId||current.workspaceOwnerId!==workspaceOwnerId||settingsChanged)return;
-    const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');setForkPreview(null);
+    const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');setForkPreview(null);setSourceUrlsCandidate(null);
     const inputKey=intakeNewDraftInputKey(row,current.goal,current.settings),ownerId=current.workspaceOwnerId;
     try{
       const preview=await previewIntakeNewDraft(row,current.goal,current.settings,controller.signal);
@@ -147,12 +158,68 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       if(controller.signal.aborted||!sourceMounted.current||running.current!==controller)return;
       if(latest.workspaceOwnerId!==ownerId||!updated||intakeNewDraftInputKey(updated,latest.goal,latest.settings)!==inputKey)throw Error('확인 중 입력이나 로그인 계정이 변경되었습니다. 새 초안을 다시 확인해주세요.');
       setForkPreview({rowId,inputKey,ownerId,preview,requestId:crypto.randomUUID(),pending:false});
-    }catch(cause){if(!controller.signal.aborted){if(cause instanceof IntakeNewDraftSettingsChanged)setSettingsChanged(true);setError(cause instanceof Error?cause.message:'저장된 원문을 확인하지 못했습니다.');}}
+    }catch(cause){if(!controller.signal.aborted&&sourceMounted.current&&navigation.current.workspaceOwnerId===ownerId){
+      const updated=navigation.current.rows.find(value=>value.id===rowId);
+      if(cause instanceof IntakeNewDraftSourceUrlsAvailable&&cause.candidate.jobId===row.forkJobId&&updated&&intakeNewDraftInputKey(updated,navigation.current.goal,navigation.current.settings)===inputKey)setSourceUrlsCandidate({rowId,inputKey,ownerId,candidate:cause.candidate});
+      if(cause instanceof IntakeNewDraftSettingsChanged)setSettingsChanged(true);setError(cause instanceof Error?cause.message:'저장된 원문을 확인하지 못했습니다.');}}
+    finally{finish(controller);}
+  }
+  async function inspectSourceUrls(){
+    const confirmed=sourceUrlsCandidate,current=navigation.current,row=confirmed&&current.rows.find(value=>value.id===confirmed.rowId);
+    if(!confirmed||sourceUrlsCandidateRef.current!==confirmed||running.current||!sourceMounted.current||!row||row.forkJobId!==confirmed.candidate.jobId||current.workspaceOwnerId!==confirmed.ownerId)return;
+    if(intakeNewDraftInputKey(row,current.goal,current.settings)!==confirmed.inputKey){setSourceUrlsCandidate(null);setError('입력이 변경되었습니다. 새 초안을 다시 확인해주세요.');return;}
+    const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');
+    try{
+      const prepared={...row,pendingSourceMode:'pending-source-urls-v1' as const,pendingSourceHash:confirmed.candidate.sourceReceiptHash};
+      const preview=await previewIntakeNewDraft(prepared,current.goal,current.settings,controller.signal);
+      if(controller.signal.aborted||!sourceMounted.current||running.current!==controller||navigation.current.workspaceOwnerId!==confirmed.ownerId)return;
+      const latest=navigation.current,fresh=latest.rows.find(value=>value.id===confirmed.rowId);
+      if(!fresh||intakeNewDraftInputKey(fresh,latest.goal,latest.settings)!==confirmed.inputKey||preview.source.productId!==confirmed.candidate.productId||preview.source.productVersion!==confirmed.candidate.productVersion)throw Error('원문 상품이나 현재 입력이 변경되었습니다. 새 초안을 다시 확인해주세요.');
+      const update=(rows:IntakeRow[])=>rows.map(value=>value.id===confirmed.rowId?prepared:value);navigation.current.rows=update(navigation.current.rows);onRows(update);setSourceUrlsCandidate(null);
+      setForkPreview({rowId:confirmed.rowId,inputKey:intakeNewDraftInputKey(prepared,latest.goal,latest.settings),ownerId:confirmed.ownerId,preview,requestId:crypto.randomUUID(),pending:false});
+    }catch(cause){if(!controller.signal.aborted&&sourceMounted.current){setSourceUrlsCandidate(null);setError(cause instanceof Error?cause.message:'원문 URL 연결을 확인하지 못했습니다.');}}
+    finally{finish(controller);}
+  }
+  async function inspectPendingSource(rowId:string){
+    const current=navigation.current,row=current.rows.find(value=>value.id===rowId);
+    if(!sourceMounted.current||running.current||!row?.pendingJobId||current.workspaceOwnerId!==workspaceOwnerId||settingsChanged)return;
+    const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');setForkPreview(null);setPendingPreview(null);
+    try{
+      const inputKey=intakeNewDraftInputKey({...row,forkJobId:row.pendingJobId},current.goal,current.settings),ownerId=current.workspaceOwnerId;
+      const preview=await previewPendingIntakeSource(row,ownerId,controller.signal);
+      const latest=navigation.current,updated=latest.rows.find(value=>value.id===rowId);
+      if(controller.signal.aborted||!sourceMounted.current||running.current!==controller)return;
+      if(latest.workspaceOwnerId!==ownerId||!updated||updated.pendingJobId!==row.pendingJobId||intakeNewDraftInputKey({...updated,forkJobId:updated.pendingJobId},latest.goal,latest.settings)!==inputKey)throw Error('확인 중 입력이나 로그인 계정이 변경되었습니다. 기존 요청을 다시 확인해주세요.');
+      setPendingPreview({rowId,inputKey,ownerId,preview,pending:false});
+    }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'기존 대기 요청을 확인하지 못했습니다.');}
+    finally{finish(controller);}
+  }
+  async function preparePendingSource(){
+    const confirmed=pendingPreview,current=navigation.current,row=confirmed&&current.rows.find(value=>value.id===confirmed.rowId);
+    if(!confirmed||pendingPreviewRef.current!==confirmed||running.current||!sourceMounted.current||!row||row.pendingJobId!==confirmed.preview.job.id||current.workspaceOwnerId!==confirmed.ownerId)return;
+    if(intakeNewDraftInputKey({...row,forkJobId:row.pendingJobId},current.goal,current.settings)!==confirmed.inputKey){setPendingPreview(null);setError('입력이 변경되었습니다. 기존 요청을 다시 확인해주세요.');return;}
+    const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');setPendingPreview({...confirmed,pending:true});
+    const active=()=>running.current===controller&&!controller.signal.aborted&&sourceMounted.current&&navigation.current.workspaceOwnerId===confirmed.ownerId;
+    try{
+      const prepared=await preparePendingIntakeSource(confirmed.preview,row,confirmed.ownerId,controller.signal,{captureFromBrowser:capture1688FromChrome});
+      if(!active())return;
+      const latest=navigation.current,updated=latest.rows.find(value=>value.id===confirmed.rowId);
+      if(!updated||updated.pendingJobId!==confirmed.preview.job.id||intakeNewDraftInputKey({...updated,forkJobId:updated.pendingJobId},latest.goal,latest.settings)!==confirmed.inputKey)throw Error('원문 준비 중 입력이 변경되었습니다. 현재 입력을 유지하고 기존 요청을 다시 확인해주세요.');
+      const nextRow={...updated,pendingJobId:undefined,forkJobId:prepared.job.id,pendingSourceMode:'pending-source-urls-v1' as const,pendingSourceHash:prepared.receiptHash??undefined,status:'error' as const,message:'기존 요청과 원문은 보존했습니다. 현재 입력을 적용할 새 초안을 확인해주세요.'};
+      const update=(rows:IntakeRow[])=>rows.map(value=>value.id===confirmed.rowId?nextRow:value);
+      navigation.current.rows=update(navigation.current.rows);onRows(update);onJobs([prepared.job]);setPendingPreview(null);
+      const inputKey=intakeNewDraftInputKey(nextRow,latest.goal,latest.settings);
+      const preview=await previewIntakeNewDraft(nextRow,latest.goal,latest.settings,controller.signal);
+      if(!active())return;
+      const newest=navigation.current,fresh=newest.rows.find(value=>value.id===confirmed.rowId);
+      if(!fresh||intakeNewDraftInputKey(fresh,newest.goal,newest.settings)!==inputKey)throw Error('입력이 변경되었습니다. 새 초안을 다시 확인해주세요.');
+      setForkPreview({rowId:confirmed.rowId,inputKey,ownerId:confirmed.ownerId,preview,requestId:crypto.randomUUID(),pending:false});
+    }catch(cause){if(active()){if(cause instanceof IntakeNewDraftSettingsChanged)setSettingsChanged(true);setPendingPreview(previous=>previous?{...previous,pending:false}:null);setError(cause instanceof Error?cause.message:'원문 준비를 확인하지 못했습니다. 기존 요청과 현재 입력은 유지됩니다.');}}
     finally{finish(controller);}
   }
   async function makeNewDraft(){
     const confirmed=forkPreview,current=navigation.current,row=confirmed&&current.rows.find(value=>value.id===confirmed.rowId);
-    if(!confirmed||running.current||!sourceMounted.current||!row||current.workspaceOwnerId!==confirmed.ownerId)return;
+    if(!confirmed||forkPreviewRef.current!==confirmed||running.current||!sourceMounted.current||!row||current.workspaceOwnerId!==confirmed.ownerId)return;
     if(intakeNewDraftInputKey({...row,forkJobId:confirmed.preview.source.jobId},current.goal,current.settings)!==confirmed.inputKey){setForkPreview(null);setError('입력이 변경되었습니다. 새 초안을 다시 확인해주세요.');return;}
     const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');
     const active=()=>running.current===controller&&!controller.signal.aborted&&sourceMounted.current&&navigation.current.workspaceOwnerId===confirmed.ownerId;
@@ -212,11 +279,19 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
         <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
-        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>1~7단계 확인·수정</button>}{row.status==='error'&&row.forkJobId&&row.profile.template&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>저장 원문으로 새 초안</button>}</td>
+        <td role="status" className={row.status === 'error' ? 'collection-error' : ''}>{row.message || '입력 대기'}{productId && onOpenProduct && <button type="button" className="btn ghost" disabled={busy} onClick={()=>void openSavedProduct(row.id,productId)}>1~7단계 확인·수정</button>}{row.status==='error'&&row.pendingJobId&&row.profile.template&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectPendingSource(row.id)}>기존 대기 요청 확인</button>}{row.status==='error'&&row.forkJobId&&row.profile.template&&<button type="button" className="btn ghost" disabled={busy||settingsChanged} onClick={()=>void inspectNewDraft(row.id)}>저장 원문으로 새 초안</button>}</td>
         <td><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => { const id = crypto.randomUUID(); focusRow.current = id; setQuery(''); onRows(previous => previous.length < 50 ? [...previous, { ...intakeRow(row.profile, id), features: row.features, keywords: row.keywords }] : previous); }}>복제</button><button type="button" className="btn ghost" disabled={busy} onClick={() => removeRow(row.id)}>행 삭제</button></td>
       </tr>; })}
     </tbody></table>{rows.length > 0 && !visible.length && <p className="collection-empty">검색 결과가 없습니다. 검색을 해제하면 입력한 상품을 다시 볼 수 있습니다.</p>}{!rows.length && <p className="collection-empty">대기열이 비어있습니다. [+ 상품 추가] 버튼으로 카테고리를 선택해주세요.</p>}</div>
     {previewRow && <div><button type="button" className="btn ghost" onClick={() => setPreviewId(null)}>견적 연결 미리보기 닫기</button><IntakeQuotationPreview profile={previewRow.profile}/></div>}
+    {pendingPreview&&<section role="dialog" aria-label="기존 대기 요청 확인" className="panel-note"><h3>기존 대기 요청 확인</h3>
+      <p>{pendingPreview.preview.scope.company?.name} · {pendingPreview.preview.job.context?.category.categoryPath.join(' > ')} · 코드 {pendingPreview.preview.job.context?.category.categoryId}</p>
+      <p>{pendingPreview.preview.job.source_url}</p><p>기존 목표: {pendingPreview.preview.job.goal} · 브랜드 {pendingPreview.preview.job.context?.settings.brand} · 환율 {pendingPreview.preview.job.context?.settings.exchangeRate}</p>
+      <p>기존 요청의 카테고리·기본설정·원문은 보존합니다. 아직 상품이 없으면 원문과 최초 상품·옵션만 준비합니다. 번역·이미지 다운로드·등록전송은 실행하지 않으며, 현재 입력을 적용할 새 초안은 다음 화면에서 확인합니다.</p>
+      <button type="button" className="btn primary" disabled={busy} onClick={()=>void preparePendingSource()}>{pendingPreview.pending?'원문 준비 중…':'원문 준비 후 새 초안 검토'}</button>
+      <button type="button" className="btn ghost" disabled={busy} onClick={()=>setPendingPreview(null)}>닫기 · 현재 입력 유지</button>
+    </section>}
+    {sourceUrlsCandidate&&<section role="dialog" aria-label="원문 URL 새 초안 확인" className="panel-note"><h3>원문 URL로 새 초안</h3><p>서버에서 수정하지 않은 최초 원문 상품을 확인했습니다. 저장 안 된 사진은 새 초안에서 가져옵니다. 기존 상품의 입력과 원본은 보존하며, 지금은 새 초안을 검토하는 조회만 실행합니다.</p><button type="button" className="btn primary" disabled={busy} onClick={()=>void inspectSourceUrls()}>원문 URL로 새 초안 검토</button><button type="button" className="btn ghost" disabled={busy} onClick={()=>setSourceUrlsCandidate(null)}>닫기 · 현재 입력 유지</button></section>}
     {forkPreview&&<section role="dialog" aria-label="저장 원문으로 새 초안" className="panel-note"><h3>저장 원문으로 새 초안</h3>
       <p>{forkPreview.preview.source.company.name} · {forkPreview.preview.target.categoryPath.join(' > ')} · 코드 {forkPreview.preview.target.categoryId}</p>
       <p>원문 수집 시각: {forkPreview.preview.source.collectedAt}</p><p>선택한 카테고리와 현재 기본설정으로 별도 상품을 작성합니다. 기존 상품의 수정 내용과 전송 기록은 보존합니다.</p>

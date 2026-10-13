@@ -17,13 +17,13 @@ const dragMime='application/x-yoofam-option-image-order';
 function dragTransfer(){const values=new Map();return{effectAllowed:'none',dropEffect:'none',get types(){return[...values.keys()];},setData(type,value){values.set(type,value);},getData(type){return values.get(type)??'';},clearData(){values.clear();}};}
 function dragEvent(dataTransfer,currentTarget={dataset:{},contains:()=>false}){return{dataTransfer,currentTarget,target:{},defaultPrevented:false,stopped:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.stopped=true;}};}
 
-function imageUI(fetcher,{productId='p',optionId='red',version=initialVersion,profileId,refreshToken='0',stage='additional',disabled=false,onTranslate}={}){
+function imageUI(fetcher,{productId='p',optionId='red',version=initialVersion,profileId,refreshToken='0',stage='additional',disabled=false,onTranslate,onEdit}={}){
  const slots=[],effects=[],layouts=[],cache=new Map(),calls=[];let cursor=0,saved=0,closed=false,lateWrites=0,saveVersion,stateEpoch=0;
  const effect=(queue,fn,deps)=>{const i=cursor++;if(!slots[i]||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){const previous=slots[i],next={deps,cleanup:previous?.cleanup};slots[i]=next;queue.push(()=>{previous?.cleanup?.();next.cleanup=fn();});}};
  const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>{if(closed){lateWrites++;return;}stateEpoch++;slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){effect(effects,fn,deps);},useLayoutEffect(fn,deps){effect(layouts,fn,deps);}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>{calls.push({url,init});const response=await fetcher(url,init);if(response.ok)saveVersion=(await response.clone().json()).productVersion;return response;},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');return name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name);}});return exports;}
  const Component=load('app/components/option-image-editor.tsx').OptionImageEditor;
- const render=(flush=true)=>{cursor=0;const tree=Component({productId,optionId,version,profileId,refreshToken,stage,disabled,onTranslate,onSaved(){saved++;stateEpoch++;version=saveVersion;}});layouts.splice(0).forEach(fn=>fn());if(flush)effects.splice(0).forEach(fn=>fn());return tree;};
+ const render=(flush=true)=>{cursor=0;const tree=Component({productId,optionId,version,profileId,refreshToken,stage,disabled,onTranslate,onEdit,onSaved(){saved++;stateEpoch++;version=saveVersion;}});layouts.splice(0).forEach(fn=>fn());if(flush)effects.splice(0).forEach(fn=>fn());return tree;};
  // Two unchanged commit/event-loop turns include the host's post-ACK version
  // refresh and its newly scheduled GET, rather than observing busy=false once.
  const idle=async()=>{let quiet=0;const deadline=Date.now()+10000;for(;;){const epoch=stateEpoch,count=calls.length,currentVersion=version;render();await new Promise(resolve=>setImmediate(resolve));render();await Promise.resolve();const tree=render();if(!tree.props['data-workspace-saving']&&epoch===stateEpoch&&count===calls.length&&currentVersion===version&&!effects.length&&!layouts.length)quiet++;else quiet=0;if(quiet===2)return;assert.ok(Date.now()<deadline,'option image UI request timed out');await new Promise(resolve=>setTimeout(resolve,1));}};
@@ -101,6 +101,28 @@ test('final image translation entries carry exact saved canonical binding and ne
    h.stage(stage);await h.idle();const oldSku=h.button(label+' 1 중국어 한국어 번역').props.onClick;h.select('blue');oldSku();await h.idle();assert.equal(targets.length,2,'old SKU callback cannot retarget current row');
   }finally{h.close();}
  }
+});
+
+test('manual detail-card editing carries the exact saved slot and rejects dirty, stale or inactive callbacks without writes',async()=>{
+ const f=fixture(),targets=[];
+ await f.reply('',{method:'PUT',body:JSON.stringify({expectedRevision:1,changes:[{optionId:'red',fieldKey:'detailImages',value:f.keys[1]+'\n'+f.keys[2]},{optionId:'red',fieldKey:'wire-detailImages',value:f.keys[1]+'\n'+f.keys[2]}]})});
+ const h=imageUI((url,init)=>f.reply(url,init),{stage:'detail',version:f.view.productVersion,onEdit(...args){targets.push(args);}});
+ try{await h.idle();assert.equal(targets.length,0);await h.click('상세 이미지 2 편집하기');
+  assert.deepEqual(plain(targets[0]),[f.keys[2],'detail',{kind:'quotation',profileId:null,optionId:'red',input:'detailImages',fieldKey:'wire-detailImages',slotIndex:1,revision:2,inputFingerprint:'a'.repeat(64),optionRevision:3,value:f.keys[1]+'\n'+f.keys[2]}]);
+  const stale=h.button('상세 이미지 1 편집하기').props.onClick;h.choose('선택 옵션 상세 이미지 후보 4');stale();await h.idle();assert.equal(targets.length,1);assert.equal(h.button('상세 이미지 1 편집하기').props.disabled,true);
+  await h.click('입력 취소·저장 이미지 다시 조회');h.disabled(true);stale();h.disabled(false);h.stage('additional');stale();await h.idle();assert.equal(targets.length,1);
+  h.stage('detail');await h.idle();const old=h.button('상세 이미지 1 편집하기').props.onClick;h.select('blue');old();await h.idle();assert.equal(targets.length,1);assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false);
+ }finally{h.close();}
+});
+
+test('unlock after a changed source never overwrites an unacknowledged image save and explicit recovery still uses one PUT',async()=>{
+ const f=fixture(),h=imageUI(async(url,init)=>{const response=f.reply(url,init);if(init?.method==='PUT')throw Error('committed image save ACK unavailable');return response;});
+ try{await h.idle();h.choose('선택 옵션 추가 이미지 후보 4');await h.click('선택 옵션 이미지 저장');assert.equal(h.saved,0);assert.equal(h.render().props['data-workspace-dirty'],true);
+  const snapshot=plain(f.view),reads=h.calls.filter(call=>call.init?.method!=='PUT').length;
+  h.disabled(true);h.source(f.view.productVersion,'unknown-save');await h.idle();h.disabled(false);await h.idle();
+  assert.equal(h.calls.filter(call=>call.init?.method!=='PUT').length,reads);assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,1);assert.equal(h.render().props['data-workspace-dirty'],true);assert.deepEqual(plain(f.view),snapshot);
+  await h.click('입력 유지·최신 이미지 조회');assert.equal(h.saved,1);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(h.calls.filter(call=>call.init?.method==='PUT').length,1);assert.deepEqual(plain(f.view),snapshot);
+ }finally{h.close();}
 });
 
 test('translation refuses canonical and exact-primary values that disagree even when the final primary slot exists',async()=>{

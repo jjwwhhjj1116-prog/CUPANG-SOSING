@@ -8,11 +8,12 @@ import { downloadImageSelection } from '@/app/image-selection-download';
 import { DetailImageCompositePanel } from '@/app/components/detail-image-composite-panel';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage;
-  disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void };
+  disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
+  onEdit?: (sourceKey: string, role: OptionImageStage, quotationTarget: FreeImageQuotationRequest) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
 const dragMime = 'application/x-yoofam-option-image-order';
 type ImageDrag = { scope: string; sourceKey: string; stage: OptionImageStage; view: QuotationFieldsView; keys: string[]; key: string; token: string; element: HTMLElement };
-export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, disabled = false, onSaved, onTranslate }: Props) {
+export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, disabled = false, onSaved, onTranslate, onEdit }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope), currentSource = useRef(sourceKey), currentStage = useRef(stage), request = useRef<AbortController | null>(null);
@@ -81,12 +82,20 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   }
   useEffect(() => {
     let active = true;
-    void Promise.resolve().then(() => { if (!active || !current()) return; setBusy(false); setError(''); setUncertain(pendingSave.current?.scope === scope); if (dirty && view) return; void load(); });
+    void Promise.resolve().then(() => {
+      if (!active || !current()) return; setBusy(false); setError(''); setUncertain(pendingSave.current?.scope === scope);
+      if (pendingSave.current?.scope === scope || latestDraft.current.scope === scope && Object.keys(latestDraft.current.values).length && latestSaved.current?.scope === scope) return;
+      // An image apply can publish the new version before its processing lock
+      // clears. Resume that skipped read on unlock, without rereading a basis
+      // already loaded or replacing any local/unacknowledged option draft.
+      if (disabled || latestSaved.current?.scope === scope && latestSaved.current.sourceKey === sourceKey) return;
+      void load();
+    });
     return () => { active = false; request.current?.abort(); request.current = null; };
     // Source identity governs reads. Stage changes retain the same option's
     // pending image/HTML edits; local editing never starts an automatic write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, sourceKey]);
+  }, [scope, sourceKey, disabled]);
   function edit(field: OptionImageInput, value: string | null) {
     if (!view || latestSaved.current?.view !== view || !interactive() || pendingSave.current?.scope === scope || request.current) return;
     clearDrag();
@@ -201,15 +210,16 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       onDragStart: (event: DragEvent<HTMLElement>) => startDrag(key, event), onDragOver: (event: DragEvent<HTMLElement>) => dragOver(key, event),
       onDrop: (event: DragEvent<HTMLElement>) => dropImage(key, event), onDragEnd: (event: DragEvent<HTMLElement>) => endDrag(key, event) };
   }
-  function translateSelected(key: string, slotIndex: number, sourceLanguage: 'zh' | 'en') {
+  function translateSelected(key: string, slotIndex: number, sourceLanguage: 'zh' | 'en', manual = false) {
     const base = latestSaved.current;
-    if (!onTranslate || !base || base.view !== view || base.scope !== scope || base.sourceKey !== sourceKey || base.view.productVersion !== version
+    if (!(manual ? onEdit : onTranslate) || !base || base.view !== view || base.scope !== scope || base.sourceKey !== sourceKey || base.view.productVersion !== version
       || !interactive() || pendingSave.current?.scope === scope || request.current || Object.keys(latestDraft.current.values).length || !base.view.imageKeys.includes(key)) return;
     try {
       const target = optionImageTargets(base.view.resolved.schema.fields)[input], value = optionImageValue(base.view, optionId, input);
       if (quotationImageKeys(value)[slotIndex] !== key || target.linked.some(id => optionImageValue(base.view, optionId, input, {}, id) !== value)) return;
-      onTranslate(key, stage, sourceLanguage, { kind: 'quotation', profileId: profileId ?? null, optionId, input, fieldKey: target.primary, slotIndex,
-        revision: base.view.revision, inputFingerprint: base.view.inputFingerprint, optionRevision: base.view.optionRevision, value });
+      const quotationTarget: FreeImageQuotationRequest = { kind: 'quotation', profileId: profileId ?? null, optionId, input, fieldKey: target.primary, slotIndex,
+        revision: base.view.revision, inputFingerprint: base.view.inputFingerprint, optionRevision: base.view.optionRevision, value };
+      if (manual) onEdit?.(key, stage, quotationTarget); else onTranslate?.(key, stage, sourceLanguage, quotationTarget);
     } catch (cause) { setError(cause instanceof Error ? cause.message : '번역할 이미지 연결을 확인해주세요.'); }
   }
   async function downloadSelection() {
@@ -228,6 +238,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     <figcaption><label><input type="checkbox" aria-label={`선택 옵션 ${label} 후보 ${index + 1}`} checked={selected.includes(key)} disabled={locked || (!selected.includes(key) && selected.length >= limit)} onChange={() => toggle(key)} />이미지 {index + 1} 선택</label></figcaption>
   </figure>);
   const selectedActions = (key: string, index: number) => <div className={stage === 'detail' ? 'option-detail-image-toolbar' : 'image-selected-actions'} role="group" aria-label={`${label} ${index + 1} 편집`}>
+    {onEdit && <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 편집하기`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh', true)}>편집하기</button>}
     {onTranslate && <><button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 중국어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh')}>중국어 → 한국어</button>
       <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 영어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'en')}>영어 → 한국어</button></>}
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 위로 이동`} disabled={locked || index === 0} onClick={() => move(key, -1)}>↑</button>
