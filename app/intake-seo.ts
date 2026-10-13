@@ -92,24 +92,43 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
       &&typeof job.review.source.description==='string'&&!!job.review.source.description.trim()
       &&typeof job.result.draft.description==='string'&&!job.result.draft.description.trim();
     let descriptionMissing=false;
+    let guidanceMissing=false;
     let partial=!!coverage?.missingSourceIndexes.length||serviceStopped;
     const reviewRequired=()=>{
       onReviewRequired();
       const missing=coverage?.missingSourceIndexes.length??0;
       const reason=(serviceStopped?`Google 번역 HTTP ${stoppedStatus} 응답으로 남은 자동 요청을 중단했습니다.${missing?` 속성·옵션 번역 ${missing}개가 누락됐습니다.`:''}`
-        :missing?`생성 결과에서 속성·옵션 번역 ${missing}개가 누락됐습니다.`:'')+(descriptionMissing?' 상품 설명 번역을 받지 못했습니다.':'');
+        :missing?`생성 결과에서 속성·옵션 번역 ${missing}개가 누락됐습니다.`:'')+(descriptionMissing?' 상품 설명 번역을 받지 못했습니다.':'')
+        +(guidanceMissing?' 입력한 특징·타겟의 SEO 구성안을 확인·수정해야 합니다.':'');
       return withWarnings(`검토 필요 · 상품 초안을 저장했습니다. ${reason} 미완료 항목은 번역 완료로 처리하지 않았으며 원문과 직접 수정한 값은 유지합니다. 1~7단계에서 확인·수정해주세요.${remainder}`);
     };
     const applyVersion=body.applyVersion??job.productVersion;
     const send=async(action:'preview'|'apply',fingerprint?:string)=>{
       const response=await fetcher(`${base}/translation-apply`,{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,jobId:job.id,expectedVersion:applyVersion,...(body.optionsOnly?{scope:'options'}:{}),...(fingerprint?{fingerprint}:{})})});
       const value=await response.json() as {error?:string;productId?:string;productVersion?:string;contentRevision?:number;preview?:unknown[];fingerprint?:string;applied?:number;
-        intakeSeoCoverage?:{jobId?:unknown;contentRevision?:unknown;missingDescription?:unknown}};
+        intakeSeoCoverage?:{jobId?:unknown;contentRevision?:unknown;missingDescription?:unknown};
+        intakeSeoGuidance?:{jobId?:unknown;contentRevision?:unknown;needsReview?:unknown;warnings?:unknown}};
       if(!response.ok)throw Error(value.error||'SEO 초안 반영 상태를 확인해주세요.');
       return value;
     };
     const preview=await send('preview');if(signal.aborted)return '';
     if(preview.productId!==productId||preview.productVersion!==applyVersion||!Array.isArray(preview.preview)||typeof preview.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(preview.fingerprint))throw Error('초안 반영 대상이 일치하지 않습니다.');
+    const guidanceProofRequired=!body.optionsOnly&&next.action==='prepare-collected'
+      &&job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL&&job.result.model===GOOGLE_TEXT_MODEL
+      &&job.review.instructionsVersion==='sourceflow-translation-v6'
+      &&!['optionsRetry','intakeOptions','seoRetry'].some(key=>Object.hasOwn(job.review,key))
+      &&!!job.review.source.guidance&&!!job.review.source.category
+      &&/^수집 요청 [a-f0-9-]{36} \(https:\/\/detail\.1688\.com\/offer\/[1-9]\d{0,29}\.html\)의 저장 원문$/u.test(job.review.source.reference);
+    if(guidanceProofRequired&&preview.intakeSeoGuidance===undefined)throw Error('현재 초안의 특징·타겟 SEO 구성 검토 상태를 확인하지 못했습니다.');
+    if(preview.intakeSeoGuidance!==undefined){
+      const proof=preview.intakeSeoGuidance;
+      if(body.optionsOnly||proof.jobId!==job.id||!Number.isSafeInteger(preview.contentRevision)||(preview.contentRevision??-1)<0
+        ||proof.contentRevision!==preview.contentRevision||typeof proof.needsReview!=='boolean'||!Array.isArray(proof.warnings)
+        ||proof.warnings.length>10||proof.warnings.some(value=>typeof value!=='string'||!value.trim()||value.length>2000)
+        ||proof.needsReview!==(proof.warnings.length>0))throw Error('현재 초안의 특징·타겟 SEO 구성 검토 상태를 확인하지 못했습니다.');
+      guidanceMissing=proof.needsReview;partial||=guidanceMissing;
+      for(const value of proof.warnings as string[])warnings.add(`SEO 입력 검토: ${value}`);
+    }
     if(googleDescriptionAbsent){
       const proof=preview.intakeSeoCoverage;
       if(!proof||proof.jobId!==job.id||!Number.isSafeInteger(preview.contentRevision)||(preview.contentRevision??-1)<0

@@ -12,10 +12,13 @@ export function labelDateNotice(categoryId: string | null, categoryPath: readonl
 }
 
 /** Fill untouched review drafts from saved inputs and category-scoped observed defaults. */
-export function fillLabelDraft(draft: Record<LabelField, string>, content: ProductContent, productTitle: string, settings: unknown, categoryId: string | null = null, clearedFields: readonly LabelField[] = [], referenceTime?: string, dateNotice?: boolean) {
+export function fillLabelDraft(draft: Record<LabelField, string>, content: ProductContent, productTitle: string, settings: unknown, categoryId: string | null = null, clearedFields: readonly LabelField[] = [], referenceTime?: string, dateNotice?: boolean, includeGenericDefaults = true) {
   const stored = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings as Record<string, unknown> : {};
+  // New intake and explicit fill may use the general Couplus form defaults.
+  // Opening an older saved common draft preserves its former 80719-only scope.
+  const formDefaults = includeGenericDefaults || categoryId === '80719' ? couplusLabelDefaults(categoryId) : {};
   const candidates: Partial<Record<LabelField, unknown>> = {
-    ...couplusLabelDefaults(categoryId),
+    ...formDefaults,
     productName: savedTextOrFallback(content.seo.title, productTitle).trim(),
     manufacturer: stored.manufacturer, importer: stored.importer, contact: stored.serviceContact,
     washingPrecautions: washingPrecautionsText(stored),
@@ -30,5 +33,5 @@ export function fillLabelDraft(draft: Record<LabelField, string>, content: Produ
     if (typeof value !== 'string' || !value.trim() || value.length > 2000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value)) continue;
     label[key] = value.trim(); filled.push(key);
   }
-  return { label, filled, referenceFields: filled.filter(key => Object.hasOwn(couplusLabelDefaults(categoryId), key)) };
+  return { label, filled, referenceFields: filled.filter(key => Object.hasOwn(formDefaults, key)) };
 }

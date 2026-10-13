@@ -69,15 +69,19 @@ test('cleared SEO title cannot resurrect the old product name in label autofill'
  assert.equal(fillLabelDraft(draftOf(content),content,'이전 상품명',{}).label.productName,'새 품명');
 });
 
-test('80719 observed label defaults prepare only untouched review text and require explicit save',()=>{
+test('observed nine-row form defaults prepare selected-category untouched review text and require explicit save',()=>{
  const content=emptyProductContent('p'),before=JSON.stringify(content);
  const next=fillLabelDraft(draftOf(content),content,'상품',{},'80719');
  assert.equal(next.label.countryOfOrigin,'중국');assert.equal(next.label.usageStandard,'14세이상');
  assert.equal(next.label.precautions,'용도 외에 사용금지. 파손및화기주의');assert.equal(next.referenceFields.length,3);
  assert.equal(JSON.stringify(content),before);
- for(const category of [null,'81452','103495','80720','unknown']){
+ for(const category of [null,'','bad/category','분류명',' '.repeat(2),'x'.repeat(101)]){
   const other=fillLabelDraft(draftOf(content),content,'상품',{},category);
   assert.equal(other.label.countryOfOrigin,'');assert.equal(other.label.precautions,'');assert.equal(other.label.usageStandard,'');
+ }
+ for(const category of ['81452','103495','80720','991234','trial-category']){
+  const other=fillLabelDraft(draftOf(content),content,'상품',{},category);
+  assert.equal(other.label.countryOfOrigin,'중국');assert.equal(other.label.precautions,'용도 외에 사용금지. 파손및화기주의');assert.equal(other.label.usageStandard,'14세이상');
  }
  const saved=applyContentPatch(content,{label:next.label},'now');
  assert.equal(documentImagePlan('label',saved,{productId:'p'}).rows.find(row=>row[0]==='사용 기준')[1],'14세이상');

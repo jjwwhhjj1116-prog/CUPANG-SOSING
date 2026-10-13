@@ -5,10 +5,12 @@ import { couplus64497Fields } from '@/app/couplus-toothbrush-schema';
 import { couplus77442Fields } from '@/app/couplus-board-schema';
 import { couplus81452Fields } from '@/app/couplus-brace-schema';
 
-// User-supplied Couplus screenshots 14–23, category 80719 only.
-// Stage-six defaults are reviewable draft text, not verified product facts.
+// Couplus's public nine-row initializeData, recorded 2026-10-02, prepares
+// these same values whenever a product is selected, before saved label values.
+// They are reviewable form text, not verified supplier origin/age declarations.
+// Our unselected/invalid category path still starts blank.
 export function couplusLabelDefaults(categoryId: string | null): Readonly<Record<string, string>> {
-  return categoryId === '80719' ? {
+  return typeof categoryId==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(categoryId) ? {
     countryOfOrigin: '중국', precautions: '용도 외에 사용금지. 파손및화기주의', usageStandard: '14세이상',
   } : {};
 }

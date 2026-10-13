@@ -1,13 +1,15 @@
 import type { CollectionResult } from '@/app/collection-result';
 import type { LabelField } from '@/app/product-content';
 
-// Exact whole-attribute names only. SKU, packing dimensions, origin and legal
+// Exact whole-attribute names only. SKU, packing dimensions, country and legal
 // declarations must not be inferred from similar words in supplier descriptions.
+// 产地/原产地 may name a city/region and are not manufacturing-country headings.
 const names: Partial<Record<LabelField, readonly string[]>> = {
   material: ['재질', '材质', 'material'],
   model: ['모델명', '型号', 'model'],
   components: ['제품 구성품', '구성품', '包装清单', 'package contents'],
   dimensions: ['제품 크기', '제품 치수', '产品尺寸', 'product dimensions'],
+  countryOfOrigin: ['제조국', '原产国', 'country of origin'],
 };
 
 export function collectionLabelField(name: string): LabelField | undefined {

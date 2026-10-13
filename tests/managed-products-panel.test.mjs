@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {managedProductHarness,managedFixture,managedHeaders} from './helpers/managed-products.mjs';
+import {importPriceFixture,postImportPrices} from './helpers/managed-import-prices.mjs';
 const native=createRequire(import.meta.url),nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const text=tree=>typeof tree==='string'||typeof tree==='number'?String(tree):Array.isArray(tree)?tree.map(text).join(''):tree&&typeof tree==='object'?text(tree.props?.children):'';
 function ui(fetcher){
@@ -102,4 +103,41 @@ test('import management opens the selected owned SKU, survives a same-company re
   const originalRows=JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products').all());Object.assign(h.state.user.membership,{companyCode:'A01526306',companyName:'유앤채'});h.syncMember();panel.button('목록 새로고침').props.onClick();await panel.settle();assert.equal(dialog(),undefined);rowButton.props.onClick();assert.equal(dialog(),undefined);assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products').all()),originalRows);
   panel.button('매입정보 관리').props.onClick();assert.equal(dialog().props.initialSkuId,'');assert.equal(dialog().props.company.code,'A01526306');
  }finally{panel.close();h.close();}
+});
+
+async function managedPageFixture(company,fetcher){
+ const h=managedProductHarness();Object.assign(h.state.user.membership,{companyCode:company.code,companyName:company.name});h.syncMember();
+ const bytes=managedFixture(130),source=await(await h.submit(bytes,{companyCode:company.code})).json();assert.equal((await h.submit(bytes,{companyCode:company.code,action:'import',sha256:source.sha256})).status,201);
+ const original=JSON.stringify(h.sqlite.prepare('SELECT * FROM managed_products').all()),panel=ui(fetcher?fetcher(h):h.fetcher),rows=()=>nodes(panel.render()).filter(node=>node.type==='tr'&&node.props['data-sku-id']);
+ const price=async count=>{const bytes=importPriceFixture(Array.from({length:count},(_,index)=>[String(1000000000+index),'2026-10-13','10.50'])),response=await postImportPrices(h,bytes);assert.equal(response.status,200,await response.clone().text());const preview=await response.json();const saved=await postImportPrices(h,bytes,{action:'import',preview});assert.equal(saved.status,201,await saved.clone().text());};
+ await panel.settle();panel.button('매입정보없음 130').props.onClick();await panel.settle();
+ return{h,panel,rows,price,original,close(){panel.close();h.close();}};
+}
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`a price import re-reads the valid filtered page without losing table choices or original rows (${company.code})`,async()=>{
+ const f=await managedPageFixture(company);try{
+  const find=label=>nodes(f.panel.render()).find(node=>node.props?.['aria-label']===label);find('SKU ID 정렬').props.onClick();await f.panel.settle();find('SKU ID 정렬').props.onClick();await f.panel.settle();find('ROI 컬럼 표시').props.onChange({target:{checked:false}});
+  for(let page=1;page<13;page++){f.panel.button('다음').props.onClick();await f.panel.settle();}assert.equal(f.rows().length,10);find('SKU 1000000000 선택').props.onChange({target:{checked:true}});
+  f.panel.button('매입정보 관리').props.onClick();const dialog=nodes(f.panel.render()).find(node=>node.type?.name==='ManagedImportPricesPanel');await f.price(20);dialog.props.onImported();await f.panel.settle();
+  assert.equal(f.rows().length,10);assert.equal(f.rows()[0].props['data-sku-id'],'1000000029');assert.match(text(f.panel.render()),/11 \/ 11 페이지/);assert.match(text(f.panel.render()),/전체 결과 110개 · 선택 1개/);assert.equal(find('ROI 컬럼 표시').props.checked,false);assert.equal(f.panel.button('다음').props.disabled,true);
+  const last=new URL(f.h.state.calls.filter(call=>call.url.startsWith('/api/managed-products?')).at(-1).url,'https://app.test');assert.equal(last.searchParams.get('page'),'11');assert.equal(last.searchParams.get('filter'),'no-import');assert.equal(last.searchParams.get('sort'),'SKUID');assert.equal(last.searchParams.get('direction'),'descending');
+  assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM managed_products').all()),f.original);assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) n FROM managed_import_prices').get().n,20);for(const table of ['products','collection_jobs','supplier_hub_receipts'])assert.equal(f.h.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,0);
+ }finally{f.close();}
+});
+test('a now-empty filter returns to page one while all registered source rows remain available',async()=>{
+ const f=await managedPageFixture({code:'A01464742',name:'와이홉'});try{
+  for(let page=1;page<13;page++){f.panel.button('다음').props.onClick();await f.panel.settle();}f.panel.button('매입정보 관리').props.onClick();const dialog=nodes(f.panel.render()).find(node=>node.type?.name==='ManagedImportPricesPanel');await f.price(130);dialog.props.onImported();await f.panel.settle();
+  assert.equal(f.rows().length,0);assert.match(text(f.panel.render()),/1 \/ 1 페이지/);assert.equal(f.panel.button('이전').props.disabled,true);assert.match(text(f.panel.render()),/전체 결과 0개/);
+  f.panel.button('전체 130').props.onClick();await f.panel.settle();assert.equal(f.rows().length,10);assert.match(text(f.panel.render()),/전체 결과 130개/);assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM managed_products').all()),f.original);
+ }finally{f.close();}
+});
+test('an aborted old page cannot rebase a newer filter or expose rows after an account change',async()=>{
+ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])for(const switchOwner of [false,true]){
+  let hold=false,finish,heldSignal;const f=await managedPageFixture(company,h=>async(url,init={})=>{const response=await h.fetcher(url,init),query=new URL(url,'https://app.test').searchParams;if(hold&&url.startsWith('/api/managed-products?')&&query.get('page')==='13'&&query.get('filter')==='no-import'){hold=false;heldSignal=init.signal;return new Promise(resolve=>{finish=()=>resolve(response);});}return response;});
+  try{
+   for(let page=1;page<13;page++){f.panel.button('다음').props.onClick();await f.panel.settle();}await f.price(20);hold=true;f.panel.button('목록 새로고침').props.onClick();await f.panel.settle();assert.ok(finish);assert.equal(f.panel.button('상품DB 다운로드').props.disabled,true);const heldCallCount=f.h.state.calls.length;
+   if(switchOwner){const old=f.h.state.user;f.h.state.user={...old,userId:'next-same-company-owner',membership:{...old.membership,id:'next-same-company-owner'}};f.h.syncMember();}
+   f.panel.button('전체 130').props.onClick();await f.panel.settle();assert.equal(heldSignal.aborted,true);finish();await f.panel.settle();
+   assert.match(text(f.panel.render()),switchOwner?/전체 결과 0개/:/전체 결과 130개/);assert.equal(f.rows().length,switchOwner?0:10);assert.match(text(f.panel.render()),/1 \/ (?:1|13) 페이지/);assert.ok(!f.h.state.calls.slice(heldCallCount).some(call=>new URL(call.url,'https://app.test').searchParams.get('page')==='11'));assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM managed_products').all()),f.original);
+  }finally{f.close();}
+ }
 });

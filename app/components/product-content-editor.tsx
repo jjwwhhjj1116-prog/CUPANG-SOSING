@@ -216,7 +216,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     });
   }
 
-  const fillLabel = useCallback(async () => {
+  const fillLabel = useCallback(async (includeGenericDefaults = true) => {
     if(!loaded || busy || loading || activeRequest.current)return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
@@ -225,7 +225,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
       const body = await response.json() as { settings?: unknown; categoryId?: string | null; dateNotice?: boolean; referenceTime?: string; error?: string };
       if(controller.signal.aborted)return;
       if (!response.ok) throw new Error(body.error || '저장된 기본설정을 읽지 못했습니다.');
-      const next = fillLabelDraft(draft.label, content, product.title, body.settings, body.categoryId ?? null, draft.labelClears, body.referenceTime, typeof body.dateNotice === 'boolean' ? body.dateNotice : undefined);
+      const next = fillLabelDraft(draft.label, content, product.title, body.settings, body.categoryId ?? null, draft.labelClears, body.referenceTime, typeof body.dateNotice === 'boolean' ? body.dateNotice : undefined, includeGenericDefaults);
       setDraft(previous => ({ ...previous, label: next.label, labelProductNameLinked: previous.labelProductNameLinked || (next.filled.includes('productName') && next.label.productName === content.seo.title.value) }));
       setMessage(next.filled.length
         ? `${next.filled.map(key => labelFields[key]).join(' · ')} 입력을 채웠습니다. 실제 상품과 대조한 뒤 표시사항을 저장하면 PNG와 견적 자료에 반영됩니다.${next.referenceFields.length ? ` ${next.referenceFields.map(key => labelFields[key]).join(' · ')}은 쿠플러스 참조 화면의 기본값이며 이 상품에서 확인된 정보는 아닙니다.` : ''}`
@@ -239,7 +239,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   useEffect(() => {
     if (section !== '표시사항' || !loaded || loading || busy || anyDirty || activeRequest.current || labelAutofillAttempted.current) return;
     labelAutofillAttempted.current = true;
-    void fillLabel();
+    void fillLabel(false);
   }, [section, loaded, loading, busy, anyDirty, fillLabel]);
 
   async function save() {

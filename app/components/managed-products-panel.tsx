@@ -26,17 +26,22 @@ export function ManagedProductsPanel(){
   const controller=new AbortController();
   importContext.current=null;
   queueMicrotask(()=>{if(!controller.signal.aborted){setLoading(true);setError('');}});
-  void(async()=>{try{
+  void(async()=>{let rebasingPage=false;try{
    const query=JSON.parse(tableKey) as ManagedTableQuery,params=new URLSearchParams({page:String(page),pageSize:String(pageSize),search,filter,...managedTableParams(query)}),response=await fetch('/api/managed-products?'+params,{signal:controller.signal,cache:'no-store'}),body=await response.json() as List&{error?:string};
    if(!response.ok)throw Error(body.error??'상품 목록을 읽지 못했습니다.');
-   if(!Array.isArray(body.products)||!body.company||!Number.isSafeInteger(body.total)||!/^[a-f0-9]{64}$/.test(body.accountContext))throw Error('상품 목록 응답을 확인하지 못했습니다.');
+   if(!Array.isArray(body.products)||body.products.length>pageSize||!body.company||!Number.isSafeInteger(body.total)||body.total<0||body.page!==page||body.pageSize!==pageSize||!/^[a-f0-9]{64}$/.test(body.accountContext))throw Error('상품 목록 응답을 확인하지 못했습니다.');
    if(!controller.signal.aborted){
+    // A price import or a refreshed source can shrink the current filter.
+    // Re-read its last valid page without publishing the out-of-range result
+    // or restoring import/download actions during that read.
+    const lastPage=Math.max(1,Math.ceil(body.total/pageSize));
+    if(page>lastPage){rebasingPage=true;setPage(lastPage);return;}
     const previous=latestList.current;latestList.current=body;importContext.current=body;
     if(previous&&(previous.accountContext!==body.accountContext||previous.company.code!==body.company.code||previous.company.name!==body.company.name)){setPreview(null);setConfirmed(false);setImportPriceDialog(null);setMessage('로그인 계정 또는 회사정보가 변경되었습니다. 선택한 파일을 다시 미리보기해주세요.');}
     setData(body);
    }
   }catch(cause){if(!controller.signal.aborted){importContext.current=null;setData(null);setPreview(null);setConfirmed(false);setError(cause instanceof Error?cause.message:'상품 목록을 읽지 못했습니다.');}}
-  finally{if(!controller.signal.aborted)setLoading(false);}})();
+  finally{if(!controller.signal.aborted&&!rebasingPage)setLoading(false);}})();
   return()=>controller.abort();
  },[page,pageSize,search,filter,refresh,tableKey]);
  async function upload(commit:boolean){

@@ -15,7 +15,8 @@ function abbreviateHeadings(h, component) {
     // Valid structured AI output can shorten a heading. The immutable original
     // still says lens/frame material or supplier item number, not a whole-product fact.
     for (const [source, translated] of [[component, '재질'], ['货号', '모델명']]) {
-      const item = output.response.attributes.find(attribute => attribute.name === '상품속성: ' + source);
+      const sourceIndex = h.aiSources.at(-1).attributes.findIndex(attribute => attribute.name === '상품속성: ' + source);
+      const item = output.response.attributes.find(attribute => attribute.sourceIndex === sourceIndex);
       assert.ok(item); item.name = translated;
     }
     return output;

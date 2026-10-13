@@ -22,7 +22,7 @@ import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
 import {GOOGLE_TEXT_MODEL} from '@/app/automation/translation';
 import {intakeSupplierSourceMatches} from '@/app/intake-supplier-source';
-import { applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
+import { applyInitialIntakeSeoGuidance, initialIntakeSeoGuidancePending, applySeoGuidanceComposition, validateSeoGuidanceComposition, type SeoGuidanceComposition } from '@/app/seo-guidance-composition';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 
 type Context = { params: Promise<{ id: string }> };
@@ -79,6 +79,9 @@ export async function POST(request: Request, context: Context) {
       if (job.review.source.category) categorySource = await readTranslationCategorySource(owner, id, product.source_url, job.review.source.category.id);
     } catch (error) { return json({ error: error instanceof Error ? error.message : '상품 카테고리를 확인하지 못했습니다.' }, 409); }
     let plan;
+    let canonicalIntake=false;
+    let intakeSeoGuidance: {jobId:string;contentRevision:number;needsReview:boolean;warnings:string[]} | undefined;
+    let pendingGuidance: ReturnType<typeof applyInitialIntakeSeoGuidance>['pendingFields'] | undefined;
     try {
       if(seoComposition){
         // An ordinary/manual review may omit category metadata; an existing
@@ -107,6 +110,7 @@ export async function POST(request: Request, context: Context) {
             ||!intakeSupplierSourceMatches(job.review.source,JSON.parse(current.guard.resultPayload),collection))
             throw Error('수집 원문이 변경되었습니다. 기존 번역 이력과 수정값은 유지합니다. 새 원문으로 번역 요청을 다시 준비하고 검토해주세요.');
           seoSource=current.guard;
+          canonicalIntake=true;
         }
       }
       let applicationJob=job;
@@ -137,9 +141,21 @@ export async function POST(request: Request, context: Context) {
         const canonical = await findIntakeTranslation(owner,id);
         if (canonical && !optionRecoveryJobs.some(value => value.id === canonical.id)) optionRecoveryJobs.push(canonical);
       }
-      plan = integratedTranslationPlan(intakeReplay ? intakeTranslationReplayContent(content,job) : content, options, applicationJob, product.updated_at, scope, hiddenAttributes, intakeBrand,
+      const planningContent=intakeReplay ? intakeTranslationReplayContent(content,job) : content;
+      plan = integratedTranslationPlan(planningContent, options, applicationJob, product.updated_at, scope, hiddenAttributes, intakeBrand,
         intakeReplay && !!content.categoryAttributes,optionRecoveryJobs);
       if (seoComposition) plan = applySeoGuidanceComposition(plan,content,applicationJob,seoComposition);
+      else if(canonicalIntake&&job.review.source.guidance&&job.status==='completed'&&job.result
+        &&job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL&&job.result.model===GOOGLE_TEXT_MODEL
+        &&job.review.instructionsVersion==='sourceflow-translation-v6'
+        &&!['optionsRetry','intakeOptions','seoRetry'].some(key=>Object.hasOwn(job.review,key))){
+        // The source CAS above proves this exact company, intake context and
+        // receipt. Owner-written SEO stays separate from provider/supplier facts.
+        const composed=applyInitialIntakeSeoGuidance(plan,planningContent,applicationJob,{brand:intakeBrand??'',...job.review.source.guidance});
+        plan=composed.plan;plan.skipped.push(...composed.warnings);
+        pendingGuidance=composed.pendingFields;
+        intakeSeoGuidance={jobId:job.id,contentRevision:content.revision,needsReview:composed.warnings.length>0,warnings:composed.warnings};
+      }
     }
     catch (error) { return json({ error: error instanceof Error ? error.message : '번역 연결을 확인해주세요.' }, 409); }
     let attributeRules;
@@ -169,6 +185,7 @@ export async function POST(request: Request, context: Context) {
     }
     const preview = { scope, productId: id, productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, fingerprint: digest, preview: plan.preview, skipped: plan.skipped,
       ...(intakeSeoCoverage?{intakeSeoCoverage}:{}),
+      ...(intakeSeoGuidance?{intakeSeoGuidance}:{}),
       ...(optionsRetry?{optionsRetry}:{}) };
     if (body.action === 'preview') return json(preview);
     if (body.fingerprint !== digest) return json({ error: '검토 이후 자료가 변경되었습니다. 통합 미리보기를 다시 확인해주세요.' }, 409);
@@ -176,6 +193,7 @@ export async function POST(request: Request, context: Context) {
     const now = new Date(Math.max(Date.now(), Date.parse(product.updated_at) + 1)).toISOString();
     const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
     if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
+    if(pendingGuidance&&Object.keys(pendingGuidance).length)nextContent.intakeSeoGuidancePending=initialIntakeSeoGuidancePending(nextContent,job,pendingGuidance);
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
       contentRevision: content.revision, optionRevision: options.revision, jobId: job.id, jobProductVersion:job.productVersion, jobContentRevision:job.contentRevision, categorySource, attributeRules,seoSource });
     return saved ? json({ scope, productId: id, productVersion: now, contentRevision: nextContent.revision, optionRevision: nextOptions.revision, applied: plan.preview.length })

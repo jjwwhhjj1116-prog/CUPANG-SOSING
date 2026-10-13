@@ -41,6 +41,10 @@ export type ProductContent = {
   /** Server-created intake guidance, consumed by any explicit keyword save.
    * Absence (including legacy documents) means manual keywords stay protected. */
   intakeKeywordSeed?: { value: string[]; updatedAt: string; sourceReference: string };
+  /** Internal canonical-intake proof; no client patch can supply this metadata.
+   * An explicit save of its SEO field acknowledges that optional candidate. */
+  intakeSeoGuidancePending?: {jobId:string;sourceReference:string;fields:{
+    title?:{value:string;updatedAt:string;warning:string};keywords?:{value:string[];updatedAt:string;warning:string}}};
   /** Stage-five content becomes independent when the owner saves it. */
   detail?: { description?: ContentField<string>; altText?: ContentField<string> };
   /** New URL drafts follow the SEO description until an explicit stage-five save.
@@ -213,6 +217,10 @@ export function applyContentPatch(current: ProductContent, patch: ContentPatch, 
       next.seo.keywords = { value: patch.seo.keywords, provenance: 'manual', updatedAt: now };
       // Saving the same text or an empty list still confirms a user's choice.
       delete next.intakeKeywordSeed;
+    }
+    if(next.intakeSeoGuidancePending){
+      for(const field of ['title','keywords'] as const)if(patch.seo[field]!==undefined)delete next.intakeSeoGuidancePending.fields[field];
+      if(!Object.keys(next.intakeSeoGuidancePending.fields).length)delete next.intakeSeoGuidancePending;
     }
   }
   if (patch.detail) {
