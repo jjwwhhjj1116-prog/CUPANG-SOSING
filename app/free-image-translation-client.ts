@@ -6,6 +6,7 @@ import {
 import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
 import { resolveFreeImageTextStyle, ensureFreeImageTextFont, type FreeImageTextStyle } from '@/app/free-image-text-style';
 import { validateFreeImageBrush, MAX_FREE_IMAGE_BRUSH_TOTAL_POINTS, type FreeImageBrush } from '@/app/free-image-brush';
+import { validateFreeImageCropRect, validateFreeImageCrop, type FreeImageCropRect, type FreeImageCrop } from '@/app/free-image-crop';
 import type { Worker, WorkerOptions, LoggerMessage } from 'tesseract.js';
 
 export type OcrBox = { x: number; y: number; width: number; height: number };
@@ -17,7 +18,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
   brush?: FreeImageBrush;
 };
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number };
-export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[] };
+export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
 export function sameFreeImageQuotationRequest(actual: FreeImageSource['quotationTarget'] | FreeImageQuotationRequest | null | undefined, expected: FreeImageQuotationRequest | null | undefined): boolean {
   if (!actual || !expected) return !actual && !expected;
@@ -207,12 +208,13 @@ function wrappedLines(context: CanvasRenderingContext2D, value: string, maximumW
 }
 /** Paint only selected rectangles or brush paths, preserving outside pixels.
  * Flat fills and strokes are reviewed edits, not AI reconstruction. */
-export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = []): Promise<FreeImageRendered> {
+export async function renderFreeImageTranslation(image: FreeImageLoaded, regions: readonly FreeImageRegion[], signal: AbortSignal, optionImageIds: readonly string[] = [], cropRect?: FreeImageCropRect): Promise<FreeImageRendered> {
   dimensions(image.width, image.height); signal.throwIfAborted();
+  const crop = cropRect === undefined ? undefined : validateFreeImageCrop({ ...validateFreeImageCropRect(cropRect, image.width, image.height), sourceWidth: image.width, sourceHeight: image.height }, image.source);
   const selectedOptions = validateFreeImageOptionIds(image.source, [...optionImageIds]);
   if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
   const chosen = regions.filter(row => row.selected).map(row => ({ ...row, box: { ...row.box } }));
-  if (!chosen.length || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
+  if (!chosen.length && !crop || chosen.length > MAX_OCR_REGIONS) throw Error('이미지에 적용할 문구 영역을 선택해주세요.');
   const textRegions = chosen.filter(region => region.erase !== true);
   if (textRegions.length) validateImageTextRegions(textRegions.map(region => ({ id: region.id, text: region.translated })));
   const ids = new Set<string>(), styles = new Map<string, ReturnType<typeof resolveFreeImageTextStyle>>(), brushes = new Map<string, ReturnType<typeof validateFreeImageBrush>>();
@@ -281,18 +283,35 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
     lines.forEach((line, index) => output.context.fillText(line, textX, y + padding + index * lineHeight));
     output.context.restore();
   }
-  const blob = await abortable(new Promise<Blob>((resolve, reject) => output.canvas.toBlob(value => value ? resolve(value) : reject(Error('번역 이미지 미리보기를 만들지 못했습니다.')), 'image/png')), signal);
+  // Coordinates of every edit still refer to the original canvas. Crop only
+  // the fully painted result, without resizing or moving an overlay first.
+  let final = output;
+  if (crop) {
+    final = canvas(crop.width, crop.height);
+    final.context.drawImage(output.canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+  }
+  const blob = await abortable(new Promise<Blob>((resolve, reject) => final.canvas.toBlob(value => value ? resolve(value) : reject(Error('번역 이미지 미리보기를 만들지 못했습니다.')), 'image/png')), signal);
   signal.throwIfAborted();
   if (!blob.size || blob.size > MAX_IMAGE_BYTES) throw Error('번역 이미지가 10MB를 초과합니다. 원본 크기를 줄여주세요.');
-  return { source: image.source, output: blob, width: image.width, height: image.height, ...(selectedOptions.length ? { optionImageIds: selectedOptions } : {}) };
+  return { source: image.source, output: blob, width: final.canvas.width, height: final.canvas.height, ...(selectedOptions.length ? { optionImageIds: selectedOptions } : {}), ...(crop ? { crop } : {}) };
 }
 
 export class FreeImageApplyError extends Error { constructor(message: string, public uncertain: boolean) { super(message); } }
-export type FreeImageApplyReply = { source: FreeImageSource; key: string; productVersion: string; contentRevision: number; applied: true; replayed?: boolean; optionImageIds?: string[]; optionRevision?: number; quotationRevision?: number; quotationInputFingerprint?: string };
+export type FreeImageApplyReply = { source: FreeImageSource; key: string; productVersion: string; contentRevision: number; applied: true; replayed?: boolean; optionImageIds?: string[]; optionRevision?: number; quotationRevision?: number; quotationInputFingerprint?: string; crop?: FreeImageCrop };
+function renderedCrop(image: FreeImageRendered) {
+  if (image.crop === undefined) return undefined;
+  const crop = validateFreeImageCrop(image.crop, image.source);
+  if (image.width !== crop.width || image.height !== crop.height) throw new FreeImageApplyError('잘라낸 PNG 미리보기의 크기와 선택 영역이 다릅니다.', false);
+  return crop;
+}
+function sameCrop(actual: unknown, expected: FreeImageCrop | undefined, source: FreeImageSource) {
+  try { return expected === undefined ? actual === undefined : JSON.stringify(validateFreeImageCrop(actual, source)) === JSON.stringify(expected); }
+  catch { return false; }
+}
 export async function expectedFreeImageOutputKey(image: FreeImageRendered): Promise<string> {
   const source = validateFreeImageSource(image.source), owner = source.sourceKey.split('/')[0];
   if (!isOwnedImageKey(owner, source.sourceKey)) throw new FreeImageApplyError('원본 이미지 저장 범위를 확인해주세요.', false);
-  const identity = freeImageApplyIdentity(source, image.optionImageIds ?? []);
+  const identity = freeImageApplyIdentity(source, image.optionImageIds ?? [], renderedCrop(image));
   const digest = async (bytes: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource)), byte => byte.toString(16).padStart(2, '0')).join('');
   const [fingerprint, outputSha256] = await Promise.all([digest(new TextEncoder().encode(identity)), digest(await image.output.arrayBuffer())]);
   return `${owner}/free-image-${source.productId}-${fingerprint}-${outputSha256}.png`;
@@ -300,10 +319,11 @@ export async function expectedFreeImageOutputKey(image: FreeImageRendered): Prom
 export function readFreeImageApplyReply(input: unknown, image: FreeImageRendered, expectedKey: string): FreeImageApplyReply {
   const body = input as FreeImageApplyReply, owner = image.source.sourceKey.split('/')[0];
   const ids = validateFreeImageOptionIds(image.source, image.optionImageIds ?? []);
+  const crop = renderedCrop(image);
   const quotationTarget = image.source.quotationTarget;
   const contentDelta = quotationTarget || image.source.optionImages?.commonAssigned === false ? 0 : 1;
   if (!body || image.source.optionImages?.commonAssigned === false && !ids.length
-    || !sameFreeImageSource(body.source, image.source) || body.applied !== true || !isOwnedImageKey(owner, body.key)
+    || !sameFreeImageSource(body.source, image.source) || !sameCrop(body.crop, crop, image.source) || body.applied !== true || !isOwnedImageKey(owner, body.key)
     || body.key === image.source.sourceKey || body.key !== expectedKey || typeof body.productVersion !== 'string' || !Number.isFinite(Date.parse(body.productVersion))
     || Date.parse(body.productVersion) <= Date.parse(image.source.productVersion) || !Number.isSafeInteger(body.contentRevision)
     || (body.replayed === true ? body.contentRevision < image.source.contentRevision + contentDelta : body.contentRevision !== image.source.contentRevision + contentDelta)
@@ -317,27 +337,28 @@ export function readFreeImageApplyReply(input: unknown, image: FreeImageRendered
   }
   return body;
 }
-export type FreeImageRecoveryReply = FreeImageApplyReply | { source: FreeImageSource; key: string; applied: false };
+export type FreeImageRecoveryReply = FreeImageApplyReply | { source: FreeImageSource; key: string; applied: false; crop?: FreeImageCrop };
 /** A quotation retry first checks the exact PNG digest without uploading it.
  * Only a verified fresh, unapplied response permits a separate explicit save. */
 export async function recoverFreeImageTranslation(image: FreeImageRendered, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<FreeImageRecoveryReply> {
   validateFreeImageSource(image.source); signal.throwIfAborted();
   if (!image.source.quotationTarget || image.output.type !== 'image/png' || !image.output.size || image.output.size > MAX_IMAGE_BYTES) throw new FreeImageApplyError('저장 상태를 확인할 옵션 이미지 미리보기를 확인해주세요.', true);
   const expectedKey = await expectedFreeImageOutputKey(image);
+  const crop = renderedCrop(image);
   const outputSha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await image.output.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('');
   signal.throwIfAborted();
   let response: Response, body: unknown;
   try {
     response = await fetcher(`/api/products/${encodeURIComponent(image.source.productId)}/image-text`, { method: 'POST', signal,
-      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'recover', source: image.source, outputSha256, outputBytes: image.output.size }) });
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'recover', source: image.source, outputSha256, outputBytes: image.output.size, ...(crop ? { crop } : {}) }) });
     body = await response.json();
   } catch { throw new FreeImageApplyError('같은 미리보기의 저장 상태를 확인하지 못했습니다. 다시 확인해주세요.', true); }
   signal.throwIfAborted();
   if (!response.ok) throw new FreeImageApplyError((body as { error?: string })?.error || '같은 미리보기의 저장 상태를 확인하지 못했습니다.', true);
   if ((body as FreeImageRecoveryReply)?.applied === true) return readFreeImageApplyReply(body, image, expectedKey);
   const recovered = body as FreeImageRecoveryReply;
-  if (!recovered || recovered.applied !== false || !sameFreeImageSource(recovered.source, image.source) || recovered.key !== expectedKey
-    || Object.keys(recovered).some(key => !['source', 'key', 'applied'].includes(key))) throw new FreeImageApplyError('저장 상태 응답의 이미지 연결을 확인하지 못했습니다. 같은 미리보기로 다시 확인해주세요.', true);
+  if (!recovered || recovered.applied !== false || !sameFreeImageSource(recovered.source, image.source) || !sameCrop(recovered.crop, crop, image.source) || recovered.key !== expectedKey
+    || Object.keys(recovered).some(key => !['source', 'key', 'applied', 'crop'].includes(key))) throw new FreeImageApplyError('저장 상태 응답의 이미지 연결을 확인하지 못했습니다. 같은 미리보기로 다시 확인해주세요.', true);
   return recovered;
 }
 /** Reuse the exact source proof and PNG on an explicit uncertain-outcome retry.
@@ -346,9 +367,11 @@ export async function applyFreeImageTranslation(image: FreeImageRendered, signal
   validateFreeImageSource(image.source); signal.throwIfAborted();
   if (image.output.type !== 'image/png' || !image.output.size || image.output.size > MAX_IMAGE_BYTES) throw new FreeImageApplyError('저장할 PNG 미리보기를 확인해주세요.', false);
   const expectedKey = await expectedFreeImageOutputKey(image); signal.throwIfAborted();
+  const crop = renderedCrop(image);
   const form = new FormData(); form.set('action', 'apply'); form.set('source', JSON.stringify(image.source));
   const ids = validateFreeImageOptionIds(image.source, image.optionImageIds ?? []);
   if (ids.length) form.set('optionImageIds', JSON.stringify(ids));
+  if (crop) form.set('crop', JSON.stringify(crop));
   form.set('file', new File([image.output], 'translated-text.png', { type: 'image/png' }));
   let response: Response;
   try { response = await fetcher(`/api/products/${encodeURIComponent(image.source.productId)}/image-text`, { method: 'POST', signal, body: form }); }

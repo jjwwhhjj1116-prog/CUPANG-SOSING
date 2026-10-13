@@ -20,6 +20,9 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: styleModule });
 const historyModule = {};
 const brushModule = {};
+const cropModule = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-crop.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: cropModule, Error });
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/free-image-brush.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
   { exports: brushModule, require(name) { assert.equal(name, '@/app/free-image-translation'); return { MAX_OCR_PIXELS: 12000000 }; } });
@@ -54,12 +57,13 @@ function fixture(initialProps = {}, clientOverrides = {}) {
     async recognizeFreeImage(image, language, signal, progress) { calls.push({ action: 'ocr', image, language, signal }); progress('인식 중'); return ocrIntercept ? ocrIntercept(image, signal) : [region('r1'), region('r2')]; },
     async translateFreeImageRegions(source, language, rows, signal) { calls.push({ action: 'translate', source, language, rows, signal });
       return translateIntercept ? translateIntercept(source, rows, signal) : { source, regions: rows.map(row => ({ id: row.id, original: row.text, translated: '한국어 ' + row.id, issue: null })), requests: 1, stoppedHttpStatus: null, warnings: [] }; },
-    async renderFreeImageTranslation(image, rows, signal, optionImageIds = []) {
-      const selection = Array.from(optionImageIds).sort(); calls.push({ action: 'preview', image, rows, signal, optionImageIds: selection });
+    async renderFreeImageTranslation(image, rows, signal, optionImageIds = [], crop) {
+      const selection = Array.from(optionImageIds).sort(); if(crop!==undefined)cropModule.validateFreeImageCropRect(crop,image.width,image.height);
+      calls.push({ action: 'preview', image, rows, signal, optionImageIds: selection, ...(crop!==undefined?{crop}:{}) });
       if (selection.some(id => image.source.role !== 'main' || !image.source.optionImages?.optionIds.includes(id)) || new Set(selection).size !== selection.length
         || image.source.optionImages?.commonAssigned === false && !selection.length) throw Error('이 원본을 대표 이미지로 사용하는 옵션만 선택해주세요.');
-      return renderIntercept ? renderIntercept(image, rows, signal, selection) : { source: image.source, output: new Blob(['rendered PNG'], { type: 'image/png' }), width: 20, height: 12,
-        ...(selection.length ? { optionImageIds: [...selection] } : {}) }; },
+      return renderIntercept ? renderIntercept(image, rows, signal, selection, crop) : { source: image.source, output: new Blob(['rendered PNG'], { type: 'image/png' }), width: crop?.width??20, height: crop?.height??12,
+        ...(crop!==undefined?{crop:{...crop,sourceWidth:image.width,sourceHeight:image.height}}:{}), ...(selection.length ? { optionImageIds: [...selection] } : {}) }; },
     async applyFreeImageTranslation(image, signal) { calls.push({ action: 'apply', image, signal });
       return applyIntercept ? applyIntercept(image, signal) : { source: image.source, key: 'owner/generated.png', applied: true, productVersion: '2026-10-06T00:00:01Z', contentRevision: 3 }; },
     async recoverFreeImageTranslation(image, signal) { calls.push({ action: 'recover', image, signal }); return recoverIntercept ? recoverIntercept(image, signal) : { source: image.source, key: 'owner/generated.png', applied: true, replayed: true }; },
@@ -75,6 +79,8 @@ function fixture(initialProps = {}, clientOverrides = {}) {
       if (name === '@/app/free-image-edit-history') return historyModule;
       if (name === '@/app/free-image-brush') return brushModule;
       if (name === '@/app/components/free-image-brush-canvas') return { FreeImageBrushCanvas: 'FreeImageBrushCanvas' };
+      if (name === '@/app/free-image-crop') return cropModule;
+      if (name === '@/app/components/free-image-crop-canvas') return { FreeImageCropCanvas: 'FreeImageCropCanvas' };
       assert.equal(name, '@/app/free-image-translation-client'); return client;
     } });
   const render = () => { cursor = 0; const outer = exports.default(props), tree = outer.type(outer.props); effects.splice(0).forEach(fn => fn()); return tree; };

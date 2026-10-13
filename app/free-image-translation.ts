@@ -1,3 +1,4 @@
+import { validateFreeImageCrop, type FreeImageCrop } from '@/app/free-image-crop';
 export const FREE_IMAGE_ROLES=['main','additional','detailTop','detail','detailBottom','label'] as const;
 export type FreeImageRole=typeof FREE_IMAGE_ROLES[number];
 export type FreeImageQuotationTarget={kind:'quotation';profileId:string|null;optionId:string;input:'mainImage'|'additionalImages'|'detailImages'|'labelImages';fieldKey:string;slotIndex:number;
@@ -57,9 +58,10 @@ export function validateFreeImageOptionIds(source:FreeImageSource,value:unknown)
   ||source.quotationTarget&&value.length>0||value.some(id=>source.role!=='main'||!source.optionImages?.optionIds.includes(id)))throw Error('이 원본을 대표 이미지로 사용하는 옵션만 선택해주세요.');
  return [...value].sort() as string[];
 }
-export function freeImageApplyIdentity(source:FreeImageSource,optionImageIds:readonly string[]=[]){
+export function freeImageApplyIdentity(source:FreeImageSource,optionImageIds:readonly string[]=[],crop?:FreeImageCrop){
  const ids=validateFreeImageOptionIds(source,[...optionImageIds]);
  if(source.optionImages?.commonAssigned===false&&!ids.length)throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
+ if(crop!==undefined)return JSON.stringify({source:freeImageSourceIdentity(source),...(ids.length?{optionImageIds:ids}:{}),crop:validateFreeImageCrop(crop,source)});
  return ids.length?JSON.stringify({source:freeImageSourceIdentity(source),optionImageIds:ids}):freeImageSourceIdentity(source);
 }
 export function validateImageTextRegions(value:unknown):ImageTextRegion[]{

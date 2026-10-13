@@ -449,8 +449,10 @@ test('replay cannot resurrect a removed role, changed original or forged output 
 });
 test('full original capacity and stale product/content/source snapshots stop before storing a result', async () => {
   const h = await ready(); try {
-    const source = await h.source(); h.sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify([...h.keys, ...Array.from({ length: 45 }, (_, i) => 'owner/extra-' + i + '.png')]), 'product');
+    const source = await h.source(), limit = h.load('app/image-files.ts').PRODUCT_IMAGE_POOL_LIMIT, original = h.objects.get(h.key).bytes.slice(); h.sqlite.prepare('UPDATE products SET image_keys=? WHERE id=?').run(JSON.stringify([...h.keys, ...Array.from({ length: limit - h.keys.length }, (_, i) => 'owner/extra-' + i + '.png')]), 'product');
+    assert.equal(JSON.parse(h.product().image_keys).length, limit); assert.ok(JSON.parse(h.product().image_keys).includes(source.sourceKey));
     await assertStatus(await h.request('POST', h.applyBody(source)), 400); assert.equal(h.writes.length, 0);
+    assert.deepEqual(h.objects.get(h.key).bytes, original); assert.equal(JSON.parse(h.product().image_keys).length, limit);
     h.sqlite.prepare('UPDATE products SET updated_at=? WHERE id=?').run('2026-10-06T10:00:02.000Z', 'product');
     await assertStatus(await h.request('POST', h.applyBody(source)), 409); assert.equal(h.writes.length, 0);
   } finally { h.close(); }

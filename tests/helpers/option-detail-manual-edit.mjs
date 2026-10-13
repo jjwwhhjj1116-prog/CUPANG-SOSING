@@ -34,6 +34,7 @@ function declarations(file,expose){
 const apiHelpers=declarations('free-image-quotation-linkage.test.mjs','fixture,png');
 const optionHelpers=declarations('option-image-editor.test.mjs','imageUI');
 const panelHelpers=declarations('free-image-translation-panel.test.mjs','fixture');
+export const manualPanelFixture=panelHelpers.fixture;
 const rendererHelpers=declarations('free-image-translation-client.test.mjs','fixture');
 const stageHelpers=declarations('dashboard-option-stages.test.mjs','harness');
 const mainHelpers=declarations('option-main-image-editor.test.mjs','editor');
@@ -57,7 +58,17 @@ export async function manualEditFixture(company,{stage='detail'}={}){
  const requests=[],clientHarness=rendererHelpers.fixture({imageWidth:3,imageHeight:2}),client=clientHarness.client;
  const createCanvas=clientHarness.document.createElement;
  clientHarness.document.createElement=tag=>{
-  const canvas=createCanvas(tag);canvas.toBlob=(callback,type)=>{assert.equal(type,'image/png');callback(new Blob([encodedPng(canvas.width,canvas.height,canvas.pixels)],{type}));};return canvas;
+  const canvas=createCanvas(tag),context=canvas.getContext('2d'),draw=context.drawImage;
+  context.drawImage=function(image,...args){
+   if(args.length===8){
+    const[x,y,width,height,dx,dy,destWidth,destHeight]=args;assert.deepEqual([dx,dy,destWidth,destHeight],[0,0,width,height]);assert.equal(canvas.width,width);assert.equal(canvas.height,height);
+    assert.ok(x>=0&&y>=0&&x+width<=image.width&&y+height<=image.height);canvas.pixels=new Uint8Array(width*height*4);
+    for(let py=0;py<height;py++)for(let px=0;px<width;px++)canvas.pixels.set(image.pixels.subarray(((py+y)*image.width+px+x)*4,((py+y)*image.width+px+x)*4+4),(py*width+px)*4);
+    clientHarness.operations.push(['crop',x,y,width,height,dx,dy,destWidth,destHeight]);return;
+   }
+   return draw.call(this,image,...args);
+  };
+  canvas.toBlob=(callback,type)=>{assert.equal(type,'image/png');callback(new Blob([encodedPng(canvas.width,canvas.height,canvas.pixels)],{type}));};return canvas;
  };
  const transport=async(url,init={})=>{
   const parsed=new URL(url,'https://app.test'),method=init.method??'GET';requests.push({method,path:parsed.pathname+parsed.search});
@@ -80,7 +91,7 @@ export async function manualEditFixture(company,{stage='detail'}={}){
   {sameFreeImageQuotationRequest:client.sameFreeImageQuotationRequest,FreeImageApplyError:client.FreeImageApplyError});
  panel.setSource((image,signal)=>client.readFreeImageSource(f.id,image.source.productVersion,image.source.sourceKey,image.source.role,signal,transport,
   image.source.quotationTarget?Object.fromEntries(Object.entries(image.source.quotationTarget).filter(([key])=>key!=='bindingSha256')):undefined));
- panel.setRender((image,rows,signal,ids)=>client.renderFreeImageTranslation(image,rows,signal,ids));
+ panel.setRender((image,rows,signal,ids,crop)=>client.renderFreeImageTranslation(image,rows,signal,ids,crop));
  panel.setApply((image,signal)=>client.applyFreeImageTranslation(image,signal,transport));
  panel.setRecover((image,signal)=>client.recoverFreeImageTranslation(image,signal,transport));
  const optionProps=stage==='main'?stageUI.record('product-options-editor',props=>props.imageView===true).props:stageUI.record('option-image-editor',props=>props.stage===stage).props;

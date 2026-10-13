@@ -19,6 +19,7 @@ import { isOwnedImageKey, MAX_IMAGE_BYTES, MAX_IMAGE_MULTIPART_BYTES, PRODUCT_IM
 import { MAX_OCR_PIXELS, validFreeImageRole, validateFreeImageSource, validateImageTextRegions,
   freeImageSourceIdentity, freeImageApplyIdentity, validateFreeImageOptionIds, type FreeImageSource, type FreeImageQuotationTarget } from '@/app/free-image-translation';
 import { readBoundedBytes, readBoundedJson, readBoundedStream, RequestBodyError } from '@/app/request-body';
+import { validateFreeImageCrop, type FreeImageCrop } from '@/app/free-image-crop';
 
 type Context = { params: Promise<{ id: string }> };
 class ImageTextError extends Error {
@@ -102,27 +103,33 @@ async function freshSource(owner: string, id: string, source: FreeImageSource) {
   if (freeImageSourceIdentity(observed) !== freeImageSourceIdentity(source)) throw changed();
   return current;
 }
-async function storedOutput(key: string, source: FreeImageSource, optionImageIds: string[], sha256: string, size: number) {
+async function storedOutput(key: string, source: FreeImageSource, optionImageIds: string[], sha256: string, size: number, crop?: FreeImageCrop) {
   if (!env.FILES) throw new ImageTextError(503, '이미지 저장소가 연결되지 않았습니다.');
   const object = await env.FILES.get(key);
   if (!object) return false;
   const identity = freeImageSourceIdentity(source), ids = JSON.stringify(optionImageIds), metadata = object.customMetadata;
-  const [sourceSha256, optionIdsSha256] = await Promise.all([digest(new TextEncoder().encode(identity)), digest(new TextEncoder().encode(ids))]);
-  const hashedScope = metadata?.freeImageSourceSha256 === sourceSha256 && metadata?.freeImageOptionIdsSha256 === optionIdsSha256;
+  const [sourceSha256, optionIdsSha256, cropSha256] = await Promise.all([digest(new TextEncoder().encode(identity)), digest(new TextEncoder().encode(ids)), crop ? digest(new TextEncoder().encode(JSON.stringify(crop))) : undefined]);
+  const hashedScope = metadata?.freeImageSourceSha256 === sourceSha256 && metadata?.freeImageOptionIdsSha256 === optionIdsSha256 && metadata?.freeImageCropSha256 === cropSha256;
   // Step 584 stored the short, common-only source proof as plain JSON. Keep
   // those deterministic retries readable, but never infer selected option
   // scope from missing metadata or downgrade a damaged hash-based record.
-  const legacyScope = !source.quotationTarget && optionImageIds.length === 0 && metadata?.freeImageSource === identity && (metadata.freeImageOptionIds ?? '[]') === '[]'
-    && metadata.freeImageSourceSha256 === undefined && metadata.freeImageOptionIdsSha256 === undefined;
+  const legacyScope = crop === undefined && !source.quotationTarget && optionImageIds.length === 0 && metadata?.freeImageSource === identity && (metadata.freeImageOptionIds ?? '[]') === '[]'
+    && metadata.freeImageSourceSha256 === undefined && metadata.freeImageOptionIdsSha256 === undefined && metadata.freeImageCropSha256 === undefined;
   if (object.size !== size || object.size > MAX_IMAGE_BYTES || object.httpMetadata?.contentType !== 'image/png'
     || metadata?.freeImageOutputSha256 !== sha256 || !hashedScope && !legacyScope
     || source.quotationTarget && !/^[a-f0-9]{64}$/.test(metadata?.freeImageQuotationOverridesSha256 ?? '')) throw new ImageTextError(409, '같은 이미지 결과 번호에 다른 파일이 저장되어 있습니다.');
   const bytes = await readBoundedStream(object.body, MAX_IMAGE_BYTES);
   if (bytes.length !== size || await digest(bytes) !== sha256) throw new ImageTextError(409, '저장한 이미지 결과의 내용이 다릅니다.');
+  if (crop) {
+    let dimensions;
+    try { dimensions = inspectImage(bytes); } catch { throw new ImageTextError(409, '저장한 잘라내기 결과가 유효한 PNG가 아닙니다.'); }
+    if (dimensions.mime !== 'image/png' || dimensions.width !== crop.width || dimensions.height !== crop.height
+      || metadata?.imageWidth !== String(crop.width) || metadata?.imageHeight !== String(crop.height)) throw new ImageTextError(409, '저장한 잘라내기 결과의 실제 크기와 선택 영역이 다릅니다.');
+  }
   return true;
 }
-async function replay(owner: string, id: string, source: FreeImageSource, optionImageIds: string[], key: string, sha256: string, size: number) {
-  if (source.quotationTarget) return quotationReplay(owner, id, source, key, sha256, size);
+async function replay(owner: string, id: string, source: FreeImageSource, optionImageIds: string[], key: string, sha256: string, size: number, crop?: FreeImageCrop) {
+  if (source.quotationTarget) return quotationReplay(owner, id, source, key, sha256, size, crop);
   const current = await state(owner, id);
   const role = current.content.assets[source.role].value;
   const optionOnly = source.optionImages?.commonAssigned === false;
@@ -132,11 +139,11 @@ async function replay(owner: string, id: string, source: FreeImageSource, option
   if (observed.sourceSha256 !== source.sourceSha256 || observed.width !== source.width || observed.height !== source.height) return null;
   const options = optionImageIds.length ? await readProductOptions(owner, id) : null;
   if (options && (options.revision < source.optionImages!.revision + 1 || optionImageIds.some(id => options.rows.filter(row => row.id === id && row.imageKey === key).length !== 1))) return null;
-  if (!await storedOutput(key, source, optionImageIds, sha256, size)) return null;
+  if (!await storedOutput(key, source, optionImageIds, sha256, size, crop)) return null;
   return response({ source, key, productVersion: current.product.updated_at, contentRevision: current.content.revision, applied: true, replayed: true,
-    ...(options ? { optionRevision: options.revision, optionImageIds } : {}) });
+    ...(options ? { optionRevision: options.revision, optionImageIds } : {}), ...(crop ? { crop } : {}) });
 }
-async function quotationReplay(owner: string, id: string, source: FreeImageSource, key: string, sha256: string, size: number) {
+async function quotationReplay(owner: string, id: string, source: FreeImageSource, key: string, sha256: string, size: number, crop?: FreeImageCrop) {
   const target = source.quotationTarget!, current = await state(owner, id);
   if (!current.keys.includes(key)) return null;
   const saved = await stableQuotationFieldsView(owner, id, target.profileId), view = saved.view;
@@ -146,11 +153,16 @@ async function quotationReplay(owner: string, id: string, source: FreeImageSourc
   const exact = exactPrimaryQuotationTarget(view.resolved.schema.fields, target.input), rows = view.resolved.rows.filter(row => row.optionId === target.optionId), value = quotationValue(source, key);
   if (exact.primary !== target.fieldKey || rows.length !== 1 || exact.linked.some(id => rows[0].fields[id]?.value !== value || view.overrides.options[target.optionId]?.[id] !== value)) return null;
   const observed = await original(owner, id, source.sourceKey, source.role, current, false, false, source.quotationTarget);
-  if (observed.sourceSha256 !== source.sourceSha256 || observed.width !== source.width || observed.height !== source.height || !await storedOutput(key, source, [], sha256, size)) return null;
+  if (observed.sourceSha256 !== source.sourceSha256 || observed.width !== source.width || observed.height !== source.height || !await storedOutput(key, source, [], sha256, size, crop)) return null;
   const stored = await env.FILES.get(key), overrideHash = await digest(new TextEncoder().encode(JSON.stringify(view.overrides)));
   if (stored?.customMetadata?.freeImageQuotationOverridesSha256 !== overrideHash) throw changed();
   return response({ source, key, productVersion: view.productVersion, contentRevision: view.contentRevision, optionRevision: view.optionRevision,
-    quotationRevision: view.revision, quotationInputFingerprint: view.inputFingerprint, applied: true, replayed: true });
+    quotationRevision: view.revision, quotationInputFingerprint: view.inputFingerprint, applied: true, replayed: true, ...(crop ? { crop } : {}) });
+}
+function selectedCrop(value: unknown, source: FreeImageSource) {
+  if (value === undefined) return undefined;
+  try { return validateFreeImageCrop(value, source); }
+  catch (error) { throw new ImageTextError(400, error instanceof Error ? error.message : '잘라낼 원본 영역을 확인해주세요.'); }
 }
 function selectedOptionIds(value: unknown, source: FreeImageSource) {
   try { return validateFreeImageOptionIds(source, value); }
@@ -198,17 +210,18 @@ export async function POST(request: Request, context: Context) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ImageTextError(400, '번역할 문구를 확인해주세요.');
       const input = body as Record<string, unknown>;
       if (input.action === 'recover') {
-        if (Object.keys(input).some(key => !['action', 'source', 'outputSha256', 'outputBytes'].includes(key)) || typeof input.outputSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.outputSha256)
+        if (Object.keys(input).some(key => !['action', 'source', 'outputSha256', 'outputBytes', 'crop'].includes(key)) || typeof input.outputSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.outputSha256)
           || !Number.isSafeInteger(input.outputBytes) || (input.outputBytes as number) < 1 || (input.outputBytes as number) > MAX_IMAGE_BYTES) throw new ImageTextError(400, '복구할 PNG 결과 번호와 크기를 확인해주세요.');
         let source: FreeImageSource;
         try { source = validateFreeImageSource(input.source); } catch { throw new ImageTextError(400, '복구할 원본 정보를 확인해주세요.'); }
         if (!source.quotationTarget || source.productId !== id || !isOwnedImageKey(owner, source.sourceKey)) throw new ImageTextError(400, '이 상품의 최종 견적 이미지 복구 범위를 확인해주세요.');
-        const fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source))), key = `${owner}/free-image-${id}-${fingerprint}-${input.outputSha256}.png`;
-        const recovered = await replay(owner, id, source, [], key, input.outputSha256, input.outputBytes as number);
+        const crop = selectedCrop(input.crop, source);
+        const fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, [], crop))), key = `${owner}/free-image-${id}-${fingerprint}-${input.outputSha256}.png`;
+        const recovered = await replay(owner, id, source, [], key, input.outputSha256, input.outputBytes as number, crop);
         if (recovered) return recovered;
         await freshSource(owner, id, source);
-        await storedOutput(key, source, [], input.outputSha256, input.outputBytes as number);
-        return response({ source, key, applied: false });
+        await storedOutput(key, source, [], input.outputSha256, input.outputBytes as number, crop);
+        return response({ source, key, applied: false, ...(crop ? { crop } : {}) });
       }
       if (Object.keys(input).some(key => !['action', 'source', 'sourceLanguage', 'regions'].includes(key)) || input.action !== 'translate' || !['zh', 'en'].includes(String(input.sourceLanguage))) throw new ImageTextError(400, '이미지 문구 번역 요청을 확인해주세요.');
       let source: FreeImageSource, regions;
@@ -224,13 +237,20 @@ export async function POST(request: Request, context: Context) {
     let form: FormData;
     try { form = await new Response(body.buffer as ArrayBuffer, { headers: { 'content-type': type } }).formData(); }
     catch { throw new ImageTextError(400, '이미지 파일 요청을 읽지 못했습니다.'); }
-    if ([...form.keys()].some(key => !['action', 'source', 'file', 'optionImageIds'].includes(key)) || ['action', 'source', 'file'].some(key => form.getAll(key).length !== 1)
+    if ([...form.keys()].some(key => !['action', 'source', 'file', 'optionImageIds', 'crop'].includes(key)) || ['action', 'source', 'file'].some(key => form.getAll(key).length !== 1)
       || form.getAll('optionImageIds').length > 1
+      || form.getAll('crop').length > 1
       || form.get('action') !== 'apply' || typeof form.get('source') !== 'string') throw new ImageTextError(400, 'PNG 결과 한 개와 원본 정보를 전달해주세요.');
     let source: FreeImageSource;
     try { const value = form.get('source') as string; if (value.length > 32768) throw Error('원본 정보가 너무 큽니다.'); source = validateFreeImageSource(JSON.parse(value)); }
     catch (error) { throw new ImageTextError(400, error instanceof Error ? error.message : '원본 정보를 확인해주세요.'); }
     if (source.productId !== id || !isOwnedImageKey(owner, source.sourceKey)) throw new ImageTextError(400, '상품·이미지 소유자를 확인해주세요.');
+    let crop: FreeImageCrop | undefined;
+    try {
+      const value = form.get('crop');
+      if (value !== null && (typeof value !== 'string' || value.length > 1024)) throw Error('잘라낼 영역의 입력 형식을 확인해주세요.');
+      crop = selectedCrop(value === null ? undefined : JSON.parse(value as string), source);
+    } catch (error) { if (error instanceof ImageTextError) throw error; throw new ImageTextError(400, '잘라낼 영역의 입력 형식을 확인해주세요.'); }
     let optionImageIds: string[];
     try {
       const value = form.get('optionImageIds');
@@ -249,11 +269,11 @@ export async function POST(request: Request, context: Context) {
     if (dimensions.width * dimensions.height > MAX_OCR_PIXELS) throw new ImageTextError(413, '번역 결과는 1,200만 픽셀 이하이어야 합니다.');
     const same = dimensions.width === source.width && dimensions.height === source.height;
     const rotated = dimensions.width === source.height && dimensions.height === source.width;
-    if (!same && !rotated) throw new ImageTextError(400, '번역 결과 크기가 원본 이미지와 다릅니다.');
-    const sha256 = await digest(bytes), fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, optionImageIds)));
+    if (crop ? dimensions.width !== crop.width || dimensions.height !== crop.height : !same && !rotated) throw new ImageTextError(400, crop ? '잘라낸 PNG의 실제 크기가 선택 영역과 다릅니다.' : '번역 결과 크기가 원본 이미지와 다릅니다.');
+    const sha256 = await digest(bytes), fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, optionImageIds, crop)));
     const key = `${owner}/free-image-${id}-${fingerprint}-${sha256}.png`;
     if (!isOwnedImageKey(owner, key)) throw new ImageTextError(400, '이미지 결과 저장 범위를 확인해주세요.');
-    const recovered = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length);
+    const recovered = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop);
     if (recovered) return recovered;
     const current = await freshSource(owner, id, source);
     const quotation = source.quotationTarget ? await stableQuotationFieldsView(owner, id, source.quotationTarget.profileId) : null;
@@ -269,22 +289,24 @@ export async function POST(request: Request, context: Context) {
     catch { throw new ImageTextError(409, '이미지 역할이 중복되어 있습니다. 원본 역할을 확인한 후 다시 적용해주세요.'); }
     const finalOverrides = quotation ? quotationOverrides(quotation, source, key) : null;
     const quotationOverridesSha256 = finalOverrides ? await digest(new TextEncoder().encode(JSON.stringify(finalOverrides))) : undefined;
-    if (!await storedOutput(key, source, optionImageIds, sha256, bytes.length)) {
+    if (!await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop)) {
       try {
         // Both arrays can contain 200 long IDs. Store their hashes rather than
         // full JSON so the complete record stays below R2's 8KB metadata limit.
-        const [sourceSha256, optionIdsSha256] = await Promise.all([
+        const [sourceSha256, optionIdsSha256, cropSha256] = await Promise.all([
           digest(new TextEncoder().encode(freeImageSourceIdentity(source))), digest(new TextEncoder().encode(JSON.stringify(optionImageIds))),
+          crop ? digest(new TextEncoder().encode(JSON.stringify(crop))) : undefined,
         ]);
         const saved = await env.FILES.put(key, bytes, { onlyIf: new Headers({ 'if-none-match': '*' }), httpMetadata: { contentType: 'image/png' },
           customMetadata: { freeImageSourceSha256: sourceSha256, freeImageOptionIdsSha256: optionIdsSha256, freeImageOutputSha256: sha256,
+            ...(cropSha256 ? { freeImageCropSha256: cropSha256 } : {}),
             ...(quotationOverridesSha256 ? { freeImageQuotationOverridesSha256: quotationOverridesSha256 } : {}),
             imageValidation: 'header-v1', dimensionValidation: 'header-v1', imageWidth: String(dimensions.width), imageHeight: String(dimensions.height) } });
-        if (!saved && !await storedOutput(key, source, optionImageIds, sha256, bytes.length)) throw Error('Image upload was not confirmed.');
+        if (!saved && !await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop)) throw Error('Image upload was not confirmed.');
       } catch (error) {
         // A failed acknowledgement may follow a committed R2 put. Verify bytes
         // and metadata before continuing; never overwrite or delete that object.
-        if (!await storedOutput(key, source, optionImageIds, sha256, bytes.length)) throw error;
+        if (!await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop)) throw error;
       }
     }
     if (quotationOverridesSha256 && (await env.FILES.get(key))?.customMetadata?.freeImageQuotationOverridesSha256 !== quotationOverridesSha256) throw changed();
@@ -294,7 +316,7 @@ export async function POST(request: Request, context: Context) {
     try {
       if (quotation && finalOverrides) {
         const saved = await attachQuotationImageTranslation(owner, id, finalOverrides, quotation.view.revision, quotation.source, quotation.view.categoryContext.categoryId, imageKeys);
-        const committed = await replay(owner, id, source, [], key, sha256, bytes.length);
+        const committed = await replay(owner, id, source, [], key, sha256, bytes.length, crop);
         if (committed) {
           if (!saved) return committed;
           const acknowledged: unknown = await committed.json();
@@ -311,12 +333,12 @@ export async function POST(request: Request, context: Context) {
       const saved = options ? await applyProductImageTranslation(owner, { ...common, contentMutated: !optionOnly, options, optionImageIds, sourceKey: source.sourceKey, outputKey: key })
         : await attachProductDocument(owner, { ...common, contentMutated: true, ...(source.optionImages ? { expectedOptionRevision: source.optionImages.revision } : {}) });
       if (saved) return response({ source, key, productVersion: saved.productVersion, contentRevision: saved.content.revision, applied: true,
-        ...(options ? { optionRevision: options.revision + 1, optionImageIds } : {}) });
-      const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length);
+        ...(options ? { optionRevision: options.revision + 1, optionImageIds } : {}), ...(crop ? { crop } : {}) });
+      const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop);
       if (committed) return committed;
       throw changed();
     } catch (error) {
-      const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length);
+      const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop);
       if (committed) return committed;
       throw error;
     }
