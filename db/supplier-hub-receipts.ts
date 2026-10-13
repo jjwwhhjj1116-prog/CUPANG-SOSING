@@ -76,7 +76,10 @@ export async function saveHistoricalSupplierHubReceipt(owner:string,productId:st
       AND r.observed_at>=? AND NOT EXISTS(SELECT 1 FROM product_removals removed WHERE removed.product_id=p.id AND removed.owner_id=p.owner_id)`)
     .bind(productId,owner,productVersion,previous.fingerprint,previousPayload,supplierHubReceiptObservationTime(receipt.result)).first());
 }
-/** Latest submitted draft is deliberately separate from the current editable draft. */
+/** Latest submitted draft is deliberately separate from the current editable draft.
+ * The normal rowid table retains first server-storage order: both regular
+ * UPSERT and historical refresh UPDATE the existing row. Re-observing an older
+ * quotation must not promote it above a later stored transmission. */
 export async function readSupplierHubReceiptSummaries(owner:string,products:{id:string}[]){
   const summaries:Record<string,SupplierHubReceiptSummary|null>={};
   if(!products.length)return summaries;
@@ -86,7 +89,7 @@ export async function readSupplierHubReceiptSummaries(owner:string,products:{id:
     const rows=await db.prepare(`SELECT r.product_id,r.payload FROM supplier_hub_receipts r
       WHERE r.owner_id=? AND r.product_id IN (${ids.map(()=>'?').join(',')})
       AND r.fingerprint=(SELECT latest.fingerprint FROM supplier_hub_receipts latest
-        WHERE latest.owner_id=r.owner_id AND latest.product_id=r.product_id ORDER BY latest.observed_at DESC,latest.fingerprint DESC LIMIT 1)`)
+        WHERE latest.owner_id=r.owner_id AND latest.product_id=r.product_id ORDER BY latest.rowid DESC LIMIT 1)`)
       .bind(owner,...ids).all<{product_id:string;payload:string}>();
     for(const row of rows.results){try{summaries[row.product_id]=supplierHubReceiptSummary(parseStoredSupplierHubReceipt(row.payload));}catch{summaries[row.product_id]=null;}}
   }

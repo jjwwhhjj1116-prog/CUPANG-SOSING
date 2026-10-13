@@ -104,6 +104,7 @@ function harness() {
   const store = load('db/translation-jobs.ts', { 'cloudflare:workers': { env } });
   const product = { id: 'product', owner_id: 'owner', updated_at: '2026-09-22T00:00:00.000Z' };
   const dependencies = { 'cloudflare:workers': { env }, '@/db/translation-jobs': store,
+    '@/db/collection-products': { findProductCollection: async () => null },
     '@/db/queries': { findProduct: async () => product }, '@/db/product-content': { readProductContent: async () => ({ revision: 2 }) } };
   return { sqlite, env, store, product, dependencies };
 }

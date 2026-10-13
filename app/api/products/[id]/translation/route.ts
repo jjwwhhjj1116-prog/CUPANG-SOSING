@@ -9,7 +9,7 @@ import { optionsRetryProof } from '@/app/options-translation-retry';
 import { intakeOptionsReviewProof } from '@/app/intake-options-translation';
 import {seoRetryReviewProof} from '@/app/seo-translation-retry';
 import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
-import {CollectionCompanyError} from '@/app/collection-company';
+import {CollectionCompanyError,verifyCapturedCollectionCompany} from '@/app/collection-company';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { TranslationError, translationDestination, translationConfiguration, requireTranslationConfig, validateTranslationSource, prepareTranslationReview, executeTranslation, type TranslationJob, type TranslationSecrets } from '@/app/automation/translation';
 
@@ -19,6 +19,18 @@ const configuration = () => translationConfiguration(env as TranslationSecrets);
 const unavailable = () => json({ error: '번역 요청 저장소에 연결하지 못했습니다. 실행 이력을 확인한 뒤 진행해주세요.' }, 503);
 const conflict = () => json({ error: '상품·콘텐츠·설정 또는 승인 상태가 변경되었습니다. 새 검토 요청을 만들어주세요.', code: 'TRANSLATION_CONFLICT' }, 409);
 async function seoCompany(owner:string){const user=await getChatGPTUser();return user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;}
+async function verifyTranslationCompany(owner:string,productId:string){
+  const {findProductCollection}=await import('@/db/collection-products');
+  const link=await findProductCollection(owner,productId);
+  // Manual legacy products have no collection company to infer from today's
+  // login. A linked product instead keeps its exact captured context.
+  if(!link)return true;
+  const {findCollectionJob}=await import('@/db/collection-jobs');
+  const collection=await findCollectionJob(owner,link.job_id);
+  if(!collection||collection.product_id!==productId)return false;
+  verifyCapturedCollectionCompany(collection.context,await seoCompany(owner));
+  return true;
+}
 
 export async function GET(request: Request, context: Context) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return json({ error: '운영 인증 연결 후 사용할 수 있습니다.' }, 503);
@@ -70,6 +82,9 @@ export async function POST(request: Request, context: Context) {
   try {
     const owner = await getWorkspaceOwnerId(); const { id } = await context.params;
     const product = await findProduct(owner, id); if (!product) return json({ error: '상품을 찾을 수 없습니다.' }, 404);
+    // Check before preparing/replaying a job, approving/claiming it or sending
+    // any source text to Google/AI. GET history stays read-only and unchanged.
+    if(!await verifyTranslationCompany(owner,id))return conflict();
     const config = requireTranslationConfig(env as TranslationSecrets);
     if(body.action==='prepare-seo-retry'){
       if(Object.keys(body).some(key=>!['action','expectedVersion','retryKey'].includes(key))||typeof body.retryKey!=='string'

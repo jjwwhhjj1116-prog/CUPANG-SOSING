@@ -177,6 +177,12 @@ const category80719: QuotationField[] = [
 // Explicit meanings in observed fields; never infer from partial label matches.
 function productContentBinding(item: QuotationField): QuotationField {
   if (item.section !== 'product' || item.visibility !== 'hidden') return item;
+  // The recorded Single's overall product material shares the stage-six
+  // material source. Frame/lens materials and similarly named controls do not.
+  if (item.label === '상품 재질' && item.type === 'select' && !item.readOnly && !item.numericText && !item.numericValue && item.choices?.length
+    && JSON.stringify(item.hubWire?.path) === JSON.stringify(['productPage', 'unexposedAttributes'])
+    && item.hubWire?.name === '상품 재질' && item.hubWire.nameKey === 'attributeName' && item.hubWire.valueKey === 'attributeValue')
+    return { ...item, contentField: 'material' };
   if (item.label === '포함 구성 요소' && item.type === 'select') return { ...item, contentField: 'components' };
   if (item.label === '모델명/품번' && item.type === 'text') return { ...item, contentField: 'model' };
   // Packaging and capacity are separate facts from physical dimensions.
