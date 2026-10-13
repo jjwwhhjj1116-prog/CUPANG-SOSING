@@ -24,6 +24,7 @@ function componentHarness(file,exportName,initialProps,request,overrides={}){
   useCallback(fn,deps){const slot=index++,old=slots[slot];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))slots[slot]={fn,deps};return slots[slot].fn;},
   useEffect(fn,deps){const slot=index++,old=slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:null};slots[slot]=next;effects.push(()=>{old?.cleanup?.();next.cleanup=fn();});}}
  };
+ hooks.useLayoutEffect=hooks.useEffect;
  function load(path){
   if(cache.has(path))return cache.get(path);
   const exports={};cache.set(path,exports);

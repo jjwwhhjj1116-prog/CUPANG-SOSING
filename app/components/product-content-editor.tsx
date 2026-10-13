@@ -1,7 +1,7 @@
 'use client';
 
 import { QuotationKeywordReview } from '@/app/components/quotation-keyword-review';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { assetRoles, currentDetailContent, detailImageKeys, emptyProductContent, labelFields, productImageKeys, type AssetRole, type ContentField, type LabelField, type ProductContent } from '@/app/product-content';
 import { orderedEditorImages, type AssetEditorFilter } from '@/app/option-editor-tools';
 import { imageStagePatch, imageStageRoles, mergeSavedImageStage } from '@/app/image-stage-save';
@@ -12,6 +12,7 @@ import { type CustomLabel } from '@/app/product-content';
 import { CustomLabelEditor } from '@/app/components/custom-label-editor';
 import { attachResizedImage, imageTransformPlan, readResizeSource, renderResizedImage, type ImageTransform, type ResizeSource, type ResizedImage } from '@/app/local-image-resize';
 import { downloadImageSelection } from '@/app/image-selection-download';
+import {capturedSettingsBannerChangeAllowed,capturedSettingsBannerKeys,parseCapturedSettingsBanners,type CapturedSettingsBanners} from '@/app/captured-settings-banners';
 
 type Props = {
   product: { id: string; title: string; image_keys: string; updated_at?: string };
@@ -49,17 +50,20 @@ const provenance = { unverified: '미작성', collected: '수집 원문', transl
 function Origin({ field }: { field: ContentField<unknown> }) {
   return <small style={{ color: '#64748b', fontWeight: 400 }}>{provenance[field.provenance]}</small>;
 }
-async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<ProductContent> {
+async function fetchContent(endpoint: string, signal?: AbortSignal): Promise<{content:ProductContent;banners?:CapturedSettingsBanners}> {
   const response = await fetch(endpoint, { signal, cache: 'no-store' });
-  const body = await response.json() as { content?: ProductContent; error?: string };
+  const body = await response.json() as { content?: ProductContent; capturedSettingsBanners?:unknown;error?: string };
   if (!response.ok || !body.content) throw new Error(body.error || '저장본을 불러오지 못했습니다.');
-  return body.content;
+  return {content:body.content,banners:parseCapturedSettingsBanners(body.capturedSettingsBanners,body.content)};
 }
 
 export function ProductContentEditor(props: Props) { return <ContentEditor key={props.product.id} {...props} />; }
 
 function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslateImage, imageProcessingBusy = false, seoLayout = false }: Props) {
   const [content, setContent] = useState<ProductContent>(() => emptyProductContent(product.id));
+  const [settingsBanners,setSettingsBanners]=useState<CapturedSettingsBanners|undefined>();
+  const bannerSnapshot=useRef<{content:ProductContent;descriptor?:CapturedSettingsBanners;imageKeys:string[];mounted:boolean}>({content:emptyProductContent(product.id),imageKeys:[],mounted:true});
+  useLayoutEffect(()=>{let keys:string[]=[];try{keys=productImageKeys(product.image_keys);}catch{/* uncertain metadata leaves the banner editable */}bannerSnapshot.current.imageKeys=keys;bannerSnapshot.current.mounted=true;return()=>{bannerSnapshot.current.mounted=false;};},[product.image_keys]);
   const [draft, setDraft] = useState<Draft>(() => draftFrom(emptyProductContent(product.id)));
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -91,7 +95,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   const currentProductTitle = useRef(product.title);
   useEffect(() => { currentProductTitle.current = product.title; }, [product.title]);
   const endpoint = `/api/products/${encodeURIComponent(product.id)}/content`;
-  const applyLoaded = useCallback((saved: ProductContent) => {
+  const applyLoaded = useCallback(({content:saved,banners}:{content:ProductContent;banners?:CapturedSettingsBanners}) => {
+    bannerSnapshot.current={...bannerSnapshot.current,content:saved,descriptor:banners};setSettingsBanners(banners);
     setContent(saved); setDraft(draftFrom(saved, currentProductTitle.current)); setLoaded(true); setConflict(false); setError(''); setMessage('');
     setResizeSource(null);setResizePreview(null);resizeUpload.current={};
   }, []);
@@ -143,6 +148,9 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
   const visibleImages = orderedEditorImages(imageKeys, draft.assets, assetFilter);
   const activePreview = previewKey && imageKeys.includes(previewKey) ? previewKey : visibleImages[0] ?? null;
   const detailPreview = focusedAssetRole === 'detail' ? detailImageKeys(draft.assets).filter(key => imageKeys.includes(key)) : [];
+  const protectedBanners=new Set(capturedSettingsBannerKeys(settingsBanners,content,draft.assets,imageKeys));
+  function bannerLocked(key:string){const snapshot=bannerSnapshot.current;return !snapshot.mounted||capturedSettingsBannerKeys(snapshot.descriptor,snapshot.content,snapshot.content.assets,snapshot.imageKeys).includes(key);}
+  function imageDraft(amend:(previous:Draft)=>Draft){setDraft(previous=>{const snapshot=bannerSnapshot.current;if(!snapshot.mounted)return previous;const next=amend(previous);return capturedSettingsBannerChangeAllowed(snapshot.descriptor,snapshot.content,previous.assets,next.assets,snapshot.imageKeys)?next:previous;});}
   const unavailableImages = [...new Set(Object.values(draft.assets).flat())].filter(key => !imageKeys.includes(key));
   const sectionTitle = section === '이미지' && focusedAssetRole ? assetRoles[focusedAssetRole] : section;
 
@@ -161,6 +169,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     finally{if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false);}
   }
   async function openResize(key:string) {
+    if(bannerLocked(key))return;
     await resizeAction(async signal=>{
       const source=await readResizeSource(product.id,key,content.revision,signal);
       if(signal.aborted)return;
@@ -196,7 +205,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     }
   }
   async function previewResize() {
-    if(!resizeSource)return;
+    if(!resizeSource||bannerLocked(resizeSource.key))return;
     await resizeAction(async signal=>{
       const preview=await renderResizedImage(resizeSource,Number(resizeWidth),Number(resizeHeight),signal,currentTransform());
       if(signal.aborted)return;
@@ -204,13 +213,13 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     });
   }
   async function applyResize() {
-    if(!resizePreview)return;
+    if(!resizePreview||bannerLocked(resizePreview.key))return;
     await resizeAction(async signal=>{
       const saved=await attachResizedImage(product.id,resizePreview,resizeUpload.current,signal);
       if(signal.aborted)return;
       const sourceKey=resizePreview.key,roles=imageStageRoles(focusedAssetRole);
       setResizeAdded(previous=>({version:saved.productVersion,keys:[...new Set([...previous.keys,saved.key])]}));
-      setDraft(previous=>({...previous,assets:Object.fromEntries(Object.entries(previous.assets).map(([role,keys])=>[role,roles.includes(role as AssetRole)?keys.map(key=>key===sourceKey?saved.key:key):keys])) as Draft['assets']}));
+      imageDraft(previous=>({...previous,assets:Object.fromEntries(Object.entries(previous.assets).map(([role,keys])=>[role,roles.includes(role as AssetRole)?keys.map(key=>key===sourceKey?saved.key:key):keys])) as Draft['assets']}));
       setPreviewKey(saved.key);setResizePreview(null);setResizeSource(null);resizeUpload.current={};
       setMessage('새 이미지를 자료함에 보관하고 현재 단계에서 선택된 원본 위치에 반영했습니다. 이미지 역할·순서를 저장하면 견적에 반영됩니다. 원본과 다른 단계·옵션별 선택은 유지했습니다.');onSaved?.();
     });
@@ -255,10 +264,11 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
       : section === '표시사항' ? { label: draft.label, labelClears: draft.labelClears, labelProductNameLinked: draft.labelProductNameLinked, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(Object.keys(detailPatch).length ? { detail: detailPatch } : {}) };
     try {
       const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
-      const body = await response.json() as { content?: ProductContent; error?: string };
+      const body = await response.json() as { content?: ProductContent;capturedSettingsBanners?:unknown; error?: string };
       if(controller.signal.aborted)return;
       if (!response.ok || !body.content) { if (response.status === 409) setConflict(true); throw new Error(body.error || '저장하지 못했습니다.'); }
       const saved = body.content;
+      const banners=parseCapturedSettingsBanners(body.capturedSettingsBanners,saved);bannerSnapshot.current={...bannerSnapshot.current,content:saved,descriptor:banners};setSettingsBanners(banners);
       setContent(saved);
       const savedDraft = draftFrom(saved, product.title);
       // Preserve unsaved work in other tabs when this section is saved.
@@ -279,14 +289,14 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     finally { if(activeRequest.current===controller)activeRequest.current=null;if(!controller.signal.aborted)setBusy(false); }
   }
   function assign(key: string, role: AssetRole | '') {
-    setDraft(previous => {
+    imageDraft(previous => {
       const assets = Object.fromEntries(Object.entries(previous.assets).map(([name, keys]) => [name, keys.filter(value => value !== key)])) as Draft['assets'];
       if (role) assets[role] = ['main', 'detailTop', 'detailBottom'].includes(role) ? [key] : [...assets[role], key];
       return { ...previous, assets };
     });
   }
   function move(role: AssetRole, index: number, offset: number) {
-    setDraft(previous => {
+    imageDraft(previous => {
       const keys = [...previous.assets[role]]; const destination = index + offset;
       if (destination < 0 || destination >= keys.length) return previous;
       [keys[index], keys[destination]] = [keys[destination], keys[index]];
@@ -294,17 +304,17 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     });
   }
   function detailImageAction(key: string, action: () => void) {
-    if (!loaded || busy || loading || conflict || imageProcessingBusy || activeRequest.current || !imageKeys.includes(key)) return;
+    if (!loaded || busy || loading || conflict || imageProcessingBusy || activeRequest.current || !imageKeys.includes(key)||bannerLocked(key)) return;
     action();
   }
   function excludeRoleImage(key: string, role: AssetRole) {
-    setDraft(previous => ({ ...previous, assets: { ...previous.assets, [role]: previous.assets[role].filter(value => value !== key) } }));
+    imageDraft(previous => ({ ...previous, assets: { ...previous.assets, [role]: previous.assets[role].filter(value => value !== key) } }));
   }
   function selectFocusedImage(key: string, role: AssetRole) {
     // Restoring this stage's existing selection must retain legitimate legacy
     // sharing and other-stage drafts. Only a new role claim moves the file.
     if (!initial.assets[role].includes(key)) { assign(key, role); return; }
-    setDraft(previous => ({ ...previous, assets: { ...previous.assets,
+    imageDraft(previous => ({ ...previous, assets: { ...previous.assets,
       [role]: ['main', 'detailTop', 'detailBottom'].includes(role) ? [key] : [...previous.assets[role].filter(value => value !== key), key],
     } }));
   }
@@ -379,15 +389,15 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
             const sourceIndex = imageKeys.indexOf(key) + 1;
             const role = draft.assets.detailTop.includes(key) ? 'detailTop' : draft.assets.detailBottom.includes(key) ? 'detailBottom' : 'detail';
             const position = draft.assets[role].indexOf(key);
-            const disabled = busy || loading || conflict || imageProcessingBusy;
-            return <figure key={key}><figcaption>{role==='detailTop'?'상단 이미지':role==='detailBottom'?'하단 이미지':`본문 이미지 ${position+1}`}</figcaption>
+            const capturedBanner=protectedBanners.has(key),disabled = busy || loading || conflict || imageProcessingBusy || capturedBanner;
+            return <figure key={key}><figcaption>{role==='detailTop'?'상단 이미지':role==='detailBottom'?'하단 이미지':`본문 이미지 ${position+1}`}{capturedBanner&&' · 등록 시 기본설정에서 선택된 배너'}</figcaption>
             <div className="detail-image-toolbar" role="group" aria-label={`이미지 ${sourceIndex} 상세 편집`}>
-              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 중국어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'zh',role as 'detailTop'|'detail'|'detailBottom'))}>중국어→한국어 번역</button>
+              {!capturedBanner&&<><button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 중국어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'zh',role as 'detailTop'|'detail'|'detailBottom'))}>중국어→한국어 번역</button>
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 영어→한국어 번역`} disabled={disabled || !onTranslateImage} onClick={()=>detailImageAction(key,()=>onTranslateImage?.(key,'en',role as 'detailTop'|'detail'|'detailBottom'))}>영어→한국어 번역</button>
-              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 편집`} disabled={disabled} onClick={()=>detailImageAction(key,()=>void openResize(key))}>편집</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 편집`} disabled={disabled} onClick={()=>detailImageAction(key,()=>void openResize(key))}>편집</button></>}
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 위로`} disabled={disabled || role!=='detail' || position===0} onClick={()=>detailImageAction(key,()=>move(role,position,-1))}>↑</button>
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 아래로`} disabled={disabled || role!=='detail' || position===draft.assets[role].length-1} onClick={()=>detailImageAction(key,()=>move(role,position,1))}>↓</button>
-              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 상세에서 제외`} title="상세페이지에서 제외" disabled={disabled} onClick={()=>detailImageAction(key,()=>excludeRoleImage(key,role))}>삭제</button>
+              {!capturedBanner&&<button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 상세에서 제외`} title="상세페이지에서 제외" disabled={disabled} onClick={()=>detailImageAction(key,()=>excludeRoleImage(key,role))}>삭제</button>}
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`상세페이지 순서 ${index+1}`} loading="lazy"/>
@@ -403,6 +413,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
           const role = (Object.keys(assetRoles) as AssetRole[]).find(value => draft.assets[value].includes(key)) ?? '';
           const position = role ? draft.assets[role].indexOf(key) : -1;
           const focusedSelected = Boolean(focusedAssetRole && draft.assets[focusedAssetRole].includes(key));
+          const capturedBanner=protectedBanners.has(key);
           return <div key={key} className={`image-asset-card ${key===activePreview?'previewing':''} ${focusedSelected?'chosen':''}`}>
             <button type="button" className="image-asset-preview" aria-label={`이미지 ${index + 1} 크게 보기`} onClick={() => setPreviewKey(key)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -412,9 +423,10 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
               <span>이미지 {index + 1} · 확대</span>
             </button>
             <ImageSizeNotice size={imageSizes[key]} role={role} />
-            <button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 편집하기`} onClick={()=>void openResize(key)}>편집하기</button>
-            {focusedAssetRole&&<button type="button" className={`btn ${focusedSelected?'primary':'ghost'}`} aria-pressed={focusedSelected} onClick={()=>focusedSelected?excludeRoleImage(key,focusedAssetRole):selectFocusedImage(key,focusedAssetRole)}>{focusedSelected?'선택 해제':`${assetRoles[focusedAssetRole]}로 선택`}</button>}
-            <label className="field"><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} onChange={event => assign(key, event.target.value as AssetRole | '')}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+            {!capturedBanner&&<button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 편집하기`} onClick={()=>void openResize(key)}>편집하기</button>}
+            {capturedBanner&&<small>등록 시 기본설정에서 선택된 배너</small>}
+            {focusedAssetRole&&!capturedBanner&&<button type="button" className={`btn ${focusedSelected?'primary':'ghost'}`} aria-pressed={focusedSelected} onClick={()=>focusedSelected?excludeRoleImage(key,focusedAssetRole):selectFocusedImage(key,focusedAssetRole)}>{focusedSelected?'선택 해제':`${assetRoles[focusedAssetRole]}로 선택`}</button>}
+            <label className="field"><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} disabled={capturedBanner} onChange={event => assign(key, event.target.value as AssetRole | '')}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value} disabled={value!==role&&draft.assets[value as AssetRole].some(key=>protectedBanners.has(key))}>{label}</option>)}</select></label>
             {role && <div className="image-asset-order"><span>{assetRoles[role]} {position + 1}번째</span><div><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}
           </div>;
         })}</div></aside></div>

@@ -49,6 +49,7 @@ async function fixture(company) {
     useRef(initial) { const index = cursor++; return slots[index] ?? (slots[index] = { current: initial }); },
     useCallback(fn, deps) { const index = cursor++, previous = slots[index]; if (!previous || !sameDeps(previous.deps, deps)) slots[index] = { value: fn, deps }; return slots[index].value; },
     useEffect: hook,
+    useLayoutEffect: hook,
   };
   function load(file) {
     if (modules.has(file)) return modules.get(file);

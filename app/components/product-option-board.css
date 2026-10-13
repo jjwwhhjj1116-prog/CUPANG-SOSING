@@ -1,0 +1,17 @@
+.option-board-view-tools{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px;color:#606b83}
+.option-board-view-tools>label{display:flex;align-items:center;gap:8px}
+.option-board-view-tools select{min-width:150px;padding:7px;border:1px solid #dfe4ed;border-radius:4px;background:#fff}
+.option-board-view-tools fieldset{display:flex;align-items:center;gap:8px;border:0;margin:0 0 0 auto;padding:0}
+.option-board-view-tools legend{float:left;margin-right:8px}
+.option-board-view-tools fieldset label{display:flex;align-items:center;gap:4px}
+.option-board-view-tools input{accent-color:#25b9df}
+.option-board-scroll{isolation:isolate;overflow:auto;position:relative}
+.option-board-height-fixed{height:clamp(280px,48vh,560px)}
+.option-board-scroll:focus-visible{outline:2px solid #25b9df;outline-offset:2px}
+.option-board .option-work-table{table-layout:fixed}
+.option-work-table th{position:sticky;top:0;z-index:2}
+.option-work-table th.option-board-pinned,.option-work-table td.option-board-pinned{position:sticky;left:0;z-index:1;background:#fff;box-shadow:3px 0 5px #15254712}
+.option-work-table th.option-board-pinned{z-index:3;background:#f7f7f9}
+.option-board .option-work-table td[data-column]{max-width:none;overflow-wrap:anywhere}
+.option-board .option-work-table td[data-column="name"]{text-align:left}
+.option-board .option-work-table td:not([data-column="name"]){text-align:center}

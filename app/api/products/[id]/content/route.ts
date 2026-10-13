@@ -5,18 +5,38 @@ import { findProduct } from '@/db/queries';
 import { readProductContent, saveProductContent } from '@/db/product-content';
 import { CONTENT_BODY_LIMIT, applyContentPatch, productImageKeys, validateContentInput } from '@/app/product-content';
 import { verifiedGeneratedImageReplacements } from '@/app/generated-image-adoption-proof';
+import {capturedSettingsBanners} from '@/app/captured-settings-banners';
+import {parseCollectionRequest} from '@/app/sourcing';
+import {approvedSupplierHubCompany} from '@/app/supplier-hub-company';
+import type {ProductContent} from '@/app/product-content';
+import type {ProductRecord} from '@/db/queries';
 
 type Context = { params: Promise<{ id: string }> };
 function unavailable() { return NextResponse.json({ error: '운영 인증 연결 후 콘텐츠 편집을 사용할 수 있습니다.' }, { status: 503 }); }
 const response = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
+async function bannerMetadata(owner:string,product:ProductRecord,content:ProductContent){
+  // Optional evidence must not initialize tables, replace saved content or make
+  // a legacy product unreadable when collection tables are unavailable.
+  try{
+    if(!env.DB||!content.assets.detailTop.value.length&&!content.assets.detailBottom.value.length)return;
+    const offerId=parseCollectionRequest({urls:[product.source_url]})[0].offerId;
+    const source=await env.DB.prepare(`SELECT c.payload FROM collection_products cp JOIN collection_jobs j ON j.id=cp.job_id
+      JOIN collection_context c ON c.job_id=j.id WHERE cp.owner_id=? AND cp.product_id=? AND j.owner_id=cp.owner_id
+      AND j.offer_id=? AND j.status='awaiting_connector'`).bind(owner,product.id,offerId).first<{payload:string}>();
+    const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
+    return capturedSettingsBanners(owner,product,content,source,company);
+  }catch{return;}
+}
 
 export async function GET(_: Request, context: Context) {
   if (process.env.NODE_ENV === 'production' && !(await getChatGPTUser())?.verifiedAccess) return unavailable();
   const owner = await getWorkspaceOwnerId();
   const { id } = await context.params;
   try {
-    if (!await findProduct(owner, id)) return response({ error: '상품을 찾을 수 없습니다.' }, 404);
-    return response({ content: await readProductContent(owner, id) });
+    const product=await findProduct(owner,id);
+    if(!product)return response({error:'상품을 찾을 수 없습니다.'},404);
+    const content=await readProductContent(owner,id),banners=await bannerMetadata(owner,product,content);
+    return response({content,...(banners?{capturedSettingsBanners:banners}:{})});
   } catch { return response({ error: '저장한 콘텐츠를 불러오지 못했습니다.' }, 503); }
 }
 
@@ -72,6 +92,8 @@ export async function PATCH(request: Request, context: Context) {
       if (objects.some(value => !/^image\/(png|jpeg|webp|gif|avif)$/i.test(value?.httpMetadata?.contentType ?? ''))) return response({ error: 'PNG·JPEG·WebP·GIF·AVIF 이미지만 자료에 지정할 수 있습니다.' }, 400);
     }
     const saved = await saveProductContent(owner, next, validated.expectedRevision, validated.patch.assets ? product.image_keys : undefined);
-    return saved ? response({ content: saved }) : response({ error: '동시에 변경된 콘텐츠입니다. 저장본을 다시 불러와주세요.', code: 'CONTENT_CONFLICT' }, 409);
+    if(!saved)return response({ error: '동시에 변경된 콘텐츠입니다. 저장본을 다시 불러와주세요.', code: 'CONTENT_CONFLICT' }, 409);
+    const banners=await bannerMetadata(owner,product,saved);
+    return response({content:saved,...(banners?{capturedSettingsBanners:banners}:{})});
   } catch { return response({ error: '콘텐츠를 저장하지 못했습니다. 입력 내용은 유지됩니다. 저장본을 확인한 후 다시 시도해주세요.' }, 503); }
 }

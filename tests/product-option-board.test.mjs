@@ -6,7 +6,7 @@ import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {renderToStaticMarkup} from 'react-dom/server';
 const native=createRequire(import.meta.url);
-function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,fetch,AbortController,require(name){if(name in overrides)return overrides[name];if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;}
+function load(file,overrides={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,URL,fetch,AbortController,require(name){if(name.endsWith('.css'))return{};if(name in overrides)return overrides[name];if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);}});return exports;}
 const boardFields=[...['title','mainImage','additionalImages','detailImages','labelImages'].map(id=>({id,section:id==='title'?'start':'image',visibility:'common',type:id==='title'?'text':'images',required:false})),...['supplyPrice','salePrice','msrp'].map(id=>({id,section:'product',visibility:'common',type:'number',required:false}))];
 function quotation(contentRevision=undefined,imageKeys=['owner/red.png','owner/shared.png','owner/source.png','owner/size.png'],content={},options=data){const assets=content.assets??{},keys=role=>assets[role]?.value??[];return {productVersion:options.productVersion,optionRevision:options.options.revision,contentRevision,imageKeys,resolved:{schema:{categoryId:'80719',categoryPath:['바스켓'],fields:boardFields},rows:options.options.rows.map(row=>({optionId:row.id,fields:{supplyPrice:{value:'4100'},salePrice:{value:'6200'},title:{value:content.seo?.title.value??''},mainImage:{value:(row.imageKey?[row.imageKey]:keys('main')).join('\n')},additionalImages:{value:keys('additional').join('\n')},detailImages:{value:[...keys('detailTop'),...keys('detail'),...keys('detailBottom')].join('\n')},labelImages:{value:keys('label').join('\n')}}}))}};}
 const model=load('app/components/product-option-board.tsx');
@@ -87,7 +87,7 @@ test('option board renders the observed twelve data headers with matching row ce
  const result=tree(),headers=nodes(result.tree).filter(node=>node.type==='th').slice(1).map(text);
  assert.deepEqual(headers,['옵션번호','옵션명','SEO설정','가격설정','대표이미지','추가이미지','상세이미지','사이즈표','한글표시사항','견적서','재고/가격','관리']);
  for(const row of nodes(result.tree).filter(node=>node.type==='tr'&&node.props['data-option-id']))assert.equal(nodes(row).filter(node=>node.type==='td').length,13);
- assert.equal(nodes(result.tree).filter(node=>node.type==='input'&&node.props.type==='checkbox').length,3);
+ assert.equal(nodes(nodes(result.tree).find(node=>node.type==='table')).filter(node=>node.type==='input'&&node.props.type==='checkbox').length,3);
 });
 
 test('typed stage callbacks preserve the clicked option across every stage and take precedence over legacy callbacks',()=>{

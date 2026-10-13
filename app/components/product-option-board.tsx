@@ -7,11 +7,21 @@ import {quotationMainImageKeys,optionQuotationName,type ProductOption,type Produ
 import type {QuotationField} from '@/app/quotation-schema';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
+import './product-option-board.css';
 
 type Props={productId:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
 type CommonContentStep='추가 이미지'|'상세 이미지'|'표시사항';
 type CommonRole='additional'|'detail'|'size'|'label';
 const commonStages=[['additional','추가이미지','추가 이미지'],['detail','상세이미지','상세 이미지'],['size','사이즈표','옵션'],['label','한글표시사항','표시사항']] as const;
+const columns=[
+  {id:'id',label:'옵션번호',width:170},{id:'name',label:'옵션명',width:230},
+  {id:'seo',label:'SEO설정',width:100},{id:'price',label:'가격설정',width:100},
+  {id:'main',label:'대표이미지',width:130},{id:'additional',label:'추가이미지',width:100},
+  {id:'detail',label:'상세이미지',width:100},{id:'size',label:'사이즈표',width:100},
+  {id:'label',label:'한글표시사항',width:110},{id:'quotation',label:'견적서',width:100},
+  {id:'stock',label:'재고/가격',width:190},{id:'management',label:'관리',width:76},
+] as const;
+type ColumnId=typeof columns[number]['id'];
 export type OptionBoardQuotationContent={title:string;main:string[];additional:string[];detail:string[];label:string[];imageIssues:Partial<Record<'main'|'additional'|'detail'|'label',boolean>>};
 export type OptionBoardData=ProductOptionsResponse & {imageKeys:string[];quotationPrices?:Record<string,{supplyPrice:string;salePrice:string}>;quotationContent?:Record<string,OptionBoardQuotationContent>;seoTitle?:string|null;commonImageKeys:string[];commonAssets?:Partial<Record<CommonRole,string[]>>};
 function record(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==='object'&&!Array.isArray(value);}
@@ -85,21 +95,43 @@ export function ProductOptionBoard({productId,sourceUrl,refreshToken,returnFocus
   const [loaded,setLoaded]=useState<{productId:string;attempt:number;refreshToken?:string;data:OptionBoardData|null;error:string}|null>(null);
   const [attempt,setAttempt]=useState(0);const [query,setQuery]=useState('');
   const [selection,setSelection]=useState({productId,ids:new Set<string>()});
+  const [pageSize,setPageSize]=useState(50);
+  const [pagination,setPagination]=useState({productId,page:0});
+  const [visibleColumns,setVisibleColumns]=useState<ColumnId[]>(()=>columns.map(column=>column.id));
+  const [pinnedColumn,setPinnedColumn]=useState<ColumnId|''>('');
+  const [fixedHeight,setFixedHeight]=useState(true);
   const current=loaded?.productId===productId&&loaded.attempt===attempt&&loaded.refreshToken===refreshToken?loaded:null;
   const data=current?.data??null,error=current?.error??'';
   useEffect(()=>{const controller=new AbortController();
     readOptionBoard(productId,controller.signal).then(value=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:value,error:''});}).catch(cause=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:null,error:cause instanceof Error?cause.message:'옵션 조회 실패'});});
     return()=>controller.abort();
   },[productId,attempt,refreshToken]);
+  const keys=data?.imageKeys??[];
+  const rows=data?.options.rows.filter(row=>[row.id,row.supplierSku,row.originalName,row.translatedName,row.color,row.size,data.quotationContent?.[row.id]?.title].join(' ').toLowerCase().includes(query.trim().toLowerCase()))??[];
+  const filteredOptionIds=rows.map(row=>row.id).join(',');
+  const pageCount=Math.max(1,Math.ceil(rows.length/pageSize));
+  const page=Math.min(pagination.productId===productId?pagination.page:0,pageCount-1);
+  const pageRows=rows.slice(page*pageSize,(page+1)*pageSize);
+  const displayedColumns=columns.filter(column=>visibleColumns.includes(column.id));
   useEffect(()=>{
     if(!returnFocus||!data||typeof document==='undefined')return;
     const board=[...document.querySelectorAll<HTMLElement>('.option-board')].find(node=>node.dataset.productId===productId);
-    if(board?.closest('[hidden],[inert]'))return;
-    const button=[...(board?.querySelectorAll<HTMLButtonElement>('button')??[])].find(node=>(node.getAttribute('aria-label')??node.textContent?.trim())===returnFocus);
+    if(!board||board.closest('[hidden],[inert]'))return;
+    // A saved reorder/removal can move the original option to another page.
+    // Follow its exact ID within the preserved search, never clear that search
+    // or reveal a column the owner deliberately hid to satisfy a focus target.
+    const index=filteredOptionIds.split(',').findIndex(id=>id!==''&&returnFocus.startsWith(`옵션 ${id} `));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Render the exact saved option's page before restoring its external DOM focus.
+    if(index>=0&&Math.floor(index/pageSize)!==page){setPagination({productId,page:Math.floor(index/pageSize)});return;}
+    const button=[...board.querySelectorAll<HTMLButtonElement>('button')].find(node=>(node.getAttribute('aria-label')??node.textContent?.trim())===returnFocus);
     if(button){button.focus();onReturnFocusHandled?.();}
-  },[data,productId,returnFocus,onReturnFocusHandled]);
-  const keys=data?.imageKeys??[];
-  const rows=data?.options.rows.filter(row=>[row.id,row.supplierSku,row.originalName,row.translatedName,row.color,row.size,data.quotationContent?.[row.id]?.title].join(' ').toLowerCase().includes(query.trim().toLowerCase()))??[];
+  },[data,productId,returnFocus,onReturnFocusHandled,page,pageSize,filteredOptionIds,visibleColumns]);
+  const pinned=(id:ColumnId)=>pinnedColumn===id?' option-board-pinned':'';
+  const setPage=(next:number)=>setPagination({productId,page:Math.max(0,Math.min(next,pageCount-1))});
+  const showColumn=(id:ColumnId,visible:boolean)=>{
+    setVisibleColumns(current=>visible?[...new Set([...current,id])]:current.filter(value=>value!==id));
+    if(!visible&&pinnedColumn===id)setPinnedColumn('');
+  };
   const selected=new Set(selection.productId===productId?[...selection.ids].filter(id=>data?.options.rows.some(row=>row.id===id)):[]);
   const toggle=(ids:string[],checked:boolean)=>{const next=new Set(selected);for(const id of ids){if(checked)next.add(id);else next.delete(id);}setSelection({productId,ids:next});};
   const stageHandler=(optionId:string,step:CollectionEditorTab):(()=>void)|undefined=>{
@@ -117,8 +149,13 @@ export function ProductOptionBoard({productId,sourceUrl,refreshToken,returnFocus
   let url:string|undefined;try{const parsed=new URL(sourceUrl);if(parsed.protocol==='https:'&&parsed.hostname==='detail.1688.com')url=parsed.href;}catch{/* Display text only. */}
   return <section className="option-board" data-product-id={productId} aria-busy={!data&&!error}>
     <div className="option-board-source"><strong>1688 원본 URL</strong>{url?<a href={url} target="_blank" rel="noopener noreferrer">{sourceUrl}</a>:<span>{sourceUrl||'미입력'}</span>}</div>
-    <div className="registration-table-tools"><label className="search"><input type="search" aria-label="상품 옵션 검색" placeholder="옵션명 · SKU · 색상 · 사이즈" value={query} onChange={event=>setQuery(event.target.value)}/></label><span>총 {data?.options.rows.length??0}개 옵션 · 검색 {rows.length}개 · 선택 {selected.size}개</span><button type="button" className="btn ghost" onClick={()=>onEdit()}>옵션·번들·가격 수정</button><button type="button" className="btn ghost" onClick={()=>setAttempt(value=>value+1)}>새로고침</button></div>
-    {error?<p role="alert">{error}</p>:!data?<p role="status">저장된 옵션·가격을 불러오는 중…</p>:<div className="table-wrap"><table className="option-work-table"><thead><tr><th><input type="checkbox" aria-label="현재 옵션 전체 선택" checked={rows.length>0&&rows.every(row=>selected.has(row.id))} onChange={event=>toggle(rows.map(row=>row.id),event.target.checked)}/></th><th>옵션번호</th><th>옵션명</th><th>SEO설정</th><th>가격설정</th><th>대표이미지</th>{commonStages.map(([role,label])=><th key={role}>{label}</th>)}<th>견적서</th><th>재고/가격</th><th>관리</th></tr></thead><tbody>{rows.map(row=>{
+    <div className="registration-table-tools"><label className="search"><input type="search" aria-label="상품 옵션 검색" placeholder="옵션명 · SKU · 색상 · 사이즈" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><label>Items per page <select aria-label="페이지당 옵션 수" value={pageSize} onChange={event=>{setPageSize(Number(event.target.value));setPage(0);}}>{[10,25,50,100].map(count=><option key={count} value={count}>{count}</option>)}</select></label><span>총 {data?.options.rows.length??0}개 옵션 · 검색 {rows.length}개 · 선택 {selected.size}개</span><button type="button" className="btn ghost" onClick={()=>onEdit()}>옵션·번들·가격 수정</button><button type="button" className="btn ghost" onClick={()=>setAttempt(value=>value+1)}>새로고침</button></div>
+    <div className="option-board-view-tools">
+      <details className="registration-column-picker"><summary>선택 컬럼 보기 · {displayedColumns.length}/{columns.length}</summary><div role="group" aria-label="옵션 표시할 컬럼"><button type="button" className="btn ghost" onClick={()=>setVisibleColumns(columns.map(column=>column.id))}>전체 표시</button>{columns.map(column=><label key={column.id}><input type="checkbox" aria-label={`옵션 ${column.label} 컬럼 표시`} checked={visibleColumns.includes(column.id)} onChange={event=>showColumn(column.id,event.target.checked)}/>{column.label}</label>)}</div></details>
+      <label>고정할 열 선택 <select aria-label="옵션 고정할 열 선택" value={pinnedColumn} onChange={event=>setPinnedColumn(event.target.value as ColumnId|'')}><option value="">고정 안 함</option>{displayedColumns.map(column=><option key={column.id} value={column.id}>{column.label}</option>)}</select></label>
+      <fieldset><legend>높이 고정</legend><label><input type="radio" name={`option-height-${productId}`} aria-label="옵션 높이 고정 Y" checked={fixedHeight} onChange={()=>setFixedHeight(true)}/>Y</label><label><input type="radio" name={`option-height-${productId}`} aria-label="옵션 높이 고정 N" checked={!fixedHeight} onChange={()=>setFixedHeight(false)}/>N</label></fieldset>
+    </div>
+    {error?<p role="alert">{error}</p>:!data?<p role="status">저장된 옵션·가격을 불러오는 중…</p>:<div className={`table-wrap option-board-scroll${fixedHeight?' option-board-height-fixed':''}`} tabIndex={0} aria-label="상품 옵션 작업 표"><table className="option-work-table" style={{minWidth:Math.max(280,40+displayedColumns.reduce((width,column)=>width+column.width,0))}}><colgroup><col style={{width:40}}/>{displayedColumns.map(column=><col key={column.id} style={{width:column.width}}/>)}</colgroup><thead><tr><th><input type="checkbox" aria-label="현재 옵션 전체 선택" title="현재 페이지 옵션 전체 선택" checked={pageRows.length>0&&pageRows.every(row=>selected.has(row.id))} onChange={event=>toggle(pageRows.map(row=>row.id),event.target.checked)}/></th>{displayedColumns.map(column=><th key={column.id} data-column={column.id} className={pinned(column.id)}>{column.label}</th>)}</tr></thead><tbody>{pageRows.map(row=>{
       const prices=data.quotationPrices&&Object.hasOwn(data.quotationPrices,row.id)?data.quotationPrices[row.id]:undefined;
       const priceText=(value:string)=>value.trim()===''?'미입력':/^\d+(?:\.\d+)?$/.test(value)&&Number.isFinite(Number(value))?Number(value).toLocaleString('ko-KR')+'원':value;
       const calculation=data.pricing.rows.find(item=>item.optionId===row.id);
@@ -130,15 +167,25 @@ export function ProductOptionBoard({productId,sourceUrl,refreshToken,returnFocus
       const mainIssue=effective?.imageIssues.main||selectedImages.length!==mainCount;
       const mainLabel=mainIssue&&!mainCount?'연결 확인 필요':mainCount+'장';
       const priceLabel=prices?prices.supplyPrice.trim()&&prices.salePrice.trim()?'입력됨':'미입력':calculation?.calculation?'계산값':'미입력';
-      return <tr key={row.id} data-option-id={row.id}><td><input type="checkbox" aria-label={`옵션 ${row.id} 선택`} checked={selected.has(row.id)} onChange={event=>toggle([row.id],event.target.checked)}/></td><td>{row.id}<small>{row.supplierSku||'SKU 미입력'}</small></td><td><strong>{optionQuotationName(row)||'(옵션명 공란)'}</strong><small>{row.originalName}</small><small>구성 {row.unitsPerPack}개 · 견적 {row.included?'포함':'제외'}</small></td>
-        <td>{stageButton(row.id,'SEO','SEO설정',(effective?.title??data.seoTitle)==null?'확인 필요':(effective?.title??data.seoTitle)?.trim()?'입력됨':'미입력')}</td>
-        <td>{stageButton(row.id,'가격','가격설정',priceLabel)}</td>
-        <td>{imageKey?<img src={`/api/files/${imageKey.split('/').map(encodeURIComponent).join('/')}`} alt={effective?.title||optionQuotationName(row)||'옵션 이미지'} width={64} height={64}/>:<small>{mainIssue||!effective&&row.imageKey?'이미지 연결 확인 필요':'대표 이미지 미설정'}</small>}{imageKey&&<small>{original?'수집 원본 · 대표 이미지 미설정':effective?'견적서 대표 이미지':row.imageKey?'개별 이미지':'공통 대표 이미지'}</small>}{mainIssue&&mainCount>0&&<small>{mainCount}장 · 연결 확인 필요</small>}{stageButton(row.id,'대표 이미지','대표이미지',mainLabel)}</td>
-        {commonStages.map(([role,label,step])=>{const saved=[...new Set(role!=='size'&&effective?effective[role]:data.commonAssets?.[role]??[])],count=saved.filter(key=>keys.includes(key)).length,issue=saved.length!==count||(role!=='size'&&effective?.imageIssues[role]);const unusedSize=role==='size'&&!saved.length,text=unusedSize?'미사용':issue&&!count?'연결 확인 필요':count+'장';return <td key={role}>{issue&&count>0&&<small>{count}장 · 연결 확인 필요</small>}{stageButton(row.id,unusedSize?'SEO':step,label,text)}</td>;})}
-        <td>{stageButton(row.id,'견적서','견적서','열기')}</td>
-        <td>{row.stock==null?'재고 미확인':`재고 ${row.stock.toLocaleString('ko-KR')}개`}<small>{row.unitCostCny===null?'원가 미입력':`¥${row.unitCostCny} / 개`}</small>{prices?<><small>{priceText(prices.supplyPrice)} (견적 공급가)</small><small>{priceText(prices.salePrice)} (견적 판매가)</small></>:calculation?.calculation?<><small>{calculation.calculation.supplyPrice.toLocaleString('ko-KR')}원 (공급가)</small><small>{calculation.calculation.salePrice.toLocaleString('ko-KR')}원 (판매가)</small></>:<small>{calculation?.error||'가격 미계산'}</small>}</td>
-        <td>{onManage?<button type="button" className="registration-delete" aria-label={`옵션 ${row.id} 삭제 검토`} title="옵션 삭제 검토" onClick={()=>onManage(row.id)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg></button>:<button type="button" className="btn ghost" aria-label={`옵션 ${row.id} 수정`} onClick={()=>onEdit(row.id)}>수정</button>}</td>
+      const cells={
+        id:<>{row.id}<small>{row.supplierSku||'SKU 미입력'}</small></>,
+        name:<><strong>{optionQuotationName(row)||'(옵션명 공란)'}</strong><small>{row.originalName}</small><small>구성 {row.unitsPerPack}개 · 견적 {row.included?'포함':'제외'}</small></>,
+        seo:stageButton(row.id,'SEO','SEO설정',(effective?.title??data.seoTitle)==null?'확인 필요':(effective?.title??data.seoTitle)?.trim()?'입력됨':'미입력'),
+        price:stageButton(row.id,'가격','가격설정',priceLabel),
+        main:<>{imageKey?<img src={`/api/files/${imageKey.split('/').map(encodeURIComponent).join('/')}`} alt={effective?.title||optionQuotationName(row)||'옵션 이미지'} width={64} height={64}/>:<small>{mainIssue||!effective&&row.imageKey?'이미지 연결 확인 필요':'대표 이미지 미설정'}</small>}{imageKey&&<small>{original?'수집 원본 · 대표 이미지 미설정':effective?'견적서 대표 이미지':row.imageKey?'개별 이미지':'공통 대표 이미지'}</small>}{mainIssue&&mainCount>0&&<small>{mainCount}장 · 연결 확인 필요</small>}{stageButton(row.id,'대표 이미지','대표이미지',mainLabel)}</>,
+        quotation:stageButton(row.id,'견적서','견적서','열기'),
+        stock:<>{row.stock==null?'재고 미확인':`재고 ${row.stock.toLocaleString('ko-KR')}개`}<small>{row.unitCostCny===null?'원가 미입력':`¥${row.unitCostCny} / 개`}</small>{prices?<><small>{priceText(prices.supplyPrice)} (견적 공급가)</small><small>{priceText(prices.salePrice)} (견적 판매가)</small></>:calculation?.calculation?<><small>{calculation.calculation.supplyPrice.toLocaleString('ko-KR')}원 (공급가)</small><small>{calculation.calculation.salePrice.toLocaleString('ko-KR')}원 (판매가)</small></>:<small>{calculation?.error||'가격 미계산'}</small>}</>,
+        management:onManage?<button type="button" className="registration-delete" aria-label={`옵션 ${row.id} 삭제 검토`} title="옵션 삭제 검토" onClick={()=>onManage(row.id)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg></button>:<button type="button" className="btn ghost" aria-label={`옵션 ${row.id} 수정`} onClick={()=>onEdit(row.id)}>수정</button>,
+      };
+      return <tr key={row.id} data-option-id={row.id}><td><input type="checkbox" aria-label={`옵션 ${row.id} 선택`} checked={selected.has(row.id)} onChange={event=>toggle([row.id],event.target.checked)}/></td>{displayedColumns.map(column=>{
+        const common=commonStages.find(([role])=>role===column.id);
+        let cell;
+        if(common){const [role,label,step]=common,saved=[...new Set(role!=='size'&&effective?effective[role]:data.commonAssets?.[role]??[])],count=saved.filter(key=>keys.includes(key)).length,issue=saved.length!==count||(role!=='size'&&effective?.imageIssues[role]);const unusedSize=role==='size'&&!saved.length,text=unusedSize?'미사용':issue&&!count?'연결 확인 필요':count+'장';cell=<>{issue&&count>0&&<small>{count}장 · 연결 확인 필요</small>}{stageButton(row.id,unusedSize?'SEO':step,label,text)}</>;}
+        else cell=cells[column.id as keyof typeof cells];
+        return <td key={column.id} data-column={column.id} className={pinned(column.id)}>{cell}</td>;
+      })}
       </tr>;
     })}</tbody></table>{!rows.length&&<p className="collection-empty">{data.options.rows.length?'검색 결과가 없습니다.':'저장된 옵션이 없습니다.'}</p>}</div>}
+    <nav className="registration-pagination" aria-label="상품 옵션 페이지 이동"><button type="button" aria-label="상품 옵션 이전 페이지" disabled={!data||page===0} onClick={()=>setPage(page-1)}>이전</button><span>{page+1} / {pageCount} · {rows.length?`${page*pageSize+1}–${Math.min((page+1)*pageSize,rows.length)}`:'0'} / {rows.length}개</span><button type="button" aria-label="상품 옵션 다음 페이지" disabled={!data||page>=pageCount-1} onClick={()=>setPage(page+1)}>다음</button></nav>
   </section>;
 }
