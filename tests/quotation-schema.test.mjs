@@ -53,7 +53,7 @@ test('completed translation flows through saved SEO, labels and options into the
  input.content=contentModel.applyContentPatch(input.content,plan.patch,time);
  input.options=optionModel.applyOptionRows(input.options,plan.rows,time);
  const resolved=model.resolveQuotationFields(input),fields=resolved.rows.find(row=>row.optionId==='red').fields;
- assert.equal(fields.title.value,'번역 수납바구니');assert.equal(fields.noticeNameModel.value,'번역 수납바구니');
+ assert.equal(fields.title.value,'번역 수납바구니, 빨강 세트');assert.equal(fields.noticeNameModel.value,'번역 수납바구니');
  assert.equal(fields.noticeMaterial.value,'면');assert.equal(fields.color.value,'빨강');
  assert.equal(input.options.rows[0].translatedName,'빨강 세트');assert.equal(fields.supplyPrice.value,'2000');
  assert.match(fields.searchTags.value,/수납/);assert.equal(input.content.seo.description.value,'한국어 상세 설명');
@@ -61,7 +61,7 @@ test('completed translation flows through saved SEO, labels and options into the
  assert.equal(fields.kcCertificationNumber.value,'해당사항없음');
  const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));
  const exported=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets)[0];
- assert.equal(exported.title,'번역 수납바구니');assert.equal(exported.skuName,'빨강 세트');
+ assert.equal(exported.title,'번역 수납바구니, 빨강 세트');assert.equal(exported.skuName,'빨강 세트');
  assert.equal(exported.noticeMaterial,'면');assert.equal(exported.color,'빨강');assert.equal(exported.supplyPrice,2000);
  assert.equal(exported.detailHtml,'');assert.equal(exported.altText,'');
  const label=load('app/quotation-label-plan.ts').quotationLabelPlan(resolved,'red');
@@ -118,7 +118,7 @@ test('all recorded categories expose input links for automatic values and retain
  for(const categoryId of categories){
   const input=fixture();input.categoryId=categoryId;const before=JSON.stringify(input);
   const result=model.resolveQuotationFields(input),row=result.rows[1];
-  assert.equal(row.fields.title.value,'번역된 가방',categoryId);assert.equal(row.fields.brand.value,'입력 브랜드',categoryId);
+  assert.equal(row.fields.title.value,'번역된 가방, 빨강',categoryId);assert.equal(row.fields.brand.value,'입력 브랜드',categoryId);
   assert.equal(row.fields.mainImage.value,'owner/option.png',categoryId);assert.equal(row.fields.detailImages.value,'owner/detail.png',categoryId);
   assert.equal(row.fields.boxSkuQuantity.value,'50',categoryId);assert.equal(row.fields.searchTags.value,'가방, 대용량',categoryId);
   for(const field of result.schema.fields){
@@ -137,7 +137,7 @@ test('single translation content save reaches quotation and export while retaini
  const plan=load('app/translation-batch-adoption.ts').translationBatchAdoption(input.content,job,'v');
  input.content=contentModel.applyContentPatch(input.content,plan.input.patch,'now');
  let result=model.resolveQuotationFields(input);
- assert.equal(result.rows[1].fields.title.value,'한번에 작성한 상품명');
+ assert.equal(result.rows[1].fields.title.value,'한번에 작성한 상품명, 빨강');
  assert.equal(result.rows[1].fields.noticeMaterial.value,'면');
  const rows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,result,JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`})));
  assert.equal(rows[0].noticeMaterial,'면');
@@ -448,7 +448,7 @@ test('observed Couplus defaults fill only 80719 missing fields and preserve sour
  assert.equal(row.fields.lidIncluded.value,'');assert.equal(row.fields.lidIncluded.source,'couplus-default');
  assert.equal(row.fields.quantity.value,'1');assert.equal(row.fields.noticeMaterial.value,'면');
  input.content.label.countryOfOrigin.value='중국';input.content.seo.title.value='수정 상품명';input.content.assets.detail.value=['owner/detail.png'];
- row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.noticeCountryOfOrigin.value,'중국');assert.equal(row.fields.title.value,'수정 상품명');assert.equal(row.fields.detailImages.value,'owner/detail.png');
+ row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.noticeCountryOfOrigin.value,'중국');assert.equal(row.fields.title.value,'수정 상품명, 빨강');assert.equal(row.fields.detailImages.value,'owner/detail.png');
  input.overrides={common:{taxType:'면세',handlingReason:''},options:{red:{taxType:'영세'}}};row=model.resolveQuotationFields(input).rows[1];
  assert.equal(row.fields.taxType.value,'영세');assert.equal(row.fields.handlingReason.value,'');assert.equal(row.fields.handlingReason.source,'manual-common');
  input.categoryId='unknown';input.overrides=undefined;row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.taxType.value,'');assert.equal(row.fields.kcMarkType.value,'');
@@ -530,7 +530,7 @@ test('observed screenshot schema has five sections, all 80719 attributes and kee
 test('resolver connects saved SEO/settings/options/images and computes option-specific prices without rounding regression', () => {
   const result = model.resolveQuotationFields(fixture());
   assert.equal(result.rows.length, 2); assert.equal(result.rows[0].optionId, null); assert.equal(result.rows[0].included, false);
-  const row = result.rows[1]; assert.equal(row.included, true); assert.equal(row.fields.title.value, '번역된 가방'); assert.equal(row.fields.title.source, 'content');
+  const row = result.rows[1]; assert.equal(row.included, true); assert.equal(row.fields.title.value, '번역된 가방, 빨강'); assert.equal(row.fields.title.source, 'content');
   assert.equal(row.fields.manufacturer.value, '실제 제조사'); assert.equal(row.fields.brand.value, '입력 브랜드'); assert.equal(row.fields.brand.needsReview, true);
   assert.equal(row.fields.supplyPrice.value, '2000'); assert.equal(row.fields.supplyPrice.source, 'pricing');
   assert.equal(result.rows[0].fields.supplyPrice.value, '111');
@@ -705,7 +705,7 @@ test('77442 uses officially cross-checked board fields without copying saved pro
  const row=model.resolveQuotationFields(input).rows[1];
  for(const id of ['board_magnetic','packagedWeightG','packagedDimensionsMm','taxType'])assert.equal(row.fields[id].value,'');
  assert.equal(row.fields.noticePermission.value,'해당사항없음');assert.equal(row.fields.noticePermission.source,'couplus-default');
- assert.equal(row.fields.title.value,'번역된 가방');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
+ assert.equal(row.fields.title.value,'번역된 가방, 빨강');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
  input.overrides={common:{board_magnetic:'자석부착가능',noticePermission:'확인된 증빙'},options:{}};
  assert.equal(model.resolveQuotationFields(input).rows[1].fields.board_magnetic.value,'자석부착가능');
  assert.equal(model.getQuotationSchema('80719').fields.some(f=>f.id.startsWith('board_')),false);
@@ -766,7 +766,7 @@ test('deliberately cleared SEO title remains empty in quotation, alt text and bo
  input.overrides={common:{title:'견적 전용 이름'},options:{}};
  assert.equal(model.resolveQuotationFields(input).rows[1].fields.title.value,'견적 전용 이름');
  input.content=contentModel.emptyProductContent('p1');delete input.overrides;
- assert.equal(model.resolveQuotationFields(input).rows[1].fields.title.value,input.product.title);
+ assert.equal(model.resolveQuotationFields(input).rows[1].fields.title.value,input.product.title+', 빨강');
 });
 
 test('saved components and release month flow into category quotations and Excel while manual clears win',()=>{
@@ -885,7 +885,7 @@ test('64497 links saved content and preserves blanks without copying another sel
  let row=model.resolveQuotationFields(input).rows[1];
  assert.equal(row.fields.noticePermission.value,'해당사항없음');assert.equal(row.fields.noticePermission.source,'couplus-default');assert.ok(row.fields.noticePermission.reviewMessages.some(i=>i.includes('실제 상품')));
  for(const id of ['tooth_cupMaterial','kcMarkType','packagedWeightG','packagedDimensionsMm','shelfLifeDays'])assert.equal(row.fields[id].value,'');
- assert.equal(row.fields.title.value,'번역된 가방');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
+ assert.equal(row.fields.title.value,'번역된 가방, 빨강');assert.equal(row.fields.mainImage.value,'owner/option.png');assert.equal(row.fields.quantity.value,'1');
  input.content=contentModel.applyContentPatch(input.content,{label:{certification:'확인된 허가 자료'}},'now');
  row=model.resolveQuotationFields(input).rows[1];assert.equal(row.fields.noticePermission.value,'확인된 허가 자료');assert.equal(row.fields.noticePermission.source,'content');
  input.overrides={common:{noticePermission:'공통 확인값'},options:{red:{noticePermission:''}}};
@@ -1454,10 +1454,10 @@ for(const record of categoryEvidence.records){
   input.content=contentModel.applyContentPatch(input.content,{seo:{title:'검토 상품',keywords:['확인키워드'],description:'확인 설명'},label:{material:'확인 재질',countryOfOrigin:'중국',components:'본품 1개',releaseDate:'2026-09',qualityAssurance:'확인 보증',contact:'확인 연락처'},assets:{additional:['owner/additional.png'],label:['owner/option.png']}},'now');
   input.options.rows[0].color='검정';input.options.rows[0].size='Free';const snapshot=JSON.stringify(input);
   const resolved=model.resolveQuotationFields(input),row=resolved.rows.find(r=>r.optionId==='red');
-  for(const [key,value] of Object.entries({title:'검토 상품',searchTags:'확인키워드',color:'검정',quantity:'1',mainImage:'owner/option.png',additionalImages:'owner/additional.png',labelImages:'owner/option.png',noticeMaterial:'확인 재질',noticeCountryOfOrigin:'중국',noticeComponents:'본품 1개',noticeReleaseDate:'2026-09',noticeQualityAssurance:'확인 보증',noticeServiceContact:'확인 연락처'}))assert.equal(row.fields[key]?.value,value,key);
+  for(const [key,value] of Object.entries({title:'검토 상품, 빨강',searchTags:'확인키워드',color:'검정',quantity:'1',mainImage:'owner/option.png',additionalImages:'owner/additional.png',labelImages:'owner/option.png',noticeMaterial:'확인 재질',noticeCountryOfOrigin:'중국',noticeComponents:'본품 1개',noticeReleaseDate:'2026-09',noticeQualityAssurance:'확인 보증',noticeServiceContact:'확인 연락처'}))assert.equal(row.fields[key]?.value,value,key);
   assert.ok(Number(row.fields.supplyPrice.value)>0);assert.ok(Number(row.fields.salePrice.value)>0);
   const assets=JSON.parse(input.product.image_keys).map((key,index)=>({key,name:`assets/${index}.png`}));const rows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets);
-  assert.equal(rows.length,1);assert.equal(rows[0].title,'검토 상품');assert.equal(rows[0].noticeMaterial,'확인 재질');assert.equal(rows[0].mainImage,'1.png');assert.equal(rows[0].labelImages,'1.png');assert.equal(JSON.stringify(input),snapshot);
+  assert.equal(rows.length,1);assert.equal(rows[0].title,'검토 상품, 빨강');assert.equal(rows[0].noticeMaterial,'확인 재질');assert.equal(rows[0].mainImage,'1.png');assert.equal(rows[0].labelImages,'1.png');assert.equal(JSON.stringify(input),snapshot);
   input.overrides={common:{noticeMaterial:'공통 재질',title:'견적 이름'},options:{red:{noticeMaterial:''}}};let changed=model.resolveQuotationFields(input);assert.equal(changed.rows[1].fields.noticeMaterial.value,'');assert.equal(changed.rows[1].fields.title.value,'견적 이름');
   input.overrides=model.emptyQuotationOverrides();input.content=contentModel.applyContentPatch(input.content,{label:{material:''}},'later');changed=model.resolveQuotationFields(input);assert.equal(changed.rows[1].fields.noticeMaterial.value,'');assert.equal(changed.rows[1].fields.noticeMaterial.source,'content');
  });
@@ -1574,7 +1574,7 @@ test('all observed categories carry saved stages into quotation without leaking 
   input.content.assets.additional.value=['owner/add.png'];input.content.assets.label.value=['owner/label.png'];
   input.content.label.contact.value='고객지원 02-123-4567';
   const before=JSON.stringify(input),resolved=model.resolveQuotationFields(input),row=resolved.rows.find(r=>r.optionId==='red');
-  const expected={title:'번역된 가방',searchTags:'가방, 대용량',model:'A-100',manufacturer:'실제 제조사',brand:'입력 브랜드',mainImage:'owner/option.png',additionalImages:'owner/add.png',labelImages:'owner/label.png',detailImages:'owner/detail.png',boxSkuQuantity:'50'};
+  const expected={title:'번역된 가방, 빨강',searchTags:'가방, 대용량',model:'A-100',manufacturer:'실제 제조사',brand:'입력 브랜드',mainImage:'owner/option.png',additionalImages:'owner/add.png',labelImages:'owner/label.png',detailImages:'owner/detail.png',boxSkuQuantity:'50'};
   for(const [key,value] of Object.entries(expected))assert.equal(row.fields[key].value,value,`${categoryId}:${key}`);
   for(const key of ['supplyPrice','salePrice','msrp'])assert.equal(row.fields[key].value,'2000',categoryId+':'+key);
   assert.match(row.fields.detailHtml.value,/&lt;script&gt;/,categoryId);assert.ok(!row.fields.detailHtml.value.includes('<script>'),categoryId);
@@ -1872,7 +1872,7 @@ test('captured hidden-attribute switch gates translated suggestions, keeps expos
   input.content.categoryAttributes={categoryId:'80719',jobId:'j',hiddenAttributes,values:[{name:'바구니 형태',value:'사각형'},{name:'색상',value:'파랑'}],...(binding?{bindings:[{fieldId:field.id,fieldSignature:JSON.stringify(field),value:'원형'}]}:{})};
   let fields=model.resolveQuotationFields(input).rows.find(r=>r.optionId==='red').fields;
   assert.equal(fields.basketShape.value,hiddenAttributes===false?'':binding?'원형':'사각형');
-  assert.equal(fields.color.value,'파랑');assert.equal(fields.title.value,'번역된 가방');
+  assert.equal(fields.color.value,'파랑');assert.equal(fields.title.value,'번역된 가방, 빨강');
   input.overrides={common:{basketShape:'다각형'},options:{red:{basketShape:'원형'}}};
   fields=model.resolveQuotationFields(input).rows.find(r=>r.optionId==='red').fields;
   assert.equal(fields.basketShape.value,'원형');assert.equal(fields.basketShape.source,'manual-option');

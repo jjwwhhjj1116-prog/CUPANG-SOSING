@@ -24,6 +24,7 @@ import { quotationPackagingBasisIssues, validateQuotationPackagingBasis, type Qu
 import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-descriptors';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
+import { quotationOptionTitle } from '@/app/quotation-option-title';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -466,7 +467,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
     const titleSource = content.seo.title.provenance === 'manual' || content.seo.title.value ? 'content' as const : 'product' as const;
     const pricing = option ? prices.find(row => row.optionId === option.id) : null;
     switch (id) {
-      case 'title': return { value: title, source: titleSource };
+      case 'title': return { value: quotationOptionTitle(title, option), source: titleSource };
       case 'category': return literal(schema.categoryId ? `${schema.categoryPath.join(' > ')}${schema.categoryPath.length ? ' ' : ''}(${schema.categoryId})` : '', 'schema');
       // A fresh Couplus 80719 draft leaves this blank even after SEO completes.
       // The form's instruction to enter a name is not an automatic default.

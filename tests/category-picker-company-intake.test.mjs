@@ -65,7 +65,8 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
   assert.equal(draft.completed,true,draft.message);
   const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(created.productId).payload);
   const view=await json(await h.route(`/api/products/${created.productId}/quotation-fields`));
-  assert.equal(view.categoryContext.profileId,selected.id);assert.ok(view.resolved.rows.every(row=>row.fields.title.value===content.seo.title.value));
+  assert.equal(view.categoryContext.profileId,selected.id);const savedOptions=(await json(await h.route(`/api/products/${created.productId}/options`))).options;
+  for(const row of view.resolved.rows){const option=savedOptions.rows.find(option=>option.id===row.optionId);assert.equal(row.fields.title.value,option?.translatedName?content.seo.title.value+', '+option.translatedName:content.seo.title.value);}
   const source=await h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',created.productId,null);
   assert.equal(source.profile.id,selected.id);assert.deepEqual(plain(source.profile.template),currentConnection.template);assert.deepEqual(plain(source.profile.mappings),currentConnection.mappings);
   assert.equal(existingWork(),originalWork);assert.deepEqual(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id),before);

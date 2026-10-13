@@ -223,7 +223,7 @@ test('real preview/export pipeline fills mapped CSV, includes option assets and 
   assert.equal(response.status, 200); const review = await response.json();
   assert.match(review.fingerprint, /^[a-f0-9]{64}$/); assert.equal(review.report.optionRevision, 1); assert.equal(review.report.rowCount, 2);
   assert.equal(review.report.submissionReady, false); assert.equal(review.rows[0][2], 10); assert.equal(review.rows[1][2], 30);
-  assert.equal(review.rows[0][0],"'=SUM(1,1)");
+  assert.equal(review.rows[0][0],"'=SUM(1,1), 첫 번째");
   assert.ok(review.report.warnings.some(message=>message.includes('2개 셀에 작은따옴표')));
   const unmappedAutomatic=review.report.mappingCoverage.find(field=>field.fieldId==='altText');
   assert.equal(unmappedAutomatic.required,false);assert.equal(unmappedAutomatic.manualOptions.length,0);
@@ -233,7 +233,7 @@ test('real preview/export pipeline fills mapped CSV, includes option assets and 
   assert.equal(exported.status, 200); assert.equal(exported.headers.get('content-type'), 'application/zip'); assert.equal(exported.headers.get('cache-control'), 'no-store');
   const files = unzipSync(new Uint8Array(await exported.arrayBuffer()));
   const csv = new TextDecoder().decode(files[quotationName(files,'csv')]);
-  assert.ok(csv.includes('"\'=SUM(1,1)"')); assert.ok(csv.includes('"첫 번째","10","image-001.png"'));
+  assert.ok(csv.includes('"\'=SUM(1,1)"')); assert.ok(csv.includes('"\'=SUM(1,1), 첫 번째"')); assert.ok(csv.includes('"첫 번째","10","image-001.png"'));
   assert.ok(!csv.includes('제외됨')); assert.deepEqual(files['assets/image-001.png'], png);
   const exportedOptions = JSON.parse(new TextDecoder().decode(files['options.json']));
   assert.equal(exportedOptions.rows.length, 3); assert.equal(exportedOptions.rows[0].provenance.originalName, 'manual');
@@ -534,12 +534,12 @@ test('all recorded category schemas preserve edited fields through actual XLSX e
   const fields={schemaVersion:1,productId:'test',revision:1,updatedAt:null,overrides:{common:{[field.id]:value},options:{second:{title:'',[field.id]:''}}}};
   const route=routeWith({readProfile:async()=>selected,readContent:async()=>savedContent,readFields:async()=>fields,get:async path=>{const data=path===key?bytes:png;return{size:data.length,arrayBuffer:async()=>data.slice().buffer};}});
   const response=await route.POST(request(preview),context);assert.equal(response.status,200,categoryId+': '+await response.clone().text());const review=await response.json();
-  assert.deepEqual(review.rows,[['수정 상품 '+categoryId,'첫 번째',value],['','第二','']],categoryId);
+  assert.deepEqual(review.rows,[['수정 상품 '+categoryId+', 첫 번째','첫 번째',value],['','第二','']],categoryId);
   const output=await route.POST(request({...preview,action:'export',fingerprint:review.fingerprint}),context);assert.equal(output.status,200,categoryId+' export');
   const files=unzipSync(new Uint8Array(await output.arrayBuffer())),workbook=unzipSync(files[quotationName(files,'xlsx')]);
   const sheet=new TextDecoder().decode(workbook['xl/worksheets/sheet1.xml']);
   const escape=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
-  for(const [cell,expected] of [['A2','수정 상품 '+categoryId],['B2','첫 번째'],['C2',value],['A3',''],['B3','第二'],['C3','']]){
+  for(const [cell,expected] of [['A2','수정 상품 '+categoryId+', 첫 번째'],['B2','첫 번째'],['C2',value],['A3',''],['B3','第二'],['C3','']]){
    assert.ok(sheet.includes(`<c r="${cell}" t="inlineStr"><is><t xml:space="preserve">${escape(expected)}</t>`),categoryId+'/'+cell);
   }
   const doc=JSON.parse(new TextDecoder().decode(files['quotation-fields.json']));

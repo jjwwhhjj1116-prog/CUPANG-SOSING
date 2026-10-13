@@ -116,7 +116,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    assert.ok(rows.every(option=>option.imageKey===null),'intake source images are not selected option representatives');
    for(const role of ['main','additional','detail'])assert.deepEqual(content.assets[role].value,[],`intake keeps stage ${role} pending`);
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
-   let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,expectedTitle);assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
+   let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,expectedTitle+', 검정 옵션');assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
    for(const field of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[field].value,'',`unselected originals stay out of quotation ${field}`);
    assert.equal(content.detailDescriptionLinked,true);
    assert.equal(row.fields.detailHtml.value,'<p>검토용 설명</p>','new URL draft follows its saved SEO explanation until stage five is saved');assert.equal(row.fields.altText.value,'','fresh alternate text stays blank');
@@ -134,7 +134,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.equal(savedContent.status,200,await savedContent.clone().text());
     view=await (await qr.GET(new Request(qu),qc)).json();
     const stageRow=view.resolved.rows.find(r=>r.optionId==='collected-1');
-    for(const [field,value] of Object.entries({title:'1단계 수정 상품명',searchTags:'1단계 검색어',noticeMaterial:'6단계 재질',noticeCountryOfOrigin:'중국',additionalImages:[keys[2],keys[1]].join('\n'),detailImages:[keys[3],keys[4],keys[5]].join('\n'),labelImages:keys[6],detailHtml:'<p>수정 설명 &amp; 줄바꿈<br>둘째 줄</p>'}))assert.equal(stageRow.fields[field].value,value,'source-stage edit '+field);
+    for(const [field,value] of Object.entries({title:'1단계 수정 상품명, 검정 옵션',searchTags:'1단계 검색어',noticeMaterial:'6단계 재질',noticeCountryOfOrigin:'중국',additionalImages:[keys[2],keys[1]].join('\n'),detailImages:[keys[3],keys[4],keys[5]].join('\n'),labelImages:keys[6],detailHtml:'<p>수정 설명 &amp; 줄바꿈<br>둘째 줄</p>'}))assert.equal(stageRow.fields[field].value,value,'source-stage edit '+field);
    }
    const edit=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'35000'},...(automatic==='fresh'?[{fieldKey:'title',optionId:null,value:'검토 완료 상품명'},{fieldKey:'searchTags',optionId:null,value:'검토 검색어'},{fieldKey:'additionalImages',optionId:'collected-1',value:''},{fieldKey:'detailHtml',optionId:null,value:'<p>직접 수정한 상세 설명</p>'},{fieldKey:'noticeMaterial',optionId:null,value:'검토 재질'},{fieldKey:'packagedWeightG',optionId:'collected-1',value:'420'},{fieldKey:'packagedDimensionsMm',optionId:'collected-1',value:'100*200*300'}]:[])]})}),qc);assert.equal(edit.status,200);
    assert.match(await run(),/저장된 SEO·옵션값/);assert.equal(generations,expectedGenerations);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,expectedGenerations);
@@ -318,7 +318,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
   const afterContent=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload),afterOptions=JSON.parse(sqlite.prepare('SELECT payload FROM product_options').get().payload);
   assert.equal(afterContent.seo.title.value,'저장 브랜드 한국어 수납 상품');assert.equal(afterContent.label.productName.value,'저장 브랜드 한국어 수납 상품');assert.equal(afterContent.labelProductNameLinked,true);
   assert.deepEqual(afterContent.seo.keywords.value,['추천 검색어']);assert.equal(afterContent.intakeKeywordSeed,undefined);assert.equal(afterOptions.rows[0].translatedName,'검정 옵션');assert.equal(afterOptions.rows[0].color,'검정');
-  const afterQuote=await (await quoteRoute.GET(new Request(quoteUrl),quoteContext)).json();assert.equal(optionRow(afterQuote).fields.title.value,'저장 브랜드 한국어 수납 상품');assert.equal(optionRow(afterQuote).fields.salePrice.value,'35000');assert.equal(optionRow(afterQuote).fields.mainImage.value,'');
+  const afterQuote=await (await quoteRoute.GET(new Request(quoteUrl),quoteContext)).json();assert.equal(optionRow(afterQuote).fields.title.value,'저장 브랜드 한국어 수납 상품, 검정 옵션');assert.equal(optionRow(afterQuote).fields.salePrice.value,'35000');assert.equal(optionRow(afterQuote).fields.mainImage.value,'');
   assert.equal((await apply({action:'apply',fingerprint:preview.fingerprint})).status,409);assert.equal(network.length,before+1);
  }finally{sqlite.close();}
 });

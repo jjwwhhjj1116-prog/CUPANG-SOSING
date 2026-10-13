@@ -41,6 +41,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const [forkPreview,setForkPreviewState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;preview:IntakeNewDraftPreview;requestId:string;pending:boolean;created?:IntakeNewDraftCreated}|null>(null);
   const [pendingPreview,setPendingPreviewState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;preview:PendingIntakeSourcePreview;pending:boolean}|null>(null);
   const [sourceUrlsCandidate,setSourceUrlsCandidateState]=useState<{rowId:string;inputKey:string;ownerId:string|undefined;candidate:IntakeNewDraftSourceUrlsAvailable['candidate']}|null>(null);
+  const [ownerGeneration,setOwnerGeneration]=useState(0),ownerEpoch=useRef(0);
   const forkPreviewRef=useRef<typeof forkPreview>(null),pendingPreviewRef=useRef<typeof pendingPreview>(null),sourceUrlsCandidateRef=useRef<typeof sourceUrlsCandidate>(null);
   function setForkPreview(value:typeof forkPreview){forkPreviewRef.current=value;setForkPreviewState(value);}
   function setPendingPreview(value:typeof pendingPreview|((previous:typeof pendingPreview)=>typeof pendingPreview)){const next=typeof value==='function'?value(pendingPreviewRef.current):value;pendingPreviewRef.current=next;setPendingPreviewState(next);}
@@ -50,7 +51,9 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const forkRunning=useRef<AbortController|null>(null),forkOwner=useRef(workspaceOwnerId);
   const navigation = useRef({rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings});
   useLayoutEffect(()=>{navigation.current={rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings};},[rows,jobs,onOpenProduct,workspaceOwnerId,goal,settings]);
-  useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;forkPreviewRef.current=null;pendingPreviewRef.current=null;sourceUrlsCandidateRef.current=null;setForkPreviewState(null);setPendingPreviewState(null);setSourceUrlsCandidateState(null);const controller=forkRunning.current;if(!controller)return;forkRunning.current=null;controller.abort();if(running.current===controller){running.current=null;setBusy(false);onBusy(false);}},[workspaceOwnerId,onBusy]);
+  useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;ownerEpoch.current++;setOwnerGeneration(ownerEpoch.current);forkPreviewRef.current=null;pendingPreviewRef.current=null;sourceUrlsCandidateRef.current=null;setForkPreviewState(null);setPendingPreviewState(null);setSourceUrlsCandidateState(null);const controller=running.current;forkRunning.current=null;if(!controller)return;running.current=null;controller.abort();setBusy(false);onBusy(false);},[workspaceOwnerId,onBusy]);
+  const sameOwner=()=>forkOwner.current===workspaceOwnerId&&navigation.current.workspaceOwnerId===workspaceOwnerId&&ownerEpoch.current===ownerGeneration;
+  const ownerCurrent=()=>sourceMounted.current&&sameOwner();
   const focusRow = useRef<string | null>(null);
   const urlInputs = useRef(new Map<string, HTMLInputElement>());
   useEffect(() => {
@@ -80,36 +83,36 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   const pending = selected.length;
   const visiblePending = visible.filter(row => row.status !== 'saved');
   function toggle(ids: string[], checked: boolean) {
-    if (running.current) return;
+    if (!ownerCurrent()||running.current) return;
     setExcluded(previous => checked ? previous.filter(id => !ids.includes(id)) : [...new Set([...previous, ...ids])]);
   }
   function edit(id: string, patch: Partial<IntakeRow>) {
-    if (running.current) return;
+    if (!ownerCurrent()||running.current) return;
     if(forkPreview?.rowId===id)setForkPreview(null);
     if(pendingPreview?.rowId===id)setPendingPreview(null);
     if(sourceUrlsCandidate?.rowId===id)setSourceUrlsCandidate(null);
-    const update=(previous:IntakeRow[])=>previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft' as const, message: '', productId: undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined } : row);
+    const update=(previous:IntakeRow[])=>sameOwner()?previous.map(row => row.id === id ? { ...row, ...patch, status: 'draft' as const, message: '', productId: undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined } : row):previous;
     navigation.current.rows=update(navigation.current.rows);
     onRows(update);
   }
   function removeRow(id:string){
-    if(running.current)return;
+    if(!ownerCurrent()||running.current)return;
     if(forkPreview?.rowId===id)setForkPreview(null);
     if(pendingPreview?.rowId===id)setPendingPreview(null);
     if(sourceUrlsCandidate?.rowId===id)setSourceUrlsCandidate(null);
-    const update=(previous:IntakeRow[])=>previous.filter(row=>row.id!==id);
+    const update=(previous:IntakeRow[])=>sameOwner()?previous.filter(row=>row.id!==id):previous;
     navigation.current.rows=update(navigation.current.rows);onRows(update);
   }
   async function openSavedProduct(rowId:string,id:string) {
     const current=navigation.current,row=current.rows.find(value=>value.id===rowId);
-    if(!sourceMounted.current||reloadOwnerRef.current!==workspaceOwnerId||running.current||!current.onOpenProduct||!row||intakeProductId(row,current.jobs)!==id)return;
+    if(!ownerCurrent()||reloadOwnerRef.current!==workspaceOwnerId||running.current||!current.onOpenProduct||!row||intakeProductId(row,current.jobs)!==id)return;
     const controller=new AbortController();running.current=controller;setBusy(true);onBusy(true);setError('');
     try { await current.onOpenProduct(id,controller.signal); }
     catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:'저장된 상품을 열지 못했습니다. 다시 시도해주세요.');}
     finally { finish(controller); }
   }
   async function reloadSettings() {
-    if(!sourceMounted.current||reloadOwnerRef.current!==workspaceOwnerId||running.current)return;
+    if(!ownerCurrent()||reloadOwnerRef.current!==workspaceOwnerId||running.current)return;
     const controller=new AbortController();running.current=controller;setBusy(true);onBusy(true);setError('');setSettingsMessage('');
     try {
       const epoch=onSettingsReloadStarted?.();
@@ -128,28 +131,29 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     finally { finish(controller); }
   }
   async function submit() {
-    if (running.current || !pending || settingsChanged) return;
+    const current=navigation.current;
+    if (!ownerCurrent()||current.rows!==rows||current.settings!==settings||current.goal!==goal||running.current || !pending || settingsChanged) return;
     const controller = new AbortController(); running.current = controller; setBusy(true); onBusy(true); setError('');
     const productIds = new Map<string,string>();
     const completed = new Set<string>();
-    const active=()=>running.current===controller&&!controller.signal.aborted;
+    const active=()=>ownerCurrent()&&running.current===controller&&!controller.signal.aborted;
     const publishJobs=(values:CollectionJob[])=>{if(active())onJobs(values);};
     try {
       await submitIntakeQueue(rows, goal, { signal: controller.signal, fetcher: fetch, expectedSettings:settings, onSettingsChanged:()=>{if(active()){setSettingsChanged(true);setSettingsMessage('');}}, selectedIds: new Set(selected.map(row => row.id)),
         collect: (job,onProgress,onProduct) => collectIntakeProduct(job,{signal:controller.signal,fetcher:fetch,captureFromBrowser:capture1688FromChrome,onJob:updated=>{if(!active())return;publishJobs([updated]);if(updated.product_id)onProduct(updated.product_id);},onProgress}),
-        onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row));}, onJobs:publishJobs });
+        onRow: (id, patch) => {if(!active())return;if(patch.productId)productIds.set(id,patch.productId);if(patch.status==='saved')completed.add(id);onRows(previous => sameOwner()?previous.map(row => row.id === id ? { ...row, ...patch } : row):previous);}, onJobs:publishJobs });
       // Open a confirmed single source draft after import and draft processing.
       // A saved Google failure may require manual translation; failed imports
       // and uncertain saves remain in the editable queue.
       const single=selected.length===1?selected[0]:undefined;
       const productId=single&&completed.has(single.id)?productIds.get(single.id):undefined;
       if(productId&&onOpenProduct&&active())await onOpenProduct(productId,controller.signal);
-    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
+    } catch (cause) { if (active()) setError(cause instanceof Error ? cause.message : '입력 내용을 확인해주세요.'); }
     finally { finish(controller); }
   }
   async function inspectNewDraft(rowId:string){
     const current=navigation.current,row=current.rows.find(value=>value.id===rowId);
-    if(!sourceMounted.current||running.current||!row?.forkJobId||current.workspaceOwnerId!==workspaceOwnerId||settingsChanged)return;
+    if(!ownerCurrent()||running.current||!row?.forkJobId||current.workspaceOwnerId!==workspaceOwnerId||settingsChanged)return;
     const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');setForkPreview(null);setSourceUrlsCandidate(null);
     const inputKey=intakeNewDraftInputKey(row,current.goal,current.settings),ownerId=current.workspaceOwnerId;
     try{
@@ -182,7 +186,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   }
   async function inspectPendingSource(rowId:string){
     const current=navigation.current,row=current.rows.find(value=>value.id===rowId);
-    if(!sourceMounted.current||running.current||!row?.pendingJobId||current.workspaceOwnerId!==workspaceOwnerId||settingsChanged)return;
+    if(!ownerCurrent()||running.current||!row?.pendingJobId||current.workspaceOwnerId!==workspaceOwnerId||settingsChanged)return;
     const controller=new AbortController();running.current=controller;forkRunning.current=controller;setBusy(true);onBusy(true);setError('');setForkPreview(null);setPendingPreview(null);
     try{
       const inputKey=intakeNewDraftInputKey({...row,forkJobId:row.pendingJobId},current.goal,current.settings),ownerId=current.workspaceOwnerId;

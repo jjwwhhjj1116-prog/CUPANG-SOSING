@@ -107,7 +107,7 @@ for (const company of companies) test(`Google two-request intake persists exact 
     for (const row of view.resolved.rows.filter(row => row.optionId)) {
       const option = options.rows.find(option => option.id === row.optionId);
       const expected = option.unitCostCny === 3.6 ? ['4260', '7100', '9230'] : ['4930', '8220', '10690'];
-      assert.equal(row.fields.title.value, generatedTitle); assert.equal(row.fields.brand.value, company.companyName);
+      assert.equal(row.fields.title.value, `${generatedTitle}, ${option.translatedName}`); assert.equal(row.fields.brand.value, company.companyName);
       assert.equal(row.fields.brand.source, 'settings'); assert.equal(row.fields.mainImage.value, option.imageKey);
       assert.equal(row.fields.additionalImages.value, content.assets.additional.value.join('\n'));
       assert.equal(row.fields.detailImages.value, content.assets.detail.value.join('\n'));

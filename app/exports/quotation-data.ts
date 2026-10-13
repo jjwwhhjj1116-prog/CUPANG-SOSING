@@ -5,6 +5,7 @@ import type { ProductRecord } from '@/db/queries';
 import { calculatePrice } from '@/app/pricing';
 import { optionSourceCostCny, optionQuotationName, quotationMainImageKeys, resolveOptionPricePolicy, type ProductOption } from '@/app/product-options';
 import type { BundleAsset } from '@/app/exports/review-bundle';
+import { quotationOptionTitle } from '@/app/quotation-option-title';
 
 export type QuotationOption = {
   provenance?: Partial<Pick<ProductOption['provenance'], 'translatedName'>>;
@@ -15,6 +16,7 @@ export type QuotationRowData = QuotationRowValues;
 
 /** Values are read from saved records; absent legal/product facts remain blank. */
 export function quotationData(product: ProductRecord, content: ProductContent, settings: WorkspaceSettings, options: QuotationOption[], assets: BundleAsset[]) {
+  const title=savedTextOrFallback(content.seo.title,product.title);
   const filename = (key: string | null | undefined) => {
     if (!key) return '';
     const asset = assets.find(asset => asset.key === key);
@@ -22,7 +24,7 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
     return asset.name;
   };
   const base: QuotationRowData = {
-    title: savedTextOrFallback(content.seo.title, product.title), sourceUrl: product.source_url,
+    title, sourceUrl: product.source_url,
     brand: settings.brand, manufacturer: savedTextOrFallback(content.label.manufacturer, settings.manufacturer),
     importer: savedTextOrFallback(content.label.importer, settings.importer), serviceContact: savedTextOrFallback(content.label.contact, settings.serviceContact),
     boxQuantity: settings.boxSkuQuantity, material: content.label.material.value,
@@ -39,7 +41,7 @@ export function quotationData(product: ProductRecord, content: ProductContent, s
     if (option.unitCostCny === null) throw new Error('포함 옵션의 원가와 구성 수량을 확인해주세요.');
     const sourcePriceCny = optionSourceCostCny(option.unitCostCny, option.unitsPerPack);
     const price = calculatePrice(option.unitCostCny, policy, option.unitsPerPack);
-    return { ...base, skuName: optionQuotationName(option), skuId: option.supplierSku,
+    return { ...base, title:quotationOptionTitle(title,option),skuName: optionQuotationName(option), skuId: option.supplierSku,
       sourcePriceCny, supplyPrice: price.supplyPrice, salePrice: price.salePrice, msrp: price.msrp,
       mainImage: filename(quotationMainImageKeys(option, content.assets.main.value)[0]),
     };

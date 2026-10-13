@@ -10,7 +10,7 @@ import { quotationImageKeys } from '@/app/quotation-image-targets';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 
 type Props = { productId: string; optionId: string | null; version: string; profileId?: string; refreshToken?: string; disabled?: boolean; onSaved?: () => void;
-  onTranslate?: (key: string, role: 'label', language: 'zh' | 'en', target: FreeImageQuotationRequest) => void };
+  onTranslate?: (key: string, role: 'label', language: 'zh' | 'en', target: FreeImageQuotationRequest, intent?: 'manual') => void };
 type Preview = { scope: string; sourceKey: string; signature: string; view: ProductLabelsView; url: string; rendered: { blob: Blob; width: number; height: number } };
 const unchanged = (before: ProductLabelsView, after: ProductLabelsView) => before.productId === after.productId && before.revision === after.revision && before.inputFingerprint === after.inputFingerprint && before.productVersion === after.productVersion;
 
@@ -198,7 +198,7 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
     const controller=begin();if(!controller)return;try{const value=await saveProductLabelReferences(input,previous.value,choices,scopedFetch(controller));if(!current()||controller.signal.aborted)return;store(value);draft(null);setUncertain(false);setNotice('최종 라벨 연결을 저장했습니다. 제외한 파일과 생성 기록은 보관됩니다.');onSaved?.();}
     catch(cause){if(current()&&!controller.signal.aborted){setUncertain(cause instanceof ProductLabelReferenceSaveError&&cause.uncertain);setError(cause instanceof Error?cause.message:'최종 라벨 저장 실패');}}finally{finish(controller);}}
   const caption=optionId===null?'상품 공통':'선택 옵션',pool=base?.value.view.imageKeys??[],url=(key:string)=>`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
-  function translateSelected(key:string,slotIndex:number,language:'zh'|'en'){
+  function translateSelected(key:string,slotIndex:number,language:'zh'|'en',intent?:'manual'){
     const previous=liveSaved.current,controls=liveControls.current;
     if(!controls.onTranslate||optionId===null||!previous||previous.scope!==scope||previous.sourceKey!==sourceKey||previous.value.view.productVersion!==version
       ||!current()||controls.disabled||request.current||uncertain||liveDraft.current.scope===scope&&liveDraft.current.keys!==null||!previous.value.view.imageKeys.includes(key)||controls.beforeSave&&!controls.beforeSave())return;
@@ -206,8 +206,10 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
       const quotation=previous.value.quotation,target=exactPrimaryQuotationTarget(quotation.resolved.schema.fields,'labelImages'),rows=quotation.resolved.rows.filter(row=>row.optionId===optionId),value=rows[0]?.fields[target.primary]?.value;
       if(rows.length!==1||typeof value!=='string'||target.fields.some(field=>field.readOnly)||quotationImageKeys(value)[slotIndex]!==key
         ||target.linked.some(id=>rows[0].fields[id]?.value!==value)||JSON.stringify(quotationImageKeys(value))!==JSON.stringify(previous.value.keys))return;
-      controls.onTranslate(key,'label',language,{kind:'quotation',profileId:profileId??null,optionId,input:'labelImages',fieldKey:target.primary,slotIndex,
-        revision:quotation.revision,inputFingerprint:quotation.inputFingerprint,optionRevision:quotation.optionRevision,value});
+      const binding:FreeImageQuotationRequest={kind:'quotation',profileId:profileId??null,optionId,input:'labelImages',fieldKey:target.primary,slotIndex,
+        revision:quotation.revision,inputFingerprint:quotation.inputFingerprint,optionRevision:quotation.optionRevision,value};
+      if(intent==='manual')controls.onTranslate(key,'label',language,binding,'manual');
+      else controls.onTranslate(key,'label',language,binding);
     }catch(cause){setError(cause instanceof Error?cause.message:'번역할 최종 라벨 연결을 확인해주세요.');}
   }
   return <section className="panel-stack" aria-label={`${caption} 최종 라벨 연결`} data-quotation-source-step="표시사항" data-workspace-dirty={dirty} data-workspace-saving={busy}>
@@ -218,7 +220,7 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
       {pool.includes(key)&&<a className="btn ghost" aria-label={`최종 라벨 ${index+1} 이미지 다운로드`} href={url(key)} download={key.split('/').at(-1)}>이미지 다운로드</a>}
       {optionId!==null&&onTranslate&&<><button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 중국어 한국어 번역`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'zh')}>중국어 → 한국어</button>
         <button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 영어 한국어 번역`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'en')}>영어 → 한국어</button>
-        <button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 문구 영역 편집`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'zh')}>문구·영역 편집</button></>}
+        <button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 문구 영역 편집`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'zh','manual')}>문구·영역 편집</button></>}
       <button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 견적에서 제외`} disabled={locked||uncertain} onClick={()=>edit(latestKeys().filter(value=>value!==key))}>견적에서 제외</button></figure>)}</div>
     {base&&!selected.length&&<p>이 범위의 최종 라벨은 공란입니다. 공통 라벨을 자동으로 다시 선택하지 않습니다.</p>}
     {base&&<><label className="field"><span>전체 교체할 저장 이미지</span><select aria-label="최종 라벨 전체 교체 이미지" value={replacement} disabled={locked||uncertain} onChange={event=>{if(!current()||locked||request.current||uncertain)return;liveReplacement.current=event.target.value;setReplacement(event.target.value);}}><option value="">파일 선택</option>{pool.map((key,index)=><option key={key} value={key}>이미지 {index+1} · {key.split('/').at(-1)}</option>)}</select></label>

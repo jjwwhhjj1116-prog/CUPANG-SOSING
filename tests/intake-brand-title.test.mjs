@@ -85,7 +85,7 @@ test('API review binds the brand to the exact captured intake and rejects a chan
   '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},
   '@/db/queries':{findProduct:async()=>({id:'p',updated_at:version,image_keys:'[]',source_url:'https://detail.1688.com/offer/813724060928.html'})},
   '@/db/product-content':{readProductContent:async()=>content},'@/db/product-options':{readProductOptions:async()=>options},
-  '@/db/translation-jobs':{getTranslationJob:async()=>job},
+  '@/db/translation-jobs':{getTranslationJob:async()=>job,findIntakeTranslation:async()=>null}, // Independent manual review, not a canonical intake job.
   '@/db/translation-category-source':{readTranslationCategorySource:async()=>({offerId:'813724060928',snapshot:{linked:true,payload:JSON.stringify({settings:captured})}})},
   '@/db/quotation-attribute-rules':{getAttributeRules:async()=>null},
   '@/db/translation-adoption':{saveIntegratedTranslation:async(_owner,next)=>{saves++;assert.equal(next.seo.title.value,'와이홉 우드 패턴 선글라스');return true;}},
@@ -105,7 +105,7 @@ test('API leaves missing and explicitly empty intake brands blank without readin
    '@/app/chatgpt-auth':{getWorkspaceOwnerId:async()=>'owner'},
    '@/db/queries':{findProduct:async()=>({id:'p',updated_at:version,image_keys:'[]',source_url:'https://detail.1688.com/offer/813724060928.html'}),getSettings:async()=>{throw Error('Must not substitute later workspace settings');}},
    '@/db/product-content':{readProductContent:async()=>content},'@/db/product-options':{readProductOptions:async()=>options},
-   '@/db/translation-jobs':{getTranslationJob:async()=>job},
+   '@/db/translation-jobs':{getTranslationJob:async()=>job,findIntakeTranslation:async()=>null}, // Independent manual review, not a canonical intake job.
    '@/db/translation-category-source':{readTranslationCategorySource:async()=>({offerId:'813724060928',snapshot})},
    '@/db/quotation-attribute-rules':{getAttributeRules:async()=>null},'@/db/translation-adoption':{saveIntegratedTranslation:async()=>{throw Error('Preview must not save');}},
   })('app/api/products/[id]/translation-apply/route.ts');
@@ -122,11 +122,11 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
   await h.load('db/queries.ts').saveSettings('owner',JSON.stringify({...h.settings,brand:'수집 후 계정 브랜드'}));
   await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
-  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload),original=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload);
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload),original=JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_results').get().payload),options=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload);
   assert.equal(product.title,original.title);assert.equal(h.aiSources[0].title,original.title);assert.equal(h.aiSources.length,1);
   assert.equal(content.seo.title.value,generated);assert.equal(content.label.productName.value,generated);
   let view=await json(await h.route(base+'/quotation-fields'));assert.equal(view.resolved.rows.length,7);
-  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,generated);assert.equal(row.fields.brand.value,company.companyName);assert.equal(row.fields.noticeNameModel.value,generated);assert.equal(row.fields.model.value,'');}
+  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,row.optionId?generated+', '+options.rows.find(option=>option.id===row.optionId).translatedName:generated);assert.equal(row.fields.brand.value,company.companyName);assert.equal(row.fields.noticeNameModel.value,generated);assert.equal(row.fields.model.value,'');}
   const listed=await json(await h.load('app/api/products/route.ts').GET());assert.equal(listed.products[0].content_summary.seoTitle,generated);
   const detail=()=>h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test'+base),{params:Promise.resolve({id:product.id})});
   let workspace=await json(await detail());assert.deepEqual(workspace.product.content_summary,listed.products[0].content_summary);assert.equal(workspace.product.title,original.title);
@@ -134,7 +134,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:reviewed}}}}));
   const requests=h.network.length;await h.intake();assert.equal(h.aiSources.length,1);assert.equal(h.network.length,requests);
   view=await json(await h.route(base+'/quotation-fields'));
-  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,reviewed);assert.equal(row.fields.noticeNameModel.value,reviewed);assert.equal(row.fields.brand.value,company.companyName);}
+  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,row.optionId?reviewed+', '+options.rows.find(option=>option.id===row.optionId).translatedName:reviewed);assert.equal(row.fields.noticeNameModel.value,reviewed);assert.equal(row.fields.brand.value,company.companyName);}
   workspace=await json(await detail());assert.equal(workspace.product.content_summary.seoTitle,reviewed);assert.equal(workspace.product.title,original.title);
   const fields=['skuId','categoryId','sourceUrl','title','brand','noticeNameModel'],workbook=quotationWorkbook(fields);
   const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
@@ -145,7 +145,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const reader=h.load('app/xlsx-template.ts'),archive=await reader.readXlsxArchive(await downloaded.arrayBuffer());
   for(let index=0;index<6;index++){
    const cells=reader.xlsxHeaders(reader.inspectXlsxArchive(archive),'견적서',index+2);
-   assert.equal(cells[1],'80719');assert.equal(cells[2],h.sourceUrl);assert.equal(cells[3],reviewed);assert.equal(cells[4],company.companyName);assert.equal(cells[5],reviewed);
+   assert.equal(cells[1],'80719');assert.equal(cells[2],h.sourceUrl);assert.equal(cells[3],reviewed+', '+options.rows.filter(option=>option.included)[index].translatedName);assert.equal(cells[4],company.companyName);assert.equal(cells[5],reviewed);
   }
   assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
   const current=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);

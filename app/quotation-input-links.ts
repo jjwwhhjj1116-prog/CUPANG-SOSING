@@ -3,7 +3,7 @@ import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-no
 
 // Exact resolver bindings only. A category name is never an input mapping.
 const links: Readonly<Record<string, string>> = {
-  title: '1단계 SEO 상품명 → 수집 상품명', altText: '7단계 대체 텍스트 · 신규 초안은 공란',
+  title: '1단계 SEO 상품명 → 수집 상품명 · 옵션 한국어명 있으면 쉼표 뒤 연결', altText: '7단계 대체 텍스트 · 신규 초안은 공란',
   category: '상품추가에서 선택한 카테고리', searchTags: '1단계 SEO 검색어',
   supplyPrice: '2단계 옵션 공급가', salePrice: '2단계 옵션 판매가', msrp: '2단계 옵션 권장소비자가격',
   brand: '기본설정 브랜드', manufacturer: '6단계 제조사 → 기본설정 제조사',

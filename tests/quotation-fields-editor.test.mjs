@@ -1117,7 +1117,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   let content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'1단계에서 직접 검토한 상품명',keywords:['직접 태그']},label:{model:'확인한 모델'}}}}));
   let view=await json(await h.route(base+'/quotation-fields'));
-  assert.equal(view.automatic.rows[1].fields.title.value,'1단계에서 직접 검토한 상품명');
+  assert.equal(view.automatic.rows[1].fields.title.value,'1단계에서 직접 검토한 상품명, 유광 검정 / 선글라스');
   const changes=[change('title',company.companyName+' 최종 견적서 상품명'),change('manufacturer',''),change('brand','이 옵션의 검토 브랜드','collected-1'),change('lidIncluded','','collected-1')];
   const {confirmQuotationFieldsSave}=load('app/quotation-fields-confirmation.ts');
   const saved=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}}));
@@ -1129,7 +1129,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   view=await json(await h.route(base+'/quotation-fields'));
   assert.equal(JSON.stringify(view.overrides),overridesBefore);
   for(const row of view.resolved.rows){assert.equal(row.fields.title.value,company.companyName+' 최종 견적서 상품명');assert.equal(row.fields.manufacturer.value,'');assert.equal(row.fields.manufacturer.source,'manual-common');}
-  assert.equal(view.automatic.rows[1].fields.title.value,'나중에 수정한 SEO 상품명');assert.equal(view.automatic.rows[1].fields.manufacturer.value,'나중에 확인한 제조사');
+  assert.equal(view.automatic.rows[1].fields.title.value,'나중에 수정한 SEO 상품명, 유광 검정 / 선글라스');assert.equal(view.automatic.rows[1].fields.manufacturer.value,'나중에 확인한 제조사');
   assert.equal(view.resolved.rows[1].fields.brand.value,'이 옵션의 검토 브랜드');assert.equal(view.resolved.rows[2].fields.brand.value,h.settings.brand,'unmodified options keep this product captured registration settings');
   assert.equal(view.resolved.rows[1].fields.lidIncluded.value,'');assert.equal(view.resolved.rows[1].fields.lidIncluded.source,'manual-option');
   assert.deepEqual(view.categoryContext.categoryPath,h.context.category.categoryPath);assert.equal(view.categoryContext.categoryId,'80719');

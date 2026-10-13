@@ -106,7 +106,7 @@ for(const company of schemaCompanies)test(`stage content and final wire cells re
   let view=await read();const schema=view.resolved.schema,option=view.resolved.rows.find(row=>row.optionId!==null),osrp=at(schema,'productPage.commonAttributes.osrp');
   assert.equal(view.resolved.rows.filter(row=>row.optionId!==null).length,6);
   assert.equal(option.fields.model.value,'6-STAGE-MODEL');assert.equal(option.fields.manufacturer.value,'6단계 수정 제조사');
-  assert.equal(option.fields.title.value,'1단계 수정 상품명');assert.equal(option.fields.searchTags.value,'검토 검색어');
+  assert.equal(option.fields.title.value,'1단계 수정 상품명, 유광 검정 / 선글라스');assert.equal(option.fields.searchTags.value,'검토 검색어');
   assert.equal(option.fields.tradeType.value,local.settings.tradeType);assert.equal(option.fields.boxSkuQuantity.value,String(local.settings.boxSkuQuantity));
   assert.equal(option.fields.packagedWeightG.value,'420');assert.equal(option.fields.packagedDimensionsMm.value,'100*200*300');
   assert.equal(option.fields.mainImage.value,images[4]);assert.equal(option.fields.additionalImages.value,images.slice(1,3).join('\n'));assert.equal(option.fields.detailImages.value,images[3]);
@@ -124,7 +124,7 @@ for(const company of schemaCompanies)test(`stage content and final wire cells re
   const assets=images.map((key,index)=>({key,name:'images/'+index+'.png',bytes:new Uint8Array([1]),contentType:'image/png'}));
   const output=local.load('app/exports/quotation-fields.ts').resolvedQuotationRows(source,resolved,assets);
   const keys=['title','model','supplyPrice','salePrice','msrp',osrp.id,'mainImage','additionalImages','detailImages','packagedWeightG','packagedDimensionsMm','detailHtml'];
-  const expected=['1단계 수정 상품명','',17920,29870,38830,'','4.png','','3.png',420,'100*200*300','<p>'+description+'</p>'];
+  const expected=['1단계 수정 상품명, 유광 검정 / 선글라스','',17920,29870,38830,'','4.png','','3.png',420,'100*200*300','<p>'+description+'</p>'];
   assert.deepEqual(JSON.parse(JSON.stringify(keys.map(key=>output[0][key]))),expected);
   const bytes=new TextEncoder().encode(keys.join(',')+'\n').buffer,sha256=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex');
   const profile={...f.profile,template:{name:'synthetic-stage-inputs.csv',format:'csv',sheetName:'',headerRow:1,headers:keys,sha256},mappings:keys.map((field,column)=>({field,column,required:false}))};
