@@ -35,9 +35,10 @@ test('package byte review binds category, product and generated fingerprint befo
 test('package preview displays byte errors and editing uses its resolved category profile',()=>{
  const review={...inspectSubmission(resolved(),[]),productId:'p',inputFingerprint:'a'.repeat(64)};
  const preview={fingerprint:review.inputFingerprint,filename:`YOOFAM-${review.inputFingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],submissionReview:review,report:{profileId:'resolved-profile',rowCount:1,warnings:[]}};
- let index=0,inspectProps;const states=[preview,false,'',''];
+ let index=0,refIndex=0,inspectProps;const states=[preview,false,'',''];
  const {SubmissionPackage}=load('app/components/submission-package.tsx',{
-  react:{useState:initial=>[index<states.length?states[index++]:initial,()=>{}],useEffect:()=>{},useRef:()=>({current:null})},
+  // The preview setter stores the same object in state and its action ref.
+  react:{useState:initial=>[index<states.length?states[index++]:initial,()=>{}],useEffect:()=>{},useRef:initial=>({current:refIndex++===0?preview:initial})},
   '@/app/components/legal-documents-editor':{LegalDocumentsEditor:()=>null},
   '@/app/components/historical-supplier-hub-result':{HistoricalSupplierHubResult:()=>null},
   '@/app/components/quotation-review-issues':{QuotationReviewIssues:props=>{inspectProps=props;return createElement('p',null,props.issues.map(issue=>issue.message).join(' / '));}},
@@ -182,7 +183,7 @@ function renderPanel(products,results=[]) {
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
     '@/app/components/submission-package':{SubmissionPackage:()=>null},
     '@/app/components/quotation-review-issues':load('app/components/quotation-review-issues.tsx',{react:nativeRequire('react')}),
-    react:{useState:()=>[states[index++],()=>{}],useEffect:()=>{}},
+    react:{useState:()=>[states[index++],()=>{}],useEffect:()=>{},useMemo:fn=>fn(),useRef:initial=>({current:initial}),useLayoutEffect:fn=>fn()},
   });
   return renderToStaticMarkup(createElement(SubmissionReviewPanel,{products,profiles:[],onEdit:()=>{}}));
 }
@@ -190,7 +191,7 @@ function renderPanel(products,results=[]) {
 test('review panel keeps successful but wrong-product responses out of its report state',async()=>{
  for(const valid of [true,false]){
   const slots=[],effects=[];let cursor=0;
-  const hooks={useState(initial){const i=cursor++;slots[i]??=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useEffect(fn){effects.push(fn);}};
+  const hooks={useState(initial){const i=cursor++;slots[i]??=initial;return[slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useEffect(fn){effects.push(fn);},useMemo:fn=>fn(),useRef:initial=>({current:initial}),useLayoutEffect:fn=>fn()};
   const report={...inspectSubmission(resolved(),[]),productId:valid?'p':'other',requestedProfileId:null,title:'상품',sourceUrl:'https://example.com/item',checkedAt:'2026-09-25T00:00:00.000Z',fingerprint:'a'.repeat(64)};
   const {SubmissionReviewPanel}=load('app/components/submission-review-panel.tsx',{
    '@/app/components/submission-package':{SubmissionPackage:()=>null},
@@ -302,11 +303,12 @@ test('review field navigation refuses another category even when option and fiel
  assert.equal(JSON.stringify(source),before);
 });
 test('review navigation selects the exact option and field without changing saved data',()=>{
- const source=resolved();source.rows.push({...structuredClone(source.rows[0]),optionId:null,optionLabel:'공통'});
+ const source=resolved();source.rows.push({...structuredClone(source.rows[0]),optionId:null,optionLabel:'공통',included:false});
  const before=JSON.stringify(source);
  const destination=resolveQuotationNavigation(source,{optionId:'red',fieldId:'material'});
  assert.equal(destination.ok,true);assert.equal(destination.optionId,'red');assert.equal(destination.section,'product');assert.equal(destination.fieldId,'material');
- assert.equal(resolveQuotationNavigation(source,{optionId:null,fieldId:'title'}).optionId,null);
+ const common=resolveQuotationNavigation(source,{optionId:null,fieldId:'title'});
+ assert.equal(common.optionId,null);assert.doesNotMatch(common.message,/제외된 옵션/);
  assert.equal(JSON.stringify(source),before);
 });
 test('stale review navigation does not fall back to common or another field',()=>{

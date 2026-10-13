@@ -22,6 +22,7 @@ import { quotationPriceDisplayField, quotationPriceEditChanges, quotationPriceEd
 import { quotationPriceTargets } from '@/app/quotation-price-targets';
 import { quotationRequiredSummary } from '@/app/quotation-required-summary';
 import { confirmQuotationFieldsSave, quotationFieldsSaveNeedsReadback } from '@/app/quotation-fields-confirmation';
+import { quotationModelSuggestionState } from '@/app/quotation-model-suggestion';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -569,6 +570,10 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         const restoredWeight = ownManual && quotationPackagedWeightPeer(view.resolved.schema.fields, field.id)
           ? resolveQuotationEditorCell(view, updateQuotationEditorDraft(view.overrides, changes, { fieldKey: field.id, optionId: selectedOption, value: null }), selectedOption, field.id) : null;
         const editable = !field.readOnly; const imageKeys = imageValues(cell.value);
+        const modelState = quotationModelSuggestionState(view.resolved.schema, field.id,
+          (key, optionId = selectedOption) => resolveQuotationEditorCell(view, changes, optionId, key),
+          { optionId: selectedOption, optionIds: view.resolved.rows.filter(item => item.included).map(item => item.optionId) });
+        const modelSuggestion = modelState.suggestion;
         const inputProps = { id, value: cell.value, readOnly: !editable, 'aria-invalid': quotationEditorValidation(field, cell, view.imageKeys).length > 0, 'aria-describedby': `${id}-notes`, onChange: (event: { target: { value: string } }) => edit(field.id, event.target.value) };
         const group = quotationFieldGroup(field, schema?.fields);
         const heading = group && (fieldIndex === 0 || quotationFieldGroup(sectionFields[fieldIndex - 1], schema?.fields) !== group) ? <h5 key={`group-${field.id}`} className="quotation-field-group">{group}</h5> : null;
@@ -578,10 +583,28 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           {field.type === 'select' && editable ? <QuotationChoiceInput field={field} cell={cell} id={id} disabled={busy || loading} invalid={inputProps['aria-invalid']} onChange={value => edit(field.id, value)}/>
             : field.type === 'textarea' || field.type === 'images' ? <textarea {...inputProps} rows={field.type === 'images' ? 2 : 3} placeholder={field.type === 'images' ? '아래에서 이 상품의 이미지 파일을 선택하세요.' : '확인한 내용을 입력하세요.'} />
               : <input {...inputProps} type="text" inputMode={field.type === 'number' ? 'decimal' : 'text'} placeholder={field.readOnly ? '' : hasCouplusEmptyAttributeDefault(field, cell) ? '해당사항없음' : '확인한 내용을 입력하세요.'} />}
+          {modelSuggestion && <div className="quotation-field-auto">
+            <small>출처: 현재 {selectedOption === null ? '공통' : '옵션'} 견적 상품명 · {sourceLabels[modelSuggestion.source] ?? modelSuggestion.source}</small>
+            <p>상품명: {modelSuggestion.sourceTitle}</p><p>제안 모델명: {modelSuggestion.value}{modelSuggestion.shortened && ' · 앞 50자 이내'}</p>
+            {modelSuggestion.peer && <p>공식 견적 {modelSuggestion.peer.label} · 현재 {modelSuggestion.peer.before || '(공란)'} ({sourceLabels[modelSuggestion.peer.source] ?? modelSuggestion.peer.source}) → {modelSuggestion.peer.changed ? `같은 제안값으로 함께 입력: ${modelSuggestion.value}` : '이미 같은 값 · 기존 입력 유지'}</p>}
+            <button type="button" className="quotation-field-text-button" disabled={busy || loading || conflicts.length > 0} onClick={() => {
+              if (busy || loading || conflicts.length || activeWrite.current) return;
+              setChanges(previous => {
+                const suggestion = quotationModelSuggestionState(view.resolved.schema, field.id,
+                  (key, optionId = selectedOption) => resolveQuotationEditorCell(view, previous, optionId, key),
+                  { optionId: selectedOption, optionIds: view.resolved.rows.filter(item => item.included).map(item => item.optionId) }).suggestion;
+                return suggestion ? suggestion.changes.reduce((draft, change) => updateQuotationEditorDraft(view.overrides, draft,
+                  { ...change, optionId: selectedOption }), previous) : previous;
+              });
+              setApplyAll(false); setBulk(null); setMessage('');
+            }}>상품명으로 모델명 입력</button>
+            <small>별도 모델명이 없는 상품일 때만 확인하고 적용하세요. 현재 편집 범위의 견적 초안에만 반영하며 다른 옵션 일괄 적용 선택은 해제합니다. 견적 입력 저장을 눌러 확정합니다.</small>
+          </div>}
+          {modelState.reason && <p className="quotation-field-help">{modelState.reason}</p>}
           {field.type === 'images' && <><div className="quotation-fields-image-list">{view.imageKeys.map((key, index) => <button className="quotation-fields-image-choice" key={key} type="button" disabled={!editable} aria-pressed={imageKeys.includes(key)} aria-label={`이미지 ${index + 1} ${imageKeys.includes(key) ? '연결 해제' : '연결'}`} onClick={() => edit(field.id, (imageKeys.includes(key) ? imageKeys.filter(item => item !== key) : field.maxItems === 1 ? [key] : [...imageKeys, key]).join('\n'))}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} loading="lazy" /><span>이미지 {index + 1}</span>{imageKeys.includes(key) && <b>{imageKeys.indexOf(key) + 1}</b>}</button>)}</div>{imageKeys.length > 0 && <div className="quotation-fields-image-selected">{imageKeys.map((key, index) => <div key={key}><span>{index + 1}. {view.imageKeys.includes(key) ? `이미지 ${view.imageKeys.indexOf(key) + 1}` : `연결 확인: ${key}`}</span><button type="button" disabled={!editable || index === 0} aria-label={`${index + 1}번 이미지 앞으로`} onClick={() => { const next = [...imageKeys]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; edit(field.id, next.join('\n')); }}>↑</button><button type="button" disabled={!editable || index === imageKeys.length - 1} aria-label={`${index + 1}번 이미지 뒤로`} onClick={() => { const next = [...imageKeys]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; edit(field.id, next.join('\n')); }}>↓</button><button type="button" disabled={!editable} onClick={() => edit(field.id, imageKeys.filter(item => item !== key).join('\n'))}>제외</button></div>)}</div>}</>}
-          <div id={`${id}-notes`}>{'help' in field && field.help ? <p className="quotation-field-help">{String(field.help)}</p> : null}{priceMismatch.map(item => <p key={item.alias.id} className="quotation-field-issue">이전 요약 가격 {quotationFieldDisplay(item.alias, item.cell, '(공란)')}과 Supplier Hub 가격이 다릅니다. 저장값은 유지했습니다. 이 금액을 직접 입력하면 두 항목에 함께 반영합니다.</p>)}{issues.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>
+          <div id={`${id}-notes`}>{modelSuggestion ? <p className="quotation-field-help">별도 모델명이 있으면 해당 값을 입력하세요. 모델명이 없는 상품에 한해 위 상품명과 제안값을 확인한 뒤 직접 적용할 수 있습니다.</p> : 'help' in field && field.help ? <p className="quotation-field-help">{String(field.help)}</p> : null}{priceMismatch.map(item => <p key={item.alias.id} className="quotation-field-issue">이전 요약 가격 {quotationFieldDisplay(item.alias, item.cell, '(공란)')}과 Supplier Hub 가격이 다릅니다. 저장값은 유지했습니다. 이 금액을 직접 입력하면 두 항목에 함께 반영합니다.</p>)}{issues.map(issue => <p key={issue} className="quotation-field-issue">{issue}</p>)}</div>
           {ownManual && <div className="quotation-field-auto">{restoredWeight ? `수정 해제 후 ${sourceLabels[restoredWeight.source]}: ${quotationFieldDisplay(field, restoredWeight, '(미입력)')}` : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? `수정 해제 후 공통값: ${quotationFieldDisplay(field, {value:draftManual(view, changes, null, field.id)!,source:'manual-common'})}` : `자동값 (${sourceLabels[automatic?.source ?? 'empty'] ?? '저장 자료'}): ${quotationFieldDisplay(field, automatic ?? {value:'',source:'empty'}, '(미입력)')}`}</div>}
           <div className="quotation-field-footer"><div>{editable && ownManual && <button type="button" className="quotation-field-text-button" onClick={() => edit(field.id, null)}>{restoredWeight ? restoredWeight.source.startsWith('manual-') ? '수정 해제 · 연결값 사용' : '수정 해제 · 자동값 복원' : selectedOption !== null && draftManual(view, changes, null, field.id) !== null ? '수정 해제 · 공통값 사용' : '수정 해제 · 자동값 복원'}</button>}{linkedWeight ? <small>연결된 포장 무게의 {weightManual.source === 'manual-option' ? '옵션' : '공통'} 입력값을 따릅니다.</small> : inheritedManual && <small>공통값을 따릅니다. 여기서 입력하면 이 옵션만 바뀝니다.</small>}{field.minLength !== undefined && field.minLength > 0 && <small> 최소 {field.minLength}자</small>}{field.maxLength !== undefined && <small> {quotationValueLength(field, cell.value)}/{field.maxLength}자</small>}</div>{editable && optionCount > 0 && <label className="quotation-field-select-copy"><input type="checkbox" checked={selectedFields.includes(field.id)} onChange={event => { setSelectedFields(previous => event.target.checked ? [...previous, field.id] : previous.filter(key => key !== field.id)); setBulk(null); }} />다른 옵션에 적용</label>}</div>
         </div>];

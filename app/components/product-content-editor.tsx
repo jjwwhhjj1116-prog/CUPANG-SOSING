@@ -297,8 +297,16 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     if (!loaded || busy || loading || conflict || imageProcessingBusy || activeRequest.current || !imageKeys.includes(key)) return;
     action();
   }
-  function excludeDetailImage(key: string, role: 'detailTop' | 'detail' | 'detailBottom') {
+  function excludeRoleImage(key: string, role: AssetRole) {
     setDraft(previous => ({ ...previous, assets: { ...previous.assets, [role]: previous.assets[role].filter(value => value !== key) } }));
+  }
+  function selectFocusedImage(key: string, role: AssetRole) {
+    // Restoring this stage's existing selection must retain legitimate legacy
+    // sharing and other-stage drafts. Only a new role claim moves the file.
+    if (!initial.assets[role].includes(key)) { assign(key, role); return; }
+    setDraft(previous => ({ ...previous, assets: { ...previous.assets,
+      [role]: ['main', 'detailTop', 'detailBottom'].includes(role) ? [key] : [...previous.assets[role].filter(value => value !== key), key],
+    } }));
   }
 
   return <div className={seoLayout&&section==='SEO'?'panel-stack seo-common-editor':'panel-stack'} aria-busy={busy || loading} data-workspace-dirty={anyDirty} data-workspace-saving={busy}>
@@ -379,7 +387,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 편집`} disabled={disabled} onClick={()=>detailImageAction(key,()=>void openResize(key))}>편집</button>
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 위로`} disabled={disabled || role!=='detail' || position===0} onClick={()=>detailImageAction(key,()=>move(role,position,-1))}>↑</button>
               <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 아래로`} disabled={disabled || role!=='detail' || position===draft.assets[role].length-1} onClick={()=>detailImageAction(key,()=>move(role,position,1))}>↓</button>
-              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 상세에서 제외`} title="상세페이지에서 제외" disabled={disabled} onClick={()=>detailImageAction(key,()=>excludeDetailImage(key,role))}>삭제</button>
+              <button type="button" className="btn ghost" aria-label={`이미지 ${sourceIndex} 상세에서 제외`} title="상세페이지에서 제외" disabled={disabled} onClick={()=>detailImageAction(key,()=>excludeRoleImage(key,role))}>삭제</button>
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`상세페이지 순서 ${index+1}`} loading="lazy"/>
@@ -394,7 +402,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
           const index = imageKeys.indexOf(key);
           const role = (Object.keys(assetRoles) as AssetRole[]).find(value => draft.assets[value].includes(key)) ?? '';
           const position = role ? draft.assets[role].indexOf(key) : -1;
-          return <div key={key} className={`image-asset-card ${key===activePreview?'previewing':''} ${role===focusedAssetRole?'chosen':''}`}>
+          const focusedSelected = Boolean(focusedAssetRole && draft.assets[focusedAssetRole].includes(key));
+          return <div key={key} className={`image-asset-card ${key===activePreview?'previewing':''} ${focusedSelected?'chosen':''}`}>
             <button type="button" className="image-asset-preview" aria-label={`이미지 ${index + 1} 크게 보기`} onClick={() => setPreviewKey(key)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} width={200} height={180} loading="lazy"
@@ -404,7 +413,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
             </button>
             <ImageSizeNotice size={imageSizes[key]} role={role} />
             <button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 편집하기`} onClick={()=>void openResize(key)}>편집하기</button>
-            {focusedAssetRole&&<button type="button" className={`btn ${role===focusedAssetRole?'primary':'ghost'}`} aria-pressed={role===focusedAssetRole} onClick={()=>assign(key,role===focusedAssetRole?'':focusedAssetRole)}>{role===focusedAssetRole?'선택 해제':`${assetRoles[focusedAssetRole]}로 선택`}</button>}
+            {focusedAssetRole&&<button type="button" className={`btn ${focusedSelected?'primary':'ghost'}`} aria-pressed={focusedSelected} onClick={()=>focusedSelected?excludeRoleImage(key,focusedAssetRole):selectFocusedImage(key,focusedAssetRole)}>{focusedSelected?'선택 해제':`${assetRoles[focusedAssetRole]}로 선택`}</button>}
             <label className="field"><span>이미지 {index + 1} 역할</span><select aria-label={`이미지 ${index + 1} 역할`} value={role} onChange={event => assign(key, event.target.value as AssetRole | '')}><option value="">자료에서 제외</option>{Object.entries(assetRoles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
             {role && <div className="image-asset-order"><span>{assetRoles[role]} {position + 1}번째</span><div><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 앞 순서로`} disabled={position === 0} onClick={() => move(role, position, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`이미지 ${index + 1} 뒤 순서로`} disabled={position === draft.assets[role].length - 1} onClick={() => move(role, position, 1)}>↓</button></div></div>}
           </div>;
@@ -417,7 +426,7 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
           <div className="image-selected-actions">
             <button type="button" aria-label={`선택 이미지 ${index+1} 앞으로`} disabled={index===0} onClick={()=>move(focusedAssetRole,index,-1)}>←</button>
             <button type="button" aria-label={`선택 이미지 ${index+1} 뒤로`} disabled={index===draft.assets[focusedAssetRole].length-1} onClick={()=>move(focusedAssetRole,index,1)}>→</button>
-            <button type="button" aria-label={`선택 이미지 ${index+1} 제외`} onClick={()=>assign(key,'')}>×</button>
+            <button type="button" aria-label={`선택 이미지 ${index+1} 제외`} onClick={()=>excludeRoleImage(key,focusedAssetRole)}>×</button>
           </div>
         </div>)}</div>}
       </div>}
