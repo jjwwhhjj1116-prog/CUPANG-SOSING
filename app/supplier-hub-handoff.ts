@@ -38,15 +38,16 @@ export async function checkSupplierHubExtension(signal:AbortSignal,direct=false)
   if(!direct&&result.popupWindowBinding!==true)throw new Error('팝업 첨부 전 Chrome 창 확인을 지원하는 확장 0.2.45 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(result.productTransmissionHistory!==true||result.historicalReceiptLookup!==true)throw new Error('수정 전 견적서의 전체 전송 이력 확인을 지원하는 Chrome 확장 0.2.57으로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(result.exactAgreementLabels!==true)throw new Error('동의 문구 확인을 지원하는 Chrome 확장 0.2.59로 업데이트하고 앱 페이지를 새로고침해주세요.');
+  if(direct&&result.originalFileObservationCas!==true)throw new Error('파일 조회 중 최신 SKU 결과를 보존하는 Chrome 확장 0.2.64로 업데이트하고 앱 페이지를 새로고침해주세요.');
 }
-export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean;productTransmissionHistory:boolean;historicalReceiptLookup:boolean;exactAgreementLabels:boolean;publicSingleSkuCapture:boolean;companyRegistrationStatus:boolean};
+export type SupplierHubExtensionInfo={version:string;pendingReceiptRefreshRecovery:boolean;registrationObservationCas:boolean;originalFileObservationCas:boolean;productTransmissionHistory:boolean;historicalReceiptLookup:boolean;exactAgreementLabels:boolean;publicSingleSkuCapture:boolean;companyRegistrationStatus:boolean};
 /** Reports the installed manifest reply in this app tab. Does not inspect Hub,
  * create a browser tab, prepare files, or change any transmission record. */
 export async function readSupplierHubExtensionInfo(signal:AbortSignal):Promise<SupplierHubExtensionInfo>{
   const result=await exchange('PING',null,signal),version=result.version;
   if(typeof version!=='string'||version!==version.trim()||!/^(?:0|[1-9]\d{0,4})(?:\.(?:0|[1-9]\d{0,4})){1,3}$/.test(version)
     ||version.split('.').some(part=>Number(part)>65535))throw Error('설치된 Chrome 확장의 버전을 확인하지 못했습니다. 앱 페이지를 새로고침한 뒤 다시 확인해주세요.');
-  return {version,pendingReceiptRefreshRecovery:result.pendingReceiptRefreshRecovery===true,registrationObservationCas:result.registrationObservationCas===true,
+  return {version,pendingReceiptRefreshRecovery:result.pendingReceiptRefreshRecovery===true,registrationObservationCas:result.registrationObservationCas===true,originalFileObservationCas:result.originalFileObservationCas===true,
     productTransmissionHistory:result.productTransmissionHistory===true,historicalReceiptLookup:result.historicalReceiptLookup===true,exactAgreementLabels:result.exactAgreementLabels===true,publicSingleSkuCapture:result.publicSingleSkuCapture===true,companyRegistrationStatus:result.companyRegistrationStatus===true};
 }
 export async function getSupplierHubProductHistory(identity:PackageIdentity,signal:AbortSignal){
@@ -138,6 +139,7 @@ export async function getSupplierHubResult(identity:PackageIdentity,signal:Abort
     const capability=await exchange('PING',null,signal);
     if(capability.acceptedReceiptRefreshRecovery!==true)throw new Error('확인한 견적서 기록을 보존하는 Chrome 확장 0.2.42 이상으로 업데이트하고 앱 페이지를 새로고침해주세요.');
     if(capability.pendingReceiptRefreshRecovery!==true)throw new Error('원본 탭이 닫힌 견적서 검증 결과 복구를 지원하는 Chrome 확장 0.2.56으로 업데이트하고 앱 페이지를 새로고침해주세요.');
+    if(capability.originalFileObservationCas!==true)throw new Error('파일 조회 중 최신 SKU 결과를 보존하는 Chrome 확장 0.2.64로 업데이트하고 앱 페이지를 새로고침해주세요.');
   }
   const response=await exchange(refresh==='registration'?'REGISTRATION':refresh?'REFRESH':'RESULT',identity,signal);
   if(response.fingerprint!==identity.fingerprint||response.registered!==false)throw new SupplierHubResultInvalid('견적서 결과의 식별값이 일치하지 않습니다.');
@@ -180,6 +182,7 @@ export async function transmitSupplierHubPackage(blob:Blob,identity:PackageIdent
   const capability=await exchange('PING',null,signal);
   if(capability.exactAgreementLabels!==true)throw new Error('동의 문구 확인을 지원하는 Chrome 확장 0.2.59로 업데이트하고 앱 페이지를 새로고침해주세요.');
   if(reviewedAgreements.legalDocumentsRequired===true&&capability.legalDocumentAttachments!==true)throw Error('법적 서류 전송을 지원하는 Chrome 확장 0.2.38로 갱신해주세요.');
+  if(capability.originalFileObservationCas!==true)throw new Error('파일 조회 중 최신 SKU 결과를 보존하는 Chrome 확장 0.2.64로 업데이트하고 앱 페이지를 새로고침해주세요.');
   const response=await exchange('TRANSMIT',{...identity,reviewedAgreements,base64:await packageBase64(blob)},signal);
   const result=response.result as SupplierHubTransmission;
   if(response.fingerprint!==identity.fingerprint||response.registered!==false||!result||result.registered!==false

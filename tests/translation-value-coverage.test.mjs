@@ -35,7 +35,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
  let source;const queries=[];
  const h=mobileIntakeHarness({...company,translationFetcher:async url=>{
   const q=new URL(url).searchParams.get('q');queries.push(q);
-  const translated=q===source.title?'검토 선글라스':q===source.attributes[0].value?'유광 검정 선글라스':q==='材质'?'재질':q==='尺寸'?'크기':q==='宽度'?'너비':q==='长度'?'길이':q==='宽 10 cm'?'너비 20 cm':q==='长 20 cm'?'길이 10 cm':q===source.attributes[1].value?'유광 검정':q===source.attributes[3].value?'무광 검정':q;
+  const translate=text=>text===source.title?'검토 선글라스':text===source.attributes[0].value?'유광 검정 선글라스':text==='材质'?'재질':text==='尺寸'?'크기':text==='宽度'?'너비':text==='长度'?'길이':text==='宽 10 cm'?'너비 20 cm':text==='长 20 cm'?'길이 10 cm':text===source.attributes[1].value?'유광 검정':text===source.attributes[3].value?'무광 검정':text;
+  const translated=q.startsWith('[[YFTR')?q.split('\n').map(line=>{const match=/^(\[\[YFTR\d{6}\]\]) (.+)$/u.exec(line);assert.ok(match,'exact framed request');return `${match[1]} ${translate(match[2])}`;}).join('\n'):translate(q);
   return Response.json([[[translated,q]],null,'zh-CN']);
  }});
  try{
@@ -61,7 +62,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const request=body=>h.route(base+'/translation',{method:'POST',body}),prepared=await json(await request({action:'prepare',expectedVersion:version,idempotencyKey:crypto.randomUUID(),source}));
   await json(await request({action:'approve',jobId:prepared.job.id,reviewFingerprint:prepared.job.review.fingerprint,confirmPaid:true}));
   const {job}=await json(await request({action:'execute',jobId:prepared.job.id}));assert.equal(job.status,'completed');assert.equal(job.review.destination,'Google 번역');
-  assert.deepEqual(job.result.draft.attributes.map(item=>item.sourceIndex),[0,1,3,5]);assert.match(job.result.draft.warnings.join(' '),/8개 중 4개.*누락 4개/);assert.match(job.result.draft.warnings.join(' '),/같은.*원문에 없는 숫자.*2개/);
+  assert.deepEqual(job.result.draft.attributes.map(item=>item.sourceIndex),[0,1,3,5]);assert.match(job.result.draft.warnings.join(' '),/8개 중 4개.*누락 4개/);assert.match(job.result.draft.warnings.join(' '),/같은.*원문에 없는 숫자.*2개/);assert.ok(queries.some(q=>q.startsWith('[[YFTR')),'fixture exercises the deployed batch transport');
   assert.deepEqual(job.review.source,source);assert.equal(h.aiSources.length,0);assert.equal(job.result.usage,null);
   const savedJob=h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(job.id),calls=queries.length;
   const preview=await json(await h.route(base+'/translation-apply',{method:'POST',body:{action:'preview',jobId:job.id,expectedVersion:version}}));assert.deepEqual(options(h),initial);

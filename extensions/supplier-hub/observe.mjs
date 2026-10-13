@@ -123,7 +123,7 @@ export async function observeSupplierHubResult(message,sender,api=chrome,store=t
         &&previous.quotationId===result.quotationId&&previous.registration?.quotationId===result.quotationId;
       const observation={...identity,...result,company:identity.company,observedAt:Date.now(),...(keepRegistration?{registration:previous.registration}:{}),...(historicalSource?{profileId:historicalSource.profileId,historicalReceipt:true,receiptProductVersion:historicalSource.receiptProductVersion,purpose:'validation-status',recoveredAt:identity.recoveredAt??Date.now()}:{} )};
       if(readOnlyRecovery||historicalSource){if(!await store('observe',key,{expected:beforeResult,observation}))throw Error('조회 중 더 최신 전송 결과가 저장되었습니다. 기존 결과를 유지했습니다.');}
-      else await store('put',key,observation);
+      else if(!await store('file-observe',key,{expected:previous,observation}))throw Error('조회 중 더 최신 전송 결과가 저장되었습니다. 기존 결과를 유지했습니다.');
     }
     return result;
   }finally{activeTabs.delete(message.tabId);}

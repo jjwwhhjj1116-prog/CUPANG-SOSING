@@ -1,6 +1,6 @@
 import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
 import { fingerprint } from '@/app/automation/model';
-import { translationAttributeIssue,translationNumbers,invalidOptionTranslationDestination } from '@/app/translation-attribute-evidence';
+import { translationAttributeIssue,translationAttributeFactText,translationNumbers,invalidOptionTranslationDestination } from '@/app/translation-attribute-evidence';
 
 export type TranslationSource = { title: string; description: string; attributes: { name: string; value: string }[]; provenance: 'manual'; reference: string; category?: { id: string; path: string[] }; guidance?: { features: string; keywords: string } };
 export type TranslationDraft = { title: string; keywords: string[]; description: string; attributes: { sourceIndex: number; name: string; value: string }[]; warnings: string[] };
@@ -147,11 +147,10 @@ export function buildTranslationRequest(review: TranslationReview) {
     text: { format: { type: 'json_schema', name: 'korean_product_draft', strict: true, schema } } };
 }
 
-/** A returned option index with an unusable destination remains missing,
+/** Only values supported by their bound source count as returned attributes,
  * including read-only recovery of an older completed v6 result. */
 export function translationAttributeCoverage(source:TranslationSource,draft:Pick<TranslationDraft,'attributes'>){
-  const returned=new Set(draft.attributes.filter(attribute=>!source.attributes[attribute.sourceIndex]
-    ||!invalidOptionTranslationDestination(source.attributes[attribute.sourceIndex].name,attribute.value)).map(attribute=>attribute.sourceIndex));
+  const returned=new Set(draft.attributes.filter(attribute=>translationAttributeIssue(source.attributes[attribute.sourceIndex],attribute)===null).map(attribute=>attribute.sourceIndex));
   return {expected:source.attributes.length,returned:returned.size,missingSourceIndexes:source.attributes.flatMap((_,index)=>returned.has(index)?[]:[index])};
 }
 
@@ -203,9 +202,11 @@ export function validateTranslationDraft(value: unknown, source: TranslationSour
   if ((instructionsVersion === 'sourceflow-translation-v3' || instructionsVersion === 'sourceflow-translation-v4' || instructionsVersion === 'sourceflow-translation-v5' || instructionsVersion === 'sourceflow-translation-v6') && (result.keywords.some(word => word.length > QUOTATION_TAG_ITEM_LIMIT || /[\n,]/u.test(word)) || result.keywords.join(', ').length > QUOTATION_TAG_TOTAL_LIMIT)) {
     throw new TranslationError('INVALID_QUOTATION_KEYWORDS', '번역 검색어가 견적서의 전체 150자·태그별 20자 기준을 초과하거나 구분자를 포함합니다. 결과를 자동 적용하지 않았으며 자동 재요청하지 않습니다.', true);
   }
-  const sourceText = [source.title, source.description, ...source.attributes.map(attribute => `${attribute.name} ${attribute.value}`)].join(' ');
+  const sourceText = [source.title, source.description, ...source.attributes.map(translationAttributeFactText)].join(' ');
   const sourceNumbers = new Set(translationNumbers(sourceText));
-  const outputText = [title, description, ...result.keywords, ...attributes.map(attribute => attribute.value)].join(' ');
+  // v6 deliberately omits one unusable attribute while retaining valid SEO.
+  // Rejected option text cannot make that retained draft fail a second time.
+  const outputText = [title, description, ...result.keywords, ...result.attributes.map(attribute => attribute.value)].join(' ');
   for (const number of translationNumbers(outputText)) {
     if (!sourceNumbers.has(number)) throw new TranslationError('UNSUPPORTED_FACT', '원문에 없는 숫자가 번역에 포함되어 자동 채택하지 않았습니다.', true);
   }

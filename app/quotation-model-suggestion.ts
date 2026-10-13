@@ -8,6 +8,10 @@ export type QuotationModelSuggestion = {
   changes: { fieldKey: string; value: string }[];
   peer?: { fieldId: string; label: string; before: string; source: Cell['source']; changed: boolean };
 };
+export type QuotationManualModelLink = {
+  fieldId: string; value: string; source: Cell['source']; changes: { fieldKey: string; value: string }[];
+  peer: { fieldId: string; label: string; before: string; source: Cell['source'] };
+};
 const modelPath = ['productPage', 'modelNumber'], titlePath = ['startPage', 'productName'];
 const samePath = (field: QuotationField, path: readonly string[]) => JSON.stringify(field.hubWire?.path) === JSON.stringify(path);
 const bareWire = (field: QuotationField) => field.hubWire?.name === undefined && field.hubWire?.nameKey === undefined && field.hubWire?.valueKey === undefined;
@@ -94,4 +98,48 @@ export function quotationModelSuggestionState(schema: QuotationSchema, fieldId: 
 
 export function quotationModelSuggestion(schema: QuotationSchema, fieldId: string, readCell: ReadCell, scope?: QuotationModelSuggestionScope): QuotationModelSuggestion | null {
   return quotationModelSuggestionState(schema, fieldId, readCell, scope).suggestion;
+}
+
+/** A manually reviewed model is not a product-name suggestion. Offer its exact
+ * value for the recorded official peer only after showing both cells. Reading,
+ * typing and saving either cell alone continue to preserve independent edits. */
+export function quotationManualModelLinkState(schema: QuotationSchema, fieldId: string, readCell: ReadCell, scope?: QuotationModelSuggestionScope): { link: QuotationManualModelLink | null; reason: string | null } {
+  const absent = { link: null, reason: null }, blocked = (reason: string) => ({ link: null, reason });
+  if (schema.status !== 'observed' || schema.unsupportedFields?.length) return absent;
+  const field = exactField(schema.fields, 'model', modelPath, 'product');
+  if (!field || field.id !== fieldId || field.readOnly || !field.hubWire) return absent;
+  const model = readCell(field.id);
+  if (!model || !model.source.startsWith('manual-') || !model.value.trim()) return absent;
+  if (!wellFormed(model.value) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(model.value)
+    || quotationValueIssues(field, model.value).length)
+    return blocked('입력한 모델명의 규격을 먼저 확인해주세요. 공식 모델명/품번은 변경하지 않았습니다.');
+  const candidates = schema.fields.filter(item => item !== field && (item.contentField === 'model'
+    || item.section === 'product' && item.visibility === 'hidden' && item.label === '모델명/품번'));
+  if (!candidates.length) return absent;
+  const peer = candidates.length === 1 ? candidates[0] : null;
+  if (!peer || peer.section !== 'product' || peer.visibility !== 'hidden' || peer.type !== 'text' || peer.readOnly
+    || peer.contentField !== 'model' || peer.label !== '모델명/품번' || peer.numericText || peer.numericValue || peer.choices || peer.workbookWire || peer.hubInput || peer.optionDimension
+    || !samePath(peer, ['productPage', 'unexposedAttributes']) || peer.hubWire?.name !== '모델명/품번'
+    || peer.hubWire.nameKey !== 'attributeName' || peer.hubWire.valueKey !== 'attributeValue' || quotationValueIssues(peer, model.value).length)
+    return blocked('공식 견적 모델 항목의 연결·입력 규칙을 하나로 확인하지 못했습니다. 모델명과 모델명/품번을 직접 확인해주세요.');
+  if (!scope || !Array.isArray(scope.optionIds) || scope.optionIds.length > 200 || new Set(scope.optionIds).size !== scope.optionIds.length)
+    return blocked('모델명을 적용할 옵션 범위를 확인하지 못했습니다. 현재 견적 입력을 다시 확인해주세요.');
+  const peerCell = readCell(peer.id);
+  if (!peerCell) return blocked('공식 견적 모델명/품번의 현재 입력을 확인하지 못했습니다. 두 모델 항목을 직접 확인해주세요.');
+  if (peerCell.value !== model.value && peerCell.source.startsWith('manual-'))
+    return blocked('모델명/품번에 별도 직접 입력값 또는 직접 비운 값이 있습니다. 기존 값을 유지했습니다. 두 모델 항목을 직접 확인해주세요.');
+  if (scope.optionId === null) {
+    for (const optionId of scope.optionIds.filter(id => id !== null)) {
+      const optionModel = readCell(field.id, optionId), optionPeer = readCell(peer.id, optionId);
+      if (!optionModel || !optionPeer) return blocked('옵션별 모델 입력을 확인하지 못했습니다. 현재 견적 입력을 다시 확인해주세요.');
+      const afterModel = optionModel.source === 'manual-option' ? optionModel.value : model.value;
+      const afterPeer = optionPeer.source === 'manual-option' ? optionPeer.value : model.value;
+      if (afterModel !== afterPeer)
+        return blocked('옵션별 모델명 또는 모델명/품번에 별도 값·직접 공란이 있습니다. 공통 적용으로 덮지 않았습니다. 해당 옵션에서 두 모델 항목을 확인해주세요.');
+    }
+  }
+  if (peerCell.value === model.value) return absent;
+  return { link: { fieldId: field.id, value: model.value, source: model.source,
+    changes: [{ fieldKey: peer.id, value: model.value }],
+    peer: { fieldId: peer.id, label: peer.label, before: peerCell.value, source: peerCell.source } }, reason: null };
 }

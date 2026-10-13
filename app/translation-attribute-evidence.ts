@@ -12,6 +12,13 @@ export function untranslatedChineseTranslation(original:string,translated:string
 // Preserve the deployed extraction contract for decimals and code literals.
 export const translationNumbers=(value:string)=>value.match(/\d+(?:[.,]\d+)*/g)??[];
 
+const optionBinding=(name:string)=>/^option(?:-(?:color|size))?:[A-Za-z0-9_-]{1,80}$/u.test(name);
+/** Option names are local routing identities, not seller facts. A namespaced
+ * supplier attribute remains a real name even if it resembles an option ID. */
+export function translationAttributeFactText(attribute:{name:string;value:string}):string {
+  return optionBinding(attribute.name)?attribute.value:`${attribute.name} ${attribute.value}`;
+}
+
 /** Match the existing option editor's destination contract without changing
  * the received text. Ordinary supplier attributes may remain multiline. */
 export function invalidOptionTranslationDestination(sourceName:string,value:string):boolean {
@@ -27,7 +34,8 @@ export function translationAttributeIssue(source:{name:string;value:string}|unde
   if(!source)return 'invalid-source';
   if(untranslatedChineseTranslation(source.value,translated.value)
     || untranslatedChineseTranslation(source.name.replace(/^상품속성: /u,''),translated.name.replace(/^상품속성: /u,'')))return 'chinese-copy';
-  const numbers=new Set(translationNumbers(`${source.name} ${source.value}`));
-  if(translationNumbers(`${translated.name} ${translated.value}`).some(number=>!numbers.has(number)))return 'foreign-number';
+  const numbers=new Set(translationNumbers(translationAttributeFactText(source)));
+  const output=optionBinding(source.name)?translated.value:`${translated.name} ${translated.value}`;
+  if(translationNumbers(output).some(number=>!numbers.has(number)))return 'foreign-number';
   return invalidOptionTranslationDestination(source.name,translated.value)?'invalid-option-destination':null;
 }

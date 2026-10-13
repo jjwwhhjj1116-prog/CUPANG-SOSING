@@ -22,7 +22,7 @@ import { quotationPriceDisplayField, quotationPriceEditChanges, quotationPriceEd
 import { quotationPriceTargets } from '@/app/quotation-price-targets';
 import { quotationRequiredSummary } from '@/app/quotation-required-summary';
 import { confirmQuotationFieldsSave, quotationFieldsSaveNeedsReadback } from '@/app/quotation-fields-confirmation';
-import { quotationModelSuggestionState } from '@/app/quotation-model-suggestion';
+import { quotationManualModelLinkState, quotationModelSuggestionState } from '@/app/quotation-model-suggestion';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -419,6 +419,11 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const initialTarget = useRef(navigationTarget); const pendingFocus = useRef<string | null>(null);
   const requests = useRef(0); const observedRefresh = useRef(refreshToken); const prefix = useId();
   const activeWrite = useRef<AbortController | null>(null);
+  const modelActionState = useRef({ view, selectedOption, busy, loading, conflicts });
+  useEffect(() => {
+    modelActionState.current = { view, selectedOption, busy, loading, conflicts };
+    return () => { modelActionState.current = { view: null, selectedOption, busy: true, loading: true, conflicts }; };
+  }, [view, selectedOption, busy, loading, conflicts]);
   const labelBatchCache = useRef<LabelBatchCache>({ signature: null, uploaded: new Map() });
   const labelUploadCache = useRef<QuotationLabelUploadCache>({ signature: null, uploadedKey: null, rendered: null });
   const invalidateRequests = useCallback(() => { requests.current++; activeWrite.current?.abort(); activeWrite.current=null; }, []);
@@ -445,6 +450,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   }, [loading, view, active, selectedOption, prefix]);
   const refresh = useCallback(async (discard = false, afterConflict = false, labelFailure?: string) => {
     if (activeWrite.current && !afterConflict) return;
+    // Block an already captured model action before React commits loading.
+    // The refreshed view's effect releases this lock after success or failure.
+    modelActionState.current = { ...modelActionState.current, loading: true };
     const failureMessage = labelFailure ?? labelRecovery;
     const id = ++requests.current; setLoading(true); setError(''); setBulk(null);
     try {
@@ -545,7 +553,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       }}/>
       {optionLimitIssue && <p className="quotation-fields-notice" role="alert">{optionLimitIssue}</p>}
       {!view.resolved.rows.some(item => item.included) && <p className="quotation-fields-notice" role="alert">견적에 포함된 옵션이 없습니다. 옵션 설정에서 상품 옵션을 추가하거나 포함을 선택해주세요. 공통 입력은 보존되지만 견적서 출력 대상은 아닙니다.</p>}
-      <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { setSelectedOption(event.target.value || null); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${item.optionLabel}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
+      <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { const next = event.target.value || null; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${item.optionLabel}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
       {!row && <p role="alert" className="quotation-fields-notice">선택한 옵션이 현재 상품에 없습니다. 공통값으로 자동 전환하지 않았습니다. 편집할 옵션을 다시 선택해주세요. 미저장 입력은 유지됩니다.</p>}
       <div className="quotation-fields-summary"><span>현재 옵션 필수 미입력 <b>{missingRequired}개</b></span><span>입력 확인 <b>{allIssues.length}건</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
       {packagingReconfirmation.length>0&&<div className="quotation-fields-notice"><p>직접 입력한 포장값의 판매 구성 수량이 바뀌었습니다. 현재 구성의 실제 포장 무게·치수를 확인한 뒤 저장해주세요. 입력값은 그대로 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy||loading||dirty||conflicts.length>0} onClick={()=>{
@@ -574,6 +582,10 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           (key, optionId = selectedOption) => resolveQuotationEditorCell(view, changes, optionId, key),
           { optionId: selectedOption, optionIds: view.resolved.rows.filter(item => item.included).map(item => item.optionId) });
         const modelSuggestion = modelState.suggestion;
+        const manualModelState = quotationManualModelLinkState(view.resolved.schema, field.id,
+          (key, optionId = selectedOption) => resolveQuotationEditorCell(view, changes, optionId, key),
+          { optionId: selectedOption, optionIds: view.resolved.rows.filter(item => item.included).map(item => item.optionId) });
+        const manualModelLink = manualModelState.link;
         const inputProps = { id, value: cell.value, readOnly: !editable, 'aria-invalid': quotationEditorValidation(field, cell, view.imageKeys).length > 0, 'aria-describedby': `${id}-notes`, onChange: (event: { target: { value: string } }) => edit(field.id, event.target.value) };
         const group = quotationFieldGroup(field, schema?.fields);
         const heading = group && (fieldIndex === 0 || quotationFieldGroup(sectionFields[fieldIndex - 1], schema?.fields) !== group) ? <h5 key={`group-${field.id}`} className="quotation-field-group">{group}</h5> : null;
@@ -601,6 +613,25 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
             <small>별도 모델명이 없는 상품일 때만 확인하고 적용하세요. 현재 편집 범위의 견적 초안에만 반영하며 다른 옵션 일괄 적용 선택은 해제합니다. 견적 입력 저장을 눌러 확정합니다.</small>
           </div>}
           {modelState.reason && <p className="quotation-field-help">{modelState.reason}</p>}
+          {manualModelLink && <div className="quotation-field-auto">
+            <small>현재 {selectedOption === null ? '공통' : '옵션'} 모델명 · {sourceLabels[manualModelLink.source] ?? manualModelLink.source}</small>
+            <p>입력한 모델명: {manualModelLink.value}</p>
+            <p>공식 견적 {manualModelLink.peer.label} · 현재 {manualModelLink.peer.before || '(공란)'} ({sourceLabels[manualModelLink.peer.source] ?? manualModelLink.peer.source}) → {manualModelLink.value}</p>
+            <button type="button" className="quotation-field-text-button" disabled={busy || loading || conflicts.length > 0} onClick={() => {
+              const current = modelActionState.current;
+              if (current.view !== view || current.selectedOption !== selectedOption || current.busy || current.loading || current.conflicts.length || activeWrite.current) return;
+              setChanges(previous => {
+                const link = quotationManualModelLinkState(view.resolved.schema, field.id,
+                  (key, optionId = selectedOption) => resolveQuotationEditorCell(view, previous, optionId, key),
+                  { optionId: selectedOption, optionIds: view.resolved.rows.filter(item => item.included).map(item => item.optionId) }).link;
+                return link ? link.changes.reduce((draft, change) => updateQuotationEditorDraft(view.overrides, draft,
+                  { ...change, optionId: selectedOption }), previous) : previous;
+              });
+              setApplyAll(false); setBulk(null); setMessage('');
+            }}>입력한 모델명을 공식 모델명/품번에 적용</button>
+            <small>위 두 값이 같은 실제 모델인지 확인한 뒤 적용하세요. 현재 편집 범위의 견적 초안에만 반영하며 다른 옵션 일괄 적용 선택은 해제합니다. 견적 입력 저장을 눌러 확정합니다.</small>
+          </div>}
+          {manualModelState.reason && <p className="quotation-field-help">{manualModelState.reason}</p>}
           {field.type === 'images' && <><div className="quotation-fields-image-list">{view.imageKeys.map((key, index) => <button className="quotation-fields-image-choice" key={key} type="button" disabled={!editable} aria-pressed={imageKeys.includes(key)} aria-label={`이미지 ${index + 1} ${imageKeys.includes(key) ? '연결 해제' : '연결'}`} onClick={() => edit(field.id, (imageKeys.includes(key) ? imageKeys.filter(item => item !== key) : field.maxItems === 1 ? [key] : [...imageKeys, key]).join('\n'))}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`} alt={`업로드 이미지 ${index + 1}`} loading="lazy" /><span>이미지 {index + 1}</span>{imageKeys.includes(key) && <b>{imageKeys.indexOf(key) + 1}</b>}</button>)}</div>{imageKeys.length > 0 && <div className="quotation-fields-image-selected">{imageKeys.map((key, index) => <div key={key}><span>{index + 1}. {view.imageKeys.includes(key) ? `이미지 ${view.imageKeys.indexOf(key) + 1}` : `연결 확인: ${key}`}</span><button type="button" disabled={!editable || index === 0} aria-label={`${index + 1}번 이미지 앞으로`} onClick={() => { const next = [...imageKeys]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; edit(field.id, next.join('\n')); }}>↑</button><button type="button" disabled={!editable || index === imageKeys.length - 1} aria-label={`${index + 1}번 이미지 뒤로`} onClick={() => { const next = [...imageKeys]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; edit(field.id, next.join('\n')); }}>↓</button><button type="button" disabled={!editable} onClick={() => edit(field.id, imageKeys.filter(item => item !== key).join('\n'))}>제외</button></div>)}</div>}</>}

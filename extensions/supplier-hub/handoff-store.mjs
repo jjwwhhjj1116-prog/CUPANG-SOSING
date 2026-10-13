@@ -50,8 +50,8 @@ export function canPromoteSupplierHubReceipt(identity,expected,accepted){
 /** Only the new read-only validation-status observation uses this CAS. Keep an
  * accepted ID and its SKU observation monotonic while a file table redraws. */
 export function canObserveSupplierHubValidation(expected,observation){
-  if(!observation||!HANDOFF_ORIGINS.includes(observation.origin)||!/^\w[\w-]{0,99}$/.test(observation.productId||'')
-    ||!/^\d{1,20}$/.test(observation.categoryId||'')||!/^[a-f0-9]{64}$/.test(observation.fingerprint||'')
+  if(!observation||!HANDOFF_ORIGINS.includes(observation.origin)||typeof observation.productId!=='string'||!/^\w[\w-]{0,99}$/.test(observation.productId)
+    ||typeof observation.categoryId!=='string'||!/^\d{1,20}$/.test(observation.categoryId)||typeof observation.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(observation.fingerprint)
     ||observation.purpose!=='validation-status'||!/^\w[\w-]{0,99}$/.test(observation.profileId||'')
     ||!Number.isSafeInteger(observation.recoveredAt)||observation.recoveredAt<=0||observation.recoveredAt>Date.now()+60000
     ||observation.validationResume!==undefined||observation.attachmentNames!==undefined
@@ -64,6 +64,39 @@ export function canObserveSupplierHubValidation(expected,observation){
   if(expected.state==='validation-complete'&&!isAcceptedResult(observation,observation))return false;
   if((expected.registration!==undefined||observation.registration!==undefined)&&(expected.state!=='validation-complete'||observation.state!=='validation-complete'
     ||expected.quotationId!==observation.quotationId||JSON.stringify(expected.registration)!==JSON.stringify(observation.registration)))return false;
+  return true;
+}
+/** The original upload tab may report a new file state, including rejection.
+ * Compare its exact previously read value atomically so that this file-only
+ * observation cannot overwrite a SKU lookup committed after that read. */
+export function canObserveOriginalSupplierHubValidation(expected,observation){
+  if(!observation||!HANDOFF_ORIGINS.includes(observation.origin)||!/^\w[\w-]{0,99}$/.test(observation.productId||'')
+    ||!/^\d{1,20}$/.test(observation.categoryId||'')||!/^[a-f0-9]{64}$/.test(observation.fingerprint||'')
+    ||observation.purpose!==undefined||observation.validationResume!==undefined||observation.attachmentNames!==undefined
+    ||!['validation-complete','validation-pending','validation-rejected','not-found'].includes(observation.state)||observation.registered!==false
+    ||observation.filename!==`YOOFAM-${observation.fingerprint}.xlsx`||!Number.isSafeInteger(observation.observedAt)||observation.observedAt<=0||observation.observedAt>Date.now()+60000
+    ||!Object.hasOwn({A01526306:'유앤채',A01464742:'와이홉'},observation.company?.code)||({A01526306:'유앤채',A01464742:'와이홉'})[observation.company.code]!==observation.company.name
+    ||observation.includedOptions!==undefined&&(!Number.isSafeInteger(observation.includedOptions)||observation.includedOptions<1||observation.includedOptions>200)
+    ||['submittedAt','status','detail','quotationId'].some(field=>observation[field]!==undefined&&(typeof observation[field]!=='string'||observation[field].length>20000))
+    ||typeof observation.quotationId==='string'&&(observation.quotationId!==observation.quotationId.trim()||observation.quotationId.length>200||/\.\.\.|…/.test(observation.quotationId)))return false;
+  // Older original popup attempts have no captured option count. Preserve
+  // their file-only observation without guessing a count; app source and final
+  // SKU-completion checks continue to require the exact submitted option count.
+  // A rendered completed file can precede assignment of its quotation ID. This
+  // stores that file state only; accepted-receipt/lookup guards require the ID.
+  // A file refresh can retain only the exact matching registration it read;
+  // it cannot create or refresh SKU evidence. The original-tab caller still
+  // verifies its company and attempt before presenting this observation.
+  if(observation.registration!==undefined&&(!expected||expected.state!=='validation-complete'||observation.state!=='validation-complete'
+    ||typeof observation.quotationId!=='string'||!observation.quotationId
+    ||!['origin','productId','categoryId','fingerprint','filename'].every(field=>expected[field]===observation[field])
+    ||expected.company?.code!==observation.company.code||expected.company?.name!==observation.company.name
+    ||expected.includedOptions!==observation.includedOptions||expected.quotationId!==observation.quotationId
+    ||expected.registration===undefined||JSON.stringify(expected.registration)!==JSON.stringify(observation.registration)
+    ||observation.registration.quotationId!==observation.quotationId||observation.registration.registered!==false
+    ||observation.registration.includedOptions!==observation.includedOptions||!Number.isSafeInteger(observation.registration.observedAt)||observation.registration.observedAt<=0||observation.registration.observedAt>Date.now()+60000
+    ||!Array.isArray(observation.registration.rows)||observation.registration.rows.length>1000
+    ||observation.includedOptions!==undefined&&observation.registration.rows.length>observation.includedOptions))return false;
   return true;
 }
 /** A SKU lookup may replace only the accepted receipt it started from. File
@@ -93,7 +126,8 @@ export async function transferRecord(action,key,value){
     if(!origin||value!==undefined)throw Error('상품 전송 이력 요청을 확인해주세요.');
     return productTransferRecords(origin,key.slice(`history:${origin}:`.length));
   }
-  if(!['get','put','claim','promote','observe','register'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  if(!['get','put','claim','promote','observe','file-observe','register'].includes(action)||typeof key!=='string'||!(/^(attempt:\d+$|(?:result|transmission):https?:\/\/)/.test(key)))throw Error('전송 기록을 확인해주세요.');
+  if(action==='file-observe'&&(!value||!Object.hasOwn(value,'expected')||key!==resultKey(value.observation)||!canObserveOriginalSupplierHubValidation(value.expected,value.observation)))throw Error('원래 등록 탭의 조건부 검증 조회 기록을 확인해주세요.');
   if(action==='register'&&(!value||key!==resultKey(value.observation)||!canObserveSupplierHubRegistration(value.expected,value.observation)))throw Error('상품별 결과의 조건부 조회 기록을 확인해주세요.');
   if(action==='observe'&&(!value||key!==resultKey(value.observation)||!canObserveSupplierHubValidation(value.expected,value.observation)))throw Error('검증 결과의 조건부 조회 기록을 확인해주세요.');
   if(action==='promote'&&!(HANDOFF_ORIGINS.includes(value?.accepted?.origin)&&/^\w[\w-]{0,99}$/.test(value.accepted.productId||'')
@@ -114,6 +148,10 @@ export async function transferRecord(action,key,value){
       }
       else if(action==='observe'){
         if(JSON.stringify(result)!==JSON.stringify(value.expected)||!canObserveSupplierHubValidation(result,value.observation))result=false;
+        else{store.put(value.observation,key);result=true;}
+      }
+      else if(action==='file-observe'){
+        if(JSON.stringify(result)!==JSON.stringify(value.expected)||!canObserveOriginalSupplierHubValidation(result,value.observation))result=false;
         else{store.put(value.observation,key);result=true;}
       }
       else if(action==='register'){

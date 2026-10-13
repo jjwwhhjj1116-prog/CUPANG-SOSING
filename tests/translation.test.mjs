@@ -562,14 +562,17 @@ test('incomplete v5 output persists only expected/returned counts and never retr
  }finally{sqlite.close();}
 });
 
-test('new v6 reviews keep only returned attributes with explicit coverage warnings while invalid identities and invented numbers remain errors',async()=>{
+test('new v6 reviews keep usable partial attributes while invalid identities and invented SEO numbers remain errors',async()=>{
  const input={...source,attributes:[...source.attributes,{name:'option:red',value:'红色'}]},review=await model.prepareTranslationReview(input,config),request=model.buildTranslationRequest(review),original=JSON.stringify(input);
  assert.equal(review.instructionsVersion,'sourceflow-translation-v6');assert.equal(request.text.format.schema.properties.attributes.minItems,0);assert.equal(request.text.format.schema.properties.attributes.maxItems,2);assert.equal(request.max_output_tokens,config.maxOutputTokens);
  for(const attributes of [[],draft.attributes]){
   const result=model.validateTranslationDraft({...draft,attributes},input,review.instructionsVersion);assert.deepEqual(JSON.parse(JSON.stringify(result.attributes)),attributes);
   const coverage=model.translationAttributeCoverage(input,result);assert.equal(coverage.expected,2);assert.equal(coverage.returned,attributes.length);assert.deepEqual(JSON.parse(JSON.stringify(coverage.missingSourceIndexes)),attributes.length?[1]:[0,1]);assert.match(result.warnings[0],/누락 .*원문에 보존/);
  }
- for(const attributes of [[draft.attributes[0],draft.attributes[0]],[{...draft.attributes[0],sourceIndex:2}],[{...draft.attributes[0],sourceIndex:-1}],[{...draft.attributes[0],value:'999 인증'}]])assert.throws(()=>model.validateTranslationDraft({...draft,attributes},input,review.instructionsVersion));
+ for(const attributes of [[draft.attributes[0],draft.attributes[0]],[{...draft.attributes[0],sourceIndex:2}],[{...draft.attributes[0],sourceIndex:-1}]])assert.throws(()=>model.validateTranslationDraft({...draft,attributes},input,review.instructionsVersion));
+ const partial=model.validateTranslationDraft({...draft,attributes:[{...draft.attributes[0],value:'999 인증'}]},input,review.instructionsVersion);
+ assert.deepEqual(JSON.parse(JSON.stringify(partial.attributes)),[]);assert.equal(partial.title,draft.title);assert.equal(partial.description,draft.description);assert.deepEqual(JSON.parse(JSON.stringify(partial.keywords)),draft.keywords);assert.match(partial.warnings.join(' '),/원문에 없는 숫자.*1개/);assert.match(partial.warnings.join(' '),/누락 2개/);
+ for(const patch of [{title:draft.title+' 999'},{description:draft.description+' 999'},{keywords:[...draft.keywords,'999']}])assert.throws(()=>model.validateTranslationDraft({...draft,...patch},input,review.instructionsVersion),error=>error.code==='UNSUPPORTED_FACT');
  assert.throws(()=>model.validateTranslationDraft({...draft,keywords:['길'.repeat(21)]},input,review.instructionsVersion),error=>error.code==='INVALID_QUOTATION_KEYWORDS');
  assert.equal(JSON.stringify(input),original);let calls=0;
  const result=await model.executeTranslation(review,config,async()=>{calls++;return Response.json(completed());});assert.equal(calls,1);assert.equal(result.draft.attributes.length,1);assert.match(result.draft.warnings[0],/2개 중 1개/);assert.equal(result.appliedToContent,false);
