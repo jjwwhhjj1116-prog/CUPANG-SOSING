@@ -15,6 +15,7 @@ const links: Readonly<Record<string, string>> = {
   glove_fashionSize: '옵션 사이즈 · 스포츠장갑의 정확한 선택값',
   weight: '80719 옵션 상품 중량 · 포장 무게와 별개',
   mainImage: '옵션 대표 이미지 → 3단계 공통 대표 이미지', additionalImages: '4단계 추가 이미지',
+  sizeImages: '옵션·사이즈표에서 저장한 사이즈표 이미지',
   detailImages: '5단계 상세 이미지', detailHtml: '5단계 상세 설명·선택 이미지 → 전송용 HTML',
   labelImages: '6단계 한글 표시사항 이미지', noticeNameModel: '6단계 제품명·모델명 → SEO 상품명',
   noticeMaterial: '6단계 재질', noticeDimensions: '옵션 상품 치수 → 6단계 크기',

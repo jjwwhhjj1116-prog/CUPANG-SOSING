@@ -11,6 +11,7 @@ const inputs={
   'productPage.commonAttributes.msrp':'msrp', 'productPage.commonAttributes.osrp':'msrp',
   'productPage.commonAttributes.productBarcode':'barcode',
   'imagePage.images.mainImage':'mainImage', 'imagePage.images.additionalImage':'additionalImages',
+  'imagePage.images.sizeChartImage':'sizeImages',
   'imagePage.details.detailedImage':'detailImages',
   'imagePage.details.htmlProductDetailContent':'detailHtml', 'imagePage.details.altText':'altText',
   'legalPage.kcMarkType':'kcMarkType',

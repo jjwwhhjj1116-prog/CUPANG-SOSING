@@ -115,3 +115,17 @@ test('new-intake preview shows the selected bundle quantity and final pack price
  h.edit('번들링 활성화',true);h.edit('번들 수량 기준','coupangMargin');h.edit('번들 기준 최소 쿠팡 마진액 (원)',9000);
  assert.ok(preview().includes('판매 구성 수량: 7개'));assert.equal(h.saves.length,0);
 });
+
+test('translation toggle hides inactive copywriting without erasing its saved choice or style',async()=>{
+ const h=harness({translateImages:true,addCopyright:true,translationPrompt:'타겟 고객에게 원문 의미를 살려 간결하게 표현'}),before=JSON.stringify(h.initial);
+ assert.equal(h.control('카피라이트 추가').props.checked,true);
+ assert.match(text(h.render()),/한국어 마케팅 문구/);
+ h.edit('이미지 번역',false);
+ assert.equal(nodes(h.render()).some(node=>node.type==='span'&&node.props.children==='카피라이트 추가'),false);
+ await h.save();
+ assert.equal(h.saves[0].translateImages,false);assert.equal(h.saves[0].addCopyright,true);
+ assert.equal(h.saves[0].translationPrompt,h.initial.translationPrompt);
+ h.edit('이미지 번역',true);assert.equal(h.control('카피라이트 추가').props.checked,true);
+ h.edit('카피라이트 추가',false);await h.save();assert.equal(h.saves[1].addCopyright,false);
+ assert.equal(JSON.stringify(h.initial),before);
+});

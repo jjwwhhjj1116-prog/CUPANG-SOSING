@@ -8,6 +8,7 @@ import { adoptGeneratedOptionImage } from '@/app/option-image-adoption';
 import { generatedImagesRolePatch } from '@/app/image-role-adoption';
 import type { ProductContent } from '@/app/product-content';
 import type { ImageEditJob, ImageEditView, ImagePurpose, ImageQuality, ImageSize } from '@/app/automation/image-edit';
+import { imageRecipeVersion } from '@/app/automation/image-edit';
 
 type Props = { productId: string; version: string; imageKeys: string[]; onProductChanged?: () => void; translationTarget?: { sourceKey: string; sequence: number; sourceLanguage?: 'zh' | 'en' }; onBusyChange?: (busy: boolean) => void };
 const statuses: Record<ImageEditJob['status'], string> = { prepared: '원본·요청 검토 대기', approved: '승인됨 · 실행 대기', running: '실행 중 · 중복 호출 차단', completed: '이미지 생성 완료 · 검토 필요', failed: '실패 · 자동 재호출 없음', uncertain: '결과 확인 필요 · 자동 재호출 없음' };
@@ -75,7 +76,7 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
   }
   const source = imageKeys.includes(sourceKey) ? sourceKey : imageKeys[0] ?? '';
   const job = view?.jobs.find(item => item.id === selectedId) ?? view?.jobs[0] ?? null;
-  const stale = Boolean(job && (job.productVersion !== version || job.review.settingsFingerprint !== view?.settingsFingerprint || job.review.recipeVersion !== 1));
+  const stale = Boolean(job && (job.productVersion !== version || job.review.settingsFingerprint !== view?.settingsFingerprint || job.review.recipeVersion !== imageRecipeVersion));
 
   function attachmentSnapshot(next:ImageEditView) {
     const {productId,imageKeys}=attachmentContext.current;
@@ -168,8 +169,9 @@ function ImageGenerationContent({ productId, version, imageKeys, onProductChange
     {view && <>
       {!view.configuration.configured && <div className="connection-note"><strong>이미지 서버 연결 설정이 필요합니다</strong><ul>{view.configuration.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
       <div className="connection-note"><strong>저장된 기본 설정으로 요청 준비</strong>
-        <p>문구 번역 {view.settings.translateImages ? '켜짐' : '꺼짐'} · 대표 이미지 배경 정리 {view.settings.removeBackground ? '켜짐' : '꺼짐'} · 저작권 표시 {view.settings.addCopyright ? '켜짐 · 확인된 권리자 문구가 없어 미적용' : '꺼짐'}</p>
+        <p>문구 번역 {view.settings.translateImages ? '켜짐' : '꺼짐'} · 대표 이미지 배경 정리 {view.settings.removeBackground ? '켜짐' : '꺼짐'} · 카피라이팅 {view.settings.translateImages && view.settings.addCopyright ? '켜짐' : '꺼짐'}</p>
         <p>번역 목적을 직접 선택하면 기본 번역 설정과 관계없이 번역합니다. 번역·상세 작업의 배경과 원문 배치는 보존합니다.</p>
+        <p>카피라이팅은 읽을 수 있는 원문 판매 문구를 한국어로 다듬습니다. 상품 사양과 숫자·단위, 기존 저작권 표시를 유지하며 새 상품 주장이나 소유권 문구를 추가하지 않습니다.</p>
         {view.settings.translationPrompt && <details><summary>저장된 번역 지침</summary><pre>{view.settings.translationPrompt}</pre></details>}
       </div>
       {!imageKeys.length && <p>먼저 이 상품에 원본 이미지를 업로드해주세요. 원본 없이 임의의 상품 이미지를 생성하지 않습니다.</p>}

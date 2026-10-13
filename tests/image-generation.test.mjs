@@ -141,6 +141,37 @@ const request = body => new Request('http://localhost/api/products/product/image
 const prepare = { action: 'prepare', expectedVersion: '2026-09-22T00:00:00.000Z', idempotencyKey: 'fixture_prepare', ...input };
 async function approvedJob(route) { const prepared = await route.POST(request(prepare), context); assert.equal(prepared.status, 201); const { job } = await prepared.json(); const approved = await route.POST(request({ action: 'approve', jobId: job.id, reviewFingerprint: job.review.fingerprint, confirmPaid: true }), context); assert.equal(approved.status, 200); return job; }
 
+test('legacy image review remains readable but cannot approve or spend under the changed copywriting recipe',async()=>{
+ for(const phase of ['prepared','approved']){
+  const {sqlite,dependencies,store}=harness();let calls=0;
+  const route=load('app/api/products/[id]/image-generation/route.ts',dependencies,'development',async()=>{calls++;return response();});
+  try{
+   const job=await approvedJob(route),now=new Date().toISOString();
+   sqlite.prepare("UPDATE image_jobs SET status=?,review=json_set(review,'$.recipeVersion',1)").run(phase);
+   const before=sqlite.prepare('SELECT * FROM image_jobs').get();
+   const history=await (await route.GET(new Request('http://localhost'),context)).json();
+   assert.equal(history.jobs[0].review.recipeVersion,1);assert.equal(history.jobs[0].status,phase);
+   const body=phase==='prepared'?{action:'approve',jobId:job.id,reviewFingerprint:job.review.fingerprint,confirmPaid:true}:{action:'execute',jobId:job.id};
+   const rejected=await route.POST(request(body),context);
+   assert.equal(rejected.status,409);assert.equal((await rejected.json()).code,'IMAGE_SETTINGS_CHANGED');
+   assert.equal(await store.approveImageJob('owner','product',job.id,job.review.fingerprint,now),null);
+   assert.equal(await store.claimImageJob('owner','product',job.id,job.review.fingerprint,'fixture-claim',now),null);
+   assert.equal(calls,0);assert.deepEqual(sqlite.prepare('SELECT * FROM image_jobs').get(),before);
+  }finally{sqlite.close();}
+ }
+});
+
+test('atomic execution claim rejects a legacy recipe appearing after source validation',async()=>{
+ const {sqlite,dependencies,files}=harness();let calls=0;
+ const route=load('app/api/products/[id]/image-generation/route.ts',dependencies,'development',async()=>{calls++;return response();});
+ try{
+  const job=await approvedJob(route),get=files.get;
+  files.get=async key=>{sqlite.prepare("UPDATE image_jobs SET review=json_set(review,'$.recipeVersion',1) WHERE id=?").run(job.id);return get(key);};
+  assert.equal((await route.POST(request({action:'execute',jobId:job.id}),context)).status,409);
+  assert.equal(calls,0);assert.equal(sqlite.prepare('SELECT status FROM image_jobs').get().status,'approved');
+ }finally{sqlite.close();}
+});
+
 test('image prepare/approve are free; execute appends one owned R2 result and preserves original roles', async () => {
   const { sqlite, objects, dependencies } = harness(); let calls = 0;
   const route = load('app/api/products/[id]/image-generation/route.ts', dependencies, 'development', async () => { calls++; return response(); });

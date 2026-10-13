@@ -14,7 +14,11 @@ const json=async response=>{assert.ok(response.ok,await response.clone().text())
 /** Actual panel and image/content/option APIs with SQLite; only provider output
  * is synthetic. Prompt contracts do not claim a real model's visual accuracy. */
 async function fixture(companyCode){
- const api=mobileIntakeHarness({companyCode,companyName:companyCode==='A01464742'?'와이홉':'유앤채'});await api.intake();
+ const api=mobileIntakeHarness({companyCode,companyName:companyCode==='A01464742'?'와이홉':'유앤채'});
+ // User-reviewed role adoption reads bounded R2 body streams, like the real
+ // bucket; arrayBuffer-only intake fixtures cannot establish that lineage.
+ const readObject=api.bindings.FILES.get;api.bindings.FILES.get=async key=>{const object=await readObject(key);return object?{...object,body:new Response(await object.arrayBuffer()).body}:null;};
+ await api.intake();
  let product=api.sqlite.prepare('SELECT * FROM products').get();const keys=JSON.parse(product.image_keys),base='/api/products/'+product.id;
  const original=await sharp({create:{width:8,height:8,channels:3,background:'#cc0000'}}).png().toBuffer();
  const output=await sharp({create:{width:1024,height:1024,channels:3,background:'#ffffff'}}).png().toBuffer();api.objects.set(keys[0],original);

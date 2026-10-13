@@ -76,9 +76,9 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
       </div>
       <div className="settings-image-option">
         {toggle('translateImages','이미지 번역')}
-        <label className="field full"><span>이미지 번역 프롬프트 설정</span><textarea value={draft.translationPrompt} maxLength={10000} disabled={busy} onChange={event=>update('translationPrompt',event.target.value)} placeholder="표현 방식, 금지 표현, 단위 표기 등 번역 지침"/></label>
+        <label className="field full"><span>이미지 번역 프롬프트 설정</span><textarea value={draft.translationPrompt} maxLength={10000} disabled={busy} onChange={event=>update('translationPrompt',event.target.value)} placeholder="카피라이팅 스타일 가이드 · 표현 방식, 타겟 고객, 금지 표현, 단위 표기"/></label>
       </div>
-      <div className="settings-image-option">{toggle('addCopyright','카피라이트 추가')}</div>
+      {draft.translateImages && <div className="settings-image-option">{toggle('addCopyright','카피라이트 추가')}<small>번역된 이미지의 원문 의미를 보존하여 한국어 마케팅 문구를 다듬습니다.</small></div>}
       <div className="settings-image-option">{toggle('removeBackground','누끼이미지 자동적용')}<small>대표 이미지의 배경·텍스트 제거</small></div>
       <small>공통 이미지는 10MB 이하로 업로드하세요. 설정 저장 후 새 상품 초안에 적용됩니다. 이미지 사용을 꺼도 선택한 파일은 보관됩니다.</small>
     </section>

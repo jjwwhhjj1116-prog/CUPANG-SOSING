@@ -17,6 +17,8 @@ export function quotationFieldGroup(field: QuotationField, fields?: readonly Quo
   }
   if (field.section === 'image') {
     if (field.id === 'labelImages') return '라벨 이미지';
+    if(field.type==='images'&&field.hubInput==='sizeImages'&&!field.hubWire?.name
+      &&JSON.stringify(field.hubWire?.path)===JSON.stringify(['imagePage','images','sizeChartImage']))return '기본 이미지';
     return ['mainImage','additionalImages'].includes(field.id) ? '기본 이미지' : '상세 정보';
   }
   if (field.section === 'legal') {

@@ -1,6 +1,7 @@
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import { env } from 'cloudflare:workers';
 import type { ImageEditJob, ImageEditResult } from '@/app/automation/image-edit';
+import { imageRecipeVersion } from '@/app/automation/image-edit';
 import { defaultSettings, newWorkspaceSettings } from '@/app/workspace-settings';
 
 type Row = { id: string; product_id: string; product_version: string; content_revision: number; product_image_keys: string;
@@ -60,7 +61,8 @@ export async function createImageJob(owner: string, value: ImageEditJob, imageKe
   const previous = await db.prepare('SELECT * FROM image_jobs WHERE owner_id=? AND product_id=? AND idempotency_key=?').bind(owner, value.productId, key).first<Row>();
   return previous ? { job: job(previous), replayed: true, conflict: previous.request_fingerprint !== requestFingerprint } : null;
 }
-const unchanged = `AND EXISTS(SELECT 1 FROM products WHERE id=image_jobs.product_id AND owner_id=image_jobs.owner_id
+const unchanged = `AND json_extract(image_jobs.review,'$.recipeVersion')=${imageRecipeVersion}
+  AND EXISTS(SELECT 1 FROM products WHERE id=image_jobs.product_id AND owner_id=image_jobs.owner_id
   AND updated_at=image_jobs.product_version AND image_keys=image_jobs.product_image_keys AND json_array_length(image_keys)<${PRODUCT_IMAGE_POOL_LIMIT})
   AND COALESCE((SELECT revision FROM product_content WHERE product_id=image_jobs.product_id AND owner_id=image_jobs.owner_id),0)=content_revision
   ${settingsGuard('image_jobs.owner_id', 'image_jobs.review')}`;

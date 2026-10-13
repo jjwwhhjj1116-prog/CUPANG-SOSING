@@ -505,6 +505,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         return { ...selected, source: selected.value && option?.imageKey ? 'option' : selected.source };
       }
       case 'additionalImages': return images(content.assets.additional.value);
+      case 'sizeImages': return images(content.assets.size.value);
       case 'labelImages': return images(content.assets.label.value);
       case 'detailImages': return images(contentDetailImageKeys(content));
       case 'detailHtml': {

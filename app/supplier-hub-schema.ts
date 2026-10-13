@@ -119,6 +119,13 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     const numeric=types.includes('number')||types.includes('integer')
       ||types.every(type=>type===undefined||type==='null')&&Array.isArray(enums)&&enums.some(value=>typeof value==='number')&&enums.every(value=>value===null||typeof value==='number');
     const pathBinding=snapshot.inputBindings==='couplus-paths-v1'&&!wire.name?couplusQuotationInput(wire.path):undefined;
+    // The recorded Single form and Couplus size-chart save use this one file
+    // wire. Keep its former live ID so saved manual values are never orphaned.
+    // Similar labels, named arrays and scalar choices are not image bindings.
+    const sizeChartImages=pathBinding==='sizeImages'&&section==='image'&&visibility==='common'
+      &&wire.name===undefined&&wire.nameKey===undefined&&wire.valueKey===undefined
+      &&types.includes('string')&&types.every(type=>type==='string'||type==='null')
+      &&!['enum','dropdown','const','pattern','format'].some(key=>Object.hasOwn(node,key));
     // These observed dropdowns are suggestions beside free-text controls.
     // Explicit schema enums/constants and other dropdowns keep their rules.
     // Brand suggestions must not replace the owner's captured setting.
@@ -172,12 +179,12 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     // separate from its empty scalar placeholder (Couplus explicitly skips it).
     const documentControl=!wire.name&&JSON.stringify(wire.path)===JSON.stringify(['legalPage','adCert'])&&node.type==='string'
       &&!['minLength','pattern','format','enum','dropdown'].some(key=>Object.hasOwn(node,key));
-    const result:LiveQuotationField={id,section,label,type:canonical?.type==='images'?'images':choices?'select':numeric?'number':canonical?.type==='textarea'?'textarea':'text',required:required&&!optionalNullable&&!documentControl,visibility,reviewRequired:true,hubWire:wire,
+    const result:LiveQuotationField={id,section,label,type:sizeChartImages||canonical?.type==='images'?'images':choices?'select':numeric?'number':canonical?.type==='textarea'?'textarea':'text',required:required&&!optionalNullable&&!documentControl,visibility,reviewRequired:true,hubWire:wire,
       ...(canonical?.readOnly?{readOnly:true}:{}),...(canonical?.contentField?{contentField:canonical.contentField}:{}),
-      ...(pathBinding&&canonical?{hubInput:pathBinding,...(canonical.unit?{unit:canonical.unit}:{})}:{}),
+      ...(pathBinding&&(canonical||sizeChartImages)?{hubInput:pathBinding,...(canonical?.unit?{unit:canonical.unit}:{})}:{}),
       ...(couplusSetting?{couplusSetting}:{}),
-      ...(canonical?.type==='images'&&canonical.maxItems?{maxItems:canonical.maxItems}:{}),
-      maxLength:canonical?.type==='images'||pathBinding&&canonical?canonical?.maxLength??2000:2000,
+      ...(sizeChartImages?{maxItems:5}:canonical?.type==='images'&&canonical.maxItems?{maxItems:canonical.maxItems}:{}),
+      maxLength:sizeChartImages?2564:canonical?.type==='images'||pathBinding&&canonical?canonical?.maxLength??2000:2000,
       ...(choices?{choices}:{}),...(numeric?{integer:types.includes('integer')&&!types.includes('number'),...(choices?{numericValue:true as const}:{})}:{}),...(draftDefault!==undefined?{draftDefault}:{}),
       ...(numericText&&canonical?{numericText:true as const,integer:canonical.integer,min:canonical.min,max:canonical.max}:{}),
       help:'선택한 회사의 Supplier Hub 상세 양식에서 가져온 항목입니다. 기본값과 상품정보를 확인·수정해주세요.'};

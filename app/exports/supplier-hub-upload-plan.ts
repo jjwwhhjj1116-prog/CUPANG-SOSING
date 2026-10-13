@@ -24,7 +24,10 @@ export function supplierHubUploadPlan(resolved: ResolvedQuotation, assets: reado
   for (const row of resolved.rows.filter(row => row.included)) {
     if (!row.fields.labelImages?.value.trim()) missingLabels.push({ optionId: row.optionId, optionLabel: row.optionLabel });
     for (const field of resolved.schema.fields.filter(field => field.type === 'images')) {
-      if (!['mainImage', 'additionalImages', 'detailImages', 'labelImages'].includes(field.id)) throw new Error('업로드 영역을 확인하지 않은 이미지 항목입니다.');
+      const sizeChart=field.hubInput==='sizeImages'&&field.section==='image'&&field.visibility==='common'
+        &&field.hubWire?.name===undefined&&field.hubWire?.nameKey===undefined&&field.hubWire?.valueKey===undefined
+        &&JSON.stringify(field.hubWire?.path)===JSON.stringify(['imagePage','images','sizeChartImage']);
+      if (!sizeChart&&!['mainImage', 'additionalImages', 'detailImages', 'labelImages'].includes(field.id)) throw new Error('업로드 영역을 확인하지 않은 이미지 항목입니다.');
       const group = field.id === 'labelImages' ? groups.labelImages : groups.productImages;
       const keys = (row.fields[field.id]?.value ?? '').split('\n').map(key => key.trim()).filter(Boolean);
       keys.forEach((key, index) => {

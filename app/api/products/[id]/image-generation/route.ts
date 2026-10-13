@@ -8,7 +8,7 @@ import { isOwnedImageKey, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { newWorkspaceSettings } from '@/app/workspace-settings';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { fingerprint } from '@/app/automation/model';
-import { ImageEditError, imageConfiguration, imageProcessingSettings, requireImageConfig, validateImageEditInput, imageMetadata, imageByteLimit, prepareImageReview, executeImageEdit, type ImageSecrets, type ImageEditJob, type ImageEditResult } from '@/app/automation/image-edit';
+import { ImageEditError, imageConfiguration, imageProcessingSettings, requireImageConfig, validateImageEditInput, imageMetadata, imageByteLimit, imageRecipeVersion, prepareImageReview, executeImageEdit, type ImageSecrets, type ImageEditJob, type ImageEditResult } from '@/app/automation/image-edit';
 import { listImageJobs, getImageJob, createImageJob, approveImageJob, claimImageJob, finishImageFailure, finishImageSuccess, attachImageResult } from '@/db/image-jobs';
 
 type Context = { params: Promise<{ id: string }> };
@@ -89,7 +89,7 @@ export async function POST(request: Request, context: Context) {
     const config = requireImageConfig(env as ImageSecrets);
     if (existing.review.model !== config.model) return conflict();
     const settings = await savedImageSettings(owner);
-    if (existing.review.settingsFingerprint !== settings.settingsFingerprint || existing.review.recipeVersion !== 1) return settingsConflict();
+    if (existing.review.settingsFingerprint !== settings.settingsFingerprint || existing.review.recipeVersion !== imageRecipeVersion) return settingsConflict();
     if (body.action === 'approve') {
       if (body.confirmPaid !== true || body.reviewFingerprint !== existing.review.fingerprint) return json({ error: '원본·모델·요청·크기·품질의 유료 실행 승인이 필요합니다.', code: 'PAID_APPROVAL_REQUIRED' }, 400);
       if (existing.status === 'approved') return json({ job: existing, replayed: true });
@@ -111,7 +111,10 @@ export async function POST(request: Request, context: Context) {
     }
     const outputKey = `${owner}/ai-${claimed.id}.png`;
     try {
-      await env.FILES.put(outputKey, generated.bytes as ArrayBufferView, { httpMetadata: { contentType: 'image/png' }, customMetadata: { imageJobId: claimed.id, provenance: 'generated', sha256: generated.metadata.sha256 } });
+      await env.FILES.put(outputKey, generated.bytes as ArrayBufferView, { httpMetadata: { contentType: 'image/png' },
+        customMetadata: { imageJobId: claimed.id, provenance: 'generated', sha256: generated.metadata.sha256,
+          imageValidation: 'header-v1', dimensionValidation: 'header-v1',
+          imageWidth: String(generated.metadata.width), imageHeight: String(generated.metadata.height) } });
       const result: ImageEditResult = { ...generated.metadata, storageKey: outputKey, model: claimed.review.model, purpose: claimed.review.purpose,
         generatedAt: generated.generatedAt, providerRequestId: generated.providerRequestId, usage: generated.usage, attached: false, assignedRole: false, provenance: 'generated', reviewRequired: true };
       const finished = await finishImageSuccess(owner, claimed, claim, result);

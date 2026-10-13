@@ -151,7 +151,7 @@ const panelKeys=['owner/raw.png','owner/第二 張.png','owner/label.png'];
 function panelHarness(handler=(_url,_init,{view,job})=>Response.json({...view,job}),initialProps={},status='prepared'){
  const calls=[],busyChanges=[];let changed=0;
  const job={id:'synthetic-image-job',productId:'synthetic-detail',productVersion:'v',contentRevision:3,status,createdAt:'2026-10-06T00:00:00Z',
-  review:{sourceKey:panelKeys[0],source:{width:100,height:100,bytes:100,mime:'image/png',sha256:'fixture'},model:'synthetic-model',size:'1024x1024',quality:'low',purpose:'translate',prompt:'',effectivePrompt:'시험 요청',settingsFingerprint:'settings',recipeVersion:1,expiresAt:'2099-01-01',paidNotice:'시험 요청',pricingUrl:'https://example.invalid',fingerprint:'fixture'},result:null,error:null};
+  review:{sourceKey:panelKeys[0],source:{width:100,height:100,bytes:100,mime:'image/png',sha256:'fixture'},model:'synthetic-model',size:'1024x1024',quality:'low',purpose:'translate',prompt:'',effectivePrompt:'시험 요청',settingsFingerprint:'settings',recipeVersion:2,expiresAt:'2099-01-01',paidNotice:'시험 요청',pricingUrl:'https://example.invalid',fingerprint:'fixture'},result:null,error:null};
  const view={configuration:{configured:true,issues:[]},settings:{translateImages:true,removeBackground:false,addCopyright:false,translationPrompt:''},settingsFingerprint:'settings',jobs:[job]};
  const request=async(url,init)=>{calls.push({url,init});return calls.length===1?Response.json(view):handler(url,init,{view,job});};
  const h=componentHarness('app/components/image-generation-panel.tsx','default',{productId:'synthetic-detail',version:'v',imageKeys:[...panelKeys],onProductChanged(){changed++;},onBusyChange(value){busyChanges.push(value);},...initialProps},request);
