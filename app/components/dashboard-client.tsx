@@ -167,6 +167,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     return () => window.removeEventListener('beforeunload', protect);
   }, [detail]);
   const productNavigation=useRef(0);
+  const workspaceProductsRead=useRef(0);
   const batchNavigation=useRef<AbortController|null>(null);
   useEffect(()=>()=>{productNavigation.current++;batchNavigation.current?.abort();},[]);
   function changeView(next:'work'|'archive') {
@@ -296,6 +297,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     }
   }
   const detailStepIndex = registrationSteps.indexOf(tab);
+  const progressStepIndex = detailStepIndex < 0 ? registrationSteps.indexOf(lastRegistrationStep) : detailStepIndex;
   const detailNavigation = productNavigation.current;
   function adoptPreparedProfile(profile:CategoryProfile,source:CategoryProfile) {
     const operation=settingsOperationRef.current;
@@ -320,15 +322,21 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     finally { setCheckingConnections(false); }
   }
 
-  const applyWorkspace = useCallback((results: Awaited<ReturnType<typeof fetchWorkspace>>, settingsEpoch:number,categoryProfilesEpoch:number) => {
+  const applyWorkspace = useCallback((results: Awaited<ReturnType<typeof fetchWorkspace>>, settingsEpoch:number,categoryProfilesEpoch:number,productsRead:number,detailNavigation:number) => {
     const operation=settingsOperationRef.current;
-    if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId||productsRead!==workspaceProductsRead.current)return;
     const [productData, settingData, collectionData, categoriesData] = results;
     if(workspaceOwnerId&&settingData.status==='fulfilled'&&parseWorkspaceSettingsScope((settingData.value as {scope?:unknown}).scope)?.ownerId!==workspaceOwnerId){
       setLoadError('로그인 계정이 변경되었습니다. 페이지를 새로고침해주세요.');setLoading(false);return;
     }
-    if (productData.status === 'fulfilled') setProducts(productData.value.products);
-    if (productData.status === 'fulfilled') setDetail(current=>current?productData.value.products.find(product=>product.id===current.id)??current:null);
+    if (productData.status === 'fulfilled') setProducts(current=>{
+      const previous=new Map(current.map(product=>[product.id,product]));
+      return productData.value.products.map(product=>{const saved=previous.get(product.id);return saved&&Date.parse(saved.updated_at)>Date.parse(product.updated_at)?saved:product;});
+    });
+    if (productData.status === 'fulfilled'&&detailNavigation===productNavigation.current) setDetail(current=>{
+      if(!current)return null;const product=productData.value.products.find(product=>product.id===current.id);
+      return !product||Date.parse(current.updated_at)>Date.parse(product.updated_at)?current:product;
+    });
     if (settingData.status === 'fulfilled'&&settingsEpoch===operation.epoch&&!operation.saving) setSettings(savedRegistrationSettings(settingData.value.settings));
     if (collectionData.status === 'fulfilled') setCollectionJobs(collectionData.value.jobs);
     if (categoriesData.status === 'fulfilled'&&categoryProfilesEpoch===categoryProfilesEpochRef.current) setCategoryProfiles(categoriesData.value.profiles);
@@ -338,6 +346,10 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   async function loadWorkspace() {
     const operation=settingsOperationRef.current;
     if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
+    // A late response from an earlier source save may not replace a later
+    // refresh, its failure notice, or a newly opened product's source clocks.
+    const productsRead=++workspaceProductsRead.current;
+    const detailNavigation=productNavigation.current;
     const settingsEpoch=operation.epoch;
     const categoryProfilesEpoch=categoryProfilesEpochRef.current;
     const detailId=detail?.id;
@@ -345,9 +357,9 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       fetchWorkspace(),
       detailId?readJson<{product:Product}>(`/api/products/${encodeURIComponent(detailId)}`).catch(()=>null):Promise.resolve(null),
     ]);
-    if(!operation.mounted||operation.ownerId!==workspaceOwnerId)return;
-    applyWorkspace(workspace,settingsEpoch,categoryProfilesEpoch);
-    if(currentDetail)setDetail(current=>current?.id===detailId?currentDetail.product:current);
+    if(!operation.mounted||operation.ownerId!==workspaceOwnerId||productsRead!==workspaceProductsRead.current)return;
+    applyWorkspace(workspace,settingsEpoch,categoryProfilesEpoch,productsRead,detailNavigation);
+    if(currentDetail&&detailNavigation===productNavigation.current)setDetail(current=>current&&current.id===detailId&&Date.parse(current.updated_at)<=Date.parse(currentDetail.product.updated_at)?currentDetail.product:current);
   }
   async function openArchivedProduct(id: string) {
     const request=++productNavigation.current;
@@ -358,9 +370,11 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
   useEffect(() => {
     let active = true;
+    const productsRead=++workspaceProductsRead.current;
+    const detailNavigation=productNavigation.current;
     const settingsEpoch=settingsOperationRef.current.epoch;
     const categoryProfilesEpoch=categoryProfilesEpochRef.current;
-    fetchWorkspace().then(results => { if (active) applyWorkspace(results,settingsEpoch,categoryProfilesEpoch); });
+    fetchWorkspace().then(results => { if (active) applyWorkspace(results,settingsEpoch,categoryProfilesEpoch,productsRead,detailNavigation); });
     return () => { active = false; };
   }, [applyWorkspace]);
 
@@ -528,9 +542,10 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div></Modal>}
 
       {detail&&<div className="drawer-backdrop" onMouseDown={()=>closeWorkspace()}><aside className="detail-drawer registration-workspace" role="dialog" aria-modal="true" aria-label="상품 등록 작업 공간" onMouseDown={e=>e.stopPropagation()}>
-        <header><div className="detail-heading"><span className="drawer-eyebrow">PRODUCT WORKSPACE · 등록 자료 준비</span><h2>{registrationTitle(detail)}</h2><div className="detail-product-meta"><span>YP-{detail.id.slice(0,8).toUpperCase()}</span><time dateTime={detail.created_at}>등록 {registrationDate(detail.created_at)}</time><span>{detail.options_count}개 옵션</span></div><div className="detail-source"><span>1688 원본 URL</span>{sourceLink(detail.source_url)?<a href={sourceLink(detail.source_url)} target="_blank" rel="noopener noreferrer">{detail.source_url}</a>:<span className="detail-source-value">{detail.source_url||'원본 URL 미입력'}</span>}</div></div><button className="icon-close" aria-label="상품 작업 공간 닫기" onClick={()=>closeWorkspace()}>×</button></header>{closeNotice&&<p role="status" className="panel-note">{closeNotice}</p>}
-        <nav className="registration-steps" aria-label="상품 등록 7단계">{registrationSteps.map((value,index)=><button type="button" key={value} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={tab===value?'active':''}><span>{index+1}</span><strong>{value}</strong></button>)}</nav>
-        <details className="registration-source-context"><summary>카테고리 · 수집 자료</summary><ProductSourceContext key={detail.id} productId={detail.id} productVersion={detail.updated_at} sourceUrl={detail.source_url} step={tab} onNavigate={selectDetailTab} onSaved={loadWorkspace} onBusy={changeSourceSupplementBusy} onBeforeSupplement={()=>{const state=workspaceEditState(detailBody.current);if(state.dirty||state.busy){setCloseNotice('저장하지 않은 입력이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 상세 원문을 보완해주세요.');return false;}return true;}}/></details>
+        <header><div className="detail-heading"><h2>상품 등록 진행: {registrationTitle(detail)}</h2></div><button className="icon-close" aria-label="상품 작업 공간 닫기" onClick={()=>closeWorkspace()}>×</button></header>{closeNotice&&<p role="status" className="panel-note">{closeNotice}</p>}
+        <div className="registration-progress" role="progressbar" aria-label="상품 등록 입력 단계" aria-valuemin={1} aria-valuemax={registrationSteps.length} aria-valuenow={progressStepIndex+1}><span style={{width:`${(progressStepIndex+1)/registrationSteps.length*100}%`}}/></div>
+        <nav className="registration-steps" aria-label="상품 등록 7단계">{registrationSteps.map((value,index)=><button type="button" key={value} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={[tab===value?'active':'',index<=progressStepIndex?'reached':''].filter(Boolean).join(' ')}><span>{index+1}</span><strong>{({SEO:'SEO 설정',가격:'가격 설정',표시사항:'한글 표시사항',견적서:'견적서 작업'} as Record<string,string>)[value]??value}</strong></button>)}</nav>
+        <details className="registration-source-context"><summary>카테고리 · 수집 자료</summary><div className="detail-product-meta"><span>YP-{detail.id.slice(0,8).toUpperCase()}</span><time dateTime={detail.created_at}>등록 {registrationDate(detail.created_at)}</time><span>{detail.options_count}개 옵션</span></div><div className="detail-source"><span>1688 원본 URL</span>{sourceLink(detail.source_url)?<a href={sourceLink(detail.source_url)} target="_blank" rel="noopener noreferrer">{detail.source_url}</a>:<span className="detail-source-value">{detail.source_url||'원본 URL 미입력'}</span>}</div><ProductSourceContext key={detail.id} productId={detail.id} productVersion={detail.updated_at} sourceUrl={detail.source_url} step={tab} onNavigate={selectDetailTab} onSaved={loadWorkspace} onBusy={changeSourceSupplementBusy} onBeforeSupplement={()=>{const state=workspaceEditState(detailBody.current);if(state.dirty||state.busy){setCloseNotice('저장하지 않은 입력이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 상세 원문을 보완해주세요.');return false;}return true;}}/></details>
         <nav className="registration-tools" aria-label="상품 보조 작업"><span>보조 작업</span>{supportingTabs.map(item=><button key={item.value} type="button" onClick={()=>selectDetailTab(item.value)} aria-pressed={tab===item.value} className={tab===item.value?'active':''}>{item.label}</button>)}<small>단계 이동 시 입력 유지 · 각 단계에서 저장</small></nav>
         <div className="detail-body" ref={detailBody} inert={sourceSupplementBusy}><DetailPanel key={detail.id} onBeforeSeoGenerate={()=>{
           if(sourceSupplementBusyRef.current||busyRef.current||detailNavigation!==productNavigation.current)return false;

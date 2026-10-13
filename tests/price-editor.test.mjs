@@ -17,7 +17,7 @@ function harness({onSave}={}){
   return native(name);
  }});
  const render=()=>{let tree;for(let i=0;i<10;i++){cursor=0;changed=false;tree=exports.PriceEditor({initial,sourcePrice:2,onSave:async p=>{saveCalls++;if(fail)throw Error('save failed');await onSave?.(p);initial={...p};}});if(!changed)return tree;}throw Error('render loop');};
- return{render,update(p){initial=p;},fail(){fail=true;},get saveCalls(){return saveCalls;},input(){return nodes(render()).find(n=>n.type==='input'&&n.props.type==='number');},reset(){return nodes(render()).find(n=>n.type==='button'&&n.props.type==='button');}};
+ return{render,update(p){initial=p;},fail(){fail=true;},get saveCalls(){return saveCalls;},input(){return nodes(render()).find(n=>n.type==='input'&&n.props.type==='number');},reset(){return nodes(render()).find(n=>n.type==='button'&&n.props.type==='button'&&n.props.children==='수정 취소·최신 가격 정책 불러오기');}};
 }
 test('price editor refreshes clean policy after an external update',()=>{
  const h=harness();assert.equal(h.input().props.value,200);h.update({...base,exchangeRate:350});assert.equal(h.input().props.value,350);assert.equal(h.reset(),undefined);

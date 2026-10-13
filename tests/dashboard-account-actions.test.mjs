@@ -22,7 +22,7 @@ const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'http
  * renderers record their received props; every tested callback is the real
  * parent callback, and requests run through its real fetch/readJson code. */
 function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'계정의 저장 브랜드',exchangeRate:350},scope:scope()},deleteReply=async id=>Response.json({productId:id,removed:true}),realRegistrationBoard=false,profiles=[],officialFlow}={}){
- const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
+ const instances=new Map(),cache=new Map(),components=new Map(),componentMounts=new Map(),componentCounts=new Map(),layoutEffects=[],effects=[],requests=[];let active,tree,closed=false,lateWrites=0;
  let currentSettings=settingsBody,replyDelete=deleteReply,nextDelete=null,nextSettings=null,replySettingsPut=null,nextProduct=null,replyProduct=null;
  let currentProfiles=profiles,nextProfiles;
  const workspaceEdits={dirty:false,busy:false,freeDirty:false,freeBusy:false};
@@ -33,6 +33,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
   useRef(initial){const slot=active.index++;return active.slots[slot]??(active.slots[slot]={current:initial});},
   useCallback(fn,deps){const slot=active.index++,old=active.slots[slot];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))active.slots[slot]={fn,deps};return active.slots[slot].fn;},
   useEffect(fn,deps){const instance=active,slot=instance.index++,old=instance.slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:old?.cleanup};instance.slots[slot]=next;effects.push(()=>{next.cleanup?.();next.cleanup=fn();});}},
+  useLayoutEffect(fn,deps){const instance=active,slot=instance.index++,old=instance.slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:old?.cleanup};instance.slots[slot]=next;layoutEffects.push(()=>{next.cleanup?.();next.cleanup=fn();});}},
   useMemo(fn){return fn();},
  };
  async function request(url,init={}){
@@ -112,7 +113,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  function render(){
   if(closed)return tree;components.clear();componentMounts.clear();componentCounts.clear();const seen=new Set();tree=expand({type:Dashboard,props:{userName:'테스트 관리자',workspaceOwnerId}},'root',seen);
   for(const [key,instance]of instances)if(!seen.has(key)){instance.mounted=false;instance.slots.forEach(slot=>slot?.cleanup?.());instances.delete(key);}
-  effects.splice(0).forEach(effect=>effect());return tree;
+  layoutEffects.splice(0).forEach(effect=>effect());effects.splice(0).forEach(effect=>effect());return tree;
  }
  const settle=async()=>{for(let i=0;i<10;i++){if(!closed)render();await new Promise(resolve=>setImmediate(resolve));}};
  const component=name=>{render();return components.get(name);};
@@ -183,8 +184,8 @@ for(const company of schemaCompanies)for(const laterChange of [false,true])test(
   const stale=h.deferProfiles();h.component('product-content-editor').onSaved();await h.settle();
   await h.click('공식 파일 기준으로 연결');for(let i=0;i<30&&h.button('공식 파일 기준으로 연결');i++)await h.settle();
   const saved=await flow.api.load('db/category-profiles.ts').getCategoryProfile('owner',flow.profile.id);assert.equal(saved.revision,2);assert.equal(saved.template.workbookEvidence.templateSha256,saved.template.sha256);assert.deepEqual(flow.api.objects.get(saved.template.storageKey),flow.bytes);
-  stale.resolve([flow.profile]);await h.settle();await h.click('저장한 견적 전송 준비');await h.settle();
-  const mount=h.instance('SubmissionPackage');assert.ok(mount);await h.click('견적서 + 첨부 파일 준비');
+  stale.resolve([flow.profile]);await h.settle();await h.click('저장한 견적 전송 준비');await settleUntil(h,()=>Boolean(h.instance('SubmissionPackage')));
+  const mount=h.instance('SubmissionPackage');assert.ok(mount,text(h.render()));await h.click('견적서 + 첨부 파일 준비');
   await settleUntil(h,()=>h.button('확장에 첨부 파일 준비')&&!nodes(h.render()).find(node=>node.props?.['aria-label']==='견적서와 첨부 파일 준비').props['aria-busy']);
   assert.ok(h.button('확장에 첨부 파일 준비'),text(h.render()));
   for(const input of nodes(h.render()).filter(node=>node.type==='input'&&node.props.type==='checkbox'))input.props.onChange({target:{checked:true}});
@@ -525,7 +526,7 @@ test('every typed option stage opens the intended product workspace and retains 
   const h=harness();try{
    await h.settle();const selectedProduct=h.products[1],optionId='option-b-2';h.component('registration-board').onOptions(selectedProduct);await h.settle();const board=h.component('product-option-board');assert.equal(board.productId,selectedProduct.id);assert.equal(typeof board.onStage,'function');const initialReads=h.requests.length;
    board.onStage(optionId,step);await h.settle();assert.equal(h.component('product-option-board'),undefined);assert.equal(h.component('product-content-editor').product.id,selectedProduct.id);assert.equal(h.component('product-options-editor').product.id,selectedProduct.id);assert.equal(h.component('product-options-editor').focusedOptionId,optionId);assert.equal(h.component('product-options-editor').initialBulkAction,undefined);
-   if(step==='옵션')assert.equal(h.button('옵션·사이즈표').props['aria-pressed'],true);else assert.ok(nodes(h.render()).some(node=>node.type==='button'&&node.props['aria-current']==='step'&&text(node)===(['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서'].indexOf(step)+1)+step));
+   if(step==='옵션')assert.equal(h.button('옵션·사이즈표').props['aria-pressed'],true);else assert.ok(nodes(h.render()).some(node=>node.type==='button'&&node.props['aria-current']==='step'&&text(node)===(['SEO','가격','대표 이미지','추가 이미지','상세 이미지','표시사항','견적서'].indexOf(step)+1)+({'SEO':'SEO 설정','가격':'가격 설정','표시사항':'한글 표시사항','견적서':'견적서 작업'}[step]??step)));
    if(step==='가격')assert.equal(h.component('product-options-editor').pricingView,true);
    if(step==='대표 이미지')assert.equal(h.component('product-options-editor').imageView,true);
    if(step==='견적서')assert.deepEqual(plain(h.component('quotation-panel').navigationTarget),{optionId,fieldId:'title'});
@@ -552,10 +553,10 @@ test('selected option SEO and common SEO stay visible in the combined workspace 
   const input=name=>nodes(h.render()).find(node=>node.props?.['data-test-editor']===name);
   input('option-seo-editor').props.onChange({target:{value:'미저장 선택 옵션 제목'}});
   input('product-content-editor').props.onChange({target:{value:'미저장 공통 설명'}});
-  await h.click('2가격');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('product-content-editor'),commonMount);
+  await h.click('2가격 설정');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('product-content-editor'),commonMount);
   assert.equal(h.componentVisible('option-seo-editor'),false);assert.equal(h.componentVisible('product-content-editor'),false);
   assert.equal(input('option-seo-editor').props.value,'미저장 선택 옵션 제목');assert.equal(input('product-content-editor').props.value,'미저장 공통 설명');
-  await h.click('1SEO');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('product-content-editor'),commonMount);
+  await h.click('1SEO 설정');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('product-content-editor'),commonMount);
   assert.equal(h.componentVisible('option-seo-editor'),true);assert.equal(h.componentVisible('product-content-editor'),true);
   assert.equal(input('option-seo-editor').props.value,'미저장 선택 옵션 제목');assert.equal(input('product-content-editor').props.value,'미저장 공통 설명');
   assert.ok(h.requests.every(request=>request.method==='GET'));
@@ -649,7 +650,7 @@ test('dirty or busy workspace blocks a new option board, quotation entry and ret
   const h=harness();try{
    await h.settle();const first=h.products[0],second=h.products[1];h.component('registration-board').onOptions(first);await h.settle();const old=h.component('product-option-board');h.component('registration-board').onOpen(first,'SEO');await h.settle();h.setWorkspaceEdits({dirty:mode==='dirty',busy:mode==='busy'});const initialReads=h.requests.length;
    h.component('registration-board').onOptions(second);await h.settle();assert.equal(h.component('product-option-board'),undefined);assert.equal(h.component('product-content-editor').product.id,first.id);assert.equal(h.component('product-content-editor').section,'SEO');
-   const quoteStep=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서');assert.ok(quoteStep);quoteStep.props.onClick();old.onStage('option-a-2','견적서');old.onManage('option-a-2');await h.settle();
+   const quoteStep=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서 작업');assert.ok(quoteStep);quoteStep.props.onClick();old.onStage('option-a-2','견적서');old.onManage('option-a-2');await h.settle();
    assert.equal(h.component('product-content-editor').product.id,first.id);assert.equal(h.component('product-content-editor').section,'SEO');assert.equal(h.component('product-options-editor').initialBulkAction,undefined);assert.equal(h.component('product-option-board'),undefined);assert.equal(h.requests.length,initialReads);assert.ok(h.requests.every(request=>request.method==='GET'));
   }finally{h.close();}
  }

@@ -141,7 +141,7 @@ test('packaging review retains unsaved source and quotation fields before openin
   h.quotationEditor.onDirtyChange(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),initialTarget);assert.match(text(h.workspace()),/견적서에 저장하지 않은 입력/);
   h.quotationEditor.onDirtyChange(false);h.setQuotationBusy(true);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),initialTarget);assert.match(text(h.workspace()),/작업이 진행 중/);
   h.setQuotationBusy(false);await h.settle();h.packagingEditor.onReviewPackaging('sku-2');await h.settle();
-  assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG'});assert.equal(h.quotationEditor.profileId,'profile-b');assert.equal(h.button('7견적서').props['aria-current'],'step');
+  assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG'});assert.equal(h.quotationEditor.profileId,'profile-b');assert.equal(h.button('7견적서 작업').props['aria-current'],'step');
   const before=h.quotationEditor.mount;h.packagingEditor.onReviewPackaging('sku-2');await h.settle();assert.notEqual(h.quotationEditor.mount,before);
   assert.ok(h.requests.every(request=>request.method==='GET'),'navigation does not overwrite saved values or transmit a package');
  }finally{h.close();}
@@ -152,26 +152,26 @@ test('retained packaging callback cannot replace a newly opened workspace target
   await h.settle();await h.openBoardStage('상품 b');const old=h.packagingEditor.onReviewPackaging;
   await h.openBoardStage('상품 b','SEO','sku-3');const requestCount=h.requests.length;
   assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-3',fieldId:'title'});
-  old('previous-option');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-3',fieldId:'title'});assert.equal(h.button('1SEO').props['aria-current'],'step');assert.equal(h.requests.length,requestCount,'retained callback cannot refresh or navigate the newly selected option');
+  old('previous-option');await h.settle();assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-3',fieldId:'title'});assert.equal(h.button('1SEO 설정').props['aria-current'],'step');assert.equal(h.requests.length,requestCount,'retained callback cannot refresh or navigate the newly selected option');
   assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
 });
 
 test('packaging review from a category-bound submission target keeps the quotation panel and manual start row',async()=>{
  const h=harness({submission:true,packaging:true});try{
-  await h.settle();await h.openBoardStage('상품 b');await h.click('7견적서');await h.click('저장한 견적 전송 준비');await h.click('견적서 수정하기');
+  await h.settle();await h.openBoardStage('상품 b');await h.click('7견적서 작업');await h.click('저장한 견적 전송 준비');await h.click('견적서 수정하기');
   assert.equal(h.quotationEditor.navigationTarget.categoryId,'80719');assert.equal(h.quotationEditor.profileId,'profile-b');
   const automaticRow=()=>nodes(h.workspace()).find(node=>node.type==='label'&&text(node)==='카테고리에 저장한 입력 시작 행 자동 사용');
   const rowInput=()=>nodes(nodes(h.workspace()).find(node=>node.type==='label'&&text(node).startsWith('상품 데이터 입력 시작 행'))).find(node=>node.type==='input');
   nodes(automaticRow()).find(node=>node.type==='input').props.onChange({target:{checked:false}});await h.settle();
   rowInput().props.onChange({target:{value:'9'}});await h.settle();assert.equal(rowInput().props.value,9);
-  await h.click('2가격');const reads=h.requests.length,originalEditor=h.quotationEditor.mount;
+  await h.click('2가격 설정');const reads=h.requests.length,originalEditor=h.quotationEditor.mount;
   h.packagingEditor.onReviewPackaging('sku-2');await h.settle();
   assert.equal(rowInput().props.value,9,'packaging navigation must not remount the panel and reset its output row');
   assert.equal(nodes(automaticRow()).find(node=>node.type==='input').props.checked,false);
   assert.deepEqual(JSON.parse(JSON.stringify(h.quotationEditor.navigationTarget)),{optionId:'sku-2',fieldId:'packagedWeightG',categoryId:'80719'});
   assert.equal(h.quotationEditor.profileId,'profile-b');assert.notEqual(h.quotationEditor.mount,originalEditor,'only the field editor is remounted to consume the explicit target');
-  assert.equal(h.button('7견적서').props['aria-current'],'step');assert.equal(h.requests.length,reads,'the current panel profile and row settings are retained without reloading them');
+  assert.equal(h.button('7견적서 작업').props['aria-current'],'step');assert.equal(h.requests.length,reads,'the current panel profile and row settings are retained without reloading them');
   assert.ok(h.requests.every(request=>request.method==='GET'),'inspection never changes saved values or transmits files');
  }finally{h.close();}
 });
@@ -193,7 +193,7 @@ test('reviewed archive product enters transmission preparation with its own prof
  const h=harness({submission:true});try{
   await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 b 선택').props.onChange({target:{checked:true}});
   await h.click('▦상품관리(신규)');await h.click('상품 작업 열기 →');h.archiveReads[0].resolve(Response.json({product:h.product('a')}));await h.settle();
-  const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서');assert.ok(step);step.props.onClick();await h.settle();
+  const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서 작업');assert.ok(step);step.props.onClick();await h.settle();
   await h.click('저장한 견적 전송 준비');
   assert.equal(h.workspace(),undefined);assert.match(text(h.render()),/선택한 상품 1건/);
   let reads=h.requests.filter(request=>request.url.includes('/submission-review'));assert.equal(reads.length,1);assert.equal(reads[0].url,'/api/products/a/submission-review?profileId=profile-a');
@@ -209,7 +209,7 @@ test('reviewed archive product enters transmission preparation with its own prof
 test('transmission preparation preserves unsaved quotation and retained source input',async()=>{
  const h=harness({submission:true});try{
   await h.settle();await h.openBoardStage('상품 b');
-  const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서');step.props.onClick();await h.settle();
+  const step=nodes(h.render()).find(node=>node.type==='button'&&text(node)==='7견적서 작업');step.props.onClick();await h.settle();
   h.quotationEditor.onDirtyChange(true);await h.settle();assert.equal(h.button('저장한 견적 전송 준비').props.disabled,true);
   h.quotationEditor.onDirtyChange(false);await h.settle();h.title().props.onChange({target:{value:'보존할 미저장 상품명'}});await h.settle();
   await h.click('저장한 견적 전송 준비');assert.ok(h.workspace());assert.equal(h.title().props.value,'보존할 미저장 상품명');
@@ -389,7 +389,7 @@ test('batch review read errors retain retry and quotation/work review choices',a
    h.productReads.at(-1).resolve(response);await h.settle();assert.equal(Boolean(h.workspace()),false);
    assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));
   }
-  await h.click('견적 초안 검토');assert.equal(h.button('7견적서').props['aria-current'],'step');
+  await h.click('견적 초안 검토');assert.equal(h.button('7견적서 작업').props['aria-current'],'step');
   nodes(h.render()).find(node=>node.props?.['aria-label']==='상품 작업 공간 닫기').props.onClick();await h.settle();
   await h.click('작업 개시');await h.click('상품별 작업 열기');assert.equal(nodes(h.workspace()).find(node=>node.type==='button'&&text(node)==='작업 이력').props['aria-pressed'],true);
   assert.equal(h.requests.filter(request=>request.url===base+'/work-draft').length,1,'opening review does not repeat draft preparation');
