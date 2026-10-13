@@ -1,20 +1,23 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { runBatchProduct } from '@/app/batch-work';
 import { BatchLabelPanel } from '@/app/components/batch-label-panel';
 import { BatchTranslationPanel } from '@/app/components/batch-translation-panel';
 type Item = {id:string;title:string;updated_at:string};
 type Result = {status:'waiting'|'running'|'done'|'failed';message:string};
-export function BatchWorkPanel({products,onOpen}:{products:Item[];onOpen:(id:string,step?:'대표 이미지'|'견적서'|'작업')=>void}) {
+export function BatchWorkPanel({products,onOpen,onBusyChange}:{products:Item[];onOpen:(id:string,step?:'대표 이미지'|'견적서'|'작업')=>void;onBusyChange?:(busy:boolean)=>void}) {
   const [busy,setBusy]=useState(false);const [results,setResults]=useState<Record<string,Result>>({});
   const [mode,setMode]=useState<'pricing'|'translation'|'labels'>('pricing');
+  const [labelsBusy,setLabelsBusy]=useState(false),labelsBusyRef=useRef(false),busyCallback=useRef(onBusyChange);
+  useLayoutEffect(()=>{busyCallback.current=onBusyChange;},[onBusyChange]);
+  const changeLabelsBusy=(value:boolean)=>{labelsBusyRef.current=value;setLabelsBusy(value);busyCallback.current?.(value);};
   const stop=useRef(false);const keys=useRef(new Map<string,string>());
   const controller=useRef<AbortController|null>(null);
-  useEffect(()=>()=>{stop.current=true;controller.current?.abort();},[]);
+  useEffect(()=>()=>{stop.current=true;controller.current?.abort();busyCallback.current?.(false);},[]);
   async function run() {
-    if(controller.current)return;
-    const active=new AbortController();controller.current=active;setBusy(true);stop.current=false;
+    if(controller.current||labelsBusyRef.current)return;
+    const active=new AbortController();controller.current=active;setBusy(true);busyCallback.current?.(true);stop.current=false;
     for(const product of products) {
       if(stop.current)break;
       setResults(previous=>({...previous,[product.id]:{status:'running',message:'저장 원본 이미지 초안 준비·가격 확인 중'}}));
@@ -29,9 +32,10 @@ export function BatchWorkPanel({products,onOpen}:{products:Item[];onOpen:(id:str
       }catch(error){if(active.signal.aborted)break;setResults(previous=>({...previous,[product.id]:{status:'failed',message:error instanceof Error?error.message:'실행 실패'}}));}
     }
     controller.current=null;
+    busyCallback.current?.(false);
     if(!active.signal.aborted)setBusy(false);
   }
-  if(mode==='labels')return <div className="modal-form"><button type="button" className="btn ghost" onClick={()=>setMode('pricing')}>← 초안 준비 작업</button><BatchLabelPanel products={products} onOpen={onOpen}/></div>;
+  if(mode==='labels')return <div className="modal-form" data-workspace-saving={labelsBusy}><button type="button" className="btn ghost" disabled={labelsBusy} onClick={()=>{if(!labelsBusyRef.current)setMode('pricing');}}>← 초안 준비 작업</button><BatchLabelPanel products={products} onOpen={onOpen} onBusyChange={changeLabelsBusy}/></div>;
   if(mode==='translation')return <div className="modal-form"><button type="button" className="btn ghost" onClick={()=>setMode('pricing')}>← 초안 준비 작업</button><BatchTranslationPanel products={products} onOpen={onOpen}/></div>;
   return <div className="modal-form">
     <button type="button" className="btn blue" disabled={busy} onClick={()=>setMode('translation')}>완료된 번역 모아서 검토·적용</button>

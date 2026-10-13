@@ -1,6 +1,6 @@
 import {exchange} from '@/app/supplier-hub-handoff';
 
-export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object};
+export type BrowserProductCapture={sourceUrl:string;scripts:string[]}|{sourceUrl:string;format:'1688-public-mobile-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string}|{sourceUrl:string;format:'1688-public-mobile-partial-capture-v1';mobileHtml:string;skuPayload:object;detailSource:string;detailUnavailable:{status:502|503|504}}|{sourceUrl:string;format:'1688-public-sku-capture-v1';skuPayload:object};
 
 /** Runs only after a user starts a URL import. The extension opens the URL
  * in that same Chrome window; it never reads cookies or another profile. */
@@ -28,11 +28,17 @@ export async function capture1688FromChrome(sourceUrl:string,signal:AbortSignal)
       ||Object.keys(result).some(key=>!['ok','format','sourceUrl','skuPayload'].includes(key))){reject(Error('1688 옵션 원문 형식 또는 크기를 확인하지 못했습니다.'));return;}
     resolve({sourceUrl,format:result.format,skuPayload:result.skuPayload});return;
    }
-   if(result.format==='1688-public-mobile-capture-v1'){
+   if(result.format==='1688-public-mobile-capture-v1'||result.format==='1688-public-mobile-partial-capture-v1'){
     let skuText:string|undefined;try{skuText=JSON.stringify(result.skuPayload);}catch{reject(Error('1688 모바일 옵션 원문이 올바른 JSON이 아닙니다.'));return;}
     if(typeof result.mobileHtml!=='string'||!result.mobileHtml.trim()||typeof result.detailSource!=='string'||!result.skuPayload||typeof result.skuPayload!=='object'||Array.isArray(result.skuPayload)
       ||typeof skuText!=='string'||[result.mobileHtml,result.detailSource,skuText].some(value=>new TextEncoder().encode(value).byteLength>2*1024*1024)){
       reject(Error('1688 모바일 상품 원문 형식 또는 크기를 확인하지 못했습니다.'));return;
+    }
+    if(result.format==='1688-public-mobile-partial-capture-v1'){
+     const missing=result.detailUnavailable;
+     if(result.detailSource!==''||!missing||typeof missing!=='object'||Array.isArray(missing)||Object.keys(missing).length!==1||![502,503,504].includes(missing.status)
+       ||Object.keys(result).some(key=>!['ok','format','sourceUrl','mobileHtml','skuPayload','detailSource','detailUnavailable'].includes(key))){reject(Error('1688 부분 원문의 일시 오류 상태를 확인하지 못했습니다.'));return;}
+     resolve({sourceUrl,format:result.format,mobileHtml:result.mobileHtml,skuPayload:result.skuPayload,detailSource:result.detailSource,detailUnavailable:{status:missing.status}});return;
     }
     resolve({sourceUrl,format:result.format,mobileHtml:result.mobileHtml,skuPayload:result.skuPayload,detailSource:result.detailSource});return;
    }

@@ -59,8 +59,12 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  // text. Do not capture it twice in one intake or on a saved image retry. Its
  // optional gaps and explicit source-repair action remain available to review.
  const fullMobileSource=source&&['chrome-public-mobile-v1','1688-public-mobile-v1'].includes(source.provider);
- const reuseFullMobileSource=fullMobileSource&&(capturedFromChrome||!!job.received_at||source?.provider==='chrome-public-mobile-v1');
- if(source&&!reuseFullMobileSource&&canSupplementCollection(source)&&options.captureFromBrowser){
+ // A confirmed transient detail failure is a reviewable partial receipt, not
+ // an instruction to immediately repeat the same capture during import/retry.
+ // The user's explicit source-repair action still uses the full source proof.
+ const partialMobileSource=source&&['chrome-public-mobile-partial-v1','1688-public-mobile-partial-v1'].includes(source.provider);
+ const reuseCapturedMobileSource=partialMobileSource||fullMobileSource&&(capturedFromChrome||!!job.received_at||source?.provider==='chrome-public-mobile-v1');
+ if(source&&!reuseCapturedMobileSource&&canSupplementCollection(source)&&options.captureFromBrowser){
   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
   try{
    let expectedProductVersion:string|undefined;

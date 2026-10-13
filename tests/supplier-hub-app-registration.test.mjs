@@ -268,8 +268,13 @@ test('actual IndexedDB product cursor reads every matching fingerprint and abort
  assert.deepEqual(new Set(records.map(row=>row.value.fingerprint)),new Set([old.fingerprint,current.fingerprint]));
  assert.equal(JSON.stringify([...store.rows]),before,'history cursor is read-only across all fingerprints');
  for(let index=0;index<201;index++){const record={...identity,productId:'bounded',fingerprint:index.toString(16).padStart(64,'0'),registered:false};store.rows.set(resultKey(record),record);}
- const bounded=JSON.stringify([...store.rows]);await assert.rejects(store.productRecords(origin,'bounded'),/기존 기록은 유지/);
- assert.equal(JSON.stringify([...store.rows]),bounded,'bounded cursor abort retains all local records');
+ const bounded=JSON.stringify([...store.rows]);await assert.rejects(store.productRecords(origin,'bounded'),/이전 전송 기록을 확인하지 못해 새 첨부를 중단/);
+ assert.equal(JSON.stringify([...store.rows]),bounded,'canonical 200-record rejection retains every local record');
+ // Internal validation locks can coexist with 200 canonical rows, so the raw
+ // cursor has its separate 400-record bound. This path must abort read-only.
+ for(let index=201;index<401;index++){const record={...identity,productId:'bounded',fingerprint:index.toString(16).padStart(64,'0'),registered:false};store.rows.set(resultKey(record),record);}
+ const cursorBounded=JSON.stringify([...store.rows]);await assert.rejects(store.productRecords(origin,'bounded'),/기존 기록은 유지/);
+ assert.equal(JSON.stringify([...store.rows]),cursorBounded,'raw 400-record cursor abort retains every local record');
 });
 function boundaryStatus(company,quotationId,filename){
  let menuOpen=false,observer,searches=0,visibleRows=[];

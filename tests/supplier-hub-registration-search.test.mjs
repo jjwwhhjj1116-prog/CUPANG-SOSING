@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
+import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
+import {quotationWorkbook} from './helpers/quotation-workbook.mjs';
+import {canObserveSupplierHubRegistration} from '../extensions/supplier-hub/handoff-store.mjs';
 import {refreshSupplierHubRegistration} from '../extensions/supplier-hub/app-registration.mjs';
 import {searchSupplierHubRegistration} from '../extensions/supplier-hub/registration-search.mjs';
 const source=fs.readFileSync(new URL('../extensions/supplier-hub/registration-search.mjs',import.meta.url),'utf8').replace('export async function','async function');
@@ -18,8 +22,8 @@ function harness(options={}){
    observerCallback?.([{type:'childList',target:{},addedNodes:[added]}]);}
   else observerCallback?.([{type:options.resultMode==='attribute'?'attributes':'childList',target:options.resultMode==='unrelated'?{}:tableBody,addedNodes:[]}]);}}};
  const label={innerText:'견적서 ID',getClientRects:()=>[{}]};
- const reset={innerText:' 재설정',disabled:!!options.resetDisabled,getClientRects:()=>[{}],getAttribute:()=>null,click:()=>{resets++;if(!options.resetFails)input.value='';if(options.resetReplaces)input.isConnected=false;for(const [key,filter]of filters){if(options.staleFilter!==key){filter.value='';filter.checked=false;}}}};
- const context=vm.createContext({HTMLInputElement:Input,Event:class{constructor(type){this.type=type;}},MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}disconnect(){observerCallback=undefined;}},setTimeout:(callback,ms)=>{timers.set(callback,ms);return callback;},clearTimeout:callback=>timers.delete(callback),location:{origin:'https://supplier.coupang.com',pathname:'/qvt/wims',...options.location},document:{body:{innerText:'Company Code: '+(options.companyCode??'A01464742')},querySelectorAll(selector){if(selector==='table')return options.missingTable?[]:[table];if(selector.startsWith('.pagination'))return [];if(filters.has(selector))return options.missingFilter===selector?[]:[filters.get(selector)];if(selector.startsWith('input'))return options.duplicate?[input,input]:[input];if(selector.startsWith('label'))return [label];return options.missingReset?[button]:[button,reset];}}});
+ const reset={innerText:options.resetText??' 재설정',disabled:!!options.resetDisabled,getClientRects:()=>[{}],getAttribute:()=>null,click:()=>{resets++;if(!options.resetFails)input.value='';if(options.resetReplaces)input.isConnected=false;for(const [key,filter]of filters){if(options.staleFilter!==key){filter.value='';filter.checked=false;}}}};
+ const context=vm.createContext({HTMLInputElement:Input,Event:class{constructor(type){this.type=type;}},MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}disconnect(){observerCallback=undefined;}},setTimeout:(callback,ms)=>{timers.set(callback,ms);return callback;},clearTimeout:callback=>timers.delete(callback),location:{origin:'https://supplier.coupang.com',pathname:'/qvt/wims',...options.location},document:{body:{innerText:'Company Code: '+(options.companyCode??'A01464742')},querySelectorAll(selector){if(selector==='table')return options.missingTable?[]:[table];if(selector.startsWith('.pagination'))return [];if(filters.has(selector))return options.missingFilter===selector?[]:[filters.get(selector)];if(selector.startsWith('input'))return options.duplicate?[input,input]:[input];if(selector.startsWith('label'))return [label];return options.missingReset?[button]:options.duplicateReset?[button,reset,{...reset}]:[button,reset];}}});
  vm.runInContext(source,context);
  return {run:(id,wait=false)=>context.searchSupplierHubRegistration(id,wait),script:(func,args=[])=>vm.runInContext(`(${func.toString()})(...args)`,Object.assign(context,{args})),input,events,filters,resets:()=>resets,clicks:()=>clicks,button,timers,tick(ms){for(const [callback,duration]of [...timers])if(duration===ms){timers.delete(callback);callback();}},changed(){observerCallback?.([{type:'childList',target:tableBody,addedNodes:[]}]);}};
 }
@@ -36,6 +40,17 @@ test('Hub reset clears previous filters before the exact quotation search',async
  const h=harness({value:'quote-123'});await h.run('quote-123');
  assert.equal(h.resets(),1);assert.equal(h.clicks(),1);
  for(const filter of h.filters.values()){assert.equal(filter.value,'');assert.equal(filter.checked,false);}
+});
+
+test('plain and exactly observed FontAwesome reset labels preserve one native reset and exact-ID search',async()=>{
+ for(const resetText of ['재설정',' \n 재설정 \t','\uf021 재설정',' \uf021\n 재설정 ']){
+  const h=harness({resetText});await h.run('quote-123');assert.equal(h.resets(),1);assert.equal(h.clicks(),1);assert.equal(h.input.value,'quote-123');assert.deepEqual(h.events,['input','change']);
+ }
+});
+test('unknown reset prefixes, other text, duplicate or disabled observed buttons never alter any query',async()=>{
+ for(const options of ['초기화 재설정','reset 재설정','\uf021 다시 재설정','\uf021재설정','\uf022 재설정','\uf021\uf021 재설정','재설정 전체'].map(resetText=>({resetText})).concat([{resetText:'\uf021 재설정',duplicateReset:true},{resetText:'\uf021 재설정',resetDisabled:true}])){
+  const h=harness(options);await assert.rejects(h.run('quote-123'),/재설정/);assert.equal(h.resets(),0);assert.equal(h.clicks(),0);assert.equal(h.events.length,0);
+ }
 });
 
 test('missing reset, unfinished reset and stale filters never issue a misleading search',async()=>{
@@ -101,4 +116,34 @@ test('app status recovery reads only freshly rendered SKU rows after a serialize
   assert.equal(tabs.length,2);assert.equal(tabs[1].windowId,17);assert.equal(tabs[1].active,false);assert.deepEqual(records.get('attempt:123'),original);
   assert.equal(scripts.some(name=>/attach|requestSupplierHubValidation/.test(name)),false);assert.equal(records.has(`transmission:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`),false);
  }
+});
+
+async function reviewedReceiptFixture(company){
+ const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name}),json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
+ try{
+  const fields=['skuId','categoryId',...h.load('app/quotation-schema.ts').getQuotationSchema('80719').fields.map(field=>field.id)],bytes=quotationWorkbook(fields),sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',bytes)).toString('hex'),storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,bytes);
+  const profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'합성 정확 접수 조회 시험',categoryId:'80719',categoryPath:h.context.category.categoryPath,template:{name:'synthetic-step628.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
+  h.context.category=profile;h.sqlite.prepare('UPDATE collection_context SET payload=?').run(JSON.stringify(h.context));await h.intake();
+  const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id,content=(await json(await h.route(base+'/content'))).content,images=JSON.parse(product.image_keys);
+  await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{label:{model:'SYNTHETIC-628',material:'검토한 합성 재질'},assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]}}}}));
+  const fieldsView=await json(await h.route(base+'/quotation-fields'));await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:fieldsView.revision,expectedInputFingerprint:fieldsView.inputFingerprint,changes:[{fieldKey:'handlingReason',optionId:null,value:'해당사항없음'},{fieldKey:'packagedWeightG',optionId:null,value:'420'},{fieldKey:'packagedDimensionsMm',optionId:null,value:'100*200*300'},{fieldKey:'storageMaterial',optionId:null,value:''}]}}));
+  const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));assert.equal(preview.submissionReview.errorCount,0);
+  const result={state:'validation-complete',filename:preview.filename,company,includedOptions:preview.report.rowCount,quotationId:'synthetic-step628-'+company.code,observedAt:Date.now(),registered:false},payload=value=>({profileId:profile.id,categoryId:'80719',fingerprint:preview.fingerprint,result:value});
+  await json(await h.route(base+'/supplier-hub-receipt',{method:'POST',body:payload(result)}));
+  return{h,base,product,profile,preview,result,payload,json};
+ }catch(error){h.close();throw error;}
+}
+for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name:'유앤채'}])test(`observed reset icon lets the accepted quotation collect fresh SKUs and persist an exact owned receipt (${company.code})`,async()=>{
+ const f=await reviewedReceiptFixture(company);try{
+  const identity={origin:'http://localhost:3000',productId:f.product.id,categoryId:'80719',fingerprint:f.preview.fingerprint},key=`result:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`,saved={...identity,...f.result},original={...identity,company,includedOptions:f.result.includedOptions},records=new Map([[key,saved],['attempt:123',original]]),quotationId=saved.quotationId;
+  const rows=Array.from({length:saved.includedOptions},(_,index)=>['상품 '+index,'2026-10-13','합성 조회 분류','',saved.filename,quotationId,'synthetic-sku-'+index,'상품 검수중','가격/정책']),oldRows=rows.map(row=>row.map((value,index)=>index===6?'old-'+value:value));
+  const ui=harness({companyCode:company.code,resetText:'\uf021 재설정',resultMode:'replace-wrapper',initialRows:oldRows,resultRows:rows}),scripts=[],tabs=[{id:123,windowId:17,url:'https://supplier.coupang.com/qvt/registration',status:'complete'}];
+  const store=async(action,name,value)=>{if(action==='put')records.set(name,value);if(action==='register'){if(JSON.stringify(records.get(name))!==JSON.stringify(value.expected)||!canObserveSupplierHubRegistration(value.expected,value.observation))return false;records.set(name,value.observation);return true;}return records.get(name);};
+  const api={tabs:{query:async()=>tabs,get:async id=>tabs.find(tab=>tab.id===id),create:async value=>{const tab={id:124,status:'complete',...value};tabs.push(tab);return tab;}},scripting:{executeScript:async({func,args})=>{scripts.push(func.name);const result=ui.script(func,args);if(func===searchSupplierHubRegistration){for(let i=0;i<4;i++)await Promise.resolve();ui.tick(350);ui.tick(8000);}return[{result:await result}];}}};
+  const snapshot=()=>JSON.stringify(['products','product_content','product_options','product_quotation_fields','collection_context','category_profiles','translation_jobs'].map(table=>f.h.sqlite.prepare('SELECT * FROM '+table).all())),before=snapshot();
+  const result=await refreshSupplierHubRegistration({...identity,type:'YOOFAM_REFRESH_REGISTRATION'},{frameId:0,url:identity.origin+'/',tab:{id:7,windowId:17}},api,store);
+  assert.equal(ui.resets(),1);assert.equal(ui.clicks(),1);assert.equal(ui.input.value,quotationId);assert.deepEqual(Array.from(result.registration.rows,row=>row.skuId),rows.map(row=>row[6]));assert.equal(records.get(key),result);assert.deepEqual(records.get('attempt:123'),original);assert.equal(tabs[1].active,false);assert.equal(tabs[1].windowId,17);assert.equal(scripts.some(name=>/attach|requestSupplierHubValidation/.test(name)),false);assert.equal([...records.keys()].some(name=>name.startsWith('transmission:')),false);
+  await f.json(await f.h.route(f.base+'/supplier-hub-receipt',{method:'POST',body:f.payload(result)}));const receipt=(await f.json(await f.h.route(f.base+'/supplier-hub-receipt?fingerprint='+identity.fingerprint))).receipt,summary=f.h.load('app/supplier-hub-receipt.ts').supplierHubReceiptSummary(receipt);
+  assert.equal(receipt.result.quotationId,quotationId);assert.deepEqual(receipt.result.registration.rows.map(row=>row.skuId),rows.map(row=>row[6]));assert.equal(summary.label,'SKU ID 확인');assert.equal(summary.issuedSkus,saved.includedOptions);assert.equal(summary.company.code,company.code);assert.equal(receipt.result.registered,false);assert.equal(snapshot(),before);assert.equal(f.h.sqlite.prepare('SELECT count(*) n FROM supplier_hub_receipts').get().n,1);
+ }finally{f.h.close();}
 });

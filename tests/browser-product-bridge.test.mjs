@@ -65,6 +65,14 @@ test('bridge forwards only bounded public mobile source fields for server revali
  assert.equal(h.events.size,0);assert.equal(h.timers.size,0);
 });
 
+test('bridge keeps the explicit transient partial detail contract and rejects invented or ambiguous omission flags',async()=>{
+ const source={sourceUrl:url,format:'1688-public-mobile-partial-capture-v1',mobileHtml:'<script>window.__INIT_DATA={}</script>',skuPayload:{ret:['SUCCESS']},detailSource:'',detailUnavailable:{status:503},ok:true};
+ const h=fixture(),{pending}=await h.begin();h.receive({channel:'YOOFAM_1688_CAPTURE_RESULT',requestId,result:source});const result=await pending;assert.equal(result.format,source.format);assert.deepEqual(JSON.parse(JSON.stringify(result.detailUnavailable)),{status:503});assert.equal(result.detailSource,'');assert.equal(h.events.size,0);assert.equal(h.timers.size,0);
+ for(const change of [value=>delete value.detailUnavailable,value=>{value.detailUnavailable={status:200};},value=>{value.detailUnavailable={status:403};},value=>{value.detailUnavailable={status:'503'};},value=>{value.detailUnavailable={status:503,html:'invented'};},value=>{value.detailSource='partial HTML';},value=>{value.receipt={title:'invented'};}]){
+  const h=fixture(),{pending}=await h.begin(),value=structuredClone(source);change(value);h.receive({channel:'YOOFAM_1688_CAPTURE_RESULT',requestId,result:value});await assert.rejects(pending,/1688 부분/);assert.equal(h.events.size,0);assert.equal(h.timers.size,0);
+ }
+});
+
 test('bridge rejects mobile source mismatches, cyclic JSON and byte limits without hanging',async()=>{
  for(const change of [s=>s.sourceUrl=url.replace('813724060928','999'),s=>s.mobileHtml='',s=>s.mobileHtml='가'.repeat(700000),s=>s.skuPayload=[],s=>s.skuPayload.self=s.skuPayload,s=>s.format='unknown']){
   const h=fixture(),{pending}=await h.begin();

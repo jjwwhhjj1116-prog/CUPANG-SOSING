@@ -185,6 +185,8 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   const [optionNavigationBusy,setOptionNavigationBusy]=useState(false);
   useEffect(()=>()=>{optionBoardScope.current=null;optionNavigation.current?.abort();optionNavigation.current=null;},[]);
   const [batchOpen, setBatchOpen] = useState(false);
+  const batchBusyRef=useRef(false);
+  const changeBatchBusy=(value:boolean)=>{batchBusyRef.current=value;};
   const [batchOpenError,setBatchOpenError]=useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyProductId, setHistoryProductId] = useState('');
@@ -272,10 +274,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     openProduct(result.product,initialTab);
   }
   function closeBatch() {
+    if(batchBusyRef.current){setBatchOpenError('진행 중인 일괄 작업을 중지하거나 현재 저장 결과를 확인한 뒤 닫아주세요.');return;}
     batchNavigation.current?.abort();batchNavigation.current=null;
     setBatchOpen(false);setBatchOpenError('');
   }
   async function openBatchProduct(productId:string,initialTab='작업') {
+    if(batchBusyRef.current){setBatchOpenError('진행 중인 일괄 작업을 중지하거나 현재 저장 결과를 확인한 뒤 상품을 열어주세요.');return;}
     batchNavigation.current?.abort();
     const controller=new AbortController();batchNavigation.current=controller;
     const request=++productNavigation.current;setBatchOpenError('');
@@ -520,7 +524,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       </Modal>}
       {categoryOpen&&<Modal wide title="카테고리·견적서 연결" subtitle="상품 자료를 견적서 열에 연결하고 카테고리별 설정을 보관합니다." onClose={()=>setCategoryOpen(false)}><CategoryProfileEditor value={editingCategory} initialDraft={categorySeed} onClose={()=>setCategoryOpen(false)} onSave={profile=>{setCategoryProfiles(current=>[profile,...current.filter(item=>item.id!==profile.id)]);setCategoryOpen(false);setAddOpen(true);}}/></Modal>}
 
-      {batchOpen&&<Modal wide title="선택 상품 일괄 작업" subtitle="저장한 상품을 순서대로 처리하고 각 결과를 기록합니다." onClose={closeBatch}>{batchOpenError&&<p role="alert">{batchOpenError}</p>}<BatchWorkPanel products={products.filter(product=>selected.has(product.id))} onOpen={(id,step)=>void openBatchProduct(id,step)}/></Modal>}
+      {batchOpen&&<Modal wide title="선택 상품 일괄 작업" subtitle="저장한 상품을 순서대로 처리하고 각 결과를 기록합니다." onClose={closeBatch}>{batchOpenError&&<p role="alert">{batchOpenError}</p>}<BatchWorkPanel products={products.filter(product=>selected.has(product.id))} onOpen={(id,step)=>void openBatchProduct(id,step)} onBusyChange={changeBatchBusy}/></Modal>}
       {historyOpen&&<Modal wide title="상품별 작업 이력" subtitle="각 상품에 저장된 단계별 산출물과 실행 이력을 확인합니다." onClose={()=>setHistoryOpen(false)}><div className="modal-form"><label>상품 선택<select aria-label="작업 이력 상품 선택" value={historyProductId} onChange={event=>setHistoryProductId(event.target.value)}>{!products.length&&<option value="">저장된 상품 없음</option>}{products.map(product=><option key={product.id} value={product.id}>{product.title}</option>)}</select></label>{products.filter(product=>product.id===historyProductId).map(product=><AutomationPanel key={product.id} productId={product.id} version={product.updated_at}/>)}</div></Modal>}
 
       {detail&&<div className="drawer-backdrop" onMouseDown={()=>closeWorkspace()}><aside className="detail-drawer registration-workspace" role="dialog" aria-modal="true" aria-label="상품 등록 작업 공간" onMouseDown={e=>e.stopPropagation()}>

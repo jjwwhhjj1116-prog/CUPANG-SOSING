@@ -97,15 +97,27 @@ export async function collectAlibabaMobileCapture(sourceUrl: string, options: {f
   // Validate identity/SKUs/prices before following the page's bounded detail
   // reference. A response for another offer cannot authorize a detail read.
   parseAlibabaMobileProduct(page, payload);
-  const detailSource = page.detailUrl ? await readBody(await request(page.detailUrl, 'text/plain'), 2 * 1024 * 1024) : '';
+  let detailSource='',detailUnavailable:{status:502|503|504}|undefined;
+  if(page.detailUrl){
+    const response=await request(page.detailUrl,'text/plain');
+    if([502,503,504].includes(response.status)){
+      // This optional source alone is temporarily unavailable. Preserve the
+      // already validated page/SKU bytes and explicitly report the omission;
+      // authentication, malformed/oversized sources and cancellation still fail.
+      try{await response.body?.cancel();}catch{/* Never consume the failed detail body as supplier facts. */}
+      detailUnavailable={status:response.status as 502|503|504};
+    }else detailSource=await readBody(response,2*1024*1024);
+  }
   if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
   parseAlibabaMobileProduct(page, payload, detailSource ? parseAlibabaMobileDescription(detailSource) : '');
+  if(detailUnavailable)return{format:'1688-public-mobile-partial-capture-v1' as const,sourceUrl:source.sourceUrl,mobileHtml,skuPayload:payload,detailSource,detailUnavailable};
   return {format:'1688-public-mobile-capture-v1' as const, sourceUrl:source.sourceUrl, mobileHtml, skuPayload:payload, detailSource};
 }
 
 export async function collectAlibabaMobileProduct(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal}) {
   const capture = await collectAlibabaMobileCapture(sourceUrl, options);
   if (capture.format === '1688-public-sku-capture-v1') return parseAlibabaPublicSkuProduct(capture.skuPayload, capture.sourceUrl);
-  return parseAlibabaMobileProduct(parseAlibabaMobilePage(capture.mobileHtml,capture.sourceUrl), capture.skuPayload,
+  const result=parseAlibabaMobileProduct(parseAlibabaMobilePage(capture.mobileHtml,capture.sourceUrl), capture.skuPayload,
     capture.detailSource ? parseAlibabaMobileDescription(capture.detailSource) : '');
+  return capture.format==='1688-public-mobile-partial-capture-v1'?{...result,provider:'1688-public-mobile-partial-v1'}:result;
 }

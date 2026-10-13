@@ -7,13 +7,13 @@ import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url),nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<10;i++)await new Promise(resolve=>setImmediate(resolve));};
 const version='2026-10-05T00:00:00.000Z',next='2026-10-05T00:00:00.001Z';
-function harness(prepare){
+function harness(prepare,onBusyChange){
  const state=[],refs=[],effects=[],cleanups=[],requests=[],opened=[],cache=new Map();let si=0,ri=0,first=true;
- const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);}};
+ const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);},useLayoutEffect(fn){fn();}};
  const fetcher=async function(url,init){assert.equal(this,undefined,'native fetch cannot receive helper options as its receiver');requests.push({url,init});if(url==='/api/products/p')return Response.json({product:{id:'p',updated_at:version}});if(url.endsWith('/work-draft'))return prepare();assert.equal(url,'/api/products/p/automation');const body=JSON.parse(init.body);return Response.json({workflow:{productId:'p',productVersion:body.expectedVersion,stages:[{id:'pricing',status:'complete'},{id:'mainImage',status:'draft'},{id:'additionalImages',status:'draft'},{id:'detailImage',status:'draft'},{id:'quotation',status:'blocked'}]}});};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,crypto,fetch:fetcher,require:name=>name==='react'?hooks:name.includes('/batch-label-panel')?{BatchLabelPanel:()=>null}:name.includes('/batch-translation-panel')?{BatchTranslationPanel:()=>null}:name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name)});return exports;}
  const component=load('app/components/batch-work-panel.tsx').BatchWorkPanel;
- const render=()=>{si=0;ri=0;const tree=component({products:[{id:'p',title:'검토 상품',updated_at:version}],onOpen:(...values)=>opened.push(values)});if(first){first=false;effects.forEach(fn=>cleanups.push(fn()));}return tree;};
+ const render=()=>{si=0;ri=0;const tree=component({products:[{id:'p',title:'검토 상품',updated_at:version}],onOpen:(...values)=>opened.push(values),onBusyChange});if(first){first=false;effects.forEach(fn=>cleanups.push(fn()));}return tree;};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
  return {render,button,requests,opened,unmount(){cleanups.forEach(fn=>fn?.());}};
 }
@@ -30,6 +30,23 @@ test('work panel explicitly prepares drafts once, uses the saved version and ope
  const status=nodes(h.render()).find(node=>node.props.role==='status').props.children;
  assert.match(status,/원본 이미지 초안/);assert.match(status,/가격 확인됨/);assert.match(status,/저장 초안 3단계/);assert.ok(!status.includes('이미지 완료'));
  assert.equal(h.button('이미지 초안 검토').props.disabled,false);
+});
+
+test('label running and uncertain-save callbacks keep the parent mode and release navigation only after resolution',()=>{
+ const events=[],h=harness(()=>{throw Error('no write expected');},value=>events.push(value));
+ try{
+  h.button('선택 상품 표시사항 PNG 일괄 생성·연결').props.onClick();
+  const back=h.button('← 초안 준비 작업').props.onClick;
+  const labels=nodes(h.render()).find(node=>typeof node.type==='function'&&node.props.onBusyChange);
+  assert.ok(labels);
+  labels.props.onBusyChange(true);back();
+  assert.equal(h.button('← 초안 준비 작업').props.disabled,true);
+  assert.equal(h.requests.length,0);
+  labels.props.onBusyChange(false);
+  assert.equal(h.button('← 초안 준비 작업').props.disabled,false);
+  back();assert.ok(h.button('선택 상품 표시사항 PNG 일괄 생성·연결'));
+  assert.deepEqual(events,[true,false]);
+ }finally{h.unmount();}
 });
 
 test('work panel keeps an unavailable-source explanation with price results and stops after closing during preparation',async()=>{

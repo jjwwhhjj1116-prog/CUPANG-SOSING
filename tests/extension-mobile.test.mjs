@@ -17,7 +17,7 @@ const request={type:'YOOFAM_CAPTURE_1688',requestId:'00000000-0000-4000-8000-000
 const sender={tab:{id:7,windowId:17},frameId:0,url:'https://sourceflow.jjwwhhjj1116.workers.dev/products'};
 const raw=()=>({format:'1688-public-mobile-capture-v1',sourceUrl,mobileHtml:html,skuPayload:structuredClone(skus),detailSource:detail});
 
-function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false,mobileBody=html,skuPayload=skus}={}){
+function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false,mobileBody=html,skuPayload=skus,detailResponse,sourceUrlOverride=sourceUrl}={}){
  const listeners=new Set(),rules=new Map(),calls=[],app={id:7,windowId:17,url:sender.url},id='a'.repeat(32);
  let skuRequests=0;
  const api={runtime:{id},tabs:{get:async()=>({...app}),query:async()=>{calls.push('tab-query');throw Error('unexpected product tab');}},
@@ -27,7 +27,7 @@ function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false,mobi
   const url=new URL(target);calls.push(url.hostname);await onFetch({url,init,app,rules,listeners});
   assert.equal(init.credentials,'omit');assert.equal(init.redirect,'manual');assert.equal(init.headers.get('cookie'),null);
   if(url.hostname==='m.1688.com')return new Response(mobileBody,{headers:{'content-type':'text/html;charset=utf-8'}});
-  if(url.hostname==='itemcdn.tmall.com')return new Response(detail);
+  if(url.hostname==='itemcdn.tmall.com')return detailResponse?detailResponse():new Response(detail);
   assert.equal(url.hostname,'h5api.m.1688.com');
   const rule=[...rules.values()].find(value=>value.condition.urlFilter==='|'+url.href+'|');
   const token=rule?'anonymousOnly':'undefined';
@@ -45,8 +45,22 @@ function fixture({onFetch=()=>{},headerChange=value=>value,failSigned=false,mobi
   if(failSigned)throw Error('network unavailable');
   return Response.json(skuPayload);
  };
- return {api,app,rules,listeners,calls,fetcher,run:()=>capture1688Product(request,sender,api,{fetcher}),transport:()=>createMobileTransport(api,sourceUrl,async()=>{},fetcher)};
+ return {api,app,rules,listeners,calls,fetcher,run:()=>capture1688Product({...request,sourceUrl:sourceUrlOverride},sender,api,{fetcher}),transport:()=>createMobileTransport(api,sourceUrlOverride,async()=>{},fetcher)};
 }
+
+test('generated Chrome collector preserves synthetic page and SKU bytes on transient optional-detail failures and cleans its transport',async()=>{
+ const url='https://detail.1688.com/offer/628000000001.html',page=JSON.parse(JSON.stringify(mobile).replaceAll('813724060928','628000000001')),payload=JSON.parse(JSON.stringify(skus).replaceAll('813724060928','628000000001')),body='<script>window.__INIT_DATA='+JSON.stringify(page)+';</script>';
+ const api=mobileIntakeHarness();try{for(const status of [502,503,504]){
+  const h=fixture({mobileBody:body,skuPayload:payload,sourceUrlOverride:url,detailResponse:()=>new Response('temporary optional detail outage',{status})}),result=await h.run();assert.equal(result.ok,true,result.error);assert.equal(result.format,'1688-public-mobile-partial-capture-v1');assert.equal(result.sourceUrl,url);assert.equal(result.mobileHtml,body);assert.deepEqual(result.skuPayload,payload);assert.deepEqual(result.detailUnavailable,{status});assert.equal(result.detailSource,'');assert.equal(h.rules.size,0);assert.equal(h.listeners.size,0);assert.ok(!h.calls.includes('tab-query'));
+  const parsed=api.load('app/browser-product-capture.ts').parseBrowserProductCapture(result,url);assert.equal(parsed.provider,'chrome-public-mobile-partial-v1');assert.equal(parsed.options.length,6);assert.equal(parsed.images.length,8);assert.equal(parsed.attributes.length,24);assert.ok(!parsed.images.some(image=>image.role==='detail'));
+ }}finally{api.close();}
+});
+
+test('generated Chrome collector cannot treat optional detail authentication or malformed successful content as a partial source',async()=>{
+ for(const detailResponse of [()=>new Response('denied',{status:401}),()=>new Response('denied',{status:403}),()=>new Response('unsupported detail content')]){
+  const h=fixture({detailResponse}),transport=h.transport();try{await assert.rejects(collectAlibabaMobileCapture(sourceUrl,{fetcher:transport,signal:new AbortController().signal}));}finally{await transport.dispose();}assert.equal(h.rules.size,0);assert.equal(h.listeners.size,0);assert.ok(!h.calls.includes('tab-query'));
+ }
+});
 
 test('public mtop checksum matches RFC vectors and UTF-8 Node crypto across padding boundaries',()=>{
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/public-mtop-md5.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder});
