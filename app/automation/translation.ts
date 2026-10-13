@@ -1,6 +1,6 @@
 import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
 import { fingerprint } from '@/app/automation/model';
-import { translationAttributeIssue,translationNumbers } from '@/app/translation-attribute-evidence';
+import { translationAttributeIssue,translationNumbers,invalidOptionTranslationDestination } from '@/app/translation-attribute-evidence';
 
 export type TranslationSource = { title: string; description: string; attributes: { name: string; value: string }[]; provenance: 'manual'; reference: string; category?: { id: string; path: string[] }; guidance?: { features: string; keywords: string } };
 export type TranslationDraft = { title: string; keywords: string[]; description: string; attributes: { sourceIndex: number; name: string; value: string }[]; warnings: string[] };
@@ -147,9 +147,11 @@ export function buildTranslationRequest(review: TranslationReview) {
     text: { format: { type: 'json_schema', name: 'korean_product_draft', strict: true, schema } } };
 }
 
-/** Compare source identities only; never fill an omitted translation with a fact. */
+/** A returned option index with an unusable destination remains missing,
+ * including read-only recovery of an older completed v6 result. */
 export function translationAttributeCoverage(source:TranslationSource,draft:Pick<TranslationDraft,'attributes'>){
-  const returned=new Set(draft.attributes.map(attribute=>attribute.sourceIndex));
+  const returned=new Set(draft.attributes.filter(attribute=>!source.attributes[attribute.sourceIndex]
+    ||!invalidOptionTranslationDestination(source.attributes[attribute.sourceIndex].name,attribute.value)).map(attribute=>attribute.sourceIndex));
   return {expected:source.attributes.length,returned:returned.size,missingSourceIndexes:source.attributes.flatMap((_,index)=>returned.has(index)?[]:[index])};
 }
 
@@ -177,7 +179,13 @@ export function validateTranslationDraft(value: unknown, source: TranslationSour
     const attribute = object(item, ['sourceIndex', 'name', 'value']); const index = attribute.sourceIndex;
     if (!Number.isInteger(index) || (index as number) < 0 || (index as number) >= source.attributes.length || seen.has(index as number)) throw new TranslationError('INVALID_MODEL_OUTPUT', '원문에 없는 속성이 응답에 포함되었습니다.', true);
     seen.add(index as number);
-    return { sourceIndex: index as number, name: text(attribute.name, 200), value: text(attribute.value, 2000) };
+    const name=text(attribute.name,200);
+    // v6 can retain usable SEO when one well-typed, bounded option result has
+    // an unusable destination. All source identities and generic text syntax
+    // keep their existing hard validation; the bad value is omitted below.
+    const value=instructionsVersion==='sourceflow-translation-v6'&&typeof attribute.value==='string'&&attribute.value.length<=2000
+      &&invalidOptionTranslationDestination(source.attributes[index as number].name,attribute.value)?attribute.value.trim():text(attribute.value,2000);
+    return {sourceIndex:index as number,name,value};
   });
   if(instructionsVersion==='sourceflow-translation-v5' && seen.size!==source.attributes.length)throw new TranslationError('INCOMPLETE_SOURCE_ATTRIBUTES', `상품 속성·옵션 번역 일부가 누락되었습니다(기대 ${source.attributes.length}개 · 반환 ${seen.size}개). 원문은 보존했으며 불완전한 결과를 자동 반영하지 않았습니다.`, true);
   const result = { title, description, keywords: [...new Set(draft.keywords.map(word => text(word, 100)))], attributes, warnings: draft.warnings.map(warning => text(warning, 2000)) };
@@ -185,9 +193,10 @@ export function validateTranslationDraft(value: unknown, source: TranslationSour
     if(scope!=='options')validateKoreanSeo(result,source);
     const issues=attributes.map(attribute=>translationAttributeIssue(source.attributes[attribute.sourceIndex],attribute));
     result.attributes=attributes.filter((_,index)=>issues[index]===null);
-    const copied=issues.filter(issue=>issue==='chinese-copy').length,foreignNumbers=issues.filter(issue=>issue==='foreign-number').length;
+    const copied=issues.filter(issue=>issue==='chinese-copy').length,foreignNumbers=issues.filter(issue=>issue==='foreign-number').length,invalidOptions=issues.filter(issue=>issue==='invalid-option-destination').length;
     if(copied)result.warnings.unshift(`중국어 원문을 그대로 반환한 상품 속성·옵션 ${copied}개는 번역 완료로 처리하지 않았습니다. 해당 원문과 기존 값을 유지했습니다.`);
     if(foreignNumbers)result.warnings.unshift(`같은 상품 속성·옵션 원문에 없는 숫자를 반환한 ${foreignNumbers}개는 적용하지 않았습니다. 다른 항목의 숫자를 옮기지 않고 해당 원문과 기존 값을 유지했습니다.`);
+    if(invalidOptions)result.warnings.unshift(`옵션명 500자·색상/사이즈 200자 이내의 한 줄 입력 규격과 맞지 않는 번역 ${invalidOptions}개는 적용하지 않았습니다. 해당 원문과 기존 값을 유지하고 정상 상품명·설명·다른 번역은 초안으로 보존했습니다.`);
     const coverage=translationAttributeCoverage(source,result);
     if(coverage.missingSourceIndexes.length)result.warnings.unshift(`상품 속성·옵션 ${coverage.expected}개 중 ${coverage.returned}개를 번역 초안으로 받았습니다. 누락 ${coverage.missingSourceIndexes.length}개는 원문에 보존했으며 번역 완료로 처리하지 않았습니다. SEO·옵션·표시사항에서 확인하고 수정해주세요.`);
   }

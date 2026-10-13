@@ -7,16 +7,17 @@ import { translationAttributeIssue } from '@/app/translation-attribute-evidence'
 
 export function integratedTranslationPlan(content: ProductContent, options: ProductOptions, job: TranslationJob, version: string, scope: 'all' | 'options' = 'all', hiddenAttributes?: boolean, intakeBrand?: string, preserveCategoryAttributes = false, optionRecoveryJobs:readonly TranslationJob[] = []) {
   if (options.productId !== content.productId || job.contentRevision !== content.revision) throw Error('상품 또는 번역 원문의 콘텐츠 버전이 변경되었습니다. 최신 자료를 확인해주세요.');
-  let rejected=0;
+  let rejected=0,invalidOptions=0;
   if(job.review.instructionsVersion==='sourceflow-translation-v6'&&job.result){
-    const attributes=job.result.draft.attributes.filter(attribute=>!translationAttributeIssue(job.review.source.attributes[attribute.sourceIndex],attribute));
+    const attributes=job.result.draft.attributes.filter(attribute=>{const issue=translationAttributeIssue(job.review.source.attributes[attribute.sourceIndex],attribute);if(issue==='invalid-option-destination')invalidOptions++;return !issue;});
     rejected=job.result.draft.attributes.length-attributes.length;
     // Older completed v6 rows also pass this read-only adoption boundary.
     // Keep the saved job and reviewed source intact for later inspection.
     if(rejected)job={...job,result:{...job.result,draft:{...job.result.draft,attributes}}};
   }
   const text = scope === 'options' ? { input: null, preview: [], skipped: [] } : translationBatchAdoption(content, job, version, intakeBrand);
-  if(rejected)text.skipped.push(`원문 연결·중국어 원문 복사·같은 항목 원문에 없는 숫자를 확인해야 하는 상품 속성·옵션 ${rejected}개는 번역 완료로 처리하지 않고 기존 값을 유지했습니다.`);
+  if(rejected-invalidOptions)text.skipped.push(`원문 연결·중국어 원문 복사·같은 항목 원문에 없는 숫자를 확인해야 하는 상품 속성·옵션 ${rejected-invalidOptions}개는 번역 완료로 처리하지 않고 기존 값을 유지했습니다.`);
+  if(invalidOptions)text.skipped.push(`옵션명 500자·색상/사이즈 200자 이내의 한 줄 입력 규격과 맞지 않는 번역 ${invalidOptions}개는 적용하지 않고 원문과 기존 값을 유지했습니다. 해당 옵션은 확인·수정해주세요.`);
   const translated = adoptOptionTranslations(options, job, version, true, optionRecoveryJobs);
   const preview = [...text.preview];
   if(content.categoryAttributes && job.review.instructionsVersion==='sourceflow-translation-v6' && job.result &&

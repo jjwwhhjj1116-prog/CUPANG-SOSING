@@ -91,18 +91,20 @@ export async function buildGoogleTranslationDraft(source:TranslationSource,fetch
     keywords.push(token);
   }
   const attributes:TranslationDraft['attributes']=[];
-  let foreignNumbers=0;
+  let foreignNumbers=0,invalidOptions=0;
   fields.forEach((pair,sourceIndex)=>{
     const name=pair.bound?source.attributes[sourceIndex].name:translated.get(pair.name),value=translated.get(pair.value);
     if(name&&name.length<=200&&value&&value.length<=2000){
       const attribute={sourceIndex,name,value},issue=translationAttributeIssue(source.attributes[sourceIndex],attribute);
       if(issue==='foreign-number')foreignNumbers++;
+      if(issue==='invalid-option-destination')invalidOptions++;
       if(!issue)attributes.push(attribute);
     }
   });
   const warnings=[scope==='options'?'Google 옵션 텍스트 번역 초안입니다. 옵션 의미를 확인하고 수정해주세요. 상품명·설명·표시사항은 요청하거나 변경하지 않았습니다.':'Google 텍스트 번역 초안입니다. 판매자가 기재한 재질·인증·성능과 상품명·옵션 의미를 확인하고 수정해주세요.'];
   if(stopStatus!==null)warnings.push(`Google 번역 HTTP ${stopStatus} 응답으로 남은 요청을 중단했습니다. 이미 받은 번역은 초안으로 유지하고 요청하지 않은 항목은 원문에 보존했습니다. 자동 재시도하지 않았습니다.`);
   if(foreignNumbers)warnings.push(`같은 상품 속성·옵션 원문에 없는 숫자를 반환한 ${foreignNumbers}개는 적용하지 않고 원문에 보존했습니다.`);
+  if(invalidOptions)warnings.push(`옵션명 500자·색상/사이즈 200자 이내의 한 줄 입력 규격과 맞지 않는 번역 ${invalidOptions}개는 적용하지 않고 원문에 보존했습니다. 정상 상품명·설명·다른 번역은 초안으로 유지했습니다.`);
   if(description&&!translatedDescription)warnings.push('상품 설명 번역을 받지 못했습니다. 원문은 유지했으며 설명 초안을 비워 두었습니다.');
   if(descriptionTooLong)warnings.push('전체 상품 설명 번역이 20,000자 한도를 초과했습니다. 번역을 자르거나 일부만 적용하지 않고 원문을 유지했습니다.');
   if(budgetReached)warnings.push('한 번의 번역 요청 묶음 한도를 넘은 텍스트는 원문에 보존했습니다. 자동으로 추가 요청하지 않았습니다.');
