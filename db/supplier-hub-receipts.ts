@@ -2,6 +2,17 @@ import { env } from 'cloudflare:workers';
 import { sourceGuard, type QuotationSourceGuard } from '@/db/quotation-fields';
 import { parseStoredSupplierHubReceipt, supplierHubReceiptSummary, supplierHubReceiptObservationTime, supplierHubReceiptOrder, type SupplierHubReceipt, type SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
 import { supplierHubTransmissionHistory } from '@/app/supplier-hub-transmission-history';
+import type {WorkspaceMember} from '@/app/workspace-members';
+
+export type SupplierHubReceiptMember = Pick<WorkspaceMember,'id'|'email'|'role'|'companyCode'|'companyName'>;
+/** Native member login must still have the same approved identity inside the
+ * receipt mutation. Legacy/dev storage callers retain their prior contract. */
+function memberGuard(owner:string,member:SupplierHubReceiptMember|undefined,company:SupplierHubReceipt['result']['company']){
+  if(!member)return {sql:(env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED==='true'?'0':'1',args:[] as string[]};
+  if(member.id!==owner||member.companyCode!==company?.code||member.companyName!==company.name)return {sql:'0',args:[] as string[]};
+  return {sql:'EXISTS(SELECT 1 FROM members m WHERE m.id=? AND m.id=p.owner_id AND m.status=\'approved\' AND m.email=? AND m.role=? AND m.company_code=? AND m.company_name=?)',
+    args:[member.id,member.email,member.role,member.companyCode,member.companyName]};
+}
 
 async function database(){
   if(!env.DB)throw new Error('D1 unavailable');
@@ -14,26 +25,26 @@ async function database(){
 }
 export { database as ensureSupplierHubReceiptDatabase };
 /** Save an observation without changing product versions or invalidating its XLSX. */
-export async function saveSupplierHubReceipt(owner:string,productId:string,receipt:SupplierHubReceipt,source:QuotationSourceGuard,quotationRevision:number){
-  const db=await database(),guard=sourceGuard(owner,productId,source);
+export async function saveSupplierHubReceipt(owner:string,productId:string,receipt:SupplierHubReceipt,source:QuotationSourceGuard,quotationRevision:number,member?:SupplierHubReceiptMember){
+  const db=await database(),guard=sourceGuard(owner,productId,source),authorization=memberGuard(owner,member,receipt.result.company);
   // Hub pending rows carry an empty ID. Pin only an ID that has been assigned.
   const row=await db.prepare(`INSERT INTO supplier_hub_receipts(owner_id,product_id,fingerprint,observed_at,evidence_order,payload)
     SELECT p.owner_id,p.id,?,?,?,? FROM products p WHERE ${guard.sql}
-      AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=?
+      AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND ${authorization.sql}
     ON CONFLICT(owner_id,product_id,fingerprint) DO UPDATE SET observed_at=excluded.observed_at,evidence_order=excluded.evidence_order,payload=excluded.payload
       WHERE (excluded.observed_at>supplier_hub_receipts.observed_at
         OR excluded.observed_at=supplier_hub_receipts.observed_at AND excluded.evidence_order>supplier_hub_receipts.evidence_order)
       AND (NULLIF(json_extract(supplier_hub_receipts.payload,'$.result.quotationId'),'') IS NULL
         OR json_extract(supplier_hub_receipts.payload,'$.result.quotationId')=json_extract(excluded.payload,'$.result.quotationId'))
       AND NOT (excluded.evidence_order=1 AND supplier_hub_receipts.evidence_order>1)
-    RETURNING fingerprint`).bind(receipt.fingerprint,supplierHubReceiptObservationTime(receipt.result),supplierHubReceiptOrder(receipt.result),JSON.stringify(receipt),...guard.args,quotationRevision).first();
+    RETURNING fingerprint`).bind(receipt.fingerprint,supplierHubReceiptObservationTime(receipt.result),supplierHubReceiptOrder(receipt.result),JSON.stringify(receipt),...guard.args,quotationRevision,...authorization.args).first();
   if(row)return true;
   // Equal/older repeated observations are harmless, but a changed saved source is not.
   return Boolean(await db.prepare(`SELECT p.id FROM products p WHERE ${guard.sql}
-    AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=?
+    AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND ${authorization.sql}
     AND EXISTS(SELECT 1 FROM supplier_hub_receipts r WHERE r.owner_id=p.owner_id AND r.product_id=p.id AND r.fingerprint=?
       AND (NULLIF(json_extract(r.payload,'$.result.quotationId'),'') IS NULL OR json_extract(r.payload,'$.result.quotationId') IS ?))`)
-    .bind(...guard.args,quotationRevision,receipt.fingerprint,receipt.result.quotationId??null).first());
+    .bind(...guard.args,quotationRevision,...authorization.args,receipt.fingerprint,receipt.result.quotationId??null).first());
 }
 export async function readSupplierHubReceipt(owner:string,productId:string,fingerprint:string):Promise<SupplierHubReceipt|null>{
   const db=await database();
@@ -53,28 +64,28 @@ export async function readSupplierHubTransmissionHistory(owner:string,productId:
   return supplierHubTransmissionHistory(productId,receipts);
 }
 /** Refresh an already stored receipt after the editable draft changed, without changing that draft. */
-export async function saveHistoricalSupplierHubReceipt(owner:string,productId:string,receipt:SupplierHubReceipt,previous:SupplierHubReceipt,productVersion:string){
+export async function saveHistoricalSupplierHubReceipt(owner:string,productId:string,receipt:SupplierHubReceipt,previous:SupplierHubReceipt,productVersion:string,member?:SupplierHubReceiptMember){
   if(receipt.schemaVersion!==previous.schemaVersion||receipt.evidence!==previous.evidence||receipt.fingerprint!==previous.fingerprint
     ||receipt.profileId!==previous.profileId||receipt.categoryId!==previous.categoryId||receipt.productVersion!==previous.productVersion)throw Error('원래 전송 기록의 연결값이 바뀌었습니다.');
-  const db=await database();
+  const db=await database(),authorization=memberGuard(owner,member,receipt.result.company);
   const previousPayload=JSON.stringify(previous),payload=JSON.stringify(receipt);
   const row=await db.prepare(`UPDATE supplier_hub_receipts SET observed_at=?,evidence_order=?,payload=?
     WHERE owner_id=? AND product_id=? AND fingerprint=? AND payload=?
       AND EXISTS(SELECT 1 FROM products p WHERE p.id=supplier_hub_receipts.product_id AND p.owner_id=supplier_hub_receipts.owner_id AND p.updated_at=?
-        AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=p.id AND r.owner_id=p.owner_id))
+        AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=p.id AND r.owner_id=p.owner_id) AND ${authorization.sql})
       AND (? > observed_at OR ? = observed_at AND ? > evidence_order)
       AND (NULLIF(json_extract(payload,'$.result.quotationId'),'') IS NULL
         OR json_extract(payload,'$.result.quotationId')=json_extract(?,'$.result.quotationId'))
       AND NOT (?=1 AND evidence_order>1)
     RETURNING fingerprint`).bind(supplierHubReceiptObservationTime(receipt.result),supplierHubReceiptOrder(receipt.result),payload,
-      owner,productId,receipt.fingerprint,previousPayload,productVersion,
+      owner,productId,receipt.fingerprint,previousPayload,productVersion,...authorization.args,
       supplierHubReceiptObservationTime(receipt.result),supplierHubReceiptObservationTime(receipt.result),supplierHubReceiptOrder(receipt.result),payload,supplierHubReceiptOrder(receipt.result)).first();
   if(row)return true;
   // Equal or older repeated observations are harmless only while the pinned draft and receipt remain unchanged.
   return Boolean(await db.prepare(`SELECT p.id FROM products p JOIN supplier_hub_receipts r ON r.product_id=p.id AND r.owner_id=p.owner_id
-    WHERE p.id=? AND p.owner_id=? AND p.updated_at=? AND r.fingerprint=? AND r.payload=?
+    WHERE p.id=? AND p.owner_id=? AND p.updated_at=? AND r.fingerprint=? AND r.payload=? AND ${authorization.sql}
       AND r.observed_at>=? AND NOT EXISTS(SELECT 1 FROM product_removals removed WHERE removed.product_id=p.id AND removed.owner_id=p.owner_id)`)
-    .bind(productId,owner,productVersion,previous.fingerprint,previousPayload,supplierHubReceiptObservationTime(receipt.result)).first());
+    .bind(productId,owner,productVersion,previous.fingerprint,previousPayload,...authorization.args,supplierHubReceiptObservationTime(receipt.result)).first());
 }
 /** Latest submitted draft is deliberately separate from the current editable draft.
  * The normal rowid table retains first server-storage order: both regular

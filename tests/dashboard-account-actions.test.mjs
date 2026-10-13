@@ -34,7 +34,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'ê
   useCallback(fn,deps){const slot=active.index++,old=active.slots[slot];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))active.slots[slot]={fn,deps};return active.slots[slot].fn;},
   useEffect(fn,deps){const instance=active,slot=instance.index++,old=instance.slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:old?.cleanup};instance.slots[slot]=next;effects.push(()=>{next.cleanup?.();next.cleanup=fn();});}},
   useLayoutEffect(fn,deps){const instance=active,slot=instance.index++,old=instance.slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:old?.cleanup};instance.slots[slot]=next;layoutEffects.push(()=>{next.cleanup?.();next.cleanup=fn();});}},
-  useMemo(fn){return fn();},
+  useMemo(fn,deps){const instance=active,slot=instance.index++,old=instance.slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i])))instance.slots[slot]={value:fn(),deps};return instance.slots[slot].value;},
  };
  async function request(url,init={}){
   requests.push({url,init,method:init.method??'GET'});

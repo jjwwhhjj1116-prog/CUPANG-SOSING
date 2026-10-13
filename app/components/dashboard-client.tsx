@@ -5,7 +5,7 @@ import { registrationSteps, initialRegistrationStep, type CollectionEditorTab } 
 import { requestWorkspaceClose, workspaceEditState, quotationSourceState } from '@/app/workspace-close';
 import type { QuotationNavigationTarget } from '@/app/quotation-navigation';
 
-import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CategoryProfileEditor } from '@/app/components/category-profile-editor';
 import { IntakeQueuePanel, type IntakeSourceSeed } from '@/app/components/intake-queue-panel';
 import { useIntakeDraft } from '@/app/components/use-intake-draft';
@@ -134,8 +134,26 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     operation.ownerId=workspaceOwnerId;operation.mounted=true;operation.saving=false;operation.epoch++;
     return()=>{operation.mounted=false;operation.saving=false;operation.epoch++;};
   },[workspaceOwnerId]);
-  const [transmitOpen, setTransmitOpen] = useState(false);
-  const [submissionTarget,setSubmissionTarget]=useState<{product:Product;profileId:string}|null>(null);
+  const submissionContext=useMemo(()=>({ownerId:workspaceOwnerId}),[workspaceOwnerId]);
+  type SubmissionSession={context:typeof submissionContext;target:{product:Product;profileId:string}|null};
+  const [submissionSession,setSubmissionSession]=useState<SubmissionSession|null>(null);
+  const liveSubmissionContext=useRef<typeof submissionContext|null>(submissionContext),liveSubmissionSession=useRef<SubmissionSession|null>(null);
+  useLayoutEffect(()=>{
+    liveSubmissionContext.current=submissionContext;
+    return()=>{liveSubmissionContext.current=null;liveSubmissionSession.current=null;};
+  },[submissionContext]);
+  const currentSubmission=submissionSession?.context===submissionContext?submissionSession:null;
+  const submissionTarget=currentSubmission?.target;
+  function openSubmission(target:SubmissionSession['target']) {
+    if(liveSubmissionContext.current!==submissionContext||target&&workspaceOwnerId&&target.product.owner_id!==workspaceOwnerId)return;
+    const session={context:submissionContext,target};liveSubmissionSession.current=session;setSubmissionSession(session);
+  }
+  function submissionCurrent(session:SubmissionSession|null) {
+    return !!session&&liveSubmissionContext.current===submissionContext&&session.context===submissionContext&&liveSubmissionSession.current===session;
+  }
+  function closeSubmission(session:SubmissionSession|null) {
+    if(!submissionCurrent(session))return;liveSubmissionSession.current=null;setSubmissionSession(null);
+  }
   const [detail, setDetail] = useState<Product | null>(null);
   const [tab, setTab] = useState('SEO');
   const [quotationTarget,setQuotationTarget]=useState<QuotationNavigationTarget|undefined>();
@@ -289,12 +307,12 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
   }
   function prepareCurrentSubmission(profileId:string) {
     const operation=settingsOperationRef.current;
-    if(!detail||!operation.mounted||operation.ownerId!==workspaceOwnerId||detailNavigation!==productNavigation.current||(workspaceOwnerId&&detail.owner_id!==workspaceOwnerId))return;
+    if(!detail||liveSubmissionContext.current!==submissionContext||!operation.mounted||operation.ownerId!==workspaceOwnerId||detailNavigation!==productNavigation.current||(workspaceOwnerId&&detail.owner_id!==workspaceOwnerId))return;
     const state=workspaceEditState(detailBody.current);
     if(state.busy){setCloseNotice('저장 중인 작업이 있습니다. 저장이 끝나면 전송을 준비해주세요.');return;}
     if(state.dirty){setCloseNotice('저장하지 않은 입력이 있습니다. 각 단계에서 저장한 뒤 전송을 준비해주세요.');return;}
     optionWorkspaceReturn.current=null;optionBoardScope.current=null;setOptionBoardProduct(null);setOptionReturnFocus(undefined);
-    setCloseNotice('');setSubmissionTarget({product:detail,profileId});setDetail(null);setTransmitOpen(true);
+    setCloseNotice('');openSubmission({product:detail,profileId});setDetail(null);
   }
   async function openCollectedProduct(productId:string,initialTab:CollectionEditorTab,signal:AbortSignal){
     const request=++productNavigation.current;
@@ -529,7 +547,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 
       <section className="content">
         <header className="topbar"><div><h1>{view==='work'?'로켓배송 AI상품등록':'로켓배송 상품관리(신규)'}</h1><p>{view==='work'?'상품별 등록 현황 및 관리':'등록 상품 · SKU · 가격 · 구매정보'}</p></div>
-          <div className="top-actions"><a className="workspace-user" href="/account">{userName} · 계정 관리</a>{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy} onClick={()=>{if(!settingsBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" onClick={()=>{setAddOpen(true);}}>＋ 상품 추가</button><details className="bulk-action-menu"><summary className="btn ghost">전체 작업 ▾</summary><div><button type="button" onClick={()=>setSelected(new Set(products.map(product=>product.id)))}>최근 상품 전체 선택</button><button type="button" onClick={()=>setSelected(new Set())}>선택 해제</button><button type="button" onClick={()=>setBatchOpen(true)}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy} onClick={runAutomation}>작업 개시</button><button className="btn rose" onClick={()=>{setSubmissionTarget(null);setTransmitOpen(true);}}>등록 전송</button></>}</div></header>
+          <div className="top-actions"><a className="workspace-user" href="/account">{userName} · 계정 관리</a>{view==='work'&&<><button type="button" className="btn settings" aria-expanded={settingsOpen} aria-controls="workspace-settings-panel" disabled={settingsBusy} onClick={()=>{if(!settingsBusyRef.current)setSettingsOpen(open=>!open);}}>⚙ 기본설정</button><button className="btn primary" onClick={()=>{setAddOpen(true);}}>＋ 상품 추가</button><details className="bulk-action-menu"><summary className="btn ghost">전체 작업 ▾</summary><div><button type="button" onClick={()=>setSelected(new Set(products.map(product=>product.id)))}>최근 상품 전체 선택</button><button type="button" onClick={()=>setSelected(new Set())}>선택 해제</button><button type="button" onClick={()=>setBatchOpen(true)}>선택 상품 일괄 작업</button><button type="button" onClick={()=>{setHistoryProductId(products[0]?.id??'');setHistoryOpen(true);}}>작업 이력</button></div></details><button className="btn start" disabled={busy} onClick={runAutomation}>작업 개시</button><button className="btn rose" onClick={()=>openSubmission(null)}>등록 전송</button></>}</div></header>
 
         {settingsOpen&&<section id="workspace-settings-panel" className="workspace-settings-panel" aria-labelledby="workspace-settings-heading"><header><h2 id="workspace-settings-heading">기본 등록 정보 설정</h2></header><WorkspaceSettingsDialog workspaceOwnerId={workspaceOwnerId} onSave={saveWorkspaceSettings} onClose={()=>{if(!settingsBusyRef.current)setSettingsOpen(false);}} onBusy={changeSettingsBusy}/></section>}
 
@@ -597,7 +615,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
       </aside></div>}
 
       {optionBoardProduct&&(!workspaceOwnerId||optionBoardProduct.owner_id===workspaceOwnerId)&&<div className="option-board-return-context" hidden={!!detail} inert={!!detail}><Modal wide title={registrationTitle(optionBoardProduct)} subtitle="옵션별 상품 자료와 견적서를 확인합니다." onClose={closeOptionBoard}>{optionNavigationBusy&&<p role="status">선택한 상품의 최신 자료를 불러오는 중…</p>}<ProductOptionBoard key={optionBoardProduct.id} productId={optionBoardProduct.id} sourceUrl={optionBoardProduct.source_url} imageKeys={optionBoardProduct.image_keys} refreshToken={`${optionBoardVersion}:${optionBoardReturnRevision}`} returnFocus={detail?undefined:optionReturnFocus} onReturnFocusHandled={()=>setOptionReturnFocus(undefined)} onStage={(optionId,step)=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,step);}} onManage={optionId=>{if(typeof optionId==='string')void navigateOptionBoard(optionId,'옵션',true);}} onContent={step=>void navigateOptionBoard(undefined,step)} onImage={optionId=>void navigateOptionBoard(optionId,'대표 이미지')} onEdit={optionId=>void navigateOptionBoard(optionId,'가격')} onQuotation={optionId=>void navigateOptionBoard(optionId,'견적서')}/></Modal></div>}
-      {transmitOpen&&<Modal title="Supplier Hub 등록 전송" subtitle="선택 상품의 실제 저장 자료를 검사하고 필요한 항목을 수정하세요." onClose={()=>setTransmitOpen(false)}><SubmissionReviewPanel key={submissionTarget?`${submissionTarget.product.id}:${submissionTarget.profileId}`:"selected"} products={submissionTarget?[submissionTarget.product]:products.filter(product=>selected.has(product.id))} profiles={categoryProfiles} initialProfileId={submissionTarget?.profileId} onReceiptSaved={()=>{void loadWorkspace().catch(()=>setToast('전송 결과는 보관됐습니다. 상품 목록을 다시 불러와주세요.'));}} onEdit={(id,preferredProfileId,target)=>{const product=submissionTarget?.product.id===id?submissionTarget.product:products.find(item=>item.id===id);if(product){setTransmitOpen(false);openProduct(product,'견적서',preferredProfileId,target);}}}/></Modal>}
+      {currentSubmission&&<Modal title="Supplier Hub 등록 전송" subtitle="선택 상품의 실제 저장 자료를 검사하고 필요한 항목을 수정하세요." onClose={()=>closeSubmission(currentSubmission)}><SubmissionReviewPanel key={submissionTarget?`${submissionTarget.product.id}:${submissionTarget.profileId}`:"selected"} products={submissionTarget?[submissionTarget.product]:products.filter(product=>selected.has(product.id)&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId))} profiles={categoryProfiles} initialProfileId={submissionTarget?.profileId} onReceiptSaved={()=>{if(submissionCurrent(currentSubmission))void loadWorkspace().catch(()=>{if(submissionCurrent(currentSubmission))setToast('전송 결과는 보관됐습니다. 상품 목록을 다시 불러와주세요.');});}} onEdit={(id,preferredProfileId,target)=>{if(!submissionCurrent(currentSubmission))return;const product=submissionTarget?.product.id===id?submissionTarget.product:products.find(item=>item.id===id);if(product&&(!workspaceOwnerId||product.owner_id===workspaceOwnerId)){closeSubmission(currentSubmission);openProduct(product,'견적서',preferredProfileId,target);}}}/></Modal>}
 
       {connectionsOpen&&<Modal title="연동 상태" subtitle="서버의 저장소·AI 설정 상태를 확인합니다." onClose={()=>setConnectionsOpen(false)}>
         <div className="settings-form">

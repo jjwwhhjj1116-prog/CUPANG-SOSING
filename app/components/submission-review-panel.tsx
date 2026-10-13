@@ -24,12 +24,13 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
   const requestKey=JSON.stringify([targetKey,productKey,profileId,profileKey,run]);
   const context=useMemo(()=>({key:requestKey}),[requestKey]);
   const currentContext=useRef<typeof context|null>(context);
-  useLayoutEffect(()=>{currentContext.current=context;return()=>{currentContext.current=null;};},[context]);
+  const activeReview=useRef<AbortController|null>(null);
+  useLayoutEffect(()=>{currentContext.current=context;return()=>{currentContext.current=null;const controller=activeReview.current;activeReview.current=null;if(controller&&!controller.signal.aborted)controller.abort();};},[context]);
   const results=snapshot.key===requestKey?snapshot.results:[];
   const busy=products.length>0&&(snapshot.key!==requestKey||!snapshot.finished);
   useEffect(()=>{
     const ids=JSON.parse(targetKey) as string[];
-    const controller=new AbortController(); let next=0;
+    const controller=new AbortController();activeReview.current=controller;let next=0;
     async function worker() {
       while(next<ids.length && !controller.signal.aborted) {
         const id=ids[next++]; let result:Result;
@@ -43,7 +44,7 @@ export function SubmissionReviewPanel({products,profiles,onEdit,onReceiptSaved,i
       }
     }
     void Promise.all(Array.from({length:Math.min(3,ids.length)},()=>worker())).finally(()=>{if(!controller.signal.aborted&&currentContext.current===context)setSnapshot(current=>({key:requestKey,results:current.key===requestKey?current.results:[],finished:true}));});
-    return()=>controller.abort();
+    return()=>{if(activeReview.current===controller)activeReview.current=null;if(!controller.signal.aborted)controller.abort();};
   },[targetKey,profileId,requestKey,context]);
   function editCurrent(id:string,selectedProfileId?:string,target?:QuotationNavigationTarget) {
     if(currentContext.current!==context||!products.some(product=>product.id===id))return;

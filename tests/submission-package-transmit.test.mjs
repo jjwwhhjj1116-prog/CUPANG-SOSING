@@ -42,6 +42,7 @@ function harness({receiptReadStatus=200,receiptReadCode,receiptReadNetworkError=
  let clock=0,editNext=false,resumeRetry;
  const preview={fingerprint,filename:`YOOFAM-${fingerprint}.xlsx`,headers:['상품명'],rows:[['상품']],report:{company,productId:'p',categoryId:'80719',profileId:'profile',rowCount:1,warnings:[],submissionReady:false,...(legalDocuments?{legalDocuments}:{})},submissionReview:{productId:'p',categoryId:'80719',inputFingerprint:fingerprint,submissionReady:false,transport:'not-connected',errorCount:0,reviewCount:0,omittedIssueCount:0,issues:[]}};
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(effect,deps){const i=cursor++;if(!(i in slots)||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){slots[i]?.cleanup?.();slots[i]={deps,cleanup:effect()};}}};
+ hooks.useLayoutEffect=hooks.useEffect;
  let editRecovery=false,lookupError=false,holdLookup=false,resumeLookup,historyReadError=false;
  const bridge={getSupplierHubProductHistory:async()=>{if(historyLookupError)throw Error('이전 Chrome 이력 조회 실패');return {records:[],blocked:localHistoryBlocked};},
   checkSupplierHubExtension:async(_signal,direct)=>calls.push(['check',direct]),prepareSupplierHubHandoff:async()=>calls.push(['prepare']),

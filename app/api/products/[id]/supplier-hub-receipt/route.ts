@@ -2,17 +2,26 @@ import { NextResponse } from 'next/server';
 import { env } from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct } from '@/db/queries';
-import { readSupplierHubReceipt, readSupplierHubTransmissionHistory, saveHistoricalSupplierHubReceipt, saveSupplierHubReceipt } from '@/db/supplier-hub-receipts';
+import { readSupplierHubReceipt, readSupplierHubTransmissionHistory, saveHistoricalSupplierHubReceipt, saveSupplierHubReceipt, type SupplierHubReceiptMember } from '@/db/supplier-hub-receipts';
 import { readMappedQuotationSource, resolveQuotationExport, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
 import { quotationStartRow } from '@/app/category-profiles';
 import { quotationFilename } from '@/app/exports/quotation-filename';
 import { publicDetailConfig } from '@/app/quotation-public-detail';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { validateSupplierHubReceiptResult, type SupplierHubReceipt } from '@/app/supplier-hub-receipt';
-import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
+import { approvedSupplierHubCompany, type SupplierHubCompany } from '@/app/supplier-hub-company';
+import { matchesWorkspaceAccount } from '@/app/workspace-members';
 
 type Context={params:Promise<{id:string}>};
 const json=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
+async function writeAuthorization(owner:string,expected:SupplierHubCompany):Promise<SupplierHubReceiptMember|undefined>{
+  const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
+  if(!company||company.code!==expected.code||company.name!==expected.name)throw new QuotationExportError('접수 결과 저장 전 로그인 계정의 승인 회사가 변경되었습니다. 파일을 다시 보내지 말고 원래 견적서 결과를 확인해주세요.',409);
+  if((env as {YOOFAM_AUTH_ENABLED?:string}).YOOFAM_AUTH_ENABLED!=='true')return undefined;
+  const member=user!.membership;
+  if(!member||member.id!==owner||!matchesWorkspaceAccount(member))throw new QuotationExportError('접수 결과를 저장할 승인 회원정보가 변경되었습니다.',409);
+  return {id:member.id,email:member.email,role:member.role,companyCode:member.companyCode,companyName:member.companyName};
+}
 export async function GET(request:Request,context:Context){
   if(process.env.NODE_ENV==='production'&&!(await getChatGPTUser())?.verifiedAccess)return json({error:'로그인을 확인해주세요.',code:'AUTH_REQUIRED'},503);
   const query=new URL(request.url).searchParams,fingerprint=query.get('fingerprint'),history=query.get('mode')==='history';
@@ -53,7 +62,8 @@ export async function POST(request:Request,context:Context){
         }
       }catch(error){return json({error:error instanceof Error?error.message:'전송 결과를 확인해주세요.'},400);}
       const receipt:SupplierHubReceipt={...previous,recordedAt:new Date().toISOString(),result};
-      if(!await saveHistoricalSupplierHubReceipt(owner,id,receipt,previous,product.updated_at))return json({error:'기존 전송 기록 또는 상품이 변경되었습니다. 파일을 다시 보내지 말고 결과를 다시 조회해주세요.'},409);
+      const authorization=await writeAuthorization(owner,company);
+      if(!await saveHistoricalSupplierHubReceipt(owner,id,receipt,previous,product.updated_at,authorization))return json({error:'기존 전송 기록·상품 또는 승인 회원정보가 변경되었습니다. 파일을 다시 보내지 말고 결과를 다시 조회해주세요.'},409);
       return json({saved:true,fingerprint:previous.fingerprint,registered:false,historical:true});
     }
     if(body.action!==undefined)return json({error:'전송 결과 동작을 확인해주세요.'},400);
@@ -68,7 +78,8 @@ export async function POST(request:Request,context:Context){
     catch(error){return json({error:error instanceof Error?error.message:'전송 결과를 확인해주세요.'},400);}
     const receipt:SupplierHubReceipt={schemaVersion:1,evidence:'chrome-observation',profileId:saved.profile.id,categoryId:body.categoryId,
       fingerprint:revision,productVersion:saved.product.updated_at,recordedAt:new Date().toISOString(),result};
-    if(!await saveSupplierHubReceipt(owner,id,receipt,saved.source,saved.state.revision))return json({error:'견적서 저장본 또는 접수된 견적서 ID가 변경되었습니다.'},409);
+    const authorization=await writeAuthorization(owner,saved.company);
+    if(!await saveSupplierHubReceipt(owner,id,receipt,saved.source,saved.state.revision,authorization))return json({error:'견적서 저장본·접수된 견적서 ID 또는 승인 회원정보가 변경되었습니다.'},409);
     return json({saved:true,fingerprint:revision,registered:false});
   }catch(error){
     if(error instanceof RequestBodyError)return json({error:error.message},error.status);

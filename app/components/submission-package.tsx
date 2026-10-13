@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { verifyQuotationResultSource, QuotationResultSourceChanged } from '@/app/quotation-result-source';
 import { isQuotationFilename } from '@/app/exports/quotation-filename';
 import { validatePackageReview, type PackageReview } from '@/app/submission-review-response';
@@ -61,9 +61,11 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
   const active=useRef<AbortController|null>(null);
   const mounted=useRef(true);
   const receiptNotice=useRef('');
-  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;active.current?.abort();};},[]);
-  function pauseTracking(){
-    active.current?.abort();active.current=null;setBusy(false);setTracking(false);
+  useLayoutEffect(()=>{mounted.current=true;return()=>{mounted.current=false;const controller=active.current;active.current=null;if(controller&&!controller.signal.aborted)controller.abort();};},[]);
+  const trackingController=tracking?active.current:null;
+  function pauseTracking(controller:AbortController|null){
+    if(!mounted.current||!controller||active.current!==controller||controller.signal.aborted)return;
+    controller.abort();active.current=null;setBusy(false);setTracking(false);
     setMessage('결과 확인을 일시정지했습니다. 전달한 파일은 유지됩니다.');
   }
   async function restoreSubmission(value:Preview,controller:AbortController){
@@ -287,7 +289,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
   return <section className="panel-stack" aria-label="견적서와 첨부 파일 준비" aria-busy={busy}>
     <LegalDocumentsEditor productId={productId} disabled={busy||transferAttempted&&!rejectedSubmission} onSaved={()=>{setPreview(null);setCheckedFingerprint('');setHubResult(null);setAgreements({priceData:false,labelBusinessContact:false,legalDocumentsNotApplicable:false});setMessage('서류를 저장했습니다. 견적서와 첨부 파일을 다시 준비해주세요.');}}/>
     <button type="button" className="btn primary" disabled={busy} onClick={()=>void run('preview')}>{tracking?'등록 결과 확인 중…':busy?'견적서 준비 중…':'견적서 + 첨부 파일 준비'}</button>
-    {tracking&&<button type="button" className="btn ghost" onClick={pauseTracking}>결과 확인 일시정지</button>}
+    {tracking&&<button type="button" className="btn ghost" onClick={()=>pauseTracking(trackingController)}>결과 확인 일시정지</button>}
     {error&&<p role="alert">{error}</p>}{receiptError&&<p role="alert">{receiptError}</p>}{message&&<p role="status">{message}</p>}
     {preview&&<>
       {preview.report.company&&<p>등록 회사: {preview.report.company.name} · {preview.report.company.code}</p>}

@@ -27,7 +27,8 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
   calls.push({action,files,identity,agreements});return {state:'validation-requested',registered:false};
  }
  const hooks={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>slots[i]=typeof value==='function'?value(slots[i]):value];},
-  useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;}};
+  useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(){cursor++;},
+  useLayoutEffect(effect,deps){const i=cursor++,previous=slots[i];if(!previous||!deps||deps.some((value,index)=>!Object.is(value,previous.deps[index]))){previous?.cleanup?.();slots[i]={deps,cleanup:effect()};}}};
  let lookupError=false;
  const bridge={getSupplierHubProductHistory:async identity=>({records:[],blocked:[...savedSubmissions].some(([key,value])=>JSON.parse(key)[0]===identity.productId&&Boolean(value.attempt||value.result))}),
   getSupplierHubSubmission:async identity=>{calls.push({action:'chrome-recover'});return savedSubmissions.get(submissionKey(identity))||{attempt:null,result:null};},
@@ -61,6 +62,6 @@ export function submissionPackageUI({route,productId,profileId='cat',categoryId=
   const deadline=Date.now()+requestTimeoutMs;while(render().props['aria-busy']){if(Date.now()>deadline)throw Error('UI request timeout');await new Promise(resolve=>setTimeout(resolve,1));}
  }
  async function click(label){const target=button(label);if(!target||target.props.disabled)throw Error('Button unavailable: '+label);target.props.onClick();await idle();}
- return {calls,dispatches,button,click,idle,render,deferNext(action){let arrive,release;const arrived=new Promise(resolve=>{arrive=resolve;}),wait=new Promise(resolve=>{release=resolve;});deferred={action,arrive,wait};return{arrived,release};},remount(){slots.length=0;},setLookupError(value){lookupError=value;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
+ return {calls,dispatches,button,click,idle,render,deferNext(action){let arrive,release;const arrived=new Promise(resolve=>{arrive=resolve;}),wait=new Promise(resolve=>{release=resolve;});deferred={action,arrive,wait};return{arrived,release};},remount(){for(const slot of slots)slot?.cleanup?.();slots.length=0;},setLookupError(value){lookupError=value;},choose(){for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});},
   alerts:()=>nodes(render()).filter(node=>node.props?.role==='alert').map(node=>node.props.children)};
 }
