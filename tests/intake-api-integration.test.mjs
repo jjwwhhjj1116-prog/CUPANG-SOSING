@@ -260,11 +260,11 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    }
    assert.equal(sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
    if(automatic==='browser-source'){
-    assert.equal(browserReads,4);assert.equal(calls.filter(path=>path.endsWith('/collect')).length,1);
+    assert.equal(browserReads,7,'first hydrated JSON-LD needs 4 reads; its separate optional-source capture needs 3 stable reads');assert.equal(calls.filter(path=>path.endsWith('/collect')).length,1);assert.equal(calls.filter(path=>path.endsWith('/source-supplement')).length,1);assert.ok(calls.indexOf('/api/collection-jobs/job/source-supplement')<calls.indexOf('/api/collection-jobs/job/product'));
     assert.equal(calls.filter(path=>path.endsWith('/browser-capture')).length,1);
     assert.equal(network.filter(host=>host==='gw.open.1688.com').length,0);
     assert.equal(network.filter(host=>host==='detail.1688.com').length,1);
-    const receipt=await load('db/collection-results.ts').readCollectionResult('owner','job');assert.equal(receipt.result.provider,'chrome-product-jsonld-v1');
+    const receipt=await load('db/collection-results.ts').readCollectionResult('owner','job');assert.equal(receipt.result.provider,'chrome-product-jsonld-v1');assert.equal(receipt.result.options.length,payload.result.result.productSkuInfos.length);assert.deepEqual(JSON.parse(JSON.stringify(receipt.result.options.map(row=>[row.sku,row.unitPriceCny,row.minimumOrder,row.stock]))),payload.result.result.productSkuInfos.map(row=>[row.skuId,Number(row.price),payload.result.result.minOrderQuantity,Number(row.amountOnSale)]));
    }
    return;
   }

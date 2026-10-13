@@ -36,6 +36,7 @@ const optionHelpers=declarations('option-image-editor.test.mjs','imageUI');
 const panelHelpers=declarations('free-image-translation-panel.test.mjs','fixture');
 const rendererHelpers=declarations('free-image-translation-client.test.mjs','fixture');
 const stageHelpers=declarations('dashboard-option-stages.test.mjs','harness');
+const mainHelpers=declarations('option-main-image-editor.test.mjs','editor');
 export const detailStageUI=stageHelpers.harness;
 
 export function encodedPng(width,height,pixels){
@@ -51,8 +52,8 @@ export function encodedPng(width,height,pixels){
  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(rows)),chunk('IEND',Buffer.alloc(0))]);
 }
 
-export async function manualEditFixture(company){
- const f=await apiHelpers.fixture({company,linkedWire:true});
+export async function manualEditFixture(company,{stage='detail'}={}){
+ const f=await apiHelpers.fixture({company,linkedWire:true,withMain:stage==='main'});
  const requests=[],clientHarness=rendererHelpers.fixture({imageWidth:3,imageHeight:2}),client=clientHarness.client;
  const createCanvas=clientHarness.document.createElement;
  clientHarness.document.createElement=tag=>{
@@ -73,26 +74,32 @@ export async function manualEditFixture(company){
  const current=async()=>{const response=await f.h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test'+f.base),{params:Promise.resolve({id:f.id})});return(await json(response)).product;};
  const sourceSnapshot=()=>f.sourceRows();
  const fileSnapshot=async()=>new Map(await Promise.all([...f.h.objects].map(async([key,bytes])=>[key,{bytes:[...bytes],head:plain(await f.h.bindings.FILES.head(key))}])));
- const stageUI=detailStageUI({tab:'상세 이미지',product:await current(),focusedOptionId:f.selected,preferredProfileId:f.profile.id});
+ const stageUI=detailStageUI({tab:stage==='main'?'대표 이미지':stage==='additional'?'추가 이미지':'상세 이미지',product:await current(),focusedOptionId:f.selected,preferredProfileId:f.profile.id});
  const panelProps=stageUI.record('free-image-translation-panel').props;
  const panel=panelHelpers.fixture({productId:panelProps.productId,version:panelProps.version,imageKeys:panelProps.imageKeys,quotationContext:panelProps.quotationContext,focusedOptionId:panelProps.focusedOptionId,translationTarget:undefined},
-  {sameFreeImageQuotationRequest:client.sameFreeImageQuotationRequest});
+  {sameFreeImageQuotationRequest:client.sameFreeImageQuotationRequest,FreeImageApplyError:client.FreeImageApplyError});
  panel.setSource((image,signal)=>client.readFreeImageSource(f.id,image.source.productVersion,image.source.sourceKey,image.source.role,signal,transport,
   image.source.quotationTarget?Object.fromEntries(Object.entries(image.source.quotationTarget).filter(([key])=>key!=='bindingSha256')):undefined));
  panel.setRender((image,rows,signal,ids)=>client.renderFreeImageTranslation(image,rows,signal,ids));
  panel.setApply((image,signal)=>client.applyFreeImageTranslation(image,signal,transport));
  panel.setRecover((image,signal)=>client.recoverFreeImageTranslation(image,signal,transport));
- const optionProps=stageUI.record('option-image-editor',props=>props.stage==='detail').props;
- const options=optionHelpers.imageUI(transport,{...optionProps,onSaved:undefined});
+ const optionProps=stage==='main'?stageUI.record('product-options-editor',props=>props.imageView===true).props:stageUI.record('option-image-editor',props=>props.stage===stage).props;
+ let options;
+ if(stage==='main'){
+  const main=mainHelpers.editor({backend:f.h,product:await current(),profile:f.profile,id:f.selected,request:transport},{wrapper:true,onEdit:optionProps.onEdit,onTranslate:optionProps.onTranslate});
+  options={...main,ordered:()=>nodes(main.render()).filter(node=>node.type==='img'&&node.props.alt==='최종 견적 대표이미지').map(node=>node.props.src.slice(11).split('/').map(decodeURIComponent).join('/')),
+   source(value,nextRefresh=main.props.refreshToken){main.props.version=value;main.props.product.updated_at=value;main.props.refreshToken=nextRefresh;main.render();},
+   disabled(value){main.props.imageProcessingBusy=value;main.render();}};
+ }else options=optionHelpers.imageUI(transport,{...optionProps,onSaved:undefined});
  async function settlePanel(){
   const deadline=Date.now()+10000;do{await panel.settle();if(!panel.render().props['data-workspace-saving'])return;assert.ok(Date.now()<deadline,'actual image API work timed out');await new Promise(resolve=>setTimeout(resolve,1));}while(true);
  }
  async function openCard(index=1){
-  await options.idle();await options.click('상세 이미지 '+index+' 편집하기');
+  await options.idle();await options.click(stage==='main'?'최종 대표이미지 편집하기':(stage==='additional'?'추가 이미지 ':'상세 이미지 ')+index+' 편집하기');
   const props=stageUI.record('free-image-translation-panel').props;assert.equal(props.translationTarget.intent,'manual');
   const {onProductChanged,onBusyChange,beforeApply,...binding}=props;assert.equal(typeof onProductChanged,'function');assert.equal(typeof onBusyChange,'function');assert.equal(typeof beforeApply,'function');panel.setProps(binding);await settlePanel();
   return props.translationTarget;
  }
- return {...f,company,requests,intakeNetworkBaseline:[...f.h.network],clientHarness,client,transport,current,sourceSnapshot,fileSnapshot,stageUI,panel,options,openCard,settlePanel,
+ return {...f,company,stage,requests,intakeNetworkBaseline:[...f.h.network],clientHarness,client,transport,current,sourceSnapshot,fileSnapshot,stageUI,panel,options,openCard,settlePanel,
   close(){options.close();panel.close();stageUI.close();f.close();}};
 }

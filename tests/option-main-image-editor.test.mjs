@@ -28,9 +28,9 @@ async function fixture(company=schemaCompanies[0],withTemplate=false){
   return {backend,profile,product,endpoint,id,source,key,fields,nextKey:view.imageKeys.find(value=>value!==key&&value!==source)??source,calls,request,read:()=>backend.route(endpoint).then(json),lost(){lose=true;},recover(){unavailable=false;},close(){backend.close();}};
  }catch(error){backend.close();throw error;}
 }
-function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate}={}){
+function editor(f,{wrapper=false,focusedOptionId=f.id,imageView=true,onTranslate,onEdit,imageProcessingBusy=false}={}){
  const contexts=new Map(),cache=new Map(),effects=[],saved=[];let active,seen;
- const props={product:f.product,productId:f.product.id,profileId:f.profile.id,focusedOptionId,imageView,version:f.product.updated_at,onTranslate,onSaved(){saved.push(1);props.product.updated_at=f.backend.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.product.id).updated_at;props.version=props.product.updated_at;}};
+ const props={product:f.product,productId:f.product.id,profileId:f.profile.id,focusedOptionId,imageView,version:f.product.updated_at,onTranslate,onEdit,imageProcessingBusy,disabled:imageProcessingBusy,onSaved(){saved.push(1);props.product.updated_at=f.backend.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.product.id).updated_at;props.version=props.product.updated_at;}};
  const hookEffect=(fn,deps)=>{const ctx=active,i=ctx.cursor++,old=ctx.slots[i];if(!old||!sameDeps(old.deps,deps)){ctx.slots[i]={deps,cleanup:old?.cleanup};effects.push({ctx,i,fn});}};
  const react={useState(initial){const ctx=active,i=ctx.cursor++;if(!(i in ctx.slots))ctx.slots[i]=typeof initial==='function'?initial():initial;return[ctx.slots[i],value=>{ctx.slots[i]=typeof value==='function'?value(ctx.slots[i]):value;}];},useRef(initial){const ctx=active,i=ctx.cursor++;return ctx.slots[i]??(ctx.slots[i]={current:initial});},useEffect:hookEffect,useLayoutEffect:hookEffect,useMemo(fn,deps){const ctx=active,i=ctx.cursor++,old=ctx.slots[i];if(!old||!sameDeps(old.deps,deps))ctx.slots[i]={deps,value:fn()};return ctx.slots[i].value;},useCallback(fn,deps){return react.useMemo(()=>fn,deps);}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,Date,URL,AbortController,TextEncoder,TextDecoder,structuredClone,crypto,fetch:f.request,require(name){if(name==='react')return react;if(name.startsWith('@/'))return name.includes('/components/')?load(name.slice(2)+'.tsx'):f.backend.load(name.slice(2)+'.ts');return native(name);}},{filename:file});return exports;}
@@ -62,6 +62,18 @@ test('main translation toolbar uses final quotation A with exact saved binding a
   h.props.focusedOptionId=f.id;await h.idle();const previousClock=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick;
   f.product.updated_at=new Date(Date.parse(f.product.updated_at)+1).toISOString();h.render();previousClock();await h.idle();assert.equal(targets.length,2,'captured clock callback cannot use an older saved proof');
   assert.equal(f.calls.some(call=>call.url.includes('/image-text')),false);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
+ }finally{h?.close();f.close();}
+});
+
+test('main manual editing uses its exact final slot and live lock blocks retained edit/blank/save/translation callbacks',async()=>{
+ const f=await fixture(),targets=[];let h;
+ try{const view=await f.read(),binding=f.backend.load('app/quotation-main-image.ts').verifyMainImageView(view);h=editor(f,{wrapper:true,onEdit(...args){targets.push(args);},onTranslate(...args){targets.push(args);}});await h.idle();
+  await h.click('최종 대표이미지 편집하기');assert.deepEqual(plain(targets[0]),[f.key,'main',{kind:'quotation',profileId:f.profile.id,optionId:f.id,input:'mainImage',fieldKey:binding.primary,slotIndex:0,revision:view.revision,inputFingerprint:view.inputFingerprint,optionRevision:view.optionRevision,value:f.key}]);
+  const manual=h.button('최종 대표이미지 편집하기').props.onClick,translate=h.button('최종 대표이미지 중국어 한국어 번역').props.onClick,blank=h.button('최종 대표이미지 비우기').props.onClick,candidate=h.button(`최종 대표이미지 ${view.imageKeys.indexOf(f.nextKey)+1} 선택`).props.onClick;
+  h.props.imageProcessingBusy=true;await h.idle();manual();translate();blank();candidate();await h.idle();assert.equal(targets.length,1);assert.equal(h.button('최종 대표이미지 편집하기').props.disabled,true);assert.equal(h.button('최종 견적 대표이미지 저장').props.disabled,true);assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);
+  h.props.imageProcessingBusy=false;await h.idle();candidate();await h.idle();manual();assert.equal(targets.length,1);const save=h.button('최종 견적 대표이미지 저장').props.onClick;
+  h.props.imageProcessingBusy=true;await h.idle();save();await h.idle();assert.equal(f.calls.filter(call=>call.method!=='GET').length,0);assert.equal(h.button('최종 견적 대표이미지 저장').props.disabled,true);
+  h.props.imageProcessingBusy=false;await h.idle();await h.click('선택 취소·저장 대표이미지 조회');h.props.imageView=false;await h.idle();manual();assert.equal(targets.length,1);
  }finally{h?.close();f.close();}
 });
 

@@ -23,7 +23,6 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  let supplementNotice='';
  let source:ReturnType<typeof validateCollectionReceiptResponse>=null;
  let repairedExistingSource=false;
- let capturedFromChrome=false;
  if(!job.received_at){
   reportProgress('상품 페이지에서 정보 가져오는 중');
   let response=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/collect`,{method:'POST',signal:options.signal});
@@ -31,7 +30,6 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(!response.ok&&body.code==='SOURCE_NOT_COLLECTED'&&options.captureFromBrowser&&!options.signal.aborted){
    reportProgress('현재 Chrome에서 1688 상품 원문 확인 중');
    const captured=await options.captureFromBrowser(job.source_url,options.signal);
-   capturedFromChrome=true;
    if(options.signal.aborted)return;
    response=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/browser-capture`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(captured),signal:options.signal});
    body=await response.json() as typeof body;
@@ -63,7 +61,10 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  // an instruction to immediately repeat the same capture during import/retry.
  // The user's explicit source-repair action still uses the full source proof.
  const partialMobileSource=source&&['chrome-public-mobile-partial-v1','1688-public-mobile-partial-v1'].includes(source.provider);
- const reuseCapturedMobileSource=partialMobileSource||fullMobileSource&&(capturedFromChrome||!!job.received_at||source?.provider==='chrome-public-mobile-v1');
+ // The validated full server receipt has already fetched the same mobile SKU
+ // and optional detail sources as Chrome. Empty seller text is still a source
+ // gap for review, but repeating that capture cannot make it a new intake.
+ const reuseCapturedMobileSource=partialMobileSource||fullMobileSource;
  const storedSourceFork=job.context?.forkedFrom?.kind==='stored-source-new-draft-v1'&&job.context.forkedFrom.requestId===job.id&&job.context.forkedFrom.sourceJobId!==job.id;
  if(source&&!storedSourceFork&&!reuseCapturedMobileSource&&canSupplementCollection(source)&&options.captureFromBrowser){
   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
