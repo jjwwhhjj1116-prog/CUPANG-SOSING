@@ -10,6 +10,16 @@ import {unwrapOfficialXlsxDownload} from '@/app/xlsx-template';
 export type HubCategoryNode={categoryId:string;name:string;isLeaf:boolean};
 export type HubCategoryBranch={trail:HubCategoryNode[];children:HubCategoryNode[];ownerId:string;company:SupplierHubCompany;observedAt:number;source:'supplier-hub-category-api';fullCatalogVerified:false};
 const companies:Record<string,string>={A01526306:'유앤채',A01464742:'와이홉'};
+/** Only the separate Excel transport failed after the original bytes and
+ * identity were checked. Invalid returned forms never enter this boundary. */
+export class OfficialExcelSchemaUnavailableError extends Error {
+  readonly code?: string;
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : '별도 Excel 상세 양식을 조회하지 못했습니다.', { cause });
+    this.name = 'OfficialExcelSchemaUnavailableError';
+    if (cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string') this.code = cause.code;
+  }
+}
 const sameMetadata=(left:HubSchemaSnapshot['metadata'],right:HubSchemaSnapshot['metadata'])=>Object.keys(left).length===Object.keys(right).length&&Object.entries(left).every(([key,value])=>Object.hasOwn(right,key)&&right[key]===value);
 // Compare observed node fields, not the key insertion order after Chrome transport.
 function sameCategoryTrail(actual:unknown,expected:readonly HubCategoryNode[]){
@@ -117,7 +127,10 @@ export async function loadLiveHubCategoryTemplate(choice:CategoryChoice,snapshot
     if(!inspected.ok)throw Error(body.error??'원본 Excel 식별값을 확인하지 못했습니다.');
     const identity=body.identity;
     if(body.registered!==false||!identity||identity.scopeType!=='Retail_Categorized_Excel'||identity.kanCategoryId!==kan||!/^\d{1,20}$/.test(identity.noticeNumber)||!/^\d{1,20}$/.test(identity.version))throw Error('원본 Excel의 scope·분류·고시·버전을 확인하지 못했습니다.');
-    const loaded=await exchange('SCHEMA',{trail,selection:{categoryId:choice.categoryId,name:choice.path.at(-1)},expectedSchema:{schemaString:snapshot.schemaString,metadata:snapshot.metadata},excelIdentity:identity},signal);
+    const loaded=await exchange('SCHEMA',{trail,selection:{categoryId:choice.categoryId,name:choice.path.at(-1)},expectedSchema:{schemaString:snapshot.schemaString,metadata:snapshot.metadata},excelIdentity:identity},signal).catch(cause=>{
+      signal.throwIfAborted();
+      throw new OfficialExcelSchemaUnavailableError(cause);
+    });
     const returned=loaded.branch as {schema?:unknown;excelSchema?:unknown},verified=validateHubCategoryBranch(returned,trail),source=validateHubSchemaSnapshot(returned.schema,choice.categoryId,choice.path),excel=validateHubSchemaSnapshot(returned.excelSchema,choice.categoryId,choice.path);
     const matches=(keys:string[],value:string)=>keys.some(key=>excel.metadata[key]!==undefined)&&keys.every(key=>excel.metadata[key]===undefined||String(excel.metadata[key])===value);
     if(verified.ownerId!==ownerId||verified.company.code!==company.code||verified.company.name!==company.name||!verified.children.some(node=>node.isLeaf&&node.categoryId===choice.categoryId&&node.name===choice.path.at(-1))

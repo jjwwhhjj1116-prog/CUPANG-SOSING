@@ -9,7 +9,7 @@ import { CategoryQuotationPreview } from '@/app/components/category-quotation-pr
 import './category-picker.css';
 import { IntakeQuotationPreview } from '@/app/components/intake-quotation-preview';
 import { SupplierHubCategoryBrowser } from '@/app/components/supplier-hub-category-browser';
-import { loadLiveHubCategorySchema, loadLiveHubCategoryTemplate, resolveSavedHubCategoryChoice } from '@/app/supplier-hub-catalog';
+import { loadLiveHubCategorySchema, loadLiveHubCategoryTemplate, resolveSavedHubCategoryChoice, OfficialExcelSchemaUnavailableError } from '@/app/supplier-hub-catalog';
 import type { HubSchemaSnapshot } from '@/app/supplier-hub-schema';
 import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
@@ -18,6 +18,10 @@ import { confirmCategorySelectionList, confirmCategorySelectionProfile, confirmL
 import { parseWorkspaceSettingsScope } from '@/app/workspace-settings-scope';
 
 const useAccountEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+type WorkbookSelection = { target: CategoryChoice; schema: HubSchemaSnapshot; scope: ReturnType<typeof parseWorkspaceSettingsScope> | undefined; selectionEpoch: number; accountEpoch: number };
+const selectionIdentity = (choice: CategoryChoice | undefined) => choice ? JSON.stringify([choice.key, choice.categoryId, choice.path, choice.profileId ?? null,
+  choice.supplierHub ? [choice.supplierHub.ownerId, choice.supplierHub.company.code, choice.supplierHub.company.name,
+    choice.supplierHub.trail.map(node => [node.categoryId, node.name, node.isLeaf])] : null]) : '';
 
 // Draft rules are part of the reusable form definition. A new observation time
 // alone does not change it; refreshing this profile leaves product snapshots intact.
@@ -63,10 +67,15 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const completed = useRef(false);
   const createRequest = useRef<{ body: string; id: string } | null>(null);
   const definitionRefreshRequest = useRef<CategoryDefinitionRefreshRequest | null>(null);
+  const selectionEpoch = useRef(0);
+  const workbookSelectionRef = useRef<WorkbookSelection | null>(null);
+  const [workbookSelection, setWorkbookSelection] = useState<WorkbookSelection | null>(null);
+  function clearWorkbookSelection() { workbookSelectionRef.current = null; setWorkbookSelection(null); }
   useAccountEffect(() => {
     if(account.current.ownerId!==workspaceOwnerId){
       account.current.ownerId=workspaceOwnerId;account.current.epoch++;
       activeRequest.current?.abort();activeRequest.current=null;completed.current=false;createRequest.current=null;definitionRefreshRequest.current=null;
+      selectionEpoch.current++;clearWorkbookSelection();
       setRefreshedProfiles(null);setLiveChoice(null);setSelectedKey('');setPath([]);setQuery('');setCatalogMode('live');setBusy(false);setError('');
     }
     setAccountEpoch(account.current.epoch);
@@ -85,15 +94,25 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const hasChildren = categoryLevel(choices, path, path.length).length > 0;
   const depths = Math.max(1, path.length + (hasChildren ? 1 : 0));
   const unresolvedBranch = catalogMode==='saved'&&path.length > 0 && !hasChildren && connections.length === 0;
-  function choose(choice: CategoryChoice) { if (!current()||activeRequest.current) return; completed.current = false;setLiveChoice(null);setCatalogMode('saved');setPath(choice.path); setSelectedKey(choice.key); setError(''); }
+  const availableWorkbookSelection = workbookSelection && workbookSelection.accountEpoch === accountEpoch
+    && (workbookSelection.scope?.ownerId ?? undefined) === workspaceOwnerId
+    && selectionIdentity(workbookSelection.target) === selectionIdentity(selected) ? workbookSelection : null;
+  function choose(choice: CategoryChoice) { if (!current()||activeRequest.current) return; selectionEpoch.current++;clearWorkbookSelection();completed.current = false;setLiveChoice(null);setCatalogMode('saved');setPath(choice.path); setSelectedKey(choice.key); setError(''); }
   function navigate(next: string[]) {
     if (!current()||activeRequest.current) return;
+    selectionEpoch.current++;clearWorkbookSelection();
     completed.current = false;
     setPath(next); const leaves = categoryChoicesAtPath(choices, next).filter(choice => choice.isLeaf);
     setSelectedKey(leaves.length === 1 ? leaves[0].key : leaves.some(choice => choice.key === selectedKey) ? selectedKey : ''); setError('');
   }
-  async function confirm(target = selected) {
+  async function confirm(target = selected, mode: 'schema' | 'workbook' = 'schema', reviewedWorkbook?: WorkbookSelection) {
     if (!current()||!target || !canConfirmCategory(target) || busy || activeRequest.current || completed.current) return;
+    if (mode === 'workbook' && (!reviewedWorkbook || workbookSelectionRef.current !== reviewedWorkbook
+      || reviewedWorkbook.selectionEpoch !== selectionEpoch.current || reviewedWorkbook.accountEpoch !== account.current.epoch
+      || selectionIdentity(reviewedWorkbook.target) !== selectionIdentity(target))) return;
+    if (mode === 'schema') clearWorkbookSelection();
+    const requestSelectionEpoch = selectionEpoch.current;
+    const unavailableWorkbook: { current: Pick<WorkbookSelection, 'schema' | 'scope'> | null } = { current: null };
     const controller = new AbortController(); activeRequest.current = controller;
     setBusy(true); setError('');
     const cancelled=()=>controller.signal.aborted||!current();
@@ -102,20 +121,34 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       const result=await readCategoryJsonResponse<{scope?:unknown;error?:string}>(response,'카테고리 선택 계정 확인');
       if(cancelled())throw Error('카테고리 선택을 취소했습니다.');
       const scope=parseWorkspaceSettingsScope(result.scope);
-      if(!response.ok||!scope||scope.ownerId!==workspaceOwnerId)throw Error('카테고리를 선택한 로그인 계정이 다릅니다. 기존 입력은 유지되며 현재 계정에서 카테고리를 다시 선택해주세요.');
+      if(!response.ok||!scope||scope.ownerId!==workspaceOwnerId){if(reviewedWorkbook)clearWorkbookSelection();throw Error('카테고리를 선택한 로그인 계정이 다릅니다. 기존 입력은 유지되며 현재 계정에서 카테고리를 다시 선택해주세요.');}
       return scope;
     };
     try {
       const scope=workspaceOwnerId?await readScope():undefined;
       if(cancelled())return;
+      if (reviewedWorkbook && JSON.stringify(scope) !== JSON.stringify(reviewedWorkbook.scope)) {
+        clearWorkbookSelection();throw Error('승인 회사가 변경되었습니다. 현재 회사의 카테고리를 다시 선택해주세요.');
+      }
       if(target.supplierHub&&scope&&(!scope.company||scope.company.code!==target.supplierHub.company.code||scope.company.name!==target.supplierHub.company.name))throw Error('현재 로그인 계정의 승인 회사와 선택한 Supplier Hub 회사가 다릅니다. 같은 회사의 카테고리를 다시 선택해주세요.');
       const hubSchema=target.supplierHub?confirmLiveCategorySelectionSchema(target,await loadLiveHubCategorySchema(target,controller.signal),scope?.company):undefined;
       if(cancelled())return;
+      async function connectTemplate(choice: CategoryChoice, captured: HubSchemaSnapshot) {
+        if (reviewedWorkbook && !sameHubDefinition(reviewedWorkbook.schema, captured)) {
+          clearWorkbookSelection();throw Error('상세 양식이 변경되었습니다. 카테고리를 다시 선택하고 공식 원본을 확인해주세요.');
+        }
+        try { return await loadLiveHubCategoryTemplate(choice, captured, controller.signal, mode); }
+        catch (cause) {
+          if (mode === 'schema' && typeof OfficialExcelSchemaUnavailableError === 'function' && cause instanceof OfficialExcelSchemaUnavailableError
+            && (captured.metadata.scopeType ?? captured.metadata.scope) === 'Retail_Categorized_Single') unavailableWorkbook.current = { schema: captured, scope };
+          throw cause;
+        }
+      }
       const select=async(profile:CategoryProfile)=>{
         confirmCategorySelectionProfile(target,profile,hubSchema,scope?.company);
         if(scope){const latest=await readScope();if(JSON.stringify(latest)!==JSON.stringify(scope))throw Error('카테고리를 확인하는 동안 승인 회사가 변경되었습니다. 기존 입력은 유지되며 현재 회사의 카테고리를 다시 선택해주세요.');}
         if(cancelled())return;
-        completed.current=true;onSelected(profile);
+        clearWorkbookSelection();completed.current=true;onSelected(profile);
       };
       async function withSchema(profile:CategoryProfile){
         if(!hubSchema)return profile;
@@ -152,7 +185,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         if(cancelled())return profile;
         const captured=hubSchema??confirmLiveCategorySelectionSchema(choice,await loadLiveHubCategorySchema(choice,controller.signal),scope?.company);
         if(cancelled())return profile;
-        const connection=await loadLiveHubCategoryTemplate(choice,captured,controller.signal);
+        const connection=await connectTemplate(choice,captured);
         if(cancelled())return profile;
         return createPrepared(choice,{...categoryProfileForChoice(choice),hubSchema:captured,...connection},captured,profile.id);
       }
@@ -212,19 +245,25 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       // A new live category needs both its frozen editable form and the exact
       // official workbook. Existing custom profiles above keep their original
       // template and mappings; selecting them never downloads a replacement.
-      const connection=hubSchema?await loadLiveHubCategoryTemplate(target,hubSchema,controller.signal):undefined;
+      const connection=hubSchema?await connectTemplate(target,hubSchema):undefined;
       if(cancelled())return;
       const prepared={...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{}),...(connection??{})};
       const saved=await createPrepared(target,prepared,hubSchema);
       if(cancelled())return;
       await select(saved);
-    } catch (cause) { if(!cancelled()){completed.current = false;setError(cause instanceof Error ? cause.message : '카테고리 선택 실패');} }
+    } catch (cause) { if(!cancelled()){
+      if (unavailableWorkbook.current && requestSelectionEpoch === selectionEpoch.current) {
+        const proposal: WorkbookSelection = { target, ...unavailableWorkbook.current, selectionEpoch: requestSelectionEpoch, accountEpoch: account.current.epoch };
+        workbookSelectionRef.current = proposal;setWorkbookSelection(proposal);
+      }
+      completed.current = false;setError(cause instanceof Error ? cause.message : '카테고리 선택 실패');
+    } }
     finally { if (activeRequest.current === controller) activeRequest.current = null; if (!cancelled()) setBusy(false); }
   }
   return <div className="category-picker" aria-busy={busy}>
     <p className="category-instructions">등록할 상품의 카테고리를 선택해주세요. 단계별로 선택하면 하위 카테고리가 표시됩니다.</p>
     <div className="workspace-actions" role="group" aria-label="카테고리 목록 선택"><button type="button" className={`btn ${catalogMode==='live'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('live')}>Supplier Hub 카테고리</button><button type="button" className={`btn ${catalogMode==='saved'?'primary':'ghost'}`} disabled={busy} onClick={()=>setCatalogMode('saved')}>저장된 목록</button></div>
-    {catalogMode==='live'&&<SupplierHubCategoryBrowser disabled={busy} onNavigating={()=>{if(!current()||activeRequest.current)return;completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(!current()||activeRequest.current||completed.current)return;setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>}
+    {catalogMode==='live'&&<SupplierHubCategoryBrowser disabled={busy} onNavigating={()=>{if(!current()||activeRequest.current)return;selectionEpoch.current++;clearWorkbookSelection();completed.current=false;setLiveChoice(null);setSelectedKey('');setPath([]);setError('');}} onChoice={choice=>{if(!current()||activeRequest.current||completed.current)return;selectionEpoch.current++;clearWorkbookSelection();setLiveChoice(choice);setPath(choice.path);setSelectedKey(choice.key);setError('');if(canConfirmCategory(choice))void confirm(choice);}}/>}
     {path.length > 0 && <nav className="category-breadcrumb" aria-label="선택한 카테고리 경로">{path.map((name,index)=><button type="button" key={index} disabled={busy||catalogMode==='live'} onClick={()=>navigate(path.slice(0,index+1))}>{name}</button>)}</nav>}
     <div hidden={catalogMode!=='saved'}>
     <label className="field"><span>카테고리 검색</span><input type="search" placeholder="카테고리 이름 또는 번호" value={query} onChange={event => setQuery(event.target.value)} disabled={busy}/></label>
@@ -240,6 +279,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     {selected?.isLeaf && <div className={`category-summary ${canConfirmCategory(selected) ? '' : 'unconfirmed'}`}><strong>{selected.path.join(' › ')}</strong><span>{selected.categoryId ? `카테고리 ${selected.categoryId}` : '분류 코드 미확인'}</span><p>{canConfirmCategory(selected) ? '선택 완료를 누르면 1688 URL 입력으로 이동합니다. 수집한 상품정보와 기본설정을 이 카테고리의 견적 항목에 연결합니다.' : '이 분류는 코드 확인이 필요합니다. 확인된 최종 카테고리를 선택해주세요.'}</p>{schema?.status === 'unconfirmed' && <small>이 카테고리의 전체 견적 항목은 아직 대조되지 않았습니다.</small>}</div>}
     <details className="category-scope"><summary>현재 지원 범위와 확인 근거</summary><p>{categoryObservationScope.rootsWithSecondLevel}개 대분류의 2단계 {categoryObservationScope.secondLevel}개와 주방수납/정리 최종 {categoryObservationScope.completeSubtreeLeaves}개, 요가/필라테스용품 최종 {categoryObservationScope.yogaSubtreeLeaves}개 경로를 확인했습니다. 코드 {categoryObservationScope.knownCodes}개 중 {categoryObservationScope.supplierHubCodes}개는 {categoryObservationScope.supplierHubObservedDate} Supplier Hub 개별등록 화면과 대조했습니다. 전체 최종 분류·카테고리별 양식·공식 접수는 아직 모두 검증되지 않았습니다.</p></details>
     {error && <p role="alert" className="collection-error">{error}</p>}
+    {availableWorkbookSelection && <div className="panel-note"><p>공식 원본의 회사·카테고리·파일 지문은 확인했지만 별도 Excel 상세 양식 조회에 실패했습니다. 공식 파일의 열·선택값으로 새 설정을 연결할 수 있습니다. 별도 Excel 양식은 미확인으로 남으며 카테고리별 기본값 대조와 필수 고시·첨부 검수는 계속 필요합니다.</p><button className="btn ghost" type="button" disabled={busy} onClick={() => void confirm(availableWorkbookSelection.target, 'workbook', availableWorkbookSelection)}>공식 파일 기준으로 선택 · URL 입력</button></div>}
     <div className="modal-actions"><button className="btn primary" type="button" disabled={!canConfirmCategory(selected) || busy} onClick={() => void confirm()}>{busy ? '설정 중…' : '선택 완료 · URL 입력'}</button></div>
     <details className="category-advanced" key={selected?.key ?? 'unselected'}><summary>견적 항목·Excel 출력 설정</summary>
       {selected?.isLeaf && <p>{codeEvidenceLabel(selected, selectedProfile)}{selected.codeObservedAt ? ` · ${selected.codeObservedAt.slice(0, 10)}` : ''}</p>}

@@ -8,7 +8,7 @@ import type {QuotationField} from '@/app/quotation-schema';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
 
-type Props={productId:string;sourceUrl:string;imageKeys:string;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
+type Props={productId:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
 type CommonContentStep='추가 이미지'|'상세 이미지'|'표시사항';
 type CommonRole='additional'|'detail'|'size'|'label';
 const commonStages=[['additional','추가이미지','추가 이미지'],['detail','상세이미지','상세 이미지'],['size','사이즈표','옵션'],['label','한글표시사항','표시사항']] as const;
@@ -81,16 +81,23 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   }
   return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets:{additional:readKeys('additional'),detail:[...readKeys('detailTop'),...readKeys('detail'),...readKeys('detailBottom')],size:readKeys('size'),label:readKeys('label')}};
 }
-export function ProductOptionBoard({productId,sourceUrl,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
-  const [loaded,setLoaded]=useState<{productId:string;attempt:number;data:OptionBoardData|null;error:string}|null>(null);
+export function ProductOptionBoard({productId,sourceUrl,refreshToken,returnFocus,onReturnFocusHandled,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
+  const [loaded,setLoaded]=useState<{productId:string;attempt:number;refreshToken?:string;data:OptionBoardData|null;error:string}|null>(null);
   const [attempt,setAttempt]=useState(0);const [query,setQuery]=useState('');
   const [selection,setSelection]=useState({productId,ids:new Set<string>()});
-  const current=loaded?.productId===productId&&loaded.attempt===attempt?loaded:null;
+  const current=loaded?.productId===productId&&loaded.attempt===attempt&&loaded.refreshToken===refreshToken?loaded:null;
   const data=current?.data??null,error=current?.error??'';
   useEffect(()=>{const controller=new AbortController();
-    readOptionBoard(productId,controller.signal).then(value=>{if(!controller.signal.aborted)setLoaded({productId,attempt,data:value,error:''});}).catch(cause=>{if(!controller.signal.aborted)setLoaded({productId,attempt,data:null,error:cause instanceof Error?cause.message:'옵션 조회 실패'});});
+    readOptionBoard(productId,controller.signal).then(value=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:value,error:''});}).catch(cause=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:null,error:cause instanceof Error?cause.message:'옵션 조회 실패'});});
     return()=>controller.abort();
-  },[productId,attempt]);
+  },[productId,attempt,refreshToken]);
+  useEffect(()=>{
+    if(!returnFocus||!data||typeof document==='undefined')return;
+    const board=[...document.querySelectorAll<HTMLElement>('.option-board')].find(node=>node.dataset.productId===productId);
+    if(board?.closest('[hidden],[inert]'))return;
+    const button=[...(board?.querySelectorAll<HTMLButtonElement>('button')??[])].find(node=>(node.getAttribute('aria-label')??node.textContent?.trim())===returnFocus);
+    if(button){button.focus();onReturnFocusHandled?.();}
+  },[data,productId,returnFocus,onReturnFocusHandled]);
   const keys=data?.imageKeys??[];
   const rows=data?.options.rows.filter(row=>[row.id,row.supplierSku,row.originalName,row.translatedName,row.color,row.size,data.quotationContent?.[row.id]?.title].join(' ').toLowerCase().includes(query.trim().toLowerCase()))??[];
   const selected=new Set(selection.productId===productId?[...selection.ids].filter(id=>data?.options.rows.some(row=>row.id===id)):[]);
@@ -108,7 +115,7 @@ export function ProductOptionBoard({productId,sourceUrl,onQuotation,onEdit,onIma
     return handler?<button type="button" className="registration-cell-button" aria-label={`옵션 ${optionId} ${label} 편집`} onClick={handler}>{text}</button>:<small>{text}</small>;
   };
   let url:string|undefined;try{const parsed=new URL(sourceUrl);if(parsed.protocol==='https:'&&parsed.hostname==='detail.1688.com')url=parsed.href;}catch{/* Display text only. */}
-  return <section className="option-board" aria-busy={!data&&!error}>
+  return <section className="option-board" data-product-id={productId} aria-busy={!data&&!error}>
     <div className="option-board-source"><strong>1688 원본 URL</strong>{url?<a href={url} target="_blank" rel="noopener noreferrer">{sourceUrl}</a>:<span>{sourceUrl||'미입력'}</span>}</div>
     <div className="registration-table-tools"><label className="search"><input type="search" aria-label="상품 옵션 검색" placeholder="옵션명 · SKU · 색상 · 사이즈" value={query} onChange={event=>setQuery(event.target.value)}/></label><span>총 {data?.options.rows.length??0}개 옵션 · 검색 {rows.length}개 · 선택 {selected.size}개</span><button type="button" className="btn ghost" onClick={()=>onEdit()}>옵션·번들·가격 수정</button><button type="button" className="btn ghost" onClick={()=>setAttempt(value=>value+1)}>새로고침</button></div>
     {error?<p role="alert">{error}</p>:!data?<p role="status">저장된 옵션·가격을 불러오는 중…</p>:<div className="table-wrap"><table className="option-work-table"><thead><tr><th><input type="checkbox" aria-label="현재 옵션 전체 선택" checked={rows.length>0&&rows.every(row=>selected.has(row.id))} onChange={event=>toggle(rows.map(row=>row.id),event.target.checked)}/></th><th>옵션번호</th><th>옵션명</th><th>SEO설정</th><th>가격설정</th><th>대표이미지</th>{commonStages.map(([role,label])=><th key={role}>{label}</th>)}<th>견적서</th><th>재고/가격</th><th>관리</th></tr></thead><tbody>{rows.map(row=>{

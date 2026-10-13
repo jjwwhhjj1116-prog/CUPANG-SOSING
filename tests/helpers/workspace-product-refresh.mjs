@@ -44,8 +44,8 @@ export async function workspaceRefreshFixture(company){
 
 /** The existing actual Dashboard/private DetailPanel callback renderer, with
  * only its product fixture transport changed to the real owned local APIs. */
-export async function workspaceRefreshUI(f,{initialListDeferred=false}={}){
- const fixtureProducts=(await f.list()).products,plans=[];
+export async function workspaceRefreshUI(f,{initialListDeferred=false,realOptionBoard=false,realRegistrationBoard=false,confirmClose=false}={}){
+ const fixtureProducts=(await f.list()).products,plans=[],optionPlans=[];
  const deferredList=()=>{
   const wait=deferred(),arrival=deferred(),plan={wait:wait.promise,fail:false};plans.push(plan);
   plan.arrive=arrival.resolve;
@@ -57,14 +57,26 @@ export async function workspaceRefreshUI(f,{initialListDeferred=false}={}){
   if(!plan)return response;plan.arrive();await plan.wait;
   return plan.fail?Response.json({error:'합성 목록 조회 실패'},{status:503}):response;
  };
+ const deferOptionBoard=()=>{
+  const wait=deferred(),arrival=deferred(),plan={wait:wait.promise,fail:false};optionPlans.push(plan);
+  plan.arrive=arrival.resolve;
+  return{arrived:arrival.promise,release(){wait.resolve();},releaseFailure(){plan.fail=true;wait.resolve();}};
+ };
+ const actualProductRequest=async(url,init)=>{
+  if(init.signal?.aborted)throw Error('합성 조회 취소');
+  const plan=url.endsWith('/options')?optionPlans.shift():null,response=await f.route(url,{method:init.method??'GET',body:init.body});
+  if(!plan)return response;plan.arrive();await plan.wait;
+  if(init.signal?.aborted)throw Error('합성 조회 취소');
+  return plan.fail?Response.json({error:'합성 이전 옵션 조회 실패'},{status:503}):response;
+ };
  const source=originalHarness.replaceAll('import.meta.url','testUrl')
   .replace("const products=officialFlow?.products??[product('product-a'),product('product-b')];",'const products=fixtureProducts;')
   .replace("if(url==='/api/products')return Response.json({products});","if(url==='/api/products')return actualList();")
-  .replace("if(url.startsWith('/api/products/')){","if(url.endsWith('/pricing')&&init.method==='POST')return actualPricing(url,init);if(url.startsWith('/api/products/')){");
+  .replace("if(url.startsWith('/api/products/')){","if(url.endsWith('/pricing')&&init.method==='POST')return actualPricing(url,init);if(realOptionBoard&&url.startsWith('/api/products/')&&url!==productBase)return actualProductRequest(url,init);if(url.startsWith('/api/products/')){");
  assert.ok(source.includes('return actualList()')&&source.includes('const products=fixtureProducts;'));
  const makeHarness=vm.runInNewContext('('+source+')',{fs,vm,ts,native,nodes,text,deferred,scope,assert,Response,Request,AbortController,URLSearchParams,URL,Date,Intl,TextEncoder,TextDecoder,
-  structuredClone,crypto:webcrypto,setImmediate,setTimeout,fixtureProducts,actualList,actualPricing:(url,init)=>f.route(url,{method:init.method,body:init.body}),testUrl});
- const h=makeHarness({workspaceOwnerId:'owner',settingsBody:{settings:f.settings,scope:scope('owner',f.company.code)},profiles:[f.context.category]});
+  structuredClone,crypto:webcrypto,setImmediate,setTimeout,fixtureProducts,actualList,actualPricing:(url,init)=>f.route(url,{method:init.method,body:init.body}),actualProductRequest,productBase:f.base,testUrl});
+ const h=makeHarness({workspaceOwnerId:'owner',settingsBody:{settings:f.settings,scope:scope('owner',f.company.code)},profiles:[f.context.category],realOptionBoard,realRegistrationBoard,confirmClose});
  h.setProductReply(f.productResponse);
  const holdDetail=async(id=f.product.id)=>{
   const response=await f.productResponse(id),pending=h.deferProduct(id);
@@ -78,6 +90,6 @@ export async function workspaceRefreshUI(f,{initialListDeferred=false}={}){
   const field=nodes(h.render()).find(node=>node.props?.['data-test-editor']==='product-content-editor');assert.ok(field);field.props.onChange({target:{value}});
  };
  const draft=()=>nodes(h.render()).find(node=>node.props?.['data-test-editor']==='product-content-editor')?.props.value;
- return{...h,initial,holdDetail,deferList:deferredList,notifySaved,open,editor,row,editDraft,draft,
+ return{...h,initial,holdDetail,deferList:deferredList,deferOptionBoard,notifySaved,open,editor,row,editDraft,draft,
   errors:()=>nodes(h.render()).filter(node=>node.props?.role==='alert').map(text)};
 }
