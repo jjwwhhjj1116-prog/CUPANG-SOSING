@@ -85,11 +85,16 @@ for(const company of companies)test(`legacy raw dimensions keep their fingerprin
   await f.save([{fieldKey:'packagedWeightG',optionId:null,value:'420'},{fieldKey:'packagedDimensionsMm',optionId:null,value:'160*70*50'}]);
   const row=f.h.sqlite.prepare('SELECT * FROM product_quotation_fields').get(),state=JSON.parse(row.payload);
   // Simulate a pre-fix persisted override only in this disposable SQLite DB.
+  // A pre-deployment record cannot contain the later explicit quantity proof.
+  delete state.packagingBasis;delete state.categoryPackagingBasis;
+  assert.equal(Object.hasOwn(state,'packagingBasis'),false);assert.equal(Object.hasOwn(state,'categoryPackagingBasis'),false);
   const overrides=state.categoryOverrides?.['category:69900'];assert.ok(overrides?.common);overrides.common.packagedDimensionsMm='160×70×50';
   f.h.sqlite.prepare('UPDATE product_quotation_fields SET payload=?').run(JSON.stringify(state));
   const retained=f.h.sqlite.prepare('SELECT payload FROM product_quotation_fields').get().payload,saved=await f.h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',f.product.id,f.profile.id),dataStart=f.h.load('app/category-profiles.ts').quotationStartRow(f.profile.template);
-  const baselineSource=execFileSync('git',['show','6b95a0e:app/exports/quotation-source.ts'],{encoding:'utf8'}),baseline={};
-  vm.runInNewContext(ts.transpileModule(baselineSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:baseline,Error,require(name){if(name==='@/app/chatgpt-auth')return{};return f.h.load(name.slice(2)+'.ts');}});
+  // Compare the last pre-quantity-proof recipe, including its existing official
+  // template schema. The earlier 6b95a0e recipe predates that separate change.
+  const baselineSource=execFileSync('git',['show','df4f532:app/exports/quotation-source.ts'],{encoding:'utf8'}),baseline={};
+  vm.runInNewContext(ts.transpileModule(baselineSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:baseline,Error,require(name){if(name==='@/app/chatgpt-auth')return{};if(name==='cloudflare:workers')return{env:f.h.bindings};return f.h.load(name.slice(2)+'.ts');}});
   const oldHash=await baseline.quotationExportFingerprint(saved,dataStart),current=await f.preview();assert.equal(current.fingerprint,oldHash);
   const view=await f.get();assert.ok(view.resolved.rows.filter(row=>row.included).every(row=>row.fields.packagedDimensionsMm.value==='160×70×50'&&row.fields.packagedDimensionsMm.validationIssues.some(issue=>issue.includes('별표'))));assert.equal(f.h.sqlite.prepare('SELECT payload FROM product_quotation_fields').get().payload,retained);
   const result={state:'validation-complete',filename:current.filename,company,includedOptions:6,quotationId:'synthetic-legacy-dimensions-'+company.code,observedAt:Date.now(),registered:false};

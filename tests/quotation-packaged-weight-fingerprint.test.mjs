@@ -128,12 +128,21 @@ for(const company of [{code:'A01464742',name:'와이홉'},{code:'A01526306',name
   const p=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+p.id,endpoint=base+'/quotation-fields';let view=await json(await h.route(endpoint));
   const save=async changes=>view=await json(await h.route(endpoint,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}}));
   await save([{fieldKey:'packagedWeightG',optionId:null,value:'420'}]);
+  // This legacy seed predates explicit quantity confirmation. Remove only the
+  // new sidecar in the disposable DB; all raw overrides and clocks stay intact.
+  const legacyState=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_quotation_fields').get().payload);
+  delete legacyState.packagingBasis;delete legacyState.categoryPackagingBasis;
+  assert.equal(Object.hasOwn(legacyState,'packagingBasis'),false);assert.equal(Object.hasOwn(legacyState,'categoryPackagingBasis'),false);
+  h.sqlite.prepare('UPDATE product_quotation_fields SET payload=?').run(JSON.stringify(legacyState));
+  view=await json(await h.route(endpoint));assert.equal(view.packagingBasis,undefined);
   const exporter=h.load('app/exports/quotation-source.ts'),model=h.load('app/automation/model.ts'),normalize=h.load('app/settings-fingerprint.ts').savedProductFingerprintSettings,price=h.load('app/product-options.ts').optionPriceCalculationRevision;
   const oldIdentities=async()=>{
    const saved=await exporter.readMappedQuotationSource('owner',p.id,'cat');
-   const legacyExport=await model.fingerprint({format:'sourceflow-quotation-fields-v1',saved:{...saved,settings:normalize(saved.settings)},dataStartRow:2,schema:f.q.getQuotationSchema('69900',path,saved.hubSchema),...price(saved.product,saved.options.rows,saved.settings,saved.state.overrides)});
-   const inputs={categoryId:'69900',categoryPath:path,product:saved.product,content:saved.content,options:saved.options,settings:normalize(saved.settings),hubSchema:saved.hubSchema};
-   const legacyInput=await model.fingerprint({inputs,schema:view.automatic.schema,categoryContext:view.categoryContext,profileRevision:null,settingsPayload:saved.source.settingsPayload,collection:saved.source.collection,...price(saved.product,saved.options.rows,saved.settings)});
+   const legacyExport=await model.fingerprint({format:'sourceflow-quotation-fields-v1',saved:{...saved,settings:normalize(saved.settings)},dataStartRow:2,schema:f.q.getQuotationSchema('69900',path,saved.hubSchema,saved.template),...price(saved.product,saved.options.rows,saved.settings,saved.state.overrides)});
+   const inputs={categoryId:'69900',categoryPath:path,product:saved.product,content:saved.content,options:saved.options,settings:normalize(saved.settings),hubSchema:saved.hubSchema,...(saved.template?{template:saved.template}:{})};
+   // Later same-value PUTs are real explicit confirmations, so retain their
+   // actual proof while comparing only the former weight-alias identity.
+   const legacyInput=await model.fingerprint({inputs,schema:view.automatic.schema,categoryContext:view.categoryContext,profileRevision:null,settingsPayload:saved.source.settingsPayload,collection:saved.source.collection,...(view.packagingBasis?{packagingBasis:view.packagingBasis}:{}),...price(saved.product,saved.options.rows,saved.settings)});
    return{saved,legacyExport,legacyInput};
   };
   const before=await oldIdentities(),current=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));

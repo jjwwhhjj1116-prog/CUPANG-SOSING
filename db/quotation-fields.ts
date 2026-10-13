@@ -3,12 +3,14 @@ import { quotationScope } from '@/app/quotation-scopes';
 import { env } from 'cloudflare:workers';
 import { emptyQuotationOverrides, type QuotationOverrides } from '@/app/quotation-schema';
 import { collectionSchema, collectionProductSchema } from '@/db/collection-jobs';
+import type { QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 
 export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotation_fields (
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
   revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
 )`;
-export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; categoryOverrides?: Record<string, QuotationOverrides>; updatedAt: string | null };
+export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; categoryOverrides?: Record<string, QuotationOverrides>;
+  packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null };
 export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;
@@ -80,8 +82,8 @@ export async function quotationSourcesCurrent(owner: string, productId: string, 
 }
 
 /** All option/common overrides are committed together; automatic values never overwrite them. */
-export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null = null): Promise<QuotationFieldsState | null> {
-  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId);
+export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null = null, packagingBasis?:QuotationPackagingBasis|null): Promise<QuotationFieldsState | null> {
+  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId,undefined,packagingBasis);
 }
 /** The translated PNG is appended and the selected final quotation overrides
  * advance in the same batch. Common content and source SKU facts are untouched. */
@@ -92,15 +94,22 @@ export async function attachQuotationImageTranslation(owner: string, productId: 
     throw Error('Invalid final quotation image attachment.');
   return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId, imageKeys);
 }
-async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[]): Promise<QuotationFieldsState | null> {
+async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[], packagingBasis?:QuotationPackagingBasis|null): Promise<QuotationFieldsState | null> {
   const db = await database(); const guard = sourceGuard(owner, productId, source);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid quotation revision');
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
   const previous = await readQuotationFields(owner, productId);
   if (previous.revision !== expectedRevision) return null;
-  const state: QuotationFieldsState = { schemaVersion: 1, productId, revision: expectedRevision + 1,
+  const state: QuotationFieldsState = { ...previous,schemaVersion: 1, productId, revision: expectedRevision + 1,
     overrides: categoryId ? previous.overrides : overrides,
     categoryOverrides: categoryId ? { ...previous.categoryOverrides, [quotationScope(categoryId)]: overrides } : previous.categoryOverrides, updatedAt };
+  if(packagingBasis!==undefined){
+    if(categoryId){
+      const scopes={...previous.categoryPackagingBasis},key=quotationScope(categoryId);
+      if(packagingBasis)scopes[key]=packagingBasis;else delete scopes[key];
+      if(Object.keys(scopes).length)state.categoryPackagingBasis=scopes;else delete state.categoryPackagingBasis;
+    }else if(packagingBasis)state.packagingBasis=packagingBasis;else delete state.packagingBasis;
+  }
   const payload = JSON.stringify(state);
   if (new TextEncoder().encode(payload).length > 512 * 1024) throw new Error('Quotation overrides exceed storage limit');
   const result = await db.batch<Row>([

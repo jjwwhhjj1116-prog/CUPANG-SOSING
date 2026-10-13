@@ -20,6 +20,7 @@ import { isQuotationLegalNotice, quotationNoticeInput } from '@/app/quotation-no
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
 import { isPackagedDimensionsMmField, isCanonicalPackagedDimensionsMm, normalizePackagedDimensionsMm } from '@/app/quotation-packaged-dimensions';
 import type {TemplateDefinition} from '@/app/category-profiles';
+import { quotationPackagingBasisIssues, validateQuotationPackagingBasis, type QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-descriptors';
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
@@ -73,6 +74,7 @@ export type QuotationFieldsView = {
   categoryContext: { source: 'profile' | 'collection' | 'unknown'; profileId: string | null; categoryId: string | null; categoryPath: string[] };
   productVersion: string; contentRevision: number; optionRevision: number; updatedAt: string | null;
   imageKeys: string[]; submissionReady: false;
+  packagingBasis?:QuotationPackagingBasis;optionPackQuantities?:Record<string,number>;
 };
 
 type FieldExtras = Partial<Omit<QuotationField, 'id' | 'section' | 'label'>>;
@@ -357,7 +359,7 @@ export function applyQuotationChanges(current: QuotationOverrides, changes: read
 }
 
 export type QuotationResolverInput = { categoryId: string | null; categoryPath?: readonly string[]; product: ProductRecord;
-  content: ProductContent; settings: WorkspaceSettings; options: ProductOptions | readonly ProductOption[]; overrides?: QuotationOverrides; hubSchema?:HubSchemaSnapshot; template?:TemplateDefinition|null };
+  content: ProductContent; settings: WorkspaceSettings; options: ProductOptions | readonly ProductOption[]; overrides?: QuotationOverrides; packagingBasis?:QuotationPackagingBasis;hubSchema?:HubSchemaSnapshot; template?:TemplateDefinition|null };
 type Automatic = { value: string; source: QuotationSource; issues?: string[] };
 const literal = (value: unknown, source: QuotationSource): Automatic => ({ value: value === null || value === undefined ? '' : String(value), source: value === '' || value === null || value === undefined ? 'empty' : source });
 const htmlEscape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -368,6 +370,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   const untouchedOptions = Array.isArray(input.options) || (input.options as ProductOptions).revision === 0;
   const includeCommonRow = options.length === 0 && untouchedOptions;
   const overrides = input.overrides ?? emptyQuotationOverrides();
+  if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
   const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
   let ownedKeys: string[] = [];
   const reviewMessages = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
@@ -631,6 +634,14 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
         if (!cell || cell.source.startsWith('manual-') || !cell.value.trim()) continue;
         const message = '포장 정보는 ' + option.packagingUnitsPerPack + '개입 기준입니다. 현재 ' + option.unitsPerPack + '개입의 포장 무게·치수를 옵션에서 확인해주세요.';
         cell.needsReview = true; cell.issues.push(message); cell.validationIssues!.push(message);
+      }
+    }
+    if(option&&input.packagingBasis){
+      for(const definition of schema.fields){
+        const cell=fields[definition.id];
+        if(!cell?.source.startsWith('manual-'))continue;
+        const errors=quotationPackagingBasisIssues(schema.fields,input.packagingBasis,overrides,option.id,option.unitsPerPack,definition.id);
+        if(errors.length){cell.needsReview=true;cell.validationIssues!.push(...errors);cell.issues.push(...errors);}
       }
     }
     const imageIssues = quotationImageRoleIssues(fields.mainImage?.value ?? '', fields.detailImages?.value ?? '');

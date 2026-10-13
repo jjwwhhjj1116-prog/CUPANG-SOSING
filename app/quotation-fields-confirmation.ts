@@ -1,5 +1,6 @@
 import { applyQuotationChanges, type QuotationChange, type QuotationFieldsView, type QuotationOverrides } from '@/app/quotation-schema';
 import { quotationPackagedWeightManual } from '@/app/quotation-packaged-weight';
+import { applyQuotationPackagingBasis, quotationPackagingBasisIssues, isQuotationPackagingBasisIssue, validatePackQuantities, validateQuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 
 const unconfirmed = () => new Error('저장 응답이 요청한 견적 입력과 다릅니다. 직접 수정값을 유지했습니다. 기본값 다시 반영으로 저장본을 확인해주세요.');
 function overrideSignature(value: QuotationOverrides): string {
@@ -15,6 +16,7 @@ function overrideSignature(value: QuotationOverrides): string {
 function sourceSignature(view: QuotationFieldsView): string {
   return JSON.stringify({ category: view.categoryContext, schema: view.resolved.schema, automaticSchema: view.automatic.schema,
     contentRevision: view.contentRevision, optionRevision: view.optionRevision, imageKeys: view.imageKeys,
+    ...(view.optionPackQuantities?{optionPackQuantities:Object.entries(view.optionPackQuantities).sort(([left],[right])=>left.localeCompare(right))}:{}),
     rows: view.resolved.rows.map(row => [row.optionId, row.included, row.optionLabel]),
     automatic: view.automatic.rows.map(row => ({ optionId: row.optionId, included: row.included, optionLabel: row.optionLabel,
       fields: Object.fromEntries(Object.keys(row.fields).sort().map(key => [key, { value: row.fields[key].value, source: row.fields[key].source }])) })),
@@ -58,6 +60,12 @@ function validSaveVersion(previous: QuotationFieldsView, saved: QuotationFieldsV
 export function confirmQuotationFieldsSave(previous: QuotationFieldsView, saved: QuotationFieldsView, changes: readonly QuotationChange[], readback?: QuotationFieldsView): QuotationFieldsView {
   try {
     const expected = applyQuotationChanges(previous.overrides, changes);
+    if(previous.optionPackQuantities!==undefined){validatePackQuantities(previous.optionPackQuantities);validatePackQuantities(saved.optionPackQuantities);if(readback)validatePackQuantities(readback.optionPackQuantities);}
+    if(previous.packagingBasis!==undefined)validateQuotationPackagingBasis(previous.packagingBasis);
+    const expectedPackaging=previous.optionPackQuantities===undefined?previous.packagingBasis
+      :applyQuotationPackagingBasis(previous.packagingBasis,previous.resolved.schema.fields,previous.optionPackQuantities,changes);
+    if(saved.packagingBasis!==undefined)validateQuotationPackagingBasis(saved.packagingBasis);
+    if(JSON.stringify(saved.packagingBasis??null)!==JSON.stringify(expectedPackaging??null))throw unconfirmed();
     if (!Number.isSafeInteger(saved.revision) || saved.revision !== previous.revision + 1
       || !validSaveVersion(previous, saved)
       || sourceSignature(saved) !== sourceSignature(previous)
@@ -65,6 +73,7 @@ export function confirmQuotationFieldsSave(previous: QuotationFieldsView, saved:
     if (readback && (readback.revision !== saved.revision || readback.inputFingerprint !== saved.inputFingerprint
       || readback.productVersion !== saved.productVersion || readback.updatedAt !== saved.updatedAt
       || sourceSignature(readback) !== sourceSignature(saved) || overrideSignature(readback.overrides) !== overrideSignature(expected))) throw unconfirmed();
+    if(readback&&JSON.stringify(readback.packagingBasis??null)!==JSON.stringify(expectedPackaging??null))throw unconfirmed();
     const keys = previous.resolved.schema.fields.map(field => field.id).sort();
     for (const row of previous.resolved.rows) {
       const stored = saved.resolved.rows.find(item => item.optionId === row.optionId);
@@ -82,6 +91,11 @@ export function confirmQuotationFieldsSave(previous: QuotationFieldsView, saved:
             !== previous.automatic.rows.find(item => item.optionId === row.optionId)?.fields[key]?.value)) restored = row.fields.detailHtml;
         }
         if (!restored || cell?.value !== restored.value || cell.source !== restored.source) throw unconfirmed();
+        if(previous.optionPackQuantities!==undefined){
+          const expectedIssues=quotationPackagingBasisIssues(previous.resolved.schema.fields,expectedPackaging,expected,row.optionId,
+            row.optionId===null?undefined:previous.optionPackQuantities[row.optionId],field.id);
+          if(JSON.stringify((cell.validationIssues??[]).filter(isQuotationPackagingBasisIssue))!==JSON.stringify(expectedIssues))throw unconfirmed();
+        }
       }
     }
     return saved;

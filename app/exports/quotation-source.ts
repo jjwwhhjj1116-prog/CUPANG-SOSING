@@ -22,6 +22,7 @@ import { translateHubRuleVersionMappings } from '@/app/hub-rule-version-mappings
 import { savedProductFingerprintSettings } from '@/app/settings-fingerprint';
 import { quotationNoticeBindingFingerprint } from '@/app/quotation-notice-inputs';
 import { quotationPackagedWeightBindingFingerprint } from '@/app/quotation-packaged-weight';
+import { scopedQuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import { inspectGeneratedProductLabels } from '@/app/product-label-proof';
 import { inspectGeneratedQuotationLabels } from '@/app/quotation-label-proof';
 import type { ProductLabelsView } from '@/app/product-label';
@@ -98,7 +99,7 @@ export async function readQuotationExportSource(owner: string, productId: string
   // This also detects changes during the independent source reads before any R2 work starts.
   if (!await quotationSourcesCurrent(owner, productId, source)) throw new QuotationExportError('자료를 읽는 동안 변경이 발생했습니다. 저장 완료 후 다시 검토해주세요.', 409);
   const resolved = resolveQuotationFields({categoryId:categoryContext.categoryId,categoryPath:categoryContext.categoryPath,product,content,options,settings,
-    overrides:scopedQuotationOverrides(state,categoryContext.categoryId),...(hubSchema?{hubSchema}:{}),...(template?{template}:{})});
+    overrides:scopedQuotationOverrides(state,categoryContext.categoryId),packagingBasis:scopedQuotationPackagingBasis(state,categoryContext.categoryId),...(hubSchema?{hubSchema}:{}),...(template?{template}:{})});
   const labelObjects = new Map<string,Promise<{customMetadata?:Record<string,string>}|null>>();
   const labelHead = (key:string) => {
     if(!labelObjects.has(key))labelObjects.set(key,env.FILES?.head?env.FILES.head(key):Promise.resolve(null));
@@ -147,7 +148,8 @@ export async function readMappedQuotationSource(owner: string, productId: string
 }
 export function resolveQuotationExport(saved: QuotationExportSource) {
   const resolved = resolveQuotationFields({ categoryId: saved.categoryContext.categoryId, categoryPath: saved.categoryContext.categoryPath,
-    product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides,...(saved.hubSchema?{hubSchema:saved.hubSchema}:{}),...(saved.template?{template:saved.template}:{}) });
+    product: saved.product, content: saved.content, settings: saved.settings, options: saved.options, overrides: saved.state.overrides,
+    packagingBasis:scopedQuotationPackagingBasis(saved.savedScopes??saved.state,saved.categoryContext.categoryId),...(saved.hubSchema?{hubSchema:saved.hubSchema}:{}),...(saved.template?{template:saved.template}:{}) });
   if (saved.categoryContext.categoryId && saved.savedScopes && hasLegacyQuotationOverrides(saved.savedScopes)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
   return resolved;
 }

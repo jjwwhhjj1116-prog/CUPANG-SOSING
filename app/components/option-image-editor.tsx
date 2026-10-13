@@ -5,6 +5,7 @@ import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schem
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
 import { downloadImageSelection } from '@/app/image-selection-download';
+import { DetailImageCompositePanel } from '@/app/components/detail-image-composite-panel';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage;
   disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void };
@@ -31,10 +32,11 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   useLayoutEffect(() => { currentStage.current = stage; activeDrag.current = null; }, [stage]);
   useLayoutEffect(() => { liveDisabled.current = disabled; if (disabled) activeDrag.current = null; }, [disabled]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [uncertain, setUncertain] = useState(false);
+  const compositeBusy = useRef(false), [merging, setMerging] = useState(false);
   const view = saved?.scope === scope ? saved.view : null, draft = pending.scope === scope ? pending.values : {};
   const dirty = Object.keys(draft).length > 0, input = stage === 'additional' ? 'additionalImages' : 'detailImages', label = stage === 'additional' ? '추가 이미지' : '상세 이미지';
   const current = () => mounted.current && currentScope.current === scope && currentSource.current === sourceKey;
-  const interactive = () => current() && currentStage.current === stage && !liveDisabled.current;
+  const interactive = () => current() && currentStage.current === stage && !liveDisabled.current && !compositeBusy.current;
   function verify(body: QuotationFieldsView, saveResponse = false, explicitLatest = false) {
     if (!body || (!saveResponse && !explicitLatest && body.productVersion !== version) || !Number.isFinite(Date.parse(body.productVersion)) || !Number.isSafeInteger(body.revision) || body.revision < 0
       || !Number.isSafeInteger(body.contentRevision) || body.contentRevision < 0 || !Number.isSafeInteger(body.optionRevision) || body.optionRevision < 0
@@ -139,14 +141,14 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     const targets = optionImageTargets(view.resolved.schema.fields); selected = quotationImageKeys(optionImageValue(view, optionId, input, draft)); html = optionImageValue(view, optionId, 'detailHtml', draft);
     limit = Math.min(...targets[input].fields.map(field => field.maxItems ?? 30)); issues = optionImageDraftIssues(view, optionId, draft);
   } catch (cause) { bindingError = cause instanceof Error ? cause.message : '이미지 연결 확인 필요'; }
-  const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || disabled || uncertain || !!bindingError;
+  const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || merging || disabled || uncertain || !!bindingError;
   const unavailable = selected.filter(key => !view?.imageKeys.includes(key));
   const activePreview = preview?.scope === scope && view?.imageKeys.includes(preview.key) ? preview.key : selected.find(key => view?.imageKeys.includes(key)) ?? view?.imageKeys[0] ?? null;
   function clearDrag() { activeDrag.current = null; setDragging(null); }
   function dragSelection(key: string) {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
     if (!base || base.scope !== scope || base.sourceKey !== sourceKey || !current() || currentStage.current !== stage
-      || liveDisabled.current || request.current || pendingSave.current?.scope === scope || bindingError) return null;
+      || liveDisabled.current || compositeBusy.current || request.current || pendingSave.current?.scope === scope || bindingError) return null;
     try {
       const keys = quotationImageKeys(optionImageValue(base.view, optionId, input, editing));
       if (!keys.includes(key) || keys.some(value => !base.view.imageKeys.includes(value)) || new Set(keys).size !== keys.length) return null;
@@ -230,13 +232,18 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 영어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'en')}>영어 → 한국어</button></>}
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 위로 이동`} disabled={locked || index === 0} onClick={() => move(key, -1)}>↑</button>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 아래로 이동`} disabled={locked || index === selected.length - 1} onClick={() => move(key, 1)}>↓</button>
-    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked} onClick={() => updateImages(keys => keys.filter(item => item !== key))}>삭제</button>
+    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked} onClick={() => updateImages(keys => keys.filter((_, position) => position !== index))}>삭제</button>
   </div>;
-  return <section className="panel-stack" aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy}>
+  return <section className="panel-stack" aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging}>
     <h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3><p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
     <p>드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요. 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
     <button type="button" className="btn ghost" disabled={!view || locked || !selected.length || !!unavailable.length} onClick={() => void downloadSelection()}>{label} ZIP 다운로드</button>
     <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. 미저장 선택을 견적서에 반영하려면 이미지 저장을 눌러주세요.</small>
+    {stage === 'detail' && view && <DetailImageCompositePanel key={scope} productId={productId} optionId={optionId} profileId={profileId} view={view}
+      disabled={disabled || busy || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
+      beforeApply={() => current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
+      onBusyChange={value => { compositeBusy.current = value; setMerging(value); }}
+      onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} />}
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
     {view && <>{stage === 'additional' ? <div className="image-edit-workspace">
@@ -269,8 +276,8 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       </label>}
     </>}
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
-    <button type="button" className="btn primary" disabled={!view || busy || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : '선택 옵션 이미지 저장'}</button>
-    {dirty && <button type="button" className="btn ghost" disabled={busy || disabled} onClick={() => void load(true)}>입력 유지·최신 이미지 조회</button>}
-    <button type="button" className="btn ghost" disabled={busy || disabled} onClick={() => void load()}>{dirty ? '입력 취소·저장 이미지 다시 조회' : '저장 이미지 다시 조회'}</button>
+    <button type="button" className="btn primary" disabled={!view || busy || merging || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : '선택 옵션 이미지 저장'}</button>
+    {dirty && <button type="button" className="btn ghost" disabled={busy || merging || disabled} onClick={() => void load(true)}>입력 유지·최신 이미지 조회</button>}
+    <button type="button" className="btn ghost" disabled={busy || merging || disabled} onClick={() => void load()}>{dirty ? '입력 취소·저장 이미지 다시 조회' : '저장 이미지 다시 조회'}</button>
   </section>;
 }

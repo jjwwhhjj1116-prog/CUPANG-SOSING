@@ -5,6 +5,7 @@ import { applyQuotationChanges, validateQuotationChanges } from '@/app/quotation
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { PublicDetailError } from '@/app/quotation-public-detail';
 import { stableQuotationFieldsView as stableView, QuotationFieldsSnapshotError as FieldsError } from '@/app/quotation-fields-snapshot';
+import { applyQuotationPackagingBasis, quotationPackQuantities } from '@/app/quotation-packaging-basis';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -41,8 +42,9 @@ export async function PUT(request: Request, context: Context) {
     try { changes = validateQuotationChanges(body.changes, { schema: saved.view.resolved.schema, optionIds: saved.options.rows.map(option => option.id), ownedImageKeys: saved.view.imageKeys, overrides: saved.view.overrides }); }
     catch (error) { throw new FieldsError(error instanceof Error ? error.message : '변경한 견적서 필드를 확인해주세요.', 400); }
     const overrides = applyQuotationChanges(saved.view.overrides, changes);
+    const packagingBasis=applyQuotationPackagingBasis(saved.view.packagingBasis,saved.view.resolved.schema.fields,quotationPackQuantities(saved.options.rows),changes);
     if (new TextEncoder().encode(JSON.stringify(overrides)).length > 500 * 1024) throw new FieldsError('수동 수정 자료가 저장 한도를 초과했습니다. 긴 내용을 줄여주세요.', 413);
-    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, saved.source, saved.view.categoryContext.categoryId);
+    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, saved.source, saved.view.categoryContext.categoryId,packagingBasis??null);
     if (!stored) throw changed();
     return json((await stableView(owner, id, profileId)).view);
   } catch (error) { return failure(error); }
