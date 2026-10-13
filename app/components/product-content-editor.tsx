@@ -246,8 +246,13 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
     if(!loaded || busy || loading || conflict || activeRequest.current)return;
     const controller=new AbortController();activeRequest.current=controller;
     setBusy(true); setError(''); setMessage('');
+    // A photo-only save must not confirm the displayed linked SEO description
+    // as a separately authored manual detail. Send only text actually edited
+    // in this step; explicit changed blanks still detach the description.
+    const detailPatch = editingDetail ? Object.fromEntries((['description', 'altText'] as const)
+      .filter(key => draft.detail[key] !== initial.detail[key]).map(key => [key, draft.detail[key]])) : {};
     const patch = section === 'SEO' ? { seo: { ...draft.seo, keywords: draft.seo.keywords.split(/[\n,]/).map(value => value.trim()).filter(Boolean) } }
-      : section === '표시사항' ? { label: draft.label, labelClears: draft.labelClears, labelProductNameLinked: draft.labelProductNameLinked, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(editingDetail ? { detail: draft.detail } : {}) };
+      : section === '표시사항' ? { label: draft.label, labelClears: draft.labelClears, labelProductNameLinked: draft.labelProductNameLinked, labelLayout: draft.labelLayout, customLabels: draft.customLabels } : { assets: imageStagePatch(initial.assets,draft.assets,focusedAssetRole), ...(Object.keys(detailPatch).length ? { detail: detailPatch } : {}) };
     try {
       const response = await fetch(endpoint, { method: 'PATCH', signal:controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: content.revision, patch }) });
       const body = await response.json() as { content?: ProductContent; error?: string };

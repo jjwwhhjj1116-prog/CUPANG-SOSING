@@ -217,6 +217,12 @@ function delimitedCell(value: string | number): string { return `"${String(delim
 function validationWarnings(source: string, profile: CategoryProfileInput, values: (string | number)[][], startRow: number, files: Map<string, Uint8Array>, inspection: XlsxInspection, rows: QuotationData[]): { warnings: string[]; issues: QuotationValidationIssue[]; count: number } {
   const root = spans(source);
   const fields = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema,profile.template).fields;
+  const barcodeNode=profile.hubSchema?(JSON.parse(profile.hubSchema.schemaString) as {
+    properties?:{productPage?:{properties?:{commonAttributes?:{properties?:{productBarcode?:{type?:unknown;enum?:unknown;const?:unknown}}}}}}
+  }).properties?.productPage?.properties?.commonAttributes?.properties?.productBarcode:undefined;
+  const barcodeTypes=Array.isArray(barcodeNode?.type)?barcodeNode.type:[barcodeNode?.type];
+  const barcodeFreeText=Boolean(barcodeNode&&barcodeNode.enum===undefined&&!Object.hasOwn(barcodeNode,'const')
+    &&barcodeTypes.includes('string')&&barcodeTypes.every(type=>type==='string'||type==='null'));
   const warnings: string[] = []; const issues: QuotationValidationIssue[] = []; let mismatches = 0; let blockingMismatches = 0; let unchecked = 0; let uncertainLengths = 0;
   const rules = root.children.filter(node => node.local === 'dataValidations').flatMap(node => node.children.filter(child => child.local === 'dataValidation'));
   for (const rule of rules) {
@@ -276,18 +282,23 @@ function validationWarnings(source: string, profile: CategoryProfileInput, value
       if (verdict) continue;
       mismatches++;
       const field = fields.find(field => field.id === mapping.field);
-      // The observed brand list is a suggestion only. Both the original file's
-      // disabled error alert and the exact live free-text wire must prove this;
-      // required blanks, enum constraints and other columns remain errors.
+      // Observed brand/barcode lists are suggestions only when the original
+      // disabled error alert and exact live free-text wire both prove this.
+      // Required blanks, enums/constants and other columns remain errors.
       const advisoryBrand = rule.attributes.type === 'list' && ['0', 'false'].includes(rule.attributes.showErrorMessage ?? '')
         && String(value).trim() !== '' && field?.type === 'text' && !field.choices && !field.hubWire?.name
         && field.hubWire?.path.length === 2 && field.hubWire.path[0] === 'productPage' && field.hubWire.path[1] === 'brand';
-      if (!advisoryBrand) {
+      const advisoryBarcode=rule.attributes.type==='list'&&['0','false'].includes(rule.attributes.showErrorMessage??'')
+        &&String(value).trim()!==''&&barcodeFreeText&&field?.type==='text'&&!field.choices&&!field.readOnly&&field.hubInput==='barcode'
+        &&!field.hubWire?.name&&!field.hubWire?.nameKey&&!field.hubWire?.valueKey
+        &&JSON.stringify(field.hubWire?.path)===JSON.stringify(['productPage','commonAttributes','productBarcode']);
+      if (!advisoryBrand&&!advisoryBarcode) {
         blockingMismatches++;
         if (issues.length < 1000) issues.push({row:startRow+index,column:mapping.column+1,header:profile.template!.headers[mapping.column],message:description});
       }
       if (warnings.length < 20) {
-        let suggestion = advisoryBrand ? ' 원본은 목록 외 입력을 허용하며, Supplier Hub 브랜드도 자유 입력 항목입니다.' : '';
+        let suggestion = advisoryBrand ? ' 원본은 목록 외 입력을 허용하며, Supplier Hub 브랜드도 자유 입력 항목입니다.'
+          :advisoryBarcode?' 원본은 목록 외 입력을 허용하며, Supplier Hub 상품 바코드도 자유 입력 항목입니다.':'';
         if (rule.attributes.type === 'list') {
           const raw = mapping.field === 'constant' ? undefined : rows[index][mapping.field];
           // A blank is a selection only when the resolver supplied provenance.

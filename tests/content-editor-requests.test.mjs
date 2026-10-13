@@ -92,7 +92,7 @@ test('detail step saves explanation and image roles together while preserving an
  edit.props.onChange({target:{value:'번역 설명\n<script>실행 금지</script>'}});
  nodes(h.render()).find(n=>n.props?.['aria-label']==='이미지 1 역할').props.onChange({target:{value:'detail'}});
  const save=h.button('상세 설명·이미지 저장');assert.equal(save.props.disabled,false);save.props.onClick();await settle();
- assert.equal(patch.seo,undefined);assert.deepEqual(patch.detail,{description:'번역 설명\n<script>실행 금지</script>',altText:''});assert.deepEqual(patch.assets.detail,['owner/a.png']);
+ assert.equal(patch.seo,undefined);assert.deepEqual(patch.detail,{description:'번역 설명\n<script>실행 금지</script>'});assert.deepEqual(patch.assets.detail,['owner/a.png']);
  assert.equal(saved.seo.description.value,'');assert.equal(saved.detail.description.provenance,'manual');
  assert.equal(nodes(h.render('SEO')).find(n=>n.type==='input'&&n.props.maxLength===500).props.value,'미저장 상품명');
  assert.equal(h.button('상세 설명·이미지 저장').props.disabled,true);

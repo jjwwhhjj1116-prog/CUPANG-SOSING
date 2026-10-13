@@ -119,11 +119,14 @@ export function compileHubQuotationSchema(snapshot:HubSchemaSnapshot,base:readon
     const numeric=types.includes('number')||types.includes('integer')
       ||types.every(type=>type===undefined||type==='null')&&Array.isArray(enums)&&enums.some(value=>typeof value==='number')&&enums.every(value=>value===null||typeof value==='number');
     const pathBinding=snapshot.inputBindings==='couplus-paths-v1'&&!wire.name?couplusQuotationInput(wire.path):undefined;
-    // Hub's brand dropdown is a suggestion list beside a free text input.
-    // A suggestion must not replace the owner's captured brand setting.
+    // These observed dropdowns are suggestions beside free-text controls.
+    // Explicit schema enums/constants and other dropdowns keep their rules.
+    // Brand suggestions must not replace the owner's captured setting.
     const freeTextBrand=wire.path.length===2&&wire.path[0]==='productPage'&&wire.path[1]==='brand'&&!wire.name
       &&node.enum===undefined&&types.includes('string')&&types.every(type=>type==='string'||type==='null');
-    if(freeTextBrand)choices=undefined;
+    const freeTextBarcode=wire.path.length===3&&wire.path[0]==='productPage'&&wire.path[1]==='commonAttributes'&&wire.path[2]==='productBarcode'&&!wire.name
+      &&node.enum===undefined&&!Object.hasOwn(node,'const')&&types.includes('string')&&types.every(type=>type==='string'||type==='null');
+    if(freeTextBrand||freeTextBarcode)choices=undefined;
     // Observed price/packaging inputs carry numeric text. Other string inputs
     // must never acquire numeric sources merely because their label matches.
     const numericText=Boolean(pathBinding&&['supplyPrice','salePrice','msrp','packagedWeightG'].includes(pathBinding)
