@@ -90,6 +90,50 @@ test('invalid tags are not truncated and failed reads keep the current draft',as
  }finally{h.close();}
 });
 
+test('selected SEO shows the captured 100/150 character caps and saves both exact limits without changing other options',async()=>{
+ const f=fixture(),before=plain(f.view.overrides),h=seoUI((url,init)=>f.reply(url,init));try{
+  await h.idle();assert.equal(h.input('선택 옵션 상품명').props.maxLength,100);assert.equal(h.input('선택 옵션 검색태그').props.maxLength,150);
+  const counters=()=>nodes(h.render()).filter(node=>node.type==='small'&&node.props.className==='seo-input-count');
+  assert.deepEqual(counters().map(visibleText),[`${'공통 Hub 상품명'.length}/100자`,`${'공통Hub태그'.length}/150자`]);assert.ok(counters().every(node=>node.props['aria-live']==='polite'));
+  const title='가'.repeat(100),tags='가'+Array(10).fill('가'.repeat(14)).join(',');assert.equal(tags.length,150);
+  h.input('선택 옵션 상품명').props.onChange({target:{value:title}});h.input('선택 옵션 검색태그').props.onChange({target:{value:tags}});assert.deepEqual(counters().map(visibleText),['100/100자','150/150자']);
+  await h.click('선택 옵션 SEO 저장');assert.equal(h.saved,1);assert.equal(f.view.overrides.options.red.title,title);assert.equal(f.view.overrides.options.red['wire-title'],title);assert.equal(f.view.overrides.options.red.searchTags,tags);assert.equal(f.view.overrides.options.red['wire-tags'],tags);
+  assert.deepEqual(f.view.overrides.common,before.common);assert.deepEqual(f.view.overrides.options.blue,before.options.blue);assert.equal(f.view.overrides.options.red.unrelated,'보존');
+ }finally{h.close();}
+});
+
+test('oversized SEO text and whitespace stay intact and captured save callbacks cannot bypass either displayed cap',async()=>{
+ const f=fixture(),before=plain(f.view),h=seoUI((url,init)=>f.reply(url,init));try{
+  await h.idle();h.input('선택 옵션 상품명').props.onChange({target:{value:'저장 전 입력'}});const submit=h.button('선택 옵션 SEO 저장').props.onClick;
+  for(const title of ['가'.repeat(101),' '.repeat(101)]){
+   h.input('선택 옵션 상품명').props.onChange({target:{value:title}});assert.equal(h.input('선택 옵션 상품명').props.value,title);assert.equal(h.button('선택 옵션 SEO 저장').props.disabled,true);assert.match(visibleText(h.render()),/101\/100자/);submit();await h.idle();assert.match(visibleText(h.render()),/상품명: 100자 제한을 초과/);assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false);
+  }
+  h.input('선택 옵션 상품명').props.onChange({target:{value:'저장 전 입력'}});const tags='가가'+Array(10).fill('가'.repeat(14)).join(',');assert.equal(tags.length,151);h.input('선택 옵션 검색태그').props.onChange({target:{value:tags}});
+  assert.equal(h.button('선택 옵션 SEO 저장').props.disabled,true);submit();await h.idle();assert.equal(h.input('선택 옵션 검색태그').props.value,tags);assert.match(visibleText(h.render()),/151\/150자/);assert.match(visibleText(h.render()),/검색태그: 150자 제한을 초과/);assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false);assert.equal(h.saved,0);assert.deepEqual(plain(f.view),before);
+ }finally{h.close();}
+});
+
+test('selected SEO respects a smaller limit on either linked schema field and retains default caps when lengths are absent',async()=>{
+ for(const limitField of ['canonical','primary','absent']){
+  const f=fixture();for(const field of f.view.resolved.schema.fields){if(limitField==='absent')delete field.maxLength;else if((limitField==='primary')===field.id.startsWith('wire-'))field.maxLength=field.id.includes('title')?75:120;}
+  const h=seoUI((url,init)=>f.reply(url,init));try{
+   await h.idle();const titleLimit=limitField==='absent'?100:75,tagsLimit=limitField==='absent'?150:120;assert.equal(h.input('선택 옵션 상품명').props.maxLength,titleLimit,limitField);assert.equal(h.input('선택 옵션 검색태그').props.maxLength,tagsLimit,limitField);
+   h.input('선택 옵션 상품명').props.onChange({target:{value:'가'.repeat(titleLimit+1)}});const submit=h.button('선택 옵션 SEO 저장').props.onClick;submit();await h.idle();assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false,limitField);assert.equal(h.input('선택 옵션 상품명').props.value,'가'.repeat(titleLimit+1),limitField);
+   const title='가'.repeat(titleLimit),tags='가'+Array(10).fill('가'.repeat((tagsLimit-10)/10)).join(',');assert.equal(tags.length,tagsLimit);
+   h.input('선택 옵션 상품명').props.onChange({target:{value:title}});h.input('선택 옵션 검색태그').props.onChange({target:{value:'가'+tags}});submit();await h.idle();assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false,limitField);assert.equal(h.input('선택 옵션 검색태그').props.value,'가'+tags,limitField);
+   h.input('선택 옵션 검색태그').props.onChange({target:{value:tags}});await h.click('선택 옵션 SEO 저장');assert.equal(h.saved,1,limitField);assert.equal(f.view.overrides.options.red['wire-title'],title);assert.equal(f.view.overrides.options.red['wire-tags'],tags);
+  }finally{h.close();}
+ }
+});
+
+test('opening or reloading legacy oversized SEO never slices or writes it and explicit restore and blank save remain available',async()=>{
+ const f=fixture(),title='가'.repeat(130),tags='가가'+Array(10).fill('가'.repeat(14)).join(',');for(const key of ['title','wire-title']){f.view.overrides.options.red[key]=title;f.view.resolved.rows[0].fields[key]={value:title,source:'manual-option',validationIssues:[]};}for(const key of ['searchTags','wire-tags']){f.view.overrides.options.red[key]=tags;f.view.resolved.rows[0].fields[key]={value:tags,source:'manual-option',validationIssues:[]};}
+ const before=plain(f.view),h=seoUI((url,init)=>f.reply(url,init));try{
+  await h.idle();assert.equal(h.input('선택 옵션 상품명').props.value,title);assert.equal(h.input('선택 옵션 검색태그').props.value,tags);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(nodes(h.render()).filter(node=>node.props.className==='seo-input-count exceeded').length,2);await h.click('저장 SEO 다시 조회');assert.equal(h.input('선택 옵션 상품명').props.value,title);assert.equal(h.calls.some(call=>call.init?.method==='PUT'),false);assert.deepEqual(plain(f.view),before);
+  h.input('선택 옵션 검색태그').props.onChange({target:{value:''}});assert.equal(h.button('선택 옵션 SEO 저장').props.disabled,true);await h.click('상품명 공통·자동값 복원');assert.equal(h.input('선택 옵션 상품명').props.value,'공통 Hub 상품명');await h.click('선택 옵션 SEO 저장');assert.equal(h.saved,1);const put=JSON.parse(h.calls.find(call=>call.init?.method==='PUT').init.body);assert.equal(put.expectedRevision,before.revision);assert.equal(put.expectedInputFingerprint,before.inputFingerprint);assert.deepEqual(put.changes.map(change=>[change.fieldKey,change.value]),[['title',null],['wire-title',null],['searchTags',''],['wire-tags','']]);assert.equal(h.input('선택 옵션 검색태그').props.value,'');assert.deepEqual(f.view.overrides.common,before.overrides.common);assert.deepEqual(f.view.overrides.options.blue,before.overrides.options.blue);assert.equal(f.view.overrides.options.red.unrelated,'보존');
+ }finally{h.close();}
+});
+
 test('ambiguous bindings and a mismatched successful save response never publish or discard a selected SEO draft',async()=>{
  const bad=fixture();bad.view.resolved.schema.fields.push({...bad.view.resolved.schema.fields[2],id:'duplicate-title'});
  const invalid=seoUI(()=>Response.json(bad.view));try{await invalid.idle();assert.equal(invalid.input('선택 옵션 상품명'),undefined);assert.equal(invalid.button('선택 옵션 SEO 저장').props.disabled,true);assert.match(JSON.stringify(invalid.render()),/연결을 하나로/);assert.equal(invalid.calls.some(call=>call.init?.method==='PUT'),false);}finally{invalid.close();}

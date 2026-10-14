@@ -4,7 +4,15 @@ import { applyQuotationChanges, type QuotationChange, type QuotationFieldsView }
 import { optionSeoChanges, optionSeoDraftIssues, optionSeoValue, quotationSeoTargets, verifyOptionSeoRefresh, type OptionSeoDraft, type OptionSeoInput } from '@/app/quotation-seo-targets';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onCommonDescription?: () => void };
-const fields = [['title', '상품명'], ['searchTags', '검색태그']] as const;
+const fields = [['title', '상품명', 100], ['searchTags', '검색태그', 150]] as const;
+function seoInputs(view: QuotationFieldsView, optionId: string, draft: OptionSeoDraft) {
+  const targets = quotationSeoTargets(view.resolved.schema.fields);
+  return fields.map(([input, label, limit]) => ({ input, label, value: optionSeoValue(view, optionId, input, draft),
+    maxLength: Math.min(limit, ...targets[input].fields.map(field => field.maxLength ?? limit)) }));
+}
+function seoLengthIssues(inputs: ReturnType<typeof seoInputs>) {
+  return inputs.flatMap(({ label, value, maxLength }) => value.length > maxLength ? [`${label}: ${maxLength}자 제한을 초과했습니다. 입력을 검토해주세요.`] : []);
+}
 export function OptionSeoEditor({ productId, optionId, version, profileId, refreshToken, onSaved, onCommonDescription }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
@@ -99,14 +107,14 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
     latestDraft.current = { scope, values: { ...(latestDraft.current.scope === scope ? latestDraft.current.values : {}), [input]: value } };
     setPending(latestDraft.current); setMessage('');
   }
-  let issues: string[] = [], bindingError = '';
-  if (view) { try { issues = optionSeoDraftIssues(view, optionId, draft); } catch (cause) { bindingError = cause instanceof Error ? cause.message : 'SEO 연결 확인 필요'; } }
+  let inputs: ReturnType<typeof seoInputs> = [], issues: string[] = [], bindingError = '';
+  if (view) { try { inputs = seoInputs(view, optionId, draft); issues = [...optionSeoDraftIssues(view, optionId, draft), ...seoLengthIssues(inputs)]; } catch (cause) { bindingError = cause instanceof Error ? cause.message : 'SEO 연결 확인 필요'; } }
   async function save() {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
     if (!base || base.scope !== scope || !Object.keys(editing).length || request.current || !current()) return;
     if(pendingSave.current?.scope===scope){await load(true);return;}
     if (base.sourceKey !== sourceKey) { setError('상품 저장 상태가 변경됐습니다. 입력을 유지하고 최신 SEO 자료를 조회한 뒤 저장해주세요.'); return; }
-    let changes; try { changes = optionSeoChanges(base.view, optionId, editing); } catch (cause) { setError(cause instanceof Error ? cause.message : 'SEO 입력을 확인해주세요.'); return; }
+    let changes; try { const lengthIssues = seoLengthIssues(seoInputs(base.view, optionId, editing)); if (lengthIssues.length) throw Error(lengthIssues.join(' ')); changes = optionSeoChanges(base.view, optionId, editing); } catch (cause) { setError(cause instanceof Error ? cause.message : 'SEO 입력을 확인해주세요.'); return; }
     const attempt={scope,before:base.view,changes:changes.map(change=>({...change}))} as NonNullable<typeof pendingSave.current>;pendingSave.current=attempt;setUncertain(true);
     const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage('');
     let response:Response|undefined;
@@ -129,7 +137,7 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
     {onCommonDescription && <button type="button" className="btn ghost" disabled={busy} onClick={onCommonDescription}>상품 공통 SEO·설명 편집</button>}
     {busy && <p role="status">옵션 SEO 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
-    {view && fields.map(([input, label]) => <label className="field" key={input}><span>{label}</span><textarea aria-label={`선택 옵션 ${label}`} value={optionSeoValue(view, optionId, input, draft)} disabled={busy || uncertain || !!bindingError} onChange={event => edit(input, event.target.value)} /><button type="button" className="btn ghost" disabled={busy || uncertain || !!bindingError} onClick={() => edit(input, null)}>{label} 공통·자동값 복원</button></label>)}
+    {inputs.map(({ input, label, value, maxLength }) => <label className="field" key={input}><span>{label}</span><textarea aria-label={`선택 옵션 ${label}`} value={value} maxLength={maxLength} disabled={busy || uncertain || !!bindingError} onChange={event => edit(input, event.target.value)} /><small aria-live="polite" className={value.length > maxLength ? 'seo-input-count exceeded' : 'seo-input-count'}>{value.length}/{maxLength}자{value.length > maxLength ? ` · 기존 입력을 유지했습니다. ${label} 입력을 검토해주세요.` : ''}</small><button type="button" className="btn ghost" disabled={busy || uncertain || !!bindingError} onClick={() => edit(input, null)}>{label} 공통·자동값 복원</button></label>)}
     <small>검색태그는 쉼표로 구분합니다. 공란도 직접 수정값으로 저장하며, 필수 상품명을 비우면 최종 견적서에서 수정이 필요합니다.</small>
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
     <button type="button" className="btn primary" disabled={!view || busy || !dirty || !!bindingError || !!issues.length} onClick={() => void save()}>{uncertain?'SEO 저장 결과 확인':'선택 옵션 SEO 저장'}</button>

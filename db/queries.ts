@@ -17,8 +17,13 @@ function database() {
   return env.DB;
 }
 
+// Remember completed schema setup only. Pending request I/O and failed attempts
+// must stay local to their request; product and settings reads are never cached.
+const schemaReadyBindings = new WeakSet<D1Database>();
+
 export async function ensureDatabase() {
   const db = database();
+  if (schemaReadyBindings.has(db)) return;
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS products (
       id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, source_url TEXT NOT NULL,
@@ -44,7 +49,7 @@ export async function ensureDatabase() {
       product_id TEXT PRIMARY KEY REFERENCES products(id), payload TEXT NOT NULL
     )`),
   ]);
-  await db.prepare('PRAGMA optimize').run();
+  schemaReadyBindings.add(db);
 }
 
 export async function listProducts(ownerId: string, removed: 'exclude' | 'only' = 'exclude') {

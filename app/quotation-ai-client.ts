@@ -15,6 +15,24 @@ export function quotationAiViewCurrent(value: QuotationAiView, view: QuotationFi
     && value.optionRevision === view.optionRevision && value.quotationRevision === view.revision
     && value.profileId === view.categoryContext.profileId;
 }
+/** Reuse one completed whole-product draft across option editors. An unresolved
+ * execution remains visible for recovery even after its source was edited. */
+export function quotationAiJobForScope(value: QuotationAiView, view: QuotationFieldsView, productId: string, optionId: string | null, all: boolean) {
+  if (!quotationAiViewCurrent(value, view, productId)) return null;
+  const jobs = value.jobs.filter(job => job.profileId === value.profileId);
+  const unsettled = jobs.find(job => job.status === 'running' || job.status === 'uncertain');
+  if (unsettled) return unsettled;
+  const current = jobs.filter(job => job.fingerprint === value.fingerprint && job.quotationRevision === view.revision);
+  if (all) return current.find(job => job.scope.applyToAllOptions) ?? null;
+  if (optionId === null) return null;
+  return current.find(job => !job.scope.applyToAllOptions && job.scope.optionId === optionId)
+    ?? current.find(job => job.scope.applyToAllOptions) ?? null;
+}
+export function quotationAiScopedProposalChanges(view: QuotationFieldsView, job: QuotationAiJobView, fingerprint: string, optionId: string | null, all: boolean) {
+  if (all && !job.scope.applyToAllOptions || !all && optionId === null) throw Error('AI 초안을 적용할 옵션 범위를 확인해주세요.');
+  const changes = quotationAiProposalChanges(view, job, fingerprint);
+  return all ? changes : changes.filter(change => change.optionId === optionId);
+}
 /** Recheck every proposed target before placing anything in an unsaved editor. */
 export function quotationAiProposalChanges(view: QuotationFieldsView, job: QuotationAiJobView, fingerprint: string) {
   if (job.status !== 'completed' || job.fingerprint !== fingerprint || job.quotationRevision !== view.revision

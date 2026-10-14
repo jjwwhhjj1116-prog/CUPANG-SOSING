@@ -24,11 +24,42 @@ test('stale revision/profile/fingerprint, excluded option, duplicate and unsafe 
     assert.throws(()=>client.quotationAiProposalChanges(x.view,x.job,x.state.fingerprint),kind);
   }
 });
-test('UI performs read only on mount; null individual scope cannot invoke AI; explicit all invokes once and only applies on review',async()=>{
+test('UI defaults to whole-product scope; mount is read-only; turning it off requires an option; generation applies only on review',async()=>{
   const x=await fixture(),applied=[],busy=[];const ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:null,disabled:false,onBusyChange:v=>busy.push(v),onApply:v=>applied.push(v)},async(_url,init)=>Response.json(init?.method==='POST'?{job:x.job,sourceCurrent:true}:x.state));
-  await ui.idle();assert.equal(ui.calls.filter(c=>c.method==='POST').length,0);assert.equal(ui.button('AI 처리').props.disabled,true);
+  await ui.idle();assert.equal(ui.calls.filter(c=>c.method==='POST').length,0);assert.equal(ui.checkbox().props.checked,true);assert.equal(ui.button('AI 처리').props.disabled,false);
+  ui.checkbox().props.onChange({target:{checked:false}});assert.equal(ui.button('AI 처리').props.disabled,true);
   ui.checkbox().props.onChange({target:{checked:true}});await ui.click('AI 처리');assert.equal(ui.calls.filter(c=>c.method==='POST').length,1);assert.equal(applied.length,0);assert.deepEqual(busy,[true,false]);
   await ui.click('검토한 초안 입력란에 적용');assert.ok(applied[0].length);assert.deepEqual(ui.calls.map(c=>c.method),['GET','POST']);ui.unmount();
+});
+
+for(const company of companies)test(company.name+': existing whole-product AI draft reopens on either option without another provider call and can apply only the selected option',async()=>{
+  const x=await fixture(company);x.state.jobs=[x.job];const original=JSON.stringify(x.view);
+  for(const option of x.f.options.rows){
+    const applied=[],ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:option.id,disabled:false,onApply:v=>applied.push(v)},async()=>Response.json(x.state));
+    await ui.idle();assert.equal(ui.checkbox().props.checked,true);assert.equal(ui.button('검토한 초안 입력란에 적용').props.disabled,false);
+    ui.checkbox().props.onChange({target:{checked:false}});await ui.click('검토한 초안 입력란에 적용');
+    assert.ok(applied[0].length);assert.ok(applied[0].every(change=>change.optionId===option.id));
+    assert.deepEqual(ui.calls.map(call=>call.method),['GET']);assert.equal(JSON.stringify(x.view),original);ui.unmount();
+  }
+});
+
+test('scope selection prefers an exact individual job, rejects stale/profiles, and never widens an individual proposal to all options',async()=>{
+  const x=await fixture(),optionId=x.f.options.rows[0].id;
+  const individual={...x.job,id:'individual',scope:{optionId,applyToAllOptions:false},result:{...x.job.result,changes:x.job.result.changes.filter(change=>change.optionId===optionId)}};
+  x.state.jobs=[{...x.job,id:'old',fingerprint:'c'.repeat(64)},{...x.job,id:'foreign',profileId:'foreign'},individual,x.job];
+  assert.equal(client.quotationAiJobForScope(x.state,x.view,x.f.product.id,optionId,false).id,'individual');
+  assert.equal(client.quotationAiJobForScope(x.state,x.view,x.f.product.id,optionId,true).id,x.job.id);
+  assert.throws(()=>client.quotationAiScopedProposalChanges(x.view,individual,x.state.fingerprint,optionId,true));
+  assert.throws(()=>client.quotationAiScopedProposalChanges(x.view,x.job,x.state.fingerprint,null,false));
+  assert.equal(client.quotationAiJobForScope({...x.state,quotationRevision:1},x.view,x.f.product.id,optionId,true),null);
+});
+
+test('a current-profile unresolved request remains visible across source edits and option scopes and cannot be bypassed by changing scope',async()=>{
+  const x=await fixture(),optionId=x.f.options.rows[0].id;
+  x.state.jobs=[{...x.job,status:'uncertain',fingerprint:'c'.repeat(64),quotationRevision:9,scope:{optionId:x.f.options.rows[1].id,applyToAllOptions:false},result:null,error:{code:'TIMEOUT',message:'확인 필요',uncertain:true}},x.job];
+  const ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId,disabled:false,onApply:()=>assert.fail('No apply')},async()=>Response.json(x.state));
+  await ui.idle();assert.equal(ui.button('AI 처리').props.disabled,true);assert.equal(ui.checkbox().props.disabled,true);assert.ok(ui.button('불확실한 이전 실행 종료'));
+  assert.ok(!ui.button('검토한 초안 입력란에 적용'));assert.deepEqual(ui.calls.map(call=>call.method),['GET']);ui.unmount();
 });
 test('AI result after saved source changed is neither applied nor reused',async()=>{
   const x=await fixture(),applied=[];const ui=quotationAiUI({productId:x.f.product.id,profileId:x.f.profile.id,view:x.view,optionId:x.f.options.rows[0].id,disabled:false,onApply:v=>applied.push(v)},async(_url,init)=>Response.json(init?.method==='POST'?{job:{...x.job,scope:{optionId:x.f.options.rows[0].id,applyToAllOptions:false}},sourceCurrent:false}:x.state));
