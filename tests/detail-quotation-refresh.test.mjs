@@ -46,7 +46,7 @@ function harness(rejectPrice=false,props={}){
  return {component,saves:()=>saved};
 }
 test('each saved source refreshes quotation even when the product timestamp stays unchanged',()=>{
- for(const [name,callback,predicate] of [['ProductContentEditor','onSaved'],['ProductOptionsEditor','onSaved',props=>!props.seoView],['ProductOptionsEditor','onSaved',props=>props.seoView],['DocumentImagePanel','onSaved',props=>props.section==='label'],['DocumentImagePanel','onSaved',props=>props.section==='size'],['ImageGenerationPanel','onProductChanged'],['TranslationPanel','onContentSaved']]){
+ for(const [name,callback,predicate] of [['ProductContentEditor','onSaved'],['ProductOptionsEditor','onSaved',props=>!props.seoView],['SeoWorkspaceEditor','onSaved'],['DocumentImagePanel','onSaved',props=>props.section==='label'],['DocumentImagePanel','onSaved',props=>props.section==='size'],['ImageGenerationPanel','onProductChanged'],['TranslationPanel','onContentSaved']]){
   const h=harness(),before=h.component('QuotationPanel').props.refreshToken;
   h.component(name,predicate).props[callback]();
   assert.notEqual(h.component('QuotationPanel').props.refreshToken,before,name);assert.equal(h.saves(),1);

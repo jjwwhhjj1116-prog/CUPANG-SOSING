@@ -65,7 +65,7 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  const stubs=new Map();
  function componentModule(name){
   let component=stubs.get(name);if(!component){component=props=>{components.set(name,props);componentMounts.set(name,active);componentCounts.set(name,(componentCounts.get(name)??0)+1);
-   if(name==='option-seo-editor'||name==='product-content-editor'){
+   if(name==='option-seo-editor'||name==='product-content-editor'||name==='seo-workspace-editor'){
     const [draft,setDraft]=hooks.useState('');
     return{type:'textarea',props:{'data-test-editor':name,value:draft,onChange:event=>setDraft(event.target.value)}};
    }
@@ -546,24 +546,24 @@ test('selected option SEO and common SEO stay visible in the combined workspace 
   const editor=h.component('option-seo-editor');assert.ok(editor);assert.equal(editor.productId,first.id);assert.equal(editor.optionId,'option-a-2');assert.equal(editor.version,fresh.updated_at);
   const common=nodes(h.render()).find(node=>node.type==='details'&&text(node).includes('상품 공통 SEO·설명 편집'));
   assert.ok(common);assert.equal(common.props.open,true);assert.equal(common.props.children[0].props.hidden,true);
-  assert.equal(h.componentVisible('option-seo-editor'),true);assert.equal(h.componentVisible('product-content-editor'),true);
-  assert.equal(h.component('product-content-editor').section,'SEO');assert.equal(h.component('product-content-editor').product.updated_at,fresh.updated_at);
+  assert.equal(h.componentVisible('option-seo-editor'),true);assert.equal(h.componentVisible('seo-workspace-editor'),true);assert.equal(h.componentVisible('product-content-editor'),false);
+  assert.equal(h.component('seo-workspace-editor').productId,first.id);assert.equal(h.component('seo-workspace-editor').version,fresh.updated_at);
   const before=editor.refreshToken;editor.onSaved();await h.settle();assert.notEqual(h.component('option-seo-editor').refreshToken,before);
-  const mount=h.componentMount('option-seo-editor'),commonMount=h.componentMount('product-content-editor');
-  const combined=mount.ancestors.find(node=>node.type==='details'&&text(node).includes('상품 공통 SEO·설명 편집'));
-  assert.ok(combined);assert.ok(commonMount.ancestors.includes(combined),'both editors share the same open combined host');
+  const mount=h.componentMount('option-seo-editor'),commonMount=h.componentMount('seo-workspace-editor');
+  const combined=mount.ancestors.find(node=>node.props?.className==='seo-content-columns');
+  assert.ok(combined);assert.ok(commonMount.ancestors.includes(combined),'both editors share the retained stage-one host');
   const input=name=>nodes(h.render()).find(node=>node.props?.['data-test-editor']===name);
   input('option-seo-editor').props.onChange({target:{value:'미저장 선택 옵션 제목'}});
-  input('product-content-editor').props.onChange({target:{value:'미저장 공통 설명'}});
-  await h.click('2가격 설정');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('product-content-editor'),commonMount);
-  assert.equal(h.componentVisible('option-seo-editor'),false);assert.equal(h.componentVisible('product-content-editor'),false);
-  assert.equal(input('option-seo-editor').props.value,'미저장 선택 옵션 제목');assert.equal(input('product-content-editor').props.value,'미저장 공통 설명');
-  await h.click('1SEO 설정');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('product-content-editor'),commonMount);
-  assert.equal(h.componentVisible('option-seo-editor'),true);assert.equal(h.componentVisible('product-content-editor'),true);
-  assert.equal(input('option-seo-editor').props.value,'미저장 선택 옵션 제목');assert.equal(input('product-content-editor').props.value,'미저장 공통 설명');
+  input('seo-workspace-editor').props.onChange({target:{value:'미저장 공통 SEO'}});
+  await h.click('2가격 설정');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('seo-workspace-editor'),commonMount);
+  assert.equal(h.componentVisible('option-seo-editor'),false);assert.equal(h.componentVisible('seo-workspace-editor'),false);
+  assert.equal(input('option-seo-editor').props.value,'미저장 선택 옵션 제목');assert.equal(input('seo-workspace-editor').props.value,'미저장 공통 SEO');
+  await h.click('1SEO 설정');assert.equal(h.componentMount('option-seo-editor'),mount);assert.equal(h.componentMount('seo-workspace-editor'),commonMount);
+  assert.equal(h.componentVisible('option-seo-editor'),true);assert.equal(h.componentVisible('seo-workspace-editor'),true);
+  assert.equal(input('option-seo-editor').props.value,'미저장 선택 옵션 제목');assert.equal(input('seo-workspace-editor').props.value,'미저장 공통 SEO');
   assert.ok(h.requests.every(request=>request.method==='GET'));
-  h.component('registration-board').onOpen(h.products[1],'SEO');await h.settle();assert.equal(h.component('option-seo-editor'),undefined);assert.equal(h.component('product-content-editor').product.id,h.products[1].id);
-  assert.equal(h.componentVisible('product-content-editor'),true);assert.equal(input('product-content-editor').props.value,'');
+  h.component('registration-board').onOpen(h.products[1],'SEO');await h.settle();assert.equal(h.component('option-seo-editor'),undefined);assert.equal(h.component('seo-workspace-editor').productId,h.products[1].id);
+  assert.equal(h.componentVisible('seo-workspace-editor'),true);assert.equal(input('seo-workspace-editor').props.value,'');
   const normal=nodes(h.render()).find(node=>node.type==='details'&&text(node).includes('상품 공통 SEO·설명 편집'));assert.equal(normal.props.open,true);
  }finally{h.close();}
 });

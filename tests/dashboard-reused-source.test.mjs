@@ -12,6 +12,8 @@ function fixture(){
  const slots=[],cache=new Map();let index=0;
  const draft={rows:[{id:'existing',url:'https://detail.1688.com/offer/1.html',features:'직접 입력',keywords:'수동',status:'draft'}],goal:'work',ready:true,loading:false,saving:false,dirty:true,message:'직접 입력 보존',setRows(fn){this.rows=fn(this.rows);},setGoal(value){this.goal=value;},save(){},load(){}};
  const hooks={useState(initial){const slot=index++;if(!(slot in slots))slots[slot]=typeof initial==='function'?initial():initial;return[slots[slot],value=>slots[slot]=typeof value==='function'?value(slots[slot]):value];},useRef(initial){const slot=index++;return slots[slot]??(slots[slot]={current:initial});},useCallback(fn){return fn;},useEffect(){}};
+ hooks.useMemo=(fn,deps)=>{const slot=index++,old=slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i])))slots[slot]={value:fn(),deps};return slots[slot].value;};
+ hooks.useLayoutEffect=hooks.useEffect;
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,crypto,structuredClone,window:{confirm:()=>false},require(name){
   if(name==='react')return hooks;
   if(name==='@/app/components/use-intake-draft')return{useIntakeDraft:()=>draft};

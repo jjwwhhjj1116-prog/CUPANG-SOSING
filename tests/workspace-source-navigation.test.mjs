@@ -10,6 +10,7 @@ const settle=async()=>{for(let index=0;index<12;index++)await new Promise(resolv
 function harness(){
  const instances=new Map(),effects=[],cache=new Map();let active;
  const hooks={useState(initial){const index=active.index++,instance=active;if(!(index in instance.slots))instance.slots[index]=typeof initial==='function'?initial():initial;return[instance.slots[index],value=>instance.slots[index]=typeof value==='function'?value(instance.slots[index]):value];},useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},useMemo:fn=>fn(),useCallback:fn=>fn,useEffect(fn){if(active.first)effects.push(fn);}};
+ hooks.useLayoutEffect=hooks.useEffect;
  const implemented=new Set(['dashboard-client','price-editor','product-options-editor']);
  let body;
  function load(file){
