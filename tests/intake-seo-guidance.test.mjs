@@ -51,7 +51,8 @@ for(const company of schemaCompanies)test(`initial arbitrary URL intake uses cap
   assert.ok(f.queries.every(q=>!q.includes(f.features)&&!q.includes('주방 정리함')&&!q.includes(f.settings.brand)),'owner SEO input must not become supplier facts or provider input');assert.equal(f.queries.length,2);assert.deepEqual(f.sourceRequests,[f.sourceUrl]);assert.equal(f.h.aiSources.length,0);
   assert.deepEqual(f.h.sqlite.prepare('SELECT * FROM collection_results WHERE job_id=?').get(f.job.id),f.original);assert.deepEqual(f.h.sqlite.prepare('SELECT * FROM collection_context WHERE job_id=?').get(f.job.id),f.context);assert.equal(JSON.stringify(f.h.sqlite.prepare('SELECT * FROM collection_jobs WHERE id=?').get('job')),f.untouched);
   const quote=await json(await f.h.route('/api/products/'+product.id+'/quotation-fields'));assert.equal(quote.categoryContext.profileId,f.profile.id);assert.equal(quote.categoryContext.categoryId,'991234');assert.deepEqual(quote.categoryContext.categoryPath,schemaPath);
-  for(const row of quote.resolved.rows){assert.equal(row.fields.title.value,row.optionId?title+', 흰색':title);assert.equal(row.fields.searchTags.value,content.seo.keywords.value.join(', '));assert.equal(row.fields.brand.value,f.settings.brand);assert.equal(row.fields.supplyPrice.value,'4930');assert.equal(row.fields.salePrice.value,'8220');}
+  // The source-bound first SEO writer updates the existing document title.
+  for(const row of quote.resolved.rows){assert.equal(row.fields.title.value,title);assert.equal(row.fields.searchTags.value,content.seo.keywords.value.join(', '));assert.equal(row.fields.brand.value,f.settings.brand);assert.equal(row.fields.supplyPrice.value,'4930');assert.equal(row.fields.salePrice.value,'8220');}
   assert.ok(!f.h.network.includes('supplier.coupang.com'));
  }finally{f.close();}
 });

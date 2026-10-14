@@ -126,7 +126,9 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(product.title,original.title);assert.equal(h.aiSources[0].title,original.title);assert.equal(h.aiSources.length,1);
   assert.equal(content.seo.title.value,generated);assert.equal(content.label.productName.value,generated);
   let view=await json(await h.route(base+'/quotation-fields'));assert.equal(view.resolved.rows.length,7);
-  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,row.optionId?generated+', '+options.rows.find(option=>option.id===row.optionId).translatedName:generated);assert.equal(row.fields.brand.value,company.companyName);assert.equal(row.fields.noticeNameModel.value,generated);assert.equal(row.fields.model.value,'');}
+  // Canonical first SEO reads its saved plain document; later independent
+  // content PATCH assertions below intentionally retain the legacy fallback.
+  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,generated);assert.equal(row.fields.brand.value,company.companyName);assert.equal(row.fields.noticeNameModel.value,generated);assert.equal(row.fields.model.value,'');}
   const listed=await json(await h.load('app/api/products/route.ts').GET());assert.equal(listed.products[0].content_summary.seoTitle,generated);
   const detail=()=>h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test'+base),{params:Promise.resolve({id:product.id})});
   let workspace=await json(await detail());assert.deepEqual(workspace.product.content_summary,listed.products[0].content_summary);assert.equal(workspace.product.title,original.title);

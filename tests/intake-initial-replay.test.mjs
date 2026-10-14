@@ -66,7 +66,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(content.label.material.value,'같은 시각에 다시 확인한 재질');assert.equal(content.categoryAttributes.jobId,initial.id);
   assert.ok(options.rows.every(row=>row.translatedName&&row.provenance.translatedName==='translated'));
   const quotation=await json(await h.route('/api/products/'+product(h).id+'/quotation-fields'));
-  assert.ok(quotation.resolved.rows.every(row=>row.fields.title.value===(row.optionId?content.seo.title.value+', '+options.rows.find(option=>option.id===row.optionId).translatedName:content.seo.title.value)));
+  // Untouched first SEO fields still use the canonical existing-document writer.
+  assert.ok(quotation.resolved.rows.every(row=>row.fields.title.value===content.seo.title.value));
   assert.equal(h.sqlite.prepare('SELECT payload FROM collection_context').get().payload,frozen);assert.equal(product(h).pricing_policy,policy);
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM translation_jobs').get(),initial);assert.equal(h.aiSources.length,1);
   const before=JSON.stringify({content,options});await intake(h);
@@ -92,7 +93,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(content.label.productName.value,content.seo.title.value);assert.equal(content.categoryAttributes.jobId,initial.id);
   assert.ok(options.rows.every(row=>row.translatedName&&row.provenance.translatedName==='translated'));
   const quotation=await json(await h.route('/api/products/'+product(h).id+'/quotation-fields'));
-  assert.ok(quotation.resolved.rows.every(row=>row.fields.title.value===(row.optionId?content.seo.title.value+', '+options.rows.find(option=>option.id===row.optionId).translatedName:content.seo.title.value)));
+  // A later label edit does not move the untouched first SEO into another writer.
+  assert.ok(quotation.resolved.rows.every(row=>row.fields.title.value===content.seo.title.value));
   assert.equal(h.sqlite.prepare('SELECT payload FROM collection_context').get().payload,context);
   assert.equal(h.sqlite.prepare('SELECT * FROM translation_jobs').get().result,initial.result);
   const before=JSON.stringify({content,options});await intake(h);

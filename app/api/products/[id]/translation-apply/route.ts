@@ -195,9 +195,9 @@ export async function POST(request: Request, context: Context) {
     if (!plan.preview.length) return json({ error: '새로 적용할 번역 항목이 없습니다.' }, 409);
     const now = new Date(Math.max(Date.now(), Date.parse(product.updated_at) + 1)).toISOString();
     const nextContent = applyContentPatch(content, plan.patch ?? {}, now), nextOptions = applyIntegratedOptions(options, plan, now);
-    // Only the reviewed stage-one composition shares the explicit SEO writer.
-    // Ordinary translation and protected/unchanged SEO keep their prior basis.
-    if (seoComposition) applySeoDocumentTitlePolicy(nextContent, plan.patch?.seo);
+    // Reviewed stage-one composition and the exact source-bound first intake
+    // share the SEO writer. Other translation and unchanged SEO keep their basis.
+    if (seoComposition || canonicalIntake) applySeoDocumentTitlePolicy(nextContent, plan.patch?.seo);
     if (plan.categoryAttributes) nextContent.categoryAttributes = plan.categoryAttributes;
     if(pendingGuidance&&Object.keys(pendingGuidance).length)nextContent.intakeSeoGuidancePending=initialIntakeSeoGuidancePending(nextContent,job,pendingGuidance);
     const saved = await saveIntegratedTranslation(owner, nextContent, nextOptions, { productVersion: product.updated_at, imageKeys: product.image_keys,
