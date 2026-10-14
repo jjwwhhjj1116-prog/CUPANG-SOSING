@@ -25,7 +25,7 @@ function harness({focusedOptionId='b',count=3,initialBulkAction='remove',pricing
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,Date,URL,AbortController,TextEncoder,TextDecoder,Uint8Array,Response,Request,crypto,process:{env:{NODE_ENV:'development'}},fetch:async(url,init={})=>{
    requests.push({url,method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});assert.equal(url,'/api/products/p/options');
    const route=load('app/api/products/[id]/options/route.ts');return route[init.method??'GET'](new Request('https://synthetic.test'+url,init),{params:Promise.resolve({id:'p'})});
-  },require(name){
+  },require(name){if(name.endsWith('.css'))return{};
    if(name==='react')return hooks;if(name==='next/server')return{NextResponse:Response};
    if(name==='@/app/chatgpt-auth')return{getChatGPTUser:async()=>({verifiedAccess:true,userId:'owner'}),getWorkspaceOwnerId:async()=>'owner'};
    if(name==='@/db/queries')return{findProduct:async(owner,id)=>owner==='owner'&&id==='p'?structuredClone(serverProduct):null,getSettings:async()=>null};

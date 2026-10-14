@@ -11,7 +11,7 @@ test('bulk packaging UI requires all measurements, invalidates edits and support
  const hooks={useRef:initial=>({current:initial}),useEffect:()=>{},useState(initial){const i=cursor++;if(!(i in state))state[i]=initial;return[state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];}};
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
  const code=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8')+(file.endsWith('product-options-editor.tsx')?'\nexport {OptionBulkTools};':'');
- vm.runInNewContext(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,crypto,require:name=>name==='react'?hooks:name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name)});return exports;
+ vm.runInNewContext(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,crypto,require:name=>name.endsWith('.css')?{}:name==='react'?hooks:name.startsWith('@/')?load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts')):native(name)});return exports;
  }
  const model=load('app/product-options.ts');const component=load('app/components/product-options-editor.tsx').OptionBulkTools;
  const original=[{...model.emptyOptionInput('a'),originalName:'옵션',included:true,unitCostCny:2}];
