@@ -45,7 +45,7 @@ export function seoWorkspaceInput(view: SeoWorkspaceView, draft: SeoWorkspaceDra
   const seo: SeoWorkspaceInput['seo'] = {};
   if (Object.hasOwn(draft.seo, 'title')) seo.title = draft.seo.title;
   if (Object.hasOwn(draft.seo, 'description')) seo.description = draft.seo.description;
-  if (Object.hasOwn(draft.seo, 'keywords')) seo.keywords = draft.seo.keywords!.split(/[\n,]/u).map(value => value.trim()).filter(Boolean);
+  if (Object.hasOwn(draft.seo, 'keywords')) seo.keywordText = draft.seo.keywords;
   const names = Object.keys(draft.optionNames);
   if (names.some(id => view.options.rows.filter(row => row.id === id).length !== 1)) throw Error('수정한 옵션이 현재 저장본에 없습니다. 입력을 유지했습니다.');
   return validateSeoWorkspaceInput({ expectedProductVersion: view.productVersion, expectedContentRevision: view.content.revision, expectedOptionRevision: view.options.revision,

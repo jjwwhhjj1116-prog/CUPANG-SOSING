@@ -26,7 +26,7 @@ for (const companyCode of ['A01464742', 'A01526306']) test(`entry and draft edit
     await h.click('SEO 설정 저장');
     assert.equal(patches(h).length, 1); assert.equal(h.saved, 1); assert.equal(h.render().props['data-workspace-dirty'], false);
     assert.deepEqual(patches(h)[0].body, { expectedProductVersion: api.version, expectedContentRevision: api.content.revision, expectedOptionRevision: api.options.revision,
-      seo: { title: '검토한 상품명', keywords: ['검색 하나', '검색 둘'] }, optionNames: [{ optionId: api.options.rows[0].id, value: '검토한 옵션명' }] });
+      seo: { title: '검토한 상품명', keywordText: '검색 하나, 검색 둘\n검색 하나', keywords: ['검색 하나', '검색 둘 검색 하나'] }, optionNames: [{ optionId: api.options.rows[0].id, value: '검토한 옵션명' }] });
     const saved = await responseJson(await api.request()), storage = api.stored();
     assert.equal(saved.content.seo.title.value, '검토한 상품명'); assert.equal(saved.options.rows[0].translatedName, '검토한 옵션명');
     assert.deepEqual(saved.content.assets, api.content.assets); assert.deepEqual(saved.content.label, api.content.label); assert.deepEqual(saved.content.detail, api.content.detail);
@@ -60,22 +60,113 @@ test('explicit unchanged blanks and description are saved as manual fields, with
   const h = seoWorkspaceEditor(api);
   try {
     await h.idle(); h.edit('SEO 상품명', ''); h.edit('SEO 검색태그', ''); h.edit('SEO 상품 설명', '직접 검토 설명'); h.edit(nameLabel, ''); await h.click('SEO 설정 저장');
-    const saved = await responseJson(await api.request()); assert.deepEqual(patches(h)[0].body.seo, { title: '', keywords: [], description: '직접 검토 설명' });
+    const saved = await responseJson(await api.request()); assert.deepEqual(patches(h)[0].body.seo, { title: '', keywordText: '', keywords: [], description: '직접 검토 설명' });
     assert.equal(saved.content.seo.title.value, ''); assert.equal(saved.content.seo.title.provenance, 'manual'); assert.equal(saved.content.seo.keywords.provenance, 'manual');
     assert.equal(saved.options.rows[0].translatedName, ''); assert.equal(saved.options.rows[0].provenance.translatedName, 'manual'); assert.deepEqual(saved.content.label.material, content.label.material);
     assert.equal(saved.content.intakeKeywordSeed, undefined);
   } finally { h.close(); api.close(); }
 });
 
-test('over-limit edits remain intact and captured save callbacks cannot bypass client validation', async () => {
+test('over-limit titles and invalid keyword text remain intact and captured save callbacks cannot bypass validation', async () => {
   const api = seoWorkspaceHarness(), h = seoWorkspaceEditor(api);
   try {
     await h.idle(); h.edit('SEO 상품명', '검토 전'); const retained = h.button('SEO 설정 저장').props.onClick;
     h.edit('SEO 상품명', '가'.repeat(101)); assert.equal(h.button('SEO 설정 저장').props.disabled, true); retained(); await h.idle();
     assert.equal(h.input('SEO 상품명').props.value.length, 101); assert.equal(patches(h).length, 0);
-    h.edit('SEO 상품명', '검토 후'); h.edit('SEO 검색태그', '가'.repeat(90) + ', ' + '나'.repeat(90)); retained(); await h.idle();
-    assert.equal(h.input('SEO 검색태그').props.value.length, 182); assert.equal(h.button('SEO 설정 저장').props.disabled, true); assert.equal(patches(h).length, 0); assert.equal(api.mutations.length, 0);
+    h.edit('SEO 상품명', '검토 후');
+    for (const raw of ['가'.repeat(5051), '가\u0000나']) {
+      h.edit('SEO 검색태그', raw); retained(); await h.idle();
+      assert.equal(h.input('SEO 검색태그').props.value, raw); assert.equal(h.button('SEO 설정 저장').props.disabled, true); assert.equal(patches(h).length, 0); assert.equal(api.mutations.length, 0);
+    }
   } finally { h.close(); api.close(); }
+});
+
+const boundaryTags = Array.from({ length: 8 }, (_, index) => `Tag${index}` + 'a'.repeat(13));
+const documentLongTags = Array.from({ length: 31 }, (_, index) => 'K' + String(index).padStart(2, '0'));
+const rawKeywordCases = [
+  { name: '150 raw characters preserve all eight valid unique cleaned tags', raw: boundaryTags.join(', '), expected: boundaryTags, shortened: false },
+  { name: '151 raw characters remove a whole valid last tag before cleaning', raw: boundaryTags.join(', ') + 'a', expected: boundaryTags.slice(0, -1), prefix: boundaryTags.slice(0, -1), shortened: true },
+  { name: '150 raw characters are cleaned without prefix removal', raw: '가'.repeat(70) + ', ' + '나'.repeat(78), expected: [], shortened: false },
+  { name: '151 raw characters remove a complete tail before cleaning', raw: '가'.repeat(70) + ', ' + '나'.repeat(79), expected: [], prefix: ['가'.repeat(70)], shortened: true },
+  { name: 'duplicate tags normalize to their first occurrence', raw: '중복, 중복, 마지막', expected: ['중복', '마지막'], shortened: false },
+  { name: 'comma-only blanks', raw: ' , , ', expected: [], shortened: false },
+  { name: 'newline becomes a space inside one comma-delimited tag', raw: '첫째\n둘째, 셋째', expected: ['첫째 둘째', '셋째'], shortened: false },
+  { name: 'compact 75 tags with raw149 and canonical223 deduplicate after preparation', raw: Array(75).fill('가').join(','), expected: ['가'], shortened: false },
+  { name: 'raw123 keeps all31 unique cleaned tags despite canonical153', raw: documentLongTags.join(','), expected: documentLongTags, shortened: false },
+  { name: 'valid whole trailing tag remains removed even if the retained prefix is cleaned empty', raw: '가'.repeat(80) + ', ' + '나'.repeat(60) + ', ' + '다'.repeat(20), expected: [], prefix: ['가'.repeat(80), '나'.repeat(60)], shortened: true },
+  { name: 'overlong first tag saves an empty array', raw: '가'.repeat(151) + ', 끝', expected: [], prefix: [], shortened: true },
+  { name: 'exact raw cap5050 saves its blank prefix', raw: '가'.repeat(5050), expected: [], prefix: [], shortened: true },
+  { name: 'punctuation, jamo, long tags and normalized duplicates keep case-sensitive differences',
+    raw: '한글-상품!,한글 상품,가ㄱ나,ㅏ,中文,123_456,BrandX,brandx,BrandX,A\nB,' + '가'.repeat(20) + ',' + '가'.repeat(21),
+    expected: ['한글 상품', '123 456', 'BrandX', 'brandx', 'A B', '가'.repeat(20)], shortened: false },
+  { name: 'all punctuation or jamo candidates clean to a manual blank', raw: '!!!,___,中文,가ㄱ나', expected: [], shortened: false },
+  { name: '20-character cap is applied after punctuation replacement and trimming', raw: '가'.repeat(20) + '!,' + '나'.repeat(21), expected: ['가'.repeat(20)], shortened: false },
+];
+for (const sample of rawKeywordCases) test(`keyword editor actual API save/readback: ${sample.name}`, async () => {
+  const api = seoWorkspaceHarness(), h = seoWorkspaceEditor(api);
+  try {
+    await h.idle(); const storage = api.stored(); h.edit('SEO 검색태그', sample.raw);
+    assert.equal(h.input('SEO 검색태그').props.value, sample.raw, 'typing and preview do not replace the raw draft');
+    assert.match(visibleText(h.render()), new RegExp(`${sample.raw.length}/150자`), 'the counter measures raw characters');
+    assert.equal(h.button('SEO 설정 저장').props.disabled, false); assert.equal(patches(h).length, 0);
+    const preview = nodes(h.render()).find(node => node.props['aria-label'] === '검색태그 저장안');
+    if (sample.shortened) {
+      assert.ok(preview, 'over-limit raw input has an accessible save preview');
+      assert.ok(visibleText(preview).includes(`길이 조정 후 검색태그: ${sample.prefix.join(', ') || '(공란)'}`), 'raw prefix preview remains distinct from the cleaned saved list');
+      const removed = sample.raw.split(',').map(value => value.trim()).filter(Boolean).length - sample.prefix.length;
+      assert.ok(visibleText(preview).includes(`뒤 태그 ${removed}개를 제외`));
+    } else assert.equal(preview, undefined, 'raw length at most 150 never announces shortening');
+    const finalPreview = nodes(h.render()).find(node => node.props['aria-label'] === '검색태그 최종 저장안');
+    assert.ok(finalPreview, 'an edited valid raw draft has a final cleaned save preview');
+    assert.ok(visibleText(finalPreview).includes(`최종 저장 검색태그: ${sample.expected.join(', ') || '(공란)'}`), 'final preview shows the exact cleaned list or explicit blank');
+    await h.click('SEO 설정 저장');
+    assert.equal(patches(h).length, 1); assert.deepEqual(patches(h)[0].body.seo, { keywordText: sample.raw, keywords: sample.expected });
+    assert.equal(h.input('SEO 검색태그').props.value, sample.expected.join(', '), 'only a verified successful readback replaces raw input'); assert.equal(h.saved, 1);
+    assert.equal(h.render().props['data-workspace-dirty'], false); assert.equal(nodes(h.render()).some(node => ['검색태그 저장안', '검색태그 최종 저장안'].includes(node.props['aria-label'])), false);
+    const value = await responseJson(await api.request());
+    assert.deepEqual(value.content.seo.keywords.value, sample.expected); assert.equal(value.content.seo.keywords.provenance, 'manual');
+    assert.deepEqual(api.stored().options, storage.options); assert.deepEqual(api.stored().quotation, storage.quotation);
+    await h.click('SEO 저장본 다시 조회'); assert.equal(h.input('SEO 검색태그').props.value, sample.expected.join(', ')); assert.equal(patches(h).length, 1);
+  } finally { h.close(); api.close(); }
+});
+
+test('a failed shortened-keyword acknowledgement retains raw draft and verifies its saved prefix with one GET', async () => {
+  const api = seoWorkspaceHarness(), raw = '중복, 중복, ' + '긴'.repeat(151), expected = ['중복'];
+  const h = seoWorkspaceEditor(api, { fetcher: async (url, init, route) => {
+    const response = await route(url, init); if (init?.method !== 'PATCH') return response;
+    const wrong = await response.json(); wrong.content.seo.keywords.value = ['중복', '중복']; return Response.json(wrong);
+  } });
+  try {
+    await h.idle(); h.edit('SEO 검색태그', raw); await h.click('SEO 설정 저장');
+    assert.deepEqual(patches(h)[0].body.seo, { keywordText: raw, keywords: expected }); assert.equal(patches(h).length, 1);
+    assert.equal(h.input('SEO 검색태그').props.value, raw); assert.equal(h.render().props['data-workspace-dirty'], true); assert.equal(h.saved, 0);
+    assert.match(visibleText(h.render()), /저장 결과를 아직 확인하지 못했습니다/);
+    const before = api.stored(), count = h.calls.length; await h.click('SEO 저장 결과 확인');
+    assert.equal(h.calls.length, count + 1); assert.equal(h.calls.at(-1).method, 'GET'); assert.equal(patches(h).length, 1); assert.deepEqual(api.stored(), before);
+    assert.equal(h.input('SEO 검색태그').props.value, expected.join(', ')); assert.equal(h.saved, 1); assert.equal(h.render().props['data-workspace-dirty'], false);
+  } finally { h.close(); api.close(); }
+});
+
+test('progress distinguishes initial GET, active PATCH and confirmation GET; uncertainty appears only after a retained attempt fails', async () => {
+  const api = seoWorkspaceHarness(); let holdMethod = 'GET', waiting = deferred(), held;
+  const h = seoWorkspaceEditor(api, { fetcher: (url, init, route) => {
+    if ((init?.method ?? 'GET') === holdMethod) { held = { url, init, route }; return waiting.promise; }
+    return route(url, init);
+  } });
+  try {
+    await new Promise(resolve => setImmediate(resolve)); let text = visibleText(h.render());
+    assert.match(text, /SEO·옵션 저장본을 확인하고 있습니다…/); assert.doesNotMatch(text, /저장 결과를 아직 확인하지 못했습니다|저장.*실패/);
+    assert.equal(patches(h).length, 0); waiting.resolve(await held.route(held.url, held.init)); await h.idle();
+    holdMethod = 'PATCH'; waiting = deferred(); h.edit('SEO 검색태그', '중복, 중복'); h.button('SEO 설정 저장').props.onClick();
+    text = visibleText(h.render()); assert.match(text, /SEO 설정을 저장하고 있습니다…/); assert.doesNotMatch(text, /SEO·옵션 저장본을 확인하고 있습니다…|저장 결과를 아직 확인하지 못했습니다/);
+    assert.equal(h.input('SEO 검색태그').props.value, '중복, 중복'); waiting.reject(Error('fixture uncommitted ACK lost')); await h.idle();
+    text = visibleText(h.render()); assert.match(text, /저장 결과를 아직 확인하지 못했습니다/); assert.doesNotMatch(text, /저장하고 있습니다…|저장본을 확인하고 있습니다…/);
+    holdMethod = 'GET'; waiting = deferred(); h.button('SEO 저장 결과 확인').props.onClick();
+    text = visibleText(h.render()); assert.match(text, /SEO·옵션 저장본을 확인하고 있습니다…/); assert.doesNotMatch(text, /SEO 설정을 저장하고 있습니다…|저장 결과를 아직 확인하지 못했습니다/);
+    assert.equal(patches(h).length, 1); waiting.resolve(await held.route(held.url, held.init)); await h.idle();
+    assert.equal(h.input('SEO 검색태그').props.value, '중복, 중복'); assert.equal(h.render().props['data-workspace-dirty'], true); assert.equal(h.saved, 0);
+    assert.doesNotMatch(visibleText(h.render()), /저장 결과를 아직 확인하지 못했습니다/); assert.equal(patches(h).length, 1);
+  } finally { waiting.resolve(Response.json({ error: 'fixture finished' }, { status: 503 })); h.close(); api.close(); }
 });
 
 for (const corruption of ['foreign product', 'unrelated cost']) test(`wrong ACK (${corruption}) retains all drafts and requires a read instead of a second PATCH`, async () => {

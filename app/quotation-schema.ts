@@ -1,5 +1,6 @@
 import { couplus81221Fields, couplus81221Path } from '@/app/couplus-glove-schema';
 import { QUOTATION_TAG_TOTAL_LIMIT, QUOTATION_TAG_ITEM_LIMIT } from '@/app/quotation-keywords';
+import { quotationSeoKeywordText } from '@/app/seo-keyword-text';
 import { couplus64497Fields, couplus64497Path } from '@/app/couplus-toothbrush-schema';
 import { couplus77442Fields, couplus77442Path } from '@/app/couplus-board-schema';
 import { couplus81452Fields, couplus81452Path } from '@/app/couplus-brace-schema';
@@ -477,7 +478,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       case 'tradeType': return settingValue(settings.tradeType);
       case 'taxType': return literal(settings.taxType, 'settings');
       case 'importType': return settingValue(settings.importType);
-      case 'searchTags': return literal(content.seo.keywords.value.join(', '), 'content');
+      case 'searchTags': return literal(quotationSeoKeywordText(content), 'content');
       case 'supplyPrice': case 'salePrice': case 'msrp': {
         if (!option) return literal(id === 'supplyPrice' ? product.supply_price : id === 'salePrice' ? product.sale_price : product.msrp, 'product');
         return { ...literal(pricing?.calculation?.[id], 'pricing'), issues: pricing?.error ? [pricing.error] : !option.included ? ['견적 제외 옵션의 가격은 자동 계산하지 않았습니다.'] : !pricing?.calculation ? ['옵션 가격 계산을 확인해주세요.'] : [] };
