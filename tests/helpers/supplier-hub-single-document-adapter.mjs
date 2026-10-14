@@ -49,6 +49,12 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
   const hubFetch=async(url,init)=>{
     calls.push({name:'hub-fetch',url,init:{...init,signal:undefined}});f.hubReads++;if(options.beforeHubFetch)await options.beforeHubFetch(url,init,f);
     if(url.endsWith('/drafts'))return response(url,[...documents.values()].map(doc=>f.fullDocuments?clone(doc):{docId:doc.docId,productName:doc.productName}));
+    if(new URL(url).pathname.startsWith('/sr/draft/api/get-by-id/')){
+      const docId=decodeURIComponent(new URL(url).pathname.slice('/sr/draft/api/get-by-id/'.length)),stored=documents.get(docId);
+      let result=stored?{...clone(stored),status:'UNFINISHED'}:null;
+      if(options.documentRead)result=await options.documentRead(result,f);
+      return response(url,result,options.documentStatus??200,options.documentContentType??'application/json');
+    }
     const body=JSON.parse(init.body);
     if(url.endsWith('/create')){const docId='created-'+company.code;documents.set(docId,{...body,docId});return response(url,{docId},options.createStatus??200);}
     if(url.endsWith('/update')){documents.set(body.docId,body);return response(url,{},options.updateStatus??200);}

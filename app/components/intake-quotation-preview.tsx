@@ -6,6 +6,7 @@ export function IntakeQuotationPreview({ profile }: { profile: CategoryProfile }
   const schema = getQuotationSchema(profile.categoryId, profile.categoryPath,profile.hubSchema,profile.template);
   const fieldLabels:Record<string,string>={...categoryFields,...Object.fromEntries(schema.fields.map(field=>[field.id,field.label]))};
   const template = profile.template;
+  const single = schema.status === 'observed' && (profile.hubSchema?.metadata.scopeType ?? profile.hubSchema?.metadata.scope) === 'Retail_Categorized_Single';
   let mappingError = '';
   try { validateQuotationChoiceFormats(profile, schema.fields); }
   catch (error) { mappingError = error instanceof Error ? error.message : '견적 열 연결을 확인해주세요.'; }
@@ -24,7 +25,7 @@ export function IntakeQuotationPreview({ profile }: { profile: CategoryProfile }
           return <tr key={column}><td>{column + 1}</td><th scope="row">{header || '(제목 없음)'}</th><td>{!mapping ? '연결 없음' : mapping.field === 'constant' ? `고정값: ${mapping.constant || '(공란)'}` : fieldLabels[mapping.field]}</td><td>{mapping ? `${mapping.required ? '필수' : conditional ? '조건부 필수' : '선택'}${mapping.choiceFormat ? ` · 선택지 ${mapping.choiceFormat === 'label' ? '표시 이름' : '저장값'}` : ''}` : '미설정'}</td></tr>;
         })}
       </tbody></table></div></details>
-    </> : <p className="panel-note">원본 Excel 양식은 연결되지 않았습니다. 아래 카테고리 견적 항목은 확인할 수 있지만 원본 양식 출력은 별도 연결이 필요합니다.</p>}
+    </> : single ? <p className="panel-note">Supplier Hub 개별 견적 양식이 연결되어 있습니다. 수집한 상품정보를 아래 항목에 반영하고 1~7단계에서 확인·수정합니다. Excel 파일 출력은 별도로 연결할 수 있습니다.</p> : <p className="panel-note">원본 Excel 양식은 연결되지 않았습니다. 아래 카테고리 견적 항목은 확인할 수 있지만 원본 양식 출력은 별도 연결이 필요합니다.</p>}
     <CategoryQuotationPreview schema={schema}/>
   </section>;
 }

@@ -61,18 +61,18 @@ export function sameCategorySelectionDefinition(previous: CategoryProfile, curre
     && canonical(previous.mappings ?? []) === canonical(current.mappings ?? []);
 }
 
-/** A newly prepared official workbook must acknowledge its exact bytes,
- * descriptors and column connections before URL intake can capture it. */
+/** Any requested workbook must acknowledge its exact bytes, descriptors and
+ * columns. A Single-only category deliberately has no workbook connection. */
 export function sameCategorySelectionConnection(saved: Pick<CategoryProfile, 'template' | 'mappings'>, prepared: Pick<CategoryProfileInput, 'template' | 'mappings'>): boolean {
   return canonical(saved.template ?? null) === canonical(prepared.template ?? null)
     && canonical(saved.mappings ?? []) === canonical(prepared.mappings ?? []);
 }
 
-/** Creating a new official connection must not acknowledge the original empty
- * profile or lose the exact compiled workbook and mappings in the response. */
+/** Creating a new connection must acknowledge the exact frozen Single form and
+ * any separately requested workbook; an HTTP success alone is insufficient. */
 export function confirmPreparedCategorySelectionProfile(choice:CategoryChoice,saved:CategoryProfile,prepared:CategoryProfileInput,liveSchema?:HubSchemaSnapshot,approvedCompany?:SupplierHubCompany|null,sourceId?:string):CategoryProfile{
   if(!saved||saved.id===sourceId||saved.revision!==1||saved.name!==prepared.name
     ||!sameCategorySelectionConnection(saved,prepared)
-    ||liveSchema&&(!saved.template||!saved.hubSchema||!sameCategoryHubDefinition(saved.hubSchema,liveSchema)))throw invalid();
+    ||liveSchema&&(!saved.hubSchema||!sameCategoryHubDefinition(saved.hubSchema,liveSchema)))throw invalid();
   return confirmCategorySelectionProfile(choice,saved,liveSchema,approvedCompany);
 }

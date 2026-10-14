@@ -56,6 +56,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
   const [refreshedProfiles, setRefreshedProfiles] = useState<CategoryProfile[] | null>(null);
   const [liveChoice,setLiveChoice]=useState<CategoryChoice|null>(null);
   const [catalogMode,setCatalogMode]=useState<'live'|'saved'>('live');
+  const [connectionMode,setConnectionMode]=useState<'single'|'excel'>('single');
   const profiles = refreshedProfiles ?? suppliedProfiles;
   const choices = useMemo(() => categoryChoices(profiles), [profiles]);
   const [path, setPath] = useState<string[]>(profiles.find(profile => profile.id === selectedId)?.categoryPath ?? []);
@@ -76,7 +77,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       account.current.ownerId=workspaceOwnerId;account.current.epoch++;
       activeRequest.current?.abort();activeRequest.current=null;completed.current=false;createRequest.current=null;definitionRefreshRequest.current=null;
       selectionEpoch.current++;clearWorkbookSelection();
-      setRefreshedProfiles(null);setLiveChoice(null);setSelectedKey('');setPath([]);setQuery('');setCatalogMode('live');setBusy(false);setError('');
+      setRefreshedProfiles(null);setLiveChoice(null);setSelectedKey('');setPath([]);setQuery('');setCatalogMode('live');setConnectionMode('single');setBusy(false);setError('');
     }
     setAccountEpoch(account.current.epoch);
     account.current.mounted=true;
@@ -105,12 +106,12 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     setPath(next); const leaves = categoryChoicesAtPath(choices, next).filter(choice => choice.isLeaf);
     setSelectedKey(leaves.length === 1 ? leaves[0].key : leaves.some(choice => choice.key === selectedKey) ? selectedKey : ''); setError('');
   }
-  async function confirm(target = selected, mode: 'schema' | 'workbook' = 'schema', reviewedWorkbook?: WorkbookSelection) {
+  async function confirm(target = selected, mode: 'single' | 'schema' | 'workbook' = connectionMode === 'excel' ? 'schema' : 'single', reviewedWorkbook?: WorkbookSelection) {
     if (!current()||!target || !canConfirmCategory(target) || busy || activeRequest.current || completed.current) return;
     if (mode === 'workbook' && (!reviewedWorkbook || workbookSelectionRef.current !== reviewedWorkbook
       || reviewedWorkbook.selectionEpoch !== selectionEpoch.current || reviewedWorkbook.accountEpoch !== account.current.epoch
       || selectionIdentity(reviewedWorkbook.target) !== selectionIdentity(target))) return;
-    if (mode === 'schema') clearWorkbookSelection();
+    if (mode !== 'workbook') clearWorkbookSelection();
     const requestSelectionEpoch = selectionEpoch.current;
     const unavailableWorkbook: { current: Pick<WorkbookSelection, 'schema' | 'scope'> | null } = { current: null };
     const controller = new AbortController(); activeRequest.current = controller;
@@ -133,11 +134,13 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
       if(target.supplierHub&&scope&&(!scope.company||scope.company.code!==target.supplierHub.company.code||scope.company.name!==target.supplierHub.company.name))throw Error('현재 로그인 계정의 승인 회사와 선택한 Supplier Hub 회사가 다릅니다. 같은 회사의 카테고리를 다시 선택해주세요.');
       const hubSchema=target.supplierHub?confirmLiveCategorySelectionSchema(target,await loadLiveHubCategorySchema(target,controller.signal),scope?.company):undefined;
       if(cancelled())return;
+      if(mode==='single'&&hubSchema&&(hubSchema.metadata.scopeType??hubSchema.metadata.scope)!=='Retail_Categorized_Single')
+        throw Error('개별 등록 양식의 Single scope를 확인하지 못했습니다. 해당 회사의 최종 카테고리를 다시 선택해주세요.');
       async function connectTemplate(choice: CategoryChoice, captured: HubSchemaSnapshot) {
         if (reviewedWorkbook && !sameHubDefinition(reviewedWorkbook.schema, captured)) {
           clearWorkbookSelection();throw Error('상세 양식이 변경되었습니다. 카테고리를 다시 선택하고 공식 원본을 확인해주세요.');
         }
-        try { return await loadLiveHubCategoryTemplate(choice, captured, controller.signal, mode); }
+        try { return await loadLiveHubCategoryTemplate(choice, captured, controller.signal, mode==='workbook'?'workbook':'schema'); }
         catch (cause) {
           if (mode === 'schema' && typeof OfficialExcelSchemaUnavailableError === 'function' && cause instanceof OfficialExcelSchemaUnavailableError
             && (captured.metadata.scopeType ?? captured.metadata.scope) === 'Retail_Categorized_Single') unavailableWorkbook.current = { schema: captured, scope };
@@ -180,7 +183,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         // A live leaf or saved detailed Hub identity may prepare a new official
         // connection. Old profiles, captured products and drafts stay frozen;
         // a saved manual code without Hub proof retains its manual path.
-        if(profile.template||!hubSchema&&!profile.hubSchema)return hubSchema?withSchema(profile):profile;
+        if(profile.template||mode==='single'||!hubSchema&&!profile.hubSchema)return hubSchema?withSchema(profile):profile;
         const choice=target!.supplierHub?target!:await resolveSavedHubCategoryChoice(profile,controller.signal);
         if(cancelled())return profile;
         const captured=hubSchema??confirmLiveCategorySelectionSchema(choice,await loadLiveHubCategorySchema(choice,controller.signal),scope?.company);
@@ -242,10 +245,10 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         confirmCategorySelectionProfile({...target,supplierHub:undefined},latest,undefined,scope?.company);
         const saved=await prepareSelection(latest);if(cancelled())return;await select(saved);return;
       }
-      // A new live category needs both its frozen editable form and the exact
-      // official workbook. Existing custom profiles above keep their original
-      // template and mappings; selecting them never downloads a replacement.
-      const connection=hubSchema?await connectTemplate(target,hubSchema):undefined;
+      // Individual registration needs its frozen Single form, not an Excel
+      // download. Workbook preparation is a separate explicit choice; existing
+      // connected profiles above keep their original bytes and mappings.
+      const connection=hubSchema&&mode!=='single'?await connectTemplate(target,hubSchema):undefined;
       if(cancelled())return;
       const prepared={...categoryProfileForChoice(target),...(hubSchema?{hubSchema}:{}),...(connection??{})};
       const saved=await createPrepared(target,prepared,hubSchema);
@@ -283,7 +286,8 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
     <div className="modal-actions"><button className="btn primary" type="button" disabled={!canConfirmCategory(selected) || busy} onClick={() => void confirm()}>{busy ? '설정 중…' : '선택 완료 · URL 입력'}</button></div>
     <details className="category-advanced" key={selected?.key ?? 'unselected'}><summary>견적 항목·Excel 출력 설정</summary>
       {selected?.isLeaf && <p>{codeEvidenceLabel(selected, selectedProfile)}{selected.codeObservedAt ? ` · ${selected.codeObservedAt.slice(0, 10)}` : ''}</p>}
-      <p>Supplier Hub 카테고리를 선택하면 상세 양식과 공식 Excel을 함께 준비한 뒤 URL을 입력합니다. 기존에 연결한 양식은 유지하며, 비어 있는 Hub 설정은 새 공식 설정으로 준비합니다. 수동 코드만 저장한 설정은 직접 연결한 양식을 사용합니다.</p>
+      <p>Supplier Hub 카테고리를 선택하면 해당 회사의 개별 등록 양식을 연결하고 URL을 입력합니다. 이미 연결한 Excel 양식은 유지합니다. Excel 출력이 필요하면 아래에서 별도로 연결할 수 있습니다.</p>
+      <label className="switch-row"><span>상품 추가 전에 공식 Excel 양식도 연결</span><input type="checkbox" aria-label="상품 추가 전에 공식 Excel 양식도 연결" checked={connectionMode==='excel'} disabled={busy} onChange={event=>{if(!current()||activeRequest.current)return;selectionEpoch.current++;clearWorkbookSelection();completed.current=false;setConnectionMode(event.target.checked?'excel':'single');setError('');}}/><i/></label><small>개별 견적 초안 작성에는 필요하지 않습니다. 선택한 경우에만 공식 원본과 Excel 상세 양식을 조회합니다.</small>
       {savedPreviewWarning && <p role="alert">{savedPreviewWarning}</p>}
       {selected?.isLeaf && schema && (selectedDefinition ? <IntakeQuotationPreview key={`${selected.key}:${selectedDefinition.profile.revision}`} profile={selectedDefinition.profile}/> : <CategoryQuotationPreview key={selected.key} schema={schema} />)}
       <button className="btn ghost" type="button" disabled={busy} onClick={() => onAdvanced(categoryAdvancedSeed(selected, path))}>{selected?.categoryId ? '카테고리·Excel 양식 설정' : '선택 경로로 실제 코드·양식 연결'}</button>

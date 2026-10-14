@@ -71,12 +71,20 @@ export async function singleDocumentHubRequestPage(input){
       ||({A01526306:'유앤채',A01464742:'와이홉'})[codes[0]]!==binding.identity.company.name)throw Error('개별 전송 회사·저장본의 연결을 확인해주세요.');
   };
   check();
-  const known=input.method==='GET'&&input.path==='/sr/draft/api/drafts'||input.method==='POST'&&(['/sr/draft/api/create','/sr/draft/api/update'].includes(input.path)||/^\/sr\/qvt\/api\/validate-step\/[2-5]$/.test(input.path));
+  const documentRead=input.method==='GET'&&/^\/sr\/draft\/api\/get-by-id\/[^/?#]+$/.test(input.path);
+  const known=input.method==='GET'&&input.path==='/sr/draft/api/drafts'||documentRead||input.method==='POST'&&(['/sr/draft/api/create','/sr/draft/api/update'].includes(input.path)||/^\/sr\/qvt\/api\/validate-step\/[2-5]$/.test(input.path));
   if(!known||input.method==='GET'&&Object.hasOwn(input,'body'))throw Error('확인된 개별 문서 경로에서만 요청할 수 있습니다.');
   let records={};try{records=JSON.parse(data.yoofamSingleDocumentRecords||'{}');}catch{throw Error('이 탭의 개별 전송 기록을 확인해주세요.');}
   if(!records||typeof records!=='object'||Array.isArray(records)||Object.keys(records).length>1000)throw Error('개별 전송 기록 범위를 확인해주세요.');
   const key=binding.packetDigest;let record=records[key];
   const save=()=>{records[key]=record;data.yoofamSingleDocumentRecords=JSON.stringify(records);};
+  // The shipped Hub client uses get-by-id for document contents. A metadata
+  // list is only a baseline; it cannot identify another user's draft to read.
+  if(documentRead){
+    let requested;try{requested=decodeURIComponent(input.path.slice('/sr/draft/api/get-by-id/'.length));}catch{throw Error('문서 조회 식별값을 확인해주세요.');}
+    if(!record||!same(record.binding,binding)||!identifier(record.docId)||requested!==String(record.docId)
+      ||record.baselineDocIds?.some(id=>same(id,record.docId)))throw Error('이 요청에서 새로 만든 정확한 문서만 조회할 수 있습니다.');
+  }
   if(input.method==='POST'){
     if(typeof input.operationId!=='string'||!input.operationId.startsWith(binding.requestId+':'))throw Error('원래 개별 문서 요청을 확인해주세요.');
     if(input.path.endsWith('/create')){
@@ -308,14 +316,15 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
   async function readDocument(input,recovery=false){
     const {binding,record}=await owned(input),docId=record.docId;
     if(!docId||record.baselineDocIds?.some(id=>equal(id,docId))||recovery&&record[input.operation==='create'?'createOperationId':'updateOperationId']!==input.operationId)return null;
-    const response=await execute(input.tab,input.identity,singleDocumentHubRequestPage,[{binding,method:'GET',path:'/sr/draft/api/drafts'}]);
-    if(response?.ok!==true||!Array.isArray(response.json))return null;
-    const rows=response.json.filter(row=>equal(row?.docId,docId));
-    // Metadata-only list rows do not prove document contents. No invented GET
-    // URL or guessed row.body/document alias is used to fill this evidence gap.
-    if(rows.length!==1||!Array.isArray(rows[0]?.jsonDocument)||rows[0].scope!=='Retail_Categorized_Single')return null;
+    const response=await execute(input.tab,input.identity,singleDocumentHubRequestPage,[{binding,method:'GET',path:'/sr/draft/api/get-by-id/'+encodeURIComponent(String(docId))}]);
+    const document=response?.json;
+    // Axios' response.data is the document itself in the observed Hub loader;
+    // do not accept a guessed {data, body, document} wrapper or a list row.
+    if(response?.ok!==true||!document||typeof document!=='object'||Array.isArray(document)||!equal(document.docId,docId)
+      ||!['UNFINISHED','REJECTED'].includes(document.status)||!Array.isArray(document.jsonDocument)||document.jsonDocument.length!==1
+      ||document.scope!=='Retail_Categorized_Single')return null;
     const fields=['docId','productName','categoryPath','categoryId','displayCategoryCode','jsonDocument','scope','productNoticeNumber','version','remark'];
-    const body=Object.fromEntries(fields.filter(key=>Object.hasOwn(rows[0],key)).map(key=>[key,rows[0][key]]));
+    const body=Object.fromEntries(fields.filter(key=>Object.hasOwn(document,key)).map(key=>[key,document[key]]));
     return {docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,body,...(recovery?{readOnly:true,operationId:input.operationId}:{})};
   }
   return Object.freeze({readSource,

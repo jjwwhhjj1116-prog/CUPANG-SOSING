@@ -5,7 +5,11 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {mobileIntakeHarness} from './helpers/mobile-intake.mjs';
 import {categoryPickerUI} from './helpers/category-picker.mjs';
-import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
+import {hubSchemaSnapshot as syntheticHubSchemaSnapshot,schemaCompanies,schemaPath} from './helpers/hub-schema.mjs';
+
+// These live-choice fixtures represent the SCHEMA command's Single form.
+// Generic older schema fixtures deliberately omit scope for unrelated tests.
+const hubSchemaSnapshot=(...args)=>{const snapshot=syntheticHubSchemaSnapshot(...args);return{...snapshot,metadata:{...snapshot.metadata,scopeType:'Retail_Categorized_Single'}};};
 
 const json=async(response,status=200)=>{assert.equal(response.status,status,await response.clone().text());return response.json();};
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -37,7 +41,7 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
   const originalWork=existingWork();
   const before=h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id);
   const api=h.load('app/api/category-profiles/route.ts'),currentConnection=await template(h,company);let downloads=0;
-  const picker=categoryPickerUI((path,init)=>api[init?.method??'GET'](new Request('https://app.test'+path,init)),{catalog:{
+  const picker=categoryPickerUI((path,init)=>api[init?.method??'GET'](new Request('https://app.test'+path,init)),{connectExcel:true,catalog:{
    loadLiveHubCategorySchema:async()=>currentSchema,
    loadLiveHubCategoryTemplate:async()=>{downloads++;return currentConnection;},
   }});

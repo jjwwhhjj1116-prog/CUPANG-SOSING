@@ -12,7 +12,7 @@ const native=createRequire(import.meta.url);
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));};
 const pending=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve};};
-function harness(request,existing=false,{initialProfiles,readProfiles=async()=>Response.json({profiles:[]}),readSchema=async()=>undefined,readTemplate=async()=>({template:{name:'auto.xlsx'},mappings:[{column:0,field:'title'}]})}={}){
+function harness(request,existing=false,{initialProfiles,connectExcel=true,readProfiles=async()=>Response.json({profiles:[]}),readSchema=async()=>undefined,readTemplate=async()=>({template:{name:'auto.xlsx'},mappings:[{column:0,field:'title'}]})}={}){
  const slots=[],cleanup=[],calls=[],selected=[];let index=0,first=true,closed=false,late=0;
  const choice={key:'saved',profileId:existing?'saved':null,path:['test'],categoryId:'80719',isLeaf:true};
  const fetcher=(url,init)=>{calls.push({...init,url});return !existing&&!init?.method?readProfiles(url,init):request(url,init);};
@@ -40,6 +40,9 @@ function harness(request,existing=false,{initialProfiles,readProfiles=async()=>R
  }});
  const render=()=>{index=0;const tree=exports.CategoryPicker({profiles:initialProfiles??(existing?[{id:'saved',categoryId:'80719',categoryPath:['test'],revision:1}]:[]),selectedId:'saved',onSelected:p=>selected.push(p),onAdvanced(){}});first=false;return tree;};
  const confirm=()=>nodes(nodes(render()).find(n=>n.props?.className==='modal-actions')).find(n=>n.type==='button').props.onClick;
+ // These retained cases exercise the explicit Excel preparation/recovery path.
+ // Normal Single-only intake is covered by category-picker-single-intake.
+ if(connectExcel)nodes(render()).find(node=>node.type==='input'&&node.props['aria-label']==='상품 추가 전에 공식 Excel 양식도 연결').props.onChange({target:{checked:true}});
  return{calls,selected,render,confirm,chooseLive(){nodes(render()).find(node=>node.type?.name==='SupplierHubCategoryBrowser').props.onChoice({...choice,key:'live',supplierHub:{trail:[],ownerId:'owner',company:{code:'A01464742',name:'와이홉'}}});},close(){closed=true;cleanup.forEach(fn=>fn?.());},get late(){return late;}};
 }
 

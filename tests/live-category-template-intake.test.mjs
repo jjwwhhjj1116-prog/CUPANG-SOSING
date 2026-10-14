@@ -65,7 +65,7 @@ function harness(company){
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
    {exports,Error,Date,File,FormData,TextEncoder,TextDecoder,Uint8Array,crypto,atob,btoa,fetch:request,require(name){if(name==='@/app/supplier-hub-handoff')return{exchange};if(name==='@/app/load-category-profiles')return load('app/load-category-profiles.ts');assert.ok(name.startsWith('@/'),name);return api.load(name.slice(2)+'.ts');}});return exports;
  }
- const catalog=load('app/supplier-hub-catalog.ts'),picker=categoryPickerUI(request,{catalog,workspaceOwnerId:'owner'});
+ const catalog=load('app/supplier-hub-catalog.ts'),picker=categoryPickerUI(request,{catalog,workspaceOwnerId:'owner',connectExcel:true});
  return{api,picker,calls,choice,snapshot,file,setMode(value){mode=value;},setAck(fn){corruptAck=fn;},close(){picker.close();api.close();}};
 }
 
@@ -82,9 +82,14 @@ for(const company of schemaCompanies)test(`a new live category connects its exac
   await json(await h.api.route(`/api/collection-jobs/${job.id}/result`,{method:'POST',body:{schemaVersion:1,sourceUrl,provider:'synthetic-local-fixture',collectedAt:new Date().toISOString(),title:'白色收纳盒',description:'收纳盒',options:[{sku:'625001',name:'White',unitPriceCny:5.5,minimumOrder:10,stock:null}],images:[],attributes:[]}}));
   await h.api.intake(job.id);const product=h.api.sqlite.prepare('SELECT * FROM products WHERE source_url=?').get(sourceUrl),base='/api/products/'+product.id;
   const content=await json(await h.api.route(base+'/content'));await json(await h.api.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.content.revision,patch:{seo:{title:'직접 검토한 시험 상품명',description:''},label:{material:''}}}}));
-  const preview=await json(await h.api.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));assert.equal(preview.rows.length,1);assert.equal(preview.rows[0][0],'직접 검토한 시험 상품명');assert.equal(preview.rows[0][1],schemaPath.join('>')+' (991234)');
+  // Step647's saved option title is part of the quotation name. A manually
+  // edited common SEO title does not remove its purchasing-option suffix.
+  const optionRows=(await json(await h.api.route(base+'/options'))).options.rows;
+  assert.equal(optionRows.filter(row=>row.included).length,1);assert.equal(optionRows[0].translatedName,'White');
+  const expectedTitle='직접 검토한 시험 상품명, '+optionRows[0].translatedName;
+  const preview=await json(await h.api.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));assert.equal(preview.rows.length,1);assert.equal(preview.rows[0][0],expectedTitle);assert.equal(preview.rows[0][1],schemaPath.join('>')+' (991234)');
   const output=await h.api.route(base+'/quotation',{method:'POST',body:{action:'download',fingerprint:preview.fingerprint}});assert.equal(output.status,200,await output.clone().text());
-  const reader=h.api.load('app/xlsx-template.ts'),inspection=reader.inspectXlsxArchive(await reader.readXlsxArchive(await output.arrayBuffer()));assert.equal(reader.xlsxHeaders(inspection,h.file.sheetName,9)[0],'직접 검토한 시험 상품명');
+  const reader=h.api.load('app/xlsx-template.ts'),inspection=reader.inspectXlsxArchive(await reader.readXlsxArchive(await output.arrayBuffer()));assert.equal(reader.xlsxHeaders(inspection,h.file.sheetName,9)[0],expectedTitle);
   assert.deepEqual(h.api.objects.get(selected.template.storageKey),h.file.bytes);assert.equal(product.supplier_hub_status,'미전송');assert.deepEqual(h.api.network,[]);
  }finally{h.close();}
 });

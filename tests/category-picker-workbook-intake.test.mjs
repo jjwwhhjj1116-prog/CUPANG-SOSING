@@ -65,7 +65,7 @@ export async function workbookIntakeFixture(company=companies[0]){
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
    {exports,Error,Date,File,FormData,TextEncoder,TextDecoder,Uint8Array,crypto,atob,btoa,fetch:request,require(name){if(name==='@/app/supplier-hub-handoff')return{exchange};if(name==='@/app/load-category-profiles')return load('app/load-category-profiles.ts');return h.load(name.slice(2)+'.ts');}});return exports;
  }
- const catalog=load('app/supplier-hub-catalog.ts'),picker=categoryPickerUI(request,{catalog,workspaceOwnerId:'owner'});
+ const catalog=load('app/supplier-hub-catalog.ts'),picker=categoryPickerUI(request,{catalog,workspaceOwnerId:'owner',connectExcel:true});
  const button=()=>nodes(picker.render()).find(node=>node.type==='button'&&node.props.children===buttonLabel);
  const invoke=async()=>{const target=button();assert.ok(target,'explicit original-file choice must be visible after the verified transport failure');target.props.onClick();await waitFor(()=>!nodes(picker.render()).some(node=>node.props?.className==='category-picker'&&node.props['aria-busy']));};
  const retained=()=>JSON.stringify(Object.fromEntries(['products','product_options','product_content','product_quotation_fields','collection_jobs','collection_context','collection_results','workspace_settings','category_profiles'].map(table=>[table,h.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()])));
@@ -120,7 +120,9 @@ for(const mode of ['hash','path','company','identity','excel-owner'])test(`a wro
 for(const company of companies)test(`empty working profile is retained and a stale revision blocks the explicit connection (${company.code})`,{skip:!available},async()=>{
  const f=await workbookIntakeFixture(company);try{
   const schema=await f.catalog.loadLiveHubCategorySchema(f.choice,new AbortController().signal),store=f.h.load('db/category-profiles.ts'),old=await store.createCategoryProfile('owner',{name:'기존 작업 중 빈 양식',categoryId:'69900',categoryPath:f.choice.path,hubSchema:schema,template:null,mappings:[]});
-  const before=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id));f.picker.setProps({profiles:[old],selectedId:old.id});await f.picker.confirm();assert.ok(f.button());
+  const before=JSON.stringify(f.h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id));f.picker.setProps({profiles:[old],selectedId:old.id});
+  nodes(f.picker.render()).find(node=>node.type==='select'&&nodes(node).some(child=>child.type==='option'&&child.props.value===old.id)).props.onChange({target:{value:old.id}});
+  await f.picker.confirm();assert.ok(f.button());
   await store.updateCategoryProfile('owner',old.id,old.revision,{...old,name:'다른 화면에서 확인한 이름'});const actor=f.retained();await f.invoke();assert.equal(f.picker.selected.length,0);assert.equal(f.retained(),actor);assert.ok(f.picker.alerts().some(value=>String(value).includes('설정이 변경')));
   // A fresh explicit selection reviews the current revision; never overwrite
   // the old working profile when its verified original is connected.

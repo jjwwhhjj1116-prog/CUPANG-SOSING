@@ -19,11 +19,14 @@ for(const company of SINGLE_COMPANIES){
     }finally{f.close();}
   });
 
-  test(company.name+' metadata-only actual draft response blocks before navigation instead of inventing document contents',async()=>{
+  test(company.name+' metadata-only draft list reads the owned document through shipped get-by-id contract',async()=>{
     const f=await singleBrowserFixture(company,{fullDocuments:false});
     try{
-      const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'update-requested');assert.equal(result.registered,false);assert.equal(result.error.code,'READBACK_UNCONFIRMED');
-      assert.equal(f.calls.some(call=>call.name==='tabs-update'),false);assert.deepEqual(f.selected,[]);assert.equal(f.submitted,0);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+      const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'awaiting-consent',JSON.stringify(result.error));assert.equal(result.registered,false);
+      const reads=f.calls.filter(call=>call.name==='hub-fetch'&&new URL(call.url).pathname.includes('/get-by-id/'));
+      assert.ok(reads.length>=1);assert.ok(reads.every(call=>call.init.method==='GET'&&call.url.endsWith('/created-'+company.code)));
+      assert.equal(reads.some(call=>call.url.endsWith('/protected-previous')),false);
+      assert.equal(f.submitted,0);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
     }finally{f.close();}
   });
 
@@ -73,4 +76,52 @@ test('same-window ambiguity or wrong frame cannot choose another Chrome profile/
 test('trusted action-time app confirmation is required before concrete checkbox clicks and final submit',async()=>{
   const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{human:false});
   try{const started=await f.receiver.start(f.packet,f.sender);assert.equal(started.state,'awaiting-consent');const result=await f.receiver.confirm(f.packet,f.sender,f.action(started));assert.equal(result.error.code,'HUMAN_CONFIRMATION');assert.equal(f.submitted,0);assert.equal(JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest].confirmedChallengeId,undefined);}finally{f.close();}
+});
+
+test('get-by-id rejects wrong document, unknown status, wrappers, incomplete body and non-JSON errors before loading any row',async()=>{
+  const changes=[
+    document=>({...document,docId:'protected-previous'}),
+    document=>({...document,status:'SUBMITTED'}),
+    document=>({...document,status:'UNKNOWN'}),
+    document=>({code:200,data:document}),
+    document=>[document],
+    document=>({...document,jsonDocument:[]}),
+    document=>({...document,scope:'Retail_Uncategorized_Single'}),
+    document=>({...document,version:document.version+1}),
+    document=>{const copy=structuredClone(document);copy.jsonDocument[0].productPage.supplyPrice=123456;return copy;},
+  ];
+  for(const documentRead of changes){
+    const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{fullDocuments:false,documentRead});
+    try{
+      const result=await f.receiver.start(f.packet,f.sender);
+      assert.equal(result.state,'update-requested');assert.equal(result.error.code,'READBACK_UNCONFIRMED');
+      assert.equal(result.registered,false);assert.deepEqual(f.selected,[]);assert.equal(f.submitted,0);
+      assert.equal(f.calls.some(call=>call.name==='tabs-update'),false);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+    }finally{f.close();}
+  }
+  for(const options of [{documentStatus:403},{documentContentType:'text/html'}]){
+    const f=await singleBrowserFixture(SINGLE_COMPANIES[0],options);
+    try{const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'update-requested');assert.equal(result.registered,false);assert.deepEqual(f.selected,[]);assert.equal(f.submitted,0);}finally{f.close();}
+  }
+});
+
+test('lost update acknowledgement is recovered only with its exact owned get-by-id body and does not repeat a POST',async()=>{
+  const options={fullDocuments:false,loseExecuteAck:'singleDocumentHubRequestPage',losePath:'/sr/draft/api/update'},f=await singleBrowserFixture(SINGLE_COMPANIES[1],options);
+  try{
+    const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'update-requested');assert.equal(result.needsRecovery,true);
+    const writes=f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length;
+    const recovered=await f.receiver.recover(f.packet,f.sender);assert.equal(recovered.state,'updated');assert.equal(recovered.registered,false);
+    assert.equal(f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST').length,writes);
+    assert.deepEqual(f.documents.get('protected-previous'),f.prior);assert.deepEqual(f.selected,[]);
+  }finally{f.close();}
+});
+
+test('a caller cannot use get-by-id to read another existing draft through the page adapter',async()=>{
+  const f=await singleBrowserFixture(SINGLE_COMPANIES[0]);
+  try{
+    await f.receiver.start(f.packet,f.sender);
+    const before=f.calls.filter(call=>call.name==='hub-fetch').length;
+    await assert.rejects(()=>f.adapter.hubRequest({identity:f.context.identity,sessionId:f.sessionId,tab:{tabId:71},method:'GET',path:'/sr/draft/api/get-by-id/protected-previous'}),/정확한 문서/);
+    assert.equal(f.calls.filter(call=>call.name==='hub-fetch').length,before);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+  }finally{f.close();}
 });
