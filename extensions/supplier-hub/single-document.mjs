@@ -160,9 +160,16 @@ function checkpointValid(state,context){
   if(state.state==='stage-consent-requested'&&(state.operationId!==state.requestId+':stage-consent:'+state.challenge.stage||!Number.isSafeInteger(state.humanConfirmedAt)
     ||state.humanConfirmedAt<state.challenge.issuedAt||state.humanConfirmedAt>state.challenge.expiresAt))fail('CHECKPOINT','원래 단계 동의 요청 기록을 확인해주세요.');
   if(['pending','accepted','rejected','registered'].includes(state.state)&&(!receiptValid(state.receipt,state,context,state.updatedAt)||state.receipt.state!==state.state))fail('CHECKPOINT','저장한 접수·SKU 증거를 확인해주세요.');
+  if(state.submitRequestedAt!==undefined&&(!['submit-requested','pending','accepted','rejected','registered'].includes(state.state)||!Number.isSafeInteger(state.humanConfirmedAt)
+    ||!Number.isSafeInteger(state.submitRequestedAt)||state.submitRequestedAt<state.humanConfirmedAt||state.submitRequestedAt>state.updatedAt))fail('CHECKPOINT','원래 문서의 제출 요청 시각을 확인해주세요.');
   return state;
 }
 function receiptValid(receipt,state,context,time){
+  if(object(receipt)&&receipt.sourceStatus!==undefined){
+    const nativeStates={SUBMITTED:'pending',REJECTED:'rejected',FINISHED:'accepted'};
+    if(!Object.hasOwn(nativeStates,receipt.sourceStatus)||nativeStates[receipt.sourceStatus]!==receipt.state||receipt.evidence!=='document-receipt'||receipt.registered!==false
+      ||!identifier(receipt.qvtRequestId)||!same(receipt.receiptId,receipt.qvtRequestId)||Object.hasOwn(receipt,'skuId')||receipt.observedAt<(state.submitRequestedAt??state.humanConfirmedAt))return false;
+  }
   return object(receipt)&&['pending','accepted','rejected','registered'].includes(receipt.state)&&same(receipt.docId,state.docId)&&same(receipt.company,context.packet.company)
     &&receipt.identityDigest===context.identityDigest&&receipt.preparedBodySha256===context.bodySha256&&Number.isSafeInteger(receipt.observedAt)
     &&receipt.observedAt>=state.humanConfirmedAt&&receipt.observedAt<=time+5000&&['document-receipt','document-and-sku'].includes(receipt.evidence)
@@ -392,7 +399,7 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
         const finalReview=await call('readAgreements',{tab:state.tab,identity:context.identity,docId:state.docId});
         if(!same(agreementDescriptor(finalReview,state,context),check.items)||finalReview.items.some(item=>item.required&&!item.checked))fail('CONSENT_UNCONFIRMED','제출 직전 동의 선택값이 변경되었습니다.');
         await readDocument(context,state,false,true);
-        state=await save(context,state,{state:'submit-requested',operationId:state.requestId+':submit'});
+        state=await save(context,state,{state:'submit-requested',operationId:state.requestId+':submit',submitRequestedAt:clock()});
         await guard(context,state);
         // submit may lose its ACK; its durable checkpoint is never retried.
         await call('submit',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,docId:state.docId,requestId:state.requestId,operationId:state.operationId,challenge:check,expectedBody:withDoc(context.packet,state.docId)});
@@ -412,7 +419,8 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
   async function observe(context,state){
     if(!['submit-requested','pending','accepted','rejected','registered'].includes(state.state))return result(state);
     await guard(context,state);
-    const receipt=await call('observeReceipt',{tab:state.tab,identity:context.identity,identityDigest:context.identityDigest,preparedBodySha256:context.bodySha256,docId:state.docId,operationId:state.operationId});
+    const receipt=await call('observeReceipt',{tab:state.tab,sessionId:state.sessionId,identity:context.identity,identityDigest:context.identityDigest,preparedBodySha256:context.bodySha256,docId:state.docId,operationId:state.operationId,
+      submitRequestedAt:state.submitRequestedAt??state.humanConfirmedAt,expectedBody:withDoc(context.packet,state.docId),baselineDocIds:state.baselineDocIds,previousReceipt:state.receipt});
     if(!receiptValid(receipt,state,context,clock()))fail('RECEIPT_UNCONFIRMED','새 문서와 연결된 실제 접수·SKU 증거를 확인하지 못했습니다.');
     if(state.receipt?.receiptId!==undefined&&(!same(receipt.receiptId,state.receipt.receiptId)||state.state==='accepted'&&receipt.state==='pending'))fail('RECEIPT_CHANGED','원래 확인한 접수 식별값을 다른 관찰로 바꿀 수 없습니다.');
     if(state.state==='registered'&&(receipt.state!=='registered'||!same(receipt.skuId,state.receipt.skuId)))fail('RECEIPT_CHANGED','원래 확인한 등록 식별값을 다른 관찰로 바꿀 수 없습니다.');

@@ -28,7 +28,7 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
   const advance=element({click:()=>{
     f.nextClicks++;if(options.companyMenuCloses)f.companyMenuOpen=false;
     const phases=['startPage','productPage','imagePage','legalPage','logisticsPage'],current=phases.indexOf(hubLocation.pathname.split('/').at(-1));
-    if(current===4){f.submitted++;return;}
+    if(current===4){f.submitted++;options.afterNativeSubmit?.(f);return;}
     if(options.stageFlow&&options.nextNoCommitStage===phases[current])throw Error('Synthetic next-step click lost before observed page change');
     if(options.stageFlow&&[1,2].includes(current)){
       const stage=phases[current],key=stage==='productPage'?'msrpAgree':'labelContactAgreed';
@@ -96,6 +96,11 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
   };
   const hubFetch=async(url,init,uiLoader=false)=>{
     calls.push({name:uiLoader?'hub-ui-fetch':'hub-fetch',url,init:{...init,signal:undefined}});f.hubReads++;if(options.beforeHubFetch)await options.beforeHubFetch(url,init,f);
+    if(url.endsWith('/drafts/register-requested')){
+      const rows=typeof options.registerRequestedRows==='function'?await options.registerRequestedRows(f):options.registerRequestedRows??[];
+      const result=response(options.registerRequestedUrl??url,rows,options.registerRequestedStatus??200,options.registerRequestedContentType??'application/json');
+      if(options.registerRequestedRedirected)Object.defineProperty(result,'redirected',{value:true});return result;
+    }
     if(url.endsWith('/drafts')){
       f.listReads++;let list=[...documents.values()].map(doc=>f.fullDocuments?clone(doc):{docId:doc.docId,productName:doc.productName,categoryPath:doc.categoryPath,modifiedAt:doc.modifiedAt,remark:doc.remark});
       if(options.draftList)list=await options.draftList(list,f);return response(url,list);
@@ -143,6 +148,7 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
     let value;try{value=await vm.runInContext('('+request.func.toString()+')(...args)',target);}catch(error){f.executeErrors.push({name:request.func.name,action:request.args?.[0]?.action,stage:request.args?.[0]?.stage,message:error.message});throw error;}
     if(request.func.name==='singleDocumentStageAgreementPage'&&request.args?.[0]?.action==='confirm'&&options.stageLostExecuteAck===request.args[0].stage){options.stageLostExecuteAck=null;throw Error('Synthetic stage confirmation executeScript ACK lost after observation');}
     if(request.func.name==='singleDocumentNavigatePage'&&options.nextLostExecuteAck&&request.args?.[0]?.stageConsents?.some(entry=>entry.stage===options.nextLostExecuteAck)){options.nextLostExecuteAck=null;throw Error('Synthetic next-step executeScript ACK lost after observed page change');}
+    if(request.func.name==='singleDocumentSubmitPage'&&options.submitLoseExecuteAck){options.submitLoseExecuteAck=false;throw Error('Synthetic submit ACK lost after its one click');}
     if(options.loseExecuteAck===request.func.name&&request.args?.[0]?.path===options.losePath)throw Error('Synthetic Chrome executeScript ACK lost');
     return [{frameId:options.frameId??0,documentId:request.target.tabId===appTab.id?'12345678-1234-4234-9234-123456789abc':f.hubDocumentId,result:value===undefined?undefined:jsonCopy(value)}];
   }},webRequest};

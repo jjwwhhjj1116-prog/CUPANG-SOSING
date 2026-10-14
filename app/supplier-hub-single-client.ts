@@ -45,8 +45,10 @@ export type SingleConsentItem = {key:string;id:string;text:string;required:boole
 export type SingleConsentChallenge = {id:string;docId:string|number;packetDigest:string;issuedAt:number;expiresAt:number;stage?:SingleConsentStage;items:SingleConsentItem[]};
 export type SingleConfirmation = {action:'confirm-and-continue'|'confirm-and-submit';stage?:SingleConsentStage;userInitiated:true;challengeId:string;confirmedAt:number;approvedKeys:string[]};
 export type SingleDocumentPreview = {format:string;fingerprint:string;productId:string;optionId:string;identityDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;registered:false;remoteWrites:false};
+export type SingleDocumentReceipt = {state:'pending'|'accepted'|'rejected'|'registered';docId:string|number;company:SupplierHubCompany;identityDigest:string;preparedBodySha256:string;observedAt:number;
+  evidence:'document-receipt'|'document-and-sku';receiptId?:string|number;skuId?:string|number;sourceStatus?:'SUBMITTED'|'REJECTED'|'FINISHED';qvtRequestId?:string|number};
 export type SingleDocumentState = {format:string;requestId:string;identity:Record<string,unknown>;identityDigest:string;packetDigest:string;preparedBodySha256:string;originalBodySha256:string;
-  state:string;docId:string|number|null;registered:boolean;success:boolean;needsRecovery:boolean;challenge?:SingleConsentChallenge;error?:{code:string;message:string};receipt?:Record<string,unknown>};
+  state:string;docId:string|number|null;registered:boolean;success:boolean;needsRecovery:boolean;challenge?:SingleConsentChallenge;error?:{code:string;message:string};receipt?:SingleDocumentReceipt};
 export type SingleDocumentSession = {packet:SingleDocumentPacket;preview:SingleDocumentPreview;packetDigest:string;origin:string};
 export type SingleDocumentAction = 'start'|'resume'|'recover'|'confirm'|'observe';
 const singleHash=/^[a-f0-9]{64}$/,singleId=/^\w[\w-]{0,99}$/;
@@ -134,7 +136,7 @@ export async function runSingleDocument(session:SingleDocumentSession,action:Sin
   const value=await singleDocumentExchange(action,session.packet,signal,confirmation),proof=await singlePacketProof(session.packet,session.origin);
   if(signal.aborted)throw new SingleDocumentBridgeError('응답 확인을 취소했습니다. 저장 결과를 조회해주세요.',action!=='recover'&&action!=='observe');
   const states=['prepared','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered','scope-blocked'];
-  const fail=()=>{throw new SingleDocumentBridgeError('개별 견적 응답의 회원·문서·본문 연결을 확인하지 못했습니다. 저장 결과를 조회해주세요.',true,'SINGLE_REPLY_IDENTITY');};
+  const fail=():never=>{throw new SingleDocumentBridgeError('개별 견적 응답의 회원·문서·본문 연결을 확인하지 못했습니다. 저장 결과를 조회해주세요.',action!=='recover'&&action!=='observe','SINGLE_REPLY_IDENTITY');};
   if(!singleObject(value)||value.format!==session.packet.format||value.requestId!==session.packet.requestId||!singleObject(value.identity)||value.identityDigest!==session.preview.identityDigest
     ||value.packetDigest!==session.packetDigest||value.packetDigest!==proof.packetDigest||value.originalBodySha256!==proof.originalBodySha256||value.preparedBodySha256!==proof.preparedBodySha256
     ||!states.includes(String(value.state))||typeof value.needsRecovery!=='boolean'||value.docId!==null&&!singleIdentifier(value.docId)
@@ -149,12 +151,31 @@ export async function runSingleDocument(session:SingleDocumentSession,action:Sin
   else if(result.challenge!==undefined)fail();
   if(['pending','accepted','rejected','registered'].includes(result.state)){
     const receipt=result.receipt;
+    if(!receipt)return fail();
     if(!singleObject(receipt)||receipt.state!==result.state||receipt.docId!==result.docId||singleCanonical(receipt.company)!==singleCanonical(session.packet.company)
       ||receipt.identityDigest!==session.preview.identityDigest||receipt.preparedBodySha256!==proof.preparedBodySha256||!Number.isSafeInteger(receipt.observedAt)||Number(receipt.observedAt)<=0||Number(receipt.observedAt)>Date.now()+5000
       ||!['document-receipt','document-and-sku'].includes(String(receipt.evidence))||['accepted','registered'].includes(result.state)&&!singleIdentifier(receipt.receiptId)
       ||result.state==='registered'&&(receipt.evidence!=='document-and-sku'||!singleIdentifier(receipt.skuId)))fail();
+    if(receipt.sourceStatus!==undefined){
+      const states:Record<string,string>={SUBMITTED:'pending',REJECTED:'rejected',FINISHED:'accepted'};
+      if(!Object.hasOwn(states,receipt.sourceStatus)||receipt.state!==states[receipt.sourceStatus]||receipt.evidence!=='document-receipt'
+        ||!singleIdentifier(receipt.qvtRequestId)||receipt.qvtRequestId!==receipt.receiptId||receipt.skuId!==undefined||result.registered!==false||result.success!==false)fail();
+    }else if(receipt.qvtRequestId!==undefined)fail();
   }
   return freezeSingleJson(structuredClone(result));
+}
+/** Later observations retain the original owned document and registration
+ * file identity. A rejected refresh never replaces the previously shown proof. */
+export function verifySingleDocumentObservation(previous:SingleDocumentState|null,result:SingleDocumentState):void{
+  if(!previous)return;
+  const before=previous.receipt,after=result.receipt;
+  if(previous.docId!==null&&result.docId!==previous.docId
+    ||before&&(!after||after.observedAt<before.observedAt
+      ||before.receiptId!==undefined&&after.receiptId!==before.receiptId
+      ||before.qvtRequestId!==undefined&&(after.qvtRequestId!==before.qvtRequestId||after.sourceStatus===undefined)
+      ||previous.state==='accepted'&&result.state==='pending'
+      ||previous.state==='registered'&&(result.state!=='registered'||after.skuId!==before.skuId)))
+    throw new SingleDocumentBridgeError('원래 문서 또는 등록 파일 ID와 다른 조회 결과입니다. 이전 확인 결과를 유지했습니다.',false,'SINGLE_RECEIPT_CHANGED');
 }
 export async function readSingleCatalogContext(signal:AbortSignal):Promise<{ownerId:string;company:SupplierHubCompany}>{
   const controller=new AbortController(),abort=()=>controller.abort();if(signal.aborted)abort();signal.addEventListener('abort',abort,{once:true});

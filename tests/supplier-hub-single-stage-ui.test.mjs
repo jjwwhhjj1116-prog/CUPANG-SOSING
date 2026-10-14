@@ -107,3 +107,33 @@ test('actual handoff content maps the Single bridge to one strict worker command
  const payload={action:'confirm',packet:{requestId:'synthetic'},confirmation:{action:'confirm-and-continue',stage:'productPage'}};await listeners[0]({source:window,origin,data:{channel:'YOOFAM_HUB_HANDOFF',type:'SINGLE_DOCUMENT',requestId:'a'.repeat(36),payload}});
  assert.equal(sent.length,1);assert.equal(sent[0].type,'YOOFAM_SINGLE_DOCUMENT_REQUEST');assert.deepEqual(sent[0].confirmation,payload.confirmation);assert.equal(replies[0].target,origin);assert.equal(replies[0].message.result.ok,true);await listeners[0]({source:{},origin,data:{channel:'YOOFAM_HUB_HANDOFF',type:'SINGLE_DOCUMENT',requestId:'b'.repeat(36),payload}});assert.equal(sent.length,1);
 });
+const nativeReceipt=(h,sourceStatus,qvtRequestId=20265801)=>{
+ const state={SUBMITTED:'pending',FINISHED:'accepted',REJECTED:'rejected'}[sourceStatus];
+ return h.result(state,null,{receipt:{state,docId:'synthetic-doc-656',company:plain(h.saved.company),identityDigest:h.context.identityDigest,
+  preparedBodySha256:h.context.bodySha256,observedAt:h.clock.now,evidence:'document-receipt',sourceStatus,qvtRequestId,receiptId:qvtRequestId}});
+};
+for(const company of companies)for(const [sourceStatus,label]of [['SUBMITTED','접수 처리 중'],['FINISHED','등록 파일 처리 완료 · SKU 확인 전'],['REJECTED','반려']])
+ test(company.name+': '+sourceStatus+' shows exact native registration-file identity without inventing a SKU',async()=>{
+  const h=fixture(company,{verified:true});try{await h.prepare();const session=await h.client.previewSingleDocument(h.sent[0].message.payload.packet,new AbortController().signal);h.bridge=()=>nativeReceipt(h,sourceStatus,'00165801');await h.click('선택 옵션의 개별 견적 등록 시작');const text=h.text();
+   assert.ok(text.includes(label));assert.match(text,/문서 ID/);assert.match(text,/등록 파일 ID/);assert.match(text,/00165801/);assert.match(text,/synthetic-doc-656/);assert.ok(!text.includes('접수·SKU 증거를 확인했습니다.'));
+   assert.ok(!text.includes('견적서 접수·SKU 확인'));if(sourceStatus==='REJECTED')assert.match(text,/반려 상세는 Supplier Hub에서 확인/);
+   const reply=await h.client.runSingleDocument(session,'observe',new AbortController().signal);assert.equal(reply.registered,false);assert.equal(reply.success,false);assert.equal(reply.receipt.qvtRequestId,'00165801');assert.equal(reply.receipt.skuId,undefined);
+  }finally{h.close();}
+ });
+test('native status, exact alias type, required qvt id and absent SKU are all validated before display',async()=>{
+ const h=fixture(companies[0],{verified:true});try{await h.prepare();const session=await h.client.previewSingleDocument(h.sent[0].message.payload.packet,new AbortController().signal);
+  for(const changed of [{sourceStatus:'FINISHED'},{qvtRequestId:undefined},{qvtRequestId:null},{qvtRequestId:0},{qvtRequestId:'20265801'},{receiptId:undefined},{skuId:'invented-sku'},{evidence:'document-and-sku'},{sourceStatus:'UNKNOWN'}]){
+   h.bridge=()=>{const value=nativeReceipt(h,'SUBMITTED');for(const [key,item]of Object.entries(changed)){if(item===undefined)delete value.receipt[key];else value.receipt[key]=item;}return value;};
+   await assert.rejects(h.client.runSingleDocument(session,'observe',new AbortController().signal),error=>error.code==='SINGLE_REPLY_IDENTITY'&&error.uncertain===false);
+  }
+  h.bridge=()=>{const value=nativeReceipt(h,'FINISHED');value.state='registered';value.receipt.state='registered';value.registered=true;value.success=true;return value;};
+  await assert.rejects(h.client.runSingleDocument(session,'observe',new AbortController().signal));
+ }finally{h.close();}
+});
+for(const company of companies)test(company.name+': later qvt identity replacement keeps the previous displayed native file and document',async()=>{
+ const h=fixture(company,{verified:true});try{await h.prepare();h.bridge=()=>nativeReceipt(h,'SUBMITTED',20265801);await h.click('선택 옵션의 개별 견적 등록 시작');h.bridge=()=>nativeReceipt(h,'FINISHED',20265801);await h.click('개별 접수 결과 조회');assert.match(h.text(),/등록 파일 처리 완료/);
+  const previous=h.text();h.bridge=()=>nativeReceipt(h,'FINISHED',20265802);await h.click('개별 접수 결과 조회');assert.match(h.text(),/원래 문서 또는 등록 파일 ID/);assert.match(h.text(),/20265801/);assert.ok(!h.text().includes('20265802'));assert.ok(h.text().includes('등록 파일 처리 완료'));assert.equal(h.button('선택 옵션의 개별 견적 등록 시작'),undefined);
+  h.bridge=()=>nativeReceipt(h,'SUBMITTED',20265801);await h.click('개별 접수 결과 조회');assert.ok(h.text().includes('등록 파일 처리 완료'));assert.ok(!h.text().includes('접수 처리 중'));
+  h.bridge=()=>{const value=nativeReceipt(h,'FINISHED',20265801);value.docId='another-doc';value.receipt.docId='another-doc';return value;};await h.click('개별 접수 결과 조회');assert.match(h.text(),/synthetic-doc-656/);assert.ok(!h.text().includes('another-doc'));assert.equal(h.sent.filter(call=>call.snapshot.payload.action==='start').length,1);assert.ok(previous.includes('20265801'));
+ }finally{h.close();}
+});
