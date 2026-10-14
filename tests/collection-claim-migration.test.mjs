@@ -64,7 +64,12 @@ test('claim migration upgrade keeps every prior job/context/receipt/link/status 
     assert.equal(db.prepare('SELECT status FROM collection_jobs WHERE id=?').get('yun-original').status, 'awaiting_connector');
     assert.equal(db.prepare('SELECT payload FROM collection_results WHERE job_id=?').get('yun-original').payload, original);
     assert.equal(db.prepare('SELECT job_id FROM collection_products WHERE product_id=?').get('p-yun').job_id, 'yun-original');
+    // This fixture upgrades through 0017 first. Later additive migrations must
+    // then exist before comparing its data with the complete current runtime.
+    const historical = rows(db);
+    db.exec(files.slice(migrationIndex + 1).map(file => file.sql).join('\n'));
     const withHistory = rows(db);
+    for (const [table, previous] of Object.entries(historical)) assert.deepEqual(withHistory[table], previous, table);
     db.exec(files[migrationIndex].sql); db.exec(files[migrationIndex].sql);
     for (const statement of runtimeDDL()) db.exec(statement.sql);
     assert.deepEqual(rows(db), withHistory);
@@ -108,6 +113,6 @@ test('fresh and repeated migrations produce the same claim schema as ordered run
     fresh.exec(files.map(file => file.sql).join('\n'));
     assert.deepEqual(schemaSnapshot(fresh), first); assert.deepEqual(first, schemaSnapshot(runtime));
     assert.equal(first.some(item => item.name === 'idx_collection_active_offer'), false);
-    assert.equal(first.filter(item => item.type === 'table').length, 30);
+    assert.equal(first.filter(item => item.type === 'table').length, 37);
   } finally {fresh.close(); runtime.close();}
 });

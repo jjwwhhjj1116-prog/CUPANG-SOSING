@@ -20,6 +20,9 @@ export const collectionOfferClaimSchema = `CREATE TABLE IF NOT EXISTS collection
   PRIMARY KEY(owner_id, offer_id)
 )`;
 export const retireLegacyOfferIndex = 'DROP INDEX IF EXISTS idx_collection_active_offer';
+// Claim ownership stays unique in collection_offer_claims. Historical jobs may
+// share an offer; this non-unique index only bounds their ordered lookup.
+export const collectionOfferLookupIndex = 'CREATE INDEX IF NOT EXISTS idx_collection_owner_offer_status_created ON collection_jobs(owner_id, offer_id, status, created_at DESC, id DESC)';
 export const collectionProductSchema=`CREATE TABLE IF NOT EXISTS collection_products (
  job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), owner_id TEXT NOT NULL,
  product_id TEXT NOT NULL UNIQUE REFERENCES products(id), created_at TEXT NOT NULL
@@ -42,6 +45,7 @@ export async function ensureCollectionDatabase() {
       removed_at TEXT NOT NULL, product_version TEXT NOT NULL
     )`),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_collection_owner_time ON collection_jobs(owner_id, created_at)'),
+    env.DB.prepare(collectionOfferLookupIndex),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS collection_context (job_id TEXT PRIMARY KEY REFERENCES collection_jobs(id), payload TEXT NOT NULL)'),
     env.DB.prepare(retireLegacyOfferIndex),
   ]);

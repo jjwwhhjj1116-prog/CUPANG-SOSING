@@ -122,10 +122,12 @@ test('translation toggle hides inactive copywriting without erasing its saved ch
  assert.match(text(h.render()),/한국어 마케팅 문구/);
  h.edit('이미지 번역',false);
  assert.equal(nodes(h.render()).some(node=>node.type==='span'&&node.props.children==='카피라이트 추가'),false);
+ assert.equal(nodes(h.render()).some(node=>node.type==='span'&&node.props.children==='이미지 번역 프롬프트 설정'),false);
  await h.save();
  assert.equal(h.saves[0].translateImages,false);assert.equal(h.saves[0].addCopyright,true);
  assert.equal(h.saves[0].translationPrompt,h.initial.translationPrompt);
  h.edit('이미지 번역',true);assert.equal(h.control('카피라이트 추가').props.checked,true);
+ assert.equal(h.control('이미지 번역 프롬프트 설정').props.value,h.initial.translationPrompt);
  h.edit('카피라이트 추가',false);await h.save();assert.equal(h.saves[1].addCopyright,false);
  assert.equal(JSON.stringify(h.initial),before);
 });
