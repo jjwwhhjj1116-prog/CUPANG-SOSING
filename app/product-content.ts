@@ -39,6 +39,9 @@ export type ProductContent = {
   legalDocuments?: import('@/app/legal-documents').LegalDocuments;
   seo: { title: ContentField<string>; keywords: ContentField<string[]>; description: ContentField<string> };
   seoKeywordDocument?: { policy: 'couplus-service-v1'; sourceKeywords: string[]; sourceUpdatedAt: string; value: string };
+  /** Manual SEO saves update an existing document with the base title. A
+   * different title writer invalidates this value/clock basis automatically. */
+  seoTitleDocument?: { policy: 'couplus-seo-save-v1'; sourceTitle: string; sourceUpdatedAt: string | null; value: string };
   /** Server-created intake guidance, consumed by any explicit keyword save.
    * Absence (including legacy documents) means manual keywords stay protected. */
   intakeKeywordSeed?: { value: string[]; updatedAt: string; sourceReference: string };

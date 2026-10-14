@@ -11,7 +11,7 @@ const version='2026-10-10T00:00:00.000Z';
 const compositionModules=new Map();
 function compositionModule(file){if(compositionModules.has(file))return compositionModules.get(file);const exports={};compositionModules.set(file,exports);
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,structuredClone,TextEncoder,crypto:globalThis.crypto,require:name=>compositionModule(name.slice(2)+'.ts')});return exports;}
-function ui({allowed=true,storageValue=null,pending=null,registrationError=false,preparedAi=false,productId='p',productVersion=version,fetcher=null,draftHelper=null,sourceHelpers=null,savedSeo=null}={}){
+function ui({allowed=true,storageValue=null,pending=null,registrationError=false,preparedAi=false,productId='p',productVersion=version,fetcher=null,draftHelper=null,sourceHelpers=null,savedSeo=null,workspaceOwnerId,brand='와이홉',registrationBrand=brand}={}){
  const slots=[],effects=[],layouts=[],calls=[],runs=[],creates=[],storage=new Map(storageValue?[[`yoofam-seo-workspace:${productId}`,storageValue]]:[]);let cursor=0,closed=false,lateWrites=0,lastKey,active=true;
  const schedule=(queue,fn,deps)=>{const i=cursor++;if(!slots[i]||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){const before=slots[i];slots[i]={deps,cleanup:before?.cleanup};queue.push(()=>{before?.cleanup?.();slots[i].cleanup=fn();});}};
  const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{if(closed){lateWrites++;return;}slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useEffect(fn,deps){schedule(effects,fn,deps);},useLayoutEffect(fn,deps){schedule(layouts,fn,deps);}};
@@ -20,17 +20,17 @@ function ui({allowed=true,storageValue=null,pending=null,registrationError=false
   async runSeoWorkspaceDraft(state,controls){runs.push({state:plain(state),controls});if(draftHelper)return draftHelper.runSeoWorkspaceDraft(state,controls);controls.onState(state);await pending?.promise;if(controls.signal.aborted||!controls.isContextCurrent())throw Error('중단');const job=preparedAi?{id:'job',productId,productVersion:state.productVersion,status:'prepared',startedAt:null,result:null,error:null}:{id:'job',productId,productVersion:state.productVersion,status:'completed',result:{draft:{title:'검정 면장갑',keywords:['면장갑'],warnings:[]}}};controls.onJob(job);return{job,closed:!preparedAi,message:preparedAi?'생성 요청 준비':'초안 작성 완료'};},async refreshSeoWorkspaceDraft(state,controls){if(draftHelper)return draftHelper.refreshSeoWorkspaceDraft(state,controls);const job={id:'job',productId,productVersion:state.productVersion,status:'completed',result:{draft:{title:'검정 면장갑',keywords:['면장갑'],warnings:[]}}};return{job,closed:true,message:'기존 초안 조회'};}};
  const api=async(url,init)=>{calls.push({url,init});if(fetcher)return fetcher(url,init);if(url.endsWith('/translation'))return Response.json({configuration:{configured:true,model:preparedAi?'@cf/meta/llama-3.3-70b-instruct-fp8-fast':'google-translate-gtx',maxOutputTokens:preparedAi?2000:0,issues:[]},jobs:[]});
   if(url.endsWith('/content'))return Response.json({content:{productId,revision:2,...(savedSeo?{seo:savedSeo}:{})}});if(url.endsWith('/translation-source'))return Response.json(source);
-  if(url.endsWith('/registration-settings'))return registrationError?Response.json({error:'로그인 회사와 수집 회사가 다릅니다.'},{status:409}):Response.json({productId,settings:{brand:'와이홉'}});
+  if(url.endsWith('/registration-settings'))return registrationError?Response.json({error:'로그인 회사와 수집 회사가 다릅니다.'},{status:409}):Response.json({productId,settings:{brand:registrationBrand}});
   if(url.endsWith('/options'))return Response.json({productVersion,options:{productId,rows:[]}});throw Error(url);};
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/seo-workspace-generator.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
   {exports,fetch:api,AbortController,structuredClone,sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
-   if(name.endsWith('.css'))return{};if(name==='@/app/seo-workspace-draft')return helper;if(name==='@/app/seo-guidance-composition')return compositionModule('app/seo-guidance-composition.ts');if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};
+   if(name.endsWith('.css'))return{};if(name==='@/app/seo-workspace-draft')return helper;if(name==='@/app/seo-guidance-session')return compositionModule('app/seo-guidance-session.ts');if(name==='@/app/seo-guidance-composition')return compositionModule('app/seo-guidance-composition.ts');if(name==='@/app/components/translation-integrated-preview')return{TranslationIntegratedPreview:()=>null};
    if(sourceHelpers?.[name])return sourceHelpers[name];if(name==='@/app/collected-translation-attributes')return{collectedTranslationAttributes:value=>value.map(item=>({name:'상품속성: '+item.name,value:item.value}))};
    if(name==='@/app/option-translation')return{optionTranslationBatch:()=>({attributes:[],remaining:0})};if(name==='@/app/sourcing')return{collectionSourceReference:(id,url)=>id+' '+url};throw Error(name);}});
- const render=()=>{cursor=0;const root=exports.SeoWorkspaceGenerator({productId,version:productVersion,brand:'와이홉',active,beforeGenerate:()=>allowed,onSaved(){throw Error('Unexpected product save');}});if(lastKey!==undefined&&lastKey!==root.key){slots.forEach(slot=>slot?.cleanup?.());slots.splice(0);effects.splice(0);layouts.splice(0);}lastKey=root.key;const tree=root.type(root.props);layouts.splice(0).forEach(fn=>fn());effects.splice(0).forEach(fn=>fn());return tree;};
+ const render=(passive=true)=>{cursor=0;const root=exports.SeoWorkspaceGenerator({productId,workspaceOwnerId,version:productVersion,brand,active,beforeGenerate:()=>allowed,onSaved(){throw Error('Unexpected product save');}});if(lastKey!==undefined&&lastKey!==root.key){slots.forEach(slot=>slot?.cleanup?.());slots.splice(0);effects.splice(0);layouts.splice(0);}lastKey=root.key;const tree=root.type(root.props);layouts.splice(0).forEach(fn=>fn());if(passive)effects.splice(0).forEach(fn=>fn());return tree;};
  const idle=async()=>{for(let i=0;i<10;i++){render();await new Promise(resolve=>setImmediate(resolve));}};
  const until=async(predicate)=>{const deadline=Date.now()+5000;while(!predicate()){assert.ok(Date.now()<deadline,'component did not reach the expected bounded state');render();await new Promise(resolve=>setImmediate(resolve));}};
- render();return{render,idle,until,calls,runs,creates,storage,input:label=>nodes(render()).find(node=>node.type==='input'&&node.props['aria-label']===label),integrated:()=>nodes(render()).find(node=>node.props?.jobId),button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),consent:()=>nodes(render()).find(node=>node.type==='input'&&node.props.type==='checkbox'),close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());},get lateWrites(){return lateWrites;},setAllowed(value){allowed=value;},setRegistrationError(value){registrationError=value;},setVersion(value){productVersion=value;source.productVersion=value;},setSource(value){Object.assign(source,value);},setProduct(id,value){productId=id;productVersion=value;source.productId=id;source.productVersion=value;},setActive(value){active=value;}};
+ render();return{render,idle,until,calls,runs,creates,storage,input:label=>nodes(render()).find(node=>node.type==='input'&&node.props['aria-label']===label),integrated:()=>nodes(render()).find(node=>node.props?.jobId),button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),consent:()=>nodes(render()).find(node=>node.type==='input'&&node.props.type==='checkbox'),close(){closed=true;slots.forEach(slot=>slot?.cleanup?.());},get lateWrites(){return lateWrites;},setAllowed(value){allowed=value;},setRegistrationError(value){registrationError=value;},setVersion(value){productVersion=value;source.productVersion=value;},setSource(value){Object.assign(source,value);},setProduct(id,value){productId=id;productVersion=value;source.productId=id;source.productVersion=value;},setActive(value){active=value;},setOwner(value){workspaceOwnerId=value;},setRegistrationBrand(value){registrationBrand=value;}};
 }
 
 test('unsubmitted SEO brand, features and keyword edits survive a same-source clock refresh and stage navigation',async()=>{
@@ -144,3 +144,91 @@ test('saved SEO replacement defaults off, displays exact saved text/blank and lo
   integrated.props.onBusyChange(false);await h.idle();assert.equal(h.render().props['data-workspace-saving'],false);h.input('저장된 검색태그 교체').props.onChange({target:{checked:true}});await h.idle();assert.equal(h.integrated().props.seoComposition.replaceKeywords,true);
  }finally{h.close();}
 });
+
+const sessionCache=compositionModule('app/seo-guidance-session.ts');
+const guidanceLabels=['SEO 브랜드','SEO 상품 특징','SEO 타겟 키워드'];
+const guidanceValues=h=>guidanceLabels.map(label=>h.input(label).props.value);
+const guidanceEdit=(h,index,value)=>h.input(guidanceLabels[index]).props.onChange({target:{value}});
+const guidanceBlur=(h,index)=>{const input=h.input(guidanceLabels[index]);input.props.onBlur({target:{value:input.props.value}});h.render();};
+const assertGuidanceReadOnly=h=>{assert.ok(h.calls.every(call=>!call.init?.method||call.init.method==='GET'));assert.equal(h.runs.length,0);assert.equal(h.storage.size,0);};
+const guidanceCompanies=[{owner:'waihop-owner',code:'A01464742',name:'와이홉'},{owner:'unand-owner',code:'A01526306',name:'유앤채'}];
+
+for(const company of guidanceCompanies){
+ const options={workspaceOwnerId:company.owner,brand:company.name,registrationBrand:company.name+', 기본 보조'},other=guidanceCompanies.find(value=>value.owner!==company.owner);
+ test(`finalized feature and target blanks survive real generator close/reopen while default brand wins only at initialization (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);let h=ui(options);try{
+   await h.idle();guidanceEdit(h,0,'직접 브랜드, 직접 보조');guidanceEdit(h,1,'');guidanceEdit(h,2,'');
+   assert.equal(h.render().props['data-workspace-dirty'],true);for(let index=0;index<3;index++)guidanceBlur(h,index);
+   assert.deepEqual(guidanceValues(h),['직접 브랜드, 직접 보조','','']);assert.equal(h.render().props['data-workspace-dirty'],false);assertGuidanceReadOnly(h);assert.equal(h.calls.length,5);
+   h.close();h=ui(options);await h.idle();assert.deepEqual(guidanceValues(h),[company.name,'','']);assert.equal(h.render().props['data-workspace-dirty'],false);assertGuidanceReadOnly(h);assert.equal(h.calls.length,5);
+  }finally{h.close();}
+ });
+ test(`without a default brand reopened input uses the finalized product brand first comma segment (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);let h=ui({...options,registrationBrand:''});try{
+   await h.idle();assert.equal(h.input('SEO 브랜드').props.value,'');guidanceEdit(h,0,' 직접 브랜드 , 둘째');guidanceEdit(h,1,'  직접 특징\n둘째 줄  ');guidanceBlur(h,0);guidanceBlur(h,1);
+   assert.equal(h.input('SEO 브랜드').props.value,' 직접 브랜드 , 둘째');h.close();h=ui({...options,registrationBrand:''});await h.idle();
+   assert.deepEqual(guidanceValues(h),[' 직접 브랜드 ','  직접 특징\n둘째 줄  ','면장갑']);assertGuidanceReadOnly(h);
+  }finally{h.close();}
+ });
+ test(`an explicit brand blank remains raw in the opened session and generation snapshot but default brand returns on reopen (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);let h=ui(options);try{
+   await h.idle();guidanceEdit(h,0,'');guidanceBlur(h,0);assert.equal(h.input('SEO 브랜드').props.value,'');assert.equal(h.render().props['data-workspace-dirty'],false);
+   h.button('한국어 초안 자동 작성').props.onClick();await h.idle();assert.equal(h.creates[0].memo.brand,'');assert.equal(h.input('SEO 브랜드').props.value,'');
+   h.close();h=ui(options);await h.idle();assert.equal(h.input('SEO 브랜드').props.value,company.name);assertGuidanceReadOnly(h);
+  }finally{h.close();}
+ });
+ test(`one blur cannot cache or clean the other unfinalized fields and old unmounted blur callbacks are inert (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);let h=ui(options);try{
+   await h.idle();guidanceEdit(h,0,'미확정 브랜드');guidanceEdit(h,1,'확정 특징');guidanceEdit(h,2,'미확정 타겟');guidanceBlur(h,1);
+   assert.equal(h.render().props['data-workspace-dirty'],true);const old=h.input('SEO 타겟 키워드').props.onBlur,first=h;h.close();h=ui(options);await h.idle();
+   old({target:{value:'미확정 타겟'}});assert.equal(first.lateWrites,0);assert.deepEqual(guidanceValues(h),[company.name,'확정 특징','면장갑']);assertGuidanceReadOnly(h);
+  }finally{h.close();}
+ });
+ test(`same-source version refresh preserves raw edits, confirmed blanks and the current raw brand until reopen (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);let h=ui(options);try{
+   await h.idle();guidanceEdit(h,0,'현재 브랜드, 현재 보조');guidanceEdit(h,1,'확정 특징');guidanceEdit(h,2,'');guidanceBlur(h,1);guidanceBlur(h,2);const stale=h.input('SEO 브랜드').props.onBlur;
+   h.setVersion('2026-10-10T00:00:02.000Z');await h.idle();stale({target:{value:'현재 브랜드, 현재 보조'}});
+   assert.deepEqual(guidanceValues(h),['현재 브랜드, 현재 보조','확정 특징','']);assert.equal(h.render().props['data-workspace-dirty'],true);guidanceBlur(h,0);assert.equal(h.render().props['data-workspace-dirty'],false);
+   assert.equal(h.calls.length,10);assertGuidanceReadOnly(h);h.close();h=ui({...options,productVersion:'2026-10-10T00:00:02.000Z'});await h.idle();assert.deepEqual(guidanceValues(h),[company.name,'확정 특징','']);assertGuidanceReadOnly(h);
+  }finally{h.close();}
+ });
+ test(`changed captured guidance defaults reset both finalized and raw memo, retire old callbacks and cannot resurrect its old cache (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);let h=ui(options);try{
+   await h.idle();guidanceEdit(h,1,'이전 확정 특징');guidanceEdit(h,2,'이전 확정 타겟');guidanceBlur(h,1);guidanceBlur(h,2);guidanceEdit(h,1,'이전 미확정 특징');const stale=h.input('SEO 상품 특징').props.onBlur;
+   h.setSource({requestContext:{categoryId:'82533',categoryPath:['장갑'],features:'새 원문 특징',keywords:'새 원문 타겟'}});h.setVersion('2026-10-10T00:00:03.000Z');await h.idle();stale({target:{value:'이전 미확정 특징'}});
+   assert.deepEqual(guidanceValues(h),[company.name,'새 원문 특징','새 원문 타겟']);assert.match(text(h.render()),/수집 원문이 변경/);assert.equal(h.render().props['data-workspace-dirty'],false);
+   h.setSource({requestContext:{categoryId:'82533',categoryPath:['장갑'],features:'보온',keywords:'면장갑'}});h.setVersion('2026-10-10T00:00:04.000Z');await h.idle();assert.deepEqual(guidanceValues(h),[company.name,'보온','면장갑']);assertGuidanceReadOnly(h);
+  }finally{h.close();}
+ });
+ test(`owner A/B/A retires cached memo and rejects old callbacks at the layout boundary before passive work (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);const h=ui(options);try{
+   await h.idle();guidanceEdit(h,1,'이전 계정 특징');guidanceBlur(h,1);const old=h.input('SEO 상품 특징').props;
+   h.setOwner(other.owner);h.setRegistrationBrand(other.name+', 보조');h.render(false);const count=h.calls.length;old.onChange({target:{value:'이전 계정 재입력'}});old.onBlur({target:{value:'이전 계정 특징'}});assert.equal(h.calls.length,count);await h.idle();
+   assert.deepEqual(guidanceValues(h),[other.name,'보온','면장갑']);guidanceEdit(h,1,'다른 계정 특징');guidanceBlur(h,1);const foreign=h.input('SEO 상품 특징').props.onBlur;
+   h.setOwner(company.owner);h.setRegistrationBrand(options.registrationBrand);h.render(false);old.onBlur({target:{value:'이전 계정 특징'}});foreign({target:{value:'다른 계정 특징'}});await h.idle();
+   assert.deepEqual(guidanceValues(h),[company.name,'보온','면장갑']);assertGuidanceReadOnly(h);assert.equal(h.calls.length,15);
+  }finally{h.close();}
+ });
+ test(`hidden-stage layout rejects an older blur while retaining its raw unfinalized field until a current blur (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);let h=ui(options);try{
+   await h.idle();guidanceEdit(h,1,'현재 미확정 특징');const stale=h.input('SEO 상품 특징').props.onBlur;h.setActive(false);h.render(false);stale({target:{value:'현재 미확정 특징'}});
+   assert.equal(h.render().props['data-workspace-dirty'],true);h.setActive(true);await h.idle();assert.equal(h.input('SEO 상품 특징').props.value,'현재 미확정 특징');guidanceBlur(h,1);assert.equal(h.render().props['data-workspace-dirty'],false);
+   assert.equal(h.calls.length,5);h.close();h=ui(options);await h.idle();assert.equal(h.input('SEO 상품 특징').props.value,'현재 미확정 특징');assertGuidanceReadOnly(h);
+  }finally{h.close();}
+ });
+ test(`started and recovered request snapshots keep their raw memo without publishing it into the blur cache (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);const waiting=deferred();let h=ui({...options,pending:waiting});try{
+   await h.idle();guidanceEdit(h,1,'확정 세션 특징');guidanceBlur(h,1);const stale=h.input('SEO 상품 특징').props.onBlur;guidanceEdit(h,1,'시작한 요청 특징');
+   h.button('한국어 초안 자동 작성').props.onClick();stale({target:{value:'시작한 요청 특징'}});assert.equal(h.runs.length,1);const proof=h.storage.get('yoofam-seo-workspace:p');assert.equal(JSON.parse(proof).memo.features,'시작한 요청 특징');
+   const first=h;h.close();waiting.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(first.lateWrites,0);h=ui({...options,storageValue:proof});await h.idle();
+   assert.equal(h.input('SEO 상품 특징').props.value,'시작한 요청 특징');assert.equal(h.input('SEO 상품 특징').props.disabled,true);h.input('SEO 상품 특징').props.onBlur({target:{value:'시작한 요청 특징'}});
+   assert.equal(h.storage.get('yoofam-seo-workspace:p'),proof);assert.equal(h.runs.length,0);h.close();h=ui(options);await h.idle();assert.equal(h.input('SEO 상품 특징').props.value,'확정 세션 특징');assertGuidanceReadOnly(h);
+  }finally{waiting.resolve();h.close();}
+ });
+ test(`legacy ownerless generator keeps raw edits dirty and performs no memo retention on blur (${company.code})`,async()=>{
+  sessionCache.setSeoGuidanceSessionOwner(undefined);let h=ui({...options,workspaceOwnerId:undefined});try{
+   await h.idle();guidanceEdit(h,1,'보관할 수 없는 입력');guidanceBlur(h,1);assert.equal(h.render().props['data-workspace-dirty'],true);assertGuidanceReadOnly(h);
+   h.close();h=ui({...options,workspaceOwnerId:undefined});await h.idle();assert.equal(h.input('SEO 상품 특징').props.value,'보온');assertGuidanceReadOnly(h);
+  }finally{h.close();}
+ });
+}

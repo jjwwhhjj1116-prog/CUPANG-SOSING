@@ -53,7 +53,7 @@ for (const companyCode of ['A01464742', 'A01526306']) {
       const result = await h.load('app/api/products/[id]/quotation-fields/route.ts').GET(new Request('https://app.test/api/products/' + h.id + '/quotation-fields'), { params: Promise.resolve({ id: h.id }) });
       assert.equal(result.status, 200); const view = await result.json();
       const generated = view.automatic.rows.find(row => row.optionId === h.options.rows[0].id);
-      assert.equal(generated.fields.title.value, '수정한 상품명, 수정한 옵션명'); assert.equal(generated.fields.searchTags.value, '수정 태그, 다른 태그');
+      assert.equal(generated.fields.title.value, '수정한 상품명', 'a saved SEO document uses the base title; option suffix conversion is only its missing-document fallback'); assert.equal(generated.fields.searchTags.value, '수정 태그, 다른 태그');
       assert.equal(view.resolved.rows.find(row => row.optionId === h.options.rows[0].id).fields.title.value, '직접 견적 이름');
       const second = view.resolved.rows.find(row => row.optionId === 'second'); assert.equal(second.fields.salePrice.value, ''); assert.equal(second.fields.labelImages.value, '');
       assert.equal(generated.fields.packagedWeightG.value, '350');

@@ -58,6 +58,14 @@ export function applySeoWorkspaceChanges(before: SeoWorkspaceView, input: SeoWor
   if (before.content.productId !== before.productId || before.options.productId !== before.productId || !Number.isFinite(Date.parse(now)) || Date.parse(now) <= Date.parse(before.productVersion))
     throw Error('같은 상품의 최신 SEO 저장 자료를 확인해주세요.');
   const content = input.seo ? applyContentPatch(before.content, { seo: input.seo }, now) : before.content;
+  if (input.seo && (input.seo.title !== undefined || input.seo.keywords !== undefined)) {
+    const title = content.seo.title;
+    // The SEO writer uses the base title in existing documents. An absent
+    // legacy title must not replace the resolver's known product fallback.
+    if (title.value || title.provenance === 'manual') content.seoTitleDocument = {
+      policy: 'couplus-seo-save-v1', sourceTitle: title.value, sourceUpdatedAt: title.updatedAt, value: title.value,
+    };
+  }
   if (input.seo?.keywordText !== undefined) {
     const keywords = content.seo.keywords.value;
     content.seoKeywordDocument = { policy: 'couplus-service-v1', sourceKeywords: [...keywords], sourceUpdatedAt: now,

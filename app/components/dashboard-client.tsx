@@ -15,6 +15,7 @@ import HistoricalAiRegistrationsPanel from '@/app/components/historical-ai-regis
 import { ProductContentEditor } from '@/app/components/product-content-editor';
 import { OptionSeoEditor } from '@/app/components/option-seo-editor';
 import { SeoWorkspaceGenerator } from '@/app/components/seo-workspace-generator';
+import { setSeoGuidanceSessionOwner } from '@/app/seo-guidance-session';
 import { SeoWorkspaceEditor } from '@/app/components/seo-workspace-editor';
 import { OptionImageEditor } from '@/app/components/option-image-editor';
 import { DetailImageBatchPanel } from '@/app/components/detail-image-batch-panel';
@@ -109,6 +110,7 @@ const goalOptions = [
 
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
 export default function DashboardClient({ userName, workspaceOwnerId }: { userName: string; workspaceOwnerId?:string }) {
+  useLayoutEffect(()=>{setSeoGuidanceSessionOwner(workspaceOwnerId);},[workspaceOwnerId]);
   const [products, setProducts] = useState<Product[]>([]);
   const receiptReadSequence=useRef(new Map<string,number>());
   const [view, setView] = useState<'work'|'archive'>('work');
@@ -608,7 +610,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
         <nav className="registration-steps" aria-label="상품 등록 7단계">{registrationSteps.map((value,index)=><button type="button" key={value} onClick={()=>selectDetailTab(value)} aria-current={tab===value?'step':undefined} className={[tab===value?'active':'',index<=progressStepIndex?'reached':''].filter(Boolean).join(' ')}><span>{index+1}</span><strong>{({SEO:'SEO 설정',가격:'가격 설정',표시사항:'한글 표시사항',견적서:'견적서 작업'} as Record<string,string>)[value]??value}</strong></button>)}</nav>
         <details className="registration-source-context"><summary>카테고리 · 수집 자료</summary><div className="detail-product-meta"><span>YP-{detail.id.slice(0,8).toUpperCase()}</span><time dateTime={detail.created_at}>등록 {registrationDate(detail.created_at)}</time><span>{detail.options_count}개 옵션</span></div><div className="detail-source"><span>1688 원본 URL</span>{sourceLink(detail.source_url)?<a href={sourceLink(detail.source_url)} target="_blank" rel="noopener noreferrer">{detail.source_url}</a>:<span className="detail-source-value">{detail.source_url||'원본 URL 미입력'}</span>}</div><ProductSourceContext key={detail.id} productId={detail.id} productVersion={detail.updated_at} sourceUrl={detail.source_url} step={tab} onNavigate={selectDetailTab} onSaved={loadWorkspace} onBusy={changeSourceSupplementBusy} onBeforeSupplement={()=>{const state=workspaceEditState(detailBody.current);if(state.dirty||state.busy){setCloseNotice('저장하지 않은 입력이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 상세 원문을 보완해주세요.');return false;}return true;}}/></details>
         <nav className="registration-tools" aria-label="상품 보조 작업"><span>보조 작업</span>{supportingTabs.map(item=><button key={item.value} type="button" onClick={()=>selectDetailTab(item.value)} aria-pressed={tab===item.value} className={tab===item.value?'active':''}>{item.label}</button>)}<small>단계 이동 시 입력 유지 · 각 단계에서 저장</small></nav>
-        <div className="detail-body" ref={detailBody} inert={sourceSupplementBusy}><DetailPanel onReceiptSaved={()=>void refreshReceiptStatus(detail.id,detail.updated_at)} key={detail.id} onBeforeSeoGenerate={()=>{
+        <div className="detail-body" ref={detailBody} inert={sourceSupplementBusy}><DetailPanel workspaceOwnerId={workspaceOwnerId} onReceiptSaved={()=>void refreshReceiptStatus(detail.id,detail.updated_at)} key={detail.id} onBeforeSeoGenerate={()=>{
           if(sourceSupplementBusyRef.current||busyRef.current||detailNavigation!==productNavigation.current)return false;
           const pending=workspaceEditState(detailBody.current,false,true);
           if(pending.busy||pending.dirty){setCloseNotice('저장하지 않은 수정이나 진행 중인 작업이 있습니다. 먼저 저장한 뒤 SEO 초안을 작성해주세요.');return false;}
@@ -656,7 +658,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 function Modal({ title, subtitle, onClose, children, wide=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" onClick={onClose}>×</button></header>{children}</section></div>;
 }
-function DetailPanel({ onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSubmission, onProfilePrepared, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
+function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSubmission, onProfilePrepared, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
   const [paidImageBusy,setPaidImageBusy]=useState(false);
   const [freeImageBusy,setFreeImageBusy]=useState(false);
@@ -701,7 +703,7 @@ function DetailPanel({ onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApp
     setImageTranslation(previous=>({productId:product.id,sourceKey,sequence:(previous?.sequence??0)+1,sourceLanguage,...(role?{role}:{})}));
   }}/>;
   return <>
-    <div hidden={tab!=='SEO'} className="registration-seo-heading"><h2>SEO 설정</h2><SeoWorkspaceGenerator productId={product.id} version={product.updated_at} brand={settings.brand} active={tab==='SEO'} beforeGenerate={onBeforeSeoGenerate} onSaved={sourceSaved}/></div>
+    <div hidden={tab!=='SEO'} className="registration-seo-heading"><h2>SEO 설정</h2><SeoWorkspaceGenerator workspaceOwnerId={workspaceOwnerId} productId={product.id} version={product.updated_at} brand={settings.brand} active={tab==='SEO'} beforeGenerate={onBeforeSeoGenerate} onSaved={sourceSaved}/></div>
     <div hidden={!['SEO','표시사항',...imageSteps].includes(tab)} className={tab==='SEO'?'seo-content-columns':'panel-stack'}>
       {isImageStep&&<label className="btn primary upload-btn">＋ 이미지 업로드<input type="file" accept="image/*" onChange={onUpload}/></label>}
       <div hidden={!focusedOptionId||tab!=='추가 이미지'}>{focusedOptionId&&<OptionImageEditor key={`${product.id}:${focusedOptionId}:${pricingProfileId??''}:additional`} productId={product.id} optionId={focusedOptionId} version={product.updated_at} profileId={pricingProfileId} refreshToken={String(quotationRefresh)} stage="additional" disabled={imageProcessingBusy} onSaved={sourceSaved} onTranslate={translateFinalImage} onEdit={editFinalImage}/>}</div>
