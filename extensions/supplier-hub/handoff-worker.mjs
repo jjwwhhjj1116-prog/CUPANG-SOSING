@@ -10,7 +10,11 @@ import {refreshSupplierHubRegistration} from './app-registration.mjs';
 import {readAppSupplierHubCatalog} from './catalog.mjs';
 import {readOwnedProductTransferHistory} from './product-history.mjs';
 import {readAppCompanyRegistrations} from './company-registration.mjs';
+import {dispatchSingleDocument} from './single-dispatch.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_SINGLE_DOCUMENT_REQUEST'){
+    dispatchSingleDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message,code:error.code}));return true;
+  }
   if(!['YOOFAM_PREPARE_PACKAGE','YOOFAM_GET_RESULT','YOOFAM_GET_PRODUCT_TRANSMISSIONS','YOOFAM_QUERY_COMPANY_REGISTRATIONS','YOOFAM_DISPATCH_PACKAGE','YOOFAM_OBSERVE_RESULT','YOOFAM_VALIDATE_PACKAGE','YOOFAM_CAPTURE_1688','YOOFAM_CANCEL_1688','YOOFAM_TRANSMIT_PACKAGE','YOOFAM_RESUME_VALIDATION','YOOFAM_REFRESH_RESULT','YOOFAM_REFRESH_REGISTRATION','YOOFAM_READ_CATEGORY_BRANCH','YOOFAM_READ_CATEGORY_SCHEMA','YOOFAM_READ_CATEGORY_TEMPLATE'].includes(message?.type))return;
   (async()=>{try{
     if(message.type==='YOOFAM_QUERY_COMPANY_REGISTRATIONS'){const observation=await readAppCompanyRegistrations(message,sender);respond({ok:true,observation});return;}

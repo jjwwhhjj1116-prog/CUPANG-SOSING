@@ -17,6 +17,14 @@ const compiled = provider => {
   const config = productionConfig({ ...input, ...(provider ? { SOURCEFLOW_TEXT_PROVIDER: provider } : {}) }, hosting);
   return { ...config, main: 'index.js', no_bundle: true, assets: { ...config.assets, directory: '../client' } };
 };
+test('free-only quotation AI binding preserves the existing Google translation service and rejects a paid fallback configuration',()=>{
+  const config=productionConfig({...input,SOURCEFLOW_TEXT_PROVIDER:'google-free',SOURCEFLOW_QUOTATION_AI_PROVIDER:'workers-ai',SOURCEFLOW_QUOTATION_AI_FREE_ONLY:'true'},hosting);
+  assert.deepEqual(config.ai,{binding:'AI'});assert.equal(config.vars.SOURCEFLOW_TEXT_PROVIDER,'google-free');assert.equal(config.vars.SOURCEFLOW_TEXT_MODEL,'google-translate-gtx');
+  assert.equal(config.vars.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS,'0');assert.equal(config.vars.SOURCEFLOW_QUOTATION_AI_FREE_ONLY,'true');
+  assert.doesNotThrow(()=>assertProductionArtifactConfig({...config,main:'index.js',no_bundle:true},hosting));
+  assert.throws(()=>productionConfig({...input,SOURCEFLOW_QUOTATION_AI_PROVIDER:'workers-ai'},hosting));
+  assert.throws(()=>productionConfig({...input,SOURCEFLOW_QUOTATION_AI_PROVIDER:'paid-fallback',SOURCEFLOW_QUOTATION_AI_FREE_ONLY:'true'},hosting));
+});
 
 test('production config preserves project/bindings and only packages approved nonsecret variables', () => {
   const config = productionConfig({ ...input, CLOUDFLARE_API_TOKEN: 'must-never-be-in-artifact', OPENAI_API_KEY: 'also-not-packaged' }, hosting);

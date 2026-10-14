@@ -1,5 +1,7 @@
 'use client';
 import { QuotationTranslatedAttributes } from '@/app/components/quotation-translated-attributes';
+import { QuotationAiPanel } from '@/app/components/quotation-ai-panel';
+import { SupplierHubSingleReview } from '@/app/components/supplier-hub-single-review';
 
 import { resolveQuotationNavigation, type QuotationNavigationTarget } from '@/app/quotation-navigation';
 
@@ -404,7 +406,7 @@ export function QuotationFieldsEditor(props: Props) { return <QuotationFieldsFor
 function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshToken, onSaved, onDirtyChange }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const [view, setView] = useState<QuotationFieldsView | null>(null);
-  const [changes, setChanges] = useState<QuotationEditorChange[]>([]);
+  const [changes, commitChanges] = useState<QuotationEditorChange[]>([]);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [loading, setLoading] = useState(true); const [operationBusy, setBusy] = useState(false);
   const [error, setError] = useState(''); const [message, setMessage] = useState('');
@@ -419,6 +421,12 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const initialTarget = useRef(navigationTarget); const pendingFocus = useRef<string | null>(null);
   const requests = useRef(0); const observedRefresh = useRef(refreshToken); const prefix = useId();
   const activeWrite = useRef<AbortController | null>(null);
+  const aiDraftApplied = useRef(false);
+  function setChanges(next: QuotationEditorChange[] | ((previous: QuotationEditorChange[]) => QuotationEditorChange[])) {
+    aiDraftApplied.current = typeof next === 'function' || next.length > 0;
+    commitChanges(next);
+  }
+  useEffect(() => { aiDraftApplied.current = changes.length > 0; }, [changes]);
   const modelActionState = useRef({ view, selectedOption, busy, loading, conflicts });
   useEffect(() => {
     modelActionState.current = { view, selectedOption, busy, loading, conflicts };
@@ -547,6 +555,18 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     {schema && <div className="quotation-fields-category"><strong>{schema.categoryPath.join(' › ') || '카테고리 미연결'}{schema.categoryId ? ` · ${schema.categoryId}` : ''}</strong><small>{schema.status !== 'observed' && '이 카테고리의 세부 규격은 미확인입니다. '}{schema.evidence}</small></div>}
     {view && <>
       <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section, fieldId) => { setSelectedOption(optionId); setApplyAll(false); openSection(section, fieldId, optionId !== selectedOption); setBulk(null); }}/>
+      <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} disabled={dirty || busy || loading || conflicts.length > 0}
+        onBusyChange={next=>{modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
+        onApply={proposals=>{
+          const current=modelActionState.current;
+          if(current.view!==view||current.busy||current.loading||current.conflicts.length||changes.length||aiDraftApplied.current||activeWrite.current)return;
+          const requested=validateQuotationChanges(proposals,{schema:view.resolved.schema,optionIds:view.resolved.rows.flatMap(item=>item.optionId===null?[]:[item.optionId]),ownedImageKeys:view.imageKeys,overrides:view.overrides});
+          const nextDraft=requested.reduce((draft,change)=>updateQuotationEditorDraft(view.overrides,draft,change),[] as QuotationEditorChange[]);
+          aiDraftApplied.current=nextDraft.length>0;
+          setChanges(nextDraft);
+          setApplyAll(false);setBulk(null);setMessage('검토한 AI 초안을 입력란에 반영했습니다. 확인·수정한 뒤 견적 입력 저장을 눌러주세요.');
+        }}/>
+      <SupplierHubSingleReview productId={productId} profileId={profileId} view={view} disabled={dirty || busy || loading || conflicts.length > 0}/>
       <LegacyQuotationImport key={JSON.stringify([view.revision, view.inputFingerprint, changes])} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={keys => {
         try { setChanges(importLegacyQuotationDraft(view, changes, keys)); setBulk(null); setError(''); setMessage('선택한 이전 입력을 초안에 반영했습니다. 현재 분류에 저장하려면 견적 입력 저장을 눌러주세요.'); }
         catch (cause) { setError(cause instanceof Error ? cause.message : '이전 입력을 확인해주세요.'); }

@@ -28,6 +28,9 @@ export function productionConfig(environment, hosting) {
   const domain = environment.SOURCEFLOW_CUSTOM_DOMAIN?.trim();
   const workersAi = environment.SOURCEFLOW_TEXT_PROVIDER === 'workers-ai';
   const googleTranslation = environment.SOURCEFLOW_TEXT_PROVIDER === 'google-free';
+  const quotationAi = environment.SOURCEFLOW_QUOTATION_AI_PROVIDER === 'workers-ai';
+  if (environment.SOURCEFLOW_QUOTATION_AI_PROVIDER && !quotationAi) throw new Error('지원하지 않는 견적서 AI 서비스입니다.');
+  if (quotationAi && environment.SOURCEFLOW_QUOTATION_AI_FREE_ONLY !== 'true') throw new Error('견적서 AI는 확인한 Workers Free 요금제에서만 활성화합니다.');
   if (domain && (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain) || /(?:^|\.)workers\.dev$/.test(domain))) throw new Error('SOURCEFLOW_CUSTOM_DOMAIN은 직접 소유한 호스트 이름만 입력해주세요. workers.dev는 비워두면 사용됩니다.');
   return {
     name, account_id: accountId, main: 'vinext/server/app-router-entry',
@@ -37,12 +40,13 @@ export function productionConfig(environment, hosting) {
     ...(domain ? { routes: [{ pattern: domain, custom_domain: true }] } : {}),
     d1_databases: [{ binding: 'DB', database_name: databaseName, database_id: databaseId, migrations_dir: 'db/migrations' }],
     r2_buckets: [{ binding: 'FILES', bucket_name: bucket }],
-    ...(workersAi ? { ai: { binding: 'AI' } } : {}),
+    ...(workersAi || quotationAi ? { ai: { binding: 'AI' } } : {}),
     vars: {
       NODE_ENV: 'production', SOURCEFLOW_DEPLOYMENT_MODE: 'production', SOURCEFLOW_SITES_PROJECT_ID: SITES_PROJECT_ID,
       CLOUDFLARE_ACCESS_TEAM_DOMAIN: team.replace(/\/$/, ''), CLOUDFLARE_ACCESS_AUD: audience,
       ...(workersAi ? { SOURCEFLOW_TEXT_PROVIDER: 'workers-ai', SOURCEFLOW_TEXT_MODEL: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS: '4096' } : {}),
       ...(googleTranslation ? {SOURCEFLOW_TEXT_PROVIDER:'google-free',SOURCEFLOW_TEXT_MODEL:'google-translate-gtx',SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS:'0'} : {}),
+      ...(quotationAi ? {SOURCEFLOW_QUOTATION_AI_PROVIDER:'workers-ai',SOURCEFLOW_QUOTATION_AI_FREE_ONLY:'true'} : {}),
     },
   };
 }
@@ -62,9 +66,12 @@ export function assertProductionArtifactConfig(config, hosting) {
     CLOUDFLARE_ACCESS_TEAM_DOMAIN: config.vars.CLOUDFLARE_ACCESS_TEAM_DOMAIN, CLOUDFLARE_ACCESS_AUD: config.vars.CLOUDFLARE_ACCESS_AUD,
     SOURCEFLOW_CUSTOM_DOMAIN: domain,
     SOURCEFLOW_TEXT_PROVIDER: config.vars.SOURCEFLOW_TEXT_PROVIDER,
+    SOURCEFLOW_QUOTATION_AI_PROVIDER: config.vars.SOURCEFLOW_QUOTATION_AI_PROVIDER,
+    SOURCEFLOW_QUOTATION_AI_FREE_ONLY: config.vars.SOURCEFLOW_QUOTATION_AI_FREE_ONLY,
   }, hosting);
   if (JSON.stringify(config.ai ?? null) !== JSON.stringify(expected.ai ?? null) || (expected.ai && (config.vars.SOURCEFLOW_TEXT_MODEL !== expected.vars.SOURCEFLOW_TEXT_MODEL || config.vars.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS !== expected.vars.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS))) throw new Error('Workers AI 바인딩 또는 모델 설정이 운영 구성과 다릅니다.');
   if(expected.vars.SOURCEFLOW_TEXT_PROVIDER==='google-free'&&(config.vars.SOURCEFLOW_TEXT_MODEL!==expected.vars.SOURCEFLOW_TEXT_MODEL||config.vars.SOURCEFLOW_TEXT_MAX_OUTPUT_TOKENS!=='0'))throw new Error('Google 번역 설정이 운영 구성과 다릅니다.');
+  if(expected.vars.SOURCEFLOW_QUOTATION_AI_PROVIDER==='workers-ai'&&config.vars.SOURCEFLOW_QUOTATION_AI_FREE_ONLY!=='true')throw new Error('견적서 AI 무료 요금제 제한이 운영 구성과 다릅니다.');
   if (config.preview_urls !== false || config.workers_dev !== expected.workers_dev || JSON.stringify(config.routes ?? []) !== JSON.stringify(expected.routes ?? [])) throw new Error('공개 URL·미리보기 URL 설정이 검토된 운영 구성과 다릅니다.');
   if (!config.compatibility_flags?.includes('nodejs_compat') || config.compatibility_date !== COMPATIBILITY_DATE || config.no_bundle !== true) throw new Error('Worker 실행 호환성 또는 빌드 구성을 확인해주세요.');
   return expected;
