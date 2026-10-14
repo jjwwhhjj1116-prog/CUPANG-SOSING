@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CategoryPicker } from '@/app/components/category-picker';
-import { intakeProductId, intakeRow, submitIntakeQueue, visibleIntakeRows, type IntakeRow } from '@/app/intake-queue';
+import { intakeProductId, intakeRow, intakeRowsForCollection, submitIntakeQueue, visibleIntakeRows, type IntakeRow } from '@/app/intake-queue';
 import { collectionBlock, parseCollectionRequest, type CollectionJob } from '@/app/sourcing';
 import { savedRegistrationSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { parseWorkspaceSettingsScope, type WorkspaceSettingsScope } from '@/app/workspace-settings-scope';
@@ -14,6 +14,7 @@ import {createIntakeNewDraft,recoverIntakeNewDraft,previewIntakeNewDraft,intakeN
 import {previewPendingIntakeSource,preparePendingIntakeSource,type PendingIntakeSourcePreview} from '@/app/intake-pending-source';
 
 export type IntakeSourceSeed={id:string;sourceUrl:string};
+type IntakeCategorySelection={target:string;ownerId:string|undefined;epoch:number;completed:boolean;seed?:IntakeSourceSeed};
 export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced, onJobs, onBusy, goal, onGoal, settings, workspaceOwnerId, onSettingsReloadStarted, onSettingsReloaded, jobs = [], onOpenProduct,sourceSeed,onSourceConsumed }: {
   sourceSeed?:IntakeSourceSeed;onSourceConsumed?:(id:string)=>void;
   jobs?:CollectionJob[]; onOpenProduct?:(id:string,signal:AbortSignal)=>Promise<void>;
@@ -24,8 +25,24 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   onAdvanced: (seed?: CategoryAdvancedSeed) => void; onJobs: (jobs: CollectionJob[]) => void; onBusy: (busy: boolean) => void;
   goal: string; onGoal: (goal: string) => void;
 }) {
-  const [categoryTarget, setCategoryTarget] = useState<string | null>(sourceSeed?'new':null);
+  const categoryEpoch=useRef(0),categoryMounted=useRef(true),categoryOwner=useRef(workspaceOwnerId),categorySource=useRef(sourceSeed);
+  const [categorySelection,setCategorySelection]=useState<IntakeCategorySelection|null>(sourceSeed?{target:'new',ownerId:workspaceOwnerId,epoch:0,completed:false,seed:sourceSeed}:null);
+  const categorySelectionRef=useRef(categorySelection),categoryTarget=categorySelection?.target??null;
   const pendingSeed=useRef(sourceSeed?.id??null);
+  const focusRow = useRef<string | null>(null),busyNotice=useRef(onBusy);
+  useLayoutEffect(()=>{
+    categoryMounted.current=true;
+    const selection=categorySelectionRef.current;
+    if(selection&&selection.epoch!==categoryEpoch.current){const resumed={...selection,epoch:categoryEpoch.current};categorySelectionRef.current=resumed;if(!resumed.completed)setCategorySelection(resumed);}
+    // Cleanup invalidates sessions opened after setup; the current epoch is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return()=>{categoryMounted.current=false;categoryEpoch.current++;};
+  },[]);
+  useLayoutEffect(()=>{
+    categorySource.current=sourceSeed;
+    if(categoryOwner.current===workspaceOwnerId)return;
+    categoryOwner.current=workspaceOwnerId;categoryEpoch.current++;categorySelectionRef.current=null;pendingSeed.current=null;focusRow.current=null;setCategorySelection(null);
+  },[workspaceOwnerId,sourceSeed]);
   const sourceMounted=useRef(true);
   useEffect(()=>{sourceMounted.current=true;return()=>{sourceMounted.current=false;};},[]);
   const reloadOwnerRef=useRef(workspaceOwnerId);
@@ -54,7 +71,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   useLayoutEffect(()=>{if(forkOwner.current===workspaceOwnerId)return;forkOwner.current=workspaceOwnerId;ownerEpoch.current++;setOwnerGeneration(ownerEpoch.current);forkPreviewRef.current=null;pendingPreviewRef.current=null;sourceUrlsCandidateRef.current=null;setForkPreviewState(null);setPendingPreviewState(null);setSourceUrlsCandidateState(null);const controller=running.current;forkRunning.current=null;if(!controller)return;running.current=null;controller.abort();setBusy(false);onBusy(false);},[workspaceOwnerId,onBusy]);
   const sameOwner=()=>forkOwner.current===workspaceOwnerId&&navigation.current.workspaceOwnerId===workspaceOwnerId&&ownerEpoch.current===ownerGeneration;
   const ownerCurrent=()=>sourceMounted.current&&sameOwner();
-  const focusRow = useRef<string | null>(null);
+  useLayoutEffect(()=>{busyNotice.current=onBusy;},[onBusy]);
   const urlInputs = useRef(new Map<string, HTMLInputElement>());
   useEffect(() => {
     if (categoryTarget || busy || !focusRow.current) return;
@@ -66,7 +83,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if (!controller) return;
     running.current = null;
     controller.abort();
-    onBusy(false);
+    busyNotice.current(false);
   }, []);
   function finish(controller: AbortController) {
     // A closed queue may already have released its parent lock. A late result
@@ -78,10 +95,10 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     if (!controller.signal.aborted) setBusy(false);
   }
   const visible = visibleIntakeRows(rows, query);
-  const pendingRows = rows.filter(row => row.status !== 'saved');
+  const pendingRows = intakeRowsForCollection(rows),pendingRowIds=new Set(pendingRows.map(row=>row.id));
   const selected = pendingRows.filter(row => !excluded.includes(row.id));
   const pending = selected.length;
-  const visiblePending = visible.filter(row => row.status !== 'saved');
+  const visiblePending = intakeRowsForCollection(visible),unfilledRows=rows.filter(row=>row.status!=='saved'&&!pendingRowIds.has(row.id));
   function toggle(ids: string[], checked: boolean) {
     if (!ownerCurrent()||running.current) return;
     setExcluded(previous => checked ? previous.filter(id => !ids.includes(id)) : [...new Set([...previous, ...ids])]);
@@ -97,6 +114,7 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
   }
   function removeRow(id:string){
     if(!ownerCurrent()||running.current)return;
+    if(categorySelectionRef.current?.target===id){categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);}
     if(forkPreview?.rowId===id)setForkPreview(null);
     if(pendingPreview?.rowId===id)setPendingPreview(null);
     if(sourceUrlsCandidate?.rowId===id)setSourceUrlsCandidate(null);
@@ -251,35 +269,61 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
       }
     }finally{finish(controller);}
   }
-  function cancelCategory(){
+  function categoryCurrent(selection:IntakeCategorySelection|null,completed=false){
+    return !!selection&&categoryMounted.current&&ownerCurrent()&&categoryOwner.current===selection.ownerId
+      &&categorySelectionRef.current===selection&&categoryEpoch.current===selection.epoch&&(completed||!selection.completed);
+  }
+  function openCategory(target:string){
+    if(!ownerCurrent()||!categoryMounted.current||running.current)return;
+    if(target!=='new'&&!navigation.current.rows.some(row=>row.id===target&&row.status!=='saved'))return;
+    const seed=target==='new'&&categorySource.current?.id===pendingSeed.current?categorySource.current:undefined;
+    const selection={target,ownerId:workspaceOwnerId,epoch:++categoryEpoch.current,completed:false,seed};
+    categorySelectionRef.current=selection;setCategorySelection(selection);
+  }
+  function cancelCategory(selection:IntakeCategorySelection|null){
+    if(!categoryCurrent(selection))return;
+    categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);
     const id=pendingSeed.current;pendingSeed.current=null;
     if(id)onSourceConsumed?.(id);
-    setCategoryTarget(null);
   }
-  if (categoryTarget) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={cancelCategory}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker workspaceOwnerId={workspaceOwnerId} profiles={profiles} selectedId={rows.find(row => row.id === categoryTarget)?.profile.id ?? ''} onAdvanced={onAdvanced} onSelected={profile => {
-    if(!sourceMounted.current)return;
-    if(sourceSeed&&categoryTarget==='new'&&pendingSeed.current!==sourceSeed.id)return;
-    if (categoryTarget === 'new') {
-      if(rows.length>=50){setError('상품 대기열은 최대 50행입니다. 기존 입력을 정리한 뒤 상품을 추가해주세요.');return;}
-      let sourceUrl='';
-      if(sourceSeed&&pendingSeed.current===sourceSeed.id){
-        try{[sourceUrl]=parseCollectionRequest({urls:[sourceSeed.sourceUrl],goal:'collect'}).map(value=>value.sourceUrl);}
-        catch{setError('보관된 1688 URL을 확인해주세요. 기존 입력은 유지했습니다.');return;}
-      }
-      const id = crypto.randomUUID(); focusRow.current = id;
-      onRows(previous => previous.length < 50 ? [...previous,{...intakeRow(profile,id),url:sourceUrl}] : previous);
-      const seedId=pendingSeed.current;pendingSeed.current=null;if(seedId)onSourceConsumed?.(seedId);
-    } else { focusRow.current = categoryTarget; edit(categoryTarget, { profile }); }
+  function selectCategory(selection:IntakeCategorySelection,profile:CategoryProfile){
+    if(!categoryCurrent(selection)||running.current)return;
+    if(selection.seed&&(pendingSeed.current!==selection.seed.id||categorySource.current?.id!==selection.seed.id||categorySource.current.sourceUrl!==selection.seed.sourceUrl))return;
+    const target=selection.target,currentRows=navigation.current.rows;
+    if(target==='new'&&currentRows.length>=50){setError('상품 대기열은 최대 50행입니다. 기존 입력을 정리한 뒤 상품을 추가해주세요.');return;}
+    if(target!=='new'&&!currentRows.some(row=>row.id===target&&row.status!=='saved'))return;
+    let sourceUrl='';
+    if(selection.seed){
+      try{[sourceUrl]=parseCollectionRequest({urls:[selection.seed.sourceUrl],goal:'collect'}).map(value=>value.sourceUrl);}
+      catch{setError('보관된 1688 URL을 확인해주세요. 기존 입력은 유지했습니다.');return;}
+    }
+    const id=target==='new'?crypto.randomUUID():target;
+    selection.completed=true;
+    // The real draft wrapper applies synchronously. A delayed updater still
+    // belongs to this completed selection until another session or owner wins.
+    const update=(previous:IntakeRow[])=>{
+      if(!categoryCurrent(selection,true))return previous;
+      if(target==='new')return previous.length<50&&!previous.some(row=>row.id===id)?[...previous,{...intakeRow(profile,id),url:sourceUrl}]:previous;
+      return previous.map(row=>row.id===target&&row.status!=='saved'?{...row,profile,status:'draft' as const,message:'',productId:undefined,forkJobId:undefined,pendingJobId:undefined,pendingSourceMode:undefined,pendingSourceHash:undefined}:row);
+    };
+    if(forkPreviewRef.current?.rowId===target)setForkPreview(null);
+    if(pendingPreviewRef.current?.rowId===target)setPendingPreview(null);
+    if(sourceUrlsCandidateRef.current?.rowId===target)setSourceUrlsCandidate(null);
+    navigation.current.rows=update(currentRows);focusRow.current=id;onRows(update);
+    if(!categoryCurrent(selection,true))return;
+    const seedId=selection.seed?.id;if(seedId){pendingSeed.current=null;onSourceConsumed?.(seedId);}
+    if(!categoryCurrent(selection,true))return;
     onProfile(profile);
-    setQuery('');
-    setCategoryTarget(null);
-  }} /><footer><button type="button" className="btn ghost" onClick={cancelCategory}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
+    if(!categoryCurrent(selection,true))return;
+    setQuery('');setCategorySelection(null);
+  }
+  if (categorySelection) return <div className="intake-category-dialog" role="dialog" aria-label="카테고리 선택"><header><h3>카테고리 선택</h3><button type="button" className="icon-close" aria-label="카테고리 선택 취소" onClick={()=>cancelCategory(categorySelection)}>×</button></header>{error&&<p role="alert">{error}</p>}<CategoryPicker workspaceOwnerId={workspaceOwnerId} profiles={profiles} selectedId={rows.find(row => row.id === categorySelection.target)?.profile.id ?? ''} onAdvanced={seed=>{if(!categoryCurrent(categorySelection))return;categoryEpoch.current++;categorySelectionRef.current=null;setCategorySelection(null);onAdvanced(seed);}} onSelected={profile=>selectCategory(categorySelection,profile)}/><footer><button type="button" className="btn ghost" onClick={()=>cancelCategory(categorySelection)}>취소 · 상품 대기열로 돌아가기</button></footer></div>;
   return <div className="modal-form intake-queue">
     <div className="intake-queue-tools"><label>검색<input type="search" aria-label="상품 대기열 검색" placeholder="카테고리 · 1688 URL · 특징 · 키워드" value={query} disabled={busy} onChange={event => setQuery(event.target.value)}/></label><label className="intake-pin-control"><select aria-label="상품 대기열 고정할 열 선택" value={pinnedColumn} onChange={event => setPinnedColumn(event.target.value)}><option value="none">고정할 열 선택</option><option value="category">카테고리</option><option value="url">1688 링크</option><option value="features">특징</option><option value="keywords">키워드</option><option value="status">상태</option></select></label><span>전체 {rows.length}건 · 선택 {pending}건</span>{query && <button type="button" className="btn ghost" disabled={busy} onClick={() => setQuery('')}>검색 해제</button>}</div>
     <div className="intake-queue-table" data-pinned={pinnedColumn} role="region" aria-label="상품 대기열 표" tabIndex={0}><table><thead><tr><th><input type="checkbox" aria-label="검색 결과 전체 선택" disabled={busy || !visiblePending.length} checked={visiblePending.length > 0 && visiblePending.every(row => !excluded.includes(row.id))} onChange={event => toggle(visiblePending.map(row => row.id), event.target.checked)}/></th><th>카테고리</th><th>1688 링크</th><th>특징</th><th>키워드</th><th>상태</th><th>관리</th></tr></thead><tbody>
       {visible.map(row => { const index = rows.findIndex(item => item.id === row.id); const productId=intakeProductId(row,jobs); return <tr key={row.id}>
-        <td><input type="checkbox" aria-label={`${index + 1}번째 상품 선택`} disabled={busy || row.status === 'saved'} checked={row.status !== 'saved' && !excluded.includes(row.id)} onChange={event => toggle([row.id], event.target.checked)}/></td>
-        <td><button type="button" className="intake-category-button" disabled={busy || row.status === 'saved'} onClick={() => setCategoryTarget(row.id)}>{row.profile.categoryPath.join(' > ')}</button><small className="intake-profile-summary">코드 {row.profile.categoryId || '미입력'} · v{row.profile.revision}<br/>{row.profile.template ? `양식: ${row.profile.template.name}` : (row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single' ? '개별 견적 양식 연결' : 'Excel 양식 미연결'}</small><button type="button" className="btn ghost" aria-expanded={previewId === row.id} onClick={() => setPreviewId(previewId === row.id ? null : row.id)}>견적 항목·양식 확인</button></td>
+        <td><input type="checkbox" aria-label={`${index + 1}번째 상품 선택`} disabled={busy || !pendingRowIds.has(row.id)} checked={pendingRowIds.has(row.id) && !excluded.includes(row.id)} onChange={event => toggle([row.id], event.target.checked)}/></td>
+        <td><button type="button" className="intake-category-button" disabled={busy || row.status === 'saved'} onClick={() => openCategory(row.id)}>{row.profile.categoryPath.join(' > ')}</button><small className="intake-profile-summary">코드 {row.profile.categoryId || '미입력'} · v{row.profile.revision}<br/>{row.profile.template ? `양식: ${row.profile.template.name}` : (row.profile.hubSchema?.metadata.scopeType??row.profile.hubSchema?.metadata.scope)==='Retail_Categorized_Single' ? '개별 견적 양식 연결' : 'Excel 양식 미연결'}</small><button type="button" className="btn ghost" aria-expanded={previewId === row.id} onClick={() => setPreviewId(previewId === row.id ? null : row.id)}>견적 항목·양식 확인</button></td>
         <td><input ref={element => { if (element) urlInputs.current.set(row.id, element); else urlInputs.current.delete(row.id); }} aria-label={`${index + 1}번째 1688 링크`} value={row.url} maxLength={2048} disabled={busy || row.status === 'saved'} placeholder="https://detail.1688.com/offer/…" onChange={event => edit(row.id, { url: event.target.value })} />{row.url.trim() && <small className="intake-source-url">{row.url.trim()}</small>}</td>
         <td><textarea aria-label={`${index + 1}번째 특징`} value={row.features} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="상품 특징" onChange={event => edit(row.id, { features: event.target.value })} /></td>
         <td><textarea aria-label={`${index + 1}번째 키워드`} value={row.keywords} maxLength={2000} disabled={busy || row.status === 'saved'} placeholder="타겟 키워드" onChange={event => edit(row.id, { keywords: event.target.value })} /></td>
@@ -310,9 +354,10 @@ export function IntakeQueuePanel({ rows, onRows, profiles, onProfile, onAdvanced
     ].map(([id, title, description]) => <label className="goal-card" key={id}><input type="radio" name="queue-goal" checked={(goal==='collect'?'collect':goal==='work'?'work':'price') === id} onChange={() => onGoal(id)} /><span><strong>{title}</strong><small>{description}</small></span></label>)}</fieldset>
     <p className="collection-notice">{collectionBlock} <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.72.zip" download>상품 수집·전송 확장 0.2.72 다운로드</a></p><small>복제는 카테고리·특징·키워드를 복사하며 새 URL을 입력해야 합니다. 행 삭제는 이 입력 목록만 지우며 서버에 저장한 요청을 취소하지 않습니다.</small>
     {selected.some(row => !visible.some(item => item.id === row.id)) && <p className="collection-notice">검색으로 숨겨진 선택 상품도 함께 처리합니다. 선택 {pending}건 중 숨겨진 상품 {selected.filter(row => !visible.some(item => item.id === row.id)).length}건</p>}
+    {!!unfilledRows.length&&<p className="collection-notice">URL을 입력하지 않은 {unfilledRows.length}개 행은 시작 대상에서 제외됩니다.</p>}
     {settingsChanged&&<div className="panel-note"><p>기본설정이 변경돼 남은 상품 처리를 멈췄습니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>void reloadSettings()}>최신 기본설정 불러오기</button></div>}
     {settingsMessage&&<p role="status">{settingsMessage}</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
-    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => setCategoryTarget('new')}>＋ 상품 추가</button><button type="button" className="btn primary" disabled={busy || !pending || settingsChanged} onClick={() => void submit()}>{busy ? '상품정보 가져오는 중…' : `${pending === pendingRows.length ? '전체' : '선택'} 시작 (${pending}건)`}</button></div>
+    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy || rows.length >= 50} onClick={() => openCategory('new')}>＋ 상품 추가</button><button type="button" className="btn primary" disabled={busy || !pending || settingsChanged} onClick={() => void submit()}>{busy ? '상품정보 가져오는 중…' : `${pending === pendingRows.length ? '전체' : '선택'} 시작 (${pending}건)`}</button></div>
   </div>;
 }

@@ -22,11 +22,11 @@ const row=(n)=>({...intakeRow(profile(n),String(n)),url:`https://detail.1688.com
 const response=(body,status=200)=>Response.json(body,{status});
 const saved=body=>({jobs:[{id:'job',offer_id:body.urls[0].match(/offer\/(\d+)/)[1],source_url:body.urls[0],status:'awaiting_connector'}],preservedRequests:[]});
 
-test('each row retains its category revision and attributes; validate entire queue before network',async()=>{
+test('each row retains its category revision and attributes; invalid-only starts do not send requests',async()=>{
  const rows=[row(1),row(2)];const before=JSON.stringify(rows);const result=intakeQueueRequests(rows,'price');
  assert.equal(result[1].body.profileId,profile(2).id);assert.equal(result[1].body.expectedProfileRevision,2);assert.equal(result[1].body.features,'특징2');assert.equal(result[0].body.urls[0],'https://detail.1688.com/offer/1.html');assert.equal(JSON.stringify(rows),before);
  let calls=0;
- for(const invalid of [[row(1),{...row(2),url:'wrong'}],[row(1),{...row(2),url:row(1).url}],[],Array.from({length:51},(_,i)=>row(i+1)),[{...row(1),features:'x'.repeat(2001)}]]){
+ for(const invalid of [[{...row(2),url:'wrong'}],[row(1),{...row(2),url:row(1).url}],[],Array.from({length:51},(_,i)=>row(i+1)),[{...row(1),features:'x'.repeat(2001)}]]){
   await assert.rejects(submitIntakeQueue(invalid,'price',{signal:new AbortController().signal,fetcher:async()=>{calls++;},onRow(){},onJobs(){}}));
  }
  assert.equal(calls,0);
@@ -54,14 +54,14 @@ test('abort while first request is pending prevents later requests and late call
  assert.equal(calls,1);assert.equal(updates,0);
 });
 
-test('preflight reports every invalid row and both duplicates without sending requests or changing input',async()=>{
+test('preflight reports invalid rows and both duplicates while valid rows continue without changing input',async()=>{
  const rows=[row(1),{...row(2),url:row(1).url},{...row(3),url:'invalid',profile:{...profile(3),revision:0},keywords:'x'.repeat(2001)},row(4)];
  const before=JSON.stringify(rows),states=[];let calls=0;
- await assert.rejects(submitIntakeQueue(rows,'price',{signal:new AbortController().signal,fetcher:async()=>{calls++;},onJobs(){},onRow:(id,state)=>states.push({id,...state})}),/3개 행/);
- assert.equal(calls,0);assert.equal(states.length,3);assert.match(states.find(s=>s.id==='1').message,/1, 2행/);assert.match(states.find(s=>s.id==='2').message,/중복/);
- assert.match(states.find(s=>s.id==='3').message,/카테고리/);assert.match(states.find(s=>s.id==='3').message,/2,000/);assert.ok(!states.some(s=>s.id==='4'));assert.equal(JSON.stringify(rows),before);
+ await submitIntakeQueue(rows,'price',{signal:new AbortController().signal,fetcher:async(_url,init)=>{calls++;return response(saved(JSON.parse(init.body)));},onJobs(){},onRow:(id,state)=>states.push({id,...state})});
+ assert.equal(calls,1);assert.equal(states.length,4);assert.match(states.find(s=>s.id==='1').message,/1, 2행/);assert.match(states.find(s=>s.id==='2').message,/중복/);
+ assert.match(states.find(s=>s.id==='3').message,/카테고리/);assert.match(states.find(s=>s.id==='3').message,/2,000/);assert.equal(states.find(s=>s.id==='4').status,'saved');assert.equal(JSON.stringify(rows),before);
  const corrected=rows.filter(r=>r.id!=='2').map(r=>r.id==='3'?row(3):r);
- await submitIntakeQueue(corrected,'price',{signal:new AbortController().signal,fetcher:async(_url,init)=>{calls++;return response(saved(JSON.parse(init.body)));},onJobs(){},onRow(){}});assert.equal(calls,3);
+ calls=0;await submitIntakeQueue(corrected,'price',{signal:new AbortController().signal,fetcher:async(_url,init)=>{calls++;return response(saved(JSON.parse(init.body)));},onJobs(){},onRow(){}});assert.equal(calls,3);
 });
 
 test('saved rows are excluded from duplicate checks and cancelled preflight emits no updates',async()=>{
