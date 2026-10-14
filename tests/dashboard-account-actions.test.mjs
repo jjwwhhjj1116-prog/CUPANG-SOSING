@@ -17,6 +17,7 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 const settleUntil=async(h,ready)=>{const deadline=Date.now()+10000;while(!ready()){assert.ok(Date.now()<deadline,text(h.render()));await h.settle();await new Promise(resolve=>setTimeout(resolve,5));}};
 const version='2026-10-06T00:00:00.000Z';
 const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://source.example.test/product/'+id,created_at:version,updated_at:version,image_keys:JSON.stringify(['test-owner/'+id+'/source.png','test-owner/'+id+'/second.png']),options_count:1,source_price_cny:2,exchange_rate:350,supply_margin:50,coupang_margin:40,supply_price:1400,sale_price:2340,msrp:3050,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',removal_policy:{blocked:false,code:null,reason:'',receipt:null},goal_stage:'work'});
+const singleSummary=()=>({format:'yoofam-single-receipt-summary-v1',evidence:'chrome-observation',registered:false,label:'개별 문서 등록 파일 완료 확인',company:{code:'A01526306',name:'유앤채'},fingerprint:'a'.repeat(64),categoryId:'81452',observedAt:Date.now(),createdAt:new Date().toISOString(),optionCount:1,optionId:'reviewed-option',docId:901,qvtRequestId:7901,state:'accepted',sourceStatus:'FINISHED'});
 
 /** Actual DashboardClient, its private DetailPanel and settings dialog. Child
  * renderers record their received props; every tested callback is the real
@@ -665,4 +666,34 @@ test('global intake busy state blocks captured board and option callbacks before
   intake.onBusy(true);optionBoard.onStage('option-a-2','가격');optionBoard.onManage('option-a-2');await h.settle();assert.equal(h.requests.length,initialReads);assert.equal(h.component('product-option-board').productId,first.id);assert.equal(h.component('product-options-editor'),undefined);
   intake.onBusy(false);optionBoard.onStage('option-a-2','가격');await h.settle();const navigation=h.requests.slice(initialReads);assert.equal(navigation.length,1);assert.equal(navigation[0].url,'/api/products/'+first.id);assert.equal(navigation[0].method,'GET');assert.equal(navigation[0].init.cache,'no-store');assert.ok(navigation[0].init.signal instanceof AbortSignal);assert.equal(h.componentVisible('product-option-board'),false);assert.equal(h.component('product-options-editor').focusedOptionId,'option-a-2');assert.equal(h.component('product-options-editor').initialBulkAction,undefined);assert.ok(h.requests.every(request=>request.method==='GET'));
  }finally{h.close();}
+});
+
+
+test('single receipt save refreshes only status and preserves current editable product and quotation session',async()=>{
+ const h=harness();try{
+  await h.settle();const first=h.products[0];h.component('registration-board').onOpen(first,'견적서');await h.settle();
+  const quote=h.component('quotation-panel'),token=quote.refreshToken,mount=h.componentMount('quotation-panel'),summary=singleSummary();
+  h.setProductReply(async()=>Response.json({product:{...first,title:'must not replace edited source',supply_price:999999,hub_single_receipt:summary,removal_policy:{blocked:true,code:'PRODUCT_HUB_TRANSMITTED',reason:'protected',receipt:null,singleReceipt:summary}}}));
+  quote.onReceiptSaved();await h.settle();const updated=h.component('registration-board').products.find(row=>row.id===first.id);
+  assert.equal(updated.hub_single_receipt.qvtRequestId,7901);assert.equal(updated.title,first.title);assert.equal(updated.supply_price,first.supply_price);assert.equal(updated.updated_at,first.updated_at);
+  assert.equal(h.component('quotation-panel').refreshToken,token);assert.equal(h.componentMount('quotation-panel'),mount);assert.ok(h.requests.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+test('a late older receipt status read cannot overwrite the latest read or reset source clocks',async()=>{
+ const h=harness();try{
+  await h.settle();const first=h.products[0];h.component('registration-board').onOpen(first,'견적서');await h.settle();const saved=h.component('quotation-panel').onReceiptSaved;
+  const older=h.deferProduct(first.id);saved();await h.settle();const summary=singleSummary();summary.qvtRequestId=7902;
+  h.setProductReply(async()=>Response.json({product:{...first,hub_single_receipt:summary}}));saved();await h.settle();
+  older.resolve(Response.json({product:{...first,hub_single_receipt:singleSummary()}}));await h.settle();
+  assert.equal(h.component('registration-board').products.find(row=>row.id===first.id).hub_single_receipt.qvtRequestId,7902);assert.ok(h.requests.every(row=>row.method==='GET'));
+ }finally{h.close();}
+});
+test('changed product versions or login owner discard receipt-only refreshes',async()=>{
+ for(const kind of ['version','owner','unmount']){
+  const h=harness();try{
+   await h.settle();const first=h.products[0];h.component('registration-board').onOpen(first,'견적서');await h.settle();const saved=h.component('quotation-panel').onReceiptSaved;
+   if(kind==='version'){h.setProductReply(async()=>Response.json({product:{...first,updated_at:'2099-01-01T00:00:00.000Z',hub_single_receipt:singleSummary()}}));saved();await h.settle();assert.equal(h.component('registration-board').products.find(row=>row.id===first.id).hub_single_receipt,undefined);}
+   else{const pending=h.deferProduct(first.id);saved();await h.settle();if(kind==='owner')h.switchOwner('other-owner');else h.close();pending.resolve(Response.json({product:{...first,hub_single_receipt:singleSummary()}}));await h.settle();assert.equal(h.lateWrites,0);if(kind==='owner')assert.equal(h.component('registration-board').products.find(row=>row.id===first.id)?.hub_single_receipt,undefined);}
+  }finally{h.close();}
+ }
 });

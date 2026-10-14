@@ -109,7 +109,8 @@ test('wrong offer/receipt acknowledgement or an uncertain product save cannot si
 
 test('a pending request older than 200 later jobs is recovered by exact owned ID without expanding the recent list',{skip:!available},async()=>{
  const f=await pendingIntakeFixture();try{
-  for(let index=0;index<203;index++)f.h.sqlite.prepare('INSERT INTO collection_jobs VALUES(?,?,?,?,?,?,?,?)').run('00000000-0000-4000-8000-'+String(index).padStart(12,'0'),'owner',String(642100000000+index),'https://detail.1688.com/offer/'+(642100000000+index)+'.html','collect','awaiting_connector','2026-10-14T00:00:00.000Z','2026-10-14T00:00:00.000Z');
+  const later=new Date(Date.parse(f.sourceJob.created_at)+1000).toISOString();
+  for(let index=0;index<203;index++)f.h.sqlite.prepare('INSERT INTO collection_jobs VALUES(?,?,?,?,?,?,?,?)').run('00000000-0000-4000-8000-'+String(index).padStart(12,'0'),'owner',String(642100000000+index),'https://detail.1688.com/offer/'+(642100000000+index)+'.html','collect','awaiting_connector',later,later);
   const recent=await json(await f.h.load('app/api/collection-jobs/route.ts').GET());assert.equal(recent.jobs.length,200);assert.ok(!recent.jobs.some(job=>job.id===f.sourceJob.id));
   await f.click('시작 (');await f.click('기존 대기 요청 확인');assert.ok(f.button('원문 준비 후 새 초안 검토'));assert.ok(f.events.some(event=>event.url==='/api/collection-jobs?id='+f.sourceJob.id));assert.equal(f.h.sqlite.prepare('SELECT count(*) n FROM products').get().n,0);assert.equal(f.requestPreserved(),true);
  }finally{f.close();}
@@ -154,4 +155,28 @@ test('raw URL review fingerprint, receipt hash, target revision and atomic sourc
   else{const db=f.h.bindings.DB,prepare=db.prepare.bind(db),batch=db.batch.bind(db);db.prepare=sql=>Object.assign(prepare(sql),{sql});let armed=true;db.batch=async statements=>{if(armed&&statements.some(value=>value.sql?.startsWith('INSERT INTO collection_jobs(id'))){armed=false;const row=f.h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(f.sourceProduct()),value=JSON.parse(row.payload);value.label.material.value='원자 생성 직전 직접 변경';f.h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(value),f.sourceProduct());}return batch(statements);};}
   const products=f.h.sqlite.prepare('SELECT count(*) n FROM products').get().n;await f.click('새 초안 생성');assert.equal(f.h.sqlite.prepare('SELECT count(*) n FROM products').get().n,products);assert.equal(f.collections.length,0);assert.equal(f.h.network.length,0);assert.equal(f.requestPreserved(),true);
  }finally{f.close();}}
+});
+
+test('any native Single transmission history prevents a pending source from being treated as pristine',{skip:!available},async()=>{
+ for(const company of companies){const f=await pendingIntakeFixture(company,{received:true,linked:true});try{
+  await f.click('시작 (');await f.click('저장 원문으로 새 초안');assert.ok(f.button('원문 URL로 새 초안 검토'));
+  await f.h.load('db/supplier-hub-single-receipts.ts').ensureSingleReceiptDatabase();
+  f.h.sqlite.prepare('INSERT INTO supplier_hub_single_receipts(owner_id,product_id,request_id,observed_at,payload,created_at) VALUES(?,?,?,?,?,?)')
+   .run('owner',f.sourceProduct(),'native-source-activity',1,'{"state":"rejected"}','2026-10-13T00:00:00.000Z');
+  const before=f.preserved(),products=f.h.sqlite.prepare('SELECT COUNT(*) n FROM products').get().n;
+  await f.click('원문 URL로 새 초안 검토');assert.equal(f.button('새 초안 생성'),undefined);assert.equal(f.preserved(),before);assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) n FROM products').get().n,products);
+  assert.equal(f.collections.length,0);assert.equal(f.h.network.length,0);
+ }finally{f.close();}}
+});
+
+test('native receipt inserted after raw-source preview cancels atomic fork creation and preserves the working source',{skip:!available},async()=>{
+ const f=await pendingIntakeFixture();try{
+  await f.click('시작 (');await f.click('기존 대기 요청 확인');await f.click('원문 준비 후 새 초안 검토');assert.ok(f.button('새 초안 생성'));
+  await f.h.load('db/supplier-hub-single-receipts.ts').ensureSingleReceiptDatabase();
+  const db=f.h.bindings.DB,prepare=db.prepare.bind(db),batch=db.batch.bind(db);db.prepare=sql=>Object.assign(prepare(sql),{sql});let armed=true;
+  db.batch=async statements=>{if(armed&&statements.some(value=>value.sql?.startsWith('INSERT INTO collection_jobs(id'))){armed=false;f.h.sqlite.prepare('INSERT INTO supplier_hub_single_receipts(owner_id,product_id,request_id,observed_at,payload,created_at) VALUES(?,?,?,?,?,?)')
+   .run('owner',f.sourceProduct(),'native-atomic-activity',1,'{"state":"pending"}','2026-10-13T00:00:00.000Z');}return batch(statements);};
+  const before=f.preserved(),products=f.h.sqlite.prepare('SELECT COUNT(*) n FROM products').get().n;await f.click('새 초안 생성');
+  assert.equal(f.preserved(),before);assert.equal(f.h.sqlite.prepare('SELECT COUNT(*) n FROM products').get().n,products);assert.equal(f.collections.length,0);assert.equal(f.h.network.length,0);assert.equal(armed,false);
+ }finally{f.close();}
 });

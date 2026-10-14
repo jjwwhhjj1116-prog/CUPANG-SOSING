@@ -22,6 +22,7 @@ import {verifyWorkspaceBannerFiles} from '@/db/workspace-banners';
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import type {CollectionContext,CollectionJob} from '@/app/sourcing';
 import {ensureSupplierHubReceiptDatabase} from '@/db/supplier-hub-receipts';
+import {ensureSingleReceiptDatabase} from '@/db/supplier-hub-single-receipts';
 
 type SourceImage={index:number;key:string;operationId:string;createdAt:string};
 type SourceRow={id:string;owner_id:string;offer_id:string;source_url:string;goal:string;status:string;created_at:string;updated_at:string;source_context:string;original_receipt:string;receipt_payload:string;received_at:string;product_id:string;product_version:string;image_keys:string;pricing_policy:string|null;content_revision:number;content_payload:string|null;option_revision:number;option_payload:string|null;quotation_revision:number;quotation_payload:string|null;source_images:string;busy:number};
@@ -35,7 +36,8 @@ const select=`SELECT j.*,c.payload AS source_context,r.payload AS original_recei
 const conflict=(message='자료·기본설정·카테고리가 변경되었습니다. 기존 상품은 유지되며 새 초안 내용을 다시 확인해주세요.')=>new CollectionForkError(409,message);
 const pendingActivitySql=`(EXISTS(SELECT 1 FROM translation_jobs t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id)
  OR EXISTS(SELECT 1 FROM image_jobs t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id)
- OR EXISTS(SELECT 1 FROM supplier_hub_receipts t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id))`;
+ OR EXISTS(SELECT 1 FROM supplier_hub_receipts t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id)
+ OR EXISTS(SELECT 1 FROM supplier_hub_single_receipts t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id))`;
 /** Only the unchanged initial promotion can leave its seller URLs unstored.
  * This compares the exact initializer, including owner settings and deliberate
  * defaults; a permission flag cannot authorize edits to a working product. */
@@ -46,14 +48,14 @@ async function pristinePendingSource(owner:string,job:CollectionJob,source:Sourc
  if(Object.entries(initial.product).some(([key,value])=>product[key as keyof typeof product]!==value)
   ||source.pricing_policy!==JSON.stringify(initial.policy)||source.content_payload!==JSON.stringify(initial.content)||source.option_payload!==JSON.stringify(initial.options))return false;
  if(source.quotation_payload){const fields=JSON.parse(source.quotation_payload);if(fields.revision!==0||Object.keys(fields.common??{}).length||Object.values(fields.options??{}).some(value=>value&&Object.keys(value as object).length))return false;}
- await ensureSupplierHubReceiptDatabase();
+ await ensureSupplierHubReceiptDatabase();await ensureSingleReceiptDatabase();
  const activity=await env.DB!.prepare(`SELECT ${pendingActivitySql} AS busy ${joins} WHERE j.owner_id=? AND j.id=?`).bind(owner,job.id).first<{busy:number}>();return activity?.busy===0;
 }
 async function database(owner:string,jobId:string){
  const db=await ensureCollectionDatabase();await ensureDatabase();await readCollectionResult(owner,jobId);
  const link=await db.prepare('SELECT product_id FROM collection_products WHERE owner_id=? AND job_id=?').bind(owner,jobId).first<{product_id:string}>();
  if(link){await readProductContent(owner,link.product_id);await readProductOptions(owner,link.product_id);await readQuotationFields(owner,link.product_id);await hasUnsettledTranslation(owner,link.product_id);await listImageJobs(owner,link.product_id);}
- await db.prepare(collectionImagesSchema).run();return db;
+ await db.prepare(collectionImagesSchema).run();await ensureSingleReceiptDatabase();return db;
 }
 export async function prepareCollectionNewDraft(owner:string,company:SupplierHubCompany,jobId:string,input:CollectionNewDraftTargetRequest){
  const db=await database(owner,jobId),job=await findCollectionJob(owner,jobId);

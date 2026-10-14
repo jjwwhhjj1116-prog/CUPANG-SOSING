@@ -18,18 +18,20 @@ type Preview = {
   submissionReview?: QuotationPreviewReviewData;
   report:{dataStartRow:number;mappingCoverage?:QuotationMappingFinding[];rowCount:number;missingRequired:{row:number;column:number;header:string}[];warnings:string[];contentRevision:number;optionRevision:number;profileRevision:number};
 };
-type QuotationPanelProps = {onPrepareSubmission?:(profileId:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
+type QuotationPanelProps = {onPrepareSubmission?:(profileId:string)=>void;onProfilePrepared?:(profile:CategoryProfile,source:CategoryProfile)=>void;onProfileChange?:(profileId:string|undefined)=>void;onSaved?:()=>void;onReceiptSaved?:()=>void;navigationTarget?:QuotationNavigationTarget;navigationSequence?:number;productId:string;onManageCategories:()=>void;refreshToken?:string;preferredProfileId?:string};
 export function QuotationPanel(props: QuotationPanelProps) {
   return <QuotationPanelContent key={JSON.stringify([props.productId,props.preferredProfileId ?? '',props.navigationTarget?.categoryId])} {...props}/>;
 }
-function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
+function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileChange,onSaved,onReceiptSaved,productId,onManageCategories,refreshToken,preferredProfileId,navigationTarget,navigationSequence=0}: QuotationPanelProps) {
   const [profiles,setProfiles]=useState<CategoryProfile[]>([]);
   const [profileId,setProfileId]=useState('');const [startRow,setStartRow]=useState(2);
   const [useSavedRow,setUseSavedRow]=useState(true);
   const [previewState,setPreviewState]=useState<{data:Preview;version?:string}|null>(null);const [busy,setBusy]=useState(false);
   const previewRef=useRef<Preview|null>(null);
   const versionRef=useRef(refreshToken);
+  const profileChangeRef=useRef(onProfileChange);
   useLayoutEffect(()=>{versionRef.current=refreshToken;},[refreshToken]);
+  useLayoutEffect(()=>{profileChangeRef.current=onProfileChange;},[onProfileChange]);
   const preview=previewState?.version===refreshToken?previewState?.data??null:null;
   const setPreview=(data:Preview|null)=>{previewRef.current=data;setPreviewState(data?{data,version:refreshToken}:null);};
   const [reviewTarget,setReviewTarget]=useState<{target:QuotationNavigationTarget;sequence:number;navigationSequence:number}|null>(null);
@@ -66,7 +68,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
       const selection=selectQuotationProfile(savedProfiles,data.categoryContext,preferredProfileId,navigationTarget?.categoryId);
       const savedId=selection.profileId;
       setConnectionWarning(selection.warning);
-      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);onProfileChange?.(savedId||undefined);
+      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);profileChangeRef.current?.(savedId||undefined);
       setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
       setCapturedProfileId(data.categoryContext.source==='collection'?data.categoryContext.profileId:null);
       setCapturedCategoryPath(data.categoryContext.source==='collection'?data.categoryContext.categoryPath:[]);
@@ -140,7 +142,7 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
       dirtyRef.current=value;
       if(value){profileRequest.current?.abort();activeRequest.current?.abort();setPreview(null);setMessage('');}
       setDirty(value);
-    }} onSaved={()=>{setPreview(null);onSaved?.();}}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
+    }} onReceiptSaved={onReceiptSaved} onSaved={()=>{setPreview(null);onSaved?.();}}/>:<p role="status">선택한 카테고리와 견적서 설정을 불러오고 있습니다.</p>}</div>
     {selected&&!selected.template&&<div className="panel-note"><strong>전송할 공식 견적 양식 준비</strong><p>1~7단계 초안은 저장되어 있습니다. 전송 전에 현재 회사와 저장한 전체 카테고리 경로를 확인하고 공식 Excel을 연결합니다.</p><button type="button" className="btn primary" disabled={busy||dirty||refreshingProfiles||!contextLoaded||!selected.hubSchema} onClick={()=>void prepareOfficialTemplate()}>공식 견적 양식 준비</button>{!selected.hubSchema&&<small>카테고리·양식 관리에서 Supplier Hub 상세 양식을 먼저 확인해주세요.</small>}</div>}
     {selected&&!selected.template&&(selected.hubSchema?.metadata.scopeType??selected.hubSchema?.metadata.scope)==='Retail_Categorized_Single'&&<div className="panel-note"><p>별도 Excel 상세 양식을 읽을 수 없다면 공식 파일의 열·선택값으로 연결할 수 있습니다. 현재 회사와 카테고리를 다시 확인하며, Excel JSON 미확인 상태와 기존 전송 검사는 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy||dirty||refreshingProfiles||!contextLoaded} onClick={()=>void prepareOfficialTemplate('workbook')}>공식 파일 기준으로 연결</button></div>}
     {selected?.template?.workbookEvidence&&<p role="status" className="panel-note">공식 XLSX 파일 기준 연결 · 별도 Excel JSON 양식 미확인. 필수값·미연결 항목·첨부 검사는 그대로 적용됩니다.</p>}

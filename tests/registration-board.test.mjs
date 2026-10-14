@@ -10,6 +10,7 @@ const {registrationTitle,registrationNumber,registrationThumbnail,registrationSt
 const columnLabels=['등록번호','상품이미지','상품명','구매링크','SEO설정','가격설정','대표이미지','추가이미지','상세이미지','사이즈표','한글표시사항','견적서','등록상태','관리'];
 function elements(tree,predicate){const found=[];function visit(node){if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(predicate(node))found.push(node);visit(node.props?.children);}visit(tree);return found;}
 function nodeText(node){return Array.isArray(node)?node.map(nodeText).join(''):node&&typeof node==='object'?nodeText(node.props?.children):typeof node==='boolean'?'':String(node??'');}
+const nativeSummary={format:'yoofam-single-receipt-summary-v1',evidence:'chrome-observation',registered:false,label:'개별 문서 등록 파일 완료 확인',company:{code:'A01526306',name:'유앤채'},fingerprint:'a'.repeat(64),categoryId:'81452',observedAt:Date.now(),createdAt:new Date().toISOString(),optionCount:1,optionId:'reviewed-one',docId:901,qvtRequestId:7901,state:'accepted',sourceStatus:'FINISHED'};
 function boardHarness(props={}){
  const values=[],confirmations=[];let cursor=0;
  const {RegistrationBoard:Board}=load('app/components/registration-board.tsx',{window:{innerWidth:1600,innerHeight:900,confirm(message){confirmations.push(message);return props.confirm!==false;}},react:{...require('react'),useRef(initial){const index=cursor++;if(!(index in values))values[index]={current:initial};return values[index];},useState(initial){const index=cursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],value=>{values[index]=typeof value==='function'?value(values[index]):value;}];}}});
@@ -18,6 +19,22 @@ function boardHarness(props={}){
  const base={products:[product],selected:new Set(),onSelected:value=>selections.push(value),onOpen:(...args)=>calls.push(args),onOptions:value=>options.push(value),loading:false,error:'',onArchive:()=>{},...props};
  return {product:base.products[0],calls,options,selections,confirmations,render(){cursor=0;return Board(base);}};
 }
+
+test('native receipt row keeps document and registration file distinct, never claims an issued SKU or all options',()=>{
+ const h=boardHarness();h.product.hub_single_receipt=nativeSummary;
+ const before=JSON.stringify(h.product),tree=h.render(),cell=elements(tree,node=>node.type==='td'&&node.props['data-column']==='status')[0];
+ const value=nodeText(cell);assert.match(value,/문서 ID: 901/);assert.match(value,/등록 파일 ID: 7901/);assert.match(value,/개별 전송 기록 1개/);assert.match(value,/SKU 확인 전/);assert.doesNotMatch(value,/SKU 1\/3|전송완료|등록완료/);
+ assert.equal(registrationTransmissionLabel(h.product),nativeSummary.label);assert.equal(JSON.stringify(h.product),before);
+ const filter=elements(tree,node=>node.type==='select'&&node.props['aria-label']==='등록 상태 필터')[0];
+ filter.props.onChange({target:{value:nativeSummary.label}});assert.equal(elements(h.render(),node=>node.type==='tbody')[0].props.children.length,1);
+});
+
+test('coexisting native and file receipts display both histories without claiming either is the latest',()=>{
+ const h=boardHarness();h.product.hub_single_receipt=nativeSummary;h.product.hub_receipt={label:'견적서 접수',company:nativeSummary.company,quotationId:'bulk-401',fingerprint:'b'.repeat(64),categoryId:'80719',observedAt:Date.now()+1,includedOptions:3,issuedSkus:0};
+ const value=nodeText(elements(h.render(),node=>node.type==='td'&&node.props['data-column']==='status')[0]);
+ assert.equal(registrationTransmissionLabel(h.product),'전송 이력 있음');assert.match(value,/견적서 ID: bulk-401/);assert.match(value,/등록 파일 ID: 7901/);assert.match(value,/SKU 0\/3개/);assert.match(value,/SKU 확인 전/);
+ assert.doesNotMatch(value,/최근 전송한 견적서 기준/);
+});
 test('board shows edited title and selected image while searches retain source title and URL',()=>{
  const product={id:'p',title:'원본상품',source_url:'https://detail.1688.com/offer/813724060928.html',created_at:'2026-09-26T00:00:00Z',image_keys:'["first","owner/chosen image"]',content_summary:{seoTitle:'수정한 상품명',mainImageKey:'owner/chosen image'}};
  assert.equal(registrationTitle(product),'수정한 상품명');assert.equal(registrationThumbnail(product),'/api/files/owner/chosen%20image');

@@ -27,10 +27,14 @@ for(const company of companies)test(company.name+': actual Single package select
 test('UI mount performs no image publication; explicit review then prepare uses current saved fingerprint only',async()=>{
   const f=await assetApiFixture();try{
     const view=await json(await f.h.route(f.base+'/quotation-fields'+f.query)),before=f.state();
-    const ui=quotationAiUI({productId:f.id,profileId:f.profile.id,view,disabled:false},(url,init)=>f.h.route(url,{method:init?.method??'GET',body:init?.body?JSON.parse(init.body):undefined}),'app/components/supplier-hub-single-review.tsx','SupplierHubSingleReview');
-    await ui.idle();assert.equal(ui.calls.length,0);assert.equal(ui.button('이미지 전송 자료 준비').props.disabled,true);
-    await ui.click('개별 견적 자료 검토');assert.deepEqual(ui.calls.map(c=>c.method),['GET']);assert.equal(ui.button('이미지 전송 자료 준비').props.disabled,false);
-    await ui.click('이미지 전송 자료 준비');assert.deepEqual(ui.calls.map(c=>c.method),['GET','POST']);assert.equal(ui.calls[1].body.action,'prepare');assert.equal(ui.button('이미지 전송 자료 준비').props.disabled,true);
+    const ui=quotationAiUI({productId:f.id,profileId:f.profile.id,view,disabled:false},(url,init)=>{
+      if(url==='/api/supplier-hub/catalog-context')return Response.json({ownerId:'owner',company:f.profile.supplierHub?.company??companies[0]});
+      if(String(url).includes('/supplier-hub-single-receipt')){assert.equal(init?.method??'GET','GET');return Response.json({format:'yoofam-single-receipt-history-v1',productId:f.id,receipts:[]});}
+      return f.h.route(url,{method:init?.method??'GET',body:init?.body?JSON.parse(init.body):undefined});
+    },'app/components/supplier-hub-single-review.tsx','SupplierHubSingleReview');
+    await ui.idle();assert.equal(ui.calls.length,3,JSON.stringify(ui.alerts()));assert.ok(ui.calls.every(call=>call.method==='GET'));assert.equal(ui.calls.filter(call=>call.url.includes('/supplier-hub-single-package')).length,0);assert.equal(ui.button('이미지 전송 자료 준비').props.disabled,true);
+    await ui.click('개별 견적 자료 검토');assert.deepEqual(ui.calls.filter(call=>call.url.includes('/supplier-hub-single-package')).map(c=>c.method),['GET']);assert.equal(ui.button('이미지 전송 자료 준비').props.disabled,false);
+    await ui.click('이미지 전송 자료 준비');const packageCalls=ui.calls.filter(call=>call.url.includes('/supplier-hub-single-package'));assert.deepEqual(packageCalls.map(c=>c.method),['GET','POST']);assert.equal(packageCalls[1].body.action,'prepare');assert.equal(ui.button('이미지 전송 자료 준비').props.disabled,true);
     assert.equal(f.state(),before);assert.deepEqual(f.h.network,[]);ui.unmount();
   }finally{f.close();}
 });

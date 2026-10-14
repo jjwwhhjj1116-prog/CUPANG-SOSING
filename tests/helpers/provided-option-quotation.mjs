@@ -39,7 +39,7 @@ export function providedOptionModule(file) {
     vm.runInNewContext(output, {
       exports, Error, RangeError, URL, URLSearchParams, Date, Response, Request, Headers, Blob,
       TextEncoder, TextDecoder, Uint8Array, DataView, CompressionStream, DecompressionStream,
-      structuredClone, crypto: webcrypto,
+      structuredClone, crypto: webcrypto, AbortController, setTimeout, clearTimeout,
       fetch() { throw Error('External requests are forbidden for user-provided facts.'); },
       require(name) {
         if (name === 'parse5') return parse5;

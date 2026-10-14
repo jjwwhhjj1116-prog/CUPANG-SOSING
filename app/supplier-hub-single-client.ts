@@ -1,5 +1,6 @@
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import type { SupplierHubCompany } from '@/app/supplier-hub-company';
+import {parseStoredSingleReceipt,type SingleReceiptRecord} from '@/app/supplier-hub-single-receipt';
 
 export type SinglePackageView = {
   format: 'yoofam-supplier-hub-single-package-v1'; prepared: boolean; registered: false; remoteWrites: false; submissionReady: false;
@@ -46,7 +47,7 @@ export type SingleConsentChallenge = {id:string;docId:string|number;packetDigest
 export type SingleConfirmation = {action:'confirm-and-continue'|'confirm-and-submit';stage?:SingleConsentStage;userInitiated:true;challengeId:string;confirmedAt:number;approvedKeys:string[]};
 export type SingleDocumentPreview = {format:string;fingerprint:string;productId:string;optionId:string;identityDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;registered:false;remoteWrites:false};
 export type SingleDocumentReceipt = {state:'pending'|'accepted'|'rejected'|'registered';docId:string|number;company:SupplierHubCompany;identityDigest:string;preparedBodySha256:string;observedAt:number;
-  evidence:'document-receipt'|'document-and-sku';receiptId?:string|number;skuId?:string|number;sourceStatus?:'SUBMITTED'|'REJECTED'|'FINISHED';qvtRequestId?:string|number};
+  evidence:'document-receipt'|'document-and-sku';receiptId?:string|number;skuId?:string|number;sourceStatus?:'SUBMITTED'|'REJECTED'|'FINISHED';qvtRequestId?:string|number;registered?:false};
 export type SingleDocumentState = {format:string;requestId:string;identity:Record<string,unknown>;identityDigest:string;packetDigest:string;preparedBodySha256:string;originalBodySha256:string;
   state:string;docId:string|number|null;registered:boolean;success:boolean;needsRecovery:boolean;challenge?:SingleConsentChallenge;error?:{code:string;message:string};receipt?:SingleDocumentReceipt};
 export type SingleDocumentSession = {packet:SingleDocumentPacket;preview:SingleDocumentPreview;packetDigest:string;origin:string};
@@ -177,15 +178,87 @@ export function verifySingleDocumentObservation(previous:SingleDocumentState|nul
       ||previous.state==='registered'&&(result.state!=='registered'||after.skuId!==before.skuId)))
     throw new SingleDocumentBridgeError('원래 문서 또는 등록 파일 ID와 다른 조회 결과입니다. 이전 확인 결과를 유지했습니다.',false,'SINGLE_RECEIPT_CHANGED');
 }
-export async function readSingleCatalogContext(signal:AbortSignal):Promise<{ownerId:string;company:SupplierHubCompany}>{
+export async function readSingleCatalogContext(signal:AbortSignal,request:typeof fetch=fetch):Promise<{ownerId:string;company:SupplierHubCompany}>{
   const controller=new AbortController(),abort=()=>controller.abort();if(signal.aborted)abort();signal.addEventListener('abort',abort,{once:true});
   const timer=setTimeout(abort,10000);
   try{
-  const response=await fetch('/api/supplier-hub/catalog-context',{cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});
+  const response=await request('/api/supplier-hub/catalog-context',{cache:'no-store',credentials:'same-origin',redirect:'error',signal:controller.signal});
   const text=await response.text();if(controller.signal.aborted||response.redirected||text.length>4096||response.url&&response.url!==window.location.origin+'/api/supplier-hub/catalog-context')throw Error('현재 회원 회사정보를 확인하지 못했습니다.');
   let value:unknown;try{value=JSON.parse(text);}catch{throw Error('현재 회원 회사정보를 읽지 못했습니다.');}
   if(!response.ok||!singleExact(value,['ownerId','company'])||!singleId.test(String(value.ownerId))||!singleExact(value.company,['code','name'])
     ||({A01526306:'유앤채',A01464742:'와이홉'} as Record<string,string>)[String(value.company.code)]!==value.company.name)throw Error('승인된 회원 회사로 자료를 확인해주세요.');
   return freezeSingleJson(structuredClone(value) as {ownerId:string;company:SupplierHubCompany});
   }finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
+}
+
+type SingleReceiptScope={productId:string;profileId?:string};
+export type SingleReceiptSaveAttempt={profileId:string;optionId:string;observation:SingleDocumentState;packet:SingleDocumentPacket};
+const receiptEndpoint=(scope:SingleReceiptScope)=>{
+  if(!singleId.test(scope.productId)||scope.profileId!==undefined&&!singleId.test(scope.profileId))throw Error('상품·카테고리 식별값을 확인해주세요.');
+  return `/api/products/${encodeURIComponent(scope.productId)}/supplier-hub-single-receipt`;
+};
+async function receiptJson(response:Response,path:string,signal:AbortSignal):Promise<unknown>{
+  if(response.redirected||response.url&&response.url!==window.location.origin+path||!response.body)throw Error('전송 확인 결과의 앱 응답을 확인하지 못했습니다.');
+  const reader=response.body.getReader(),parts:Uint8Array[]=[];let size=0;
+  const abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
+  try{for(;;){if(signal.aborted)throw Error('전송 확인 결과 조회가 취소됐습니다.');const result=await reader.read();if(result.done)break;size+=result.value.byteLength;if(size>2*1024*1024)throw Error('전송 확인 결과의 응답 크기를 확인해주세요.');parts.push(result.value);}}
+  catch(cause){await reader.cancel().catch(()=>{});throw cause;}finally{signal.removeEventListener('abort',abort);reader.releaseLock();}
+  if(signal.aborted)throw Error('전송 확인 결과 조회가 취소됐습니다.');
+  const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
+  let value:unknown;try{value=JSON.parse(new TextDecoder().decode(bytes));}catch{throw Error('전송 확인 결과를 읽지 못했습니다.');}
+  if(signal.aborted)throw Error('전송 확인 결과 조회가 취소됐습니다.');
+  if(!response.ok)throw Error(singleObject(value)&&typeof value.error==='string'&&value.error.length<=500?value.error:'전송 확인 결과를 저장하거나 조회하지 못했습니다.');
+  return value;
+}
+async function receiptRequest<T>(signal:AbortSignal,operation:(signal:AbortSignal)=>Promise<T>):Promise<T>{
+  const controller=new AbortController(),abort=()=>controller.abort();if(signal.aborted)abort();signal.addEventListener('abort',abort,{once:true});
+  const timer=setTimeout(abort,15000);try{return await operation(controller.signal);}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
+}
+async function receiptActor(record:SingleReceiptRecord,scope:SingleReceiptScope,actor:{ownerId:string;company:SupplierHubCompany}){
+  if(record.productId!==scope.productId||scope.profileId!==undefined&&record.profileId!==scope.profileId
+    ||record.identity.ownerId!==actor.ownerId||singleCanonical(record.company)!==singleCanonical(actor.company)
+    ||record.identity.accountContext!==await singleDigest(['sourceflow-managed-product-account-v1',actor.ownerId,actor.company.code,actor.company.name]))throw new SingleDocumentBridgeError('현재 회원 회사·상품과 다른 전송 확인 결과입니다.',false,'SINGLE_RECEIPT_ACCOUNT');
+}
+const sameActor=(before:{ownerId:string;company:SupplierHubCompany},after:{ownerId:string;company:SupplierHubCompany})=>{
+  if(before.ownerId!==after.ownerId||singleCanonical(before.company)!==singleCanonical(after.company))throw new SingleDocumentBridgeError('전송 확인 결과를 확인하는 중 회원 회사가 변경됐습니다.',false,'SINGLE_RECEIPT_ACCOUNT');
+};
+/** Read-only history never restores a Chrome session, challenge or approval. */
+export async function readSingleReceiptHistory(scope:SingleReceiptScope,signal:AbortSignal,request:typeof fetch=fetch):Promise<SingleReceiptRecord[]>{
+  return receiptRequest(signal,async active=>{
+    const path=receiptEndpoint(scope)+(scope.profileId?`?profileId=${encodeURIComponent(scope.profileId)}`:''),before=await readSingleCatalogContext(active,request);
+    const value=await receiptJson(await request(path,{cache:'no-store',credentials:'same-origin',redirect:'error',signal:active}),path,active);
+    if(!singleExact(value,['format','productId','receipts'])||value.format!=='yoofam-single-receipt-history-v1'||value.productId!==scope.productId||!Array.isArray(value.receipts)||value.receipts.length>200)throw Error('저장된 전송 확인 이력의 형식을 확인해주세요.');
+    const records:SingleReceiptRecord[]=[];for(const item of value.receipts){const record=parseStoredSingleReceipt(item);await receiptActor(record,scope,before);records.push(record);}
+    sameActor(before,await readSingleCatalogContext(active,request));if(active.aborted)throw Error('전송 확인 결과 조회가 취소됐습니다.');
+    return freezeSingleJson(structuredClone(records));
+  });
+}
+export function singleReceiptSaveAttempt(session:SingleDocumentSession,observation:SingleDocumentState):SingleReceiptSaveAttempt|null{
+  const receipt=observation.receipt;
+  if(!receipt?.sourceStatus||!['pending','accepted','rejected'].includes(observation.state))return null;
+  if(observation.registered!==false||observation.success!==false||receipt.skuId!==undefined||receipt.qvtRequestId===undefined||receipt.qvtRequestId!==receipt.receiptId
+    ||observation.requestId!==session.packet.requestId||observation.packetDigest!==session.packetDigest||observation.identityDigest!==session.preview.identityDigest)throw Error('확인된 개별 등록 파일 결과로만 저장해주세요.');
+  return freezeSingleJson(structuredClone({profileId:session.packet.profileId,optionId:session.packet.optionId,observation,packet:session.packet}));
+}
+/** Retries only this immutable local observation; no Supplier Hub action. */
+export async function saveSingleReceiptObservation(attempt:SingleReceiptSaveAttempt,signal:AbortSignal,request:typeof fetch=fetch):Promise<SingleReceiptRecord>{
+  return receiptRequest(signal,async active=>{
+    const {packet,observation,profileId,optionId}=attempt,scope={productId:packet.productId,profileId},path=receiptEndpoint(scope),before=await readSingleCatalogContext(active,request);
+    if(before.ownerId!==packet.ownerId||singleCanonical(before.company)!==singleCanonical(packet.company)||profileId!==packet.profileId||optionId!==packet.optionId)throw new SingleDocumentBridgeError('현재 회원 회사와 원래 확인 결과가 다릅니다.',false,'SINGLE_RECEIPT_ACCOUNT');
+    const body=singleCanonical({profileId,optionId,observation});if(new TextEncoder().encode(body).byteLength>128*1024)throw Error('확인 결과의 저장 요청 크기를 확인해주세요.');
+    const value=await receiptJson(await request(path,{method:'POST',headers:{'content-type':'application/json'},body,cache:'no-store',credentials:'same-origin',redirect:'error',signal:active}),path,active);
+    if(!singleExact(value,['receipt']))throw Error('전송 확인 결과의 저장 응답을 확인해주세요.');
+    const record=parseStoredSingleReceipt(value.receipt);await receiptActor(record,scope,before);
+    const expected=observation.receipt!,immutableReceipt=(value:SingleDocumentReceipt)=>Object.fromEntries(Object.entries(value).filter(([key])=>!['observedAt','state','sourceStatus'].includes(key)));
+    const receiptMatches=record.receipt.observedAt>=expected.observedAt&&singleCanonical(immutableReceipt(record.receipt))===singleCanonical(immutableReceipt(expected))
+      &&(record.receipt.observedAt!==expected.observedAt||singleCanonical(record.receipt)===singleCanonical(expected))
+      &&(expected.state!=='accepted'||record.receipt.state!=='pending')&&(expected.state!=='rejected'||record.receipt.state==='rejected');
+    if(record.optionId!==optionId||record.requestId!==packet.requestId||record.docId!==observation.docId||record.identityDigest!==observation.identityDigest
+      ||record.packetDigest!==observation.packetDigest||record.preparedBodySha256!==observation.preparedBodySha256||record.originalBodySha256!==observation.originalBodySha256
+      ||record.fingerprint!==packet.fingerprint||record.schemaSha256!==packet.schemaSha256||record.categoryId!==packet.categoryId
+      ||singleCanonical(record.source)!==singleCanonical(packet.source)||singleCanonical(record.identity)!==singleCanonical(observation.identity)
+      ||!receiptMatches)throw Error('저장된 결과와 원래 확인한 등록 파일이 다릅니다.');
+    sameActor(before,await readSingleCatalogContext(active,request));if(active.aborted)throw Error('전송 확인 결과 저장 확인이 취소됐습니다.');
+    return freezeSingleJson(structuredClone(record));
+  });
 }

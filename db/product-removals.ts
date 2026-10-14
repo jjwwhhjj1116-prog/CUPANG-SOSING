@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { ensureDatabase } from '@/db/queries';
-import { productRemovalDecisionFromReceipts, type ProductRemovalDecision, type ProductRemovalReceiptRow } from '@/app/product-removal-policy';
+import { productRemovalDecisionFromReceipts,unconfirmedProductRemovalDecision, type ProductRemovalDecision, type ProductRemovalReceiptRow,type ProductRemovalSingleReceiptRow } from '@/app/product-removal-policy';
 import { ensureSupplierHubReceiptDatabase } from '@/db/supplier-hub-receipts';
+import {ensureSingleReceiptDatabase} from '@/db/supplier-hub-single-receipts';
 
 export type ProductRemovalRecord = {
   product_id:string;owner_id:string;removed_at:string;product_version:string;
@@ -11,33 +12,41 @@ async function database() {
   await ensureDatabase();
   if (!env.DB) throw new Error('D1 binding DB is unavailable.');
   await ensureSupplierHubReceiptDatabase();
+  await ensureSingleReceiptDatabase();
   return env.DB;
 }
 
 async function receiptRows(ownerId:string,products:readonly {id:string}[],existingDb?:Awaited<ReturnType<typeof database>>) {
-  const rows:Record<string,ProductRemovalReceiptRow[]>=Object.fromEntries(products.map(product=>[product.id,[]]));
+  const rows:Record<string,{bulk:ProductRemovalReceiptRow[];single:ProductRemovalSingleReceiptRow[]}>=Object.fromEntries(products.map(product=>[product.id,{bulk:[],single:[]}]));
   if(!products.length)return rows;
   const db=existingDb??await database();
   for(let offset=0;offset<products.length;offset+=80){
     const ids=products.slice(offset,offset+80).map(product=>product.id);
     const saved=await db.prepare(`SELECT product_id,fingerprint,payload,observed_at,evidence_order FROM supplier_hub_receipts
       WHERE owner_id=? AND product_id IN (${ids.map(()=>'?').join(',')})`).bind(ownerId,...ids).all<ProductRemovalReceiptRow & {product_id:string}>();
-    for(const row of saved.results)if(Object.hasOwn(rows,row.product_id))rows[row.product_id].push({fingerprint:row.fingerprint,payload:row.payload,observed_at:row.observed_at,evidence_order:row.evidence_order});
+    for(const row of saved.results)if(Object.hasOwn(rows,row.product_id))rows[row.product_id].bulk.push({fingerprint:row.fingerprint,payload:row.payload,observed_at:row.observed_at,evidence_order:row.evidence_order});
+    const single=await db.prepare(`SELECT owner_id,product_id,request_id,observed_at,payload,created_at FROM (
+      SELECT owner_id,product_id,request_id,observed_at,payload,created_at,
+        ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY rowid) AS receipt_rank FROM supplier_hub_single_receipts
+      WHERE owner_id=? AND product_id IN (${ids.map(()=>'?').join(',')})) WHERE receipt_rank<=201`)
+      .bind(ownerId,...ids).all<ProductRemovalSingleReceiptRow>();
+    for(const row of single.results)if(Object.hasOwn(rows,row.product_id))rows[row.product_id].single.push(row);
   }
   return rows;
 }
 
 /** Historical accepted/pending evidence remains protected after draft edits. */
 export async function readProductRemovalPolicies(ownerId:string,products:readonly {id:string}[]):Promise<Record<string,ProductRemovalDecision>> {
-  const rows=await receiptRows(ownerId,products);
-  return Object.fromEntries(products.map(product=>[product.id,productRemovalDecisionFromReceipts(rows[product.id])]));
+  try{const rows=await receiptRows(ownerId,products);
+    return Object.fromEntries(products.map(product=>[product.id,productRemovalDecisionFromReceipts(rows[product.id].bulk,rows[product.id].single)]));
+  }catch{return Object.fromEntries(products.map(product=>[product.id,unconfirmedProductRemovalDecision()]));}
 }
 
 /** Mark a current owned product as removed without changing its saved data. */
 export async function removeProduct(ownerId:string,productId:string,expectedVersion:string) {
   const db=await database();
   const rows=(await receiptRows(ownerId,[{id:productId}],db))[productId];
-  if(productRemovalDecisionFromReceipts(rows).blocked)return null;
+  if(productRemovalDecisionFromReceipts(rows.bulk,rows.single).blocked)return null;
   return db.prepare(`INSERT INTO product_removals(product_id,owner_id,removed_at,product_version)
     SELECT p.id,p.owner_id,?,p.updated_at FROM products p
     WHERE p.id=? AND p.owner_id=? AND p.updated_at=?
@@ -49,8 +58,15 @@ export async function removeProduct(ownerId:string,productId:string,expectedVers
               AND json_extract(reviewed.value,'$.payload')=receipt.payload
               AND json_extract(reviewed.value,'$.observed_at')=receipt.observed_at
               AND json_extract(reviewed.value,'$.evidence_order')=receipt.evidence_order))
+      AND NOT EXISTS(SELECT 1 FROM supplier_hub_single_receipts receipt
+        WHERE receipt.owner_id=p.owner_id AND receipt.product_id=p.id
+          AND NOT EXISTS(SELECT 1 FROM json_each(?) reviewed
+            WHERE json_extract(reviewed.value,'$.request_id')=receipt.request_id
+              AND json_extract(reviewed.value,'$.payload')=receipt.payload
+              AND json_extract(reviewed.value,'$.observed_at')=receipt.observed_at
+              AND json_extract(reviewed.value,'$.created_at')=receipt.created_at))
     RETURNING product_id,owner_id,removed_at,product_version`)
-    .bind(new Date().toISOString(),productId,ownerId,expectedVersion,JSON.stringify(rows))
+    .bind(new Date().toISOString(),productId,ownerId,expectedVersion,JSON.stringify(rows.bulk),JSON.stringify(rows.single))
     .first<ProductRemovalRecord>();
 }
 
