@@ -131,6 +131,12 @@ export function parseProductJsonLd(nodes, sourceUrl) {
         if (offers.length !== 1 || !hasType(offers[0], 'Offer'))
             throw Error('옵션별 단일 원가를 확인하지 못했습니다. 가격 범위는 원가로 사용하지 않습니다.');
         const offer = offers[0];
+        // An explicit Offer identity must belong to this exact variant before
+        // its price can become the SKU's cost. Keep one-sided IDs and leading
+        // zeroes; contradictory or invalid published IDs are not fallback data.
+        if (variant.sku !== undefined && offer.sku !== undefined
+            && required(variant.sku, 'SKU').trim() !== required(offer.sku, 'SKU').trim())
+            throw Error('옵션 SKU와 가격 Offer의 SKU가 일치하지 않습니다.');
         let price = offer.price, currency = offer.priceCurrency, quantity = resolve(offer.eligibleQuantity);
         if (price === undefined) {
             const specs = list(offer.priceSpecification).map(resolve);

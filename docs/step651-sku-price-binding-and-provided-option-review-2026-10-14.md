@@ -1,0 +1,31 @@
+# Step 651 — SKU price binding and provided-option review
+
+The user supplied the title `单层硅胶髌骨带专业可调节透气防滑保护运动防损伤护膝登山`, one option `黑色单层`, and its CNY unit price `2.99`. This is evidence for one option only. It does not establish the supplier SKU, minimum order, inventory, other variants, images, packaging or certification. The 1688 URL denied by the browser tool in Step 650 was not read or requested again, including through the app, an extension, an API or another browser.
+
+## Product-price association repair
+
+The shared JSON-LD parser previously accepted a variant SKU even when its nested Offer explicitly named a different SKU, assigning that Offer's price to the variant. A local synthetic product reproduced the defect. When both identifiers are published, the parser now requires nonblank strings that match exactly after trimming. It preserves a valid identifier published on only one side, leading zeroes, the stated CNY price, explicit MOQ and zero inventory. A contradictory variant rejects the receipt rather than importing a subset of prices. The collection-result and Chrome capture contract shapes are unchanged.
+
+Six new cases cover inline/local-reference/non-variant data, invalid or contradictory identities, partial-set rejection and isolated actual intake handlers for both approved companies. Those synthetic complete sources use a different offer ID and an explicitly fictional MOQ; they do not turn the user's missing facts into a collection receipt. The valid local intake exercises draft creation, pricing and replay with manual title, empty description/option name, color and material preserved. A conflicting source creates no receipt, product, option, translation, image or Hub result.
+
+An existing sparse-JSON-LD fallback test expected only three calls although the established intake performs one append-only supplement attempt. The same failure was confirmed with the HEAD parser before updating the fixture expectation. The corrected test checks that a rejected supplement preserves the original source/SKU/price/MOQ and does not initiate translation, quotation-field or Hub calls. No production behavior was changed for this test repair.
+
+## User-provided option and real saved price settings
+
+The existing authorized Chrome remained signed in as the administrator for 유앤채, `A01526306`. Its visible saved settings enabled the integrated rate of 290, with ordinary rate 350, supply margin 50%, Coupang margin 40%, minimum margin 3,000, nearest-10 processing, MSRP factor 1.3, and bundling disabled. Entering `2.99` only in the settings preview gave purchase cost 1,284, supply price 4,280, sale price 7,130 and MSRP 9,270. The preview is not saved, and the settings were cancelled without changing stored inputs or existing product prices.
+
+The requested Google free-translation module translated only the two user-supplied strings, detecting `zh-CN`; the two requests went to `translate.googleapis.com` and made no seller-source reads. Its literal title translation contains seller promotional claims and is not automatically adopted as a verified legal/product declaration. The review workbook instead uses a clearly manual short name, `실리콘 슬개골 스트랩 무릎 보호대`, and option `검정 단층`. The option color `검정` is an explicit manual review of the supplied `黑色` token, not a captured supplier color field.
+
+A test-only pure application helper passes this one-option manual model through the real quotation resolver, row mapper and XLSX writer. Supplier SKU remains empty, MOQ/inventory/packaging remain null, and source images remain absent. A selling pack of one is an explicit review configuration and is separate from supplier MOQ. Category defaults retain their own provenance. Tests exercise price changes, explicit blanks, excluded options, missing required data and unchanged original files.
+
+The private captured original `SupplierHub-A01526306-Kan5562.xlsx` and the saved version-two 81452 profile are read only. The writer verifies the original SHA-256, company/category/header/rule evidence and places exactly one reviewed option in row nine. Other archive parts, instructional rows and the following row are preserved. An ignored local review XLSX was generated with the visible account inputs and the matching 4,280/7,130/9,270 prices. It is explicitly incomplete, with eight required cells missing and ten review errors. Its report says `sourceCollected:false`, `completeOptionsVerified:false`, `submissionReady:false` and `transmitted:false`. It is not stored as a new production product or submitted to Supplier Hub.
+
+## Validation and release
+
+The collector group passed 81/81; the disjoint extension-UI/provided-option group passed 11/11. These are 92 distinct cases in eight files, with zero local failures, cancellations or skips. Two official-original cases require the ignored private capture and skip if it is unavailable. TypeScript and scoped lint passed, and the bounded production build and artifact check passed. These checks do not establish live collection of the requested offer, every-category compatibility or a new Hub receipt.
+
+The new extension package is 0.2.65; all four app download links point to it. The original 0.2.64 archive remains byte-identical. The new package has the same permissions and host permissions as 0.2.64. No assertion is made that the user's installed extension was upgraded. The server applies the same SKU association check to raw JSON-LD browser captures independently of the installed download label.
+
+Released Worker: `b1add1d6-9361-492c-80ab-50e080ff7eb5`; built client: `dashboard-client-LlbKh6ts.js`. Reloading the existing app showed the 0.2.65 link and restored the same two queue rows, including 81452 version two, its official original, and 57/58 mappings. The protected old row's URL/category/input stayed intact and its checkbox was deselected. No source collection was started. The migration count remains 19.
+
+Private screenshots, local translation/review proofs, test logs, before-failure evidence and deployment metadata are in ignored `outputs/`. Live full-option/image collection, new editable production intake and final Supplier Hub registration/receipt remain unverified. No completion percentage is derived from these partial checks.

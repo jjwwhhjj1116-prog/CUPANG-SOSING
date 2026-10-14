@@ -50,16 +50,22 @@ test('browser capture route stores only owner-scoped verified receipts and retri
 
 test('URL intake falls back to same-Chrome capture only after public fetch fails',async()=>{
  const receipt=load('app/browser-product-capture.ts').parseBrowserProductCapture({sourceUrl:url,scripts:[JSON.stringify(source)]},url);
- const calls=[],updates=[];
+ const original=JSON.stringify(receipt),calls=[],updates=[];
  const {collectIntakeProduct}=load('app/intake-collection.ts',{'@/app/collection-batch':{importReceivedJobs:async(jobs,options)=>{assert.equal(jobs[0].received_at,'2026-09-30T00:00:00Z');options.onResult('job',{status:'completed',productId:'draft',completedImages:1});}}});
  const job={id:'job',offer_id:'813724060928',source_url:url,status:'awaiting_connector',goal:'collect'};
  const result=await collectIntakeProduct(job,{signal:new AbortController().signal,fetcher:async(path,init)=>{
   calls.push(path);
   if(path.endsWith('/collect'))return Response.json({code:'SOURCE_NOT_COLLECTED',error:'공개 조회 실패'},{status:422});
+  // This sparse JSON-LD is not a full mobile source. The established add-only
+  // repair is attempted once; a rejected legacy capture preserves the receipt.
+  if(path.endsWith('/source-supplement'))return Response.json({error:'추가한 상세 원문을 확인하지 못했습니다. 기존 원문은 유지됩니다.'},{status:400});
   assert.equal(path,'/api/collection-jobs/job/browser-capture');assert.equal(JSON.parse(init.body).sourceUrl,url);
   return Response.json({jobId:'job',offerId:job.offer_id,receipt:{result:receipt,receivedAt:'2026-09-30T00:00:00Z'}});
  },captureFromBrowser:async(value)=>{assert.equal(value,url);calls.push('chrome');return {sourceUrl:url,scripts:[JSON.stringify(source)]};},onJob:value=>updates.push(value),onProgress:()=>{}});
- assert.deepEqual(calls,['/api/collection-jobs/job/collect','chrome','/api/collection-jobs/job/browser-capture']);
+ assert.deepEqual(calls,['/api/collection-jobs/job/collect','chrome','/api/collection-jobs/job/browser-capture','chrome','/api/collection-jobs/job/source-supplement']);
+ assert.equal(calls.filter(path=>path.endsWith('/source-supplement')).length,1);assert.equal(JSON.stringify(receipt),original);
+ assert.equal(receipt.options[0].sku,'seller-sku');assert.equal(receipt.options[0].unitPriceCny,25.6);assert.equal(receipt.options[0].minimumOrder,1);
+ assert.match(result,/상세 원문 보완 미완료/);assert.ok(!calls.some(path=>path.includes('/translation')||path.includes('/quotation-fields')||path.includes('/supplier-hub')),'source-only fallback must not replace reviewed fields or generate/transmit');
  assert.match(result,/상품 추가 완료/);assert.equal(updates.at(-1).product_id,'draft');
 });
 
