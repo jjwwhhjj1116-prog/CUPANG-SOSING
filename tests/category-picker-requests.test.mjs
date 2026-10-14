@@ -270,3 +270,40 @@ test('malformed fresh profile identities are not absence evidence for a blank re
   h.confirm()();await settle();assert.equal(h.selected.length,0);assert.equal(h.calls.filter(call=>call.method==='POST').length,0);assert.doesNotThrow(()=>h.render());
  }
 });
+
+test('HTML 503 during category create preserves the live selection, original form and idempotent retry',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test'],...currentDraftRules};
+ const original={id:'untouched',name:'기존 작업 양식',categoryId:'991234',categoryPath:['기존 분류'],revision:7,template:{name:'retained.xlsx'},mappings:[{column:0,field:'constant',constant:'기존 수동값',required:true}]};
+ const connection={template:{name:'official-synthetic.xlsx',format:'xlsx',sheetName:'견적서',headerRow:5,dataStartRow:9,headers:['상품명'],sha256:'a'.repeat(64),storageKey:'owner/category-templates/'+'a'.repeat(64)+'.xlsx'},mappings:[{column:0,field:'title',required:true}]};
+ const before=JSON.stringify({original,snapshot,connection});let attempts=0;
+ const h=harness(async(_url,init)=>{
+  assert.equal(init.method,'POST');
+  if(++attempts===1)return new Response('<!DOCTYPE html><title>Temporary upstream unavailable</title>',{status:503,headers:{'content-type':'text/html'}});
+  return Response.json({profile:{...JSON.parse(init.body),id:'new',categoryPath:['test'],revision:1}},{status:201});
+ },false,{initialProfiles:[original],readProfiles:async()=>Response.json({profiles:[original]}),readSchema:async()=>snapshot,readTemplate:async()=>connection});
+ try{
+  h.chooseLive();await settle();assert.equal(h.selected.length,0);assert.equal(h.render().props['aria-busy'],false);
+  assert.match(JSON.stringify(h.render()),/카테고리 저장 실패 \[HTTP 503 · HTML 응답\]/);assert.doesNotMatch(JSON.stringify(h.render()),/Unexpected token|DOCTYPE|Temporary upstream/);
+  assert.equal(JSON.stringify({original,snapshot,connection}),before,'a platform HTML response must not alter the source form or selected snapshot');
+  assert.ok(nodes(h.render()).some(node=>node.props?.className==='category-advanced'&&node.key==='live'),'the same live leaf remains selected for an explicit retry');
+  h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].categoryId,'80719');assert.deepEqual(h.selected[0].template,connection.template);assert.deepEqual(h.selected[0].mappings,connection.mappings);
+  const writes=h.calls.filter(call=>call.method==='POST');assert.equal(writes.length,2);assert.match(writes[0].headers['Idempotency-Key'],/^[0-9a-f-]{36}$/);assert.equal(writes[0].headers['Idempotency-Key'],writes[1].headers['Idempotency-Key']);assert.equal(writes[0].body,writes[1].body);
+  assert.equal(JSON.stringify({original,snapshot,connection}),before);h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.calls.filter(call=>call.method==='POST').length,2);
+ }finally{h.close();}
+});
+
+test('HTML 503 during schema update retains the original revision and reviewed mappings until a valid retry',async()=>{
+ const snapshot={...hubSchemaSnapshot(undefined,'80719'),categoryPath:['test'],...currentDraftRules};
+ const original={id:'saved',name:'기존 작업 양식',categoryId:'80719',categoryPath:['test'],revision:3,template:{name:'retained.xlsx'},mappings:[{column:0,field:'title',required:true}]},before=JSON.stringify({original,snapshot});let attempts=0;
+ const h=harness(async(_url,init)=>{
+  assert.equal(init.method,'PUT');const body=JSON.parse(init.body);assert.equal(body.id,original.id);assert.equal(body.expectedRevision,3);assert.deepEqual(body.profile.template,original.template);assert.deepEqual(body.profile.mappings,original.mappings);
+  if(++attempts===1)return new Response('<!DOCTYPE html><title>Temporary upstream unavailable</title>',{status:503,headers:{'content-type':'text/html'}});
+  return Response.json({profile:{...body.profile,revision:4}});
+ },false,{initialProfiles:[original],readProfiles:async()=>Response.json({profiles:[original]}),readSchema:async()=>snapshot,readTemplate:async()=>{throw Error('The reviewed original template must never be replaced');}});
+ try{
+  h.chooseLive();await settle();assert.equal(h.selected.length,0);assert.equal(h.render().props['aria-busy'],false);
+  assert.match(JSON.stringify(h.render()),/상세 견적 양식 저장 실패 \[HTTP 503 · HTML 응답\]/);assert.doesNotMatch(JSON.stringify(h.render()),/Unexpected token|DOCTYPE|Temporary upstream/);
+  assert.equal(JSON.stringify({original,snapshot}),before);h.confirm()();await settle();assert.equal(h.selected.length,1);assert.equal(h.selected[0].id,original.id);assert.equal(h.selected[0].revision,4);assert.deepEqual(h.selected[0].template,original.template);assert.deepEqual(h.selected[0].mappings,original.mappings);
+  const writes=h.calls.filter(call=>call.method==='PUT');assert.equal(writes.length,2);assert.equal(writes[0].body,writes[1].body);assert.equal(h.calls.filter(call=>call.method==='POST').length,0);assert.equal(JSON.stringify({original,snapshot}),before);
+ }finally{h.close();}
+});

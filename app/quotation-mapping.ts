@@ -130,14 +130,22 @@ export function suggestQuotationMappings(headers: readonly string[], categoryId:
     const key = normalized[column]; let fields = candidates.get(key);
     if (!fields?.size) { unmatchedColumns.push(column); return; }
     let repeated=normalized.filter(value => value === key).length>1;
-    // The official fashion file has two '출시 연도' columns: a hidden
-    // product attribute and a logistics season field. Only its original
-    // merged groups can distinguish their exact wires; header order cannot.
+    // Original merged groups distinguish duplicate labels only when the
+    // captured form also supplies their exact wires. Fashion's '출시 연도'
+    // and Kan5562's exposed/legal '색상' cannot be matched by column order.
     const group=columnGroups?.[column];
     if((fields.size!==1||repeated)&&group){
       const scoped=schema.fields.filter(field=>fields!.has(field.id as CategoryField)&&(
         group==='비노출 속성'&&field.visibility==='hidden'&&field.hubWire?.name===field.label
           &&JSON.stringify(field.hubWire.path)===JSON.stringify(['productPage','unexposedAttributes'])
+        ||group==='노출 속성'&&field.section==='product'&&field.visibility==='exposed'
+          &&headerKey(field.label)===key&&field.hubWire?.name===field.label
+          &&field.hubWire.nameKey==='attributeName'&&field.hubWire.valueKey==='attributeValue'
+          &&JSON.stringify(field.hubWire.path)===JSON.stringify(['productPage','commonAttributes','exposedAttributes'])
+        ||group==='상품 법적 정보 : 고객이 상품 이해에 필요한 법적 고시 정보입니다.'&&field.section==='legal'&&field.visibility==='common'
+          &&headerKey(field.label)===key&&field.hubWire?.name===field.label
+          &&field.hubWire.nameKey==='noticeItemName'&&field.hubWire.valueKey==='noticeItemValue'
+          &&JSON.stringify(field.hubWire.path)===JSON.stringify(['legalPage','notices'])
         ||group==='시즌 속성'&&field.section==='logistics'&&!field.hubWire?.name&&field.hubWire?.path.length===2
           &&field.hubWire.path[0]==='logisticsPage'&&['fashionYear','fashionSeason'].includes(field.hubWire.path[1])));
       if(scoped.length===1){fields=new Set([scoped[0].id as CategoryField]);repeated=normalized.filter((value,index)=>value===key&&columnGroups?.[index]===group).length>1;}

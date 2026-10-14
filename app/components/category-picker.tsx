@@ -161,7 +161,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         const connection={template:profile.template,mappings:translateHubRuleVersionMappings(profile.mappings,profile.hubSchema,hubSchema)};
         if(cancelled())return profile;
         const response=await fetch('/api/category-profiles',{method:'PUT',headers:{'content-type':'application/json',...(scope?{'X-YOOFAM-Workspace-Owner':scope.ownerId}:{})},body:JSON.stringify({id:profile.id,expectedRevision:profile.revision,profile:{...profile,hubSchema,...connection}}),signal:controller.signal});
-        const result=await response.json() as {profile?:CategoryProfile;error?:string};
+        const result=await readCategoryJsonResponse<{profile?:CategoryProfile;error?:string}>(response,'상세 견적 양식 저장');
         if(!response.ok)throw Error(result.error??'상세 견적 양식을 저장하지 못했습니다.');
         const saved=result.profile;
         if(!saved||saved.id!==profile.id||saved.revision!==profile.revision+1||saved.categoryId!==target!.categoryId||JSON.stringify(saved.categoryPath)!==JSON.stringify(target!.path)||!sameHubDefinition(saved.hubSchema,hubSchema)||JSON.stringify(saved.template)!==JSON.stringify(connection.template)||JSON.stringify(saved.mappings)!==JSON.stringify(connection.mappings))throw Error('저장된 상세 양식과 기존 견적서 연결을 확인하지 못했습니다.');
@@ -171,7 +171,7 @@ export function CategoryPicker({ profiles: suppliedProfiles, selectedId, workspa
         const body=JSON.stringify(prepared);
         if(createRequest.current?.body!==body)createRequest.current={body,id:crypto.randomUUID()};
         const response=await fetch('/api/category-profiles',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':createRequest.current.id,...(scope?{'X-YOOFAM-Workspace-Owner':scope.ownerId}:{})},body,signal:controller.signal});
-        const result=await response.json() as {profile:CategoryProfile;error?:string};
+        const result=await readCategoryJsonResponse<{profile:CategoryProfile;error?:string}>(response,'카테고리 저장');
         if(cancelled())throw Error('카테고리 선택을 취소했습니다.');
         if(!response.ok)throw Error(result.error??'카테고리를 저장하지 못했습니다.');
         return confirmPreparedCategorySelectionProfile(choice,result.profile,prepared,captured,scope?.company,sourceId);
