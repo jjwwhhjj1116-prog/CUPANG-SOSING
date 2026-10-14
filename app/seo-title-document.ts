@@ -1,7 +1,17 @@
-import type { ProductContent } from '@/app/product-content';
+import type { ContentPatch, ProductContent } from '@/app/product-content';
 import { quotationOptionTitle } from '@/app/quotation-option-title';
 
-/** An existing Couplus document is read directly after a manual SEO save;
+/** Stamp the existing-document title only after an explicit SEO writer applied
+ * a title or keyword field. A missing legacy title keeps its known fallback. */
+export function applySeoDocumentTitlePolicy(content: ProductContent, seo: ContentPatch['seo']): void {
+  if (!seo || seo.title === undefined && seo.keywords === undefined) return;
+  const title = content.seo.title;
+  if (title.value || title.provenance === 'manual') content.seoTitleDocument = {
+    policy: 'couplus-seo-save-v1', sourceTitle: title.value, sourceUpdatedAt: title.updatedAt, value: title.value,
+  };
+}
+
+/** An existing Couplus document is read directly after an explicit SEO save;
  * comma + korName conversion is the missing-document fallback. Retain the
  * former fallback for legacy content and a later independent title writer. */
 export function quotationSeoDocumentTitle(content: ProductContent, resolvedBaseTitle: string,
