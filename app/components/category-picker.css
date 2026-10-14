@@ -19,3 +19,16 @@
 @media(max-width:760px){.category-tree{gap:12px}.category-tree section{min-width:185px}.category-tree button{font-size:13px;padding:12px}.category-tree h3{font-size:14px;padding:18px}}
 .category-instructions{margin:0;font-size:14px;color:#536176;line-height:1.7}.category-advanced{border-top:1px solid #dfe4ec;padding-top:14px;font-size:13px;color:#536176}.category-advanced>summary{cursor:pointer;padding:8px 0}.category-advanced>p{line-height:1.7}
 .intake-category-dialog{margin:8px 0 18px;border:1px solid #dce3ef;border-radius:9px;background:#fff;box-shadow:0 7px 20px #16234a12}.intake-category-dialog>header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #e4e8ef}.intake-category-dialog>header h3{margin:0;color:#151b50;font-size:18px}.intake-category-dialog>footer{display:flex;justify-content:flex-end;padding:12px 20px;border-top:1px solid #e4e8ef}.category-saved{font-size:12px;color:#536176}.category-saved>summary{cursor:pointer;padding:5px 0}.category-saved .field{margin-top:10px}
+
+/* Keep the live hierarchy as adjacent columns, even with only one root list.
+   Saved/manual category trees above retain their existing layout. */
+.hub-category-browser{min-width:0}
+.hub-category-browser .category-tree{align-items:stretch;gap:14px;min-width:0;max-width:100%;padding:3px 3px 12px;scroll-snap-type:x proximity}
+.hub-category-browser .category-tree>section{flex:0 0 clamp(220px,21vw,260px);width:clamp(220px,21vw,260px);min-width:0;max-width:none;border-radius:7px;scroll-snap-align:start;scroll-margin-inline:14px}
+.hub-category-browser .category-tree h3{padding:14px 16px;font-size:14px;line-height:1.5}
+.hub-category-browser .category-tree-options{max-height:min(440px,55vh);min-height:240px;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.hub-category-browser .category-tree button{min-height:54px;padding:10px 13px;font-size:13px;line-height:1.55;gap:8px}
+.hub-category-browser .category-tree button>span{min-width:0;overflow-wrap:anywhere}
+.hub-category-browser .category-tree button>small{flex-shrink:0;padding:2px 5px;font-size:10px}
+.hub-category-browser .category-tree button:focus-visible{outline:3px solid #6ab7ed;outline-offset:-3px}
+@media(max-width:760px){.hub-category-browser .category-tree{gap:10px}.hub-category-browser .category-tree>section{flex-basis:min(220px,75vw);width:min(220px,75vw);min-width:160px}.hub-category-browser .category-tree h3{padding:12px;font-size:13px}.hub-category-browser .category-tree-options{max-height:min(400px,50vh);min-height:200px}.hub-category-browser .category-tree button{padding:10px 12px}}

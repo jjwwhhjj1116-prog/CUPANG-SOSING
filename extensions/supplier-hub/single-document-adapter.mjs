@@ -1,6 +1,8 @@
 import {verifySupplierHubCompany} from './company.mjs';
 import {HANDOFF_ORIGINS} from './handoff-store.mjs';
 import {SINGLE_DOCUMENT_ORIGIN,SingleDocumentError} from './single-document.mjs';
+import {singleDocumentLoadPage} from './single-load-page.mjs';
+import {observeSingleDraftLoad} from './single-load-observer.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -158,31 +160,24 @@ export function singleDocumentRestoreOwnedRecordPage(input){
   records[input.binding.packetDigest]=input.record;data.yoofamSingleDocumentRecords=JSON.stringify(records);return true;
 }
 
-/** Recorded selector navigation with exact visible row identity. No vendor
- * row index, checkbox auto-selection, retry click or product-field edits. */
+/** Advance only the owned document after its read-only UI load was correlated
+ * with the exact browser request. Never auto-select terms or edit fields. */
 export async function singleDocumentNavigatePage(input){
   const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
   const visible=node=>Boolean(node&&node.getClientRects().length);
+  let companyVerified=false;
   const check=()=>{
     if(location.origin!=='https://supplier.coupang.com'||!/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname))throw Error('개별 등록 단계 화면이 변경되었습니다.');
-    const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);if(codes.length!==1||codes[0]!==input.binding.identity.company.code)throw Error('개별 등록 회사가 변경되었습니다.');
+    const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
+    const names=Array.from(document.querySelectorAll('button')).filter(node=>visible(node)&&!node.disabled&&(node.innerText||'').trim()===input.binding.identity.company.name);
+    if(codes.length>1||codes.length===1&&codes[0]!==input.binding.identity.company.code||!codes.length&&(!companyVerified||names.length!==1))throw Error('개별 등록 회사가 변경되었습니다.');
+    if(codes.length===1)companyVerified=true;
     const record=JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}')[input.binding.packetDigest];
     if(!record||canon(record.binding)!==canon(input.binding)||canon(record.docId)!==canon(input.docId))throw Error('이 요청이 생성한 정확한 문서가 아닙니다.');
     return record;
   };
   const wait=async predicate=>{for(let count=0;count<80;count++){check();if(predicate())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('개별 등록 화면이 준비되지 않았습니다. 읽기로 확인해주세요.');};
   const record=check();
-  if(location.pathname.endsWith('/startPage')){
-    if(Array.from(document.querySelectorAll('.rsc-text-input input')).some(node=>(node.value||'').trim()))throw Error('기존 작성 중인 상품을 보존했습니다.');
-    const load=Array.from(document.querySelectorAll('.btn-outline-secondary')).filter(node=>visible(node)&&!node.disabled&&(node.innerText||'').includes('중간 저장 불러오기'));
-    if(load.length!==1)throw Error('중간 저장 불러오기 버튼을 확인하지 못했습니다.');load[0].click();
-    await wait(()=>Array.from(document.querySelectorAll('.modal-title')).some(node=>visible(node)&&(node.innerText||'').includes('중간 저장 불러오기')));
-    const rows=Array.from(document.querySelectorAll('.sr-contents__table-draft tbody > tr')).filter(visible),matches=rows.filter(row=>row.getAttribute('data-doc-id')===String(input.docId));
-    if(matches.length!==1)throw Error('새 문서 ID가 화면에 정확히 식별되지 않아 다른 중간 저장 작업을 선택하지 않았습니다.');
-    const buttons=Array.from(matches[0].querySelectorAll('.btn-outline-primary')).filter(node=>visible(node)&&!node.disabled);if(buttons.length!==1)throw Error('새 중간 저장 문서 선택 버튼을 확인해주세요.');
-    buttons[0].click();await wait(()=>Array.from(document.querySelectorAll('.rsc-text-input input')).some(node=>node.value===input.productName));
-    record.loadedDocId=input.docId;document.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify({...JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}'),[input.binding.packetDigest]:record});
-  }
   // Never advance an already open user form merely because its title matches.
   if(record.loadedDocId!==input.docId)throw Error('이 요청에서 불러온 새 문서 화면이 아니므로 기존 작성 단계를 유지했습니다.');
   const pages=['Product Page','Image Page','Legal Page','Logistics Page'];
@@ -191,7 +186,7 @@ export async function singleDocumentNavigatePage(input){
     check();
     // A required unchecked term can block intermediate navigation. Stop here;
     // its action-time confirmation needs an observed UI contract of its own.
-    if(Array.from(document.querySelectorAll('input[type="checkbox"]')).some(node=>visible(node)&&node.required&&!node.checked))throw Error('현재 단계의 필수 동의는 사용자가 직접 확인해야 합니다. 자동으로 선택하지 않았습니다.');
+    if(Array.from(document.querySelectorAll('input[type="checkbox"]')).some(node=>visible(node)&&(node.required||['agreeMSRPTerm','agreeLabelContact'].includes(node.id))&&!node.checked))throw Error('현재 단계의 필수 동의는 사용자가 직접 확인해야 합니다. 자동으로 선택하지 않았습니다.');
     const buttons=Array.from(document.querySelectorAll('button[type="submit"]')).filter(node=>visible(node)&&!node.disabled&&node.getAttribute('aria-disabled')!=='true');
     if(buttons.length!==1)throw Error('다음 개별 등록 단계 버튼을 확인해주세요.');buttons[0].click();await wait(()=>(document.querySelector('#root__title')?.innerText||'').trim()===next);
   }
@@ -255,7 +250,7 @@ export function singleDocumentReceiptPage(input){
 
 export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now}={}){
   if(!api?.tabs||!api?.scripting||['get','query','update','sendMessage'].some(key=>typeof api.tabs[key]!=='function')||typeof api.scripting.executeScript!=='function')throw new TypeError('Existing Chrome tab adapter is required.');
-  const sourceBindings=new Map(),baselines=new Map(),pageRecords=new Map();
+  const sourceBindings=new Map(),baselines=new Map(),pageRecords=new Map(),frameDocuments=new Map();
   async function appCurrent(identity){
     if(!HANDOFF_ORIGINS.includes(identity?.origin)||!Number.isSafeInteger(identity.appTabId)||!Number.isSafeInteger(identity.windowId))fail('SOURCE_CHANGED','원래 앱 탭을 확인해주세요.');
     const tab=await api.tabs.get(identity.appTabId);let url;try{url=new URL(tab?.url);}catch{fail('SOURCE_CHANGED','원래 앱 탭을 같은 Chrome 창에 열어두세요.');}
@@ -287,12 +282,16 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
     const proof=await readSource(prior.input);if(!proof.current||sessionId!==undefined&&proof.sessionId!==sessionId)fail('SOURCE_CHANGED','현재 회원 세션·준비한 개별 견적서가 변경되었습니다.');
     return sourceBindings.get(canonical(identity)).binding;
   }
-  async function execute(tab,identity,func,args){
+  async function execute(tab,identity,func,args,documentId){
     const before=await api.tabs.get(tab.tabId);if(!validHubTab(before,identity.windowId))fail('TAB_CHANGED','선택한 Supplier Hub 탭이 이동되었습니다.');
-    const [company]=await api.scripting.executeScript({target:{tabId:tab.tabId,frameIds:[0]},func:verifySupplierHubCompany,args:[identity.company,'catalog']});
+    const target={tabId:tab.tabId,...(documentId?{documentIds:[documentId]}:{frameIds:[0]})};
+    const [company]=await api.scripting.executeScript({target,func:verifySupplierHubCompany,args:[identity.company,'catalog']});
     if(company?.frameId!==undefined&&company.frameId!==0||company?.result?.code!==identity.company.code)fail('TAB_CHANGED','현재 Supplier Hub 회사가 다릅니다.');
-    const [execution]=await api.scripting.executeScript({target:{tabId:tab.tabId,frameIds:[0]},func,args});
+    if(documentId&&company?.documentId!==documentId)fail('TAB_CHANGED','새 문서를 불러오는 브라우저 문서가 변경되었습니다.');
+    const [execution]=await api.scripting.executeScript({target,func,args});
     const after=await api.tabs.get(tab.tabId);if(!validHubTab(after,identity.windowId)||execution?.frameId!==undefined&&execution.frameId!==0)fail('TAB_CHANGED','개별 등록 탭·프레임이 변경되었습니다.');
+    if(documentId&&execution?.documentId!==documentId)fail('TAB_CHANGED','새 문서를 불러오는 브라우저 문서가 변경되었습니다.');
+    if(execution?.frameId===0&&typeof execution.documentId==='string')frameDocuments.set(tab.tabId,execution.documentId);
     return execution?.result;
   }
   async function readTab(input){
@@ -348,6 +347,27 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
         const carried=pageRecords.get(binding.packetDigest);
         if(!carried||!equal(carried.docId,record.docId)||!equal(carried.binding,binding))fail('NAVIGATION','같은 탭의 원래 문서 응답 기록이 없습니다.');
         await execute(input.tab,input.identity,singleDocumentRestoreOwnedRecordPage,[{binding,record:carried}]);
+      }
+      const current=await api.tabs.get(input.tab.tabId);
+      if(new URL(current.url).pathname==='/sr/registration/step/startPage'){
+        await owned(input);const documentId=frameDocuments.get(input.tab.tabId),attemptId=crypto.randomUUID();
+        const readList=async()=>{
+          const response=await hubRequest({...input,method:'GET',path:'/sr/draft/api/drafts'});
+          if(response?.ok!==true||!Array.isArray(response.json))fail('NAVIGATION','원문 중간 저장 목록을 확인하지 못했습니다.');
+          return response.json.map(row=>({docId:row.docId,productName:row.productName,categoryPath:row.categoryPath,modifiedAt:row.modifiedAt,remark:Boolean(row.remark)}));
+        };
+        const drafts=await readList(),base={binding,docId:input.docId,productName:input.productName,attemptId,drafts};
+        await execute(input.tab,input.identity,singleDocumentLoadPage,[{...base,action:'prepare'}],documentId);
+        const after=await readList();if(!equal(after,drafts))fail('NAVIGATION','문서 목록이 변경되었습니다. 다른 문서를 선택하지 않았습니다.');
+        const observed=await observeSingleDraftLoad({api,tabId:input.tab.tabId,documentId,docId:input.docId},()=>execute(input.tab,input.identity,singleDocumentLoadPage,[{...base,action:'load'}],documentId));
+        if(observed.loaded?.loaded!==true||!equal(observed.loaded.docId,input.docId))fail('NAVIGATION','새 문서 화면의 불러오기를 확인하지 못했습니다.');
+        await bindingFor(input.identity,input.sessionId);
+        const readback=await readDocument(input);
+        // Repeat the receiver's exact-body check after the page's own loader;
+        // replacing only the server-assigned ID restores the prepared body.
+        const body=readback?.body?copy(readback.body):null;if(!body)fail('READBACK_UNCONFIRMED','불러온 새 문서의 본문을 확인하지 못했습니다.');body.docId=null;
+        if(await digest(body)!==binding.preparedBodySha256)fail('READBACK_UNCONFIRMED','불러오는 동안 새 문서 본문이 변경되었습니다.');
+        await execute(input.tab,input.identity,singleDocumentLoadPage,[{...base,action:'confirm',observation:observed.observation}],documentId);
       }
       await bindingFor(input.identity,input.sessionId);return execute(input.tab,input.identity,singleDocumentNavigatePage,[{binding,docId:input.docId,productName:input.productName}]);
     },

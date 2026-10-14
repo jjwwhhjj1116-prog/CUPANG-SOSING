@@ -4,16 +4,25 @@ import {singleBrowserFixture} from './helpers/supplier-hub-single-document-adapt
 import {SINGLE_COMPANIES} from './helpers/supplier-hub-single-document.mjs';
 
 for(const company of SINGLE_COMPANIES){
+  test(company.name+' modal and next-step clicks may close the verified company menu without losing the owned document',async()=>{
+    const f=await singleBrowserFixture(company,{companyMenuCloses:true});
+    try{
+      const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'awaiting-consent',JSON.stringify(result));
+      assert.deepEqual(f.loaderRequests,[f.createdDocId]);assert.equal(f.nextClicks,4);assert.equal(f.submitted,0);assert.equal(f.checkboxClicks,0);
+      assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+    }finally{f.close();}
+  });
   test(company.name+' concrete serialized tab adapter reads fresh package and sends exact create/update/2..5 without automatic agreement or false receipt',async()=>{
     const f=await singleBrowserFixture(company);
     try{
-      const started=await f.receiver.start(f.packet,f.sender);assert.equal(started.state,'awaiting-consent',JSON.stringify(started.error));assert.equal(f.submitted,0);assert.deepEqual(f.selected,['created-'+company.code]);
+      const started=await f.receiver.start(f.packet,f.sender);assert.equal(started.state,'awaiting-consent',JSON.stringify(started.error));assert.equal(f.submitted,0);assert.deepEqual(f.selected,[f.createdDocId]);
       assert.ok(f.calls.filter(call=>call.name==='app-fetch').every(call=>call.init.method==='GET'&&call.init.credentials==='same-origin'&&call.init.redirect==='error'));
       const remote=f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST');assert.equal(remote.length,6);
       assert.deepEqual(remote.map(call=>new URL(call.url).pathname),['/sr/draft/api/create','/sr/draft/api/update',...[2,3,4,5].map(step=>'/sr/qvt/api/validate-step/'+step)]);
       for(const call of remote){assert.equal(call.init.credentials,'include');assert.equal(call.init.redirect,'error');assert.equal(Object.hasOwn(call.init.headers,'authorization'),false);assert.equal(Object.hasOwn(call.init.headers,'cookie'),false);}
       const body=JSON.parse(remote[0].init.body);assert.equal(body.jsonDocument[0].imagePage.msrpAgree,false);assert.equal(f.packet.body.jsonDocument[0].imagePage.msrpAgree,true);
-      assert.equal(f.calls.filter(call=>call.name==='tabs-update').length,1);assert.ok(f.calls.filter(call=>call.name==='execute').every(call=>JSON.stringify(call.target.frameIds)==='[0]'));
+      assert.equal(f.calls.filter(call=>call.name==='tabs-update').length,1);assert.ok(f.calls.filter(call=>call.name==='execute').every(call=>JSON.stringify(call.target.frameIds)==='[0]'||call.target.documentIds?.length===1));
+      assert.deepEqual(f.loaderRequests,[f.createdDocId]);assert.equal(f.ownDocumentReadsDuringLoad,0);assert.ok(Object.values(f.webRequest).every(event=>event.size===0));
       const submitted=await f.receiver.confirm(f.packet,f.sender,f.action(started));assert.equal(f.submitted,1);assert.equal(submitted.state,'submit-requested');assert.equal(submitted.registered,false);assert.equal(submitted.error.code,'RECEIPT_UNCONFIRMED');
       await f.receiver.observe(f.packet,f.sender);assert.equal(f.submitted,1);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
     }finally{f.close();}
@@ -24,7 +33,7 @@ for(const company of SINGLE_COMPANIES){
     try{
       const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'awaiting-consent',JSON.stringify(result.error));assert.equal(result.registered,false);
       const reads=f.calls.filter(call=>call.name==='hub-fetch'&&new URL(call.url).pathname.includes('/get-by-id/'));
-      assert.ok(reads.length>=1);assert.ok(reads.every(call=>call.init.method==='GET'&&call.url.endsWith('/created-'+company.code)));
+      assert.ok(reads.length>=1);assert.ok(reads.every(call=>call.init.method==='GET'&&call.url.endsWith('/'+f.createdDocId)));
       assert.equal(reads.some(call=>call.url.endsWith('/protected-previous')),false);
       assert.equal(f.submitted,0);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
     }finally{f.close();}
@@ -56,9 +65,76 @@ test('fresh package mismatch with a different option document cannot use a prepa
   try{const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.error.code,'SOURCE_CHANGED');assert.equal(f.calls.some(call=>call.name==='hub-fetch'),false);}finally{f.close();}
 });
 
-test('row identity absent never selects an API-position-matched existing draft',async()=>{
+test('public rows without a DOM docId load only the new owned document through exact Chrome observation',async()=>{
   const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{hideRowIdentity:true});
-  try{const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'navigation-requested');assert.equal(result.registered,false);assert.deepEqual(f.selected,[]);assert.equal(f.submitted,0);assert.deepEqual(f.documents.get('protected-previous'),f.prior);}finally{f.close();}
+  try{const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'awaiting-consent',JSON.stringify(result.error));assert.equal(result.registered,false);assert.deepEqual(f.selected,[f.createdDocId]);assert.deepEqual(f.loaderRequests,[f.createdDocId]);assert.equal(f.submitted,0);assert.ok(Object.values(f.webRequest).every(event=>event.size===0));assert.deepEqual(f.documents.get('protected-previous'),f.prior);}finally{f.close();}
+});
+
+test('wrong loader document, cached response or redirect cannot advance after the read-only selection',async()=>{
+  for(const options of [{wrongLoaderId:987654321},{loaderCache:true},{loaderRedirect:true},{loaderError:true},{loaderStatus:403},{loaderContentType:'text/html'}]){
+    const f=await singleBrowserFixture(SINGLE_COMPANIES[0],options);
+    try{
+      const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'navigation-requested',JSON.stringify(result));assert.equal(result.registered,false);
+      assert.equal(f.nextClicks,0);assert.equal(f.checkboxClicks,0);assert.equal(f.submitted,0);assert.equal(f.loaded===f.createdDocId||options.wrongLoaderId!==undefined,true);
+      assert.ok(Object.values(f.webRequest).every(event=>event.size===0));assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+      const record=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest];assert.equal(record.loadedDocId,undefined);
+    }finally{f.close();}
+  }
+});
+
+test('changed complete API snapshot or ambiguous minute-level display tuple never clicks a document row',async()=>{
+  const stale={draftList:(list,f)=>f.modal?list.map(row=>row.docId===f.createdDocId?{...row,modifiedAt:new Date(f.now+60000).toISOString()}:row):list};
+  for(const options of [stale,{ambiguousRow:true}]){
+    const f=await singleBrowserFixture(SINGLE_COMPANIES[0],options);
+    try{const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'navigation-requested',JSON.stringify(result));assert.deepEqual(f.selected,[]);assert.deepEqual(f.loaderRequests,[]);assert.equal(f.nextClicks,0);assert.equal(f.submitted,0);assert.ok(Object.values(f.webRequest).every(event=>event.size===0));assert.deepEqual(f.documents.get('protected-previous'),f.prior);}finally{f.close();}
+  }
+});
+
+test('known unchecked MSRP consent halts at product page even without the HTML required flag',async()=>{
+  const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{intermediateAgreementUnchecked:true});
+  try{
+    const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'navigation-requested',JSON.stringify(result));assert.equal(result.registered,false);
+    assert.deepEqual(f.selected,[f.createdDocId]);assert.equal(f.hubLocation.pathname,'/sr/registration/step/productPage');assert.equal(f.nextClicks,1);
+    assert.equal(f.intermediateAgreement.required,false);assert.equal(f.intermediateAgreement.checked,false);assert.equal(f.checkboxClicks,0);assert.equal(f.submitted,0);
+    assert.ok(Object.values(f.webRequest).every(event=>event.size===0));assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+  }finally{f.close();}
+});
+
+test('company header changing after the menu closes cannot nominate or load any row',async()=>{
+  const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{companyMenuCloses:true,companyChangeAfterModal:true});
+  try{
+    const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'navigation-requested',JSON.stringify(result));assert.equal(result.registered,false);
+    assert.deepEqual(f.selected,[]);assert.equal(f.nextClicks,0);assert.equal(f.checkboxClicks,0);assert.equal(f.submitted,0);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+  }finally{f.close();}
+});
+
+
+test('new document price or schema revision changed after the UI GET cannot advance or mark the page loaded',async()=>{
+  for(const mutate of [document=>{document.jsonDocument[0].productPage.supplyPrice+=1;},document=>{document.version+=1;}]){
+    const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{documentRead:(document,fixture)=>{
+      if(fixture.loaderRequests.length>0){mutate(document);fixture.documents.set(fixture.createdDocId,structuredClone(document));}
+      return document;
+    }});
+    try{
+      const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'navigation-requested',JSON.stringify(result));assert.equal(result.error.code,'READBACK_UNCONFIRMED');
+      assert.deepEqual(f.selected,[f.createdDocId]);assert.deepEqual(f.loaderRequests,[f.createdDocId]);assert.equal(f.nextClicks,0);assert.equal(f.checkboxClicks,0);assert.equal(f.submitted,0);
+      const record=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest];assert.equal(record.loadedDocId,undefined);
+      assert.ok(Object.values(f.webRequest).every(event=>event.size===0));assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+    }finally{f.close();}
+  }
+});
+
+test('browser document replacement during the read-only loader blocks continuation in the replacement document',async()=>{
+  const replacement='99999999-1111-4222-8333-444444444444';
+  const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{beforeHubFetch:(url,init,fixture)=>{
+    if(fixture.loaderRequests.length>0&&url.includes('/get-by-id/'))fixture.hubDocumentId=replacement;
+  }});
+  try{
+    const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'scope-blocked',JSON.stringify(result));assert.equal(result.error.code,'TAB_CHANGED');assert.equal(result.registered,false);
+    assert.deepEqual(f.selected,[f.createdDocId]);assert.equal(f.hubDocumentId,replacement);assert.equal(f.nextClicks,0);assert.equal(f.checkboxClicks,0);assert.equal(f.submitted,0);
+    const record=JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest];assert.equal(record.loadedDocId,undefined);
+    assert.ok(Object.values(f.webRequest).every(event=>event.size===0));assert.deepEqual(f.documents.get('protected-previous'),f.prior);
+  }finally{f.close();}
 });
 
 test('a populated user Hub form is preserved and blocked before create request',async()=>{
