@@ -3,6 +3,7 @@ import {HANDOFF_ORIGINS} from './handoff-store.mjs';
 import {SINGLE_DOCUMENT_ORIGIN,SingleDocumentError} from './single-document.mjs';
 import {singleDocumentLoadPage} from './single-load-page.mjs';
 import {observeSingleDraftLoad} from './single-load-observer.mjs';
+import {singleDocumentStageAgreementPage} from './single-stage-page.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -186,12 +187,32 @@ export async function singleDocumentNavigatePage(input){
     check();
     // A required unchecked term can block intermediate navigation. Stop here;
     // its action-time confirmation needs an observed UI contract of its own.
-    if(Array.from(document.querySelectorAll('input[type="checkbox"]')).some(node=>visible(node)&&(node.required||['agreeMSRPTerm','agreeLabelContact'].includes(node.id))&&!node.checked))throw Error('현재 단계의 필수 동의는 사용자가 직접 확인해야 합니다. 자동으로 선택하지 않았습니다.');
+    const checkboxes=Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(visible),stage=location.pathname.split('/').at(-1),known={productPage:'agreeMSRPTerm',imagePage:'agreeLabelContact'}[stage];
+    if(known&&checkboxes.some(node=>node.id===known)&&!(input.stageConsents??[]).some(entry=>entry.stage===stage))return {docId:input.docId,company:input.binding.identity.company,productName:input.productName,readyForSubmit:false,readyForConsent:true,stage};
+    if(checkboxes.some(node=>(node.required||['agreeMSRPTerm','agreeLabelContact'].includes(node.id))&&!node.checked))throw Error('현재 단계의 필수 동의를 확인해주세요. 자동으로 선택하지 않았습니다.');
     const buttons=Array.from(document.querySelectorAll('button[type="submit"]')).filter(node=>visible(node)&&!node.disabled&&node.getAttribute('aria-disabled')!=='true');
-    if(buttons.length!==1)throw Error('다음 개별 등록 단계 버튼을 확인해주세요.');buttons[0].click();await wait(()=>(document.querySelector('#root__title')?.innerText||'').trim()===next);
+    if(buttons.length!==1)throw Error('다음 개별 등록 단계 버튼을 확인해주세요.');
+    const currentRecord=check();if(currentRecord.nextOperations?.[stage])throw Error('이 단계의 다음 요청은 이미 실행했습니다. 화면을 읽기로 확인하고 다시 누르지 않았습니다.');
+    currentRecord.nextOperations??={};currentRecord.nextOperations[stage]={next,state:'requested'};
+    document.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify({...JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}'),[input.binding.packetDigest]:currentRecord});
+    buttons[0].click();await wait(()=>(document.querySelector('#root__title')?.innerText||'').trim()===next);
+    const advanced=check();advanced.nextOperations[stage].state='observed';
+    document.documentElement.dataset.yoofamSingleDocumentRecords=JSON.stringify({...JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}'),[input.binding.packetDigest]:advanced});
   }
   check();if(record.loadedDocId!==input.docId||(document.querySelector('#root__title')?.innerText||'').trim()!=='Logistics Page')throw Error('선택한 새 문서의 최종 단계를 확인하지 못했습니다.');
   return {docId:input.docId,company:input.binding.identity.company,productName:input.productName,readyForSubmit:true};
+}
+
+/** Recovery reads the current owned stage without another next-step click. */
+export function singleDocumentNavigationReadPage(input){
+  const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
+  const record=JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}')[input.binding.packetDigest],codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),m=>m[1]),stage=location.pathname.split('/').at(-1);
+  if(location.origin!=='https://supplier.coupang.com'||codes.length!==1||codes[0]!==input.binding.identity.company.code||!record||canon(record.binding)!==canon(input.binding)||record.docId!==input.docId||record.loadedDocId!==input.docId)throw Error('원래 새 문서의 현재 단계를 읽기로 확인해주세요.');
+  const base={docId:input.docId,company:input.binding.identity.company,productName:input.productName};
+  if(stage==='logisticsPage'&&(document.querySelector('#root__title')?.innerText||'').trim()==='Logistics Page')return {...base,readyForSubmit:true};
+  const known={productPage:'agreeMSRPTerm',imagePage:'agreeLabelContact'}[stage];
+  if(known&&!(input.stageConsents??[]).some(entry=>entry.stage===stage)&&Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(node=>node.getClientRects().length&&node.id===known).length===1)return {...base,readyForSubmit:false,readyForConsent:true,stage};
+  throw Error('이 단계의 요청 결과가 불명확합니다. 읽기로 확인했으며 다음 버튼을 다시 누르지 않았습니다.');
 }
 
 /** Read current displayed legal terms; known IDs alone do not establish their
@@ -208,11 +229,12 @@ export function singleDocumentAgreementPage(input){
     if(!node.id||texts.length!==1||node.disabled)throw Error('동의 항목의 정확한 문구를 확인하지 못했습니다.');
     return {key:node.id,id:node.id,text:texts[0],required:node.required===true||node.id==='agreeLabelContact',checked:node.checked===true,enabled:true};
   });
-  if(!items.length||new Set(items.map(item=>item.id)).size!==items.length||!items.some(item=>item.required))throw Error('현재 최종 단계의 필수 동의 문구를 확인하지 못했습니다.');
+  const stageConfirmed=['productPage','imagePage'].every(stage=>record.stageConsentOperations?.[stage]?.state==='observed');
+  if(!items.length&&!stageConfirmed||new Set(items.map(item=>item.id)).size!==items.length||items.length&&!items.some(item=>item.required))throw Error('현재 최종 단계의 필수 동의 문구를 확인하지 못했습니다.');
   if(input.action==='confirm'){
     const expected=input.challenge?.items;
     if(!Array.isArray(expected)||canon(items.map(({key,id,text,required})=>({key,id,text,required})))!==canon(expected)
-      ||input.confirmation?.challengeId!==input.challenge.id||input.confirmation?.userInitiated!==true
+      ||input.confirmation?.challengeId!==input.challenge.id||input.confirmation?.userInitiated!==true||Date.now()>input.challenge.expiresAt
       ||canon([...input.confirmation.approvedKeys].sort())!==canon(items.filter(item=>item.required).map(item=>item.key).sort()))throw Error('현재 사용자가 확인한 동의 항목과 다릅니다.');
     for(const item of items.filter(item=>item.required)){
       const candidates=Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(node=>visible(node)&&node.id===item.id);if(candidates.length!==1||candidates[0].disabled)throw Error('동의 선택 항목이 변경되었습니다.');
@@ -369,14 +391,19 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
         if(await digest(body)!==binding.preparedBodySha256)fail('READBACK_UNCONFIRMED','불러오는 동안 새 문서 본문이 변경되었습니다.');
         await execute(input.tab,input.identity,singleDocumentLoadPage,[{...base,action:'confirm',observation:observed.observation}],documentId);
       }
-      await bindingFor(input.identity,input.sessionId);return execute(input.tab,input.identity,singleDocumentNavigatePage,[{binding,docId:input.docId,productName:input.productName}]);
+      await bindingFor(input.identity,input.sessionId);return execute(input.tab,input.identity,singleDocumentNavigatePage,[{binding,docId:input.docId,productName:input.productName,stageConsents:input.stageConsents??[]}]);
     },
+    readNavigation:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentNavigationReadPage,[{binding,docId:input.docId,productName:input.productName,stageConsents:input.stageConsents??[]}]);},
+    readStageAgreements:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentStageAgreementPage,[{binding,docId:input.docId,stage:input.stage,action:'read'}]);},
+    confirmStageAgreements:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentStageAgreementPage,[{binding,docId:input.docId,stage:input.stage,action:'confirm',challenge:input.challenge,confirmation:input.confirmation,operationId:input.operationId}]);},
+    recoverStageConsent:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentStageAgreementPage,[{binding,docId:input.docId,stage:input.stage,action:'recover',challenge:input.challenge,operationId:input.operationId}]);},
     readAgreements:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentAgreementPage,[{binding,docId:input.docId,action:'read'}]);},
     verifyHumanConfirmation:async input=>{
-      await appCurrent(input.identity);const response=await api.tabs.sendMessage(input.identity.appTabId,{type:'YOOFAM_CONFIRM_SINGLE_DOCUMENT_ACTION',expected:copy(input)},{frameId:0});await appCurrent(input.identity);
+      const first=await bindingFor(input.identity),prior=sourceBindings.get(canonical(input.identity));
+      await appCurrent(input.identity);const response=await api.tabs.sendMessage(input.identity.appTabId,{type:'YOOFAM_CONFIRM_SINGLE_DOCUMENT_ACTION',expected:{...copy(input),sourceExpected:copy(prior.input),sessionId:first.sessionId,identityDigest:first.identityDigest}},{frameId:0});await appCurrent(input.identity);
       const binding=await bindingFor(input.identity);
       return {confirmed:response?.ok===true&&response.userInitiated===true&&response.challengeId===input.challenge.id&&response.identityDigest===binding.identityDigest
-        &&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=5000,challengeId:input.challenge.id,identityDigest:binding.identityDigest};
+        &&first.sessionId===binding.sessionId&&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=5000,challengeId:input.challenge.id,identityDigest:binding.identityDigest,confirmedAt:response.checkedAt};
     },
     confirmAgreements:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentAgreementPage,[{binding,docId:input.docId,action:'confirm',challenge:input.challenge,confirmation:input.confirmation}]);},
     submit:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentSubmitPage,[{binding,docId:input.docId,operationId:input.operationId,challenge:input.challenge}]);},

@@ -1,6 +1,7 @@
 import {singleDocumentIdentity,createSingleDocumentReceiver,createSingleDocumentStore,SingleDocumentError} from './single-document.mjs';
 import {createSingleDocumentBrowserAdapter} from './single-document-adapter.mjs';
-// Current Hub rows lack exact docId; readback and receipt remain unverified.
+// The owned UI loader and staged terms are reconstructed. Live new-document
+// terms, body persistence and exact receipt are still unverified.
 // This release gate is deliberately not a packet field.
 export const SINGLE_DOCUMENT_LIVE_VERIFIED=false;
 let receiver;

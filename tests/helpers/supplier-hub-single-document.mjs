@@ -48,12 +48,18 @@ export async function singleDocumentFixture(company=SINGLE_COMPANIES[0],options=
   const packet=singlePacket(company),sender=clone(SINGLE_SENDER),context=await singleDocumentIdentity(packet,sender),storage=options.storage??sqliteSingleStore(),calls=[];
   const tab={tabId:71,windowId:sender.tab.windowId,origin:SINGLE_DOCUMENT_ORIGIN,authenticated:true,company:clone(company)};
   const protectedBody={docId:'protected-existing',productName:'보호된 기존 작업',jsonDocument:[{productPage:{price:12345}}]},documents=new Map([[protectedBody.docId,clone(protectedBody)]]);
-  const operations=new Map(),items=[
+  const operations=new Map(),items=options.stageFlow&&options.finalNoItems?[]:[
     {key:'priceData',id:'msrpAgree',text:'합성 가격 정보 약관 확인',required:true,checked:false,enabled:true},
     {key:'labelBusinessContact',id:'agreeLabelContact',text:'합성 업무용 라벨 연락처 공개 동의',required:true,checked:false,enabled:true},
   ];
   const f={packet,sender,context,storage,calls,tab,documents,operations,items,now:1_800_000_000_000,sessionId:'session-one',current:true,ready:true,priorDocumentClear:true,submitted:0,sourceReads:0,
     sourceSnapshot:clone(packet),protectedSnapshot:clone(protectedBody),createCount:0,updateCount:0};
+  const stageItems={
+    productPage:[{key:'msrpAgree',id:'agreeMSRPTerm',text:'합성 가격 정보 이용약관에 동의합니다.',required:true,checked:false,enabled:true,title:'합성 MSRP, OSRP 이용약관',termsText:'합성 약관 1. 공급자가 제공한 가격 정보의 권한을 확인합니다.\n합성 약관 2. 견적서의 현재 가격 정보를 확인합니다.\n합성 약관 3. 해당 정보 이용에 동의합니다.'}],
+    imagePage:[{key:'labelContactAgreed',id:'agreeLabelContact',text:'합성 라벨의 공식 업무용 연락처 제공 및 공개에 동의합니다.',required:true,checked:false,enabled:true,title:'합성 상품 라벨 연락처 제공 및 공개 동의',termsText:'합성 약관 1. 개인 연락처를 제외합니다.\n합성 약관 2. 공식 업무용 연락처임을 확인합니다.\n합성 약관 3. 공개에 동의합니다.\n합성 약관 4. 현재 표시사항을 확인합니다.'}],
+  };
+  f.stageItems=stageItems;f.stageIndex=0;f.stageAcceptCounts={productPage:0,imagePage:0};f.stageReceipts=new Map();f.stageWrites=[];
+  const stages=['productPage','imagePage','logisticsPage'];
   const record=async(name,input)=>{calls.push({name,input:clone(input)});await options.before?.(name,input,f);};
   const proofFor=docId=>({docId,company:clone(company),identityDigest:context.identityDigest,body:clone(documents.get(docId))});
   const adapter={
@@ -90,17 +96,40 @@ export async function singleDocumentFixture(company=SINGLE_COMPANIES[0],options=
     readDocument:async input=>{await record('readDocument',input);return options.readback?.(input,f)??proofFor(input.docId);},
     recoverWrite:async input=>{await record('recoverWrite',input);const operation=operations.get(input.operationId);if(!operation||options.recoveryMissing)return null;return {readOnly:true,operationId:input.operationId,...proofFor(operation.docId),...options.recoveryProof};},
     readValidation:async input=>{await record('readValidation',input);return {readOnly:true,operationId:input.operationId,docId:input.docId,company:clone(company),step:input.step,response:{code:200,data:[{success:true}]},...options.validationRecovery};},
-    navigate:async input=>{await record('navigate',input);assert.equal(input.docId,'created-'+company.code);return {docId:input.docId,company:clone(company),productName:packet.body.productName,readyForSubmit:true,...options.navigation};},
-    readAgreements:async input=>{await record('readAgreements',input);return {docId:input.docId,company:clone(tab.company),readyForSubmit:true,items:clone(items),...options.agreementReview};},
+    navigate:async input=>{
+      await record('navigate',input);assert.equal(input.docId,'created-'+company.code);
+      if(options.stageFlow){
+        while(f.stageIndex<2&&stageItems[stages[f.stageIndex]].every(item=>!item.required||item.checked)){
+          const stage=stages[f.stageIndex],key=stageItems[stage][0].key,body=documents.get(input.docId);body.jsonDocument[0].imagePage[key]=true;f.stageWrites.push({stage,key,docId:input.docId});f.stageIndex++;
+        }
+        if(f.stageIndex<2)return {docId:input.docId,company:clone(company),productName:packet.body.productName,stage:stages[f.stageIndex],readyForConsent:true,readyForSubmit:false,...options.navigation};
+      }
+      return {docId:input.docId,company:clone(company),productName:packet.body.productName,readyForSubmit:true,...(options.stageFlow?{stage:'logisticsPage'}:{}),...options.navigation};
+    },
+    readAgreements:async input=>{await record('readAgreements',input);return {docId:input.docId,company:clone(tab.company),readyForSubmit:true,items:clone(items),...(options.stageFlow?{stage:'logisticsPage'}:{}),...options.agreementReview};},
     verifyHumanConfirmation:async input=>{await record('verifyHumanConfirmation',input);return {confirmed:options.humanConfirmed!==false,challengeId:input.challenge.id,identityDigest:context.identityDigest};},
     confirmAgreements:async input=>{await record('confirmAgreements',input);assert.equal(storage.get(context.key).state,'consent-requested');for(const item of items)if(input.confirmation.approvedKeys.includes(item.key))item.checked=true;return {docId:input.docId,company:clone(company),readyForSubmit:true,items:clone(items)};},
-    submit:async input=>{await record('submit',input);assert.equal(storage.get(context.key).state,'submit-requested');assert.ok(items.every(item=>!item.required||item.checked));f.submitted++;if(options.submitLost)throw Error('synthetic submit ACK lost');return {dispatched:true};},
+    submit:async input=>{await record('submit',input);assert.equal(storage.get(context.key).state,'submit-requested');assert.ok(items.every(item=>!item.required||item.checked));if(options.stageFlow)assert.ok(Object.values(stageItems).every(stage=>stage.every(item=>item.checked)));f.submitted++;if(options.submitLost)throw Error('synthetic submit ACK lost');return {dispatched:true};},
     observeReceipt:async input=>{await record('observeReceipt',input);assert.equal(f.submitted,1);const receipt={state:'registered',docId:input.docId,company:clone(company),identityDigest:context.identityDigest,
       receiptId:'receipt-'+company.code,skuId:'sku-'+company.code,preparedBodySha256:context.bodySha256,observedAt:f.now,evidence:'document-and-sku',...options.receipt};
       for(const key of Object.keys(receipt))if(receipt[key]===undefined)delete receipt[key];return receipt;},
   };
+  if(options.stageFlow){
+    const stageReview=input=>({docId:input.docId,company:clone(company),stage:stages[f.stageIndex],readyForConsent:true,items:clone(stageItems[stages[f.stageIndex]]??[])});
+    adapter.readStageAgreements=async input=>{await record('readStageAgreements',input);const review=stageReview(input);return options.stageAgreementReview?options.stageAgreementReview(review,f):review;};
+    adapter.confirmStageAgreements=async input=>{
+      await record('confirmStageAgreements',input);const checkpoint=storage.get(context.key);assert.equal(checkpoint.state,'stage-consent-requested');assert.equal(input.operationId,checkpoint.operationId);
+      const stage=stages[f.stageIndex];assert.equal(input.stage,stage);if(options.stageConsentNoCommit===stage)throw Error('synthetic stage consent ACK lost before checkbox acceptance');
+      for(const item of stageItems[stage])if(input.confirmation.approvedKeys.includes(item.key))item.checked=true;
+      f.stageAcceptCounts[stage]++;const review=stageReview(input);f.stageReceipts.set(input.operationId,{readOnly:true,operationId:input.operationId,...clone(review)});
+      if(options.stageConsentLost===stage)throw Error('synthetic stage consent ACK lost after checkbox acceptance');return review;
+    };
+    adapter.recoverStageConsent=async input=>{
+      await record('recoverStageConsent',input);const receipt=f.stageReceipts.get(input.operationId);return receipt?{...clone(receipt),...options.stageRecoveryProof}:null;
+    };
+  }
   f.adapter=adapter;f.receiver=createSingleDocumentReceiver({adapter,store:storage.store,now:()=>f.now});
-  f.action=result=>({action:'confirm-and-submit',userInitiated:true,challengeId:result.challenge.id,confirmedAt:f.now,approvedKeys:result.challenge.items.filter(item=>item.required).map(item=>item.key)});
+  f.action=result=>({action:['productPage','imagePage'].includes(result.challenge.stage)?'confirm-and-continue':'confirm-and-submit',...(result.challenge.stage?{stage:result.challenge.stage}:{}),userInitiated:true,challengeId:result.challenge.id,confirmedAt:f.now,approvedKeys:result.challenge.items.filter(item=>item.required).map(item=>item.key)});
   f.assertPreserved=()=>{assert.deepEqual(packet,f.sourceSnapshot);assert.deepEqual(documents.get(protectedBody.docId),f.protectedSnapshot);};
   f.close=()=>storage.db.close();return f;
 }
