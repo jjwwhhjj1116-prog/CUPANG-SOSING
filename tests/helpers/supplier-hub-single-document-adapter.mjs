@@ -10,7 +10,7 @@ const response=(url,json,status=200,contentType='application/json')=>{
 };
 function element(values={}){return {disabled:false,required:false,checked:false,innerText:'',textContent:'',value:'',id:'',labels:[],classList:{contains:()=>false},getClientRects:()=>[{}],getAttribute:()=>null,querySelectorAll:()=>[],click:()=>{},...values};}
 const localMinute=value=>{const date=new Date(value),pad=n=>String(n).padStart(2,'0');return date.getFullYear()+'.'+pad(date.getMonth()+1)+'.'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes());};
-function requestEvent(){const listeners=new Set();return {addListener:(callback,filter,extra)=>{listeners.add(callback);void filter;void extra;},removeListener:callback=>listeners.delete(callback),emit:details=>{for(const callback of [...listeners])callback(details);},get size(){return listeners.size;}};}
+function requestEvent(){const listeners=new Map();return {addListener:(callback,filter)=>listeners.set(callback,filter),removeListener:callback=>listeners.delete(callback),emit:(...details)=>{for(const callback of [...listeners.keys()])callback(...details);},get size(){return listeners.size;},get loadSize(){return [...listeners.values()].filter(filter=>filter?.urls?.some(url=>url.endsWith('/sr/draft/api/get-by-id/*'))).length;}};}
 export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={}){
   const packet=singlePacket(company),sender=clone(SINGLE_SENDER),hash=async text=>Buffer.from(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(text))).toString('hex');
   packet.accountContext=await hash(JSON.stringify(['sourceflow-managed-product-account-v1',packet.ownerId,company.code,company.name]));
@@ -101,7 +101,7 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
       if(options.draftList)list=await options.draftList(list,f);return response(url,list);
     }
     if(new URL(url).pathname.startsWith('/sr/draft/api/get-by-id/')){
-      if(!uiLoader&&Object.values(webRequest).some(event=>event.size>0))f.ownDocumentReadsDuringLoad++;
+      if(!uiLoader&&Object.values(webRequest).some(event=>event.loadSize>0))f.ownDocumentReadsDuringLoad++;
       const docId=decodeURIComponent(new URL(url).pathname.slice('/sr/draft/api/get-by-id/'.length)),stored=documents.get(docId)??documents.get(Number(docId));
       let result=stored?{...clone(stored),status:'UNFINISHED'}:null;
       if(options.documentRead)result=await options.documentRead(result,f);
@@ -146,7 +146,10 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
     if(options.loseExecuteAck===request.func.name&&request.args?.[0]?.path===options.losePath)throw Error('Synthetic Chrome executeScript ACK lost');
     return [{frameId:options.frameId??0,documentId:request.target.tabId===appTab.id?'12345678-1234-4234-9234-123456789abc':f.hubDocumentId,result:value===undefined?undefined:jsonCopy(value)}];
   }},webRequest};
+  const pageEvents=new Map();hubDocument.addEventListener=(name,callback)=>{if(!pageEvents.has(name))pageEvents.set(name,new Set());pageEvents.get(name).add(callback);};hubDocument.removeEventListener=(name,callback)=>pageEvents.get(name)?.delete(callback);
+  f.hubEvent=(name,isTrusted=true)=>{for(const callback of [...(pageEvents.get(name)??[])])callback({isTrusted});};f.pageEvents=pageEvents;
+  for(const name of ['onUpdated','onDetached','onRemoved','onReplaced'])api.tabs[name]=requestEvent();
   f.api=api;f.adapter=createSingleDocumentBrowserAdapter({api,now:clock});f.receiver=createSingleDocumentReceiver({adapter:f.adapter,store:storage.store,now:clock});
   f.action=started=>({action:['productPage','imagePage'].includes(started.challenge.stage)?'confirm-and-continue':'confirm-and-submit',...(started.challenge.stage?{stage:started.challenge.stage}:{}),userInitiated:true,challengeId:started.challenge.id,confirmedAt:clock(),approvedKeys:started.challenge.items.filter(item=>item.required).map(item=>item.key)});
-  f.close=()=>storage.db.close();return f;
+  f.close=()=>{f.adapter.dispose();f.hubEvent('pointerdown');storage.db.close();};return f;
 }

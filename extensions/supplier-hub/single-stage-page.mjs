@@ -11,6 +11,7 @@ export async function singleDocumentStageAgreementPage(input){
     const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),m=>m[1]);
     const buttons=Array.from(document.querySelectorAll('button')).filter(node=>visible(node)&&!node.disabled&&(node.innerText||'').trim()===input.binding.identity.company.name);
     const record=JSON.parse(data.yoofamSingleDocumentRecords||'{}')[input.binding.packetDigest];
+    if(record?.watchToken!==undefined&&(record.watchState!=='active'||Date.now()>=record.watchExpiresAt))throw Error('현재 새 문서의 입력 관찰이 중단됐습니다.');
     if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/sr/registration/step/'+input.stage||codes.length>1||codes.length===1&&codes[0]!==input.binding.identity.company.code
       ||!codes.length&&(!companyVerified||buttons.length!==1)||!record||!same(record.binding,input.binding)||!same(record.docId,input.docId)||!same(record.loadedDocId,input.docId))throw Error('소유한 새 문서의 현재 약관 단계를 확인해주세요.');
     if(codes.length===1)companyVerified=true;return record;

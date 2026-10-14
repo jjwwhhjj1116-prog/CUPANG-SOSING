@@ -5,7 +5,7 @@ import {SINGLE_COMPANIES} from './helpers/supplier-hub-single-document.mjs';
 
 const record=f=>JSON.parse(f.hubDocument.documentElement.dataset.yoofamSingleDocumentRecords)[f.context.packetDigest];
 const writes=f=>f.calls.filter(call=>call.name==='hub-fetch'&&call.init.method==='POST');
-const preserved=f=>{assert.deepEqual(f.documents.get('protected-previous'),f.prior);assert.ok(Object.values(f.webRequest).every(event=>event.size===0));};
+const preserved=f=>{assert.deepEqual(f.documents.get('protected-previous'),f.prior);assert.ok(Object.values(f.webRequest).every(event=>event.loadSize===0));};
 
 for(const company of SINGLE_COMPANIES){
   test(company.name+' serialized modal capture and three human confirmations continue only the exact new document',async()=>{

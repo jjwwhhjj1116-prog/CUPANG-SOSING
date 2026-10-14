@@ -4,6 +4,8 @@ import {SINGLE_DOCUMENT_ORIGIN,SingleDocumentError} from './single-document.mjs'
 import {singleDocumentLoadPage} from './single-load-page.mjs';
 import {observeSingleDraftLoad} from './single-load-observer.mjs';
 import {singleDocumentStageAgreementPage} from './single-stage-page.mjs';
+import {createSingleDocumentWatch} from './single-document-watch.mjs';
+import {singleDocumentWatchPage} from './single-watch-page.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -68,6 +70,7 @@ export async function singleDocumentHubRequestPage(input){
   const binding=input?.binding;
   const check=()=>{
     if(location.origin!==origin||!(['/dashboard/KR','/qvt/registration','/qvt/wims','/sr/registration'].includes(location.pathname)||/^\/sr\/registration\/step\/(startPage|productPage|imagePage|legalPage|logisticsPage)$/.test(location.pathname)))throw Error('Supplier Hub 개별 등록 화면이 변경되었습니다.');
+    const watched=JSON.parse(data.yoofamSingleDocumentRecords||'{}')[binding?.packetDigest];if(watched?.watchToken!==undefined&&(watched.watchState!=='active'||Date.now()>=watched.watchExpiresAt))throw Error('현재 새 문서의 입력 관찰이 중단됐습니다.');
     const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
     if(!binding||!['identityDigest','packetDigest','preparedBodySha256','originalBodySha256'].every(key=>typeof binding[key]==='string'&&/^[a-f0-9]{64}$/.test(binding[key]))
       ||codes.length!==1||codes[0]!==binding.identity?.company?.code||!({A01526306:'유앤채',A01464742:'와이홉'})[codes[0]]
@@ -174,6 +177,7 @@ export async function singleDocumentNavigatePage(input){
     if(codes.length>1||codes.length===1&&codes[0]!==input.binding.identity.company.code||!codes.length&&(!companyVerified||names.length!==1))throw Error('개별 등록 회사가 변경되었습니다.');
     if(codes.length===1)companyVerified=true;
     const record=JSON.parse(document.documentElement.dataset.yoofamSingleDocumentRecords||'{}')[input.binding.packetDigest];
+    if(record?.watchToken!==undefined&&(record.watchState!=='active'||Date.now()>=record.watchExpiresAt))throw Error('현재 새 문서의 입력 관찰이 중단됐습니다.');
     if(!record||canon(record.binding)!==canon(input.binding)||canon(record.docId)!==canon(input.docId))throw Error('이 요청이 생성한 정확한 문서가 아닙니다.');
     return record;
   };
@@ -222,6 +226,7 @@ export function singleDocumentAgreementPage(input){
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/sr/registration/step/logisticsPage')throw Error('개별 상품의 최종 등록 화면을 확인해주세요.');
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]);
   const records=JSON.parse(data.yoofamSingleDocumentRecords||'{}'),record=records[input.binding.packetDigest];
+  if(record?.watchToken!==undefined&&(record.watchState!=='active'||Date.now()>=record.watchExpiresAt))throw Error('현재 새 문서의 입력 관찰이 중단됐습니다.');
   if(codes.length!==1||codes[0]!==input.binding.identity.company.code||!record||canon(record.binding)!==canon(input.binding)||record.docId!==input.docId||record.loadedDocId!==input.docId)throw Error('새 개별 문서의 회사·화면 연결을 확인해주세요.');
   const visible=node=>Boolean(node&&node.getClientRects().length);
   const items=Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(visible).map(node=>{
@@ -250,6 +255,7 @@ export function singleDocumentSubmitPage(input){
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/sr/registration/step/logisticsPage')throw Error('최종 개별 등록 화면이 변경되었습니다.');
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]),data=document.documentElement.dataset;
   const records=JSON.parse(data.yoofamSingleDocumentRecords||'{}'),record=records[input.binding.packetDigest];
+  if(record?.watchToken!==undefined&&(record.watchState!=='active'||Date.now()>=record.watchExpiresAt))throw Error('현재 새 문서의 입력 관찰이 중단됐습니다.');
   if(codes.length!==1||codes[0]!==input.binding.identity.company.code||!record||canon(record.binding)!==canon(input.binding)||record.docId!==input.docId||record.loadedDocId!==input.docId
     ||record.confirmedChallengeId!==input.challenge.id||record.submitOperationId)throw Error('원래 새 문서의 제출 확인을 읽기로 확인해주세요.');
   const visible=node=>Boolean(node&&node.getClientRects().length);
@@ -272,7 +278,8 @@ export function singleDocumentReceiptPage(input){
 
 export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now}={}){
   if(!api?.tabs||!api?.scripting||['get','query','update','sendMessage'].some(key=>typeof api.tabs[key]!=='function')||typeof api.scripting.executeScript!=='function')throw new TypeError('Existing Chrome tab adapter is required.');
-  const sourceBindings=new Map(),baselines=new Map(),pageRecords=new Map(),frameDocuments=new Map();
+  const sourceBindings=new Map(),baselines=new Map(),pageRecords=new Map(),frameDocuments=new Map(),liveWatches=new Map();
+  const requireWatch=entry=>{try{entry.watch.assertCurrent(entry.expected);}catch{fail('TAB_CHANGED','불러온 새 문서의 관찰이 중단됐습니다. 다른 문서를 클릭하거나 전송하지 않았습니다.');}};
   async function appCurrent(identity){
     if(!HANDOFF_ORIGINS.includes(identity?.origin)||!Number.isSafeInteger(identity.appTabId)||!Number.isSafeInteger(identity.windowId))fail('SOURCE_CHANGED','원래 앱 탭을 확인해주세요.');
     const tab=await api.tabs.get(identity.appTabId);let url;try{url=new URL(tab?.url);}catch{fail('SOURCE_CHANGED','원래 앱 탭을 같은 Chrome 창에 열어두세요.');}
@@ -305,14 +312,20 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
     return sourceBindings.get(canonical(identity)).binding;
   }
   async function execute(tab,identity,func,args,documentId){
+    const entry=liveWatches.get(tab.tabId);if(entry){requireWatch(entry);documentId=entry.expected.documentId;}
     const before=await api.tabs.get(tab.tabId);if(!validHubTab(before,identity.windowId))fail('TAB_CHANGED','선택한 Supplier Hub 탭이 이동되었습니다.');
     const target={tabId:tab.tabId,...(documentId?{documentIds:[documentId]}:{frameIds:[0]})};
     const [company]=await api.scripting.executeScript({target,func:verifySupplierHubCompany,args:[identity.company,'catalog']});
     if(company?.frameId!==undefined&&company.frameId!==0||company?.result?.code!==identity.company.code)fail('TAB_CHANGED','현재 Supplier Hub 회사가 다릅니다.');
     if(documentId&&company?.documentId!==documentId)fail('TAB_CHANGED','새 문서를 불러오는 브라우저 문서가 변경되었습니다.');
+    if(entry?.ready){
+      requireWatch(entry);const [guard]=await api.scripting.executeScript({target,func:singleDocumentWatchPage,args:[{...entry.page,action:'check'}]});
+      if(guard?.documentId!==documentId||guard?.result?.current!==true)fail('TAB_CHANGED','현재 새 문서의 입력 관찰을 확인하지 못했습니다.');
+    }
     const [execution]=await api.scripting.executeScript({target,func,args});
     const after=await api.tabs.get(tab.tabId);if(!validHubTab(after,identity.windowId)||execution?.frameId!==undefined&&execution.frameId!==0)fail('TAB_CHANGED','개별 등록 탭·프레임이 변경되었습니다.');
     if(documentId&&execution?.documentId!==documentId)fail('TAB_CHANGED','새 문서를 불러오는 브라우저 문서가 변경되었습니다.');
+    if(entry){requireWatch(entry);if(entry.ready){const [guard]=await api.scripting.executeScript({target,func:singleDocumentWatchPage,args:[{...entry.page,action:'check'}]});if(guard?.result?.current!==true)fail('TAB_CHANGED','입력 중 소유 문서 관찰이 변경되었습니다.');}}
     if(execution?.frameId===0&&typeof execution.documentId==='string')frameDocuments.set(tab.tabId,execution.documentId);
     return execution?.result;
   }
@@ -323,7 +336,9 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
   }
   async function owned(input){
     const binding=await bindingFor(input.identity,input.sessionId),record=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding]);
-    if(!record||record.binding.identityDigest!==binding.identityDigest||record.binding.packetDigest!==binding.packetDigest||input.docId!==null&&input.docId!==undefined&&!equal(record.docId,input.docId))fail('READBACK_UNCONFIRMED','현재 요청에서 생성한 새 문서의 식별값이 없습니다.');return {binding,record};
+    if(!record||record.binding.identityDigest!==binding.identityDigest||record.binding.packetDigest!==binding.packetDigest||input.docId!==null&&input.docId!==undefined&&!equal(record.docId,input.docId))fail('READBACK_UNCONFIRMED','현재 요청에서 생성한 새 문서의 식별값이 없습니다.');
+    if(record.loadedDocId!==undefined){const entry=liveWatches.get(input.tab.tabId);if(!entry||!entry.ready||entry.expected.packetDigest!==binding.packetDigest||entry.expected.identityDigest!==binding.identityDigest||!equal(entry.expected.docId,record.docId))fail('TAB_CHANGED','이전 문서 기록만으로 관찰을 복구하지 않았습니다.');requireWatch(entry);}
+    return {binding,record};
   }
   async function hubRequest(input){
     const binding=await bindingFor(input.identity,input.sessionId);
@@ -381,7 +396,13 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
         const drafts=await readList(),base={binding,docId:input.docId,productName:input.productName,attemptId,drafts};
         await execute(input.tab,input.identity,singleDocumentLoadPage,[{...base,action:'prepare'}],documentId);
         const after=await readList();if(!equal(after,drafts))fail('NAVIGATION','문서 목록이 변경되었습니다. 다른 문서를 선택하지 않았습니다.');
-        const observed=await observeSingleDraftLoad({api,tabId:input.tab.tabId,documentId,docId:input.docId},()=>execute(input.tab,input.identity,singleDocumentLoadPage,[{...base,action:'load'}],documentId));
+        if(liveWatches.has(input.tab.tabId))fail('NAVIGATION','이 탭의 이전 관찰을 보존했습니다. 새로 불러오지 않았습니다.');
+        let entry;
+        const watch=createSingleDocumentWatch({api,tabId:input.tab.tabId,windowId:input.identity.windowId,documentId,docId:input.docId,packetDigest:binding.packetDigest,identityDigest:binding.identityDigest,company:input.identity.company,now,
+          onInvalid:()=>{if(entry?.ready)api.scripting.executeScript({target:{tabId:input.tab.tabId,documentIds:[documentId]},func:singleDocumentWatchPage,args:[{...entry.page,action:'invalid'}]}).catch(()=>{});}});
+        const status=watch.getStatus();entry={watch,expected:{tabId:input.tab.tabId,windowId:input.identity.windowId,frameId:0,documentId,docId:input.docId,packetDigest:binding.packetDigest,identityDigest:binding.identityDigest,company:copy(input.identity.company),token:watch.token},page:{binding,docId:input.docId,documentId,token:watch.token,expiresAt:status.expiresAt},ready:false};
+        liveWatches.set(input.tab.tabId,entry);
+        let observed;try{observed=await observeSingleDraftLoad({api,tabId:input.tab.tabId,documentId,docId:input.docId},()=>execute(input.tab,input.identity,singleDocumentLoadPage,[{...base,action:'load'}],documentId));}catch(error){watch.invalid('load-unconfirmed');throw error;}
         if(observed.loaded?.loaded!==true||!equal(observed.loaded.docId,input.docId))fail('NAVIGATION','새 문서 화면의 불러오기를 확인하지 못했습니다.');
         await bindingFor(input.identity,input.sessionId);
         const readback=await readDocument(input);
@@ -390,6 +411,7 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
         const body=readback?.body?copy(readback.body):null;if(!body)fail('READBACK_UNCONFIRMED','불러온 새 문서의 본문을 확인하지 못했습니다.');body.docId=null;
         if(await digest(body)!==binding.preparedBodySha256)fail('READBACK_UNCONFIRMED','불러오는 동안 새 문서 본문이 변경되었습니다.');
         await execute(input.tab,input.identity,singleDocumentLoadPage,[{...base,action:'confirm',observation:observed.observation}],documentId);
+        await execute(input.tab,input.identity,singleDocumentWatchPage,[{...entry.page,action:'arm'}],documentId);entry.ready=true;
       }
       await bindingFor(input.identity,input.sessionId);return execute(input.tab,input.identity,singleDocumentNavigatePage,[{binding,docId:input.docId,productName:input.productName,stageConsents:input.stageConsents??[]}]);
     },
@@ -414,5 +436,6 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
       if(diagnostic?.receiptVerified!==true)fail('RECEIPT_UNCONFIRMED','완료 문구만으로 접수·SKU를 확정하지 않습니다. 원래 문서의 실제 접수를 확인해주세요.');
       return diagnostic;
     },
+    dispose:()=>{for(const [tabId,entry] of liveWatches){entry.watch.close();if(entry.ready)api.scripting.executeScript({target:{tabId,documentIds:[entry.expected.documentId]},func:singleDocumentWatchPage,args:[{...entry.page,action:'close'}]}).catch(()=>{});}liveWatches.clear();},
   });
 }
