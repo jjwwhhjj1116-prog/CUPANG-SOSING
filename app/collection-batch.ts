@@ -4,6 +4,7 @@ import { recommendCollectionImages, validateCollectionCapacity } from '@/app/col
 import { runCollectionImport, type CollectionImportOutcome } from '@/app/collection-import';
 import { collectionRequestWithRetry } from '@/app/collection-retry';
 import { collectionSourceWarnings } from '@/app/collection-result';
+import { fetchCollectionCapacity } from '@/app/collection-capacity-client';
 
 export function pendingReceivedJobs(jobs: readonly CollectionJob[]) {
   return jobs.filter(job => job.status !== 'cancelled' && !!job.received_at && !job.product_id);
@@ -23,16 +24,23 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
   onProductSaved?: (jobId: string, productId: string) => Promise<void>;
   reservedImageSlots?: number;
   assignToStage?: boolean;
+  signal?: AbortSignal;
+  capacityTimeoutMs?: number;
 }) {
+  const shouldStop = () => !!options.signal?.aborted || options.shouldStop();
   for (const job of jobs) {
-    if (options.shouldStop()) break;
+    if (shouldStop()) break;
     if (job.status === 'cancelled' || !job.received_at) continue;
     options.onProgress(job.id, '수신 원문과 이미지 저장 여유 확인 중');
     try {
       const path = `/api/collection-jobs/${encodeURIComponent(job.id)}`;
       const onRetry = (attempt: number) => options.onProgress(job.id, `일시적 통신 오류 · ${attempt}/3회 재시도 중`);
       const request = (url: string, init: RequestInit) => collectionRequestWithRetry(url, init, {
-        fetcher: options.fetcher, attempts: 3, wait: options.retryWait, shouldStop: options.shouldStop, onRetry,
+        fetcher: options.fetcher, attempts: 3, wait: options.retryWait, shouldStop, onRetry,
+      });
+      const capacityRequest = () => fetchCollectionCapacity(path + '/capacity', {
+        fetcher: options.fetcher, signal: options.signal, shouldStop,
+        timeoutMs: options.capacityTimeoutMs, attempts: 3, retryWait: options.retryWait, onRetry,
       });
       const response = await request(path + '/result', { cache: 'no-store' });
       const body = await response.json() as { error?: string } | null;
@@ -40,12 +48,12 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       const source = validateCollectionReceiptResponse(body, job.id, job.offer_id);
       if (!source) throw Error('수집 원문이 아직 도착하지 않았습니다.');
       const sourceWarnings = collectionSourceWarnings(source);
-      if (options.shouldStop()) break;
+      if (shouldStop()) break;
       let indices: number[] = [];
       if (source.images.length) {
         let capacityResponse: Response | undefined;
-        try { capacityResponse = await request(path + '/capacity', { cache: 'no-store' }); }
-        catch { if (options.shouldStop()) break; }
+        try { capacityResponse = await capacityRequest(); }
+        catch { if (shouldStop()) break; }
         let capacityBody: { error?: string; capacity?: unknown } | null = null;
         if (capacityResponse?.ok) {
           try { capacityBody = await capacityResponse.json(); }
@@ -54,10 +62,10 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
         // A proxy may return HTML (or no response). Neither should discard an
         // already verified source or prevent saving its editable text draft.
         if (!capacityResponse || [429,502,503,504].includes(capacityResponse.status)) {
-          if (!options.shouldStop()) {
+          if (!shouldStop()) {
             options.onProgress(job.id, '이미지 확인 지연 · 상품·옵션 초안을 먼저 저장 중');
             const draft = await runCollectionImport(job.id, source.images.length, {
-              onProductSaved: productId => options.onProductSaved?.(job.id, productId) ?? Promise.resolve(), fetcher: options.fetcher, imageIndices: [], shouldStop: options.shouldStop,
+              onProductSaved: productId => options.onProductSaved?.(job.id, productId) ?? Promise.resolve(), fetcher: options.fetcher, imageIndices: [], shouldStop,
               retryAttempts: 3, retryWait: options.retryWait, onRetry,
             });
             options.onResult(job.id, draft.status === 'completed' ? {
@@ -69,32 +77,36 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
           }
           break;
         }
-        if (options.shouldStop()) break;
+        if (shouldStop()) break;
         if (!capacityResponse.ok) {
           try { capacityBody = await capacityResponse.json(); } catch { /* Keep HTTP failures terminal. */ }
           throw Error(capacityBody?.error || '이미지 저장 여유 조회 실패');
         }
         indices = recommendCollectionImages(source, validateCollectionCapacity(capacityBody?.capacity, source.images.length), 'all', options.reservedImageSlots);
       }
-      if (options.shouldStop()) break;
+      if (shouldStop()) break;
       let result = await runCollectionImport(job.id, source.images.length, {
         // Every verified intake receipt stores originals in the same library.
         // Transport/provider names must not turn Chrome/API intake back into
         // one round trip per image. Stage assignment still uses serial writes.
         ...(options.assignToStage===false?{imageBatchSize:3 as const}:{}),
         assignToStage: options.assignToStage,
-        continueOnImageError: true, onProductSaved: productId => options.onProductSaved?.(job.id, productId) ?? Promise.resolve(), fetcher: options.fetcher, imageIndices: indices, shouldStop: options.shouldStop,
-        retryAttempts: 3, retryWait: options.retryWait, onRetry,
+        // The importer rechecks capacity. This adapter bounds that complete
+        // read too, and preserves the existing three-attempt contract for
+        // every other endpoint without nesting two retry loops.
+        continueOnImageError: true, onProductSaved: productId => options.onProductSaved?.(job.id, productId) ?? Promise.resolve(),
+        fetcher: (url, init) => url === path + '/capacity' ? capacityRequest() : request(String(url), init ?? {}),
+        imageIndices: indices, shouldStop, retryAttempts: 1,
         onProgress: progress => options.onProgress(job.id, progress.stage === 'product' ? '상품·옵션 반영 중' : `원본 이미지 ${progress.completedImages}/${progress.totalImages}개 저장 중`),
       });
       // Capacity is rechecked immediately before importing. An outage between
       // the two reads must preserve the same text draft as an initial outage.
       // Permission/validation failures never enter this fallback.
-      if (result.status === 'failed' && result.capacityUnavailable && !options.shouldStop()) {
+      if (result.status === 'failed' && result.capacityUnavailable && !shouldStop()) {
         options.onProgress(job.id, '이미지 확인 지연 · 상품·옵션 초안을 먼저 저장 중');
         const draft = await runCollectionImport(job.id, source.images.length, {
           onProductSaved: productId => options.onProductSaved?.(job.id, productId) ?? Promise.resolve(),
-          fetcher: options.fetcher, imageIndices: [], shouldStop: options.shouldStop,
+          fetcher: options.fetcher, imageIndices: [], shouldStop,
           retryAttempts: 3, retryWait: options.retryWait, onRetry,
         });
         result = draft.status === 'completed' ? { ...draft, status: 'failed',
@@ -106,7 +118,7 @@ export async function importReceivedJobs(jobs: readonly CollectionJob[], options
       options.onResult(job.id, { ...result, warnings: [...sourceWarnings, ...(result.warnings ?? []), ...(omitted ? [`이미지 ${omitted}개는 저장 여유·제외 설정에 따라 건너뛰었습니다. 원본 주소는 보존됩니다.`] : [])] });
       if (result.status === 'stopped') break;
     } catch (cause) {
-      if (options.shouldStop()) break;
+      if (shouldStop()) break;
       options.onResult(job.id, { status: 'failed', productId: null, completedImages: 0, error: cause instanceof Error ? cause.message : '원문 반영 실패' });
     }
   }

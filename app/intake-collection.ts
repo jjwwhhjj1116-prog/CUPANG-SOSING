@@ -101,7 +101,7 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   reportProgress('저장 원문으로 SEO·옵션 초안 작성 중');
   seo=await prepareIntakeSeoOutcome(productId,fetcher,options.signal);
  };
- await importReceivedJobs([received],{assignToStage:false,reservedImageSlots:1,onProductSaved:(_id,productId)=>prepareDraft(productId),fetcher:(url,init)=>fetcher(url,{...init,signal:options.signal}),shouldStop:()=>options.signal.aborted,
+ await importReceivedJobs([received],{assignToStage:false,reservedImageSlots:1,signal:options.signal,onProductSaved:(_id,productId)=>prepareDraft(productId),fetcher:(url,init)=>fetcher(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,options.signal]):options.signal}),shouldStop:()=>options.signal.aborted,
   onProgress:(_id,message)=>reportProgress(message),onResult:(_id,outcome)=>{outcomes.push(outcome);if(outcome.productId)reportJob({...received,product_id:outcome.productId});}});
  if(options.signal.aborted)return;
  const outcome=outcomes[0];

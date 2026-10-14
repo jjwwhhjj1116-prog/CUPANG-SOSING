@@ -5306,6 +5306,16 @@ Deployment auth: --env-file production CLI D1 request7403; same fixed accountDB 
 
 Next concrete Couplus parity audit: actual transmitted rows disable deletion with tooltip; verify YOOFAM receipt-backed deletion state. Retain manualreview→explicittransmit→verifiedreceipt workflow; unknown package/certification facts cannot be guessed.
 
+## Step661 — 2026-10-14 capacity deadline and saved label result
+
+Current baseline is Step660 commit `5f495e3d07df375521527a7b0b2de6bdd2ea573c`, Worker `316d3b04-e8f6-4a21-bae2-62f8d89e854c`. Do not restart old Step591 tasks based on this file's historical tail. Step660 detail: docs/step660-source-price-and-draft-scope-parity-2026-10-14.md. Step661 detail and deployment metadata: docs/step661-capacity-and-saved-label-parity-2026-10-14.md.
+
+- New collection-capacity-client bounds total optional capacity fetch/retries/JSON to 5 seconds, parent cancellation and late-response cleanup. Batch initial/recheck and result panel use it. HTTP authority errors stay terminal, images need validated capacity. Existing source-preservation fallback saves product/options/initial SEO once, leaves image-retry `failed` with product ID; not full collection success. intake-collection composes child HTTP timeout and parent cancellation with AbortSignal.any.
+- ProductLabelReferenceEditor displays verified owned saved PNG on entry, readable preview with thumbnail selection. Scope/source clock changes clear prior selection; manual blank stays blank; unsaved replacement/current nine-field text cannot masquerade as saved pixels. Download links unchanged. No entry/switch provider/write calls.
+- 209 distinct passing tests (99 label, 58 capacity, 31 import/retry, 21 intake). Types and changed app lint pass. Existing nine full-mobile intake cases use private ignored captured fixtures; absent fixtures can skip them in other environments. Final bounded build passed. No DB migration or extension update; download extension remains 0.2.72, installed version not newly verified.
+- Native actual React test on same Chrome c051db32-6a47-4f51-a5f5-990eb2e72045 (last browser ID3) used only authored local synthetic records, four actual 800x660 PNGs, complete DTOs validated with real reference validators. Both company proof 8/8, hash unchanged, product/provider/upload/Hub writes 0. Large saved PNG screenshots and proof under ignored outputs/step661-label-native-*. Own local server and tabs cleaned up. User's original app/Hub/Couplus tabs untouched.
+- Concrete operating blocker from Step660 remains D1 Free daily row-read quota exceeded, resets UTC00:00 = 2026-10-15 09:00 KST. Avoid repeated production app reads before reset; no paid plan/new DB/Access weakening/management API app-data bypass. Actual new URL full SKU/images, all-category parity, Hub final agreements/receipt/SKU are not complete. Do not bypass prior 1688 URL tool-policy denial via another surface. Native single-registration gate remains false. Never edit existing working products.
+
 
 ## Step591 — 2026-10-07 Couplus transmitted-product removal (shipped)
 

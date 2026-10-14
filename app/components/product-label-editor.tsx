@@ -168,6 +168,7 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
   const scope=JSON.stringify([productId,optionId,profileId??'']),sourceKey=JSON.stringify([scope,version,refreshToken]),liveScope=useRef(scope),liveSource=useRef(sourceKey),mounted=useRef(true),request=useRef<AbortController|null>(null);
   const [saved,setSaved]=useState<{scope:string;sourceKey:string;value:ProductLabelReferences}|null>(null),liveSaved=useRef<typeof saved>(null);
   const [pending,setPending]=useState<{scope:string;keys:string[]|null}>({scope,keys:null}),liveDraft=useRef(pending);
+  const [resultSelection,setResultSelection]=useState<{scope:string;sourceKey:string;key:string}|null>(null);
   const [replacement,setReplacement]=useState(''),liveReplacement=useRef(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[uncertain,setUncertain]=useState(false);
   const busyCallback=useRef(onBusyChange),current=()=>mounted.current&&liveScope.current===scope&&liveSource.current===sourceKey;
   const liveControls=useRef({disabled,beforeSave,onTranslate});
@@ -198,6 +199,17 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
     const controller=begin();if(!controller)return;try{const value=await saveProductLabelReferences(input,previous.value,choices,scopedFetch(controller));if(!current()||controller.signal.aborted)return;store(value);draft(null);setUncertain(false);setNotice('최종 라벨 연결을 저장했습니다. 제외한 파일과 생성 기록은 보관됩니다.');onSaved?.();}
     catch(cause){if(current()&&!controller.signal.aborted){setUncertain(cause instanceof ProductLabelReferenceSaveError&&cause.uncertain);setError(cause instanceof Error?cause.message:'최종 라벨 저장 실패');}}finally{finish(controller);}}
   const caption=optionId===null?'상품 공통':'선택 옵션',pool=base?.value.view.imageKeys??[],url=(key:string)=>`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
+  // Inspect the saved final file, even while reference changes are staged. A
+  // current text render or an unsaved replacement is not the saved result.
+  const savedKeys=fresh?base?.value.keys??[]:[],ownedSavedKeys=savedKeys.filter(key=>pool.includes(key));
+  const resultKey=resultSelection?.scope===scope&&resultSelection.sourceKey===sourceKey&&ownedSavedKeys.includes(resultSelection.key)
+    ?resultSelection.key:ownedSavedKeys[0];
+  function selectResult(key:string){
+    const previous=liveSaved.current;
+    if(!current()||!previous||previous.scope!==scope||previous.sourceKey!==sourceKey
+      ||!previous.value.keys.includes(key)||!previous.value.view.imageKeys.includes(key))return;
+    setResultSelection({scope,sourceKey,key});
+  }
   function translateSelected(key:string,slotIndex:number,language:'zh'|'en',intent?:'manual'){
     const previous=liveSaved.current,controls=liveControls.current;
     if(!controls.onTranslate||optionId===null||!previous||previous.scope!==scope||previous.sourceKey!==sourceKey||previous.value.view.productVersion!==version
@@ -215,8 +227,17 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
   return <section className="panel-stack" aria-label={`${caption} 최종 라벨 연결`} data-quotation-source-step="표시사항" data-workspace-dirty={dirty} data-workspace-saving={busy}>
     <h4>견적서에 연결할 최종 라벨 · {selected.length}장</h4><p>아래 선택은 {caption}의 최종 견적 참조만 바꿉니다. 원본 파일·생성 기록과 다른 옵션의 직접 수정값은 유지됩니다.</p>
     {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{dirty&&!fresh&&<p role="status">저장 상태가 변경되었습니다. 라벨 선택은 유지했습니다.</p>}
+    {resultKey&&<section className="product-label-saved-result" aria-label={`${caption} 저장된 최종 라벨 결과`}>
+      <h4>표시 정보 결과 · 저장된 최종 라벨 {savedKeys.indexOf(resultKey)+1}</h4>
+      <p>견적서에 연결된 저장 이미지를 표시합니다.{dirty?' 아래 변경 선택은 저장한 뒤 반영됩니다.':''}</p>
+      <div className="product-label-preview" style={{maxHeight:600,overflow:'auto'}}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- Show the authenticated saved file rather than rendering current label text. */}
+        <img src={url(resultKey)} alt={`저장된 최종 라벨 ${savedKeys.indexOf(resultKey)+1} 결과`} data-saved-label-result style={{width:'100%',height:'auto'}}/>
+      </div>
+    </section>}
+    {fresh&&savedKeys.length>0&&!ownedSavedKeys.length&&<p role="status">저장된 최종 라벨의 연결 파일을 확인하지 못했습니다. 아래 라벨 참조를 확인해주세요.</p>}
     {/* eslint-disable-next-line @next/next/no-img-element -- Private reference thumbnails require the authenticated same-origin file route. */}
-    <div className="image-selected-strip">{selected.map((key,index)=><figure key={key}>{pool.includes(key)?<><img src={url(key)} alt={`최종 라벨 ${index+1}`} width={120} height={120}/><figcaption>{index+1} · {key.split('/').at(-1)}</figcaption></>:<p>현재 상품에 없는 라벨 참조 · {key.split('/').at(-1)}</p>}
+    <div className="image-selected-strip">{selected.map((key,index)=><figure key={key}>{pool.includes(key)?<><button type="button" className="product-label-result-thumbnail" aria-label={`최종 라벨 ${index+1} 저장 결과 보기`} aria-pressed={savedKeys.includes(key)&&resultKey===key} disabled={!fresh||!savedKeys.includes(key)} onClick={()=>selectResult(key)}><img src={url(key)} alt={`최종 라벨 ${index+1}`} width={120} height={120}/></button><figcaption>{index+1} · {key.split('/').at(-1)}</figcaption></>:<p>현재 상품에 없는 라벨 참조 · {key.split('/').at(-1)}</p>}
       {pool.includes(key)&&<a className="btn ghost" aria-label={`최종 라벨 ${index+1} 이미지 다운로드`} href={url(key)} download={key.split('/').at(-1)}>이미지 다운로드</a>}
       {optionId!==null&&onTranslate&&<><button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 중국어 한국어 번역`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'zh')}>중국어 → 한국어</button>
         <button type="button" className="btn ghost" aria-label={`최종 라벨 ${index+1} 영어 한국어 번역`} disabled={locked||dirty||uncertain||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,index,'en')}>영어 → 한국어</button>

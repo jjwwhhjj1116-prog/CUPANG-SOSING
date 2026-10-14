@@ -3,10 +3,56 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-function load(file) { const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, Error, URL, TextEncoder, setTimeout, require: name => load(name.slice(2) + '.ts') }); return exports; }
+function load(file) { const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, Error, URL, TextEncoder, AbortController, setTimeout, clearTimeout, require: name => load(name.slice(2) + '.ts') }); return exports; }
 const { importReceivedJobs, pendingReceivedJobs } = load('app/collection-batch.ts');
 const job = id => ({ id, offer_id: '123', source_url: 'https://detail.1688.com/offer/123.html', status: 'awaiting_connector', received_at: '2026-09-25T00:00:00Z', product_id: null });
 const source = { schemaVersion: 1, offerId: '123', sourceUrl: job('a').source_url, provider: 'synthetic-test', collectedAt: '2026-09-25T00:00:00Z', title: 'fixture', description: '', options: [{ sku: 'a', name: 'one', unitPriceCny: 2, minimumOrder: 1, stock: null }], images: [] };
+
+for(const stage of ['fetch','body'])for(const capacityRead of [1,2]){
+ test(`capacity ${stage} deadline on read ${capacityRead} saves one source draft and ignores late data`,async()=>{
+  const calls=[],results=[],prepared=[];let reads=0,signal,finish;
+  const pending=new Promise(resolve=>{finish=resolve;});
+  await importReceivedJobs([job('a')],{capacityTimeoutMs:10,shouldStop:()=>false,onProgress:()=>{},retryWait:async()=>{},onResult:(_id,value)=>results.push(value),onProductSaved:async(id,productId)=>prepared.push([id,productId]),fetcher:async(url,init)=>{
+   calls.push(url);
+   if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+   if(url.endsWith('/capacity')){
+    if(++reads!==capacityRead)return Response.json({capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}});
+    signal=init.signal;
+    if(stage==='fetch')return pending;
+    const response=Response.json({});Object.defineProperty(response,'json',{value:()=>pending});return response;
+   }
+   assert.ok(url.endsWith('/product'),'unconfirmed capacity must not authorize images');return Response.json({productId:'draft'});
+  }});
+  assert.equal(signal.aborted,true);assert.deepEqual(prepared,[['a','draft']]);
+  assert.equal(calls.filter(url=>url.endsWith('/product')).length,1);
+  assert.equal(results.length,1);assert.equal(results[0].productId,'draft');assert.equal(results[0].status,'failed');assert.equal(results[0].completedImages,0);
+  const snapshot=JSON.stringify({calls,results,prepared});
+  finish(stage==='fetch'?Response.json({capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}}):{capacity:{usedSlots:0,totalImages:1,reusableIndices:[]}});
+  for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(JSON.stringify({calls,results,prepared}),snapshot);
+ });
+}
+
+test('parent abort during unresolved capacity stops immediately without a product or initial draft',async()=>{
+ const controller=new AbortController(),calls=[],results=[];let signal,started;
+ const ready=new Promise(resolve=>{started=resolve;});
+ const run=importReceivedJobs([job('a')],{signal:controller.signal,capacityTimeoutMs:1000,shouldStop:()=>false,onProgress:()=>{},onResult:(_id,value)=>results.push(value),onProductSaved:async()=>assert.fail('cancelled intake must not prepare a draft'),fetcher:async(url,init)=>{
+  calls.push(url);if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+  assert.ok(url.endsWith('/capacity'));signal=init.signal;started();return new Promise(()=>{});
+ }});
+ await ready;controller.abort();await run;assert.equal(signal.aborted,true);assert.equal(results.length,0);assert.equal(calls.length,2);
+});
+
+test('known capacity authority headers retain terminal failure when their JSON body never settles',async()=>{
+ for(const status of [401,403,409]){
+  const results=[];
+  await importReceivedJobs([job('a')],{capacityTimeoutMs:10,shouldStop:()=>false,onProgress:()=>{},onResult:(_id,value)=>results.push(value),onProductSaved:async()=>assert.fail('authority failure must not create a draft'),fetcher:async(url)=>{
+   if(url.endsWith('/result'))return Response.json({jobId:'a',offerId:'123',receipt:{result:{...source,images:[{url:'https://cbu01.alicdn.com/a.jpg',role:'main'}]}}});
+   assert.ok(url.endsWith('/capacity'));const response=new Response('',{status});Object.defineProperty(response,'json',{value:()=>new Promise(()=>{})});return response;
+  }});
+  assert.equal(results.length,1);assert.equal(results[0].status,'failed');assert.equal(results[0].productId,null);
+ }
+});
 
 test('library intake uses bounded batches regardless of server or Chrome source provider',async()=>{
  const images=Array.from({length:8},(_,index)=>({url:`https://cbu01.alicdn.com/${index}.jpg`,role:index===0?'main':'detail'}));

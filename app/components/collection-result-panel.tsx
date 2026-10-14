@@ -7,6 +7,8 @@ import { runCollectionImport } from '@/app/collection-import';
 import { registrationSteps, type CollectionEditorTab } from '@/app/registration-navigation';
 import { collectionSourceWarnings, type CollectionResult } from '@/app/collection-result';
 import { validateCollectionReceiptResponse } from '@/app/collection-receipt-response';
+import { fetchCollectionCapacity } from '@/app/collection-capacity-client';
+import { collectionRequestWithRetry } from '@/app/collection-retry';
 type Props={jobId:string;offerId:string;productId?:string|null;onSaved:()=>void;onOpenProduct?:(productId:string,tab:CollectionEditorTab,signal:AbortSignal)=>Promise<void>};
 export function CollectionResultPanel(props:Props){return <CollectionResultContent key={props.jobId} {...props}/>;}
 function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}:Props){
@@ -22,8 +24,9 @@ function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}
  const [navigationError,setNavigationError]=useState('');
  const [opening,setOpening]=useState(false);
  const navigation=useRef<AbortController|null>(null);
+ const capacityRead=useRef<AbortController|null>(null);
  const linkedProductId=productId||savedProductId;
- useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;stop.current=true;navigation.current?.abort();};},[]);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;stop.current=true;navigation.current?.abort();capacityRead.current?.abort();};},[]);
  async function openEditor(tab:CollectionEditorTab){
   if(!linkedProductId||!onOpenProduct||running.current)return;
   const controller=new AbortController();navigation.current=controller;running.current=true;setBusy(true);setOpening(true);setNavigationError('');
@@ -32,20 +35,22 @@ function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}
   finally{if(navigation.current===controller){navigation.current=null;running.current=false;if(mounted.current){setBusy(false);setOpening(false);}}}
  }
  async function readCapacity(received:CollectionResult,initial=false){
+  const controller=new AbortController();capacityRead.current?.abort();capacityRead.current=controller;
   setCapacity(null);setCapacityMessage('이미지 저장 상태 확인 중…');
   try{
-   const check=await fetch('/api/collection-jobs/'+encodeURIComponent(jobId)+'/capacity',{cache:'no-store'});
+   const check=await fetchCollectionCapacity('/api/collection-jobs/'+encodeURIComponent(jobId)+'/capacity',{fetcher:fetch,signal:controller.signal});
    const data=await check.json() as {capacity?:unknown;error?:string};
    if(!check.ok)throw new Error(data.error||'이미지 저장 여유 조회 실패');
    const current=validateCollectionCapacity(data.capacity,received.images.length);
-   if(!mounted.current)return;
+   if(!mounted.current||controller.signal.aborted||capacityRead.current!==controller)return;
    setCapacity(current);setCapacityMessage('');
    const available=received.images.map((_,index)=>index).filter(index=>!current.blockedIndices?.includes(index));
    setSelectedImages(previous=>{
     const next=initial?recommendCollectionImages(received,current):previous.filter(index=>available.includes(index));
     return next.length<=50&&collectionSelectionFits(current,next)?next:[];
    });
-  }catch(cause){if(mounted.current)setCapacityMessage(`${cause instanceof Error?cause.message:'이미지 저장 상태 조회 실패'} 원문은 유지됩니다. 이미지 저장 상태를 다시 조회해주세요.`);}
+  }catch(cause){if(mounted.current&&!controller.signal.aborted&&capacityRead.current===controller)setCapacityMessage(`${cause instanceof Error?cause.message:'이미지 저장 상태 조회 실패'} 원문은 유지됩니다. 이미지 저장 상태를 다시 조회해주세요.`);}
+  finally{if(capacityRead.current===controller)capacityRead.current=null;}
  }
  async function refreshCapacity(){
   if(!result||running.current)return;
@@ -55,8 +60,17 @@ function CollectionResultContent({jobId,offerId,productId,onSaved,onOpenProduct}
  async function importAll(productOnly=false){
   if(!result||running.current)return;
   running.current=true;stop.current=false;setStopping(false);setWarnings([]);setBusy(true);setImporting(true);
+  const onRetry=(attempt:number)=>{if(mounted.current)setMessage(`일시적인 연결 오류 · ${attempt}/3회 재시도 중…`);};
+  const fetchImport:typeof fetch=async(url,init)=>{
+   if(url==='/api/collection-jobs/'+encodeURIComponent(jobId)+'/capacity'){
+    const controller=new AbortController();capacityRead.current=controller;
+    try{return await fetchCollectionCapacity(String(url),{fetcher:fetch,signal:controller.signal,shouldStop:()=>stop.current,attempts:3,onRetry});}
+    finally{if(capacityRead.current===controller)capacityRead.current=null;}
+   }
+   return collectionRequestWithRetry(String(url),init??{},{fetcher:fetch,attempts:3,shouldStop:()=>stop.current,onRetry});
+  };
   let outcome;
-  try { outcome=await runCollectionImport(jobId,result.images.length,{continueOnImageError:true,retryAttempts:3,onRetry:attempt=>{if(mounted.current)setMessage(`일시적인 연결 오류 · ${attempt}/3회 재시도 중…`);},imageIndices:productOnly?[]:selectedImages,shouldStop:()=>stop.current,onProgress:progress=>{
+  try { outcome=await runCollectionImport(jobId,result.images.length,{continueOnImageError:true,retryAttempts:1,fetcher:fetchImport,imageIndices:productOnly?[]:selectedImages,shouldStop:()=>stop.current,onProgress:progress=>{
    if(mounted.current)setMessage(progress.stage==='product'?'상품·옵션 반영 중…':`원본 이미지 ${progress.completedImages}/${progress.totalImages}개 저장 확인…`);
   }}); } catch(cause) {
    running.current=false;

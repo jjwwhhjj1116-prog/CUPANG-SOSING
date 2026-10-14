@@ -5,10 +5,62 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
 const nativeRequire=createRequire(import.meta.url);
-function load(file,dependencies){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,setTimeout:(fn)=>setImmediate(fn),fetch:dependencies.fetch,require(name){if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime')return nativeRequire(name);return load(name.slice(2)+'.ts',dependencies);}});return exports;}
+function load(file,dependencies){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,setTimeout:dependencies.timers?.setTimeout??((fn)=>setImmediate(fn)),clearTimeout:dependencies.timers?.clearTimeout??clearImmediate,fetch:dependencies.fetch,require(name){if(name in dependencies)return dependencies[name];if(name==='react/jsx-runtime')return nativeRequire(name);return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'),dependencies);}});return exports;}
 function nodes(tree){if(Array.isArray(tree))return tree.flatMap(nodes);if(!tree||typeof tree!=='object')return[];return[tree,...nodes(tree.props?.children)];}
 const result={schemaVersion:1,offerId:'123',title:'수집 상품 원문',provider:'synthetic',collectedAt:'2026-01-01T00:00:00Z',sourceUrl:'https://detail.1688.com/offer/123.html',description:'판매자 설명',options:[{sku:'a',name:'옵션 A',unitPriceCny:2,minimumOrder:1,stock:1}],images:[{url:'https://cbu01.alicdn.com/a.png',role:'main'},{url:'https://cbu01.alicdn.com/b.png',role:'detail'}]};
 const capacity={usedSlots:0,totalImages:2,reusableIndices:[]};
+function deadlineTimers(){let id=0;const pending=new Map();return{setTimeout(fn,delay){pending.set(++id,{fn,delay});return id;},clearTimeout(id){pending.delete(id);},fire(){assert.equal(pending.size,1);const [key,value]=pending.entries().next().value;assert.equal(value.delay,5000);pending.delete(key);value.fn();},get count(){return pending.size;}};}
+const settle=async()=>{for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));};
+
+for(const stage of ['fetch','body'])test(`capacity ${stage} deadline unlocks product-only import and ignores a late response`,async()=>{
+ const timers=deadlineTimers(),calls=[];let finish,signal,reads=0;
+ const pending=new Promise(resolve=>{finish=resolve;});
+ const h=harness(async(url,init)=>{
+  calls.push(url);
+  if(url.endsWith('/result'))return Response.json({jobId:'job',offerId:'123',receipt:{result},message:'수신됨'});
+  if(url.endsWith('/product'))return Response.json({productId:'draft'});
+  assert.ok(url.endsWith('/capacity'));
+  if(++reads>1)return Response.json({capacity});
+  signal=init.signal;
+  if(stage==='fetch')return pending;
+  const response=Response.json({});Object.defineProperty(response,'json',{value:()=>pending});return response;
+ },null,{},timers);
+ await h.click('수신 결과 조회');assert.match(JSON.stringify(h.render()),/수집 상품 원문/);assert.equal(h.button('원문을 상품·옵션으로 반영').props.disabled,true);
+ timers.fire();await settle();assert.equal(signal.aborted,true);assert.equal(timers.count,0);
+ assert.equal(h.button('원문을 상품·옵션으로 반영').props.disabled,false);assert.match(JSON.stringify(h.render()),/확인 시간이 초과/);
+ assert.equal(h.find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='상품·선택 이미지 ').props.disabled,true);
+ await h.click('원문을 상품·옵션으로 반영');assert.equal(h.saved,1);assert.equal(calls.filter(url=>url.endsWith('/product')).length,1);
+ const snapshot=JSON.stringify(h.render()),updates=h.stateUpdates;
+ finish(stage==='fetch'?Response.json({capacity}):{capacity});await settle();
+ assert.equal(JSON.stringify(h.render()),snapshot);assert.equal(h.stateUpdates,updates);assert.ok(!calls.some(url=>url.endsWith('/images')));
+ await h.click('이미지 저장 상태 다시 조회');assert.equal(timers.count,0);assert.doesNotMatch(JSON.stringify(h.render()),/확인 시간이 초과/);
+});
+
+test('closing the receipt during a stalled capacity body cancels the read and clears its deadline',async()=>{
+ const timers=deadlineTimers();let signal,finish;
+ const pending=new Promise(resolve=>{finish=resolve;});
+ const h=harness(async(url,init)=>{
+  if(url.endsWith('/result'))return Response.json({jobId:'job',offerId:'123',receipt:{result},message:'수신됨'});
+  signal=init.signal;const response=Response.json({});Object.defineProperty(response,'json',{value:()=>pending});return response;
+ },null,{},timers);
+ await h.click('수신 결과 조회');h.unmount();const updates=h.stateUpdates;await settle();
+ assert.equal(signal.aborted,true);assert.equal(timers.count,0);assert.equal(h.saved,0);assert.equal(h.stateUpdates,updates);
+ finish({capacity});await settle();assert.equal(h.stateUpdates,updates);
+});
+
+test('import capacity recheck has the same bounded body read and never starts image writes on timeout',async()=>{
+ const timers=deadlineTimers(),calls=[];let reads=0,signal;
+ const h=harness(async(url,init)=>{
+  calls.push(url);
+  if(url.endsWith('/result'))return Response.json({jobId:'job',offerId:'123',receipt:{result},message:'수신됨'});
+  assert.ok(url.endsWith('/capacity'));
+  if(++reads!==2)return Response.json({capacity});
+  signal=init.signal;const response=Response.json({});Object.defineProperty(response,'json',{value:()=>new Promise(()=>{})});return response;
+ },null,{},timers);
+ await h.click('수신 결과 조회');h.find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='상품·선택 이미지 ').props.onClick();await settle();
+ timers.fire();await settle();assert.equal(signal.aborted,true);assert.equal(timers.count,0);assert.equal(h.saved,0);
+ assert.ok(calls.every(url=>url.endsWith('/result')||url.endsWith('/capacity')));assert.equal(h.button('원문을 상품·옵션으로 반영').props.disabled,false);
+});
 
 test('SKU-only receipts show missing detail and attribute facts after reload without claiming all data was collected',async()=>{
  for(const provider of ['1688-public-sku-v1','chrome-public-sku-v1']){
@@ -30,7 +82,7 @@ test('all seven stages open the same saved product without collecting or executi
  assert.equal(navigation.initialRegistrationStep('옵션'),'SEO');
  assert.equal(navigation.initialRegistrationStep('unknown'),'SEO');
 });
-function harness(fetcher,importer,props={}){const states=[],refs=[],cleanups=[];let effectsStarted=false;let index=0,ri=0,saved=0;const hooks={useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(initial){const slot=ri++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(effect){if(!effectsStarted)cleanups.push(effect());}};const panel=load('app/components/collection-result-panel.tsx',{react:hooks,fetch:fetcher,...(importer?{'@/app/collection-import':{runCollectionImport:importer}}:{})});const render=()=>{index=0;ri=0;const root=panel.CollectionResultPanel({jobId:'job',offerId:'123',onSaved(){saved++;},...props});const tree=root.type(root.props);effectsStarted=true;return tree;};const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node);return node;};const button=name=>find(n=>n.type==='button'&&n.props.children===name);return{render,find,button,unmount(){cleanups.forEach(fn=>fn?.());},get saved(){return saved;},async click(name){button(name).props.onClick();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));}};}
+function harness(fetcher,importer,props={},timers){const states=[],refs=[],cleanups=[];let effectsStarted=false;let index=0,ri=0,saved=0,stateUpdates=0;const hooks={useState(initial){const slot=index++;if(slot>=states.length)states.push(initial);return[states[slot],next=>{stateUpdates++;states[slot]=typeof next==='function'?next(states[slot]):next;}];},useRef(initial){const slot=ri++;if(slot>=refs.length)refs.push({current:initial});return refs[slot];},useEffect(effect){if(!effectsStarted)cleanups.push(effect());}};const panel=load('app/components/collection-result-panel.tsx',{react:hooks,fetch:fetcher,timers,...(importer?{'@/app/collection-import':{runCollectionImport:importer}}:{})});const render=()=>{index=0;ri=0;const root=panel.CollectionResultPanel({jobId:'job',offerId:'123',onSaved(){saved++;},...props});const tree=root.type(root.props);effectsStarted=true;return tree;};const find=predicate=>{const node=nodes(render()).find(predicate);assert.ok(node);return node;};const button=name=>find(n=>n.type==='button'&&n.props.children===name);return{render,find,button,unmount(){cleanups.forEach(fn=>fn?.());},get stateUpdates(){return stateUpdates;},get saved(){return saved;},async click(name){button(name).props.onClick();for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));}};}
 
 test('role selection replaces the draft and only selected SKU images reach the importer',async()=>{
  const source={...result,options:[{...result.options[0],imageIndex:1}],images:[...result.images,{url:'https://cbu01.alicdn.com/c.png',role:'additional'}]};let received;
