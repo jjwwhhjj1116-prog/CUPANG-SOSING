@@ -5,6 +5,7 @@ import {mainImageValue,readMainImageView,saveMainImageView,verifyMainImageRefres
 import type {QuotationFieldsView} from '@/app/quotation-schema';
 import type {FreeImageQuotationRequest} from '@/app/free-image-translation-client';
 import {readMainImageLibrary,mainImageLibraryCurrent,mainImageLibraryKeys,type MainImageLibrary,type MainImageLibraryTab} from '@/app/main-image-library';
+import {ImageFullscreenPreview} from '@/app/components/image-fullscreen-preview';
 type Props={productId:string;version?:string;profileId?:string;refreshToken?:string;focusedOptionId?:string;onSaved?:()=>void;translationEnabled?:boolean;disabled?:boolean;
  onTranslate?:(sourceKey:string,role:'main',sourceLanguage:'zh'|'en',quotationTarget:FreeImageQuotationRequest)=>void;
  onEdit?:(sourceKey:string,role:'main',quotationTarget:FreeImageQuotationRequest)=>void};
@@ -52,6 +53,23 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
   try{const view=await saveMainImageView(endpoint,before.view,draft.optionId,draft.value,scoped(c));if(!current()||c.signal.aborted)return;store(view);clear();void groupLibrary(view);setMessage('선택 옵션의 최종 견적 대표이미지를 저장했습니다.');onSaved?.();}
   catch(cause){if(current()&&!c.signal.aborted){setUncertain(cause instanceof MainImageSaveError&&cause.uncertain);setError(cause instanceof Error?cause.message:'대표이미지 저장 실패');}}finally{finish(c);}}
  const pool=base?.view.imageKeys??[],url=(key:string)=>`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`,valid=!!id&&rows.some(row=>row.optionId===id);
+ const previewScope=JSON.stringify([scope,sourceKey,id,selected,selected.map(key=>pool.includes(key)),translationEnabled,disabled]);
+ const [previewClock,setPreviewClock]=useState(()=>({scope:previewScope,token:{}}));
+ if(previewClock.scope!==previewScope)setPreviewClock({scope:previewScope,token:{}});
+ const previewGeneration=previewClock.scope===previewScope?previewClock.token:null,previewEpoch=useRef(previewGeneration);
+ type Preview={generation:object;key:string};
+ const [preview,setPreview]=useState<Preview|null>(null),livePreview=useRef<Preview|null>(null);
+ useLayoutEffect(()=>{previewEpoch.current=previewGeneration;if(livePreview.current?.generation!==previewGeneration)livePreview.current=null;},[previewGeneration]);
+ function openPreview(key:string){
+  const before=liveSaved.current,draft=liveDraft.current;
+  if(!previewGeneration||!before||!base||!valid||!fresh||!currentOption()||liveDisabled.current||previewEpoch.current!==previewGeneration||before.view!==base.view||!pool.includes(key))return;
+  try{
+   const actual=mainImageValue(before.view,id,draft.scope===scope&&draft.optionId===id?draft.value:undefined).split('\n').map(value=>value.trim()).filter(Boolean);
+   if(JSON.stringify(actual)!==JSON.stringify(selected)||!actual.includes(key))return;
+   const next={generation:previewGeneration,key};livePreview.current=next;setPreview(next);
+  }catch{/* Invalid image bindings remain owned by the existing read/save guards. */}
+ }
+ function closePreview(target:Preview){if(previewEpoch.current!==previewGeneration||livePreview.current!==target)return;livePreview.current=null;setPreview(null);}
  const libraryState=library?.scope===scope&&library.sourceKey===sourceKey?library:null;
  const groups=base&&libraryState?.value&&mainImageLibraryCurrent(libraryState.value,productId,base.view)?libraryState.value:null;
  const tab=libraryTab.scope===scope&&groups?libraryTab.tab:'work';
@@ -73,7 +91,7 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
   <h3>최종 견적 대표이미지</h3><p>이 옵션의 견적서와 상품 표에 표시할 대표이미지를 선택합니다.</p>{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}{dirty&&!fresh&&<p role="status">다른 저장값이 변경되었습니다. 이미지 선택은 유지했습니다.</p>}
   <label className="field"><span>편집할 옵션</span><select aria-label="최종 대표이미지 옵션" value={id} disabled={disabled||busy||dirty||focusedOptionId!==undefined} onChange={event=>{if(focusedOptionId===undefined&&currentOption()&&!liveDisabled.current&&!request.current&&!(liveDraft.current.scope===scope&&liveDraft.current.value!==undefined))setSelection({scope,id:event.target.value});}}><option value="">옵션 선택</option>{rows.filter(row=>focusedOptionId===undefined||row.optionId===focusedOptionId).map(row=><option key={row.optionId} value={row.optionId!}>{row.optionLabel}{row.included?'':' · 견적 제외'}</option>)}</select></label>
   {!valid&&<p role="alert">선택한 옵션이 현재 견적서에 없습니다.</p>}
-  <div className="image-selected-strip">{selected.map(key=><figure key={key}>{pool.includes(key)?<img src={url(key)} alt="최종 견적 대표이미지" style={{maxWidth:'100%',maxHeight:320}}/>:<p>현재 상품에 없는 대표이미지 참조</p>}<figcaption>{key.split('/').at(-1)}</figcaption>
+  <div className="image-selected-strip">{selected.map(key=><figure key={key}>{pool.includes(key)?<button type="button" aria-label="최종 대표이미지 크게 보기" aria-haspopup="dialog" disabled={!valid||!fresh||disabled} onClick={()=>openPreview(key)} style={{display:'block',maxWidth:'100%',padding:0,border:0,background:'transparent',cursor:'zoom-in'}}><img src={url(key)} alt="최종 견적 대표이미지" style={{maxWidth:'100%',maxHeight:320}}/></button>:<p>현재 상품에 없는 대표이미지 참조</p>}<figcaption>{key.split('/').at(-1)}</figcaption>
    {onEdit&&<button type="button" className="btn ghost" aria-label="최종 대표이미지 편집하기" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'zh',true)}>편집하기</button>}
    {onTranslate&&<div role="group" aria-label="최종 견적 대표이미지 번역"><button type="button" className="btn ghost" aria-label="최종 대표이미지 중국어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'zh')}>중국어 → 한국어</button><button type="button" className="btn ghost" aria-label="최종 대표이미지 영어 한국어 번역" disabled={disabled||!translationEnabled||!valid||busy||uncertain||dirty||!fresh||!pool.includes(key)} onClick={()=>translateSelected(key,'en')}>영어 → 한국어</button></div>}
   </figure>)}</div>{valid&&!selected.length&&<p>최종 대표이미지는 공란입니다.</p>}
@@ -84,5 +102,6 @@ export function OptionMainImageEditor({productId,version,profileId,refreshToken,
   {base&&!visiblePool.length&&<p>이 종류에 연결된 저장 이미지가 없습니다. 작업 이미지에서 전체 목록을 확인하세요.</p>}
   <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||!valid||busy||uncertain} onClick={()=>edit('')}>최종 대표이미지 비우기</button><button type="button" className="btn ghost" disabled={disabled||!valid||busy||uncertain} onClick={()=>edit(null)}>공통·원본 대표이미지 복원</button><button type="button" className="btn primary" disabled={disabled||!valid||busy||!dirty} onClick={()=>void save()}>{uncertain?'대표이미지 저장 결과 확인·재시도':'최종 견적 대표이미지 저장'}</button></div>
   {dirty&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void load(true)}>선택 유지·최신 대표이미지 조회</button>}<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>{if(currentOption()&&!liveDisabled.current&&!request.current){clear();void load();}}}>{dirty?'선택 취소·저장 대표이미지 조회':'최종 대표이미지 저장본 조회'}</button>
+  {preview?.generation===previewGeneration&&selected.includes(preview.key)&&pool.includes(preview.key)&&<ImageFullscreenPreview src={url(preview.key)} alt="최종 견적 대표이미지 전체 화면" onClose={()=>closePreview(preview)}/>}
  </section>;
 }

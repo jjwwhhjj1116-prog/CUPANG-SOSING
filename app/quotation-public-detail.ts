@@ -3,6 +3,7 @@ import { quotationValueIssues, type ResolvedQuotation } from '@/app/quotation-sc
 import { isOwnedImageKey, imageFileType, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import type { BundleAsset } from '@/app/exports/review-bundle';
 import type { SubmissionIssue } from '@/app/submission-review';
+import { parseFragment, type DefaultTreeAdapterMap } from 'parse5';
 
 export const PUBLIC_DETAIL_PREFIX = 'quotation-public-detail/';
 export const PUBLIC_DETAIL_FORMAT = 'yoofam-public-detail-v1';
@@ -11,6 +12,22 @@ export type PublicDetailImage = { key: string; token: string; url: string };
 export class PublicDetailError extends Error { constructor(message: string, public status = 409) { super(message); } }
 const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
 const escape = (value: string) => value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]!));
+
+/** Read image references as inert HTML. Text, comments and raw/inert elements
+ * cannot authorize publication; no manual URL is fetched or rewritten. */
+function manualImageSources(html: string): string[] {
+  const values = new Set<string>(), nodes: DefaultTreeAdapterMap['node'][] = [parseFragment(html)];
+  while (nodes.length) {
+    const node = nodes.pop()!;
+    if ('tagName' in node && ['script', 'style', 'template', 'noscript', 'textarea', 'title'].includes(node.tagName)) continue;
+    if ('childNodes' in node) for (let index = node.childNodes.length - 1; index >= 0; index--) nodes.push(node.childNodes[index]);
+    if ('tagName' in node && node.tagName === 'img') {
+      const src = node.attrs.find(attribute => attribute.name === 'src')?.value.trim();
+      if (src) values.add(src);
+    }
+  }
+  return [...values];
+}
 
 export function publicDetailConfig(bindings: { YOOFAM_DETAIL_IMAGE_SECRET?: string; YOOFAM_DETAIL_IMAGE_ORIGIN?: string }): PublicDetailConfig | null {
   const secret = bindings.YOOFAM_DETAIL_IMAGE_SECRET, origin = bindings.YOOFAM_DETAIL_IMAGE_ORIGIN;
@@ -35,13 +52,54 @@ export async function resolvePublicDetail(resolved: ResolvedQuotation, content: 
   if (!definition) return { resolved, images: [] as PublicDetailImage[] };
   const signingKey = await crypto.subtle.importKey('raw', Uint8Array.from(config.secret.match(/../g)!, part => parseInt(part, 16)), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const byKey = new Map<string, PublicDetailImage>(), includedKeys = new Set<string>();
+  const manualSources = new Map<string, string[]>();
+  const imageForKey = async (key: string) => {
+    let image = byKey.get(key);
+    if (!image) {
+      const token = hex(await crypto.subtle.sign('HMAC', signingKey, new TextEncoder().encode(`${PUBLIC_DETAIL_FORMAT}\0${owner}\0${key}`)));
+      image = { key, token, url: `${config.origin}/media/quotation/${token}` }; byKey.set(key, image);
+      if (byKey.size > PRODUCT_IMAGE_POOL_LIMIT) throw new PublicDetailError('상세 이미지가 허용 개수를 초과했습니다.', 413);
+    }
+    return image;
+  };
   const description = currentDetailContent(content).description.value;
   const paragraph = description ? `<p>${escape(description).replace(/\r?\n/g, '<br>')}</p>` : '';
   const rows = [];
   for (const row of resolved.rows) {
     const cell = row.fields.detailHtml;
-    if (!cell || ['manual-common', 'manual-option'].includes(cell.source)) { rows.push(row); continue; }
+    if (!cell) { rows.push(row); continue; }
     const keys = (row.fields.detailImages?.value ?? '').split('\n').map(key => key.trim()).filter(Boolean);
+    if (['manual-common', 'manual-option'].includes(cell.source)) {
+      let sources = manualSources.get(cell.value);
+      if (!sources) { sources = manualImageSources(cell.value); manualSources.set(cell.value, sources); }
+      const capabilities = sources.flatMap<{ src: string; url: URL | null; absolute: boolean }>(src => {
+        try { const url = new URL(src, config.origin); return url.pathname.startsWith('/media/quotation/')
+          ? [{ src, url, absolute: /^https:\/\//i.test(src) || src.startsWith('//') }] : []; }
+        catch { return src.startsWith('/media/quotation/') ? [{ src, url: null, absolute: false }] : []; }
+      });
+      if (!capabilities.length) { rows.push(row); continue; }
+      // Generated HTML is editable before its first export. Its capability URLs
+      // may be published only while the corresponding saved detail-role images
+      // still belong to this product and current signing configuration.
+      const validKeys = keys.length <= 30 && new Set(keys).size === keys.length
+        && keys.every(key => isOwnedImageKey(owner, key) && ownedKeys.includes(key));
+      const candidates = validKeys ? await Promise.all(keys.map(imageForKey)) : [];
+      const local = capabilities.filter(reference => !reference.url || reference.url.origin === config.origin
+        // A former origin is identifiable only when its token verifies against
+        // this owner's current selected image. Other external URLs stay manual.
+        || candidates.some(image => reference.url!.pathname === `/media/quotation/${image.token}`));
+      if (!local.length) { rows.push(row); continue; }
+      const referenced = local.map(reference => reference.absolute && candidates.find(image => image.url === reference.url?.href));
+      if (!validKeys || referenced.some(image => !image)) {
+        const validationIssues = [...new Set([...(cell.validationIssues ?? []), '직접 수정한 상세 HTML의 이미지 주소가 현재 상품의 상세 이미지·공개 설정과 일치하지 않습니다. 현재 상세 이미지로 주소를 다시 확인해주세요.'])];
+        rows.push({ ...row, fields: { ...row.fields, detailHtml: { ...cell, validationIssues,
+          issues: [...validationIssues, ...(cell.reviewMessages ?? [])], needsReview: true } } });
+      } else {
+        if (row.included) for (const image of referenced) if (image) includedKeys.add(image.key);
+        rows.push(row);
+      }
+      continue;
+    }
     if (keys.length > 30 || new Set(keys).size !== keys.length || keys.some(key => !isOwnedImageKey(owner, key) || !ownedKeys.includes(key))) {
       // Keep a damaged saved selection editable. Invalid/excluded references
       // must never mint links or prevent fixing another option in the form.
@@ -52,15 +110,10 @@ export async function resolvePublicDetail(resolved: ResolvedQuotation, content: 
     }
     const images: PublicDetailImage[] = [];
     for (const key of keys) {
-      let image = byKey.get(key);
-      if (!image) {
-        const token = hex(await crypto.subtle.sign('HMAC', signingKey, new TextEncoder().encode(`${PUBLIC_DETAIL_FORMAT}\0${owner}\0${key}`)));
-        image = { key, token, url: `${config.origin}/media/quotation/${token}` }; byKey.set(key, image);
-      }
+      const image = await imageForKey(key);
       images.push(image);
       if (row.included) includedKeys.add(key);
     }
-    if (byKey.size > PRODUCT_IMAGE_POOL_LIMIT) throw new PublicDetailError('상세 이미지가 허용 개수를 초과했습니다.', 413);
     const alt = row.fields.altText?.value ?? '';
     const imageHtml = images.map((image, index) => `<img src="${escape(image.url)}" alt="${escape(alt ? `${alt} ${index + 1}` : '')}" style="display:block;width:100%;height:auto">`).join('');
     const value = images.length ? `<div style="width:800px;max-width:100%;margin:0;padding:0;background-color:#ffffff;box-sizing:border-box">${paragraph}${imageHtml}</div>` : paragraph;
@@ -71,7 +124,7 @@ export async function resolvePublicDetail(resolved: ResolvedQuotation, content: 
   return { resolved: { ...resolved, rows }, images: [...byKey.values()].filter(image => includedKeys.has(image.key)) };
 }
 
-/** Explicit package/download requests publish only images referenced by generated HTML.
+/** Explicit package/download requests publish only verified images referenced by final HTML.
  * Conditional creation keeps an already exported URL's bytes immutable. */
 export async function publishPublicDetail(images: readonly PublicDetailImage[], assets: readonly BundleAsset[], bucket: R2Bucket) {
   const byKey = new Map(assets.map(asset => [asset.key, asset]));
@@ -101,7 +154,16 @@ export async function publishPublicDetail(images: readonly PublicDetailImage[], 
 export function publicDetailMediaIssues(resolved: ResolvedQuotation, images: readonly PublicDetailImage[], assets: readonly BundleAsset[]): SubmissionIssue[] {
   const byKey = new Map(assets.map(asset => [asset.key, asset]));
   const gifs = images.filter(image => { const asset = byKey.get(image.key); return asset && imageFileType(asset.data).extension === 'gif'; });
-  return resolved.rows.filter(row => row.included && gifs.some(image => row.fields.detailHtml?.value.includes(image.url))).map(row => ({
+  const sources = new Map<string, Set<string>>();
+  return resolved.rows.filter(row => {
+    if (!row.included || !gifs.length) return false;
+    const html = row.fields.detailHtml?.value ?? '';
+    if (!sources.has(html)) sources.set(html, new Set(manualImageSources(html)));
+    return gifs.some(image => [...sources.get(html)!].some(src => {
+      if (!/^https:\/\//i.test(src) && !src.startsWith('//')) return false;
+      try { return new URL(src, image.url).href === image.url; } catch { return false; }
+    }));
+  }).map(row => ({
     kind: 'error', code: 'HTML_MEDIA_UNSUPPORTED', optionId: row.optionId, optionLabel: row.optionLabel, fieldId: 'detailHtml',
     message: 'HTML 상세 내용에 Supplier Hub가 지원하지 않는 GIF 이미지가 있습니다. 상세 이미지를 교체하거나 7단계 HTML 입력을 수정해주세요.',
   }));

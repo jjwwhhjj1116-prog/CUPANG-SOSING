@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as parse5 from 'parse5';
-import { webcrypto, createHash } from 'node:crypto';
+import { webcrypto, createHash, createHmac } from 'node:crypto';
 
 function modules(env = {}) {
   const cache = new Map();
@@ -109,6 +109,102 @@ test('direct HTML and deliberate blanks are authoritative, including an empty co
   const result = await api.resolvePublicDetail(resolved({ common: {}, options: { first: { detailHtml: '' } } }), content, 'owner', keys, config);
   assert.equal(result.resolved.rows.find(row => row.optionId === 'first').fields.detailHtml.value, '');
   assert.match(result.resolved.rows.find(row => row.optionId === 'second').fields.detailHtml.value, /<img /);
+});
+
+test('editing generated HTML before first export preserves its bytes and publishes only its selected owned references', async () => {
+  const generated = await api.resolvePublicDetail(resolved(), content, 'owner', keys, config);
+  const html = generated.resolved.rows.find(row => row.optionId === 'first').fields.detailHtml.value.replace('margin:0', 'margin:7px')
+    + '<p data-reviewed="yes">수동 검수 문구 &amp; 보존</p>';
+  const input = resolved({ common: { detailHtml: html }, options: {} }), before = JSON.stringify(input);
+  const result = await api.resolvePublicDetail(input, content, 'owner', keys, config);
+  assert.ok(result.resolved.rows.every(row => row.fields.detailHtml.value === html));
+  assert.deepEqual(Array.from(result.images, image => image.key), keys.slice(0, 3)); assert.equal(JSON.stringify(input), before);
+  const b = bucket(), route = modules({ FILES: b })('app/media/quotation/[token]/route.ts');
+  for (const image of result.images) assert.equal((await route.GET(new Request(image.url), { params: Promise.resolve({ token: image.token }) })).status, 404);
+  await api.publishPublicDetail(result.images, assets, b);
+  for (const image of result.images) assert.equal((await route.GET(new Request(image.url), { params: Promise.resolve({ token: image.token }) })).status, 200);
+});
+
+test('mixed manual and automatic rows deduplicate capabilities and never publish excluded-only or unused candidate images', async () => {
+  const generated = await api.resolvePublicDetail(resolved(), content, 'owner', keys, config);
+  const selected = generated.images.find(image => image.key === keys[1]);
+  const html = `<section data-manual="keep"><img src='${selected.url}' alt="직접 수정"><img src="${selected.url}"></section>`;
+  const foreignSlotToken = createHmac('sha256', Buffer.from(config.secret, 'hex')).update(`${api.PUBLIC_DETAIL_FORMAT}\0owner\0${keys[3]}`).digest('hex');
+  const result = await api.resolvePublicDetail(resolved({ common: {}, options: {
+    first: { detailHtml: html }, second: { detailImages: keys[2] },
+    excluded: { detailImages: keys[3], detailHtml: `<img src="${config.origin}/media/quotation/${foreignSlotToken}">` },
+  } }), content, 'owner', keys, config);
+  assert.equal(result.resolved.rows.find(row => row.optionId === 'first').fields.detailHtml.value, html);
+  assert.deepEqual(new Set(Array.from(result.images, image => image.key)), new Set([keys[1], keys[2]]));
+});
+
+test('stale, tampered, foreign and removed manual capability references stay editable with blocking binding errors', async () => {
+  const generated = await api.resolvePublicDetail(resolved(), content, 'owner', keys, config), image = generated.images[0];
+  const token = (owner, key) => createHmac('sha256', Buffer.from(config.secret, 'hex')).update(`${api.PUBLIC_DETAIL_FORMAT}\0${owner}\0${key}`).digest('hex');
+  const scenarios = [
+    { src: image.url, settings: { ...config, secret: 'b2'.repeat(32) } },
+    { src: image.url, settings: { ...config, origin: 'https://new-detail.example.test' } },
+    { src: image.url.slice(0, -1) + (image.url.endsWith('0') ? '1' : '0') },
+    { src: `${config.origin}/media/quotation/${token('other-company-owner', 'other-company-owner/top.png')}` },
+    { src: `${config.origin}/media/quotation/${token('owner', 'owner/other-product.png')}` },
+    { src: image.url, owned: keys.slice(1) },
+    { src: image.url, detailImages: keys[1] },
+    { src: image.url + '?unbound=1' },
+    { src: new URL(image.url).pathname },
+  ];
+  for (const scenario of scenarios) {
+    const html = `<div data-do-not-regenerate="true"><img src="${scenario.src}">원문 유지</div>`;
+    const input = resolved({ common: { detailHtml: html, ...(scenario.detailImages ? { detailImages: scenario.detailImages } : {}) }, options: {} });
+    const result = await api.resolvePublicDetail(input, content, 'owner', scenario.owned ?? keys, scenario.settings ?? config);
+    assert.equal(result.images.length, 0); assert.ok(result.resolved.rows.every(row => row.fields.detailHtml.value === html));
+    assert.match(result.resolved.rows.find(row => row.optionId === 'first').fields.detailHtml.validationIssues.join(' '), /현재 상품의 상세 이미지·공개 설정/);
+  }
+});
+
+test('comments, escaped text and inert manual elements cannot authorize publication of an owned URL', async () => {
+  const generated = await api.resolvePublicDetail(resolved(), content, 'owner', keys, config), url = generated.images[0].url;
+  const html = `<!-- <img src="${url}"> --><script>"<img src='${url}'>"</script><template><img src="${url}"></template>`
+    + `<textarea><img src="${url}"></textarea><p title="${url}">&lt;img src="${url}"&gt;</p>`;
+  const result = await api.resolvePublicDetail(resolved({ common: { detailHtml: html }, options: {} }), content, 'owner', keys, config);
+  assert.equal(result.images.length, 0); assert.ok(result.resolved.rows.every(row => row.fields.detailHtml.value === html));
+});
+
+test('manual references to opaque owned GIF capabilities receive the same byte-level media restriction', async () => {
+  const generated = await api.resolvePublicDetail(resolved(), content, 'owner', keys, config), html = `<img src="${generated.images[0].url}">`;
+  const detail = await api.resolvePublicDetail(resolved({ common: { detailHtml: html }, options: {} }), content, 'owner', keys, config);
+  const gifAssets = assets.map(asset => ({ ...asset, data: new Uint8Array(Buffer.from('GIF89a')) }));
+  const issues = api.publicDetailMediaIssues(detail.resolved, detail.images, gifAssets);
+  assert.equal(issues.length, 2); assert.ok(issues.every(issue => issue.code === 'HTML_MEDIA_UNSUPPORTED'));
+});
+
+test('entity-encoded manual capability URLs keep their source bytes and exact GIF review binding', async () => {
+  const generated = await api.resolvePublicDetail(resolved(), content, 'owner', keys, config), image = generated.images[0];
+  const html = `<img src="${image.url.replaceAll('/', '&#47;')}" data-text="보존">`;
+  const detail = await api.resolvePublicDetail(resolved({ common: { detailHtml: html }, options: {} }), content, 'owner', keys, config);
+  assert.ok(detail.resolved.rows.every(row => row.fields.detailHtml.value === html));
+  assert.deepEqual(Array.from(detail.images, value => value.key), [image.key]);
+  const gifAssets = assets.map(asset => ({ ...asset, data: new Uint8Array(Buffer.from('GIF89a')) }));
+  const issues = api.publicDetailMediaIssues(detail.resolved, detail.images, gifAssets);
+  assert.equal(issues.length, 2); assert.ok(issues.every(issue => issue.code === 'HTML_MEDIA_UNSUPPORTED'));
+});
+
+test('browser-equivalent absolute and scheme-relative owned URLs publish without rewriting manual HTML', async () => {
+  const generated = await api.resolvePublicDetail(resolved(), content, 'owner', keys, config), image = generated.images[0];
+  for (const src of [image.url.replace('https://example.com', 'HTTPS://EXAMPLE.COM:443'), image.url.replace('https:', '')]) {
+    const html = `<img src="${src}" data-original="yes">`, detail = await api.resolvePublicDetail(resolved({ common: { detailHtml: html }, options: {} }), content, 'owner', keys, config);
+    assert.ok(detail.resolved.rows.every(row => row.fields.detailHtml.value === html));
+    assert.deepEqual(Array.from(detail.images, value => value.key), [image.key]);
+    const issues = api.publicDetailMediaIssues(detail.resolved, detail.images, assets.map(asset => ({ ...asset, data: new Uint8Array(Buffer.from('GIF89a')) })));
+    assert.equal(issues.length, 2, 'normalization must also preserve the media restriction review binding');
+  }
+});
+
+test('an unrecognized external capability-shaped URL remains manual and no-config HTML remains unverified', async () => {
+  const html = `<img src="https://outside.example/media/quotation/${'f'.repeat(64)}">`;
+  const detail = await api.resolvePublicDetail(resolved({ common: { detailHtml: html }, options: {} }), content, 'owner', keys, config);
+  assert.equal(detail.images.length, 0); assert.ok(detail.resolved.rows.every(row => row.fields.detailHtml.value === html));
+  const original = resolved({ common: { detailHtml: html }, options: {} });
+  assert.strictEqual((await api.resolvePublicDetail(original, content, 'owner', keys, null)).resolved, original);
 });
 
 test('no configuration retains legacy paragraph behavior; image capabilities differ by owner and signing key', async () => {

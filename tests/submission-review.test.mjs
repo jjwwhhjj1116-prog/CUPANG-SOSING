@@ -38,7 +38,7 @@ test('package preview displays byte errors and editing uses its resolved categor
  let index=0,refIndex=0,inspectProps;const states=[preview,false,'',''];
  const {SubmissionPackage}=load('app/components/submission-package.tsx',{
   // The preview setter stores the same object in state and its action ref.
-  react:{useState:initial=>[index<states.length?states[index++]:initial,()=>{}],useEffect:()=>{},useRef:initial=>({current:refIndex++===0?preview:initial})},
+  react:{useState:initial=>[index<states.length?states[index++]:initial,()=>{}],useEffect:()=>{},useLayoutEffect:()=>{},useRef:initial=>({current:refIndex++===0?preview:initial})},
   '@/app/components/legal-documents-editor':{LegalDocumentsEditor:()=>null},
   '@/app/components/historical-supplier-hub-result':{HistoricalSupplierHubResult:()=>null},
   '@/app/components/quotation-review-issues':{QuotationReviewIssues:props=>{inspectProps=props;return createElement('p',null,props.issues.map(issue=>issue.message).join(' / '));}},
