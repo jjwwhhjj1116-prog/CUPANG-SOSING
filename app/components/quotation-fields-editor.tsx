@@ -26,6 +26,7 @@ import { quotationPriceTargets } from '@/app/quotation-price-targets';
 import { quotationRequiredSummary } from '@/app/quotation-required-summary';
 import { confirmQuotationFieldsSave, quotationFieldsSaveNeedsReadback } from '@/app/quotation-fields-confirmation';
 import { quotationManualModelLinkState, quotationModelSuggestionState } from '@/app/quotation-model-suggestion';
+import { QuotationExposedDuplicates } from '@/app/components/quotation-exposed-duplicates';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -561,6 +562,9 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     {schema && <div className="quotation-fields-category"><strong>{schema.categoryPath.join(' › ') || '카테고리 미연결'}{schema.categoryId ? ` · ${schema.categoryId}` : ''}</strong><small>{schema.status !== 'observed' && '이 카테고리의 세부 규격은 미확인입니다. '}{schema.evidence}</small></div>}
     {view && <>
       <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section, fieldId) => { setSelectedOption(optionId); setApplyAll(false); openSection(section, fieldId, optionId !== selectedOption); setBulk(null); }}/>
+      <QuotationExposedDuplicates resolved={view.resolved} numbers={view.optionRegistrationNumbers} disabled={busy || loading || conflicts.length > 0}
+        readValue={(optionId, fieldId) => resolveQuotationEditorCell(view, changes, optionId, fieldId).value}
+        onOpen={(optionId, fieldId) => { setSelectedOption(optionId); setApplyAll(false); openSection('product', fieldId, optionId !== selectedOption); setBulk(null); }}/>
       <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} disabled={dirty || busy || loading || conflicts.length > 0}
         onBusyChange={next=>{modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
         onApply={proposals=>{

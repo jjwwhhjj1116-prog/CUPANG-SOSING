@@ -2,6 +2,7 @@ import type { ImageCheck } from '@/app/quotation-image-review';
 import type { ResolvedQuotation } from '@/app/quotation-schema';
 import { unsupportedQuotationMedia } from '@/app/quotation-html-review';
 import { hasSelectedEmptyQuotationChoice } from '@/app/quotation-choice-state';
+import { quotationExposedAttributeComparison } from '@/app/quotation-exposed-duplicates';
 
 export type SubmissionIssue = {
   kind: 'error' | 'review'; code: string; message: string;
@@ -35,6 +36,10 @@ export function inspectSubmission(resolved: ResolvedQuotation, ownedImageKeys: r
   for (const message of new Set(resolved.validationIssues ?? resolved.issues)) general('QUOTATION_CONSTRAINT', message);
   for (const message of new Set(resolved.reviewMessages ?? [])) add({kind:'review', code:'QUOTATION_EVIDENCE',
     message, optionId:null, optionLabel:'상품 공통', fieldId:null});
+  const exposed = quotationExposedAttributeComparison(resolved);
+  for (const group of exposed.groups) for (const optionId of group.optionIds) add({kind:'review', code:'DUPLICATE_EXPOSED_ATTRIBUTES',
+    message:`노출속성 값이 같은 옵션이 ${group.optionIds.length}개입니다. 상품 속성에서 각 옵션의 실제 값을 확인·수정해주세요.`,
+    optionId, optionLabel:resolved.rows.find(row => row.optionId === optionId)!.optionLabel, fieldId:exposed.fields[0].fieldId});
   const owned = new Set(ownedImageKeys);
   for (const row of rows) {
     const unsupportedMedia = unsupportedQuotationMedia(row.fields.detailHtml?.value ?? '');
