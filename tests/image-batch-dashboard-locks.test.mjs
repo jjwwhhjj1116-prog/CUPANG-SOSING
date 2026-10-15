@@ -57,3 +57,24 @@ test('paid/free processing and unsaved quotation edits block both batch roles be
  free.props.onBusyChange(false);h.permission(false);assert.equal(additional.props.beforeApply(),false);assert.equal(detail.props.beforeApply(),false);
  h.permission(true);assert.equal(additional.props.beforeApply(),true);assert.equal(detail.props.beforeApply(),true);
 });
+
+test('family detail approval retains its own dialog while locking other image and price work, and independent locks survive release',()=>{
+ const h=harness(),family=h.component('DetailFamilyApplyPanel','상세 이미지'),additional=h.component('DetailImageBatchPanel','추가 이미지','additional'),detail=h.component('DetailImageBatchPanel','상세 이미지','detail');
+ assert.equal(family.props.active,true);assert.equal(h.component('DetailFamilyApplyPanel','대표 이미지').props.active,false);
+ family.props.onBusyChange(true);additional.props.onBusyChange(false);detail.props.onBusyChange(false);
+ assert.equal(h.component('DetailFamilyApplyPanel','상세 이미지').props.disabled,false);
+ assert.equal(h.component('OptionImageEditor','상세 이미지','detail').props.disabled,true);
+ assert.equal(h.component('DetailImageBatchPanel','추가 이미지','additional').props.disabled,true);
+ assert.equal(h.component('DetailImageBatchPanel','상세 이미지','detail').props.disabled,true);
+ assert.equal(additional.props.beforeApply(),false);assert.equal(detail.props.beforeApply(),false);
+ assert.equal(h.component('FreeImageTranslationPanel').props.beforeApply(),false);
+ assert.equal(h.component('PriceEditor','가격').props.beforeSave(),false);
+ assert.equal(h.checks,0);
+ detail.props.onBusyChange(true);family.props.onBusyChange(false);
+ assert.equal(h.component('DetailFamilyApplyPanel','상세 이미지').props.disabled,true);
+ assert.equal(h.component('OptionImageEditor','상세 이미지','detail').props.disabled,true);
+ detail.props.onBusyChange(false);
+ assert.equal(h.component('OptionImageEditor','상세 이미지','detail').props.disabled,false);
+ h.permission(false);assert.equal(family.props.beforeOpen(),false);
+ h.permission(true);assert.equal(family.props.beforeOpen(),true);
+});

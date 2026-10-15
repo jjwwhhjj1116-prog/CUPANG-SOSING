@@ -89,6 +89,15 @@ async function rawSnapshot(db: D1Database, owner: string, id: string, profileId:
   if (!row) throw conflict();
   return { payload: row.payload, raw: JSON.parse(row.payload) as Raw };
 }
+/** Additive read-only adapter shared by explicit family-detail application.
+ * It retains the exact paired row snapshot and changes no split behavior. */
+export async function readOwnedSplitSnapshot(owner: string, id: string, profileId: string | null, existingDb?: D1Database) {
+  const db = existingDb ?? await database(owner, id);
+  return { db, ...await rawSnapshot(db, owner, id, profileId) };
+}
+export function splitSnapshotPredicate(owner: string, id: string, profileId: string | null, payload: string) {
+  return { sql: `(${snapshotSql})=?`, args: [owner, id, profileId, payload], expression: `(${snapshotSql})`, parameters: [owner, id, profileId] };
+}
 function sourceState(raw: Raw, id: string) {
   const read = <T>(name: string, absent: T): T => raw[name].length ? JSON.parse(raw[name][0].payload as string) as T : absent;
   if (raw.products.length !== 1 || raw.content.length !== 1 || raw.options.length !== 1) throw conflict('저장된 원본 상품·SEO·옵션 자료가 필요합니다. 먼저 저장해주세요.');
