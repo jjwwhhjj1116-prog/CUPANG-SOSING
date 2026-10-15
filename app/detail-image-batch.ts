@@ -8,7 +8,7 @@ import {
 } from '@/app/free-image-translation-client';
 
 export type DetailBatchItem = {
-  slotIndex: number; sourceKey: string; status: 'pending' | 'ready' | 'failed' | 'applied' | 'uncertain';
+  slotIndex: number; sourceKey: string; status: 'pending' | 'ready' | 'failed' | 'applied' | 'uncertain' | 'skipped';
   message: string; texts: { original: string; translated: string }[]; rendered?: FreeImageRendered;
   attempt?: { image: FreeImageRendered; before: QuotationFieldsView; reply?: FreeImageApplyReply }; appliedKey?: string;
 };
@@ -51,6 +51,23 @@ export function detailBatchSelection(view: QuotationFieldsView, optionId: string
   if (keys.length > limit || new Set(keys).size !== keys.length || keys.some(key => !view.imageKeys.includes(key))) throw changed();
   return { target, value, keys };
 }
+/** Keep the saved field and its slot positions intact. Settings banners are
+ * display content, not translation inputs, regardless of their list position. */
+export function detailBatchTranslationSlots(view: QuotationFieldsView, optionId: string, profileId: string | null, stage: 'detail' | 'additional' = 'detail') {
+  const { keys } = detailBatchSelection(view, optionId, profileId, stage);
+  if (stage === 'additional') return { keys, slots: keys.map((_, index) => index), protectedSlots: [] as number[] };
+  const protectedKeys = view.protectedDetailImageKeys;
+  if (!Array.isArray(protectedKeys) || protectedKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(protectedKeys).size !== protectedKeys.length
+    || protectedKeys.some(key => typeof key !== 'string' || !view.imageKeys.includes(key)))
+    throw Error('상단·하단 설정 이미지의 연결을 확인하지 못했습니다. 최신 상세 이미지 목록을 다시 조회해주세요.');
+  const protectedSet = new Set(protectedKeys), slots: number[] = [], protectedSlots: number[] = [];
+  keys.forEach((key, index) => (protectedSet.has(key) ? protectedSlots : slots).push(index));
+  return { keys, slots, protectedSlots };
+}
+function translatableSlot(batch: DetailImageBatch, slotIndex: number, view = batch.view) {
+  if (!Number.isSafeInteger(slotIndex) || !detailBatchTranslationSlots(view, batch.optionId, batch.profileId, batch.stage).slots.includes(slotIndex))
+    throw Error('상단·하단 설정 이미지는 번역하지 않고 유지합니다. 최신 본문 이미지 목록을 확인해주세요.');
+}
 export async function readDetailBatchView(batch: Pick<DetailImageBatch, 'productId' | 'optionId' | 'profileId' | 'stage'>, signal: AbortSignal, fetcher: typeof fetch = fetch) {
   signal.throwIfAborted();
   const response = await fetcher(endpoint(batch), { cache: 'no-store', signal }), body = await response.json() as QuotationFieldsView & { error?: string };
@@ -71,27 +88,37 @@ const note = (cause: unknown) => cause instanceof Error ? cause.message : '이 �
  * released between images; no uploads or product writes occur here. */
 export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'items'>, signal: AbortSignal,
   onProgress: (batch: DetailImageBatch, message: string) => void = () => {}, deps: Dependencies = {}): Promise<DetailImageBatch> {
-  const selected = detailBatchSelection(input.view, input.optionId, input.profileId, input.stage);
+  signal.throwIfAborted();
+  const selected = detailBatchTranslationSlots(input.view, input.optionId, input.profileId, input.stage);
   const label = input.stage === 'additional' ? '추가 이미지' : '상세 이미지', role = input.stage === 'additional' ? 'additional' : 'detail';
   if (!selected.keys.length) throw Error(`저장한 선택 옵션의 ${label}를 먼저 선택해주세요.`);
+  if (!selected.slots.length) throw Error('번역할 본문 이미지가 없습니다. 상단·하단 설정 이미지는 그대로 유지합니다.');
   if (!detailBatchCapacity(input.view)) throw Error('새 번역 결과를 저장할 이미지 공간이 없습니다. 원본을 유지했으며 일괄 번역을 시작하지 않았습니다.');
-  let batch: DetailImageBatch = { ...input, items: selected.keys.map((sourceKey, slotIndex) => ({ slotIndex, sourceKey, status: 'pending', message: '', texts: [] })) };
-  let bytes = 0;
+  let batch: DetailImageBatch = { ...input, items: selected.keys.map((sourceKey, slotIndex) => ({ slotIndex, sourceKey,
+    status: selected.protectedSlots.includes(slotIndex) ? 'skipped' : 'pending',
+    message: selected.protectedSlots.includes(slotIndex) ? '상단·하단 설정 이미지는 번역하지 않고 유지합니다.' : '', texts: [] })) };
+  let bytes = 0, position = 0;
   for (const entry of batch.items) {
-    signal.throwIfAborted(); onProgress(batch, `${entry.slotIndex + 1}/${batch.items.length} ${label} 번역 준비 중…`);
+    if (entry.status === 'skipped') continue;
+    signal.throwIfAborted(); position++; onProgress(batch, `${position}/${selected.slots.length} ${label} 번역 준비 중…`);
     try {
+      signal.throwIfAborted();
       const image = await (deps.readSource ?? readFreeImageSource)(batch.productId, batch.view.productVersion, entry.sourceKey, role, signal, deps.fetcher, targetFor(batch, entry.slotIndex));
-      const regions = await (deps.recognize ?? recognizeFreeImage)(image, batch.language, signal, message => onProgress(batch, `${entry.slotIndex + 1}/${batch.items.length} · ${message}`));
+      signal.throwIfAborted();
+      const regions = await (deps.recognize ?? recognizeFreeImage)(image, batch.language, signal, message => onProgress(batch, `${position}/${selected.slots.length} · ${message}`));
+      signal.throwIfAborted();
       const chosen = regions.filter(region => region.selected && (batch.language === 'zh'
         ? /\p{Script=Han}/u.test(region.text) : !/\p{Script=Han}/u.test(region.text) && /[a-z]{2}/iu.test(region.text)));
       if (!chosen.length) throw Error('확실하게 읽은 문구가 없습니다. 개별 이미지 편집에서 원문과 영역을 확인해주세요.');
       const translated = await (deps.translate ?? translateFreeImageRegions)(image.source, batch.language, chosen.map(({ id, text }) => ({ id, text })), signal, deps.fetcher);
+      signal.throwIfAborted();
       const results = new Map(translated.regions.map(region => [region.id, region]));
       if (chosen.some(region => !results.get(region.id)?.translated || results.get(region.id)?.issue))
         throw Error(['일부 문구를 번역하지 못했습니다. 원본을 유지합니다.', ...translated.warnings, ...translated.regions.flatMap(row => row.issue ? [row.issue] : [])].join(' '));
       const prepared: FreeImageRegion[] = regions.map(region => results.has(region.id)
         ? { ...region, translated: results.get(region.id)!.translated!, issue: null, translationProvenance: 'generated' } : { ...region, selected: false });
       const rendered = await (deps.render ?? renderFreeImageTranslation)(image, prepared, signal);
+      signal.throwIfAborted();
       if (bytes + rendered.output.size > DETAIL_BATCH_BYTES) throw Error('일괄 미리보기 30MB 한도입니다. 이미 준비한 결과를 먼저 검토하고 나머지는 개별 번역해주세요.');
       bytes += rendered.output.size;
       batch = replace(batch, { ...entry, status: 'ready', rendered, texts: chosen.map(region => ({ original: region.text, translated: results.get(region.id)!.translated! })),
@@ -99,7 +126,7 @@ export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'ite
     } catch (cause) {
       signal.throwIfAborted(); batch = replace(batch, { ...entry, status: 'failed', message: note(cause) });
     }
-    onProgress(batch, `${entry.slotIndex + 1}/${batch.items.length} ${label} 준비 완료`);
+    onProgress(batch, `${position}/${selected.slots.length} ${label} 준비 완료`);
   }
   return batch;
 }
@@ -137,8 +164,10 @@ export async function applyDetailBatchResult(batch: DetailImageBatch, slotIndex:
   onProgress: (batch: DetailImageBatch) => void = () => {}, deps: Dependencies = {}): Promise<DetailImageBatch> {
   const entry = batch.items.find(row => row.slotIndex === slotIndex);
   if (!entry?.rendered || entry.status !== 'ready' || batch.items.some(row => row.status === 'uncertain')) throw Error('검토한 미적용 번역 결과를 선택해주세요.');
+  translatableSlot(batch, slotIndex);
   const current = await readDetailBatchView(batch, signal, deps.fetcher);
   if (!same(current, batch.view)) throw changed();
+  translatableSlot(batch, slotIndex, current);
   if (!detailBatchCapacity(current)) throw Error('새 번역 결과를 저장할 이미지 공간이 없습니다. 원본을 유지했으며 업로드하지 않았습니다.');
   const selected = detailBatchSelection(current, batch.optionId, batch.profileId, batch.stage);
   if (selected.keys[slotIndex] !== entry.sourceKey) throw changed();
@@ -175,6 +204,9 @@ export async function recoverDetailBatchResult(batch: DetailImageBatch, signal: 
   const current = await readDetailBatchView(batch, signal, deps.fetcher);
   if (!reply.applied) {
     if (!same(current, attempt.before)) throw changed();
+    if (!detailBatchTranslationSlots(current, batch.optionId, batch.profileId, batch.stage).slots.includes(entry.slotIndex)) {
+      const next = replace(batch, { ...entry, status: 'skipped', attempt: undefined, rendered: undefined, texts: [], message: '아직 적용되지 않았습니다. 상단·하단 설정 이미지는 번역하지 않고 유지합니다.' }); onProgress(next); return next;
+    }
     const next = replace(batch, { ...entry, status: 'ready', attempt: undefined, message: '아직 적용되지 않았습니다. 검토 후 다시 적용할 수 있습니다.' }); onProgress(next); return next;
   }
   verifyCommit(batch, attempt.before, current, entry.slotIndex, reply);

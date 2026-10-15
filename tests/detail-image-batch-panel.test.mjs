@@ -14,7 +14,7 @@ function ui({active=true,permission=true,failed=false,uncertain=false,heldPrepar
  let props={productId:'product',optionId:'red',profileId:'cat',stage,version:view.productVersion,active,beforeApply:()=>allow,onSaved(){saved++;props={...props,version:view.productVersion};},onBusyChange(value){busy.push(value);}};
  const enqueue=(queue,fn,deps)=>{const slot=cursor++,old=slots[slot];if(!old||!deps||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:null};slots[slot]=next;queue.push(()=>{old?.cleanup?.();next.cleanup=fn();});}};
  const react={useState(initial){const slot=cursor++;if(!(slot in slots))slots[slot]=typeof initial==='function'?initial():initial;return[slots[slot],value=>{if(closed){late++;return;}slots[slot]=typeof value==='function'?value(slots[slot]):value;}];},useRef(initial){const slot=cursor++;return slots[slot]??(slots[slot]={current:initial});},useEffect(fn,deps){enqueue(effects,fn,deps);},useLayoutEffect(fn,deps){enqueue(layouts,fn,deps);}};
- const helpers={detailBatchSelection:()=>({keys}),detailBatchCapacity:value=>150-value.imageKeys.length,readDetailBatchView:async()=>{calls.push(['read']);await heldRead?.promise;return{...view};},prepareDetailImageBatch:async(input,signal,progress)=>{
+ const helpers={detailBatchTranslationSlots:()=>({keys,slots:keys.map((_key,index)=>index),protectedSlots:[]}),detailBatchCapacity:value=>150-value.imageKeys.length,readDetailBatchView:async()=>{calls.push(['read']);await heldRead?.promise;return{...view};},prepareDetailImageBatch:async(input,signal,progress)=>{
   calls.push(['prepare',input.language,input.stage]);const value={...input,items:keys.map((sourceKey,slotIndex)=>({sourceKey,slotIndex,status:failed&&slotIndex===1?'failed':'ready',message:failed&&slotIndex===1?'읽을 수 있는 문구가 없습니다.':'',texts:[{original:'中文',translated:'한국어'}],rendered:failed&&slotIndex===1?undefined:{output:new Blob(['preview'],{type:'image/png'})}}))};
   progress(value,'준비 중');await heldPrepare?.promise;signal.throwIfAborted();return value;
  },applyDetailBatchResult:async(batch,index,signal,progress)=>{
@@ -31,39 +31,39 @@ function ui({active=true,permission=true,failed=false,uncertain=false,heldPrepar
 }
 test('stage-five bulk translation has a positive review-before-save flow, preserves unchecked results, and does not read while inactive',async()=>{
  const h=ui({active:false});try{await h.start();assert.equal(h.calls.length,0);h.update({active:true});await settle();h.render();
-  await h.click('모든 상세 이미지 번역 준비');assert.equal(h.calls.filter(row=>row[0]==='prepare').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+  await h.click('모든 이미지 AI 처리');assert.equal(h.calls.filter(row=>row[0]==='prepare').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
   assert.equal(h.button('검토한 상세 이미지 0개 적용').props.disabled,true);h.review(0);h.review(2);await h.click('검토한 상세 이미지 2개 적용');
   assert.deepEqual(h.calls.filter(row=>row[0]==='apply'),[['apply',0],['apply',2]]);assert.equal(h.saved,1);assert.ok(h.control('상세 이미지 2 번역 결과 검토 완료'));assert.equal(h.render().props['data-workspace-dirty'],true);
   await h.click('미적용 번역 결과 지우기 · 원본 유지');assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(h.calls.filter(row=>row[0]==='apply').length,2);assert.match(text(h.render()),/이미 저장한 결과와 나머지 원본은 유지/);
  }finally{h.close();}
 });
 test('unsaved other-editor inputs block both batch preparation and a retained apply callback',async()=>{
- const h=ui({permission:false});try{await h.start();h.button('모든 상세 이미지 번역 준비').props.onClick();await settle();assert.equal(h.calls.filter(row=>row[0]==='prepare').length,0);
-  h.permission(true);await h.click('모든 상세 이미지 번역 준비');h.review(0);const retained=h.button('검토한 상세 이미지 1개 적용');h.permission(false);retained.props.onClick();await settle();assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);assert.match(text(h.render()),/먼저 저장/);
+ const h=ui({permission:false});try{await h.start();h.button('모든 이미지 AI 처리').props.onClick();await settle();assert.equal(h.calls.filter(row=>row[0]==='prepare').length,0);
+  h.permission(true);await h.click('모든 이미지 AI 처리');h.review(0);const retained=h.button('검토한 상세 이미지 1개 적용');h.permission(false);retained.props.onClick();await settle();assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);assert.match(text(h.render()),/먼저 저장/);
  }finally{h.close();}
 });
 test('unreadable images remain visible without a review checkbox while successful previews remain usable',async()=>{
- const h=ui({failed:true});try{await h.start();await h.click('모든 상세 이미지 번역 준비');assert.ok(h.control('일괄 상세 이미지 2'));assert.equal(h.control('상세 이미지 2 번역 결과 검토 완료'),undefined);assert.match(text(h.render()),/읽을 수 있는 문구/);
+ const h=ui({failed:true});try{await h.start();await h.click('모든 이미지 AI 처리');assert.ok(h.control('일괄 상세 이미지 2'));assert.equal(h.control('상세 이미지 2 번역 결과 검토 완료'),undefined);assert.match(text(h.render()),/읽을 수 있는 문구/);
   h.review(0);await h.click('검토한 상세 이미지 1개 적용');assert.deepEqual(h.calls.filter(row=>row[0]==='apply'),[['apply',0]]);
  }finally{h.close();}
 });
 test('first uncertain save stops the queue; recovery reads only that result and requires a fresh explicit next selection',async()=>{
- const h=ui({uncertain:true});try{await h.start();await h.click('모든 상세 이미지 번역 준비');h.review(0);h.review(1);await h.click('검토한 상세 이미지 2개 적용');
+ const h=ui({uncertain:true});try{await h.start();await h.click('모든 이미지 AI 처리');h.review(0);h.review(1);await h.click('검토한 상세 이미지 2개 적용');
   assert.deepEqual(h.calls.filter(row=>row[0]==='apply'),[['apply',0]]);assert.ok(h.button('같은 이미지 저장 상태 확인'));await h.click('같은 이미지 저장 상태 확인');assert.equal(h.calls.filter(row=>row[0]==='recover').length,1);assert.equal(h.calls.filter(row=>row[0]==='apply').length,1);
   assert.equal(h.button('검토한 상세 이미지 0개 적용').props.disabled,true);h.fail(false);h.review(1);await h.click('검토한 상세 이미지 1개 적용');assert.deepEqual(h.calls.filter(row=>row[0]==='apply'),[['apply',0],['apply',1]]);
  }finally{h.close();}
 });
 test('source changes keep previews but disable their stale selection and application',async()=>{
- const h=ui();try{await h.start();await h.click('모든 상세 이미지 번역 준비');h.review(0);h.update({version:'2026-10-13T00:00:01.000Z'});assert.equal(h.control('상세 이미지 1 번역 결과 검토 완료').props.disabled,true);assert.equal(h.button('검토한 상세 이미지 1개 적용').props.disabled,true);assert.match(text(h.render()),/준비한 결과는 유지/);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
+ const h=ui();try{await h.start();await h.click('모든 이미지 AI 처리');h.review(0);h.update({version:'2026-10-13T00:00:01.000Z'});assert.equal(h.control('상세 이미지 1 번역 결과 검토 완료').props.disabled,true);assert.equal(h.button('검토한 상세 이미지 1개 적용').props.disabled,true);assert.match(text(h.render()),/준비한 결과는 유지/);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);
  }finally{h.close();}
 });
 test('a newly opened stage waits for the other image editor and loads after its processing lock is released',async()=>{
  const h=ui({active:false});try{h.update({active:true,disabled:true});await settle();assert.equal(h.calls.length,0);h.update({disabled:false});await settle();assert.equal(h.calls.filter(row=>row[0]==='read').length,1);
-  const language=h.control('일괄 상세 이미지 원문 언어');language.props.onChange({target:{value:'en'}});await h.click('모든 상세 이미지 번역 준비');assert.deepEqual(h.calls.find(row=>row[0]==='prepare'),['prepare','en','detail']);
+  const language=h.control('일괄 상세 이미지 원문 언어');language.props.onChange({target:{value:'zh'}});await h.click('영어→한국어 번역');assert.deepEqual(h.calls.find(row=>row[0]==='prepare'),['prepare','en','detail']);
  }finally{h.close();}
 });
 test('cancelling preparation and closing the view stop late UI adoption without writes',async()=>{
- const held=deferred(),h=ui({heldPrepare:held});try{await h.start();h.button('모든 상세 이미지 번역 준비').props.onClick();await settle();assert.ok(h.button('일괄 이미지 작업 중단'));h.button('일괄 이미지 작업 중단').props.onClick();h.close();held.resolve();await settle();assert.equal(h.late,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);assert.equal(h.busy.at(-1),false);
+ const held=deferred(),h=ui({heldPrepare:held});try{await h.start();h.button('모든 이미지 AI 처리').props.onClick();await settle();assert.ok(h.button('일괄 이미지 작업 중단'));h.button('일괄 이미지 작업 중단').props.onClick();h.close();held.resolve();await settle();assert.equal(h.late,0);assert.equal(h.calls.filter(row=>row[0]==='apply').length,0);assert.equal(h.busy.at(-1),false);
  }finally{h.close();}
 });
 test('stage four exposes the observed bulk action and reviews/applies only selected additional results above fifty files',async()=>{
