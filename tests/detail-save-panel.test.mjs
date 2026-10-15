@@ -31,8 +31,12 @@ for(const company of companies){
  test(`whole-detail save requires exact review, includes excluded options and atomically backs up before clearing HTML (${company.companyCode})`,async()=>{
   const f=await fixture(company),h=panel(f);try{
    const before=f.retained(),source=f.retainedOthers(),originals=new Map([...f.api.objects].map(([key,bytes])=>[key,Buffer.from(bytes)]));await h.click('상세 이미지 합치기');assert.equal(f.retained(),before);assert.equal(writes(f).length,0);const count=f.view.resolved.rows.filter(row=>row.optionId).length;assert.match(text(h.render()),new RegExp(`모든 옵션 ${count}개`));assert.match(text(h.render()),/견적 제외 옵션도 포함/);assert.match(text(h.render()),/백업.*HTML 입력을 비웁니다/);
+   assert.match(text(h.render()),/대체 텍스트 미리보기/);assert.match(text(h.render()),/대체 텍스트는 SEO 설명과 한국어 옵션명/);
+   const basis=f.view.detailSaveTextBasis,base=basis.metaDescription||basis.productName+' 상세 설명';
+   assert.ok(text(h.render()).includes(base));
    assert.equal(h.button('상세 저장').props.disabled,true);h.button('상세 저장').props.onClick();await h.idle();assert.equal(writes(f).length,0);h.review();const save=h.button('상세 저장').props.onClick;save();save();await h.idle();assert.equal(h.saved.length,1);assert.equal(f.calls.filter(call=>call.url.includes('/detail-save')&&call.init.method==='POST').length,1);assert.equal(f.calls.filter(call=>call.url==='/api/files'&&call.init.method==='POST').length,1);
    const saved=h.saved[0],key=saved.overrides.common.detailImages;assert.ok(saved.imageKeys.includes(key));assert.equal(saved.overrides.common.detailHtml,'');for(const row of saved.resolved.rows){assert.equal(row.fields.detailImages.value,key);assert.equal(row.fields.detailHtml.value,'');}assert.equal(saved.resolved.rows.find(row=>row.optionId===f.excluded).included,false);assert.equal(f.retainedOthers(),source);
+   for(const row of saved.resolved.rows.filter(row=>row.optionId))assert.equal(row.fields.altText.value,base+(basis.optionNames[row.optionId]?' - '+basis.optionNames[row.optionId]:''));
    const state=JSON.parse(f.api.sqlite.prepare('SELECT payload FROM product_quotation_fields').get().payload),history=Object.values(state.detailSaveBackups).flat();assert.equal(history.length,1);assert.equal(history[0].before.find(change=>change.optionId===f.optionId&&change.fieldKey==='detailHtml').value,'<p>직접 검토한 기존 HTML</p>');assert.equal(history[0].before.find(change=>change.optionId===f.excluded&&change.fieldKey==='detailHtml').value,'<p>다른 옵션의 직접 HTML</p>');for(const [key,bytes]of originals)assert.deepEqual(Buffer.from(f.api.objects.get(key)),bytes);assert.equal(f.api.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');assert.equal(h.button('합친 이미지 선택 옵션에 적용').props.disabled,true);
   }finally{h.close();f.api.close();}
  });
@@ -70,3 +74,12 @@ for(const company of companies){
   const f=await fixture(company);let lost=true;const request=f.request;f.request=async(url,init={})=>{const response=await request(url,init);if(url==='/api/files'&&init.method==='POST'&&lost){lost=false;throw Error('fixture selected upload ACK lost');}return response;};const h=panel(f);try{await h.click('상세 이미지 합치기');const oldReview=h.control('전체 옵션 상세 저장 확인').props.onChange,oldAll=h.button('상세 저장').props.onClick;await h.click('합친 이미지 선택 옵션에 적용');const count=writes(f).length;oldReview({target:{checked:true}});oldAll();await h.idle();assert.equal(writes(f).length,count);assert.equal(h.button('상세 저장').props.disabled,true);assert.equal(h.control('전체 옵션 상세 저장 확인').props.disabled,true);assert.ok(h.button('상세 이미지 저장 결과 확인'));assert.equal(f.calls.some(call=>call.url.includes('/detail-save')),false);}finally{h.close();f.api.close();}
  });
 }
+
+test('a legacy response without authoritative text sources keeps selected apply available but blocks whole-save review',async()=>{
+ const f=await fixture(companies[0]);let h;try{
+  delete f.view.detailSaveTextBasis;const request=f.request;
+  f.request=async(url,init={})=>{const response=await request(url,init);if(url.includes('/quotation-fields')&&response.ok){const value=await response.json();delete value.detailSaveTextBasis;return Response.json(value);}return response;};
+  h=panel(f);await h.click('상세 이미지 합치기');assert.match(text(h.render()),/대체 텍스트 원천/);assert.equal(h.button('상세 저장').props.disabled,true);
+  const checkbox=nodes(h.render()).find(node=>node.type==='input'&&node.props['aria-label']==='전체 옵션 상세 저장 확인');assert.equal(checkbox.props.disabled,true);checkbox.props.onChange({target:{checked:true}});h.button('상세 저장').props.onClick();await h.idle();assert.equal(writes(f).length,0);assert.equal(h.button('합친 이미지 선택 옵션에 적용').props.disabled,false);
+ }finally{h?.close();f.api.close();}
+});

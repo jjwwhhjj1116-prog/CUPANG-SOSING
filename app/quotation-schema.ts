@@ -80,6 +80,9 @@ export type QuotationFieldsView = {
   optionRegistrationNumbers?: Record<string, string>;
   /** Response-only top/bottom banner roles; absent means keyboard deletion has no role proof. */
   protectedDetailImageKeys?: string[];
+  /** Response-only raw sources for the reviewed Couplus detail-save text rule.
+   * Quotation title overrides and display-name fallbacks are not these sources. */
+  detailSaveTextBasis?: { policy: 'couplus-detail-alt-v1'; productName: string; metaDescription: string; optionNames: Record<string, string> };
   packagingBasis?:QuotationPackagingBasis;optionPackQuantities?:Record<string,number>;
 };
 

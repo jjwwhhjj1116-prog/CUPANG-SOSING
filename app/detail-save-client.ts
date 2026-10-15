@@ -1,7 +1,7 @@
 import type { DetailComposite } from '@/app/detail-image-composite';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { applyQuotationChanges } from '@/app/quotation-schema';
-import { detailSaveChanges, type DetailSaveReceipt } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_TEXT_POLICY, detailSaveCommonAltText, detailSaveChanges, type DetailSaveReceipt } from '@/app/detail-save-plan';
 import { MAX_IMAGE_BYTES, imageFileType } from '@/app/image-files';
 import { readBoundedStream } from '@/app/request-body';
 import { labelUploadDigest } from '@/app/label-upload-key';
@@ -11,7 +11,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const changed = () => Error('상세 이미지·옵션·견적서가 변경됐습니다. 미리보기를 보관한 채 최신 저장본을 확인해주세요.');
 const path = (input: DetailComposite, action: 'quotation-fields' | 'detail-save') => `/api/products/${encodeURIComponent(input.productId)}/${action}${input.profileId ? `?profileId=${encodeURIComponent(input.profileId)}` : ''}`;
 function bindAttempt(input: DetailComposite, attempt: DetailSaveAttempt) {
-  const identity = JSON.stringify([input.productId, input.optionId, input.profileId ?? null, input.view, input.keys, input.sources, input.uploadId, input.sha256, input.width, input.height, input.output.size]);
+  const identity = JSON.stringify([DETAIL_SAVE_TEXT_POLICY, input.productId, input.optionId, input.profileId ?? null, input.view, input.keys, input.sources, input.uploadId, input.sha256, input.width, input.height, input.output.size]);
   if (attempt.identity !== undefined && attempt.identity !== identity) throw changed();
   if (attempt.identity === undefined && (attempt.pending || attempt.completed || attempt.key)) throw changed();
   attempt.identity = identity;
@@ -38,8 +38,9 @@ async function uploadReceipt(input: DetailComposite, signal: AbortSignal, fetche
   if (actual.sha256 !== input.sha256 || actual.type !== 'image/png') throw changed(); return body.key;
 }
 function verifySaved(input: DetailComposite, key: string, saved: QuotationFieldsView, receipt: DetailSaveReceipt) {
-  const before = input.view, changes = detailSaveChanges(before, key);
+  const before = input.view, changes = detailSaveChanges(before, key, DETAIL_SAVE_TEXT_POLICY);
   if (receipt.uploadId !== input.uploadId || receipt.key !== key || receipt.sha256 !== input.sha256 || receipt.bytes !== input.output.size
+    || receipt.textPolicy !== DETAIL_SAVE_TEXT_POLICY || receipt.textCommonFilled !== !detailSaveCommonAltText(before)
     || receipt.beforeRevision !== before.revision || receipt.revision !== before.revision + 1 || receipt.sourceOptionId !== input.optionId || receipt.categoryId !== before.categoryContext.categoryId
     || !same(receipt.optionIds, before.resolved.rows.flatMap(row => row.optionId ? [row.optionId] : []))
     || saved.revision !== before.revision + 1 || saved.updatedAt !== saved.productVersion || Date.parse(saved.productVersion) <= Date.parse(before.productVersion)
@@ -49,14 +50,16 @@ function verifySaved(input: DetailComposite, key: string, saved: QuotationFields
     || !same(saved.imageKeys, [...before.imageKeys, key]) || !same(saved.protectedDetailImageKeys, before.protectedDetailImageKeys)
     || !same(saved.optionRegistrationNumbers, before.optionRegistrationNumbers) || !same(saved.packagingBasis, before.packagingBasis)
     || !same(saved.optionPackQuantities, before.optionPackQuantities) || !same(saved.legacyOverrides, before.legacyOverrides)
+    || !same(saved.detailSaveTextBasis, before.detailSaveTextBasis)
     || !same(saved.overrides, applyQuotationChanges(before.overrides, changes)) || !same(saved.automatic, before.automatic)) throw changed();
   if (!same(saved.resolved.rows.map(row => [row.optionId, row.included]), before.resolved.rows.map(row => [row.optionId, row.included]))) throw changed();
   for (const row of saved.resolved.rows) {
-    const rowChanges = changes.filter(value => value.optionId === row.optionId || value.optionId === null);
+    const rowChanges = changes.filter(value => value.optionId === row.optionId
+      || value.optionId === null && !changes.some(specific => specific.optionId === row.optionId && specific.fieldKey === value.fieldKey));
     const prior = before.resolved.rows.find(value => value.optionId === row.optionId)!;
     if (row.optionLabel !== prior.optionLabel || !same(Object.keys(row.fields), Object.keys(prior.fields))
       || rowChanges.some(change => row.fields[change.fieldKey]?.value !== change.value
-        || row.fields[change.fieldKey]?.source !== (row.optionId === null ? 'manual-common' : 'manual-option'))) throw changed();
+        || row.fields[change.fieldKey]?.source !== (change.optionId === null ? 'manual-common' : 'manual-option'))) throw changed();
     for (const [id, cell] of Object.entries(prior.fields)) if (!rowChanges.some(change => change.fieldKey === id) && !same(cell, row.fields[id])) throw changed();
   }
 }
@@ -90,7 +93,7 @@ export async function applyDetailSave(input: DetailComposite, attempt: DetailSav
   if (attempt.pending) throw Error('이전 상세 저장 결과를 먼저 확인해주세요.');
   if (!same(await readView(input, signal, fetcher), input.view)) throw changed();
   // Validate targets and all option IDs before allocating a file.
-  detailSaveChanges(input.view, `${input.view.imageKeys[0]?.split('/')[0]}/quotation-label-${input.uploadId}.png`);
+  detailSaveChanges(input.view, `${input.view.imageKeys[0]?.split('/')[0]}/quotation-label-${input.uploadId}.png`, DETAIL_SAVE_TEXT_POLICY);
   if (input.output.type !== 'image/png' || input.output.size < 1 || input.output.size > MAX_IMAGE_BYTES
     || await labelUploadDigest(new Uint8Array(await input.output.arrayBuffer())) !== input.sha256) throw changed();
   signal.throwIfAborted();
@@ -106,7 +109,7 @@ export async function applyDetailSave(input: DetailComposite, attempt: DetailSav
   if (!same(await readView(input, signal, fetcher), input.view)) throw changed();
   signal.throwIfAborted(); attempt.pending = 'save';
   const response = await fetcher(path(input, 'detail-save'), { method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: input.view.revision,
-    expectedInputFingerprint: input.view.inputFingerprint, sourceOptionId: input.optionId, uploadId: input.uploadId, sha256: input.sha256, bytes: input.output.size }) });
+    expectedInputFingerprint: input.view.inputFingerprint, sourceOptionId: input.optionId, uploadId: input.uploadId, sha256: input.sha256, bytes: input.output.size, textPolicy: DETAIL_SAVE_TEXT_POLICY }) });
   if (!response.ok) { if (response.status < 500 && response.status !== 429) attempt.pending = undefined; const body = await response.json() as { error?: string }; throw Error(body.error || '공통·모든 옵션 상세 저장 결과를 확인해주세요.'); }
   const body = await response.json() as { quotation: QuotationFieldsView; receipt: DetailSaveReceipt }; signal.throwIfAborted();
   verifySaved(input, key, body.quotation, body.receipt);

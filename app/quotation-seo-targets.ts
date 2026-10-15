@@ -1,11 +1,12 @@
 import { applyQuotationChanges, quotationValueIssues, validateQuotationChanges, type QuotationChange, type QuotationField, type QuotationFieldsView } from '@/app/quotation-schema';
 
-export type PrimaryQuotationInput = 'title' | 'searchTags' | 'mainImage' | 'additionalImages' | 'detailImages' | 'labelImages';
+export type PrimaryQuotationInput = 'title' | 'searchTags' | 'mainImage' | 'additionalImages' | 'detailImages' | 'labelImages' | 'altText';
 export type PrimaryQuotationTarget = { primary: string; linked: string[]; primaryField: QuotationField; fields: QuotationField[] };
 const paths: Partial<Record<PrimaryQuotationInput, string[]>> = {
   title: ['startPage', 'productName'], searchTags: ['productPage', 'searchTags'],
   mainImage: ['imagePage', 'images', 'mainImage'], additionalImages: ['imagePage', 'images', 'additionalImage'],
   detailImages: ['imagePage', 'details', 'detailedImage'],
+  altText: ['imagePage', 'details', 'altText'],
 };
 
 /** A matching label is not a source binding. Named label-image controls keep
@@ -18,7 +19,7 @@ export function exactPrimaryQuotationTarget(fields: readonly QuotationField[], i
   if (wire && wire.hubInput !== input) throw Error('Supplier Hub 항목의 원천 연결을 확인하지 못했습니다. 견적서 상세 항목을 확인해주세요.');
   const primaryField = wire ?? canonical[0];
   const linkedFields = primaryField.id === canonical[0].id ? [primaryField] : [canonical[0], primaryField];
-  const images = !['title', 'searchTags'].includes(input);
+  const images = ['mainImage', 'additionalImages', 'detailImages', 'labelImages'].includes(input);
   if (linkedFields.some(field => images ? field.type !== 'images' : !['text', 'textarea', 'select'].includes(field.type) || field.numericText))
     throw Error('선택한 항목의 입력 규칙을 확인하지 못했습니다. 견적서 상세 항목을 확인해주세요.');
   return { primary: primaryField.id, linked: linkedFields.map(field => field.id), primaryField, fields: linkedFields };
