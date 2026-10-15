@@ -28,7 +28,10 @@ for (const company of priceTableCompanies) test(`the nine-column price table use
     assert.deepEqual(nodes(h.node('가격표 페이지당 옵션 수')).filter(node => node.type === 'option').map(node => node.props.value), [10, 25, 50, 100]);
     assert.equal(dataRows(h).length, 10); assert.equal(h.node('가격표 고정할 열').props.value, 'name');
     assert.equal(h.node('가격표 높이 고정 Y').props.checked, true);
-    assert.match(text(dataRows(h)[0]), /price-001/);
+    const metadataResponse=await h.request('/api/products/'+h.product.id+'/options'),metadata=await metadataResponse.json();
+    assert.equal(metadataResponse.status,200);assert.ok(metadata.optionRegistrationNumbers['price-001']);
+    assert.equal(text(nodes(dataRows(h)[0]).find(node=>node.props?.['data-price-column']==='id')),metadata.optionRegistrationNumbers['price-001']);
+    assert.equal(dataRows(h)[0].props['data-price-option-id'],'price-001');
     assert.equal(text(nodes(dataRows(h)[0]).find(node => node.props?.['data-price-column'] === 'stock')), '0');
     assert.equal(text(nodes(dataRows(h)[1]).find(node => node.props?.['data-price-column'] === 'stock')), '미확인');
     const beforeSummary = text(summaries(h)), original = JSON.stringify(await h.rows());
@@ -36,6 +39,9 @@ for (const company of priceTableCompanies) test(`the nine-column price table use
     assert.equal(h.node('가격표 현재 페이지').props.children[0], 2);
     change(h, '가격 옵션 검색', 'fixture-sku-73'); await h.settle(); assert.deepEqual(ids(h), ['price-073']);
     assert.equal(text(summaries(h)), beforeSummary, 'search cannot replace full-option price averages');
+    change(h,'가격 옵션 검색',metadata.optionRegistrationNumbers['price-062']);await h.settle();assert.deepEqual(ids(h),['price-062']);
+    assert.equal(text(nodes(dataRows(h)[0]).find(node=>node.props?.['data-price-column']==='id')),metadata.optionRegistrationNumbers['price-062']);
+    assert.equal(text(summaries(h)),beforeSummary);
     change(h, '가격 옵션 검색', ''); change(h, '가격표 페이지당 옵션 수', '25'); await h.settle();
     assert.equal(dataRows(h).length, 25); assert.equal(ids(h)[0], 'price-001');
     assert.equal(JSON.stringify(await h.rows()), original); assert.equal(h.protectedSnapshot(), h.before);

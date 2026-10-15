@@ -1,4 +1,5 @@
 'use client';
+import { validOptionRegistrationNumbers, optionRegistrationLabel } from '@/app/product-registration';
 import { QuotationTranslatedAttributes } from '@/app/components/quotation-translated-attributes';
 import { QuotationAiPanel } from '@/app/components/quotation-ai-panel';
 import { SupplierHubSingleReview } from '@/app/components/supplier-hub-single-review';
@@ -356,7 +357,7 @@ export function QuotationOptionOverview({ view, changes, disabled, onOpen }: {
   return <details className="quotation-fields-notice" open><summary>전체 견적 작성 현황 · 포함 {rows.length}개 · 필수 미입력 {rows.reduce((sum, row) => sum + row.missing, 0)}개</summary>
     <p>미저장 입력까지 반영한 항목 수입니다. 직접 수정한 공란도 수정으로 집계합니다. 양식 기본값과 입력 형식 확인은 실제 상품 검증·등록 가능 판정과 다릅니다. 제외 옵션은 집계하지 않습니다.</p>
     {rows.length > 0 && <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션</th><th>저장 자료 연동</th><th>양식 기본값</th><th>직접 수정</th><th>필수 미입력</th><th>입력 확인</th></tr></thead><tbody>{rows.map(row => <tr key={row.optionId ?? 'common'}>
-      <td><button type="button" className="quotation-field-text-button" disabled={disabled} onClick={() => onOpen(row.optionId, 'start')}>{row.optionLabel}</button></td>
+      <td><button type="button" className="quotation-field-text-button" disabled={disabled} onClick={() => onOpen(row.optionId, 'start')}>{optionRegistrationLabel(row.optionId,row.optionLabel,view.optionRegistrationNumbers)}</button></td>
       <td>{row.linked}</td><td>{row.defaults}</td><td>{row.manual}</td><td>{row.missing}{row.missingFields.map(field => <div key={field.fieldKey}><button type="button" className="quotation-field-text-button" disabled={disabled} onClick={() => onOpen(row.optionId, field.section, field.fieldKey)}>{field.label} 입력하기</button></div>)}</td>
       <td>{row.problems.length ? row.problems.map(problem => <div key={problem.fieldKey}><button type="button" className="quotation-field-text-button" disabled={disabled} onClick={() => onOpen(row.optionId, problem.section)}>{problem.label} 구역 열기</button><small> · {problem.issues.join(' / ')}</small></div>) : '필수·형식 오류 없음 · 별도 검토 필요'}</td>
     </tr>)}</tbody></table></div>}
@@ -399,7 +400,11 @@ async function fetchView(endpoint: string, signal?: AbortSignal): Promise<Quotat
   const response = await fetch(endpoint, { signal, cache: 'no-store' });
   const body = await response.json() as QuotationFieldsView & { error?: string };
   if (!response.ok || !body.resolved || !body.automatic) throw new Error(body.error || '견적 입력 자료를 불러오지 못했습니다.');
+  verifyQuotationRegistrationDisplay(body);
   return body;
+}
+function verifyQuotationRegistrationDisplay(view: QuotationFieldsView) {
+  if(!Array.isArray(view.resolved?.rows)||!validOptionRegistrationNumbers(view.optionRegistrationNumbers,view.resolved.rows.flatMap(row=>row.optionId===null?[]:[{id:row.optionId}]))) throw Error('견적서의 옵션 등록번호 응답을 확인하지 못했습니다. 입력은 유지했습니다.');
 }
 
 export function QuotationFieldsEditor(props: Props) { return <QuotationFieldsForm key={`${props.productId}:${props.profileId ?? ''}`} {...props} />; }
@@ -520,6 +525,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
         if (response.status === 409) { await refresh(false,true); if(controller.signal.aborted)return; setError(body.error || '저장 중 원본이 바뀌었습니다. 현재 입력을 보존했습니다. 최신 값을 검토한 뒤 다시 저장해주세요.'); return; }
         throw new Error(body.error || '견적 입력을 저장하지 못했습니다.');
       }
+      verifyQuotationRegistrationDisplay(body);
       const readback = quotationFieldsSaveNeedsReadback(view, requested) ? await fetchView(endpoint, controller.signal) : undefined;
       if (controller.signal.aborted) return;
       const confirmed = confirmQuotationFieldsSave(view, body, requested, readback);
@@ -573,7 +579,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       }}/>
       {optionLimitIssue && <p className="quotation-fields-notice" role="alert">{optionLimitIssue}</p>}
       {!view.resolved.rows.some(item => item.included) && <p className="quotation-fields-notice" role="alert">견적에 포함된 옵션이 없습니다. 옵션 설정에서 상품 옵션을 추가하거나 포함을 선택해주세요. 공통 입력은 보존되지만 견적서 출력 대상은 아닙니다.</p>}
-      <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { const next = event.target.value || null; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${item.optionLabel}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
+      <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { const next = event.target.value || null; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${optionRegistrationLabel(item.optionId,item.optionLabel,view.optionRegistrationNumbers)}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
       {!row && <p role="alert" className="quotation-fields-notice">선택한 옵션이 현재 상품에 없습니다. 공통값으로 자동 전환하지 않았습니다. 편집할 옵션을 다시 선택해주세요. 미저장 입력은 유지됩니다.</p>}
       <div className="quotation-fields-summary"><span>현재 옵션 필수 미입력 <b>{missingRequired}개</b></span><span>입력 확인 <b>{allIssues.length}건</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
       {packagingReconfirmation.length>0&&<div className="quotation-fields-notice"><p>직접 입력한 포장값의 판매 구성 수량이 바뀌었습니다. 현재 구성의 실제 포장 무게·치수를 확인한 뒤 저장해주세요. 입력값은 그대로 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy||loading||dirty||conflicts.length>0} onClick={()=>{

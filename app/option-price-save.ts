@@ -1,4 +1,5 @@
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
+import { validOptionRegistrationNumbers } from '@/app/product-registration';
 import { applyQuotationChanges, quotationPriceIssues, quotationValueIssues, validateQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
 
@@ -36,6 +37,7 @@ export function verifyOptionPriceView(view: QuotationFieldsView, profileId?: str
     || new Set(view.resolved.schema.fields.map(field => field.id)).size !== view.resolved.schema.fields.length
     || new Set(view.resolved.rows.map(row => row.optionId)).size !== view.resolved.rows.length
     || new Set(view.automatic.rows.map(row => row.optionId)).size !== view.automatic.rows.length) throw changed();
+  if (!validOptionRegistrationNumbers(view.optionRegistrationNumbers,view.resolved.rows.flatMap(row=>row.optionId===null?[]:[{id:row.optionId}]))) throw changed();
   if (Object.values(view.overrides.common).some(value => typeof value !== 'string')
     || Object.values(view.overrides.options).some(values => !record(values) || Object.values(values).some(value => typeof value !== 'string'))) throw changed();
   const targets = quotationPriceTargets(view.resolved.schema.fields), ids = [...new Set(quotationPriceInputs.flatMap(input => targets[input].linked))];

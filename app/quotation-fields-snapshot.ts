@@ -3,7 +3,7 @@ import { scopedQuotationOverrides, hasLegacyQuotationOverrides } from '@/app/quo
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { findProduct, getSettings } from '@/db/queries';
 import { readProductContent } from '@/db/product-content';
-import { readProductOptions } from '@/db/product-options';
+import { readProductOptions, readOptionRegistrationNumbers } from '@/db/product-options';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { readQuotationFields, readQuotationCollectionSource, quotationSourcesCurrent, type QuotationSourceGuard } from '@/db/quotation-fields';
 import { resolveQuotationFields, type QuotationFieldsView } from '@/app/quotation-schema';
@@ -98,7 +98,11 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     ...quotationPackagedWeightBindingFingerprint(overrides, resolved, () => automatic),
     ...optionPriceCalculationRevision(product, options.rows, settings),
     ...(detailConfig ? { detailHtml: await publicDetailVersion(detailConfig) } : {}) });
+  // Response-only identifiers follow the saved option UUIDs. Read them after
+  // calculating the operation fingerprint and before the source-clock check.
+  const optionRegistrationNumbers = product.registration_number ? await readOptionRegistrationNumbers(owner, product, options) : undefined;
   const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, overrides, legacyOverrides: categoryContext.categoryId ? state.overrides : undefined, resolved, automatic, categoryContext,
+    ...(optionRegistrationNumbers === undefined ? {} : { optionRegistrationNumbers }),
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };
   view.optionPackQuantities=optionPackQuantities;if(packagingBasis)view.packagingBasis=packagingBasis;
   return { view, source, options };

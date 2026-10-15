@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { QuotationFieldsView, QuotationChange } from '@/app/quotation-schema';
+import { optionRegistrationLabel } from '@/app/product-registration';
 import { quotationPriceTargets, type QuotationPriceInput, type QuotationPriceTargets } from '@/app/quotation-price-targets';
 import { optionPriceChanges, optionPriceDraftIssues, optionPriceValue, verifyOptionPriceRefresh, verifyOptionPriceSave, verifyOptionPriceView } from '@/app/option-price-save';
 
@@ -93,7 +94,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   let issues:string[]=[];
   if(view&&targets)try{issues=optionPriceDraftIssues(view,edits);}catch(cause){targetError=cause instanceof Error?cause.message:'가격 입력을 확인해주세요.';}
   const differences=targets?rows.flatMap(row=>prices.flatMap(([key,label])=>targets![key].linked.some(fieldKey=>value(row.optionId,fieldKey)!==value(row.optionId,targets![key].primary))
-    ?[`${row.optionLabel||'상품 공통'} · ${label}: 이전 공통·직접 수정값과 Supplier Hub 가격이 다릅니다. 기존 값은 유지했습니다. 아래에서 가격을 직접 입력하면 두 항목에 함께 반영됩니다.`]:[])):[];
+    ?[`${optionRegistrationLabel(row.optionId,row.optionLabel||'상품 공통',view?.optionRegistrationNumbers)} · ${label}: 이전 공통·직접 수정값과 Supplier Hub 가격이 다릅니다. 기존 값은 유지했습니다. 아래에서 가격을 직접 입력하면 두 항목에 함께 반영됩니다.`]:[])):[];
   async function save(operation:Operation={}){
     const base=latestSaved.current,editing=latestDraft.current.scope===endpointScope?latestDraft.current.edits:[];
     if(!base||base.scope!==endpointScope||!editing.length||request.current||!current()||uncertainRef.current||!operation.coordinated&&blocked.current||beforeSave?.()===false)return null;
@@ -122,7 +123,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
     {busy&&<p role="status">가격 처리 중…</p>}{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {!!edits.length&&view&&!fresh&&<p role="status">상품 정보가 변경됐습니다. 입력을 유지한 채 최신 가격을 조회한 뒤 저장해주세요.</p>}
     {targetError&&<p role="alert">{targetError}</p>}{!!differences.length&&<p role="status">{differences.join(' ')}</p>}
-    {renderGrid?grid:!!rows.length&&<div className="table-wrap"><table><thead><tr><th>옵션</th>{prices.map(([key,label])=><th key={key}>{label} (원)</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.optionId??'common'}><th scope="row">{row.optionLabel||'상품 공통'}</th>{prices.map(([key,label])=><td key={key}><input aria-label={`${row.optionLabel||'상품 공통'} ${label}`} type="number" min={1} step={1} value={value(row.optionId,targets?.[key].primary??key)} disabled={busy||disabled||!targets} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>change(row.optionId,key,event.target.value)}/><button type="button" className="btn ghost" disabled={busy||disabled||!targets} onClick={()=>change(row.optionId,key,null)}>복원</button></td>)}</tr>)}</tbody></table></div>}
+    {renderGrid?grid:!!rows.length&&<div className="table-wrap"><table><thead><tr><th>옵션</th>{prices.map(([key,label])=><th key={key}>{label} (원)</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.optionId??'common'}><th scope="row">{optionRegistrationLabel(row.optionId,row.optionLabel||'상품 공통',view?.optionRegistrationNumbers)}</th>{prices.map(([key,label])=><td key={key}><input aria-label={`${row.optionLabel||'상품 공통'} ${label}`} type="number" min={1} step={1} value={value(row.optionId,targets?.[key].primary??key)} disabled={busy||disabled||!targets} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} onChange={event=>change(row.optionId,key,event.target.value)}/><button type="button" className="btn ghost" disabled={busy||disabled||!targets} onClick={()=>change(row.optionId,key,null)}>복원</button></td>)}</tr>)}</tbody></table></div>}
     {view&&!rows.length&&<p>견적서에 포함한 옵션이 없습니다.</p>}{!!issues.length&&<p role="alert">{[...new Set(issues)].join(' ')}</p>}
     {!renderGrid&&<button type="button" className="btn primary" disabled={busy||disabled||!targets||!!targetError||!edits.length||!!issues.length} onClick={()=>void save()}>옵션 가격 저장</button>}
     {renderGrid&&uncertain&&<p role="status">가격 저장 응답을 확인하지 못했습니다. 입력을 유지한 채 저장 결과를 조회해주세요.</p>}

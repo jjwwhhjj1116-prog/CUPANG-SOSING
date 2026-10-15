@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { OptionCalculation, OptionField, OptionInput } from '@/app/product-options';
 import { effectiveGridPrices } from '@/app/option-price-grid';
+import { savedOptionRegistrationNumber, optionRegistrationLabel } from '@/app/product-registration';
 import type { OptionPriceController } from '@/app/components/option-quotation-prices';
 import './option-price-table.css';
 
@@ -14,7 +15,7 @@ const columns = [
 ] as const;
 type ColumnId = typeof columns[number]['id'];
 type Props = { rows: readonly OptionInput[]; calculations: readonly OptionCalculation[]; selected: ReadonlySet<string>;
-  focusedOptionId?: string; onSelect: (ids: string[]) => void;
+  focusedOptionId?: string; optionRegistrationNumbers?: Readonly<Record<string,string>>; onSelect: (ids: string[]) => void;
   priceController?:OptionPriceController;priceBlocked?:boolean;
   onChange: <K extends OptionField>(id: string, key: K, value: OptionInput[K]) => void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
@@ -23,7 +24,7 @@ const percent = (value: number) => `${Math.round(value)}%`;
 const marginRate = (cost: number, sale: number) => !cost || !sale || cost >= sale ? 0 : Math.round((sale - cost) / sale * 100);
 
 /** Presentation state never replaces the editor's complete option draft. */
-export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, onSelect, onChange,priceController,priceBlocked=false }: Props) {
+export function OptionPriceTable({ rows, calculations, selected, focusedOptionId, optionRegistrationNumbers, onSelect, onChange,priceController,priceBlocked=false }: Props) {
   const [query, setQuery] = useState(''), [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(() => Math.max(0, Math.floor(rows.findIndex(row => row.id === focusedOptionId) / 10)));
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(() => columns.map(column => column.id));
@@ -36,7 +37,7 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
   const entries = rows.map((row, index) => ({ row, index, result: byId.get(row.id) }));
   const filtered = (() => {
     const needle = query.trim().toLocaleLowerCase('ko-KR');
-    return needle ? entries.filter(({ row, result }) => [row.id, row.supplierSku, row.originalName, row.translatedName,
+    return needle ? entries.filter(({ row, result }) => [savedOptionRegistrationNumber(row.id,optionRegistrationNumbers), row.id, row.supplierSku, row.originalName, row.translatedName,
       row.unitsPerPack, row.stock, row.unitCostCny, result?.calculation?.supplyPrice, result?.calculation?.salePrice,
       result?.calculation?.marginKrw].some(value => value != null && String(value).toLocaleLowerCase('ko-KR').includes(needle))) : entries;
   })();
@@ -73,7 +74,7 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
     const calculation = result?.calculation;
     switch (id) {
       case 'name': return <><strong>{row.translatedName || row.originalName || `옵션 ${index + 1}`}</strong><small>{row.supplierSku || '공급자 SKU 미입력'}</small></>;
-      case 'id': return row.id;
+      case 'id': return savedOptionRegistrationNumber(row.id,optionRegistrationNumbers);
       case 'quantity': return <input aria-label={`가격 옵션 ${index + 1} 구성 수량`} type="number" min="1" step="1" disabled={priceBlocked} value={Number.isFinite(row.unitsPerPack) ? row.unitsPerPack : ''} onChange={event => onChange(row.id, 'unitsPerPack', event.target.valueAsNumber)} />;
       case 'stock': return row.stock == null ? '미확인' : row.stock.toLocaleString('ko-KR');
       case 'cost': return <input aria-label={`가격 옵션 ${index + 1} 개당 원가`} type="number" min="0" step="any" disabled={priceBlocked} value={row.unitCostCny === null || !Number.isFinite(row.unitCostCny) ? '' : row.unitCostCny} onChange={event => onChange(row.id, 'unitCostCny', event.target.value === '' ? null : event.target.valueAsNumber)} />;
@@ -114,7 +115,7 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
       <article><h5>평균 판매가</h5><strong>{averages.sale === null ? '—' : won(averages.sale)}</strong><p>평균 쿠팡 마진: {averages.coupangMargin === null ? '—' : won(averages.coupangMargin)}</p></article>
       <article><h5>평균 마진율</h5><strong>공급: {averages.supplyRate === null ? '—' : percent(averages.supplyRate)}</strong><p>쿠팡: {averages.coupangRate === null ? '—' : percent(averages.coupangRate)}</p></article>
     </div></section>
-    {priceController&&<details><summary>권장소비자가·가격 복원</summary>{rows.filter(row=>row.included).map(row=>{const index=rows.findIndex(value=>value.id===row.id);return <label className="field" key={row.id}><span>{row.translatedName||row.originalName||row.id} · 권장소비자가</span><div>{priceInput(row,index,'msrp','권장소비자가')}</div></label>;})}</details>}
+    {priceController&&<details><summary>권장소비자가·가격 복원</summary>{rows.filter(row=>row.included).map(row=>{const index=rows.findIndex(value=>value.id===row.id);return <label className="field" key={row.id}><span>{optionRegistrationLabel(row.id,row.translatedName||row.originalName||row.id,optionRegistrationNumbers)} · 권장소비자가</span><div>{priceInput(row,index,'msrp','권장소비자가')}</div></label>;})}</details>}
     <p>옵션명·이미지·치수·복제는 상단 옵션·사이즈표에서 수정합니다. 왼쪽 가격 정책은 저장한 뒤 이 표에 반영됩니다.</p>
   </div>;
 }

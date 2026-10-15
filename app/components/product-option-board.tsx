@@ -5,7 +5,7 @@ import type {ProductContent} from '@/app/product-content';
 import type {CollectionEditorTab} from '@/app/registration-navigation';
 import {quotationMainImageKeys,optionQuotationName,type ProductOption,type ProductOptionsResponse} from '@/app/product-options';
 import type {QuotationField} from '@/app/quotation-schema';
-import {optionRegistrationNumber} from '@/app/product-registration';
+import {validOptionRegistrationNumbers} from '@/app/product-registration';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
 import './product-option-board.css';
@@ -39,19 +39,6 @@ function validOption(row:unknown):row is ProductOption {
 }
 function validCalculation(value:unknown){
   return value===null||(record(value)&&['supplyPrice','salePrice'].every(key=>{const price=value[key];return typeof price==='number'&&Number.isFinite(price);}));
-}
-function validOptionRegistrationNumbers(value:unknown,rows:ProductOption[],parent?:string){
-  if(value===undefined)return true;
-  if(!record(value))return false;
-  const entries=Object.entries(value),prefix=parent===undefined?null:optionRegistrationNumber(parent,0)?.substring(0,9);
-  if(entries.length>rows.length||(parent!==undefined&&!prefix&&entries.length))return false;
-  const seen=new Set<string>();let observedPrefix:string|null=null;
-  return entries.every(([id,number])=>{
-    if(!rows.some(row=>row.id===id)||typeof number!=='string'||number.length!==12||!/^\d{12}$/.test(number)||number.substring(9)==='000'||seen.has(number))return false;
-    const currentPrefix=number.substring(0,9);
-    if((prefix&&currentPrefix!==prefix)||(observedPrefix&&currentPrefix!==observedPrefix))return false;
-    seen.add(number);observedPrefix=currentPrefix;return true;
-  });
 }
 export async function readOptionBoard(productId:string,signal:AbortSignal,fetcher:typeof fetch=fetch,productRegistrationNumber?:string):Promise<OptionBoardData>{
   const response=await fetcher(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal});

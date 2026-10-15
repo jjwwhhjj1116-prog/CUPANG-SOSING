@@ -76,6 +76,8 @@ export type QuotationFieldsView = {
   categoryContext: { source: 'profile' | 'collection' | 'unknown'; profileId: string | null; categoryId: string | null; categoryPath: string[] };
   productVersion: string; contentRevision: number; optionRevision: number; updatedAt: string | null;
   imageKeys: string[]; submissionReady: false;
+  /** Immutable display numbers keyed by option UUID; absent for legacy products. */
+  optionRegistrationNumbers?: Record<string, string>;
   packagingBasis?:QuotationPackagingBasis;optionPackQuantities?:Record<string,number>;
 };
 

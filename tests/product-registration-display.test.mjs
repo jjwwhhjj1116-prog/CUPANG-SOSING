@@ -36,6 +36,29 @@ test('observed option-number pattern formats its suffix with explicit valid disp
   for(const value of [undefined,'','26101512301','261015123001\n','YP-12345678'])assert.equal(optionRegistrationNumber(value,0),null);
 });
 
+test('persisted option display maps validate current identities, one parent prefix and unique nonzero suffixes',()=>{
+  const {validOptionRegistrationNumbers,savedOptionRegistrationNumber,optionRegistrationLabel}=moduleLoader()('app/product-registration.ts');
+  const rows=[{id:'uuid-a'},{id:'uuid-b'},{id:'legacy'}],parent='261015123001',numbers={'uuid-a':'261015123009','uuid-b':'261015123002'};
+  assert.equal(validOptionRegistrationNumbers(undefined,rows,parent),true);assert.equal(validOptionRegistrationNumbers({},rows,parent),true);
+  assert.equal(validOptionRegistrationNumbers(numbers,rows,parent),true);assert.equal(validOptionRegistrationNumbers(numbers,[...rows].reverse()),true);
+  for(const value of [null,[],true,'261015123001',{'foreign':'261015123001'},{'uuid-a':'261015123000'},
+    {'uuid-a':'261015123001\n'},{'uuid-a':'26101512301'},{'uuid-a':261015123001},
+    {'uuid-a':'261015123001','uuid-b':'261015123001'},{'uuid-a':'261015123001','uuid-b':'261015124002'}])
+    assert.equal(validOptionRegistrationNumbers(value,rows),false,JSON.stringify(value));
+  assert.equal(validOptionRegistrationNumbers(numbers,rows,'261015124001'),false);
+  assert.equal(validOptionRegistrationNumbers(numbers,rows,'YP-LEGACY'),false);
+  assert.equal(validOptionRegistrationNumbers({'uuid-a':'261015123999'},rows,parent),true);
+  const before=JSON.stringify({rows,numbers});
+  assert.equal(savedOptionRegistrationNumber('uuid-a',numbers),'261015123009');assert.equal(savedOptionRegistrationNumber('legacy',numbers),'legacy');
+  assert.equal(savedOptionRegistrationNumber('toString',numbers),'toString','prototype properties are never metadata');
+  assert.equal(optionRegistrationLabel(null,'상품 공통값',numbers),'상품 공통값');
+  assert.equal(optionRegistrationLabel('uuid-a','빨강',numbers),'261015123009 · 빨강');
+  assert.equal(optionRegistrationLabel('uuid-a','uuid-a',numbers),'261015123009');
+  assert.equal(optionRegistrationLabel('uuid-a','',numbers),'261015123009');
+  assert.equal(optionRegistrationLabel('legacy','이전 옵션',numbers),'이전 옵션');
+  assert.equal(JSON.stringify({rows,numbers}),before);
+});
+
 test('printable quote header displays registration metadata while its print action and CSV retain saved identity', async () => {
   const blobs = [], downloads = [], timers = []; let printed = 0;
   class BrowserURL extends URL {}

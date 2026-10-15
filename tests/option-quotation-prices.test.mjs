@@ -44,6 +44,34 @@ test('stage-two direct price saves only the changed option field using the same 
  const body=JSON.parse(writes[0].init.body);assert.deepEqual(body.changes,[{optionId:'red',fieldKey:'supplyPrice',value:'150'}]);assert.equal(body.expectedRevision,1);assert.equal(body.expectedInputFingerprint,'a'.repeat(64));assert.match(writes[0].url,/profileId=profile/);assert.equal(h.saved,1);
 });
 
+test('persisted numbers label price rows while accessible inputs and saves retain option UUIDs',async()=>{
+ const f=fixture();f.current.optionRegistrationNumbers={red:'261015123009'};
+ const h=harness((url,init)=>f.reply(url,init));try{
+  await h.idle();
+  const heading=nodes(h.render()).find(node=>node.type==='th'&&node.props.scope==='row');
+  assert.equal(heading.props.children,'261015123009 · 빨강');
+  assert.ok(h.input('빨강 공급가'));assert.equal(h.input('261015123009 · 빨강 공급가'),undefined);
+  h.input('빨강 공급가').props.onChange({target:{value:'170'}});h.button('옵션 가격 저장').props.onClick();await h.idle();
+  const writes=h.calls.filter(call=>call.init.method==='PUT');assert.equal(writes.length,1);
+  assert.deepEqual(JSON.parse(writes[0].init.body).changes,[{optionId:'red',fieldKey:'supplyPrice',value:'170'}]);
+  assert.equal(h.saved,1);assert.equal(h.render().props['data-workspace-dirty'],false);
+  assert.equal(nodes(h.render()).find(node=>node.type==='th'&&node.props.scope==='row').props.children,'261015123009 · 빨강');
+  assert.equal(f.current.overrides.options.red.supplyPrice,'170');assert.equal(f.current.overrides.options['261015123009'],undefined);
+ }finally{h.close();}
+});
+
+test('malformed refreshed display metadata preserves the current price draft and original option heading',async()=>{
+ const f=fixture();f.current.optionRegistrationNumbers={red:'261015123009'};let malformed=false;
+ const h=harness((url,init)=>{const response=f.reply(url,init);if(malformed){const body=plain(f.current);body.optionRegistrationNumbers={foreign:'261015123001'};return Response.json(body);}return response;});
+ try{
+  await h.idle();h.input('빨강 판매가').props.onChange({target:{value:'270'}});malformed=true;
+  h.button('입력 유지·최신 가격 조회').props.onClick();await h.idle();
+  assert.equal(h.input('빨강 판매가').props.value,'270');assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.saved,0);
+  assert.equal(nodes(h.render()).find(node=>node.type==='th'&&node.props.scope==='row').props.children,'261015123009 · 빨강');
+  assert.match(JSON.stringify(h.render()),/확인하지 못했습니다/);assert.equal(h.calls.some(call=>call.init.method==='PUT'),false);
+ }finally{h.close();}
+});
+
 test('retained price callbacks submit the latest synchronous edits and preserve an intentional optional blank',async()=>{
  const f=fixture(),h=harness((url,init)=>f.reply(url,init));try{
   await h.idle();h.input('빨강 공급가').props.onChange({target:{value:'150'}});const captured=h.button('옵션 가격 저장').props.onClick;
@@ -62,6 +90,8 @@ test('unchanged, wrong-scope or forged manual-price acknowledgements retain all 
   ['other returned price',body=>{body.resolved.rows[1].fields.salePrice.value='999';}],
   ['other automatic price',body=>{body.automatic.rows[1].fields.salePrice.value='999';body.resolved.rows[1].fields.salePrice.value='999';}],
   ['other title',body=>{body.resolved.rows[1].fields.title.value='unexpected title';}],['missing row',body=>{body.resolved.rows.pop();body.automatic.rows.pop();}],
+  ['foreign display metadata',body=>{body.optionRegistrationNumbers={foreign:'261015123001'};}],
+  ['duplicate display metadata',body=>{body.optionRegistrationNumbers={red:'261015123001',blue:'261015123001'};}],
   ['image source',body=>{body.imageKeys.push('owner/other.png');}],['selected cell',body=>{body.resolved.rows[0].fields.supplyPrice.value='151';}],
  ]){
   const f=fixture();f.current.resolved.schema.fields.push({id:'title',label:'상품명',type:'text'});

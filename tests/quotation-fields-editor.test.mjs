@@ -276,6 +276,49 @@ function renderEditor(view, section = 'start', changes = []) {
   const { QuotationFieldsEditor } = load('app/components/quotation-fields-editor.tsx', { react: hooks });
   return renderToStaticMarkup(React.createElement(QuotationFieldsEditor, { productId: 'p1' }));
 }
+
+test('stage-seven overview and selector show saved numbers while opening, selecting and saving use original option IDs',async()=>{
+ const view=fixture(),edits=[change('brand','파랑 검토 브랜드','blue')],opened=[],calls=[];
+ view.optionRegistrationNumbers={red:'261015123009',blue:'261015123002'};
+ for(const resolved of [view.resolved,view.automatic])for(const row of resolved.rows)if(row.optionId==='red'||row.optionId==='blue')row.optionLabel=row.optionId==='red'?'빨강':'파랑';
+ const before=JSON.stringify(view),walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
+ const overview=editor.QuotationOptionOverview({view,changes:edits,disabled:false,onOpen:(...args)=>opened.push(args)});
+ const rowButton=walk(overview).find(node=>node.type==='button'&&node.props.children==='261015123009 · 빨강');
+ assert.ok(rowButton);rowButton.props.onClick();assert.deepEqual(opened,[['red','start']]);
+ assert.ok(renderToStaticMarkup(overview).includes('261015123002 · 파랑'));assert.ok(!renderToStaticMarkup(overview).includes('excluded'));
+ const states=[view,edits,[],false,false,'','','start','red',[],true,null,false];let slot=0,notices=0;
+ const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(){},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'number-selection'};
+ const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init)=>{const body=JSON.parse(init.body);calls.push({url,...body});return Response.json(acknowledgedView(view,body.changes));}});
+ const render=()=>{slot=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}});return walk(wrapper.type(wrapper.props));};
+ const selector=render().find(node=>node.type==='select'&&node.props.value==='red');assert.ok(selector);
+ const choices=walk(selector).filter(node=>node.type==='option');
+ assert.deepEqual(choices.map(node=>node.props.value),['','red','blue','excluded']);
+ assert.equal(choices.find(node=>node.props.value==='red').props.children,'261015123009 · 빨강');
+ assert.equal(choices.find(node=>node.props.value==='blue').props.children,'261015123002 · 파랑');
+ assert.equal(choices.find(node=>node.props.value==='excluded').props.children,'excluded · 견적 제외');
+ selector.props.onChange({target:{value:'blue'}});assert.equal(states[8],'blue');
+ const save=render().find(node=>node.type==='button'&&String(node.props.children).startsWith('견적 입력 저장'));
+ assert.equal(save.props.disabled,false);save.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
+ assert.equal(calls.length,1);assert.deepEqual(calls[0].changes,[{fieldKey:'brand',value:'파랑 검토 브랜드',optionId:'blue'}]);
+ assert.equal(calls[0].expectedInputFingerprint,view.inputFingerprint);assert.equal(notices,1);assert.equal(states[1].length,0);
+ assert.deepEqual(states[0].optionRegistrationNumbers,view.optionRegistrationNumbers);assert.equal(JSON.stringify(view),before);
+});
+
+test('malformed display maps in refreshed or saved quotation responses preserve every local edit and saved view',async()=>{
+ for(const operation of ['refresh','save'])for(const numbers of [{foreign:'261015123001'},{red:'261015123001',blue:'261015123001'},{red:'261015123000'}]){
+  const view=fixture(),edits=[change('brand','유지할 검토 브랜드','red'),change('manufacturer','')];
+  view.optionRegistrationNumbers={red:'261015123009',blue:'261015123002'};
+  const states=[view,edits,[],false,false,'','','start','red',[],true,null,false];let slot=0,notices=0,calls=0;
+  const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>states[i]=typeof value==='function'?value(states[i]):value];},useEffect(){},useCallback:fn=>fn,useRef:value=>({current:value}),useId:()=> 'invalid-display'};
+  const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(_url,init)=>{calls++;const reply=init?.method==='PUT'?acknowledgedView(view,JSON.parse(init.body).changes):clone(view);reply.optionRegistrationNumbers=numbers;return Response.json(reply);}});
+  const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){notices++;}}),tree=wrapper.type(wrapper.props);
+  const walk=value=>Array.isArray(value)?value.flatMap(walk):value&&typeof value==='object'?[value,...walk(value.props?.children)]:[];
+  const button=walk(tree).find(node=>node.type==='button'&&(operation==='refresh'?node.props.children==='기본값 다시 반영':String(node.props.children).startsWith('견적 입력 저장')));
+  assert.ok(button);assert.equal(button.props.disabled,false);button.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(calls,1,operation);assert.equal(notices,0,operation);assert.equal(states[0],view,operation);
+  assert.deepEqual(states[1],edits,operation);assert.match(states[5],/옵션 등록번호.*입력은 유지/,operation);
+ }
+});
 test('rendered editor has five groups, marks schema uncertainty, marks observed defaults as reviewable and escapes manual HTML', () => {
   const view = fixture();
   const start = renderEditor(view);
