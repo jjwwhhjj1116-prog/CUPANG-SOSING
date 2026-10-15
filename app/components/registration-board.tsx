@@ -9,9 +9,10 @@ import { useRef, useState } from 'react';
 import { archiveDateBounds, type ArchiveRange } from '@/app/product-archive';
 import {matchesRegistrationColumnFilter,registrationFilterChoices,type RegistrationColumnFilter} from '@/app/registration-column-filter';
 import {RegistrationFilterPopover} from '@/app/components/registration-filter-popover';
+import {registrationNumber} from '@/app/product-registration';
+export {registrationNumber} from '@/app/product-registration';
 
-type BoardProduct = {removal_policy?:ProductRemovalDecision|null;hub_receipt?:SupplierHubReceiptSummary|null;hub_single_receipt?:SingleReceiptSummary|null;content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
-export function registrationNumber(product:Pick<BoardProduct,'id'>){return `YP-${product.id.slice(0,8).toUpperCase()}`;}
+type BoardProduct = {registration_number?:string;removal_policy?:ProductRemovalDecision|null;hub_receipt?:SupplierHubReceiptSummary|null;hub_single_receipt?:SingleReceiptSummary|null;content_summary?:RegistrationContentSummary|null;source_image_key?:string|null;id:string;title:string;source_url:string;created_at:string;image_keys:string;options_count:number;registration_status:string;seo_status:string;quote_status:string;supply_price:number;sale_price:number};
 export function filterRegistrationProducts<T extends BoardProduct>(products:T[],query:string,from:string|null,to:string|null) {
   return products.filter(product=>{
     const time=Date.parse(product.created_at);

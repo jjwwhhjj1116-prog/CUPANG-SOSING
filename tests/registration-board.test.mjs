@@ -197,6 +197,26 @@ test('the displayed registration number and full saved ID are searchable without
  assert.equal(filterRegistrationProducts([product],'YP-99999999',null,null).length,0);assert.equal(JSON.stringify(product),before);
 });
 
+test('saved twelve-digit registration metadata drives displayed search while invalid or legacy metadata uses its existing label',()=>{
+ const product={...boardHarness().product,registration_number:'261015009001'},before=JSON.stringify(product);
+ assert.equal(registrationNumber(product),'261015009001');
+ for(const query of ['261015009001','15009','12345678-abcd','수정한 상품명','813724060928'])assert.equal(filterRegistrationProducts([product],query,null,null).length,1);
+ assert.equal(filterRegistrationProducts([product],'YP-12345678',null,null).length,0);
+ const h=boardHarness({products:[product]});assert.match(nodeText(elements(h.render(),node=>node.type==='td'&&node.props['data-column']==='id')[0]),/^261015009001/);
+ assert.equal(JSON.stringify(product),before);
+ for(const registration_number of [undefined,null,'','26101500901','2610150090010','261015009001\n',' 261015009001','２６１０１５００９００１','YP-12345678',261015009001])assert.equal(registrationNumber({...product,registration_number}),'YP-12345678');
+});
+
+test('registration number column filters and sorts the displayed metadata without changing selection or action IDs',()=>{
+ const seed=boardHarness().product,products=[{...seed,id:'uuid-z',registration_number:'261015002001'},{...seed,id:'uuid-a',registration_number:'261015003001'},{...seed,id:'uuid-m',registration_number:'261015001001'},{...seed,id:'legacy-id'}],before=JSON.stringify(products),h=boardHarness({products,selected:new Set(['legacy-id'])});
+ const popup=openColumnFilter(h,'등록번호');assert.deepEqual(Array.from(popup.props.choices,choice=>choice.value),['261015001001','261015002001','261015003001','YP-LEGACY-I']);
+ popup.props.onApply({mode:'conditions',conditions:[{operator:'gte',value:'261015001001'},{operator:'lte',value:'261015002001'}]});
+ openColumnFilter(h,'등록번호').props.onSort('ascending');assert.deepEqual(boardRowIds(h),['uuid-m','uuid-z']);
+ openColumnFilter(h,'등록번호').props.onSort('descending');assert.deepEqual(boardRowIds(h),['uuid-z','uuid-m']);
+ const tree=h.render();elements(tree,node=>node.type==='input'&&node.props['aria-label']==='현재 페이지 전체 선택')[0].props.onChange({target:{checked:true}});assert.deepEqual([...h.selections.at(-1)],['legacy-id','uuid-z','uuid-m']);
+ elements(tree,node=>node.type==='button'&&node.props.className==='registration-title')[0].props.onClick();assert.equal(h.options.at(-1).id,'uuid-z');assert.equal(JSON.stringify(products),before);
+});
+
 test('purchase link cell leaves missing or unsupported URLs inert',()=>{
  const h=boardHarness();for(const value of ['', 'javascript:alert(1)', 'file:///secret', 'broken-url']){
   h.product.source_url=value;const source=elements(h.render(),node=>node.type==='td'&&node.props['data-column']==='source')[0];

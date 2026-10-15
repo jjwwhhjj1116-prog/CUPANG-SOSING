@@ -3,7 +3,7 @@ import { env } from 'cloudflare:workers';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
 import { findProduct, getSettings, type ProductRecord } from '@/db/queries';
 import { productImageKeys } from '@/app/product-content';
-import { readProductOptions, saveProductOptions } from '@/db/product-options';
+import { readProductOptions, saveProductOptions, readOptionRegistrationNumbers } from '@/db/product-options';
 import { readOptionSourceImages } from '@/db/collection-images';
 import { OPTIONS_BODY_LIMIT, applyOptionRows, calculateOptionPrices, resolveOptionPricePolicy, validateOptionsInput, type ProductOptions } from '@/app/product-options';
 
@@ -22,8 +22,10 @@ export async function GET(_: Request, context: Context) {
     const product = await findProduct(owner, id);
     if (!product) return response({ error: '상품을 찾을 수 없습니다.' }, 404);
     const options = await readProductOptions(owner, id);
-    const [prices,sourceImageKeys]=await Promise.all([pricing(owner,product,options),readOptionSourceImages(owner,product,options).catch(()=>({}))]);
-    return response({ options, pricing: prices, sourceImageKeys, productVersion: product.updated_at });
+    const [prices,sourceImageKeys,optionRegistrationNumbers]=await Promise.all([pricing(owner,product,options),readOptionSourceImages(owner,product,options).catch(()=>({})),
+      product.registration_number?readOptionRegistrationNumbers(owner,product,options):undefined]);
+    return response({ options, pricing: prices, sourceImageKeys, productVersion: product.updated_at,
+      ...(optionRegistrationNumbers===undefined?{}:{optionRegistrationNumbers}) });
   } catch { return response({ error: '옵션과 가격 설정을 불러오지 못했습니다.' }, 503); }
 }
 async function input(request: Request) {
@@ -57,6 +59,9 @@ export async function PATCH(request: Request, context: Context) {
     if (files.some(file => !file)) return response({ error: '옵션 이미지가 저장소에 없습니다. 이미지 연결을 수정해주세요.' }, 400);
     if (files.some(file => !/^image\/(png|jpeg|webp|gif|avif)$/i.test(file?.httpMetadata?.contentType ?? ''))) return response({ error: '지원하는 이미지 파일만 옵션에 연결할 수 있습니다.' }, 400);
     const saved = await saveProductOptions(owner, next, current.revision, product.updated_at);
-    return saved ? response({ options: saved, pricing: calculations, productVersion: version }) : response({ error: '저장 중 상품 또는 옵션이 변경되었습니다. 저장본을 다시 불러와주세요.', code: 'OPTIONS_CONFLICT' }, 409);
+    if(!saved)return response({ error: '저장 중 상품 또는 옵션이 변경되었습니다. 저장본을 다시 불러와주세요.', code: 'OPTIONS_CONFLICT' }, 409);
+    const optionRegistrationNumbers=product.registration_number?await readOptionRegistrationNumbers(owner,product,saved):undefined;
+    return response({ options: saved, pricing: calculations, productVersion: version,
+      ...(optionRegistrationNumbers===undefined?{}:{optionRegistrationNumbers}) });
   } catch { return response({ error: '옵션을 저장하지 못했습니다. 입력 내용은 유지됩니다. 저장본을 확인한 후 다시 시도해주세요.' }, 503); }
 }

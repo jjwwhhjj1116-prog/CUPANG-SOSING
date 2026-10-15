@@ -113,6 +113,6 @@ test('fresh and repeated migrations produce the same claim schema as ordered run
     fresh.exec(files.map(file => file.sql).join('\n'));
     assert.deepEqual(schemaSnapshot(fresh), first); assert.deepEqual(first, schemaSnapshot(runtime));
     assert.equal(first.some(item => item.name === 'idx_collection_active_offer'), false);
-    assert.equal(first.filter(item => item.type === 'table').length, 37);
+    assert.equal(first.filter(item => item.type === 'table').length, 40);
   } finally {fresh.close(); runtime.close();}
 });

@@ -17,6 +17,7 @@ function load(file, overrides = {}, mode = 'development') {
       if (name === '@/app/pricing') return load('app/pricing.ts');
       if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
       if (name === '@/app/automation/model') return load('app/automation/model.ts');
+      if (name === '@/db/product-registration') return load('db/product-registration.ts');
       if (name === '@/app/automation/translation') return load('app/automation/translation.ts');
       if (name === '@/app/automation/image-edit') return load('app/automation/image-edit.ts');
       if (name === '@/app/product-content') return load('app/product-content.ts');
@@ -40,6 +41,15 @@ const product = { id: 'test', owner_id: 'owner', title: 'LOCAL TEST', source_url
 const command = (action = 'run', key = 'request_1234') => ({ action, expectedVersion: version, idempotencyKey: key, stages: [...model.automationStages] });
 const context = { params: Promise.resolve({ id: 'test' }) };
 const request = body => new Request('http://localhost/api/products/test/automation', { method: 'POST', body: JSON.stringify(body) });
+
+test('display registration metadata leaves reviewed automation current while price edits invalidate it', async () => {
+ const before=JSON.stringify(product),base=await model.automationInputFingerprint(product,settings,null);
+ const numbered={...product,registration_number:'261015001001'};
+ assert.equal(await model.automationInputFingerprint(numbered,settings,null),base);
+ assert.equal(await model.automationInputFingerprint({...numbered,registration_number:'261015002001'},settings,null),base);
+ assert.notEqual(await model.automationInputFingerprint({...numbered,sale_price:product.sale_price+10},settings,null),base);
+ assert.equal(numbered.registration_number,'261015001001');assert.equal(JSON.stringify(product),before);
+});
 
 function optionFixture(){
  const optionModel=load('app/product-options.ts');return {...optionModel.emptyProductOptions(product.id),revision:1,

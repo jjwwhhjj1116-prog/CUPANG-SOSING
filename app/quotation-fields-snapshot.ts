@@ -13,7 +13,7 @@ import { validateCategoryIdentity } from '@/app/category-identity';
 import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
 import { parseCollectionRequest } from '@/app/sourcing';
-import { fingerprint } from '@/app/automation/model';
+import { fingerprint, productFingerprintSource } from '@/app/automation/model';
 import { env } from 'cloudflare:workers';
 import { publicDetailConfig, publicDetailVersion, resolvePublicDetail } from '@/app/quotation-public-detail';
 import { optionPriceCalculationRevision } from '@/app/product-options';
@@ -92,7 +92,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const packagingBasis=scopedQuotationPackagingBasis(state,categoryContext.categoryId),optionPackQuantities=quotationPackQuantities(options.rows);
   const resolved = (await resolvePublicDetail(resolveQuotationFields({ ...inputs, overrides,...(packagingBasis?{packagingBasis}:{}) }),content,owner,imageKeys,detailConfig)).resolved;
   if (categoryContext.categoryId && hasLegacyQuotationOverrides(state)) resolved.issues.push('분류가 기록되지 않은 이전 수정값은 자동 적용하지 않았습니다. 자료 다운로드의 quotation-saved-scopes.json에 보존됩니다.');
-  const inputFingerprint = await fingerprint({ inputs: { ...inputs, settings: savedProductFingerprintSettings(inputs.settings) }, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection,
+  const inputFingerprint = await fingerprint({ inputs: { ...inputs, product: productFingerprintSource(inputs.product), settings: savedProductFingerprintSettings(inputs.settings) }, schema: automatic.schema, categoryContext, profileRevision: profile?.revision ?? null, settingsPayload: source.settingsPayload, collection,
     ...(packagingBasis?{packagingBasis}:{}),
     ...quotationNoticeBindingFingerprint(inputs, resolved),
     ...quotationPackagedWeightBindingFingerprint(overrides, resolved, () => automatic),

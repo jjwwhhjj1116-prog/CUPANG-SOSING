@@ -9,7 +9,7 @@ import { getQuotationSchema, resolveQuotationFields, type QuotationFieldsView } 
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { validateCategoryProfile } from '@/app/category-profiles';
 import { parseCollectionRequest } from '@/app/sourcing';
-import { fingerprint } from '@/app/automation/model';
+import { fingerprint, productFingerprintSource } from '@/app/automation/model';
 import { validateCategoryIdentity } from '@/app/category-identity';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
@@ -157,7 +157,7 @@ export async function quotationExportFingerprint(saved: QuotationExportSource, d
   // Raw source/state payloads matter: an override reset and an equal-valued manual
   // override have different provenance, even when the visible cell is unchanged.
   const resolved = resolveQuotationExport(saved);
-  return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...saved, settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,
+  return fingerprint({ format: 'sourceflow-quotation-fields-v1', saved: { ...saved, product: productFingerprintSource(saved.product), settings: savedProductFingerprintSettings(saved.settings) }, dataStartRow,
     schema: getQuotationSchema(saved.categoryContext.categoryId, saved.categoryContext.categoryPath,saved.hubSchema,saved.template),
     ...quotationNoticeBindingFingerprint(saved, resolved),
     ...quotationPackagedWeightBindingFingerprint(saved.state.overrides, resolved, () => resolveQuotationExport({ ...saved, state: { ...saved.state, overrides: { common: {}, options: {} } } })),

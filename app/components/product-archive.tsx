@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { archiveStatusLabel, koreanDay, safeArchiveUrl, type ArchivePage, type ArchiveRange } from '@/app/product-archive';
+import { registrationNumber } from '@/app/product-registration';
 import './product-archive.css';
 
 type Filters = { range: ArchiveRange; from: string; to: string; query: string };
@@ -56,7 +57,7 @@ export function ProductArchive({ onOpenProduct, refreshToken }: ProductArchivePr
     <form className="sf-archive-filters" onSubmit={event => { event.preventDefault(); firstPage(draft); }}>
       <label htmlFor={`${id}-range`}>조회 기간<select id={`${id}-range`} value={draft.range} onChange={event => setDraft(value => ({ ...value, range: event.target.value as ArchiveRange }))}>{ranges.map(range => <option key={range.id} value={range.id}>{range.label}</option>)}</select></label>
       {draft.range === 'custom' && <><label htmlFor={`${id}-from`}>시작일<input id={`${id}-from`} type="date" required value={draft.from} onChange={event => setDraft(value => ({ ...value, from: event.target.value }))} /></label><label htmlFor={`${id}-to`}>종료일<input id={`${id}-to`} type="date" required min={draft.from || undefined} value={draft.to} onChange={event => setDraft(value => ({ ...value, to: event.target.value }))} /></label></>}
-      <label className="sf-archive-search" htmlFor={`${id}-search`}>상품명 · 전체 URL · 1688 상품 번호<input id={`${id}-search`} type="search" value={draft.query} maxLength={2048} placeholder="상품명이나 URL을 입력하세요" onChange={event => setDraft(value => ({ ...value, query: event.target.value }))} /></label>
+      <label className="sf-archive-search" htmlFor={`${id}-search`}>상품명 · 등록번호 · 전체 URL · 1688 상품 번호<input id={`${id}-search`} type="search" value={draft.query} maxLength={2048} placeholder="상품명·등록번호·URL을 입력하세요" onChange={event => setDraft(value => ({ ...value, query: event.target.value }))} /></label>
       <button className="sf-archive-primary" type="submit" disabled={loading}>조회</button>
     </form>
     <div className="sf-archive-summary"><span>{page ? page.from && page.to ? `${page.from} ~ ${page.to}` : '전체 기간' : '조회 조건을 적용하고 있습니다.'}</span><span>상품과 수집 요청은 각각의 기록으로 보관됩니다.</span></div>
@@ -67,6 +68,7 @@ export function ProductArchive({ onOpenProduct, refreshToken }: ProductArchivePr
         <h3>{day}<span>이 페이지 {items.length}건</span></h3><div className="sf-archive-records">{items.map(item => <article className="sf-archive-record" key={`${item.sourceKind}:${item.id}`}>
           <div className="sf-archive-record-top"><span className={`sf-archive-kind ${item.sourceKind}`}>{item.sourceKind === 'product' ? '저장 상품' : '수집 요청'}</span><span className="sf-archive-status">{archiveStatusLabel(item)}</span>{item.supplierHubStatus && <span className="sf-archive-hub">Supplier Hub · {item.supplierHubStatus}</span>}<time dateTime={item.createdAt}>등록 {formattedDate(item.createdAt)}</time></div>
           <h4>{item.title || `1688 상품 ${item.offerId ?? 'URL'} 수집 요청`}</h4>
+          {item.sourceKind === 'product' && <p>등록번호 {registrationNumber(item)}</p>}
           <div className="sf-archive-url">{safeArchiveUrl(item.sourceUrl) ? <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer">{item.sourceUrl}</a> : <span>{item.sourceUrl}</span>}<button type="button" onClick={() => void copyUrl(item.sourceUrl)} aria-label={`${item.title || item.offerId || '상품'} 전체 URL 복사`}>URL 복사</button></div>
           <div className="sf-archive-record-bottom"><div><p>{item.category ? <><span>{item.category.source === 'request-snapshot' ? '요청 시 선택 분류' : '같은 URL 요청의 선택 분류'}</span> {item.category.path.join(' › ')}{item.category.id ? ` (${item.category.id})` : ''}</> : <span>연결된 카테고리 기록 없음</span>}</p>{item.sourceKind === 'request' && <p className="sf-archive-request-note">{item.status === 'cancelled' ? '취소한 요청입니다. 수집 완료 상품을 의미하지 않습니다.' : 'URL을 보관한 요청입니다. 아직 상품 수집 완료로 확인되지 않았습니다.'}</p>}</div>{item.sourceKind === 'product' && <button type="button" className="sf-archive-open" onClick={() => void openProduct(item.id)} disabled={openingId !== null}>{openingId === item.id ? '여는 중…' : '상품 작업 열기 →'}</button>}</div>
         </article>)}</div>

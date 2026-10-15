@@ -2,7 +2,7 @@ export type ArchiveRange = 'today' | '7days' | 'month' | 'all' | 'custom';
 export type ArchiveKind = 'product' | 'request';
 export type ArchiveCategory = { id: string; path: string[]; source: 'request-snapshot' | 'matching-request'; requestId: string };
 export type ArchiveItem = {
-  id: string; sourceKind: ArchiveKind; title: string; sourceUrl: string; offerId: string | null;
+  id: string; registration_number?: string; sourceKind: ArchiveKind; title: string; sourceUrl: string; offerId: string | null;
   createdAt: string; updatedAt: string; status: string; supplierHubStatus: string | null;
   category: ArchiveCategory | null;
 };

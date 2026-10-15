@@ -22,7 +22,7 @@ function tree(query='',sourceUrl='https://detail.1688.com/offer/813724060928.htm
  let slot=0;const selected=[];const edited=[];const images=[];const contentSteps=[];const stages=[];const managed=[];const states=[{...loadedIdentity,data:{...boardData,imageKeys:snapshotKeys},error:''},attempt,query];
  const hooks={useState(initial){const i=slot++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useEffect(){}};
  const {ProductOptionBoard}=load('app/components/product-option-board.tsx',{react:hooks});
- const render=()=>{slot=0;return ProductOptionBoard({productId:'p1',sourceUrl,imageKeys:JSON.stringify(owned),onQuotation:id=>selected.push(id),onContent:step=>contentSteps.push(step),onImage:id=>images.push(id),onEdit:id=>edited.push(id),...(features.stage?{onStage:(id,step)=>stages.push([id,step])}:{}),...(features.manage?{onManage:id=>managed.push(id)}:{})});};
+ const render=()=>{slot=0;return ProductOptionBoard({productId:'p1',productRegistrationNumber:features.registrationNumber,sourceUrl,imageKeys:JSON.stringify(owned),onQuotation:id=>selected.push(id),onContent:step=>contentSteps.push(step),onImage:id=>images.push(id),onEdit:id=>edited.push(id),...(features.stage?{onStage:(id,step)=>stages.push([id,step])}:{}),...(features.manage?{onManage:id=>managed.push(id)}:{})});};
  return {selected,edited,images,contentSteps,stages,managed,render,tree:render()};
 }
 function nodes(value){if(!value||typeof value!=='object')return[];if(Array.isArray(value))return value.flatMap(nodes);return[value,...nodes(value.props?.children)];}
@@ -35,6 +35,33 @@ test('option list opens the clicked option and preserves zero, unknown and delib
  const buttons=nodes(result.tree).filter(n=>n.type==='button'&&n.props['aria-label']?.endsWith('견적서 편집'));buttons[1].props.onClick();assert.deepEqual(result.selected,['blue']);
  const filtered=tree('sku-red');assert.equal(nodes(filtered.tree).filter(n=>n.type==='button'&&n.props['aria-label']?.endsWith('견적서 편집')).length,1);
  const unsafe=renderToStaticMarkup(tree('','javascript:alert(1)').tree);assert.ok(!unsafe.includes('href="javascript:'));
+});
+
+test('persisted option registration display survives search, reorder and deletion while actions retain exact IDs',()=>{
+ const numbered={...data,optionRegistrationNumbers:{red:'261015007001',blue:'261015007002'}},before=JSON.stringify(numbered),features={registrationNumber:'261015007001',stage:true,manage:true};
+ const result=tree('sku-blue',undefined,numbered,[],undefined,0,features),row=nodes(result.tree).find(node=>node.type==='tr'&&node.props['data-option-id']==='blue'),cell=nodes(row).find(node=>node.type==='td'&&node.props['data-column']==='id');
+ assert.equal(text(cell),'261015007002sku-blue');assert.equal(nodes(result.tree).filter(node=>node.type==='tr'&&node.props['data-option-id']).length,1);
+ for(const query of ['261015007002','blue','sku-blue']){byLabel(result.render(),'상품 옵션 검색').props.onChange({target:{value:query}});assert.equal(text(nodes(result.render()).find(node=>node.type==='td'&&node.props['data-column']==='id')),'261015007002sku-blue');}
+ byLabel(result.render(),'옵션 blue 선택').props.onChange({target:{checked:true}});assert.equal(byLabel(result.render(),'옵션 blue 선택').props.checked,true);
+ byLabel(result.render(),'옵션 blue 견적서 편집').props.onClick();byLabel(result.render(),'옵션 blue 삭제 검토').props.onClick();assert.deepEqual(result.stages,[['blue','견적서']]);assert.deepEqual(result.managed,['blue']);
+ byLabel(result.render(),'상품 옵션 검색').props.onChange({target:{value:''}});assert.deepEqual(nodes(result.render()).filter(node=>node.type==='td'&&node.props['data-column']==='id').map(text),['261015007001sku-red','261015007002sku-blue']);
+ assert.equal(JSON.stringify(numbered),before);
+ const reordered={...numbered,options:{...numbered.options,rows:[...numbered.options.rows].reverse()}};
+ assert.deepEqual(nodes(tree('',undefined,reordered,[],undefined,0,features).tree).filter(node=>node.type==='td'&&node.props['data-column']==='id').map(text),['261015007002sku-blue','261015007001sku-red']);
+ const remaining={...reordered,optionRegistrationNumbers:{blue:numbered.optionRegistrationNumbers.blue},options:{...reordered.options,rows:reordered.options.rows.slice(0,1)}};
+ assert.equal(text(nodes(tree('',undefined,remaining,[],undefined,0,features).tree).find(node=>node.type==='td'&&node.props['data-column']==='id')),'261015007002sku-blue');
+ for(const options of [data,{...data,optionRegistrationNumbers:{red:'261015007001'}}])assert.equal(text(nodes(tree('sku-blue',undefined,options,[],undefined,0,features).tree).find(node=>node.type==='td'&&node.props['data-column']==='id')),'bluesku-blue');
+});
+
+test('option response validates persisted number maps and parent prefix before loading any content snapshot',async()=>{
+ const signal=new AbortController().signal,parent='261015007001',content={productId:'p1',schemaVersion:1,assets:{main:{value:[]}}};
+ const read=async(body,parentNumber=parent)=>{const requests=[];const fetcher=async url=>{requests.push(url);return Response.json(url.endsWith('/options')?body:url.endsWith('/content')?{content}:quotation(undefined,undefined,content,body));};return{requests,result:await model.readOptionBoard('p1',signal,fetcher,parentNumber)};};
+ const sparse={...data,optionRegistrationNumbers:{blue:'261015007002'}},received=await read(sparse);assert.equal(received.result.optionRegistrationNumbers.blue,'261015007002');assert.equal(Object.hasOwn(received.result.optionRegistrationNumbers,'red'),false);
+ assert.equal(Object.hasOwn((await read(data)).result,'optionRegistrationNumbers'),false);
+ for(const optionRegistrationNumbers of [null,[],1,{blue:261015007002},{blue:'26101500700'},{blue:'261015007002\n'},{blue:'261015007000'},{foreign:'261015007003'},{red:'261015007001',blue:'261015007001'},{blue:'261015008002'},{red:'261015007001',blue:'261014007002'}]){
+  const requests=[];await assert.rejects(model.readOptionBoard('p1',signal,async url=>{requests.push(url);return Response.json({...data,optionRegistrationNumbers});},parent),/옵션 등록번호/);assert.deepEqual(requests,['/api/products/p1/options']);
+ }
+ await assert.rejects(read(sparse,'bad-parent'),/옵션 등록번호/);
 });
 
 test('price buttons retain the chosen option ID and general editing does not pass a click event',()=>{

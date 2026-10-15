@@ -1,7 +1,8 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
+import {registrationNumber} from '@/app/product-registration';
 
-type RemovedProduct={id:string;owner_id:string;title:string;source_url:string;updated_at:string;removed_at:string};
+type RemovedProduct={id:string;registration_number?:string;owner_id:string;title:string;source_url:string;updated_at:string;removed_at:string};
 type RemovalSnapshot={ownerId?:string;attempt:number;rows?:RemovedProduct[];error?:string;restoringId?:string};
 export function ProductRemovalDialog({workspaceOwnerId,onRestored,onBusyChange}:{workspaceOwnerId?:string;onRestored:()=>Promise<void>;onBusyChange?:(busy:boolean)=>void}){
   const [attempt,setAttempt]=useState(0),[snapshot,setSnapshot]=useState<RemovalSnapshot|null>(null);
@@ -36,6 +37,6 @@ export function ProductRemovalDialog({workspaceOwnerId,onRestored,onBusyChange}:
     {error&&<p role="alert">{error}</p>}
     {rows===null&&!error&&<p role="status">삭제된 상품을 불러오는 중…</p>}
     {rows?.length===0&&<p>삭제된 상품이 없습니다.</p>}
-    {rows&&rows.length>0&&<table className="registration-table"><thead><tr><th>등록번호</th><th>상품명</th><th>삭제일</th><th>관리</th></tr></thead><tbody>{rows.map(product=><tr key={product.id}><td>YP-{product.id.slice(0,8).toUpperCase()}</td><td>{product.title||'상품명 미입력'}</td><td>{new Date(product.removed_at).toLocaleString('ko-KR')}</td><td><button type="button" className="btn ghost" disabled={busy!==null} onClick={()=>void restore(product)}>{busy===product.id?'복원 중…':'복원'}</button></td></tr>)}</tbody></table>}
+    {rows&&rows.length>0&&<table className="registration-table"><thead><tr><th>등록번호</th><th>상품명</th><th>삭제일</th><th>관리</th></tr></thead><tbody>{rows.map(product=><tr key={product.id}><td>{registrationNumber(product)}</td><td>{product.title||'상품명 미입력'}</td><td>{new Date(product.removed_at).toLocaleString('ko-KR')}</td><td><button type="button" className="btn ghost" disabled={busy!==null} onClick={()=>void restore(product)}>{busy===product.id?'복원 중…':'복원'}</button></td></tr>)}</tbody></table>}
   </section>;
 }

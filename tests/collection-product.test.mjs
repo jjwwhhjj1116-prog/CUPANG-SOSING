@@ -300,8 +300,17 @@ test('collection creates category-scoped review defaults before opening stage si
  assert.equal(prepared.product.supplier_hub_status,'미전송');
  for(const categoryId of ['81452','999999']){
   const other=prepare('owner',{...captured,context:{...captured.context,category:{...captured.context.category,categoryId,categoryPath:categoryId==='81452'?load('app/quotation-schema.ts').getQuotationSchema(categoryId).categoryPath:['미확인 카테고리']}}},result,'p',now);
-  assert.equal(other.content.label.countryOfOrigin.value,'');assert.equal(other.content.label.precautions.value,'');assert.equal(other.content.label.usageStandard.value,'');
+  // Every syntactically valid selected category receives the reviewable generic
+  // form defaults. The source receipt still contains no country declaration.
+  const defaults={countryOfOrigin:'중국',precautions:'용도 외에 사용금지. 파손및화기주의',usageStandard:'14세이상'};
+  for(const [key,value] of Object.entries(defaults)){
+   assert.equal(other.content.label[key].value,value);
+   if(value)assert.equal(other.content.label[key].provenance,'generated');
+  }
  }
+ const defaultModule=load('app/couplus-quotation-defaults.ts');
+ for(const categoryId of [null,'','invalid/category'])assert.deepEqual(JSON.parse(JSON.stringify(defaultModule.couplusLabelDefaults(categoryId))),{});
+ assert.equal((result.attributes??[]).some(attribute=>attribute.name==='原产国'),false);
 });
 
 test('retrying imported source never restores defaults over reviewed label or explicit blank',async()=>{

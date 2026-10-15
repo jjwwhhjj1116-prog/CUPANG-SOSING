@@ -53,6 +53,17 @@ const profile = { id: 'profile', revision: 1, verification: 'draft', createdAt: 
 };
 const assets = [{ key: 'owner/option.png', name: 'assets/image-001.png', data: png }];
 
+test('quotation export receipts ignore display numbers but still bind actual saved prices',async()=>{
+ const source=load('app/exports/quotation-source.ts',{'cloudflare:workers':{env:{}}});
+ const saved={product,content,options,settings:defaultSettings,state:{schemaVersion:1,productId:'test',revision:0,overrides:{common:{},options:{}},updatedAt:null},profile:null,
+  categoryContext:{source:'unknown',profileId:null,categoryId:null,categoryPath:[]},source:{productVersion:product.updated_at},company:fixtureCompany};
+ const numbered={...saved,product:{...product,registration_number:'261015001001'}};
+ const before=JSON.stringify(saved),receipt=await source.quotationExportFingerprint(saved,null);
+ assert.equal(await source.quotationExportFingerprint(numbered,null),receipt);
+ assert.notEqual(await source.quotationExportFingerprint({...numbered,product:{...numbered.product,sale_price:product.sale_price+10}},null),receipt);
+ assert.equal(numbered.product.registration_number,'261015001001');assert.equal(JSON.stringify(saved),before);
+});
+
 test('quotation rows use the identical option policy/decimal cost calculation and omit excluded SKUs', () => {
   const rows = quotationData(product, content, defaultSettings, options.rows, assets);
   const calculated = optionsModel.calculateOptionPrices(optionRows, policy).filter(row => row.included);

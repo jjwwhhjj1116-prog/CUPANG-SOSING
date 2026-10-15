@@ -13,7 +13,7 @@ function load(file, overrides = {}, mode = 'development') {
     if (name === 'next/server') return { NextResponse: Response };
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
     if (name === '@/db/collection-images') return {readOptionSourceImages:async()=>({})};
-    const modules = { '@/app/product-options': 'app/product-options.ts', '@/app/product-content': 'app/product-content.ts', '@/app/pricing': 'app/pricing.ts', '@/app/workspace-settings': 'app/workspace-settings.ts' };
+    const modules = { '@/app/product-options': 'app/product-options.ts', '@/app/product-content': 'app/product-content.ts', '@/app/pricing': 'app/pricing.ts', '@/app/workspace-settings': 'app/workspace-settings.ts', '@/app/image-pool-limit':'app/image-pool-limit.ts', '@/db/product-registration':'db/product-registration.ts' };
     if (modules[name]) return load(modules[name], overrides, mode);
     throw Error(name);
   } });
@@ -72,6 +72,7 @@ function sqliteDependencies() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(`PRAGMA foreign_keys=ON; CREATE TABLE products(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,source_price_cny REAL,quote_status TEXT,options_count INTEGER,updated_at TEXT); INSERT INTO products VALUES('test','owner',999,'완료',9,'${version}');`);
   sqlite.exec(fs.readFileSync(new URL('../db/migrations/0015_product_removals.sql', import.meta.url), 'utf8'));
+  sqlite.exec(fs.readFileSync(new URL('../db/migrations/0024_product_registration.sql', import.meta.url), 'utf8'));
   const db = { prepare(sql) { let args = []; const q = { bind(...values) { args = values; return q; }, execute() { return sqlite.prepare(sql).all(...args); }, async first() { return q.execute()[0] ?? null; }, async run() { return sqlite.prepare(sql).run(...args); } }; return q; }, async batch(queries) { sqlite.exec('BEGIN'); try { const result = queries.map(q => ({ results: q.execute() })); sqlite.exec('COMMIT'); return result; } catch (error) { sqlite.exec('ROLLBACK'); throw error; } } };
   return { sqlite, queries: load('db/product-options.ts', { 'cloudflare:workers': { env: { DB: db } } }) };
 }

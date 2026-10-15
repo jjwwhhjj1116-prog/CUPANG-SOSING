@@ -5,11 +5,12 @@ import type {ProductContent} from '@/app/product-content';
 import type {CollectionEditorTab} from '@/app/registration-navigation';
 import {quotationMainImageKeys,optionQuotationName,type ProductOption,type ProductOptionsResponse} from '@/app/product-options';
 import type {QuotationField} from '@/app/quotation-schema';
+import {optionRegistrationNumber} from '@/app/product-registration';
 import {exactPrimaryQuotationTarget} from '@/app/quotation-seo-targets';
 import {quotationPriceTargets} from '@/app/quotation-price-targets';
 import './product-option-board.css';
 
-type Props={productId:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
+type Props={productId:string;productRegistrationNumber?:string;sourceUrl:string;imageKeys:string;refreshToken?:string;returnFocus?:string;onReturnFocusHandled?:()=>void;onQuotation:(optionId:string)=>void;onEdit:(optionId?:string)=>void;onImage?:(optionId:string)=>void;onContent?:(step:CommonContentStep)=>void;onStage?:(optionId:string,step:CollectionEditorTab)=>void;onManage?:(optionId:string)=>void};
 type CommonContentStep='추가 이미지'|'상세 이미지'|'표시사항';
 type CommonRole='additional'|'detail'|'size'|'label';
 const commonStages=[['additional','추가이미지','추가 이미지'],['detail','상세이미지','상세 이미지'],['size','사이즈표','옵션'],['label','한글표시사항','표시사항']] as const;
@@ -23,7 +24,7 @@ const columns=[
 ] as const;
 type ColumnId=typeof columns[number]['id'];
 export type OptionBoardQuotationContent={title:string;main:string[];additional:string[];detail:string[];label:string[];imageIssues:Partial<Record<'main'|'additional'|'detail'|'label',boolean>>};
-export type OptionBoardData=ProductOptionsResponse & {imageKeys:string[];quotationPrices?:Record<string,{supplyPrice:string;salePrice:string}>;quotationContent?:Record<string,OptionBoardQuotationContent>;seoTitle?:string|null;commonImageKeys:string[];commonAssets?:Partial<Record<CommonRole,string[]>>};
+export type OptionBoardData=ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>;imageKeys:string[];quotationPrices?:Record<string,{supplyPrice:string;salePrice:string}>;quotationContent?:Record<string,OptionBoardQuotationContent>;seoTitle?:string|null;commonImageKeys:string[];commonAssets?:Partial<Record<CommonRole,string[]>>};
 function record(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==='object'&&!Array.isArray(value);}
 function validOption(row:unknown):row is ProductOption {
   if(!record(row)||typeof row.id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(row.id)
@@ -39,15 +40,29 @@ function validOption(row:unknown):row is ProductOption {
 function validCalculation(value:unknown){
   return value===null||(record(value)&&['supplyPrice','salePrice'].every(key=>{const price=value[key];return typeof price==='number'&&Number.isFinite(price);}));
 }
-export async function readOptionBoard(productId:string,signal:AbortSignal,fetcher:typeof fetch=fetch):Promise<OptionBoardData>{
+function validOptionRegistrationNumbers(value:unknown,rows:ProductOption[],parent?:string){
+  if(value===undefined)return true;
+  if(!record(value))return false;
+  const entries=Object.entries(value),prefix=parent===undefined?null:optionRegistrationNumber(parent,0)?.substring(0,9);
+  if(entries.length>rows.length||(parent!==undefined&&!prefix&&entries.length))return false;
+  const seen=new Set<string>();let observedPrefix:string|null=null;
+  return entries.every(([id,number])=>{
+    if(!rows.some(row=>row.id===id)||typeof number!=='string'||number.length!==12||!/^\d{12}$/.test(number)||number.substring(9)==='000'||seen.has(number))return false;
+    const currentPrefix=number.substring(0,9);
+    if((prefix&&currentPrefix!==prefix)||(observedPrefix&&currentPrefix!==observedPrefix))return false;
+    seen.add(number);observedPrefix=currentPrefix;return true;
+  });
+}
+export async function readOptionBoard(productId:string,signal:AbortSignal,fetcher:typeof fetch=fetch,productRegistrationNumber?:string):Promise<OptionBoardData>{
   const response=await fetcher(`/api/products/${encodeURIComponent(productId)}/options`,{cache:'no-store',signal});
-  const body=await response.json() as ProductOptionsResponse & {error?:string};
+  const body=await response.json() as ProductOptionsResponse & {optionRegistrationNumbers?:Record<string,string>;error?:string};
   if(!response.ok)throw Error(body?.error||'옵션을 불러오지 못했습니다.');
   if(!body||body.options?.productId!==productId||body.options.schemaVersion!==1||!Number.isSafeInteger(body.options.revision)||body.options.revision<0
     ||typeof body.productVersion!=='string'||!body.productVersion||!Array.isArray(body.options.rows)||body.options.rows.length>200||body.options.rows.some(row=>!validOption(row))
     ||new Set(body.options.rows.map(row=>row.id)).size!==body.options.rows.length||!Array.isArray(body.pricing?.rows)
     ||body.pricing.rows.some(row=>!record(row)||typeof row.optionId!=='string'||!body.options.rows.some(option=>option.id===row.optionId)||!validCalculation(row.calculation)))throw Error('상품의 옵션 응답을 확인하지 못했습니다.');
   if(body.sourceImageKeys!==undefined&&(!body.sourceImageKeys||typeof body.sourceImageKeys!=='object'||Array.isArray(body.sourceImageKeys)||Object.entries(body.sourceImageKeys).some(([id,key])=>typeof key!=='string'||!key||!body.options.rows.some(row=>row.id===id))))throw Error('상품의 원본 이미지 응답을 확인하지 못했습니다.');
+  if(!validOptionRegistrationNumbers(body.optionRegistrationNumbers,body.options.rows,productRegistrationNumber))throw Error('상품의 옵션 등록번호 응답을 확인하지 못했습니다.');
   const contentResponse=await fetcher(`/api/products/${encodeURIComponent(productId)}/content`,{cache:'no-store',signal});
   const saved=await contentResponse.json() as {content?:ProductContent;error?:string};
   if(!contentResponse.ok)throw Error(saved?.error||'공통 상품 자료를 불러오지 못했습니다.');
@@ -91,7 +106,7 @@ export async function readOptionBoard(productId:string,signal:AbortSignal,fetche
   }
   return {...body,imageKeys:quote.imageKeys,quotationPrices,quotationContent,seoTitle:content.seo?.title.value??null,commonImageKeys:content.assets.main.value,commonAssets:{additional:readKeys('additional'),detail:[...readKeys('detailTop'),...readKeys('detail'),...readKeys('detailBottom')],size:readKeys('size'),label:readKeys('label')}};
 }
-export function ProductOptionBoard({productId,sourceUrl,refreshToken,returnFocus,onReturnFocusHandled,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
+export function ProductOptionBoard({productId,productRegistrationNumber,sourceUrl,refreshToken,returnFocus,onReturnFocusHandled,onQuotation,onEdit,onImage,onContent,onStage,onManage}:Props){
   const [loaded,setLoaded]=useState<{productId:string;attempt:number;refreshToken?:string;data:OptionBoardData|null;error:string}|null>(null);
   const [attempt,setAttempt]=useState(0);const [query,setQuery]=useState('');
   const [selection,setSelection]=useState({productId,ids:new Set<string>()});
@@ -103,11 +118,12 @@ export function ProductOptionBoard({productId,sourceUrl,refreshToken,returnFocus
   const current=loaded?.productId===productId&&loaded.attempt===attempt&&loaded.refreshToken===refreshToken?loaded:null;
   const data=current?.data??null,error=current?.error??'';
   useEffect(()=>{const controller=new AbortController();
-    readOptionBoard(productId,controller.signal).then(value=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:value,error:''});}).catch(cause=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:null,error:cause instanceof Error?cause.message:'옵션 조회 실패'});});
+    readOptionBoard(productId,controller.signal,fetch,productRegistrationNumber).then(value=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:value,error:''});}).catch(cause=>{if(!controller.signal.aborted)setLoaded({productId,attempt,refreshToken,data:null,error:cause instanceof Error?cause.message:'옵션 조회 실패'});});
     return()=>controller.abort();
-  },[productId,attempt,refreshToken]);
+  },[productId,productRegistrationNumber,attempt,refreshToken]);
   const keys=data?.imageKeys??[];
-  const rows=data?.options.rows.filter(row=>[row.id,row.supplierSku,row.originalName,row.translatedName,row.color,row.size,data.quotationContent?.[row.id]?.title].join(' ').toLowerCase().includes(query.trim().toLowerCase()))??[];
+  const optionNumbers=new Map(data?.options.rows.map(row=>[row.id,data.optionRegistrationNumbers&&Object.hasOwn(data.optionRegistrationNumbers,row.id)?data.optionRegistrationNumbers[row.id]:row.id])??[]);
+  const rows=data?.options.rows.filter(row=>[optionNumbers.get(row.id),row.id,row.supplierSku,row.originalName,row.translatedName,row.color,row.size,data.quotationContent?.[row.id]?.title].join(' ').toLowerCase().includes(query.trim().toLowerCase()))??[];
   const filteredOptionIds=rows.map(row=>row.id).join(',');
   const pageCount=Math.max(1,Math.ceil(rows.length/pageSize));
   const page=Math.min(pagination.productId===productId?pagination.page:0,pageCount-1);
@@ -168,7 +184,7 @@ export function ProductOptionBoard({productId,sourceUrl,refreshToken,returnFocus
       const mainLabel=mainIssue&&!mainCount?'연결 확인 필요':mainCount+'장';
       const priceLabel=prices?prices.supplyPrice.trim()&&prices.salePrice.trim()?'입력됨':'미입력':calculation?.calculation?'계산값':'미입력';
       const cells={
-        id:<>{row.id}<small>{row.supplierSku||'SKU 미입력'}</small></>,
+        id:<>{optionNumbers.get(row.id)}<small>{row.supplierSku||'SKU 미입력'}</small></>,
         name:<><strong>{optionQuotationName(row)||'(옵션명 공란)'}</strong><small>{row.originalName}</small><small>구성 {row.unitsPerPack}개 · 견적 {row.included?'포함':'제외'}</small></>,
         seo:stageButton(row.id,'SEO','SEO설정',(effective?.title??data.seoTitle)==null?'확인 필요':(effective?.title??data.seoTitle)?.trim()?'입력됨':'미입력'),
         price:stageButton(row.id,'가격','가격설정',priceLabel),

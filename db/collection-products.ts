@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { ensureDatabase, findProduct } from '@/db/queries';
+import { prepareProductRegistration, prepareProductRegistrationOptions } from '@/db/product-registration';
 import { readProductOptions } from '@/db/product-options';
 import { readProductContent } from '@/db/product-content';
 import { verifyWorkspaceBannerFiles } from '@/db/workspace-banners';
@@ -29,6 +30,8 @@ export async function promoteCollection(owner:string,job:CollectionJob,receipt:C
    WHERE j.id=? AND j.owner_id=? AND r.owner_id=? AND j.status='awaiting_connector' AND ${effectiveCollectionPayload}=? AND c.payload=?
    AND NOT EXISTS(SELECT 1 FROM collection_products WHERE job_id=j.id)`)
    .bind(...entries.map(([,value])=>value),job.id,owner,owner,JSON.stringify(receipt),JSON.stringify(job.context)),
+  ...prepareProductRegistration(db,owner,id,now),
+  prepareProductRegistrationOptions(db,owner,id,prepared.options.rows.map(row=>row.id),now),
   db.prepare('INSERT INTO product_price_policy(product_id,payload) SELECT id,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(prepared.policy),id,owner),
   db.prepare('INSERT INTO product_options(product_id,owner_id,revision,payload,updated_at) SELECT id,owner_id,1,?,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(prepared.options),now,id,owner),
   db.prepare('INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at) SELECT id,owner_id,1,?,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(prepared.content),now,id,owner),

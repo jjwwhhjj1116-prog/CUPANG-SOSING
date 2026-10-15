@@ -2,6 +2,7 @@ import {env} from 'cloudflare:workers';
 import {CollectionForkError,CollectionPendingSourceAvailable,type CollectionNewDraftTargetRequest,type CollectionNewDraftPreview,type CollectionNewDraftCreated} from '@/app/collection-fork';
 import {ensureCollectionDatabase,findCollectionJob} from '@/db/collection-jobs';
 import {ensureDatabase,getSettings,findProduct} from '@/db/queries';
+import {prepareProductRegistration,prepareProductRegistrationOptions} from '@/db/product-registration';
 import {readCollectionResult,effectiveCollectionPayload} from '@/db/collection-results';
 import {getCategoryProfile} from '@/db/category-profiles';
 import {validateStoredTemplate} from '@/db/category-templates';
@@ -118,6 +119,8 @@ export async function createCollectionNewDraft(owner:string,company:SupplierHubC
  db.prepare(`UPDATE collection_offer_claims SET job_id=? WHERE owner_id=? AND offer_id=? AND job_id=? AND EXISTS(SELECT 1 ${guard}) AND EXISTS(SELECT 1 FROM collection_context WHERE job_id=? AND payload=?)`).bind(requestId,owner,source.offer_id,jobId,...guardArgs,requestId,contextPayload),
  db.prepare(`INSERT INTO collection_results(job_id,owner_id,payload,received_at) SELECT ?,?,?,? WHERE ${created} ON CONFLICT(job_id) DO NOTHING`).bind(requestId,owner,source.receipt_payload,now,...createdArgs),
  db.prepare(`INSERT INTO products(${entries.map(([key])=>key).join(',')}) SELECT ${entries.map(()=>'?').join(',')} WHERE ${created} AND EXISTS(SELECT 1 FROM collection_results WHERE job_id=? AND owner_id=? AND payload=?)`).bind(...entries.map(([,value])=>value),...createdArgs,requestId,owner,source.receipt_payload),
+ ...prepareProductRegistration(db,owner,productId,now),
+ prepareProductRegistrationOptions(db,owner,productId,draft.options.rows.map(row=>row.id),now),
  db.prepare('INSERT INTO product_price_policy(product_id,payload) SELECT id,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(draft.policy),productId,owner),
  db.prepare('INSERT INTO product_options(product_id,owner_id,revision,payload,updated_at) SELECT id,owner_id,1,?,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(draft.options),now,productId,owner),
  db.prepare('INSERT INTO product_content(product_id,owner_id,revision,payload,updated_at) SELECT id,owner_id,1,?,? FROM products WHERE id=? AND owner_id=?').bind(JSON.stringify(draft.content),now,productId,owner),

@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { emptyProductOptions, type ProductOptions } from '@/app/product-options';
+import {prepareProductRegistrationOptions} from '@/db/product-registration';
 
 type Row = { payload: string; revision: number };
 async function database() {
@@ -34,6 +35,21 @@ export async function saveProductOptions(ownerId: string, options: ProductOption
       WHERE id=? AND owner_id=? AND updated_at=? AND changes()=1
       AND EXISTS(SELECT 1 FROM product_options WHERE product_id=? AND owner_id=? AND revision=?)`)
       .bind(options.rows.filter(row => row.included).length, options.updatedAt, options.productId, ownerId, expectedProductVersion, options.productId, ownerId, options.revision),
+    prepareProductRegistrationOptions(db,ownerId,options.productId,options.rows.map(row=>row.id),options.updatedAt,{revision:options.revision,payload:JSON.stringify(options)}),
   ]);
   return result[0].results[0] ? options : null;
+}
+
+/** Response-only display enrichment; neither reads nor legacy option edits
+ * allocate numbers. Removed UUID mappings remain stored, outside the payload. */
+export async function readOptionRegistrationNumbers(ownerId:string,product:{id:string;registration_number?:string},options:ProductOptions):Promise<Record<string,string>|undefined>{
+  if(!product.registration_number)return undefined;
+  const db=await database();
+  const saved=await db.prepare(`SELECT m.option_id,substr(n.registration_number,1,9)||printf('%03d',m.sequence) AS registration_number
+    FROM product_registration_numbers n JOIN product_registration_options m ON m.product_id=n.product_id AND m.owner_id=n.owner_id
+    JOIN json_each(?) current ON current.value=m.option_id
+    WHERE n.product_id=? AND n.owner_id=? AND n.registration_number=?`)
+    .bind(JSON.stringify(options.rows.map(row=>row.id)),product.id,ownerId,product.registration_number)
+    .all<{option_id:string;registration_number:string}>();
+  return Object.fromEntries(saved.results.map(row=>[row.option_id,row.registration_number]));
 }

@@ -11,9 +11,14 @@ const output = ts.transpileModule(source, {
 
 function load(env) {
   const exports = {};
+  const registration = {};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../db/product-registration.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, {exports:registration});
   vm.runInNewContext(output, {
     exports,
     require: name => {
+      if (name === '@/db/product-registration') return registration;
       assert.equal(name, 'cloudflare:workers');
       return { env };
     },
@@ -46,6 +51,27 @@ const expectedDDL = [
   `CREATE TABLE IF NOT EXISTS product_price_policy (
     product_id TEXT PRIMARY KEY REFERENCES products(id), payload TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS product_registration_counters (
+    owner_id TEXT NOT NULL, registration_day TEXT NOT NULL,
+    last_sequence INTEGER NOT NULL CHECK(last_sequence BETWEEN 1 AND 999),
+    PRIMARY KEY(owner_id, registration_day)
+  )`,
+  `CREATE TABLE IF NOT EXISTS product_registration_numbers (
+    product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
+    registration_day TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 999),
+    registration_number TEXT NOT NULL CHECK(
+      registration_day GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+      AND length(registration_number)=12
+      AND registration_number=replace(substr(registration_day,3),'-','') || printf('%03d',sequence) || '001'
+    ), created_at TEXT NOT NULL,
+    UNIQUE(owner_id, registration_day, sequence), UNIQUE(owner_id, registration_number),
+    FOREIGN KEY(owner_id, registration_day) REFERENCES product_registration_counters(owner_id, registration_day)
+  )`,
+  `CREATE TABLE IF NOT EXISTS product_registration_options (
+    product_id TEXT NOT NULL REFERENCES product_registration_numbers(product_id), owner_id TEXT NOT NULL,
+    option_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 999),
+    PRIMARY KEY(product_id, option_id), UNIQUE(product_id, sequence)
+  )`,
 ].map(normalize);
 
 function mockDatabase(onBatch = async () => expectedDDL.map(() => ({ success: true }))) {
@@ -68,11 +94,11 @@ function mockDatabase(onBatch = async () => expectedDDL.map(() => ({ success: tr
   return { db, prepared, batches };
 }
 
-test('first bootstrap preserves all seven additive table/index statements without online optimize', async () => {
+test('first bootstrap uses ten additive table/index statements without online optimize or product backfill', async () => {
   const h = mockDatabase();
   await load({ DB: h.db }).ensureDatabase();
   assert.deepEqual(h.batches, [expectedDDL]);
-  assert.equal(h.prepared.length, 7);
+  assert.equal(h.prepared.length, 10);
 });
 
 test('a completed bootstrap skips DDL on subsequent calls for the same binding', async () => {
@@ -82,7 +108,7 @@ test('a completed bootstrap skips DDL on subsequent calls for the same binding',
   await store.ensureDatabase();
   await store.ensureDatabase();
   assert.equal(h.batches.length, 1);
-  assert.equal(h.prepared.length, 7);
+  assert.equal(h.prepared.length, 10);
 });
 
 test('a failed bootstrap propagates the error and retries before remembering success', async () => {
@@ -96,7 +122,7 @@ test('a failed bootstrap propagates the error and retries before remembering suc
   await store.ensureDatabase();
   await store.ensureDatabase();
   assert.deepEqual(h.batches, [expectedDDL, expectedDDL]);
-  assert.equal(h.prepared.length, 14);
+  assert.equal(h.prepared.length, 20);
 });
 
 test('different D1 binding objects bootstrap independently within an isolate', async () => {

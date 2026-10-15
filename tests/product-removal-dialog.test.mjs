@@ -9,6 +9,7 @@ const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 const removed=(id='removed-a',owner='test-owner')=>({id,owner_id:owner,title:'보관 상품 '+id,source_url:'https://source.example.test/product/'+id,updated_at:'2026-10-06T00:00:00.000Z',removed_at:'2026-10-06T00:01:00.000Z'});
+function loadLocal(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports});return exports;}
 
 /** The actual dialog and effects; HTTP is supplied at the response boundary. */
 function harness(fetcher,{workspaceOwnerId='test-owner',onRestored=async()=>{}}={}){
@@ -19,7 +20,7 @@ function harness(fetcher,{workspaceOwnerId='test-owner',onRestored=async()=>{}}=
   useRef(initial){const slot=index++;return slots[slot]??(slots[slot]={current:initial});},
   useEffect(fn,deps){const slot=index++,old=slots[slot];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i]))){const next={deps,cleanup:old?.cleanup};slots[slot]=next;effects.push(()=>{next.cleanup?.();next.cleanup=fn();});}},
  };
- const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/product-removal-dialog.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,Date,fetch:async(url,init)=>{requests.push({url,init});return fetcher(url,init);},require:name=>name==='react'?hooks:native(name)});
+ const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/product-removal-dialog.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,Date,fetch:async(url,init)=>{requests.push({url,init});return fetcher(url,init);},require:name=>name==='react'?hooks:name.startsWith('@/')?loadLocal(name.slice(2)+'.ts'):native(name)});
  const Component=exports.ProductRemovalDialog;
  const render=()=>{index=0;const tree=Component(props);effects.splice(0).forEach(fn=>fn());return tree;};
  const settle=async()=>{for(let i=0;i<8;i++){if(!closed)render();await new Promise(resolve=>setImmediate(resolve));}};
@@ -31,6 +32,18 @@ test('removed-product dialog exposes restore only after a fresh response belongi
  const pending=deferred(),row=removed();const h=harness(()=>pending.promise);try{
   assert.equal(h.buttons().length,0);assert.equal(h.requests.length,1);assert.equal(h.requests[0].url,'/api/products?removed=only');assert.equal(h.requests[0].init.cache,'no-store');
   pending.resolve(Response.json({products:[row]}));await h.settle();assert.equal(h.buttons().length,1);assert.match(text(h.render()),/보관 상품 removed-a/);assert.equal(h.requests.length,1);assert.equal(h.restored,0);
+ }finally{h.close();}
+});
+
+test('removed list displays saved registration metadata and restores the unchanged UUID and clock',async()=>{
+ const row={...removed('14b09f83-6365-426f-b394-080af6bb5ddd'),registration_number:'261015003001'},legacy=removed('abcdef12-legacy');
+ const before=JSON.stringify([row,legacy]),h=harness(async(_url,init)=>init.method==='DELETE'?Response.json({productId:row.id,restored:true}):Response.json({products:[row,legacy]}));
+ try{
+  await h.settle();const cells=nodes(h.render()).filter(node=>node.type==='tr'&&node.key).map(node=>nodes(node).find(cell=>cell.type==='td')).map(text);
+  assert.deepEqual(cells,['261015003001','YP-ABCDEF12']);assert.equal(JSON.stringify([row,legacy]),before);
+  h.buttons()[0].props.onClick();await h.settle();const request=h.requests.find(value=>value.init.method==='DELETE');
+  assert.equal(request.url,'/api/products/'+row.id);assert.deepEqual(JSON.parse(request.init.body),{action:'restore',expectedVersion:row.updated_at,expectedRemovedAt:row.removed_at});
+  assert.equal(h.restored,1);assert.doesNotMatch(text(h.render()),/261015003001/);assert.match(text(h.render()),/YP-ABCDEF12/);
  }finally{h.close();}
 });
 

@@ -40,6 +40,19 @@ const context={params:Promise.resolve({id:'product'})};
 const request=(body,profileId)=>new Request('http://localhost/api/products/product/quotation-fields'+(profileId?'?profileId='+profileId:''),{method:body?'PUT':'GET',headers:{'content-type':'application/json',origin:'http://localhost'},...(body?{body:JSON.stringify(body)}:{})});
 async function get(h,profileId){const response=await h.route.GET(request(null,profileId),context);assert.equal(response.status,200,await response.clone().text());return response.json();}
 function put(h,view,changes,profileId){return h.route.PUT(request({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes},profileId),context);}
+
+test('stage-seven review remains valid without display metadata and retains the same automatic fields', async () => {
+ const h=await harness();try{
+  const before=await get(h);
+  assert.ok(h.sqlite.prepare('SELECT registration_number FROM product_registration_numbers WHERE product_id=?').get('product'));
+  // A local legacy-read fixture. This never alters operational products or source clocks.
+  h.sqlite.prepare('DELETE FROM product_registration_numbers WHERE product_id=?').run('product');
+  const legacy=await get(h);
+  assert.equal(legacy.inputFingerprint,before.inputFingerprint);
+  assert.deepEqual(legacy.automatic,before.automatic);
+  assert.equal((await put(h,before,[{fieldKey:'brand',optionId:null,value:'검토한 브랜드'}])).status,200);
+ }finally{h.sqlite.close();}
+});
 async function profile(h,id='80719'){return h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'LOCAL TEST category',categoryId:id,categoryPath:h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath.length?[...h.load('app/quotation-schema.ts').getQuotationSchema(id).categoryPath]:['미확인 카테고리'],template:null,mappings:[]});}
 const baseGuard=()=>({productVersion:version,imageKeys:product.image_keys,pricingPolicy:null,contentRevision:0,optionRevision:0,settingsPayload:null,profile:null,collection:null});
 

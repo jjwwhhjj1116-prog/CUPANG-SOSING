@@ -178,6 +178,20 @@ async function officialSubmissionFlow(company){
   get signal(){return trackSignal;},continue(){pause.resolve();},close(){pause.resolve();api.close();}};
 }
 
+test('dashboard shows saved registration metadata in option and detail headers while navigation stays UUID scoped',async()=>{
+ const h=harness();h.products[0].registration_number='261015014001';
+ try{
+  await h.settle();const first=h.products[0],second=h.products[1],before=JSON.stringify(h.products);
+  h.component('registration-board').onOptions(first);await h.settle();
+  const board=h.component('product-option-board');assert.equal(board.productId,first.id);assert.equal(board.productRegistrationNumber,'261015014001');assert.match(text(h.render()),/등록번호 261015014001/);
+  board.onStage('saved-option-uuid','SEO');await h.settle();
+  const metadata=nodes(h.render()).find(node=>node.props?.className==='detail-product-meta');assert.match(text(metadata),/^261015014001/);assert.equal(h.component('option-seo-editor').optionId,'saved-option-uuid');
+  assert.equal(h.requests.at(-1).url,'/api/products/'+first.id);assert.ok(h.requests.every(request=>request.method==='GET'));
+  h.component('registration-board').onOpen(second,'SEO');await h.settle();assert.match(text(nodes(h.render()).find(node=>node.props?.className==='detail-product-meta')),/^YP-PRODUCT-/);
+  assert.equal(JSON.stringify(h.products),before);
+ }finally{h.close();}
+});
+
 for(const company of schemaCompanies)for(const laterChange of [false,true])test(`official preparation and first receipt refresh retain one live tracker; ${laterChange?'a later profile save cancels it':'the same tracker reaches SKU receipt'} (${company.code})`,async()=>{
  const flow=await officialSubmissionFlow(company),h=harness({workspaceOwnerId:'owner',settingsBody:{settings:flow.api.settings,scope:scope('owner',company.code)},officialFlow:flow});
  try{

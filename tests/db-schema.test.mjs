@@ -40,7 +40,7 @@ function seedCompanions(db) {
 
 test('ordered migrations match every runtime table, constraint, column and named index on fresh SQLite', () => {
   const result = checkDatabaseSchema();
-  assert.equal(result.tables, 37); assert.equal(result.indexes, 17); assert.equal(result.runtimeModules, 25);
+  assert.equal(result.tables, 40); assert.equal(result.indexes, 17); assert.equal(result.runtimeModules, 26);
 });
 
 test('legacy Drizzle schema upgrade preserves product/settings rows, defaults, PK declarations and indexes', () => {
@@ -93,8 +93,11 @@ test('reapplying bootstrap preserves every current table including uncertain/run
     db.prepare('INSERT INTO managed_store_settings VALUES(?,?,?,?,?,?)').run('test-admin','test-company','테스트 회사',1,json,now);
     db.prepare('INSERT INTO quotation_ai_jobs(id,owner_id,product_id,idempotency_key,request_fingerprint,review,status,created_at) VALUES(?,?,?,?,?,?,?,?)').run('synthetic-quote-ai',owner,productId,'synthetic-idempotency','a'.repeat(64),json,'prepared',now);
     db.prepare('INSERT INTO quotation_ai_daily VALUES(?,?)').run('2026-10-14',1);
+    db.prepare('INSERT INTO product_registration_counters VALUES(?,?,?)').run(owner,'2026-09-22',1);
+    db.prepare('INSERT INTO product_registration_numbers VALUES(?,?,?,?,?,?)').run(productId,owner,'2026-09-22',1,'260922001001',now);
+    db.prepare('INSERT INTO product_registration_options VALUES(?,?,?,?)').run(productId,owner,'synthetic-option',1);
     const before = tableData(db); const schema = schemaSnapshot(db);
-    assert.equal(before.length, 37); assert.ok(before.every(table => table.rows.length === 1));
+    assert.equal(before.length, 40); assert.ok(before.every(table => table.rows.length === 1));
     db.exec(migrations); db.exec(migrations);
     assert.deepEqual(tableData(db), before); assert.deepEqual(schemaSnapshot(db), schema);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
@@ -142,7 +145,7 @@ test('schema checker detects missing indexes, changed CHECK/default/unique defin
 });
 
 test('quotation-fields migration adds one guarded table without changing the existing thirteen tables or rows', () => {
-  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql','0009_members.sql','0010_category_profile_pagination.sql','0011_supplier_hub_receipts.sql','0012_collection_source_supplements.sql','0013_managed_products.sql','0014_historical_ai_records.sql','0015_product_removals.sql','0016_product_labels.sql','0017_collection_offer_claims.sql','0018_managed_import_prices.sql','0019_managed_store_settings.sql','0020_quotation_ai_jobs.sql','0021_managed_product_companions.sql','0022_supplier_hub_single_receipts.sql','0023_collection_offer_lookup.sql']);
+  const files=readMigrationFiles();assert.deepEqual(files.map(file=>file.name),['0001_sourceflow_bootstrap.sql','0002_quotation_fields.sql','0003_archive_indexes.sql','0004_collection_results.sql','0005_collection_products.sql','0006_collection_images.sql','0007_quotation_attribute_rules.sql','0008_intake_drafts.sql','0009_members.sql','0010_category_profile_pagination.sql','0011_supplier_hub_receipts.sql','0012_collection_source_supplements.sql','0013_managed_products.sql','0014_historical_ai_records.sql','0015_product_removals.sql','0016_product_labels.sql','0017_collection_offer_claims.sql','0018_managed_import_prices.sql','0019_managed_store_settings.sql','0020_quotation_ai_jobs.sql','0021_managed_product_companions.sql','0022_supplier_hub_single_receipts.sql','0023_collection_offer_lookup.sql','0024_product_registration.sql']);
   const db=memoryDatabase();
   try {
     db.exec(bootstrap);seedLegacy(db);seedCompanions(db);

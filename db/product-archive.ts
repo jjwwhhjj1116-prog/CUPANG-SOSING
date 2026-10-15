@@ -15,7 +15,8 @@ async function database() {
   return env.DB;
 }
 type ArchiveRow = { id: string; source_kind: 'product' | 'request'; title: string; source_url: string; offer_id: string | null;
-  created_at: string; updated_at: string; status: string; supplier_hub_status: string | null; category_json: string | null; request_id: string | null };
+  created_at: string; updated_at: string; status: string; supplier_hub_status: string | null; category_json: string | null; request_id: string | null;
+  registration_number: string | null };
 function category(row: ArchiveRow): ArchiveItem['category'] {
   if (!row.category_json || !row.request_id) return null;
   try { const value = JSON.parse(row.category_json);
@@ -31,7 +32,13 @@ export async function listProductArchive(ownerId: string, query: ArchiveQuery): 
     const args: (string | number)[] = [ownerId]; const conditions = [`${alias}.owner_id=?`];
     if (query.startUtc) { conditions.push(`${alias}.created_at>=?`); args.push(query.startUtc); }
     if (query.endUtc) { conditions.push(`${alias}.created_at<?`); args.push(query.endUtc); }
-    if (query.query) { conditions.push(kind === 'product' ? `(instr(lower(p.title),lower(?))>0 OR instr(lower(p.source_url),lower(?))>0)` : `(instr(lower(j.source_url),lower(?))>0 OR instr(j.offer_id,?)>0)`); args.push(query.query, query.query); }
+    if (query.query) {
+      conditions.push(kind === 'product'
+        ? `(instr(lower(p.title),lower(?))>0 OR instr(lower(p.source_url),lower(?))>0 OR EXISTS(
+            SELECT 1 FROM product_registration_numbers n WHERE n.owner_id=p.owner_id AND n.registration_number=? AND n.product_id=p.id))`
+        : `(instr(lower(j.source_url),lower(?))>0 OR instr(j.offer_id,?)>0)`);
+      args.push(query.query, query.query, ...(kind === 'product' ? [query.query] : []));
+    }
     if (query.cursor) { conditions.push(`(${alias}.created_at,${alias}.id,'${kind}')<(?,?,?)`); args.push(query.cursor.createdAt, query.cursor.id, query.cursor.kind); }
     return { sql: conditions.join(' AND '), args };
   };
@@ -50,13 +57,15 @@ export async function listProductArchive(ownerId: string, query: ArchiveQuery): 
         WHERE cp.product_id=page.id AND cp.owner_id=?),(
         SELECT j.id FROM collection_jobs j WHERE j.owner_id=? AND j.source_url=substr(page.source_url,1,min(instr(page.source_url||'?','?'),instr(page.source_url||'#','#'))-1)
         ORDER BY j.created_at DESC,j.id DESC LIMIT 1)) END AS request_id FROM page
-    ) SELECT linked.*,CASE WHEN json_valid(c.payload) THEN json_object('id',json_extract(c.payload,'$.category.categoryId'),'path',json_extract(c.payload,'$.category.categoryPath')) ELSE NULL END AS category_json
-      FROM linked LEFT JOIN collection_context c ON c.job_id=linked.request_id ORDER BY created_at DESC,id DESC,source_kind DESC`)
-    .bind(...products.args, ...requests.args, query.limit + 1, ownerId,ownerId).all<ArchiveRow>();
+    ) SELECT linked.*,n.registration_number,CASE WHEN json_valid(c.payload) THEN json_object('id',json_extract(c.payload,'$.category.categoryId'),'path',json_extract(c.payload,'$.category.categoryPath')) ELSE NULL END AS category_json
+      FROM linked LEFT JOIN product_registration_numbers n ON linked.source_kind='product' AND n.product_id=linked.id AND n.owner_id=?
+      LEFT JOIN collection_context c ON c.job_id=linked.request_id ORDER BY created_at DESC,id DESC,source_kind DESC`)
+    .bind(...products.args, ...requests.args, query.limit + 1, ownerId,ownerId,ownerId).all<ArchiveRow>();
   const hasMore = result.results.length > query.limit;
   const items = result.results.slice(0, query.limit).map((row): ArchiveItem => ({ id: row.id, sourceKind: row.source_kind,
     title: row.title, sourceUrl: row.source_url, offerId: row.offer_id || archiveOfferId(row.source_url), createdAt: row.created_at,
-    updatedAt: row.updated_at, status: row.status, supplierHubStatus: row.supplier_hub_status, category: category(row) }));
+    updatedAt: row.updated_at, status: row.status, supplierHubStatus: row.supplier_hub_status, category: category(row),
+    ...(row.registration_number ? {registration_number:row.registration_number} : {}) }));
   return { items, nextCursor: hasMore && items.length ? await nextArchiveCursor(items[items.length - 1], query) : null,
     range: query.range, from: query.from, to: query.to, query: query.query, limit: query.limit, timeZone: 'Asia/Seoul' };
 }

@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import type { PricePolicy } from '@/app/pricing';
+import { productRegistrationCounterSchema, productRegistrationSchema, productRegistrationOptionsSchema, prepareProductRegistration, withRegistrationNumber } from '@/db/product-registration';
 
 export type ProductRecord = {
   id: string; owner_id: string; source_url: string; title: string;
@@ -9,6 +10,7 @@ export type ProductRecord = {
   registration_status: string; supplier_hub_status: string; image_keys: string;
   goal_stage: string; created_at: string; updated_at: string;
   pricing_policy?: string | null;
+  registration_number?: string;
 };
 export type RemovedProductRecord = ProductRecord & {removed_at:string};
 
@@ -48,6 +50,9 @@ export async function ensureDatabase() {
     db.prepare(`CREATE TABLE IF NOT EXISTS product_price_policy (
       product_id TEXT PRIMARY KEY REFERENCES products(id), payload TEXT NOT NULL
     )`),
+    db.prepare(productRegistrationCounterSchema),
+    db.prepare(productRegistrationSchema),
+    db.prepare(productRegistrationOptionsSchema),
   ]);
   schemaReadyBindings.add(db);
 }
@@ -56,15 +61,17 @@ export async function listProducts(ownerId: string, removed: 'exclude' | 'only' 
   await ensureDatabase();
   const result = await database().prepare(
     removed === 'only'
-      ? `SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy, r.removed_at
+      ? `SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy, r.removed_at,
+          (SELECT registration_number FROM product_registration_numbers n WHERE n.product_id=p.id AND n.owner_id=p.owner_id) AS registration_number
           FROM products p INNER JOIN product_removals r ON r.product_id=p.id AND r.owner_id=p.owner_id
           WHERE p.owner_id=? ORDER BY r.removed_at DESC, p.updated_at DESC LIMIT 200`
-      : `SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy
+      : `SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy,
+          (SELECT registration_number FROM product_registration_numbers n WHERE n.product_id=p.id AND n.owner_id=p.owner_id) AS registration_number
           FROM products p WHERE p.owner_id=? AND NOT EXISTS (
             SELECT 1 FROM product_removals r WHERE r.product_id=p.id AND r.owner_id=p.owner_id
           ) ORDER BY p.updated_at DESC LIMIT 200`,
   ).bind(ownerId).all<ProductRecord | RemovedProductRecord>();
-  return result.results;
+  return result.results.map(withRegistrationNumber);
 }
 
 export async function insertProduct(product: ProductRecord, policy?: PricePolicy) {
@@ -85,13 +92,12 @@ export async function insertProduct(product: ProductRecord, policy?: PricePolicy
     );
   // Keep the policy with the initial price, including disabled minimum margin
   // and rounding. A later workspace change must not recalculate this draft.
-  if (policy) {
-    const payload=JSON.stringify(policy);
-    await database().batch([insert,database().prepare('INSERT INTO product_price_policy(product_id,payload) VALUES(?,?)').bind(product.id,payload)]);
-    return {...product,pricing_policy:payload};
-  }
-  await insert.run();
-  return product;
+  const db = database(), payload = policy ? JSON.stringify(policy) : undefined;
+  const result = await db.batch<{registration_number:string}>([insert,
+    ...(payload === undefined ? [] : [db.prepare('INSERT INTO product_price_policy(product_id,payload) VALUES(?,?)').bind(product.id,payload)]),
+    ...prepareProductRegistration(db, product.owner_id, product.id, product.created_at),
+  ]);
+  return {...product, ...(payload === undefined ? {} : {pricing_policy:payload}), registration_number:result[result.length-1].results[0].registration_number};
 }
 
 export async function updateProduct(ownerId: string, id: string, updates: Record<string, string | number>, expectedVersion?: string) {
@@ -107,12 +113,14 @@ export async function updateProduct(ownerId: string, id: string, updates: Record
   const now = new Date().toISOString();
   // Advance the version inside the same SQL mutation, including same-millisecond
   // legacy title edits or a server clock behind the stored version.
-  return database().prepare(`UPDATE products SET ${setters}, updated_at = CASE
+  const saved = await database().prepare(`UPDATE products SET ${setters}, updated_at = CASE
       WHEN updated_at >= ? THEN strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0.001 seconds') ELSE ? END
     WHERE id = ? AND owner_id = ?${expectedVersion === undefined ? '' : ' AND updated_at = ?'}
-    RETURNING *, (SELECT payload FROM product_price_policy WHERE product_id = products.id) AS pricing_policy`)
+    RETURNING *, (SELECT payload FROM product_price_policy WHERE product_id = products.id) AS pricing_policy,
+      (SELECT registration_number FROM product_registration_numbers n WHERE n.product_id=products.id AND n.owner_id=products.owner_id) AS registration_number`)
     .bind(...entries.map(([, value]) => value), now, now, id, ownerId, ...(expectedVersion === undefined ? [] : [expectedVersion]))
     .first<ProductRecord>();
+  return saved ? withRegistrationNumber(saved) : null;
 }
 
 export async function getSettings(ownerId: string) {
@@ -131,9 +139,10 @@ export async function saveSettings(ownerId: string, payload: string) {
 
 export async function findProduct(ownerId: string, id: string, activeOnly = false) {
   await ensureDatabase();
-  return database().prepare('SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy FROM products p WHERE owner_id = ? AND id = ?'
+  const saved = await database().prepare('SELECT p.*, (SELECT payload FROM product_price_policy WHERE product_id=p.id) AS pricing_policy, (SELECT registration_number FROM product_registration_numbers n WHERE n.product_id=p.id AND n.owner_id=p.owner_id) AS registration_number FROM products p WHERE owner_id = ? AND id = ?'
     +(activeOnly?' AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=p.id AND r.owner_id=p.owner_id)':''))
     .bind(ownerId, id).first<ProductRecord>();
+  return saved ? withRegistrationNumber(saved) : null;
 }
 
 export async function applyProductPrice(ownerId: string, id: string, expectedVersion: string, values: {
@@ -146,7 +155,8 @@ export async function applyProductPrice(ownerId: string, id: string, expectedVer
   const result = await database().batch<ProductRecord>([database().prepare(`UPDATE products SET exchange_rate=?, supply_margin=?, coupang_margin=?,
     supply_price=?, sale_price=?, msrp=?, quote_status='대기', updated_at=?
     WHERE owner_id=? AND id=? AND updated_at=?
-      AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=products.id AND r.owner_id=products.owner_id) RETURNING *`)
+      AND NOT EXISTS(SELECT 1 FROM product_removals r WHERE r.product_id=products.id AND r.owner_id=products.owner_id) RETURNING *,
+        (SELECT registration_number FROM product_registration_numbers n WHERE n.product_id=products.id AND n.owner_id=products.owner_id) AS registration_number`)
     .bind(values.exchangeRate, values.supplyMargin, values.coupangMargin, values.supplyPrice, values.salePrice, values.msrp,
       version, ownerId, id, expectedVersion),
     database().prepare(`INSERT INTO product_price_policy(product_id, payload)
@@ -154,5 +164,5 @@ export async function applyProductPrice(ownerId: string, id: string, expectedVer
       ON CONFLICT(product_id) DO UPDATE SET payload=excluded.payload`).bind(payload,ownerId,id,version),
   ]);
   const saved = result[0].results[0];
-  return saved ? { ...saved, pricing_policy: payload } : null;
+  return saved ? { ...withRegistrationNumber(saved), pricing_policy: payload } : null;
 }
