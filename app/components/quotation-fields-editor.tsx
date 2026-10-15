@@ -27,6 +27,7 @@ import { quotationRequiredSummary } from '@/app/quotation-required-summary';
 import { confirmQuotationFieldsSave, quotationFieldsSaveNeedsReadback } from '@/app/quotation-fields-confirmation';
 import { quotationManualModelLinkState, quotationModelSuggestionState } from '@/app/quotation-model-suggestion';
 import { QuotationExposedDuplicates } from '@/app/components/quotation-exposed-duplicates';
+import { ProductOptionSplitPanel } from '@/app/components/product-option-split-panel';
 
 export type QuotationEditorChange = { fieldKey: string; optionId: string | null; value: string | null };
 type Row = QuotationFieldsView['resolved']['rows'][number];
@@ -423,7 +424,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const [bulk, setBulk] = useState<BulkPreview | null>(null);
   const [applyAll, setApplyAll] = useState(false);
   const [labelRecovery, setLabelRecovery] = useState('');
-  const busy = operationBusy || Boolean(labelRecovery);
+  const [splitBusy, setSplitBusy] = useState(false), [splitDrafting, setSplitDrafting] = useState(false);
+  const busy = operationBusy || Boolean(labelRecovery) || splitBusy || splitDrafting;
   const initialTarget = useRef(navigationTarget); const pendingFocus = useRef<string | null>(null);
   const requests = useRef(0); const observedRefresh = useRef(refreshToken); const prefix = useId();
   const activeWrite = useRef<AbortController | null>(null);
@@ -442,7 +444,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const labelUploadCache = useRef<QuotationLabelUploadCache>({ signature: null, uploadedKey: null, rendered: null });
   const invalidateRequests = useCallback(() => { requests.current++; activeWrite.current?.abort(); activeWrite.current=null; }, []);
   const dirty = changes.length > 0;
-  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => { onDirtyChange?.(dirty || splitDrafting); }, [dirty, splitDrafting, onDirtyChange]);
   useEffect(() => {
     const controller = new AbortController(); const id = ++requests.current;
     fetchView(endpoint, controller.signal).then(saved => { if (!controller.signal.aborted && id === requests.current) {
@@ -554,8 +556,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   let savePlan: ReturnType<typeof quotationSavePlan> = { changes: [], propagated: [] };
   if (view && changes.length) try { savePlan = quotationSavePlan(view, changes, selectedOption, applyAll); validateQuotationChanges(savePlan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides }); } catch (cause) { hasInvalidDraft = true; invalidDraftMessage = cause instanceof Error ? cause.message : '수정한 필드의 입력 오류를 확인해주세요.'; }
 
-  return <section className="quotation-fields" aria-busy={loading || operationBusy} data-workspace-dirty={dirty} data-workspace-saving={operationBusy}>
-    <div className="quotation-fields-heading"><div><h3>카테고리별 견적 입력</h3><p>저장 자료를 자동으로 채우고, 필요한 항목만 직접 수정합니다.</p></div><button type="button" className="btn ghost" disabled={loading || operationBusy} onClick={() => void refresh()}>기본값 다시 반영</button></div>
+  return <section className="quotation-fields" aria-busy={loading || operationBusy || splitBusy} data-workspace-dirty={dirty || splitDrafting} data-workspace-saving={operationBusy || splitBusy}>
+    <div className="quotation-fields-heading"><div><h3>카테고리별 견적 입력</h3><p>저장 자료를 자동으로 채우고, 필요한 항목만 직접 수정합니다.</p></div><button type="button" className="btn ghost" disabled={loading || busy} onClick={() => void refresh()}>기본값 다시 반영</button></div>
     {loading && <p role="status">최신 견적 입력을 확인하는 중입니다.</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
     {message && <p role="status" className="quotation-fields-notice">{message}</p>}
@@ -565,6 +567,8 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       <QuotationExposedDuplicates resolved={view.resolved} numbers={view.optionRegistrationNumbers} disabled={busy || loading || conflicts.length > 0}
         readValue={(optionId, fieldId) => resolveQuotationEditorCell(view, changes, optionId, fieldId).value}
         onOpen={(optionId, fieldId) => { setSelectedOption(optionId); setApplyAll(false); openSection('product', fieldId, optionId !== selectedOption); setBulk(null); }}/>
+      <ProductOptionSplitPanel productId={productId} profileId={profileId} view={view} disabled={dirty || operationBusy || Boolean(labelRecovery) || loading || conflicts.length > 0}
+        onBusyChange={setSplitBusy} onDraftChange={setSplitDrafting} onCommitted={() => { onSaved?.(); void refresh(); }} />
       <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} disabled={dirty || busy || loading || conflicts.length > 0}
         onBusyChange={next=>{modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
         onApply={proposals=>{
