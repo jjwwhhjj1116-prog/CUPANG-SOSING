@@ -19,6 +19,7 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
   const [catalog, setCatalog] = useState<DetailFamilyCatalog | null>(null), [selected, setSelected] = useState<string[]>([]);
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
   const [review, setReview] = useState<Review | null>(null), [accepted, setAccepted] = useState(false), [uncertain, setUncertain] = useState(false);
+  const [copyEditor, setCopyEditor] = useState(false);
   const [corrupt, setCorrupt] = useState(false), [checkedList, setCheckedList] = useState(false);
   const mounted = useRef(true), root = useRef<HTMLElement>(null), operation = useRef<AbortController | null>(null), pending = useRef<Review | null>(null);
   const sourceKey = JSON.stringify([active, disabled, version, refreshToken]);
@@ -40,7 +41,7 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
       if (value.input?.productId !== productId || (value.input.profileId ?? '') !== (profileId ?? '')) throw Error('적용할 상품 범위가 다릅니다.');
       value.attempt = restoredDetailFamilyAttempt(value.input, value.preview);
       pending.current = value; liveReview.current = value; opened.current = true;
-      setReview(value); setCatalog(value.input.catalog); setSelected(value.input.targetIds); setUncertain(true); setOpen(true);
+      setReview(value); setCatalog(value.input.catalog); setSelected(value.input.targetIds); setCopyEditor(value.input.editorPolicy === 'saved-inputs-v1'); setUncertain(true); setOpen(true);
       setMessage('이전에 요청한 상세 적용 결과를 먼저 확인해주세요. 저장 요청을 반복하지 않습니다.');
     } catch { setError('이전 상세 적용 확인 자료를 읽지 못했습니다. 원본과 대상 상품 목록을 먼저 확인해주세요.'); setCorrupt(true); setUncertain(true); } });
     return () => { disposed = true; mounted.current = false; operation.current?.abort(); controls.current.onBusyChange?.(false); };
@@ -67,6 +68,7 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
       confirmed.current = null; setCatalog(saved); setReview(null); setAccepted(false);
       const eligible = saved.targets.filter(target => target.eligible).map(target => target.productId);
       setSelected(previous => opened.current ? previous.filter(id => eligible.includes(id)) : eligible.length <= 19 ? eligible : []);
+      setCopyEditor(previous => opened.current ? previous && !!saved.editor : !!saved.editor);
     } catch (cause) { if (mounted.current && !controller.signal.aborted && generation === sequence.current) setError(errorText(cause)); }
     finally { if (operation.current === controller) { operation.current = null; if (mounted.current) setBusy(false); } }
   }
@@ -91,7 +93,7 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
     if (!canEnter() || uncertain || !catalog || !generation || epoch.current !== generation) return;
     const controller = new AbortController(); operation.current = controller; setBusy(true); setError(''); setAccepted(false);
     try {
-      const input = createDetailFamilyInput(productId, profileId, catalog, selected);
+      const input = createDetailFamilyInput(productId, profileId, catalog, selected, undefined, copyEditor ? 'saved-inputs-v1' : undefined);
       const preview = await previewDetailFamily(input, controller.signal);
       if (mounted.current && !controller.signal.aborted && controls.current.active && generation === epoch.current) { confirmed.current = null; setReview({ input, preview, attempt: {}, generation }); }
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(errorText(cause)); }
@@ -127,7 +129,7 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
   return <section className="panel-stack" aria-label="분할 상품 상세 적용" data-quotation-source-step="상세 이미지" data-workspace-dirty={open || uncertain} data-workspace-saving={busy || uncertain}>
     <header><h3>분할 상품에 상세 적용</h3><p>공통·전체 옵션에 저장한 상세 PNG를 선택한 분할 상품의 견적서에 연결합니다.</p></header>
     <p>대상의 상세 HTML은 비우며 이전 값은 적용 기록에 보관합니다. ALT·대표/추가 이미지·표시사항은 유지합니다.</p>
-    <p>원본 편집 이력과 번역 그룹을 복사하는 기능은 포함하지 않습니다.</p>
+    <p>통합 이미지만 적용하거나, 저장 전 개별 사진을 함께 보관해 대상에서 다시 편집할 수 있습니다.</p>
     {catalog && !catalog.sourceReady && <p role="status">{catalog.reason || '원본 상세 이미지를 먼저 공통·전체 옵션에 저장한 뒤 다시 확인해주세요.'}</p>}
     <div className="button-row"><button type="button" className="btn ghost" disabled={locked || open || uncertain} onClick={() => void load()}>분할 대상 다시 확인</button>
       <button type="button" className="btn primary" disabled={locked || uncertain || !catalog?.sourceReady || !catalog.targets.some(target => target.eligible)} onClick={start}>분할 상품에 상세 적용</button></div>
@@ -151,12 +153,15 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
         {catalog?.image && <figure>{/* eslint-disable-next-line @next/next/no-img-element -- The existing authenticated image endpoint serves this owned saved PNG. */}
           <img src={imageUrl(catalog.image.key)} alt="공통·전체 옵션에 저장된 상세 PNG" style={{ maxWidth: '100%', maxHeight: 230, objectFit: 'contain' }} /><figcaption>{catalog.image.width} × {catalog.image.height}px · 저장된 상세 이미지</figcaption></figure>}
         {!uncertain && <><p>적용할 상품을 선택하세요. 대상의 모든 옵션(견적 제외 포함)의 상세 이미지와 HTML이 바뀝니다. 전송 이력이 있는 상품은 현재 적용 대상에서 제외됩니다.</p>
+          {catalog?.editor && <label style={{ display: 'block', margin: '12px 0' }}><input type="checkbox" checked={copyEditor} disabled={locked} onChange={event => {
+            setCopyEditor(event.target.checked); confirmed.current = null; setReview(null); setAccepted(false); setError('');
+          }} /> 저장 전 개별 사진 {catalog.editor.images}장도 함께 보관해 다시 편집하기</label>}
           <div style={{ maxHeight: 280, overflow: 'auto' }}>{catalog?.targets.map(target => <label key={target.productId} style={{ display: 'block', padding: 8 }}>
             <input type="checkbox" aria-label={`${target.title} 상세 적용 대상`} checked={selected.includes(target.productId)} disabled={locked || !target.eligible}
               onChange={event => { setSelected(previous => event.target.checked ? [...previous, target.productId] : previous.filter(id => id !== target.productId)); confirmed.current = null; setReview(null); setAccepted(false); setError(''); }} />
             {target.registrationNumber ?? '이전 상품'} · {target.title} · 옵션 {target.optionCount}개{!target.eligible && ` · ${target.reason ?? '적용 불가'}`}</label>)}</div>
           <p>선택 {selected.length}개 / 한 번에 최대 19개</p><button type="button" className="btn ghost" disabled={locked || !selected.length || selected.length > 19} onClick={() => void prepare()}>상세 적용 미리보기</button></>}
-        {review && <div aria-label="분할 상품 상세 적용 미리보기"><h4>확인한 적용 대상</h4>{review.preview.targets.map(target => <p key={target.productId}><strong>{target.registrationNumber ?? '이전 상품'} · {target.title}</strong><br />공통 + 옵션 {target.optionIds.length}개 · 상세 PNG 연결 · 상세 HTML 비우기</p>)}
+        {review && <div aria-label="분할 상품 상세 적용 미리보기"><h4>확인한 적용 대상</h4>{review.preview.editor && <p>저장 전 사진 {review.preview.editor.inputs.images.length}장의 순서를 함께 보관합니다. 대상의 현재 카테고리 편집용 목록이 바뀌며, 이후 개별 사진으로 다시 편집할 수 있습니다.</p>}{review.preview.targets.map(target => <p key={target.productId}><strong>{target.registrationNumber ?? '이전 상품'} · {target.title}</strong><br />공통 + 옵션 {target.optionIds.length}개 · 상세 PNG 연결 · 상세 HTML 비우기</p>)}
           {stale && !uncertain && <p role="alert">원본 저장값이 바뀌었습니다. 대상을 다시 확인하고 미리보기를 새로 만들어주세요.</p>}
           {!uncertain && <label style={{ display: 'block', margin: '16px 0' }}><input type="checkbox" checked={accepted && !stale} disabled={locked || stale} onChange={event => {
             if (liveReview.current !== review || review.generation !== epoch.current) return; confirmed.current = event.target.checked ? review : null; setAccepted(event.target.checked);

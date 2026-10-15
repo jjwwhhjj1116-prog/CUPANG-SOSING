@@ -5,6 +5,7 @@ import { DETAIL_SAVE_TEXT_POLICY, detailSaveCommonAltText, detailSaveChanges, ty
 import { MAX_IMAGE_BYTES, imageFileType } from '@/app/image-files';
 import { readBoundedStream } from '@/app/request-body';
 import { labelUploadDigest } from '@/app/label-upload-key';
+import { validateDetailEditorInputs } from '@/app/detail-editor-inputs';
 
 export type DetailSaveAttempt = { pending?: 'upload' | 'save'; key?: string; completed?: QuotationFieldsView; identity?: string };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -39,6 +40,12 @@ async function uploadReceipt(input: DetailComposite, signal: AbortSignal, fetche
 }
 function verifySaved(input: DetailComposite, key: string, saved: QuotationFieldsView, receipt: DetailSaveReceipt) {
   const before = input.view, changes = detailSaveChanges(before, key, DETAIL_SAVE_TEXT_POLICY);
+  if (saved.detailEditorInputs !== undefined) {
+    let editor; try { editor = validateDetailEditorInputs(saved.detailEditorInputs, key.split('/')[0], receipt.categoryId ?? ''); } catch { throw changed(); }
+    if (editor.origin.productId !== input.productId || editor.origin.sourceOptionId !== input.optionId || editor.origin.uploadId !== input.uploadId || editor.origin.revision !== receipt.revision
+      || editor.output.key !== key || editor.output.sha256 !== input.sha256 || editor.output.bytes !== input.output.size || editor.images.length !== input.sources.length
+      || editor.images.some((image, index) => { const source = input.sources[index]; return image.key !== source.key || image.sha256 !== source.sha256 || image.width !== source.width || image.height !== source.height; })) throw changed();
+  }
   if (receipt.uploadId !== input.uploadId || receipt.key !== key || receipt.sha256 !== input.sha256 || receipt.bytes !== input.output.size
     || receipt.textPolicy !== DETAIL_SAVE_TEXT_POLICY || receipt.textCommonFilled !== !detailSaveCommonAltText(before)
     || receipt.beforeRevision !== before.revision || receipt.revision !== before.revision + 1 || receipt.sourceOptionId !== input.optionId || receipt.categoryId !== before.categoryContext.categoryId

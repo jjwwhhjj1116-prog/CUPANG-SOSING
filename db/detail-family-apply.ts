@@ -2,12 +2,14 @@ import { env } from 'cloudflare:workers';
 import { readOwnedSplitSnapshot, splitSnapshotPredicate } from '@/db/product-option-splits';
 import { stableQuotationFieldsView } from '@/app/quotation-fields-snapshot';
 import { detailFamilySource, detailFamilyTargetPlan, type DetailFamilySource } from '@/app/detail-family-plan';
-import { DetailFamilyError, type DetailFamilyCatalog, type DetailFamilyPreview, type DetailFamilyReceipt, type DetailFamilyImage } from '@/app/detail-family-apply';
+import { DetailFamilyError, type DetailFamilyCatalog, type DetailFamilyPreview, type DetailFamilyReceipt, type DetailFamilyImage, type DetailFamilyEditorPolicy } from '@/app/detail-family-apply';
+import { detailEditorInputs, validateDetailEditorInputs, type DetailEditorInputs } from '@/app/detail-editor-inputs';
 import type { SupplierHubCompany } from '@/app/supplier-hub-company';
 import type { QuotationFieldsState } from '@/db/quotation-fields';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 import { labelUploadKey, labelUploadDigest } from '@/app/label-upload-key';
-import { isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
+import { imageFileType, isOwnedImageKey, MAX_IMAGE_BYTES } from '@/app/image-files';
+import { imageDisplayDimensions } from '@/app/image-dimensions';
 import { inspectImage } from '@/app/automation/image-edit';
 import { readBoundedStream } from '@/app/request-body';
 import { fingerprint } from '@/app/automation/model';
@@ -22,12 +24,13 @@ export const detailFamilyOperationsSchema = `CREATE TABLE IF NOT EXISTS detail_f
 )`;
 type Snapshot = Awaited<ReturnType<typeof readOwnedSplitSnapshot>>;
 type View = Awaited<ReturnType<typeof stableQuotationFieldsView>>['view'];
-type Input = { requestId: string; expectedInputFingerprint: string; targetIds: string[]; previewFingerprint?: string };
+type Input = { requestId: string; expectedInputFingerprint: string; targetIds: string[]; previewFingerprint?: string; editorPolicy?: DetailFamilyEditorPolicy };
 type Identity = { email: string; role: string };
 const conflict = (message = '상세 이미지·같은 분할 그룹·대상 상품 자료가 변경되었습니다. 새 미리보기를 확인해주세요.') => new DetailFamilyError(message);
 const encodedBytes = (value: string) => new TextEncoder().encode(value).length;
 const quoteLimit = (state: string) => { if (encodedBytes(state) > 512 * 1024) throw new DetailFamilyError('견적서 자료는 상품마다512KiB 이내여야 합니다.', 413); };
-const requestPayload = (profileId: string | null, input: Input) => JSON.stringify({ profileId, expectedInputFingerprint: input.expectedInputFingerprint, targetIds: input.targetIds });
+const requestPayload = (profileId: string | null, input: Input) => JSON.stringify({ profileId, expectedInputFingerprint: input.expectedInputFingerprint, targetIds: input.targetIds,
+  ...(input.editorPolicy ? { editorPolicy: input.editorPolicy } : {}) });
 const state = (saved: Snapshot, id: string): QuotationFieldsState => saved.raw.quotation.length ? JSON.parse(saved.raw.quotation[0].payload as string)
   : { schemaVersion: 1, productId: id, revision: 0, updatedAt: null, overrides: { common: {}, options: {} } };
 async function database(owner: string, id: string, profileId: string | null) {
@@ -70,6 +73,26 @@ async function png(owner: string, source: Pick<DetailFamilySource, 'key' | 'uplo
   if (metadata.mime !== 'image/png' || metadata.width !== 800 || metadata.height < 1 || metadata.height > 16000 || metadata.width * metadata.height > 40000000) throw conflict('검토한800px 통합 상세 PNG를 확인해주세요.');
   return { key: source.key, sha256: source.sha256, bytes: source.bytes, width: 800, height: metadata.height };
 }
+/** Reuse sealed byte identities from the ordinary save, never live URLs or
+ * current global role assignments. Reading is bounded even for a corrupt object. */
+async function verifyEditorImages(owner: string, value: DetailEditorInputs, categoryId: string) {
+  const inputs = planning(() => validateDetailEditorInputs(value, owner, categoryId));
+  if (!env.FILES) throw conflict('상세 편집 원본 저장소를 확인해주세요.');
+  let total = 0;
+  for (const source of inputs.images) {
+    const object = await env.FILES.get(source.key);
+    if (!object || object.size < 1 || object.size > MAX_IMAGE_BYTES || total + object.size > 30 * 1024 * 1024)
+      throw conflict('저장한 상세 편집 원본 이미지가 없거나30MiB 읽기 한도를 초과했습니다.');
+    const bytes = await readBoundedStream(object.body, MAX_IMAGE_BYTES); total += bytes.length;
+    if (bytes.length !== object.size || total > 30 * 1024 * 1024 || await labelUploadDigest(bytes) !== source.sha256)
+      throw conflict('저장한 상세 편집 원본 이미지의 실제 파일이 변경되었습니다.');
+    let dimensions;
+    try { imageFileType(bytes); dimensions = imageDisplayDimensions(bytes); } catch { throw conflict('저장한 상세 편집 원본의 이미지 형식을 확인해주세요.'); }
+    if (!dimensions || dimensions.width !== source.width || dimensions.height !== source.height)
+      throw conflict('저장한 상세 편집 원본의 표시 크기가 변경되었습니다.');
+  }
+  return inputs;
+}
 function family(saved: Snapshot) { return saved.raw.family.length === 1 ? saved.raw.family[0] : null; }
 function readyTarget(saved: Snapshot) {
   if (saved.raw.busy || saved.raw.removed || saved.raw.transmitted || saved.raw.products[0].supplier_hub_status !== '미전송'
@@ -109,13 +132,22 @@ export async function detailFamilyCatalog(owner: string, company: SupplierHubCom
     targets.push({ productId: record.id, title: record.title, registrationNumber: record.registration_number, optionCount, eligible, reason: targetReason });
   }
   if ((await readOwnedSplitSnapshot(owner, id, source.view.categoryContext.profileId, db)).payload !== source.saved.payload) throw conflict();
+  const editor = image ? detailEditorInputs(source.view, source.quotation, id) : undefined;
   return { format: 'detail-family-catalog-v1', sourceProductId: id, sourceVersion: source.view.productVersion, inputFingerprint: source.view.inputFingerprint,
-    company, familyId: relation?.family_id as string ?? null, sourceReady: !!image && !!relation, reason, image, targets };
+    company, familyId: relation?.family_id as string ?? null, sourceReady: !!image && !!relation, reason, image, targets,
+    ...(editor ? { editor: { policy: 'saved-inputs-v1', categoryId: editor.categoryId, images: editor.images.length } } : {}) };
 }
 export async function previewDetailFamily(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, input: Input) {
   const db = await database(owner, id, profileId), source = await load(owner, company, id, profileId, db, identity), relation = family(source.saved);
   if (!relation || source.saved.raw.busy || source.view.inputFingerprint !== input.expectedInputFingerprint) throw conflict();
   const proof = planning(() => detailFamilySource({ productId: id, view: source.view, state: source.quotation })), image = await png(owner, proof);
+  let editorInputs: DetailEditorInputs | undefined;
+  if (input.editorPolicy) {
+    const capturedInputs = detailEditorInputs(source.view, source.quotation, id);
+    if (!capturedInputs || JSON.stringify(capturedInputs.output) !== JSON.stringify({ key: proof.key, sha256: proof.sha256, bytes: proof.bytes }))
+      throw conflict('현재 통합 상세 저장본에 연결된 검증 가능한 편집 원본이 없습니다.');
+    editorInputs = await verifyEditorImages(owner, capturedInputs, proof.categoryId);
+  }
   const targets = [];
   for (const targetId of input.targetIds) {
     if (targetId === id) throw conflict('원본 상품은 적용 대상에서 제외해주세요.');
@@ -126,15 +158,16 @@ export async function previewDetailFamily(owner: string, company: SupplierHubCom
     targets.push({ ...target, productId: targetId, registrationNumber: await number(db, owner, targetId) });
   }
   const now = new Date(Math.max(Date.now(), ...targets.map(target => Date.parse(target.view.productVersion) + 1))).toISOString();
-  const planned = targets.map(target => ({ ...target, plan: planning(() => detailFamilyTargetPlan({ productId: target.productId, view: target.view, state: target.quotation }, proof, now)) }));
+  const planned = targets.map(target => ({ ...target, plan: planning(() => detailFamilyTargetPlan({ productId: target.productId, view: target.view, state: target.quotation }, proof, now, editorInputs)) }));
   for (const target of planned) quoteLimit(JSON.stringify(target.plan.quotation));
   const request = requestPayload(profileId, input), before = JSON.stringify({ source: { productId: id, profileId: source.view.categoryContext.profileId, payload: source.saved.payload },
     targets: planned.map(target => ({ productId: target.productId, profileId: target.view.categoryContext.profileId, payload: target.saved.payload })) });
   const preview: DetailFamilyPreview = { format: 'detail-family-preview-v1', requestId: input.requestId,
-    fingerprint: await fingerprint({ owner, company, request, source: source.saved.payload, image, targets: planned.map(target => target.saved.payload) }),
+    fingerprint: await fingerprint({ owner, company, request, source: source.saved.payload, image, targets: planned.map(target => target.saved.payload), ...(editorInputs ? { editorInputs } : {}) }),
     sourceProductId: id, sourceVersion: source.view.productVersion, company, familyId: relation.family_id as string, key: image.key, sha256: image.sha256, bytes: image.bytes,
     targets: planned.map(target => ({ productId: target.productId, title: target.saved.raw.products[0].title as string, registrationNumber: target.registrationNumber,
-      beforeVersion: target.view.productVersion, revision: target.view.revision, optionIds: target.view.resolved.rows.flatMap(row => row.optionId === null ? [] : [row.optionId]) })) };
+      beforeVersion: target.view.productVersion, revision: target.view.revision, optionIds: target.view.resolved.rows.flatMap(row => row.optionId === null ? [] : [row.optionId]) })),
+    ...(editorInputs ? { editor: { policy: 'saved-inputs-v1', inputs: editorInputs } } : {}) };
   // Snapshots are JSON strings inside the archive, so their escaped quotation
   // payloads must be counted at that extra encoding layer, not as plain bytes.
   const expectedAfter = planned.map(target => {
@@ -153,7 +186,7 @@ export async function previewDetailFamily(owner: string, company: SupplierHubCom
   if (estimated > 2 * 1024 * 1024) throw new DetailFamilyError('선택한 대상의 상세 적용 보관 자료가2MiB를 초과합니다. 대상 수를 줄여주세요.', 413);
   for (const value of [source, ...planned]) if ((await readOwnedSplitSnapshot(owner, value.view === source.view ? id : (value as typeof planned[number]).productId,
     value.view.categoryContext.profileId, db)).payload !== value.saved.payload) throw conflict();
-  return { db, source, proof, image, planned, now, preview, request, before };
+  return { db, source, proof, image, editorInputs, planned, now, preview, request, before };
 }
 
 type Operation = { source_product_id: string; profile_id: string | null; request_payload: string; before_payload: string; after_payload: string; receipt_payload: string };
@@ -174,6 +207,10 @@ export async function recoverDetailFamily(owner: string, company: SupplierHubCom
       const uploadId = receipt.key.match(/\/quotation-label-([a-f0-9]{64})\.png$/u)?.[1];
       if (!uploadId) current = false;
       else await png(owner, { key: receipt.key, sha256: receipt.sha256, bytes: receipt.bytes, uploadId });
+      if (current && receipt.editor) {
+        if (receipt.editor.policy !== 'saved-inputs-v1') current = false;
+        else await verifyEditorImages(owner, receipt.editor.inputs, receipt.editor.inputs.categoryId);
+      }
     } catch { current = false; }
     // File checks can yield while another editor saves. Recovery must still
     // compare every exact snapshot after reading the PNG; it never retries writes.
@@ -228,6 +265,7 @@ export async function commitDetailFamily(owner: string, company: SupplierHubComp
   }
   statements.push(db.prepare(`SELECT CASE WHEN NOT ${created} THEN 1 WHEN ${initial[0].sql} THEN 1 ELSE json('detail family source changed') END AS verified`).bind(...createdArgs, ...initial[0].args));
   if (JSON.stringify(await png(owner, prepared.proof)) !== JSON.stringify(prepared.image)) throw conflict();
+  if (prepared.editorInputs) await verifyEditorImages(owner, prepared.editorInputs, prepared.proof.categoryId);
   let results;
   try { results = await db.batch(statements); }
   catch (error) {

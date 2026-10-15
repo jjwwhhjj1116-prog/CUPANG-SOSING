@@ -1,8 +1,9 @@
-import type { DetailFamilyCatalog, DetailFamilyPreview, DetailFamilyReceipt } from '@/app/detail-family-apply';
+import type { DetailFamilyCatalog, DetailFamilyPreview, DetailFamilyReceipt, DetailFamilyEditorPolicy } from '@/app/detail-family-apply';
+import { validateDetailEditorInputs } from '@/app/detail-editor-inputs';
 import { supplierHubCompany } from '@/app/supplier-hub-company';
 import { MAX_IMAGE_BYTES, isOwnedImageKey } from '@/app/image-files';
 
-export type DetailFamilyInput = { productId: string; profileId?: string; catalog: DetailFamilyCatalog; targetIds: string[]; requestId: string };
+export type DetailFamilyInput = { productId: string; profileId?: string; catalog: DetailFamilyCatalog; targetIds: string[]; requestId: string; editorPolicy?: DetailFamilyEditorPolicy };
 export type DetailFamilyAttempt = { identity?: string; pending?: boolean; receipt?: DetailFamilyReceipt };
 export type DetailFamilyResult = { receipt: DetailFamilyReceipt; current: boolean };
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -23,7 +24,9 @@ export function validateDetailFamilyCatalog(productId: string, value: unknown): 
   if (!record(value) || value.format !== 'detail-family-catalog-v1' || value.sourceProductId !== productId || !time(value.sourceVersion) || !hash(value.inputFingerprint)
     || !record(value.company) || !supplierHubCompany(value.company.code, value.company.name) || value.familyId !== null && !uuid(value.familyId)
     || typeof value.sourceReady !== 'boolean' || value.reason !== null && typeof value.reason !== 'string' || value.image !== null && !validImage(value.image)
-    || value.sourceReady && (!value.familyId || !validImage(value.image)) || !Array.isArray(value.targets) || value.targets.length > 200) return invalid();
+    || value.sourceReady && (!value.familyId || !validImage(value.image)) || !Array.isArray(value.targets) || value.targets.length > 200
+    || value.editor !== undefined && (!record(value.editor) || Object.keys(value.editor).length !== 3 || value.editor.policy !== 'saved-inputs-v1' || !integer(value.editor.images, 150) || !value.editor.images
+      || typeof value.editor.categoryId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/u.test(value.editor.categoryId) || !value.image)) return invalid();
   const ids = new Set<string>();
   for (const target of value.targets) {
     if (!record(target) || !safe(target.productId) || target.productId === productId || ids.has(target.productId) || typeof target.title !== 'string' || target.title.length > 500
@@ -33,12 +36,13 @@ export function validateDetailFamilyCatalog(productId: string, value: unknown): 
   }
   return value as DetailFamilyCatalog;
 }
-export function createDetailFamilyInput(productId: string, profileId: string | undefined, catalog: DetailFamilyCatalog, targetIds: readonly string[], requestId = crypto.randomUUID()): DetailFamilyInput {
+export function createDetailFamilyInput(productId: string, profileId: string | undefined, catalog: DetailFamilyCatalog, targetIds: readonly string[], requestId = crypto.randomUUID(), editorPolicy?: DetailFamilyEditorPolicy): DetailFamilyInput {
   validateDetailFamilyCatalog(productId, catalog);
   if (!catalog.sourceReady || !catalog.image || !catalog.familyId) throw Error(catalog.reason || '원본 상세 이미지를 먼저 공통·전체 옵션에 저장해주세요.');
   if (!uuid(requestId) || !Array.isArray(targetIds) || !targetIds.length || targetIds.length > 19 || new Set(targetIds).size !== targetIds.length
     || targetIds.some(id => !catalog.targets.some(target => target.productId === id && target.eligible))) throw Error('적용할 분할 상품을 1~19개 선택해주세요.');
-  return { productId, profileId, catalog, targetIds: [...targetIds], requestId };
+  if (editorPolicy !== undefined && (editorPolicy !== 'saved-inputs-v1' || catalog.editor?.policy !== editorPolicy)) return invalid();
+  return { productId, profileId, catalog, targetIds: [...targetIds], requestId, ...(editorPolicy ? { editorPolicy } : {}) };
 }
 export function validateDetailFamilyPreview(input: DetailFamilyInput, value: unknown): DetailFamilyPreview {
   const catalog = validateDetailFamilyCatalog(input.productId, input.catalog);
@@ -46,6 +50,11 @@ export function validateDetailFamilyPreview(input: DetailFamilyInput, value: unk
     || value.sourceProductId !== input.productId || value.sourceVersion !== catalog.sourceVersion || !same(value.company, catalog.company)
     || value.familyId !== catalog.familyId || value.key !== catalog.image?.key || value.sha256 !== catalog.image?.sha256 || value.bytes !== catalog.image?.bytes
     || !Array.isArray(value.targets) || value.targets.length !== input.targetIds.length) return invalid();
+  if (input.editorPolicy !== undefined) {
+    if (input.editorPolicy !== 'saved-inputs-v1' || catalog.editor?.policy !== input.editorPolicy || !record(value.editor) || value.editor.policy !== input.editorPolicy) return invalid();
+    let inputs; try { inputs = validateDetailEditorInputs(value.editor.inputs, catalog.image!.key.split('/')[0], catalog.editor.categoryId); } catch { return invalid(); }
+    if (inputs.output.key !== value.key || inputs.output.sha256 !== value.sha256 || inputs.output.bytes !== value.bytes || inputs.images.length !== catalog.editor.images) return invalid();
+  } else if (value.editor !== undefined) return invalid();
   value.targets.forEach((target: unknown, index: number) => {
     const listed = catalog.targets.find(item => item.productId === input.targetIds[index]);
     if (!record(target) || !listed?.eligible || target.productId !== listed.productId || target.title !== listed.title || target.registrationNumber !== listed.registrationNumber
@@ -57,6 +66,7 @@ export function validateDetailFamilyPreview(input: DetailFamilyInput, value: unk
 export function validateDetailFamilyReceipt(input: DetailFamilyInput, preview: DetailFamilyPreview, value: unknown): DetailFamilyReceipt {
   if (!record(value) || value.format !== 'detail-family-receipt-v1' || !time(value.committedAt) || value.fingerprint !== preview.fingerprint || !Array.isArray(value.targets)) return invalid();
   validateDetailFamilyPreview(input, { ...value, format: 'detail-family-preview-v1' });
+  if (!same(value.editor, preview.editor)) return invalid();
   value.targets.forEach((target: unknown, index: number) => {
     const prior = preview.targets[index];
     if (!record(target) || target.beforeVersion !== prior.beforeVersion || target.revision !== prior.revision || !same(target.optionIds, prior.optionIds)
@@ -66,7 +76,7 @@ export function validateDetailFamilyReceipt(input: DetailFamilyInput, preview: D
   return value as DetailFamilyReceipt;
 }
 const body = (input: DetailFamilyInput, action: 'preview' | 'commit', previewFingerprint?: string) => ({ action, requestId: input.requestId,
-  expectedInputFingerprint: input.catalog.inputFingerprint, targetIds: input.targetIds, ...(previewFingerprint ? { previewFingerprint } : {}) });
+  expectedInputFingerprint: input.catalog.inputFingerprint, targetIds: input.targetIds, ...(previewFingerprint ? { previewFingerprint } : {}), ...(input.editorPolicy ? { editorPolicy: input.editorPolicy } : {}) });
 function bind(input: DetailFamilyInput, preview: DetailFamilyPreview, attempt: DetailFamilyAttempt) {
   validateDetailFamilyPreview(input, preview); const identity = JSON.stringify([input, preview]);
   if (attempt.identity !== undefined && attempt.identity !== identity || attempt.identity === undefined && (attempt.pending || attempt.receipt)) return invalid();

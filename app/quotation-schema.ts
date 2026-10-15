@@ -26,6 +26,7 @@ import {validateOfficialWorkbookFields} from '@/app/official-workbook-field-desc
 import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence';
 import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
+import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -83,6 +84,8 @@ export type QuotationFieldsView = {
   /** Response-only raw sources for the reviewed Couplus detail-save text rule.
    * Quotation title overrides and display-name fallbacks are not these sources. */
   detailSaveTextBasis?: { policy: 'couplus-detail-alt-v1'; productName: string; metaDescription: string; optionNames: Record<string, string> };
+  /** Response-only sealed pre-composite inputs for the current category. */
+  detailEditorInputs?: DetailEditorInputs;
   packagingBasis?:QuotationPackagingBasis;optionPackQuantities?:Record<string,number>;
 };
 

@@ -5,6 +5,7 @@ import { optionImageTargets } from '@/app/quotation-image-targets';
 import { quotationScope, scopedQuotationOverrides } from '@/app/quotation-scopes';
 import { applyQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import type { QuotationFieldsState } from '@/db/quotation-fields';
+import { validateDetailEditorInputs, type DetailEditorInputs } from '@/app/detail-editor-inputs';
 
 export type DetailFamilySource = { productId: string; categoryId: string; key: string; sha256: string; bytes: number; uploadId: string; receiptRevision: number };
 export type DetailFamilySnapshot = { productId: string; view: QuotationFieldsView; state: QuotationFieldsState };
@@ -69,19 +70,26 @@ export function detailFamilySource(input: DetailFamilySnapshot): DetailFamilySou
 
 /** Copy the final integrated quote image into this target's current category
  * only. ALT, source content, other scopes and historical receipts stay intact. */
-export function detailFamilyTargetPlan(input: DetailFamilySnapshot, source: DetailFamilySource, now: string): DetailFamilyTargetPlan {
+export function detailFamilyTargetPlan(input: DetailFamilySnapshot, source: DetailFamilySource, now: string, editorInputs?: DetailEditorInputs): DetailFamilyTargetPlan {
   validateSource(source);
   const { categoryId, scope } = snapshot(input), { view, state } = input;
   if (source.productId === input.productId || source.categoryId !== categoryId) return invalid('원본과 다른 가족 상품의 같은 카테고리를 선택해주세요.');
   if (typeof now !== 'string' || !Number.isFinite(Date.parse(now)) || !Number.isFinite(Date.parse(view.productVersion))
     || Date.parse(now) <= Date.parse(view.productVersion)) return invalid('대상 상품의 저장 시각보다 새로운 적용 시각을 확인해주세요.');
   const imageKeys = [...view.imageKeys];
-  if (!imageKeys.includes(source.key)) {
+  if (editorInputs) {
+    const owner = source.key.slice(0, source.key.indexOf('/'));
+    editorInputs = validateDetailEditorInputs(editorInputs, owner, categoryId);
+    if (!same(editorInputs.output, { key: source.key, sha256: source.sha256, bytes: source.bytes })) return invalid('편집 원본과 통합 상세 저장본이 다릅니다.');
+  }
+  for (const key of [source.key, ...(editorInputs?.images.map(image => image.key) ?? [])]) {
+    if (imageKeys.includes(key)) continue;
     if (imageKeys.length >= PRODUCT_IMAGE_POOL_LIMIT) return invalid('대상 상품의 이미지 보관 공간이 부족합니다. 기존 원본은 유지했습니다.');
-    imageKeys.push(source.key);
+    imageKeys.push(key);
   }
   const changes = detailSaveChanges(view, source.key), before = detailSaveManualBackup(view, changes), overrides = applyQuotationChanges(view.overrides, changes);
   const quotation: QuotationFieldsState = { ...structuredClone(state), revision: state.revision + 1, updatedAt: now,
     categoryOverrides: { ...structuredClone(state.categoryOverrides ?? {}), [scope]: overrides } };
+  if (editorInputs) quotation.detailEditorInputs = { ...structuredClone(state.detailEditorInputs ?? {}), [scope]: structuredClone(editorInputs) };
   return { quotation, imageKeys, changes, before };
 }

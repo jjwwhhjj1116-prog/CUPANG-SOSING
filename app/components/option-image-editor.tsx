@@ -6,6 +6,7 @@ import type { FreeImageQuotationRequest } from '@/app/free-image-translation-cli
 import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
 import { downloadImageSelection } from '@/app/image-selection-download';
 import { DetailImageCompositePanel } from '@/app/components/detail-image-composite-panel';
+import { canEditSavedDetailInputs, prepareSavedDetailInputs } from '@/app/detail-editor-inputs-client';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean;
   disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
@@ -112,8 +113,8 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     if (!view?.imageKeys.includes(key)) return;
     updateImages(keys => keys.includes(key) ? keys.filter(item => item !== key) : [...keys, key]);
   }
-  function move(key: string, direction: -1 | 1) {
-    updateImages(keys => { const index = keys.indexOf(key), destination = index + direction; if (index < 0 || destination < 0 || destination >= keys.length) return keys; const ordered = [...keys]; [ordered[index], ordered[destination]] = [ordered[destination], ordered[index]]; return ordered; });
+  function move(key: string, index: number, direction: -1 | 1) {
+    updateImages(keys => { const destination = index + direction; if (keys[index] !== key || destination < 0 || destination >= keys.length) return keys; const ordered = [...keys]; [ordered[index], ordered[destination]] = [ordered[destination], ordered[index]]; return ordered; });
   }
   async function save() {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
@@ -274,6 +275,20 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '선택 이미지 다운로드 실패'); }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
+  async function reopenDetailInputs() {
+    const base = latestSaved.current, generation = keyboardGeneration;
+    if (!base || base.view !== view || base.sourceKey !== sourceKey || !generation || keyboardEpoch.current !== generation || !active || !liveActive.current
+      || stage !== 'detail' || !interactive() || request.current || pendingSave.current || Object.keys(latestDraft.current.values).length) return;
+    const controller = new AbortController(); request.current = controller; clearDrag(); setBusy(true); setError(''); setMessage('');
+    try {
+      const prepared = await prepareSavedDetailInputs({ productId, optionId, profileId, view: base.view }, controller.signal);
+      if (controller.signal.aborted || !current() || !liveActive.current || currentStage.current !== 'detail' || liveDisabled.current || keyboardEpoch.current !== generation
+        || latestSaved.current !== base || pendingSave.current || Object.keys(latestDraft.current.values).length) return;
+      latestDraft.current = { scope, values: { detailImages: prepared.keys.join('\n') } }; setPending(latestDraft.current);
+      setMessage('저장 전 개별 사진을 편집 입력으로 불러왔습니다. 현재 견적서는 유지됩니다. 순서·삭제를 확인하고 선택 옵션 이미지를 저장한 뒤 필요한 사진을 편집·번역해주세요.');
+    } catch (cause) { if (!controller.signal.aborted && current() && keyboardEpoch.current === generation) setError(cause instanceof Error ? cause.message : '개별 상세 사진 확인 실패'); }
+    finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
+  }
   const candidateCards = view?.imageKeys.map((key, index) => <figure className={`image-asset-card ${key === activePreview ? 'previewing' : ''} ${selected.includes(key) ? 'chosen' : ''}`} key={key}>
     <button type="button" className="image-asset-preview" aria-label={`상품 저장 이미지 ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (interactive() && !request.current) setPreview({ scope, key }); }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -285,8 +300,8 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     {onEdit && <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 편집하기`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh', true)}>편집하기</button>}
     {onTranslate && <><button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 중국어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'zh')}>중국어 → 한국어</button>
       <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 영어 한국어 번역`} disabled={locked || dirty || saved?.sourceKey !== sourceKey || !view?.imageKeys.includes(key)} onClick={() => translateSelected(key, index, 'en')}>영어 → 한국어</button></>}
-    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 위로 이동`} disabled={locked || index === 0} onClick={() => move(key, -1)}>↑</button>
-    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 아래로 이동`} disabled={locked || index === selected.length - 1} onClick={() => move(key, 1)}>↓</button>
+    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 위로 이동`} disabled={locked || index === 0} onClick={() => move(key, index, -1)}>↑</button>
+    <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 아래로 이동`} disabled={locked || index === selected.length - 1} onClick={() => move(key, index, 1)}>↓</button>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked} onClick={() => updateImages(keys => keys.filter((_, position) => position !== index))}>삭제</button>
   </div>;
   return <section className="panel-stack" aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging}>
@@ -294,6 +309,10 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     <p>드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요. 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
     <button type="button" className="btn ghost" disabled={!view || locked || !selected.length || !!unavailable.length} onClick={() => void downloadSelection()}>{label} ZIP 다운로드</button>
     <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. 미저장 선택을 견적서에 반영하려면 이미지 저장을 눌러주세요.</small>
+    {stage === 'detail' && view && canEditSavedDetailInputs({ productId, optionId, profileId, view }) && <div className="button-row">
+      <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs()}>저장 전 개별 사진으로 편집</button>
+      <small>합치기 직전의 검증된 사진 순서를 불러옵니다. 저장하기 전까지 현재 통합 상세 이미지는 바뀌지 않습니다.</small>
+    </div>}
     {stage === 'detail' && view && <DetailImageCompositePanel key={scope} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
       disabled={disabled || busy || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       beforeApply={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
@@ -306,13 +325,13 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <section className="image-edit-canvas" aria-label="선택 옵션 이미지 미리보기"><h4>현재 {label} · {selected.length}/{limit}개</h4>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {activePreview ? <figure className="image-large-preview"><figcaption>이미지 {view.imageKeys.indexOf(activePreview) + 1} 미리보기</figcaption><img src={imageUrl(activePreview)} alt={`선택 옵션 ${label} 큰 미리보기`} /></figure> : <p>이미지 목록에서 미리볼 자료를 선택하세요.</p>}
-        <div className="image-selected-strip option-additional-image-strip" aria-label={`선택 옵션 ${label} 순서`}>{selected.map((key, index) => <figure key={key} {...sortableProps(key, index, 'image-selected-item')}>
+        <div className="image-selected-strip option-additional-image-strip" aria-label={`선택 옵션 ${label} 순서`}>{selected.map((key, index) => <figure key={`${index}:${key}`} {...sortableProps(key, index, 'image-selected-item')}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {view.imageKeys.includes(key) ? <button type="button" aria-label={`${label} ${index + 1} 크게 보기`} disabled={locked} onClick={() => { if (interactive() && !request.current) setPreview({ scope, key }); }}><img src={imageUrl(key)} alt={`${label} ${index + 1}`} width={64} height={64} /><span>{index + 1}</span></button> : <p>현재 상품에 없는 이미지</p>}
       <figcaption>{index + 1} · {key.split('/').at(-1)}</figcaption>
       {selectedActions(key, index)}
     </figure>)}</div>{!selected.length && <p>이 옵션에 선택한 {label}가 없습니다.</p>}
-      </section></div> : <><section className="option-detail-image-stack" aria-label="선택 옵션 상세 이미지 순서"><h4>현재 상세 이미지 · {selected.length}/{limit}개</h4>{selected.map((key, index) => <figure key={key} {...sortableProps(key, index, 'option-detail-image-item')} onMouseEnter={() => hoverDetail(key)} onMouseLeave={() => leaveDetail(key)}>
+      </section></div> : <><section className="option-detail-image-stack" aria-label="선택 옵션 상세 이미지 순서"><h4>현재 상세 이미지 · {selected.length}/{limit}개</h4>{selected.map((key, index) => <figure key={`${index}:${key}`} {...sortableProps(key, index, 'option-detail-image-item')} onMouseEnter={() => hoverDetail(key)} onMouseLeave={() => leaveDetail(key)}>
         <figcaption>상세 이미지 {index + 1} · {key.split('/').at(-1)}</figcaption>{selectedActions(key, index)}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {view.imageKeys.includes(key) ? <img src={imageUrl(key)} alt={`상세 이미지 ${index + 1}`} loading="lazy" /> : <p>현재 상품에 없는 이미지</p>}

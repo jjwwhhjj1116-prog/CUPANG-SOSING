@@ -5,6 +5,7 @@ import { emptyQuotationOverrides, type QuotationOverrides } from '@/app/quotatio
 import { collectionSchema, collectionProductSchema } from '@/db/collection-jobs';
 import type { QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import type { DetailSaveBackup } from '@/app/detail-save-plan';
+import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 
 export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotation_fields (
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
@@ -12,7 +13,7 @@ export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotati
 )`;
 export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; categoryOverrides?: Record<string, QuotationOverrides>;
   packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null;
-  detailSaveBackups?: Record<string, DetailSaveBackup[]> };
+  detailSaveBackups?: Record<string, DetailSaveBackup[]>; detailEditorInputs?: Record<string, DetailEditorInputs> };
 export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;
@@ -137,6 +138,12 @@ async function commitQuotationFields(owner: string, productId: string, overrides
     if (history.length >= 5) throw new QuotationDetailSaveLimitError('이 카테고리의 상세 저장 백업은 최대 5개입니다. 기존 백업을 보존했으며 추가 저장하지 않았습니다.');
     if (Object.values(previous.detailSaveBackups ?? {}).some(entries => entries.some(entry => entry.receipt.uploadId === detail.backup.receipt.uploadId))) return null;
     state.detailSaveBackups = { ...previous.detailSaveBackups, [key]: [...history, { ...structuredClone(detail.backup), updatedAt }] };
+    // A newly reviewed ordinary composite becomes this category's authority.
+    // Preserve other categories while retiring only its former family inputs.
+    if (categoryId && previous.detailEditorInputs && Object.hasOwn(previous.detailEditorInputs, quotationScope(categoryId))) {
+      const inputs = { ...previous.detailEditorInputs }; delete inputs[quotationScope(categoryId)];
+      if (Object.keys(inputs).length) state.detailEditorInputs = inputs; else delete state.detailEditorInputs;
+    }
   }
   const payload = JSON.stringify(state);
   if (new TextEncoder().encode(payload).length > 512 * 1024) {

@@ -44,10 +44,12 @@ export async function POST(request: Request, context: Context) {
     if (!object(body) || !['preview', 'commit'].includes(body.action as string) || !uuid(body.requestId) || !hash(body.expectedInputFingerprint)
       || !Array.isArray(body.targetIds) || body.targetIds.length < 1 || body.targetIds.length > 19 || new Set(body.targetIds).size !== body.targetIds.length
       || body.targetIds.some(value => typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/u.test(value))
-      || Object.keys(body).length !== (body.action === 'commit' ? 5 : 4)
-      || Object.keys(body).some(key => !['action', 'requestId', 'expectedInputFingerprint', 'targetIds', ...(body.action === 'commit' ? ['previewFingerprint'] : [])].includes(key))
+      || Object.hasOwn(body, 'editorPolicy') && body.editorPolicy !== 'saved-inputs-v1'
+      || Object.keys(body).length !== (body.action === 'commit' ? 5 : 4) + (Object.hasOwn(body, 'editorPolicy') ? 1 : 0)
+      || Object.keys(body).some(key => !['action', 'requestId', 'expectedInputFingerprint', 'targetIds', 'editorPolicy', ...(body.action === 'commit' ? ['previewFingerprint'] : [])].includes(key))
       || body.action === 'commit' && !hash(body.previewFingerprint)) throw new DetailFamilyError('같은 분할 그룹의 대상1~19개·원본 버전·미리보기 번호를 확인해주세요.', 400, 'DETAIL_FAMILY_INVALID');
     const input = { requestId: body.requestId, expectedInputFingerprint: body.expectedInputFingerprint, targetIds: body.targetIds as string[],
+      ...(body.editorPolicy === 'saved-inputs-v1' ? { editorPolicy: 'saved-inputs-v1' as const } : {}),
       ...(body.action === 'commit' ? { previewFingerprint: body.previewFingerprint as string } : {}) };
     if (body.action === 'preview') return json((await previewDetailFamily(owner, company, member, id, profileId, input)).preview);
     return json(await commitDetailFamily(owner, company, member, id, profileId, input));
