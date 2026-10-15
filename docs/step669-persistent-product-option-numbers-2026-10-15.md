@@ -33,4 +33,6 @@ REA는 보관된 배포 UI의 `generateRegistrationId`를 확인했다. 날짜 �
 
 기존 무료 D1에 `0024`의 빈 테이블만 추가하려는 요청은 Cloudflare 인증 오류 10000으로 거절됐다. migration 적용·운영 상품 변경·새 Worker 배포는 완료되지 않았다. 현재 운영 버전은 Step668의 `c9f47c1e-9d46-49c7-8eb4-fef0f70d8021`이다. 인증 복구 뒤 준비된 SQL 적용과 같은 무료 Worker 배포를 이어간다. 새 DB·유료 자원·권한 확대는 없다.
 
+구현 커밋 `10633b9fe7f7bc1dbbe7255945447e46b1e01eec`은 GitHub main에 푸시했고 HEAD와 origin/main이 일치했다. 공식 Wrangler 인증 복구 요청에서 R2 쓰기 권한을 포함한 첫 시도는 자동 승인 검토가 거절했다. 현재 배포에 필요한 `account:read`, `user:read`, `workers:write`, `d1:write`로 줄인 공식 인증 요청은 실행됐으며, 같은 Chrome의 Cloudflare `Consent Application` 탭에서 사용자 인증 완료를 기다린다. R2·offline 권한을 다시 요청하거나 거절을 우회하지 않았다. 콜백·인증 성공과 배포 성공은 아직 확인되지 않았다.
+
 실제 새 URL 전체 SKU·이미지 수집, 모든 카테고리 양식·기본값 대조와 Supplier Hub 동의→최종 등록→접수증/SKU 대조는 남아 있다. `SINGLE_DOCUMENT_LIVE_VERIFIED`와 운영 mutation gate는 false이다. 과거 거절된 URL을 다른 도구로 우회하거나 기존 작업 상품을 수정하지 않는다. 이 단계의 통과는 전체 제품 완성률이나 실제 Hub 등록 성공률이 아니다.
