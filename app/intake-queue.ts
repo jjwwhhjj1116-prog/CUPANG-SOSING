@@ -88,6 +88,7 @@ export async function submitIntakeQueue(rows: readonly IntakeRow[], goal: string
       const result = await response.json() as { jobs?: CollectionJob[]; preservedRequests?: PreservedCollectionRequest[]; error?: string; code?: string };
       if (options.signal.aborted) break;
       if(!response.ok&&result.code==='REGISTRATION_SETTINGS_CHANGED'){options.onRow(request.id,{status:'error',message:result.error||'기본설정을 다시 확인해주세요.'});options.onSettingsChanged?.();break;}
+      if(!response.ok&&response.status===409&&result.code==='CATEGORY_PROFILE_CHANGED'){options.onRow(request.id,{status:'error',message:result.error||'카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 카테고리를 다시 선택한 뒤 시작해주세요.'});break;}
       if (!response.ok || !Array.isArray(result.jobs) || result.jobs.length !== 1 || result.jobs[0].source_url !== request.body.urls[0] || !Array.isArray(result.preservedRequests)) throw Error(result.error || '해당 상품의 저장 결과를 확인하지 못했습니다. 입력은 유지됩니다.');
       options.onJobs(result.jobs);
       const differences = result.preservedRequests?.flatMap(item => item.differences) ?? [];

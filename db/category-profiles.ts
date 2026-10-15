@@ -20,9 +20,14 @@ export async function listCategoryProfiles(ownerId: string, afterId = ''): Promi
   return (await db.prepare('SELECT * FROM category_profiles WHERE owner_id=? AND id>? ORDER BY id ASC LIMIT 101').bind(ownerId, afterId).all<Row>()).results.map(profile);
 }
 export async function getCategoryProfile(ownerId: string, id: string): Promise<CategoryProfile | null> {
+  return (await getCategoryProfileSnapshot(ownerId, id))?.category ?? null;
+}
+/** Internal intake fence: parsed context and exact persisted bytes come from
+ * one owner-scoped SELECT. The raw payload is never an API response property. */
+export async function getCategoryProfileSnapshot(ownerId: string, id: string): Promise<{ category: CategoryProfile; payload: string } | null> {
   const db = await database();
   const result = await db.prepare('SELECT * FROM category_profiles WHERE owner_id=? AND id=?').bind(ownerId, id).first<Row>();
-  return result ? profile(result) : null;
+  return result ? { category: profile(result), payload: result.payload } : null;
 }
 export const findCategoryProfile = getCategoryProfile;
 export async function createCategoryProfile(ownerId: string, input: CategoryProfileInput, requestId?: string): Promise<CategoryProfile | null> {

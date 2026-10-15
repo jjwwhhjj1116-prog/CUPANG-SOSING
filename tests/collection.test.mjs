@@ -13,7 +13,12 @@ function load(file, dependencies = {}, mode = 'development') {
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
   vm.runInNewContext(output, { exports, Error, structuredClone, crypto, URL, Response, process: { env: { NODE_ENV: mode } }, require: name => {
-    if (name in dependencies) return dependencies[name];
+    if (name in dependencies) {
+      const value=dependencies[name];
+      if(name==='@/db/category-profiles'&&value.getCategoryProfile&&!value.getCategoryProfileSnapshot)return {...value,getCategoryProfileSnapshot:async(...args)=>{const category=await value.getCategoryProfile(...args);return category?{category,payload:JSON.stringify(category)}:null;}};
+      if(name==='@/db/collection-jobs'&&!value.CollectionIntakeSourceChangedError)return {...value,CollectionIntakeSourceChangedError:class extends Error{}};
+      return value;
+    }
     if (name === '@/db/collection-results') return load('db/collection-results.ts', dependencies);
     if (name === '@/app/category-profiles') return load('app/category-profiles.ts');
     if (name === '@/app/workflow') return load('app/workflow.ts');
@@ -23,7 +28,7 @@ function load(file, dependencies = {}, mode = 'development') {
     if (name === '@/app/chatgpt-auth') return {getChatGPTUser:async()=>mode==='production'?null:({userId:'local-demo',verifiedAccess:true,
       membership:{id:'local-demo',email:'collection-fixture@example.test',role:'member',status:'approved',companyCode:fixtureCompany.code,companyName:fixtureCompany.name}}),getWorkspaceOwnerId:async()=>'local-demo'};
     if (name === '@/db/queries') return {getSettings:async()=>null};
-    if (name === '@/db/category-profiles') return {getCategoryProfile:async()=>({id:'12345678-1234-1234-1234-123456789012',revision:1,categoryId:'80719',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath,verification:'draft'})};
+    if (name === '@/db/category-profiles') return {getCategoryProfileSnapshot:async()=>{const category={id:'12345678-1234-1234-1234-123456789012',revision:1,categoryId:'80719',categoryPath:load('app/quotation-schema.ts').getQuotationSchema('80719').categoryPath,verification:'draft'};return {category,payload:JSON.stringify(category)};}};
     if (name === 'next/server') return { NextResponse: Response };
     if (name.startsWith('@/app/')) return load(name.slice(2)+'.ts', dependencies);
     if (name.startsWith('./')) return load(path.posix.join(path.posix.dirname(file),name)+'.ts',dependencies);
@@ -39,6 +44,8 @@ function storage() {
   // Production workspace initialization supplies the product identity columns
   // used by the owner-scoped company/offer-claim join before jobs are queued.
   sqlite.exec('CREATE TABLE products (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL)');
+  sqlite.exec('CREATE TABLE category_profiles(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,payload TEXT NOT NULL,revision INTEGER NOT NULL)');
+  sqlite.exec('CREATE TABLE workspace_settings(owner_id TEXT PRIMARY KEY,payload TEXT NOT NULL)');
   const db = {
     prepare(sql) {
       let values = [];
@@ -56,7 +63,19 @@ function storage() {
       catch (error) { sqlite.exec('ROLLBACK'); throw error; }
     },
   };
-  return { sqlite, queries: load('db/collection-jobs.ts', { 'cloudflare:workers': { env: { DB: db } } }) };
+  const queries=load('db/collection-jobs.ts', { 'cloudflare:workers': { env: { DB: db } } }),enqueue=queries.enqueueCollection;
+  // These older API tests mock profile/settings reads. Mirror their paired raw
+  // snapshots into this local DB; the new CAS suite uses unmocked actual reads.
+  queries.enqueueCollection=(owner,requests,context,source)=>{
+    if(source){
+      sqlite.prepare('INSERT INTO category_profiles VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET owner_id=excluded.owner_id,payload=excluded.payload,revision=excluded.revision')
+        .run(source.category.id,owner,source.category.payload,source.category.revision);
+      if(source.settingsPayload===null)sqlite.prepare('DELETE FROM workspace_settings WHERE owner_id=?').run(owner);
+      else sqlite.prepare('INSERT INTO workspace_settings VALUES(?,?) ON CONFLICT(owner_id) DO UPDATE SET payload=excluded.payload').run(owner,source.settingsPayload);
+    }
+    return enqueue(owner,requests,context,source);
+  };
+  return { sqlite, queries };
 }
 const parse = load('app/sourcing.ts').parseCollectionRequest;
 const url = 'https://detail.1688.com/offer/123456789.html';

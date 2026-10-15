@@ -31,6 +31,14 @@ export const collectionProductSchema=`CREATE TABLE IF NOT EXISTS collection_prod
 const columns = 'id, offer_id, source_url, goal, status, created_at, updated_at';
 const selectColumns = `${columns}, (SELECT payload FROM collection_context WHERE job_id=collection_jobs.id) AS context_json, (SELECT product_id FROM collection_products WHERE job_id=collection_jobs.id) AS product_id, (SELECT received_at FROM collection_results WHERE job_id=collection_jobs.id AND owner_id=collection_jobs.owner_id) AS received_at`;
 type JobRow = CollectionJob & { context_json?: string | null };
+export type CollectionIntakeSourceGuard = { category: { id: string; revision: number; payload: string }; settingsPayload: string | null };
+export class CollectionIntakeSourceChangedError extends Error {
+  constructor(public readonly code: 'CATEGORY_PROFILE_CHANGED' | 'REGISTRATION_SETTINGS_CHANGED') {
+    super(code === 'CATEGORY_PROFILE_CHANGED'
+      ? '선택한 카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 최신 카테고리를 다시 선택해주세요.'
+      : '기본설정이 변경되었습니다. 입력한 URL과 카테고리는 유지됩니다. 기본설정을 다시 불러온 뒤 시작해주세요.');
+  }
+}
 function withContext(row: JobRow): CollectionJob {
   const { context_json, ...job } = row;
   return { ...job, context: context_json ? JSON.parse(context_json) : null };
@@ -64,8 +72,13 @@ export async function findCollectionJob(owner: string, id: string) {
   return row?withContext(row):null;
 }
 
-export async function enqueueCollection(owner: string, requests: CollectionRequest[], context: CollectionContext | null = null) {
+export async function enqueueCollection(owner: string, requests: CollectionRequest[], context: CollectionContext | null = null, source?: CollectionIntakeSourceGuard) {
   const db = await ensureCollectionDatabase();
+  const categoryGuard = source ? 'EXISTS(SELECT 1 FROM category_profiles WHERE owner_id=? AND id=? AND revision=? AND payload=?)' : '1';
+  const categoryValues = source ? [owner, source.category.id, source.category.revision, source.category.payload] : [];
+  const settingsGuard = source ? '(SELECT payload FROM workspace_settings WHERE owner_id=?) IS ?' : '1';
+  const settingsValues = source ? [owner, source.settingsPayload] : [];
+  const sourceGuard = `(${categoryGuard}) AND (${settingsGuard})`, sourceValues = [...categoryValues, ...settingsValues];
   const now = new Date().toISOString();
   let company: ReturnType<typeof capturedCollectionCompany> = null;
   try { company=capturedCollectionCompany(context); }
@@ -95,37 +108,47 @@ export async function enqueueCollection(owner: string, requests: CollectionReque
   const statements = requests.flatMap(request => {
     const id=crypto.randomUUID();
     return [db.prepare(`DELETE FROM collection_offer_claims
-      WHERE owner_id=? AND offer_id=? AND EXISTS(SELECT 1 FROM collection_jobs j
+      WHERE owner_id=? AND offer_id=? AND ${sourceGuard} AND EXISTS(SELECT 1 FROM collection_jobs j
         WHERE j.id=collection_offer_claims.job_id AND j.owner_id=collection_offer_claims.owner_id
           AND (j.status='cancelled' OR EXISTS(SELECT 1 FROM collection_products cp
             JOIN product_removals r ON r.product_id=cp.product_id AND r.owner_id=cp.owner_id
-            WHERE cp.job_id=j.id AND cp.owner_id=j.owner_id) OR ${differentLinkedCompany}))`).bind(owner,request.offerId,...companyValues),
+            WHERE cp.job_id=j.id AND cp.owner_id=j.owner_id) OR ${differentLinkedCompany}))`).bind(owner,request.offerId,...sourceValues,...companyValues),
     db.prepare(`INSERT INTO collection_offer_claims(owner_id,offer_id,job_id)
       SELECT j.owner_id,j.offer_id,j.id FROM collection_jobs j
       WHERE j.owner_id=? AND j.offer_id=? AND j.status='awaiting_connector'
+        AND ${sourceGuard}
         AND NOT EXISTS(SELECT 1 FROM collection_products cp JOIN product_removals r
           ON r.product_id=cp.product_id AND r.owner_id=cp.owner_id
           WHERE cp.job_id=j.id AND cp.owner_id=j.owner_id)
         AND NOT (${differentLinkedCompany})
       ORDER BY j.created_at DESC,j.id DESC LIMIT 1
-      ON CONFLICT(owner_id,offer_id) DO NOTHING`).bind(owner,request.offerId,...companyValues),
+      ON CONFLICT(owner_id,offer_id) DO NOTHING`).bind(owner,request.offerId,...sourceValues,...companyValues),
     db.prepare(`INSERT INTO collection_jobs
     (id, owner_id, offer_id, source_url, goal, status, created_at, updated_at)
     SELECT ?, ?, ?, ?, ?, 'awaiting_connector', ?, ?
-    WHERE NOT EXISTS(SELECT 1 FROM collection_offer_claims WHERE owner_id=? AND offer_id=?)`)
-    .bind(id, owner, request.offerId, request.sourceUrl, request.goal, now, now,owner,request.offerId),
+    WHERE ${sourceGuard} AND NOT EXISTS(SELECT 1 FROM collection_offer_claims WHERE owner_id=? AND offer_id=?)`)
+    .bind(id, owner, request.offerId, request.sourceUrl, request.goal, now, now,...sourceValues,owner,request.offerId),
     db.prepare(`INSERT INTO collection_context(job_id,payload)
-      SELECT id, ? FROM collection_jobs WHERE owner_id=? AND id=?
-      ON CONFLICT(job_id) DO NOTHING`).bind(JSON.stringify(context),owner,id),
+      SELECT id, ? FROM collection_jobs WHERE owner_id=? AND id=? AND ${sourceGuard}
+      ON CONFLICT(job_id) DO NOTHING`).bind(JSON.stringify(context),owner,id,...sourceValues),
     db.prepare(`INSERT INTO collection_offer_claims(owner_id,offer_id,job_id)
-      SELECT owner_id,offer_id,id FROM collection_jobs WHERE owner_id=? AND id=?
-      ON CONFLICT(owner_id,offer_id) DO NOTHING`).bind(owner,id),
+      SELECT owner_id,offer_id,id FROM collection_jobs WHERE owner_id=? AND id=? AND ${sourceGuard}
+      ON CONFLICT(owner_id,offer_id) DO NOTHING`).bind(owner,id,...sourceValues),
     db.prepare(`SELECT ${selectColumns} FROM collection_jobs
-      WHERE owner_id=? AND id=(SELECT job_id FROM collection_offer_claims WHERE owner_id=? AND offer_id=?)`)
-      .bind(owner,owner,request.offerId),
+      WHERE owner_id=? AND id=(SELECT job_id FROM collection_offer_claims WHERE owner_id=? AND offer_id=?) AND ${sourceGuard}`)
+      .bind(owner,owner,request.offerId,...sourceValues),
   ];});
+  // Report the source clocks from this transaction, never from a later read
+  // that could mistake a concurrent edit after a successful enqueue for failure.
+  if (source) statements.push(db.prepare(`SELECT ${categoryGuard} AS category_current, ${settingsGuard} AS settings_current`)
+    .bind(...categoryValues, ...settingsValues));
   const results = await db.batch<JobRow>(statements);
-  return results.filter((_,index)=>index%6===5).map(result => {
+  if (source) {
+    const current = results[results.length - 1].results[0] as unknown as { category_current: number; settings_current: number } | undefined;
+    if (!current?.category_current) throw new CollectionIntakeSourceChangedError('CATEGORY_PROFILE_CHANGED');
+    if (!current.settings_current) throw new CollectionIntakeSourceChangedError('REGISTRATION_SETTINGS_CHANGED');
+  }
+  return results.slice(0, requests.length * 6).filter((_,index)=>index%6===5).map(result => {
     const job = result.results[0];
     if (!job) throw new Error('Missing persisted job');
     return withContext(job);

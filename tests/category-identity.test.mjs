@@ -49,7 +49,7 @@ async function collectionCategoryResponse(user){
  const deps={
   'next/server':{NextResponse:Response},
   '@/app/chatgpt-auth':{getChatGPTUser:async()=>user,getWorkspaceOwnerId:async()=>'test-owner'},
-  '@/db/category-profiles':{getCategoryProfile:async()=>({id:profileId,revision:1,categoryId:'81472',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']})},
+  '@/db/category-profiles':{getCategoryProfileSnapshot:async()=>{const category={id:profileId,revision:1,categoryId:'81472',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']};return {category,payload:JSON.stringify(category)};}},
   '@/db/queries':{getSettings:async()=>{settingsRead++;return null;}},
   '@/db/collection-jobs':{enqueueCollection:async()=>{queued++;return[];},listCollectionJobs:async()=>[]},
  };

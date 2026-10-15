@@ -3,8 +3,8 @@ import { validateCategoryIdentity } from '@/app/category-identity';
 import { NextResponse } from 'next/server';
 import { collectionBlock, collectionKeywords, parseCollectionRequest } from '@/app/sourcing';
 import { preservedCollectionRequests } from '@/app/collection-preservation';
-import { enqueueCollection, listCollectionJobs, findCollectionJob } from '@/db/collection-jobs';
-import { getCategoryProfile } from '@/db/category-profiles';
+import { enqueueCollection, listCollectionJobs, findCollectionJob, CollectionIntakeSourceChangedError } from '@/db/collection-jobs';
+import { getCategoryProfileSnapshot } from '@/db/category-profiles';
 import { getSettings } from '@/db/queries';
 import { savedRegistrationSettings, validateSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { getChatGPTUser, getWorkspaceOwnerId } from '@/app/chatgpt-auth';
@@ -51,8 +51,9 @@ export async function POST(request: Request) {
   catch (error) { return NextResponse.json({ error: error instanceof SyntaxError ? '올바른 JSON이 필요합니다.' : error instanceof Error ? error.message : '입력을 확인해주세요.' }, { status: 400 }); }
   try {
     const owner=await getWorkspaceOwnerId();
-    const category=await getCategoryProfile(owner,profileId);
-    if(!category)return NextResponse.json({error:'선택한 카테고리 연결을 찾을 수 없습니다.'},{status:404});
+    const selected=await getCategoryProfileSnapshot(owner,profileId);
+    if(!selected)return NextResponse.json({error:'선택한 카테고리 연결을 찾을 수 없습니다.'},{status:404});
+    const category=selected.category;
     if(category.revision!==expectedProfileRevision)return NextResponse.json({error:'선택한 카테고리·견적서 설정이 변경되었습니다. 입력을 유지하고 최신 카테고리를 다시 선택해주세요.',code:'CATEGORY_PROFILE_CHANGED'},{status:409});
     const user=await getChatGPTUser(),company=user?.verifiedAccess&&user.userId===owner?approvedSupplierHubCompany(user.membership):null;
     if(!company&&(process.env.NODE_ENV==='production'||user?.verifiedAccess))return NextResponse.json({error:'수집 요청에 기록할 승인 회사 코드·이름을 확인해주세요.',code:'COLLECTION_COMPANY_UNCONFIRMED'},{status:409});
@@ -64,7 +65,12 @@ export async function POST(request: Request) {
     const settings=savedRegistrationSettings(savedSettings?JSON.parse(savedSettings.payload):null);
     if(expectedSettings&&JSON.stringify(expectedSettings)!==JSON.stringify(settings))return NextResponse.json({error:'기본설정이 변경되었습니다. 입력한 URL과 카테고리는 유지됩니다. 기본설정을 다시 불러온 뒤 시작해주세요.',code:'REGISTRATION_SETTINGS_CHANGED'},{status:409});
     const context={category,settings,features,keywords,capturedAt:new Date().toISOString(),...(company?{company}:{})};
-    const jobs = await enqueueCollection(owner, entries, context);
+    const jobs = await enqueueCollection(owner, entries, context, {
+      category: { id: category.id, revision: category.revision, payload: selected.payload }, settingsPayload: savedSettings?.payload ?? null,
+    });
     return NextResponse.json({ jobs, preservedRequests: preservedCollectionRequests(jobs, entries, context), message: collectionBlock, executionStarted: false }, { headers: { 'cache-control': 'no-store' } });
-  } catch { return NextResponse.json({ error: '대기열 저장을 확인하지 못했습니다. 같은 URL로 다시 시도해도 대기 중인 요청은 중복되지 않습니다.' }, { status: 503 }); }
+  } catch (error) {
+    if(error instanceof CollectionIntakeSourceChangedError)return NextResponse.json({error:error.message,code:error.code},{status:409});
+    return NextResponse.json({ error: '대기열 저장을 확인하지 못했습니다. 같은 URL로 다시 시도해도 대기 중인 요청은 중복되지 않습니다.' }, { status: 503 });
+  }
 }
