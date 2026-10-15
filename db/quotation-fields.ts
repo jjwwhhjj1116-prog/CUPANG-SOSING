@@ -4,13 +4,15 @@ import { env } from 'cloudflare:workers';
 import { emptyQuotationOverrides, type QuotationOverrides } from '@/app/quotation-schema';
 import { collectionSchema, collectionProductSchema } from '@/db/collection-jobs';
 import type { QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
+import type { DetailSaveBackup } from '@/app/detail-save-plan';
 
 export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotation_fields (
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
   revision INTEGER NOT NULL CHECK(revision > 0), payload TEXT NOT NULL, updated_at TEXT NOT NULL
 )`;
 export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; categoryOverrides?: Record<string, QuotationOverrides>;
-  packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null };
+  packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null;
+  detailSaveBackups?: Record<string, DetailSaveBackup[]> };
 export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;
@@ -94,12 +96,31 @@ export async function attachQuotationImageTranslation(owner: string, productId: 
     throw Error('Invalid final quotation image attachment.');
   return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId, imageKeys);
 }
-async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[], packagingBasis?:QuotationPackagingBasis|null): Promise<QuotationFieldsState | null> {
+export class QuotationDetailSaveLimitError extends Error {}
+export const detailSaveHistoryScope = (categoryId: string | null) => categoryId ? quotationScope(categoryId) : 'unclassified';
+type DetailSaveCommit = { backup: Omit<DetailSaveBackup, 'updatedAt'>; expectedOverrides: QuotationOverrides;
+  member: { email: string; role: string; companyCode: string; companyName: string } };
+/** The appended PNG, all common/option edits, before-values and receipt share
+ * one guarded quotation payload and one product clock in the D1 transaction. */
+export async function attachQuotationDetailSave(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number,
+  source: QuotationSourceGuard, categoryId: string | null, imageKeys: string[], detail: DetailSaveCommit) {
+  const previous = JSON.parse(source.imageKeys) as unknown;
+  if (!Array.isArray(previous) || imageKeys.length !== previous.length + 1 || imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT
+    || JSON.stringify(imageKeys.slice(0, -1)) !== JSON.stringify(previous) || new Set(imageKeys).size !== imageKeys.length
+    || detail.backup.receipt.key !== imageKeys.at(-1) || detail.backup.receipt.beforeRevision !== expectedRevision
+    || detail.backup.receipt.revision !== expectedRevision + 1 || detail.backup.receipt.categoryId !== categoryId)
+    throw Error('Invalid detail save attachment.');
+  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId, imageKeys, undefined, detail);
+}
+async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[], packagingBasis?:QuotationPackagingBasis|null, detail?: DetailSaveCommit): Promise<QuotationFieldsState | null> {
   const db = await database(); const guard = sourceGuard(owner, productId, source);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid quotation revision');
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
-  const previous = await readQuotationFields(owner, productId);
-  if (previous.revision !== expectedRevision) return null;
+  const previousRow = detail ? await db.prepare('SELECT payload,revision FROM product_quotation_fields WHERE owner_id=? AND product_id=?').bind(owner, productId).first<Row>() : null;
+  const previous = detail && previousRow ? JSON.parse(previousRow.payload) as QuotationFieldsState : await readQuotationFields(owner, productId);
+  if (previous.revision !== expectedRevision || detail && previousRow && previousRow.revision !== previous.revision) return null;
+  if (detail && (previous.schemaVersion !== 1 || previous.productId !== productId
+    || JSON.stringify(categoryId ? previous.categoryOverrides?.[quotationScope(categoryId)] ?? emptyQuotationOverrides() : previous.overrides) !== JSON.stringify(detail.expectedOverrides))) return null;
   const state: QuotationFieldsState = { ...previous,schemaVersion: 1, productId, revision: expectedRevision + 1,
     overrides: categoryId ? previous.overrides : overrides,
     categoryOverrides: categoryId ? { ...previous.categoryOverrides, [quotationScope(categoryId)]: overrides } : previous.categoryOverrides, updatedAt };
@@ -110,19 +131,38 @@ async function commitQuotationFields(owner: string, productId: string, overrides
       if(Object.keys(scopes).length)state.categoryPackagingBasis=scopes;else delete state.categoryPackagingBasis;
     }else if(packagingBasis)state.packagingBasis=packagingBasis;else delete state.packagingBasis;
   }
+  if (detail) {
+    const key = detailSaveHistoryScope(categoryId), history = previous.detailSaveBackups?.[key] ?? [];
+    if (!Array.isArray(history)) throw Error('Invalid detail save history.');
+    if (history.length >= 5) throw new QuotationDetailSaveLimitError('이 카테고리의 상세 저장 백업은 최대 5개입니다. 기존 백업을 보존했으며 추가 저장하지 않았습니다.');
+    if (Object.values(previous.detailSaveBackups ?? {}).some(entries => entries.some(entry => entry.receipt.uploadId === detail.backup.receipt.uploadId))) return null;
+    state.detailSaveBackups = { ...previous.detailSaveBackups, [key]: [...history, { ...structuredClone(detail.backup), updatedAt }] };
+  }
   const payload = JSON.stringify(state);
-  if (new TextEncoder().encode(payload).length > 512 * 1024) throw new Error('Quotation overrides exceed storage limit');
+  if (new TextEncoder().encode(payload).length > 512 * 1024) {
+    if (detail) throw new QuotationDetailSaveLimitError('상세 저장 백업을 포함한 견적 자료가 512KB 한도를 초과했습니다. 기존 자료는 보존했습니다.');
+    throw new Error('Quotation overrides exceed storage limit');
+  }
+  const exactQuoteGuard = detail ? ' AND ((?=0 AND NOT EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id)) OR EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id AND q.owner_id=p.owner_id AND q.revision=? AND q.payload=?))' : '';
+  const exactQuoteArgs = detail ? [expectedRevision, expectedRevision, previousRow?.payload ?? ''] : [];
+  const authorization = detail && (env as { YOOFAM_AUTH_ENABLED?: string }).YOOFAM_AUTH_ENABLED === 'true'
+    ? { sql: ` AND EXISTS(SELECT 1 FROM members m WHERE m.id=p.owner_id AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)`,
+      args: [detail.member.email.trim().toLowerCase(), detail.member.role, detail.member.companyCode, detail.member.companyName] } : { sql: '', args: [] as string[] };
   const result = await db.batch<Row>([
     db.prepare(`INSERT INTO product_quotation_fields(product_id,owner_id,revision,payload,updated_at)
-      SELECT p.id,p.owner_id,?,?,? FROM products p WHERE ${guard.sql}
+      SELECT p.id,p.owner_id,?,?,? FROM products p WHERE ${guard.sql}${exactQuoteGuard}${authorization.sql}
       AND (?=0 OR EXISTS(SELECT 1 FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id AND revision=?))
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at
         WHERE product_quotation_fields.owner_id=excluded.owner_id AND product_quotation_fields.revision=?
-      RETURNING payload,revision`).bind(state.revision, payload, updatedAt, ...guard.args, expectedRevision, expectedRevision, expectedRevision),
+      RETURNING payload,revision`).bind(state.revision, payload, updatedAt, ...guard.args, ...exactQuoteArgs, ...authorization.args, expectedRevision, expectedRevision, expectedRevision),
     db.prepare(`UPDATE products SET ${imageKeys ? 'image_keys=?,' : ''}quote_status='대기',updated_at=?
       WHERE id=? AND owner_id=? AND updated_at=? AND image_keys=? AND changes()=1
       AND EXISTS(SELECT 1 FROM product_quotation_fields WHERE product_id=? AND owner_id=? AND revision=?) RETURNING updated_at`)
       .bind(...(imageKeys ? [JSON.stringify(imageKeys)] : []), updatedAt, productId, owner, source.productVersion, source.imageKeys, productId, owner, state.revision),
+    ...(detail ? [db.prepare(`UPDATE product_quotation_fields SET revision=CASE WHEN EXISTS(SELECT 1 FROM products p
+      WHERE p.id=? AND p.owner_id=? AND p.updated_at=? AND p.image_keys=?) THEN revision ELSE 0 END
+      WHERE product_id=? AND owner_id=? AND revision=? AND payload=? RETURNING payload,revision`)
+      .bind(productId, owner, updatedAt, JSON.stringify(imageKeys), productId, owner, state.revision, payload)] : []),
   ]);
   if (imageKeys && Boolean(result[0].results[0]) !== Boolean(result[1].results[0])) throw Error('Final quotation image attachment acknowledgement was incomplete.');
   return result[0].results[0] ? state : null;
