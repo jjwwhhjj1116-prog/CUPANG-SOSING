@@ -10,7 +10,7 @@ type Operation = { notify?:boolean; coordinated?:boolean; expectedProductVersion
 export type OptionPriceController = {
   view:QuotationFieldsView|null; edits:readonly QuotationChange[]; targets:QuotationPriceTargets|undefined;
   busy:boolean; dirty:boolean; fresh:boolean; uncertain:boolean; issues:string[];
-  current:()=>boolean; snapshot:()=>{view:QuotationFieldsView|null;edits:QuotationChange[];fresh:boolean;uncertain:boolean};
+  current:()=>boolean; snapshot:()=>{view:QuotationFieldsView|null;edits:QuotationChange[];fresh:boolean;uncertain:boolean;busy:boolean};
   change:(optionId:string|null,input:QuotationPriceInput,value:string|null)=>void;
   refresh:(keepEdits?:boolean,explicitLatest?:boolean,operation?:Operation)=>Promise<QuotationFieldsView|null>;
   save:(operation?:Operation)=>Promise<QuotationFieldsView|null>;
@@ -111,7 +111,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
     finally{finish(controller);}
   }
   const controller:OptionPriceController={view,edits,targets,busy,dirty:edits.length>0,fresh,uncertain,issues:[...issues,...(targetError?[targetError]:[])],current,
-    snapshot:()=>({view:latestSaved.current?.scope===endpointScope?latestSaved.current.view:null,edits:latestDraft.current.scope===endpointScope?[...latestDraft.current.edits]:[],fresh:latestSaved.current?.scope===endpointScope&&latestSaved.current?.sourceKey===sourceKey,uncertain:uncertainRef.current}),change,refresh:load,save};
+    snapshot:()=>({view:latestSaved.current?.scope===endpointScope?latestSaved.current.view:null,edits:latestDraft.current.scope===endpointScope?[...latestDraft.current.edits]:[],fresh:latestSaved.current?.scope===endpointScope&&latestSaved.current?.sourceKey===sourceKey,uncertain:uncertainRef.current,busy:request.current!==null}),change,refresh:load,save};
   // The renderer consumes state. Its live-ref functions are passed to event
   // handlers, never evaluated while building the grid.
   // eslint-disable-next-line react-hooks/refs

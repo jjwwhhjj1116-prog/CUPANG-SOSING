@@ -8,18 +8,19 @@ const native=createRequire(import.meta.url);
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[];
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
 function harness(handler, readHandler, props={}){
- const state=[],refs=[],effects=[],cleanups=[],cache=new Map();let si=0,ri=0,first=true,saves=0;
- const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],v=>{state[i]=typeof v==='function'?v(state[i]):v;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useMemo:fn=>fn(),useCallback:fn=>fn,useEffect(fn){if(first)effects.push(fn);}};
+ const state=[],refs=[],effects=[],cleanups=[],memos=[],layoutStates=[],layouts=[],cache=new Map();let si=0,ri=0,mi=0,li=0,first=true,saves=0;
+ const sameDeps=(before,next)=>before&&next&&before.length===next.length&&next.every((value,index)=>Object.is(value,before[index]));
+ const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],v=>{state[i]=typeof v==='function'?v(state[i]):v;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useMemo(fn,deps){const i=mi++,before=memos[i];if(!before||!sameDeps(before.deps,deps))memos[i]={value:fn(),deps};return memos[i].value;},useCallback(fn,deps){return hooks.useMemo(()=>fn,deps);},useEffect(fn){if(first)effects.push(fn);},useLayoutEffect(fn,deps){const i=li++,before=layoutStates[i];if(!before||!sameDeps(before.deps,deps)){layoutStates[i]={deps,cleanup:before?.cleanup};layouts.push(()=>{layoutStates[i].cleanup?.();layoutStates[i].cleanup=fn();});}}};
  let body;
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);const source=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8')+(file==='app/components/product-options-editor.tsx'?'\nexport {OptionsEditor as RegularOptionsEditor};':'');vm.runInNewContext(ts.transpileModule(source,{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,structuredClone,TextEncoder,crypto,fetch:async(url,init)=>init?.method==='PATCH'?handler(url,init,body):readHandler?readHandler(body):Response.json(body),require(name){if(name.endsWith('.css'))return{};if(name==='react')return hooks;if(name.startsWith('@/'))return load(name.slice(2)+(name.includes('/components/')?'.tsx':'.ts'));return native(name);}});return exports;}
  const model=load('app/product-options.ts');body={options:{...model.emptyProductOptions('p'),revision:1,rows:[{...model.emptyOptionInput('a'),unitCostCny:2,included:true,updatedAt:'before',provenance:{}}]},productVersion:'2026-09-24T00:00:00Z',pricing:{policy:{exchangeRate:100,supplyMargin:0,coupangMargin:0,minimumMargin:0,msrpMultiple:1,roundingUnit:1},policySource:'saved-product',rows:[]}};
  const component=load('app/components/product-options-editor.tsx').RegularOptionsEditor;
  const product={id:'p',title:'상품',image_keys:'["owner/a.png","owner/b.png"]',updated_at:body.productVersion};
  const expandPriceTable=node=>Array.isArray(node)?node.map(expandPriceTable):node&&typeof node==='object'?typeof node.type==='function'&&node.type.name==='OptionPriceTable'?expandPriceTable(node.type(node.props)):{...node,props:{...node.props,children:expandPriceTable(node.props?.children)}}:node;
- const render=()=>{si=0;ri=0;const tree=expandPriceTable(component({...props,product,onSaved(){saves++;}}));first=false;return tree;};
+ const render=()=>{si=0;ri=0;mi=0;li=0;const tree=expandPriceTable(component({...props,product,onSaved(){saves++;}}));layouts.splice(0).forEach(fn=>fn());first=false;return tree;};
  const button=()=>nodes(render()).find(n=>n.type==='button'&&n.props.children==='옵션 저장·가격 계산');
  const image=()=>nodes(render()).find(n=>n.type==='select'&&n.props['aria-label']==='옵션 1 이미지');
- return{render,button,image,product,get saves(){return saves;},async start(){render();effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){cleanups.forEach(fn=>fn?.());}};
+ return{render,button,image,product,get saves(){return saves;},async start(){render();effects.forEach(fn=>cleanups.push(fn()));await settle();},unmount(){layoutStates.forEach(value=>value.cleanup?.());cleanups.forEach(fn=>fn?.());}};
 }
 
 test('saved option packaging opens its exact quotation target only after a successful save',async()=>{

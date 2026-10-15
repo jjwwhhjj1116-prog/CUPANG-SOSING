@@ -4,7 +4,7 @@ import type { AssetRole } from '@/app/product-content';
 import { bundlePolicy, suggestBundleQuantity, type BundlePolicy } from '@/app/bundle-policy';
 
 export type PackagingValues = { packagedWeightG: number; packagedWidthMm: number; packagedLengthMm: number; packagedHeightMm: number };
-export type BulkOptionAction = { type: 'packaging'; value: PackagingValues } | { type: 'clearPackaging' } | { type: 'unitCostCny' | 'unitsPerPack'; value: number } | { type: 'autoBundle'; value: BundlePolicy } | { type: 'addBundle'; value: number; newIds: Record<string, string> } | { type: 'imageKey'; value: string | null } | { type: 'include' | 'exclude' | 'remove' };
+export type BulkOptionAction = { type: 'packaging'; value: PackagingValues } | { type: 'clearPackaging' } | { type: 'unitCostCny' | 'unitsPerPack' | 'applyBundle'; value: number } | { type: 'autoBundle'; value: BundlePolicy } | { type: 'addBundle'; value: number; newIds: Record<string, string> } | { type: 'imageKey'; value: string | null } | { type: 'include' | 'exclude' | 'remove' };
 export type BulkOptionPreview = {
   priceBase: string;
   base: string; action: BulkOptionAction; selectedIds: string[]; rows: OptionInput[];
@@ -12,13 +12,21 @@ export type BulkOptionPreview = {
 };
 export function optionBulkPriceBase(policy: PricePolicy): string {
   return JSON.stringify([policy.exchangeRate, policy.supplyMargin, policy.coupangMargin, policy.minimumMargin,
-    policy.msrpMultiple, policy.roundingUnit, policy.roundingMode ?? 'up']);
+    policy.msrpMultiple, policy.roundingUnit, policy.roundingMode ?? 'up', policy.useIntegratedRate === true,
+    policy.useIntegratedRate === true ? policy.integratedRate ?? null : null, policy.recalculationMode ?? null]);
+}
+export function parseCouplusBundleQuantity(input: string, minimum = 1): number {
+  // The recorded prompt uses parseInt, including its decimal-prefix behavior.
+  // Preserve it while enforcing the existing saved-option quantity ceiling.
+  const value = Number.parseInt(input);
+  if (!Number.isInteger(value) || value < minimum || value > 1e6) throw new Error(`번들 수량은 ${minimum}~1,000,000 사이 정수로 입력해주세요.`);
+  return value;
 }
 export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: readonly string[], action: BulkOptionAction, policy: PricePolicy, imageKeys: readonly string[] = []): BulkOptionPreview {
   const selected = new Set(selectedIds);
   if (!selected.size || selected.size !== selectedIds.length || [...selected].some(id => !rows.some(row => row.id === id))) throw new Error('편집할 옵션을 다시 선택해주세요.');
   if (action.type === 'unitCostCny' && (!Number.isFinite(action.value) || action.value <= 0 || action.value > 1e9)) throw new Error('개당 원가는 0보다 크고 10억 CNY 이하이어야 합니다.');
-  if (action.type === 'unitsPerPack' && (!Number.isInteger(action.value) || action.value < 1 || action.value > 1e6)) throw new Error('판매 단위당 구성 수량은 1~1,000,000 사이 정수입니다.');
+  if ((action.type === 'unitsPerPack' || action.type === 'applyBundle') && (!Number.isInteger(action.value) || action.value < 1 || action.value > 1e6)) throw new Error('판매 단위당 구성 수량은 1~1,000,000 사이 정수입니다.');
   if (action.type === 'imageKey' && action.value !== null && !imageKeys.includes(action.value)) throw new Error('이 상품에 저장된 이미지를 다시 선택해주세요.');
   if (action.type === 'autoBundle') bundlePolicy(action.value);
   if (action.type === 'packaging') {
@@ -44,6 +52,13 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
       const unitsPerPack = suggestBundleQuantity(row.unitCostCny, policy, action.value);
       return [{ ...row, unitsPerPack, ...(unitsPerPack !== row.unitsPerPack ? { packagingConfirmed: false } : {}) }];
     }
+    if (action.type === 'applyBundle') {
+      const translatedName = row.translatedName.trim()
+        ? `${row.translatedName.replace(/\s*\(\d+개묶음\)\s*$/, '')} (${action.value}개묶음)` : row.translatedName;
+      if (translatedName.length > 500) throw new Error('번들 표시를 포함한 옵션 한글명은 500자 이하여야 합니다. 한글명을 줄여주세요.');
+      return [{ ...row, translatedName, unitsPerPack: action.value,
+        ...(action.value !== row.unitsPerPack ? { packagingConfirmed: false } : {}) }];
+    }
     if (action.type === 'packaging') return [{ ...row, ...action.value, packagingConfirmed: true }];
     if (action.type === 'clearPackaging') return [{ ...row, packagedWeightG: null, packagedWidthMm: null, packagedLengthMm: null, packagedHeightMm: null, packagingConfirmed: false }];
     if (action.type === 'remove') return [];
@@ -51,7 +66,9 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
     if ('value' in action) return [{ ...row, [action.type]: action.value, ...(action.type === 'unitsPerPack' && action.value !== row.unitsPerPack ? { packagingConfirmed: false } : {}) }];
     throw new Error('지원하지 않는 일괄 편집 작업입니다.');
   });
-  const beforePrices = calculateOptionPrices(rows, policy); const afterPrices = calculateOptionPrices(next, policy);
+  const beforePrices = calculateOptionPrices(rows, policy);
+  const afterPrices = calculateOptionPrices(next, action.type === 'applyBundle'
+    ? { ...policy, recalculationMode: 'couplus-stage-two-v1' } : policy);
   return { priceBase: optionBulkPriceBase(policy), base: JSON.stringify(rows), action, selectedIds: [...selected], rows: next, changes: rows.filter(row => selected.has(row.id)).map(row => {
     const targetId = action.type === 'addBundle' ? action.newIds[row.id] : row.id;
     const after = next.find(value => value.id === targetId) ?? null; const price = afterPrices.find(value => value.optionId === targetId);

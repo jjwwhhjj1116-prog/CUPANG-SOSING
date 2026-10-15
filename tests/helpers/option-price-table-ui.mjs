@@ -63,7 +63,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
         if (name in deps) return deps[name]; if (name === 'react') return hooks;
         if (name === 'react/jsx-runtime') return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };
         if (name.endsWith('.css')) return {};
-        if (name.startsWith('@/app/components/') && !['@/app/components/product-options-editor', '@/app/components/option-price-table',...(integrated?['@/app/components/option-quotation-prices']:[]),...(detail?['@/app/components/dashboard-client','@/app/components/price-editor']:[])].includes(name)) return new Proxy({}, { get: () => () => null });
+        if (name.startsWith('@/app/components/') && !['@/app/components/product-options-editor', '@/app/components/option-price-table', '@/app/components/price-selection-dialog',...(integrated?['@/app/components/option-quotation-prices']:[]),...(detail?['@/app/components/dashboard-client','@/app/components/price-editor']:[])].includes(name)) return new Proxy({}, { get: () => () => null });
         if (name.startsWith('@/')) return load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
         if (name.startsWith('./') || name.startsWith('../')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
         return native(name);

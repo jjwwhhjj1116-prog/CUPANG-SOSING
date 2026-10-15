@@ -111,7 +111,7 @@ test('bulk previews must be recalculated after any price policy change without c
  const action={type:'unitsPerPack',value:3};
  const preview=tools.previewOptionBulk(rows,['a'],action,policy);
  const before=JSON.stringify(rows);
- for(const [field,value] of Object.entries({exchangeRate:200,supplyMargin:20,coupangMargin:20,minimumMargin:3000,msrpMultiple:1.3,roundingUnit:100,roundingMode:'nearest'})){
+ for(const [field,value] of Object.entries({exchangeRate:200,supplyMargin:20,coupangMargin:20,minimumMargin:3000,msrpMultiple:1.3,roundingUnit:100,roundingMode:'nearest',useIntegratedRate:true,recalculationMode:'couplus-stage-two-v1'})){
   assert.throws(()=>tools.applyOptionBulk(rows,preview,{...policy,[field]:value}),/가격 정책/);
   assert.equal(JSON.stringify(rows),before);
  }
@@ -122,6 +122,48 @@ test('bulk previews must be recalculated after any price policy change without c
  const applied=tools.applyOptionBulk(rows,fresh,changed);
  assert.equal(fresh.changes[0].afterPrice,preview.changes[0].afterPrice*2);
  assert.equal(applied[1].included,false);assert.equal(applied[1].unitsPerPack,rows[1].unitsPerPack);
+});
+
+test('bundle prompt parsing follows integer-prefix input while rejecting unsavable quantities',()=>{
+ for(const [input,quantity] of [['2',2],[' 5개 ',5],['2.9',2],['0x10',16],['1',1],['1000000',1000000]])assert.equal(tools.parseCouplusBundleQuantity(input),quantity);
+ for(const input of ['', 'abc', '0', '-2', '1000001', 'Infinity'])assert.throws(()=>tools.parseCouplusBundleQuantity(input),/번들 수량/);
+ assert.throws(()=>tools.parseCouplusBundleQuantity('1',2),/번들 수량/);
+});
+
+test('bundle application recalculates the selected existing row with the stage-two minimum amount and retains SKU facts',()=>{
+ const exact={exchangeRate:350,supplyMargin:50,coupangMargin:40,minimumMargin:3000,msrpMultiple:1.3,roundingUnit:10,roundingMode:'nearest'};
+ const rows=[row('a',{translatedName:'검정 (2개묶음)',unitCostCny:2.99,unitsPerPack:2,stock:29,packagedWeightG:220,packagingConfirmed:true}),row('b',{unitCostCny:2.99,unitsPerPack:3})];
+ const before=JSON.stringify(rows),policyBefore=JSON.stringify(exact);
+ const preview=tools.previewOptionBulk(rows,['a'],{type:'applyBundle',value:5},exact);
+ assert.equal(preview.rows.length,2);assert.equal(preview.rows[0].id,'a');assert.equal(preview.rows[0].unitsPerPack,5);
+ assert.equal(preview.rows[0].translatedName,'검정 (5개묶음)');assert.equal(preview.rows[0].stock,29);assert.equal(preview.rows[0].packagedWeightG,220);assert.equal(preview.rows[0].packagingConfirmed,false);
+ for(const key of ['supplierSku','originalName','unitCostCny','imageKey','included','widthCm'])assert.equal(preview.rows[0][key],rows[0][key]);
+ assert.equal(JSON.stringify(preview.rows[1]),JSON.stringify(rows[1]));
+ assert.equal(preview.changes[0].afterPrice,8230);assert.equal(model.calculateOptionPrices(preview.rows,exact)[0].calculation.supplyPrice,10470);
+ assert.equal(JSON.stringify(rows),before);assert.equal(JSON.stringify(exact),policyBefore);
+ const applied=tools.applyOptionBulk(rows,preview,exact);assert.equal(applied[0].id,'a');assert.equal(applied[1].id,'b');
+ const again=tools.previewOptionBulk(applied,['a'],{type:'applyBundle',value:5},exact);assert.equal(again.rows[0].translatedName,'검정 (5개묶음)');
+ const unchanged=tools.previewOptionBulk(rows,['a'],{type:'applyBundle',value:2},exact);assert.equal(unchanged.rows[0].packagingConfirmed,true);
+});
+
+test('bundle names preserve explicit blanks and reject overflow without truncating names or facts',()=>{
+ for(const translatedName of ['', '   ']){
+  const rows=[row('a',{translatedName})],preview=tools.previewOptionBulk(rows,['a'],{type:'applyBundle',value:1},policy);
+  assert.equal(preview.rows[0].translatedName,translatedName);assert.equal(preview.rows[0].originalName,rows[0].originalName);
+ }
+ const rows=[row('a',{translatedName:'가'.repeat(500)})],before=JSON.stringify(rows);
+ assert.throws(()=>tools.previewOptionBulk(rows,['a'],{type:'applyBundle',value:2},policy),/500자/);assert.equal(JSON.stringify(rows),before);
+ for(const value of [0,1.5,1000001,NaN])assert.throws(()=>tools.previewOptionBulk([row('a')],['a'],{type:'applyBundle',value},policy));
+});
+
+test('active integrated-rate and recalculation changes invalidate bulk previews without altering drafts',()=>{
+ const rows=[row('a')],before=JSON.stringify(rows),integrated={...policy,useIntegratedRate:true,integratedRate:300};
+ const preview=tools.previewOptionBulk(rows,['a'],{type:'unitsPerPack',value:3},integrated);
+ for(const changed of [{...integrated,integratedRate:350},{...integrated,useIntegratedRate:false},{...integrated,recalculationMode:'couplus-stage-two-v1'}]){
+  assert.throws(()=>tools.applyOptionBulk(rows,preview,changed),/가격 정책/);assert.equal(JSON.stringify(rows),before);
+ }
+ const original=tools.previewOptionBulk(rows,['a'],{type:'unitsPerPack',value:3},policy);
+ assert.equal(tools.applyOptionBulk(rows,original,{...policy,useIntegratedRate:false,integratedRate:350})[0].unitsPerPack,3);
 });
 
 test('new bundle retains source packaging but leaves its own packaging unmeasured',()=>{
