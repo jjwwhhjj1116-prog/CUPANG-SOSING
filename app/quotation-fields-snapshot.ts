@@ -103,6 +103,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   const optionRegistrationNumbers = product.registration_number ? await readOptionRegistrationNumbers(owner, product, options) : undefined;
   const view: QuotationFieldsView = { revision: state.revision, inputFingerprint, overrides, legacyOverrides: categoryContext.categoryId ? state.overrides : undefined, resolved, automatic, categoryContext,
     ...(optionRegistrationNumbers === undefined ? {} : { optionRegistrationNumbers }),
+    protectedDetailImageKeys: [...new Set([...content.assets.detailTop.value, ...content.assets.detailBottom.value])].filter(key => imageKeys.includes(key)),
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };
   view.optionPackQuantities=optionPackQuantities;if(packagingBasis)view.packagingBasis=packagingBasis;
   return { view, source, options };

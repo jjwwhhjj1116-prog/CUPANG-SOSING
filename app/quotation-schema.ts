@@ -78,6 +78,8 @@ export type QuotationFieldsView = {
   imageKeys: string[]; submissionReady: false;
   /** Immutable display numbers keyed by option UUID; absent for legacy products. */
   optionRegistrationNumbers?: Record<string, string>;
+  /** Response-only top/bottom banner roles; absent means keyboard deletion has no role proof. */
+  protectedDetailImageKeys?: string[];
   packagingBasis?:QuotationPackagingBasis;optionPackQuantities?:Record<string,number>;
 };
 

@@ -1,23 +1,25 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
-import { applyDetailComposite, prepareDetailComposite, recoverDetailComposite, type DetailComposite, type DetailCompositeAttempt } from '@/app/detail-image-composite';
+import { applyDetailComposite, prepareDetailComposite, prepareDetailImageDownload, recoverDetailComposite, type DetailComposite, type DetailCompositeAttempt } from '@/app/detail-image-composite';
 
-type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean;
+type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean;
   beforeApply?: () => boolean; onSaved?: (view: QuotationFieldsView) => void; onBusyChange?: (busy: boolean) => void };
-export function DetailImageCompositePanel({ productId, optionId, profileId, view, disabled = false, beforeApply, onSaved, onBusyChange }: Props) {
-  const identity = JSON.stringify([productId, optionId, profileId ?? null]), current = useRef({ identity, view, disabled, beforeApply, onSaved, onBusyChange });
+export function DetailImageCompositePanel({ productId, optionId, profileId, view, disabled = false, stageActive = true, beforeApply, onSaved, onBusyChange }: Props) {
+  const identity = JSON.stringify([productId, optionId, profileId ?? null]), current = useRef({ identity, view, disabled, stageActive, beforeApply, onSaved, onBusyChange });
   const active = useRef(true), request = useRef<AbortController | null>(null), attempt = useRef<DetailCompositeAttempt>({});
+  const downloadRequest = useRef<AbortController | null>(null), downloadGeneration = useRef(0);
   const resultRef = useRef<DetailComposite | null>(null), [result, setResult] = useState<DetailComposite | null>(null), [url, setUrl] = useState<{ output: Blob; url: string } | null>(null);
   const [busy, setBusy] = useState(false), [pending, setPending] = useState(false), [done, setDone] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
-  useLayoutEffect(() => { current.current = { identity, view, disabled, beforeApply, onSaved, onBusyChange }; }, [identity, view, disabled, beforeApply, onSaved, onBusyChange]);
+  useLayoutEffect(() => { current.current = { identity, view, disabled, stageActive, beforeApply, onSaved, onBusyChange }; }, [identity, view, disabled, stageActive, beforeApply, onSaved, onBusyChange]);
+  useLayoutEffect(() => { downloadGeneration.current++; downloadRequest.current?.abort(); }, [identity, view, disabled, stageActive]);
   useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); current.current.onBusyChange?.(false); }; }, []);
   useEffect(() => {
     if (!result) return; let live = true; const objectUrl = URL.createObjectURL(result.output);
     void Promise.resolve().then(() => { if (live) setUrl({ output: result.output, url: objectUrl }); });
     return () => { live = false; URL.revokeObjectURL(objectUrl); };
   }, [result]);
-  const valid = () => active.current && current.current.identity === identity && !current.current.disabled && current.current.beforeApply?.() !== false;
+  const valid = () => active.current && current.current.identity === identity && current.current.stageActive && !current.current.disabled && current.current.beforeApply?.() !== false;
   function start() {
     if (request.current || !valid()) return null;
     const controller = new AbortController(); request.current = controller; current.current.onBusyChange?.(true); setBusy(true); setError(''); setMessage(''); return controller;
@@ -47,7 +49,25 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
     } catch (cause) { if (active.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : '상세 이미지 적용 실패'); }
     finally { finish(controller); }
   }
+  async function download() {
+    if (attempt.current.pending) return;
+    const controller = start(); if (!controller) return;
+    downloadRequest.current = controller;
+    const basis = current.current.view, generation = downloadGeneration.current;
+    try {
+      const prepared = await prepareDetailImageDownload({ productId, optionId, profileId, view: basis }, controller.signal);
+      if (!valid() || controller.signal.aborted || current.current.view !== basis || generation !== downloadGeneration.current) return;
+      const objectUrl = URL.createObjectURL(prepared.output);
+      try {
+        const anchor = document.createElement('a'); anchor.href = objectUrl;
+        anchor.download = `YOOFAM-${productId}-${optionId}-detail.jpg`; anchor.click();
+      } finally { setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); }
+      setMessage('현재 저장한 상세 이미지를 JPG로 내려받았습니다. 견적서와 원본은 유지됩니다.');
+    } catch (cause) { if (active.current && !controller.signal.aborted && current.current.identity === identity) setError(cause instanceof Error ? cause.message : '상세 이미지 다운로드 실패'); }
+    finally { if (downloadRequest.current === controller) downloadRequest.current = null; finish(controller); }
+  }
   return <section className="panel-stack" aria-label="상세 이미지 합치기" data-workspace-saving={busy}>
+    <button type="button" className="btn ghost" title="통합 이미지 다운로드" disabled={!stageActive || disabled || busy || pending} onClick={() => void download()}>통합 이미지 다운로드</button>
     <button type="button" className="btn ghost" disabled={disabled || busy || pending} onClick={() => void prepare()}>상세 이미지 합치기</button>
     <small>저장한 상단·본문·하단 사진을 현재 순서대로 한 장으로 만듭니다. 원본 사진과 직접 작성한 HTML은 유지합니다. 수동 HTML이 있으면 견적서의 HTML 항목도 그대로 전송됩니다.</small>
     {busy && <p role="status">상세 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}

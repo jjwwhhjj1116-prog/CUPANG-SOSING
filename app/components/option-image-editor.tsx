@@ -7,13 +7,13 @@ import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionI
 import { downloadImageSelection } from '@/app/image-selection-download';
 import { DetailImageCompositePanel } from '@/app/components/detail-image-composite-panel';
 
-type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage;
+type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean;
   disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
   onEdit?: (sourceKey: string, role: OptionImageStage, quotationTarget: FreeImageQuotationRequest) => void };
 const imageUrl = (key: string) => `/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
 const dragMime = 'application/x-yoofam-option-image-order';
 type ImageDrag = { scope: string; sourceKey: string; stage: OptionImageStage; view: QuotationFieldsView; keys: string[]; key: string; token: string; element: HTMLElement };
-export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, disabled = false, onSaved, onTranslate, onEdit }: Props) {
+export function OptionImageEditor({ productId, optionId, version, profileId, refreshToken, stage, active = true, disabled = false, onSaved, onTranslate, onEdit }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope), currentSource = useRef(sourceKey), currentStage = useRef(stage), request = useRef<AbortController | null>(null);
@@ -21,7 +21,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: QuotationFieldsView } | null>(null);
   const [pending, setPending] = useState<{ scope: string; values: OptionImageDraft }>({ scope, values: {} });
   const [preview, setPreview] = useState<{ scope: string; key: string } | null>(null);
-  const activeDrag = useRef<ImageDrag | null>(null), liveDisabled = useRef(disabled);
+  const activeDrag = useRef<ImageDrag | null>(null), liveDisabled = useRef(disabled), liveActive = useRef(active);
   const [dragging, setDragging] = useState<{ token: string; key: string; target: string | null } | null>(null);
   const latestSaved = useRef<typeof saved>(null), latestDraft = useRef({ scope, values: {} as OptionImageDraft });
   useLayoutEffect(() => {
@@ -32,6 +32,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   }, [scope, sourceKey]);
   useLayoutEffect(() => { currentStage.current = stage; activeDrag.current = null; }, [stage]);
   useLayoutEffect(() => { liveDisabled.current = disabled; if (disabled) activeDrag.current = null; }, [disabled]);
+  useLayoutEffect(() => { liveActive.current = active; }, [active]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [uncertain, setUncertain] = useState(false);
   const compositeBusy = useRef(false), [merging, setMerging] = useState(false);
   const view = saved?.scope === scope ? saved.view : null, draft = pending.scope === scope ? pending.values : {};
@@ -153,6 +154,49 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || merging || disabled || uncertain || !!bindingError;
   const unavailable = selected.filter(key => !view?.imageKeys.includes(key));
   const activePreview = preview?.scope === scope && view?.imageKeys.includes(preview.key) ? preview.key : selected.find(key => view?.imageKeys.includes(key)) ?? view?.imageKeys[0] ?? null;
+  // The shortcut needs explicit role evidence; a flattened first/last image
+  // cannot tell a settings banner from a normal content image.
+  const protectedKeys = view?.protectedDetailImageKeys;
+  const knownProtection = Array.isArray(protectedKeys) && new Set(protectedKeys).size === protectedKeys.length
+    && protectedKeys.every(key => typeof key === 'string' && view?.imageKeys.includes(key)) ? protectedKeys : null;
+  const keyboardScope = JSON.stringify([sourceKey, stage, active, disabled, saved?.sourceKey, view?.revision, view?.inputFingerprint, selected, knownProtection]);
+  const [keyboardClock, setKeyboardClock] = useState({ scope: keyboardScope, token: {} });
+  if (keyboardClock.scope !== keyboardScope) setKeyboardClock({ scope: keyboardScope, token: {} });
+  const keyboardGeneration = keyboardClock.scope === keyboardScope ? keyboardClock.token : null, keyboardEpoch = useRef(keyboardGeneration);
+  const hoveredDetail = useRef<{ generation: object; key: string; view: QuotationFieldsView; keys: string[] } | null>(null);
+  useLayoutEffect(() => { keyboardEpoch.current = keyboardGeneration; hoveredDetail.current = null; }, [keyboardGeneration]);
+  function currentKeyboard() {
+    return !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && stage === 'detail' && interactive()
+      && !locked && !request.current && pendingSave.current?.scope !== scope && saved?.sourceKey === sourceKey && latestSaved.current?.view === view && knownProtection !== null;
+  }
+  function hoverDetail(key: string) {
+    if (!view || !currentKeyboard()) return;
+    hoveredDetail.current = null;
+    if (!selected.includes(key) || !view.imageKeys.includes(key) || knownProtection?.includes(key) || new Set(selected).size !== selected.length) return;
+    hoveredDetail.current = { generation: keyboardGeneration!, key, view, keys: [...selected] };
+  }
+  function leaveDetail(key: string) { if (hoveredDetail.current?.generation === keyboardGeneration && hoveredDetail.current.key === key) hoveredDetail.current = null; }
+  function deleteHoveredDetail(event: KeyboardEvent) {
+    if (event.key !== 'Delete' || event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !currentKeyboard()) return;
+    const textInput = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      return !!element?.isContentEditable || !!element?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="spinbutton"]');
+    };
+    if (textInput(event.target) || typeof document !== 'undefined' && textInput(document.activeElement)) return;
+    const hovered = hoveredDetail.current, base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
+    if (!hovered || hovered.generation !== keyboardGeneration || !base || base.view !== hovered.view || !base.view.imageKeys.includes(hovered.key) || knownProtection?.includes(hovered.key)) return;
+    try {
+      const keys = quotationImageKeys(optionImageValue(base.view, optionId, 'detailImages', editing));
+      if (JSON.stringify(keys) !== JSON.stringify(hovered.keys) || new Set(keys).size !== keys.length || !keys.includes(hovered.key)) { hoveredDetail.current = null; return; }
+      hoveredDetail.current = null; event.preventDefault(); event.stopPropagation(); edit('detailImages', keys.filter(key => key !== hovered.key).join('\n'));
+    } catch { hoveredDetail.current = null; }
+  }
+  useEffect(() => {
+    if (typeof document === 'undefined' || stage !== 'detail' || !active) return;
+    const handler = (event: KeyboardEvent) => deleteHoveredDetail(event);
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  });
   function clearDrag() { activeDrag.current = null; setDragging(null); }
   function dragSelection(key: string) {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
@@ -250,9 +294,9 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     <p>드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요. 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
     <button type="button" className="btn ghost" disabled={!view || locked || !selected.length || !!unavailable.length} onClick={() => void downloadSelection()}>{label} ZIP 다운로드</button>
     <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. 미저장 선택을 견적서에 반영하려면 이미지 저장을 눌러주세요.</small>
-    {stage === 'detail' && view && <DetailImageCompositePanel key={scope} productId={productId} optionId={optionId} profileId={profileId} view={view}
+    {stage === 'detail' && view && <DetailImageCompositePanel key={scope} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
       disabled={disabled || busy || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
-      beforeApply={() => current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
+      beforeApply={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
       onBusyChange={value => { compositeBusy.current = value; setMerging(value); }}
       onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} />}
     {busy && <p role="status">옵션 이미지 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
@@ -268,7 +312,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <figcaption>{index + 1} · {key.split('/').at(-1)}</figcaption>
       {selectedActions(key, index)}
     </figure>)}</div>{!selected.length && <p>이 옵션에 선택한 {label}가 없습니다.</p>}
-      </section></div> : <><section className="option-detail-image-stack" aria-label="선택 옵션 상세 이미지 순서"><h4>현재 상세 이미지 · {selected.length}/{limit}개</h4>{selected.map((key, index) => <figure key={key} {...sortableProps(key, index, 'option-detail-image-item')}>
+      </section></div> : <><section className="option-detail-image-stack" aria-label="선택 옵션 상세 이미지 순서"><h4>현재 상세 이미지 · {selected.length}/{limit}개</h4>{selected.map((key, index) => <figure key={key} {...sortableProps(key, index, 'option-detail-image-item')} onMouseEnter={() => hoverDetail(key)} onMouseLeave={() => leaveDetail(key)}>
         <figcaption>상세 이미지 {index + 1} · {key.split('/').at(-1)}</figcaption>{selectedActions(key, index)}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {view.imageKeys.includes(key) ? <img src={imageUrl(key)} alt={`상세 이미지 ${index + 1}`} loading="lazy" /> : <p>현재 상품에 없는 이미지</p>}
