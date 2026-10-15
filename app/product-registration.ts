@@ -24,8 +24,11 @@ export function validOptionRegistrationNumbers(value: unknown, rows: readonly { 
   if (entries.length > rows.length || (parent !== undefined && !prefix && entries.length)) return false;
   const ids = new Set(rows.map(row => row.id)), seen = new Set<string>(); let observedPrefix: string | null = null;
   return entries.every(([id, number]) => {
-    if (!ids.has(id) || typeof number !== 'string' || number.length !== 12 || !/^[0-9]{12}$/.test(number) || number.substring(9) === '000' || seen.has(number)) return false;
-    const currentPrefix = number.substring(0, 9);
+    if (!ids.has(id) || typeof number !== 'string' || seen.has(number)) return false;
+    const [base, ...bundles] = number.split('B');
+    if (!/^[0-9]{12}$/.test(base) || base.substring(9) === '000' || bundles.length > 32
+      || bundles.some(value => !/^[1-9][0-9]{0,6}$/.test(value) || Number(value) < 2 || Number(value) > 1e6)) return false;
+    const currentPrefix = base.substring(0, 9);
     if ((prefix && currentPrefix !== prefix) || (observedPrefix && currentPrefix !== observedPrefix)) return false;
     seen.add(number); observedPrefix = currentPrefix; return true;
   });

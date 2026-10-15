@@ -48,11 +48,12 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
       if(operation.expectedProductVersion&&body.productVersion!==operation.expectedProductVersion
         ||operation.expectedOptionRevision!==undefined&&body.optionRevision!==operation.expectedOptionRevision)throw Error('옵션 저장 후의 정확한 견적서 버전을 확인하지 못했습니다. 가격 입력은 유지했습니다.');
       const base=latestSaved.current?.scope===endpointScope?latestSaved.current.view:null,editing=latestDraft.current.scope===endpointScope?latestDraft.current.edits:[];
+      const verifiedReceiptRead=operation.coordinated===true&&typeof operation.expectedProductVersion==='string'&&operation.expectedOptionRevision!==undefined&&!base&&!editing.length;
       let recovered=false;
       if(keepEdits||explicitLatest){
         if(!base||Date.parse(body.productVersion)<Date.parse(version))throw Error('최신 상품 가격 저장 상태를 확인하지 못했습니다. 입력은 유지했습니다.');verifyOptionPriceRefresh(base,body,keepEdits?editing:[]);
         if(keepEdits&&editing.length){try{verifyOptionPriceSave(base,body,editing);recovered=true;}catch{/* Keep a disjoint refresh or an unresolved save outcome editable. */}}
-      }else if(body.productVersion!==version)throw Error('상품 저장 상태가 변경됐습니다. 최신 가격을 다시 확인해주세요.');
+      }else if(body.productVersion!==version&&!verifiedReceiptRead)throw Error('상품 저장 상태가 변경됐습니다. 최신 가격을 다시 확인해주세요.');
       store(body);if(!keepEdits||recovered)clearDraft();else{uncertainRef.current=false;setUncertain(false);}
       setMessage(recovered?'저장된 옵션 가격을 확인했습니다.':keepEdits?'입력을 유지하고 최신 가격을 불러왔습니다. 확인 후 옵션 가격을 저장해주세요.':'');
       if(recovered&&operation.notify!==false)onSaved?.();return body;

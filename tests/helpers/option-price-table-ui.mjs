@@ -44,7 +44,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     useLayoutEffect(effect,deps){const index=cursor++,instance=currentInstance,before=instance.slots[index];if(!before||deps.some((value,i)=>!Object.is(value,before.deps[i]))){instance.slots[index]={deps,cleanup:before?.cleanup};layouts.push(()=>{instance.slots[index].cleanup?.();instance.slots[index].cleanup=effect();});}},
   };
   async function request(url, init = {}) {
-    const parsed=new URL(url,'https://app.test'),kind=parsed.pathname.split('/').at(-1);assert.ok(['options',...(integrated?['quotation-fields','pricing']:[])].includes(kind));assert.equal(parsed.pathname,'/api/products/'+productId+'/'+kind);
+    const parsed=new URL(url,'https://app.test'),kind=parsed.pathname.split('/').at(-1);assert.ok(['options',...(integrated?['quotation-fields','pricing','option-bundles']:[])].includes(kind));assert.equal(parsed.pathname,'/api/products/'+productId+'/'+kind);
     const method = init.method ?? 'GET'; apiCalls.push({ url, method,signal:init.signal });
     if (method !== 'GET') { const body = JSON.parse(init.body); writes.push({...body,method,kind}); if (heldSave) { heldSave.arrived(); await heldSave.promise; heldSave = null; } }
     await controls.before?.(url,init);

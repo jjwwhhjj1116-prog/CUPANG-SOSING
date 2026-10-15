@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { emptyProductOptions, type ProductOptions } from '@/app/product-options';
 import {prepareProductRegistrationOptions} from '@/db/product-registration';
+import { validatedBundleSources } from '@/app/option-bundles';
 
 type Row = { payload: string; revision: number };
 async function database() {
@@ -17,6 +18,7 @@ export async function readProductOptions(ownerId: string, productId: string): Pr
   if (!row) return emptyProductOptions(productId);
   const options: ProductOptions = JSON.parse(row.payload);
   if (options.schemaVersion !== 1 || options.productId !== productId || options.revision !== row.revision) throw new Error('Invalid saved options');
+  if (options.bundleSources !== undefined) validatedBundleSources(options);
   return options;
 }
 export async function saveProductOptions(ownerId: string, options: ProductOptions, expectedRevision: number, expectedProductVersion: string): Promise<ProductOptions | null> {
@@ -45,11 +47,20 @@ export async function saveProductOptions(ownerId: string, options: ProductOption
 export async function readOptionRegistrationNumbers(ownerId:string,product:{id:string;registration_number?:string},options:ProductOptions):Promise<Record<string,string>|undefined>{
   if(!product.registration_number)return undefined;
   const db=await database();
+  const bundleSources=validatedBundleSources(options);
+  const neededIds=[...new Set([...options.rows.map(row=>row.id),...Object.keys(bundleSources),...Object.values(bundleSources).map(source=>source.sourceOptionId)])];
   const saved=await db.prepare(`SELECT m.option_id,substr(n.registration_number,1,9)||printf('%03d',m.sequence) AS registration_number
     FROM product_registration_numbers n JOIN product_registration_options m ON m.product_id=n.product_id AND m.owner_id=n.owner_id
     JOIN json_each(?) current ON current.value=m.option_id
     WHERE n.product_id=? AND n.owner_id=? AND n.registration_number=?`)
-    .bind(JSON.stringify(options.rows.map(row=>row.id)),product.id,ownerId,product.registration_number)
+    .bind(JSON.stringify(neededIds),product.id,ownerId,product.registration_number)
     .all<{option_id:string;registration_number:string}>();
-  return Object.fromEntries(saved.results.map(row=>[row.option_id,row.registration_number]));
+  const numbers=new Map(saved.results.map(row=>[row.option_id,row.registration_number])),derived=new Map<string,string|null>();
+  const numberFor=(id:string):string|null=>{
+    if(derived.has(id))return derived.get(id)!;
+    const source=Object.hasOwn(bundleSources,id)?bundleSources[id]:undefined,number=source?numberFor(source.sourceOptionId):numbers.get(id)??null;
+    const value=number&&source?`${number}B${source.quantity}`:number;
+    derived.set(id,value);return value;
+  };
+  return Object.fromEntries(options.rows.flatMap(row=>{const number=numberFor(row.id);return number?[[row.id,number]]:[];}));
 }

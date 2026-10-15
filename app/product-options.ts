@@ -25,7 +25,8 @@ export type ProductOption = OptionInput & {
   provenance: Record<OptionField, 'unverified' | 'manual' | 'collected' | 'translated'>;
   updatedAt: string;
 };
-export type ProductOptions = { schemaVersion: 1; productId: string; revision: number; updatedAt: string | null; rows: ProductOption[] };
+export type BundleSource = { sourceOptionId: string; quantity: number };
+export type ProductOptions = { schemaVersion: 1; productId: string; revision: number; updatedAt: string | null; rows: ProductOption[]; bundleSources?: Record<string, BundleSource> };
 export type OptionCalculation = { optionId: string; included: boolean; sourceCostCny: number | null; calculation: ReturnType<typeof calculatePrice> | null; error: string | null };
 export type OptionPricing = { policy: PricePolicy; policySource: 'saved-product' | 'product-and-workspace'; rows: OptionCalculation[] };
 export type ProductOptionsResponse = { options: ProductOptions; pricing: OptionPricing; productVersion: string; sourceImageKeys?:Record<string,string>; optionRegistrationNumbers?:Record<string,string> };
@@ -103,6 +104,7 @@ export function validateOptionsInput(input: unknown, ownerId: string, imageKeys:
 export function applyOptionRows(current: ProductOptions, rows: OptionInput[], now: string): ProductOptions {
   const previous = new Map(current.rows.map(row => [row.id, row]));
   return { schemaVersion: 1, productId: current.productId, revision: current.revision + 1, updatedAt: now,
+    ...(current.bundleSources ? { bundleSources: structuredClone(current.bundleSources) } : {}),
     rows: rows.map(row => {
       const before = previous.get(row.id); let changed = !before;
       // Older clients omit the new attributes. Omission must not erase saved facts.
