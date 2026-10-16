@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 import { webcrypto, createHash } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { memoryDatabase } from '../scripts/check-db-schema.mjs';
@@ -88,7 +89,7 @@ function fixture() {
     },
     async delete(key) { deletions.push(key); throw Error('route must never delete potentially attached output'); },
   } };
-  const deps = { 'cloudflare:workers': { env }, 'next/server': { NextResponse: Response },
+  const deps = { 'cloudflare:workers': { env }, 'next/server': { NextResponse: Response }, parse5,
     '@/app/chatgpt-auth': { getChatGPTUser: async () => ({ userId: controls.owner, verifiedAccess: controls.verified }), getWorkspaceOwnerId: async () => controls.owner },
     '@/app/automation/free-image-text': { translateImageRegions: async (regions, language) => { translations.push({ regions, language });
       if (controls.duringTranslation) await controls.duringTranslation();
@@ -100,7 +101,9 @@ function fixture() {
       { exports, Error, URL, URLSearchParams, Request, Response, File, Blob, FormData, Headers, TextEncoder, TextDecoder, Uint8Array, DataView, document,
         Date, structuredClone, AbortController, AbortSignal, setTimeout, clearTimeout, crypto: webcrypto, process: { env: { get NODE_ENV() { return controls.nodeEnv; } } },
         fetch: async () => { throw Error('fixture route must not make an unstubbed external request'); },
-        require(name) { if (name in deps) return deps[name]; return load(name.startsWith('@/') ? name.slice(2) + '.ts' : path.posix.join(path.posix.dirname(file), name) + '.ts'); } });
+        require(name) { if (name in deps) return deps[name];
+          assert.ok(name.startsWith('@/') || name.startsWith('./') || name.startsWith('../'), 'Unregistered fixture dependency: ' + name);
+          return load(name.startsWith('@/') ? name.slice(2) + '.ts' : path.posix.join(path.posix.dirname(file), name) + '.ts'); } });
     return exports;
   };
   const key = 'owner/source.png', keys = [key, 'owner/first.png', 'owner/last.png', 'owner/main.png', 'owner/label.png'];

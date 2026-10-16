@@ -10,6 +10,8 @@ export async function GET(_: Request, context: { params: Promise<{ key: string[]
     const { key } = await context.params;
     const objectKey = key.join('/');
     if (!isOwnedImageKey(ownerId, objectKey)) return new Response('Forbidden', { status: 403 });
+    // Editable image documents are returned only through the scoped image API.
+    if (key.at(-1)?.startsWith('free-image-') && objectKey.endsWith('.png.edit.json')) return new Response('Not found', { status: 404 });
     if (!env.FILES) return new Response('Image storage unavailable', { status: 503 });
     const object = await env.FILES.get(objectKey);
     if (!object) return new Response('Not found', { status: 404 });

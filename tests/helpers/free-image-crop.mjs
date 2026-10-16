@@ -1,11 +1,12 @@
 import fs from 'node:fs';import vm from 'node:vm';import path from 'node:path';import ts from 'typescript';import assert from 'node:assert/strict';
+import * as parse5 from 'parse5';
 import {createHash,webcrypto} from 'node:crypto';import {deflateSync} from 'node:zlib';
 import {memoryDatabase} from '../../scripts/check-db-schema.mjs';
 import {mobileIntakeHarness} from './mobile-intake.mjs';import {hubSchemaSnapshot,schemaCompanies,schemaPath} from './hub-schema.mjs';import {quotationWorkbook} from './quotation-workbook.mjs';
 export const plain=value=>JSON.parse(JSON.stringify(value));
 function declarations(file,expose){const url=new URL('../'+file,import.meta.url),source=fs.readFileSync(url,'utf8'),ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),parts=[];
  for(const statement of ast.statements){if(ts.isImportDeclaration(statement))continue;if(ts.isExpressionStatement(statement)&&ts.isCallExpression(statement.expression)&&statement.expression.expression.getText(ast)==='test')break;if(!ts.isVariableStatement(statement)&&!ts.isFunctionDeclaration(statement)&&!ts.isClassDeclaration(statement)&&!ts.isExpressionStatement(statement))break;parts.push(statement.getText(ast));}
- return vm.runInNewContext(parts.join('\n').replaceAll('import.meta.url',JSON.stringify(url.href))+'\n({'+expose+'})',{fs,vm,path,ts,assert,createHash,webcrypto,deflateSync,memoryDatabase,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,
+ return vm.runInNewContext(parts.join('\n').replaceAll('import.meta.url',JSON.stringify(url.href))+'\n({'+expose+'})',{fs,vm,path,ts,assert,parse5,createHash,webcrypto,deflateSync,memoryDatabase,mobileIntakeHarness,hubSchemaSnapshot,schemaCompanies,schemaPath,quotationWorkbook,
   Date,URL,URLSearchParams,Blob,File,FormData,Response,Request,Headers,TextEncoder,TextDecoder,Uint8Array,DataView,Buffer,CompressionStream,DecompressionStream,AbortController,AbortSignal,structuredClone,setTimeout,clearTimeout,crypto:webcrypto});}
 const renderer=declarations('free-image-translation-client.test.mjs','fixture,image,region,source');
 const api=declarations('free-image-text-api.test.mjs','fixture,png');

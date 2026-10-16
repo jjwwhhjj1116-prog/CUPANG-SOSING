@@ -18,8 +18,11 @@ import { translateImageRegions } from '@/app/automation/free-image-text';
 import { isOwnedImageKey, MAX_IMAGE_BYTES, MAX_IMAGE_MULTIPART_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import { MAX_OCR_PIXELS, validFreeImageRole, validateFreeImageSource, validateImageTextRegions,
   freeImageSourceIdentity, freeImageApplyIdentity, validateFreeImageOptionIds, type FreeImageSource, type FreeImageQuotationTarget } from '@/app/free-image-translation';
-import { readBoundedBytes, readBoundedJson, readBoundedStream, RequestBodyError } from '@/app/request-body';
+import { readBoundedBytes, readBoundedStream, RequestBodyError } from '@/app/request-body';
 import { validateFreeImageCrop, type FreeImageCrop } from '@/app/free-image-crop';
+import { validateFreeImageEditDocument, MAX_FREE_IMAGE_EDIT_BYTES, type FreeImageEditDocument } from '@/app/free-image-edit-document';
+import { FreeImageEditRecordError, freeImageEditDigest, freeImageEditDocumentBytes, prepareFreeImageEditRecord, readFreeImageEditRecord, storeFreeImageEditRecord } from '@/app/free-image-edit-record';
+import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 
 type Context = { params: Promise<{ id: string }> };
 class ImageTextError extends Error {
@@ -54,7 +57,7 @@ async function readImage(key: string) {
   if (dimensions.width * dimensions.height > MAX_OCR_PIXELS) throw new ImageTextError(413, '이미지 번역은 1,200만 픽셀 이하에서 사용할 수 있습니다.');
   return { object, bytes, dimensions };
 }
-async function original(owner: string, id: string, sourceKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, requireRole: boolean, includeOptions = false, quotationTarget?: FreeImageQuotationTarget) {
+async function original(owner: string, id: string, sourceKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, requireRole: boolean, includeOptions = false, quotationTarget?: FreeImageQuotationTarget, editorSource?: FreeImageSource['editorSource']) {
   if (!isOwnedImageKey(owner, sourceKey) || !current.keys.includes(sourceKey)) throw new ImageTextError(404, '이 상품에 저장된 본인 소유 이미지를 선택해주세요.');
   const options = role === 'main' && includeOptions ? await readProductOptions(owner, id) : null;
   const optionIds = options?.rows.filter(row => row.imageKey === sourceKey).map(row => row.id).sort() ?? [];
@@ -63,7 +66,7 @@ async function original(owner: string, id: string, sourceKey: string, role: Free
   const { bytes, dimensions } = await readImage(sourceKey);
   const source: FreeImageSource = { productId: id, productVersion: current.product.updated_at, contentRevision: current.content.revision,
     sourceKey, sourceSha256: await digest(bytes), role, width: dimensions.width, height: dimensions.height,
-    ...(options ? { optionImages: { revision: options.revision, optionIds, ...(!commonAssigned ? { commonAssigned: false as const } : {}) } } : {}), ...(quotationTarget ? { quotationTarget } : {}) };
+    ...(options ? { optionImages: { revision: options.revision, optionIds, ...(!commonAssigned ? { commonAssigned: false as const } : {}) } } : {}), ...(quotationTarget ? { quotationTarget } : {}), ...(editorSource ? { editorSource } : {}) };
   try { return validateFreeImageSource(source); }
   catch { throw new ImageTextError(409, '대표 이미지에 연결된 옵션 정보를 다시 확인해주세요.'); }
 }
@@ -94,16 +97,36 @@ async function quotationOriginal(owner: string, id: string, sourceKey: string, r
   return original(owner, id, sourceKey, role, current, false, false, { kind: 'quotation', ...selection, revision: view.revision, inputFingerprint: view.inputFingerprint,
     optionRevision: view.optionRevision, bindingSha256: await quotationBinding(saved, selection.input), value });
 }
+async function editorCompany(owner: string) {
+  const user = await getChatGPTUser(), company = approvedSupplierHubCompany(user?.membership);
+  if (!user?.verifiedAccess || user.userId !== owner || !company) throw new ImageTextError(409, '승인된 회사 계정에서 편집 문서를 확인해주세요.');
+  return company;
+}
+async function reopenedSource(owner: string, id: string, resultKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, selection: QuotationSelection) {
+  const anchor = await quotationOriginal(owner, id, resultKey, role, current, selection);
+  if (!env.FILES) throw new ImageTextError(503, '이미지 저장소가 연결되지 않았습니다.');
+  const saved = await stableQuotationFieldsView(owner, id, selection.profileId), stored = await readFreeImageEditRecord(env.FILES, owner, id, resultKey), record = stored.record,
+    previous = record.source.quotationTarget, company = await editorCompany(owner);
+  if (!previous || record.source.role !== role || record.source.productId !== id || previous.profileId !== selection.profileId || previous.optionId !== selection.optionId
+    || previous.input !== selection.input || previous.fieldKey !== selection.fieldKey || previous.slotIndex !== selection.slotIndex
+    || JSON.stringify(record.context) !== JSON.stringify(saved.view.categoryContext) || JSON.stringify(record.company) !== JSON.stringify(company)
+    || saved.view.productVersion !== current.product.updated_at || saved.view.contentRevision !== current.content.revision) throw changed();
+  const source = await original(owner, id, record.source.sourceKey, role, current, false, false, anchor.quotationTarget,
+    { resultKey, resultSha256: record.result.sha256, documentSha256: stored.documentSha256 });
+  if (source.sourceSha256 !== record.source.sourceSha256 || source.width !== record.source.width || source.height !== record.source.height) throw changed();
+  return { source, editDocument: record.document };
+}
 async function freshSource(owner: string, id: string, source: FreeImageSource) {
   if (source.productId !== id) throw new ImageTextError(400, '번역한 상품과 저장할 상품이 다릅니다.');
   const current = await state(owner, id);
   if (current.product.updated_at !== source.productVersion || current.content.revision !== source.contentRevision) throw changed();
-  const observed = source.quotationTarget ? await quotationOriginal(owner, id, source.sourceKey, source.role, current, source.quotationTarget)
+  const observed = source.editorSource ? (await reopenedSource(owner, id, source.editorSource.resultKey, source.role, current, source.quotationTarget!)).source
+    : source.quotationTarget ? await quotationOriginal(owner, id, source.sourceKey, source.role, current, source.quotationTarget)
     : await original(owner, id, source.sourceKey, source.role, current, true, source.optionImages !== undefined);
   if (freeImageSourceIdentity(observed) !== freeImageSourceIdentity(source)) throw changed();
   return current;
 }
-async function storedOutput(key: string, source: FreeImageSource, optionImageIds: string[], sha256: string, size: number, crop?: FreeImageCrop) {
+async function storedOutput(key: string, source: FreeImageSource, optionImageIds: string[], sha256: string, size: number, crop?: FreeImageCrop, editDocument?: FreeImageEditDocument) {
   if (!env.FILES) throw new ImageTextError(503, '이미지 저장소가 연결되지 않았습니다.');
   const object = await env.FILES.get(key);
   if (!object) return false;
@@ -126,10 +149,15 @@ async function storedOutput(key: string, source: FreeImageSource, optionImageIds
     if (dimensions.mime !== 'image/png' || dimensions.width !== crop.width || dimensions.height !== crop.height
       || metadata?.imageWidth !== String(crop.width) || metadata?.imageHeight !== String(crop.height)) throw new ImageTextError(409, '저장한 잘라내기 결과의 실제 크기와 선택 영역이 다릅니다.');
   }
+  if (editDocument) {
+    const saved = await readFreeImageEditRecord(env.FILES, source.sourceKey.split('/')[0], source.productId, key);
+    if (JSON.stringify(saved.record.document) !== JSON.stringify(editDocument) || freeImageSourceIdentity(saved.record.source) !== freeImageSourceIdentity(source)
+      || saved.record.result.sha256 !== sha256 || saved.record.result.bytes !== size) throw changed();
+  }
   return true;
 }
-async function replay(owner: string, id: string, source: FreeImageSource, optionImageIds: string[], key: string, sha256: string, size: number, crop?: FreeImageCrop) {
-  if (source.quotationTarget) return quotationReplay(owner, id, source, key, sha256, size, crop);
+async function replay(owner: string, id: string, source: FreeImageSource, optionImageIds: string[], key: string, sha256: string, size: number, crop?: FreeImageCrop, editDocument?: FreeImageEditDocument) {
+  if (source.quotationTarget) return quotationReplay(owner, id, source, key, sha256, size, crop, editDocument);
   const current = await state(owner, id);
   const role = current.content.assets[source.role].value;
   const optionOnly = source.optionImages?.commonAssigned === false;
@@ -143,7 +171,7 @@ async function replay(owner: string, id: string, source: FreeImageSource, option
   return response({ source, key, productVersion: current.product.updated_at, contentRevision: current.content.revision, applied: true, replayed: true,
     ...(options ? { optionRevision: options.revision, optionImageIds } : {}), ...(crop ? { crop } : {}) });
 }
-async function quotationReplay(owner: string, id: string, source: FreeImageSource, key: string, sha256: string, size: number, crop?: FreeImageCrop) {
+async function quotationReplay(owner: string, id: string, source: FreeImageSource, key: string, sha256: string, size: number, crop?: FreeImageCrop, editDocument?: FreeImageEditDocument) {
   const target = source.quotationTarget!, current = await state(owner, id);
   if (!current.keys.includes(key)) return null;
   const saved = await stableQuotationFieldsView(owner, id, target.profileId), view = saved.view;
@@ -152,17 +180,27 @@ async function quotationReplay(owner: string, id: string, source: FreeImageSourc
     || await quotationBinding(saved, target.input, key) !== target.bindingSha256) return null;
   const exact = exactPrimaryQuotationTarget(view.resolved.schema.fields, target.input), rows = view.resolved.rows.filter(row => row.optionId === target.optionId), value = quotationValue(source, key);
   if (exact.primary !== target.fieldKey || rows.length !== 1 || exact.linked.some(id => rows[0].fields[id]?.value !== value || view.overrides.options[target.optionId]?.[id] !== value)) return null;
-  const observed = await original(owner, id, source.sourceKey, source.role, current, false, false, source.quotationTarget);
-  if (observed.sourceSha256 !== source.sourceSha256 || observed.width !== source.width || observed.height !== source.height || !await storedOutput(key, source, [], sha256, size, crop)) return null;
+  const observed = await original(owner, id, source.sourceKey, source.role, current, false, false, source.quotationTarget, source.editorSource);
+  if (observed.sourceSha256 !== source.sourceSha256 || observed.width !== source.width || observed.height !== source.height || !await storedOutput(key, source, [], sha256, size, crop, editDocument)) return null;
   const stored = await env.FILES.get(key), overrideHash = await digest(new TextEncoder().encode(JSON.stringify(view.overrides)));
   if (stored?.customMetadata?.freeImageQuotationOverridesSha256 !== overrideHash) throw changed();
   return response({ source, key, productVersion: view.productVersion, contentRevision: view.contentRevision, optionRevision: view.optionRevision,
-    quotationRevision: view.revision, quotationInputFingerprint: view.inputFingerprint, applied: true, replayed: true, ...(crop ? { crop } : {}) });
+    quotationRevision: view.revision, quotationInputFingerprint: view.inputFingerprint, applied: true, replayed: true, ...(crop ? { crop } : {}),
+    ...(editDocument ? { editDocumentSha256: await freeImageEditDigest(freeImageEditDocumentBytes(editDocument)) } : {}) });
 }
 function selectedCrop(value: unknown, source: FreeImageSource) {
   if (value === undefined) return undefined;
   try { return validateFreeImageCrop(value, source); }
   catch (error) { throw new ImageTextError(400, error instanceof Error ? error.message : '잘라낼 원본 영역을 확인해주세요.'); }
+}
+function selectedEditDocument(value: unknown, source: FreeImageSource, crop?: FreeImageCrop) {
+  if (value === undefined) { if (source.editorSource) throw new ImageTextError(400, '다시 연 편집 원본에는 편집 문서가 필요합니다.'); return; }
+  if (!source.quotationTarget) throw new ImageTextError(400, '선택 옵션의 최종 견적 이미지에만 편집 문서를 저장할 수 있습니다.');
+  try {
+    const document = validateFreeImageEditDocument(value, source);
+    if (JSON.stringify(document.crop) !== JSON.stringify(crop)) throw Error('편집 문서와 PNG 잘라내기 영역이 다릅니다.');
+    return document;
+  } catch (error) { throw new ImageTextError(400, error instanceof Error ? error.message : '편집 문서를 확인해주세요.'); }
 }
 function selectedOptionIds(value: unknown, source: FreeImageSource) {
   try { return validateFreeImageOptionIds(source, value); }
@@ -173,6 +211,7 @@ function sameOrigin(request: Request) {
   if ((origin && origin !== new URL(request.url).origin) || request.headers.get('sec-fetch-site') === 'cross-site') throw new ImageTextError(400, '같은 사이트의 이미지 편집 화면에서 요청해주세요.');
 }
 function fail(error: unknown) {
+  if (error instanceof FreeImageEditRecordError) return response({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof ImageTextError || error instanceof RequestBodyError) return response({ error: error.message }, error.status);
   if (error instanceof QuotationFieldsSnapshotError || error instanceof PublicDetailError) return response({ error: error.message }, error.status);
   return response({ error: '이미지 문구 처리 결과를 확인하지 못했습니다. 기존 이미지는 유지됩니다. 저장본을 확인한 뒤 다시 시도해주세요.' }, 503);
@@ -181,9 +220,9 @@ export async function GET(request: Request, context: Context) {
   try {
     const owner = await ownerId(), { id } = await context.params, params = new URL(request.url).searchParams;
     const quotation = params.get('target') === 'quotation';
-    const allowed = quotation ? ['sourceKey', 'role', 'target', 'profileId', 'optionId', 'fieldKey', 'slotIndex'] : ['sourceKey', 'role'];
+    const allowed = quotation ? ['sourceKey', 'role', 'target', 'profileId', 'optionId', 'fieldKey', 'slotIndex', 'editor'] : ['sourceKey', 'role'];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1) || params.getAll('sourceKey').length !== 1 || params.getAll('role').length !== 1
-      || !validFreeImageRole(params.get('role')) || params.get('role') === 'label' && !quotation) throw new ImageTextError(400, '원본 이미지와 역할을 선택해주세요.');
+      || !validFreeImageRole(params.get('role')) || params.get('role') === 'label' && !quotation || params.has('editor') && params.get('editor') !== 'saved') throw new ImageTextError(400, '원본 이미지와 역할을 선택해주세요.');
     const current = await state(owner, id), role = params.get('role') as FreeImageSource['role'];
     let selection: QuotationSelection | undefined;
     if (quotation) {
@@ -193,11 +232,12 @@ export async function GET(request: Request, context: Context) {
         || slotIndex === null || !/^(?:0|[1-9][0-9]?)$/.test(slotIndex) || Number(slotIndex) > 29 || role === 'main' && Number(slotIndex) !== 0) throw new ImageTextError(400, '최종 견적 이미지의 옵션과 선택 위치를 확인해주세요.');
       selection = { profileId, optionId, fieldKey, slotIndex: Number(slotIndex), input: role === 'main' ? 'mainImage' : role === 'additional' ? 'additionalImages' : role === 'label' ? 'labelImages' : 'detailImages' };
     }
-    const source = selection ? await quotationOriginal(owner, id, params.get('sourceKey')!, role, current, selection)
-      : await original(owner, id, params.get('sourceKey')!, role, current, true, true);
+    const editor = selection && params.get('editor') === 'saved' ? await reopenedSource(owner, id, params.get('sourceKey')!, role, current, selection) : undefined;
+    const source = editor?.source ?? (selection ? await quotationOriginal(owner, id, params.get('sourceKey')!, role, current, selection)
+      : await original(owner, id, params.get('sourceKey')!, role, current, true, true));
     // Never return a snapshot whose source/version changed while R2 was read.
     await freshSource(owner, id, source);
-    return response({ source });
+    return response({ source, ...(editor ? { editDocument: editor.editDocument } : {}) });
   } catch (error) { return fail(error); }
 }
 export async function POST(request: Request, context: Context) {
@@ -206,22 +246,28 @@ export async function POST(request: Request, context: Context) {
     sameOrigin(request);
     const type = request.headers.get('content-type') ?? '';
     if (type.split(';')[0].trim().toLowerCase() === 'application/json') {
-      const body = await readBoundedJson(request, 96 * 1024);
+      const bytes = await readBoundedBytes(request, 96 * 1024 + MAX_FREE_IMAGE_EDIT_BYTES);
+      let body: unknown;
+      try { body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
+      catch { throw new RequestBodyError(bytes.length > 96 * 1024 ? 413 : 400, '올바른 크기의 JSON 객체가 필요합니다.'); }
+      if (bytes.length > 96 * 1024 && (!body || typeof body !== 'object' || Array.isArray(body)
+        || (body as Record<string, unknown>).action !== 'recover' || (body as Record<string, unknown>).editDocument === undefined)) throw new RequestBodyError(413, '편집 문서가 없는 요청은 96KiB 이하이어야 합니다.');
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ImageTextError(400, '번역할 문구를 확인해주세요.');
       const input = body as Record<string, unknown>;
       if (input.action === 'recover') {
-        if (Object.keys(input).some(key => !['action', 'source', 'outputSha256', 'outputBytes', 'crop'].includes(key)) || typeof input.outputSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.outputSha256)
+        if (Object.keys(input).some(key => !['action', 'source', 'outputSha256', 'outputBytes', 'crop', 'editDocument'].includes(key)) || typeof input.outputSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.outputSha256)
           || !Number.isSafeInteger(input.outputBytes) || (input.outputBytes as number) < 1 || (input.outputBytes as number) > MAX_IMAGE_BYTES) throw new ImageTextError(400, '복구할 PNG 결과 번호와 크기를 확인해주세요.');
         let source: FreeImageSource;
         try { source = validateFreeImageSource(input.source); } catch { throw new ImageTextError(400, '복구할 원본 정보를 확인해주세요.'); }
         if (!source.quotationTarget || source.productId !== id || !isOwnedImageKey(owner, source.sourceKey)) throw new ImageTextError(400, '이 상품의 최종 견적 이미지 복구 범위를 확인해주세요.');
         const crop = selectedCrop(input.crop, source);
-        const fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, [], crop))), key = `${owner}/free-image-${id}-${fingerprint}-${input.outputSha256}.png`;
-        const recovered = await replay(owner, id, source, [], key, input.outputSha256, input.outputBytes as number, crop);
+        const editDocument = selectedEditDocument(input.editDocument, source, crop), editDocumentSha256 = editDocument ? await freeImageEditDigest(freeImageEditDocumentBytes(editDocument)) : undefined;
+        const fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, [], crop, editDocumentSha256))), key = `${owner}/free-image-${id}-${fingerprint}-${input.outputSha256}.png`;
+        const recovered = await replay(owner, id, source, [], key, input.outputSha256, input.outputBytes as number, crop, editDocument);
         if (recovered) return recovered;
         await freshSource(owner, id, source);
-        await storedOutput(key, source, [], input.outputSha256, input.outputBytes as number, crop);
-        return response({ source, key, applied: false, ...(crop ? { crop } : {}) });
+        await storedOutput(key, source, [], input.outputSha256, input.outputBytes as number, crop, editDocument);
+        return response({ source, key, applied: false, ...(crop ? { crop } : {}), ...(editDocumentSha256 ? { editDocumentSha256 } : {}) });
       }
       if (Object.keys(input).some(key => !['action', 'source', 'sourceLanguage', 'regions'].includes(key)) || input.action !== 'translate' || !['zh', 'en'].includes(String(input.sourceLanguage))) throw new ImageTextError(400, '이미지 문구 번역 요청을 확인해주세요.');
       let source: FreeImageSource, regions;
@@ -233,13 +279,14 @@ export async function POST(request: Request, context: Context) {
       return response({ source, ...translated });
     }
     if (!/^multipart\/form-data(?:\s*;|$)/i.test(type)) throw new ImageTextError(400, '이미지 저장은 PNG 파일을 multipart 형식으로 요청해주세요.');
-    const body = await readBoundedBytes(request, MAX_IMAGE_MULTIPART_BYTES);
+    const body = await readBoundedBytes(request, MAX_IMAGE_MULTIPART_BYTES + MAX_FREE_IMAGE_EDIT_BYTES);
     let form: FormData;
     try { form = await new Response(body.buffer as ArrayBuffer, { headers: { 'content-type': type } }).formData(); }
     catch { throw new ImageTextError(400, '이미지 파일 요청을 읽지 못했습니다.'); }
-    if ([...form.keys()].some(key => !['action', 'source', 'file', 'optionImageIds', 'crop'].includes(key)) || ['action', 'source', 'file'].some(key => form.getAll(key).length !== 1)
+    if ([...form.keys()].some(key => !['action', 'source', 'file', 'optionImageIds', 'crop', 'editDocument'].includes(key)) || ['action', 'source', 'file'].some(key => form.getAll(key).length !== 1)
       || form.getAll('optionImageIds').length > 1
       || form.getAll('crop').length > 1
+      || form.getAll('editDocument').length > 1
       || form.get('action') !== 'apply' || typeof form.get('source') !== 'string') throw new ImageTextError(400, 'PNG 결과 한 개와 원본 정보를 전달해주세요.');
     let source: FreeImageSource;
     try { const value = form.get('source') as string; if (value.length > 32768) throw Error('원본 정보가 너무 큽니다.'); source = validateFreeImageSource(JSON.parse(value)); }
@@ -251,6 +298,12 @@ export async function POST(request: Request, context: Context) {
       if (value !== null && (typeof value !== 'string' || value.length > 1024)) throw Error('잘라낼 영역의 입력 형식을 확인해주세요.');
       crop = selectedCrop(value === null ? undefined : JSON.parse(value as string), source);
     } catch (error) { if (error instanceof ImageTextError) throw error; throw new ImageTextError(400, '잘라낼 영역의 입력 형식을 확인해주세요.'); }
+    let editDocument: FreeImageEditDocument | undefined;
+    try {
+      const value = form.get('editDocument');
+      if (value !== null && (typeof value !== 'string' || new TextEncoder().encode(value).length > MAX_FREE_IMAGE_EDIT_BYTES)) throw Error('편집 문서 크기를 확인해주세요.');
+      editDocument = selectedEditDocument(value === null ? undefined : JSON.parse(value as string), source, crop);
+    } catch (error) { if (error instanceof ImageTextError) throw error; throw new ImageTextError(400, '편집 문서 형식을 확인해주세요.'); }
     let optionImageIds: string[];
     try {
       const value = form.get('optionImageIds');
@@ -270,10 +323,11 @@ export async function POST(request: Request, context: Context) {
     const same = dimensions.width === source.width && dimensions.height === source.height;
     const rotated = dimensions.width === source.height && dimensions.height === source.width;
     if (crop ? dimensions.width !== crop.width || dimensions.height !== crop.height : !same && !rotated) throw new ImageTextError(400, crop ? '잘라낸 PNG의 실제 크기가 선택 영역과 다릅니다.' : '번역 결과 크기가 원본 이미지와 다릅니다.');
-    const sha256 = await digest(bytes), fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, optionImageIds, crop)));
+    const editDocumentSha256 = editDocument ? await freeImageEditDigest(freeImageEditDocumentBytes(editDocument)) : undefined;
+    const sha256 = await digest(bytes), fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, optionImageIds, crop, editDocumentSha256)));
     const key = `${owner}/free-image-${id}-${fingerprint}-${sha256}.png`;
     if (!isOwnedImageKey(owner, key)) throw new ImageTextError(400, '이미지 결과 저장 범위를 확인해주세요.');
-    const recovered = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop);
+    const recovered = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop, editDocument);
     if (recovered) return recovered;
     const current = await freshSource(owner, id, source);
     const quotation = source.quotationTarget ? await stableQuotationFieldsView(owner, id, source.quotationTarget.profileId) : null;
@@ -289,7 +343,14 @@ export async function POST(request: Request, context: Context) {
     catch { throw new ImageTextError(409, '이미지 역할이 중복되어 있습니다. 원본 역할을 확인한 후 다시 적용해주세요.'); }
     const finalOverrides = quotation ? quotationOverrides(quotation, source, key) : null;
     const quotationOverridesSha256 = finalOverrides ? await digest(new TextEncoder().encode(JSON.stringify(finalOverrides))) : undefined;
-    if (!await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop)) {
+    let editRecord: Awaited<ReturnType<typeof prepareFreeImageEditRecord>> | undefined;
+    if (editDocument) {
+      if (!quotation || !quotation.view.categoryContext.categoryId || !env.FILES) throw changed();
+      editRecord = await prepareFreeImageEditRecord(source, editDocument, quotation.view.categoryContext, await editorCompany(owner),
+        { key, sha256, bytes: bytes.length, width: dimensions.width, height: dimensions.height });
+      await storeFreeImageEditRecord(env.FILES, editRecord);
+    }
+    if (!await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop, editDocument)) {
       try {
         // Both arrays can contain 200 long IDs. Store their hashes rather than
         // full JSON so the complete record stays below R2's 8KB metadata limit.
@@ -299,14 +360,15 @@ export async function POST(request: Request, context: Context) {
         ]);
         const saved = await env.FILES.put(key, bytes, { onlyIf: new Headers({ 'if-none-match': '*' }), httpMetadata: { contentType: 'image/png' },
           customMetadata: { freeImageSourceSha256: sourceSha256, freeImageOptionIdsSha256: optionIdsSha256, freeImageOutputSha256: sha256,
+            ...(editRecord ? { freeImageEditDocumentSha256: editRecord.documentSha256, freeImageEditRecordSha256: editRecord.recordSha256 } : {}),
             ...(cropSha256 ? { freeImageCropSha256: cropSha256 } : {}),
             ...(quotationOverridesSha256 ? { freeImageQuotationOverridesSha256: quotationOverridesSha256 } : {}),
             imageValidation: 'header-v1', dimensionValidation: 'header-v1', imageWidth: String(dimensions.width), imageHeight: String(dimensions.height) } });
-        if (!saved && !await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop)) throw Error('Image upload was not confirmed.');
+        if (!saved && !await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop, editDocument)) throw Error('Image upload was not confirmed.');
       } catch (error) {
         // A failed acknowledgement may follow a committed R2 put. Verify bytes
         // and metadata before continuing; never overwrite or delete that object.
-        if (!await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop)) throw error;
+        if (!await storedOutput(key, source, optionImageIds, sha256, bytes.length, crop, editDocument)) throw error;
       }
     }
     if (quotationOverridesSha256 && (await env.FILES.get(key))?.customMetadata?.freeImageQuotationOverridesSha256 !== quotationOverridesSha256) throw changed();
@@ -315,8 +377,11 @@ export async function POST(request: Request, context: Context) {
     // object can remain unattached after a conflict and be reused safely later.
     try {
       if (quotation && finalOverrides) {
-        const saved = await attachQuotationImageTranslation(owner, id, finalOverrides, quotation.view.revision, quotation.source, quotation.view.categoryContext.categoryId, imageKeys);
-        const committed = await replay(owner, id, source, [], key, sha256, bytes.length, crop);
+        const user = editDocument ? await getChatGPTUser() : undefined, company = editDocument ? approvedSupplierHubCompany(user?.membership) : undefined;
+        if (editDocument && (!user?.verifiedAccess || user.userId !== owner || !user.membership || !company || JSON.stringify(company) !== JSON.stringify(editRecord?.record.company))) throw changed();
+        const sealed = company && user?.membership ? { expectedOverrides: quotation.view.overrides, member: { email: user.membership.email, role: user.membership.role, companyCode: company.code, companyName: company.name } } : undefined;
+        const saved = await attachQuotationImageTranslation(owner, id, finalOverrides, quotation.view.revision, quotation.source, quotation.view.categoryContext.categoryId, imageKeys, sealed);
+        const committed = await replay(owner, id, source, [], key, sha256, bytes.length, crop, editDocument);
         if (committed) {
           if (!saved) return committed;
           const acknowledged: unknown = await committed.json();
@@ -334,11 +399,11 @@ export async function POST(request: Request, context: Context) {
         : await attachProductDocument(owner, { ...common, contentMutated: true, ...(source.optionImages ? { expectedOptionRevision: source.optionImages.revision } : {}) });
       if (saved) return response({ source, key, productVersion: saved.productVersion, contentRevision: saved.content.revision, applied: true,
         ...(options ? { optionRevision: options.revision + 1, optionImageIds } : {}), ...(crop ? { crop } : {}) });
-      const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop);
+      const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop, editDocument);
       if (committed) return committed;
       throw changed();
     } catch (error) {
-      const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop);
+      const committed = await replay(owner, id, source, optionImageIds, key, sha256, bytes.length, crop, editDocument);
       if (committed) return committed;
       throw error;
     }

@@ -52,17 +52,17 @@ function fixture(initialProps = {}, clientOverrides = {}) {
   const client = {
     FreeImageApplyError: ApplyError,
     sameFreeImageQuotationRequest(actual, expected) { const clean = target => target ? Object.fromEntries(Object.entries(target).filter(([key]) => key !== 'bindingSha256')) : null; return JSON.stringify(clean(actual)) === JSON.stringify(clean(expected)); },
-    async readFreeImageSource(id, productVersion, key, role, signal, _fetcher, quotationTarget) { calls.push({ action: 'source', id, productVersion, key, role, signal, quotationTarget });
-      const image = { source: { ...sourceFor(id, productVersion, key, role), ...(quotationTarget ? { quotationTarget: { ...quotationTarget, bindingSha256: 'b'.repeat(64) } } : {}) }, width: 20, height: 12, blob: new Blob(['original']), canvas: {} }; return sourceIntercept ? sourceIntercept(image, signal) : image; },
+    async readFreeImageSource(id, productVersion, key, role, signal, _fetcher, quotationTarget, options) { calls.push({ action: 'source', id, productVersion, key, role, signal, quotationTarget, ...(options ? { options } : {}) });
+      const image = { source: { ...sourceFor(id, productVersion, key, role), ...(quotationTarget ? { quotationTarget: { ...quotationTarget, bindingSha256: 'b'.repeat(64) } } : {}) }, width: 20, height: 12, blob: new Blob(['original']), canvas: {} }; return sourceIntercept ? sourceIntercept(image, signal, options) : image; },
     async recognizeFreeImage(image, language, signal, progress) { calls.push({ action: 'ocr', image, language, signal }); progress('인식 중'); return ocrIntercept ? ocrIntercept(image, signal) : [region('r1'), region('r2')]; },
     async translateFreeImageRegions(source, language, rows, signal) { calls.push({ action: 'translate', source, language, rows, signal });
       return translateIntercept ? translateIntercept(source, rows, signal) : { source, regions: rows.map(row => ({ id: row.id, original: row.text, translated: '한국어 ' + row.id, issue: null })), requests: 1, stoppedHttpStatus: null, warnings: [] }; },
-    async renderFreeImageTranslation(image, rows, signal, optionImageIds = [], crop) {
+    async renderFreeImageTranslation(image, rows, signal, optionImageIds = [], crop, sourceLanguage) {
       const selection = Array.from(optionImageIds).sort(); if(crop!==undefined)cropModule.validateFreeImageCropRect(crop,image.width,image.height);
-      calls.push({ action: 'preview', image, rows, signal, optionImageIds: selection, ...(crop!==undefined?{crop}:{}) });
+      calls.push({ action: 'preview', image, rows, signal, optionImageIds: selection, ...(crop!==undefined?{crop}:{}), ...(sourceLanguage ? { sourceLanguage } : {}) });
       if (selection.some(id => image.source.role !== 'main' || !image.source.optionImages?.optionIds.includes(id)) || new Set(selection).size !== selection.length
         || image.source.optionImages?.commonAssigned === false && !selection.length) throw Error('이 원본을 대표 이미지로 사용하는 옵션만 선택해주세요.');
-      return renderIntercept ? renderIntercept(image, rows, signal, selection, crop) : { source: image.source, output: new Blob(['rendered PNG'], { type: 'image/png' }), width: crop?.width??20, height: crop?.height??12,
+      return renderIntercept ? renderIntercept(image, rows, signal, selection, crop, sourceLanguage) : { source: image.source, output: new Blob(['rendered PNG'], { type: 'image/png' }), width: crop?.width??20, height: crop?.height??12,
         ...(crop!==undefined?{crop:{...crop,sourceWidth:image.width,sourceHeight:image.height}}:{}), ...(selection.length ? { optionImageIds: [...selection] } : {}) }; },
     async applyFreeImageTranslation(image, signal) { calls.push({ action: 'apply', image, signal });
       return applyIntercept ? applyIntercept(image, signal) : { source: image.source, key: 'owner/generated.png', applied: true, productVersion: '2026-10-06T00:00:01Z', contentRevision: 3 }; },
@@ -1034,4 +1034,133 @@ test('a reviewed brush PNG retains exact quotation and option proof through lost
     assert.equal(h.calls.filter(call => call.action === 'apply').at(-1).image, first); assert.equal(h.saved, 1);
     assert.equal(h.calls.filter(call => call.action === 'source').length, 1); assert.equal(h.calls.filter(call => call.action === 'preview').length, 1);
   } finally { h.close(); }
+});
+
+function savedEditDocument() {
+  const drawn = brushModule.createFreeImageBrush(3, [{ x: 4, y: 4 }, { x: 7, y: 7 }], 20, 12);
+  return plain({ format: 'free-image-edit-v1', width: 20, height: 12, sourceLanguage: 'en',
+    regions: [
+      { ...region('manual-41', ' 직접 검토한 한국어\n둘째 줄 '), text: ' English original ', translationProvenance: 'manual',
+        background: '#234567', foreground: '#abcdef', fontSize: 5, ...manualStyle },
+      { ...region('brush-57'), text: '', translated: '', translationProvenance: 'manual', erase: true, background: '#13579b', ...drawn },
+      { ...region('ocr-7', ''), text: 'unselected original', selected: false, translated: '', issue: '검토 필요', translationProvenance: 'manual',
+        fontFamily: 'gmarket', bold: false, italic: true, textAlign: 'right', lineHeight: 1.4 },
+    ], crop: { x: 2, y: 1, width: 14, height: 9, sourceWidth: 20, sourceHeight: 12 } });
+}
+function savedEditorSelection(h, { document = savedEditDocument(), sourceIntercept } = {}) {
+  const resultKey = `owner/free-image-product-${'d'.repeat(64)}.png`, originalKey = 'owner/original.png';
+  const quotationTarget = { kind: 'quotation', profileId: 'saved-profile', optionId: 'sku-restored', input: 'detailImages', fieldKey: 'wire-detail', slotIndex: 0,
+    revision: 9, inputFingerprint: 'c'.repeat(64), optionRevision: 4, value: resultKey };
+  const quotationContext = { profileId: quotationTarget.profileId, optionId: quotationTarget.optionId, input: quotationTarget.input };
+  const target = { sourceKey: resultKey, sequence: 2, sourceLanguage: 'zh', role: 'detail', intent: 'manual', quotationTarget };
+  const imageFor = image => ({ ...image, source: { ...image.source, sourceKey: originalKey,
+    editorSource: { resultKey, resultSha256: 'e'.repeat(64), documentSha256: 'f'.repeat(64) } }, editDocument: document });
+  h.setSource((image, signal, options) => sourceIntercept ? sourceIntercept(imageFor(image), signal, options) : imageFor(image));
+  const open = () => h.setProps({ imageKeys: [originalKey, resultKey, 'owner/second.png'], quotationContext, focusedOptionId: quotationTarget.optionId, translationTarget: target });
+  return { document, resultKey, originalKey, quotationTarget, quotationContext, target, imageFor, open };
+}
+
+test('saved editor restores original pixels, all ordered text/style/brush layers, unchecked blanks, crop and language without OCR or an automatic preview/write', async () => {
+  const h = fixture(), f = savedEditorSelection(h), before = JSON.stringify(f.document);
+  try {
+    f.open(); await h.settle();
+    assert.deepEqual(h.calls.map(call => call.action), ['source']); assert.deepEqual(plain(h.calls[0].options), { restoreEditor: true });
+    assert.equal(h.calls[0].key, f.resultKey); assert.equal(h.field('번역할 원본 이미지').props.value, f.resultKey);
+    assert.equal(h.field('이미지 원문 언어').props.value, 'en'); assert.equal(h.field('문구 1 원문').props.value, ' English original ');
+    assert.equal(h.field('문구 1 한국어').props.value, ' 직접 검토한 한국어\n둘째 줄 ');
+    assert.equal(h.field('문구 3 선택').props.checked, false); assert.equal(h.field('문구 3 한국어').props.value, '');
+    assert.equal(h.field('문구 3 글꼴').props.value, 'gmarket'); assert.equal(h.button('되돌리기').props.disabled, true);
+    assert.deepEqual(plain(h.brush().props.strokes), [{ id: 'brush-57', background: '#13579b', brush: f.document.regions[1].brush }]);
+    assert.equal(h.render().props['data-workspace-dirty'], 'true'); assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
+    h.setRender(async (image, rows, _signal, optionImageIds, crop, sourceLanguage) => ({ source: image.source, output: new Blob(['reviewed restored pixels'], { type: 'image/png' }),
+      width: crop.width, height: crop.height, crop: { ...crop, sourceWidth: image.width, sourceHeight: image.height },
+      editDocument: { format: 'free-image-edit-v1', width: image.width, height: image.height, sourceLanguage, regions: plain(rows), crop: { ...crop, sourceWidth: image.width, sourceHeight: image.height } }, optionImageIds }));
+    await h.click('번역 이미지 미리보기'); const preview = h.calls.filter(call => call.action === 'preview').at(-1);
+    assert.equal(preview.image.source.sourceKey, f.originalKey); assert.notEqual(preview.image.source.sourceKey, f.resultKey);
+    assert.equal(preview.image.source.editorSource.resultKey, f.resultKey); assert.deepEqual(plain(preview.image.source.quotationTarget), { ...f.quotationTarget, bindingSha256: 'b'.repeat(64) });
+    assert.deepEqual(plain(preview.rows), f.document.regions); assert.deepEqual(plain(preview.crop), { x: 2, y: 1, width: 14, height: 9 }); assert.equal(preview.sourceLanguage, 'en');
+    assert.equal(h.calls.filter(call => call.action === 'apply').length, 0); const applying = deferred(); h.setApply(() => applying.promise);
+    const apply = h.button('검토한 번역 이미지 적용').props.onClick; apply(); apply(); await h.settle();
+    assert.equal(h.calls.filter(call => call.action === 'apply').length, 1); assert.equal(h.saved, 0);
+    const sent = h.calls.find(call => call.action === 'apply').image;
+    assert.equal(sent.source.sourceKey, f.originalKey); assert.equal(sent.source.editorSource.resultKey, f.resultKey); assert.deepEqual(plain(sent.editDocument), f.document);
+    applying.resolve({ source: sent.source, applied: true }); await h.settle(); assert.equal(h.saved, 1);
+    assert.deepEqual(h.calls.map(call => call.action), ['source', 'preview', 'apply']); assert.equal(JSON.stringify(f.document), before);
+  } finally { h.close(); }
+});
+
+test('restored manual and brush IDs are reseeded together so newly added text and brush layers remain independent', async () => {
+  const h = fixture(), f = savedEditorSelection(h);
+  try {
+    f.open(); await h.settle(); await h.click('문구 영역 직접 추가'); await h.change('문구 4 한국어', '새 문구');
+    await h.change('색상 브러시 모드', '', true); await h.change('브러시 지름', '2');
+    const canvas = h.brush().props, id = canvas.onBegin(); assert.ok(id); canvas.onComplete(id, [{ x: 5, y: 5 }]); await h.settle();
+    const rows = await snapshotRegions(h); assert.deepEqual(rows.slice(0, 3), f.document.regions);
+    assert.equal(rows[3].id, 'manual-58'); assert.equal(rows[4].id, 'brush-59'); assert.equal(new Set(rows.map(row => row.id)).size, rows.length);
+    assert.equal(rows[3].translated, '새 문구'); assert.deepEqual(rows[4].brush, { size: 2, points: [{ x: 5, y: 5 }] });
+    assert.equal(h.calls.filter(call => ['ocr', 'translate', 'apply'].includes(call.action)).length, 0);
+  } finally { h.close(); }
+});
+
+test('large numeric restored IDs cannot overflow into duplicate manual or brush identities', async () => {
+  const h = fixture(), document = savedEditDocument();
+  document.regions[0].id = 'manual-9007199254740992'; document.regions[1].id = 'brush-2'; document.regions[2].id = 'manual-1';
+  const f = savedEditorSelection(h, { document });
+  try {
+    f.open(); await h.settle(); await h.click('문구 영역 직접 추가'); await h.change('색상 브러시 모드', '', true); await h.change('브러시 지름', '2');
+    const canvas = h.brush().props, id = canvas.onBegin(); assert.ok(id); canvas.onComplete(id, [{ x: 8, y: 5 }]); await h.settle();
+    const rows = await snapshotRegions(h); assert.equal(rows.length, 5); assert.equal(new Set(rows.map(row => row.id)).size, 5);
+    assert.deepEqual(rows.slice(0, 3), f.document.regions); assert.notEqual(rows[3].id, 'manual-1'); assert.notEqual(rows[4].id, 'brush-2');
+    assert.equal(h.calls.filter(call => ['ocr', 'translate', 'apply'].includes(call.action)).length, 0);
+  } finally { h.close(); }
+});
+
+test('repeated same-card manual preparation preserves the reviewed restored language, text, crop and unselected layers without a second source read', async () => {
+  const h = fixture(), f = savedEditorSelection(h);
+  try {
+    f.open(); await h.settle(); await h.change('문구 1 한국어', '아직 저장하지 않은 문구');
+    const restore = h.button('원본 불러오기 · 수동 편집').props.onClick, ocr = h.button('원본 문구 읽기').props.onClick;
+    restore(); restore(); ocr(); await h.settle();
+    h.setProps({ translationTarget: { ...f.target, sequence: 3, sourceLanguage: 'zh' } }); await h.settle();
+    assert.equal(h.field('이미지 원문 언어').props.value, 'en'); assert.equal(h.field('문구 1 한국어').props.value, '아직 저장하지 않은 문구');
+    assert.equal(h.field('문구 3 선택').props.checked, false); assert.equal(h.field('문구 3 한국어').props.value, '');
+    assert.deepEqual(h.calls.map(call => call.action), ['source']);
+    await h.click('번역 이미지 미리보기'); const preview = h.calls.at(-1); assert.equal(preview.sourceLanguage, 'en'); assert.deepEqual(plain(preview.crop), { x: 2, y: 1, width: 14, height: 9 });
+    assert.equal(preview.rows[0].translated, '아직 저장하지 않은 문구'); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('restored-source refresh reacquires the current result anchor and preserves the current edited draft instead of adopting stored rows again', async () => {
+  const h = fixture(), f = savedEditorSelection(h);
+  try {
+    f.open(); await h.settle(); await h.change('문구 1 한국어', '복원 뒤 직접 수정'); await h.change('문구 3 선택', '', true);
+    const changed = '2026-10-06T00:00:02.000Z'; h.setProps({ version: changed }); await h.settle();
+    assert.equal(h.button('번역 이미지 미리보기').props.disabled, true); await h.click('원본 저장 상태 다시 확인');
+    const reads = h.calls.filter(call => call.action === 'source'); assert.equal(reads.length, 2);
+    assert.equal(reads[1].key, f.resultKey); assert.equal(reads[1].productVersion, changed); assert.deepEqual(plain(reads[1].options), { restoreEditor: true });
+    assert.equal(h.field('문구 1 한국어').props.value, '복원 뒤 직접 수정'); assert.equal(h.field('문구 3 선택').props.checked, true);
+    await h.click('번역 이미지 미리보기'); const preview = h.calls.at(-1);
+    assert.equal(preview.image.source.productVersion, changed); assert.equal(preview.image.source.sourceKey, f.originalKey); assert.equal(preview.image.source.editorSource.resultKey, f.resultKey);
+    assert.equal(preview.rows[0].translated, '복원 뒤 직접 수정'); assert.equal(preview.sourceLanguage, 'en'); assert.equal(h.saved, 0);
+    assert.equal(h.calls.filter(call => ['ocr', 'translate', 'apply'].includes(call.action)).length, 0);
+  } finally { h.close(); }
+});
+
+test('double manual clicks during saved-document loading perform one read, and late restore after context/version/cancel/unmount cannot install its draft', async () => {
+  for (const mode of ['double', 'context', 'version', 'cancel', 'unmount']) {
+    const h = fixture(), wait = deferred(); let pending;
+    const f = savedEditorSelection(h, { sourceIntercept(image, signal) { pending = { image, signal }; return wait.promise; } });
+    try {
+      f.open(); await h.settle(); assert.ok(pending);
+      const restore = h.button('원본 불러오기 · 수동 편집').props.onClick; restore(); restore(); await h.settle();
+      assert.deepEqual(h.calls.map(call => call.action), ['source']);
+      if (mode === 'context') h.setProps({ quotationContext: { ...f.quotationContext, optionId: 'different-option' } });
+      if (mode === 'version') h.setProps({ version: '2026-10-06T00:00:03.000Z' });
+      if (mode === 'cancel') await h.click('이미지 작업 취소'); if (mode === 'unmount') h.close();
+      wait.resolve(pending.image); await h.settle();
+      if (mode === 'double') { assert.equal(h.field('문구 1 한국어').props.value, f.document.regions[0].translated); assert.equal(h.field('이미지 원문 언어').props.value, 'en'); }
+      else { assert.equal(h.field('문구 1 한국어'), undefined); assert.equal(h.render().props['data-workspace-dirty'], undefined); assert.equal(pending.signal.aborted, true); }
+      assert.equal(h.late, 0); assert.equal(h.saved, 0); assert.deepEqual(h.calls.map(call => call.action), ['source']);
+    } finally { h.close(); }
+  }
 });
