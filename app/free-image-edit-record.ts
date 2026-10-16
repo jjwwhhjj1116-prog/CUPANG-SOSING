@@ -25,13 +25,13 @@ export async function freeImageEditOutputKey(source: FreeImageSource, document: 
   document = validateFreeImageEditDocument(document, source);
   const documentSha256 = await freeImageEditDigest(freeImageEditDocumentBytes(document));
   const fingerprint = await freeImageEditDigest(new TextEncoder().encode(freeImageApplyIdentity(source, [], document.crop, documentSha256)));
-  return { key: `${source.sourceKey.split('/')[0]}/free-image-${source.productId}-${fingerprint}-${outputSha256}.png`, documentSha256 };
+  return { key: `${source.sourceKey.split('/')[0]}/${source.workspaceTarget ? 'free-image-workspace' : 'free-image'}-${source.productId}-${fingerprint}-${outputSha256}.png`, documentSha256 };
 }
 export async function prepareFreeImageEditRecord(sourceValue: FreeImageSource, documentValue: unknown, context: QuotationFieldsView['categoryContext'], company: SupplierHubCompany,
   result: FreeImageEditRecord['result']) {
   const source = validateFreeImageSource(JSON.parse(freeImageSourceIdentity(sourceValue))), document = validateFreeImageEditDocument(documentValue, source),
     owner = source.sourceKey.split('/')[0];
-  if (!source.quotationTarget || !isOwnedImageKey(owner, source.sourceKey) || !hash(result.sha256) || !Number.isSafeInteger(result.bytes) || result.bytes < 1 || result.bytes > MAX_IMAGE_BYTES
+  if (!source.quotationTarget && !source.workspaceTarget || !isOwnedImageKey(owner, source.sourceKey) || !hash(result.sha256) || !Number.isSafeInteger(result.bytes) || result.bytes < 1 || result.bytes > MAX_IMAGE_BYTES
     || result.width !== (document.crop?.width ?? document.width) || result.height !== (document.crop?.height ?? document.height)
     || new TextEncoder().encode(JSON.stringify(source)).length > 32768) throw invalid();
   const expected = await freeImageEditOutputKey(source, document, result.sha256);

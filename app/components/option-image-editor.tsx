@@ -1,5 +1,6 @@
 'use client';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
+import { isOwnedImageKey } from '@/app/image-files';
 import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react';
 import type { QuotationChange, QuotationFieldsView } from '@/app/quotation-schema';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
@@ -325,6 +326,26 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     </div>}
     {stage === 'detail' && view && <DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
       disabled={disabled || busy || merging || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
+      onRefreshRequested={() => {
+        if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'
+          || liveDisabled.current || compositeBusy.current || request.current || pendingSave.current || Object.keys(latestDraft.current.values).length) return;
+        onSaved?.();
+      }}
+      onFilesAttached={next => {
+        if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'
+          || liveDisabled.current || compositeBusy.current || request.current || pendingSave.current || latestSaved.current?.view !== view
+          || latestSaved.current.sourceKey !== sourceKey || Object.keys(latestDraft.current.values).length) return;
+        try {
+          verify(next, true);
+          const stable = (value: QuotationFieldsView) => Object.fromEntries(Object.entries(value).filter(([key]) => !['productVersion', 'imageKeys', 'inputFingerprint'].includes(key)));
+          if (JSON.stringify(stable(next)) !== JSON.stringify(stable(view)) || Date.parse(next.productVersion) <= Date.parse(view.productVersion)
+            || next.imageKeys.length <= view.imageKeys.length || !view.imageKeys.every((key, index) => next.imageKeys[index] === key)
+            || next.imageKeys.some(key => !isOwnedImageKey(view.imageKeys[0]?.split('/')[0] ?? '', key))) return;
+          clearDrag(); latestSaved.current = { scope, sourceKey, view: next }; setSaved(latestSaved.current);
+          setMessage('편집 결과를 상품의 이미지 후보에 추가했습니다. 견적서는 유지했습니다. 최신 편집 구성을 열어 사진을 확인한 뒤 옵션 초안에 적용해주세요.');
+          onSaved?.();
+        } catch { setError('추가한 사진의 최신 상품 기준을 확인하지 못했습니다. 견적서는 유지하고 최신 저장본을 다시 확인해주세요.'); }
+      }}
       beforeAdopt={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail'
         && !liveDisabled.current && !compositeBusy.current && !request.current && !pendingSave.current && latestSaved.current?.view === view
         && latestSaved.current.sourceKey === sourceKey && knownProtection !== null && !Object.keys(latestDraft.current.values).length}

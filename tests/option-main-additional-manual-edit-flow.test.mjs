@@ -19,7 +19,10 @@ for(const company of companies)for(const stage of ['main','additional']){
     assert.deepEqual(plain(latest.overrides),overrides);assert.equal(latest.revision,before.revision+1);assert.equal(latest.contentRevision,before.contentRevision);assert.equal(latest.optionRevision,before.optionRevision);assert.equal(f.sourceSnapshot(),source);
     const count=f.requests.filter(call=>call.path.startsWith(f.qurl)).length;f.options.source(latest.productVersion,'manual-saved');await f.options.idle();assert.deepEqual(plain(f.options.ordered()),keys);f.options.disabled(false);await f.options.idle();
     assert.deepEqual(plain(f.options.ordered()),expectedKeys);assert.equal(f.requests.filter(call=>call.path.startsWith(f.qurl)).length,count+1);f.options.disabled(true);await f.options.idle();f.options.disabled(false);await f.options.idle();assert.equal(f.requests.filter(call=>call.path.startsWith(f.qurl)).length,count+1);
-    const afterFiles=await f.fileSnapshot();assert.equal(afterFiles.size,files.size+1);for(const[oldKey,old]of files)assert.deepEqual(afterFiles.get(oldKey),old);assert.deepEqual([...f.h.objects.get(key)],Array.from(new Uint8Array(await image.output.arrayBuffer())));
+    const afterFiles=await f.fileSnapshot();assert.equal(afterFiles.size,files.size+2);for(const[oldKey,old]of files)assert.deepEqual(afterFiles.get(oldKey),old);assert.deepEqual([...f.h.objects.get(key)],Array.from(new Uint8Array(await image.output.arrayBuffer())));
+    assert.deepEqual([...afterFiles.keys()].filter(value=>!files.has(value)).sort(),[key,key+'.edit.json'].sort());
+    const stored=await f.h.load('app/free-image-edit-record.ts').readFreeImageEditRecord(f.h.bindings.FILES,'owner',f.id,key);
+    assert.deepEqual(plain(stored.record.document),plain(image.editDocument));assert.deepEqual(plain(stored.record.source.quotationTarget),plain(image.source.quotationTarget));assert.equal(stored.record.result.bytes,image.output.size);
     assert.deepEqual(plain(f.panel.calls.map(call=>call.action)),lostAck?['source','preview','apply','recover']:['source','preview','apply']);assert.equal(f.requests.filter(call=>call.method==='POST').length,lostAck?2:1);
     assert.equal(f.product().supplier_hub_status,'미전송');assert.deepEqual(f.h.network,f.intakeNetworkBaseline);
    }finally{f.close();}

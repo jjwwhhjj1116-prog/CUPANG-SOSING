@@ -69,6 +69,16 @@ function fixture(initialProps = {}, clientOverrides = {}) {
     async recoverFreeImageTranslation(image, signal) { calls.push({ action: 'recover', image, signal }); return recoverIntercept ? recoverIntercept(image, signal) : { source: image.source, key: 'owner/generated.png', applied: true, replayed: true }; },
   };
   Object.assign(client, clientOverrides);
+  const workspaceClient = {
+    sameFreeImageWorkspaceRequest(actual, expected) { const clean = value => value ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'bindingSha256')) : null; return JSON.stringify(clean(actual)) === JSON.stringify(clean(expected)); },
+    async readDetailWorkspaceImage(context, signal) { calls.push({ action: 'workspace-source', context, signal }); const target = context.target, photo = context.saved.workspace.document.photos.find(photo => photo.id === target.photoId);
+      const image = { source: { ...sourceFor(context.selection.productId, context.selection.view.productVersion, photo.key, 'detail'), workspaceTarget: { ...target, bindingSha256: 'c'.repeat(64) } }, width: 20, height: 12, blob: new Blob(['workspace original']), canvas: {} };
+      return sourceIntercept ? sourceIntercept(image, signal) : image; },
+    async applyDetailWorkspaceImage(image, context, signal) { calls.push({ action: 'workspace-apply', image, context, signal }); return applyIntercept ? applyIntercept(image, signal) : { ...context.saved, source: image.source, key: 'owner/workspace-result.png', applied: true }; },
+    async recoverDetailWorkspaceImage(image, context, signal) { calls.push({ action: 'workspace-recover', image, context, signal }); return recoverIntercept ? recoverIntercept(image, signal) : { ...context.saved, source: image.source, key: 'owner/workspace-result.png', applied: true }; },
+    async translateDetailWorkspaceImage(source, language, rows, signal) { calls.push({ action: 'workspace-translate', source, language, rows, signal }); return translateIntercept ? translateIntercept(source, rows, signal) : { source, regions: rows.map(row => ({ id: row.id, original: row.text, translated: '작업 한국어 ' + row.id, issue: null })), requests: 1, stoppedHttpStatus: null, warnings: [] }; },
+    ...(clientOverrides.workspaceClient ?? {}),
+  };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/free-image-translation-panel.tsx', import.meta.url), 'utf8'),
     { fileName: 'panel.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
@@ -81,6 +91,7 @@ function fixture(initialProps = {}, clientOverrides = {}) {
       if (name === '@/app/components/free-image-brush-canvas') return { FreeImageBrushCanvas: 'FreeImageBrushCanvas' };
       if (name === '@/app/free-image-crop') return cropModule;
       if (name === '@/app/components/free-image-crop-canvas') return { FreeImageCropCanvas: 'FreeImageCropCanvas' };
+      if (name === '@/app/detail-workspace-image-client') return workspaceClient;
       assert.equal(name, '@/app/free-image-translation-client'); return client;
     } });
   const render = () => { cursor = 0; const outer = exports.default(props), tree = outer.type(outer.props); effects.splice(0).forEach(fn => fn()); return tree; };
@@ -97,6 +108,78 @@ function fixture(initialProps = {}, clientOverrides = {}) {
     async change(label, value, checked) { const control = field(label); assert.ok(control, label); control.props.onChange({ target: { value, checked } }); await settle(); },
     close() { if (closed) return; states.forEach(state => state?.cleanup?.()); closed = true; } };
 }
+
+function workspaceProps(overrides = {}) {
+  const target = { kind: 'detail-workspace', profileId: 'profile', optionId: 'red', photoId: 'body-photo', revision: 3, digest: 'd'.repeat(64) };
+  return { translationTarget: { sourceKey: 'owner/original.png', sequence: 701, role: 'detail', intent: 'manual', workspaceTarget: target },
+    workspaceContext: { target, selection: { productId: 'product', optionId: 'red', profileId: 'profile', view: { productVersion: version } },
+      saved: { view: {}, roles: { top: [], bottom: [] }, workspace: { document: { photos: [{ id: 'body-photo', key: 'owner/original.png', originKey: 'owner/second.png', role: 'body' }] } } } }, ...overrides };
+}
+
+test('workspace manual editor opens current photo pixels and uses only workspace apply and completion callbacks', async () => {
+  const saved = [], editing = [], h = fixture(workspaceProps({ onWorkspaceSaved: reply => saved.push(reply), onEditingChange: value => editing.push(value) }));
+  try {
+    await h.settle(); assert.deepEqual(h.calls.map(call => call.action), ['workspace-source']); assert.equal(h.calls[0].context.saved.workspace.document.photos[0].originKey, 'owner/second.png');
+    assert.equal(h.field('번역할 원본 이미지').props.disabled, true); assert.equal(h.field('번역할 이미지 역할').props.disabled, true);
+    await h.click('문구 영역 직접 추가'); await h.change('문구 1 한국어', '작업 사진 수동 문구'); await h.click('번역 이미지 미리보기');
+    assert.equal(h.button('검토한 번역 이미지 적용'), undefined); await h.click('검토한 작업 사진 보관');
+    assert.equal(saved.length, 1); assert.equal(h.saved, 0); assert.equal(h.calls.filter(call => call.action === 'workspace-apply').length, 1);
+    assert.ok(h.calls.every(call => !['source', 'apply', 'recover', 'translate'].includes(call.action))); assert.equal(editing.at(-1), false);
+  } finally { h.close(); }
+});
+
+test('workspace reopened edit document restores editable base, language, styling and crop without automatic preview or writes', async () => {
+  const h = fixture(workspaceProps());
+  h.setSource(image => ({ ...image, source: { ...image.source, sourceKey: 'owner/base.png', editorSource: { resultKey: 'owner/original.png', resultSha256: 'b'.repeat(64), documentSha256: 'c'.repeat(64) } },
+    editDocument: { format: 'free-image-edit-v1', width: 20, height: 12, sourceLanguage: 'en', regions: [{ ...region('manual-4', '직접 검토한 공백 '), ...manualStyle }], crop: { x: 2, y: 1, width: 12, height: 9, sourceWidth: 20, sourceHeight: 12 } } }));
+  try {
+    await h.settle(); assert.equal(h.field('문구 1 한국어').props.value, '직접 검토한 공백 '); assert.equal(h.field('이미지 원문 언어').props.value, 'en');
+    assert.equal(h.field('문구 1 글꼴').props.value, 'serif'); assert.equal(h.field('문구 1 굵게').props.checked, true); assert.match(text(h.render()), /12×9/);
+    assert.deepEqual(h.calls.map(call => call.action), ['workspace-source']); await h.click('번역 이미지 미리보기'); assert.equal(h.calls.at(-1).action, 'preview');
+  } finally { h.close(); }
+});
+
+test('workspace ACK loss recovers through the workspace adapter without repeated apply or product callbacks', async () => {
+  const saved = [], h = fixture(workspaceProps({ onWorkspaceSaved: reply => saved.push(reply) }));
+  h.setApply(() => { throw new ApplyError('workspace ACK lost', true); });
+  try {
+    await h.settle(); await h.click('문구 영역 직접 추가'); await h.change('문구 1 한국어', '수동'); await h.click('번역 이미지 미리보기'); await h.click('검토한 작업 사진 보관');
+    assert.equal(h.button('문구 영역 직접 추가').props.disabled, true); assert.equal(h.button('검토한 작업 사진 보관'), undefined);
+    await h.click('작업 사진 보관 결과 확인'); assert.deepEqual(h.calls.filter(call => call.action.includes('apply') || call.action.includes('recover')).map(call => call.action), ['workspace-apply', 'workspace-recover']);
+    assert.equal(saved.length, 1); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('workspace photo/revision/profile and active or disabled ABA prevent delayed source, render or save adoption', async () => {
+  for (const kind of ['photo', 'revision', 'profile', 'active', 'disabled']) {
+    const props = workspaceProps(), saved = [], h = fixture({ ...props, active: true, disabled: false, onWorkspaceSaved: reply => saved.push(reply) }), gate = deferred();
+    h.setSource(() => gate.promise);
+    try {
+      await h.settle(); const call = h.calls.find(call => call.action === 'workspace-source');
+      if (kind === 'active' || kind === 'disabled') { h.setProps({ [kind]: kind === 'active' ? false : true }); await h.settle(); h.setProps({ [kind]: kind === 'active' ? true : false }); }
+      else { const target = { ...props.workspaceContext.target, ...(kind === 'photo' ? { photoId: 'another' } : kind === 'revision' ? { revision: 4 } : { profileId: 'another' }) }; h.setProps({ workspaceContext: { ...props.workspaceContext, target } }); }
+      gate.resolve({ source: { productId: 'product', productVersion: version, contentRevision: 2, sourceKey: 'owner/original.png', sourceSha256: 'a'.repeat(64), role: 'detail', width: 20, height: 12, workspaceTarget: { ...props.workspaceContext.target, bindingSha256: 'c'.repeat(64) } }, width: 20, height: 12, blob: new Blob(['old']), canvas: {} });
+      await h.settle(); assert.equal(call.signal.aborted, true, kind); assert.equal(h.button('문구 영역 직접 추가').props.disabled, true, kind); assert.equal(saved.length, 0); assert.equal(h.saved, 0);
+    } finally { gate.resolve(); h.close(); }
+  }
+});
+
+test('workspace translation is explicit, uses its own transport, and preserves manual blanks', async () => {
+  const h = fixture(workspaceProps());
+  try {
+    await h.settle(); await h.click('원본 문구 읽기'); await h.change('문구 1 한국어', ''); await h.click('선택 문구 한국어 번역');
+    assert.equal(h.calls.filter(call => call.action === 'workspace-translate').length, 1); assert.equal(h.calls.filter(call => call.action === 'translate').length, 0);
+    assert.equal(h.field('문구 1 한국어').props.value, ''); assert.equal(h.field('문구 2 한국어').props.value, '작업 한국어 r2'); assert.equal(h.saved, 0);
+  } finally { h.close(); }
+});
+
+test('workspace close guard reads immediate live edits and pending writes before a parent effect can run', async () => {
+  let guard; const h = fixture(workspaceProps({ onCloseGuard: value => { guard = value; } }));
+  try {
+    await h.settle(); assert.equal(guard(), true); h.button('문구 영역 직접 추가').props.onClick(); assert.equal(guard(), false);
+    await h.settle(); await h.click('이미지 번역 편집 초안 지우기'); assert.equal(guard(), true);
+  } finally { h.close(); assert.equal(guard, null); }
+});
 async function translated(h) { await h.click('원본 문구 읽기'); await h.click('선택 문구 한국어 번역'); }
 async function styleRegion(h, index = 1, values = manualStyle) {
   await h.change(`문구 ${index} 글꼴`, values.fontFamily);

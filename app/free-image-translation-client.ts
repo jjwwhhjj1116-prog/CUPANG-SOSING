@@ -107,7 +107,7 @@ export async function readFreeImageSource(productId: string, version: string, so
   }
   if (!response.ok) throw Error(body.error || '현재 역할의 이미지 원본을 확인하지 못했습니다.');
   const source = validateFreeImageSource(body.source);
-  if (source.productId !== productId || source.productVersion !== version || (source.editorSource?.resultKey ?? source.sourceKey) !== sourceKey || source.role !== role
+  if (source.workspaceTarget || source.productId !== productId || source.productVersion !== version || (source.editorSource?.resultKey ?? source.sourceKey) !== sourceKey || source.role !== role
     || restoring && (source.editorSource === undefined || body.editDocument === undefined)
     || source.editorSource !== undefined && (!restoring || body.editDocument === undefined)
     || restoring && source.editorSource?.anchorPolicy !== options?.anchorPolicy
@@ -115,6 +115,14 @@ export async function readFreeImageSource(productId: string, version: string, so
     || !sameFreeImageQuotationRequest(source.quotationTarget, quotationTarget)) throw Error('상품·이미지·역할 또는 저장 버전이 변경됐습니다. 최신 저장본에서 다시 선택해주세요.');
   const editDocument = body.editDocument === undefined ? undefined : validateFreeImageEditDocument(body.editDocument, source);
   if (editDocument && await editDocumentDigest(editDocument) !== source.editorSource!.documentSha256) throw Error('저장한 편집 내용의 연결을 확인하지 못했습니다.');
+  return readFreeImageSourcePixels(source, signal, fetcher, editDocument);
+}
+
+/** Shared authenticated pixel loader. Target authorization remains the caller's
+ * explicit content, quotation or workspace transport responsibility. */
+export async function readFreeImageSourcePixels(sourceValue: FreeImageSource, signal: AbortSignal, fetcher: typeof fetch = fetch, document?: FreeImageEditDocument): Promise<FreeImageLoaded> {
+  const source = validateFreeImageSource(sourceValue), editDocument = document === undefined ? undefined : validateFreeImageEditDocument(document, source);
+  if (editDocument && (!source.editorSource || await editDocumentDigest(editDocument) !== source.editorSource.documentSha256)) throw Error('저장한 편집 내용의 연결을 확인하지 못했습니다.');
   signal.throwIfAborted();
   const file = await fetcher(`/api/files/${source.sourceKey.split('/').map(encodeURIComponent).join('/')}`, { signal, cache: 'no-store' });
   if (!file.ok) throw Error('번역할 원본 파일을 읽지 못했습니다.');
@@ -235,7 +243,7 @@ export async function renderFreeImageTranslation(image: FreeImageLoaded, regions
   dimensions(image.width, image.height); signal.throwIfAborted();
   const crop = cropRect === undefined ? undefined : validateFreeImageCrop({ ...validateFreeImageCropRect(cropRect, image.width, image.height), sourceWidth: image.width, sourceHeight: image.height }, image.source);
   const selectedOptions = validateFreeImageOptionIds(image.source, [...optionImageIds]);
-  const editDocument = image.source.quotationTarget ? validateFreeImageEditDocument({ format: 'free-image-edit-v1', width: image.width, height: image.height,
+  const editDocument = image.source.quotationTarget || image.source.workspaceTarget ? validateFreeImageEditDocument({ format: 'free-image-edit-v1', width: image.width, height: image.height,
     sourceLanguage, regions: [...regions], ...(crop ? { crop } : {}) }, image.source) : undefined;
   if (image.source.optionImages?.commonAssigned === false && !selectedOptions.length) throw Error('이 개별 사진을 반영할 옵션을 한 개 이상 선택해주세요. 공통 대표 이미지는 변경하지 않습니다.');
   const chosen = regions.filter(row => row.selected).map(row => ({ ...row, box: { ...row.box } }));
@@ -331,7 +339,7 @@ function renderedEditDocument(image: FreeImageRendered) {
     if (image.source.editorSource) throw new FreeImageApplyError('다시 연 편집 내용과 같은 미리보기를 만들어주세요.', false);
     return undefined;
   }
-  if (!image.source.quotationTarget || image.optionImageIds?.length) throw new FreeImageApplyError('편집 내용은 선택 옵션의 견적 이미지에 저장할 수 있습니다.', false);
+  if (!image.source.quotationTarget && !image.source.workspaceTarget || image.optionImageIds?.length) throw new FreeImageApplyError('편집 내용의 저장 대상을 확인해주세요.', false);
   const document = validateFreeImageEditDocument(image.editDocument, image.source);
   if (!sameCrop(document.crop, renderedCrop(image), image.source)
     || image.width !== (document.crop?.width ?? document.width) || image.height !== (document.crop?.height ?? document.height)) throw new FreeImageApplyError('편집 내용과 PNG 미리보기의 크기가 다릅니다.', false);
@@ -354,7 +362,7 @@ export async function expectedFreeImageOutputKey(image: FreeImageRendered): Prom
   const identity = freeImageApplyIdentity(source, image.optionImageIds ?? [], renderedCrop(image), editDocumentSha256);
   const digest = async (bytes: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource)), byte => byte.toString(16).padStart(2, '0')).join('');
   const [fingerprint, outputSha256] = await Promise.all([digest(new TextEncoder().encode(identity)), digest(await image.output.arrayBuffer())]);
-  return `${owner}/free-image-${source.productId}-${fingerprint}-${outputSha256}.png`;
+  return `${owner}/free-image-${source.workspaceTarget ? 'workspace-' : ''}${source.productId}-${fingerprint}-${outputSha256}.png`;
 }
 export function readFreeImageApplyReply(input: unknown, image: FreeImageRendered, expectedKey: string, editDocumentSha256?: string): FreeImageApplyReply {
   const body = input as FreeImageApplyReply, owner = image.source.sourceKey.split('/')[0];
@@ -407,6 +415,7 @@ export async function recoverFreeImageTranslation(image: FreeImageRendered, sign
  * Never refetch, rerender, or perform an automatic second save. */
 export async function applyFreeImageTranslation(image: FreeImageRendered, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<FreeImageApplyReply> {
   validateFreeImageSource(image.source); signal.throwIfAborted();
+  if (image.source.workspaceTarget) throw new FreeImageApplyError('작업 사진은 상세 편집 구성의 보관 동작을 사용해주세요.', false);
   if (image.output.type !== 'image/png' || !image.output.size || image.output.size > MAX_IMAGE_BYTES) throw new FreeImageApplyError('저장할 PNG 미리보기를 확인해주세요.', false);
   const expectedKey = await expectedFreeImageOutputKey(image); signal.throwIfAborted();
   const crop = renderedCrop(image);

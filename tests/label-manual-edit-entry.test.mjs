@@ -30,7 +30,11 @@ for(const company of companies)test(`manual label edits stay local until reviewe
   const applied=f.panel.calls.find(call=>call.action==='apply'),key=await f.client.expectedFreeImageOutputKey(applied.image),after=await f.read(),expected=plain(before.overrides);
   expected.options[f.selected].labelImages=[f.keys[2],key,f.keys[3]].join('\n');assert.deepEqual(plain(after.overrides),expected);assert.equal(after.revision,before.revision+1);
   assert.equal(after.contentRevision,before.contentRevision);assert.equal(after.optionRevision,before.optionRevision);assert.equal(f.sourceRows(),raw);
-  const latestFiles=await f.fileSnapshot();assert.equal(latestFiles.size,files.size+1);for(const[old,value]of files)assert.deepEqual(latestFiles.get(old),value);
+  const latestFiles=await f.fileSnapshot();assert.equal(latestFiles.size,files.size+2);for(const[old,value]of files)assert.deepEqual(latestFiles.get(old),value);
+  assert.deepEqual([...latestFiles.keys()].filter(value=>!files.has(value)).sort(),[key,key+'.edit.json'].sort());
+  const stored=await f.h.load('app/free-image-edit-record.ts').readFreeImageEditRecord(f.h.bindings.FILES,'owner',f.id,key);
+  assert.deepEqual(plain(stored.record.document),plain(applied.image.editDocument));assert.deepEqual(plain(stored.record.source.quotationTarget),plain(applied.image.source.quotationTarget));
+  assert.equal(stored.documentSha256,createHash('sha256').update(JSON.stringify(plain(applied.image.editDocument))).digest('hex'));
   assert.deepEqual([...f.h.objects.get(key)],[...new Uint8Array(await applied.image.output.arrayBuffer())]);assert.equal(f.requests.filter(call=>call.method==='POST').length,1);
   assert.deepEqual(plain(f.panel.calls.map(call=>call.action)),['source','preview','apply']);assert.deepEqual(f.h.network,f.networkBaseline);assert.equal(f.product().supplier_hub_status,'미전송');
  }finally{f.close();}

@@ -38,8 +38,13 @@ export async function validateDetailWorkspaceReply(input: DetailWorkspaceSelecti
   if (value.workspace === null) return structuredClone(value) as DetailWorkspaceView;
   if (!object(value.workspace)) throw changed();
   const record = validateDetailWorkspaceRecord(value.workspace, owner, input.productId, input.optionId, input.view.categoryContext, value.workspace.company as DetailWorkspaceRecord['company']);
+  const outside = record.files.filter(file => !input.view.imageKeys.includes(file.key));
+  const prefix = `${owner}/free-image-workspace-${input.productId}-`;
+  if (outside.some(file => !file.key.startsWith(prefix) || !/^[a-f0-9]{64}-[a-f0-9]{64}\.png$/u.test(file.key.slice(prefix.length))
+    || !record.document.photos.some(photo => photo.role === 'body' && photo.key === file.key))) throw changed();
+  validateDetailWorkspaceDocument(record.document, owner, input.view.imageKeys, undefined, roles, record.document.photos);
   const { digest, ...body } = record;
-  if (record.files.some(file => !input.view.imageKeys.includes(file.key)) || digest !== await detailWorkspaceDigest(body)) throw changed();
+  if (digest !== await detailWorkspaceDigest(body)) throw changed();
   return { view: input.view, workspace: record, roles };
 }
 export async function readDetailWorkspace(input: DetailWorkspaceSelection, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<DetailWorkspaceView> {
@@ -50,7 +55,9 @@ export async function readDetailWorkspace(input: DetailWorkspaceSelection, signa
 }
 export async function createDetailWorkspaceSave(input: DetailWorkspaceSelection, before: DetailWorkspaceView, value: unknown): Promise<DetailWorkspaceSaveInput> {
   const owner = selection(input), saved = await validateDetailWorkspaceReply(input, before);
-  const document = validateDetailWorkspaceDocument(value, owner, input.view.imageKeys, saved.workspace?.document ?? null, saved.roles), expectedRevision = saved.workspace?.revision ?? 0;
+  const document = validateDetailWorkspaceDocument(value, owner, input.view.imageKeys, saved.workspace?.document ?? null, saved.roles, saved.workspace?.document.photos ?? []), expectedRevision = saved.workspace?.revision ?? 0;
+  if (document.photos.some(photo => photo.key.split('/').at(-1)?.startsWith('free-image-workspace-')
+    && !saved.workspace?.document.photos.some(previous => previous.id === photo.id && previous.key === photo.key))) throw changed();
   const requestId = await detailWorkspaceRequestId(input.productId, input.optionId, expectedRevision, detailWorkspaceExpectedView(input.view), document);
   return { selection: structuredClone(input), before: saved, document, expectedRevision, requestId };
 }
@@ -110,6 +117,7 @@ export async function prepareDetailWorkspaceRebase(input: DetailWorkspaceSaveInp
  * returning photo positions for a local draft. No quotation write is performed. */
 export async function prepareDetailWorkspaceAdoption(input: DetailWorkspaceSelection, saved: DetailWorkspaceView, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<string[]> {
   await validateDetailWorkspaceReply(input, saved); if (!saved.workspace) throw changed();
+  if (saved.workspace.document.photos.some(photo => !input.view.imageKeys.includes(photo.key))) throw Error('편집 결과를 상품 이미지에 명시적으로 추가한 뒤 옵션 초안으로 옮겨주세요.');
   const before = await readDetailWorkspace(input, signal, fetcher); if (!same(before, saved)) throw changed();
   let total = 0;
   for (const file of saved.workspace.files) {

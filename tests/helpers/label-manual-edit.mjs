@@ -37,6 +37,10 @@ export const labelReferenceFixture=refs.fixture,labelReferenceUI=refs.editor;
 
 export async function labelManualFixture(company){
  const f=await api.labelFixture(company),requests=[],networkBaseline=[...f.h.network];
+ const account=f.h.load('app/workspace-members.ts').WORKSPACE_ACCOUNTS.find(value=>value.companyCode===company.code&&value.companyName===company.name),now=new Date().toISOString();
+ assert.ok(account,'known synthetic approved company account');
+ f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)')
+  .run('owner',account.email,'fixture-not-a-password',account.role,'approved',company.code,company.name,now,now,null);
  const clientHarness=renderer.fixture({imageWidth:3,imageHeight:2}),client=clientHarness.client,createCanvas=clientHarness.document.createElement;
  clientHarness.document.createElement=tag=>{const canvas=createCanvas(tag);canvas.toBlob=(callback,type)=>{assert.equal(type,'image/png');callback(new Blob([encodedPng(canvas.width,canvas.height,canvas.pixels)],{type}));};return canvas;};
  const transport=async(url,init={})=>{

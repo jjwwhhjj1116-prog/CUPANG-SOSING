@@ -70,10 +70,11 @@ export function validateDetailWorkspaceRoles(value: unknown, ownerId: string, im
 }
 /** Omit previous only when inspecting a stored record. Pass null for a first
  * save so every new stable row is required to start from its actual own key. */
-export function validateDetailWorkspaceDocument(value: unknown, ownerId: string, imageKeys: readonly string[], previous?: DetailWorkspaceDocument | null, roles?: DetailWorkspaceRoles): DetailWorkspaceDocument {
+export function validateDetailWorkspaceDocument(value: unknown, ownerId: string, imageKeys: readonly string[], previous?: DetailWorkspaceDocument | null, roles?: DetailWorkspaceRoles, authorizedPhotos: readonly Pick<DetailWorkspacePhoto, 'id' | 'key'>[] = []): DetailWorkspaceDocument {
   const result = document(value);
   if (!Array.isArray(imageKeys) || imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(imageKeys).size !== imageKeys.length
-    || result.photos.some(photo => [photo.originKey, photo.key].some(key => !isOwnedImageKey(ownerId, key) || !imageKeys.includes(key)))) return bad();
+    || result.photos.some(photo => !isOwnedImageKey(ownerId, photo.originKey) || !imageKeys.includes(photo.originKey) || !isOwnedImageKey(ownerId, photo.key)
+      || !imageKeys.includes(photo.key) && !authorizedPhotos.some(saved => saved.id === photo.id && saved.key === photo.key))) return bad();
   const proof = roles ? validateDetailWorkspaceRoles(roles, ownerId, imageKeys) : undefined;
   if (proof) {
     for (const role of ['top', 'bottom'] as const) {
