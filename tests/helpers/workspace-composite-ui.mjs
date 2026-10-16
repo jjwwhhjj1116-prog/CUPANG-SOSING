@@ -35,7 +35,7 @@ export async function compositeFixture(company) {
   };
   return f;
 }
-export function compositePanel(f, behavior = {}) {
+export function compositePanel(f, behavior = {}, mode = 'composite') {
   let cursor = 0, epoch = 0, closed = false, lateWrites = 0, props = { selection: f.selection(), saved: f.reply(), stageActive: true, sourceCurrent: true, disabled: false };
   const slots = [], layouts = [], effects = [], saved = [], latest = [], locks = [], calls = [], downloads = [], cache = new Map();
   const effect = (queue, fn, deps) => { const index = cursor++, old = slots[index]; if (!old || !deps || deps.some((value, i) => !Object.is(value, old.deps[i]))) { const next = { deps }; slots[index] = next; queue.push(() => { old?.cleanup?.(); next.cleanup = fn(); }); } };
@@ -47,6 +47,12 @@ export function compositePanel(f, behavior = {}) {
     async recoverDetailWorkspaceComposite(prepared, attempt, signal) { calls.push({ action: 'recover', signal, prepared }); if (behavior.recover) return behavior.recover(prepared, attempt, signal); attempt.completed = f.savedView(); delete attempt.pending; return 'completed'; },
     async readLatestDetailWorkspaceComposite(selection, signal) { calls.push({ action: 'latest', signal, selection }); return behavior.latest ? behavior.latest(selection, signal) : f.reply(); },
   };
+  const bannerApi = {
+    async readDetailWorkspaceBannerRebase(selection, signal) { calls.push({ action: 'prepare', signal, selection }); return behavior.prepare ? behavior.prepare(selection, signal) : plain(f.bannerPreview); },
+    async applyDetailWorkspaceBannerRebase(selection, preview, attempt, signal) { calls.push({ action: 'apply', signal, selection, preview }); attempt.pending = true; if (behavior.apply) return behavior.apply(preview, attempt, signal); attempt.completed = await f.rebasedReply(preview); attempt.pending = false; return attempt.completed; },
+    async recoverDetailWorkspaceBannerRebase(selection, preview, attempt, signal) { calls.push({ action: 'recover', signal, selection, preview }); if (behavior.recover) return behavior.recover(preview, attempt, signal); attempt.completed = await f.rebasedReply(preview); attempt.pending = false; return 'completed'; },
+    async readLatestDetailWorkspaceBannerRebase(selection, attempt, signal) { calls.push({ action: 'latest', signal, selection }); const value = behavior.latest ? await behavior.latest(selection, signal) : plain(f.bannerPreview); attempt.superseded = true; attempt.pending = false; return value; },
+  };
   class LocalURL extends URL { static createObjectURL() { return 'blob:fixture-' + Math.random(); } static revokeObjectURL() {} }
   const document = { createElement(tag) { assert.equal(tag, 'a'); return { click() { downloads.push({ href: this.href, download: this.download }); } }; } };
   function load(file) {
@@ -56,11 +62,12 @@ export function compositePanel(f, behavior = {}) {
         document, setTimeout: fn => { fn(); return 1; }, fetch: () => { throw Error('unexpected network'); }, require(name) {
           if (name === 'react') return hooks; if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
           if (name === '@/app/detail-workspace-composite-client') return api;
+          if (name === '@/app/detail-workspace-banner-rebase-client') return bannerApi;
           if (name.startsWith('@/')) return load(name.slice(2) + (name.includes('/components/') ? '.tsx' : '.ts'));
           if (name.startsWith('.')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts'); return native(name);
         } }); return exports;
   }
-  const Component = load('app/components/detail-workspace-composite-panel.tsx').DetailWorkspaceCompositePanel;
+  const Component = mode === 'rebase' ? load('app/components/detail-workspace-rebase-panel.tsx').DetailWorkspaceRebasePanel : load('app/components/detail-workspace-composite-panel.tsx').DetailWorkspaceCompositePanel;
   function render() { cursor = 0; const tree = Component({ ...props, onSaved: view => saved.push(plain(view)), onLatestRead: reply => latest.push(plain(reply)), onBusyChange: value => locks.push(value) }); layouts.splice(0).forEach(fn => fn()); effects.splice(0).forEach(fn => fn()); return tree; }
   const button = label => nodes(render()).find(node => node.type === 'button' && text(node) === label);
   const checkbox = () => nodes(render()).find(node => node.type === 'input' && node.props.type === 'checkbox');
@@ -71,3 +78,4 @@ export function compositePanel(f, behavior = {}) {
     async click(label) { const node = button(label); assert.ok(node && !node.props.disabled, label + '\n' + text(render())); node.props.onClick(); await idle(); },
     review() { const node = checkbox(); assert.ok(node && !node.props.disabled); node.props.onChange({ target: { checked: true } }); render(); }, close() { slots.forEach(slot => slot?.cleanup?.()); closed = true; } };
 }
+export const rebasePanel = (f, behavior) => compositePanel(f, behavior, 'rebase');

@@ -12,6 +12,7 @@ import type { SupplierHubCompany } from '@/app/supplier-hub-company';
 import { readFreeImageEditRecord, FreeImageEditRecordError } from '@/app/free-image-edit-record';
 import type { FreeImageSource } from '@/app/free-image-translation';
 import { inspectImage } from '@/app/automation/image-edit';
+import { buildDetailWorkspaceBannerDocument, createDetailWorkspaceBannerPreview, detailWorkspaceBannerRebaseRequestId, type DetailWorkspaceBannerRebaseInput } from '@/app/detail-workspace-banner-rebase';
 
 export const detailWorkspacesSchema = `CREATE TABLE IF NOT EXISTS product_detail_workspaces (
  owner_id TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id), category_scope TEXT NOT NULL, option_id TEXT NOT NULL,
@@ -48,11 +49,15 @@ async function snapshot(db: D1Database, owner: string, company: SupplierHubCompa
   if (!same(confirmed.view, view) || (await readOwnedSplitSnapshot(owner, id, view.categoryContext.profileId, db)).payload !== saved.payload) throw conflict();
   return { saved, view, roles, scope, previous };
 }
-function stored(value: Row | null, owner: string, id: string, optionId: string, current: Awaited<ReturnType<typeof snapshot>>, company: SupplierHubCompany): DetailWorkspaceRecord | null {
+function stored(value: Row | null, owner: string, id: string, optionId: string, current: Awaited<ReturnType<typeof snapshot>>, company: SupplierHubCompany, historicalBanners = false): DetailWorkspaceRecord | null {
   if (!value) return null;
   let body: unknown; try { body = JSON.parse(value.payload); } catch { throw conflict('저장한 작업공간 자료를 읽지 못했습니다.'); }
   const result = validateDetailWorkspaceRecord(body, owner, id, optionId, current.view.categoryContext, company);
-  validateDetailWorkspaceDocument(result.document, owner, current.view.imageKeys, undefined, current.roles, result.document.photos);
+  if (historicalBanners) {
+    if (result.document.photos.some(photo => photo.role !== 'body' && photo.originKey !== photo.key)) throw conflict();
+    const photos = result.document.photos.filter(photo => photo.role === 'body'), document = { ...result.document, photos, generatedHtml: generateDetailWorkspaceHtml(photos, result.document.imageMargin) };
+    validateDetailWorkspaceDocument(document, owner, current.view.imageKeys, undefined, { top: [], bottom: [] }, photos);
+  } else validateDetailWorkspaceDocument(result.document, owner, current.view.imageKeys, undefined, current.roles, result.document.photos);
   if (result.revision !== value.revision || result.requestId !== value.request_id || result.updatedAt !== value.updated_at) throw conflict();
   return result;
 }
@@ -72,11 +77,14 @@ async function fileProofs(owner: string, document: DetailWorkspaceRecord['docume
   }
   return result;
 }
-async function verifyRecord(record: DetailWorkspaceRecord, owner: string, imageKeys: readonly string[], signal: AbortSignal) {
+async function verifyRecord(record: DetailWorkspaceRecord, owner: string, imageKeys: readonly string[], signal: AbortSignal, historicalBanners = false) {
   const { digest, ...value } = record;
   if (await detailWorkspaceDigest(value) !== digest || !same(await fileProofs(owner, record.document, signal), record.files)) throw conflict('작업공간 원본·현재 사진이나 저장 증거가 변경되었습니다.');
   const checked = new Set<string>(); let total = record.files.reduce((sum, file) => sum + file.bytes, 0);
   for (const photo of record.document.photos.filter(photo => !imageKeys.includes(photo.key) || photo.key.startsWith(`${owner}/free-image-workspace-`))) {
+    // An explicit rebase may inspect a removed old banner, never grant that
+    // historical pool exception to a body source or a workspace-only result.
+    if (historicalBanners && photo.role !== 'body' && photo.originKey === photo.key && !photo.key.startsWith(`${owner}/free-image-workspace-`)) continue;
     if (!env.FILES || photo.role !== 'body' || !photo.key.startsWith(`${owner}/free-image-workspace-${record.productId}-`)) throw conflict();
     let saved; try { saved = await readFreeImageEditRecord(env.FILES, owner, record.productId, photo.key); }
     catch (error) { if (error instanceof FreeImageEditRecordError && error.status === 503) throw new DetailWorkspaceError(error.message, 503); throw conflict('작업공간 사진의 편집 문서와 결과를 확인해주세요.'); }
@@ -147,6 +155,46 @@ async function commitWorkspace(db: D1Database, owner: string, company: SupplierH
   catch { throw new DetailWorkspaceError('작업공간 저장 후 기준이 변경되어 완료 응답을 확인하지 못했습니다. 조회로 먼저 확인해주세요.', 503); }
   if (!same(after.workspace, workspace)) throw new DetailWorkspaceError('작업공간 저장 결과를 확인하지 못했습니다. 조회로 먼저 확인해주세요.', 503);
   return after;
+}
+
+async function bannerRebaseState(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, signal: AbortSignal) {
+  const db = await database(owner, id, profileId), before = await snapshot(db, owner, company, identity, id, profileId, optionId), workspace = stored(before.previous, owner, id, optionId, before, company, true);
+  if (!workspace) throw conflict('배너를 갱신할 상세 작업공간을 먼저 보관해주세요.');
+  await verifyRecord(workspace, owner, before.view.imageKeys, signal, true);
+  return { db, before, workspace };
+}
+async function bannerPreview(owner: string, state: Awaited<ReturnType<typeof bannerRebaseState>>, signal: AbortSignal) {
+  const document = buildDetailWorkspaceBannerDocument(state.workspace, state.before.roles), files = await fileProofs(owner, document, signal),
+    preview = await createDetailWorkspaceBannerPreview(state.before.view, state.workspace, state.before.roles, files), { digest: ignored, ...old } = state.workspace;
+  void ignored;
+  const candidate = { ...old, document: preview.document, files: preview.files }, record = { ...candidate, digest: await detailWorkspaceDigest(candidate) };
+  await verifyRecord(record, owner, state.before.view.imageKeys, signal);
+  return preview;
+}
+/** The ordinary reader stays strict. Only this explicit review can inspect
+ * historically protected rows against a different current content role list. */
+export async function readDetailWorkspaceBannerRebase(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, signal: AbortSignal) {
+  const state = await bannerRebaseState(owner, company, identity, id, profileId, optionId, signal), preview = await bannerPreview(owner, state, signal);
+  await confirm(state.db, owner, company, identity, id, profileId, optionId, state.before);
+  return preview;
+}
+export async function saveDetailWorkspaceBannerRebase(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, input: DetailWorkspaceBannerRebaseInput, signal: AbortSignal): Promise<DetailWorkspaceView> {
+  const state = await bannerRebaseState(owner, company, identity, id, profileId, input.optionId, signal), old = state.workspace;
+  if (old.requestId === input.requestId) {
+    const roles = { top: old.document.photos.filter(photo => photo.role === 'top').map(photo => photo.key), bottom: old.document.photos.filter(photo => photo.role === 'bottom').map(photo => photo.key) };
+    if (old.revision !== input.expectedRevision + 1 || !same(old.context, input.expectedView.categoryContext)
+      || await detailWorkspaceBannerRebaseRequestId(id, input.optionId, input.expectedRevision, input.expectedDigest, input.expectedView, roles, old.document, old.files) !== input.requestId) throw conflict();
+    await confirm(state.db, owner, company, identity, id, profileId, input.optionId, state.before);
+    return readDetailWorkspace(owner, company, identity, id, profileId, input.optionId, signal);
+  }
+  if (old.revision !== input.expectedRevision || old.digest !== input.expectedDigest || !same(detailWorkspaceExpectedView(state.before.view), input.expectedView)) throw conflict();
+  const preview = await bannerPreview(owner, state, signal);
+  if (preview.requestId !== input.requestId) throw conflict('배너 사진이나 검토 기준이 변경되었습니다. 새 미리보기를 확인해주세요.');
+  if (same(preview.document, old.document)) throw conflict('보관한 배너가 이미 현재 설정과 같습니다. 작업공간을 변경하지 않았습니다.');
+  const { digest: ignored, ...record } = old; void ignored;
+  const value = { ...record, revision: old.revision + 1, updatedAt: new Date(Math.max(Date.now(), Date.parse(old.updatedAt) + 1)).toISOString(),
+    requestId: input.requestId, document: preview.document, files: preview.files }, workspace = { ...value, digest: await detailWorkspaceDigest(value) };
+  return commitWorkspace(state.db, owner, company, identity, id, profileId, input.optionId, state.before, workspace, signal);
 }
 /** Server-only captured source/raw-row seal. Never an HTTP response. */
 export async function readDetailWorkspaceImageSeal(owner: string, company: SupplierHubCompany, identity: Identity, id: string, profileId: string | null, optionId: string, signal: AbortSignal) {
