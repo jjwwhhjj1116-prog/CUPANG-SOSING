@@ -5,7 +5,7 @@ export type FreeImageQuotationTarget={kind:'quotation';profileId:string|null;opt
  revision:number;inputFingerprint:string;optionRevision:number;bindingSha256:string;value:string};
 export type FreeImageSource={productId:string;productVersion:string;contentRevision:number;sourceKey:string;sourceSha256:string;role:FreeImageRole;width:number;height:number;
  optionImages?:{revision:number;optionIds:string[];commonAssigned?:false};quotationTarget?:FreeImageQuotationTarget;
- editorSource?:{resultKey:string;resultSha256:string;documentSha256:string}};
+ editorSource?:{resultKey:string;resultSha256:string;documentSha256:string;anchorPolicy?:'current-target-v1'}};
 export type ImageTextRegion={id:string;text:string};
 export type ImageTextTranslation={id:string;original:string;translated:string|null;issue:string|null};
 export const MAX_OCR_PIXELS=12000000;
@@ -33,8 +33,9 @@ export function validateFreeImageSource(value:unknown):FreeImageSource{
  }
  if(source.editorSource!==undefined){
   const editor=source.editorSource as Record<string,unknown>;
-  if(source.quotationTarget===undefined||!editor||typeof editor!=='object'||Array.isArray(editor)||Object.keys(editor).length!==3
-   ||Object.keys(editor).some(key=>!['resultKey','resultSha256','documentSha256'].includes(key))
+  if(source.quotationTarget===undefined||!editor||typeof editor!=='object'||Array.isArray(editor)||![3,4].includes(Object.keys(editor).length)
+   ||Object.keys(editor).some(key=>!['resultKey','resultSha256','documentSha256','anchorPolicy'].includes(key))
+   ||Object.hasOwn(editor,'anchorPolicy')&&editor.anchorPolicy!=='current-target-v1'
    ||typeof editor.resultKey!=='string'||!editor.resultKey||editor.resultKey.length>512||editor.resultKey===source.sourceKey
    ||![editor.resultSha256,editor.documentSha256].every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)))throw Error('저장한 이미지 편집 결과와 문서 증거를 확인해주세요.');
  }
@@ -60,7 +61,8 @@ export function freeImageSourceIdentity(source:FreeImageSource){
    ...(source.optionImages.commonAssigned===false?{commonAssigned:false}:{})}}:{}),
   ...(target?{quotationTarget:{kind:target.kind,profileId:target.profileId,optionId:target.optionId,input:target.input,fieldKey:target.fieldKey,slotIndex:target.slotIndex,
    revision:target.revision,inputFingerprint:target.inputFingerprint,optionRevision:target.optionRevision,bindingSha256:target.bindingSha256,value:target.value}}:{}),
-  ...(source.editorSource?{editorSource:{resultKey:source.editorSource.resultKey,resultSha256:source.editorSource.resultSha256,documentSha256:source.editorSource.documentSha256}}:{})});
+  ...(source.editorSource?{editorSource:{resultKey:source.editorSource.resultKey,resultSha256:source.editorSource.resultSha256,documentSha256:source.editorSource.documentSha256,
+   ...(source.editorSource.anchorPolicy?{anchorPolicy:source.editorSource.anchorPolicy}:{})}}:{})});
 }
 export function validateFreeImageOptionIds(source:FreeImageSource,value:unknown):string[]{
  if(!Array.isArray(value)||value.length>200||value.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(id))||new Set(value).size!==value.length

@@ -322,7 +322,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     const work = begin('manual'); if (!work) return;
     discardDraft();
     try {
-      const image = await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined, { restoreEditor: true });
+      const image = await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined,
+        { restoreEditor: true, ...(liveQuotationTarget.current ? { anchorPolicy: 'current-target-v1' as const } : {}) });
       if (!current(work)) return; setLoaded(image);
       setOptionImageIds(focusedOptionId && image.source.optionImages?.optionIds.includes(focusedOptionId) ? [focusedOptionId] : []);
       if (image.editDocument) {
@@ -366,7 +367,8 @@ function FreeImageTranslationContent({ productId, version, imageKeys, translatio
     if (!loaded || uncertain || pendingSave.current || !focusedTarget() || !imageKeys.includes(sourceKey) || selectedSourceKey(loaded.source) !== sourceKey || loaded.source.role !== role) return;
     const previous = loaded, work = begin('refresh'); if (!work) return;
     try {
-      const image = await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined, loaded.source.editorSource ? { restoreEditor: true } : undefined);
+      const image = await readFreeImageSource(productId, version, sourceKey, role, work.controller.signal, undefined, liveQuotationTarget.current ?? undefined,
+        loaded.source.editorSource ? { restoreEditor: true, ...(loaded.source.editorSource.anchorPolicy ? { anchorPolicy: loaded.source.editorSource.anchorPolicy } : {}) } : undefined);
       if (!current(work)) return;
       if (image.source.sourceSha256 !== previous.source.sourceSha256 || image.source.sourceKey !== previous.source.sourceKey
         || image.source.role !== previous.source.role || image.width !== previous.width || image.height !== previous.height) {

@@ -102,17 +102,17 @@ async function editorCompany(owner: string) {
   if (!user?.verifiedAccess || user.userId !== owner || !company) throw new ImageTextError(409, '승인된 회사 계정에서 편집 문서를 확인해주세요.');
   return company;
 }
-async function reopenedSource(owner: string, id: string, resultKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, selection: QuotationSelection) {
+async function reopenedSource(owner: string, id: string, resultKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, selection: QuotationSelection, anchorPolicy?: 'current-target-v1') {
   const anchor = await quotationOriginal(owner, id, resultKey, role, current, selection);
   if (!env.FILES) throw new ImageTextError(503, '이미지 저장소가 연결되지 않았습니다.');
   const saved = await stableQuotationFieldsView(owner, id, selection.profileId), stored = await readFreeImageEditRecord(env.FILES, owner, id, resultKey), record = stored.record,
     previous = record.source.quotationTarget, company = await editorCompany(owner);
-  if (!previous || record.source.role !== role || record.source.productId !== id || previous.profileId !== selection.profileId || previous.optionId !== selection.optionId
-    || previous.input !== selection.input || previous.fieldKey !== selection.fieldKey || previous.slotIndex !== selection.slotIndex
+  if (!previous || record.source.productId !== id || previous.profileId !== selection.profileId
+    || !anchorPolicy && (record.source.role !== role || previous.optionId !== selection.optionId || previous.input !== selection.input || previous.fieldKey !== selection.fieldKey || previous.slotIndex !== selection.slotIndex)
     || JSON.stringify(record.context) !== JSON.stringify(saved.view.categoryContext) || JSON.stringify(record.company) !== JSON.stringify(company)
     || saved.view.productVersion !== current.product.updated_at || saved.view.contentRevision !== current.content.revision) throw changed();
   const source = await original(owner, id, record.source.sourceKey, role, current, false, false, anchor.quotationTarget,
-    { resultKey, resultSha256: record.result.sha256, documentSha256: stored.documentSha256 });
+    { resultKey, resultSha256: record.result.sha256, documentSha256: stored.documentSha256, ...(anchorPolicy ? { anchorPolicy } : {}) });
   if (source.sourceSha256 !== record.source.sourceSha256 || source.width !== record.source.width || source.height !== record.source.height) throw changed();
   return { source, editDocument: record.document };
 }
@@ -120,7 +120,7 @@ async function freshSource(owner: string, id: string, source: FreeImageSource) {
   if (source.productId !== id) throw new ImageTextError(400, '번역한 상품과 저장할 상품이 다릅니다.');
   const current = await state(owner, id);
   if (current.product.updated_at !== source.productVersion || current.content.revision !== source.contentRevision) throw changed();
-  const observed = source.editorSource ? (await reopenedSource(owner, id, source.editorSource.resultKey, source.role, current, source.quotationTarget!)).source
+  const observed = source.editorSource ? (await reopenedSource(owner, id, source.editorSource.resultKey, source.role, current, source.quotationTarget!, source.editorSource.anchorPolicy)).source
     : source.quotationTarget ? await quotationOriginal(owner, id, source.sourceKey, source.role, current, source.quotationTarget)
     : await original(owner, id, source.sourceKey, source.role, current, true, source.optionImages !== undefined);
   if (freeImageSourceIdentity(observed) !== freeImageSourceIdentity(source)) throw changed();
@@ -222,7 +222,7 @@ export async function GET(request: Request, context: Context) {
     const quotation = params.get('target') === 'quotation';
     const allowed = quotation ? ['sourceKey', 'role', 'target', 'profileId', 'optionId', 'fieldKey', 'slotIndex', 'editor'] : ['sourceKey', 'role'];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1) || params.getAll('sourceKey').length !== 1 || params.getAll('role').length !== 1
-      || !validFreeImageRole(params.get('role')) || params.get('role') === 'label' && !quotation || params.has('editor') && params.get('editor') !== 'saved') throw new ImageTextError(400, '원본 이미지와 역할을 선택해주세요.');
+      || !validFreeImageRole(params.get('role')) || params.get('role') === 'label' && !quotation || params.has('editor') && !['saved', 'saved-current-target-v1'].includes(params.get('editor')!)) throw new ImageTextError(400, '원본 이미지와 역할을 선택해주세요.');
     const current = await state(owner, id), role = params.get('role') as FreeImageSource['role'];
     let selection: QuotationSelection | undefined;
     if (quotation) {
@@ -232,7 +232,8 @@ export async function GET(request: Request, context: Context) {
         || slotIndex === null || !/^(?:0|[1-9][0-9]?)$/.test(slotIndex) || Number(slotIndex) > 29 || role === 'main' && Number(slotIndex) !== 0) throw new ImageTextError(400, '최종 견적 이미지의 옵션과 선택 위치를 확인해주세요.');
       selection = { profileId, optionId, fieldKey, slotIndex: Number(slotIndex), input: role === 'main' ? 'mainImage' : role === 'additional' ? 'additionalImages' : role === 'label' ? 'labelImages' : 'detailImages' };
     }
-    const editor = selection && params.get('editor') === 'saved' ? await reopenedSource(owner, id, params.get('sourceKey')!, role, current, selection) : undefined;
+    const editor = selection && params.has('editor') ? await reopenedSource(owner, id, params.get('sourceKey')!, role, current, selection,
+      params.get('editor') === 'saved-current-target-v1' ? 'current-target-v1' : undefined) : undefined;
     const source = editor?.source ?? (selection ? await quotationOriginal(owner, id, params.get('sourceKey')!, role, current, selection)
       : await original(owner, id, params.get('sourceKey')!, role, current, true, true));
     // Never return a snapshot whose source/version changed while R2 was read.

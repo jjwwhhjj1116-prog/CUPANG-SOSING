@@ -1053,9 +1053,9 @@ function savedEditorSelection(h, { document = savedEditDocument(), sourceInterce
     revision: 9, inputFingerprint: 'c'.repeat(64), optionRevision: 4, value: resultKey };
   const quotationContext = { profileId: quotationTarget.profileId, optionId: quotationTarget.optionId, input: quotationTarget.input };
   const target = { sourceKey: resultKey, sequence: 2, sourceLanguage: 'zh', role: 'detail', intent: 'manual', quotationTarget };
-  const imageFor = image => ({ ...image, source: { ...image.source, sourceKey: originalKey,
-    editorSource: { resultKey, resultSha256: 'e'.repeat(64), documentSha256: 'f'.repeat(64) } }, editDocument: document });
-  h.setSource((image, signal, options) => sourceIntercept ? sourceIntercept(imageFor(image), signal, options) : imageFor(image));
+  const imageFor = (image, options) => ({ ...image, source: { ...image.source, sourceKey: originalKey,
+    editorSource: { resultKey, resultSha256: 'e'.repeat(64), documentSha256: 'f'.repeat(64), ...(options?.anchorPolicy ? { anchorPolicy: options.anchorPolicy } : {}) } }, editDocument: document });
+  h.setSource((image, signal, options) => sourceIntercept ? sourceIntercept(imageFor(image, options), signal, options) : imageFor(image, options));
   const open = () => h.setProps({ imageKeys: [originalKey, resultKey, 'owner/second.png'], quotationContext, focusedOptionId: quotationTarget.optionId, translationTarget: target });
   return { document, resultKey, originalKey, quotationTarget, quotationContext, target, imageFor, open };
 }
@@ -1064,7 +1064,7 @@ test('saved editor restores original pixels, all ordered text/style/brush layers
   const h = fixture(), f = savedEditorSelection(h), before = JSON.stringify(f.document);
   try {
     f.open(); await h.settle();
-    assert.deepEqual(h.calls.map(call => call.action), ['source']); assert.deepEqual(plain(h.calls[0].options), { restoreEditor: true });
+    assert.deepEqual(h.calls.map(call => call.action), ['source']); assert.deepEqual(plain(h.calls[0].options), { restoreEditor: true, anchorPolicy: 'current-target-v1' });
     assert.equal(h.calls[0].key, f.resultKey); assert.equal(h.field('번역할 원본 이미지').props.value, f.resultKey);
     assert.equal(h.field('이미지 원문 언어').props.value, 'en'); assert.equal(h.field('문구 1 원문').props.value, ' English original ');
     assert.equal(h.field('문구 1 한국어').props.value, ' 직접 검토한 한국어\n둘째 줄 ');
@@ -1137,7 +1137,7 @@ test('restored-source refresh reacquires the current result anchor and preserves
     const changed = '2026-10-06T00:00:02.000Z'; h.setProps({ version: changed }); await h.settle();
     assert.equal(h.button('번역 이미지 미리보기').props.disabled, true); await h.click('원본 저장 상태 다시 확인');
     const reads = h.calls.filter(call => call.action === 'source'); assert.equal(reads.length, 2);
-    assert.equal(reads[1].key, f.resultKey); assert.equal(reads[1].productVersion, changed); assert.deepEqual(plain(reads[1].options), { restoreEditor: true });
+    assert.equal(reads[1].key, f.resultKey); assert.equal(reads[1].productVersion, changed); assert.deepEqual(plain(reads[1].options), { restoreEditor: true, anchorPolicy: 'current-target-v1' });
     assert.equal(h.field('문구 1 한국어').props.value, '복원 뒤 직접 수정'); assert.equal(h.field('문구 3 선택').props.checked, true);
     await h.click('번역 이미지 미리보기'); const preview = h.calls.at(-1);
     assert.equal(preview.image.source.productVersion, changed); assert.equal(preview.image.source.sourceKey, f.originalKey); assert.equal(preview.image.source.editorSource.resultKey, f.resultKey);
@@ -1161,6 +1161,80 @@ test('double manual clicks during saved-document loading perform one read, and l
       if (mode === 'double') { assert.equal(h.field('문구 1 한국어').props.value, f.document.regions[0].translated); assert.equal(h.field('이미지 원문 언어').props.value, 'en'); }
       else { assert.equal(h.field('문구 1 한국어'), undefined); assert.equal(h.render().props['data-workspace-dirty'], undefined); assert.equal(pending.signal.aborted, true); }
       assert.equal(h.late, 0); assert.equal(h.saved, 0); assert.deepEqual(h.calls.map(call => call.action), ['source']);
+    } finally { h.close(); }
+  }
+});
+
+test('manual quotation card preparation explicitly opts into current-target policy while common manual and OCR reads keep their existing contract', async () => {
+  for (const input of ['mainImage', 'additionalImages', 'detailImages']) {
+    const h = fixture();
+    try {
+      const { quotationTarget } = finalImageSelection(h, input);
+      h.setProps({ translationTarget: { sourceKey: 'owner/original.png', sequence: 3, role: input === 'mainImage' ? 'main' : input === 'additionalImages' ? 'additional' : 'detail',
+        sourceLanguage: 'zh', intent: 'manual', quotationTarget } });
+      await h.settle();
+      assert.deepEqual(h.calls.map(call => call.action), ['source']);
+      assert.deepEqual(plain(h.calls[0].options), { restoreEditor: true, anchorPolicy: 'current-target-v1' });
+      assert.deepEqual(plain(h.calls[0].quotationTarget), quotationTarget);
+      assert.equal(h.saved, 0); assert.equal(h.button('검토한 번역 이미지 적용'), undefined);
+    } finally { h.close(); }
+  }
+  const common = fixture(), ocr = fixture();
+  try {
+    common.setProps({ translationTarget: { sourceKey: 'owner/original.png', sequence: 2, role: 'detail', intent: 'manual' } }); await common.settle();
+    assert.deepEqual(plain(common.calls[0].options), { restoreEditor: true });
+    finalImageSelection(ocr); await ocr.click('원본 문구 읽기');
+    assert.equal(ocr.calls[0].options, undefined); assert.deepEqual(ocr.calls.map(call => call.action), ['source', 'ocr']);
+  } finally { common.close(); ocr.close(); }
+});
+
+test('reordered saved result keeps the current slot policy through version refresh, edited rows, crop and explicit preview', async () => {
+  const h = fixture(), f = savedEditorSelection(h);
+  f.quotationTarget.slotIndex = 2; f.quotationTarget.value = 'owner/second.png\nowner/original.png\n' + f.resultKey;
+  try {
+    f.open(); await h.settle();
+    assert.equal(h.calls[0].quotationTarget.slotIndex, 2); assert.equal(h.calls[0].options.anchorPolicy, 'current-target-v1');
+    await h.change('문구 1 한국어', '순서를 옮긴 뒤 수정한 문구');
+    h.setProps({ version: '2026-10-06T00:00:08.000Z' }); await h.settle(); await h.click('원본 저장 상태 다시 확인');
+    const reads = h.calls.filter(call => call.action === 'source'); assert.equal(reads.length, 2);
+    assert.deepEqual(plain(reads[1].options), { restoreEditor: true, anchorPolicy: 'current-target-v1' });
+    assert.equal(reads[1].quotationTarget.slotIndex, 2); assert.equal(reads[1].key, f.resultKey);
+    assert.equal(h.field('문구 1 한국어').props.value, '순서를 옮긴 뒤 수정한 문구');
+    await h.click('번역 이미지 미리보기'); const preview = h.calls.at(-1);
+    assert.equal(preview.image.source.editorSource.anchorPolicy, 'current-target-v1'); assert.equal(preview.image.source.sourceKey, f.originalKey);
+    assert.equal(preview.image.source.quotationTarget.slotIndex, 2); assert.equal(preview.rows[0].translated, '순서를 옮긴 뒤 수정한 문구');
+    assert.deepEqual(plain(preview.crop), { x: 2, y: 1, width: 14, height: 9 }); assert.equal(preview.sourceLanguage, 'en');
+    assert.equal(h.calls.filter(call => ['ocr', 'translate', 'apply', 'recover'].includes(call.action)).length, 0);
+  } finally { h.close(); }
+});
+
+test('a new current-slot card cannot overwrite a restored dirty draft or reuse its old preview after a product clock change', async () => {
+  const h = fixture(), f = savedEditorSelection(h);
+  try {
+    f.open(); await h.settle(); await h.change('문구 1 한국어', '보존할 현재 초안'); await h.click('번역 이미지 미리보기');
+    const staleApply = h.button('검토한 번역 이미지 적용').props.onClick;
+    const next = { ...f.quotationTarget, slotIndex: 1, value: 'owner/second.png\n' + f.resultKey, revision: 10, inputFingerprint: 'd'.repeat(64) };
+    h.setProps({ version: '2026-10-06T00:00:09.000Z', translationTarget: { ...f.target, sequence: 3, quotationTarget: next } }); await h.settle();
+    assert.equal(h.field('문구 1 한국어').props.value, '보존할 현재 초안'); assert.equal(h.field('문구 3 선택').props.checked, false);
+    assert.equal(h.calls.filter(call => call.action === 'source').length, 1, 'new card does not replace an existing edited document');
+    assert.ok(!h.button('검토한 번역 이미지 적용') || h.button('검토한 번역 이미지 적용').props.disabled);
+    staleApply(); await h.settle(); assert.equal(h.saved, 0);
+    assert.equal(h.calls.filter(call => ['apply', 'recover', 'ocr', 'translate'].includes(call.action)).length, 0);
+  } finally { h.close(); }
+});
+
+test('current-target saved-document responses arriving after profile or selected-option ABA cannot resurrect old editable state', async () => {
+  for (const mode of ['profile', 'option']) {
+    const h = fixture(), wait = deferred(); let pending;
+    const f = savedEditorSelection(h, { sourceIntercept(image, signal, options) { pending = { image, signal, options }; return wait.promise; } });
+    try {
+      f.open(); await h.settle(); assert.equal(pending.options.anchorPolicy, 'current-target-v1');
+      h.setProps({ quotationContext: { ...f.quotationContext, ...(mode === 'profile' ? { profileId: 'different-profile' } : { optionId: 'different-option' }) } });
+      await h.settle(); h.setProps({ quotationContext: f.quotationContext }); await h.settle();
+      wait.resolve(pending.image); await h.settle();
+      assert.equal(pending.signal.aborted, true); assert.equal(h.field('문구 1 한국어'), undefined);
+      assert.equal(h.button('문구 영역 직접 추가').props.disabled, true); assert.equal(h.render().props['data-workspace-dirty'], undefined);
+      assert.deepEqual(h.calls.map(call => call.action), ['source']); assert.equal(h.saved, 0); assert.equal(h.late, 0);
     } finally { h.close(); }
   }
 });

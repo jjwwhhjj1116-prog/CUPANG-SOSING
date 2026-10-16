@@ -21,6 +21,7 @@ export type FreeImageRegion = FreeImageTextStyle & {
 export type FreeImageLoaded = { source: FreeImageSource; blob: Blob; canvas: HTMLCanvasElement; width: number; height: number; editDocument?: FreeImageEditDocument };
 export type FreeImageRendered = { source: FreeImageSource; output: Blob; width: number; height: number; optionImageIds?: string[]; crop?: FreeImageCrop; editDocument?: FreeImageEditDocument };
 export type FreeImageQuotationRequest = Omit<NonNullable<FreeImageSource['quotationTarget']>, 'bindingSha256'>;
+export type FreeImageEditorReadOptions = { restoreEditor: true; anchorPolicy?: 'current-target-v1' };
 export function sameFreeImageQuotationRequest(actual: FreeImageSource['quotationTarget'] | FreeImageQuotationRequest | null | undefined, expected: FreeImageQuotationRequest | null | undefined): boolean {
   if (!actual || !expected) return !actual && !expected;
   return actual.kind === expected.kind && actual.profileId === expected.profileId && actual.optionId === expected.optionId && actual.input === expected.input
@@ -86,16 +87,18 @@ function canvas(width: number, height: number) {
 /** Read only authenticated app files, and bind the decoded visible orientation
  * to the exact SHA-256 source proof returned by the current role's endpoint. */
 export async function readFreeImageSource(productId: string, version: string, sourceKey: string, role: FreeImageRole,
-  signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: { restoreEditor: true }): Promise<FreeImageLoaded> {
+  signal: AbortSignal, fetcher: typeof fetch = fetch, quotationTarget?: FreeImageQuotationRequest, options?: FreeImageEditorReadOptions): Promise<FreeImageLoaded> {
   signal.throwIfAborted();
+  if (options?.anchorPolicy !== undefined && (options.anchorPolicy !== 'current-target-v1' || options.restoreEditor !== true || !quotationTarget)) throw Error('다시 편집할 현재 견적 이미지 연결을 확인해주세요.');
   if (role === 'label' && !quotationTarget) throw Error('선택 옵션에 저장된 최종 라벨 이미지를 선택해주세요.');
   const params = { sourceKey, role, ...(quotationTarget ? quotationSourceQuery(quotationTarget, role, sourceKey) : {}) };
   // Only our deterministic edited results can carry a saved document. Legacy
   // images still use their existing source request; a missing document is the
   // only response that permits falling back to opening the flattened picture.
   const savedEditor = !!options?.restoreEditor && !!quotationTarget && sourceKey.split('/').at(-1)?.startsWith(`free-image-${productId}-`) === true;
+  const editorMode = options?.anchorPolicy === 'current-target-v1' ? 'saved-current-target-v1' : 'saved';
   let restoring = savedEditor;
-  let response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ ...params, ...(savedEditor ? { editor: 'saved' } : {}) })}`, { signal, cache: 'no-store' });
+  let response = await fetcher(`/api/products/${encodeURIComponent(productId)}/image-text?${new URLSearchParams({ ...params, ...(savedEditor ? { editor: editorMode } : {}) })}`, { signal, cache: 'no-store' });
   let body = await response.json() as { source?: unknown; error?: string; code?: string; editDocument?: unknown }; signal.throwIfAborted();
   if (savedEditor && response.status === 404 && body.code === 'image-edit-document-missing') {
     restoring = false;
@@ -107,6 +110,7 @@ export async function readFreeImageSource(productId: string, version: string, so
   if (source.productId !== productId || source.productVersion !== version || (source.editorSource?.resultKey ?? source.sourceKey) !== sourceKey || source.role !== role
     || restoring && (source.editorSource === undefined || body.editDocument === undefined)
     || source.editorSource !== undefined && (!restoring || body.editDocument === undefined)
+    || restoring && source.editorSource?.anchorPolicy !== options?.anchorPolicy
     || body.editDocument !== undefined && (!restoring || !source.editorSource)
     || !sameFreeImageQuotationRequest(source.quotationTarget, quotationTarget)) throw Error('상품·이미지·역할 또는 저장 버전이 변경됐습니다. 최신 저장본에서 다시 선택해주세요.');
   const editDocument = body.editDocument === undefined ? undefined : validateFreeImageEditDocument(body.editDocument, source);
