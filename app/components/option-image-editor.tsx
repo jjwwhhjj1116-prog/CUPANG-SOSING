@@ -6,6 +6,7 @@ import type { FreeImageQuotationRequest } from '@/app/free-image-translation-cli
 import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
 import { downloadImageSelection } from '@/app/image-selection-download';
 import { DetailImageCompositePanel } from '@/app/components/detail-image-composite-panel';
+import { DetailWorkspacePanel } from '@/app/components/detail-workspace-panel';
 import { canEditSavedDetailInputs, prepareSavedDetailInputs, prepareSavedDetailComposition } from '@/app/detail-editor-inputs-client';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean;
@@ -36,10 +37,13 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
   useLayoutEffect(() => { liveActive.current = active; }, [active]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [uncertain, setUncertain] = useState(false);
   const compositeBusy = useRef(false), [merging, setMerging] = useState(false);
+  const workspaceBusy = useRef({ key: sourceKey, busy: false }), [workspaceWork, setWorkspaceWork] = useState({ key: sourceKey, busy: false });
+  const workspaceWorking = workspaceWork.key === sourceKey && workspaceWork.busy;
   const view = saved?.scope === scope ? saved.view : null, draft = pending.scope === scope ? pending.values : {};
   const dirty = Object.keys(draft).length > 0, input = stage === 'additional' ? 'additionalImages' : 'detailImages', label = stage === 'additional' ? '추가 이미지' : '상세 이미지';
   const current = () => mounted.current && currentScope.current === scope && currentSource.current === sourceKey;
-  const interactive = () => current() && currentStage.current === stage && !liveDisabled.current && !compositeBusy.current;
+  const interactive = () => current() && currentStage.current === stage && !liveDisabled.current && !compositeBusy.current
+    && !(workspaceBusy.current.key === sourceKey && workspaceBusy.current.busy);
   function verify(body: QuotationFieldsView, saveResponse = false, explicitLatest = false) {
     if (!body || (!saveResponse && !explicitLatest && body.productVersion !== version) || !Number.isFinite(Date.parse(body.productVersion)) || !Number.isSafeInteger(body.revision) || body.revision < 0
       || !Number.isSafeInteger(body.contentRevision) || body.contentRevision < 0 || !Number.isSafeInteger(body.optionRevision) || body.optionRevision < 0
@@ -97,7 +101,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     // Source identity governs reads. Stage changes retain the same option's
     // pending image/HTML edits; local editing never starts an automatic write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, sourceKey, disabled]);
+  }, [scope, sourceKey, disabled, workspaceWorking]);
   function edit(field: OptionImageInput, value: string | null) {
     if (!view || latestSaved.current?.view !== view || !interactive() || pendingSave.current?.scope === scope || request.current) return;
     clearDrag();
@@ -152,7 +156,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     const targets = optionImageTargets(view.resolved.schema.fields); selected = quotationImageKeys(optionImageValue(view, optionId, input, draft)); html = optionImageValue(view, optionId, 'detailHtml', draft);
     limit = Math.min(...targets[input].fields.map(field => field.maxItems ?? 30)); issues = optionImageDraftIssues(view, optionId, draft);
   } catch (cause) { bindingError = cause instanceof Error ? cause.message : '이미지 연결 확인 필요'; }
-  const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || merging || disabled || uncertain || !!bindingError;
+  const row = view?.resolved.rows.find(row => row.optionId === optionId), locked = busy || merging || workspaceWorking || disabled || uncertain || !!bindingError;
   const unavailable = selected.filter(key => !view?.imageKeys.includes(key));
   const activePreview = preview?.scope === scope && view?.imageKeys.includes(preview.key) ? preview.key : selected.find(key => view?.imageKeys.includes(key)) ?? view?.imageKeys[0] ?? null;
   // The shortcut needs explicit role evidence; a flattened first/last image
@@ -308,7 +312,7 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 아래로 이동`} disabled={locked || index === selected.length - 1} onClick={() => move(key, index, 1)}>↓</button>
     <button type="button" className="btn ghost" aria-label={`${label} ${index + 1} 선택 제거`} disabled={locked} onClick={() => updateImages(keys => keys.filter((_, position) => position !== index))}>삭제</button>
   </div>;
-  return <section className="panel-stack" aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging}>
+  return <section className="panel-stack" aria-label="선택 옵션 이미지 편집" data-quotation-source-step={stage === 'additional' ? '추가 이미지' : '상세 이미지'} data-workspace-dirty={dirty} data-workspace-saving={busy || merging || workspaceWorking}>
     <h3>{stage === 'detail' ? '상세 페이지 이미지' : '선택 옵션 추가 이미지'}</h3><p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
     <p>드래그 또는 ↑↓로 순서를 조정한 뒤 저장하세요. 선택한 이미지와 순서는 이 옵션의 견적서에만 저장합니다. 상품 공통 이미지와 다른 옵션은 유지됩니다.</p>
     <button type="button" className="btn ghost" disabled={!view || locked || !selected.length || !!unavailable.length} onClick={() => void downloadSelection()}>{label} ZIP 다운로드</button>
@@ -319,8 +323,28 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       <small>합치기 직전의 검증된 사진 순서를 불러옵니다. 저장하기 전까지 현재 통합 상세 이미지는 바뀌지 않습니다.</small>
       <small>사진·HTML 재편집은 HTML을 함께 보관한 저장 건에서 사용할 수 있습니다. 당시 HTML을 그대로 새 수동 초안에 넣으며 예전 공통·자동 상속 상태로 되돌리지는 않습니다.</small>
     </div>}
-    {stage === 'detail' && view && <DetailImageCompositePanel key={scope} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
-      disabled={disabled || busy || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
+    {stage === 'detail' && view && <DetailWorkspacePanel key={`workspace:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
+      disabled={disabled || busy || merging || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
+      beforeAdopt={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail'
+        && !liveDisabled.current && !compositeBusy.current && !request.current && !pendingSave.current && latestSaved.current?.view === view
+        && latestSaved.current.sourceKey === sourceKey && knownProtection !== null && !Object.keys(latestDraft.current.values).length}
+      onBusyChange={value => {
+        if (!current() || value && (!active || !liveActive.current || currentStage.current !== 'detail' || liveDisabled.current
+          || !keyboardGeneration || keyboardEpoch.current !== keyboardGeneration)) return;
+        if (workspaceBusy.current.key === sourceKey && workspaceBusy.current.busy === value) return;
+        workspaceBusy.current = { key: sourceKey, busy: value }; setWorkspaceWork(workspaceBusy.current);
+      }}
+      onAdopt={keys => {
+        if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'
+          || liveDisabled.current || compositeBusy.current || request.current || pendingSave.current || latestSaved.current?.view !== view
+          || latestSaved.current.sourceKey !== sourceKey || Object.keys(latestDraft.current.values).length || !Array.isArray(keys)
+          || keys.length > PRODUCT_IMAGE_POOL_LIMIT || keys.some(key => typeof key !== 'string' || !view.imageKeys.includes(key)) || !knownProtection
+          || knownProtection.some(key => selected.filter(value => value === key).length !== keys.filter(value => value === key).length)) return;
+        clearDrag(); latestDraft.current = { scope, values: { detailImages: keys.join('\n') } }; setPending(latestDraft.current);
+        setMessage('보관한 작업 사진을 선택 옵션의 수동 초안으로 불러왔습니다. 기존 견적 HTML은 유지했습니다. 확인 후 선택 옵션 이미지를 저장해주세요.');
+      }} />}
+    {stage === 'detail' && view && <DetailImageCompositePanel key={`composite:${scope}`} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
+      disabled={disabled || busy || workspaceWorking || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}
       beforeApply={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail' && !liveDisabled.current && !request.current && !pendingSave.current && !Object.keys(latestDraft.current.values).length}
       onBusyChange={value => { compositeBusy.current = value; setMerging(value); }}
       onSaved={body => { if (!current()) return; latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); onSaved?.(); }} />}
@@ -356,8 +380,8 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
       </label>}
     </>}
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
-    <button type="button" className="btn primary" disabled={!view || busy || merging || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : '선택 옵션 이미지 저장'}</button>
-    {dirty && <button type="button" className="btn ghost" disabled={busy || merging || disabled} onClick={() => void load(true)}>입력 유지·최신 이미지 조회</button>}
-    <button type="button" className="btn ghost" disabled={busy || merging || disabled} onClick={() => void load()}>{dirty ? '입력 취소·저장 이미지 다시 조회' : '저장 이미지 다시 조회'}</button>
+    <button type="button" className="btn primary" disabled={!view || busy || merging || workspaceWorking || disabled || !!bindingError || !dirty || !!issues.length} onClick={() => void save()}>{uncertain ? '이미지 저장 결과 확인' : '선택 옵션 이미지 저장'}</button>
+    {dirty && <button type="button" className="btn ghost" disabled={busy || merging || workspaceWorking || disabled} onClick={() => void load(true)}>입력 유지·최신 이미지 조회</button>}
+    <button type="button" className="btn ghost" disabled={busy || merging || workspaceWorking || disabled} onClick={() => void load()}>{dirty ? '입력 취소·저장 이미지 다시 조회' : '저장 이미지 다시 조회'}</button>
   </section>;
 }
