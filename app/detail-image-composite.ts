@@ -32,10 +32,10 @@ function selection(view: QuotationFieldsView, optionId: string, profileId?: stri
   // Existing top/body sharing is a visible repeated position, not a new role assignment.
   return keys;
 }
-async function readView(input: Pick<DetailComposite, 'productId' | 'optionId' | 'profileId'>, signal: AbortSignal, fetcher: typeof fetch) {
+async function readView(input: Pick<DetailComposite, 'productId' | 'optionId' | 'profileId'>, signal: AbortSignal, fetcher: typeof fetch, quotedInputs = true) {
   signal.throwIfAborted(); const response = await fetcher(endpoint(input), { cache: 'no-store', signal });
   const body = await response.json() as QuotationFieldsView & { error?: string }; signal.throwIfAborted();
-  if (!response.ok) throw Error(body.error || '상세 이미지 저장본을 읽지 못했습니다.'); selection(body, input.optionId, input.profileId); return body;
+  if (!response.ok) throw Error(body.error || '상세 이미지 저장본을 읽지 못했습니다.'); if (quotedInputs) selection(body, input.optionId, input.profileId); return body;
 }
 async function readImage(key: string, signal: AbortSignal, fetcher: typeof fetch) {
   const response = await fetcher(fileUrl(key), { cache: 'no-store', signal });
@@ -58,9 +58,9 @@ function dimensions(width: number, height: number) {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width > 16000 || height > 16000 || width * height > 40000000) throw Error('합칠 이미지가 화면 처리 크기를 초과합니다. 이미지를 나누거나 줄여주세요.');
 }
 type DetailImageInput = Pick<DetailComposite, 'productId' | 'optionId' | 'profileId' | 'view'>;
-async function renderDetailImages(input: DetailImageInput, keys: string[], signal: AbortSignal, fetcher: typeof fetch, format: 'png' | 'jpeg') {
+export async function renderDetailImageSequence(input: DetailImageInput, keys: string[], signal: AbortSignal, fetcher: typeof fetch, format: 'png' | 'jpeg', workspaceInputs = false) {
   signal.throwIfAborted();
-  if (!same(await readView(input, signal, fetcher), input.view)) throw changed();
+  if (!same(await readView(input, signal, fetcher, !workspaceInputs), input.view)) throw changed();
   const sources: DetailComposite['sources'] = []; let height = 0, totalBytes = 0;
   // Keep only one decoded source in memory. The second pass also confirms its bytes.
   for (const key of keys) {
@@ -84,20 +84,20 @@ async function renderDetailImages(input: DetailImageInput, keys: string[], signa
   signal.throwIfAborted(); if (!output.size || output.size > MAX_IMAGE_BYTES) throw Error('합친 이미지는 10MB 이내여야 합니다.');
   const bytes = new Uint8Array(await output.arrayBuffer()), metadata = inspectImage(bytes);
   if (metadata.mime !== mime || metadata.width !== 800 || metadata.height !== height) throw Error('합친 이미지의 파일과 화면 크기를 확인하지 못했습니다.');
-  if (!same(await readView(input, signal, fetcher), input.view)) throw changed();
+  if (!same(await readView(input, signal, fetcher, !workspaceInputs), input.view)) throw changed();
   return { keys, sources, output, width: 800 as const, height, bytes };
 }
 /** Download the current saved sequence without allocating or replacing files. */
 export async function prepareDetailImageDownload(input: DetailImageInput, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<{ output: Blob; width: 800; height: number; keys: string[] }> {
   const keys = selection(input.view, input.optionId, input.profileId);
-  const rendered = await renderDetailImages(input, keys, signal, fetcher, 'jpeg');
+  const rendered = await renderDetailImageSequence(input, keys, signal, fetcher, 'jpeg');
   return { output: rendered.output, width: rendered.width, height: rendered.height, keys: rendered.keys };
 }
 /** Read and render only. No uploads or automatic replacement during preview. */
 export async function prepareDetailComposite(input: DetailImageInput, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<DetailComposite> {
   const keys = selection(input.view, input.optionId, input.profileId);
   if (input.view.imageKeys.length >= PRODUCT_IMAGE_POOL_LIMIT) throw Error('새 합친 이미지를 저장할 공간이 없습니다. 원본은 유지됩니다.');
-  const { sources, output, height, bytes } = await renderDetailImages(input, keys, signal, fetcher, 'png');
+  const { sources, output, height, bytes } = await renderDetailImageSequence(input, keys, signal, fetcher, 'png');
   const sha256 = await labelUploadDigest(bytes), uploadId = await labelUploadDigest(new TextEncoder().encode(JSON.stringify({ kind: 'detail-composite-v1', productId: input.productId, optionId: input.optionId, category: input.view.categoryContext, fingerprint: input.view.inputFingerprint, sources, width: 800, height, sha256 })));
   return { ...input, keys, sources, output, width: 800, height, sha256, uploadId };
 }

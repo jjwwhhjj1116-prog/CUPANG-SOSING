@@ -3,7 +3,8 @@ import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { quotationValueLength } from '@/app/quotation-scalar-constraints';
 import { optionImageTargets } from '@/app/quotation-image-targets';
 import { detailEditorInputs, validateDetailEditorInputs, type DetailEditorInputs } from '@/app/detail-editor-inputs';
-import { DETAIL_SAVE_EDITOR_POLICY, type DetailSaveBackup } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_EDITOR_POLICY, DETAIL_SAVE_TEXT_POLICY, type DetailSaveBackup } from '@/app/detail-save-plan';
+import { detailWorkspaceDigest, validateDetailWorkspaceRecord } from '@/app/detail-workspace';
 import { quotationScope } from '@/app/quotation-scopes';
 import { supplierHubCompany, type SupplierHubCompany } from '@/app/supplier-hub-company';
 import { labelUploadDigest } from '@/app/label-upload-key';
@@ -71,12 +72,26 @@ export function validateDetailEditorComposition(value: unknown, ownerId: string,
 /** Verify the complete stored snapshot even on an exact POST/recovery replay. */
 export async function detailSaveEditorBackup(backup: DetailSaveBackup, view: QuotationFieldsView, company: SupplierHubCompany): Promise<DetailSaveEditorSnapshot | undefined> {
   const receipt = backup.receipt;
-  if (receipt.editorPolicy === undefined && receipt.editorSha256 === undefined && backup.editor === undefined) return;
+  if (receipt.editorPolicy === undefined && receipt.editorSha256 === undefined && backup.editor === undefined) {
+    if (receipt.workspace !== undefined || backup.workspace !== undefined) return invalid();
+    return;
+  }
   if (receipt.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY || typeof receipt.editorSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(receipt.editorSha256)) return invalid();
   const editor = validateDetailSaveEditorSnapshot(backup.editor), target = optionImageTargets(view.resolved.schema.fields).detailHtml;
   if (!same(editor.context, view.categoryContext) || !same(editor.company, company) || editor.html.fieldKey !== target.primary
     || target.fields.some(field => field.readOnly || quotationValueLength(field, editor.html.effective) > (field.maxLength ?? 150000))
     || await detailSaveEditorSha256(editor) !== receipt.editorSha256) return invalid();
+  if (backup.workspace !== undefined || receipt.workspace !== undefined) {
+    const proof = receipt.workspace;
+    if (!exact(proof, ['revision', 'digest']) || !Number.isSafeInteger(proof.revision) || (proof.revision as number) < 1
+      || typeof proof.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(proof.digest) || receipt.textPolicy !== DETAIL_SAVE_TEXT_POLICY) return invalid();
+    const workspace = validateDetailWorkspaceRecord(backup.workspace, receipt.key.split('/')[0], backup.workspace?.productId ?? '', receipt.sourceOptionId, editor.context, company), { digest, ...record } = workspace;
+    if (digest !== await detailWorkspaceDigest(record) || proof.revision !== workspace.revision || proof.digest !== digest) return invalid();
+    const files = new Map(workspace.files.map(file => [file.key, file])), sources = workspace.document.photos.map(photo => {
+      const file = files.get(photo.key); if (!file) return invalid(); return { key: photo.key, sha256: file.sha256, width: file.width, height: file.height };
+    });
+    if (!same(sources, backup.sources)) return invalid();
+  }
   if (!Array.isArray(backup.before)) return invalid();
   for (const optionId of [null, receipt.sourceOptionId]) for (const field of target.fields) {
     const values = backup.before.filter(change => change.optionId === optionId && change.fieldKey === field.id);
@@ -108,6 +123,7 @@ export async function savedDetailEditorComposition(view: QuotationFieldsView, st
   }
   const editor = await detailSaveEditorBackup(backup, view, company);
   if (!editor) return missing();
+  if (backup.workspace && backup.workspace.productId !== productId) return invalid();
   const inputs = detailEditorInputs(view, state, productId), receipt = backup.receipt;
   if (!inputs || inputs.origin.productId !== productId || inputs.origin.uploadId !== receipt.uploadId || inputs.origin.revision !== receipt.revision
     || inputs.origin.sourceOptionId !== receipt.sourceOptionId || inputs.output.key !== key || !same(inputs.images, backup.sources)) return invalid();

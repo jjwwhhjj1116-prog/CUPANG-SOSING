@@ -101,14 +101,23 @@ export async function attachQuotationImageTranslation(owner: string, productId: 
 export class QuotationDetailSaveLimitError extends Error {}
 export const detailSaveHistoryScope = (categoryId: string | null) => categoryId ? quotationScope(categoryId) : 'unclassified';
 type DetailSaveCommit = { backup: Omit<DetailSaveBackup, 'updatedAt'>; expectedOverrides: QuotationOverrides;
-  member: { email: string; role: string; companyCode: string; companyName: string } };
+  member: { email: string; role: string; companyCode: string; companyName: string };
+  /** Generated only by the authenticated saved-workspace reader, never JSON input. */
+  workspaceFence?: { sourcePredicate: { sql: string; args: (string | number | null)[] }; scope: string;
+    row: { revision: number; payload: string; requestId: string; updatedAt: string } } };
 /** The appended PNG, all common/option edits, before-values and receipt share
  * one guarded quotation payload and one product clock in the D1 transaction. */
 export async function attachQuotationDetailSave(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number,
   source: QuotationSourceGuard, categoryId: string | null, imageKeys: string[], detail: DetailSaveCommit) {
   const previous = JSON.parse(source.imageKeys) as unknown;
-  if (!Array.isArray(previous) || imageKeys.length !== previous.length + 1 || imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT
-    || JSON.stringify(imageKeys.slice(0, -1)) !== JSON.stringify(previous) || new Set(imageKeys).size !== imageKeys.length
+  const workspace = detail.backup.workspace, expected = Array.isArray(previous) && workspace
+    ? [...new Set([...previous, ...workspace.document.photos.map(photo => photo.key), detail.backup.receipt.key])] : null;
+  if (!Array.isArray(previous) || (workspace ? !detail.workspaceFence || !detail.backup.receipt.workspace || JSON.stringify(imageKeys) !== JSON.stringify(expected)
+      || detail.backup.receipt.workspace.revision !== workspace.revision || detail.backup.receipt.workspace.digest !== workspace.digest
+      || detail.workspaceFence.row.revision !== workspace.revision || detail.workspaceFence.row.payload !== JSON.stringify(workspace)
+      || detail.workspaceFence.row.requestId !== workspace.requestId || detail.workspaceFence.row.updatedAt !== workspace.updatedAt
+      : detail.workspaceFence !== undefined || detail.backup.receipt.workspace !== undefined || imageKeys.length !== previous.length + 1 || JSON.stringify(imageKeys.slice(0, -1)) !== JSON.stringify(previous))
+    || imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(imageKeys).size !== imageKeys.length
     || detail.backup.receipt.key !== imageKeys.at(-1) || detail.backup.receipt.beforeRevision !== expectedRevision
     || detail.backup.receipt.revision !== expectedRevision + 1 || detail.backup.receipt.categoryId !== categoryId)
     throw Error('Invalid detail save attachment.');
@@ -154,16 +163,20 @@ async function commitQuotationFields(owner: string, productId: string, overrides
   }
   const exactQuoteGuard = guarded ? ' AND ((?=0 AND NOT EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id)) OR EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id AND q.owner_id=p.owner_id AND q.revision=? AND q.payload=?))' : '';
   const exactQuoteArgs = guarded ? [expectedRevision, expectedRevision, previousRow?.payload ?? ''] : [];
-  const authorization = guarded && (sealedImage || (env as { YOOFAM_AUTH_ENABLED?: string }).YOOFAM_AUTH_ENABLED === 'true')
+  const authorization = guarded && (sealedImage || detail?.workspaceFence || (env as { YOOFAM_AUTH_ENABLED?: string }).YOOFAM_AUTH_ENABLED === 'true')
     ? { sql: ` AND EXISTS(SELECT 1 FROM members m WHERE m.id=p.owner_id AND m.status='approved' AND lower(trim(m.email))=? AND m.role=? AND m.company_code=? AND m.company_name=?)`,
       args: [guarded.member.email.trim().toLowerCase(), guarded.member.role, guarded.member.companyCode, guarded.member.companyName] } : { sql: '', args: [] as string[] };
+  const workspaceFence = detail?.workspaceFence, workspaceGuard = workspaceFence ? {
+    sql: ` AND ${workspaceFence.sourcePredicate.sql} AND EXISTS(SELECT 1 FROM product_detail_workspaces w WHERE w.owner_id=p.owner_id AND w.product_id=p.id AND w.category_scope=? AND w.option_id=? AND w.revision=? AND w.payload=? AND w.request_id=? AND w.updated_at=?)`,
+    args: [...workspaceFence.sourcePredicate.args, workspaceFence.scope, detail!.backup.receipt.sourceOptionId, workspaceFence.row.revision, workspaceFence.row.payload, workspaceFence.row.requestId, workspaceFence.row.updatedAt],
+  } : { sql: '', args: [] };
   const result = await db.batch<Row>([
     db.prepare(`INSERT INTO product_quotation_fields(product_id,owner_id,revision,payload,updated_at)
-      SELECT p.id,p.owner_id,?,?,? FROM products p WHERE ${guard.sql}${exactQuoteGuard}${authorization.sql}
+      SELECT p.id,p.owner_id,?,?,? FROM products p WHERE ${guard.sql}${exactQuoteGuard}${authorization.sql}${workspaceGuard.sql}
       AND (?=0 OR EXISTS(SELECT 1 FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id AND revision=?))
       ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at
         WHERE product_quotation_fields.owner_id=excluded.owner_id AND product_quotation_fields.revision=?
-      RETURNING payload,revision`).bind(state.revision, payload, updatedAt, ...guard.args, ...exactQuoteArgs, ...authorization.args, expectedRevision, expectedRevision, expectedRevision),
+      RETURNING payload,revision`).bind(state.revision, payload, updatedAt, ...guard.args, ...exactQuoteArgs, ...authorization.args, ...workspaceGuard.args, expectedRevision, expectedRevision, expectedRevision),
     db.prepare(`UPDATE products SET ${imageKeys ? 'image_keys=?,' : ''}quote_status='대기',updated_at=?
       WHERE id=? AND owner_id=? AND updated_at=? AND image_keys=? AND changes()=1
       AND EXISTS(SELECT 1 FROM product_quotation_fields WHERE product_id=? AND owner_id=? AND revision=?) RETURNING updated_at`)

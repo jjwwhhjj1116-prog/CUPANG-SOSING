@@ -8,9 +8,10 @@ import { createDetailWorkspaceSave, prepareDetailWorkspaceAdoption, prepareDetai
 import FreeImageTranslationPanel, { type FreeImageTranslationTarget } from '@/app/components/free-image-translation-panel';
 import { readLatestDetailWorkspaceForEditor, type DetailWorkspaceEditorContext } from '@/app/detail-workspace-image-client';
 import { attachDetailWorkspaceFiles, readLatestDetailWorkspaceAfterAttachment, recoverDetailWorkspaceFiles, type DetailWorkspaceAttachmentAttempt } from '@/app/detail-workspace-attachment-client';
+import { DetailWorkspaceCompositePanel } from '@/app/components/detail-workspace-composite-panel';
 
 type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean;
-  beforeAdopt?: () => boolean; onAdopt: (keys: string[]) => void; onBusyChange?: (busy: boolean) => void; onFilesAttached?: (view: QuotationFieldsView) => void; onRefreshRequested?: () => void };
+  beforeAdopt?: () => boolean; onAdopt: (keys: string[]) => void; onBusyChange?: (busy: boolean) => void; onFilesAttached?: (view: QuotationFieldsView) => void; onRefreshRequested?: () => void; onCompositeSaved?: (view: QuotationFieldsView) => void };
 type Work = { selection: DetailWorkspaceSelection; reply: DetailWorkspaceView; document: DetailWorkspaceDocument };
 type Pending = { input: DetailWorkspaceSaveInput; attempt: DetailWorkspaceAttempt };
 type PhotoEditor = { context: DetailWorkspaceEditorContext; target: FreeImageTranslationTarget; imageKeys: string[]; generation: object };
@@ -23,7 +24,7 @@ const documentFrom = (photos: DetailWorkspacePhoto[], margin = 0): DetailWorkspa
 /** Independent editable composition. Its generated HTML never replaces the
  * selected option's literal quotation HTML. */
 export function DetailWorkspacePanel(props: Props) { return <DetailWorkspaceForm key={JSON.stringify([props.productId, props.optionId, props.profileId ?? null])} {...props} />; }
-export function DetailWorkspaceForm({ productId, optionId, profileId, view, disabled = false, stageActive = true, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested }: Props) {
+export function DetailWorkspaceForm({ productId, optionId, profileId, view, disabled = false, stageActive = true, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved }: Props) {
   const [work, setWork] = useState<Work | null>(null), [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false);
   const [ready, setReady] = useState(false);
   const [canRecover, setCanRecover] = useState(false);
@@ -31,6 +32,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   const [notApplied, setNotApplied] = useState(false);
   const [editor, setEditor] = useState<PhotoEditor | null>(null), [editorBusy, setEditorBusy] = useState(false), [editorDirty, setEditorDirty] = useState(false);
   const [attaching, setAttaching] = useState(false), [attachmentRetry, setAttachmentRetry] = useState(false);
+  const [compositeBusy, setCompositeBusy] = useState(false), compositeIO = useRef(false);
   const liveEditor = useRef<PhotoEditor | null>(null), editorStatus = useRef({ busy: false, dirty: false }), attachment = useRef<Attachment | null>(null), editorSequence = useRef(0);
   const editorCloseGuard = useRef<(() => boolean) | null>(null);
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [candidate, setCandidate] = useState('');
@@ -38,9 +40,9 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   const source = JSON.stringify([productId, optionId, profileId ?? null, view, disabled, stageActive]);
   const [clock, setClock] = useState({ source, token: {} }); if (clock.source !== source) setClock({ source, token: {} });
   const generation = clock.source === source ? clock.token : null, epoch = useRef(generation);
-  const controls = useRef({ disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested });
+  const controls = useRef({ disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved });
   const storage = `yoofam-detail-workspace-v1:${productId}:${optionId}:${profileId ?? ''}`;
-  useLayoutEffect(() => { controls.current = { disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested }; }, [disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested]);
+  useLayoutEffect(() => { controls.current = { disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved }; }, [disabled, stageActive, beforeAdopt, onAdopt, onBusyChange, onFilesAttached, onRefreshRequested, onCompositeSaved]);
   useLayoutEffect(() => { epoch.current = generation; if (!pending.current && !attachment.current) operation.current?.abort(); }, [generation]);
   useEffect(() => {
     mounted.current = true; let disposed = false;
@@ -58,19 +60,19 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     });
     return () => { disposed = true; mounted.current = false; if (!pending.current && !attachment.current) operation.current?.abort(); controls.current.onBusyChange?.(false); };
   }, [storage, productId, optionId, profileId]);
-  useEffect(() => { onBusyChange?.(busy || uncertain || attaching || editor !== null); }, [busy, uncertain, attaching, editor, onBusyChange]);
+  useEffect(() => { onBusyChange?.(busy || uncertain || attaching || editor !== null || compositeBusy); }, [busy, uncertain, attaching, editor, compositeBusy, onBusyChange]);
   const stale = !!work && (!same(work.selection.view, view) || work.selection.productId !== productId || work.selection.optionId !== optionId || (work.selection.profileId ?? '') !== (profileId ?? ''));
   const dirty = !!work && (!work.reply.workspace || !same(work.document, work.reply.workspace.document));
-  const locked = !ready || busy || uncertain || attaching || editor !== null || disabled || !stageActive || stale;
+  const locked = !ready || busy || uncertain || attaching || editor !== null || compositeBusy || disabled || !stageActive || stale;
   const outside = work?.document.photos.some(photo => !view.imageKeys.includes(photo.key)) ?? false;
   function valid(token: object | null) { return mounted.current && !!token && token === epoch.current && controls.current.stageActive && !controls.current.disabled; }
   function begin(token: object | null, allowPending = false, allowEditor = false) {
-    if (!ready || !valid(token) || operation.current || liveEditor.current && !allowEditor || (pending.current || attachment.current) && !allowPending) return null;
+    if (!ready || !valid(token) || operation.current || compositeIO.current || liveEditor.current && !allowEditor || (pending.current || attachment.current) && !allowPending) return null;
     const controller = new AbortController(); operation.current = controller; setBusy(true); setError(''); controls.current.onBusyChange?.(true); return controller;
   }
   function finish(controller: AbortController) {
     if (operation.current !== controller) return; operation.current = null;
-    if (mounted.current) { setBusy(false); controls.current.onBusyChange?.(!!pending.current || !!attachment.current || !!liveEditor.current); }
+    if (mounted.current) { setBusy(false); controls.current.onBusyChange?.(!!pending.current || !!attachment.current || !!liveEditor.current || compositeIO.current); }
   }
   function adoptWork(next: Work) { liveWork.current = next; setWork(next); }
   function openWork(selection: DetailWorkspaceSelection, reply: DetailWorkspaceView) {
@@ -88,7 +90,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     finally { finish(controller); }
   }
   function amend(token: object | null, change: (photos: DetailWorkspacePhoto[]) => DetailWorkspacePhoto[]) {
-    const current = liveWork.current; if (!valid(token) || operation.current || pending.current || attachment.current || liveEditor.current || !current || current !== work || !same(current.selection.view, view)) return;
+    const current = liveWork.current; if (!valid(token) || operation.current || compositeIO.current || pending.current || attachment.current || liveEditor.current || !current || current !== work || !same(current.selection.view, view)) return;
     adoptWork({ ...current, document: documentFrom(change(structuredClone(current.document.photos)), current.document.imageMargin) }); setMessage(''); setError('');
   }
   async function store() {
@@ -171,7 +173,7 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
   }
   function editPhoto(photoId: string) {
     const current = liveWork.current, record = current?.reply.workspace;
-    if (!valid(generation) || !generation || operation.current || pending.current || attachment.current || liveEditor.current || !current || !record
+    if (!valid(generation) || !generation || operation.current || compositeIO.current || pending.current || attachment.current || liveEditor.current || !current || !record
       || !same(current.document, record.document) || !same(current.selection.view, view)) return;
     const photo = record.document.photos.find(photo => photo.id === photoId); if (!photo || photo.role !== 'body') return;
     const target = { kind: 'detail-workspace' as const, profileId: profileId ?? null, optionId, photoId, revision: record.revision, digest: record.digest };
@@ -236,9 +238,9 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
     } catch (cause) { if (mounted.current && !controller.signal.aborted) setError(issue(cause)); }
     finally { finish(controller); }
   }
-  return <section className="panel-stack" aria-label="상세 편집 구성" aria-busy={busy || editorBusy} data-workspace-dirty={dirty || uncertain || editorDirty || attaching} data-workspace-saving={busy || uncertain || editorBusy || attaching}>
+  return <section className="panel-stack" aria-label="상세 편집 구성" aria-busy={busy || editorBusy || compositeBusy} data-workspace-dirty={dirty || uncertain || editorDirty || attaching} data-workspace-saving={busy || uncertain || editorBusy || attaching || compositeBusy}>
     <header><h3>상세 편집 구성</h3><p>사진 순서·역할·원본 연결을 견적서와 별도로 보관합니다.</p></header>
-    <button type="button" className="btn ghost" disabled={!ready || busy || uncertain || attaching || editor !== null || disabled || !stageActive || dirty} onClick={() => void open()}>상세 편집 구성 열기</button>
+    <button type="button" className="btn ghost" disabled={!ready || busy || uncertain || attaching || editor !== null || compositeBusy || disabled || !stageActive || dirty} onClick={() => void open()}>상세 편집 구성 열기</button>
     {message && <p role="status">{message}</p>}{error && <p role="alert">{error}</p>}
     {stale && <p role="status">상품 저장 기준이 바뀌었습니다. 현재 구성은 유지했습니다. 작업 내용을 확인한 뒤 구성을 닫고 최신 저장본을 다시 열어주세요.</p>}
     {work && <><p>작업 사진 {work.document.photos.length}장 · {work.reply.workspace ? `보관 버전 ${work.reply.workspace.revision}` : '아직 보관하지 않은 구성'}</p>
@@ -260,7 +262,16 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
       <div className="button-row"><button type="button" className="btn primary" disabled={locked || !dirty} onClick={() => void store()}>편집 구성 보관</button>
         {outside && <button type="button" className="btn ghost" disabled={locked || dirty || !work.reply.workspace} onClick={() => void attachFiles()}>편집 결과를 상품 이미지에 추가</button>}
         <button type="button" className="btn ghost" disabled={locked || dirty || outside || !work.reply.workspace} onClick={() => void adoptPhotos()}>작업 사진을 선택 옵션 초안으로</button>
-        <button type="button" className="btn ghost" disabled={busy || uncertain || attaching || editor !== null || disabled || !stageActive} onClick={() => { if (operation.current || pending.current || attachment.current || liveEditor.current) return; liveWork.current = null; setWork(null); setMessage('현재 작업 구성을 닫았습니다. 보관한 구성과 견적서는 유지됩니다.'); setError(''); }}>현재 구성 닫기</button></div>
+        <button type="button" className="btn ghost" disabled={busy || uncertain || attaching || editor !== null || compositeBusy || disabled || !stageActive} onClick={() => { if (operation.current || compositeIO.current || pending.current || attachment.current || liveEditor.current) return; liveWork.current = null; setWork(null); setMessage('현재 작업 구성을 닫았습니다. 보관한 구성과 견적서는 유지됩니다.'); setError(''); }}>현재 구성 닫기</button></div>
+      {work.reply.workspace && <DetailWorkspaceCompositePanel key={`workspace-composite:${productId}:${optionId}:${profileId ?? ''}`} selection={{ ...work.selection, view }} saved={work.reply}
+        disabled={disabled || busy || uncertain || attaching || editor !== null} stageActive={stageActive} sourceCurrent={!dirty && !stale}
+        beforeApply={() => !operation.current && !pending.current && !attachment.current && !liveEditor.current && same(liveWork.current?.document, work.reply.workspace?.document) && same(liveWork.current?.selection.view, view)}
+        onBusyChange={value => { if (compositeIO.current === value) return; compositeIO.current = value; setCompositeBusy(value); controls.current.onBusyChange?.(value || !!pending.current || !!attachment.current || !!liveEditor.current); }}
+        onSaved={next => {
+          const latest = liveWork.current; if (!valid(generation) || !latest || !same(latest.document, work.reply.workspace?.document)) return;
+          adoptWork({ selection: { ...latest.selection, view: next }, reply: { ...latest.reply, view: next }, document: latest.document }); controls.current.onCompositeSaved?.(next);
+        }}
+        onLatestRead={reply => { if (!valid(generation)) return; openWork({ productId, optionId, profileId, view: reply.view }, reply); controls.current.onRefreshRequested?.(); }} />}
     </>}
     {editor && <section aria-label="선택한 작업 사진 편집"><FreeImageTranslationPanel productId={productId} version={editor.context.selection.view.productVersion} imageKeys={editor.imageKeys}
       translationTarget={editor.target} workspaceContext={editor.context} active={stageActive} disabled={disabled || stale || busy}

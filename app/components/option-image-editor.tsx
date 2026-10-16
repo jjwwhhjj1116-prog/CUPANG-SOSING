@@ -346,6 +346,22 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
           onSaved?.();
         } catch { setError('추가한 사진의 최신 상품 기준을 확인하지 못했습니다. 견적서는 유지하고 최신 저장본을 다시 확인해주세요.'); }
       }}
+      onCompositeSaved={next => {
+        if (!keyboardGeneration || keyboardEpoch.current !== keyboardGeneration || !active || !liveActive.current || !current() || currentStage.current !== 'detail'
+          || liveDisabled.current || compositeBusy.current || request.current || pendingSave.current || latestSaved.current?.view !== view
+          || latestSaved.current.sourceKey !== sourceKey || Object.keys(latestDraft.current.values).length) return;
+        try {
+          verify(next, true);
+          if (next.revision !== view.revision + 1 || next.contentRevision !== view.contentRevision || next.optionRevision !== view.optionRevision
+            || Date.parse(next.productVersion) <= Date.parse(view.productVersion) || next.updatedAt !== next.productVersion
+            || JSON.stringify(next.categoryContext) !== JSON.stringify(view.categoryContext) || next.imageKeys.length <= view.imageKeys.length
+            || !view.imageKeys.every((key, index) => next.imageKeys[index] === key)
+            || next.imageKeys.some(key => !isOwnedImageKey(view.imageKeys[0]?.split('/')[0] ?? '', key))) return;
+          clearDrag(); latestSaved.current = { scope, sourceKey, view: next }; setSaved(latestSaved.current);
+          setMessage('보관한 작업 구성의 최종 이미지를 공통 항목과 모든 옵션에 저장했습니다. 편집 구성과 저장 전 HTML은 별도로 보관했습니다.');
+          onSaved?.();
+        } catch { setError('상세 저장 결과의 최신 견적 기준을 확인하지 못했습니다. 저장 결과를 다시 조회해주세요.'); }
+      }}
       beforeAdopt={() => !!keyboardGeneration && keyboardEpoch.current === keyboardGeneration && active && liveActive.current && current() && currentStage.current === 'detail'
         && !liveDisabled.current && !compositeBusy.current && !request.current && !pendingSave.current && latestSaved.current?.view === view
         && latestSaved.current.sourceKey === sourceKey && knownProtection !== null && !Object.keys(latestDraft.current.values).length}
