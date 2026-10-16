@@ -5,8 +5,11 @@ import { imageFileType, MAX_IMAGE_BYTES } from '@/app/image-files';
 import { imageDisplayDimensions } from '@/app/image-dimensions';
 import { labelUploadDigest } from '@/app/label-upload-key';
 import { readBoundedStream } from '@/app/request-body';
+import { validateDetailEditorComposition, type DetailCompositionReply } from '@/app/detail-editor-composition';
+import { optionImageChanges } from '@/app/quotation-image-targets';
 
 export type PreparedDetailInputs = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; inputs: DetailEditorInputs; keys: string[] };
+export type PreparedDetailComposition = PreparedDetailInputs & { composition: DetailCompositionReply['composition'] };
 type Selection = Pick<PreparedDetailInputs, 'productId' | 'optionId' | 'profileId' | 'view'>;
 const changed = () => Error('저장된 상세 이미지나 편집 기준이 바뀌었습니다. 현재 입력을 유지하고 저장본을 다시 확인해주세요.');
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -52,4 +55,34 @@ export async function prepareSavedDetailInputs(input: Selection, signal: AbortSi
   }
   await current(); signal.throwIfAborted();
   return { ...input, inputs: saved, keys: saved.images.map(image => image.key) };
+}
+
+/** Read the literal pre-save HTML and its ordered photos as one local draft.
+ * This does not restore historical inheritance or write any quotation field. */
+export async function prepareSavedDetailComposition(input: Selection, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<PreparedDetailComposition> {
+  signal.throwIfAborted(); const inputs = selection(input), view = input.view;
+  const html = optionImageTargets(view.resolved.schema.fields).detailHtml, row = view.resolved.rows.find(row => row.optionId === input.optionId)!;
+  if (html.fields.some(field => field.readOnly) || html.linked.some(field => row.fields[field]?.value !== '')) throw changed();
+  const params = new URLSearchParams({ ...(input.profileId ? { profileId: input.profileId } : {}), editor: 'saved-composition-v1', optionId: input.optionId });
+  const endpoint = `/api/products/${encodeURIComponent(input.productId)}/detail-save?${params}`;
+  const expected = { productId: input.productId, profileId: input.profileId ?? null, optionId: input.optionId,
+    productVersion: view.productVersion, contentRevision: view.contentRevision, optionRevision: view.optionRevision,
+    revision: view.revision, inputFingerprint: view.inputFingerprint, categoryContext: view.categoryContext };
+  async function read(): Promise<DetailCompositionReply> {
+    signal.throwIfAborted(); const response = await fetcher(endpoint, { signal, cache: 'no-store' }), body: unknown = await response.json(); signal.throwIfAborted();
+    if (!response.ok) throw Error(body && typeof body === 'object' && 'error' in body && typeof body.error === 'string' ? body.error : '저장 전 사진·HTML을 확인하지 못했습니다. 현재 입력은 유지됩니다.');
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 2 || !('source' in body) || !('composition' in body)
+      || !body.source || typeof body.source !== 'object' || Array.isArray(body.source) || Object.keys(body.source).length !== Object.keys(expected).length
+      || Object.entries(expected).some(([key, value]) => !Object.hasOwn(body.source as object, key) || !same((body.source as Record<string, unknown>)[key], value))) throw changed();
+    const composition = validateDetailEditorComposition(body.composition, inputs.output.key.split('/')[0], view.categoryContext.categoryId!);
+    if (!same(composition.inputs, inputs) || composition.inputs.origin.productId !== input.productId || composition.html.fieldKey !== html.primary
+      || !same(Object.keys(composition.html.rawCommon), html.linked) || !same(Object.keys(composition.html.rawOption), html.linked)) throw changed();
+    // Validate only the HTML here. Repeated/oversized saved photo positions are
+    // intentionally retained as a draft for the existing image editor to fix.
+    optionImageChanges(view, input.optionId, { detailHtml: composition.html.effective });
+    return { source: { ...expected, categoryContext: structuredClone(expected.categoryContext) }, composition };
+  }
+  const before = await read(), prepared = await prepareSavedDetailInputs(input, signal, fetcher), after = await read();
+  if (!same(before, after)) throw changed(); signal.throwIfAborted();
+  return { ...prepared, composition: before.composition };
 }

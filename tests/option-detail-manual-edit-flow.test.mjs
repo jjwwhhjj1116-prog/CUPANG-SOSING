@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {inflateSync} from 'node:zlib';
+import {createHash} from 'node:crypto';
 import {companies,manualEditFixture,plain,text,json} from './helpers/option-detail-manual-edit.mjs';
 
+const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 function pngPixels(bytes){
  const value=Buffer.from(bytes),parts=[];let offset=8,width,height;
  while(offset<value.length){const length=value.readUInt32BE(offset),name=value.toString('ascii',offset+4,offset+8),data=value.subarray(offset+8,offset+8+length);if(name==='IHDR'){width=data.readUInt32BE(0);height=data.readUInt32BE(4);}if(name==='IDAT')parts.push(data);offset+=length+12;}
@@ -26,7 +28,15 @@ for(const company of companies){
    overrides.options[f.selected].detailImages=expected;overrides.options[f.selected]['exact-detailImages']=expected;
    assert.deepEqual(plain(after.overrides),overrides);assert.equal(after.revision,before.revision+1);assert.equal(after.contentRevision,before.contentRevision);assert.equal(after.optionRevision,before.optionRevision);
    assert.equal(after.resolved.rows.find(row=>row.optionId===f.selected).fields['exact-detailImages'].value,expected);assert.equal(f.sourceSnapshot(),source);
-   const latestFiles=await f.fileSnapshot();assert.equal(latestFiles.size,files.size+1);for(const[oldKey,old]of files)assert.deepEqual(latestFiles.get(oldKey),old);
+   const latestFiles=await f.fileSnapshot(),sideKey=key+'.edit.json';assert.equal(latestFiles.size,files.size+2);for(const[oldKey,old]of files)assert.deepEqual(latestFiles.get(oldKey),old);
+   assert.deepEqual([...latestFiles.keys()].filter(value=>!files.has(value)).sort(),[key,sideKey].sort(),'exactly the PNG and its immutable edit record are added');
+   const document=f.h.load('app/free-image-edit-document.ts').validateFreeImageEditDocument(applied.image.editDocument,applied.image.source),
+    sealed=await f.h.load('app/free-image-edit-record.ts').readFreeImageEditRecord(f.h.bindings.FILES,'owner',f.id,key),sideBytes=f.h.objects.get(sideKey),metadata=latestFiles.get(key).head;
+   assert.deepEqual(plain(sealed.record.document),plain(document));assert.deepEqual(plain(sealed.record.source),plain(applied.image.source));
+   assert.deepEqual(plain(sealed.record.company),company);assert.deepEqual(plain(sealed.record.context),plain(before.categoryContext));
+   assert.equal(sealed.record.result.key,key);assert.equal(sealed.record.result.sha256,sha(f.h.objects.get(key)));assert.equal(sealed.record.result.bytes,applied.image.output.size);
+   assert.deepEqual([sealed.record.result.width,sealed.record.result.height],[3,2]);assert.equal(latestFiles.get(sideKey).head.httpMetadata.contentType,'application/json');
+   assert.equal(metadata.customMetadata.freeImageEditDocumentSha256,sha(JSON.stringify(document)));assert.equal(metadata.customMetadata.freeImageEditRecordSha256,sha(sideBytes));
    assert.deepEqual([...f.h.objects.get(key)],Array.from(new Uint8Array(await applied.image.output.arrayBuffer())));assert.equal(f.requests.filter(call=>call.method==='POST').length,1);
    assert.equal(f.product().supplier_hub_status,'미전송');assert.deepEqual(f.h.network,f.intakeNetworkBaseline);
   }finally{f.close();}

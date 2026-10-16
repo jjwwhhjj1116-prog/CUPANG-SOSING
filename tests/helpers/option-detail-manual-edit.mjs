@@ -55,6 +55,12 @@ export function encodedPng(width,height,pixels){
 
 export async function manualEditFixture(company,{stage='detail'}={}){
  const f=await apiHelpers.fixture({company,linkedWire:true,withMain:stage==='main'});
+ // Editable documents use the sealed DB commit, whose member guard must agree
+ // with the existing auth fixture rather than an approved response alone.
+ const account=f.h.load('app/workspace-members.ts').WORKSPACE_ACCOUNTS.find(value=>value.companyCode===company.code&&value.companyName===company.name),now=new Date().toISOString();
+ assert.ok(account,'known synthetic approved company account');
+ f.h.sqlite.prepare('INSERT INTO members(id,email,password_hash,role,status,company_code,company_name,created_at,updated_at,reviewed_by) VALUES(?,?,?,?,?,?,?,?,?,?)')
+  .run('owner',account.email,'fixture-not-a-password',account.role,'approved',company.code,company.name,now,now,null);
  const requests=[],clientHarness=rendererHelpers.fixture({imageWidth:3,imageHeight:2}),client=clientHarness.client;
  const createCanvas=clientHarness.document.createElement;
  clientHarness.document.createElement=tag=>{

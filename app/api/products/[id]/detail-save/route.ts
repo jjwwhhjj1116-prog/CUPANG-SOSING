@@ -5,7 +5,9 @@ import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/quotation-fields-snapshot';
 import { attachQuotationDetailSave, detailSaveHistoryScope, readQuotationFields, QuotationDetailSaveLimitError } from '@/db/quotation-fields';
 import { applyQuotationChanges } from '@/app/quotation-schema';
-import { DETAIL_SAVE_TEXT_POLICY, detailSaveCommonAltText, detailSaveChanges, detailSaveManualBackup, detailSaveOptionIds, detailSaveReceiptMatches, type DetailSaveReceipt, type DetailSaveSource } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_TEXT_POLICY, DETAIL_SAVE_EDITOR_POLICY, detailSaveCommonAltText, detailSaveChanges, detailSaveManualBackup, detailSaveOptionIds, detailSaveReceiptMatches, type DetailSaveReceipt, type DetailSaveSource } from '@/app/detail-save-plan';
+import { createDetailSaveEditorSnapshot, detailSaveEditorSha256, detailSaveEditorBackup, savedDetailEditorComposition, DetailEditorCompositionError, type DetailCompositionReply } from '@/app/detail-editor-composition';
+import type { QuotationFieldsState } from '@/db/quotation-fields';
 import { optionImageTargets, quotationImageKeys } from '@/app/quotation-image-targets';
 import { labelUploadDigest, labelUploadKey } from '@/app/label-upload-key';
 import { imageFileType, isOwnedImageKey, MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
@@ -20,6 +22,7 @@ const conflict = () => new QuotationFieldsSnapshotError('상세 저장 원천이
 function failure(error: unknown) {
   if (error instanceof QuotationFieldsSnapshotError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof RequestBodyError || error instanceof PublicDetailError) return json({ error: error.message }, error.status);
+  if (error instanceof DetailEditorCompositionError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   if (error instanceof QuotationDetailSaveLimitError) return json({ error: error.message, code: 'DETAIL_SAVE_BACKUP_LIMIT' }, 413);
   return json({ error: '상세 이미지 저장 결과를 확인하지 못했습니다. 기존 자료와 미리보기는 보존했습니다.' }, 503);
 }
@@ -38,7 +41,7 @@ async function identity(context: Context) {
   const company = approvedSupplierHubCompany(user?.membership);
   if (!user?.verifiedAccess || user.userId !== owner || !company || !user.membership) throw new QuotationFieldsSnapshotError('승인된 회사 계정으로 로그인 후 상세 이미지를 저장해주세요.', 403);
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new QuotationFieldsSnapshotError('상품 번호를 확인해주세요.', 400);
-  return { owner, id, member: { email: user.membership.email, role: user.membership.role, companyCode: company.code, companyName: company.name } };
+  return { owner, id, company, member: { email: user.membership.email, role: user.membership.role, companyCode: company.code, companyName: company.name } };
 }
 function dimensions(width: number, height: number) {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width > 16000 || height > 16000 || width * height > 40000000)
@@ -63,9 +66,41 @@ async function uploadedPng(owner: string, receipt: Pick<DetailSaveReceipt, 'uplo
   if (metadata.mime !== 'image/png' || metadata.width !== 800) throw new QuotationFieldsSnapshotError('검토한 상세 PNG의 형식과 800px 너비를 확인해주세요.', 415);
   dimensions(metadata.width, metadata.height); return metadata;
 }
+async function quotationPayload(owner: string, id: string, state: QuotationFieldsState) {
+  const row = await env.DB.prepare('SELECT payload,revision FROM product_quotation_fields WHERE owner_id=? AND product_id=?').bind(owner, id).first<{ payload: string; revision: number }>();
+  if (!row || row.revision !== state.revision || JSON.stringify(JSON.parse(row.payload)) !== JSON.stringify(state)) throw conflict();
+  return row.payload;
+}
+async function compositionGet(request: Request, context: Context) {
+  const params = new URL(request.url).searchParams;
+  if ([...params.keys()].some(key => !['profileId', 'editor', 'optionId'].includes(key) || params.getAll(key).length !== 1)
+    || params.get('editor') !== 'saved-composition-v1' || !/^[A-Za-z0-9_-]{1,80}$/.test(params.get('optionId') ?? '')
+    || params.has('profileId') && !/^[A-Za-z0-9_-]{1,100}$/.test(params.get('profileId')!)) throw new QuotationFieldsSnapshotError('복원할 상세 편집 구성의 조회 범위를 확인해주세요.', 400);
+  const { owner, id, company, member } = await identity(context), profileId = params.get('profileId'), optionId = params.get('optionId')!;
+  const saved = await stableQuotationFieldsView(owner, id, profileId), state = await readQuotationFields(owner, id), beforePayload = await quotationPayload(owner, id, state);
+  const composition = await savedDetailEditorComposition(saved.view, state, id, optionId, company);
+  const output = await uploadedPng(owner, { ...composition.inputs.output, uploadId: composition.inputs.origin.uploadId });
+  let totalBytes = 0, height = 0;
+  for (const source of composition.inputs.images) {
+    request.signal.throwIfAborted();
+    const { bytes } = await imageBytes(owner, source.key); totalBytes += bytes.length;
+    if (totalBytes > 30 * 1024 * 1024) throw new QuotationFieldsSnapshotError('상세 원본 전체 크기는 30MB 이내여야 합니다.', 413);
+    let size; try { imageFileType(bytes); size = imageDisplayDimensions(bytes); } catch { throw conflict(); }
+    if (!size || size.width !== source.width || size.height !== source.height || await labelUploadDigest(bytes) !== source.sha256) throw conflict();
+    dimensions(size.width, size.height); height += Math.max(1, Math.round(size.height * 800 / size.width)); dimensions(800, height);
+  }
+  if (output.height !== height) throw conflict();
+  const confirmed = await stableQuotationFieldsView(owner, id, profileId), confirmedState = await readQuotationFields(owner, id), confirmedIdentity = await identity(context);
+  if (JSON.stringify(confirmed.view) !== JSON.stringify(saved.view) || beforePayload !== await quotationPayload(owner, id, confirmedState)
+    || JSON.stringify(confirmedIdentity.member) !== JSON.stringify(member)) throw conflict();
+  const view = confirmed.view, reply: DetailCompositionReply = { source: { productId: id, profileId, optionId, productVersion: view.productVersion,
+    contentRevision: view.contentRevision, optionRevision: view.optionRevision, revision: view.revision, inputFingerprint: view.inputFingerprint, categoryContext: view.categoryContext }, composition };
+  return json(reply);
+}
 export async function GET(request: Request, context: Context) {
   try {
-    const { profileId, uploadId } = selection(request, true), { owner, id } = await identity(context);
+    if (new URL(request.url).searchParams.has('editor')) return await compositionGet(request, context);
+    const { profileId, uploadId } = selection(request, true), { owner, id, company, member } = await identity(context);
     const saved = await stableQuotationFieldsView(owner, id, profileId), state = await readQuotationFields(owner, id);
     if (state.revision !== saved.view.revision) throw conflict();
     const history = state.detailSaveBackups?.[detailSaveHistoryScope(saved.view.categoryContext.categoryId)] ?? [];
@@ -75,21 +110,26 @@ export async function GET(request: Request, context: Context) {
       return json({ applied: false, quotation: saved.view });
     }
     if (!detailSaveReceiptMatches(saved.view, backup.receipt)) throw conflict();
+    const editor = await detailSaveEditorBackup(backup, saved.view, company);
+    const beforePayload = editor ? await quotationPayload(owner, id, state) : undefined;
     await uploadedPng(owner, backup.receipt);
     const confirmed = await stableQuotationFieldsView(owner, id, profileId);
     if (JSON.stringify(confirmed.view) !== JSON.stringify(saved.view)) throw conflict();
-    return json({ applied: true, quotation: confirmed.view, receipt: backup.receipt });
+    if (editor && (beforePayload !== await quotationPayload(owner, id, await readQuotationFields(owner, id))
+      || JSON.stringify((await identity(context)).member) !== JSON.stringify(member))) throw conflict();
+    return json({ applied: true, quotation: confirmed.view, receipt: backup.receipt, ...(editor ? { editor } : {}) });
   } catch (error) { return failure(error); }
 }
 export async function POST(request: Request, context: Context) {
   try {
     const origin = request.headers.get('origin');
     if (origin && origin !== new URL(request.url).origin || request.headers.get('sec-fetch-site') === 'cross-site') throw new QuotationFieldsSnapshotError('같은 사이트에서 상세 이미지를 저장해주세요.', 400);
-    const { profileId } = selection(request, false), { owner, id, member } = await identity(context);
+    const { profileId } = selection(request, false), { owner, id, member, company } = await identity(context);
     const body = await readBoundedJson(request, 8192) as Record<string, unknown>;
-    if (!body || typeof body !== 'object' || Array.isArray(body) || ![6, 7].includes(Object.keys(body).length)
-      || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'sourceOptionId', 'uploadId', 'sha256', 'bytes', 'textPolicy'].includes(key))
+    if (!body || typeof body !== 'object' || Array.isArray(body) || ![6, 7, 8].includes(Object.keys(body).length)
+      || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'sourceOptionId', 'uploadId', 'sha256', 'bytes', 'textPolicy', 'editorPolicy'].includes(key))
       || Object.hasOwn(body, 'textPolicy') && body.textPolicy !== DETAIL_SAVE_TEXT_POLICY
+      || Object.hasOwn(body, 'editorPolicy') && body.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY
       || !Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0
       || typeof body.expectedInputFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint)
       || typeof body.sourceOptionId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(body.sourceOptionId)
@@ -103,13 +143,17 @@ export async function POST(request: Request, context: Context) {
     const existing = history.find(entry => entry.receipt.uploadId === body.uploadId);
     if (existing) {
       const receipt = existing.receipt;
-      if (receipt.textPolicy !== body.textPolicy || existing.beforeInputFingerprint !== body.expectedInputFingerprint || receipt.beforeRevision !== body.expectedRevision
+      if (receipt.textPolicy !== body.textPolicy || receipt.editorPolicy !== body.editorPolicy || existing.beforeInputFingerprint !== body.expectedInputFingerprint || receipt.beforeRevision !== body.expectedRevision
         || receipt.sourceOptionId !== body.sourceOptionId || receipt.sha256 !== body.sha256 || receipt.bytes !== body.bytes
         || !detailSaveReceiptMatches(view, receipt)) throw conflict();
+      const editor = await detailSaveEditorBackup(existing, view, company);
+      const beforePayload = editor ? await quotationPayload(owner, id, previous) : undefined;
       await uploadedPng(owner, receipt);
       const quotation = (await stableQuotationFieldsView(owner, id, profileId)).view;
       if (JSON.stringify(quotation) !== JSON.stringify(view)) throw conflict();
-      return json({ quotation, receipt });
+      if (editor && (beforePayload !== await quotationPayload(owner, id, await readQuotationFields(owner, id))
+        || JSON.stringify((await identity(context)).member) !== JSON.stringify(member))) throw conflict();
+      return json({ quotation, receipt, ...(editor ? { editor } : {}) });
     }
     if (Object.values(previous.detailSaveBackups ?? {}).some(entries => entries.some(entry => entry.receipt.uploadId === body.uploadId))) throw conflict();
     if (view.revision !== body.expectedRevision || view.inputFingerprint !== body.expectedInputFingerprint) throw conflict();
@@ -117,9 +161,11 @@ export async function POST(request: Request, context: Context) {
     if (JSON.stringify(optionIds) !== JSON.stringify(saved.options.rows.map(row => row.id)) || !optionIds.includes(body.sourceOptionId)) throw conflict();
     const key = labelUploadKey(owner, body.uploadId);
     if (view.imageKeys.length >= PRODUCT_IMAGE_POOL_LIMIT || view.imageKeys.includes(key)) throw new QuotationFieldsSnapshotError('새 상세 PNG를 보존할 이미지 공간이나 저장 번호를 확인해주세요.', 409);
+    const editor = body.editorPolicy === DETAIL_SAVE_EDITOR_POLICY ? createDetailSaveEditorSnapshot(view, body.sourceOptionId, company) : undefined;
     const receipt: DetailSaveReceipt = { uploadId: body.uploadId, key, sha256: body.sha256, bytes: body.bytes as number,
       revision: view.revision + 1, beforeRevision: view.revision, sourceOptionId: body.sourceOptionId, categoryId: view.categoryContext.categoryId, optionIds,
-      ...(body.textPolicy === DETAIL_SAVE_TEXT_POLICY ? { textPolicy: DETAIL_SAVE_TEXT_POLICY, textCommonFilled: !detailSaveCommonAltText(view) } : {}) };
+      ...(body.textPolicy === DETAIL_SAVE_TEXT_POLICY ? { textPolicy: DETAIL_SAVE_TEXT_POLICY, textCommonFilled: !detailSaveCommonAltText(view) } : {}),
+      ...(editor ? { editorPolicy: DETAIL_SAVE_EDITOR_POLICY, editorSha256: await detailSaveEditorSha256(editor) } : {}) };
     const output = await uploadedPng(owner, receipt), target = optionImageTargets(view.resolved.schema.fields).detailImages;
     const row = view.resolved.rows.find(row => row.optionId === body.sourceOptionId), value = row?.fields[target.primary]?.value;
     if (typeof value !== 'string' || target.fields.some(field => field.readOnly) || target.linked.some(field => row?.fields[field]?.value !== value)) throw conflict();
@@ -145,11 +191,11 @@ export async function POST(request: Request, context: Context) {
     request.signal.throwIfAborted();
     const stored = await attachQuotationDetailSave(owner, id, overrides, view.revision, saved.source, view.categoryContext.categoryId, [...view.imageKeys, key], {
       expectedOverrides: view.overrides, member,
-      backup: { receipt, before: detailSaveManualBackup(view, changes), sources, beforeProductVersion: view.productVersion, beforeInputFingerprint: view.inputFingerprint },
+      backup: { receipt, before: detailSaveManualBackup(view, changes), sources, beforeProductVersion: view.productVersion, beforeInputFingerprint: view.inputFingerprint, ...(editor ? { editor } : {}) },
     });
     if (!stored) throw conflict();
     const quotation = (await stableQuotationFieldsView(owner, id, profileId)).view;
     if (!detailSaveReceiptMatches(quotation, receipt)) throw conflict();
-    return json({ quotation, receipt });
+    return json({ quotation, receipt, ...(editor ? { editor } : {}) });
   } catch (error) { return failure(error); }
 }

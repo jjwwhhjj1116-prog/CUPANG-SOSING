@@ -3,19 +3,24 @@ import { optionImageTargets } from '@/app/quotation-image-targets';
 import { OPTION_LIMIT } from '@/app/product-options';
 import { MAX_IMAGE_BYTES } from '@/app/image-files';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
+import type { DetailSaveEditorSnapshot } from '@/app/detail-editor-composition';
 
 export const DETAIL_SAVE_TEXT_POLICY = 'couplus-detail-alt-v1' as const;
 export type DetailSaveTextPolicy = typeof DETAIL_SAVE_TEXT_POLICY;
+export const DETAIL_SAVE_EDITOR_POLICY = 'ordered-inputs-html-v1' as const;
+export type DetailSaveEditorPolicy = typeof DETAIL_SAVE_EDITOR_POLICY;
 
 export type DetailSaveReceipt = {
   uploadId: string; key: string; sha256: string; bytes: number; revision: number; beforeRevision: number;
   sourceOptionId: string; categoryId: string | null; optionIds: string[];
   textPolicy?: DetailSaveTextPolicy; textCommonFilled?: boolean;
+  editorPolicy?: DetailSaveEditorPolicy; editorSha256?: string;
 };
 export type DetailSaveSource = { key: string; sha256: string; width: number; height: number };
 export type DetailSaveBackup = {
   receipt: DetailSaveReceipt; before: QuotationChange[]; sources: DetailSaveSource[];
   beforeProductVersion: string; beforeInputFingerprint: string; updatedAt: string;
+  editor?: DetailSaveEditorSnapshot;
 };
 
 export function detailSaveOptionIds(view: QuotationFieldsView): string[] {
@@ -79,6 +84,7 @@ export function detailSaveReceiptMatches(view: QuotationFieldsView, receipt: Det
       || JSON.stringify(receipt.optionIds) !== JSON.stringify(detailSaveOptionIds(view)) || !receipt.optionIds.includes(receipt.sourceOptionId)
       || !view.imageKeys.includes(receipt.key) || view.updatedAt !== view.productVersion) return false;
     if (receipt.textPolicy === undefined ? receipt.textCommonFilled !== undefined : receipt.textPolicy !== DETAIL_SAVE_TEXT_POLICY || typeof receipt.textCommonFilled !== 'boolean') return false;
+    if (receipt.editorPolicy === undefined ? receipt.editorSha256 !== undefined : receipt.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY || typeof receipt.editorSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.editorSha256)) return false;
     const changes = detailSaveChanges(view, receipt.key, receipt.textPolicy, receipt.textCommonFilled), expected = applyQuotationChanges(view.overrides, changes);
     if (JSON.stringify(expected) !== JSON.stringify(view.overrides)) return false;
     return view.resolved.rows.every(row => changes.filter(change => change.optionId === row.optionId

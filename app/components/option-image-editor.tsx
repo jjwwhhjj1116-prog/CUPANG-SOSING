@@ -6,7 +6,7 @@ import type { FreeImageQuotationRequest } from '@/app/free-image-translation-cli
 import { optionImageChanges, optionImageDraftIssues, optionImageTargets, optionImageValue, quotationImageKeys, reorderOptionImageKeys, verifyOptionImageRefresh, verifyOptionImageRestored, verifyOptionImageSave, verifyOptionImageRecovery, type OptionImageDraft, type OptionImageInput, type OptionImageStage } from '@/app/quotation-image-targets';
 import { downloadImageSelection } from '@/app/image-selection-download';
 import { DetailImageCompositePanel } from '@/app/components/detail-image-composite-panel';
-import { canEditSavedDetailInputs, prepareSavedDetailInputs } from '@/app/detail-editor-inputs-client';
+import { canEditSavedDetailInputs, prepareSavedDetailInputs, prepareSavedDetailComposition } from '@/app/detail-editor-inputs-client';
 
 type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; stage: OptionImageStage; active?: boolean;
   disabled?: boolean; onSaved?: () => void; onTranslate?: (sourceKey: string, role: OptionImageStage, sourceLanguage: 'zh' | 'en', quotationTarget: FreeImageQuotationRequest) => void;
@@ -275,17 +275,21 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '선택 이미지 다운로드 실패'); }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
-  async function reopenDetailInputs() {
+  async function reopenDetailInputs(withHtml = false) {
     const base = latestSaved.current, generation = keyboardGeneration;
     if (!base || base.view !== view || base.sourceKey !== sourceKey || !generation || keyboardEpoch.current !== generation || !active || !liveActive.current
       || stage !== 'detail' || !interactive() || request.current || pendingSave.current || Object.keys(latestDraft.current.values).length) return;
     const controller = new AbortController(); request.current = controller; clearDrag(); setBusy(true); setError(''); setMessage('');
     try {
-      const prepared = await prepareSavedDetailInputs({ productId, optionId, profileId, view: base.view }, controller.signal);
+      const selection = { productId, optionId, profileId, view: base.view };
+      const restored = withHtml ? await prepareSavedDetailComposition(selection, controller.signal) : null;
+      const prepared = restored ?? await prepareSavedDetailInputs(selection, controller.signal);
       if (controller.signal.aborted || !current() || !liveActive.current || currentStage.current !== 'detail' || liveDisabled.current || keyboardEpoch.current !== generation
         || latestSaved.current !== base || pendingSave.current || Object.keys(latestDraft.current.values).length) return;
-      latestDraft.current = { scope, values: { detailImages: prepared.keys.join('\n') } }; setPending(latestDraft.current);
-      setMessage('저장 전 개별 사진을 편집 입력으로 불러왔습니다. 현재 견적서는 유지됩니다. 순서·삭제를 확인하고 선택 옵션 이미지를 저장한 뒤 필요한 사진을 편집·번역해주세요.');
+      latestDraft.current = { scope, values: { detailImages: prepared.keys.join('\n'), ...(restored ? { detailHtml: restored.composition.html.effective } : {}) } }; setPending(latestDraft.current);
+      setMessage(restored
+        ? '저장 전 개별 사진과 당시 HTML을 함께 불러왔습니다. HTML은 공란·공백을 포함한 당시 문자열의 새 수동 초안입니다. 현재 견적서는 유지되며 확인 후 선택 옵션 이미지를 저장해주세요.'
+        : '저장 전 개별 사진을 편집 입력으로 불러왔습니다. 현재 견적서는 유지됩니다. 순서·삭제를 확인하고 선택 옵션 이미지를 저장한 뒤 필요한 사진을 편집·번역해주세요.');
     } catch (cause) { if (!controller.signal.aborted && current() && keyboardEpoch.current === generation) setError(cause instanceof Error ? cause.message : '개별 상세 사진 확인 실패'); }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
@@ -311,7 +315,9 @@ export function OptionImageEditor({ productId, optionId, version, profileId, ref
     <small>현재 선택한 순서의 원본·편집 결과 파일을 내려받습니다. 미저장 선택을 견적서에 반영하려면 이미지 저장을 눌러주세요.</small>
     {stage === 'detail' && view && canEditSavedDetailInputs({ productId, optionId, profileId, view }) && <div className="button-row">
       <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs()}>저장 전 개별 사진으로 편집</button>
+      <button type="button" className="btn ghost" disabled={locked || dirty || !active || saved?.sourceKey !== sourceKey} onClick={() => void reopenDetailInputs(true)}>저장 전 사진·HTML로 편집</button>
       <small>합치기 직전의 검증된 사진 순서를 불러옵니다. 저장하기 전까지 현재 통합 상세 이미지는 바뀌지 않습니다.</small>
+      <small>사진·HTML 재편집은 HTML을 함께 보관한 저장 건에서 사용할 수 있습니다. 당시 HTML을 그대로 새 수동 초안에 넣으며 예전 공통·자동 상속 상태로 되돌리지는 않습니다.</small>
     </div>}
     {stage === 'detail' && view && <DetailImageCompositePanel key={scope} productId={productId} optionId={optionId} profileId={profileId} view={view} stageActive={active}
       disabled={disabled || busy || uncertain || dirty || !!bindingError || saved?.sourceKey !== sourceKey}

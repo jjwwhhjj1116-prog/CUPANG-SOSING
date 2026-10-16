@@ -83,3 +83,48 @@ test('a legacy response without authoritative text sources keeps selected apply 
   const checkbox=nodes(h.render()).find(node=>node.type==='input'&&node.props['aria-label']==='전체 옵션 상세 저장 확인');assert.equal(checkbox.props.disabled,true);checkbox.props.onChange({target:{checked:true}});h.button('상세 저장').props.onClick();await h.idle();assert.equal(writes(f).length,0);assert.equal(h.button('합친 이미지 선택 옵션에 적용').props.disabled,false);
  }finally{h?.close();f.api.close();}
 });
+
+test('whole-save review explicitly retains ordered photos and literal HTML, and a downgraded ACK requires GET-only confirmation', async () => {
+ const f=await fixture(companies[0]);let h;
+ try{
+  const request=f.request;let downgraded=false;
+  f.request=async(url,init={})=>{const response=await request(url,init);if(url.includes('/detail-save')&&init.method==='POST'&&response.ok&&!downgraded){
+   downgraded=true;const body=await response.json();assert.equal(JSON.parse(init.body).editorPolicy,'ordered-inputs-html-v1');
+   assert.ok(body.editor);delete body.editor;delete body.receipt.editorPolicy;delete body.receipt.editorSha256;return Response.json(body);
+  }return response;};
+  h=panel(f);await h.click('상세 이미지 합치기');
+  assert.match(text(h.render()),/개별 사진 4장의 순서와 선택 옵션의 저장 전 HTML/);
+  assert.match(text(h.render()),/개별 사진 순서·저장 전 HTML 보관/);
+  assert.equal(writes(f).length,0);h.review();await h.click('상세 저장');assert.equal(h.saved.length,0);
+  assert.equal(h.control('전체 옵션 상세 저장 확인').props.disabled,true);assert.equal(h.button('합친 이미지 선택 옵션에 적용').props.disabled,true);
+  const count=writes(f).length,start=f.calls.length;await h.click('상세 저장 결과 확인');
+  assert.equal(h.saved.length,1);assert.equal(writes(f).length,count);assert.ok(f.calls.slice(start).every(call=>(call.init.method??'GET')==='GET'));
+  const state=JSON.parse(f.api.sqlite.prepare('SELECT payload FROM product_quotation_fields').get().payload),backup=Object.values(state.detailSaveBackups).flat()[0];
+  assert.equal(backup.receipt.editorPolicy,'ordered-inputs-html-v1');assert.equal(backup.editor.html.effective,'<p>직접 검토한 기존 HTML</p>');
+  assert.equal(f.calls.filter(call=>call.url.includes('/detail-save')&&call.init.method==='POST').length,1);
+ }finally{h?.close();f.api.close();}
+});
+
+for(const mode of ['missing','readOnly','differentAliases'])test(`unavailable ${mode} source HTML blocks new whole-save review before uploads and keeps selected apply independent`,async()=>{
+ const f=await fixture(companies[0]);let h;
+ try{
+  function unavailable(view){
+   const target=f.api.load('app/quotation-image-targets.ts').optionImageTargets(view.resolved.schema.fields).detailHtml,
+    row=view.resolved.rows.find(row=>row.optionId===f.optionId);
+   if(mode==='missing')delete row.fields[target.primary];
+   if(mode==='readOnly')view.resolved.schema.fields.find(field=>field.id===target.primary).readOnly=true;
+   if(mode==='differentAliases'){
+    const canonical=view.resolved.schema.fields.find(field=>field.id==='detailHtml');
+    const wire={...canonical,id:'exact-html-editor-test',hubInput:'detailHtml',hubWire:{path:['imagePage','details','htmlProductDetailContent']}};
+    view.resolved.schema.fields.push(wire);row.fields[wire.id]={...row.fields[canonical.id],value:'다른 공식 HTML'};
+   }
+   return view;
+  }
+  f.view=unavailable(f.view);const request=f.request;
+  f.request=async(url,init={})=>{const response=await request(url,init);if(url.includes('/quotation-fields')&&response.ok){const body=await response.json();return Response.json(unavailable(body));}return response;};
+  h=panel(f);await h.click('상세 이미지 합치기');assert.equal(h.button('상세 저장').props.disabled,true);
+  assert.equal(h.control('전체 옵션 상세 저장 확인').props.disabled,true);assert.equal(h.button('합친 이미지 선택 옵션에 적용').props.disabled,false);
+  h.control('전체 옵션 상세 저장 확인').props.onChange({target:{checked:true}});h.button('상세 저장').props.onClick();await h.idle();
+  assert.equal(writes(f).length,0);assert.equal(h.saved.length,0);assert.equal(h.control('전체 옵션 상세 저장 확인').props.checked,false);
+ }finally{h?.close();f.api.close();}
+});

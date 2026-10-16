@@ -3,8 +3,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { QuotationFieldsView } from '@/app/quotation-schema';
 import { applyDetailComposite, prepareDetailComposite, prepareDetailImageDownload, recoverDetailComposite, type DetailComposite, type DetailCompositeAttempt } from '@/app/detail-image-composite';
 import { applyDetailSave, recoverDetailSave, type DetailSaveAttempt } from '@/app/detail-save-client';
-import { detailSaveAltChanges, detailSaveCommonAltText } from '@/app/detail-save-plan';
+import { DETAIL_SAVE_EDITOR_POLICY, detailSaveAltChanges, detailSaveCommonAltText } from '@/app/detail-save-plan';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
+import { detailSaveEditorHtml } from '@/app/detail-editor-composition';
+
+const editorSaveOptions = { editorPolicy: DETAIL_SAVE_EDITOR_POLICY } as const;
 
 type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean;
   beforeApply?: () => boolean; onSaved?: (view: QuotationFieldsView) => void; onBusyChange?: (busy: boolean) => void };
@@ -20,7 +23,7 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
   const [sourceClock, setSourceClock] = useState({ scope: sourceScope, view, token: {} });
   if (sourceClock.scope !== sourceScope || sourceClock.view !== view) setSourceClock({ scope: sourceScope, view, token: {} });
   const generation = sourceClock.scope === sourceScope && sourceClock.view === view ? sourceClock.token : null, sourceEpoch = useRef(generation);
-  type Review = { prepared: DetailComposite; generation: object };
+  type Review = { prepared: DetailComposite; generation: object; editorPolicy: typeof DETAIL_SAVE_EDITOR_POLICY };
   const [review, setReview] = useState<Review | null>(null), liveReview = useRef<Review | null>(null);
   const preparing = useRef<AbortController | null>(null);
   useLayoutEffect(() => { current.current = { identity, view, disabled, stageActive, beforeApply, onSaved, onBusyChange }; }, [identity, view, disabled, stageActive, beforeApply, onSaved, onBusyChange]);
@@ -71,15 +74,17 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
     const prepared = resultRef.current;
     if (!prepared || !matchesIdentity(prepared) || mutationMode.current === 'selected' || savedResult.current) return;
     const recovery = waiting(), confirmation = liveReview.current;
-    if (!recovery && (!preparedCurrent(prepared) || confirmation?.prepared !== prepared || confirmation.generation !== generation)) return;
+    if (!recovery && (!preparedCurrent(prepared) || confirmation?.prepared !== prepared || confirmation.generation !== generation
+      || confirmation.editorPolicy !== DETAIL_SAVE_EDITOR_POLICY)) return;
     const controller = start(); if (!controller) return;
     mutationMode.current = 'all'; setMode('all');
     try {
-      const confirmed = recovery ? await recoverDetailSave(prepared, detailAttempt.current, controller.signal) : await applyDetailSave(prepared, detailAttempt.current, controller.signal);
+      const confirmed = recovery ? await recoverDetailSave(prepared, detailAttempt.current, controller.signal, undefined, editorSaveOptions)
+        : await applyDetailSave(prepared, detailAttempt.current, controller.signal, undefined, editorSaveOptions);
       if (!valid() || controller.signal.aborted) return;
       if (confirmed === 'ready') { setMessage('상세 저장이 아직 완료되지 않았습니다. 범위를 다시 확인한 뒤 상세 저장을 눌러주세요.'); liveReview.current = null; setReview(null); return; }
       const saved = confirmed === 'completed' ? detailAttempt.current.completed! : confirmed;
-      savedResult.current = true; liveReview.current = null; setReview(null); setDone(true); setMessage('공통 항목과 모든 저장 옵션에 상세 이미지·대체 텍스트를 저장했습니다. 이전 수동값은 백업했고 HTML 입력은 비웠습니다.'); current.current.onSaved?.(saved);
+      savedResult.current = true; liveReview.current = null; setReview(null); setDone(true); setMessage('공통 항목과 모든 저장 옵션에 상세 이미지·대체 텍스트를 저장했습니다. 개별 사진 순서와 선택 옵션의 저장 전 HTML을 보관했고, 견적서 HTML 입력은 비웠습니다.'); current.current.onSaved?.(saved);
     } catch (cause) { if (valid() && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : '상세 저장 결과를 확인해주세요.'); }
     finally { finish(controller); }
   }
@@ -104,8 +109,10 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
   const allRecovery = !!result && mode === 'all' && pending && matchesIdentity(result);
   const reviewed = !!result && review?.prepared === result && review.generation === generation;
   const optionCount = result ? new Set(result.view.resolved.rows.flatMap(row => typeof row.optionId === 'string' ? [row.optionId] : [])).size : 0;
-  let textPreview: { common: string; selected: string } | undefined, textError = '';
+  let textPreview: { common: string; selected: string } | undefined, textError = '', editorHtmlLength: number | undefined;
   if (result) try {
+    if (!result.view.categoryContext.categoryId) throw Error('저장 전 HTML을 보관할 카테고리를 확인해주세요.');
+    editorHtmlLength = detailSaveEditorHtml(result.view, result.optionId).effective.length;
     const primary = exactPrimaryQuotationTarget(result.view.resolved.schema.fields, 'altText').primary;
     const textChanges = detailSaveAltChanges(result.view);
     textPreview = { common: textChanges.find(change => change.optionId === null && change.fieldKey === primary)?.value ?? detailSaveCommonAltText(result.view),
@@ -121,13 +128,14 @@ export function DetailImageCompositePanel({ productId, optionId, profileId, view
       {url?.output === result.output && <img className="image-large-preview" src={url.url} alt="합친 상세 이미지 미리보기" />}
       {(currentResult || allRecovery) && <section className="panel-stack" aria-label="전체 옵션 상세 저장">
         <p>공통 항목과 저장된 모든 옵션 {optionCount}개에 합친 이미지를 적용합니다. 견적 제외 옵션도 포함합니다. 이전 수동값을 백업한 뒤 HTML 입력을 비웁니다.</p>
+        {editorHtmlLength !== undefined && <p>개별 사진 {result.keys.length}장의 순서와 선택 옵션의 저장 전 HTML {editorHtmlLength.toLocaleString()}자를 별도로 보관합니다. 최종 PNG와 견적서 HTML 공란은 그대로 저장됩니다.</p>}
         <p>공통 대체 텍스트는 값이 있으면 유지하고, 모든 옵션의 대체 텍스트는 SEO 설명과 한국어 옵션명으로 다시 작성합니다. SEO 설명이 없으면 원본 상품명에 ‘상세 설명’을 붙입니다.</p>
         {textPreview && <details><summary>대체 텍스트 미리보기</summary><dl><dt>공통 견적서</dt><dd>{textPreview.common}</dd><dt>선택 옵션</dt><dd>{textPreview.selected}</dd></dl></details>}
         {textError && <p role="alert">{textError}</p>}
         <label><input type="checkbox" aria-label="전체 옵션 상세 저장 확인" checked={reviewed} disabled={!currentResult || busy || pending || done || mode === 'selected' || !!textError} onChange={event => {
           if (!result || !preparedCurrent(result) || !generation || request.current || waiting() || savedResult.current || mutationMode.current === 'selected' || textError) return;
-          const next = event.target.checked ? { prepared: result, generation } : null; liveReview.current = next; setReview(next);
-        }} />이미지·대체 텍스트·HTML 비우기와 저장 범위를 확인했습니다.</label>
+          const next = event.target.checked ? { prepared: result, generation, editorPolicy: DETAIL_SAVE_EDITOR_POLICY } : null; liveReview.current = next; setReview(next);
+        }} />이미지·대체 텍스트·HTML 비우기, 개별 사진 순서·저장 전 HTML 보관과 저장 범위를 확인했습니다.</label>
         <button type="button" className="btn primary" disabled={!stageActive || disabled || busy || done || mode === 'selected' || !allRecovery && (!reviewed || !!textError)} onClick={() => void saveAll()}>{allRecovery ? '상세 저장 결과 확인' : '상세 저장'}</button>
       </section>}
       <button type="button" className="btn primary" disabled={!stageActive || disabled || busy || done || mode === 'all'} onClick={() => void apply()}>{pending && mode === 'selected' ? '상세 이미지 저장 결과 확인' : '합친 이미지 선택 옵션에 적용'}</button>
