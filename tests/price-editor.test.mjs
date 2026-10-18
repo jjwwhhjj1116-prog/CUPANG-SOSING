@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createRequire} from 'node:module';
+import {providedOptionModule} from './helpers/provided-option-quotation.mjs';
 const native=createRequire(import.meta.url);
 const base={exchangeRate:200,supplyMargin:50,coupangMargin:40,minimumMargin:0,msrpMultiple:1.3,roundingUnit:10};
 const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...nodes(t.props?.children)]:[];
@@ -13,7 +14,7 @@ function harness({onSave}={}){
   if(name==='react')return{useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return[slots[i],v=>{if(!Object.is(slots[i],v))changed=true;slots[i]=v;}];},useRef(value){const i=cursor++;return slots[i]??(slots[i]={current:value});},useLayoutEffect(effect){cursor++;layouts.push(effect);}};
   if(name==='@/app/components/option-quotation-prices')return{OptionQuotationPrices:()=>null};
   if(name==='@/app/components/option-price-preview')return{OptionPricePreview:()=>null};
-  if(name==='@/app/pricing')return{calculatePrice:(_cost,p)=>({supplyPrice:p.exchangeRate,salePrice:1,msrp:1,costKrw:1830.5,marginKrw:2999.5,actualMargin:1})};
+  if(name==='@/app/pricing')return{priceMinimumMarginEnabled:providedOptionModule('app/pricing.ts').priceMinimumMarginEnabled,calculatePrice:(_cost,p)=>({supplyPrice:p.exchangeRate,salePrice:1,msrp:1,costKrw:1830.5,marginKrw:2999.5,actualMargin:1})};
   return native(name);
  }});
  const render=()=>{let tree;for(let i=0;i<10;i++){cursor=0;changed=false;tree=exports.PriceEditor({initial,sourcePrice:2,onSave:async p=>{saveCalls++;if(fail)throw Error('save failed');await onSave?.(p);initial={...p};}});if(!changed){layouts.splice(0).forEach(effect=>effect());return tree;}layouts.length=0;}throw Error('render loop');};
@@ -35,14 +36,14 @@ test('equivalent rounding defaults do not create a false conflict',()=>{
 test('minimum margin toggle restores the edited amount and saves disabled policy as zero',async()=>{
  const h=harness();h.update({...base,minimumMargin:4500});h.render();
  const toggle=()=>nodes(h.render()).find(n=>n.type==='label'&&n.props.children?.[0]?.props?.children==='최소 공급 마진 보장').props.children[1];
- const minimum=()=>nodes(h.render()).find(n=>n.type==='label'&&n.props.children?.[0]?.props?.children==='최소 공급 마진 (원)').props.children[1];
+ const minimum=()=>nodes(h.render()).find(n=>n.type==='label'&&n.props.children?.[0]?.props?.children==='최소 공급 마진 (원)')?.props.children[1];
  assert.equal(toggle().props.checked,true);
  minimum().props.onChange({target:{value:'5500'}});
  toggle().props.onChange({target:{checked:false}});
- assert.equal(minimum().props.value,0);assert.equal(toggle().props.checked,false);
+ assert.equal(minimum(),undefined);assert.equal(toggle().props.checked,false);
  toggle().props.onChange({target:{checked:true}});assert.equal(minimum().props.value,5500);
  toggle().props.onChange({target:{checked:false}});await h.render().props.onSubmit({preventDefault(){}});
- assert.equal(minimum().props.value,0);assert.equal(h.render().props['data-workspace-dirty'],false);
+ assert.equal(minimum(),undefined);assert.equal(h.render().props['data-workspace-dirty'],false);
 });
 
 test('margin and converted cost retain the fractional won instead of showing false minimum attainment',()=>{

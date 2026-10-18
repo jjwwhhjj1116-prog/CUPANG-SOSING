@@ -1,4 +1,4 @@
-export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest'; useIntegratedRate?: boolean; integratedRate?: number | null; recalculationMode?: 'couplus-stage-two-v1' };
+export type PricePolicy = { exchangeRate: number; supplyMargin: number; coupangMargin: number; minimumMargin: number; msrpMultiple: number; roundingUnit: number; roundingMode?: 'up' | 'nearest'; useIntegratedRate?: boolean; integratedRate?: number | null; recalculationMode?: 'couplus-stage-two-v1'; recalculationMinimumEnabled?: boolean };
 export function pricePolicy(input: unknown): PricePolicy {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('가격 설정을 확인해주세요.');
   const record = input as Record<string, unknown>;
@@ -8,6 +8,8 @@ export function pricePolicy(input: unknown): PricePolicy {
   if (p.exchangeRate <= 0 || p.supplyMargin < 0 || p.supplyMargin >= 100 || p.coupangMargin < 0 || p.coupangMargin >= 100 || p.minimumMargin < 0 || p.msrpMultiple < 1 || ![1,10,100,1000].includes(p.roundingUnit)) throw new Error('환율·마진·최소 마진·시장가격 배수·올림 단위를 확인해주세요.');
   if (record.roundingMode !== undefined && record.roundingMode !== 'up' && record.roundingMode !== 'nearest') throw new Error('가격 처리 방식을 확인해주세요.');
   if (record.recalculationMode !== undefined && record.recalculationMode !== 'couplus-stage-two-v1') throw new Error('일괄 재계산 방식을 확인해주세요.');
+  if (record.recalculationMinimumEnabled !== undefined && typeof record.recalculationMinimumEnabled !== 'boolean') throw new Error('최소 공급 마진 보장의 선택 상태를 확인해주세요.');
+  if (record.recalculationMinimumEnabled === false && p.minimumMargin !== 0) throw new Error('최소 공급 마진 보장을 끄면 적용 금액은 0원이어야 합니다.');
   if (record.useIntegratedRate !== undefined && typeof record.useIntegratedRate !== 'boolean') throw new Error('통합통관 환율 사용 여부를 확인해주세요.');
   if (record.integratedRate !== undefined && record.integratedRate !== null
     && (typeof record.integratedRate !== 'number' || !Number.isFinite(record.integratedRate) || record.integratedRate <= 0)) throw new Error('확인한 통합통관 환율을 양수로 입력해주세요.');
@@ -16,7 +18,13 @@ export function pricePolicy(input: unknown): PricePolicy {
   // in the settings editor is not a charge until the owner enables it.
   return { ...Object.fromEntries(keys.map(key => [key, p[key]])), ...(record.roundingMode === 'nearest' ? { roundingMode: 'nearest' as const } : {}),
     ...(record.useIntegratedRate === true ? { useIntegratedRate: true, integratedRate: record.integratedRate } : {}),
-    ...(record.recalculationMode === 'couplus-stage-two-v1' ? { recalculationMode: 'couplus-stage-two-v1' as const } : {}) } as PricePolicy;
+    ...(record.recalculationMode === 'couplus-stage-two-v1' ? { recalculationMode: 'couplus-stage-two-v1' as const } : {}),
+    ...(typeof record.recalculationMinimumEnabled === 'boolean' ? { recalculationMinimumEnabled: record.recalculationMinimumEnabled } : {}) } as PricePolicy;
+}
+/** Couplus stage-two pricingInfo keeps the switch separate from its amount,
+ * including enabled zero. A missing marker retains the older saved policy. */
+export function priceMinimumMarginEnabled(policy: Pick<PricePolicy, 'minimumMargin' | 'recalculationMinimumEnabled'>): boolean {
+  return policy.recalculationMinimumEnabled ?? policy.minimumMargin > 0;
 }
 export function calculatePrice(sourcePriceCny: number, input: PricePolicy, unitsPerPack = 1) {
   const p = pricePolicy(input);
@@ -42,7 +50,7 @@ export function calculatePrice(sourcePriceCny: number, input: PricePolicy, units
   // Recorded stage-two updatePricing/recalculateOption directly adds the
   // enabled minimum amount. Only an explicit, saved recalculation uses it;
   // initial drafts and older policies keep the worker's margin-floor rule.
-  const target = p.recalculationMode === 'couplus-stage-two-v1' && p.minimumMargin > 0
+  const target = p.recalculationMode === 'couplus-stage-two-v1' && priceMinimumMarginEnabled(p)
     ? minimumTarget : compare(supplyTarget, minimumTarget) >= 0 ? supplyTarget : minimumTarget;
   const supply = roundCurrency(target, p.roundingUnit, p.roundingMode);
   if (supply === BigInt(0)) throw new Error('반올림한 공급가가 0원입니다. 가격 처리 단위를 줄이거나 최소 공급 마진을 설정해주세요.');

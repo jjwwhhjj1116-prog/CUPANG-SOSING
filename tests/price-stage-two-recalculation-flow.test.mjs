@@ -19,10 +19,11 @@ const text = tree => JSON.stringify(tree);
 /** Real PriceEditor callbacks and calculation, with deterministic hook slots.
  * Children stay opaque here; actual options/API/Excel are checked below. */
 export function stageTwoPriceUI({ load, initial = observed, sourcePrice = 25.6, onSave = async () => {} }) {
-  const slots = []; let cursor = 0, changed = false, writes = 0;
+  const slots = []; let cursor = 0, changed = false, writes = 0, layouts = [];
   const exports = {}, react = {
     useState(value) { const i = cursor++; if (!(i in slots)) slots[i] = typeof value === 'function' ? value() : value; return [slots[i], value => { const next = typeof value === 'function' ? value(slots[i]) : value; changed ||= !Object.is(next, slots[i]); slots[i] = next; }]; },
     useRef(value) { const i = cursor++; return slots[i] ?? (slots[i] = { current: value }); },
+    useLayoutEffect(effect, deps) { const i=cursor++,previous=slots[i];if(!previous||!deps||deps.some((value,index)=>!Object.is(value,previous.deps?.[index])))layouts.push(()=>{previous?.cleanup?.();slots[i]={deps,cleanup:effect()};}); },
   };
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/price-editor.tsx', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
     { exports, Error, require(name) {
@@ -33,7 +34,7 @@ export function stageTwoPriceUI({ load, initial = observed, sourcePrice = 25.6, 
       if (name === '@/app/components/option-quotation-prices') return { OptionQuotationPrices: function OptionQuotationPrices() {} };
       throw Error(name);
     } });
-  const render = () => { let tree; for (let i = 0; i < 12; i++) { cursor = 0; changed = false; tree = exports.PriceEditor({ sourcePrice, initial, productId: 'local', version: '2026-10-13T00:00:00.000Z', onSave: async policy => { writes++; await onSave(policy); initial = policy; } }); if (!changed) return tree; } throw Error('Price editor render loop'); };
+  const render = () => { let tree; for (let i = 0; i < 12; i++) { cursor = 0; changed = false; layouts=[]; tree = exports.PriceEditor({ sourcePrice, initial, productId: 'local', version: '2026-10-13T00:00:00.000Z', onSave: async policy => { writes++; await onSave(policy); initial = policy; } }); if (!changed) {for(const commit of layouts)commit();if(!changed)return tree;} } throw Error('Price editor render loop'); };
   const button = label => nodes(render()).find(node => node.type === 'button' && node.props.children === label);
   const field = label => nodes(render()).find(node => node.type === 'label' && nodes(node.props.children).some(child => child.type === 'span' && child.props.children === label))?.props.children[1];
   const policy = () => nodes(render()).find(node => node.type?.name === 'OptionPricePreview').props.policy;

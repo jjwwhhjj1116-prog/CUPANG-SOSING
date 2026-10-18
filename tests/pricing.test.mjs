@@ -16,6 +16,7 @@ function load(file, overrides = {}, mode = 'development') {
     if (name === '@/app/workspace-settings') return load('app/workspace-settings.ts');
     if (name === '@/app/product-options') return load('app/product-options.ts');
     if (name === '@/db/product-options') return { readProductOptions:async(_owner,id)=>({productId:id,rows:[],revision:0}) };
+    if (name === '@/db/product-registration') return load('db/product-registration.ts');
     if (name === '@/app/chatgpt-auth') return { getChatGPTUser: async () => ({ userId: 'owner' }), getWorkspaceOwnerId: async () => 'owner' };
     throw Error(name);
   } });

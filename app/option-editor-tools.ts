@@ -13,7 +13,8 @@ export type BulkOptionPreview = {
 export function optionBulkPriceBase(policy: PricePolicy): string {
   return JSON.stringify([policy.exchangeRate, policy.supplyMargin, policy.coupangMargin, policy.minimumMargin,
     policy.msrpMultiple, policy.roundingUnit, policy.roundingMode ?? 'up', policy.useIntegratedRate === true,
-    policy.useIntegratedRate === true ? policy.integratedRate ?? null : null, policy.recalculationMode ?? null]);
+    policy.useIntegratedRate === true ? policy.integratedRate ?? null : null, policy.recalculationMode ?? null,
+    ...(policy.recalculationMinimumEnabled === undefined ? [] : [policy.recalculationMinimumEnabled])]);
 }
 export function parseCouplusBundleQuantity(input: string, minimum = 1): number {
   // The recorded prompt uses parseInt, including its decimal-prefix behavior.

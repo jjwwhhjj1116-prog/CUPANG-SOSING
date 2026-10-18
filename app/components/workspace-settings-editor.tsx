@@ -50,7 +50,7 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
         <label className="field"><span>{draft.roundingMode==='nearest'?'가격 반올림 단위':'가격 올림 단위'}</span><select value={draft.roundingUnit} disabled={busy} onChange={event=>update('roundingUnit',Number(event.target.value))}>{[1,10,100,1000].map(unit=><option key={unit} value={unit}>{unit.toLocaleString('ko-KR')}원 단위</option>)}</select></label>
         {field('msrpMultiple','시장가격(MSRP) 배수','number')}
       </div>{margin('supplyMargin','공급 마진율 (%)','공급가 = 매입가 ÷ (1 − 공급마진율/100)')}{margin('coupangMargin','쿠팡 마진율 (%)','판매가 = 공급가 ÷ (1 − 쿠팡마진율/100)')}</div>
-      <div className="settings-minimum-margin">{toggle('minimumMarginEnabled','최소 공급 마진 보장')}{field('minimumMargin','최소 공급 마진액 (원)','number')}<small>비율로 계산한 공급가와 원가 + 최소 마진액 중 큰 금액에 가격 처리 단위를 적용합니다.</small></div>
+      <div className="settings-minimum-margin">{toggle('minimumMarginEnabled','최소 공급 마진 보장')}{draft.minimumMarginEnabled&&<>{field('minimumMargin','최소 공급 마진액 (원)','number')}<small>비율로 계산한 공급가와 원가 + 최소 마진액 중 큰 금액에 가격 처리 단위를 적용합니다.</small></>}</div>
       <div className="settings-bundle">
         <label className="switch-row"><span>번들링 활성화</span><input type="checkbox" checked={draft.bundleEnabled} disabled={busy} onChange={event=>event.target.checked?configureBundling({bundleEnabled:true}):update('bundleEnabled',false)}/><i/></label>
         <small>선택한 마진액을 기준으로 새 상품의 옵션별 판매 구성 수량을 계산합니다.</small>
