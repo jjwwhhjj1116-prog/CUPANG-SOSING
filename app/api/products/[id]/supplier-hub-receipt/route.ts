@@ -8,9 +8,10 @@ import { quotationStartRow } from '@/app/category-profiles';
 import { quotationFilename } from '@/app/exports/quotation-filename';
 import { publicDetailConfig } from '@/app/quotation-public-detail';
 import { readBoundedJson, RequestBodyError } from '@/app/request-body';
-import { validateSupplierHubReceiptResult, type SupplierHubReceipt } from '@/app/supplier-hub-receipt';
+import { validateSupplierHubReceiptResult, supplierHubReceiptObservationTime, supplierHubReceiptOrder, type SupplierHubReceipt } from '@/app/supplier-hub-receipt';
 import { approvedSupplierHubCompany, type SupplierHubCompany } from '@/app/supplier-hub-company';
 import { matchesWorkspaceAccount } from '@/app/workspace-members';
+import {assertSupplierHubReceiptEvidence} from '@/app/supplier-hub-receipt-evidence';
 
 type Context={params:Promise<{id:string}>};
 const json=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
@@ -74,7 +75,15 @@ export async function POST(request:Request,context:Context){
     if(revision!==body.fingerprint)return json({error:'전송 이후 초안이 변경되었습니다. 기존 전송 결과는 Chrome 확장에 유지됩니다.'},409);
     const includedOptions=resolveQuotationExport(saved).rows.filter(row=>row.included).length;
     let result;
-    try{result=validateSupplierHubReceiptResult(body.result,{filename:quotationFilename(revision,'xlsx'),company:saved.company,includedOptions});}
+    try{
+      result=validateSupplierHubReceiptResult(body.result,{filename:quotationFilename(revision,'xlsx'),company:saved.company,includedOptions});
+      const previous=await readSupplierHubReceipt(owner,id,revision);
+      if(previous&&previous.profileId===saved.profile.id&&previous.categoryId===body.categoryId&&previous.productVersion===saved.product.updated_at
+        &&result.quotationId===previous.result.quotationId)
+        if(supplierHubReceiptObservationTime(result)>supplierHubReceiptObservationTime(previous.result)
+          ||supplierHubReceiptObservationTime(result)===supplierHubReceiptObservationTime(previous.result)&&supplierHubReceiptOrder(result)>supplierHubReceiptOrder(previous.result))
+          assertSupplierHubReceiptEvidence(previous.result,result);
+    }
     catch(error){return json({error:error instanceof Error?error.message:'전송 결과를 확인해주세요.'},400);}
     const receipt:SupplierHubReceipt={schemaVersion:1,evidence:'chrome-observation',profileId:saved.profile.id,categoryId:body.categoryId,
       fingerprint:revision,productVersion:saved.product.updated_at,recordedAt:new Date().toISOString(),result};

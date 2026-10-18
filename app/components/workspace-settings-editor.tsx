@@ -1,43 +1,87 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { validateSettings, type WorkspaceSettings } from '@/app/workspace-settings';
 import { SettingsPricePreview, SettingsPriceRatio } from '@/app/components/settings-price-preview';
 import { applyObservedPricePreset } from '@/app/observed-price-preset';
+import { uploadSettingsBanner, validateSettingsBannerFile, type SettingsBannerDrafts, type SettingsBannerKey } from '@/app/settings-banner-draft';
 
-export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { value: WorkspaceSettings; onSave:(value: WorkspaceSettings)=>Promise<void>; onClose:()=>void; onBusy?:(busy:boolean)=>void }) {
+export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy, workspaceOwnerId }: { value: WorkspaceSettings; onSave:(value: WorkspaceSettings)=>Promise<void>; onClose:()=>void; onBusy?:(busy:boolean)=>void; workspaceOwnerId?:string }) {
   const [draft,setDraft]=useState(() => validateSettings(value));
+  const [banners,setBanners]=useState<SettingsBannerDrafts>({});
+  const pendingBanners=useRef<SettingsBannerDrafts>({});
+  const bannerInputs=useRef<Partial<Record<SettingsBannerKey,HTMLInputElement|null>>>({});
+  const mounted=useRef(true),owner=useRef(workspaceOwnerId),operation=useRef<AbortController|null>(null),busyNotice=useRef(onBusy);
   const [busy,setBusy]=useState(false);
   const busyRef=useRef(false);
   const [error,setError]=useState('');
+  useLayoutEffect(()=>{busyNotice.current=onBusy;},[onBusy]);
+  useLayoutEffect(()=>{
+    mounted.current=true;owner.current=workspaceOwnerId;
+    return()=>{
+      mounted.current=false;operation.current?.abort();operation.current=null;
+      for(const item of Object.values(pendingBanners.current))if(item)URL.revokeObjectURL(item.previewUrl);
+      pendingBanners.current={};bannerInputs.current={};
+      if(busyRef.current){busyRef.current=false;busyNotice.current?.(false);}
+    };
+  },[workspaceOwnerId]);
+  const current=()=>mounted.current&&owner.current===workspaceOwnerId;
   const changeBusy=(value:boolean)=>{busyRef.current=value;setBusy(value);onBusy?.(value);};
-  const update=(key:keyof WorkspaceSettings,value:string|number|boolean|null)=>{setDraft(current=>({...current,[key]:value}));setError('');};
-  const configureBundling=(change:Partial<WorkspaceSettings>)=>{setDraft(current=>({...current,bundleCriterion:current.bundleCriterion??'supplyMargin',bundleMinimumSupplyMargin:current.bundleMinimumSupplyMargin??3000,bundleMinimumCoupangMargin:current.bundleMinimumCoupangMargin??3000,...change}));setError('');};
+  const update=(key:keyof WorkspaceSettings,value:string|number|boolean|null)=>{if(!current()||busyRef.current)return;setDraft(current=>({...current,[key]:value}));setError('');};
+  const configureBundling=(change:Partial<WorkspaceSettings>)=>{if(!current()||busyRef.current)return;setDraft(current=>({...current,bundleCriterion:current.bundleCriterion??'supplyMargin',bundleMinimumSupplyMargin:current.bundleMinimumSupplyMargin??3000,bundleMinimumCoupangMargin:current.bundleMinimumCoupangMargin??3000,...change}));setError('');};
   const field=(key:keyof WorkspaceSettings,label:string,type='text')=><label className="field" key={key}><span>{label}</span><input type={type} step={type==='number'?'any':undefined} value={draft[key]===null||typeof draft[key]==='number'&&!Number.isFinite(draft[key])?'':String(draft[key])} disabled={busy} onChange={event=>update(key,type==='number'?(event.target.value===''?(['shelfLifeDays','integratedRate'].includes(key)?null:NaN):Number(event.target.value)):event.target.value)}/></label>;
   const toggle=(key:keyof WorkspaceSettings,label:string)=><label className="switch-row" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(draft[key])} disabled={busy} onChange={event=>update(key,event.target.checked)}/><i/></label>;
   const margin=(key:'supplyMargin'|'coupangMargin',label:string,formula:string)=><fieldset className="settings-margin"><legend>{label}</legend><label className="settings-percent-input"><input aria-label={label} type="number" min={0} max={99.9} step="any" value={Number.isFinite(draft[key])?draft[key]:''} disabled={busy} onChange={event=>update(key,event.target.value===''?NaN:Number(event.target.value))}/><span aria-hidden="true">%</span></label><input aria-label={label+' 조절'} type="range" min={0} max={99} step={1} value={Number.isFinite(draft[key])?Math.min(99,Math.max(0,draft[key])):0} disabled={busy} onChange={event=>update(key,Number(event.target.value))}/><small>{formula}</small></fieldset>;
   const select=(key:keyof WorkspaceSettings,label:string,options:string[])=><label className="field"><span>{label}</span><select value={String(draft[key])} disabled={busy} onChange={event=>update(key,event.target.value)}><option value="">미입력</option>{options.map(option=><option key={option}>{option}</option>)}</select></label>;
-  async function uploadBanner(key: 'topImageKey' | 'bottomImageKey', file: File) {
-    if(busyRef.current)return;
-    changeBusy(true); setError('');
-    try {
-      const form = new FormData(); form.set('file', file);
-      const response = await fetch('/api/files', { method: 'POST', body: form });
-      const result = await response.json() as { key?: string; error?: string };
-      if (!response.ok || !result.key) throw new Error(result.error || '이미지를 업로드하지 못했습니다.');
-      setDraft(current => ({ ...current, [key]: result.key!, [key === 'topImageKey' ? 'topImageEnabled' : 'bottomImageEnabled']: true }));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '업로드 실패'); }
-    finally { changeBusy(false); }
+  function chooseBanner(key:SettingsBannerKey,file:File){
+    if(!current()||busyRef.current)return;
+    try{
+      validateSettingsBannerFile(file);
+      const previous=pendingBanners.current[key],previewUrl=URL.createObjectURL(file);
+      pendingBanners.current={...pendingBanners.current,[key]:{file,previewUrl,...(previous?.file===file&&previous.uploadedKey?{uploadedKey:previous.uploadedKey}:{})}};
+      setBanners(pendingBanners.current);setError('');
+      if(previous)URL.revokeObjectURL(previous.previewUrl);
+    }catch(cause){setError(cause instanceof Error?cause.message:'이미지를 선택하지 못했습니다.');}
   }
-  const banner = (key: 'topImageKey' | 'bottomImageKey', label: string) => <div className="field">
+  function clearBanner(key:SettingsBannerKey){
+    if(!current()||busyRef.current)return;
+    const previous=pendingBanners.current[key],next={...pendingBanners.current};delete next[key];pendingBanners.current=next;setBanners(next);
+    if(previous)URL.revokeObjectURL(previous.previewUrl);
+    setDraft(current=>({...current,[key]:''}));setError('');
+  }
+  function openBannerChooser(key:SettingsBannerKey){
+    if(!current()||busyRef.current)return;
+    bannerInputs.current[key]?.click();
+  }
+  async function save(){
+    if(!current()||busyRef.current)return;
+    const controller=new AbortController();operation.current=controller;changeBusy(true);setError('');
+    const active=()=>current()&&operation.current===controller&&!controller.signal.aborted;
+    try{
+      const next=validateSettings(draft);
+      for(const key of ['topImageKey','bottomImageKey'] as const){
+        const item=pendingBanners.current[key];if(!item)continue;
+        const uploadedKey=item.uploadedKey??await uploadSettingsBanner(item.file,controller.signal,workspaceOwnerId);
+        if(!active())return;
+        pendingBanners.current={...pendingBanners.current,[key]:{...item,uploadedKey}};setBanners(pendingBanners.current);next[key]=uploadedKey;
+      }
+      if(active())await onSave(validateSettings(next));
+    }catch(cause){if(active())setError(cause instanceof Error?cause.message:'설정을 저장하지 못했습니다.');}
+    finally{if(active()){operation.current=null;changeBusy(false);}}
+  }
+  const banner = (key: SettingsBannerKey, label: string) => <div className="field" role="group" aria-label={label}
+    onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();const file=event.dataTransfer.files?.[0];if(file)chooseBanner(key,file);}}
+    onPaste={event=>{const file=event.clipboardData.files?.[0];if(file){event.preventDefault();chooseBanner(key,file);}}}>
     <span>{label}</span>
-    {draft[key] && <>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={'/api/files/' + draft[key].split('/').map(encodeURIComponent).join('/')} alt={label} style={{maxWidth:240,maxHeight:160,objectFit:'contain'}} />
-      <button type="button" className="btn ghost" disabled={busy} onClick={()=>setDraft(current=>({...current,[key]:'',[key==='topImageKey'?'topImageEnabled':'bottomImageEnabled']:false}))}>선택 해제</button>
+    {(banners[key]||draft[key]) && <>
+      <button type="button" className="btn ghost" aria-label={label+' 변경'} disabled={busy} onClick={()=>openBannerChooser(key)}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={banners[key]?.previewUrl??'/api/files/' + draft[key].split('/').map(encodeURIComponent).join('/')} alt={label} style={{maxWidth:240,maxHeight:160,objectFit:'contain'}} />
+      </button>
+      <button type="button" className="btn ghost" disabled={busy} onClick={()=>clearBanner(key)}>선택 해제</button>
     </>}
-    <input aria-label={label + ' 업로드'} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file&&!busy)void uploadBanner(key,file);}} />
+    <input ref={element=>{if(current())bannerInputs.current[key]=element;}} aria-label={label + ' 업로드'} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)chooseBanner(key,file);}} />
   </div>;
-  return <form className="settings-form couplus-settings" onSubmit={async event=>{event.preventDefault();if(busyRef.current)return;changeBusy(true);setError('');try{await onSave(validateSettings(draft));}catch(e){setError(e instanceof Error?e.message:'설정을 저장하지 못했습니다.');}finally{changeBusy(false);}}}>
+  return <form className="settings-form couplus-settings" onSubmit={async event=>{event.preventDefault();await save();}}>
     <section className="settings-registration"><h3>기본 등록 정보</h3><div className="form-grid">{field('brand','브랜드명')}<small>쉼표(,)로 구분하여 여러 브랜드를 입력할 수 있습니다.</small>{field('manufacturer','제조사')}{field('importer','수입 및 판매원')}{select('tradeType','거래타입',['제조사','공식총판사','공식대리점','기타 도소매업자'])}{select('importType','수입여부',['수입대상아님','수입상품','병행수입상품'])}{field('serviceContact','A/S 책임자와 전화번호')}{field('boxSkuQuantity','박스 내 SKU 수량','number')}<small>1개의 박스에 담긴 SKU 수량을 입력해주세요.</small></div></section>
     <section className="settings-pricing"><h3>가격설정 방법</h3>
       <SettingsPriceRatio settings={draft}/>
@@ -63,7 +107,7 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
         </>}
       </div>
       <details className="settings-price-details"><summary>실제 가격 계산 · 세부 미리보기</summary><label className="field"><span>가격 처리 방식</span><select value={draft.roundingMode} disabled={busy} onChange={event=>update('roundingMode',event.target.value as 'up'|'nearest')}><option value="up">올림 (기존 방식)</option><option value="nearest">반올림</option></select></label><p>{draft.useIntegratedRate ? '통합통관 매입가를 원 단위 반올림한 뒤 공급가·판매가·시장가격을 계산합니다.' : '원화 원가 = 중국 원가 × 적용환율.'} 판매가와 시장가격도 각각 설정 단위로 처리합니다.</p><SettingsPricePreview settings={draft} disabled={busy}/><p>설정 저장 후 새 상품 초안에 적용됩니다. 기존 상품은 가격 단계에서 별도로 수정합니다.</p></details>
-      <details className="settings-price-details"><summary>쿠플러스에서 사용하던 가격 설정 적용</summary><p>2026년 9월 24일 계정에서 확인한 설정입니다. 환율 350원 · 공급 마진 50% · 쿠팡 마진 40% · 10원 반올림 · MSRP 1.3배 · 최소 공급 마진 보장 3,000원.</p><p>현재 환율을 조회한 값이 아닙니다. 가격 입력만 변경하며 설정 저장 후 새 수집 요청에 적용됩니다. 기존 상품과 이미 접수한 요청의 가격은 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>{setDraft(current=>applyObservedPricePreset(current));setError('');}}>위 가격값을 입력란에 적용</button></details>
+      <details className="settings-price-details"><summary>쿠플러스에서 사용하던 가격 설정 적용</summary><p>2026년 9월 24일 계정에서 확인한 설정입니다. 환율 350원 · 공급 마진 50% · 쿠팡 마진 40% · 10원 반올림 · MSRP 1.3배 · 최소 공급 마진 보장 3,000원.</p><p>현재 환율을 조회한 값이 아닙니다. 가격 입력만 변경하며 설정 저장 후 새 수집 요청에 적용됩니다. 기존 상품과 이미 접수한 요청의 가격은 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy} onClick={()=>{if(!current()||busyRef.current)return;setDraft(current=>applyObservedPricePreset(current));setError('');}}>위 가격값을 입력란에 적용</button></details>
     </section>
     <section className="settings-images"><h3>이미지 작업 설정</h3>
       <div className="settings-image-option">
@@ -90,6 +134,6 @@ export function WorkspaceSettingsEditor({ value, onSave, onClose, onBusy }: { va
       <section className="settings-registration"><h3>상품고시 기본설정</h3><div className="form-grid">{field('washingMethod','세탁방법')}{field('handlingPrecautions','취급시 주의사항')}</div><div className="switch-grid">{toggle('manufactureDatePreviousMonth','제조년월 · 전월 자동 입력')}</div><small>세탁방법과 취급시 주의사항은 함께 묶어 초안에 반영합니다. 전월 자동 입력은 선택한 카테고리의 출시년월·제조년월 고시에 적용되며 상품추가 시점의 한국 날짜로 고정됩니다. 실제 상품 정보와 대조해 수정해주세요.</small></section>
       <section className="settings-registration"><h3>물류·과세 기본설정</h3><div className="form-grid">{field('shelfLifeDays','유통기간 · 식품의 경우 소비기간 (일)','number')}{select('handlingReason','취급주의 사유',['해당사항없음','유리'])}<label className="field"><span>과세여부</span><select value={draft.taxType} disabled={busy} onChange={event=>update('taxType',event.target.value)}><option value="">카테고리 기본값 사용</option>{['과세','면세','영세'].map(option=><option key={option} value={option}>{option}</option>)}</select><small>견적서의 자동값에 적용됩니다. 상품별 직접 수정값은 유지됩니다.</small></label></div><small>새 상품 견적서의 물류 정보에 반영됩니다. 유통기간이 해당되지 않는 상품은 0일을 사용합니다. 포장 무게와 포장 사이즈는 상품별로 확인해 입력해주세요.</small></section>
     </div></details>
-    {error&&<p role="alert" className="collection-error">{error}</p>}<div className="modal-actions"><button className="btn ghost" type="button" disabled={busy} onClick={()=>{if(!busyRef.current)onClose();}}>취소</button><button className="btn primary" disabled={busy}>{busy?'저장 중…':'설정 저장'}</button></div>
+    {error&&<p role="alert" className="collection-error">{error}</p>}<div className="modal-actions"><button className="btn ghost" type="button" disabled={busy} onClick={()=>{if(current()&&!busyRef.current)onClose();}}>취소</button><button className="btn primary" disabled={busy}>{busy?'저장 중…':'설정 저장'}</button></div>
   </form>;
 }

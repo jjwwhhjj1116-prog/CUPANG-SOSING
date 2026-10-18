@@ -13,6 +13,7 @@ import {LegalDocumentsEditor} from '@/app/components/legal-documents-editor';
 import {supplierHubAgreementsReady} from '@/app/supplier-hub-agreements';
 import {validateSupplierHubTransmissionHistory,type SupplierHubTransmissionHistory} from '@/app/supplier-hub-transmission-history';
 import {HistoricalSupplierHubResult} from '@/app/components/historical-supplier-hub-result';
+import {assertSupplierHubReceiptEvidence} from '@/app/supplier-hub-receipt-evidence';
 
 type Preview = {
   fingerprint:string; filename:string; headers:string[]; rows:(string|number)[][];
@@ -125,6 +126,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
   }
   async function retainResult(value:Preview,result:SupplierHubResult|null,controller:AbortController){
     if(!result||result.state==='not-found'||!categoryId||!value.report.company)return;
+    assertSupplierHubReceiptEvidence(hubResultRef.current,result);
     try{
       await storeSupplierHubReceipt({productId,profileId:value.report.profileId,categoryId,fingerprint:value.fingerprint,
         filename:value.filename,company:value.report.company,includedOptions:value.report.rowCount},result,controller.signal);
@@ -144,11 +146,15 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
     try{
       const outcome=await followSupplierHubRegistration({productId,categoryId,profileId:preview.report.profileId,
         fingerprint:preview.fingerprint,filename:preview.filename,includedOptions:preview.report.rowCount,company:preview.report.company},
-      {signal:controller.signal,initialResult,onRetry:retry=>{
+      {signal:controller.signal,initialResult,read:async(identity,signal,mode)=>{
+        const result=await getSupplierHubResult(identity,signal,mode);
+        assertSupplierHubReceiptEvidence(hubResultRef.current,result);return result;
+      },onRetry:retry=>{
         if(controller.signal.aborted)return;
         setMessage(`Supplier Hub ${retry.phase==='validation-pending'?'검증 결과':'상품별 등록 결과'} 응답이 늦어 ${Math.ceil(retry.delayMs/1000)}초 후 다시 확인합니다 (${retry.attempt}/${retry.maxAttempts}).`);
       },onProgress:async progress=>{
         if(controller.signal.aborted)return;
+        assertSupplierHubReceiptEvidence(hubResultRef.current,progress.result);
         setHubResult(progress.result);
         setMessage(progress.phase==='validation-pending'?'Supplier Hub에서 견적서 파일을 검증하고 있습니다.':
           progress.phase==='registration-pending'?`견적서 ID를 확인했습니다. 상품별 SKU를 확인하고 있습니다 (${progress.issuedSkus}/${progress.includedOptions}개).`:
@@ -198,13 +204,17 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         let result=await getSupplierHubResult({productId,categoryId,fingerprint:preview!.fingerprint},controller.signal,action==='registration'?'registration':true);
         await verifyQuotationResultSource({productId,categoryId,profileId:preview!.report.profileId,fingerprint:preview!.fingerprint,filename:preview!.filename},controller.signal);
         if(!controller.signal.aborted){
-          if(result){validateSupplierHubResultForSource(result,{filename:preview!.filename,company:preview!.report.company,includedOptions:preview!.report.rowCount,quotationId});setAttemptedFingerprint(preview!.fingerprint);}
+          if(result){
+            assertSupplierHubReceiptEvidence(hubResultRef.current,result?.state==='validation-pending'?result:null);
+            validateSupplierHubResultForSource(result,{filename:preview!.filename,company:preview!.report.company,includedOptions:preview!.report.rowCount,quotationId});setAttemptedFingerprint(preview!.fingerprint);
+          }
           // This Chrome may have fewer cached SKU rows than the restored server
           // receipt. A file-only refresh does not re-observe those rows or their time.
           if(action==='result'&&result?.state==='validation-complete'&&hubResult?.state==='validation-complete'
             &&hubResult.registration&&hubResult.quotationId===result.quotationId
             &&(!result.registration||result.registration.observedAt<hubResult.registration.observedAt))
             result={...result,registration:hubResult.registration};
+          assertSupplierHubReceiptEvidence(hubResultRef.current,result);
           setHubResult(result);if(!result)setMessage('이 견적서의 검증 결과가 아직 표시되지 않았습니다. 잠시 후 다시 확인해주세요.');
           await retainResult(preview!,result,controller);
         }
@@ -330,7 +340,7 @@ export function SubmissionPackage({productId,profileId,categoryId,onInspect,onRe
         {hubResult.registration.scope==='visible-page'?<small>현재 페이지의 결과입니다. 다른 페이지의 옵션은 아직 대조되지 않았습니다.</small>:
           <small>{hubResult.registration.hasMore===true?'다음 페이지가 남아 있습니다. 결과를 계속 확인해주세요.':hubResult.registration.hasMore===null?'추가 페이지 유무를 확인하지 못했습니다. Supplier Hub 결과 표를 확인해주세요.':'마지막 페이지까지 조회했습니다.'} 상품 검수 완료 여부는 각 행의 상태를 확인하세요.</small>}
       </div>}
-      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.77.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.77)</a>
+      <a href="/downloads/yoofam-plus-supplier-hub-extension-0.2.78.zip" download>Chrome 상품 수집·전송 확장 다운로드 (0.2.78)</a>
     </>}
   </section>;
 }

@@ -68,9 +68,12 @@ for(const company of companies)test(`${company.code}: competing ordinary file st
  }
 });
 
-for(const company of companies)test(`${company.code}: current original-tab pending, rejection and not-found observations retain their previous update semantics`,async()=>{
+for(const company of companies)test(`${company.code}: current original-tab pending keeps issued SKUs while rejection and not-found retain their previous semantics`,async()=>{
  for(const state of ['validation-pending','validation-rejected','not-found']){
   const h=await observerFixture(company,{initial:f=>state==='not-found'?{...f.accepted,state:'validation-pending',quotationId:''}:f.newer,resultPatch:{state,quotationId:''}});
+  if(state==='validation-pending'){
+   await assert.rejects(h.run(),/조건부 검증 조회/);assert.deepEqual(plain(await h.store.record('get',h.key)),h.newer);continue;
+  }
   assert.equal((await h.run()).state,state);const stored=await h.store.record('get',h.key);
   assert.equal(stored.state,state);assert.equal(stored.company.code,company.code);assert.equal(stored.registration,undefined);
   assert.equal(h.writes.length,1);assert.equal(h.writes[0].action,'file-observe');assert.equal(h.writes[0].result,true);

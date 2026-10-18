@@ -14,6 +14,23 @@ export function validateResultRequest(message,sender){
 export function resultKey(identity){
   return `result:${identity.origin}:${identity.productId}:${identity.categoryId}:${identity.fingerprint}`;
 }
+/** Same policy as the app receipt guard; keep both runtimes covered by parity
+ * cases without importing application TypeScript into the Chrome package. */
+export function supplierHubReceiptEvidenceRegression(previous,next){
+  if(!previous||!next||previous.state!=='validation-complete'||previous.registered!==false||next.registered!==false
+    ||!['origin','productId','categoryId','fingerprint','filename','includedOptions'].every(field=>previous[field]===next[field])
+    ||previous.company?.code!==next.company?.code||previous.company?.name!==next.company?.name
+    ||typeof previous.quotationId!=='string'||!previous.quotationId||next.quotationId&&next.quotationId!==previous.quotationId
+    ||previous.registration?.quotationId!==previous.quotationId||previous.registration.registered!==false
+    ||previous.registration.includedOptions!==previous.includedOptions)return null;
+  const skuId=value=>typeof value==='string'&&value.trim()&&!/\.\.\.|…/.test(value)&&!/^(?:-|—|n\/a|미표시|해당사항없음)$/i.test(value.trim())?value.trim():null;
+  const known=previous.registration.rows.map(row=>skuId(row.skuId)).filter(Boolean);
+  if(!known.length)return null;
+  if(next.state==='validation-pending')return 'pending';
+  if(next.state!=='validation-complete'||next.quotationId!==previous.quotationId||!next.registration)return null;
+  const observed=new Set(next.registration.rows.map(row=>skuId(row.skuId)).filter(Boolean));
+  return known.some(id=>!observed.has(id))?'sku-missing':null;
+}
 export function isAcceptedResult(identity,result){
   return Boolean(result&&['origin','productId','categoryId','fingerprint'].every(field=>result[field]===identity[field])
     &&result.filename===`YOOFAM-${identity.fingerprint}.xlsx`&&result.state==='validation-complete'&&result.registered===false
@@ -97,7 +114,7 @@ export function canObserveOriginalSupplierHubValidation(expected,observation){
     ||observation.registration.includedOptions!==observation.includedOptions||!Number.isSafeInteger(observation.registration.observedAt)||observation.registration.observedAt<=0||observation.registration.observedAt>Date.now()+60000
     ||!Array.isArray(observation.registration.rows)||observation.registration.rows.length>1000
     ||observation.includedOptions!==undefined&&observation.registration.rows.length>observation.includedOptions))return false;
-  return true;
+  return !supplierHubReceiptEvidenceRegression(expected,observation);
 }
 /** A SKU lookup may replace only the accepted receipt it started from. File
  * identity and validation evidence stay intact; a competing observation wins. */
@@ -118,7 +135,8 @@ export function canObserveSupplierHubRegistration(expected,observation){
     &&Number.isSafeInteger(registration.observedAt)&&registration.observedAt>0&&registration.observedAt<=Date.now()+60000
     &&Array.isArray(registration.rows)&&registration.rows.length<=expected.includedOptions
     &&registration.rows.every(row=>row&&typeof row==='object'&&!Array.isArray(row))
-    &&(!Number.isSafeInteger(expected.registration?.observedAt)||registration.observedAt>=expected.registration.observedAt));
+    &&(!Number.isSafeInteger(expected.registration?.observedAt)||registration.observedAt>=expected.registration.observedAt)
+    &&!supplierHubReceiptEvidenceRegression(expected,observation));
 }
 export async function transferRecord(action,key,value){
   if(action==='history'){

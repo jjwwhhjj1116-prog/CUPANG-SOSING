@@ -3,6 +3,7 @@ import { sourceGuard, type QuotationSourceGuard } from '@/db/quotation-fields';
 import { parseStoredSupplierHubReceipt, supplierHubReceiptSummary, supplierHubReceiptObservationTime, supplierHubReceiptOrder, type SupplierHubReceipt, type SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
 import { supplierHubTransmissionHistory } from '@/app/supplier-hub-transmission-history';
 import type {WorkspaceMember} from '@/app/workspace-members';
+import {supplierHubReceiptEvidenceRegression} from '@/app/supplier-hub-receipt-evidence';
 
 export type SupplierHubReceiptMember = Pick<WorkspaceMember,'id'|'email'|'role'|'companyCode'|'companyName'>;
 /** Native member login must still have the same approved identity inside the
@@ -27,24 +28,33 @@ export { database as ensureSupplierHubReceiptDatabase };
 /** Save an observation without changing product versions or invalidating its XLSX. */
 export async function saveSupplierHubReceipt(owner:string,productId:string,receipt:SupplierHubReceipt,source:QuotationSourceGuard,quotationRevision:number,member?:SupplierHubReceiptMember){
   const db=await database(),guard=sourceGuard(owner,productId,source),authorization=memberGuard(owner,member,receipt.result.company);
+  const previous=await db.prepare('SELECT payload FROM supplier_hub_receipts WHERE owner_id=? AND product_id=? AND fingerprint=?')
+    .bind(owner,productId,receipt.fingerprint).first<{payload:string}>();
+  const old=previous?parseStoredSupplierHubReceipt(previous.payload):null;
+  if(old&&old.fingerprint!==receipt.fingerprint)return false;
+  if(old&&old.profileId===receipt.profileId&&old.categoryId===receipt.categoryId&&old.productVersion===receipt.productVersion
+    &&(supplierHubReceiptObservationTime(receipt.result)>supplierHubReceiptObservationTime(old.result)
+      ||supplierHubReceiptObservationTime(receipt.result)===supplierHubReceiptObservationTime(old.result)&&supplierHubReceiptOrder(receipt.result)>supplierHubReceiptOrder(old.result))
+    &&supplierHubReceiptEvidenceRegression(old.result,receipt.result))return false;
   // Hub pending rows carry an empty ID. Pin only an ID that has been assigned.
   const row=await db.prepare(`INSERT INTO supplier_hub_receipts(owner_id,product_id,fingerprint,observed_at,evidence_order,payload)
     SELECT p.owner_id,p.id,?,?,?,? FROM products p WHERE ${guard.sql}
       AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND ${authorization.sql}
     ON CONFLICT(owner_id,product_id,fingerprint) DO UPDATE SET observed_at=excluded.observed_at,evidence_order=excluded.evidence_order,payload=excluded.payload
-      WHERE (excluded.observed_at>supplier_hub_receipts.observed_at
+      WHERE supplier_hub_receipts.payload IS ? AND (excluded.observed_at>supplier_hub_receipts.observed_at
         OR excluded.observed_at=supplier_hub_receipts.observed_at AND excluded.evidence_order>supplier_hub_receipts.evidence_order)
       AND (NULLIF(json_extract(supplier_hub_receipts.payload,'$.result.quotationId'),'') IS NULL
         OR json_extract(supplier_hub_receipts.payload,'$.result.quotationId')=json_extract(excluded.payload,'$.result.quotationId'))
       AND NOT (excluded.evidence_order=1 AND supplier_hub_receipts.evidence_order>1)
-    RETURNING fingerprint`).bind(receipt.fingerprint,supplierHubReceiptObservationTime(receipt.result),supplierHubReceiptOrder(receipt.result),JSON.stringify(receipt),...guard.args,quotationRevision,...authorization.args).first();
+    RETURNING fingerprint`).bind(receipt.fingerprint,supplierHubReceiptObservationTime(receipt.result),supplierHubReceiptOrder(receipt.result),JSON.stringify(receipt),...guard.args,quotationRevision,...authorization.args,previous?.payload??null).first();
   if(row)return true;
   // Equal/older repeated observations are harmless, but a changed saved source is not.
   return Boolean(await db.prepare(`SELECT p.id FROM products p WHERE ${guard.sql}
     AND COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0)=? AND ${authorization.sql}
     AND EXISTS(SELECT 1 FROM supplier_hub_receipts r WHERE r.owner_id=p.owner_id AND r.product_id=p.id AND r.fingerprint=?
+      AND r.payload IS ?
       AND (NULLIF(json_extract(r.payload,'$.result.quotationId'),'') IS NULL OR json_extract(r.payload,'$.result.quotationId') IS ?))`)
-    .bind(...guard.args,quotationRevision,...authorization.args,receipt.fingerprint,receipt.result.quotationId??null).first());
+    .bind(...guard.args,quotationRevision,...authorization.args,receipt.fingerprint,previous?.payload??JSON.stringify(receipt),receipt.result.quotationId??null).first());
 }
 export async function readSupplierHubReceipt(owner:string,productId:string,fingerprint:string):Promise<SupplierHubReceipt|null>{
   const db=await database();
@@ -67,6 +77,7 @@ export async function readSupplierHubTransmissionHistory(owner:string,productId:
 export async function saveHistoricalSupplierHubReceipt(owner:string,productId:string,receipt:SupplierHubReceipt,previous:SupplierHubReceipt,productVersion:string,member?:SupplierHubReceiptMember){
   if(receipt.schemaVersion!==previous.schemaVersion||receipt.evidence!==previous.evidence||receipt.fingerprint!==previous.fingerprint
     ||receipt.profileId!==previous.profileId||receipt.categoryId!==previous.categoryId||receipt.productVersion!==previous.productVersion)throw Error('원래 전송 기록의 연결값이 바뀌었습니다.');
+  if(supplierHubReceiptEvidenceRegression(previous.result,receipt.result))return false;
   const db=await database(),authorization=memberGuard(owner,member,receipt.result.company);
   const previousPayload=JSON.stringify(previous),payload=JSON.stringify(receipt);
   const row=await db.prepare(`UPDATE supplier_hub_receipts SET observed_at=?,evidence_order=?,payload=?

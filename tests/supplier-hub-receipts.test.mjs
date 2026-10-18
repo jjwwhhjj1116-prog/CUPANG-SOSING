@@ -74,7 +74,7 @@ for(const company of companies)test(`new bundle defaults preserve legacy accepte
   // Only inactive price-policy defaults are absent. Template, packaging and
   // legal/weight binding proofs retain the current immutable source contract.
   const resolved=h.load('app/exports/quotation-source.ts').resolveQuotationExport(legacy);
-  const fingerprint=await model.fingerprint({format:'sourceflow-quotation-fields-v1',saved:legacy,dataStartRow,
+  const fingerprint=await model.fingerprint({format:'sourceflow-quotation-fields-v1',saved:{...legacy,product:model.productFingerprintSource(legacy.product)},dataStartRow,
    schema:h.load('app/quotation-schema.ts').getQuotationSchema(source.categoryContext.categoryId,source.categoryContext.categoryPath,source.hubSchema,source.template),
    ...h.load('app/quotation-notice-inputs.ts').quotationNoticeBindingFingerprint(legacy,resolved),
    ...h.load('app/quotation-packaged-weight.ts').quotationPackagedWeightBindingFingerprint(legacy.state.overrides,resolved,()=>h.load('app/exports/quotation-source.ts').resolveQuotationExport({...legacy,state:{...legacy.state,overrides:{common:{},options:{}}}})),
@@ -115,7 +115,7 @@ for(const company of companies)test(`bundle criteria do not stale legacy quotati
   assert.equal(JSON.stringify(packagingBasis),JSON.stringify(view.packagingBasis),'actual manual package-quantity proof is not dropped from the compatibility input');
   assert.equal(JSON.stringify(automatic),JSON.stringify(view.automatic),'inactive bundle flags leave automatic values and the captured template schema identical');
   assert.equal(JSON.stringify(resolved),JSON.stringify(view.resolved),'manual values, blanks, template and packaging proof remain identical');
-  const legacyFingerprint=await model.fingerprint({inputs,schema:view.automatic.schema,categoryContext:source.categoryContext,profileRevision:null,settingsPayload:source.source.settingsPayload,collection:source.source.collection,
+  const legacyFingerprint=await model.fingerprint({inputs:{...inputs,product:model.productFingerprintSource(inputs.product)},schema:view.automatic.schema,categoryContext:source.categoryContext,profileRevision:null,settingsPayload:source.source.settingsPayload,collection:source.source.collection,
    ...(packagingBasis?{packagingBasis}:{}),
    ...h.load('app/quotation-notice-inputs.ts').quotationNoticeBindingFingerprint(inputs,resolved),
    ...h.load('app/quotation-packaged-weight.ts').quotationPackagedWeightBindingFingerprint(overrides,resolved,()=>automatic),
@@ -289,10 +289,10 @@ for(const company of companies)for(const cached of ['missing','older'])test(`fil
   assert.ok(JSON.stringify(ui.render()).includes(new Date(h.registration.observedAt).toLocaleString('ko-KR')),'SKU observation keeps its original time');
   let stored=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+h.preview.fingerprint));
   assert.equal(stored.receipt.result.registration.observedAt,h.registration.observedAt);assert.equal(stored.receipt.result.registration.rows.length,6);
-  await ui.click('견적서 ID로 상품별 등록 상태 조회');assert.deepEqual(ui.alerts(),[]);
-  assert.equal(JSON.stringify(ui.render()).includes('sku-5'),false,'a fresh SKU lookup must still replace previous rows');
+  await ui.click('견적서 ID로 상품별 등록 상태 조회');assert.ok(ui.alerts().some(message=>message.includes('기존 결과를 유지')));
+  assert.equal(JSON.stringify(ui.render()).includes('sku-5'),true,'a newer empty lookup cannot revoke already observed SKU IDs');
   stored=await json(await h.route(h.base+'/supplier-hub-receipt?fingerprint='+h.preview.fingerprint));
-  assert.equal(stored.receipt.result.registration.observedAt,freshEmpty.registration.observedAt);assert.equal(stored.receipt.result.registration.rows.length,0);
+  assert.equal(stored.receipt.result.registration.observedAt,h.registration.observedAt);assert.equal(stored.receipt.result.registration.rows.length,6);
   assert.deepEqual(h.sqlite.prepare('SELECT * FROM products').get(),before);
   const current=await json(await h.route(h.base+'/quotation',{method:'POST',body:{action:'source'}}));assert.equal(current.fingerprint,h.preview.fingerprint);
   assert.equal(ui.calls.some(call=>['transmit','prepare','export'].includes(call.action)),false);

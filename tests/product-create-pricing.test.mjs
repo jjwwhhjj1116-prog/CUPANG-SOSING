@@ -6,7 +6,7 @@ import ts from 'typescript';
 import {DatabaseSync} from 'node:sqlite';
 function runtime(){
  const sql=new DatabaseSync(':memory:');
- const DB={prepare(query){let values=[];return {bind(...args){values=args;return this;},async run(){return {meta:sql.prepare(query).run(...values)};},async first(){return sql.prepare(query).get(...values)??null;},async all(){return {results:sql.prepare(query).all(...values)};}};},async batch(statements){sql.exec('BEGIN');try{const result=[];for(const stmt of statements)result.push(await stmt.run());sql.exec('COMMIT');return result;}catch(error){sql.exec('ROLLBACK');throw error;}}};
+ const DB={prepare(query){let values=[];return {bind(...args){values=args;return this;},async run(){const statement=sql.prepare(query);if(statement.columns().length){const results=statement.all(...values);return {results,meta:{changes:sql.prepare('SELECT changes() AS changes').get().changes}};}return {results:[],meta:statement.run(...values)};},async first(){return sql.prepare(query).get(...values)??null;},async all(){return {results:sql.prepare(query).all(...values)};}};},async batch(statements){sql.exec('BEGIN');try{const result=[];for(const stmt of statements)result.push(await stmt.run());sql.exec('COMMIT');return result;}catch(error){sql.exec('ROLLBACK');throw error;}}};
  const cache=new Map();let authenticated=true;
  function load(file){if(cache.has(file))return cache.get(file);const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,crypto,URL,Response,TextEncoder,TextDecoder,process:{env:{NODE_ENV:'production'}},require(name){if(name==='cloudflare:workers')return {env:{DB}};if(name==='next/server')return {NextResponse:Response};if(name==='@/app/chatgpt-auth')return {getChatGPTUser:async()=>authenticated?{verifiedAccess:true}:null,getWorkspaceOwnerId:async()=>'owner'};if(name==='@/db/product-content')return {};if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error(name);}});cache.set(file,exports);return exports;}
  const store=load('db/queries.ts'),route=load('app/api/products/route.ts');
@@ -17,6 +17,7 @@ const observed={exchangeRate:350,supplyMargin:50,coupangMargin:40,minimumMargin:
 test('product creation uses captured workspace policy and Couplus observed decimal rounding',async()=>{
  const r=runtime();await r.store.saveSettings('owner',JSON.stringify(observed));
  const response=await r.post();assert.equal(response.status,201);const {product}=await response.json();
+ assert.match(product.registration_number,/^\d{12}$/);assert.equal(r.sql.prepare('SELECT registration_number FROM product_registration_numbers WHERE product_id=? AND owner_id=?').get(product.id,'owner').registration_number,product.registration_number);
  assert.equal(product.supply_price,4830);assert.equal(product.sale_price,8050);assert.equal(product.msrp,10470);
  assert.equal(JSON.parse(product.pricing_policy).roundingMode,'nearest');
  await r.store.saveSettings('owner',JSON.stringify({...observed,exchangeRate:500,roundingUnit:100}));
@@ -37,5 +38,6 @@ test('initial price and policy are transactional and failed authentication creat
  const r=runtime();await r.store.saveSettings('owner',JSON.stringify(observed));
  r.sql.exec("CREATE TRIGGER fail_policy BEFORE INSERT ON product_price_policy BEGIN SELECT RAISE(ABORT,'fixture'); END");
  assert.equal((await r.post()).status,503);assert.equal(r.sql.prepare('SELECT count(*) n FROM products').get().n,0);
+ for(const table of ['product_price_policy','product_registration_counters','product_registration_numbers'])assert.equal(r.sql.prepare('SELECT count(*) n FROM '+table).get().n,0,table+' must roll back with product creation');
  r.sql.exec('DROP TRIGGER fail_policy');r.logout();assert.equal((await r.post()).status,503);assert.equal(r.sql.prepare('SELECT count(*) n FROM products').get().n,0);r.sql.close();
 });

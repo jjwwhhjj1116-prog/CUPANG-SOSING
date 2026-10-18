@@ -59,6 +59,7 @@ export async function POST(request: Request) {
     if(typeof enabled!=='boolean')throw Error('최소 마진 적용 여부를 확인해주세요.');
     policy=pricePolicy(input);
     if(!enabled)policy.minimumMargin=0;
+    policy.recalculationMinimumEnabled=enabled;
     calculation=calculatePrice(sourcePriceCny,policy);
   }catch(error){return NextResponse.json({error:error instanceof Error?error.message:'가격 설정을 확인해주세요.'},{status:400});}
   const {exchangeRate,supplyMargin,coupangMargin}=policy;

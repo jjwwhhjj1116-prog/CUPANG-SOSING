@@ -10,6 +10,14 @@ function load(file,deps={},mode='development'){
 }
 const settings=load('app/workspace-settings.ts').defaultSettings;
 const prepare=load('app/collection-product.ts').prepareCollectionProduct;
+function initialNotices(draft,fieldIds){
+ const snapshot=draft.content.initialLegalNotices;
+ assert.equal(snapshot.format,'couplus-initial-legal-notices-v1');assert.equal(snapshot.categoryId,'80719');
+ const schema=load('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId,snapshot.categoryPath);
+ const values=load('app/initial-legal-notices.ts').readInitialLegalNotices(snapshot,schema);
+ for(const id of fieldIds){assert.equal(values.get(id)?.value,'해당사항없음');assert.equal(values.get(id)?.source,'couplus-default');}
+ return JSON.stringify(snapshot);
+}
 
 test('new source attributes populate editable labels and the category quotation without inventing translation',()=>{
  const source={...result,attributes:[{name:'材质',value:'尼龙'},{name:'型号',value:'B-123'},{name:'包装清单',value:'包 × 1'}]};
@@ -18,11 +26,21 @@ test('new source attributes populate editable labels and the category quotation 
   assert.equal(draft.content.label[field].value,value);
   assert.equal(draft.content.label[field].provenance,'collected');
  }
- const resolved=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings});
+ const resolve=load('app/quotation-schema.ts').resolveQuotationFields;
+ const before=initialNotices(draft,['noticeMaterial','noticeComponents']);
+ const input={categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings};
+ const resolved=resolve(input);
  const row=resolved.rows.find(row=>row.optionId);
- assert.equal(row.fields.noticeMaterial.value,'尼龙');
- assert.equal(row.fields.noticeComponents.value,'包 × 1');
+ assert.equal(row.fields.noticeMaterial.value,'해당사항없음');assert.equal(row.fields.noticeMaterial.source,'couplus-default');
+ assert.equal(row.fields.noticeComponents.value,'해당사항없음');assert.equal(row.fields.noticeComponents.source,'couplus-default');
  assert.equal(row.fields.model.value,'B-123');
+ const reviewed=resolve({...input,overrides:{common:{noticeMaterial:'직접 검토한 나일론',noticeComponents:''},options:{[row.optionId]:{noticeComponents:'직접 확인한 구성품'}}}});
+ const first=reviewed.rows.find(item=>item.optionId===row.optionId),second=reviewed.rows.find(item=>item.optionId!==row.optionId);
+ assert.equal(first.fields.noticeMaterial.value,'직접 검토한 나일론');assert.equal(first.fields.noticeMaterial.source,'manual-common');
+ assert.equal(first.fields.noticeComponents.value,'직접 확인한 구성품');assert.equal(first.fields.noticeComponents.source,'manual-option');
+ assert.equal(second.fields.noticeComponents.value,'');assert.equal(second.fields.noticeComponents.source,'manual-common');
+ assert.equal(draft.content.label.material.value,'尼龙');assert.equal(draft.content.label.components.value,'包 × 1');
+ assert.equal(JSON.stringify(draft.content.initialLegalNotices),before,'quotation edits do not rewrite the initial notice or collected label');
  assert.equal(draft.product.supplier_hub_status,'미전송');
 });
 
@@ -32,8 +50,14 @@ test('explicit product dimensions reach quotation notices without becoming packa
  assert.equal(draft.content.label.dimensions.value,'38 × 31 × 14 cm');
  assert.equal(draft.content.label.dimensions.provenance,'collected');
  assert.equal(draft.options.rows[0].size,'');
- const quote=load('app/quotation-schema.ts').resolveQuotationFields({categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings});
- assert.equal(quote.rows[0].fields.noticeDimensions.value,'38 × 31 × 14 cm');
+ const before=initialNotices(draft,['noticeDimensions']),resolve=load('app/quotation-schema.ts').resolveQuotationFields;
+ const input={categoryId:'80719',product:draft.product,content:draft.content,options:draft.options,settings};
+ const quote=resolve(input);
+ assert.equal(quote.rows[0].fields.noticeDimensions.value,'해당사항없음');assert.equal(quote.rows[0].fields.noticeDimensions.source,'couplus-default');
+ assert.equal(quote.rows[0].fields.packagedDimensionsMm.value,'');assert.equal(draft.options.rows[0].packagedWidthMm,null);
+ const reviewed=resolve({...input,overrides:{common:{noticeDimensions:'직접 확인한 38 × 31 × 14 cm'},options:{}}});
+ assert.equal(reviewed.rows[0].fields.noticeDimensions.value,'직접 확인한 38 × 31 × 14 cm');assert.equal(reviewed.rows[0].fields.noticeDimensions.source,'manual-common');
+ assert.equal(JSON.stringify(draft.content.initialLegalNotices),before);assert.equal(draft.content.label.dimensions.value,'38 × 31 × 14 cm');
  for(const attributes of [
   [{name:'包装尺寸',value:'50 × 40 × 20 cm'},{name:'尺寸',value:'XL'},{name:'净重',value:'200g'}],
   [{name:'产品尺寸',value:'38cm'},{name:'product dimensions',value:'40cm'}],
@@ -240,13 +264,19 @@ test('captured company labels feed quotation fields even after workspace default
  const captured={...job,context:{...job.context,settings:{...settings,manufacturer:'당시 제조사',importer:'당시 수입원',serviceContact:''}}};
  const p=prepare('owner',captured,result,'p',now);
  const {resolveQuotationFields}=load('app/quotation-schema.ts');
- const resolved=resolveQuotationFields({categoryId:'80719',product:p.product,content:p.content,options:p.options,settings:{...settings,manufacturer:'새 제조사',importer:'새 수입원',serviceContact:'새 연락처'}});
+ const before=initialNotices(p,['noticeManufacturerImporter','noticeServiceContact']);
+ const input={categoryId:'80719',product:p.product,content:p.content,options:p.options,settings:{...settings,manufacturer:'새 제조사',importer:'새 수입원',serviceContact:'새 연락처'}};
+ const resolved=resolveQuotationFields(input);
+ assert.equal(p.content.label.manufacturer.value,'당시 제조사');assert.equal(p.content.label.manufacturer.provenance,'manual');
+ assert.equal(p.content.label.importer.value,'당시 수입원');assert.equal(p.content.label.contact.value,'');assert.equal(p.content.label.contact.provenance,'manual');
  for(const row of resolved.rows.filter(row=>row.included)){
   assert.equal(row.fields.manufacturer.value,'당시 제조사');
-  assert.equal(row.fields.noticeManufacturerImporter.value,'제조자: 당시 제조사 / 수입자: 당시 수입원');
-  assert.equal(row.fields.noticeServiceContact.value,'');
-  assert.equal(row.fields.noticeServiceContact.source,'content');
+  assert.equal(row.fields.noticeManufacturerImporter.value,'해당사항없음');assert.equal(row.fields.noticeManufacturerImporter.source,'couplus-default');
+  assert.equal(row.fields.noticeServiceContact.value,'해당사항없음');assert.equal(row.fields.noticeServiceContact.source,'couplus-default');
  }
+ const reviewed=resolveQuotationFields({...input,overrides:{common:{noticeManufacturerImporter:'제조자: 당시 제조사 / 수입자: 당시 수입원',noticeServiceContact:''},options:{}}});
+ for(const row of reviewed.rows.filter(row=>row.included)){assert.equal(row.fields.noticeManufacturerImporter.value,'제조자: 당시 제조사 / 수입자: 당시 수입원');assert.equal(row.fields.noticeManufacturerImporter.source,'manual-common');assert.equal(row.fields.noticeServiceContact.value,'');assert.equal(row.fields.noticeServiceContact.source,'manual-common');}
+ assert.equal(JSON.stringify(p.content.initialLegalNotices),before);
 });
 
 test('captured target keywords populate SEO and category quotation tags without inventing translated keywords',()=>{
@@ -292,11 +322,18 @@ test('collection creates category-scoped review defaults before opening stage si
  assert.equal(prepared.content.label.material.value,'');
  const resolve=load('app/quotation-schema.ts').resolveQuotationFields;
  const quote=content=>resolve({categoryId:'80719',product:prepared.product,content,options:prepared.options,settings});
- assert.equal(quote(prepared.content).rows[0].fields.noticeCountryOfOrigin.value,'중국');
+ const before=initialNotices(prepared,['noticeCountryOfOrigin','noticeNameModel']);
+ assert.equal(quote(prepared.content).rows[0].fields.noticeCountryOfOrigin.value,'해당사항없음');
+ assert.equal(quote(prepared.content).rows[0].fields.noticeCountryOfOrigin.source,'couplus-default');
  const {applyContentPatch}=load('app/product-content.ts');
  const updated=applyContentPatch(prepared.content,{seo:{title:'검토한 상품명'}},'2026-01-02T00:00:00Z');
  assert.equal(updated.label.productName.value,'검토한 상품명');
- assert.equal(quote(updated).rows[0].fields.noticeNameModel.value,'검토한 상품명');
+ assert.equal(quote(updated).rows[0].fields.title.value,'검토한 상품명');
+ assert.equal(quote(updated).rows[0].fields.noticeNameModel.value,'해당사항없음');assert.equal(quote(updated).rows[0].fields.noticeNameModel.source,'couplus-default');
+ const reviewed=resolve({categoryId:'80719',product:prepared.product,content:updated,options:prepared.options,settings,overrides:{common:{noticeCountryOfOrigin:'중국',noticeNameModel:'직접 검토한 고시 품명'},options:{}}});
+ assert.equal(reviewed.rows[0].fields.noticeCountryOfOrigin.value,'중국');assert.equal(reviewed.rows[0].fields.noticeCountryOfOrigin.source,'manual-common');
+ assert.equal(reviewed.rows[0].fields.noticeNameModel.value,'직접 검토한 고시 품명');assert.equal(reviewed.rows[0].fields.noticeNameModel.source,'manual-common');
+ assert.equal(JSON.stringify(updated.initialLegalNotices),before);assert.equal(updated.label.countryOfOrigin.value,'중국');
  assert.equal(prepared.product.supplier_hub_status,'미전송');
  for(const categoryId of ['81452','999999']){
   const other=prepare('owner',{...captured,context:{...captured.context,category:{...captured.context.category,categoryId,categoryPath:categoryId==='81452'?load('app/quotation-schema.ts').getQuotationSchema(categoryId).categoryPath:['미확인 카테고리']}}},result,'p',now);

@@ -293,7 +293,7 @@ function boundaryStatus(company,quotationId,filename){
 }
 
 for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}])test(`actual API and serialized worker recover a lost preflight reply then a server accepted receipt over local pending (${currentCompany.code})`,async()=>{
- const h=mobileIntakeHarness({companyCode:currentCompany.code,companyName:currentCompany.name});try{
+ const h=mobileIntakeHarness({companyCode:currentCompany.code,companyName:currentCompany.name});let unmountUI;try{
   const json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
   const fields=['skuId','categoryId',...h.load('app/quotation-schema.ts').getQuotationSchema('80719').fields.map(field=>field.id)],workbook=quotationWorkbook(fields),sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
   const storageKey=h.load('db/category-templates.ts').templateKey('owner',sha256,'xlsx');h.objects.set(storageKey,workbook);
@@ -325,10 +325,15 @@ for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}])test(`
   vm.runInNewContext(fs.readFileSync(new URL('../extensions/supplier-hub/handoff-worker.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,''),{chrome:{runtime:{onMessage:{addListener(listener){workerListener=listener;}}}},resultKey,validateAppHubRequest,transferRecord:store.record,
    readOwnedProductTransferHistory:(who,binding)=>readOwnedProductTransferHistory(who,binding,api,store.productRecords),
    transmitSupplierHubPackage:(message,who)=>transmitSupplierHubPackage(message,who,api,store.record),refreshSupplierHubRegistration:(message,who)=>refreshSupplierHubRegistration(message,who,api,store.record)});
-  const native=createRequire(import.meta.url),slots=[],modules=new Map();let cursor=0;
-  const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;if(!(index in slots))slots[index]={current:initial};return slots[index];},useEffect(){cursor++;}};
+  const native=createRequire(import.meta.url),slots=[],modules=new Map(),layoutEffects=[];let cursor=0,layoutCommits=0,layoutCleanups=0;
+  const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;if(!(index in slots))slots[index]={current:initial};return slots[index];},
+   useLayoutEffect(effect,deps){const index=cursor++,previous=slots[index];if(previous&&deps&&deps.length===previous.deps?.length&&deps.every((value,i)=>Object.is(value,previous.deps[i])))return;
+    const slot={deps:deps?.slice()};slots[index]=slot;layoutEffects.push(()=>{previous?.cleanup?.();const cleanup=effect();layoutCommits++;if(typeof cleanup==='function')slot.cleanup=()=>{layoutCleanups++;cleanup();};});}};
+  // Commit layout effects only after rendering, and run every cleanup before
+  // a remount so the real mounted/AbortController lifecycle remains active.
+  unmountUI=()=>{for(const slot of slots)slot?.cleanup?.();slots.length=0;layoutEffects.length=0;};
   function load(file){if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,window:win,crypto:webcrypto,Uint8Array,TextEncoder,btoa,Error,AbortController,URL,setTimeout,clearTimeout,fetch:fetcher,require(name){if(name==='react')return hooks;if(name==='@/app/components/quotation-review-issues')return {QuotationReviewIssues:'issues'};if(name==='@/app/components/legal-documents-editor')return {LegalDocumentsEditor:'legal-documents'};if(name==='@/app/components/historical-supplier-hub-result')return {HistoricalSupplierHubResult:'historical-receipt'};return name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name);}});return exports;}
-  const Component=load('app/components/submission-package.tsx').SubmissionPackage,nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[],render=()=>{cursor=0;return Component({productId:product.id,profileId:'cat',categoryId:'80719',onInspect(){}});},button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
+  const Component=load('app/components/submission-package.tsx').SubmissionPackage,nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.props?.children)]:[],render=()=>{cursor=0;const tree=Component({productId:product.id,profileId:'cat',categoryId:'80719',onInspect(){}});for(const commit of layoutEffects.splice(0))commit();return tree;},button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
   const click=async label=>{const target=button(label);assert.ok(target&&!target.props.disabled,label);target.props.onClick();const deadline=Date.now()+10000;while(render().props['aria-busy']){assert.ok(Date.now()<deadline,'fixture UI completion');await new Promise(resolve=>setTimeout(resolve,1));}};
   const choose=()=>{for(const input of nodes(render()).filter(node=>node.type==='input'))input.props.onChange({target:{checked:true}});};
   await click('견적서 + 첨부 파일 준비');choose();await click('등록 전송');
@@ -340,13 +345,14 @@ for(const currentCompany of [company,{code:'A01526306',name:'유앤채'}])test(`
   const quotationId='synthetic-accepted-'+currentCompany.code,accepted={state:'validation-complete',filename:preview.filename,company:currentCompany,includedOptions:6,quotationId,observedAt:Date.now(),registered:false};
   await json(await h.route(base+'/supplier-hub-receipt',{method:'POST',body:{profileId:'cat',categoryId:'80719',fingerprint:preview.fingerprint,result:accepted}}));
   await store.record('put',resultKey(identity),{...identity,...accepted,state:'validation-pending',quotationId:''});
-  tabs.length=0;statusPage=boundaryStatus(currentCompany,quotationId,preview.filename);slots.length=0;
+  tabs.length=0;statusPage=boundaryStatus(currentCompany,quotationId,preview.filename);unmountUI();
   await click('견적서 + 첨부 파일 준비');assert.equal(button('전송 시도됨 · 검증 결과 확인').props.disabled,true);await click('견적서 ID로 상품별 등록 상태 조회');
   assert.equal(statusPage.searches,1);assert.equal(nodes(render()).filter(node=>node.type==='td'&&String(node.props.children).startsWith('synthetic-fresh-')).length,6);
   const receipt=await json(await h.route(base+'/supplier-hub-receipt?fingerprint='+preview.fingerprint));assert.equal(receipt.receipt.result.quotationId,quotationId);assert.equal(receipt.receipt.result.registration.rows.length,6);assert.equal(receipt.receipt.result.registered,false);
   assert.deepEqual(Array.from(receipt.receipt.result.registration.rows,row=>row.skuId),Array.from({length:6},(_,index)=>'synthetic-fresh-'+currentCompany.code+'-'+index));
   assert.equal(calls.filter(([name,type])=>name==='worker'&&type==='YOOFAM_TRANSMIT_PACKAGE').length,1);assert.equal(calls.some(([name,type])=>name==='script'&&['attachToSupplierHub','requestSupplierHubValidation'].includes(type)),false);
   assert.deepEqual({product:h.sqlite.prepare('SELECT * FROM products').all(),content:h.sqlite.prepare('SELECT * FROM product_content').all(),options:h.sqlite.prepare('SELECT * FROM product_options').all(),fields:h.sqlite.prepare('SELECT * FROM product_quotation_fields').all()},originalSources);
-  slots.length=0;await click('견적서 + 첨부 파일 준비');assert.equal(nodes(render()).filter(node=>node.type==='td'&&String(node.props.children).startsWith('synthetic-fresh-')).length,6);assert.equal(statusPage.searches,1,'reopening reads the stored receipt without a new Hub query');
- }finally{h.close();}
+  unmountUI();await click('견적서 + 첨부 파일 준비');assert.equal(nodes(render()).filter(node=>node.type==='td'&&String(node.props.children).startsWith('synthetic-fresh-')).length,6);assert.equal(statusPage.searches,1,'reopening reads the stored receipt without a new Hub query');
+  assert.equal(layoutCommits,3,'one layout-effect commit per actual mount, not per render');unmountUI();assert.equal(layoutCleanups,layoutCommits,'all mounted instances run their real cleanup');
+ }finally{unmountUI?.();h.close();}
 });

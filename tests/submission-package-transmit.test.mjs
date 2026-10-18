@@ -516,11 +516,15 @@ test('editing a quotation after pausing invalidates the old source before follow
  assert.equal(h.button('견적서 + 첨부 파일 준비').props.disabled,false);
 });
 
-test('a later manual SKU refresh cannot retain an earlier issuance summary for missing rows',async()=>{
+test('a later incomplete manual SKU refresh preserves the earlier issued SKU evidence',async()=>{
  const h=harness({validationComplete:true,issued:true});h.button('견적서 + 첨부 파일 준비').props.onClick();await settle();h.choose();h.button('등록 전송').props.onClick();await settle();
  const issuance=node=>node.props?.children==='전송한 옵션 수와 동일한 수의 고유 SKU ID가 조회됐습니다. 상품 검수 결과는 아래 상태를 기준으로 확인하세요.';
  assert.ok(nodes(h.render()).some(issuance));h.hideSkus();h.button('견적서 ID로 상품별 등록 상태 조회').props.onClick();await settle();
- assert.equal(nodes(h.render()).some(issuance),false);assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+ assert.equal(nodes(h.render()).some(issuance),true);
+ assert.ok(nodes(h.render()).some(node=>node.type==='td'&&node.props.children==='sku-123'));
+ assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'&&String(node.props.children).includes('기존 결과를 유지')));
+ assert.equal(h.calls.filter(([name])=>name==='transmit').length,1);
+ assert.equal(h.calls.filter(([name,,body])=>name==='fetch'&&body.action==='export').length,1);
 });
 
 test('the registration UI reports aggregate pages and never labels a partial scan as the last page',async()=>{

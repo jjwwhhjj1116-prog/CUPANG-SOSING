@@ -37,7 +37,7 @@ const accountScope=(ownerId,code='A01526306')=>({ownerId,company:{code,name:code
 test('account-bound settings display their company and save with the scope that loaded the draft',async()=>{
  for(const [ownerId,code,brand] of [['admin','A01526306','유앤채'],['member','A01464742','와이홉']]){
   const scope=accountScope(ownerId,code),h=harness(async()=>Response.json({settings:{brand,manufacturer:'',importer:brand},scope}),{workspaceOwnerId:ownerId});await settle();
-  const editor=h.editor();assert.equal(editor.props.value.brand,brand);assert.equal(editor.props.value.manufacturer,'');assert.equal(editor.key,ownerId);
+  const editor=h.editor();assert.equal(editor.props.value.brand,brand);assert.equal(editor.props.value.manufacturer,'');assert.equal(editor.props.workspaceOwnerId,ownerId);assert.equal(editor.key,ownerId);
   assert.ok(nodes(h.render()).some(n=>n.type==='strong'&&text(n)===brand+' 기본설정'));
   await editor.props.onSave(editor.props.value);assert.equal(h.saves,1);assert.deepEqual(JSON.parse(JSON.stringify(h.saved[0].scope)),scope);h.close();
  }
@@ -52,18 +52,18 @@ test('switching the page owner clears the former editor and ignores its late set
  const deferred=[],h=harness(()=>new Promise(resolve=>deferred.push(resolve)),{workspaceOwnerId:'admin'});
  assert.equal(h.calls.length,1);h.switchOwner('member');assert.equal(h.editor(),undefined);assert.equal(h.calls[0].init.signal.aborted,true);assert.equal(h.calls.length,2);
  deferred[0](Response.json({settings:{brand:'유앤채'},scope:accountScope('admin')}));await settle();assert.equal(h.editor(),undefined);
- deferred[1](Response.json({settings:{brand:'와이홉'},scope:accountScope('member','A01464742')}));await settle();assert.equal(h.editor().props.value.brand,'와이홉');assert.equal(h.editor().key,'member');assert.equal(h.saves,0);h.close();
+ deferred[1](Response.json({settings:{brand:'와이홉'},scope:accountScope('member','A01464742')}));await settle();assert.equal(h.editor().props.value.brand,'와이홉');assert.equal(h.editor().props.workspaceOwnerId,'member');assert.equal(h.editor().key,'member');assert.equal(h.saves,0);h.close();
 });
 
 test('basic settings notice and logistics inputs save the reviewed values, including zero and opt-in month', async () => {
- const slots=[];let index=0,saved;
- function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,require(name){
-  if(name==='react')return{useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];}};
+ const slots=[],effects=[];let index=0,saved;
+ function load(file){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,TextEncoder,TextDecoder,Uint8Array,DataView,require(name){
+  if(name==='react')return{useRef(initial){const i=index++;return slots[i]??(slots[i]={current:initial});},useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useLayoutEffect(callback,deps){const i=index++,previous=slots[i];if(!previous||!deps||deps.some((value,j)=>!Object.is(value,previous.deps[j])))effects.push(()=>{previous?.cleanup?.();slots[i]={deps,cleanup:callback()};});}};
   if(name==='@/app/components/settings-price-preview')return{SettingsPricePreview:()=>null};
   if(name.startsWith('@/'))return load(name.slice(2)+'.ts');return native(name);
  }});return exports;}
  const initial=load('app/workspace-settings.ts').newWorkspaceSettings,Editor=load('app/components/workspace-settings-editor.tsx').WorkspaceSettingsEditor;
- const render=()=>{index=0;return Editor({value:initial,onSave:async value=>{saved=value;},onClose:()=>{}});};
+ const render=()=>{index=0;const tree=Editor({value:initial,onSave:async value=>{saved=value;},onClose:()=>{for(const slot of slots)slot?.cleanup?.();}});effects.splice(0).forEach(commit=>commit());return tree;};
  const input=label=>nodes(nodes(render()).find(node=>node.type==='label'&&nodes(node.props.children).some(child=>child.type==='span'&&child.props.children===label))).find(node=>['input','select'].includes(node.type));
  assert.equal(input('유통기간 · 식품의 경우 소비기간 (일)').props.value,'0');
  assert.equal(input('취급주의 사유').props.value,'해당사항없음');

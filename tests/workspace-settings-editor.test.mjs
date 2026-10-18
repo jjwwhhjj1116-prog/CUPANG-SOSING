@@ -11,9 +11,9 @@ const text=tree=>Array.isArray(tree)?tree.map(text).join(''):tree&&typeof tree==
 // Actual settings form, configured-ratio display and compound-price preview.
 // Saves are captured at the parent boundary; no account settings are written.
 function harness(overrides={}){
- const cache=new Map(),instances=new Map(),saves=[];let active,closed=0;
- const hooks={useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},useState(initial){const index=active.index++,slots=active.slots;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];}};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,require(name){if(name==='react')return hooks;if(name.startsWith('@/')){const path=name.slice(2);return load(path+(path.includes('/components/')?'.tsx':'.ts'));}return native(name);}});return exports;}
+ const cache=new Map(),instances=new Map(),saves=[],effects=[];let active,closed=0;
+ const hooks={useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},useState(initial){const index=active.index++,slots=active.slots;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>{slots[index]=typeof value==='function'?value(slots[index]):value;}];},useLayoutEffect(callback,deps){const index=active.index++,owner=active,previous=owner.slots[index];if(!previous||!deps||deps.some((value,j)=>!Object.is(value,previous.deps[j])))effects.push(()=>{previous?.cleanup?.();owner.slots[index]={deps,cleanup:callback()};});}};
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,AbortController,URL,TextEncoder,TextDecoder,Uint8Array,DataView,require(name){if(name==='react')return hooks;if(name.startsWith('@/')){const path=name.slice(2);return load(path+(path.includes('/components/')?'.tsx':'.ts'));}return native(name);}});return exports;}
  const initial={...load('app/workspace-settings.ts').newWorkspaceSettings,...overrides};
  const Editor=load('app/components/workspace-settings-editor.tsx').WorkspaceSettingsEditor;
  function expand(tree){
@@ -21,7 +21,7 @@ function harness(overrides={}){
   if(typeof tree.type==='function'){const instance=instances.get(tree.type)??{slots:[]};instances.set(tree.type,instance);instance.index=0;active=instance;return expand(tree.type(tree.props));}
   return{...tree,props:{...tree.props,children:expand(tree.props?.children)}};
  }
- const render=()=>expand({type:Editor,props:{value:initial,onSave:async value=>saves.push(value),onClose:()=>closed++}});
+ const render=()=>{const tree=expand({type:Editor,props:{value:initial,onSave:async value=>saves.push(value),onClose:()=>{closed++;for(const instance of instances.values())for(const slot of instance.slots)slot?.cleanup?.();}}});effects.splice(0).forEach(commit=>commit());return tree;};
  const control=label=>{const all=nodes(render()),named=all.find(node=>node.props?.['aria-label']===label);if(named)return named;const parent=all.find(node=>node.type==='label'&&nodes(node.props.children).some(child=>child.type==='span'&&child.props.children===label));assert.ok(parent,'label '+label);return nodes(parent).find(node=>['input','select','textarea'].includes(node.type));};
  return{initial,saves,render,control,get closed(){return closed;},ratios:()=>nodes(render()).filter(node=>node.props?.role==='progressbar').map(node=>node.props['aria-valuenow']),
   button:label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label),edit(label,value){control(label).props.onChange({target:typeof value==='boolean'?{checked:value}:{value:String(value)}});},

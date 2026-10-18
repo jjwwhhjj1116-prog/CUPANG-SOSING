@@ -30,7 +30,7 @@ export function WorkspaceSettingsDialog({ workspaceOwnerId, onSave, onClose, onB
   },[attempt,workspaceOwnerId]);
   if(current?.value)return <>
     {current.scope?.company&&<p className="panel-note"><strong>{current.scope.company.name} 기본설정</strong> · {current.scope.company.code}</p>}
-    <WorkspaceSettingsEditor key={current.scope?.ownerId??'legacy'} value={current.value} onSave={value=>onSave(value,current.scope)} onClose={onClose} onBusy={onBusy}/>
+    <WorkspaceSettingsEditor key={current.scope?.ownerId??'legacy'} workspaceOwnerId={current.scope?.ownerId??workspaceOwnerId} value={current.value} onSave={value=>onSave(value,current.scope)} onClose={onClose} onBusy={onBusy}/>
   </>;
   return <section aria-busy={!current}>
     {current?.error?<><p role="alert">{current.error} 기존 설정을 확인한 뒤 편집할 수 있습니다.</p><button type="button" className="btn primary" onClick={()=>setAttempt(value=>value+1)}>기본설정 다시 불러오기</button></>:<p role="status">저장된 기본설정을 불러오는 중…</p>}

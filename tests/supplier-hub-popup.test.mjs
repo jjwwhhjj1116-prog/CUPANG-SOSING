@@ -23,13 +23,13 @@ async function refreshValidation(previousChanges={},resultChanges={}){
  const result={filename:`YOOFAM-${identity.fingerprint}.xlsx`,state:'validation-complete',quotationId:'quotation-123',registered:false,...resultChanges};
  const registration={quotationId:'quotation-123',scope:'visible-page',registered:false,observedAt:1234,rows:[{title:'상품',skuId:'SKU1',status:'상품 검수중'}]};
  const previous={...identity,...result,state:'validation-complete',quotationId:'quotation-123',observedAt:1200,registration,...previousChanges};
- const nodes=new Map(),puts=[];let current=previous;
+ const nodes=new Map(),puts=[],observations=[];let current=previous;
  const context=vm.createContext({Date,URL,Uint8Array,atob,isStoredReceiptResult,verifySupplierHubCompany(){},pendingPackage:async()=>null,
-  transferRecord:async(action,key,value)=>{if(action==='file-observe'){if(JSON.stringify(current)!==JSON.stringify(value.expected)||!canObserveOriginalSupplierHubValidation(value.expected,value.observation))return false;puts.push(value.observation);current=value.observation;return true;}if(action==='put')puts.push(value);else return key==='attempt:123'?identity:current;},resultKey:()=> 'result:key',
+  transferRecord:async(action,key,value)=>{if(action==='file-observe'){const accepted=JSON.stringify(current)===JSON.stringify(value.expected)&&canObserveOriginalSupplierHubValidation(value.expected,value.observation);observations.push({accepted,observation:value.observation});if(!accepted)return false;puts.push(value.observation);current=value.observation;return true;}if(action==='put')puts.push(value);else return key==='attempt:123'?identity:current;},resultKey:()=> 'result:key',
   readSupplierHubValidation(){},document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{disabled:false,addEventListener(event,handler){this[event]=handler;}});return nodes.get(selector);}},
   chrome:{runtime:{id:'extension',getURL:name=>`chrome-extension://extension/${name}`},tabs:{query:async()=>[{id:123,url:'https://supplier.coupang.com/qvt/registration'}]},scripting:{executeScript:async input=>[{result:input.func===context.verifySupplierHubCompany?{code:identity.company.code}:result}]}}});
  vm.runInContext(observation,context);context.chrome.runtime.sendMessage=async message=>({ok:true,result:await context.observeSupplierHubResult(message,{id:'extension',url:'chrome-extension://extension/popup.html'})});
- vm.runInContext(source,context);await nodes.get('#result').click();return{saved:puts[0],previous,registration};
+ vm.runInContext(source,context);await nodes.get('#result').click();return{saved:puts[0],previous,registration,current,observations,status:nodes.get('#status').textContent};
 }
 
 test('refreshing the same completed validation preserves SKU rows and their original observation time',async()=>{
@@ -38,8 +38,12 @@ test('refreshing the same completed validation preserves SKU rows and their orig
  assert.ok(saved.observedAt>1234);assert.equal(saved.registered,false);
 });
 
-test('changed quotation, validation status or app identity cannot inherit previously observed SKU rows',async()=>{
- for(const result of [{quotationId:'other'},{quotationId:''},{state:'validation-rejected'},{state:'validation-pending'},{state:'not-found'}]){
+test('same-source pending preserves known SKUs while changed quotation, explicit status or app identity stays isolated',async()=>{
+ const pending=await refreshValidation({}, {state:'validation-pending'});
+ assert.equal(pending.saved,undefined);assert.equal(pending.observations.length,1);assert.equal(pending.observations[0].accepted,false);
+ assert.equal(pending.current,pending.previous);assert.equal(pending.current.registration,pending.registration);
+ assert.equal(pending.current.registration.rows[0].skuId,'SKU1');assert.match(pending.status,/기존 결과를 유지/);
+ for(const result of [{quotationId:'other'},{quotationId:''},{state:'validation-rejected'},{state:'not-found'}]){
   const {saved}=await refreshValidation({},result);assert.equal(saved.registration,undefined);assert.equal(saved.state,result.state??'validation-complete');
  }
  for(const previous of [{productId:'other'},{categoryId:'999'},{origin:'http://127.0.0.1:3000'},{fingerprint:'b'.repeat(64)},{filename:'other.xlsx'},{state:'validation-pending'},{registration:{quotationId:'other'}}]){
