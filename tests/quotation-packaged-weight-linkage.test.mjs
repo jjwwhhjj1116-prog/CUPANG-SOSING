@@ -121,14 +121,14 @@ test('explicit g-weight plan pairs literal values and blanks but keeps exact sta
  }finally{h.close();}
 });
 
-for(const company of companies)test(`explicit selected weight/blank and copy-to-all reconcile conflicting peers without changing excluded rows (${company.code})`,async()=>{
+for(const company of companies)test(`explicit selected weight/blank and primary all-option save reconcile every peer while retaining exclusions (${company.code})`,async()=>{
  const f=await fixture(company);let ui;try{
   const ids=f.view.resolved.rows.filter(row=>row.included).map(row=>row.optionId),{wire,h}=f;
   await f.save([{optionId:null,fieldKey:'packagedWeightG',value:'400'},{optionId:null,fieldKey:wire.id,value:'500'},{optionId:null,fieldKey:'packagedDimensionsMm',value:'160*70*50'},
    ...ids.flatMap((optionId,index)=>[{optionId,fieldKey:'packagedWeightG',value:String(600+index*20)},{optionId,fieldKey:wire.id,value:String(610+index*20)}])]);
   const options=await json(await h.route(f.base+'/options')),rows=h.load('app/product-options.ts').optionInputs(options.options);rows.at(-1).included=false;
   await json(await h.route(f.base+'/options',{method:'PATCH',body:{expectedRevision:options.options.revision,expectedProductVersion:options.productVersion,rows}}));
-  f.view=await json(await h.route(f.endpoint));const sources=f.retained(),before=plain(f.view.overrides),excluded=plain(before.options[ids.at(-1)]);
+  f.view=await json(await h.route(f.endpoint));const sources=f.retained(),before=plain(f.view.overrides);
   const writes=[];ui=quotationLabelFormUI({productId:f.product.id,load:h.load,request:(path,init={})=>{if(init.method==='PUT')writes.push(JSON.parse(init.body));return h.route(path,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});},renderDocument:()=>assert.fail('packaging edits never render an image')});
   await ui.idle();ui.selectOption(ids[0]);ui.field('packagedWeightG').props.onChange({target:{value:'420'}});
   assert.equal(ui.field(wire.id).props.value,'420');await ui.click('견적 입력 저장');f.view=ui.view;
@@ -138,9 +138,9 @@ for(const company of companies)test(`explicit selected weight/blank and copy-to-
   const common=plain(f.view.overrides.common);ui.field('packagedWeightG').props.onChange({target:{value:'420'}});
   nodes(ui.render().tree).find(node=>node.type==='input'&&node.props.role==='switch').props.onChange({target:{checked:true}});
   await ui.click('견적 입력 저장');f.view=ui.view;
-  for(const optionId of ids.slice(0,-1)){assert.deepEqual(pair(f.view,optionId,wire),['420','420']);assert.equal(f.view.overrides.options[optionId].packagedWeightG,'420');assert.equal(f.view.overrides.options[optionId][wire.id],'420');}
-  assert.deepEqual(plain(f.view.overrides.options[ids.at(-1)]),excluded);assert.deepEqual(plain(f.view.overrides.common),common);
-  assert.equal(writes.at(-1).changes.length,10);assert.ok(writes.at(-1).changes.every(change=>ids.slice(0,-1).includes(change.optionId)&&['packagedWeightG',wire.id].includes(change.fieldKey)));
+  for(const optionId of ids){assert.deepEqual(pair(f.view,optionId,wire),['420','420']);assert.equal(f.view.overrides.options[optionId].packagedWeightG,'420');assert.equal(f.view.overrides.options[optionId][wire.id],'420');}
+  assert.equal(f.view.resolved.rows.find(row=>row.optionId===ids.at(-1)).included,false);assert.deepEqual(plain(f.view.overrides.common),common);
+  assert.equal(writes.at(-1).changes.length,12);assert.ok(writes.at(-1).changes.every(change=>ids.includes(change.optionId)&&['packagedWeightG',wire.id].includes(change.fieldKey)));
   assert.deepEqual(weightIssues(await f.checkWorkbook(Array(5).fill('420')),wire),[]);assert.equal(f.retained(),sources);
  }finally{ui?.close();f.h.close();}
 });

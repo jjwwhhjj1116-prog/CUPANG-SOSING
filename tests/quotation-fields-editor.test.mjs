@@ -983,28 +983,31 @@ test('quotation renders all five pages together with unique fields and preserved
  assert.ok(html.indexOf('data-section="product"')<html.indexOf('data-section="logistics"'));
 });
 
-test('all-option save copies edited fields only and preserves automatic prices, images and excluded options',()=>{
+test('all-option save copies edited fields to included and excluded options while retaining every untouched field',()=>{
  const view=fixture({common:{model:'공통 모델'},options:{blue:{brand:'기존 브랜드'},excluded:{brand:'제외 브랜드'}}});
  const edits=[change('brand','새 브랜드','red'),change('manufacturer','제조사'),change('model','파랑 모델','blue')];
  const before=JSON.stringify({view,edits});const plan=editor.quotationSavePlan(view,edits,'red',true);
- assert.equal(plan.propagated.length,1);assert.equal(plan.propagated[0].before,'기존 브랜드');assert.equal(plan.propagated[0].after,'새 브랜드');
+ assert.equal(plan.propagated.length,2);assert.equal(plan.propagated[0].before,'기존 브랜드');assert.equal(plan.propagated[0].after,'새 브랜드');
+ assert.deepEqual(clone(plan.propagated.map(({optionId,included})=>({optionId,included}))),[{optionId:'blue',included:true},{optionId:'excluded',included:false}]);
  assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue','brand').value,'새 브랜드');
  assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue','model').value,'파랑 모델');
- assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'excluded','brand').value,'제외 브랜드');
- for(const id of ['supplyPrice','salePrice','mainImage'])assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue',id).source,editor.resolveQuotationEditorCell(view,edits,'blue',id).source);
+ assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'excluded','brand').value,'새 브랜드');
+ for(const optionId of ['blue','excluded'])for(const id of ['supplyPrice','salePrice','mainImage'])assert.deepEqual(clone(editor.resolveQuotationEditorCell(view,plan.changes,optionId,id)),clone(editor.resolveQuotationEditorCell(view,edits,optionId,id)));
  assert.equal(JSON.stringify({view,edits}),before);
  assert.equal(JSON.stringify(editor.quotationSavePlan(view,edits,'red',false).changes),JSON.stringify(edits));
 });
 
-test('all-option save preserves explicit blanks and restores per-option automatic values without copying resolved defaults',()=>{
- const view=fixture({common:{brand:'공통'},options:{red:{brand:'빨강'},blue:{brand:'파랑'}}});
+test('all-option save preserves explicit blanks and restores every option without copying resolved defaults',()=>{
+ const view=fixture({common:{brand:'공통'},options:{red:{brand:'빨강'},blue:{brand:'파랑'},excluded:{brand:'파랑'}}});
  let plan=editor.quotationSavePlan(view,[change('brand','','red')],'red',true);
  assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue','brand').value,'');
+ assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'excluded','brand').value,'');
  plan=editor.quotationSavePlan(view,[change('brand',null,'red')],'red',true);
  assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,'blue','brand').value,'공통');
  assert.equal(plan.changes.find(item=>item.optionId==='blue').value,null);
+ assert.equal(plan.changes.find(item=>item.optionId==='excluded').value,null);
  const same=editor.quotationSavePlan(view,[change('brand','파랑','red')],'red',true);assert.equal(same.propagated.length,0);
- for(const id of [null,'missing','excluded'])assert.throws(()=>editor.quotationSavePlan(view,[change('brand','A','red')],id,true),/원본 옵션/);
+ for(const id of [null,'missing'])assert.throws(()=>editor.quotationSavePlan(view,[change('brand','A','red')],id,true),/원본 옵션/);
  assert.throws(()=>editor.quotationSavePlan(view,[change('category','wrong','red')],'red',true),/항목/);
 });
 
@@ -1018,7 +1021,102 @@ test('all-option save sends expanded edits in one revision-checked request',asyn
  const button=nodes(tree).find(n=>n.type==='button'&&typeof n.props.children==='string'&&n.props.children.startsWith('견적 입력 저장'));
  assert.ok(button);assert.equal(button.props.disabled,false);button.props.onClick();await new Promise(resolve=>setTimeout(resolve,20));
  assert.equal(calls.length,1);assert.equal(calls[0].expectedRevision,view.revision);assert.equal(calls[0].expectedInputFingerprint,view.inputFingerprint);
- assert.equal(calls[0].changes.length,2);assert.ok(calls[0].changes.some(item=>item.optionId==='blue'&&item.value==='전체 적용 브랜드'));
+ assert.equal(calls[0].changes.length,3);assert.deepEqual(calls[0].changes.map(item=>item.optionId),['red','blue','excluded']);assert.ok(calls[0].changes.every(item=>item.value==='전체 적용 브랜드'));
+});
+
+test('an excluded source copies only its explicit edits and leaves inclusion, common values, other drafts and source data intact',()=>{
+ const view=fixture({common:{manufacturer:'공통 제조사',model:'공통 모델'},options:{red:{brand:'빨강 브랜드'},blue:{brand:'파랑 브랜드',model:'파랑 직접 모델'},excluded:{brand:'제외 브랜드',model:'제외 직접 모델'}}});
+ const edits=[change('brand','  전체 검토 브랜드  ','excluded'),change('manufacturer','새 공통 제조사'),change('model','파랑 미저장 모델','blue')];
+ const before=JSON.stringify({view,edits}),plan=editor.quotationSavePlan(view,edits,'excluded',true);
+ assert.deepEqual(clone(plan.propagated.map(({optionId,included})=>({optionId,included}))),[{optionId:'red',included:true},{optionId:'blue',included:true}]);
+ assert.ok(plan.changes.some(item=>item.optionId===null&&item.fieldKey==='manufacturer'&&item.value==='새 공통 제조사'));
+ assert.ok(plan.changes.some(item=>item.optionId==='blue'&&item.fieldKey==='model'&&item.value==='파랑 미저장 모델'));
+ assert.ok(!plan.changes.some(item=>item.optionId!=='blue'&&item.fieldKey==='model'),'untouched resolved model values must not become copied overrides');
+ for(const optionId of ['red','blue','excluded']){
+  assert.equal(editor.resolveQuotationEditorCell(view,plan.changes,optionId,'brand').value,'  전체 검토 브랜드  ');
+  for(const fieldKey of ['supplyPrice','salePrice','mainImage','detailHtml','barcode','packagedWeightG','packagedDimensionsMm'])assert.deepEqual(clone(editor.resolveQuotationEditorCell(view,plan.changes,optionId,fieldKey)),clone(editor.resolveQuotationEditorCell(view,edits,optionId,fieldKey)),`${optionId}/${fieldKey}`);
+ }
+ assert.deepEqual(clone(editor.quotationSavePlan(view,edits,'excluded',false).changes),edits);
+ assert.equal(JSON.stringify({view,edits}),before,'the plan cannot mutate saved scopes, source facts, inclusion or the caller draft');
+});
+
+test('excluded-source blanks propagate literally and null removes only the same manual layer for each target',()=>{
+ for(const value of ['',null]){
+  const view=fixture({common:{brand:''},options:{red:{brand:'직접 빨강'},blue:{brand:'직접 파랑'},excluded:{brand:'직접 제외'}}});
+  const edits=[change('brand',value,'excluded')],plan=editor.quotationSavePlan(view,edits,'excluded',true);
+  assert.deepEqual(clone(plan.changes.map(item=>[item.optionId,item.value])),[['excluded',value],['red',value],['blue',value]]);
+  for(const optionId of ['red','blue','excluded']){
+   const cell=editor.resolveQuotationEditorCell(view,plan.changes,optionId,'brand');
+   assert.equal(cell.value,'');assert.equal(cell.source,value===null?'manual-common':'manual-option');
+  }
+  assert.equal(view.resolved.rows.find(row=>row.optionId==='excluded').included,false);
+ }
+});
+
+test('all-option planning validates excluded targets and rejects more than one thousand exact field changes',()=>{
+ const view=fixture(),red=clone(view.resolved.rows.find(row=>row.optionId==='red')),automatic=clone(view.automatic.rows.find(row=>row.optionId==='red'));
+ const expand=count=>{
+  const next=clone(view);next.resolved.rows=[next.resolved.rows.find(row=>row.optionId===null),...Array.from({length:count},(_,index)=>({...clone(red),optionId:`target-${index}`,optionLabel:`범위 ${index}`,included:index===0}))];
+  next.automatic.rows=[next.automatic.rows.find(row=>row.optionId===null),...Array.from({length:count},(_,index)=>({...clone(automatic),optionId:`target-${index}`,optionLabel:`범위 ${index}`,included:index===0}))];return next;
+ };
+ const maximum=expand(1000),before=JSON.stringify(maximum),plan=editor.quotationSavePlan(maximum,[change('brand','검토 브랜드','target-0')],'target-0',true);
+ assert.equal(plan.changes.length,1000);assert.equal(plan.propagated.length,999);assert.ok(plan.propagated.every(item=>item.included===false));assert.equal(JSON.stringify(maximum),before);
+ const excessive=expand(1001),excessiveBefore=JSON.stringify(excessive);
+ assert.throws(()=>editor.quotationSavePlan(excessive,[change('brand','검토 브랜드','target-0')],'target-0',true),/1,000/);assert.equal(JSON.stringify(excessive),excessiveBefore);
+ assert.throws(()=>editor.quotationSavePlan(view,[change('category','잘못된 분류','excluded')],'excluded',true),/항목/);
+});
+
+test('price validation also checks an excluded option receiving an all-option edit',()=>{
+ const view=fixture();for(const data of [view.resolved,view.automatic])data.rows.find(row=>row.optionId==='excluded').fields.supplyPrice.value='999999';
+ const before=JSON.stringify(view);
+ assert.throws(()=>editor.quotationSavePlan(view,[change('salePrice','3000','red')],'red',true),/excluded|공급가|판매가/);
+ assert.equal(JSON.stringify(view),before);
+});
+
+/** Actual form callbacks with retained hook refs and the current action-state
+ * effect. Passive initial loading is replaced by the supplied saved fixture. */
+function allOptionForm(view,edits,sourceOptionId){
+ const states=[view,edits,[],false,false,'','','start',sourceOptionId,[],true,null,false],refs=[],effects=[],calls=[];
+ let stateIndex=0,refIndex=0,saved=0,server=clone(view);
+ const hooks={useState(initial){const index=stateIndex++;if(!(index in states))states[index]=typeof initial==='function'?initial():initial;return[states[index],value=>{states[index]=typeof value==='function'?value(states[index]):value;}];},useRef(value){const index=refIndex++;return refs[index]??(refs[index]={current:value});},useEffect(fn){if(String(fn).includes('modelActionState.current ='))effects.push(fn);},useCallback:fn=>fn,useId:()=> 'all-options-form'};
+ const loaded=load('app/components/quotation-fields-editor.tsx',{react:hooks,fetch:async(url,init={})=>{
+  calls.push({url,method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});
+  if(init.method==='PUT'){server=acknowledgedView(server,JSON.parse(init.body).changes);return Response.json(server);}
+  return Response.json(server);
+ }});
+ const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
+ const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
+ const render=()=>{stateIndex=0;refIndex=0;const wrapper=loaded.QuotationFieldsEditor({productId:'p1',onSaved(){saved++;}}),tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return tree;};
+ const primarySwitch=()=>nodes(render()).find(node=>node.type==='input'&&node.props.role==='switch');
+ const saveButton=()=>nodes(render()).find(node=>node.type==='button'&&typeof node.props.children==='string'&&node.props.children.startsWith('견적 입력 저장'));
+ const settle=async()=>{const deadline=Date.now()+5000;while(states[4]){assert.ok(Date.now()<deadline,'all-option form save did not settle');await new Promise(resolve=>setImmediate(resolve));}render();};
+ render();return{calls,states,render,nodes,text,primarySwitch,saveButton,settle,get saved(){return saved;},get server(){return server;}};
+}
+
+for(const sourceOptionId of ['red','excluded'])test(`the primary all-options switch previews excluded targets and issues one save only after explicit confirmation (${sourceOptionId})`,async()=>{
+ const view=fixture({common:{manufacturer:'유지할 공통 제조사'},options:{blue:{brand:'파랑 저장 브랜드'},excluded:{brand:'제외 저장 브랜드'}}}),before=JSON.stringify(view);
+ const h=allOptionForm(view,[change('brand','',''+sourceOptionId)],sourceOptionId),staleSave=h.saveButton().props.onClick,switchNode=h.primarySwitch();
+ assert.ok(switchNode,'the primary switch is available for an excluded source too');assert.equal(switchNode.props.checked,false);
+ assert.match(h.text(h.render()),/모든 옵션에 적용/);assert.doesNotMatch(h.text(h.render()),/모든 포함 옵션에 적용/);assert.equal(h.calls.length,0);
+ switchNode.props.onChange({target:{checked:true}});staleSave();await h.settle();
+ assert.equal(h.calls.length,0,'a captured source-only save cannot submit after the switch changes its scope');assert.equal(h.primarySwitch().props.checked,true);
+ const preview=h.text(h.render());assert.match(preview,/견적 제외 옵션까지 모든 옵션에 적용/);assert.match(preview,/포함 여부는 유지/);
+ if(sourceOptionId==='red')assert.match(preview,/excluded · 견적 제외/,'the affected excluded target is identified before saving');
+ const save=h.saveButton();assert.equal(save.props.disabled,false);save.props.onClick();save.props.onClick();await h.settle();
+ assert.equal(h.calls.length,1);assert.equal(h.calls[0].method,'PUT');assert.equal(h.calls[0].body.expectedRevision,view.revision);assert.equal(h.calls[0].body.expectedInputFingerprint,view.inputFingerprint);
+ assert.deepEqual(new Set(h.calls[0].body.changes.map(item=>item.optionId)),new Set(['red','blue','excluded']));assert.ok(h.calls[0].body.changes.every(item=>item.fieldKey==='brand'&&item.value===''));
+ assert.equal(h.saved,1);assert.equal(h.states[1].length,0);assert.equal(h.primarySwitch().props.checked,false);
+ assert.deepEqual(clone(h.server.overrides.common),clone(view.overrides.common));assert.deepEqual(clone(h.server.resolved.rows.map(row=>[row.optionId,row.included])),clone(view.resolved.rows.map(row=>[row.optionId,row.included])));
+ for(const optionId of ['red','blue','excluded']){assert.equal(h.server.overrides.options[optionId].brand,'');for(const key of ['supplyPrice','salePrice','mainImage'])assert.deepEqual(clone(h.server.resolved.rows.find(row=>row.optionId===optionId).fields[key]),clone(view.resolved.rows.find(row=>row.optionId===optionId).fields[key]));}
+ assert.equal(JSON.stringify(view),before,'source fixture and stored inclusion are unchanged by form planning');
+});
+
+test('turning the primary all-options switch back off rejects its captured broad save and saves only the source option',async()=>{
+ const view=fixture(),h=allOptionForm(view,[change('brand','직접 원본 옵션 브랜드','excluded')],'excluded');
+ h.primarySwitch().props.onChange({target:{checked:true}});const broadSave=h.saveButton().props.onClick;
+ h.primarySwitch().props.onChange({target:{checked:false}});broadSave();await h.settle();assert.equal(h.calls.length,0);
+ h.saveButton().props.onClick();await h.settle();assert.equal(h.calls.length,1);assert.deepEqual(h.calls[0].body.changes,[{fieldKey:'brand',optionId:'excluded',value:'직접 원본 옵션 브랜드'}]);
+ assert.equal(h.saved,1);assert.equal(Object.hasOwn(h.server.overrides.options,'red'),false);assert.equal(Object.hasOwn(h.server.overrides.options,'blue'),false);
 });
 
 test('deleting the active option on refresh keeps its identity and draft instead of switching to common edits',async()=>{
@@ -1259,7 +1357,7 @@ test('bulk does not turn outdated pack measurements into reviewed target overrid
 
 // Recorded sunglasses source and synthetic form/assets/AI; final Hub transport
 // is captured locally. 80719 is an observed form contract, not its sales category.
-for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`bulk source errors stay local through intake, review, workbook and handoff (${company.companyCode})`,async()=>{
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`legacy bulk source errors stay local through intake, review, workbook and handoff (${company.companyCode})`,async()=>{
  const h=mobileIntakeHarness(company),json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
  try{
   await h.intake();
@@ -1274,6 +1372,14 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const changed=h.load('app/product-options.ts').optionInputs(first.options);changed[0].unitsPerPack=2;
   await json(await h.route(base+'/options',{method:'PATCH',body:{expectedRevision:first.options.revision,expectedProductVersion:first.productVersion,rows:changed}}));
   const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  // This regression checks legacy physical-dimension derivation errors. New
+  // intake correctly keeps the independent Step700 N/A notice snapshot, so
+  // explicitly model its pre-policy saved content instead of misclassifying
+  // that valid form default as a third source error. No production writer is
+  // allowed to delete this snapshot; only this isolated SQLite fixture does.
+  assert.equal(content.initialLegalNotices?.format,'couplus-initial-legal-notices-v1');
+  delete content.initialLegalNotices;
+  h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(content),product.id);
   const images=h.sqlite.prepare('SELECT object_key FROM collection_images ORDER BY image_index').all().map(row=>row.object_key);
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{
    label:{model:'REVIEWED-MODEL'},assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]},
@@ -1293,6 +1399,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const originalView=JSON.stringify(view),excluded=JSON.stringify(view.resolved.rows.find(row=>row.optionId==='collected-6'));
   const plan=editor.previewQuotationEditorBulk(view,[],'collected-1',['noticeDimensions','packagedWeightG','packagedDimensionsMm','brand'],true);
   assert.equal(plan.skipped.length,3);assert.equal(plan.rows.length,4);assert.ok(plan.rows.every(row=>row.fieldKey==='brand'));
+  assert.ok(plan.skipped.some(message=>message.includes('상품 가로·세로·높이를 모두 입력해주세요')));
+  assert.equal(plan.skipped.filter(message=>message.includes('1개입')&&message.includes('2개입')).length,2,'both invalid packaging fields remain blocked');
   const draft=editor.applyQuotationEditorBulk(view,[],plan);assert.equal(JSON.stringify(view),originalView);
   await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:draft}}));
   view=await json(await h.route(base+'/quotation-fields'));

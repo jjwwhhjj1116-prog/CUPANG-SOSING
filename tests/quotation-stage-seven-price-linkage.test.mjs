@@ -190,7 +190,8 @@ test('stage-seven copy and restore previews include exact peers, preserve exclud
  assert.equal(restore.rows.length,2);assert.ok(restore.changes.every(change=>change.optionId==='blue'&&change.value===null));
  assert.equal(editor.quotationSavePlan(view,editor.applyQuotationEditorBulk(view,[],restore),'blue',false).changes.length,2);
  const all=editor.quotationSavePlan(view,[edit('wire-msrp','400')],'red',true);
- assert.equal(all.changes.length,4);assert.ok(all.changes.every(change=>['red','blue'].includes(change.optionId)&&['msrp','wire-msrp'].includes(change.fieldKey)));
+ assert.equal(all.changes.length,6);assert.ok(all.changes.every(change=>['red','blue','excluded'].includes(change.optionId)&&['msrp','wire-msrp'].includes(change.fieldKey)));
+ assert.ok(all.propagated.some(change=>change.optionId==='excluded'&&!change.included));
  const divergent=fixture({common:{},options:{red:{supplyPrice:'110','wire-supplyPrice':'120'}}});
  assert.throws(()=>editor.previewQuotationEditorBulk(divergent,[],'red',['supplyPrice','wire-supplyPrice'],true),/수정값이 다릅니다/);
  assert.equal(JSON.stringify(view),before);

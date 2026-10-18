@@ -95,7 +95,12 @@ for(const company of companies)test(`legacy raw dimensions keep their fingerprin
   // template schema. The earlier 6b95a0e recipe predates that separate change.
   const baselineSource=execFileSync('git',['show','df4f532:app/exports/quotation-source.ts'],{encoding:'utf8'}),baseline={};
   vm.runInNewContext(ts.transpileModule(baselineSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:baseline,Error,require(name){if(name==='@/app/chatgpt-auth')return{};if(name==='cloudflare:workers')return{env:f.h.bindings};return f.h.load(name.slice(2)+'.ts');}});
-  const oldHash=await baseline.quotationExportFingerprint(saved,dataStart),current=await f.preview();assert.equal(current.fingerprint,oldHash);
+  // Display registration numbers were introduced after this historical recipe.
+  // A historical product never had that response companion; keep the actual
+  // saved source intact and omit only the later display field in the old input.
+  const historicalSaved={...saved,product:{...saved.product}};
+  assert.ok(historicalSaved.product.registration_number);delete historicalSaved.product.registration_number;
+  const oldHash=await baseline.quotationExportFingerprint(historicalSaved,dataStart),current=await f.preview();assert.equal(current.fingerprint,oldHash);
   const view=await f.get();assert.ok(view.resolved.rows.filter(row=>row.included).every(row=>row.fields.packagedDimensionsMm.value==='160×70×50'&&row.fields.packagedDimensionsMm.validationIssues.some(issue=>issue.includes('별표'))));assert.equal(f.h.sqlite.prepare('SELECT payload FROM product_quotation_fields').get().payload,retained);
   const result={state:'validation-complete',filename:current.filename,company,includedOptions:6,quotationId:'synthetic-legacy-dimensions-'+company.code,observedAt:Date.now(),registered:false};
   await json(await f.h.route(f.base+'/supplier-hub-receipt',{method:'POST',body:{profileId:f.profile.id,categoryId:'69900',fingerprint:oldHash,result}}));const receiptBytes=f.h.sqlite.prepare('SELECT payload FROM supplier_hub_receipts WHERE fingerprint=?').get(oldHash).payload;
