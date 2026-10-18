@@ -8,7 +8,7 @@ import { getCategoryProfile } from '@/db/category-profiles';
 import { readQuotationFields, readQuotationCollectionSource, quotationSourcesCurrent, type QuotationSourceGuard } from '@/db/quotation-fields';
 import { resolveQuotationFields, type QuotationFieldsView } from '@/app/quotation-schema';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
-import { validateCategoryProfile } from '@/app/category-profiles';
+import { validateCategoryProfile, type TemplateDefinition } from '@/app/category-profiles';
 import { validateCategoryIdentity } from '@/app/category-identity';
 import { productImageKeys } from '@/app/product-content';
 import { isOwnedImageKey } from '@/app/image-files';
@@ -25,6 +25,7 @@ import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 import { scopedQuotationPackagingBasis, quotationPackQuantities } from '@/app/quotation-packaging-basis';
 import { detailEditorInputs } from '@/app/detail-editor-inputs';
 import { currentStageTwoMsrp, scopedStageTwoMsrp } from '@/app/stage-two-msrp';
+import { retainedQuotationWorkbook } from '@/app/quotation-workbook-retained';
 
 
 export class QuotationFieldsSnapshotError extends Error { constructor(message: string, public status: number, public code?: string) { super(message); } }
@@ -46,6 +47,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
   let collection: QuotationSourceGuard['collection'] = null;
   let hubSchema=profile?.hubSchema;
   let template=profile?.template;
+  let capturedTemplate:TemplateDefinition|null=null;
   if (profile) categoryContext = { source: 'profile', profileId: profile.id, categoryId: profile.categoryId || null, categoryPath: [...profile.categoryPath] };
   {
     let offerId: string | null = null;
@@ -65,6 +67,7 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
           || JSON.stringify(selected.categoryPath) !== JSON.stringify(profile.categoryPath)) {
           throw new FieldsError('상품 추가 시 선택한 카테고리와 견적서 양식이 다릅니다. 선택한 카테고리 양식을 사용해주세요.', 409, 'QUOTATION_CATEGORY_MISMATCH');
         }
+        capturedTemplate=selected.template;
       }
       if (!profile && captured?.category) {
         const category = validateCategoryProfile(captured.category);
@@ -109,6 +112,8 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
     detailSaveTextBasis: { policy: 'couplus-detail-alt-v1', productName: product.title, metaDescription: content.seo.description.value,
       optionNames: Object.fromEntries(options.rows.map(option => [option.id, option.translatedName])) },
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };
+  const retainedWorkbook=retainedQuotationWorkbook(capturedTemplate,template,resolved.schema,overrides,options.rows.map(option=>option.id),hubSchema);
+  if(retainedWorkbook)view.retainedWorkbook=retainedWorkbook;
   view.optionPackQuantities=optionPackQuantities;if(packagingBasis)view.packagingBasis=packagingBasis;
   const stageTwoMsrp=currentStageTwoMsrp(view,scopedStageTwoMsrp(state,categoryContext.categoryId));
   if(stageTwoMsrp)view.stageTwoMsrp=stageTwoMsrp;

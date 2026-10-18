@@ -81,6 +81,8 @@ export type QuotationFieldsView = {
   imageKeys: string[]; submissionReady: false;
   /** Immutable display numbers keyed by option UUID; absent for legacy products. */
   optionRegistrationNumbers?: Record<string, string>;
+  /** Response-only descriptions; retained manual values stay in overrides. */
+  retainedWorkbook?: import('@/app/quotation-workbook-retained').RetainedQuotationWorkbook;
   /** Response-only top/bottom banner roles; absent means keyboard deletion has no role proof. */
   protectedDetailImageKeys?: string[];
   /** Response-only raw sources for the reviewed Couplus detail-save text rule.

@@ -490,7 +490,13 @@ for(const categoryId of categoryRoundtripIds)test(`category ${categoryId}: saved
  const before=JSON.stringify(input);const resolved=schemaModel.resolveQuotationFields(input);
  const assets=keys.map((key,index)=>({key,name:`assets/image-${index}.png`}));
  const rows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(input,resolved,assets);
- assert.equal(rows.length,2);assert.equal(rows[0].title,'저장 상품 & <검토>');assert.equal(rows[1].title,'');
+ assert.equal(rows.length,2);assert.equal(rows[0].title,'저장 상품 & <검토>, red');assert.equal(rows[1].title,'');
+ assert.equal(resolved.rows.find(row=>row.optionId===null).fields.title.value,'저장 상품 & <검토>','the saved common SEO title is not rewritten');
+ assert.equal(resolved.rows.find(row=>row.optionId==='red').fields.title.source,'content');
+ assert.equal(resolved.rows.find(row=>row.optionId==='blue').fields.title.source,'manual-option');
+ assert.deepEqual(Array.from(rows,row=>row.skuId),['sku-red','sku-blue']);
+ assert.equal(resolved.rows.find(row=>row.optionId==='excluded').included,false);
+ assert.ok(!rows.some(row=>row.title.includes('excluded')),'excluded names never enter generated title rows');
  assert.equal(rows[1].model,'수동 모델');assert.equal(rows[0].mainImage,'image-0.png');assert.equal(rows[0].labelImages,'image-2.png');
  assert.equal(rows[0].detailImages,'image-1.png');assert.ok(rows[0].supplyPrice>0);assert.ok(rows[0].salePrice>=rows[0].supplyPrice);
  const registry=load('app/category-profiles.ts').categoryFields;
@@ -513,6 +519,19 @@ for(const categoryId of categoryRoundtripIds)test(`category ${categoryId}: saved
  const original=await reader.readXlsxArchive(template.originalBytes);
  for(const [name,bytes] of original)if(name!=='xl/worksheets/sheet1.xml')assert.deepEqual(Buffer.from(archive.get(name)),Buffer.from(bytes),name);
  assert.ok(!decode(archive.get('xl/worksheets/sheet1.xml')).includes('<row r="7"'));
+ const titleColumn=mappings.find(mapping=>mapping.field==='title').column;
+ for(const explicit of [{value:'명시한 공통 견적 제목',source:'manual-common'},{value:'명시한 옵션 견적 제목',source:'manual-option'}]){
+  const manualInput={...input,overrides:{common:{...input.overrides.common,title:'명시한 공통 견적 제목'},options:{...input.overrides.options,
+   ...(explicit.source==='manual-option'?{red:{title:'명시한 옵션 견적 제목'}}:{})}}},manualBefore=JSON.stringify(manualInput);
+  const manualResolved=schemaModel.resolveQuotationFields(manualInput),manualRows=load('app/exports/quotation-fields.ts').resolvedQuotationRows(manualInput,manualResolved,assets);
+  assert.deepEqual(Array.from(manualRows,row=>row.title),[explicit.value,''],'quotation overrides and deliberate blanks do not receive an option suffix');
+  assert.equal(manualResolved.rows.find(row=>row.optionId==='red').fields.title.source,explicit.source);
+  const exceptTitle=row=>Object.fromEntries(Object.entries(row).filter(([key])=>key!=='title'));
+  assert.deepEqual(manualRows.map(exceptTitle),rows.map(exceptTitle),'explicit title edits leave all other resolved export fields intact');
+  const manualOutput=await createMappedQuotation({...template,rows:manualRows}),manualBook=reader.inspectXlsxArchive(await reader.readXlsxArchive(manualOutput.bytes.buffer));
+  assert.equal(reader.xlsxHeaders(manualBook,'견적서',5)[titleColumn],explicit.value);assert.equal(reader.xlsxHeaders(manualBook,'견적서',6)[titleColumn],'');
+  assert.equal(manualOutput.report.rowCount,2);assert.equal(manualOutput.report.missingRequired.length,1);assert.equal(JSON.stringify(manualInput),manualBefore);
+ }
  assert.equal(JSON.stringify(input),before);
 });
 

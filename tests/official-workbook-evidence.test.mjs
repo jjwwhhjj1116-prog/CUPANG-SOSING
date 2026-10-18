@@ -32,7 +32,19 @@ for(const company of schemaCompanies)test(`actual official XLSX file evidence pr
   let content=(await json(await h.route(base+'/content'))).content;
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'공식 파일로 검토한 수동 제목',description:''},label:{productType:'사용자 종류',material:'사용자 전체 소재',dimensions:'사용자 확인 치수',precautions:'사용자 확인 주의'}}}}));
   let fields=await json(await h.route(base+'/quotation-fields'));const material=fields.resolved.schema.fields.find(field=>field.label==='소재'&&field.hubWire?.path[0]==='legalPage');assert.ok(material);
-  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:fields.revision,expectedInputFingerprint:fields.inputFingerprint,changes:[{fieldKey:material.id,optionId:'collected-2',value:''}]}}));
+  assert.equal((await json(await h.route(base+'/content'))).content.label.material.value,'사용자 전체 소재');
+  for(const row of fields.resolved.rows)assert.equal(row.fields[material.id].value,'해당사항없음','initial legal-notice material remains independent of the edited label material');
+  fields=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:fields.revision,expectedInputFingerprint:fields.inputFingerprint,changes:[
+   {fieldKey:material.id,optionId:null,value:'사용자 전체 소재'},{fieldKey:material.id,optionId:'collected-2',value:''},{fieldKey:'title',optionId:'collected-2',value:''},{fieldKey:'title',optionId:'collected-3',value:'사람이 별도로 지정한 견적 제목'},
+  ]}}));
+  for(const row of fields.resolved.rows){assert.equal(row.fields[material.id].value,row.optionId==='collected-2'?'':'사용자 전체 소재');assert.equal(row.fields[material.id].source,row.optionId==='collected-2'?'manual-option':'manual-common');}
+  const expectedTitles=['공식 파일로 검토한 수동 제목, 유광 검정 / 선글라스','','사람이 별도로 지정한 견적 제목',
+   '공식 파일로 검토한 수동 제목, 무광 검정 / 선글라스 + 005 케이스','공식 파일로 검토한 수동 제목, 무광 회색 / 선글라스','공식 파일로 검토한 수동 제목, 무광 회색 / 선글라스 + 005 케이스'];
+  assert.deepEqual(Array.from((await h.load('db/product-options.ts').readProductOptions('owner',product.id)).rows,row=>row.translatedName),[
+   '유광 검정 / 선글라스','유광 검정 / 선글라스 + 005 케이스','무광 검정 / 선글라스','무광 검정 / 선글라스 + 005 케이스','무광 회색 / 선글라스','무광 회색 / 선글라스 + 005 케이스']);
+  assert.equal(fields.resolved.rows.find(row=>row.optionId==='collected-1').fields.title.source,'content');
+  assert.equal(fields.resolved.rows.find(row=>row.optionId==='collected-2').fields.title.source,'manual-option');assert.equal(fields.resolved.rows.find(row=>row.optionId==='collected-3').fields.title.source,'manual-option');
+  assert.equal((await json(await h.route(base+'/content'))).content.seo.title.value,'공식 파일로 검토한 수동 제목','quotation overrides preserve the exact common SEO base');
   const retained=()=>JSON.stringify(['products','product_options','product_content','product_quotation_fields','collection_context'].map(table=>h.sqlite.prepare('SELECT * FROM '+table).all())),before=retained();
   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview',profileId:profile.id}}));
   assert.equal(preview.rows.length,6);assert.equal(preview.report.workbookEvidence.excelSchemaVerified,false);assert.equal(preview.report.submissionReady,false);
@@ -42,11 +54,13 @@ for(const company of schemaCompanies)test(`actual official XLSX file evidence pr
   assert.equal(preview.report.warnings.filter(message=>/!F(?:9|10|11|12|13|14) \(브랜드\)/.test(message)&&message.includes('드롭다운')).length,6,'the original advisory list mismatch stays visible');
   assert.equal(preview.submissionReview.issues.filter(issue=>issue.code==='EXCEL_VALUE_INVALID'&&issue.fieldId===brand.id).length,0,'free text brand with disabled original error alert is advisory, not a transmission error');
   const materialColumn=profile.mappings.find(mapping=>mapping.field===material.id).column,titleColumn=profile.mappings.find(mapping=>mapping.field==='title').column;
-  for(const [index,row]of preview.rows.entries()){assert.equal(row[titleColumn],'공식 파일로 검토한 수동 제목');assert.match(row[1],/\(69900\)$/);assert.equal(row[materialColumn],index===1?'':'사용자 전체 소재');}
+  for(const [index,row]of preview.rows.entries()){assert.equal(row[titleColumn],expectedTitles[index]);assert.match(row[1],/\(69900\)$/);assert.equal(row[materialColumn],index===1?'':'사용자 전체 소재');}
+  assert.ok(preview.report.missingRequired.some(item=>item.row===10&&item.column===titleColumn+1),'an explicit blank title remains an original required-cell warning');
   assert.ok(preview.report.mappingCoverage.some(field=>field.label==='공식 판매처 가격'&&field.workbookOnlyAutomatic===true));assert.ok(preview.submissionReview.issues.some(issue=>issue.code==='EXCEL_OPTIONAL_SINGLE_OMITTED'&&issue.kind==='review'));
   assert.ok(preview.report.missingRequired.length>0,'file-only download does not hide missing factual measurements/label images');
   const download=await h.route(base+'/quotation',{method:'POST',body:{action:'download',profileId:profile.id,fingerprint:preview.fingerprint}});assert.equal(download.status,200,await download.clone().text());
   const inspection=reader.inspectXlsxArchive(await reader.readXlsxArchive(await download.arrayBuffer()));
+  for(const [index,title]of expectedTitles.entries())assert.equal(reader.xlsxHeaders(inspection,profile.template.sheetName,9+index)[titleColumn],title,'literal saved-option/quotation titles reach the original XLSX cells');
   assert.equal(reader.xlsxHeaders(inspection,profile.template.sheetName,10)[materialColumn],'');assert.match(reader.xlsxHeaders(inspection,profile.template.sheetName,9)[1],/\(69900\)$/);
   assert.deepEqual(h.objects.get(profile.template.storageKey),new Uint8Array(bytes));assert.equal(retained(),before);assert.equal(product.supplier_hub_status,'미전송');assert.ok(!h.network.includes('supplier.coupang.com'));
  }finally{h.close();}
