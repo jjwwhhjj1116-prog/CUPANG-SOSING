@@ -70,9 +70,54 @@ for(const company of schemaCompanies)test(`live category intake never repurposes
   const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(created.productId).payload);
   const view=await json(await h.route(`/api/products/${created.productId}/quotation-fields`));
   assert.equal(view.categoryContext.profileId,selected.id);const savedOptions=(await json(await h.route(`/api/products/${created.productId}/options`))).options;
-  for(const row of view.resolved.rows){const option=savedOptions.rows.find(option=>option.id===row.optionId);assert.equal(row.fields.title.value,option?.translatedName?content.seo.title.value+', '+option.translatedName:content.seo.title.value);}
+  const koreanNames={
+   '5627721589405':'유광 검정 / 선글라스','5627721589406':'유광 검정 / 선글라스 + 005 케이스',
+   '5627721589409':'무광 검정 / 선글라스','5627721589410':'무광 검정 / 선글라스 + 005 케이스',
+   '5627721589407':'무광 회색 / 선글라스','5627721589408':'무광 회색 / 선글라스 + 005 케이스',
+  };
+  assert.equal(savedOptions.rows.length,6);
+  for(const option of savedOptions.rows){assert.equal(option.translatedName,koreanNames[option.supplierSku]);assert.equal(option.provenance.translatedName,'translated');}
+  // Canonical intake now saves the existing SEO document. Its exact title is
+  // read directly; Korean option-name composition is the absent-document fallback.
+  assert.equal(content.seo.title.value,'우드 패턴 다리 선글라스');assert.equal(content.seo.title.provenance,'manual');
+  assert.deepEqual(content.seoTitleDocument,{policy:'couplus-seo-save-v1',sourceTitle:'우드 패턴 다리 선글라스',sourceUpdatedAt:content.seo.title.updatedAt,value:'우드 패턴 다리 선글라스'});
+  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,'우드 패턴 다리 선글라스');assert.equal(row.fields.title.source,'content');}
   const source=await h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner',created.productId,null);
   assert.equal(source.profile.id,selected.id);assert.deepEqual(plain(source.profile.template),currentConnection.template);assert.deepEqual(plain(source.profile.mappings),currentConnection.mappings);
+  assert.deepEqual(plain(source.hubSchema),selected.hubSchema);assert.deepEqual(plain(source.company),company);
+  assert.deepEqual(view.categoryContext,{source:'collection',profileId:selected.id,categoryId:currentSchema.categoryId,categoryPath:schemaPath});
+  const legacyContent=plain(content);delete legacyContent.seoTitleDocument;
+  const fallback=h.load('app/exports/quotation-source.ts').resolveQuotationExport({...source,content:legacyContent});
+  for(const row of fallback.rows){
+   const option=savedOptions.rows.find(option=>option.id===row.optionId);
+   assert.equal(row.fields.title.value,option?'우드 패턴 다리 선글라스, '+koreanNames[option.supplierSku]:'우드 패턴 다리 선글라스');
+   assert.equal(row.fields.title.source,'content');
+  }
+  const base=`/api/products/${created.productId}`,manual=(await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:'직접 검토한 공통 상품명'}}}}))).content;
+  assert.equal(manual.seo.title.provenance,'manual');assert.equal(manual.seo.title.value,'직접 검토한 공통 상품명');
+  const manualView=await json(await h.route(base+'/quotation-fields'));
+  for(const row of manualView.resolved.rows){
+   const option=savedOptions.rows.find(option=>option.id===row.optionId);
+   assert.equal(row.fields.title.value,option?'직접 검토한 공통 상품명, '+koreanNames[option.supplierSku]:'직접 검토한 공통 상품명');
+   assert.equal(row.fields.title.source,'content');
+  }
+  const named=savedOptions.rows[0].id,blank=savedOptions.rows[1].id;
+  const overridden=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:manualView.revision,expectedInputFingerprint:manualView.inputFingerprint,changes:[
+   {fieldKey:'title',optionId:null,value:'직접 견적 공통 제목'},{fieldKey:'title',optionId:named,value:'직접 견적 옵션 제목'},{fieldKey:'title',optionId:blank,value:''},
+  ]}}));
+  const checkOverrides=value=>{for(const row of value.resolved.rows){
+   assert.equal(row.fields.title.value,row.optionId===named?'직접 견적 옵션 제목':row.optionId===blank?'':'직접 견적 공통 제목');
+   assert.equal(row.fields.title.source,row.optionId===named||row.optionId===blank?'manual-option':'manual-common');
+  }};
+  checkOverrides(overridden);assert.deepEqual(overridden.automatic.rows,manualView.automatic.rows);
+  // A deliberately cleared common title is not repopulated from the product or
+  // option name; separately saved quotation values, including blanks, still win.
+  const cleared=(await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:manual.revision,patch:{seo:{title:''}}}}))).content;
+  assert.equal(cleared.seo.title.value,'');assert.equal(cleared.seo.title.provenance,'manual');
+  const clearedView=await json(await h.route(base+'/quotation-fields'));checkOverrides(clearedView);
+  for(const row of clearedView.automatic.rows){assert.equal(row.fields.title.value,'');assert.equal(row.fields.title.source,'content');}
+  assert.deepEqual(clearedView.categoryContext,view.categoryContext);
+  assert.deepEqual(JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get(next.id).payload).category,next.context.category);
   assert.equal(existingWork(),originalWork);assert.deepEqual(h.sqlite.prepare('SELECT * FROM category_profiles WHERE id=?').get(old.id),before);
  }finally{h.close();}
 });

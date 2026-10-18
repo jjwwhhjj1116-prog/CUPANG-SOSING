@@ -67,8 +67,14 @@ function QuotationPanelContent({onPrepareSubmission,onProfilePrepared,onProfileC
       if(controller.signal.aborted)return;
       const selection=selectQuotationProfile(savedProfiles,data.categoryContext,preferredProfileId,navigationTarget?.categoryId);
       const savedId=selection.profileId;
+      const selectedProfile=savedProfiles.find(profile=>profile.id===savedId);
+      // Queryless readers already use this product's immutable collection
+      // context. Resolving that default is not a new selection in other stages.
+      const capturedDefault=!preferredProfileId&&data.categoryContext.source==='collection'&&savedId===data.categoryContext.profileId
+        &&selectedProfile!==undefined&&selectedProfile.categoryId===data.categoryContext.categoryId
+        &&JSON.stringify(selectedProfile.categoryPath)===JSON.stringify(data.categoryContext.categoryPath);
       setConnectionWarning(selection.warning);
-      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);profileChangeRef.current?.(savedId||undefined);
+      setProfiles(savedProfiles);setProfileId(savedId);setOverrideProfileId(savedId||undefined);profileChangeRef.current?.(capturedDefault?undefined:savedId||undefined);
       setCapturedCategoryId(data?.categoryContext.categoryId ?? null);
       setCapturedProfileId(data.categoryContext.source==='collection'?data.categoryContext.profileId:null);
       setCapturedCategoryPath(data.categoryContext.source==='collection'?data.categoryContext.categoryPath:[]);

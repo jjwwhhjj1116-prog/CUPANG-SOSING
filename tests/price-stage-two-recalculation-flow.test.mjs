@@ -23,6 +23,7 @@ export function stageTwoPriceUI({ load, initial = observed, sourcePrice = 25.6, 
   const exports = {}, react = {
     useState(value) { const i = cursor++; if (!(i in slots)) slots[i] = typeof value === 'function' ? value() : value; return [slots[i], value => { const next = typeof value === 'function' ? value(slots[i]) : value; changed ||= !Object.is(next, slots[i]); slots[i] = next; }]; },
     useRef(value) { const i = cursor++; return slots[i] ?? (slots[i] = { current: value }); },
+    useMemo(factory, deps) { const i=cursor++,previous=slots[i];if(!previous||!deps||!previous.deps||deps.length!==previous.deps.length||deps.some((value,index)=>!Object.is(value,previous.deps[index])))slots[i]={deps:deps?.slice(),value:factory()};return slots[i].value; },
     useLayoutEffect(effect, deps) { const i=cursor++,previous=slots[i];if(!previous||!deps||deps.some((value,index)=>!Object.is(value,previous.deps?.[index])))layouts.push(()=>{previous?.cleanup?.();slots[i]={deps,cleanup:effect()};}); },
   };
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/price-editor.tsx', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
