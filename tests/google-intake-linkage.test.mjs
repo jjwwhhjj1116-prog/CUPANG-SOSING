@@ -90,6 +90,9 @@ for (const company of companies) test(`Google two-request intake persists exact 
     assert.equal(result.googleStoppedHttpStatus, undefined); assert.equal(result.usage, null);
     const generatedTitle = `${company.companyName} 우드 패턴 다리 남녀공용 선글라스`;
     assert.equal(product(h).title, source.title); assert.equal(content.seo.title.value, generatedTitle);
+    assert.equal(content.seo.title.provenance, 'manual');
+    assert.deepEqual(content.seoTitleDocument, { policy: 'couplus-seo-save-v1', sourceTitle: generatedTitle,
+      sourceUpdatedAt: content.seo.title.updatedAt, value: generatedTitle });
     assert.equal(content.label.productName.value, generatedTitle); assert.equal(content.labelProductNameLinked, true);
     assert.equal(content.categoryAttributes.categoryId, '69900'); assert.equal(content.categoryAttributes.values.length, 24);
     for (const row of options.rows) {
@@ -107,12 +110,27 @@ for (const company of companies) test(`Google two-request intake persists exact 
     for (const row of view.resolved.rows.filter(row => row.optionId)) {
       const option = options.rows.find(option => option.id === row.optionId);
       const expected = option.unitCostCny === 3.6 ? ['4260', '7100', '9230'] : ['4930', '8220', '10690'];
-      assert.equal(row.fields.title.value, `${generatedTitle}, ${option.translatedName}`); assert.equal(row.fields.brand.value, company.companyName);
+      // Intake saved the canonical SEO document: its exact common title wins.
+      assert.equal(row.fields.title.value, generatedTitle); assert.equal(row.fields.title.source, 'content');
+      assert.equal(row.fields.brand.value, company.companyName);
       assert.equal(row.fields.brand.source, 'settings'); assert.equal(row.fields.mainImage.value, option.imageKey);
       assert.equal(row.fields.additionalImages.value, content.assets.additional.value.join('\n'));
       assert.equal(row.fields.detailImages.value, content.assets.detail.value.join('\n'));
       assert.deepEqual(['supplyPrice', 'salePrice', 'msrp'].map(field => row.fields[field].value), expected);
     }
+    // Independently retain the old automatic option-title contract for legacy
+    // content without a saved SEO document. This clone never rewrites the draft.
+    const beforeFallback = currentState(h), exportSource = await h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner', product(h).id, null);
+    const legacyContent = JSON.parse(JSON.stringify(content)); delete legacyContent.seoTitleDocument;
+    const fallback = h.load('app/exports/quotation-source.ts').resolveQuotationExport({ ...exportSource, content: legacyContent });
+    assert.equal(fallback.rows.filter(row => row.optionId).length, options.rows.length);
+    for (const row of fallback.rows) {
+      const option = options.rows.find(option => option.id === row.optionId);
+      const original = option ? source.options.find(item => item.sku === option.supplierSku) : null;
+      assert.equal(row.fields.title.value, original ? `${generatedTitle}, ${dictionary.get(original.name)}` : generatedTitle);
+      assert.equal(row.fields.title.source, 'content');
+    }
+    assert.equal(currentState(h), beforeFallback);
     // Manual edits after generation, including explicit blanks, are authoritative.
     await json(await h.route(base + '/content', { method: 'PATCH', body: { expectedRevision: content.revision, patch: {
       seo: { title: '직접 확인한 선글라스', description: '', keywords: [] }, assets: { detail: [] },
