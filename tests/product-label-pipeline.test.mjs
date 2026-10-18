@@ -72,8 +72,8 @@ for (const company of companies) test(`nine selected product-label values and PN
     assert.deepEqual(plain(selected.values), values); assert.ok(keys.every(key => selected.sources[key] === 'manual-option'));
     assert.equal(selected.values.netContents, ''); assert.equal(selected.values.material, ''); assert.deepEqual(plain(view.overrides.common), common); assert.deepEqual(plain(view.overrides.options[f.other.optionId]), other);
     const savedLabels = plain(view), plan = model.productLabelPlan(view, f.selected.optionId);
-    assert.equal(plan.format, 'product-label'); assert.deepEqual(plain(plan.rows), captions.map((caption, index) => [caption, values[keys[index]]]));
-    assert.equal(plan.rows.length, 9); assert.ok(!plan.rows.some(([, value]) => value === '[공란]' || value === '해당사항없음')); assert.deepEqual(f.snapshots(), source);
+    assert.equal(plan.format, 'product-label'); assert.deepEqual(plain(plan.rows), captions.map((caption, index) => [caption, values[keys[index]]]).filter(([,value])=>value!==''));
+    assert.equal(plan.rows.length, 7); assert.equal(Object.keys(selected.values).length,9); assert.ok(!plan.rows.some(([, value]) => value === '' || value === '[공란]' || value === '해당사항없음')); assert.deepEqual(f.snapshots(), source);
     assert.deepEqual(plain((await f.readQuotation()).overrides), originalQuote);
     const context = { productId: f.product.id, endpoint: f.endpoint, view, optionId: f.selected.optionId }, uploadId = await upload.productLabelUploadId(context);
     let rememberedKey = null;
@@ -204,7 +204,7 @@ test('selected final SEO and its manual blank supersede an old generated common 
     const contentRecord = f.api.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(f.product.id), content = JSON.parse(contentRecord.payload);
     content.labelProductNameLinked = false; content.label.productName = { ...content.label.productName, value: '이전 생성된 공통 제품명', provenance: 'generated' };
     f.api.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(content), f.product.id);
-    let quotation = await f.readQuotation(); quotation = await f.saveQuotation(quotation, [{ optionId: f.selected.optionId, fieldKey: 'title', value: '저장된 선택 옵션 SEO' }, { optionId: f.other.optionId, fieldKey: 'title', value: '' }]);
+    const quotation = await f.readQuotation(); await f.saveQuotation(quotation, [{ optionId: f.selected.optionId, fieldKey: 'title', value: '저장된 선택 옵션 SEO' }, { optionId: f.other.optionId, fieldKey: 'title', value: '' }]);
     const savedSource = f.snapshots(), view = await f.read(), selected = view.rows.find(row => row.optionId === f.selected.optionId), other = view.rows.find(row => row.optionId === f.other.optionId);
     assert.equal(selected.values.productName, '저장된 선택 옵션 SEO'); assert.equal(selected.sources.productName, 'quotation');
     assert.equal(other.values.productName, ''); assert.equal(other.sources.productName, 'empty'); assert.deepEqual(f.snapshots(), savedSource);
@@ -257,7 +257,9 @@ test('common nine-row editing and an explicitly generated common PNG preserve se
     const source = f.snapshots(), attachment = f.api.load('app/product-label-attachment.ts'), model = f.api.load('app/product-label.ts'); let view = await f.read();
     view = await json(await f.save(view, [{ optionId: null, fieldKey: 'productName', value: '공통 제품 라벨' }, { optionId: null, fieldKey: 'netContents', value: '' },
       { optionId: f.selected.optionId, fieldKey: 'productName', value: '개별 제품 라벨' }]));
-    const selected = plain(view.overrides.options[f.selected.optionId]), plan = model.productLabelPlan(view, null); assert.equal(plan.rows.length, 9); assert.equal(plan.rows[0][1], '공통 제품 라벨'); assert.equal(plan.rows[4][1], '');
+    const selected = plain(view.overrides.options[f.selected.optionId]), plan = model.productLabelPlan(view, null),common=view.rows.find(row=>row.optionId===null);
+    assert.deepEqual(plain(plan.rows),plain(model.productLabelFields.map(field=>[field.label,common.values[field.key]]).filter(([,value])=>value!=='')));
+    assert.equal(plan.rows[0][1], '공통 제품 라벨'); assert.ok(!plan.rows.some(row=>row[0]==='내용량')); assert.equal(common.values.netContents,''); assert.equal(Object.keys(common.values).length,9);
     const result = await attachment.attachProductLabel({ productId: f.product.id, endpoint: f.endpoint, quotationEndpoint: f.quotationEndpoint, renderedView: view,
       optionId: null, blob: new Blob([png], { type: 'image/png' }), uploadedKey: null, onUploaded() {} }, f.request);
     const quote = await f.readQuotation(); assert.ok(quote.overrides.common.labelImages.split('\n').includes(result.key)); assert.equal(Object.hasOwn(quote.overrides.options, f.selected.optionId), false);

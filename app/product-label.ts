@@ -139,13 +139,15 @@ export function resolveProductLabels(input: { productId: string; state: ProductL
   });
 }
 
-export function productLabelPlan(view: ProductLabelsView, optionId: string | null): DocumentImagePlan & { format: 'product-label' } {
+export function productLabelPlan(view: ProductLabelsView, optionId: string | null, options: { includeEmpty?: boolean } = {}): DocumentImagePlan & { format: 'product-label' } {
   verifyProductLabelsView(view, optionId);
   const row = view.rows.find(row => row.optionId === optionId)!;
   if (optionId !== null && !row.included) throw Error('견적에 포함된 옵션을 선택해주세요.');
-  if (!Object.values(row.values).some(value => value.trim())) throw Error('표시사항을 한 항목 이상 저장한 뒤 이미지를 만들어주세요.');
+  // Couplus's renderer tests string truthiness: whitespace is printable data.
+  // Keep all-empty drafts editable, but do not invent an empty PNG document.
+  if (!Object.values(row.values).some(value => value !== '')) throw Error('표시사항을 한 항목 이상 저장한 뒤 이미지를 만들어주세요.');
   return { format: 'product-label', title: '', subtitle: '', width: 800, columnWidths: [240, 480], headers: [],
-    rows: productLabelDefinitions(view).map(field => [field.label, row.values[field.key]]), footer: '' };
+    rows: productLabelDefinitions(view).filter(field => options.includeEmpty === true || row.values[field.key] !== '').map(field => [field.label, row.values[field.key]]), footer: '' };
 }
 
 export function verifyProductLabelsView(view: ProductLabelsView, optionId: string | null, profileId?: string) {

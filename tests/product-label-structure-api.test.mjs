@@ -66,7 +66,7 @@ for(const company of companies)test(`shared label structure reaches selected PNG
   assert.equal(row(view,'synthetic-two').values.material,'');assert.equal(row(view,'synthetic-excluded').included,false);
   assert.equal(row(view,'synthetic-excluded').values.material,'제외 옵션 보존 재질');
   const plan=plain(model.productLabelPlan(view,'synthetic-one')),commonPlan=plain(model.productLabelPlan(view,null));
-  assert.deepEqual(plan.rows,[[structure[0].label,row(view,'synthetic-one').values.productName],['보관 방법',''],['실내용량',''],['구성 재질','옵션 확인 재질']]);
+  assert.deepEqual(plan.rows,[[structure[0].label,row(view,'synthetic-one').values.productName],['구성 재질','옵션 확인 재질']]);
   assert.equal(commonPlan.rows[1][1],'건조한 곳 보관');assert.ok(!plan.rows.some(([label])=>label==='제조원'));
   assert.throws(()=>model.productLabelPlan(view,'synthetic-excluded'),/포함/);
   assert.deepEqual(retained(f),sourceBefore);assert.deepEqual((await json(await f.route(quotationEndpoint))).overrides,quoteBefore.overrides);
@@ -84,7 +84,10 @@ for(const company of companies)test(`shared label structure reaches selected PNG
   const ready=await json(await f.route(f.endpoint));assert.equal(ready.review.canPrepare,true,JSON.stringify(ready.review.issues));
   const published=await json(await f.prepare(ready.fingerprint));assert.equal(published.prepared,true);assert.equal(published.remoteWrites,false);assert.equal(published.registered,false);assert.equal(published.submissionReady,false);
   assert.ok(JSON.stringify(published.payload).includes('https://single-assets.example.test/'));
-  view=await read();const nextStructure=structure.map(item=>item.id==='custom_storage'?{...item,label:'보관 안내 변경'}:item);
+  view=await read();const blankRename=structure.map(item=>item.id==='custom_storage'?{...item,label:'보관 안내 변경'}:item);
+  view=await json(await save(view,[],blankRename));assert.equal(upload.productLabelPreviewSignature({...context,view}),signature,'an omitted empty row caption does not change printed pixels');
+  assert.equal((await json(await f.route(f.endpoint))).review.canPrepare,true);
+  const nextStructure=blankRename.map(item=>item.id==='material'?{...item,label:'확인한 구성 재질'}:item);
   view=await json(await save(view,[],nextStructure));assert.notEqual(upload.productLabelPreviewSignature({...context,view}),signature);
   const oldPackage=await json(await f.route(f.endpoint));assert.equal(oldPackage.review.canPrepare,false);assert.ok(oldPackage.review.issues.some(issue=>issue.code==='GENERATED_PRODUCT_LABEL_STALE'));
   const beforeRetry=requests.length;
@@ -96,7 +99,7 @@ for(const company of companies)test(`shared label structure reaches selected PNG
   assert.equal(replaced.quotation.resolved.rows.find(item=>item.optionId==='synthetic-one').fields[labelTarget.primary].value,replaced.key);
   assert.equal((await json(await f.route(f.endpoint))).review.canPrepare,true);
   view=await read();const archived=plain(view.overrides);
-  view=await json(await save(view,[],defaultStructure));assert.equal(model.productLabelPlan(view,'synthetic-one').rows.length,9);
+  view=await json(await save(view,[],defaultStructure));assert.deepEqual(plain(model.productLabelPlan(view,'synthetic-one')),legacyPlan);
   assert.equal(row(view,'synthetic-one').values.manufacturer,'보관할 제조원');assert.deepEqual(plain(view.overrides),archived);
   view=await json(await save(view,[],structure));assert.equal(row(view,'synthetic-one').values.custom_storage,'');assert.equal(row(view,null).values.custom_storage,'건조한 곳 보관');
   const untouched=allTables(f);

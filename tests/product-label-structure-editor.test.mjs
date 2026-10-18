@@ -143,7 +143,7 @@ test('default restoration preserves archived custom and other-option values and 
     await h.click('정보 저장하기'); assert.equal(h.saved, 2, text(h.render()));
     assert.equal(f.view.structure.length, 9); assert.equal(f.view.overrides.options.red[custom], '보관할 추가값');
     assert.equal(h.input('선택 옵션 추가 안내'), undefined);
-    await h.click('한글 표시사항 생성 시작'); assert.equal(h.plans.at(-1).rows.length, 9);
+    await h.click('한글 표시사항 생성 시작'); assert.deepEqual(h.plans.at(-1).rows.map(row => row[0]), ['제품명', '제조원', '수입 및 판매원', '제조국', '원료명 및 성분명(재질)', '사용 시 주의사항']);
   } finally { h.close(); }
 });
 

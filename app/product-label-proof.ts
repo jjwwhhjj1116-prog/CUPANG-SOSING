@@ -42,7 +42,7 @@ export async function verifiedProductLabelMetadata(proof: ProductLabelProofReque
     productLabelProductVersion: view.productVersion, productLabelSourceFingerprint: view.inputFingerprint, productLabelRevision: String(view.revision) };
 }
 
-/** Only complete, server-marked nine-row PNG evidence grants replacement.
+/** Only complete, server-marked product-label PNG evidence grants replacement.
  * Legacy and manual objects are preserved without guessing their filenames. */
 export function productLabelReceiptFromMetadata(value: unknown): ProductLabelReceipt | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -84,7 +84,7 @@ export async function readProductLabelReceipt(uploadId: string, request: typeof 
   return { uploadId, key, proof };
 }
 
-/** Compare only server-marked NEW nine-row label plans. Unmarked legacy images,
+/** Compare only server-marked product-label plans. Unmarked legacy images,
  * manually uploaded files and stage-seven notice PNGs are never classified by
  * their filename or opaque upload hash. This proves plan freshness, not pixels.
  */
@@ -116,6 +116,11 @@ export async function inspectGeneratedProductLabels(input: {
       const category = await digest([view.categoryContext.categoryId,view.categoryContext.categoryPath]);
       const current = await digest(productLabelPlan(view,row.optionId));
       if (category === metadata.productLabelCategorySha256 && current === metadata.productLabelPlanSha256) continue;
+      // Previous v1 PNGs printed empty rows. Accept only that exact current
+      // ordered plan under the same authenticated scope; changed data/headings
+      // still require explicit regeneration. This never rewrites stored files.
+      if (category === metadata.productLabelCategorySha256
+        && await digest(productLabelPlan(view,row.optionId,{includeEmpty:true})) === metadata.productLabelPlanSha256) continue;
       code = 'GENERATED_PRODUCT_LABEL_STALE'; message = '생성한 제품 표시사항 PNG가 현재 저장된 제품 표시사항과 다릅니다. 수정한 내용으로 다시 생성·연결하거나 직접 확인한 라벨 파일을 연결해주세요.';
     } catch { /* Preserve the image and surface the unconfirmed proof. */ }
     issues.push({kind:'error',code,message,optionId:row.optionId,optionLabel:row.optionLabel,fieldId:target.primary});

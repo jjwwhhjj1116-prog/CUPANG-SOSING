@@ -27,11 +27,12 @@ function saved(before,structure,changes=[]){
  return {...out,revision:before.revision+1,productVersion:next,updatedAt:next};
 }
 
-test('legacy absence keeps the same nine definitions and byte-identical product-label plan',()=>{
- const legacy=view(),before=JSON.stringify(legacy),plan=model.productLabelPlan(legacy,'red');
+test('legacy absence keeps nine saved definitions and the exact prior plan while new PNGs omit empty values',()=>{
+ const legacy=view(),before=JSON.stringify(legacy),plan=model.productLabelPlan(legacy,'red',{includeEmpty:true});
  assert.equal(Object.hasOwn(legacy,'structure'),false);assert.equal(defaults.length,9);
  assert.deepEqual(plain(model.productLabelDefinitions()),plain(model.productLabelFields.map(field=>({...field,required:field.key==='productName'}))));
  assert.deepEqual(plain(plan),plain({format:'product-label',title:'',subtitle:'',width:800,columnWidths:[240,480],headers:[],rows:model.productLabelFields.map(field=>[field.label,legacy.rows.find(row=>row.optionId==='red').values[field.key]]),footer:''}));
+ assert.deepEqual(plain(model.productLabelPlan(legacy,'red').rows),plain(plan.rows.filter(row=>row[1]!=='')));
  assert.equal(JSON.stringify(legacy),before);
 });
 
@@ -41,7 +42,8 @@ test('shared order, renamed headings and custom fields use independent per-optio
  model.verifyProductLabelsView(v,'red');assert.deepEqual(Object.keys(v.rows[0].values),structure.map(field=>field.id));
  const common=v.rows.find(row=>row.optionId===null),red=v.rows.find(row=>row.optionId==='red'),excluded=v.rows.find(row=>row.optionId==='excluded');
  assert.equal(common.values[custom.id],'공통 추가값');assert.equal(red.values[custom.id],'');assert.equal(red.sources[custom.id],'manual-option');assert.equal(red.automatic[custom.id],'');assert.equal(excluded.values[custom.id],'제외 옵션 보존');
- assert.deepEqual(plain(model.productLabelPlan(v,'red').rows),[['추가 표시',''],['검토 재질','옵션 재질'],['제품명','상품 빨강']]);
+ assert.deepEqual(plain(model.productLabelPlan(v,'red').rows),[['검토 재질','옵션 재질'],['제품명','상품 빨강']]);
+ assert.deepEqual(plain(model.productLabelPlan(v,'red',{includeEmpty:true}).rows),[['추가 표시',''],['검토 재질','옵션 재질'],['제품명','상품 빨강']]);
  assert.equal(v.overrides.common.manufacturer,'삭제된 제조원 보존');assert.throws(()=>model.productLabelPlan(v,'excluded'),/포함/);
  assert.equal(JSON.stringify({structure,overrides}),before);
 });
@@ -119,7 +121,9 @@ function renderFixture(){
 }
 test('actual canvas renderer draws one to 39 ordered heading/value rows and keeps existing width/height and two-column protections',async()=>{
  for(const count of [1,3,9,39]){
-  const h=renderFixture(),v=view([defaults[0],...Array.from({length:count-1},(_,i)=>({id:'custom_'+i,label:'항목'+i,required:false}))]),plan=model.productLabelPlan(v,'red'),out=await h.render(plan);
+  const structure=[defaults[0],...Array.from({length:count-1},(_,i)=>({id:'custom_'+i,label:'항목'+i,required:false}))];
+  const h=renderFixture(),v=view(structure,{common:Object.fromEntries(structure.filter(field=>field.id!=='productName').map(field=>[field.id,'저장값'])),options:{}}),plan=model.productLabelPlan(v,'red'),out=await h.render(plan);
+  assert.equal(plan.rows.length,count);
   assert.equal(out.width,800);assert.ok(out.height>0);assert.equal(out.blob.type,'image/png');assert.deepEqual(h.draw.filter(item=>item.font.startsWith('bold')).map(item=>item.text),plain(plan.rows.map(row=>row[0]+': ')));assert.equal(h.loads.length,2);
  }
  for(const rows of [[],Array.from({length:40},()=>['항목','값']),[['제목','값','과다 열']]]){
