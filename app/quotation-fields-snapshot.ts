@@ -24,6 +24,7 @@ import { approvedSupplierHubCompany } from '@/app/supplier-hub-company';
 import { verifyCapturedCollectionCompany } from '@/app/collection-company';
 import { scopedQuotationPackagingBasis, quotationPackQuantities } from '@/app/quotation-packaging-basis';
 import { detailEditorInputs } from '@/app/detail-editor-inputs';
+import { currentStageTwoMsrp, scopedStageTwoMsrp } from '@/app/stage-two-msrp';
 
 
 export class QuotationFieldsSnapshotError extends Error { constructor(message: string, public status: number, public code?: string) { super(message); } }
@@ -109,6 +110,8 @@ async function snapshot(owner: string, id: string, profileId: string | null) {
       optionNames: Object.fromEntries(options.rows.map(option => [option.id, option.translatedName])) },
     productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, imageKeys, updatedAt: state.updatedAt, submissionReady: false };
   view.optionPackQuantities=optionPackQuantities;if(packagingBasis)view.packagingBasis=packagingBasis;
+  const stageTwoMsrp=currentStageTwoMsrp(view,scopedStageTwoMsrp(state,categoryContext.categoryId));
+  if(stageTwoMsrp)view.stageTwoMsrp=stageTwoMsrp;
   const editorInputs = detailEditorInputs(view, state, id);
   if (editorInputs) view.detailEditorInputs = editorInputs;
   return { view, source, options };

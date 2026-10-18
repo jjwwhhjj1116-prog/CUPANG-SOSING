@@ -6,6 +6,7 @@ import { collectionSchema, collectionProductSchema } from '@/db/collection-jobs'
 import type { QuotationPackagingBasis } from '@/app/quotation-packaging-basis';
 import type { DetailSaveBackup } from '@/app/detail-save-plan';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
+import type { StageTwoMsrp } from '@/app/stage-two-msrp';
 
 export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotation_fields (
   product_id TEXT PRIMARY KEY REFERENCES products(id), owner_id TEXT NOT NULL,
@@ -13,7 +14,8 @@ export const quotationFieldsSchema = `CREATE TABLE IF NOT EXISTS product_quotati
 )`;
 export type QuotationFieldsState = { schemaVersion: 1; productId: string; revision: number; overrides: QuotationOverrides; categoryOverrides?: Record<string, QuotationOverrides>;
   packagingBasis?:QuotationPackagingBasis;categoryPackagingBasis?:Record<string,QuotationPackagingBasis>;updatedAt: string | null;
-  detailSaveBackups?: Record<string, DetailSaveBackup[]>; detailEditorInputs?: Record<string, DetailEditorInputs> };
+  detailSaveBackups?: Record<string, DetailSaveBackup[]>; detailEditorInputs?: Record<string, DetailEditorInputs>;
+  stageTwoMsrp?: StageTwoMsrp; categoryStageTwoMsrp?: Record<string, StageTwoMsrp> };
 export type QuotationCollectionSource = { id: string; payload: string; updatedAt: string; linked?: boolean };
 export type QuotationSourceGuard = {
   productVersion: string; imageKeys: string; pricingPolicy: string | null;
@@ -85,8 +87,8 @@ export async function quotationSourcesCurrent(owner: string, productId: string, 
 }
 
 /** All option/common overrides are committed together; automatic values never overwrite them. */
-export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null = null, packagingBasis?:QuotationPackagingBasis|null): Promise<QuotationFieldsState | null> {
-  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId,undefined,packagingBasis);
+export async function saveQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null = null, packagingBasis?:QuotationPackagingBasis|null, stageTwoMsrp?:StageTwoMsrp|null): Promise<QuotationFieldsState | null> {
+  return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId,undefined,packagingBasis,undefined,undefined,stageTwoMsrp);
 }
 /** The translated PNG is appended and the selected final quotation overrides
  * advance in the same batch. Common content and source SKU facts are untouched. */
@@ -123,7 +125,7 @@ export async function attachQuotationDetailSave(owner: string, productId: string
     throw Error('Invalid detail save attachment.');
   return commitQuotationFields(owner, productId, overrides, expectedRevision, source, categoryId, imageKeys, undefined, detail);
 }
-async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[], packagingBasis?:QuotationPackagingBasis|null, detail?: DetailSaveCommit, sealedImage?: SealedQuotationImageCommit): Promise<QuotationFieldsState | null> {
+async function commitQuotationFields(owner: string, productId: string, overrides: QuotationOverrides, expectedRevision: number, source: QuotationSourceGuard, categoryId: string | null, imageKeys?: string[], packagingBasis?:QuotationPackagingBasis|null, detail?: DetailSaveCommit, sealedImage?: SealedQuotationImageCommit, stageTwoMsrp?:StageTwoMsrp|null): Promise<QuotationFieldsState | null> {
   const db = await database(); const guard = sourceGuard(owner, productId, source);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid quotation revision');
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
@@ -142,6 +144,13 @@ async function commitQuotationFields(owner: string, productId: string, overrides
       if(packagingBasis)scopes[key]=packagingBasis;else delete scopes[key];
       if(Object.keys(scopes).length)state.categoryPackagingBasis=scopes;else delete state.categoryPackagingBasis;
     }else if(packagingBasis)state.packagingBasis=packagingBasis;else delete state.packagingBasis;
+  }
+  if(stageTwoMsrp!==undefined){
+    if(categoryId){
+      const scopes={...previous.categoryStageTwoMsrp},key=quotationScope(categoryId);
+      if(stageTwoMsrp&&Object.keys(stageTwoMsrp).length)scopes[key]=stageTwoMsrp;else delete scopes[key];
+      if(Object.keys(scopes).length)state.categoryStageTwoMsrp=scopes;else delete state.categoryStageTwoMsrp;
+    }else if(stageTwoMsrp&&Object.keys(stageTwoMsrp).length)state.stageTwoMsrp=stageTwoMsrp;else delete state.stageTwoMsrp;
   }
   if (detail) {
     const key = detailSaveHistoryScope(categoryId), history = previous.detailSaveBackups?.[key] ?? [];

@@ -27,6 +27,7 @@ import {validateOfficialWorkbookEvidence} from '@/app/official-workbook-evidence
 import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-price-targets';
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
+import type { StageTwoMsrp } from '@/app/stage-two-msrp';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -86,6 +87,8 @@ export type QuotationFieldsView = {
   detailSaveTextBasis?: { policy: 'couplus-detail-alt-v1'; productName: string; metaDescription: string; optionNames: Record<string, string> };
   /** Response-only sealed pre-composite inputs for the current category. */
   detailEditorInputs?: DetailEditorInputs;
+  /** Current-category sale-derived MSRP authority; absent for older manual overrides. */
+  stageTwoMsrp?: StageTwoMsrp;
   packagingBasis?:QuotationPackagingBasis;optionPackQuantities?:Record<string,number>;
 };
 

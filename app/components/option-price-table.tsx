@@ -19,6 +19,7 @@ type Props = { rows: readonly OptionInput[]; calculations: readonly OptionCalcul
   priceController?:OptionPriceController;priceBlocked?:boolean;
   onChange: <K extends OptionField>(id: string, key: K, value: OptionInput[K]) => void };
 const won = (value: number) => `${Math.round(value).toLocaleString('ko-KR')}원`;
+const rowWon = (value: number) => `${value.toLocaleString('ko-KR')}원`;
 const percent = (value: number) => `${Math.round(value)}%`;
 const defaultPageSize = 20;
 // Recorded table display contract; monetary calculations stay in calculateOptionPrices.
@@ -86,8 +87,8 @@ export function OptionPriceTable({ rows, calculations, selected, focusedOptionId
         if (!calculation) return <span role="status">{result?.error || '계산 미완료'}</span>;
         if (id === 'supply') return won(calculation.supplyPrice);
         if (id === 'sale') return won(calculation.salePrice);
-        if (id === 'supplyMargin') return <>{won(calculation.marginKrw)}<small>({percent(marginRate(calculation.costKrw, calculation.supplyPrice))})</small></>;
-        return <>{won(calculation.salePrice - calculation.supplyPrice)}<small>({percent(marginRate(calculation.supplyPrice, calculation.salePrice))})</small></>;
+        if (id === 'supplyMargin') return <>{rowWon(calculation.marginKrw)}<small>({percent(marginRate(calculation.costKrw, calculation.supplyPrice))})</small></>;
+        return <>{rowWon(calculation.salePrice - calculation.supplyPrice)}<small>({percent(marginRate(calculation.supplyPrice, calculation.salePrice))})</small></>;
     }
   }
   return <div ref={root} className="option-price-grid" aria-label="옵션별 가격 정보">

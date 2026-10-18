@@ -6,6 +6,10 @@ import { readBoundedJson, RequestBodyError } from '@/app/request-body';
 import { PublicDetailError } from '@/app/quotation-public-detail';
 import { stableQuotationFieldsView as stableView, QuotationFieldsSnapshotError as FieldsError } from '@/app/quotation-fields-snapshot';
 import { applyQuotationPackagingBasis, quotationPackQuantities } from '@/app/quotation-packaging-basis';
+import { applyStageTwoMsrp, stageTwoMsrpEdits } from '@/app/stage-two-msrp';
+import { quotationPriceTargets } from '@/app/quotation-price-targets';
+import { resolveOptionPricePolicy } from '@/app/product-options';
+import { findProduct } from '@/db/queries';
 
 type Context = { params: Promise<{ id: string }> };
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -33,7 +37,7 @@ export async function PUT(request: Request, context: Context) {
   try {
     if (request.headers.get('origin') && request.headers.get('origin') !== new URL(request.url).origin) throw new FieldsError('같은 사이트에서 저장해주세요.', 400);
     const body = await readBoundedJson(request, 512 * 1024) as Record<string, unknown>;
-    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'changes'].includes(key)) ||
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'changes', 'stageTwoMsrp'].includes(key)) ||
       !Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0 || typeof body.expectedInputFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint)) throw new FieldsError('저장 버전과 변경 내용을 확인해주세요.', 400);
     const owner = await getWorkspaceOwnerId(); const { id } = await context.params; const profileId = profileSelection(request);
     const saved = await stableView(owner, id, profileId);
@@ -41,10 +45,28 @@ export async function PUT(request: Request, context: Context) {
     let changes;
     try { changes = validateQuotationChanges(body.changes, { schema: saved.view.resolved.schema, optionIds: saved.options.rows.map(option => option.id), ownedImageKeys: saved.view.imageKeys, overrides: saved.view.overrides }); }
     catch (error) { throw new FieldsError(error instanceof Error ? error.message : '변경한 견적서 필드를 확인해주세요.', 400); }
+    let derivedIds:string[]=[];
+    if(body.stageTwoMsrp!==undefined){
+      const requested=body.stageTwoMsrp;
+      if(!Array.isArray(requested)||!requested.length||requested.length>200||requested.some(id=>typeof id!=='string'||!saved.options.rows.some(option=>option.id===id))||new Set(requested).size!==requested.length)
+        throw new FieldsError('2단계 MSRP 자동 계산 옵션을 다시 확인해주세요.',400);
+      derivedIds=requested as string[];
+      const product=await findProduct(owner,id);
+      if(!product||product.updated_at!==saved.source.productVersion)throw changed();
+      try{
+        const fields=quotationPriceTargets(saved.view.resolved.schema.fields).msrp.linked;
+        const base=changes.filter(change=>change.optionId===null||!derivedIds.includes(change.optionId)||!fields.includes(change.fieldKey));
+        const policy=resolveOptionPricePolicy(product,saved.source.settingsPayload?JSON.parse(saved.source.settingsPayload):undefined).policy;
+        const expected=stageTwoMsrpEdits(saved.view,base,policy);
+        const signature=(values:typeof changes)=>JSON.stringify(values.map(value=>[value.optionId,value.fieldKey,value.value]));
+        if(JSON.stringify(expected.optionIds)!==JSON.stringify(derivedIds)||signature(expected.changes)!==signature(changes))throw Error('저장된 가격 설정으로 계산한 2단계 MSRP와 요청값이 다릅니다.');
+      }catch(error){throw new FieldsError(error instanceof Error?error.message:'2단계 MSRP 계산 기준을 확인해주세요.',400);}
+    }
     const overrides = applyQuotationChanges(saved.view.overrides, changes);
     const packagingBasis=applyQuotationPackagingBasis(saved.view.packagingBasis,saved.view.resolved.schema.fields,quotationPackQuantities(saved.options.rows),changes);
+    const stageTwoMsrp=applyStageTwoMsrp(saved.view,changes,derivedIds);
     if (new TextEncoder().encode(JSON.stringify(overrides)).length > 500 * 1024) throw new FieldsError('수동 수정 자료가 저장 한도를 초과했습니다. 긴 내용을 줄여주세요.', 413);
-    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, saved.source, saved.view.categoryContext.categoryId,packagingBasis??null);
+    const stored = await saveQuotationFields(owner, id, overrides, saved.view.revision, saved.source, saved.view.categoryContext.categoryId,packagingBasis??null,stageTwoMsrp??null);
     if (!stored) throw changed();
     return json((await stableView(owner, id, profileId)).view);
   } catch (error) { return failure(error); }

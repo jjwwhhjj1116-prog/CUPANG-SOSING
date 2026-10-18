@@ -26,6 +26,14 @@ export function pricePolicy(input: unknown): PricePolicy {
 export function priceMinimumMarginEnabled(policy: Pick<PricePolicy, 'minimumMargin' | 'recalculationMinimumEnabled'>): boolean {
   return policy.recalculationMinimumEnabled ?? policy.minimumMargin > 0;
 }
+/** Recorded savePricing recalculates MSRP from the explicitly reviewed sale
+ * amount using the saved multiple and nearest currency unit. Other prices and
+ * the policy's ordinary rounding mode are not changed by this calculation. */
+export function calculateStageTwoMsrp(salePrice: number, input: PricePolicy): number {
+  const policy = pricePolicy(input);
+  if (!Number.isSafeInteger(salePrice) || salePrice <= 0) throw Error('판매가는 양수 정수 원 단위로 입력해주세요.');
+  return Number(roundCurrency(multiply(decimal(salePrice), decimal(policy.msrpMultiple)), policy.roundingUnit, 'nearest'));
+}
 export function calculatePrice(sourcePriceCny: number, input: PricePolicy, unitsPerPack = 1) {
   const p = pricePolicy(input);
   if (!Number.isFinite(sourcePriceCny) || sourcePriceCny <= 0) throw new Error('저장된 상품 원가가 올바르지 않습니다.');
