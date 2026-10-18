@@ -91,7 +91,7 @@ export async function PATCH(request: Request, context: Context) {
       if (objects.some(value => !value)) return response({ error: '이미지 파일이 저장소에 없습니다. 다시 업로드해주세요.' }, 400);
       if (objects.some(value => !/^image\/(png|jpeg|webp|gif|avif)$/i.test(value?.httpMetadata?.contentType ?? ''))) return response({ error: 'PNG·JPEG·WebP·GIF·AVIF 이미지만 자료에 지정할 수 있습니다.' }, 400);
     }
-    const saved = await saveProductContent(owner, next, validated.expectedRevision, validated.patch.assets ? product.image_keys : undefined);
+    const saved = await saveProductContent(owner, next, validated.expectedRevision, validated.patch.assets || Object.hasOwn(validated.patch, 'manualSizeChart') ? product.image_keys : undefined);
     if(!saved)return response({ error: '동시에 변경된 콘텐츠입니다. 저장본을 다시 불러와주세요.', code: 'CONTENT_CONFLICT' }, 409);
     const banners=await bannerMetadata(owner,product,saved);
     return response({content:saved,...(banners?{capturedSettingsBanners:banners}:{})});

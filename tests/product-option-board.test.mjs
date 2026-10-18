@@ -119,24 +119,35 @@ test('option board renders the observed twelve data headers with matching row ce
 
 test('typed stage callbacks preserve the clicked option across every stage and take precedence over legacy callbacks',()=>{
  const result=tree('',undefined,data,['owner/red.png'],undefined,0,{stage:true});
- const expected=[['SEO설정','SEO'],['가격설정','가격'],['대표이미지','대표 이미지'],['추가이미지','추가 이미지'],['상세이미지','상세 이미지'],['사이즈표','SEO'],['한글표시사항','표시사항'],['견적서','견적서']];
+ const expected=[['SEO설정','SEO'],['가격설정','가격'],['대표이미지','대표 이미지'],['추가이미지','추가 이미지'],['상세이미지','상세 이미지'],['사이즈표','옵션'],['한글표시사항','표시사항'],['견적서','견적서']];
  for(const [label] of expected)byLabel(result.tree,`옵션 blue ${label} 편집`).props.onClick({type:'click'});
  assert.deepEqual(result.stages,expected.map(([,step])=>['blue',step]));assert.deepEqual(result.edited,[]);assert.deepEqual(result.images,[]);assert.deepEqual(result.contentSteps,[]);assert.deepEqual(result.selected,[]);
  const legacy=tree();assert.equal(byLabel(legacy.tree,'옵션 red SEO설정 편집'),undefined);assert.equal(byLabel(legacy.tree,'옵션 red 사이즈표 편집'),undefined);
 });
 
-for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`unused size charts open the observed SEO stage while assigned charts retain size editing (${company.companyCode})`,async()=>{
+for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{companyCode:'A01526306',companyName:'유앤채'}])test(`unused and assigned size charts both open their exact option size editor (${company.companyCode})`,async()=>{
  const {mobileIntakeHarness}=await import('./helpers/mobile-intake.mjs'),h=mobileIntakeHarness(company),json=async response=>{assert.equal(response.status,200,await response.clone().text());return response.json();};
  try{
   await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id,keys=JSON.parse(product.image_keys);
   const read=()=>model.readOptionBoard(product.id,new AbortController().signal,(url,init)=>h.route(url,{method:init?.method??'GET'})),initial=await read(),optionId=initial.options.rows[0].id;
   const before=h.sqlite.prepare('SELECT payload FROM product_options').get().payload,shown=tree('',h.sourceUrl,initial,initial.imageKeys,undefined,0,{stage:true});
-  const unused=byLabel(shown.tree,`옵션 ${optionId} 사이즈표 편집`);assert.equal(text(unused),'미사용');unused.props.onClick();assert.deepEqual(shown.stages,[[optionId,'SEO']]);
+  const unused=byLabel(shown.tree,`옵션 ${optionId} 사이즈표 편집`);assert.equal(text(unused),'미사용');unused.props.onClick();assert.deepEqual(shown.stages,[[optionId,'옵션']]);
   const content=(await json(await h.route(base+'/content'))).content;await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{assets:{size:[keys[0]]}}}}));
   const assigned=await read(),saved=tree('',h.sourceUrl,assigned,assigned.imageKeys,undefined,0,{stage:true}),active=byLabel(saved.tree,`옵션 ${optionId} 사이즈표 편집`);
   assert.equal(text(active),'1장');active.props.onClick();assert.deepEqual(saved.stages,[[optionId,'옵션']]);assert.equal(h.sqlite.prepare('SELECT payload FROM product_options').get().payload,before);
   assert.deepEqual(plain(assigned.quotationContent),plain(initial.quotationContent));assert.deepEqual(plain(assigned.quotationPrices),plain(initial.quotationPrices));assert.ok(!h.network.includes('supplier.coupang.com'));
  }finally{h.close();}
+});
+
+test('size-chart entry never redirects to SEO for absent, cleared, saved or unavailable chart files',()=>{
+ for(const size of [undefined,[],['owner/size.png'],['foreign/size.png']]){
+  const source={...data,commonAssets:size===undefined?undefined:{size}},before=JSON.stringify(source);
+  const shown=tree('',undefined,source,['owner/size.png'],undefined,0,{stage:true});
+  for(const optionId of ['red','blue'])byLabel(shown.tree,`옵션 ${optionId} 사이즈표 편집`).props.onClick();
+  assert.deepEqual(shown.stages,[['red','옵션'],['blue','옵션']]);
+  assert.deepEqual(shown.edited,[]);assert.deepEqual(shown.contentSteps,[]);assert.deepEqual(shown.selected,[]);
+  assert.equal(JSON.stringify(source),before,'opening a size editor must not change references or repair a missing chart implicitly');
+ }
 });
 
 test('management trash opens the connected deletion review without mutating the option or invoking a stage',()=>{

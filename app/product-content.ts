@@ -1,4 +1,5 @@
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
+import { validateManualSizeChart, type ManualSizeChart } from '@/app/manual-size-chart';
 export const CONTENT_BODY_LIMIT = 96 * 1024;
 export const labelFields = {
   productName: '품명', model: '모델명', material: '재질', dimensions: '크기·중량',
@@ -60,6 +61,8 @@ export type ProductContent = {
   initialLegalNotices?: import('@/app/initial-legal-notices').InitialLegalNotices;
   labelLayout?: LabelLayout;
   customLabels?: CustomLabel[];
+  /** Explicitly saved grid; independent of packaging measurements. */
+  manualSizeChart?: ManualSizeChart;
   /** Source-derived draft attributes are scoped to the category used for translation. */
   categoryAttributes?: { hiddenAttributes?: boolean; categoryId: string; jobId: string; values: { name: string; value: string; sourceName?: string }[];
     bindings?: { fieldId: string; fieldSignature: string; value: string }[]; reservedFields?: string[] };
@@ -74,6 +77,7 @@ export type ContentPatch = {
   label?: Partial<Record<LabelField, string>>;
   labelLayout?: LabelLayout;
   customLabels?: CustomLabel[];
+  manualSizeChart?: ManualSizeChart | null;
   assets?: Partial<Record<AssetRole, string[]>>;
 };
 
@@ -126,8 +130,9 @@ export type ReviewedImageReplacement = { sourceKey: string; resultKey: string };
 export function validateContentInput(input: unknown, ownedKeys: readonly string[], ownerId: string): { expectedRevision: number; patch: ContentPatch; reviewedImageJobIds?: string[] } {
   const body = object(input, ['expectedRevision', 'patch', 'reviewedImageJobIds'], '콘텐츠 요청');
   if (!Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0) throw new Error('저장 버전을 다시 불러와주세요.');
-  const raw = object(body.patch, ['seo', 'detail', 'label', 'assets', 'labelLayout', 'customLabels', 'labelProductNameLinked', 'labelClears'], '편집 내용');
+  const raw = object(body.patch, ['seo', 'detail', 'label', 'assets', 'labelLayout', 'customLabels', 'labelProductNameLinked', 'labelClears', 'manualSizeChart'], '편집 내용');
   const patch: ContentPatch = {};
+  if ('manualSizeChart' in raw) patch.manualSizeChart = raw.manualSizeChart === null ? null : validateManualSizeChart(raw.manualSizeChart);
   if ('labelProductNameLinked' in raw) {
     if (typeof raw.labelProductNameLinked !== 'boolean') throw new Error('품명 연동은 켜짐/꺼짐 값이어야 합니다.');
     patch.labelProductNameLinked = raw.labelProductNameLinked;
@@ -195,7 +200,7 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
       });
     }
   }
-  if (!Object.hasOwn(patch,'labelProductNameLinked')&&!Object.hasOwn(patch,'customLabels')&&!Object.values(patch).some(value => Object.keys(value).length)) throw new Error('저장할 편집 내용이 없습니다.');
+  if (!Object.hasOwn(patch,'labelProductNameLinked')&&!Object.hasOwn(patch,'customLabels')&&!Object.hasOwn(patch,'manualSizeChart')&&!Object.values(patch).some(value => value !== null && Object.keys(value).length)) throw new Error('저장할 편집 내용이 없습니다.');
   let reviewedImageJobIds: string[] | undefined;
   if ('reviewedImageJobIds' in body) {
     const ids = body.reviewedImageJobIds;
@@ -209,6 +214,14 @@ export function validateContentInput(input: unknown, ownedKeys: readonly string[
 export function applyContentPatch(current: ProductContent, patch: ContentPatch, now: string, reviewedReplacements: readonly ReviewedImageReplacement[] = []): ProductContent {
   current = withCurrentLabelFields(current);
   const next = structuredClone(current);
+  if (patch.manualSizeChart === null) delete next.manualSizeChart;
+  else if (patch.manualSizeChart !== undefined) next.manualSizeChart = validateManualSizeChart(patch.manualSizeChart);
+  if (Object.hasOwn(patch, 'manualSizeChart') && JSON.stringify(next.manualSizeChart) !== JSON.stringify(current.manualSizeChart)) {
+    if (Object.hasOwn(patch.assets ?? {}, 'size')) throw new Error('사이즈표 내용을 저장한 뒤 새 PNG를 만들어 연결해주세요.');
+    // Keep every original file in the pool, but an image of the former grid
+    // must not remain the active chart after a manual data change or reset.
+    next.assets.size = { value: [], provenance: 'manual', updatedAt: now };
+  }
   if(patch.labelLayout)next.labelLayout=structuredClone(patch.labelLayout);
   if(patch.customLabels!==undefined)next.customLabels=structuredClone(patch.customLabels);
   function edited<T>(previous: ContentField<T>, value: T): ContentField<T> {

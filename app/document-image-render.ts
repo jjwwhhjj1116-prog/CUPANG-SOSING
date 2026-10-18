@@ -44,16 +44,23 @@ export async function renderDocument(plan: DocumentImagePlan): Promise<{ blob: B
   const measure = (value: string) => context.measureText(value).width;
   const rows = plan.rows.map(row => row.map((cell, column) => wrapDocumentText(cell, plan.columnWidths[column] - 2 * cellPadding, measure)));
   const heights = rows.map(row => Math.max(64, Math.max(...row.map(cell => cell.length)) * lineHeight + 2 * cellPadding));
+  context.font = `bold 24px ${font}`;
+  const headers = plan.format === 'manual-size-chart'
+    ? plan.headers.map((text, column) => wrapDocumentText(text, plan.columnWidths[column] - 2 * cellPadding, measure)) : plan.headers.map(text => [text]);
+  const headerHeight = plan.format === 'manual-size-chart' ? Math.max(58, Math.max(...headers.map(cell => cell.length)) * lineHeight + 2 * cellPadding) : 58;
+  context.font = `bold 34px ${font}`;
+  const title = plan.format === 'manual-size-chart' ? wrapDocumentText(plan.title, plan.width - padding * 2, measure) : [plan.title];
+  const titleHeight = 56 + (title.length - 1) * 44;
   context.font = `20px ${font}`;
   const subtitle = wrapDocumentText(plan.subtitle, plan.width - padding * 2, measure);
   const footer = wrapDocumentText(plan.footer, plan.width - padding * 2, measure);
-  const startY = padding + 56 + subtitle.length * 30 + 26;
-  const height = startY + 58 + heights.reduce((sum, value) => sum + value, 0) + 34 + footer.length * 30 + padding;
+  const startY = padding + titleHeight + subtitle.length * 30 + 26;
+  const height = startY + headerHeight + heights.reduce((sum, value) => sum + value, 0) + 34 + footer.length * 30 + padding;
   if (height > MAX_DOCUMENT_HEIGHT) throw new Error(`내용이 길어 이미지 높이가 ${MAX_DOCUMENT_HEIGHT.toLocaleString('ko-KR')}px를 초과합니다. 저장한 설명 또는 포함 옵션 수를 줄여주세요. 내용은 잘라내지 않았습니다.`);
   canvas.width = plan.width; canvas.height = height;
   context.fillStyle = '#ffffff'; context.fillRect(0, 0, canvas.width, canvas.height); context.textBaseline = 'top';
-  context.fillStyle = '#111827'; context.font = `bold 34px ${font}`; context.fillText(plan.title, padding, padding);
-  context.font = `20px ${font}`; context.fillStyle = '#475569'; subtitle.forEach((text, index) => context.fillText(text, padding, padding + 56 + index * 30));
+  context.fillStyle = '#111827'; context.font = `bold 34px ${font}`; title.forEach((text, index) => context.fillText(text, padding, padding + index * 44));
+  context.font = `20px ${font}`; context.fillStyle = '#475569'; subtitle.forEach((text, index) => context.fillText(text, padding, padding + titleHeight + index * 30));
   let y = startY;
   const tableRow = (cells: string[][], rowHeight: number, header: boolean, index = 0) => {
     let x = padding; context.font = `${header ? 'bold ' : ''}24px ${font}`;
@@ -63,7 +70,7 @@ export async function renderDocument(plan: DocumentImagePlan): Promise<{ blob: B
       lines.forEach((text, line) => context.fillText(text, x + cellPadding, y + cellPadding + line * lineHeight)); x += width;
     }); y += rowHeight;
   };
-  tableRow(plan.headers.map(text => [text]), 58, true);
+  tableRow(headers, headerHeight, true);
   rows.forEach((cells, index) => tableRow(cells, heights[index], false, index));
   context.font = `20px ${font}`; context.fillStyle = '#64748b'; footer.forEach((text, index) => context.fillText(text, padding, y + 34 + index * 30));
   const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('PNG 인코딩에 실패했습니다.')), 'image/png'));

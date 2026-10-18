@@ -183,7 +183,7 @@ export function ProductOptionBoard({productId,productRegistrationNumber,sourceUr
       return <tr key={row.id} data-option-id={row.id}><td><input type="checkbox" aria-label={`옵션 ${row.id} 선택`} checked={selected.has(row.id)} onChange={event=>toggle([row.id],event.target.checked)}/></td>{displayedColumns.map(column=>{
         const common=commonStages.find(([role])=>role===column.id);
         let cell;
-        if(common){const [role,label,step]=common,saved=[...new Set(role!=='size'&&effective?effective[role]:data.commonAssets?.[role]??[])],count=saved.filter(key=>keys.includes(key)).length,issue=saved.length!==count||(role!=='size'&&effective?.imageIssues[role]);const unusedSize=role==='size'&&!saved.length,text=unusedSize?'미사용':issue&&!count?'연결 확인 필요':count+'장';cell=<>{issue&&count>0&&<small>{count}장 · 연결 확인 필요</small>}{stageButton(row.id,unusedSize?'SEO':step,label,text)}</>;}
+        if(common){const [role,label,step]=common,saved=[...new Set(role!=='size'&&effective?effective[role]:data.commonAssets?.[role]??[])],count=saved.filter(key=>keys.includes(key)).length,issue=saved.length!==count||(role!=='size'&&effective?.imageIssues[role]);const unusedSize=role==='size'&&!saved.length,text=unusedSize?'미사용':issue&&!count?'연결 확인 필요':count+'장';cell=<>{issue&&count>0&&<small>{count}장 · 연결 확인 필요</small>}{stageButton(row.id,step,label,text)}</>;}
         else cell=cells[column.id as keyof typeof cells];
         return <td key={column.id} data-column={column.id} className={pinned(column.id)}>{cell}</td>;
       })}

@@ -7,7 +7,7 @@ import { recoverDocumentImageAttachment } from '@/app/document-image-recovery';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 
-type Props = { productId: string; version: string; section: DocumentImageSection; onSaved?: () => void };
+type Props = { productId: string; version: string; section: DocumentImageSection; onSaved?: () => void; disabled?: boolean; onBusyChange?: (busy: boolean) => void };
 type Preview = { blob: Blob; url: string; productVersion: string; contentRevision: number; optionRevision: number; width: number; height: number; plan: DocumentImagePlan };
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(path, { cache: 'no-store' }); const body = await response.json() as T & { error?: string };
@@ -16,13 +16,16 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export function DocumentImagePanel(props: Props) { return <Panel key={`${props.productId}-${props.section}`} {...props} />; }
-function Panel({ productId, version, section, onSaved }: Props) {
+function Panel({ productId, version, section, onSaved, disabled = false, onBusyChange }: Props) {
   const [preview, setPreview] = useState<Preview | null>(null); const [busy, setBusy] = useState(false);
   const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [attachedVersion, setAttachedVersion] = useState<string | null>(null);
   const uploadedKey = useRef<string | null>(null); const alive = useRef(true);
   const currentVersion = useRef(version);
+  const blocked = useRef(disabled);
   const [hasUpload, setHasUpload] = useState(false);
   useEffect(() => { currentVersion.current = version; }, [version]);
+  useEffect(() => { blocked.current = disabled; }, [disabled]);
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
   const name = section === 'label' ? '표시사항' : '사이즈표';
@@ -30,7 +33,7 @@ function Panel({ productId, version, section, onSaved }: Props) {
   // later dashboard version invalidates it; the server still checks exact CAS.
   const stale = Boolean(preview && Date.parse(version) > Date.parse(attachedVersion ?? preview.productVersion));
   async function generate(andAttach = false) {
-    if (busy) return;
+    if (busy || disabled) return;
     setBusy(true); setError(''); setMessage('');
     try {
       const path = `/api/products/${encodeURIComponent(productId)}`;
@@ -40,7 +43,7 @@ function Panel({ productId, version, section, onSaved }: Props) {
       if (section === 'size' && optionState.productVersion !== product.product.updated_at) throw new Error('자료를 불러오는 동안 상품 또는 옵션이 변경되었습니다. 최신 저장값으로 미리보기를 다시 만들어주세요.');
       const plan = documentImagePlan(section, contents.content, optionState.options);
       const rendered = await renderDocument(plan);
-      if (!alive.current) return;
+      if (!alive.current || blocked.current) return;
       uploadedKey.current = null; setHasUpload(false); setAttachedVersion(null);
       const generated = { ...rendered, plan, url: URL.createObjectURL(rendered.blob), productVersion: product.product.updated_at, contentRevision: contents.content.revision, optionRevision: optionState.options.revision };
       setPreview(generated);
@@ -50,7 +53,7 @@ function Panel({ productId, version, section, onSaved }: Props) {
     finally { if (alive.current) setBusy(false); }
   }
   async function attach() {
-    if (!preview || (stale && !uploadedKey.current) || busy) return;
+    if (!preview || (stale && !uploadedKey.current) || busy || disabled) return;
     setBusy(true); setError(''); setMessage('');
     try {
       await attachPreview(preview);
@@ -61,7 +64,7 @@ function Panel({ productId, version, section, onSaved }: Props) {
       const complete = (productVersion: string) => {
         if (!alive.current) return;
         if (Date.parse(currentVersion.current) > Date.parse(productVersion)) throw new Error('상품 자료가 변경되었습니다. 최신 저장 상태를 다시 확인해주세요.');
-        setAttachedVersion(productVersion); setMessage(`${name} PNG를 상품 자료에 추가했습니다. 기존 파일과 이미지 역할은 보존했습니다.`); onSaved?.();
+        setAttachedVersion(productVersion); setMessage(section === 'size' ? '사이즈표 PNG를 연결했습니다. 이전 파일은 보관하고 견적에 사용할 사이즈표 한 장을 교체했습니다.' : `${name} PNG를 상품 자료에 추가했습니다. 기존 파일과 이미지 역할은 보존했습니다.`); onSaved?.();
       };
       const recover = async () => {
         const saved = await recoverDocumentImageAttachment({ productId, section, key: uploadedKey.current!, plan: preview.plan,
@@ -70,7 +73,7 @@ function Panel({ productId, version, section, onSaved }: Props) {
         complete(saved); return true;
       };
       if (uploadedKey.current && await recover()) return;
-      if (!alive.current) return;
+      if (!alive.current || blocked.current) return;
       if (Date.parse(currentVersion.current) > Date.parse(preview.productVersion)) throw new Error('상품 자료가 변경되었습니다. 최신 저장값으로 미리보기를 다시 만들어주세요.');
       if (!uploadedKey.current) {
         const form = new FormData(); form.set('file', new File([preview.blob], `sourceflow-${section}.png`, { type: 'image/png' }));
@@ -78,7 +81,7 @@ function Panel({ productId, version, section, onSaved }: Props) {
         if (!response.ok || !body.key) throw new Error(body.error || 'PNG를 업로드하지 못했습니다.'); uploadedKey.current = body.key;
         if (alive.current) setHasUpload(true);
       }
-      if (!alive.current) return;
+      if (!alive.current || blocked.current) return;
       let savedVersion: string;
       try {
       const response = await fetch(`/api/products/${encodeURIComponent(productId)}/attachments`, { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -94,10 +97,10 @@ function Panel({ productId, version, section, onSaved }: Props) {
       }
       complete(savedVersion);
   }
-  return <section className="panel-stack" style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid #dfe4ec' }} aria-label={`${name} 문서 이미지`} aria-busy={busy}>
-    <div><strong>{name} PNG 만들기</strong><p style={{ color: '#64748b', marginTop: 8 }}>저장한 {section === 'label' ? '표시사항을' : '옵션 치수·무게를'} 이미지로 조판합니다. AI 호출 없이 브라우저에서 만들며 미입력 값은 추정하지 않습니다.{section === 'size' ? ` 한 장 최대 ${MAX_SIZE_ROWS}개 포함 옵션.` : ''} 높이 최대 {MAX_DOCUMENT_HEIGHT.toLocaleString('ko-KR')}px.</p></div>
-    <button type="button" className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? '처리 중…' : '저장한 값으로 PNG 미리보기'}</button>
-    <button type="button" className="btn primary" disabled={busy} onClick={() => void generate(true)}>{name} 생성·견적 첨부</button>
+  return <section className="panel-stack" style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid #dfe4ec' }} aria-label={`${name} 문서 이미지`} aria-busy={busy} data-workspace-saving={busy}>
+    <div><strong>{name} PNG 만들기</strong><p style={{ color: '#64748b', marginTop: 8 }}>저장한 {section === 'label' ? '표시사항을' : '직접 작성한 표 또는 옵션 치수·무게를'} 이미지로 조판합니다. 미입력 측정값은 추정하지 않습니다.{section === 'size' ? ` 한 장 최대 ${MAX_SIZE_ROWS}행. 새로 만든 표를 첨부하면 활성 사이즈표 한 장을 교체하며 이전 파일은 보관합니다.` : ''} 높이 최대 {MAX_DOCUMENT_HEIGHT.toLocaleString('ko-KR')}px.</p></div>
+    <button type="button" className="btn ghost" disabled={busy || disabled} onClick={() => void generate()}>{busy ? '처리 중…' : '저장한 값으로 PNG 미리보기'}</button>
+    <button type="button" className="btn primary" disabled={busy || disabled} onClick={() => void generate(true)}>{name} 생성·견적 첨부</button>
     {error && <p role="alert" style={{ color: '#a34410' }}>{error}</p>}
     {message && <p role="status">{message}</p>}
     {stale && <p role="status" style={{ color: '#a34410' }}>상품 자료가 변경되었습니다. 최신 저장값으로 미리보기를 다시 만들어주세요.</p>}
@@ -107,7 +110,7 @@ function Panel({ productId, version, section, onSaved }: Props) {
         <img src={preview.url} alt={`저장값으로 만든 ${name} PNG 미리보기`} width={preview.width} height={preview.height} style={{ display: 'block', width: '100%', height: 'auto' }} />
       </div>
       <small style={{ color: '#64748b' }}>{preview.width} × {preview.height}px · {(preview.blob.size / 1024).toFixed(1)}KB · 검토용</small>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}><a className="btn ghost" href={preview.url} download={`sourceflow-${section}.png`}>PNG 다운로드</a><button type="button" className="btn primary" disabled={busy || (stale && !hasUpload) || Boolean(attachedVersion)} onClick={() => void attach()}>{attachedVersion ? '상품 첨부 완료' : 'PNG 업로드·상품 자료에 추가'}</button></div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}><a className="btn ghost" href={preview.url} download={`sourceflow-${section}.png`}>PNG 다운로드</a><button type="button" className="btn primary" disabled={busy || disabled || (stale && !hasUpload) || Boolean(attachedVersion)} onClick={() => void attach()}>{attachedVersion ? '상품 첨부 완료' : 'PNG 업로드·상품 자료에 추가'}</button></div>
     </>}
   </section>;
 }
