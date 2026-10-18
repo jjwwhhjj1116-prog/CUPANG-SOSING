@@ -143,7 +143,15 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
       }
       const isCategory = JSON.stringify(wire.path) === JSON.stringify(['startPage', 'categoryPath']) && wire.name === undefined;
       if (isCategory && (cell.source !== 'schema' || cell.value !== quotationCategory)) conflict('변경할 수 없는 카테고리 최종값이 원문 분류와 다릅니다.', 'SINGLE_READONLY_CATEGORY');
-      const value = primitive(isCategory ? categoryPath : cell.value, node);
+      // The named hidden-attribute initializer uses null. Its editable text
+      // placeholder is not an explicit user-cleared string or a general nullable
+      // scalar; preserve that distinction only for the exact free-text wire.
+      const hiddenDefaultNull = field.section === 'product' && field.visibility === 'hidden' && ['text', 'textarea'].includes(field.type)
+        && wire.path.length === 2 && wire.path[0] === 'productPage' && wire.path[1] === 'unexposedAttributes'
+        && wire.name !== undefined && Boolean(wire.nameKey && wire.valueKey) && cell.source === 'couplus-default' && cell.value === ''
+        && Array.isArray(node.type) && node.type.length === 2 && node.type.includes('string') && node.type.includes('null')
+        && !Object.hasOwn(node, 'enum') && !Object.hasOwn(node, 'dropdown');
+      const value: ReturnType<typeof primitive> = hiddenDefaultNull ? { value: null } : primitive(isCategory ? categoryPath : cell.value, node);
       if (value.error) issue('TYPE_OR_CONSTRAINT', 'error', value.error, row.optionId, field);
       if (JSON.stringify(wire.path) === JSON.stringify(['imagePage', 'details', 'htmlProductDetailContent']) && cell.value)
         issue('DETAIL_HTML_UNVERIFIED', 'review', '저장한 HTML과 이미지 공개 주소는 별도 검증이 필요합니다.', row.optionId, field);
