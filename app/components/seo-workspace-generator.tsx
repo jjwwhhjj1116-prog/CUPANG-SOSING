@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TranslationJob, TranslationSource, TranslationView } from '@/app/automation/translation';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptionsResponse } from '@/app/product-options';
@@ -15,7 +15,9 @@ import { commitSeoGuidanceSession, initialSeoGuidanceMemo, openSeoGuidanceSessio
   seoGuidanceSessionSourceKey, type SeoGuidanceSession } from '@/app/seo-guidance-session';
 import './seo-workspace.css';
 
-type Props = { productId: string; workspaceOwnerId?: string; version: string; brand: string; active: boolean; beforeGenerate: () => boolean; onSaved: () => void };
+type Props = { productId: string; workspaceOwnerId?: string; version: string; brand: string; active: boolean; beforeGenerate: () => boolean; onSaved: () => void;
+  onProcessingChange?: (busy: boolean, operation: object) => void };
+type ProcessingLease = { operation: object; callback: Props['onProcessingChange'] };
 type Source = { productId: string; productVersion: string; jobId: string; sourceUrl: string; title: string; description: string;
   attributes: {name:string;value:string}[]; requestContext: {categoryId:string;categoryPath:string[];features:string;keywords:string}|null };
 type Basis = { source: TranslationSource; productVersion: string; initialMemo: SeoWorkspaceDraftMemo; sourceIdentity: string;
@@ -26,7 +28,7 @@ const supplierSourceIdentity=(source:TranslationSource)=>JSON.stringify([source.
 export function SeoWorkspaceGenerator(props: Props) {
   return <SeoWorkspaceGeneratorContent key={JSON.stringify([props.workspaceOwnerId??null,props.productId])} {...props}/>;
 }
-function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, brand, active, beforeGenerate, onSaved }: Props) {
+function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, brand, active, beforeGenerate, onSaved, onProcessingChange }: Props) {
   const [basis,setBasis]=useState<Basis|null>(null),[memo,setMemo]=useState<SeoWorkspaceDraftMemo>({brand,features:'',keywords:''});
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const [job,setJob]=useState<TranslationJob|null>(null),[hasRequest,setHasRequest]=useState(false),[closed,setClosed]=useState(false);
@@ -36,16 +38,44 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
   const [compositionTitle,setCompositionTitle]=useState<string|null>(null),[compositionKeywords,setCompositionKeywords]=useState<string|null>(null),[compositionEnabled,setCompositionEnabled]=useState(true);
   const [replaceTitle,setReplaceTitle]=useState(false),[replaceKeywords,setReplaceKeywords]=useState(false);
   const [compositionBusy,setCompositionBusy]=useState(false),compositionBusyRef=useRef(false);
+  const [processing,setProcessing]=useState(false),processingLease=useRef<ProcessingLease|null>(null),processingCallback=useRef(onProcessingChange);
+  const operationContext=useRef<object>({});
+  const compositionCallback=useRef<((value:boolean)=>void)|null>(null);
+  const processingActions=useRef<{start:(operation:object)=>void;finish:(operation?:object)=>void}|null>(null);
   const [guidanceError,setGuidanceError]=useState('');
   const request=useRef<AbortController|null>(null), draftState=useRef<SeoWorkspaceDraftState|null>(null);
   const guidanceSession=useRef<SeoGuidanceSession|null>(null),memoBaseline=useRef<SeoWorkspaceDraftMemo|null>(null);
   const current=useRef({active,version,memo,workspaceOwnerId}),mounted=useRef(true),loaded=useRef<{version:string;sourceIdentity:string;guidanceKey:string}|null>(null);
   const storageKey=`yoofam-seo-workspace:${productId}`;
-  useLayoutEffect(()=>{if(current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId)request.current?.abort();current.current={active,version,memo,workspaceOwnerId};},[active,version,memo,workspaceOwnerId]);
+  function finishProcessing(operation?:object){
+    const lease=processingLease.current;if(!lease||(operation&&lease.operation!==operation))return;
+    processingLease.current=null;if(mounted.current)setProcessing(false);lease.callback?.(false,lease.operation);
+  }
+  function startProcessing(operation:object){
+    if(processingLease.current?.operation===operation)return;
+    finishProcessing();const lease={operation,callback:processingCallback.current};processingLease.current=lease;
+    setProcessing(true);lease.callback?.(true,operation);
+  }
+  useLayoutEffect(()=>{processingActions.current={start:startProcessing,finish:finishProcessing};});
+  useLayoutEffect(()=>{
+    const sourceChanged=current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId;
+    if(sourceChanged||current.current.active!==active){
+      request.current?.abort();request.current=null;operationContext.current={};
+      if(sourceChanged||!compositionBusyRef.current){finishProcessing();compositionBusyRef.current=false;setCompositionBusy(false);}
+      setBusy(false);
+    }
+    current.current={active,version,memo,workspaceOwnerId};
+  },[active,version,memo,workspaceOwnerId]);
+  useLayoutEffect(()=>{
+    const lease=processingLease.current;
+    if(processingCallback.current===onProcessingChange)return;
+    processingCallback.current=onProcessingChange;
+    if(lease){lease.callback?.(false,lease.operation);if(processingLease.current===lease){lease.callback=onProcessingChange;lease.callback?.(true,lease.operation);}}
+  },[onProcessingChange]);
   useLayoutEffect(()=>{
     mounted.current=true;
     if(loaded.current&&workspaceOwnerId){guidanceSession.current=openSeoGuidanceSession(workspaceOwnerId,productId,loaded.current.guidanceKey);setBasis(previous=>previous?{...previous}:previous);}
-    return()=>{mounted.current=false;request.current?.abort();releaseSeoGuidanceSession(guidanceSession.current);guidanceSession.current=null;};
+    return()=>{mounted.current=false;request.current?.abort();operationContext.current={};finishProcessing();releaseSeoGuidanceSession(guidanceSession.current);guidanceSession.current=null;};
   },[workspaceOwnerId,productId]);
   useEffect(()=>{
     if(!active||loaded.current?.version===version)return;
@@ -105,10 +135,15 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
     }catch(cause){setGuidanceError(cause instanceof Error?cause.message:'SEO 참고 입력을 확인해주세요. 입력 원문은 유지됩니다.');}
   }
   async function generate(readOnly=false){
-    if(!basis||basis.productVersion!==version||current.current.version!==version||recoveryInvalid||request.current||compositionBusyRef.current||!current.current.active||!beforeGenerate())return;
+    if(!basis||basis.productVersion!==version||!mounted.current||current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId||recoveryInvalid||request.current||compositionBusyRef.current||!current.current.active)return;
+    if(readOnly&&!draftState.current)return;
+    if(!readOnly&&!draftState.current&&!current.current.memo.keywords.trim())return;
+    if(!beforeGenerate())return;
+    const operation={},context=operationContext.current;
     const controller=new AbortController();request.current=controller;setBusy(true);setError('');setMessage('');
+    if(!readOnly)startProcessing(operation);
     const input=structuredClone(current.current.memo),inputKey=JSON.stringify(input);
-    const same=()=>mounted.current&&current.current.active&&current.current.version===version&&JSON.stringify(current.current.memo)===inputKey;
+    const same=()=>mounted.current&&current.current.active&&operationContext.current===context&&current.current.version===version&&current.current.workspaceOwnerId===workspaceOwnerId&&JSON.stringify(current.current.memo)===inputKey;
     try{
       const state=draftState.current??createSeoWorkspaceDraftState({productId,productVersion:version,contentRevision:basis.contentRevision,
         source:basis.source,memo:input,configuration:basis.configuration});
@@ -126,7 +161,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
         &&!result.job.startedAt&&!result.job.result&&!result.job.error;
       setJob(result.job);setClosed(result.closed||preparedOnly);setMessage(result.message);
     }catch(cause){if(!controller.signal.aborted&&same())setError(cause instanceof Error?cause.message:'초안 작성 상태를 확인하지 못했습니다.');}
-    finally{if(request.current===controller){request.current=null;if(mounted.current)setBusy(false);}}
+    finally{finishProcessing(operation);if(request.current===controller){request.current=null;if(mounted.current)setBusy(false);}}
   }
   const google=basis?.configuration.model==='google-translate-gtx';
   const titleExample=[memo.brand.trim(),memo.features.trim()||'상품 특징',memo.keywords.trim()||'타겟 키워드'].filter(Boolean).join(' ');
@@ -139,15 +174,30 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
   catch(cause){compositionError=cause instanceof Error?cause.message:'SEO 구성안을 확인해주세요.';}
   const compositionDirty=!!compositionInput&&(compositionTitle!==null||compositionKeywords!==null||!compositionEnabled||replaceTitle||replaceKeywords);
   const editComposition=(edit:()=>void)=>{if(mounted.current&&current.current.active&&current.current.version===version&&!request.current&&!busy&&!compositionBusyRef.current)edit();};
+  const compositionKey=JSON.stringify([workspaceOwnerId??null,productId,version,job?.id??null,compositionEnabled?composition??null:null]);
+  const compositionPublisher=useMemo(()=>{
+    const operation={source:compositionKey},callback=(value:boolean)=>{
+      if(value){
+        if(!mounted.current||!current.current.active||current.current.version!==version||current.current.workspaceOwnerId!==workspaceOwnerId
+          ||compositionCallback.current!==callback||request.current)return;
+        compositionBusyRef.current=true;setCompositionBusy(true);processingActions.current?.start(operation);
+      }else if(processingLease.current?.operation===operation){
+        compositionBusyRef.current=false;if(mounted.current)setCompositionBusy(false);processingActions.current?.finish(operation);
+      }
+    };
+    return callback;
+  },[compositionKey,version,workspaceOwnerId]);
+  useLayoutEffect(()=>{compositionCallback.current=compositionPublisher;},[compositionPublisher]);
   const renderGuidanceSession=guidanceSession.current;
   return <section className="seo-generation-card" aria-label="SEO 자동 작성" data-workspace-saving={busy||compositionBusy} data-workspace-dirty={memoDirty||compositionDirty} data-seo-generation-input data-quotation-source-step="SEO">
     <h3>{!basis?'초안 자동 작성':google?'한국어 초안 자동 작성':'AI 자동 생성'}</h3>
-    <div className="seo-generation-body">
+    {processing&&<p role="status" data-seo-processing>상품정보로 SEO 초안을 처리하고 있습니다…</p>}
+    <div className="seo-generation-body" hidden={processing} inert={processing}>
       <p>수집한 상품정보로 초안을 작성합니다. 결과를 확인한 뒤 적용하고 수정해주세요.</p>
       <div className="seo-generation-inputs">
         <label>브랜드<input aria-label="SEO 브랜드" value={memo.brand} maxLength={100} disabled={busy||hasRequest} onChange={event=>edit('brand',event.target.value)} onBlur={event=>blur('brand',event.target.value,renderGuidanceSession)}/><small>기본설정 브랜드를 불러옵니다. 상품명 예시의 접두사입니다.</small></label>
         <label>상품 특징<input aria-label="SEO 상품 특징" value={memo.features} maxLength={2000} disabled={busy||hasRequest} placeholder="상품 특징을 입력하세요" onChange={event=>edit('features',event.target.value)} onBlur={event=>blur('features',event.target.value,renderGuidanceSession)}/><small>원문에서 확인되는 주요 특징을 입력하세요.</small></label>
-        <label>타겟 키워드<input aria-label="SEO 타겟 키워드" value={memo.keywords} maxLength={2000} disabled={busy||hasRequest} placeholder="타겟 키워드" onChange={event=>edit('keywords',event.target.value)} onBlur={event=>blur('keywords',event.target.value,renderGuidanceSession)}/><small>상품과 관련된 검색어를 입력하세요.</small></label>
+        <label>타겟 키워드 *<input aria-label="SEO 타겟 키워드" aria-required="true" value={memo.keywords} maxLength={2000} disabled={busy||hasRequest} placeholder="타겟 키워드" onChange={event=>edit('keywords',event.target.value)} onBlur={event=>blur('keywords',event.target.value,renderGuidanceSession)}/><small>상품과 관련된 검색어를 입력하세요.</small></label>
       </div>
       <div className="seo-title-example"><strong>생성될 상품명 예시:</strong> {titleExample}</div>
       {google&&<small>무료 Google 번역으로 원문을 한국어로 옮긴 뒤 브랜드·짧은 특징·타겟을 반영한 상품명과 검색태그 구성안을 확인하고 수정합니다.</small>}
@@ -158,7 +208,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
       {guidanceError&&<p role="alert">{guidanceError}</p>}
       {error&&(!basis||basis.productVersion!==version)&&<button className="btn ghost" type="button" disabled={busy} onClick={()=>setAttempt(value=>value+1)}>수집 원문 다시 조회</button>}
       {basis&&!basis.configuration.configured&&<p role="alert">{basis.configuration.issues.join(' ')}</p>}
-      <div className="seo-generation-actions"><button className="btn ghost" type="button" disabled={busy||compositionBusy||recoveryInvalid||!basis?.configuration.configured||basis.productVersion!==version} onClick={()=>void generate()}>{hasRequest&&!job?'같은 초안 요청 확인':!basis?'초안 작성':google?'한국어 초안 자동 작성':'AI로 자동 생성'}</button>
+      <div className="seo-generation-actions"><button className="btn ghost" type="button" disabled={busy||compositionBusy||recoveryInvalid||!basis?.configuration.configured||basis.productVersion!==version||(!hasRequest&&!memo.keywords.trim())} onClick={()=>void generate()}>{hasRequest&&!job?'같은 초안 요청 확인':!basis?'초안 작성':google?'한국어 초안 자동 작성':'AI로 자동 생성'}</button>
         {hasRequest&&<button className="btn ghost" type="button" disabled={busy||compositionBusy} onClick={()=>void generate(true)}>초안 상태 조회</button>}
         {hasRequest&&closed&&<button className="btn ghost" type="button" disabled={busy||compositionBusy} onClick={()=>{if(!mounted.current||current.current.version!==version||!current.current.active||request.current||compositionBusyRef.current)return;if(basis&&draftState.current&&supplierSourceIdentity(draftState.current.source)!==basis.sourceIdentity)setMemo(basis.initialMemo);draftState.current=null;setHasRequest(false);setClosed(false);setJob(null);setConfirmAi(false);setCompositionTitle(null);setCompositionKeywords(null);setCompositionEnabled(true);setReplaceTitle(false);setReplaceKeywords(false);setMessage('새 요청의 입력을 준비했습니다. 작성 버튼을 누르면 새 초안을 요청합니다.');try{sessionStorage.removeItem(storageKey);}catch{}}}>새 초안 입력</button>}
       </div>
@@ -175,7 +225,7 @@ function SeoWorkspaceGeneratorContent({ productId, workspaceOwnerId, version, br
           {!!omittedTags.length&&<small>타겟을 우선 반영하여 전체 한도에 들어가지 않는 번역 상품명 검색어는 제외합니다: {omittedTags.join(', ')}</small>}
         </fieldset>}
         {!!job.result!.draft.warnings.length&&<ul>{job.result!.draft.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>}
-        <TranslationIntegratedPreview productId={productId} version={version} jobId={job.id} disabled={busy||!active||(compositionEnabled&&!!compositionError)} seoComposition={compositionEnabled?composition:undefined} onBusyChange={value=>{compositionBusyRef.current=value;if(mounted.current)setCompositionBusy(value);}} beforeApply={beforeGenerate} onSaved={onSaved}/>
+        <TranslationIntegratedPreview productId={productId} version={version} jobId={job.id} disabled={busy||!active||(compositionEnabled&&!!compositionError)} seoComposition={compositionEnabled?composition:undefined} onBusyChange={compositionPublisher} beforeApply={beforeGenerate} onSaved={onSaved}/>
       </div>}
     </div>
   </section>;

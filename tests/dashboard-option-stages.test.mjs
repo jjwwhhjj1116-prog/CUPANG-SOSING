@@ -33,6 +33,7 @@ function harness(initial = {}) {
     useRef(value) { const slot = active.index++; return active.slots[slot] ?? (active.slots[slot] = { current: value }); },
     useCallback(fn, deps) { const slot = active.index++, old = active.slots[slot]; if (!old || deps.some((value, i) => !Object.is(value, old.deps[i]))) active.slots[slot] = { fn, deps }; return active.slots[slot].fn; },
     useMemo(fn) { return fn(); },
+    useLayoutEffect(fn,deps) { hooks.useEffect(fn,deps); },
     useEffect(fn, deps) {
       const instance = active, slot = instance.index++, old = instance.slots[slot];
       if (!old || !deps || deps.some((value, i) => !Object.is(value, old.deps[i]))) {

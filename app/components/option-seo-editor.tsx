@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { applyQuotationChanges, type QuotationChange, type QuotationFieldsView } from '@/app/quotation-schema';
 import { optionSeoChanges, optionSeoDraftIssues, optionSeoValue, quotationSeoTargets, verifyOptionSeoRefresh, type OptionSeoDraft, type OptionSeoInput } from '@/app/quotation-seo-targets';
 
-type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; onSaved?: () => void; onCommonDescription?: () => void };
+type Props = { productId: string; optionId: string; version: string; profileId?: string; refreshToken?: string; disabled?: boolean; onSaved?: () => void; onCommonDescription?: () => void };
 const fields = [['title', '상품명', 100], ['searchTags', '검색태그', 150]] as const;
 function seoInputs(view: QuotationFieldsView, optionId: string, draft: OptionSeoDraft) {
   const targets = quotationSeoTargets(view.resolved.schema.fields);
@@ -13,11 +13,13 @@ function seoInputs(view: QuotationFieldsView, optionId: string, draft: OptionSeo
 function seoLengthIssues(inputs: ReturnType<typeof seoInputs>) {
   return inputs.flatMap(({ label, value, maxLength }) => value.length > maxLength ? [`${label}: ${maxLength}자 제한을 초과했습니다. 입력을 검토해주세요.`] : []);
 }
-export function OptionSeoEditor({ productId, optionId, version, profileId, refreshToken, onSaved, onCommonDescription }: Props) {
+export function OptionSeoEditor({ productId, optionId, version, profileId, refreshToken, disabled = false, onSaved, onCommonDescription }: Props) {
   const endpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
   const currentScope = useRef(scope);
   const currentSource = useRef(sourceKey);
+  const liveDisabled = useRef(disabled);
+  useLayoutEffect(() => { liveDisabled.current = disabled; }, [disabled]);
   const request = useRef<AbortController | null>(null);
   const mounted = useRef(true), pendingSave = useRef<{scope:string;before:QuotationFieldsView;changes:QuotationChange[];acknowledged?:QuotationFieldsView}|null>(null);
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: QuotationFieldsView } | null>(null);
@@ -103,7 +105,7 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, sourceKey]);
   function edit(input: OptionSeoInput, value: string | null) {
-    if (!view || latestSaved.current?.view!==view || pendingSave.current?.scope===scope || request.current || !current()) return;
+    if (liveDisabled.current || !view || latestSaved.current?.view!==view || pendingSave.current?.scope===scope || request.current || !current()) return;
     latestDraft.current = { scope, values: { ...(latestDraft.current.scope === scope ? latestDraft.current.values : {}), [input]: value } };
     setPending(latestDraft.current); setMessage('');
   }
@@ -111,7 +113,7 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
   if (view) { try { inputs = seoInputs(view, optionId, draft); issues = [...optionSeoDraftIssues(view, optionId, draft), ...seoLengthIssues(inputs)]; } catch (cause) { bindingError = cause instanceof Error ? cause.message : 'SEO 연결 확인 필요'; } }
   async function save() {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {};
-    if (!base || base.scope !== scope || !Object.keys(editing).length || request.current || !current()) return;
+    if (liveDisabled.current || !base || base.scope !== scope || !Object.keys(editing).length || request.current || !current()) return;
     if(pendingSave.current?.scope===scope){await load(true);return;}
     if (base.sourceKey !== sourceKey) { setError('상품 저장 상태가 변경됐습니다. 입력을 유지하고 최신 SEO 자료를 조회한 뒤 저장해주세요.'); return; }
     let changes; try { const lengthIssues = seoLengthIssues(seoInputs(base.view, optionId, editing)); if (lengthIssues.length) throw Error(lengthIssues.join(' ')); changes = optionSeoChanges(base.view, optionId, editing); } catch (cause) { setError(cause instanceof Error ? cause.message : 'SEO 입력을 확인해주세요.'); return; }
@@ -130,18 +132,26 @@ export function OptionSeoEditor({ productId, optionId, version, profileId, refre
     } catch (cause) { if (!controller.signal.aborted && current()){if(response&&!response.ok&&response.status<500){pendingSave.current=null;setUncertain(false);}setError(cause instanceof Error ? cause.message : 'SEO 저장 실패');} }
     finally { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   }
+  function read(keepDraft = false) {
+    if (liveDisabled.current || request.current || !current()) return;
+    void load(keepDraft);
+  }
+  function commonDescription() {
+    if (liveDisabled.current || request.current || !current()) return;
+    onCommonDescription?.();
+  }
   const row = view?.resolved.rows.find(row => row.optionId === optionId);
   return <section className="panel-stack" aria-label="선택 옵션 SEO 편집" data-quotation-source-step="SEO" data-workspace-dirty={dirty} data-workspace-saving={busy}>
     <h3>선택 옵션 SEO</h3><p>{row?.optionLabel || optionId} · {row?.included === false ? '견적 제외 옵션' : '선택한 옵션'}</p>
     <p>상품명과 검색태그는 이 옵션에만 저장합니다. 다른 옵션과 상품 공통 SEO는 유지됩니다. 상세 설명은 상품 공통 자료이며 공통 SEO 편집에서 수정합니다.</p>
-    {onCommonDescription && <button type="button" className="btn ghost" disabled={busy} onClick={onCommonDescription}>상품 공통 SEO·설명 편집</button>}
+    {onCommonDescription && <button type="button" className="btn ghost" disabled={disabled || busy} onClick={commonDescription}>상품 공통 SEO·설명 편집</button>}
     {busy && <p role="status">옵션 SEO 처리 중…</p>}{error && <p role="alert">{error}</p>}{bindingError && <p role="alert">{bindingError}</p>}{message && <p role="status">{message}</p>}
     {dirty && saved?.sourceKey !== sourceKey && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
-    {inputs.map(({ input, label, value, maxLength }) => <label className="field" key={input}><span>{label}</span><textarea aria-label={`선택 옵션 ${label}`} value={value} maxLength={maxLength} disabled={busy || uncertain || !!bindingError} onChange={event => edit(input, event.target.value)} /><small aria-live="polite" className={value.length > maxLength ? 'seo-input-count exceeded' : 'seo-input-count'}>{value.length}/{maxLength}자{value.length > maxLength ? ` · 기존 입력을 유지했습니다. ${label} 입력을 검토해주세요.` : ''}</small><button type="button" className="btn ghost" disabled={busy || uncertain || !!bindingError} onClick={() => edit(input, null)}>{label} 공통·자동값 복원</button></label>)}
+    {inputs.map(({ input, label, value, maxLength }) => <label className="field" key={input}><span>{label}</span><textarea aria-label={`선택 옵션 ${label}`} value={value} maxLength={maxLength} disabled={disabled || busy || uncertain || !!bindingError} onChange={event => edit(input, event.target.value)} /><small aria-live="polite" className={value.length > maxLength ? 'seo-input-count exceeded' : 'seo-input-count'}>{value.length}/{maxLength}자{value.length > maxLength ? ` · 기존 입력을 유지했습니다. ${label} 입력을 검토해주세요.` : ''}</small><button type="button" className="btn ghost" disabled={disabled || busy || uncertain || !!bindingError} onClick={() => edit(input, null)}>{label} 공통·자동값 복원</button></label>)}
     <small>검색태그는 쉼표로 구분합니다. 공란도 직접 수정값으로 저장하며, 필수 상품명을 비우면 최종 견적서에서 수정이 필요합니다.</small>
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
-    <button type="button" className="btn primary" disabled={!view || busy || !dirty || !!bindingError || !!issues.length} onClick={() => void save()}>{uncertain?'SEO 저장 결과 확인':'선택 옵션 SEO 저장'}</button>
-    {dirty && <button type="button" className="btn ghost" disabled={busy} onClick={() => void load(true)}>입력 유지·최신 SEO 조회</button>}
-    <button type="button" className="btn ghost" disabled={busy} onClick={() => void load()}>{dirty ? '입력 취소·저장 SEO 다시 조회' : '저장 SEO 다시 조회'}</button>
+    <button type="button" className="btn primary" disabled={disabled || !view || busy || !dirty || !!bindingError || !!issues.length} onClick={() => void save()}>{uncertain?'SEO 저장 결과 확인':'선택 옵션 SEO 저장'}</button>
+    {dirty && <button type="button" className="btn ghost" disabled={disabled || busy} onClick={() => read(true)}>입력 유지·최신 SEO 조회</button>}
+    <button type="button" className="btn ghost" disabled={disabled || busy} onClick={() => read()}>{dirty ? '입력 취소·저장 SEO 다시 조회' : '저장 SEO 다시 조회'}</button>
   </section>;
 }

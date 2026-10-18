@@ -108,6 +108,7 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
     if (!shownComparison || !current() || live.current.disabled || request.current || attempt.current || savedRef.current?.view !== shownComparison.before) return;
     store(shownComparison.latest); setComparison(null); setConflict(false); setError(''); setMessage('입력을 유지하고 비교한 최신 저장본을 기준으로 준비했습니다. 저장 버튼을 눌러야 반영됩니다.');
   }
+  function reload(keepDraft:boolean){if(!current()||live.current.disabled||request.current)return;void load(keepDraft,true);}
   let issues: string[] = [];
   if (view && dirty) try { seoWorkspaceInput(view, draft); } catch (cause) { issues = [cause instanceof Error ? cause.message : 'SEO 입력을 확인해주세요.']; }
   const seoValue = (key: 'title' | 'keywords' | 'description') => Object.hasOwn(draft.seo, key) ? draft.seo[key]! : key === 'keywords' ? view?.content.seo.keywords.value.join(', ') ?? '' : view?.content.seo[key].value ?? '';
@@ -146,8 +147,8 @@ export function SeoWorkspaceEditor({ productId, version, focusedOptionId, active
       {Object.keys(draft.optionNames).map(id => <tr key={id}><th>{shownComparison.latest.options.rows.find(row => row.id === id)?.originalName || id}</th><td>{shownComparison.latest.options.rows.find(row => row.id === id)?.translatedName || '(공란)'}</td><td>{draft.optionNames[id] || '(공란)'}</td></tr>)}
     </tbody></table><button type="button" className="btn ghost" disabled={locked} onClick={reviewLatest}>입력 유지·비교한 최신 기준 사용</button></section>}
     <div className="quote-actions"><button type="button" className="btn primary" disabled={!view || disabled || busy || !dirty || !uncertain && (!fresh || conflict || !!issues.length)} onClick={() => void save()}>{busy ? busyAction === 'save' ? 'SEO 설정 저장 중…' : 'SEO 저장본 조회 중…' : uncertain ? 'SEO 저장 결과 확인' : 'SEO 설정 저장'}</button>
-      {dirty && <button type="button" className="btn ghost" disabled={busy} onClick={() => void load(true, true)}>입력 유지·최신 SEO 조회</button>}
-      <button type="button" className="btn ghost" disabled={busy} onClick={() => void load(false, true)}>{dirty ? '입력 취소·저장본 다시 조회' : 'SEO 저장본 다시 조회'}</button></div>
+      {dirty && <button type="button" className="btn ghost" disabled={disabled||busy} onClick={() => reload(true)}>입력 유지·최신 SEO 조회</button>}
+      <button type="button" className="btn ghost" disabled={disabled||busy} onClick={() => reload(false)}>{dirty ? '입력 취소·저장본 다시 조회' : 'SEO 저장본 다시 조회'}</button></div>
     <small>수정한 상품명·검색태그·한국어 옵션명을 함께 저장합니다. 공란도 직접 수정값으로 저장합니다.</small>
   </section>;
 }

@@ -9,6 +9,7 @@ const version='2026-10-10T00:00:00.000Z',next='2026-10-10T00:00:00.001Z';
 function ui({badAck=false}={}){
  const slots=[],effects=[],cache=new Map(),calls=[];let cursor=0,saved=0;
  const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(initial){const i=cursor++;return slots[i]??(slots[i]={current:initial});},useCallback:fn=>fn,useMemo:fn=>fn(),useEffect(fn,deps){const i=cursor++;if(!slots[i]||JSON.stringify(slots[i].deps)!==JSON.stringify(deps)){const old=slots[i];slots[i]={deps};effects.push(()=>{old?.cleanup?.();slots[i].cleanup=fn();});}}};
+ react.useLayoutEffect=react.useEffect;
  function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
  {exports,Error,AbortController,structuredClone,fetch:async(url,init)=>{calls.push({url,init});if(!init?.method)return Response.json(base);
   assert.ok(url.endsWith('/option-names'));const value=JSON.parse(init.body);const changed=names.applyOptionNameChanges(base.options,value.changes,next),body={...base,options:changed,productVersion:next};

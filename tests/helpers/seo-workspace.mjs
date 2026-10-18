@@ -3,8 +3,11 @@ import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { webcrypto } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { memoryDatabase, runtimeDDL } from '../../scripts/check-db-schema.mjs';
 import { providedOptionFixture } from './provided-option-quotation.mjs';
+
+const nativeRequire = createRequire(import.meta.url);
 
 /** Real app handlers and D1 batch SQL against temporary SQLite. No networking. */
 export function seoWorkspaceHarness({ companyCode = 'A01464742', owner = 'owner', authenticated = true } = {}) {
@@ -41,6 +44,7 @@ export function seoWorkspaceHarness({ companyCode = 'A01464742', owner = 'owner'
       { exports, Response, Request, Headers, TextDecoder, TextEncoder, Uint8Array, Date, Error, RangeError, URL, structuredClone, AbortController, AbortSignal, crypto: webcrypto, process: { env: { NODE_ENV: 'production' } },
         fetch() { throw Error('External requests are forbidden.'); }, require(name) {
           if (name in deps) return deps[name];
+          if (name === 'parse5') return nativeRequire(name);
           if (name.startsWith('@/')) return load(name.slice(2) + '.ts');
           if (name.startsWith('.')) return load(path.posix.join(path.posix.dirname(file), name) + '.ts');
           throw Error(name);
