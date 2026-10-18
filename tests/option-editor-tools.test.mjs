@@ -144,16 +144,28 @@ test('bundle application recalculates the selected existing row with the stage-t
  const applied=tools.applyOptionBulk(rows,preview,exact);assert.equal(applied[0].id,'a');assert.equal(applied[1].id,'b');
  const again=tools.previewOptionBulk(applied,['a'],{type:'applyBundle',value:5},exact);assert.equal(again.rows[0].translatedName,'검정 (5개묶음)');
  const unchanged=tools.previewOptionBulk(rows,['a'],{type:'applyBundle',value:2},exact);assert.equal(unchanged.rows[0].packagingConfirmed,true);
+ const single=tools.previewOptionBulk(applied,['a'],{type:'applyBundle',value:1},exact);assert.equal(single.rows[0].translatedName,'검정');assert.equal(single.rows[0].unitsPerPack,1);assert.equal(single.changes[0].afterPrice,4050);assert.equal(single.rows[0].packagingConfirmed,false);
+ for(const key of ['id','supplierSku','originalName','unitCostCny','stock','imageKey','included','widthCm','packagedWeightG'])assert.equal(single.rows[0][key],rows[0][key],key);
 });
 
 test('bundle names preserve explicit blanks and reject overflow without truncating names or facts',()=>{
- for(const translatedName of ['', '   ']){
-  const rows=[row('a',{translatedName})],preview=tools.previewOptionBulk(rows,['a'],{type:'applyBundle',value:1},policy);
+ for(const translatedName of ['', '   '])for(const value of[1,2,5]){
+  const rows=[row('a',{translatedName})],preview=tools.previewOptionBulk(rows,['a'],{type:'applyBundle',value},policy);
   assert.equal(preview.rows[0].translatedName,translatedName);assert.equal(preview.rows[0].originalName,rows[0].originalName);
  }
  const rows=[row('a',{translatedName:'가'.repeat(500)})],before=JSON.stringify(rows);
  assert.throws(()=>tools.previewOptionBulk(rows,['a'],{type:'applyBundle',value:2},policy),/500자/);assert.equal(JSON.stringify(rows),before);
  for(const value of [0,1.5,1000001,NaN])assert.throws(()=>tools.previewOptionBulk([row('a')],['a'],{type:'applyBundle',value},policy));
+});
+
+test('applying quantity one removes only an existing trailing bundle suffix and never invents a single suffix',()=>{
+ const id='69600000-0000-4000-8000-000000000001';
+ for(const [translatedName,expected] of[['검정 (5개묶음)','검정'],['검정 (1개묶음)','검정'],['검정 (5개묶음)   ','검정'],['검정','검정'],[' 검정 ',' 검정 '],['검정 (별도 구성)','검정 (별도 구성)'],['',''],['   ','   '],['가'.repeat(500),'가'.repeat(500)]]){
+  const rows=[row(id,{translatedName,unitsPerPack:3,stock:29,packagedWeightG:220,packagedWidthMm:100,packagedLengthMm:90,packagedHeightMm:30,packagingConfirmed:true}),row('unselected',{translatedName:'수동 공란 보존',included:false})],before=JSON.stringify(rows);
+  const preview=tools.previewOptionBulk(rows,[id],{type:'applyBundle',value:1},policy),next=tools.applyOptionBulk(rows,preview,policy);assert.equal(next[0].translatedName,expected);assert.equal(next[0].unitsPerPack,1);assert.equal(next[0].packagingConfirmed,false);assert.equal(JSON.stringify(next[1]),JSON.stringify(rows[1]));assert.equal(JSON.stringify(rows),before);
+  for(const key of['id','supplierSku','originalName','stock','unitCostCny','widthCm','lengthCm','heightCm','weightKg','imageKey','included','packagedWeightG','packagedWidthMm','packagedLengthMm','packagedHeightMm'])assert.equal(next[0][key],rows[0][key],key);
+ }
+ const existing=[row(id,{translatedName:'단품',unitsPerPack:1,packagingConfirmed:true})];assert.equal(tools.previewOptionBulk(existing,[id],{type:'applyBundle',value:1},policy).rows[0].packagingConfirmed,true);
 });
 
 test('active integrated-rate and recalculation changes invalidate bulk previews without altering drafts',()=>{

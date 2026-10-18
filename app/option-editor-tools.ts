@@ -54,8 +54,9 @@ export function previewOptionBulk(rows: readonly OptionInput[], selectedIds: rea
       return [{ ...row, unitsPerPack, ...(unitsPerPack !== row.unitsPerPack ? { packagingConfirmed: false } : {}) }];
     }
     if (action.type === 'applyBundle') {
+      const baseName = row.translatedName.replace(/\s*\(\d+개묶음\)\s*$/, '');
       const translatedName = row.translatedName.trim()
-        ? `${row.translatedName.replace(/\s*\(\d+개묶음\)\s*$/, '')} (${action.value}개묶음)` : row.translatedName;
+        ? action.value === 1 ? baseName : `${baseName} (${action.value}개묶음)` : row.translatedName;
       if (translatedName.length > 500) throw new Error('번들 표시를 포함한 옵션 한글명은 500자 이하여야 합니다. 한글명을 줄여주세요.');
       return [{ ...row, translatedName, unitsPerPack: action.value,
         ...(action.value !== row.unitsPerPack ? { packagingConfirmed: false } : {}) }];

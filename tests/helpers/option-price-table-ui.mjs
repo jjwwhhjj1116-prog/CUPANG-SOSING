@@ -17,7 +17,7 @@ const version = '2026-10-14T02:00:00.000Z';
 
 /** Actual OptionsEditor + price table and options API/SQLite. The source URL is
  * inert synthetic data; all external requests and unrelated components fail shut. */
-export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false } = {}) {
+export async function optionPriceTableUI(company = priceTableCompanies[0], { count = 73, focusedOptionId, integrated=false,detail=false,fileStorage } = {}) {
   const sqlite = memoryDatabase(); for (const statement of runtimeDDL()) sqlite.exec(statement.sql);
   const owner = 'price-owner-' + company.code, productId = 'price-product-' + company.code;
   const apiCalls = [], writes = [], cache = new Map(), instances = new Map(), effects = [], layouts=[], focused = [],controls={};
@@ -27,7 +27,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     async first() { return statement.execute()[0] ?? null; }, async run() { return sqlite.prepare(sql).run(...args); } }; return statement; },
     async batch(statements) { sqlite.exec('BEGIN'); try { const results = statements.map(statement => ({ results: statement.execute() })); sqlite.exec('COMMIT'); return results; }
       catch (error) { sqlite.exec('ROLLBACK'); throw error; } } };
-  const objects = new Map(), bindings = { DB: db, FILES: { head: async key => objects.has(key) ? { size: objects.get(key).length, httpMetadata: { contentType: 'image/png' } } : null } };
+  const objects = new Map(), bindings = { DB: db, FILES: fileStorage ?? { head: async key => objects.has(key) ? { size: objects.get(key).length, httpMetadata: { contentType: 'image/png' } } : null } };
   const deps = { 'cloudflare:workers': { env: bindings }, 'next/server': { NextResponse: Response },
     '@/app/chatgpt-auth': { getWorkspaceOwnerId: async () => owner, getChatGPTUser: async () => ({ verifiedAccess: true, userId: owner,
       membership: { status: 'approved', companyCode: company.code, companyName: company.name } }) },
@@ -44,7 +44,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     useLayoutEffect(effect,deps){const index=cursor++,instance=currentInstance,before=instance.slots[index];if(!before||deps.some((value,i)=>!Object.is(value,before.deps[i]))){instance.slots[index]={deps,cleanup:before?.cleanup};layouts.push(()=>{instance.slots[index].cleanup?.();instance.slots[index].cleanup=effect();});}},
   };
   async function request(url, init = {}) {
-    const parsed=new URL(url,'https://app.test'),kind=parsed.pathname.split('/').at(-1);assert.ok(['options',...(integrated?['quotation-fields','pricing','option-bundles']:[])].includes(kind));assert.equal(parsed.pathname,'/api/products/'+productId+'/'+kind);
+    const parsed=new URL(url,'https://app.test'),kind=parsed.pathname.split('/').at(-1);assert.ok(['options',...(integrated?['quotation-fields','pricing','option-bundles']:[]),...(fileStorage?['content','quotation']:[])].includes(kind));assert.equal(parsed.pathname,'/api/products/'+productId+'/'+kind);
     const method = init.method ?? 'GET'; apiCalls.push({ url, method,signal:init.signal });
     if (method !== 'GET') { const body = JSON.parse(init.body); writes.push({...body,method,kind}); if (heldSave) { heldSave.arrived(); await heldSave.promise; heldSave = null; } }
     await controls.before?.(url,init);
@@ -58,7 +58,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     vm.runInNewContext(ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText,
     { exports, Error, RangeError, Date, URL, URLSearchParams, Response, Request, Headers, Blob, TextEncoder, TextDecoder,
-      Uint8Array, DataView, AbortController, structuredClone, crypto: webcrypto, process: { env: { NODE_ENV: 'production' } },
+      Uint8Array, DataView, AbortController, structuredClone, crypto: webcrypto, process: { env: { NODE_ENV: 'production' } },...(fileStorage?{File,FormData,CompressionStream,DecompressionStream}:{}),
       fetch: request, require(name) {
         if (name in deps) return deps[name]; if (name === 'react') return hooks;
         if (name === 'react/jsx-runtime') return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };
