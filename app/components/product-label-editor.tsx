@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react';
 import { productLabelChanges, productLabelDraftIssues, productLabelDefinitions, productLabelStructure, productLabelPlan, productLabelValue, verifyProductLabelsView, verifyProductLabelRefresh, verifyProductLabelSave, type ProductLabelDraft, type ProductLabelKey, type ProductLabelsView, type ProductLabelStructure } from '@/app/product-label';
 import { renderDocument } from '@/app/document-image-render';
 import { attachProductLabel } from '@/app/product-label-attachment';
@@ -10,15 +10,17 @@ import { quotationImageKeys } from '@/app/quotation-image-targets';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 import { verifyProductLabelDraftResult } from '@/app/product-label-draft';
 
-type Props = { productId: string; optionId: string | null; version: string; profileId?: string; refreshToken?: string; disabled?: boolean; onSaved?: () => void;
+type Props = { productId: string; optionId: string | null; version: string; profileId?: string; refreshToken?: string; disabled?: boolean; active?: boolean; onSaved?: () => void;
   onTranslate?: (key: string, role: 'label', language: 'zh' | 'en', target: FreeImageQuotationRequest, intent?: 'manual') => void };
 type Preview = { scope: string; sourceKey: string; signature: string; view: ProductLabelsView; url: string; rendered: { blob: Blob; width: number; height: number } };
 type LabelDraft = { scope: string; values: ProductLabelDraft; structure?: ProductLabelStructure };
 type GeneratedReview = { scope: string; sourceKey: string; before: ProductLabelDraft; values: ProductLabelDraft; warnings: string[] };
 const hasDraft = (draft: LabelDraft) => Object.keys(draft.values).length > 0 || draft.structure !== undefined;
 const unchanged = (before: ProductLabelsView, after: ProductLabelsView) => before.productId === after.productId && before.revision === after.revision && before.inputFingerprint === after.inputFingerprint && before.productVersion === after.productVersion;
+const labelDragMime = 'application/x-yoofam-product-label-row';
+type LabelDrag = { id: ProductLabelKey; nonce: string; token: object; view: ProductLabelsView; draft: LabelDraft };
 
-export function ProductLabelEditor({ productId, optionId, version, profileId, refreshToken, disabled = false, onSaved, onTranslate }: Props) {
+export function ProductLabelEditor({ productId, optionId, version, profileId, refreshToken, disabled = false, active = true, onSaved, onTranslate }: Props) {
   const query = profileId ? `?profileId=${encodeURIComponent(profileId)}` : '';
   const endpoint = `/api/products/${encodeURIComponent(productId)}/product-labels${query}`, quotationEndpoint = `/api/products/${encodeURIComponent(productId)}/quotation-fields${query}`;
   const scope = JSON.stringify([endpoint, optionId]), sourceKey = JSON.stringify([scope, version, refreshToken]);
@@ -30,6 +32,10 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   const uploads = useRef(new Map<string, ProductLabelUploadCache>());
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [referencesBusy,setReferencesBusy]=useState(false),referenceBusy=useRef(false);
+  const [referencesDirty,setReferencesDirty]=useState(false),referenceDirty=useRef(false);
+  const [dragging,setDragging]=useState<{id:ProductLabelKey;over:ProductLabelKey|null;token:object}|null>(null),[dragReset,setDragReset]=useState(0);
+  const labelDrag=useRef<LabelDrag|null>(null),dragEpoch=useRef<object|null>(null),liveActive=useRef(active);
+  useLayoutEffect(()=>{liveActive.current=active;},[active]);
   const liveDisabled=useRef(disabled);
   useLayoutEffect(()=>{liveDisabled.current=disabled;},[disabled]);
   const [notice, setNotice] = useState<{ scope: string; text: string; identity: string | null }>({ scope, text: '', identity: null });
@@ -47,6 +53,30 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   const reviewed = preview?.scope === scope && preview.sourceKey === sourceKey && !dirty && fresh ? preview : null;
   const row = view?.rows.find(row => row.optionId === optionId), caption = optionId === null ? '상품 공통' : '선택 옵션';
   const message = notice.scope === scope ? notice.text : '';
+  const dragContext=JSON.stringify([scope,sourceKey,active,disabled,busy,referencesBusy,referencesDirty,saved?.sourceKey,view?.revision,view?.inputFingerprint,structure??view?.structure,draft,dragReset]);
+  const [dragClock,setDragClock]=useState({context:dragContext,token:{}});if(dragClock.context!==dragContext)setDragClock({context:dragContext,token:{}});
+  const dragToken=dragClock.context===dragContext?dragClock.token:null;
+  const visibleDrag=dragging?.token===dragToken?dragging:null;
+  useLayoutEffect(()=>{dragEpoch.current=dragToken;labelDrag.current=null;return()=>{dragEpoch.current=null;labelDrag.current=null;};},[dragToken]);
+  function invalidateDrag(){dragEpoch.current=null;labelDrag.current=null;setDragging(null);setDragReset(value=>value+1);}
+  function canDrag(){return !!dragToken&&dragEpoch.current===dragToken&&current()&&liveActive.current&&!liveDisabled.current&&!request.current&&!referenceBusy.current&&!referenceDirty.current&&!!view&&latestSaved.current?.view===view&&latestSaved.current.sourceKey===sourceKey;}
+  function currentDrag(){const gesture=labelDrag.current;return canDrag()&&gesture?.token===dragToken&&gesture.view===latestSaved.current?.view&&gesture.draft===latestDraft.current?gesture:null;}
+  function beginDrag(id:ProductLabelKey,event:DragEvent<HTMLButtonElement>){
+    if(!canDrag()||!definitions.some(field=>field.key===id)){event.preventDefault();return;}
+    const gesture:LabelDrag={id,nonce:crypto.randomUUID(),token:dragToken!,view:view!,draft:latestDraft.current};
+    try{event.dataTransfer.setData(labelDragMime,gesture.nonce);event.dataTransfer.effectAllowed='move';}catch{event.preventDefault();return;}
+    labelDrag.current=gesture;setDragging({id,over:null,token:gesture.token});
+  }
+  function overRow(id:ProductLabelKey,event:DragEvent<HTMLDivElement>){
+    const gesture=currentDrag();if(!gesture||!Array.from(event.dataTransfer.types).includes(labelDragMime))return;
+    event.preventDefault();event.dataTransfer.dropEffect='move';setDragging(previous=>previous?.token===gesture.token&&previous.id===gesture.id&&previous.over===id?previous:{id:gesture.id,over:id,token:gesture.token});
+  }
+  function dropRow(id:ProductLabelKey,event:DragEvent<HTMLDivElement>){
+    const gesture=currentDrag();if(!gesture||event.dataTransfer.getData(labelDragMime)!==gesture.nonce)return;
+    event.preventDefault();event.stopPropagation();labelDrag.current=null;setDragging(null);
+    changeStructure(rows=>{const from=rows.findIndex(field=>field.id===gesture.id),to=rows.findIndex(field=>field.id===id);if(from<0||to<0||from===to)return rows;const [moved]=rows.splice(from,1);rows.splice(to,0,moved);return rows;});
+  }
+  function endDrag(){if(dragToken&&labelDrag.current?.token===dragToken&&dragEpoch.current===dragToken){labelDrag.current=null;setDragging(null);}}
   function setMessage(text: string, verified?: ProductLabelsView) { setNotice({ scope, text, identity: verified ? JSON.stringify([verified.productVersion, verified.inputFingerprint]) : null }); }
   function clearPreview() { latestPreview.current = null; setPreview(null); }
   function store(body: ProductLabelsView) { latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); }
@@ -59,6 +89,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   }
   async function load(keepDraft = false, explicitLatest = false, preserveCompletion = false) {
     if (request.current || !current()) return;
+    invalidateDrag();
     const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); clearPreview();
     try {
       const body = await read(controller.signal); if (controller.signal.aborted || !current()) return;
@@ -85,31 +116,35 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, sourceKey]);
   function edit(key: ProductLabelKey, value: string | null) {
-    if (!view || liveDisabled.current || request.current || referenceBusy.current || !current()) return;
+    if (!view || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || !current()) return;
+    invalidateDrag();
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     if (!productLabelDefinitions({ structure: before.structure ?? latestSaved.current?.view.structure }).some(field => field.key === key)) return;
     latestDraft.current = { ...before, values: { ...before.values, [key]: value } };
     setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('');
   }
   function restoreAll() {
-    if (!view || liveDisabled.current || request.current || referenceBusy.current || !current()) return;
+    if (!view || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || !current()) return;
+    invalidateDrag();
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     latestDraft.current = { ...before, values: Object.fromEntries(productLabelDefinitions({ structure: before.structure ?? latestSaved.current?.view.structure }).map(field => [field.key, null])) as ProductLabelDraft };
     setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('복원할 값을 확인한 뒤 정보 저장하기를 눌러주세요.');
   }
   function clearAll() {
-    if (!view || latestSaved.current?.view !== view || liveDisabled.current || request.current || referenceBusy.current || !current()) return;
+    if (!view || latestSaved.current?.view !== view || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || !current()) return;
+    invalidateDrag();
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     const required = productLabelStructure({ structure: before.structure ?? latestSaved.current?.view.structure }).filter(field => field.required);
     latestDraft.current = { scope, structure: required, values: Object.fromEntries(required.map(field => [field.id, ''])) as ProductLabelDraft };
     setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('필수 제품명 항목만 남기고 현재 내용은 비웠습니다. 항목 구조는 모든 옵션에 적용됩니다. 정보 저장하기 전까지 저장본은 바뀌지 않습니다.');
   }
   function changeStructure(change: (rows: ProductLabelStructure) => ProductLabelStructure) {
-    if (!view || latestSaved.current?.view !== view || liveDisabled.current || request.current || referenceBusy.current || !current()) return;
+    if (!view || latestSaved.current?.view !== view || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || !current()) return;
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     const currentRows = productLabelStructure({ structure: before.structure ?? latestSaved.current?.view.structure });
     const beforeRows = JSON.stringify(currentRows), rows = change(currentRows);
     if (JSON.stringify(rows) === beforeRows) return;
+    invalidateDrag();
     const active = new Set(rows.map(row => row.id));
     latestDraft.current = { scope, structure: rows, values: Object.fromEntries(Object.entries(before.values).filter(([key]) => active.has(key as ProductLabelKey))) };
     setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('항목명·순서·추가·삭제는 모든 옵션에 적용됩니다. 정보 저장하기를 눌러 반영하세요.');
@@ -120,10 +155,10 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   const issues = view ? productLabelDraftIssues(view, optionId, draft, structure) : [];
   async function save() {
     const base = latestSaved.current, editing = latestDraft.current.scope === scope ? latestDraft.current.values : {}, editingStructure = latestDraft.current.scope === scope ? latestDraft.current.structure : undefined;
-    if (!base || base.scope !== scope || !Object.keys(editing).length && editingStructure === undefined || liveDisabled.current || request.current || referenceBusy.current || !current()) return;
+    if (!base || base.scope !== scope || !Object.keys(editing).length && editingStructure === undefined || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || !current()) return;
     if (base.sourceKey !== sourceKey) { setError('상품 저장 상태가 변경됐습니다. 입력을 유지하고 최신 표시사항을 조회한 뒤 저장해주세요.'); return; }
     let changes; try { changes = productLabelChanges(base.view, optionId, editing, editingStructure); } catch (cause) { setError(cause instanceof Error ? cause.message : '표시사항 입력을 확인해주세요.'); return; }
-    const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); clearPreview();
+    invalidateDrag(); const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); clearPreview();
     try {
       const response = await fetch(endpoint, { method: 'PUT', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: base.view.revision, expectedInputFingerprint: base.view.inputFingerprint, changes, ...(editingStructure !== undefined ? { structure: editingStructure } : {}) }) }), body = await response.json() as ProductLabelsView & { error?: string };
       if (controller.signal.aborted || !current()) return;
@@ -134,8 +169,8 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   }
   async function generateDraft() {
     const base = latestSaved.current;
-    if (!base || base.scope !== scope || base.sourceKey !== sourceKey || liveDisabled.current || request.current || referenceBusy.current || !current() || latestDraft.current.scope === scope && hasDraft(latestDraft.current)) return;
-    const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); clearPreview(); setGeneratedReview(null);
+    if (!base || base.scope !== scope || base.sourceKey !== sourceKey || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || !current() || latestDraft.current.scope === scope && hasDraft(latestDraft.current)) return;
+    invalidateDrag(); const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); clearPreview(); setGeneratedReview(null);
     try {
       const response = await fetch(`/api/products/${encodeURIComponent(productId)}/product-label-draft${query}`, { method: 'POST', signal: controller.signal, headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ optionId, expectedRevision: base.view.revision, expectedInputFingerprint: base.view.inputFingerprint }) });
@@ -157,8 +192,8 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   }
   async function generate() {
     const base = latestSaved.current;
-    if (!base || base.scope !== scope || base.sourceKey !== sourceKey || liveDisabled.current || request.current || referenceBusy.current || !current() || latestDraft.current.scope === scope && hasDraft(latestDraft.current)) return;
-    const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); clearPreview();
+    if (!base || base.scope !== scope || base.sourceKey !== sourceKey || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || !current() || latestDraft.current.scope === scope && hasDraft(latestDraft.current)) return;
+    invalidateDrag(); const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); clearPreview();
     try {
       const before = await read(controller.signal); if (controller.signal.aborted || !current()) return;
       if (!unchanged(base.view, before)) throw Error('저장된 표시사항이 바뀌었습니다. 최신 자료를 조회한 뒤 다시 만들어주세요.');
@@ -176,9 +211,9 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   }
   async function attach() {
     const chosen = latestPreview.current;
-    if (!chosen || chosen.scope !== scope || chosen.sourceKey !== sourceKey || liveDisabled.current || request.current || referenceBusy.current || !current() || latestDraft.current.scope === scope && hasDraft(latestDraft.current)) return;
+    if (!chosen || chosen.scope !== scope || chosen.sourceKey !== sourceKey || liveDisabled.current || request.current || referenceBusy.current || referenceDirty.current || !current() || latestDraft.current.scope === scope && hasDraft(latestDraft.current)) return;
     const cache = uploads.current.get(chosen.signature); if (!cache) return;
-    const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage('');
+    invalidateDrag(); const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage('');
     try {
       const scopedFetch: typeof fetch = async (url, init) => { if (controller.signal.aborted || !current()) throw Error('상품 또는 옵션 저장 상태가 변경되었습니다.'); const response = await fetch(url, { ...init, signal: controller.signal }); if (controller.signal.aborted || !current()) throw Error('상품 또는 옵션 저장 상태가 변경되었습니다.'); return response; };
       const result = await attachProductLabel({ productId, endpoint, quotationEndpoint, renderedView: chosen.view, optionId, blob: chosen.rendered.blob, uploadedKey: cache.uploadedKey, onUploaded: key => { cache.uploadedKey = key; } }, scopedFetch);
@@ -189,21 +224,22 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     } catch (cause) { if (!controller.signal.aborted && current()) setError(`${cause instanceof Error ? cause.message : '제품 표시사항 PNG 연결 실패'}${cache.uploadedKey ? ' 업로드한 파일은 보존됩니다. 같은 저장값으로 다시 연결하면 기존 파일을 확인해 사용합니다.' : ''}`); }
     finally { finish(controller); }
   }
-  return <section className="panel-stack product-label-editor" aria-label={`${caption} 제품 표시사항`} data-quotation-source-step="표시사항" data-source-step="표시사항" data-workspace-dirty={dirty} data-workspace-saving={busy||referencesBusy}>
+  return <section className="panel-stack product-label-editor" aria-label={`${caption} 제품 표시사항`} data-quotation-source-step="표시사항" data-source-step="표시사항" data-workspace-dirty={dirty||referencesDirty} data-workspace-saving={busy||referencesBusy}>
     <h3>제품 한글 표시사항</h3><p>{row?.optionLabel || (optionId === null ? '상품 공통' : optionId)}{optionId !== null && row?.included === false ? ' · 견적 제외 옵션' : ''}</p>
     <p>{optionId === null ? '공통 내용은 개별 표시사항을 수정하지 않은 옵션에 적용합니다. 각 옵션의 직접 수정값은 유지됩니다.' : '이 옵션의 제품 표시사항 내용을 편집합니다. 다른 옵션과 상품 공통 내용은 유지됩니다.'} 항목명·순서·추가·삭제는 상품의 모든 옵션에 공통 적용됩니다. 카테고리별 상품고시는 7단계 견적서에서 따로 확인합니다.</p>
     {busy && <p role="status">제품 표시사항 처리 중…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
     {dirty && !fresh && <p role="status">상품 저장 상태가 변경됐습니다. 입력은 유지했습니다. 최신 자료를 조회한 뒤 저장해주세요.</p>}
-    {view && <><div className="product-label-rows">{definitions.map((field, index) => <div className="product-label-row product-label-structure-row field" key={field.key}><label><span>항목명{field.required ? ' · 필수' : ''}</span><input aria-label={`${caption} 표시사항 항목 ${index + 1} 이름`} value={field.label} maxLength={80} disabled={disabled||busy||referencesBusy} onChange={event => { const label = event.target.value; changeStructure(rows => rows.map(row => row.id === field.key ? { ...row, label } : row)); }} /></label><label><span>{field.label}</span><textarea aria-label={`${caption} ${field.label}`} value={productLabelValue(view, optionId, field.key, draft) ?? ''} disabled={disabled||busy||referencesBusy} onChange={event => edit(field.key, event.target.value)} /></label>
-      <div className="quote-actions"><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 위로`} disabled={disabled||busy||referencesBusy||index === 0} onClick={() => moveField(field.key, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 아래로`} disabled={disabled||busy||referencesBusy||index === definitions.length - 1} onClick={() => moveField(field.key, 1)}>↓</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 삭제`} disabled={disabled||busy||referencesBusy||field.required} onClick={() => changeStructure(rows => rows.filter(row => row.id !== field.key || row.required))}>삭제</button>
-      <button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy} onClick={() => edit(field.key, '')}>{field.label} 비우기</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy} onClick={() => edit(field.key, null)}>{field.label} {optionId === null ? '자동값' : '공통·자동값'} 복원</button></div>
-    </div>)}</div><div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||definitions.length >= 39} onClick={() => changeStructure(rows => rows.length >= 39 ? rows : [...rows, { id: `custom_${crypto.randomUUID().replaceAll('-', '')}`, label: '새 항목', required: false }])}>＋ 표시사항 항목 추가</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy} onClick={() => changeStructure(() => productLabelStructure())}>기본 9항목 구조로 복원</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy} onClick={clearAll}>전체 삭제</button></div></>}
+    {referencesDirty && <p role="status">최종 라벨 선택을 저장하거나 취소한 뒤 표시사항을 수정하세요.</p>}
+    {view && <><div className="product-label-rows">{definitions.map((field, index) => <div className={`product-label-row product-label-structure-row product-label-sortable field${visibleDrag?.id===field.key?' label-dragging':''}${visibleDrag?.over===field.key&&visibleDrag.id!==field.key?' label-drag-over':''}`} key={field.key} data-label-sort-id={field.key} onDragOver={event=>overRow(field.key,event)} onDrop={event=>dropRow(field.key,event)}><button type="button" className="product-label-reorder-handle" aria-label={`${caption} ${field.label} 순서 이동`} title="끌어서 순서 이동" draggable={active&&!disabled&&!busy&&!referencesBusy&&!referencesDirty&&fresh} disabled={!active||disabled||busy||referencesBusy||referencesDirty||!fresh} onDragStart={event=>beginDrag(field.key,event)} onDragEnd={endDrag}>⠿</button><label><span>항목명{field.required ? ' · 필수' : ''}</span><input aria-label={`${caption} 표시사항 항목 ${index + 1} 이름`} value={field.label} maxLength={80} disabled={disabled||busy||referencesBusy||referencesDirty} onChange={event => { const label = event.target.value; changeStructure(rows => rows.map(row => row.id === field.key ? { ...row, label } : row)); }} /></label><label><span>{field.label}</span><textarea aria-label={`${caption} ${field.label}`} value={productLabelValue(view, optionId, field.key, draft) ?? ''} disabled={disabled||busy||referencesBusy||referencesDirty} onChange={event => edit(field.key, event.target.value)} /></label>
+      <div className="quote-actions"><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 위로`} disabled={disabled||busy||referencesBusy||referencesDirty||index === 0} onClick={() => moveField(field.key, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 아래로`} disabled={disabled||busy||referencesBusy||referencesDirty||index === definitions.length - 1} onClick={() => moveField(field.key, 1)}>↓</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 삭제`} disabled={disabled||busy||referencesBusy||referencesDirty||field.required} onClick={() => changeStructure(rows => rows.filter(row => row.id !== field.key || row.required))}>삭제</button>
+      <button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty} onClick={() => edit(field.key, '')}>{field.label} 비우기</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty} onClick={() => edit(field.key, null)}>{field.label} {optionId === null ? '자동값' : '공통·자동값'} 복원</button></div>
+    </div>)}</div><div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||definitions.length >= 39} onClick={() => changeStructure(rows => rows.length >= 39 ? rows : [...rows, { id: `custom_${crypto.randomUUID().replaceAll('-', '')}`, label: '새 항목', required: false }])}>＋ 표시사항 항목 추가</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty} onClick={() => changeStructure(() => productLabelStructure())}>기본 9항목 구조로 복원</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty} onClick={clearAll}>전체 삭제</button></div></>}
     <small>공란도 직접 수정값으로 저장합니다. 내용량·재질·상품 유형·사용 기준은 확인한 값만 입력하세요.</small>
     <small>수정한 내용을 견적서 이미지에 반영하려면 다시 생성한 뒤 PNG를 견적에 연결하세요.</small>
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
-    <div className="quote-actions"><button type="button" className="btn primary" disabled={!view || disabled || busy || referencesBusy || !dirty || !!issues.length} onClick={() => void save()}>정보 저장하기</button><button type="button" className="btn ghost" disabled={!view || disabled || busy || referencesBusy} onClick={restoreAll}>전체 {optionId === null ? '자동값' : '공통·자동값'} 복원</button>
-      <button type="button" className="btn blue" disabled={!view || disabled || busy || referencesBusy || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generateDraft()}>한글 표시사항 생성 시작</button>
-      <button type="button" className="btn ghost" disabled={!view || disabled || busy || referencesBusy || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generate()}>저장한 표시사항 PNG 미리보기</button></div>
+    <div className="quote-actions"><button type="button" className="btn primary" disabled={!view || disabled || busy || referencesBusy || referencesDirty || !dirty || !!issues.length} onClick={() => void save()}>정보 저장하기</button><button type="button" className="btn ghost" disabled={!view || disabled || busy || referencesBusy || referencesDirty} onClick={restoreAll}>전체 {optionId === null ? '자동값' : '공통·자동값'} 복원</button>
+      <button type="button" className="btn blue" disabled={!view || disabled || busy || referencesBusy || referencesDirty || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generateDraft()}>한글 표시사항 생성 시작</button>
+      <button type="button" className="btn ghost" disabled={!view || disabled || busy || referencesBusy || referencesDirty || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generate()}>저장한 표시사항 PNG 미리보기</button></div>
     <small>생성 시작은 상품명·수집 속성·묶음 정보로 내용량, 재질, 상품 유형의 초안을 요청합니다. 직접 수정한 값·공란은 유지합니다. 저장 후 PNG를 만들고 견적서에 연결하세요.</small>
     {dirty && generatedReview?.scope === scope && generatedReview.sourceKey === sourceKey && <section aria-label="생성한 표시사항 초안 검토" className="panel-stack"><h4>표시사항 초안 검토</h4><table><thead><tr><th>항목</th><th>저장된 내용</th><th>AI 초안</th></tr></thead><tbody>{Object.entries(generatedReview.values).map(([key, value]) => <tr key={key}><th>{definitions.find(field => field.key === key)?.label}</th><td style={{ whiteSpace: 'pre-wrap' }}>{generatedReview.before[key as ProductLabelKey] || '(공란)'}</td><td style={{ whiteSpace: 'pre-wrap' }}>{value}</td></tr>)}</tbody></table>{generatedReview.warnings.map((warning, index) => <p key={index}>{warning}</p>)}<p>아직 저장하지 않은 제안입니다. 위 입력란에서 수정할 수 있습니다. 제조원·수입원·제조국·인증·법적 적합성 확인은 포함하지 않습니다.</p></section>}
     {dirty && <button type="button" className="btn ghost" disabled={busy} onClick={() => void load(true)}>입력 유지·최신 표시사항 조회</button>}
@@ -211,30 +247,46 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     {reviewed && <><div className="product-label-preview" style={{ maxHeight: 600, overflow: 'auto' }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={reviewed.url} alt={`${caption} 저장된 제품 표시사항 PNG`} width={reviewed.rendered.width} height={reviewed.rendered.height} style={{ width: '100%', height: 'auto' }} /></div>
-      <div className="quote-actions"><a className="btn ghost" href={reviewed.url} download="yoofam-product-label.png">표시사항 PNG 다운로드</a><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy} onClick={() => void generate()}>저장한 값으로 다시 생성</button><button type="button" className="btn primary" disabled={disabled||busy||referencesBusy} onClick={() => void attach()}>PNG 업로드·견적에 연결</button></div>
+      <div className="quote-actions"><a className="btn ghost" href={reviewed.url} download="yoofam-product-label.png">표시사항 PNG 다운로드</a><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty} onClick={() => void generate()}>저장한 값으로 다시 생성</button><button type="button" className="btn primary" disabled={disabled||busy||referencesBusy||referencesDirty} onClick={() => void attach()}>PNG 업로드·견적에 연결</button></div>
     </>}
     <ProductLabelReferenceEditor productId={productId} optionId={optionId} version={version} profileId={profileId} refreshToken={refreshToken} disabled={disabled||busy||dirty} onTranslate={onTranslate}
       beforeSave={()=>current()&&!liveDisabled.current&&!request.current&&!(latestDraft.current.scope===scope&&hasDraft(latestDraft.current))}
-      onBusyChange={value=>{referenceBusy.current=value;setReferencesBusy(value);}} onSaved={()=>{clearPreview();onSaved?.();}}/>
+      onBusyChange={value=>{if(!current()||referenceBusy.current===value)return;referenceBusy.current=value;if(value)invalidateDrag();setReferencesBusy(value);}}
+      onEditingChange={value=>{if(!current()||referenceDirty.current===value)return;referenceDirty.current=value;if(value)invalidateDrag();setReferencesDirty(value);}} onSaved={()=>{clearPreview();onSaved?.();}}/>
   </section>;
 }
 
-type ReferenceProps=Props & {disabled?:boolean;beforeSave?:()=>boolean;onBusyChange?:(busy:boolean)=>void};
-export function ProductLabelReferenceEditor({productId,optionId,version,profileId,refreshToken,disabled=false,beforeSave,onBusyChange,onSaved,onTranslate}:ReferenceProps){
+type ReferenceProps=Props & {disabled?:boolean;beforeSave?:()=>boolean;onBusyChange?:(busy:boolean)=>void;onEditingChange?:(editing:boolean)=>void};
+export function ProductLabelReferenceEditor({productId,optionId,version,profileId,refreshToken,disabled=false,beforeSave,onBusyChange,onEditingChange,onSaved,onTranslate}:ReferenceProps){
   const query=profileId?`?profileId=${encodeURIComponent(profileId)}`:'',input:ProductLabelReferenceScope={productId,optionId,endpoint:`/api/products/${encodeURIComponent(productId)}/product-labels${query}`,quotationEndpoint:`/api/products/${encodeURIComponent(productId)}/quotation-fields${query}`};
   const scope=JSON.stringify([productId,optionId,profileId??'']),sourceKey=JSON.stringify([scope,version,refreshToken]),liveScope=useRef(scope),liveSource=useRef(sourceKey),mounted=useRef(true),request=useRef<AbortController|null>(null);
   const [saved,setSaved]=useState<{scope:string;sourceKey:string;value:ProductLabelReferences}|null>(null),liveSaved=useRef<typeof saved>(null);
   const [pending,setPending]=useState<{scope:string;keys:string[]|null}>({scope,keys:null}),liveDraft=useRef(pending);
   const [resultSelection,setResultSelection]=useState<{scope:string;sourceKey:string;key:string}|null>(null);
-  const [replacement,setReplacement]=useState(''),liveReplacement=useRef(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[uncertain,setUncertain]=useState(false);
+  const [replacement,setReplacement]=useState(''),liveReplacement=useRef(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const [uncertainty,setUncertainty]=useState({scope,value:false}),liveUncertainty=useRef(uncertainty),uncertain=uncertainty.scope===scope&&uncertainty.value;
   const busyCallback=useRef(onBusyChange),current=()=>mounted.current&&liveScope.current===scope&&liveSource.current===sourceKey;
+  const editingCallback=useRef(onEditingChange),editingLease=useRef<{scope:string;sourceKey:string;callback?:ReferenceProps['onEditingChange'];value?:boolean}|null>(null);
   const liveControls=useRef({disabled,beforeSave,onTranslate});
+  function publishEditing(value:boolean){
+    const lease=editingLease.current,callback=editingCallback.current;
+    if(!current()||!lease||lease.scope!==scope||lease.sourceKey!==sourceKey)return;
+    if(lease.callback===callback&&lease.value===value)return;
+    lease.callback=callback;lease.value=value;callback?.(value);
+  }
+  function setUncertain(value:boolean){liveUncertainty.current={scope,value};setUncertainty(liveUncertainty.current);publishEditing(value||liveDraft.current.scope===scope&&liveDraft.current.keys!==null);}
   useLayoutEffect(()=>{liveControls.current={disabled,beforeSave,onTranslate};});
   useLayoutEffect(()=>{busyCallback.current=onBusyChange;});
+  useLayoutEffect(()=>{editingCallback.current=onEditingChange;});
   useLayoutEffect(()=>{mounted.current=true;liveScope.current=scope;liveSource.current=sourceKey;if(liveDraft.current.scope!==scope)liveDraft.current={scope,keys:null};return()=>{mounted.current=false;request.current?.abort();request.current=null;busyCallback.current?.(false);};},[scope,sourceKey]);
+  useLayoutEffect(()=>{
+    const lease={scope,sourceKey,callback:undefined,value:undefined} as NonNullable<typeof editingLease.current>;editingLease.current=lease;
+    return()=>{if(editingLease.current!==lease)return;editingLease.current=null;lease.callback?.(false);};
+  },[scope,sourceKey]);
   const base=saved?.scope===scope?saved:null,editing=pending.scope===scope?pending.keys:null,dirty=editing!==null,selected=editing??base?.value.keys??[],fresh=base?.sourceKey===sourceKey,locked=disabled||busy;
+  useLayoutEffect(()=>{publishEditing(dirty||uncertain);});
   function store(value:ProductLabelReferences){liveSaved.current={scope,sourceKey,value};setSaved(liveSaved.current);}
-  function draft(keys:string[]|null){liveDraft.current={scope,keys};setPending(liveDraft.current);setNotice('');}
+  function draft(keys:string[]|null){liveDraft.current={scope,keys};setPending(liveDraft.current);setNotice('');publishEditing(keys!==null||liveUncertainty.current.scope===scope&&liveUncertainty.current.value);}
   function begin(){if(request.current||!current())return null;const controller=new AbortController();request.current=controller;setBusy(true);busyCallback.current?.(true);setError('');setNotice('');return controller;}
   function finish(controller:AbortController){if(request.current===controller){request.current=null;busyCallback.current?.(false);if(current()&&!controller.signal.aborted)setBusy(false);}}
   function scopedFetch(controller:AbortController):typeof fetch{return async(url,init)=>{if(controller.signal.aborted||!current())throw Error('라벨 편집 대상이 변경되었습니다.');const response=await fetch(url,{...init,signal:controller.signal});if(controller.signal.aborted||!current())throw Error('라벨 편집 대상이 변경되었습니다.');return response;};}
@@ -245,14 +297,14 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
     else if(!keep&&value.view.productVersion!==version)throw Error('상품 저장 상태가 변경되었습니다. 최신 상품을 다시 확인해주세요.');
     store(value);if(!keep||recovered){draft(null);setUncertain(false);}if(recovered){setNotice('저장된 최종 라벨 연결을 확인했습니다.');onSaved?.();}
   }catch(cause){if(current()&&!controller.signal.aborted)setError(cause instanceof Error?cause.message:'최종 라벨 조회 실패');}finally{finish(controller);}}
-  useEffect(()=>{let active=true;void Promise.resolve().then(()=>{if(!active||!current())return;setBusy(false);setError('');if(liveDraft.current.scope===scope&&liveDraft.current.keys!==null)return;void load();});return()=>{active=false;request.current?.abort();request.current=null;};
+  useEffect(()=>{let active=true;void Promise.resolve().then(()=>{if(!active||!current())return;setBusy(false);busyCallback.current?.(false);setError('');if(liveDraft.current.scope===scope&&liveDraft.current.keys!==null)return;void load();});return()=>{active=false;request.current?.abort();request.current=null;};
     // Keep unsaved reference choices across source updates and hidden stages.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[scope,sourceKey]);
-  function edit(keys:string[]){if(locked||request.current||!current()||uncertain||!base)return;draft([...new Set(keys)]);}
+  function edit(keys:string[]){if(locked||liveControls.current.disabled||request.current||!current()||uncertain||!base)return;draft([...new Set(keys)]);}
   const latestKeys=()=>liveDraft.current.scope===scope&&liveDraft.current.keys!==null?liveDraft.current.keys:liveSaved.current?.scope===scope?liveSaved.current.value.keys:[];
-  async function save(){const previous=liveSaved.current,choices=liveDraft.current.scope===scope?liveDraft.current.keys:null;if(locked||!previous||previous.scope!==scope||choices===null||!current()||request.current)return;
-    if(beforeSave&&!beforeSave()){setError('항목 구성·내용을 먼저 저장한 뒤 최종 라벨 연결을 저장해주세요.');return;}if(previous.sourceKey!==sourceKey&&!uncertain){setError('연결 선택은 유지했습니다. 최신 라벨을 조회한 뒤 저장해주세요.');return;}
+  async function save(){const previous=liveSaved.current,choices=liveDraft.current.scope===scope?liveDraft.current.keys:null,controls=liveControls.current;if(locked||controls.disabled||!previous||previous.scope!==scope||choices===null||!current()||request.current)return;
+    if(controls.beforeSave&&!controls.beforeSave()){setError('항목 구성·내용을 먼저 저장한 뒤 최종 라벨 연결을 저장해주세요.');return;}if(previous.sourceKey!==sourceKey&&!uncertain){setError('연결 선택은 유지했습니다. 최신 라벨을 조회한 뒤 저장해주세요.');return;}
     const controller=begin();if(!controller)return;try{const value=await saveProductLabelReferences(input,previous.value,choices,scopedFetch(controller));if(!current()||controller.signal.aborted)return;store(value);draft(null);setUncertain(false);setNotice('최종 라벨 연결을 저장했습니다. 제외한 파일과 생성 기록은 보관됩니다.');onSaved?.();}
     catch(cause){if(current()&&!controller.signal.aborted){setUncertain(cause instanceof ProductLabelReferenceSaveError&&cause.uncertain);setError(cause instanceof Error?cause.message:'최종 라벨 저장 실패');}}finally{finish(controller);}}
   const caption=optionId===null?'상품 공통':'선택 옵션',pool=base?.value.view.imageKeys??[],url=(key:string)=>`/api/files/${key.split('/').map(encodeURIComponent).join('/')}`;
@@ -281,7 +333,7 @@ export function ProductLabelReferenceEditor({productId,optionId,version,profileI
       else controls.onTranslate(key,'label',language,binding);
     }catch(cause){setError(cause instanceof Error?cause.message:'번역할 최종 라벨 연결을 확인해주세요.');}
   }
-  return <section className="panel-stack" aria-label={`${caption} 최종 라벨 연결`} data-quotation-source-step="표시사항" data-workspace-dirty={dirty} data-workspace-saving={busy}>
+  return <section className="panel-stack" aria-label={`${caption} 최종 라벨 연결`} data-quotation-source-step="표시사항" data-workspace-dirty={dirty||uncertain} data-workspace-saving={busy}>
     <h4>견적서에 연결할 최종 라벨 · {selected.length}장</h4><p>아래 선택은 {caption}의 최종 견적 참조만 바꿉니다. 원본 파일·생성 기록과 다른 옵션의 직접 수정값은 유지됩니다.</p>
     {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{dirty&&!fresh&&<p role="status">저장 상태가 변경되었습니다. 라벨 선택은 유지했습니다.</p>}
     {resultKey&&<section className="product-label-saved-result" aria-label={`${caption} 저장된 최종 라벨 결과`}>

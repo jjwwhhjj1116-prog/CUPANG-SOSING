@@ -1,13 +1,15 @@
-import test from 'node:test';
+import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import ts from 'typescript';
+import {createHash} from 'node:crypto';
 const plain=value=>JSON.parse(JSON.stringify(value)),nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[],text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
 const version='2026-10-07T00:00:00.000Z';
 const resultImage=tree=>nodes(tree).find(node=>node.type==='img'&&node.props['data-saved-label-result']!==undefined);
 const thumbnailImages=tree=>nodes(tree).filter(node=>node.type==='img'&&node.props['data-saved-label-result']===undefined);
+const editingProofs=[];
 class SaveError extends Error{constructor(message,uncertain){super(message);this.uncertain=uncertain;}}
 function fixture(){
  const calls=[],writes=[],keys=['owner/old.png','owner/new.png','owner/manual.png'];let value={view:{productVersion:version,imageKeys:keys},quotation:{revision:0,productVersion:version,inputFingerprint:'a'.repeat(64),optionRevision:2,imageKeys:keys,resolved:{schema:{fields:[{id:'labelImages',type:'images'}]},rows:[{optionId:'red',fields:{labelImages:{value:[keys[0],keys[2]].join('\n')}}}]}},keys:[keys[0],keys[2]]},lose=false,unavailable=false;
@@ -22,15 +24,76 @@ function fixture(){
 }
 function editor(f,initial={}){
  let index=0,slots=[],pending=[],tree,closed=false,lateWrites=0;const props={productId:'product',optionId:'red',version,...initial},saved=[];
- const effect=(fn,deps)=>{const slot=index++,old=slots[slot],changed=!old||!deps||deps.some((value,i)=>value!==old.deps?.[i]);if(changed)pending.push(()=>{old?.cleanup?.();slots[slot]={deps,cleanup:fn()};});};
- const react={useState(initial){const slot=index++;if(!(slot in slots))slots[slot]={value:typeof initial==='function'?initial():initial};return[slots[slot].value,next=>{if(closed){lateWrites++;return;}slots[slot].value=typeof next==='function'?next(slots[slot].value):next;}];},useRef(initial){const slot=index++;if(!(slot in slots))slots[slot]={current:initial};return slots[slot];},useEffect:effect,useLayoutEffect:effect};
+ const effect=(fn,deps,kind)=>{const slot=index++,old=slots[slot],changed=!old||!deps||deps.some((value,i)=>value!==old.deps?.[i]);if(changed)pending.push({slot,old,deps,kind,fn});};
+ const react={useState(initial){const slot=index++;if(!(slot in slots))slots[slot]={value:typeof initial==='function'?initial():initial};return[slots[slot].value,next=>{if(closed){lateWrites++;return;}slots[slot].value=typeof next==='function'?next(slots[slot].value):next;}];},useRef(initial){const slot=index++;if(!(slot in slots))slots[slot]={current:initial};return slots[slot];},useEffect:(fn,deps)=>effect(fn,deps,'passive'),useLayoutEffect:(fn,deps)=>effect(fn,deps,'layout')};
  const cache=new Map();function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,URL,AbortController,TextEncoder,fetch:f.request,require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name==='@/app/product-label-references')return f.helpers;if(name==='@/app/document-image-render'||name==='@/app/product-label-attachment')return{};if(name.startsWith('./')||name.startsWith('../'))return load(path.posix.join(path.posix.dirname(file),name)+'.ts');if(name.startsWith('@/'))return load(name.slice(2)+'.ts');throw Error(name);}});return exports;}
  const Component=load('app/components/product-label-editor.tsx').ProductLabelReferenceEditor;
- const render=()=>{index=0;tree=Component({...props,onSaved:()=>saved.push(1)});const effects=pending;pending=[];effects.forEach(run=>run());return tree;};
+ const render=()=>{index=0;tree=Component({...props,onSaved:()=>saved.push(1)});const effects=pending;pending=[];for(const kind of ['layout','passive']){const phase=effects.filter(effect=>effect.kind===kind);phase.forEach(effect=>effect.old?.cleanup?.());phase.forEach(effect=>{slots[effect.slot]={deps:effect.deps,kind,cleanup:effect.fn()};});}return tree;};
  const idle=async(allowBusy=false)=>{const deadline=Date.now()+10000;for(let i=0;i<16||!allowBusy&&render().props['data-workspace-saving'];i++){assert.ok(Date.now()<deadline,'label reference read did not settle');render();await new Promise(resolve=>setImmediate(resolve));}return render();};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&(node.props['aria-label']===label||text(node)===label));
- render();return {render,idle,button,saved,async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label+' should be enabled');node.props.onClick();await idle();},select(key){const node=nodes(render()).find(node=>node.type==='select');node.props.onChange({target:{value:key}});render();},source(value){props.version=value;render();},option(value){props.optionId=value;render();},patch(value){Object.assign(props,value);render();},close(){closed=true;for(const slot of slots)slot?.cleanup?.();},get lateWrites(){return lateWrites;}};
+ render();return {render,idle,button,saved,layoutCleanups(){return slots.filter(slot=>slot?.kind==='layout'&&typeof slot.cleanup==='function').map(slot=>slot.cleanup);},async click(label){const node=button(label);assert.ok(node,label);assert.equal(node.props.disabled,false,label+' should be enabled');node.props.onClick();await idle();},select(key){const node=nodes(render()).find(node=>node.type==='select');node.props.onChange({target:{value:key}});render();},source(value){props.version=value;render();},option(value){props.optionId=value;render();},patch(value){Object.assign(props,value);render();},close(){closed=true;for(const slot of slots)slot?.cleanup?.();},get lateWrites(){return lateWrites;}};
 }
+
+test('reference edits report synchronously and unlock only after explicit cancel or save without disabling their own controls',async()=>{
+ const f=fixture(),reports=[],h=editor(f,{onEditingChange:value=>reports.push(value)});try{
+  await h.idle();assert.equal(reports.at(-1),false);const frozen=plain(f.read()),remove=h.button('최종 라벨 1 견적에서 제외').props.onClick;
+  remove();assert.equal(reports.at(-1),true,'parent guard updates before a following captured callback can run');assert.equal(f.writes.length,0);assert.deepEqual(f.read(),frozen);await h.idle();assert.equal(h.button('최종 라벨 연결 저장').props.disabled,false);assert.equal(h.button('선택 취소·저장 라벨 조회').props.disabled,false);
+  await h.click('선택 취소·저장 라벨 조회');assert.equal(reports.at(-1),false);assert.equal(f.writes.length,0);h.select('owner/new.png');assert.equal(reports.at(-1),false,'replacement picker alone is not a staged change');h.button('선택 파일로 최종 라벨 전체 교체').props.onClick();assert.equal(reports.at(-1),true);await h.idle();await h.click('최종 라벨 연결 저장');assert.equal(reports.at(-1),false);assert.deepEqual(f.writes,[['owner/new.png']]);
+  editingProofs.push({kind:'synchronous-edit-cancel-save',reports:[...reports],writes:1,selfDisabled:false});
+ }finally{h.close();}
+});
+
+test('uncertain committed reference saves remain unsettled until read-only recovery confirms their exact result',async()=>{
+ const f=fixture(),reports=[],busy=[],h=editor(f,{onEditingChange:value=>reports.push(value),onBusyChange:value=>busy.push(value)});try{
+  await h.idle();h.select('owner/new.png');await h.click('선택 파일로 최종 라벨 전체 교체');f.lost();await h.click('최종 라벨 연결 저장');assert.equal(reports.at(-1),true);assert.equal(busy.at(-1),false);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(h.button('라벨 연결 저장 결과 확인·재시도').props.disabled,false);assert.equal(f.writes.length,1);
+  f.recover();await h.click('라벨 연결 저장 결과 확인·재시도');assert.equal(reports.at(-1),false);assert.equal(f.writes.length,1);assert.equal(h.saved.length,1);
+  editingProofs.push({kind:'uncertain-save-recovery',writes:1,recoveryWrites:0,unsettledWhileIdle:true,recovered:false===reports.at(-1)});
+ }finally{h.close();}
+});
+
+test('same-scope source refresh retains the report and old cleanup cannot clear a new dirty scope',async()=>{
+ for(const changed of [{productId:'other-product'},{optionId:'blue'},{profileId:'another-profile'}]){
+  const f=fixture(),reports=[],h=editor(f,{onEditingChange:value=>reports.push(value)});try{
+   await h.idle();await h.click('최종 라벨 1 견적에서 제외');const beforeSourceCleanup=h.layoutCleanups().at(-1);h.source(f.touch());await h.idle();assert.equal(reports.at(-1),true);assert.equal(h.render().props['data-workspace-dirty'],true);const retainedReports=reports.length;beforeSourceCleanup();assert.equal(reports.length,retainedReports);assert.equal(reports.at(-1),true);
+   const previousCleanup=h.layoutCleanups().at(-1);h.patch(changed);await h.idle();assert.equal(reports.at(-1),false);assert.equal(h.render().props['data-workspace-dirty'],false);await h.click('최종 라벨 1 견적에서 제외');assert.equal(reports.at(-1),true);const count=reports.length;previousCleanup();assert.equal(reports.length,count);assert.equal(reports.at(-1),true);assert.equal(f.writes.length,0);
+   editingProofs.push({kind:'scope-and-source-cleanup',scopeChange:changed,sameScopeDraftRetained:true,oldCleanupIgnored:true,writes:0});
+  }finally{h.close();}
+ }
+});
+
+test('uncertainty belongs to its option scope and live callback replacement receives current dirty state and final cleanup',async()=>{
+ const f=fixture(),first=[],second=[],h=editor(f,{onEditingChange:value=>first.push(value)});try{
+  await h.idle();h.select('owner/new.png');await h.click('선택 파일로 최종 라벨 전체 교체');f.lost();await h.click('최종 라벨 연결 저장');assert.equal(first.at(-1),true);f.recover();h.patch({optionId:'blue',version:f.value.view.productVersion});await h.idle();assert.equal(first.at(-1),false);assert.equal(h.button('최종 라벨 전체 비우기').props.disabled,false,'old option uncertainty must not lock the new scope');await h.click('최종 라벨 1 견적에서 제외');assert.equal(first.at(-1),true);
+  h.patch({onEditingChange:value=>second.push(value)});await h.idle();assert.equal(second.at(-1),true);const staleCleanup=h.layoutCleanups().at(-1),firstCount=first.length;h.close();assert.equal(second.at(-1),false);assert.equal(first.length,firstCount);const secondCount=second.length;staleCleanup();assert.equal(second.length,secondCount);assert.equal(h.lateWrites,0);
+  editingProofs.push({kind:'uncertainty-scope-live-observer',oldUncertaintyCleared:true,newObserverCurrent:true,cleanupFalse:true,writes:1});
+ }finally{if(second.at(-1)!==false)h.close();}
+});
+
+test('captured child edit/save callbacks respect current parent lock while cancel and saved-reference reads remain available',async()=>{
+ const f=fixture(),reports=[],h=editor(f,{onEditingChange:value=>reports.push(value)});try{
+  await h.idle();const remove=h.button('최종 라벨 1 견적에서 제외').props.onClick;h.patch({disabled:true});remove();await h.idle();assert.equal(reports.at(-1),false);assert.equal(h.render().props['data-workspace-dirty'],false);h.patch({disabled:false});await h.click('최종 라벨 1 견적에서 제외');const save=h.button('최종 라벨 연결 저장').props.onClick;h.patch({disabled:true});save();await h.idle();assert.equal(f.writes.length,0);assert.equal(reports.at(-1),true);await h.click('선택 취소·저장 라벨 조회');assert.equal(reports.at(-1),false);assert.equal(f.writes.length,0);
+  editingProofs.push({kind:'parent-live-lock',staleEditBlocked:true,staleSaveBlocked:true,readAndCancelAllowed:true,writes:0});
+ }finally{h.close();}
+});
+
+test('same-scope source refresh explicitly clears current parent busy while an aborted dirty read or save retains its choices',async()=>{
+ for(const method of ['GET','PUT']){
+  const f=fixture(),original=f.request,reports=[],accepted=[],rejected=[];let parentClock=0,parentBusy=false,hold=false,release;
+  const observer=clock=>value=>{if(parentClock!==clock){rejected.push({clock,value});return;}parentBusy=value;accepted.push({clock,value});};
+  f.request=async(url,init={})=>{const result=original(url,init);if(hold&&(init.method??'GET')===method){hold=false;await new Promise(resolve=>{release=resolve;});}return result;};
+  const h=editor(f,{onBusyChange:observer(0),onEditingChange:value=>reports.push(value)});try{
+   await h.idle();await h.click('최종 라벨 1 견적에서 제외');hold=true;h.button(method==='GET'?'선택 유지·최신 라벨 조회':'최종 라벨 연결 저장').props.onClick();await h.idle(true);assert.equal(typeof release,'function');assert.equal(parentBusy,true);const readsBeforeRefresh=f.calls.length,writesBeforeRefresh=f.writes.length;
+   parentClock=1;h.patch({version:f.touch(),onBusyChange:observer(1)});await h.idle(true);assert.ok(rejected.some(report=>report.clock===0&&report.value===false),'old source cleanup is correctly rejected by the guarded parent observer');assert.equal(parentBusy,false,'the current source must report idle even when its dirty draft prevents automatic reload');assert.deepEqual(accepted.at(-1),{clock:1,value:false});assert.equal(h.render().props['data-workspace-saving'],false);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(reports.at(-1),true);assert.equal(f.calls.length,readsBeforeRefresh,'refresh with dirty choices must not start another request');assert.equal(f.writes.length,writesBeforeRefresh);
+   release();await h.idle();assert.equal(parentBusy,false);assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(reports.at(-1),true);assert.equal(h.saved.length,0);assert.equal(f.writes.length,method==='PUT'?1:0);assert.equal(h.button('선택 취소·저장 라벨 조회').props.disabled,false);
+   editingProofs.push({kind:'dirty-source-current-busy-reset',delayedMethod:method,oldObserverRejected:true,currentObserverIdle:true,draftRetained:true,writes:f.writes.length,refreshRequests:0});
+  }finally{release?.();h.close();}
+ }
+});
+
+after(()=>{
+ const source=fs.readFileSync(new URL('../app/components/product-label-editor.tsx',import.meta.url),'utf8'),start=source.indexOf('type ReferenceProps='),child=source.slice(start),testSource=fs.readFileSync(new URL('./product-label-reference-editor.test.mjs',import.meta.url));assert.ok(start>0);
+ fs.writeFileSync(new URL('../outputs/step710-reference-child-proof.json',import.meta.url),JSON.stringify({format:'step710-label-reference-child-v1',childRange:{file:'app/components/product-label-editor.tsx',startMarker:'type ReferenceProps=',end:'EOF',rangeUnit:'source suffix; other parent ranges excluded',sha256:createHash('sha256').update(child).digest('hex')},testHash:createHash('sha256').update(testSource).digest('hex'),traces:editingProofs,boundary:'Actual child component callbacks with synthetic scheduler/auth-free reference APIs. No real browser, files, products, source collection, provider or Supplier Hub writes. Parent integration tests are root-owned.'},null,2)+'\n');
+});
 
 test('saved option label cards open the exact selected translation slot without saving or touching nine-row values',async()=>{
  const f=fixture(),opened=[],h=editor(f,{profileId:'profile',onTranslate:(...args)=>opened.push(args)});try{await h.idle();
