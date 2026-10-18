@@ -31,7 +31,7 @@ export async function readProductLabelReferences(input: ProductLabelReferenceSco
   scope(input);
   async function read<T>(url:string):Promise<T>{const response=await request(url,{cache:'no-store'}),body=await response.json() as T & {error?:string};if(!response.ok)throw Error(body?.error||'최종 라벨 저장본을 읽지 못했습니다.');return body;}
   const before=await read<ProductLabelsView>(input.endpoint),quotation=await read<QuotationFieldsView>(input.quotationEndpoint),view=await read<ProductLabelsView>(input.endpoint);
-  if (before.revision!==view.revision || before.productVersion!==view.productVersion || before.inputFingerprint!==view.inputFingerprint) throw Error('라벨을 조회하는 동안 저장값이 변경됐습니다. 다시 조회해주세요.');
+  if (before.revision!==view.revision || before.productVersion!==view.productVersion || before.inputFingerprint!==view.inputFingerprint || before.renderEpoch!==view.renderEpoch) throw Error('라벨을 조회하는 동안 저장값이 변경됐습니다. 다시 조회해주세요.');
   return productLabelReferences(input,view,quotation);
 }
 function changes(input:ProductLabelReferenceScope,before:ProductLabelReferences,selected:readonly string[]) {
@@ -46,7 +46,7 @@ export function verifyProductLabelReferenceSave(input:ProductLabelReferenceScope
   const stored=input.optionId===null?next.overrides.common:next.overrides.options[input.optionId],row=next.resolved.rows.find(row=>row.optionId===input.optionId)!;
   if(next.revision!==q.revision+1 || next.updatedAt!==next.productVersion || !Number.isFinite(Date.parse(next.productVersion)) || Date.parse(next.productVersion)<=Date.parse(q.productVersion)
     || next.contentRevision!==q.contentRevision || next.optionRevision!==q.optionRevision || !same(next.imageKeys,q.imageKeys) || !same(next.categoryContext,q.categoryContext) || !same(target,newTarget)
-    || !same(next.overrides,applyQuotationChanges(q.overrides,planned)) || saved.view.revision!==before.view.revision || !same(saved.view.overrides,before.view.overrides)
+    || !same(next.overrides,applyQuotationChanges(q.overrides,planned)) || saved.view.revision!==before.view.revision || saved.view.renderEpoch!==before.view.renderEpoch || !same(saved.view.overrides,before.view.overrides)
     || !same(saved.view.rows,before.view.rows) || planned.some(change=>!stored||!Object.hasOwn(stored,change.fieldKey)||stored[change.fieldKey]!==change.value||row.fields[change.fieldKey]?.value!==change.value))
     throw Error('최종 라벨 저장 응답이 요청한 범위와 다릅니다. 입력과 원본 파일은 유지됩니다.');
 }
@@ -55,7 +55,7 @@ export function verifyProductLabelReferenceRefresh(input:ProductLabelReferenceSc
   const q=before.quotation,next=latest.quotation,target=exactPrimaryQuotationTarget(q.resolved.schema.fields,'labelImages');
   const own=(view:QuotationFieldsView,id:string)=>input.optionId===null?view.overrides.common[id]:view.overrides.options[input.optionId]?.[id];
   if(next.revision<q.revision||Date.parse(next.productVersion)<Date.parse(q.productVersion)||next.contentRevision<q.contentRevision||next.optionRevision<q.optionRevision
-    ||!same(next.categoryContext,q.categoryContext)||!same(exactPrimaryQuotationTarget(next.resolved.schema.fields,'labelImages'),target)
+    ||latest.view.renderEpoch!==before.view.renderEpoch||!same(next.categoryContext,q.categoryContext)||!same(exactPrimaryQuotationTarget(next.resolved.schema.fields,'labelImages'),target)
     ||target.linked.some(id=>!same(own(q,id),own(next,id))||!same(q.overrides.common[id],next.overrides.common[id])
       ||!same(q.resolved.rows.find(row=>row.optionId===input.optionId)?.fields[id],next.resolved.rows.find(row=>row.optionId===input.optionId)?.fields[id])))
     throw Error('최종 라벨 참조에 다른 변경이 있습니다. 입력을 유지했습니다. 저장본과 비교한 뒤 다시 선택해주세요.');
@@ -66,7 +66,7 @@ export function verifyProductLabelReferenceRefresh(input:ProductLabelReferenceSc
 export async function saveProductLabelReferences(input:ProductLabelReferenceScope,before:ProductLabelReferences,selected:readonly string[],request:typeof fetch=fetch):Promise<ProductLabelReferences>{
   const planned=changes(input,before,selected),current=await readProductLabelReferences(input,request);
   if(current.quotation.revision!==before.quotation.revision || current.quotation.inputFingerprint!==before.quotation.inputFingerprint || current.view.inputFingerprint!==before.view.inputFingerprint){verifyProductLabelReferenceSave(input,before,current,selected);return current;}
-  if(!same(current.quotation.overrides,before.quotation.overrides)||!same(current.view.rows,before.view.rows)||current.quotation.productVersion!==before.quotation.productVersion)throw Error('최종 라벨 저장본이 바뀌었습니다. 입력을 유지하고 다시 조회해주세요.');
+  if(!same(current.quotation.overrides,before.quotation.overrides)||!same(current.view.rows,before.view.rows)||current.view.renderEpoch!==before.view.renderEpoch||current.quotation.productVersion!==before.quotation.productVersion)throw Error('최종 라벨 저장본이 바뀌었습니다. 입력을 유지하고 다시 조회해주세요.');
   let response:Response|undefined;
   try{
     response=await request(input.quotationEndpoint,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:before.quotation.revision,expectedInputFingerprint:before.quotation.inputFingerprint,changes:planned})});

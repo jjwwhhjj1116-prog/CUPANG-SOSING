@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { emptyProductLabelOverrides, PRODUCT_LABEL_STORAGE_LIMIT, validateProductLabelOverrides, validateProductLabelStructure, type ProductLabelOverrides, type ProductLabelsState, type ProductLabelStructure } from '@/app/product-label';
+import { emptyProductLabelOverrides, PRODUCT_LABEL_STORAGE_LIMIT, validateProductLabelOverrides, validateProductLabelRenderEpoch, validateProductLabelStructure, type ProductLabelOverrides, type ProductLabelsState, type ProductLabelStructure } from '@/app/product-label';
 import { sourceGuard, type QuotationSourceGuard } from '@/db/quotation-fields';
 
 export const productLabelsSchema = `CREATE TABLE IF NOT EXISTS product_labels (
@@ -20,7 +20,9 @@ export async function readProductLabels(owner: string, productId: string): Promi
   if (new TextEncoder().encode(row.payload).length > PRODUCT_LABEL_STORAGE_LIMIT) throw Error('Product labels exceed storage limit');
   const state = JSON.parse(row.payload) as ProductLabelsState;
   if (state.schemaVersion !== 1 || state.productId !== productId || state.revision !== row.revision || state.updatedAt !== row.updated_at || !Number.isSafeInteger(state.revision) || state.revision < 1 || !Number.isFinite(Date.parse(state.updatedAt!))) throw Error('Invalid product labels');
-  return { ...state, overrides: validateProductLabelOverrides(state.overrides), ...(state.structure === undefined ? {} : { structure: validateProductLabelStructure(state.structure) }) };
+  const renderEpoch = validateProductLabelRenderEpoch(state.renderEpoch);
+  return { ...state, overrides: validateProductLabelOverrides(state.overrides), ...(state.structure === undefined ? {} : { structure: validateProductLabelStructure(state.structure) }),
+    ...(renderEpoch === undefined ? {} : { renderEpoch }) };
 }
 function guardedSource(owner: string, productId: string, source: ProductLabelSourceGuard) {
   const guard = sourceGuard(owner, productId, source);
@@ -42,19 +44,24 @@ export async function productLabelsSourcesCurrent(owner: string, productId: stri
 
 /** The source proof and both clocks are checked inside one D1 transaction.
  * Label storage never writes product content, options, category wires or quotes. */
-export async function saveProductLabels(owner: string, productId: string, overrides: ProductLabelOverrides, expectedRevision: number, source: ProductLabelSourceGuard, structure?: ProductLabelStructure): Promise<ProductLabelsState | null> {
-  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Number.isSafeInteger(source.quotationRevision) || source.quotationRevision < 0 || !Number.isFinite(Date.parse(source.productVersion))) throw Error('Invalid product label revision');
+export async function saveProductLabels(owner: string, productId: string, overrides: ProductLabelOverrides, expectedRevision: number, source: ProductLabelSourceGuard, structure?: ProductLabelStructure, renderEpoch?: number): Promise<ProductLabelsState | null> {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision >= Number.MAX_SAFE_INTEGER || !Number.isSafeInteger(source.quotationRevision) || source.quotationRevision < 0 || !Number.isFinite(Date.parse(source.productVersion))) throw Error('Invalid product label revision');
   const db = await database(), guard = guardedSource(owner, productId, source);
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
-  // An older caller that saves values only must not erase the shared structure.
-  // The existing revision/source proof still fences the eventual transaction.
-  if (structure === undefined && expectedRevision > 0) {
+  // Older value-only callers preserve both shared structure and render epoch.
+  // The revision/source proof still fences the eventual transaction.
+  let previousEpoch: number | undefined;
+  if (expectedRevision > 0) {
     const current = await readProductLabels(owner, productId);
     if (current.revision !== expectedRevision) return null;
-    structure = current.structure;
+    if (structure === undefined) structure = current.structure;
+    previousEpoch = current.renderEpoch;
   }
+  renderEpoch = validateProductLabelRenderEpoch(renderEpoch);
+  if (renderEpoch === undefined) renderEpoch = previousEpoch;
+  else if (renderEpoch !== (previousEpoch ?? 0) && (previousEpoch === Number.MAX_SAFE_INTEGER || renderEpoch !== (previousEpoch ?? 0) + 1)) throw Error('Invalid product label render epoch');
   const state: ProductLabelsState = { schemaVersion: 1, productId, revision: expectedRevision + 1, overrides: validateProductLabelOverrides(overrides), updatedAt,
-    ...(structure === undefined ? {} : { structure: validateProductLabelStructure(structure) }) };
+    ...(structure === undefined ? {} : { structure: validateProductLabelStructure(structure) }), ...(renderEpoch === undefined ? {} : { renderEpoch }) };
   const payload = JSON.stringify(state);
   if (new TextEncoder().encode(payload).length > PRODUCT_LABEL_STORAGE_LIMIT) throw Error('Product labels exceed storage limit');
   const result = await db.batch<{ payload: string; revision: number; id: string }>([

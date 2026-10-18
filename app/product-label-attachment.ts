@@ -15,7 +15,7 @@ const changed = () => Error('PNG 생성 후 카테고리 또는 제품 표시사
 
 /** Explicit regeneration changes final references only in the exact proven
  * product/option/profile/category scope. All original objects remain stored. */
-export async function productLabelReferenceSelection(input: { productId: string; view: QuotationFieldsView; optionId: string | null }, key: string | null, request: typeof fetch = fetch) {
+export async function productLabelReferenceSelection(input: { productId: string; view: QuotationFieldsView; optionId: string | null; renderEpoch?: number }, key: string | null, request: typeof fetch = fetch) {
   const { view } = input, target = exactPrimaryQuotationTarget(view.resolved.schema.fields,'labelImages');
   const rows = view.resolved.rows.filter(row => row.optionId === input.optionId), row = rows[0];
   if (rows.length !== 1 || target.fields.some(field => field.readOnly || typeof row.fields[field.id]?.value !== 'string')) throw Error('제품 표시사항의 옵션·이미지 연결을 확인해주세요.');
@@ -23,14 +23,21 @@ export async function productLabelReferenceSelection(input: { productId: string;
   if (value.trim()) validateQuotationChanges([{optionId:input.optionId,fieldKey:target.primary,value}], {
     schema:view.resolved.schema,optionIds:view.resolved.rows.flatMap(row=>row.optionId?[row.optionId]:[]),ownedImageKeys:view.imageKeys,overrides:view.overrides });
   const previous = keys(value), retained: string[] = [], categorySha256 = await labelUploadDigest(new TextEncoder().encode(JSON.stringify([view.categoryContext.categoryId,view.categoryContext.categoryPath])));
+  const own = input.optionId === null ? undefined : view.overrides.options[input.optionId];
+  const inheritedCommon = input.optionId !== null && typeof input.renderEpoch === 'number' && Number.isSafeInteger(input.renderEpoch) && input.renderEpoch > 0
+    && target.linked.every(id => (!own || !Object.hasOwn(own,id)) && Object.hasOwn(view.overrides.common,id) && view.overrides.common[id] === value && row.fields[id]?.value === value);
   for (const oldKey of previous) {
     const candidate = /^[^/\\\s%?#]+\/quotation-label-([a-f0-9]{64})\.png$/.exec(oldKey);
     if (oldKey === key || !candidate) { retained.push(oldKey); continue; }
     const receipt = await readProductLabelReceipt(candidate[1],request);
     if (receipt.key !== null && receipt.key !== oldKey) throw Error('기존 제품 라벨 파일의 소유자 응답을 확인하지 못했습니다.');
     const proof = receipt.proof;
-    if (!proof || proof.productId !== input.productId || proof.optionId !== input.optionId || proof.profileId !== view.categoryContext.profileId
-      || proof.categorySha256 !== categorySha256) retained.push(oldKey);
+    const sameScope = proof && proof.productId === input.productId && proof.profileId === view.categoryContext.profileId && proof.categorySha256 === categorySha256;
+    // A rewrite may replace an inherited old common PNG in this new option
+    // override only. Explicit option selections, common storage and all files
+    // remain untouched; unrelated/same-generation references stay protected.
+    const priorInheritedCommon = inheritedCommon && proof && sameScope && proof.optionId === null && (proof.renderEpoch ?? 0) !== input.renderEpoch;
+    if (!proof || !sameScope || proof.optionId !== input.optionId && !priorInheritedCommon) retained.push(oldKey);
   }
   return { target, previous, retained, next:key&&!retained.includes(key)?[...retained,key]:retained };
 }
@@ -78,7 +85,7 @@ export async function attachProductLabel(input: Input, request: typeof fetch = f
   }
   function selection(state: Awaited<ReturnType<typeof pair>>, key: string | null) {
     validateQuotation(state.quotation,state.view);
-    return productLabelReferenceSelection({productId:input.productId,view:state.quotation,optionId:input.optionId},key,request);
+    return productLabelReferenceSelection({productId:input.productId,view:state.quotation,optionId:input.optionId,renderEpoch:state.view.renderEpoch},key,request);
   }
   function verifyWrite(before: QuotationFieldsView, saved: QuotationFieldsView, changes: readonly QuotationChange[]) {
     const expected = applyQuotationChanges(before.overrides, changes), row = saved.resolved.rows.find(row => row.optionId === input.optionId);
@@ -93,7 +100,7 @@ export async function attachProductLabel(input: Input, request: typeof fetch = f
   const stored = await findProductLabelUpload({ ...input, view: input.renderedView }, request);
   async function verifyUpload(nextKey: string) {
     const receipt=await readProductLabelReceipt(stored.uploadId,request),proof=receipt.proof;
-    if (receipt.key!==nextKey || !proof || proof.productId!==input.productId || proof.optionId!==input.optionId
+    if (receipt.key!==nextKey || !proof || proof.productId!==input.productId || proof.optionId!==input.optionId || proof.renderEpoch!==input.renderedView.renderEpoch
       || proof.profileId!==input.renderedView.categoryContext.profileId || proof.categorySha256!==expectedCategorySha256 || proof.planSha256!==expectedPlanSha256)
       throw Error('저장한 PNG의 제품 표시사항 원천을 확인하지 못했습니다. 상품·옵션·카테고리와 저장한 9행 내용을 다시 확인해주세요.');
   }

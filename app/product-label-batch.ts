@@ -44,7 +44,7 @@ export async function recoverProductNineLabelBatch(productId:string,cache:Produc
   const receipt=await readProductLabelReceipt(stored.uploadId,request),proof=receipt.proof;
   const [planSha,categorySha]=await Promise.all([labelUploadDigest(new TextEncoder().encode(JSON.stringify(productLabelPlan(pending.view,pending.optionId)))),
     labelUploadDigest(new TextEncoder().encode(JSON.stringify([pending.view.categoryContext.categoryId,pending.view.categoryContext.categoryPath])))]);
-  if(receipt.key!==stored.key||!proof||proof.productId!==productId||proof.optionId!==pending.optionId||proof.profileId!==pending.view.categoryContext.profileId||proof.planSha256!==planSha||proof.categorySha256!==categorySha)
+  if(receipt.key!==stored.key||!proof||proof.productId!==productId||proof.optionId!==pending.optionId||proof.profileId!==pending.view.categoryContext.profileId||proof.planSha256!==planSha||proof.categorySha256!==categorySha||proof.renderEpoch!==pending.view.renderEpoch)
     throw Error('현재 저장된 PNG의 정확한 표시사항 원천을 확인하지 못했습니다. 자동 연결하지 않았습니다.');
   entry.uploaded.set(pending.optionId,stored.key);pending.key=stored.key;
  }
@@ -86,7 +86,7 @@ export async function runProductNineLabels(productId:string,options:Options):Pro
   if(options.shouldStop())return result(0,true);
   productLabelPlan(view,row.optionId);const stored=await findProductLabelUpload({productId,endpoint,view,optionId:row.optionId},request);
   if(stored.key)entry.uploaded.set(row.optionId,stored.key);else entry.uploaded.delete(row.optionId);
-  const references=await productLabelReferenceSelection({productId,view:quote,optionId:row.optionId},stored.key,request),limit=Math.min(...references.target.fields.map(field=>field.maxItems??30));
+  const references=await productLabelReferenceSelection({productId,view:quote,optionId:row.optionId,renderEpoch:view.renderEpoch},stored.key,request),limit=Math.min(...references.target.fields.map(field=>field.maxItems??30));
   if(references.retained.length+(stored.key&&references.retained.includes(stored.key)?0:1)>limit)throw Error(`${row.optionLabel}: 표시사항 이미지 ${limit}개 한도입니다.`);
   if(!stored.key)newFiles++;else if(!view.imageKeys.includes(stored.key))additions.add(stored.key);
  }

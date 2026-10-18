@@ -6,7 +6,8 @@ export type ProductLabelUploadCache = { signature: string; uploadedKey: string |
 export function productLabelPreviewSignature(input: ProductLabelUploadContext) {
   verifyProductLabelsView(input.view, input.optionId);
   if (input.view.productId !== input.productId) throw Error('표시사항을 만든 상품을 확인해주세요.');
-  return JSON.stringify({ productId: input.productId, endpoint: input.endpoint, category: input.view.categoryContext, optionId: input.optionId, plan: productLabelPlan(input.view, input.optionId) });
+  return JSON.stringify({ productId: input.productId, endpoint: input.endpoint, category: input.view.categoryContext, optionId: input.optionId, plan: productLabelPlan(input.view, input.optionId),
+    ...(input.view.renderEpoch === undefined ? {} : { renderEpoch: input.view.renderEpoch }) });
 }
 /** This recipe describes the nine-row product label, independent of the
  * category's stage-seven legal notice, unrelated prices or source revisions. */

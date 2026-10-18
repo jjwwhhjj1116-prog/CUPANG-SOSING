@@ -1,4 +1,4 @@
-import { productLabelPlan, type ProductLabelsView } from '@/app/product-label';
+import { productLabelPlan, validateProductLabelRenderEpoch, type ProductLabelsView } from '@/app/product-label';
 import { productLabelUploadId, type ProductLabelUploadContext } from '@/app/product-label-upload';
 import { labelUploadDigest, labelUploadKey } from '@/app/label-upload-key';
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
@@ -8,10 +8,16 @@ import type { SubmissionIssue } from '@/app/submission-review';
 
 export const PRODUCT_LABEL_PROOF_RECIPE = 'product-label-png-v1';
 export type ProductLabelProofRequest = { productId: string; optionId: string | null; endpoint: string; expectedProductVersion: string; expectedInputFingerprint: string; expectedRevision: number };
-export type ProductLabelReceipt = { recipe: typeof PRODUCT_LABEL_PROOF_RECIPE; productId: string; optionId: string | null; profileId: string | null; planSha256: string; categorySha256: string };
+export type ProductLabelReceipt = { recipe: typeof PRODUCT_LABEL_PROOF_RECIPE; productId: string; optionId: string | null; profileId: string | null; planSha256: string; categorySha256: string; renderEpoch?: number };
 const digest = (value: unknown) => labelUploadDigest(new TextEncoder().encode(JSON.stringify(value)));
 const identifier = (value: unknown, length: number): value is string => typeof value === 'string' && new RegExp(`^[A-Za-z0-9_-]{1,${length}}$`).test(value);
 const sha256 = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+function metadataRenderEpoch(metadata: Record<string, unknown>): number | undefined {
+  if (!Object.hasOwn(metadata, 'productLabelRenderEpoch')) return undefined;
+  const value = metadata.productLabelRenderEpoch;
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) throw Error('제품 표시사항 PNG의 재작성 버전을 확인해주세요.');
+  return validateProductLabelRenderEpoch(Number(value));
+}
 export function productLabelProofRequest(input: ProductLabelUploadContext): ProductLabelProofRequest {
   return { productId: input.productId, optionId: input.optionId, endpoint: input.endpoint,
     expectedProductVersion: input.view.productVersion, expectedInputFingerprint: input.view.inputFingerprint, expectedRevision: input.view.revision };
@@ -39,7 +45,8 @@ export async function verifiedProductLabelMetadata(proof: ProductLabelProofReque
     productLabelProfileId: view.categoryContext.profileId ?? '',
     productLabelPlanSha256: await digest(productLabelPlan(view, proof.optionId)),
     productLabelCategorySha256: await digest([view.categoryContext.categoryId,view.categoryContext.categoryPath]),
-    productLabelProductVersion: view.productVersion, productLabelSourceFingerprint: view.inputFingerprint, productLabelRevision: String(view.revision) };
+    productLabelProductVersion: view.productVersion, productLabelSourceFingerprint: view.inputFingerprint, productLabelRevision: String(view.revision),
+    ...(view.renderEpoch === undefined ? {} : { productLabelRenderEpoch: String(view.renderEpoch) }) };
 }
 
 /** Only complete, server-marked product-label PNG evidence grants replacement.
@@ -56,10 +63,12 @@ export function productLabelReceiptFromMetadata(value: unknown): ProductLabelRec
     || !sha256(metadata.productLabelSourceFingerprint)
     || typeof metadata.productLabelRevision !== 'string' || !/^(?:0|[1-9]\d*)$/.test(metadata.productLabelRevision) || !Number.isSafeInteger(Number(metadata.productLabelRevision))
     || !sha256(metadata.labelUploadId) || !sha256(metadata.labelBlobSha256)) throw Error('제품 표시사항 PNG의 저장 원천을 확인하지 못했습니다.');
+  const renderEpoch = metadataRenderEpoch(metadata);
   return { recipe: PRODUCT_LABEL_PROOF_RECIPE, productId: metadata.productLabelProductId,
     optionId: metadata.productLabelOptionId === '' ? null : metadata.productLabelOptionId as string,
     profileId: metadata.productLabelProfileId === '' ? null : metadata.productLabelProfileId as string,
-    planSha256: metadata.productLabelPlanSha256, categorySha256: metadata.productLabelCategorySha256 };
+    planSha256: metadata.productLabelPlanSha256, categorySha256: metadata.productLabelCategorySha256,
+    ...(renderEpoch === undefined ? {} : { renderEpoch }) };
 }
 
 /** The authenticated file route supplies evidence for this owner's exact
@@ -76,9 +85,10 @@ export async function readProductLabelReceipt(uploadId: string, request: typeof 
   let proof: ProductLabelReceipt | null = null;
   if (Object.hasOwn(body,'productLabelProof')) {
     const value = body.productLabelProof as ProductLabelReceipt;
-    if (!key || !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(name => !['recipe','productId','optionId','profileId','planSha256','categorySha256'].includes(name))
+    if (!key || !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(name => !['recipe','productId','optionId','profileId','planSha256','categorySha256','renderEpoch'].includes(name))
       || value.recipe !== PRODUCT_LABEL_PROOF_RECIPE || !identifier(value.productId,100) || value.optionId !== null && !identifier(value.optionId,80)
-      || value.profileId !== null && !identifier(value.profileId,100) || !sha256(value.planSha256) || !sha256(value.categorySha256)) throw Error('제품 표시사항 PNG의 저장 원천 응답을 확인하지 못했습니다.');
+      || value.profileId !== null && !identifier(value.profileId,100) || !sha256(value.planSha256) || !sha256(value.categorySha256)
+      || Object.hasOwn(value, 'renderEpoch') && validateProductLabelRenderEpoch(value.renderEpoch) === undefined) throw Error('제품 표시사항 PNG의 저장 원천 응답을 확인하지 못했습니다.');
     proof = value;
   }
   return { uploadId, key, proof };
@@ -113,6 +123,13 @@ export async function inspectGeneratedProductLabels(input: {
         || labelUploadKey(input.ownerId,metadata.labelUploadId) !== key || !/^[a-f0-9]{64}$/.test(metadata.labelBlobSha256 ?? '')) throw Error('Invalid generated label proof');
       if (!views.has(profileId ?? '')) views.set(profileId ?? '',input.readView(profileId));
       const view = await views.get(profileId ?? '')!;
+      const renderEpoch = metadataRenderEpoch(metadata);
+      // Even identical text belongs to the previous generation after an
+      // explicit rewrite. Full-row legacy compatibility never crosses epochs.
+      if ((renderEpoch ?? 0) !== (validateProductLabelRenderEpoch(view.renderEpoch) ?? 0)) {
+        issues.push({kind:'error',code:'GENERATED_PRODUCT_LABEL_STALE',message:'표시사항을 재작성한 뒤 새 PNG를 생성·연결해주세요. 이전 파일과 저장한 문구는 보관됩니다.',optionId:row.optionId,optionLabel:row.optionLabel,fieldId:target.primary});
+        continue;
+      }
       const category = await digest([view.categoryContext.categoryId,view.categoryContext.categoryPath]);
       const current = await digest(productLabelPlan(view,row.optionId));
       if (category === metadata.productLabelCategorySha256 && current === metadata.productLabelPlanSha256) continue;

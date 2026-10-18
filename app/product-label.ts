@@ -20,13 +20,13 @@ export type ProductLabelDraft = Partial<Record<ProductLabelKey, string | null>>;
 export type ProductLabelSource = 'manual-option' | 'manual-common' | 'content' | 'quotation' | 'settings' | 'empty';
 export type ProductLabelOverrides = { common: Partial<ProductLabelValues>; options: Record<string, Partial<ProductLabelValues>> };
 export type ProductLabelChange = { optionId: string | null; fieldKey: ProductLabelKey; value: string | null };
-export type ProductLabelsState = { schemaVersion: 1; productId: string; revision: number; overrides: ProductLabelOverrides; updatedAt: string | null; structure?: ProductLabelStructure };
+export type ProductLabelsState = { schemaVersion: 1; productId: string; revision: number; overrides: ProductLabelOverrides; updatedAt: string | null; structure?: ProductLabelStructure; renderEpoch?: number };
 export type ProductLabelRow = { optionId: string | null; optionLabel: string; included: boolean; values: ProductLabelValues; automatic: ProductLabelValues; sources: Record<ProductLabelKey, ProductLabelSource> };
 export type ProductLabelsView = {
   productId: string; revision: number; inputFingerprint: string; productVersion: string;
   contentRevision: number; optionRevision: number; quotationRevision: number; quotationInputFingerprint: string;
   categoryContext: QuotationFieldsView['categoryContext']; imageKeys: string[];
-  overrides: ProductLabelOverrides; rows: ProductLabelRow[]; updatedAt: string | null; structure?: ProductLabelStructure;
+  overrides: ProductLabelOverrides; rows: ProductLabelRow[]; updatedAt: string | null; structure?: ProductLabelStructure; renderEpoch?: number;
 };
 export const PRODUCT_LABEL_BODY_LIMIT = 96 * 1024;
 export const PRODUCT_LABEL_STORAGE_LIMIT = 512 * 1024;
@@ -38,6 +38,14 @@ const record = (value: unknown): value is Record<string, unknown> => !!value && 
 const textIssues = (value: unknown) => typeof value !== 'string' ? ['일반 텍스트를 입력해주세요.']
   : [...(value.length > 2000 ? ['항목마다 2,000자 이하로 입력해주세요.'] : []), ...(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value) ? ['제어문자를 제거해주세요.'] : [])];
 export const emptyProductLabelOverrides = (): ProductLabelOverrides => ({ common: {}, options: {} });
+
+/** Absence is the unchanged legacy generation. Only a server rewrite advances
+ * the positive epoch; ordinary value/structure saves must preserve it. */
+export function validateProductLabelRenderEpoch(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw Error('표시사항 재작성 버전을 확인해주세요.');
+  return value;
+}
 
 /** The default is intentionally absent from legacy storage and responses.
  * These getters also retain incomplete local headings while the user edits. */
@@ -112,6 +120,7 @@ export function applyProductLabelChanges(current: ProductLabelOverrides, changes
 export function resolveProductLabels(input: { productId: string; state: ProductLabelsState; content: ProductContent; options: ProductOptions; quotation: QuotationFieldsView; settings: { manufacturer?: string; importer?: string; handlingPrecautions?: string } }): ProductLabelRow[] {
   const target = exactPrimaryQuotationTarget(input.quotation.resolved.schema.fields, 'title');
   if (input.content.productId !== input.productId || input.options.productId !== input.productId || input.state.productId !== input.productId) throw Error('표시사항의 상품 자료가 일치하지 않습니다.');
+  if (Object.hasOwn(input.state, 'renderEpoch') && validateProductLabelRenderEpoch(input.state.renderEpoch) === undefined) throw Error('표시사항 재작성 버전을 확인해주세요.');
   const definitions = productLabelDefinitions({ structure: input.state.structure === undefined ? undefined : validateProductLabelStructure(input.state.structure) });
   return input.quotation.resolved.rows.map(row => {
     if (row.optionId !== null && !input.options.rows.some(option => option.id === row.optionId)) throw Error('표시사항에 연결된 옵션이 삭제되었습니다.');
@@ -166,6 +175,7 @@ export function verifyProductLabelsView(view: ProductLabelsView, optionId: strin
     || view.rows.filter(row => row.optionId === optionId).length !== 1 || new Set(view.rows.map(row => row.optionId)).size !== view.rows.length)
     throw Error('선택한 상품·옵션의 표시사항 저장본을 확인하지 못했습니다.');
   validateProductLabelOverrides(view.overrides);
+  if (Object.hasOwn(view, 'renderEpoch') && validateProductLabelRenderEpoch(view.renderEpoch) === undefined) throw Error('표시사항 재작성 버전을 확인해주세요.');
   const structure = view.structure === undefined ? undefined : validateProductLabelStructure(view.structure);
   if (!same(structure, view.structure)) throw Error('표시사항 항목 구성이 정규화된 저장본과 다릅니다.');
   const definitions = productLabelDefinitions({ structure }), active = new Set(definitions.map(field => field.key));
@@ -215,7 +225,7 @@ export function verifyProductLabelSave(before: ProductLabelsView, saved: Product
   if (saved.productId !== before.productId || saved.revision !== before.revision + 1 || saved.updatedAt !== saved.productVersion
     || Date.parse(saved.productVersion) <= Date.parse(before.productVersion) || saved.contentRevision !== before.contentRevision
     || saved.optionRevision !== before.optionRevision || saved.quotationRevision !== before.quotationRevision
-    || !same(saved.imageKeys, before.imageKeys) || !same(saved.categoryContext, before.categoryContext) || !same(saved.structure, expectedStructure)
+    || !same(saved.imageKeys, before.imageKeys) || !same(saved.categoryContext, before.categoryContext) || !same(saved.structure, expectedStructure) || saved.renderEpoch !== before.renderEpoch
     || !same(saved.rows.map(row => [row.optionId, row.optionLabel, row.included]), before.rows.map(row => [row.optionId, row.optionLabel, row.included]))
     || saved.rows.some((row, index) => productLabelDefinitions(saved).some(({ key }) => Object.hasOwn(before.rows[index].automatic, key) && row.automatic[key] !== before.rows[index].automatic[key]))
     || !same(saved.overrides, applyProductLabelChanges(before.overrides, changes, expectedStructure))) throw Error('표시사항 저장 버전과 선택 옵션 저장값을 확인하지 못했습니다. 입력은 유지했습니다.');
@@ -227,7 +237,7 @@ export function verifyProductLabelRefresh(before: ProductLabelsView, latest: Pro
   if (acceptStructureChange && (Object.keys(draft).length || structure !== undefined)) throw Error('작성 중인 표시사항을 보존하거나 취소한 뒤 최신 항목 구성을 불러와주세요.');
   if (latest.productId !== before.productId || latest.revision < before.revision || Date.parse(latest.productVersion) < Date.parse(before.productVersion)
     || !same(latest.categoryContext, before.categoryContext)
-    || !acceptStructureChange && !same(latest.structure, before.structure) && (structure === undefined || !same(latest.structure, validateProductLabelStructure(structure)))) throw Error('옵션 또는 카테고리·항목 구성이 변경되었습니다. 입력은 유지했습니다.');
+    || !acceptStructureChange && (latest.renderEpoch !== before.renderEpoch || !same(latest.structure, before.structure) && (structure === undefined || !same(latest.structure, validateProductLabelStructure(structure))))) throw Error('옵션 또는 카테고리·항목 구성·재작성 버전이 변경되었습니다. 입력은 유지했습니다.');
   for (const key of Object.keys(draft) as ProductLabelKey[]) {
     const old = (optionId === null ? before.overrides.common : Object.hasOwn(before.overrides.options, optionId) ? before.overrides.options[optionId] : undefined)?.[key] ?? null;
     const current = (optionId === null ? latest.overrides.common : Object.hasOwn(latest.overrides.options, optionId) ? latest.overrides.options[optionId] : undefined)?.[key] ?? null;
