@@ -133,7 +133,7 @@ export async function POST(request: Request, context: Context) {
       // Use the immutable intake settings, not settings changed after collection.
       const capturedSettings = categorySource?.snapshot?.linked ? JSON.parse(categorySource.snapshot.payload)?.settings : null;
       const hiddenAttributes = typeof capturedSettings?.hiddenAttributes === 'boolean' ? capturedSettings.hiddenAttributes : undefined;
-      const intakeBrand = capturedSettings ? savedRegistrationSettings(capturedSettings).brand : undefined;
+      const intakeBrand = capturedSettings ? savedRegistrationSettings(capturedSettings).brand.split(',')[0].trim() : undefined;
       const optionRecoveryJobs = job.review.instructionsVersion==='sourceflow-translation-v6' ? await listTranslationJobs(owner,id) : [];
       if (optionRecoveryJobs.length === 20) {
         // listTranslationJobs is intentionally bounded. An older canonical
