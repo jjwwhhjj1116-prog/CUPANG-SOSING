@@ -2,6 +2,7 @@ import { parse, parseFragment, type DefaultTreeAdapterMap } from 'parse5';
 import { parseCollectionRequest } from '@/app/sourcing';
 import { COLLECTION_RESULT_LIMIT, validateCollectionResult } from '@/app/collection-result';
 import { parseAlibabaDescription } from '@/app/alibaba-description';
+import { alibabaMobileResponseSucceeded } from '@/app/alibaba-mobile-response';
 
 type Row = Record<string, unknown>;
 export class AlibabaMobileInitialDataUnavailableError extends Error {}
@@ -149,7 +150,7 @@ export function parseAlibabaPublicSkuProduct(payload: unknown, sourceUrl: string
 
 function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; title: string; gallery: unknown[]; attributes?: {name: string; value: string}[]}, payload: unknown, description: string, now: number, provider: string) {
   const envelope = row(payload);
-  if (!Array.isArray(envelope.ret) || !envelope.ret.some(value => typeof value === 'string' && /^SUCCESS(?:::|$)/.test(value))) throw Error('1688 공개 옵션 조회가 성공하지 않았습니다.');
+  if (!alibabaMobileResponseSucceeded(envelope.ret)) throw Error('1688 공개 옵션 조회가 성공하지 않았습니다.');
   const data = row(row(row(row(payload).data).result).data), base = row(data.offerBaseInfo);
   if (identity(base.offerId) !== source.offerId || text(base.title) !== source.title) throw Error('상품 페이지와 옵션 조회의 상품이 다릅니다.');
   if ([data, base, row(data.skuModel)].some(value => value.isPricePrivate === true || value.isPicPrivate === true || value.isDetailForbidden === true)) throw Error('이 상품 원문은 별도 접근 확인이 필요합니다.');
@@ -202,11 +203,14 @@ function parseAlibabaSkuProduct(source: {sourceUrl: string; offerId: string; tit
     combinations.add(combination);
     const unitPriceCny = commonPrice ?? numeric(item.price);
     if (!Number.isFinite(unitPriceCny) || unitPriceCny <= 0) throw Error('옵션별 CNY 원가를 확인하지 못했습니다.');
-    const references = positions.map((position, index) => props[index].values[position].imageUrl).filter(value => value != null && value !== '');
+    // Keep the same first/second variant candidates and gallery fallback as
+    // the source client's actual-SKU drafts. Retain both candidate originals.
+    const references = positions.slice(0, 2).map((position, index) => props[index].values[position].imageUrl).filter(value => value != null && value !== '');
+    const imageIndex = references.map(reference => image(reference, 'additional'))[0] ?? 0;
     const attribute = (names: string[]) => { const values = props.flatMap((prop, index) => names.includes(prop.name) ? [parts[index]] : []); if (new Set(values).size > 1) throw Error('옵션 속성 값이 충돌합니다.'); return values[0]; };
     const color = attribute(['颜色', '色彩', '색상', 'color', 'colour']), size = attribute(['尺码', '尺寸', '사이즈', 'size']);
     return {positions, option: {sku: identity(item.skuId), name: parts.length ? parts.join(' / ') : source.title, unitPriceCny, minimumOrder, stock: item.canBookCount == null ? null : numeric(item.canBookCount),
-      ...(references.length ? {imageIndex: image(references[0], 'additional')} : {}), ...(color ? {color} : {}), ...(size ? {size} : {})}};
+      imageIndex, ...(color ? {color} : {}), ...(size ? {size} : {})}};
   }).sort((left, right) => { for (let index = 0; index < props.length; index++) { const difference = left.positions[index] - right.positions[index]; if (difference) return difference; } return 0; });
   const details = parseAlibabaDescription(description);
   details.images.forEach(url => image(url, 'detail'));

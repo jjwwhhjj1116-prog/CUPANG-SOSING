@@ -33,7 +33,7 @@ test('one explicit public SKU without variant axes preserves its title, price, M
   data.skuModel.skuProps=[];data.skuModel.skuInfoMap={'':{skuId:'622000000010',specAttrs:'',price:'12.5',canBookCount:stock}};order.beginNum=3;order.skuParam.skuPriceType=priceType;
   if(priceType==='rangePrice')order.skuParam.skuRangePrices=[{beginAmount:3,price:'12.5'},{beginAmount:100,price:'11'}];
   const before=JSON.stringify(payload),page=parser.parseAlibabaMobilePage(pageHtml(mobile),sourceUrl),result=parser.parseAlibabaMobileProduct(page,payload,parser.parseAlibabaMobileDescription(detail));
-  assert.equal(result.options.length,1);assert.deepEqual(JSON.parse(JSON.stringify(result.options[0])),{sku:'622000000010',name:page.title,unitPriceCny:12.5,minimumOrder:3,stock});
+  assert.equal(result.options.length,1);assert.deepEqual(JSON.parse(JSON.stringify(result.options[0])),{sku:'622000000010',name:page.title,unitPriceCny:12.5,minimumOrder:3,stock,imageIndex:0});
   assert.equal(result.attributes.length,24);assert.ok(result.images.some(image=>image.role==='detail'));assert.equal(JSON.stringify(payload),before);
   const publicResult=parser.parseAlibabaPublicSkuProduct(payload,sourceUrl);assert.equal(publicResult.options[0].name,page.title);assert.equal(publicResult.options[0].stock,stock);assert.equal(publicResult.options[0].unitPriceCny,12.5);
  }

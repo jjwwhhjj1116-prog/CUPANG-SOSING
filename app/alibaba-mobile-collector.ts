@@ -1,6 +1,7 @@
 import { parseCollectionRequest } from '@/app/sourcing';
 import { AlibabaMobileInitialDataUnavailableError, parseAlibabaMobilePage, parseAlibabaMobileDescription, parseAlibabaMobileProduct, parseAlibabaPublicSkuProduct } from '@/app/alibaba-mobile-product';
 import { publicMtopMd5 } from '@/app/public-mtop-md5';
+import { alibabaMobileResponseSucceeded } from '@/app/alibaba-mobile-response';
 
 const SKU_ENDPOINT = 'https://h5api.m.1688.com/h5/mtop.mbox.fc.common.gateway/1.0/';
 const PUBLIC_APP_KEY = '12574478'; // Alibaba's public lib-mtop 2.7.4 client ID, not an owned OpenAPI key.
@@ -59,7 +60,7 @@ export async function queryAlibabaMobileSkus(offerId: string, options: {fetcher?
     let payload: {ret?: unknown};
     try { payload = JSON.parse(body); } catch { throw Error('1688 옵션 조회가 JSON을 반환하지 않았습니다.'); }
     if (!payload || !Array.isArray(payload.ret) || payload.ret.some(value => typeof value !== 'string')) throw Error('1688 옵션 조회 결과를 확인하지 못했습니다.');
-    if (payload.ret.some(value => /^SUCCESS(?:::|$)/.test(value))) return payload;
+    if (alibabaMobileResponseSucceeded(payload.ret)) return payload;
     if (attempt === 0 && payload.ret.length === 1 && /^FAIL_SYS_TOKEN_EMPTY(?:::|$)/.test(payload.ret[0])) {
       ({token, cookie} = anonymousTransport(response.headers)); continue;
     }
