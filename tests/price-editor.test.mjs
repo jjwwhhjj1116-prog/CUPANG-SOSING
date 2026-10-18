@@ -11,7 +11,7 @@ const nodes=t=>Array.isArray(t)?t.flatMap(nodes):t&&typeof t==='object'?[t,...no
 function harness({onSave}={}){
  const slots=[],layouts=[];let cursor=0,changed=false,initial={...base},fail=false,saveCalls=0;
  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/price-editor.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,require(name){
-  if(name==='react')return{useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return[slots[i],v=>{if(!Object.is(slots[i],v))changed=true;slots[i]=v;}];},useRef(value){const i=cursor++;return slots[i]??(slots[i]={current:value});},useLayoutEffect(effect){cursor++;layouts.push(effect);}};
+  if(name==='react')return{useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return[slots[i],v=>{if(!Object.is(slots[i],v))changed=true;slots[i]=v;}];},useRef(value){const i=cursor++;return slots[i]??(slots[i]={current:value});},useMemo(factory,deps){const i=cursor++,previous=slots[i];if(!previous||deps.some((value,j)=>!Object.is(value,previous.deps[j])))slots[i]={deps:[...deps],value:factory()};return slots[i].value;},useLayoutEffect(effect){cursor++;layouts.push(effect);}};
   if(name==='@/app/components/option-quotation-prices')return{OptionQuotationPrices:()=>null};
   if(name==='@/app/components/option-price-preview')return{OptionPricePreview:()=>null};
   if(name==='@/app/pricing')return{priceMinimumMarginEnabled:providedOptionModule('app/pricing.ts').priceMinimumMarginEnabled,calculatePrice:(_cost,p)=>({supplyPrice:p.exchangeRate,salePrice:1,msrp:1,costKrw:1830.5,marginKrw:2999.5,actualMargin:1})};

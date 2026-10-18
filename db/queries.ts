@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import type { PricePolicy } from '@/app/pricing';
+import type { QuotationFieldsState, QuotationSourceGuard } from '@/db/quotation-fields';
 import { productRegistrationCounterSchema, productRegistrationSchema, productRegistrationOptionsSchema, prepareProductRegistration, withRegistrationNumber } from '@/db/product-registration';
 
 export type ProductRecord = {
@@ -145,13 +146,73 @@ export async function findProduct(ownerId: string, id: string, activeOnly = fals
   return saved ? withRegistrationNumber(saved) : null;
 }
 
+export type ProductPriceQuotationSnapshot={state:QuotationFieldsState;payload:string|null};
+export type ProductPriceQuotationCommit={source:QuotationSourceGuard;before:ProductPriceQuotationSnapshot;state:QuotationFieldsState;writeQuote?:boolean};
+/** Optional legacy probe: it neither creates the quotation schema nor rewrites
+ * an old document merely because its product policy is being saved. */
+export async function readProductPriceQuotationSnapshot(ownerId:string,id:string):Promise<ProductPriceQuotationSnapshot|null>{
+  const db=database();
+  if(!await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='product_quotation_fields'").first())return null;
+  const row=await db.prepare('SELECT payload,revision FROM product_quotation_fields WHERE owner_id=? AND product_id=?').bind(ownerId,id).first<{payload:string;revision:number}>();
+  if(!row)return{state:{schemaVersion:1,productId:id,revision:0,overrides:{common:{},options:{}},updatedAt:null},payload:null};
+  const state=JSON.parse(row.payload) as QuotationFieldsState;
+  if(state.schemaVersion!==1||state.productId!==id||state.revision!==row.revision||!state.overrides?.common||!state.overrides.options)throw Error('Invalid quotation price snapshot');
+  return{state,payload:row.payload};
+}
+
 export async function applyProductPrice(ownerId: string, id: string, expectedVersion: string, values: {
   exchangeRate: number; supplyMargin: number; coupangMargin: number; supplyPrice: number; salePrice: number; msrp: number;
-}, policy: PricePolicy) {
+}, policy: PricePolicy, quotation?:ProductPriceQuotationCommit) {
   await ensureDatabase();
   // A second editor must reload instead of overwriting a more recent price.
   const version = new Date(Math.max(Date.now(), Date.parse(expectedVersion) + 1)).toISOString();
   const payload = JSON.stringify(policy);
+  if(quotation){
+    const {sourceGuard}=await import('@/db/quotation-fields');
+    if(quotation.source.productVersion!==expectedVersion||quotation.before.state.productId!==id||quotation.state.productId!==id
+      ||quotation.state.revision!==quotation.before.state.revision||!Number.isSafeInteger(quotation.before.state.revision)||quotation.before.state.revision<0
+      ||(quotation.before.payload===null)!==(quotation.before.state.revision===0))throw Error('Invalid price quotation commit');
+    const previous=quotation.before,state={...quotation.state,revision:previous.state.revision+1,updatedAt:version},quotePayload=JSON.stringify(state);
+    if(new TextEncoder().encode(quotePayload).length>512*1024)throw Error('견적서 가격 자료가 저장 한도를 초과했습니다.');
+    const guard=sourceGuard(ownerId,id,quotation.source),db=database();
+    const before=`((? IS NULL AND NOT EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id))
+      OR EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id AND q.owner_id=p.owner_id AND q.revision=? AND q.payload=?))`;
+    const beforeArgs=[previous.payload,previous.state.revision,previous.payload];
+    const first=db.prepare(`UPDATE products AS p SET exchange_rate=?,supply_margin=?,coupang_margin=?,supply_price=?,sale_price=?,msrp=?,quote_status='대기',updated_at=?
+        WHERE ${guard.sql} AND ${before} RETURNING *,
+        (SELECT registration_number FROM product_registration_numbers n WHERE n.product_id=products.id AND n.owner_id=products.owner_id) AS registration_number`)
+        .bind(values.exchangeRate,values.supplyMargin,values.coupangMargin,values.supplyPrice,values.salePrice,values.msrp,version,...guard.args,...beforeArgs);
+    const policyWrite=db.prepare(`INSERT INTO product_price_policy(product_id,payload) SELECT id,? FROM products WHERE owner_id=? AND id=? AND updated_at=? AND changes()=1
+        ON CONFLICT(product_id) DO UPDATE SET payload=excluded.payload RETURNING product_id,payload`).bind(payload,ownerId,id,version);
+    if(quotation.writeQuote===false){
+      if(JSON.stringify(quotation.state)!==JSON.stringify(previous.state))throw Error('Invalid unchanged price quotation commit');
+      const result=await db.batch<ProductRecord>([first,policyWrite,
+        db.prepare(`UPDATE products AS p SET title=CASE WHEN changes()=1 AND EXISTS(SELECT 1 FROM product_price_policy pp WHERE pp.product_id=p.id AND pp.payload=?)
+            AND ${before} THEN title ELSE NULL END WHERE p.id=? AND p.owner_id=? AND p.updated_at=? RETURNING id`)
+          .bind(payload,...beforeArgs,id,ownerId,version),
+      ]);
+      const applied=Boolean(result[0].results[0]);
+      if(result.slice(1).some(item=>Boolean(item.results[0])!==applied))throw Error('Incomplete guarded price commit acknowledgement');
+      const saved=result[0].results[0];return saved?{...withRegistrationNumber(saved),pricing_policy:payload}:null;
+    }
+    const result=await db.batch<ProductRecord>([
+      first,policyWrite,
+      db.prepare(`INSERT INTO product_quotation_fields(product_id,owner_id,revision,payload,updated_at)
+        SELECT p.id,p.owner_id,CASE WHEN changes()=1 AND ${before} AND EXISTS(SELECT 1 FROM product_price_policy pp WHERE pp.product_id=p.id AND pp.payload=?) THEN ? ELSE 0 END,?,?
+        FROM products p WHERE p.id=? AND p.owner_id=? AND p.updated_at=?
+        ON CONFLICT(product_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at RETURNING *`)
+        .bind(...beforeArgs,payload,state.revision,quotePayload,version,id,ownerId,version),
+      // A different table/event and its existing NOT NULL constraint make an
+      // ignored policy/quotation companion roll back inside the transaction.
+      db.prepare(`UPDATE products AS p SET title=CASE WHEN changes()=1 AND EXISTS(SELECT 1 FROM product_price_policy pp WHERE pp.product_id=p.id AND pp.payload=?)
+          AND EXISTS(SELECT 1 FROM product_quotation_fields q WHERE q.product_id=p.id AND q.owner_id=p.owner_id AND q.revision=? AND q.payload=? AND q.updated_at=?) THEN title ELSE NULL END
+        WHERE p.id=? AND p.owner_id=? AND p.updated_at=? RETURNING id`)
+        .bind(payload,state.revision,quotePayload,version,id,ownerId,version),
+    ]);
+    const applied=Boolean(result[0].results[0]);
+    if(result.slice(1).some(item=>Boolean(item.results[0])!==applied))throw Error('Incomplete price quotation commit acknowledgement');
+    const saved=result[0].results[0];return saved?{...withRegistrationNumber(saved),pricing_policy:payload}:null;
+  }
   const result = await database().batch<ProductRecord>([database().prepare(`UPDATE products SET exchange_rate=?, supply_margin=?, coupang_margin=?,
     supply_price=?, sale_price=?, msrp=?, quote_status='대기', updated_at=?
     WHERE owner_id=? AND id=? AND updated_at=?

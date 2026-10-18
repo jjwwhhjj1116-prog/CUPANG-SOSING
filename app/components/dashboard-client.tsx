@@ -51,7 +51,7 @@ import { requestErrorMessage } from '@/app/request-error';
 import { productRemovalDecision, type ProductRemovalDecision } from '@/app/product-removal-policy';
 import type { SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
 import type { SingleReceiptSummary } from '@/app/supplier-hub-single-receipt';
-import { PriceEditor } from '@/app/components/price-editor';
+import { PriceEditor, type PriceSaveOptions } from '@/app/components/price-editor';
 import { quotationCsv, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { collectionBlock, collectionJobProgress, type CollectionJob } from '@/app/sourcing';
 
@@ -457,10 +457,10 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
     finally { setBusy(false); }
   }
 
-  async function savePrice(policy: PricePolicy) {
+  async function savePrice(policy: PricePolicy, options?:PriceSaveOptions) {
     if (!detail) throw new Error('상품을 선택해주세요.');
     const result = await readJson<{ product: Product }>('/api/products/' + detail.id + '/pricing', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy, expectedVersion: detail.updated_at }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy, expectedVersion: detail.updated_at,...options }),
     });
     setProducts(current => current.map(product => product.id === result.product.id ? result.product : product));
     setDetail(current => current?.id === result.product.id ? result.product : current);
@@ -661,7 +661,7 @@ export default function DashboardClient({ userName, workspaceOwnerId }: { userNa
 function Modal({ title, subtitle, onClose, children, wide=false }: { title:string; subtitle:string; onClose:()=>void; children:React.ReactNode; wide?:boolean }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e=>e.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-close" onClick={onClose}>×</button></header>{children}</section></div>;
 }
-function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSubmission, onProfilePrepared, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
+function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, onBeforeFreeImageApply, onPrepareSubmission, onProfilePrepared, onReviewPackaging, tab, product, settings, onUpload, onSavePrice, onSaved, onManageCategories, preferredProfileId, quotationTarget, quotationNavigationSequence, focusedOptionId, initialOptionAction }: { workspaceOwnerId?:string;onReceiptSaved:()=>void; onBeforeSeoGenerate:()=>boolean; onBeforeFreeImageApply:()=>boolean; onPrepareSubmission:(profileId:string)=>void; onProfilePrepared:(profile:CategoryProfile,source:CategoryProfile)=>void; onReviewPackaging:(optionId:string|null)=>void; focusedOptionId?:string; initialOptionAction?:'remove'; quotationTarget?:QuotationNavigationTarget; quotationNavigationSequence?:number; preferredProfileId?:string; onSavePrice:(policy:PricePolicy, options?:PriceSaveOptions)=>Promise<void>; tab:string; product:Product; settings:Settings; onSaved:()=>void; onManageCategories:()=>void; onUpload:(e:ChangeEvent<HTMLInputElement>)=>void }) {
   const [quotationRefresh, setQuotationRefresh] = useState(0);
   const [paidImageBusy,setPaidImageBusy]=useState(false);
   const [freeImageBusy,setFreeImageBusy]=useState(false);
@@ -687,7 +687,7 @@ function DetailPanel({ workspaceOwnerId, onReceiptSaved, onBeforeSeoGenerate, on
   const optionPriceBusyChanged=useCallback((busy:boolean,operation:object)=>{if(!busy&&optionPriceBusyRef.current.operation!==operation)return;optionPriceBusyRef.current={busy,operation:busy?operation:null};setOptionPriceBusy(busy);},[]);
   const priceFilesFree=()=>!imageProcessingRefs.current.paid&&!imageProcessingRefs.current.free&&!imageProcessingRefs.current.additionalBatch&&!imageProcessingRefs.current.detailBatch&&!imageProcessingRefs.current.detailFamily;
   function sourceSaved() { setQuotationRefresh(value => value + 1); onSaved(); }
-  async function saveSourcePrice(policy: PricePolicy) { await onSavePrice(policy); setQuotationRefresh(value => value + 1); }
+  async function saveSourcePrice(policy: PricePolicy, options?:PriceSaveOptions) { await onSavePrice(policy,options); setQuotationRefresh(value => value + 1); }
   const isImageStep=imageSteps.includes(tab);
   const contentSection = isImageStep ? '이미지' : tab==='표시사항' ? '표시사항' : 'SEO';
   const focusedAssetRole=tab==='대표 이미지'?'main':tab==='추가 이미지'?'additional':tab==='상세 이미지'?'detail':undefined;

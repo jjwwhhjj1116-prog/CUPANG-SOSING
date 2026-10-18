@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { calculateOptionPrices, optionQuotationName, type ProductOptionsResponse, type ProductOptions } from '@/app/product-options';
 import type { PricePolicy } from '@/app/pricing';
 
-export function OptionPricePreview({productId,version,policy}:{productId:string;version:string;policy:PricePolicy}) {
+export function OptionPricePreview({productId,version,policy,replaceReviewedPrices=false}:{productId:string;version:string;policy:PricePolicy;replaceReviewedPrices?:boolean}) {
  const [attempt,setAttempt]=useState(0);
  const key=JSON.stringify([productId,version,attempt]);
  const [snapshot,setSnapshot]=useState<{key:string;options?:ProductOptions;error?:string}|null>(null);
@@ -25,7 +25,7 @@ export function OptionPricePreview({productId,version,policy}:{productId:string;
  const money=(value:number)=>value.toLocaleString('ko-KR',{maximumFractionDigits:6})+'원';
  return <section aria-label="옵션별 가격 미리보기" aria-busy={!current}>
   <h4>옵션·번들별 가격 미리보기</h4>
-  <p>현재 입력한 가격 정책과 저장된 옵션 기준입니다. 옵션 편집 중인 값은 먼저 저장해주세요. 견적서에서 직접 수정한 가격은 이 계산보다 우선합니다.</p>
+  <p>현재 입력한 가격 정책과 저장된 옵션 기준입니다. 옵션 편집 중인 값은 먼저 저장해주세요. {replaceReviewedPrices?'일괄 재계산을 저장하면 견적서의 직접 가격도 이 계산값으로 바뀝니다.':'견적서에서 직접 수정한 가격은 이 계산보다 우선합니다.'}</p>
   {!current&&<p role="status">옵션 원가를 불러오는 중…</p>}
   {current?.error&&<p role="alert">{current.error}</p>}
   {current&&<button type="button" className="btn ghost" onClick={()=>setAttempt(value=>value+1)}>옵션 가격 다시 조회</button>}

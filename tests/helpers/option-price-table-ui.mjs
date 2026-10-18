@@ -96,8 +96,8 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     return { ...node, props: { ...node.props, children: resolve(node.props?.children, location + '/children') } };
   }
   const render = () => { tree = resolve({ type: Component, props: { product: currentProduct, pricingView: true, focusedOptionId,
-    ...(detail?{tab:'가격',settings:{...load('app/workspace-settings.ts').defaultSettings,...policy,minimumMarginEnabled:true},
-      onSavePrice:async value=>{const response=await request('/api/products/'+productId+'/pricing',{method:'POST',body:JSON.stringify({expectedVersion:currentProduct.updated_at,policy:value})});const body=await response.json();assert.equal(response.status,200,body.error);currentProduct=body.product;},
+    ...(detail?{tab:'가격',preferredProfileId:profileId,settings:{...load('app/workspace-settings.ts').defaultSettings,...policy,minimumMarginEnabled:true},
+      onSavePrice:async(value,options={})=>{const response=await request('/api/products/'+productId+'/pricing',{method:'POST',body:JSON.stringify({expectedVersion:currentProduct.updated_at,policy:value,...options})});const body=await response.json();assert.equal(response.status,200,body.error);currentProduct=body.product;},
       onBeforeSeoGenerate:()=>false,onBeforeFreeImageApply:()=>false,onPrepareSubmission:()=>{},onProfilePrepared:()=>{},onReviewPackaging:()=>{},onManageCategories:()=>{},onUpload:()=>{}}:{}),
     editableQuotationPrices:integrated,profileId,refreshToken,pricePolicyLocked:policyLocked,imageProcessingBusy:fileBusy,beforePriceCommit:()=>allowCommit&&!policyLocked&&!fileBusy,
     onSaved() { saveCount++;if(integrated){currentProduct={...sqlite.prepare('SELECT * FROM products WHERE id=?').get(productId)};refreshToken=String(Number(refreshToken)+1);} } } });
