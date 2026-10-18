@@ -136,13 +136,15 @@ export async function runSingleDocument(session:SingleDocumentSession,action:Sin
   if(window.location.origin!==session.origin)throw Error('원래 앱에서 개별 견적 요청을 확인해주세요.');
   const value=await singleDocumentExchange(action,session.packet,signal,confirmation),proof=await singlePacketProof(session.packet,session.origin);
   if(signal.aborted)throw new SingleDocumentBridgeError('응답 확인을 취소했습니다. 저장 결과를 조회해주세요.',action!=='recover'&&action!=='observe');
-  const states=['prepared','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered','scope-blocked'];
+  const states=['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered','scope-blocked'];
   const fail=():never=>{throw new SingleDocumentBridgeError('개별 견적 응답의 회원·문서·본문 연결을 확인하지 못했습니다. 저장 결과를 조회해주세요.',action!=='recover'&&action!=='observe','SINGLE_REPLY_IDENTITY');};
   if(!singleObject(value)||value.format!==session.packet.format||value.requestId!==session.packet.requestId||!singleObject(value.identity)||value.identityDigest!==session.preview.identityDigest
     ||value.packetDigest!==session.packetDigest||value.packetDigest!==proof.packetDigest||value.originalBodySha256!==proof.originalBodySha256||value.preparedBodySha256!==proof.preparedBodySha256
     ||!states.includes(String(value.state))||typeof value.needsRecovery!=='boolean'||value.docId!==null&&!singleIdentifier(value.docId)
     ||value.registered!==(value.state==='registered')||value.success!==value.registered)fail();
   const result=structuredClone(value) as unknown as SingleDocumentState,identity=result.identity;
+  if(['target-requested','target-created'].includes(result.state)&&(result.docId!==null||result.challenge!==undefined||result.receipt!==undefined)
+    ||result.state==='target-requested'&&!result.needsRecovery)fail();
   if(!Number.isSafeInteger(identity.appTabId)||Number(identity.appTabId)<0||!Number.isSafeInteger(identity.windowId)||Number(identity.windowId)<0
     ||Object.keys(identity).some(key=>!['origin','appTabId','windowId','ownerId','accountContext','company','productId','profileId','optionId','categoryId','fingerprint','schemaSha256','source'].includes(key))
     ||await singleDigest(identity)!==session.preview.identityDigest)fail();

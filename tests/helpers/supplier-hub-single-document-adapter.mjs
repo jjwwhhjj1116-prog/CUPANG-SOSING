@@ -125,9 +125,12 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
   const appContext=vm.createContext({location:appLocation,fetch:appFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date:options.stageFlow?FixtureDate:Date,Response,structuredClone});
   const hubContext=vm.createContext({location:hubLocation,document:hubDocument,fetch:hubFetch,crypto:webcrypto,AbortController,TextEncoder,TextDecoder,Uint8Array,URL,setTimeout,clearTimeout,Date:options.stageFlow?FixtureDate:Date,Response,structuredClone});
   const appTab={id:sender.tab.id,windowId:sender.tab.windowId,url:sender.url,status:'complete'},hubTab={id:71,windowId:sender.tab.windowId,url:hubLocation.origin+hubLocation.pathname,status:'complete'};
-  const tabs=[appTab,hubTab,...(options.extraTabs??[])];f.tabs=tabs;
+  // The Hub DOM belongs to a newly extension-created tab. Existing tabs are
+  // retained separately and must never be inspected, navigated or selected.
+  const tabs=[appTab,...(options.extraTabs??[])];f.tabs=tabs;
   const api={tabs:{
     get:async id=>{if(id===hubTab.id)hubTab.url=hubLocation.origin+hubLocation.pathname;return clone(tabs.find(tab=>tab.id===id));},
+    create:async input=>{calls.push({name:'tabs-create',input});if(tabs.some(tab=>tab.id===hubTab.id))throw Error('Synthetic duplicate target creation');tabs.push(hubTab);return clone(hubTab);},
     query:async query=>{calls.push({name:'tabs-query',query});return clone(tabs.filter(tab=>tab.id!==appTab.id&&tab.windowId===query.windowId));},
     update:async(id,input)=>{calls.push({name:'tabs-update',id,input});if(id!==hubTab.id)throw Error('unknown tab');hubLocation.pathname=new URL(input.url).pathname;hubTab.url=input.url;
       // A real browser navigation discards this page's dataset and input state.

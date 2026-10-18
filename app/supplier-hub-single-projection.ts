@@ -126,6 +126,12 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
   };
   const objectRules = new Set(['type', 'required', 'properties', 'additionalProperties']);
   const arrayRules = new Set(['type', 'allOf', 'items']);
+  const imagePageSchema = object(raw.properties) ? raw.properties.imagePage : undefined;
+  const nativeImagePage = snapshot.draftInitialization === 'couplus-required-v1' && object(imagePageSchema) && imagePageSchema.type === 'object'
+    && object(imagePageSchema.properties) && ['images', 'details'].every(key => {
+      const child = (imagePageSchema.properties as Node)[key];
+      return object(child) && child.type === 'object' && object(child.properties);
+    });
   const jsonDocument = included.map(row => {
     const scalar = (node: Node, wire: HubWireField): Primitive | undefined => {
       schemaKeys(node, scalarRules);
@@ -202,6 +208,21 @@ export async function projectSupplierHubSingleDocument(input: SingleProjectionIn
       return scalar(node, { path });
     };
     const document = visit(raw, []) as Node;
+    // The recorded native initializer adds these transport controls even when
+    // the category JSON schema omits them. They are not fabricated schema
+    // fields or human consent: only the action-time stage review may set true.
+    if (nativeImagePage) {
+      if (!object(document.imagePage)) conflict('Single 이미지 페이지의 기본 문서 구조를 확인해주세요.', 'SINGLE_NATIVE_AGREEMENT');
+      const image = document.imagePage as Node, properties = (imagePageSchema as Node).properties as Node;
+      for (const key of ['msrpAgree', 'labelContactAgreed']) {
+        if (Object.hasOwn(properties, key)) {
+          if (!object(properties[key]) || properties[key].type !== 'boolean') conflict('Single 동의 항목의 원문 불리언 형식을 확인해주세요.', 'SINGLE_NATIVE_AGREEMENT');
+          continue;
+        }
+        image[key] = false;
+        issues.push({ code: 'AGREEMENT_UNCONFIRMED', level: 'review', message: '제출 단계의 정확한 약관을 확인한 뒤 직접 동의해야 합니다.', optionId: row.optionId, path: ['imagePage', key] });
+      }
+    }
     for (const field of input.resolved.schema.fields.filter(field => !field.hubWire)) {
       const cell = row.fields[field.id];
       if (!cell || !cell.value && !['manual-common', 'manual-option'].includes(cell.source)) continue;

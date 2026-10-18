@@ -111,7 +111,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
     if(!connected||connected!==expectedSession||connected.preview.liveVerified!==true||!saved||!singlePackageCurrent(saved,current.current.view,productId)||connected.packet.optionId!==before.optionId)return;
     if(before.uncertain&&action!=='recover'||action==='recover'&&!before.uncertain&&!before.expired||action==='start'&&(before.state!==null||before.uncertain)
       ||action==='confirm'&&(before.expired||!before.state?.challenge||before.state.challenge.id!==expectedChallengeId)
-      ||action==='resume'&&(!before.state||['pending','accepted','rejected','registered','scope-blocked'].includes(before.state.state)))return;
+      ||action==='resume'&&(!before.state||['target-requested','pending','accepted','rejected','registered','scope-blocked'].includes(before.state.state)))return;
     let confirmation;
     if(action==='confirm'){
       try{confirmation=singleConsentConfirmation(before.state!.challenge!,Object.entries(before.approved).filter(([,value])=>value).map(([name])=>name));}
@@ -171,12 +171,14 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
     {session?.preview.liveVerified===true&&<>
       {!state&&!uncertain&&<button type="button" className="btn primary" disabled={disabled||busy} onClick={()=>void operate('start',session)}>선택 옵션의 개별 견적 등록 시작</button>}
       {uncertain&&<><p role="status">요청 결과가 확정되지 않았습니다. 같은 요청을 다시 보내지 말고 저장 결과를 확인하세요.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operate('recover',session)}>개별 요청 저장 결과 확인</button></>}
+      {state?.state==='target-requested'&&<p role="status">전송용 Supplier Hub 탭을 만든 결과가 확정되지 않았습니다. 기존 작업 탭을 사용하거나 새 탭을 다시 만들지 않고 저장 결과만 확인합니다.</p>}
+      {state?.state==='target-created'&&<p role="status">이 요청에서 만든 전용 Supplier Hub 탭의 로그인 회사부터 확인합니다. 기존 작업 탭은 이동하지 않습니다.</p>}
       {state&&!uncertain&&['pending','accepted','rejected','registered'].includes(state.state)&&<section aria-label="개별 등록 파일 처리 결과">
         <p role="status">{({pending:'접수 처리 중',accepted:'등록 파일 처리 완료 · SKU 확인 전',rejected:'반려',registered:'견적서 접수·SKU 확인'})[state.state as 'pending']}</p>
         <dl><dt>문서 ID</dt><dd>{String(state.docId)}</dd>{state.receipt?.qvtRequestId!==undefined&&<><dt>등록 파일 ID</dt><dd>{String(state.receipt.qvtRequestId)}</dd></>}</dl>
         {state.state==='rejected'&&<p>반려 상세는 Supplier Hub에서 확인해주세요.</p>}
       </section>}
-      {state&&!uncertain&&!['pending','accepted','rejected','registered','scope-blocked'].includes(state.state)&&(!challenge||expired)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operate(expired?'recover':'resume',session)}>{expired?'동의 내용 다시 확인':'개별 견적 단계 계속 확인'}</button>}
+      {state&&!uncertain&&!['target-requested','pending','accepted','rejected','registered','scope-blocked'].includes(state.state)&&(!challenge||expired)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operate(expired?'recover':'resume',session)}>{expired?'동의 내용 다시 확인':state.state==='target-created'?'전용 Supplier Hub 탭 확인 계속':'개별 견적 단계 계속 확인'}</button>}
       {state&&!uncertain&&['pending','accepted','registered'].includes(state.state)&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operate('observe',session)}>개별 접수 결과 조회</button>}
       {challenge&&<section aria-label="현재 문서의 단계별 동의"><h4>{challenge.stage?stages[challenge.stage]:'최종 제출'} 동의 확인</h4><p>문서 {String(challenge.docId)} · 이 단계의 내용을 확인한 뒤 진행하세요.</p>
         {challenge.items.map(item=><article key={item.key}>{item.title&&<h5>{item.title}</h5>}<p style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{item.text}</p>{item.termsText&&<div style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{item.termsText}</div>}

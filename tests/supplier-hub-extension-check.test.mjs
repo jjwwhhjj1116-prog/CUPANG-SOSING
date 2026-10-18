@@ -29,7 +29,7 @@ test('settings shows the returned installed version and flags, not the download 
   assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,releaseDownload);
   ui.retry();assert.equal(ui.calls.length,2);assert.equal(ui.calls[0].signal.aborted,true);
   ui.calls[1].resolve({version:'0.2.64',publicSingleSkuCapture:true,companyRegistrationStatus:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true});await settle();
-  assert.match(ui.text(),/설치된 버전 0\.2\.64/);assert.doesNotMatch(ui.text(),/업데이트 필요/);assert.equal(nodes(ui.render()).some(node=>node.type==='a'),false);
+  assert.match(ui.text(),/설치된 버전 0\.2\.64/);assert.doesNotMatch(ui.text(),/업데이트 필요/);assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,releaseDownload);
   ui.unmount();
 });
 test('a closed settings dialog aborts the read and its late response cannot replace the newly opened version',async()=>{
@@ -60,5 +60,15 @@ test('old installations with other result features still need the atomic file ob
   const ui=fixture();ui.render();ui.calls[0].resolve({version:'0.2.60',pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:value,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true});await settle();
   assert.match(ui.text(),/설치된 버전 0\.2\.60/);assert.match(ui.text(),/확장 업데이트 필요/);
   assert.equal(nodes(ui.render()).find(node=>node.type==='a').props.href,releaseDownload);ui.unmount();
+ }
+});
+
+test('an older installation with compatible feature flags still offers recovery fixes, while current and newer releases do not',async()=>{
+ for(const version of ['0.2.72',releaseVersion,'0.2.100','0.3.0']){
+  const ui=fixture();ui.render();ui.calls[0].resolve({version,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas:true,productTransmissionHistory:true,historicalReceiptLookup:true,exactAgreementLabels:true,publicSingleSkuCapture:true,companyRegistrationStatus:true});await settle();
+  assert.ok(ui.text().includes('설치된 버전 '+version));
+  const download=nodes(ui.render()).find(node=>node.type==='a');
+  if(version==='0.2.72')assert.equal(download.props.href,releaseDownload);else assert.equal(download,undefined);
+  ui.unmount();
  }
 });

@@ -45,8 +45,8 @@ export function sqliteSingleStore(){
 }
 
 export async function singleDocumentFixture(company=SINGLE_COMPANIES[0],options={}){
-  const packet=singlePacket(company),sender=clone(SINGLE_SENDER),context=await singleDocumentIdentity(packet,sender),storage=options.storage??sqliteSingleStore(),calls=[];
-  const tab={tabId:71,windowId:sender.tab.windowId,origin:SINGLE_DOCUMENT_ORIGIN,authenticated:true,company:clone(company)};
+  const packet=options.packet??singlePacket(company),sender=clone(SINGLE_SENDER),context=await singleDocumentIdentity(packet,sender),storage=options.storage??sqliteSingleStore(),calls=[];
+  const tab={tabId:71,windowId:sender.tab.windowId,origin:SINGLE_DOCUMENT_ORIGIN,requestId:packet.requestId,packetDigest:context.packetDigest,authenticated:true,company:clone(company)};
   const protectedBody={docId:'protected-existing',productName:'보호된 기존 작업',jsonDocument:[{productPage:{price:12345}}]},documents=new Map([[protectedBody.docId,clone(protectedBody)]]);
   const operations=new Map(),items=options.stageFlow&&options.finalNoItems?[]:[
     {key:'priceData',id:'msrpAgree',text:'합성 가격 정보 약관 확인',required:true,checked:false,enabled:true},
@@ -64,7 +64,7 @@ export async function singleDocumentFixture(company=SINGLE_COMPANIES[0],options=
   const proofFor=docId=>({docId,company:clone(company),identityDigest:context.identityDigest,body:clone(documents.get(docId))});
   const adapter={
     readSource:async input=>{await record('readSource',input);f.sourceReads++;return {current:f.current,submissionReady:f.ready,priorDocumentClear:f.priorDocumentClear,identity:clone(context.identity),bodySha256:context.originalBodySha256,sessionId:f.sessionId,...options.sourceProof};},
-    selectTab:async input=>{await record('selectTab',input);return clone(options.selectedTab??tab);},
+    createTarget:async input=>{await record('createTarget',input);const target=options.selectedTab??tab;return {tabId:target.tabId,windowId:target.windowId,origin:target.origin,requestId:input.requestId,packetDigest:input.packetDigest};},
     readTab:async input=>{await record('readTab',input);return clone(tab);},
     hubRequest:async input=>{
       await record('hubRequest',input);assert.equal(input.tab.tabId,tab.tabId);assert.equal(input.tab.origin,SINGLE_DOCUMENT_ORIGIN);

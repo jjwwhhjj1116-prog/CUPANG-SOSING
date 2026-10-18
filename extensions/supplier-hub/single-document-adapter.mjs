@@ -7,6 +7,7 @@ import {singleDocumentStageAgreementPage} from './single-stage-page.mjs';
 import {createSingleDocumentWatch} from './single-document-watch.mjs';
 import {singleDocumentWatchPage} from './single-watch-page.mjs';
 import {normalizeSingleReceipt} from './single-receipt.mjs';
+import {assertSingleOwnedTarget,createSingleOwnedTarget,waitSingleOwnedTarget} from './single-owned-target.mjs';
 
 const HASH=/^[a-f0-9]{64}$/;
 const ID=/^\w[\w-]{0,99}$/;
@@ -287,7 +288,7 @@ export function singleDocumentReceiptPage(input){
 }
 
 export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now}={}){
-  if(!api?.tabs||!api?.scripting||['get','query','update','sendMessage'].some(key=>typeof api.tabs[key]!=='function')||typeof api.scripting.executeScript!=='function')throw new TypeError('Existing Chrome tab adapter is required.');
+  if(!api?.tabs||!api?.scripting||['get','create','update','sendMessage'].some(key=>typeof api.tabs[key]!=='function')||typeof api.scripting.executeScript!=='function')throw new TypeError('Owned Chrome tab adapter is required.');
   const sourceBindings=new Map(),baselines=new Map(),pageRecords=new Map(),frameDocuments=new Map(),liveWatches=new Map();
   const requireWatch=entry=>{try{entry.watch.assertCurrent(entry.expected);}catch{fail('TAB_CHANGED','불러온 새 문서의 관찰이 중단됐습니다. 다른 문서를 클릭하거나 전송하지 않았습니다.');}};
   async function appCurrent(identity){
@@ -322,6 +323,8 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
     return sourceBindings.get(canonical(identity)).binding;
   }
   async function execute(tab,identity,func,args,documentId){
+    const binding=sourceBindings.get(canonical(identity))?.binding;if(!binding)fail('SOURCE_CHANGED','원래 앱의 전송 연결을 확인해주세요.');
+    assertSingleOwnedTarget(tab,binding);
     const entry=liveWatches.get(tab.tabId);if(entry){requireWatch(entry);documentId=entry.expected.documentId;}
     const before=await api.tabs.get(tab.tabId);if(!validHubTab(before,identity.windowId))fail('TAB_CHANGED','선택한 Supplier Hub 탭이 이동되었습니다.');
     const target={tabId:tab.tabId,...(documentId?{documentIds:[documentId]}:{frameIds:[0]})};
@@ -340,9 +343,12 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
     return execution?.result;
   }
   async function readTab(input){
+    const binding=sourceBindings.get(canonical(input.identity))?.binding;if(!binding)fail('SOURCE_CHANGED','원래 앱의 전송 연결을 확인해주세요.');
+    assertSingleOwnedTarget(input.tab,binding);
+    if(input.tab.authenticated!==true)await waitSingleOwnedTarget(api,input.tab,binding);
     const tab=await api.tabs.get(input.tab.tabId);if(!validHubTab(tab,input.identity.windowId))fail('TAB_CHANGED','원래 Supplier Hub 탭을 확인해주세요.');
     await execute(input.tab,input.identity,verifySupplierHubCompany,[input.identity.company,'catalog']);
-    return {tabId:tab.id,windowId:tab.windowId,origin:SINGLE_DOCUMENT_ORIGIN,authenticated:true,company:copy(input.identity.company)};
+    return {...copy(input.tab),tabId:tab.id,windowId:tab.windowId,origin:SINGLE_DOCUMENT_ORIGIN,authenticated:true,company:copy(input.identity.company)};
   }
   async function owned(input){
     const binding=await bindingFor(input.identity,input.sessionId),record=await execute(input.tab,input.identity,singleDocumentOwnedRecordPage,[binding]);
@@ -374,13 +380,10 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
     return {docId,company:copy(input.identity.company),identityDigest:binding.identityDigest,body,...(recovery?{readOnly:true,operationId:input.operationId}:{})};
   }
   return Object.freeze({readSource,
-    selectTab:async input=>{
-      await bindingFor(input.identity);const tabs=await api.tabs.query({windowId:input.windowId,url:'https://supplier.coupang.com/*'}),matches=[];
-      for(const tab of tabs.filter(tab=>validHubTab(tab,input.windowId))){
-        const candidate={tabId:tab.id,windowId:tab.windowId,origin:SINGLE_DOCUMENT_ORIGIN,authenticated:true,company:input.identity.company};
-        try{await readTab({tab:candidate,identity:input.identity});matches.push(candidate);}catch(error){if(error instanceof SingleDocumentError&&error.code==='SOURCE_CHANGED')throw error;}
-      }
-      if(matches.length!==1)fail('TAB_CHANGED','같은 Chrome 창의 요청 회사 Supplier Hub 탭을 하나로 확인해주세요.');return copy(matches[0]);
+    createTarget:async input=>{
+      const binding=await bindingFor(input.identity);
+      if(binding.requestId!==input.requestId||binding.packetDigest!==input.packetDigest)fail('SOURCE_CHANGED','원래 새 탭 생성 요청을 확인해주세요.');
+      return createSingleOwnedTarget(api,binding);
     },readTab,hubRequest,readDocument:input=>readDocument(input),recoverWrite:input=>readDocument(input,true),
     readValidation:async input=>{const {record}=await owned(input),observation=record.validation?.[input.step];return observation?.state==='observed'&&observation.operationId===input.operationId
       ?{readOnly:true,operationId:input.operationId,docId:record.docId,company:copy(input.identity.company),step:input.step,response:observation.response}:null;},

@@ -8,7 +8,7 @@ export const SINGLE_DOCUMENT_ORIGIN='https://supplier.coupang.com';
 export const SINGLE_DOCUMENT_PATHS=Object.freeze({create:'/sr/draft/api/create',update:'/sr/draft/api/update',drafts:'/sr/draft/api/drafts'});
 const COMPANIES=Object.freeze({A01526306:'유앤채',A01464742:'와이홉'});
 const PAGES=['startPage','productPage','imagePage','legalPage','logisticsPage','sourcingPage'];
-const STATES=new Set(['prepared','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered']);
+const STATES=new Set(['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected','registered']);
 const STAGE_FLAGS={productPage:{key:'msrpAgree',id:'agreeMSRPTerm'},imagePage:{key:'labelContactAgreed',id:'agreeLabelContact'}};
 const STAGES=Object.keys(STAGE_FLAGS);
 const HEX=/^[a-f0-9]{64}$/;
@@ -123,6 +123,10 @@ const withDoc=(packet,docId)=>({...clone(packet.body),docId});
 function tabValid(tab,packet){
   return object(tab)&&Number.isSafeInteger(tab.tabId)&&tab.tabId>=0&&tab.windowId===packet.windowId&&tab.origin===SINGLE_DOCUMENT_ORIGIN&&tab.authenticated===true&&same(tab.company,packet.company);
 }
+function targetValid(target,context,requestId){
+  return object(target)&&Object.keys(target).length===5&&Number.isSafeInteger(target.tabId)&&target.tabId>=0&&target.tabId!==context.identity.appTabId
+    &&target.windowId===context.identity.windowId&&target.origin===SINGLE_DOCUMENT_ORIGIN&&target.requestId===requestId&&target.packetDigest===context.packetDigest;
+}
 function checkpointValid(state,context){
   if(!object(state)||state.format!==SINGLE_DOCUMENT_FORMAT||state.key!==context.key||state.laneKey!==context.laneKey||state.packetDigest!==context.packetDigest||state.identityDigest!==context.identityDigest||state.bodySha256!==context.bodySha256||state.originalBodySha256!==context.originalBodySha256
     ||!same(state.identity,context.identity)||!ID.test(state.requestId||'')||!STATES.has(state.state)||!revision(state.sequence)
@@ -130,8 +134,12 @@ function checkpointValid(state,context){
     ||!Array.isArray(state.validatedSteps)||!same(state.validatedSteps,[2,3,4,5].slice(0,state.validatedSteps.length))
     ||state.validatedSteps.length>4||!(state.docId===null||identifier(state.docId))||state.docId!==null&&state.baselineDocIds.some(id=>same(id,state.docId))
     ||state.tab!==null&&!tabValid(state.tab,context.packet)||state.sessionId!==null&&(typeof state.sessionId!=='string'||!ID.test(state.sessionId)))fail('CHECKPOINT','저장한 개별 전송 기록의 연결을 확인해주세요.');
-  if(state.state!=='prepared'&&(!state.tab||!state.sessionId))fail('CHECKPOINT','개별 전송 탭·회원 세션 기록이 없습니다.');
-  if(!['prepared','create-requested'].includes(state.state)&&state.docId===null)fail('CHECKPOINT','새 문서 식별값이 저장되지 않았습니다.');
+  const beforeTarget=['prepared','target-requested'].includes(state.state),beforeDocument=['prepared','target-requested','target-created'].includes(state.state);
+  if(beforeTarget?state.ownedTarget!=null:!targetValid(state.ownedTarget,context,state.requestId))fail('CHECKPOINT','이 전송에서 만든 새 Supplier Hub 탭 기록이 없습니다. 기존 탭은 사용하지 않았습니다.');
+  if(beforeDocument?state.tab!==null:!state.tab||state.tab.tabId!==state.ownedTarget.tabId||state.tab.requestId!==state.requestId||state.tab.packetDigest!==context.packetDigest)fail('CHECKPOINT','새 전송 탭과 현재 문서의 연결을 확인해주세요.');
+  if(state.state!=='prepared'&&!state.sessionId)fail('CHECKPOINT','개별 전송 회원 세션 기록이 없습니다.');
+  if(!['prepared','target-requested','target-created','create-requested'].includes(state.state)&&state.docId===null)fail('CHECKPOINT','새 문서 식별값이 저장되지 않았습니다.');
+  if(['target-requested','target-created'].includes(state.state)&&(state.operationId!==state.requestId+':target'||state.docId!==null))fail('CHECKPOINT','새 전송 탭의 원래 생성 요청을 확인해주세요.');
   const stages=state.stageConsents??[];
   if(!Array.isArray(stages)||stages.length>2||stages.some((entry,index)=>!object(entry)||entry.stage!==STAGES[index]||!object(entry.challenge)||entry.challenge.stage!==entry.stage
     ||!same(entry.challenge.docId,state.docId)||entry.challenge.packetDigest!==context.packetDigest||!HEX.test(entry.challenge.id||'')
@@ -179,7 +187,7 @@ function receiptValid(receipt,state,context,time){
 }
 function result(state,extra={}){
   return {format:SINGLE_DOCUMENT_FORMAT,requestId:state.requestId,identity:clone(state.identity),identityDigest:state.identityDigest,packetDigest:state.packetDigest,originalBodySha256:state.originalBodySha256,preparedBodySha256:state.bodySha256,state:state.state,
-    docId:state.docId,registered:state.state==='registered',success:state.state==='registered',needsRecovery:['create-requested','update-requested','validation-requested','stage-consent-requested','consent-requested','submit-requested'].includes(state.state),
+    docId:state.docId,registered:state.state==='registered',success:state.state==='registered',needsRecovery:['target-requested','create-requested','update-requested','validation-requested','stage-consent-requested','consent-requested','submit-requested'].includes(state.state),
     ...(state.challenge&&['awaiting-stage-consent','awaiting-consent'].includes(state.state)?{challenge:clone(state.challenge)}:{}),...(state.receipt?{receipt:clone(state.receipt)}:{}),...extra};
 }
 
@@ -194,7 +202,7 @@ function result(state,extra={}){
  * All store claim/CAS operations must be atomic and committed before resolving;
  * claim also reserves next.laneKey across packets, except positive rejection. */
 export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
-  const required=['readSource','selectTab','readTab','hubRequest','readDocument','recoverWrite','readValidation','navigate','readAgreements','verifyHumanConfirmation','confirmAgreements','submit','observeReceipt'];
+  const required=['readSource','createTarget','readTab','hubRequest','readDocument','recoverWrite','readValidation','navigate','readAgreements','verifyHumanConfirmation','confirmAgreements','submit','observeReceipt'];
   if(!adapter||required.some(key=>typeof adapter[key]!=='function')||!store||['get','claim','compareAndSet'].some(key=>typeof store[key]!=='function')||typeof now!=='function')throw new TypeError('Single document adapter/store contract is required.');
   const active=new Set();
   const clock=()=>{const value=now();if(!Number.isSafeInteger(value)||value<=0)fail('CLOCK','전송 시각을 확인하지 못했습니다.');return value;};
@@ -208,7 +216,7 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
     const proof=await call('readSource',{identity:context.identity,bodySha256:context.originalBodySha256,preparedBodySha256:context.bodySha256,packetDigest:context.packetDigest,requestId:state.requestId,docId:state.docId});
     if(!object(proof)||proof.current!==true||proof.submissionReady!==true||proof.priorDocumentClear!==true||!same(proof.identity,context.identity)||proof.bodySha256!==context.originalBodySha256||typeof proof.sessionId!=='string'||!ID.test(proof.sessionId)
       ||state.sessionId!==null&&proof.sessionId!==state.sessionId)fail('SOURCE_CHANGED','현재 회원·회사·저장한 견적서가 준비한 자료와 다릅니다.');
-    if(state.tab){const tab=await call('readTab',{tab:state.tab,identity:context.identity});if(!tabValid(tab,context.packet)||tab.tabId!==state.tab.tabId)fail('TAB_CHANGED','선택한 Supplier Hub 탭·회사·로그인 상태가 변경되었습니다.');}
+    if(state.tab||state.ownedTarget){const target=state.tab??state.ownedTarget,tab=await call('readTab',{tab:target,identity:context.identity});if(!tabValid(tab,context.packet)||tab.tabId!==target.tabId)fail('TAB_CHANGED','새 Supplier Hub 탭·회사·로그인 상태가 변경되었습니다.');}
     return proof;
   }
   async function request(context,state,method,path,body){
@@ -276,11 +284,20 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
   }
   async function continuation(context,state){
     if(state.state==='prepared'){
-      const proof=await guard(context,state),tab=await call('selectTab',{identity:context.identity,windowId:context.packet.windowId});
-      if(!tabValid(tab,context.packet))fail('TAB_CHANGED','같은 Chrome 창에서 요청 회사로 로그인한 기존 Supplier Hub 탭을 선택해주세요.');
-      const prepared={...state,tab:clone(tab),sessionId:proof.sessionId};await guard(context,prepared);
+      const proof=await guard(context,state);
+      state=await save(context,state,{state:'target-requested',sessionId:proof.sessionId,operationId:state.requestId+':target'});
+      await guard(context,state);
+      const target=await call('createTarget',{identity:context.identity,requestId:state.requestId,packetDigest:context.packetDigest});
+      if(!targetValid(target,context,state.requestId))fail('TAB_CHANGED','이 전송에서 만든 새 Supplier Hub 탭을 확인하지 못했습니다.');
+      state=await save(context,state,{state:'target-created',ownedTarget:target});
+    }
+    if(state.state==='target-created'){
+      await guard(context,state);
+      const tab=await call('readTab',{identity:context.identity,tab:state.ownedTarget});
+      if(!tabValid(tab,context.packet)||tab.tabId!==state.ownedTarget.tabId)fail('TAB_CHANGED','새 Supplier Hub 탭의 회사·로그인 상태를 확인해주세요.');
+      const prepared={...state,tab:clone(tab)};await guard(context,prepared);
       const baselineDocIds=drafts(await request(context,prepared,'GET',SINGLE_DOCUMENT_PATHS.drafts));
-      state=await save(context,state,{tab,sessionId:proof.sessionId,baselineDocIds,state:'create-requested',operationId:state.requestId+':create'});
+      state=await save(context,state,{tab,baselineDocIds,state:'create-requested',operationId:state.requestId+':create'});
       const created=await request(context,state,'POST',SINGLE_DOCUMENT_PATHS.create,context.packet.body);
       if(!object(created)||!identifier(created.docId)||created.errorCode!==undefined&&created.errorCode!==null&&created.errorCode!==''||state.baselineDocIds.some(id=>same(id,created.docId)))fail('CREATE_UNCONFIRMED','새 문서 생성 응답의 식별값을 확인하지 못했습니다.');
       state=await save(context,state,{state:'created',docId:created.docId});
@@ -316,17 +333,18 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
       if(action==='start'){
         if(state){await guard(context,state);return result(state,{duplicate:true});}
         state={format:SINGLE_DOCUMENT_FORMAT,key:context.key,laneKey:context.laneKey,identity:context.identity,identityDigest:context.identityDigest,bodySha256:context.bodySha256,originalBodySha256:context.originalBodySha256,packetDigest:context.packetDigest,
-          requestId:context.packet.requestId,state:'prepared',sequence:0,updatedAt:clock(),docId:null,tab:null,sessionId:null,baselineDocIds:[],validatedSteps:[],stageConsents:[],challenge:null,receipt:null};
+          requestId:context.packet.requestId,state:'prepared',sequence:0,updatedAt:clock(),docId:null,tab:null,ownedTarget:null,sessionId:null,baselineDocIds:[],validatedSteps:[],stageConsents:[],challenge:null,receipt:null};
         if(await store.claim(context.key,safeValue(state))!==true){state=await get(context);if(!state)fail('CHECKPOINT_CONFLICT','같은 옵션의 다른 개별 전송 기록을 먼저 확인해주세요.');await guard(context,state);return result(state,{duplicate:true});}
         state=await continuation(context,state);return result(state);
       }
       if(!state)fail('CHECKPOINT','먼저 새 개별 전송 요청을 준비해주세요.');
       await guard(context,state);
       if(action==='resume'){
-        if(!['prepared','created','updated','validated','navigation-requested'].includes(state.state))return result(state);
+        if(!['prepared','target-created','created','updated','validated','navigation-requested'].includes(state.state))return result(state);
         state=await continuation(context,state);return result(state);
       }
       if(action==='recover'){
+        if(state.state==='target-requested')fail('TARGET_UNCONFIRMED','새 탭 생성 응답을 확인하지 못했습니다. 다른 탭을 선택하거나 새 탭을 다시 만들지 않았습니다.');
         if(['create-requested','update-requested'].includes(state.state)){
           const proof=await readDocument(context,state,true);
           state=await save(context,state,{state:state.state==='create-requested'?'created':'updated',docId:proof.docId});

@@ -142,11 +142,15 @@ test('a populated user Hub form is preserved and blocked before create request',
   try{const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'create-requested');assert.equal(f.calls.some(call=>call.name==='hub-fetch'&&call.init.method==='POST'),false);assert.equal(f.submitted,0);assert.deepEqual(f.documents.get('protected-previous'),f.prior);}finally{f.close();}
 });
 
-test('same-window ambiguity or wrong frame cannot choose another Chrome profile/tab',async()=>{
-  for(const options of [{extraTabs:[{id:72,windowId:29,url:'https://supplier.coupang.com/dashboard/KR',status:'complete'}]},{frameId:1}]){
-    const f=await singleBrowserFixture(SINGLE_COMPANIES[0],options);
-    try{const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.registered,false);assert.equal(f.calls.some(call=>call.name==='hub-fetch'),false);assert.equal(f.calls.some(call=>call.name==='tabs-update'),false);}finally{f.close();}
-  }
+test('existing same-window Hub tabs are not candidates and wrong frames still fail closed',async()=>{
+  const extraTabs=[{id:72,windowId:29,url:'https://supplier.coupang.com/dashboard/KR',status:'complete'},{id:73,windowId:29,url:'https://supplier.coupang.com/sr/registration/step/productPage',status:'complete'}];
+  const f=await singleBrowserFixture(SINGLE_COMPANIES[0],{extraTabs});
+  try{const result=await f.receiver.start(f.packet,f.sender);assert.equal(result.state,'awaiting-consent');assert.equal(result.registered,false);
+    assert.deepEqual(f.tabs.filter(tab=>[72,73].includes(tab.id)),extraTabs);assert.equal(f.calls.some(call=>call.name==='tabs-query'),false);
+    assert.equal(f.calls.some(call=>call.name==='execute'&&[72,73].includes(call.target.tabId)||call.name==='tabs-update'&&[72,73].includes(call.id)),false);
+  }finally{f.close();}
+  const invalid=await singleBrowserFixture(SINGLE_COMPANIES[0],{frameId:1});
+  try{const result=await invalid.receiver.start(invalid.packet,invalid.sender);assert.equal(result.registered,false);assert.equal(invalid.calls.some(call=>call.name==='hub-fetch'),false);assert.equal(invalid.calls.some(call=>call.name==='tabs-update'),false);}finally{invalid.close();}
 });
 
 test('trusted action-time app confirmation is required before concrete checkbox clicks and final submit',async()=>{
@@ -197,7 +201,7 @@ test('a caller cannot use get-by-id to read another existing draft through the p
   try{
     await f.receiver.start(f.packet,f.sender);
     const before=f.calls.filter(call=>call.name==='hub-fetch').length;
-    await assert.rejects(()=>f.adapter.hubRequest({identity:f.context.identity,sessionId:f.sessionId,tab:{tabId:71},method:'GET',path:'/sr/draft/api/get-by-id/protected-previous'}),/정확한 문서/);
+    await assert.rejects(()=>f.adapter.hubRequest({identity:f.context.identity,sessionId:f.sessionId,tab:{tabId:71},method:'GET',path:'/sr/draft/api/get-by-id/protected-previous'}),error=>error.code==='TAB_CHANGED');
     assert.equal(f.calls.filter(call=>call.name==='hub-fetch').length,before);assert.deepEqual(f.documents.get('protected-previous'),f.prior);
   }finally{f.close();}
 });
