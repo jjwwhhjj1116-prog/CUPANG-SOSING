@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { emptyProductLabelOverrides, PRODUCT_LABEL_STORAGE_LIMIT, validateProductLabelOverrides, type ProductLabelOverrides, type ProductLabelsState } from '@/app/product-label';
+import { emptyProductLabelOverrides, PRODUCT_LABEL_STORAGE_LIMIT, validateProductLabelOverrides, validateProductLabelStructure, type ProductLabelOverrides, type ProductLabelsState, type ProductLabelStructure } from '@/app/product-label';
 import { sourceGuard, type QuotationSourceGuard } from '@/db/quotation-fields';
 
 export const productLabelsSchema = `CREATE TABLE IF NOT EXISTS product_labels (
@@ -20,7 +20,7 @@ export async function readProductLabels(owner: string, productId: string): Promi
   if (new TextEncoder().encode(row.payload).length > PRODUCT_LABEL_STORAGE_LIMIT) throw Error('Product labels exceed storage limit');
   const state = JSON.parse(row.payload) as ProductLabelsState;
   if (state.schemaVersion !== 1 || state.productId !== productId || state.revision !== row.revision || state.updatedAt !== row.updated_at || !Number.isSafeInteger(state.revision) || state.revision < 1 || !Number.isFinite(Date.parse(state.updatedAt!))) throw Error('Invalid product labels');
-  return { ...state, overrides: validateProductLabelOverrides(state.overrides) };
+  return { ...state, overrides: validateProductLabelOverrides(state.overrides), ...(state.structure === undefined ? {} : { structure: validateProductLabelStructure(state.structure) }) };
 }
 function guardedSource(owner: string, productId: string, source: ProductLabelSourceGuard) {
   const guard = sourceGuard(owner, productId, source);
@@ -42,11 +42,19 @@ export async function productLabelsSourcesCurrent(owner: string, productId: stri
 
 /** The source proof and both clocks are checked inside one D1 transaction.
  * Label storage never writes product content, options, category wires or quotes. */
-export async function saveProductLabels(owner: string, productId: string, overrides: ProductLabelOverrides, expectedRevision: number, source: ProductLabelSourceGuard): Promise<ProductLabelsState | null> {
+export async function saveProductLabels(owner: string, productId: string, overrides: ProductLabelOverrides, expectedRevision: number, source: ProductLabelSourceGuard, structure?: ProductLabelStructure): Promise<ProductLabelsState | null> {
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Number.isSafeInteger(source.quotationRevision) || source.quotationRevision < 0 || !Number.isFinite(Date.parse(source.productVersion))) throw Error('Invalid product label revision');
   const db = await database(), guard = guardedSource(owner, productId, source);
   const updatedAt = new Date(Math.max(Date.now(), Date.parse(source.productVersion) + 1)).toISOString();
-  const state: ProductLabelsState = { schemaVersion: 1, productId, revision: expectedRevision + 1, overrides: validateProductLabelOverrides(overrides), updatedAt };
+  // An older caller that saves values only must not erase the shared structure.
+  // The existing revision/source proof still fences the eventual transaction.
+  if (structure === undefined && expectedRevision > 0) {
+    const current = await readProductLabels(owner, productId);
+    if (current.revision !== expectedRevision) return null;
+    structure = current.structure;
+  }
+  const state: ProductLabelsState = { schemaVersion: 1, productId, revision: expectedRevision + 1, overrides: validateProductLabelOverrides(overrides), updatedAt,
+    ...(structure === undefined ? {} : { structure: validateProductLabelStructure(structure) }) };
   const payload = JSON.stringify(state);
   if (new TextEncoder().encode(payload).length > PRODUCT_LABEL_STORAGE_LIMIT) throw Error('Product labels exceed storage limit');
   const result = await db.batch<{ payload: string; revision: number; id: string }>([

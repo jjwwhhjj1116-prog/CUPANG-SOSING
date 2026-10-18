@@ -116,7 +116,7 @@ export async function inspectGeneratedProductLabels(input: {
       const category = await digest([view.categoryContext.categoryId,view.categoryContext.categoryPath]);
       const current = await digest(productLabelPlan(view,row.optionId));
       if (category === metadata.productLabelCategorySha256 && current === metadata.productLabelPlanSha256) continue;
-      code = 'GENERATED_PRODUCT_LABEL_STALE'; message = '생성한 제품 표시사항 PNG가 현재 저장된 9행 표시사항과 다릅니다. 수정한 내용으로 다시 생성·연결하거나 직접 확인한 라벨 파일을 연결해주세요.';
+      code = 'GENERATED_PRODUCT_LABEL_STALE'; message = '생성한 제품 표시사항 PNG가 현재 저장된 제품 표시사항과 다릅니다. 수정한 내용으로 다시 생성·연결하거나 직접 확인한 라벨 파일을 연결해주세요.';
     } catch { /* Preserve the image and surface the unconfirmed proof. */ }
     issues.push({kind:'error',code,message,optionId:row.optionId,optionLabel:row.optionLabel,fieldId:target.primary});
   }

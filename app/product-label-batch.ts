@@ -22,7 +22,7 @@ const paths=(productId:string)=>({endpoint:`/api/products/${encodeURIComponent(p
 class LabelReadError extends Error{constructor(message:string,public status:number,public code?:string){super(message);}}
 async function readView(productId:string,endpoint:string,request:typeof fetch){
  const response=await request(endpoint,{cache:'no-store'}),value=await response.json() as ProductLabelsView&{error?:string;code?:string};
- if(!response.ok)throw new LabelReadError(value?.error||'저장된 9항목 표시사항을 읽지 못했습니다.',response.status,value?.code);verifyProductLabelsView(value,null);
+ if(!response.ok)throw new LabelReadError(value?.error||'저장된 제품 표시사항을 읽지 못했습니다.',response.status,value?.code);verifyProductLabelsView(value,null);
  if(value.productId!==productId)throw Error('선택한 상품의 표시사항을 확인해주세요.');return value;
 }
 export function pendingProductNineLabelBatch(cache:ProductNineLabelBatchCache){return [...cache].find(([,entry])=>entry.pending!==null)?.[0]??null;}
@@ -45,7 +45,7 @@ export async function recoverProductNineLabelBatch(productId:string,cache:Produc
   const [planSha,categorySha]=await Promise.all([labelUploadDigest(new TextEncoder().encode(JSON.stringify(productLabelPlan(pending.view,pending.optionId)))),
     labelUploadDigest(new TextEncoder().encode(JSON.stringify([pending.view.categoryContext.categoryId,pending.view.categoryContext.categoryPath])))]);
   if(receipt.key!==stored.key||!proof||proof.productId!==productId||proof.optionId!==pending.optionId||proof.profileId!==pending.view.categoryContext.profileId||proof.planSha256!==planSha||proof.categorySha256!==categorySha)
-    throw Error('현재 저장된 PNG의 정확한 9항목 원천을 확인하지 못했습니다. 자동 연결하지 않았습니다.');
+    throw Error('현재 저장된 PNG의 정확한 표시사항 원천을 확인하지 못했습니다. 자동 연결하지 않았습니다.');
   entry.uploaded.set(pending.optionId,stored.key);pending.key=stored.key;
  }
  if(pending.operation!=='reference'){entry.pending=null;return 'ready';}
@@ -94,7 +94,7 @@ export async function runProductNineLabels(productId:string,options:Options):Pro
  for(const [index,row]of rows.entries()){
   if(options.shouldStop())return result(index,true);
   const current=await readView(productId,endpoint,request);
-  if(signature(productId,endpoint,current)!==planSignature)throw Error('포함 옵션 또는 9항목 표시사항이 변경됐습니다. 완료한 파일은 보존했습니다.');
+  if(signature(productId,endpoint,current)!==planSignature)throw Error('포함 옵션 또는 제품 표시사항이 변경됐습니다. 완료한 파일은 보존했습니다.');
   options.onProgress({completed:index,total:rows.length,optionLabel:row.optionLabel});
   const key=entry.uploaded.get(row.optionId)??null,blob=key?null:(await options.render(productLabelPlan(current,row.optionId),row.optionId)).blob;
   if(options.shouldStop())return result(index,true);

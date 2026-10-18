@@ -7,7 +7,7 @@ import { readProductOptions } from '@/db/product-options';
 import { getCategoryProfile } from '@/db/category-profiles';
 import { readQuotationCollectionSource } from '@/db/quotation-fields';
 import { readProductLabels, productLabelsSourcesCurrent, saveProductLabels, type ProductLabelSourceGuard } from '@/db/product-labels';
-import { applyProductLabelChanges, PRODUCT_LABEL_BODY_LIMIT, PRODUCT_LABEL_STORAGE_LIMIT, resolveProductLabels, validateProductLabelChanges, verifyProductLabelsView, type ProductLabelsView } from '@/app/product-label';
+import { applyProductLabelChanges, PRODUCT_LABEL_BODY_LIMIT, PRODUCT_LABEL_STORAGE_LIMIT, resolveProductLabels, validateProductLabelChanges, validateProductLabelStructure, verifyProductLabelsView, type ProductLabelsView } from '@/app/product-label';
 import { fingerprint } from '@/app/automation/model';
 import { savedRegistrationSettings } from '@/app/workspace-settings';
 import { collectionRegistrationSettings } from '@/app/collection-registration-settings';
@@ -68,11 +68,12 @@ async function snapshot(owner: string, id: string, profileId: string | null, req
     settingsPayload: savedSettings?.payload ?? null, profile: profile ? { id: profile.id, revision: profile.revision } : null, collection };
   const rows = resolveProductLabels({ productId: id, state, content, options, quotation, settings });
   const inputFingerprint = await fingerprint({ recipe: 'product-label-source-v1', productId: id, source,
-    quotationInputFingerprint: quotation.inputFingerprint, categoryContext: quotation.categoryContext, labelRevision: state.revision, overrides: state.overrides, rows });
+    quotationInputFingerprint: quotation.inputFingerprint, categoryContext: quotation.categoryContext, labelRevision: state.revision, overrides: state.overrides, rows,
+    ...(state.structure === undefined ? {} : { structure: state.structure }) });
   const view: ProductLabelsView = { productId: id, revision: state.revision, inputFingerprint, productVersion: product.updated_at,
     contentRevision: content.revision, optionRevision: options.revision, quotationRevision: quotation.revision,
     quotationInputFingerprint: quotation.inputFingerprint, categoryContext: quotation.categoryContext, imageKeys,
-    overrides: state.overrides, rows, updatedAt: state.updatedAt };
+    overrides: state.overrides, rows, updatedAt: state.updatedAt, ...(state.structure === undefined ? {} : { structure: state.structure }) };
   verifyProductLabelsView(view, null, profileId ?? undefined);
   if (!await productLabelsSourcesCurrent(owner, id, source, state.revision)) throw conflict();
   return { view, source, options };
@@ -91,17 +92,20 @@ export async function PUT(request: Request, context: Context) {
     const owner = await ownerId();
     if (request.headers.get('origin') && request.headers.get('origin') !== new URL(request.url).origin) throw new LabelError('같은 사이트에서 표시사항을 저장해주세요.', 400);
     const body = await readBoundedJson(request, PRODUCT_LABEL_BODY_LIMIT) as Record<string, unknown>;
-    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'changes'].includes(key))
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['expectedRevision', 'expectedInputFingerprint', 'changes', 'structure'].includes(key))
       || !Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0 || typeof body.expectedInputFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedInputFingerprint)) throw new LabelError('표시사항 저장 버전과 변경 내용을 확인해주세요.', 400);
     const { id } = await context.params, profileId = selection(request), current = await snapshot(owner, id, profileId, request);
     if (body.expectedRevision !== current.view.revision || body.expectedInputFingerprint !== current.view.inputFingerprint) throw conflict();
-    let changes;
-    try { changes = validateProductLabelChanges(body.changes, current.options.rows.map(option => option.id)); }
+    let changes, structure = current.view.structure;
+    try {
+      if (Object.hasOwn(body, 'structure')) structure = validateProductLabelStructure(body.structure);
+      changes = validateProductLabelChanges(body.changes, current.options.rows.map(option => option.id), structure, Object.hasOwn(body, 'structure'));
+    }
     catch (error) { throw new LabelError(error instanceof Error ? error.message : '변경한 표시사항 항목을 확인해주세요.', 400); }
-    const overrides = applyProductLabelChanges(current.view.overrides, changes);
-    if (new TextEncoder().encode(JSON.stringify({ schemaVersion: 1, productId: id, revision: current.view.revision + 1, overrides, updatedAt: new Date().toISOString() })).length > PRODUCT_LABEL_STORAGE_LIMIT)
+    const overrides = applyProductLabelChanges(current.view.overrides, changes, structure);
+    if (new TextEncoder().encode(JSON.stringify({ schemaVersion: 1, productId: id, revision: current.view.revision + 1, overrides, updatedAt: new Date().toISOString(), ...(structure === undefined ? {} : { structure }) })).length > PRODUCT_LABEL_STORAGE_LIMIT)
       throw new LabelError('표시사항 저장 한도 512KB를 초과했습니다. 긴 입력을 줄여주세요.', 413);
-    if (!await saveProductLabels(owner, id, overrides, current.view.revision, current.source)) throw conflict();
+    if (!await saveProductLabels(owner, id, overrides, current.view.revision, current.source, structure)) throw conflict();
     return json((await snapshot(owner, id, profileId, request)).view);
   } catch (error) { return failure(error); }
 }

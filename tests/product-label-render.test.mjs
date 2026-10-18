@@ -26,8 +26,8 @@ test('product labels preserve Unicode, blank lines and literal markup through wr
  assert.ok(lines.some(row=>row.text===''));assert.equal(lines.map(row=>row.text).join(''),value.replace(/\n/g,''));assert.ok(lines.some(row=>row.text.includes('<b>')));assert.ok(result.height>612);
  for(const line of lines)assert.ok(line.x+[...line.text].length*12<=800-32);
 });
-test('invalid nine-row plans and over-height contents fail before allocating an output bitmap or encoding PNG',async()=>{
- for(const mutate of [input=>input.rows.pop(),input=>input.width=359,input=>input.rows[0].push('third'),input=>input.rows[0][1]=42,input=>input.rows.forEach(row=>row[1]='한'.repeat(20000))]){
+test('over-limit product-label plans and over-height contents fail before allocating an output bitmap or encoding PNG',async()=>{
+ for(const mutate of [input=>input.rows=Array.from({length:40},()=>['항목','값']),input=>input.width=359,input=>input.rows[0].push('third'),input=>input.rows[0][1]=42,input=>input.rows.forEach(row=>row[1]='한'.repeat(20000))]){
   const h=fixture(),input=plan();mutate(input);await assert.rejects(h.render(input));assert.equal(h.encoded,0);assert.equal(h.canvases[0].width,300);assert.equal(h.canvases[0].height,150);
  }
 });

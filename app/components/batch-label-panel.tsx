@@ -21,7 +21,7 @@ export function BatchLabelPanel({ products, onOpen, onBusyChange }: { products: 
     try {
       for (const product of products) {
         if (stop.current || !alive.current) break;
-        report(product.id, '저장된 한글 표시사항 9항목 확인 중');
+        report(product.id, '저장된 한글 표시사항 항목 확인 중');
         try {
           const result = await runProductNineLabels(product.id, { cache: cache.current, render: renderDocument,
             shouldStop: () => stop.current || !alive.current,
@@ -45,7 +45,7 @@ export function BatchLabelPanel({ products, onOpen, onBusyChange }: { products: 
   }
   function stopRun(){stop.current=true;setStopping(true);if(recovery.current)recovery.current.abort();if(!running.current){releaseProductNineLabelBatch(cache.current);publishPending();setStopping(false);if(pending)report(pending,'미확정 요청과 파일은 보관했습니다. 상품별 검토 또는 현재 연결 읽기 확인으로 이어가세요.');}}
   return <section className="modal-form" aria-label="선택 상품 라벨 일괄 생성" data-workspace-saving={busy||held}>
-    <p>선택한 {products.length}개 상품의 6단계에 저장된 한글 표시사항 9항목으로 포함 옵션마다 PNG를 만들고 견적에 연결합니다. 개별 수정값과 공란을 반영하며 원본 파일을 보관합니다.</p>
+    <p>선택한 {products.length}개 상품의 6단계에 저장된 한글 표시사항 항목명·순서·내용으로 포함 옵션마다 PNG를 만들고 견적에 연결합니다. 개별 수정값과 공란을 반영하며 원본 파일을 보관합니다.</p>
     <p>AI 호출 없이 처리하며 파일 저장 공간을 사용합니다. 인증·법정 표시사항의 정확성과 이미지 내용은 상품별로 검토해야 합니다. Supplier Hub 전송은 실행하지 않습니다.</p>
     <ul className="batch-work-list">{products.map(product => <li key={product.id}><strong>{product.title}</strong><p role="status">{messages[product.id] ?? '실행 대기'}</p><button type="button" className="btn ghost" disabled={busy||held} onClick={() => onOpen(product.id)}>상품별 검토</button></li>)}</ul>
     <small>이 화면에서 다시 실행하면 내용이 같은 업로드 파일을 재사용합니다. 화면을 닫으면 재개 기록이 사라지므로 상품별 첨부를 확인하세요.</small>
