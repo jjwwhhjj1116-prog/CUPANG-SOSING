@@ -64,10 +64,16 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    assets:{main:[imageKeys[0]],additional:[imageKeys[1]],detail:[imageKeys[2]],label:[imageKeys[3]]},
   }}}));
   const optionView=await json(await h.route(base+'/options'));
-  const rows=h.load('app/product-options.ts').optionInputs(optionView.options);rows[0].translatedName='검토한 첫 옵션';rows[5].included=false;
+  const rows=h.load('app/product-options.ts').optionInputs(optionView.options);rows[0].translatedName='검토한 첫 옵션';rows[1].translatedName='견적서 수동명과 구분할 옵션';rows[5].included=false;
   await json(await h.route(base+'/options',{method:'PATCH',body:{expectedRevision:optionView.options.revision,expectedProductVersion:optionView.productVersion,rows}}));
   let view=await json(await h.route(base+'/quotation-fields'));
-  await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
+  // A later generic content edit uses the saved korName fallback, whereas a
+  // separately reviewed quotation title must remain a manual option override.
+  assert.equal(view.automatic.rows.find(row=>row.optionId==='collected-1').fields.title.value,'사용자가 검토한 선글라스, 검토한 첫 옵션');
+  assert.equal(view.automatic.rows.find(row=>row.optionId==='collected-1').fields.noticeMaterial.value,'해당사항없음','initial legal notices remain independent of the edited stage-six label');
+  const reviewed=await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
+   {fieldKey:'title',optionId:'collected-2',value:'견적서에서 검토한 별도 상품명'},
+   {fieldKey:'noticeMaterial',optionId:null,value:'검토한 재질'},
    {fieldKey:'salePrice',optionId:'collected-2',value:'10000'},
    {fieldKey:'additionalImages',optionId:'collected-1',value:''},
    {fieldKey:'handlingReason',optionId:null,value:'해당사항없음'},
@@ -83,12 +89,21 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(view.categoryContext.categoryId,'80719');assert.equal(view.categoryContext.profileId,'cat');
   const savedOptions=(await json(await h.route(base+'/options'))).options.rows;
   assert.equal(savedOptions.filter(row=>row.included).length,5);assert.equal(savedOptions[5].included,false);
-  assert.equal(savedOptions[0].translatedName,'검토한 첫 옵션');
+  assert.equal(savedOptions[0].translatedName,'검토한 첫 옵션');assert.equal(savedOptions[0].provenance.translatedName,'manual');
+  assert.equal(savedOptions[1].translatedName,'견적서 수동명과 구분할 옵션');assert.equal(savedOptions[1].provenance.translatedName,'manual');
+  const savedContent=(await json(await h.route(base+'/content'))).content;
+  assert.equal(savedContent.seo.title.value,'사용자가 검토한 선글라스');assert.equal(savedContent.seo.title.provenance,'manual');
+  assert.equal(savedContent.label.material.value,'검토한 재질');assert.equal(savedContent.label.material.provenance,'manual');
+  assert.deepEqual(view.automatic.rows.map(row=>[row.optionId,row.fields.title.value]),reviewed.automatic.rows.map(row=>[row.optionId,row.fields.title.value]),'source resume preserves every included and excluded automatic title');
+  assert.deepEqual(view.overrides,reviewed.overrides,'source resume preserves every reviewed quotation override');
   const first=view.resolved.rows.find(row=>row.optionId==='collected-1').fields;
   const second=view.resolved.rows.find(row=>row.optionId==='collected-2').fields;
-  assert.equal(first.title.value,'사용자가 검토한 선글라스');assert.equal(first.additionalImages.value,'');
+  assert.equal(first.title.value,'사용자가 검토한 선글라스, 검토한 첫 옵션');assert.equal(first.additionalImages.value,'');
+  assert.equal(second.title.value,'견적서에서 검토한 별도 상품명');assert.equal(second.title.source,'manual-option');
+  assert.equal(view.automatic.rows.find(row=>row.optionId==='collected-2').fields.title.value,'사용자가 검토한 선글라스, 견적서 수동명과 구분할 옵션');
   assert.equal(first.supplyPrice.value,'4260');assert.equal(first.salePrice.value,'7100');assert.equal(second.salePrice.value,'10000');
-  assert.equal(first.noticeMaterial.value,'검토한 재질');assert.equal(first.kcMarkType.value,'해당사항없음');
+  assert.equal(first.noticeMaterial.value,'검토한 재질');assert.equal(first.noticeMaterial.source,'manual-common');assert.equal(first.kcMarkType.value,'해당사항없음');
+  assert.equal(view.automatic.rows.find(row=>row.optionId==='collected-1').fields.noticeMaterial.value,'해당사항없음');
   assert.match(first.detailHtml.value,/직접 확인한 설명/);
   const fields=[...new Set([...view.resolved.schema.fields.map(field=>field.id),'skuId','sourcePriceCny','sourceUrl','categoryId'])],workbook=quotationWorkbook(fields);
   const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
@@ -112,6 +127,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    assert.equal(report.issues.filter(issue=>issue.code==='COLLECTION_SOURCE_GAP').length,3);
    assert.equal(document.rows[0].fields.noticeMaterial.value,'검토한 재질');
    assert.equal(document.rows[0].fields.additionalImages.value,'');
+   assert.equal(document.rows[0].fields.title.value,'사용자가 검토한 선글라스, 검토한 첫 옵션');
+   assert.equal(document.rows[1].fields.title.value,'견적서에서 검토한 별도 상품명');
    assert.match(document.rows[0].fields.detailHtml.value,/직접 확인한 설명/);
    assert.equal(document.warnings.filter(message=>message.includes('1688 수집 원문')).length,3);
   }
@@ -122,7 +139,12 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const xlsx=h.load('app/xlsx-template.ts'),archive=await xlsx.readXlsxArchive(bytes),sheet=xlsx.inspectXlsxArchive(archive);
   for(let index=0;index<5;index++){
    const cells=xlsx.xlsxHeaders(sheet,'견적서',index+2),row=Object.fromEntries(fields.map((field,column)=>[field,cells[column]]));
-   assert.equal(row.skuId,receipt.result.options[index].sku);assert.equal(row.title,'사용자가 검토한 선글라스');assert.equal(row.sourceUrl,sourceUrl);
+   assert.equal(row.skuId,receipt.result.options[index].sku);
+   const reviewedTitle=reviewed.resolved.rows.find(value=>value.optionId===savedOptions[index].id).fields.title.value;
+   assert.equal(row.title,reviewedTitle,'workbook exports the exact reviewed option title');
+   if(index===0)assert.equal(row.title,'사용자가 검토한 선글라스, 검토한 첫 옵션');
+   if(index===1)assert.equal(row.title,'견적서에서 검토한 별도 상품명');
+   assert.equal(row.sourceUrl,sourceUrl);
    assert.equal(row.categoryId,'80719');assert.equal(row.sourcePriceCny,String(receipt.result.options[index].unitPriceCny));
    assert.equal(row.salePrice,index===1?'10000':index%2?'8220':'7100');if(index===0)assert.equal(row.additionalImages,'');
    assert.match(row.detailHtml,/직접 확인한 설명/);

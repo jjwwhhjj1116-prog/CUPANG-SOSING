@@ -5,6 +5,18 @@ import { alibabaMobileResponseSucceeded } from '@/app/alibaba-mobile-response';
 
 const SKU_ENDPOINT = 'https://h5api.m.1688.com/h5/mtop.mbox.fc.common.gateway/1.0/';
 const PUBLIC_APP_KEY = '12574478'; // Alibaba's public lib-mtop 2.7.4 client ID, not an owned OpenAPI key.
+// Optional description bytes must not consume the whole public-source budget
+// after the offer and every SKU price have already been verified.
+export const OPTIONAL_DETAIL_TIMEOUT_MS = 5000;
+
+class OptionalDetailTransportError extends Error {
+  constructor(public reason: 'network' | 'read' | 'timeout') {
+    super('1688 상세 원문을 일시적으로 받지 못했습니다. 확인된 상품·옵션 원문은 유지합니다.');
+  }
+}
+class VerifiedMobileDetailUnavailable extends OptionalDetailTransportError {
+  constructor(reason: 'network' | 'read' | 'timeout', public result: ReturnType<typeof parseAlibabaMobileProduct>) { super(reason); }
+}
 
 async function readBody(response: Response, limit: number) {
   if (!response.ok) throw Error('1688 공개 상품 요청이 정상 응답하지 않았습니다.');
@@ -23,6 +35,66 @@ async function readBody(response: Response, limit: number) {
     }
     return body + decoder.decode();
   } finally { reader.releaseLock(); }
+}
+
+async function readOptionalDetail(url: string, options: {fetcher?: typeof fetch; signal: AbortSignal; optionalDetailTimeoutMs?: number}) {
+  const timeoutMs = options.optionalDetailTimeoutMs ?? OPTIONAL_DETAIL_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw Error('상세 원문 확인 제한 시간을 확인해주세요.');
+  const controller = new AbortController();
+  let response: Response | undefined, reader: ReadableStreamDefaultReader<Uint8Array> | undefined, consumed = false;
+  let interrupted: Error | undefined, rejectInterruption: (error: Error) => void = () => {};
+  const interruption = new Promise<never>((_resolve, reject) => { rejectInterruption = reject; });
+  const stop = (error: Error) => {
+    if (interrupted) return;
+    interrupted = error; controller.abort();
+    if (reader) void reader.cancel().catch(() => {});
+    else if (response) void response.body?.cancel().catch(() => {});
+    rejectInterruption(error);
+  };
+  const cancel = () => stop(Error('상품 수집을 취소했거나 응답 시간이 초과되었습니다.'));
+  const timer = setTimeout(() => options.signal.aborted ? cancel() : stop(new OptionalDetailTransportError('timeout')), timeoutMs);
+  options.signal.addEventListener('abort', cancel, {once: true});
+  const read = async () => {
+    try {
+      try { response = await (options.fetcher ?? fetch)(url, {redirect: 'manual', credentials: 'omit', cache: 'no-store', signal: controller.signal, headers: {accept: 'text/plain'}}); }
+      catch { throw interrupted ?? new OptionalDetailTransportError('network'); }
+      if (interrupted || options.signal.aborted) {
+        void response.body?.cancel().catch(() => {});
+        throw interrupted ?? Error('상품 수집을 취소했습니다.');
+      }
+      if ([502,503,504].includes(response.status)) {
+        void response.body?.cancel().catch(() => {});
+        return {detailSource: '', detailUnavailable: {status: response.status as 502|503|504}};
+      }
+      // Authority failures and redirects are never a transient transport gap.
+      if (!response.ok) { void response.body?.cancel().catch(() => {}); throw Error('1688 공개 상품 요청이 정상 응답하지 않았습니다.'); }
+      reader = response.body?.getReader();
+      if (!reader) throw Error('1688 상품 응답이 없습니다.');
+      const charset = response.headers.get('content-type')?.match(/charset\s*=\s*["']?([\w-]+)/i)?.[1] ?? 'utf-8';
+      const decoder = new TextDecoder(charset, {fatal: true});
+      let text = '', size = 0;
+      while (true) {
+        let part: ReadableStreamReadResult<Uint8Array>;
+        try { part = await reader.read(); }
+        catch { throw interrupted ?? new OptionalDetailTransportError('read'); }
+        if (interrupted || options.signal.aborted) throw interrupted ?? Error('상품 수집을 취소했습니다.');
+        if (part.done) { consumed = true; break; }
+        size += part.value.byteLength;
+        if (size > 2 * 1024 * 1024) { void reader.cancel().catch(() => {}); throw Error('1688 상품 응답 크기가 수집 한도를 초과했습니다.'); }
+        // Invalid encodings and malformed detail payloads remain hard failures.
+        text += decoder.decode(part.value, {stream: true});
+      }
+      return {detailSource: text + decoder.decode(), detailUnavailable: undefined};
+    } finally { if (reader) { if (!consumed) void reader.cancel().catch(() => {}); reader.releaseLock(); } }
+  };
+  try {
+    if (options.signal.aborted) cancel();
+    const value = await Promise.race([interruption, options.signal.aborted ? interruption : read()]);
+    if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
+    return value;
+  } finally {
+    clearTimeout(timer); options.signal.removeEventListener('abort', cancel); controller.abort();
+  }
 }
 
 function anonymousTransport(headers: Headers) {
@@ -71,7 +143,7 @@ export async function queryAlibabaMobileSkus(offerId: string, options: {fetcher?
 
 /** Return bounded, inert public sources, so a Chrome transport can send them
  * to the server for the same identity/SKU/price checks rather than a trusted receipt. */
-export async function collectAlibabaMobileCapture(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal}) {
+export async function collectAlibabaMobileCapture(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal; optionalDetailTimeoutMs?: number}) {
   const source = parseCollectionRequest({urls: [sourceUrl]})[0];
   const request = async (url: string, accept: string) => {
     if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
@@ -97,17 +169,15 @@ export async function collectAlibabaMobileCapture(sourceUrl: string, options: {f
   const payload = await queryAlibabaMobileSkus(source.offerId, options);
   // Validate identity/SKUs/prices before following the page's bounded detail
   // reference. A response for another offer cannot authorize a detail read.
-  parseAlibabaMobileProduct(page, payload);
+  const verified = parseAlibabaMobileProduct(page, payload);
   let detailSource='',detailUnavailable:{status:502|503|504}|undefined;
   if(page.detailUrl){
-    const response=await request(page.detailUrl,'text/plain');
-    if([502,503,504].includes(response.status)){
-      // This optional source alone is temporarily unavailable. Preserve the
-      // already validated page/SKU bytes and explicitly report the omission;
-      // authentication, malformed/oversized sources and cancellation still fail.
-      try{await response.body?.cancel();}catch{/* Never consume the failed detail body as supplier facts. */}
-      detailUnavailable={status:response.status as 502|503|504};
-    }else detailSource=await readBody(response,2*1024*1024);
+    try { ({detailSource, detailUnavailable} = await readOptionalDetail(page.detailUrl, options)); }
+    catch (error) {
+      if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
+      if (error instanceof OptionalDetailTransportError && !options.signal.aborted) throw new VerifiedMobileDetailUnavailable(error.reason, verified);
+      throw error;
+    }
   }
   if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
   parseAlibabaMobileProduct(page, payload, detailSource ? parseAlibabaMobileDescription(detailSource) : '');
@@ -115,8 +185,16 @@ export async function collectAlibabaMobileCapture(sourceUrl: string, options: {f
   return {format:'1688-public-mobile-capture-v1' as const, sourceUrl:source.sourceUrl, mobileHtml, skuPayload:payload, detailSource};
 }
 
-export async function collectAlibabaMobileProduct(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal}) {
-  const capture = await collectAlibabaMobileCapture(sourceUrl, options);
+export async function collectAlibabaMobileProduct(sourceUrl: string, options: {fetcher?: typeof fetch; signal: AbortSignal; optionalDetailTimeoutMs?: number}) {
+  let capture: Awaited<ReturnType<typeof collectAlibabaMobileCapture>>;
+  try { capture = await collectAlibabaMobileCapture(sourceUrl, options); }
+  catch (error) {
+    // A server-owned transport failure is not an invented HTTP status or a raw
+    // Chrome capture. Only already verified offer/SKU facts can be recovered.
+    if (options.signal.aborted) throw Error('상품 수집을 취소했습니다.');
+    if (error instanceof VerifiedMobileDetailUnavailable) return {...error.result, provider: '1688-public-mobile-partial-v1'};
+    throw error;
+  }
   if (capture.format === '1688-public-sku-capture-v1') return parseAlibabaPublicSkuProduct(capture.skuPayload, capture.sourceUrl);
   const result=parseAlibabaMobileProduct(parseAlibabaMobilePage(capture.mobileHtml,capture.sourceUrl), capture.skuPayload,
     capture.detailSource ? parseAlibabaMobileDescription(capture.detailSource) : '');

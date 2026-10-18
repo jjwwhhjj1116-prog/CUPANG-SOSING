@@ -194,10 +194,11 @@ function transportFixture({failure, changeSku, desktopResponse, mobileResponse, 
   const fetcher = async (target, init) => {
     const url = new URL(target); calls.push({url, init});
     assert.equal(init.redirect, 'manual'); assert.equal(init.credentials, 'omit');
-    const branch=url.hostname==='detail.1688.com'?'pc':'mobile';
+    const branch=url.hostname==='detail.1688.com'?'pc':url.hostname==='itemcdn.tmall.com'?'detail':'mobile';
     if(!requestSignals.has(branch))requestSignals.set(branch,init.signal);
     assert.equal(init.signal, requestSignals.get(branch));
-    if (!wrappedSignal) assert.equal(init.signal, signal);
+    if (!wrappedSignal && branch!=='detail') assert.equal(init.signal, signal);
+    if (branch==='detail') assert.notEqual(init.signal, signal, 'optional detail has an independent bounded child signal');
     if (url.hostname === 'detail.1688.com') return desktopResponse ? desktopResponse() : new Response('<script>window._config_={"action":"noop"};</script>', {headers: {'content-type': 'text/html'}});
     if (url.hostname === 'm.1688.com') return mobileResponse ? mobileResponse() : new Response(pageHtml(mobile), {headers: {'content-type': 'text/html'}});
     if (url.hostname === 'itemcdn.tmall.com') return new Response(detail, {headers: {'content-type': 'text/plain'}});

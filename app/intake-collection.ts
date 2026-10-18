@@ -6,6 +6,7 @@ import { prepareIntakeSeoOutcome } from '@/app/intake-seo';
 import type { BrowserProductCapture } from '@/app/browser-product-bridge';
 import { canSupplementCollection } from '@/app/collection-source-supplement';
 import { captureCollectionSupplement } from '@/app/collection-supplement-client';
+import { requestIntakeCollectionReceipt } from '@/app/intake-collection-recovery';
 
 /** A user-initiated fetch produces an editable draft only, never a Hub submission. */
 export async function collectIntakeProduct(job:CollectionJob,options:{signal:AbortSignal;fetcher:typeof fetch;onJob:(job:CollectionJob)=>void;onProgress:(message:string)=>void;captureFromBrowser?:(sourceUrl:string,signal:AbortSignal)=>Promise<BrowserProductCapture>}) {
@@ -25,23 +26,17 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  let repairedExistingSource=false;
  if(!job.received_at){
   reportProgress('상품 페이지에서 정보 가져오는 중');
-  let response=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/collect`,{method:'POST',signal:options.signal});
-  let body=await response.json() as {error?:string;code?:string;receipt?:{receivedAt?:unknown}};
-  if(!response.ok&&body.code==='SOURCE_NOT_COLLECTED'&&options.captureFromBrowser&&!options.signal.aborted){
+  let acknowledgement=await requestIntakeCollectionReceipt(job,'collect',{fetcher,signal:options.signal});
+  if(acknowledgement?.kind==='source-unavailable'&&options.captureFromBrowser&&!options.signal.aborted){
    reportProgress('현재 Chrome에서 1688 상품 원문 확인 중');
    const captured=await options.captureFromBrowser(job.source_url,options.signal);
    if(options.signal.aborted)return;
-   response=await fetcher(`/api/collection-jobs/${encodeURIComponent(job.id)}/browser-capture`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(captured),signal:options.signal});
-   body=await response.json() as typeof body;
+   acknowledgement=await requestIntakeCollectionReceipt(job,'browser-capture',{fetcher,signal:options.signal,capture:captured});
   }
   if(options.signal.aborted)return;
-  if(!response.ok)throw Error(body?.error||'상품 정보를 가져오지 못했습니다.');
-  const result=validateCollectionReceiptResponse(body,job.id,job.offer_id);
-  if(!result)throw Error('수집 원문을 확인하지 못했습니다.');
-  source=result;
-  const receivedAt=body.receipt?.receivedAt;
-  if(typeof receivedAt!=='string'||!Number.isFinite(Date.parse(receivedAt)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
-  received={...job,received_at:receivedAt};
+  if(!acknowledgement||acknowledgement.kind!=='received')throw Error(acknowledgement?.error||'상품 정보를 가져오지 못했습니다.');
+  source=acknowledgement.source;
+  received={...job,received_at:acknowledgement.receivedAt};
  } else if(!Number.isFinite(Date.parse(job.received_at)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
  else if(options.captureFromBrowser){
   // A saved SKU-only receipt can outlive a temporarily unavailable Chrome.

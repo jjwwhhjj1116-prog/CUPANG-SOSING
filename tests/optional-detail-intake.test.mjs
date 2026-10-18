@@ -91,14 +91,30 @@ for(const company of schemaCompanies)test(`explicit full-source repair enriches 
   await json(await h.route(base+'/collect',{method:'POST'}));await h.intake(job.id);let product=h.sqlite.prepare('SELECT * FROM products WHERE source_url=?').get(sourceUrl);const pbase='/api/products/'+product.id;
   const rawBefore=h.sqlite.prepare('SELECT payload FROM collection_results WHERE job_id=?').get(job.id).payload,receipt=JSON.parse(rawBefore);
   let content=await json(await h.route(pbase+'/content'));await json(await h.route(pbase+'/content',{method:'PATCH',body:{expectedRevision:content.content.revision,patch:{seo:{title:'직접 검토한 상품명'},detail:{description:'직접 작성한 상세 설명'},label:{material:''},labelClears:['material'],assets:{detail:[]}}}}));
-  let options=await json(await h.route(pbase+'/options')),rows=h.load('app/product-options.ts').optionInputs(options.options);rows[0].translatedName='직접 지정한 옵션';rows[0].unitCostCny=9.25;rows[0].imageKey=null;rows[0].included=false;
-  await json(await h.route(pbase+'/options',{method:'PATCH',body:{expectedRevision:options.options.revision,expectedProductVersion:options.productVersion,rows}}));product=h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(product.id);
+  let options=await json(await h.route(pbase+'/options')),rows=h.load('app/product-options.ts').optionInputs(options.options);rows[0].translatedName='직접 지정한 옵션';rows[0].unitCostCny=9.25;rows[0].imageKey=null;rows[0].included=false;rows[1].translatedName='직접 검토한 포함 옵션';
+  await json(await h.route(pbase+'/options',{method:'PATCH',body:{expectedRevision:options.options.revision,expectedProductVersion:options.productVersion,rows}}));
+  // This ordinary content edit is not an explicit SEO-document save. The
+  // quotation fallback therefore uses the saved base title + saved korName.
+  // An independently edited quotation title must remain above that fallback.
+  const quotationBefore=await json(await h.route(pbase+'/quotation-fields'));
+  const quotationSaved=await json(await h.route(pbase+'/quotation-fields',{method:'PUT',body:{expectedRevision:quotationBefore.revision,expectedInputFingerprint:quotationBefore.inputFingerprint,
+   changes:[{fieldKey:'title',optionId:rows[2].id,value:'견적서에서 직접 지정한 상품명'}]}}));
+  const titleBefore=quotationSaved.automatic.rows.map(row=>[row.optionId,row.fields.title.value]);
+  assert.equal(quotationSaved.automatic.rows.find(row=>row.optionId===rows[1].id).fields.title.value,'직접 검토한 상품명, 직접 검토한 포함 옵션');
+  assert.equal(quotationSaved.resolved.rows.find(row=>row.optionId===rows[2].id).fields.title.value,'견적서에서 직접 지정한 상품명');
+  product=h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(product.id);
   f.status(200);const modelCalls=h.aiSources.length;let captures=0;
   const repaired=await h.load('app/collection-supplement-client.ts').completeCollectionSupplement({jobId:job.id,offerId:job.offer_id,sourceUrl,productId:product.id,productVersion:product.updated_at,provider:'1688-public-mobile-partial-v1'},{fetcher:f.fetcher,signal:new AbortController().signal,onProgress(){},captureFromBrowser:async()=>{captures++;return h.load('app/alibaba-mobile-collector.ts').collectAlibabaMobileCapture(sourceUrl,{signal:new AbortController().signal});}});
   assert.match(repaired,/보완/);assert.equal(captures,1);assert.equal(h.aiSources.length,modelCalls,'source repair must not generate new SEO or overwrite reviewed options');assert.equal(h.sqlite.prepare('SELECT payload FROM collection_results WHERE job_id=?').get(job.id).payload,rawBefore,'first receipt remains immutable');
   const effective=await json(await h.route(base+'/result'));assert.equal(effective.receipt.result.provider,'chrome-public-mobile-supplement-v1');assert.deepEqual(effective.receipt.result.options,receipt.options);assert.ok(effective.receipt.result.images.some(image=>image.role==='detail'));
-  content=await json(await h.route(pbase+'/content'));assert.equal(content.content.seo.title.value,'직접 검토한 상품명');assert.equal(content.content.detail.description.value,'직접 작성한 상세 설명');assert.equal(content.content.label.material.value,'');assert.equal(content.content.label.material.provenance,'manual');assert.deepEqual(content.content.assets.detail.value,[]);
-  options=await json(await h.route(pbase+'/options'));assert.equal(options.options.rows[0].translatedName,'직접 지정한 옵션');assert.equal(options.options.rows[0].unitCostCny,9.25);assert.equal(options.options.rows[0].imageKey,null);assert.equal(options.options.rows[0].included,false);assert.equal(options.options.rows[0].supplierSku,receipt.options[0].sku);
-  const quote=await json(await h.route(pbase+'/quotation-fields'));assert.ok(quote.resolved.rows.filter(row=>row.included).every(row=>row.fields.title?.value==='직접 검토한 상품명'));assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products WHERE id=?').get(product.id).supplier_hub_status,'미전송');
+  content=await json(await h.route(pbase+'/content'));assert.equal(content.content.seo.title.value,'직접 검토한 상품명');assert.equal(content.content.seo.title.provenance,'manual');assert.equal(content.content.detail.description.value,'직접 작성한 상세 설명');assert.equal(content.content.label.material.value,'');assert.equal(content.content.label.material.provenance,'manual');assert.deepEqual(content.content.assets.detail.value,[]);
+  options=await json(await h.route(pbase+'/options'));assert.equal(options.options.rows[0].translatedName,'직접 지정한 옵션');assert.equal(options.options.rows[1].translatedName,'직접 검토한 포함 옵션');assert.equal(options.options.rows[1].provenance.translatedName,'manual');assert.equal(options.options.rows[0].unitCostCny,9.25);assert.equal(options.options.rows[0].imageKey,null);assert.equal(options.options.rows[0].included,false);assert.equal(options.options.rows[0].supplierSku,receipt.options[0].sku);
+  const quote=await json(await h.route(pbase+'/quotation-fields'));
+  assert.deepEqual(quote.automatic.rows.map(row=>[row.optionId,row.fields.title.value]),titleBefore,'source repair cannot replace either included or excluded option titles');
+  assert.equal(quote.resolved.rows.find(row=>row.optionId===rows[1].id).fields.title.value,'직접 검토한 상품명, 직접 검토한 포함 옵션');
+  assert.equal(quote.resolved.rows.find(row=>row.optionId===rows[2].id).fields.title.value,'견적서에서 직접 지정한 상품명');
+  assert.equal(quote.resolved.rows.find(row=>row.optionId===rows[2].id).fields.title.source,'manual-option');
+  assert.deepEqual(quote.overrides,quotationSaved.overrides,'source repair cannot rewrite manual quotation values');
+  assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products WHERE id=?').get(product.id).supplier_hub_status,'미전송');
  }finally{f.close();}
 });
