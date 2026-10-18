@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DocumentImagePanel } from '@/app/components/document-image-panel';
+import { SizeChartExtractionPanel } from '@/app/components/size-chart-extraction-panel';
 import { MANUAL_SIZE_CHART_COLUMNS, MANUAL_SIZE_CHART_ROWS, manualSizeUnits, validateManualSizeChart, type ManualSizeChart } from '@/app/manual-size-chart';
 import type { ProductContent } from '@/app/product-content';
 
@@ -38,15 +39,18 @@ function Editor({ productId, version, onSaved }: Props) {
   const [saved, setSaved] = useState<Saved | null>(null);
   const [draft, setDraft] = useState<Draft | undefined>(undefined);
   const [busy, setBusy] = useState(false), [imageBusy, setImageBusy] = useState(false);
+  const [extractionBusy, setExtractionBusy] = useState(false);
+  const [extractionOpen, setExtractionOpen] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const alive = useRef(true), operation = useRef(false), sequence = useRef(0);
   const currentVersion = useRef(version), pending = useRef<Draft | undefined>(undefined);
   useEffect(() => { currentVersion.current = version; }, [version]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const imageBusyChanged = useCallback((value: boolean) => setImageBusy(value), []);
+  const extractionBusyChanged = useCallback((value: boolean) => setExtractionBusy(value), []);
   const dirty = draft !== undefined, fresh = saved?.version === version;
   const chart = draft === null ? null : draft?.chart ?? saved?.content.manualSizeChart ?? null;
-  const locked = busy || imageBusy;
+  const locked = busy || imageBusy || extractionBusy;
   function edit(value: Draft | undefined) { pending.current = value; setDraft(value); setNotice(''); }
   async function getContent() {
     const response = await fetch(`/api/products/${encodeURIComponent(productId)}/content`, { cache: 'no-store' });
@@ -65,7 +69,7 @@ function Editor({ productId, version, onSaved }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId, version]);
   async function reload(keep: boolean) {
-    if (operation.current || imageBusy) return;
+    if (operation.current || imageBusy || extractionBusy) return;
     operation.current = true; setBusy(true); setError('');
     const ticket = ++sequence.current, requestedVersion = currentVersion.current;
     try {
@@ -90,7 +94,7 @@ function Editor({ productId, version, onSaved }: Props) {
     });
   }
   async function save() {
-    if (operation.current || imageBusy || !saved || draft === undefined || !fresh) return;
+    if (operation.current || imageBusy || extractionBusy || !saved || draft === undefined || !fresh) return;
     let normalized: ManualSizeChart | null;
     try { normalized = draft === null ? null : validateManualSizeChart(draft.chart); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '사이즈표 입력을 확인해주세요.'); return; }
@@ -122,6 +126,11 @@ function Editor({ productId, version, onSaved }: Props) {
   return <section className="panel-stack" aria-label="사이즈표 편집" data-quotation-source-step="옵션" data-workspace-dirty={dirty} data-workspace-saving={locked} aria-busy={busy}>
     <h3>사이즈표 직접 편집</h3>
     <p>사이즈별 측정 항목과 값을 입력합니다. 표를 변경해 저장하면 이전 사이즈표의 견적 연결을 해제하며 원본 파일은 보관합니다.</p>
+    <button type="button" className="btn blue" aria-expanded={extractionOpen} disabled={!saved || locked || !fresh || !extractionOpen && dirty} onClick={() => { if (!locked) setExtractionOpen(open => !open); }}>{extractionOpen ? '이미지 추출 영역 닫기' : '이미지에서 사이즈표 초안 만들기'}</button>
+    {saved && extractionOpen && <SizeChartExtractionPanel productId={productId} version={version} contentRevision={saved.content.revision} disabled={dirty || busy || imageBusy || !fresh} onBusyChange={extractionBusyChanged} onDraft={value => {
+      if (operation.current || imageBusy || pending.current !== undefined || currentVersion.current !== saved.version) return;
+      edit(draftOf(validateManualSizeChart(value))); setNotice('이미지에서 추출한 표를 가져왔습니다. 원본과 비교해 수정한 뒤 정보를 저장해주세요.');
+    }}/>}
     {!saved && !error && <p role="status">저장한 사이즈표를 불러오는 중…</p>}
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {dirty && !fresh && <p role="status">상품 저장 상태가 변경되었습니다. 입력은 유지했습니다. 최신 저장본을 조회한 뒤 저장해주세요.</p>}
@@ -143,6 +152,6 @@ function Editor({ productId, version, onSaved }: Props) {
       <button type="button" className="btn ghost" disabled={locked} onClick={() => void reload(false)}>{dirty ? '입력 취소·저장 사이즈표 조회' : '저장 사이즈표 다시 조회'}</button></div>}
     {draft === null && <p role="status">정보를 저장하면 직접 작성한 표 대신 저장된 옵션 치수·무게로 표를 만듭니다.</p>}
     {dirty && <p role="status">사이즈표 정보를 먼저 저장하거나 입력을 취소한 뒤 PNG를 만들어주세요.</p>}
-    <DocumentImagePanel key={`${productId}:${saved?.content.revision ?? 'loading'}`} productId={productId} version={version} section="size" disabled={!saved || dirty || busy || !fresh} onBusyChange={imageBusyChanged} onSaved={onSaved}/>
+    <DocumentImagePanel key={`${productId}:${saved?.content.revision ?? 'loading'}`} productId={productId} version={version} section="size" disabled={!saved || dirty || busy || extractionBusy || !fresh} onBusyChange={imageBusyChanged} onSaved={onSaved}/>
   </section>;
 }

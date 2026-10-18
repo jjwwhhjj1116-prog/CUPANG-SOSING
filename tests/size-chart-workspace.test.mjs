@@ -14,7 +14,7 @@ const trace=[];
 const files=['app/components/size-chart-workspace.tsx','app/components/document-image-panel.tsx','app/document-image-render.ts','app/manual-size-chart.ts','app/product-content.ts'];
 const hashes=()=>Object.fromEntries(files.map(file=>[file,createHash('sha256').update(fs.readFileSync(new URL('../'+file,import.meta.url))).digest('hex')]));
 const beforeHashes=hashes();
-test.after(()=>{assert.deepEqual(hashes(),beforeHashes);fs.writeFileSync(new URL('../outputs/step707-size-chart-ui-proof.json',import.meta.url),JSON.stringify({sourceHashes:beforeHashes,trace,boundary:'Actual React callbacks and local content APIs/SQLite. Renderer uses a synthetic canvas. No real browser pixels, source collection, provider or Supplier Hub writes.'},null,2)+'\n');});
+test.after(()=>{assert.deepEqual(hashes(),beforeHashes);fs.writeFileSync(new URL('../'+(process.env.SIZE_CHART_WORKSPACE_PROOF_PATH||'outputs/step707-size-chart-ui-proof.json'),import.meta.url),JSON.stringify({sourceHashes:beforeHashes,trace,boundary:'Actual React callbacks and local content APIs/SQLite. Renderer uses a synthetic canvas. No real browser pixels, source collection, provider or Supplier Hub writes.'},null,2)+'\n');});
 
 // Reuse the existing real document component harness without registering its
 // test cases again. Its PNG encoder is synthetic; the renderer is tested below.
@@ -30,7 +30,7 @@ function workspace(f,intercept){
  const hooks={useState(initial){const at=cursor++;if(!(at in state))state[at]=typeof initial==='function'?initial():initial;return[state[at],value=>state[at]=typeof value==='function'?value(state[at]):value];},useRef(initial){const at=cursor++;return state[at]??(state[at]={current:initial});},useCallback(fn){cursor++;return fn;},useEffect(fn,deps){const at=cursor++,old=state[at];if(!old||!deps||!old.deps||deps.some((value,index)=>value!==old.deps[index])){state[at]={deps};effects.push(()=>{old?.cleanup?.();state[at].cleanup=fn();});}}};
  const DocumentImagePanel=()=>{},jsx=(type,props)=>({type,props}),exports={};
  const request=async(path,init={})=>{const send=()=>f.route(path,{method:init.method??'GET',...(init.body?{body:init.body}:{})});return intercept?intercept(path,init,send):send();};
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/size-chart-workspace.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,structuredClone,fetch:request,require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='@/app/components/document-image-panel')return{DocumentImagePanel};return f.h.load(name.slice(2)+'.ts');}});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/size-chart-workspace.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,Error,structuredClone,fetch:request,require(name){if(name==='react')return hooks;if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};if(name==='@/app/components/document-image-panel')return{DocumentImagePanel};if(name==='@/app/components/size-chart-extraction-panel')return{SizeChartExtractionPanel:()=>{}};return f.h.load(name.slice(2)+'.ts');}});
  const render=()=>{cursor=0;const wrapper=exports.SizeChartWorkspace({productId:f.id,version,onSaved(){saves++;version=f.h.sqlite.prepare('SELECT updated_at FROM products WHERE id=?').get(f.id).updated_at;}});const tree=wrapper.type(wrapper.props);effects.splice(0).forEach(effect=>effect());return tree;};
  const idle=async()=>{for(let i=0;i<100;i++){if(closed)return;render();await sleep();if(!render().props['aria-busy']&&state[0]&&(state[1]!==undefined||state[0].version===version))return;}throw Error('size workspace did not settle');};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node.props.children)===label);
@@ -72,6 +72,17 @@ test('an unsaved table disables the actual PNG callbacks before rendering or upl
   const button=panel.button('사이즈표 생성·견적 첨부');assert.equal(button.props.disabled,true);button.props.onClick();await sleep();assert.equal(requests,0);assert.equal(panel.plans.length,0);
   trace.push({kind:'dirty-PNG-callback-blocked',requests,renderedPlans:0});
  }finally{panel?.close();f.h.close();}
+});
+test('an extracted candidate opens a manual draft and cannot save or generate PNG while extraction is busy',async()=>{
+ const f=await sizeChartApiFixture();let ui;try{
+  ui=workspace(f);await ui.idle();const before=(await json(await f.route(f.base+'/content'))).content;
+  const extraction=()=>nodes(ui.render()).find(node=>typeof node.type==='function'&&typeof node.props?.onDraft==='function');
+  assert.equal(extraction(),undefined);await ui.click('이미지에서 사이즈표 초안 만들기');
+  extraction().props.onBusyChange(true);assert.equal(ui.png.props.disabled,true);assert.equal(ui.button('사이즈표 직접 작성').props.disabled,true);extraction().props.onBusyChange(false);
+  extraction().props.onDraft({sizeType:'원문에서 가져온 표',sizeUnits:'cm',sizes:['S'],measurements:[{name:'총장',values:['61']}]});assert.equal(ui.render().props['data-workspace-dirty'],true);assert.equal(ui.input('측정 항목 1 사이즈 1 값').props.value,'61');assert.equal(ui.png.props.disabled,true);assert.deepEqual((await json(await f.route(f.base+'/content'))).content,before);
+  await ui.click('사이즈표 정보 저장');assert.equal((await json(await f.route(f.base+'/content'))).content.manualSizeChart.measurements[0].values[0],'61');
+  trace.push({kind:'extraction-parent-draft-only',automaticContentWrites:0,explicitSave:true});
+ }finally{ui?.close();f.close();}
 });
 for(const loss of ['fetch','json'])test(`manual-grid exact committed ${loss} acknowledgement is recovered without a second PATCH`,async()=>{
  const f=await sizeChartApiFixture();let ui,patches=0;

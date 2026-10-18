@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {sizeChartApiFixture,companies,json,plain,sizeKeys} from './helpers/supplier-hub-single-size-chart.mjs';
 const chart={sizeType:'직접 확인한 규격',sizeUnits:'mm',sizes:['소','대'],measurements:[{name:'폭',values:['120','180']},{name:'둘레',values:['','  ']}]},traces=[];
 const hash=value=>createHash('sha256').update(value).digest('hex');
-test.after(()=>fs.writeFileSync(new URL('../outputs/step707-backend-size-api-proof.json',import.meta.url),JSON.stringify({format:'step707-backend-size-api-proof-v1',traces,boundary:'Actual local content/attachment/quotation handlers and SQLite/R2 fixtures. Synthetic chart/images/schema. No live browser, product, network, provider or Hub writes.'},null,2)+'\n'));
+test.after(()=>fs.writeFileSync(new URL('../'+(process.env.MANUAL_SIZE_CHART_API_PROOF_PATH||'outputs/step707-backend-size-api-proof.json'),import.meta.url),JSON.stringify({format:'step707-backend-size-api-proof-v1',traces,boundary:'Actual local content/attachment/quotation handlers and SQLite/R2 fixtures. Synthetic chart/images/schema. No live browser, product, network, provider or Hub writes.'},null,2)+'\n'));
 for(const company of companies)test(`saved arbitrary size grid survives reload and image regeneration replaces only active size (${company.code})`,async()=>{
  const f=await sizeChartApiFixture(company),{h}=f;try{
   const content=async()=> (await json(await f.route(f.base+'/content'))).content,product=()=>h.sqlite.prepare('SELECT * FROM products WHERE id=?').get(f.id),pool=product().image_keys;
