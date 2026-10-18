@@ -66,7 +66,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
-   {exports,Error,AbortController,FormData,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,structuredClone,crypto,queueMicrotask,fetch:request,window:{addEventListener(){},removeEventListener(){},confirm(){throw Error('Unexpected discard prompt');},setTimeout},require(name){
+   {exports,Error,AbortController,File,FormData,URL,URLSearchParams,Date,Intl,TextEncoder,TextDecoder,structuredClone,crypto,queueMicrotask,fetch:request,window:{addEventListener(){},removeEventListener(){},confirm(){throw Error('Unexpected discard prompt');},setTimeout},require(name){
     if(name==='react')return hooks;
     if(name==='react/jsx-runtime')return{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
     if(name.endsWith('.css'))return{};
@@ -281,16 +281,32 @@ test('pending banner upload blocks inline collapse and keeps the selected image 
   h.setStoredSettings({brand:'업로드할 브랜드',topImageEnabled:true});await h.settle();await h.click('⚙ 기본설정');
   const toggle=h.button('⚙ 기본설정'),cancel=h.button('취소');
   const upload=nodes(h.settingsForm()).find(node=>node.props?.['aria-label']==='공통 상단 이미지 업로드');
-  upload.props.onChange({target:{files:[new File(['image'],'banner.png',{type:'image/png'})],value:'banner.png'}});
+  const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64'),file=new File([bytes],'banner.png',{type:'image/png'});
+  upload.props.onChange({target:{files:[file],value:'banner.png'}});await h.settle();
+  const selectedPreview=nodes(h.settingsForm()).find(node=>node.type==='img').props.src;
+  assert.match(selectedPreview,/^blob:/,'selection stays a local preview until the user submits settings');
+  assert.equal(h.bannerUploads.length,0);assert.equal(h.requests.some(request=>request.method!=='GET'),false);
+  assert.equal(h.button('⚙ 기본설정').props.disabled,false);
+  const form=h.settingsForm();h.deferSettingsWrite();const saving=form.props.onSubmit({preventDefault(){}});
   toggle.props.onClick();cancel.props.onClick();
   assert.ok(h.settingsPanel(),'pending upload cannot unmount the original settings form');
   assert.equal(h.button('⚙ 기본설정').props.disabled,true);assert.equal(h.bannerUploads.length,1);
-  h.bannerUploads[0].resolve(Response.json({key:'owner/banner.png'}));await h.settle();
-  assert.equal(h.button('⚙ 기본설정').props.disabled,false);
-  assert.ok(nodes(h.settingsForm()).some(node=>node.type==='img'&&node.props.src==='/api/files/owner/banner.png'));
+  const posted=h.requests.find(request=>request.url==='/api/files'&&request.method==='POST');
+  assert.ok(posted.body instanceof FormData);assert.equal(posted.body.get('file').name,'banner.png');assert.equal(posted.body.get('file').type,'image/png');
+  assert.deepEqual(Buffer.from(await posted.body.get('file').arrayBuffer()),bytes);assert.equal(posted.signal.aborted,false);
   assert.equal(h.requests.some(request=>request.method==='PUT'),false);
-  await h.settingsForm().props.onSubmit({preventDefault(){}});await h.settle();assert.equal(h.settingsPanel(),undefined);
+  await form.props.onSubmit({preventDefault(){}});assert.equal(h.bannerUploads.length,1,'a captured submit cannot duplicate the pending upload');
+  h.bannerUploads[0].resolve(Response.json({key:'owner/banner.png'}));await h.settle();
+  assert.equal(h.settingsWrites.length,1);assert.ok(h.settingsPanel());assert.equal(h.button('⚙ 기본설정').props.disabled,true);
+  assert.ok(nodes(h.settingsForm()).some(node=>node.type==='img'&&node.props.src===selectedPreview),'the selected image remains visible until settings save is acknowledged');
+  toggle.props.onClick();cancel.props.onClick();await h.settle();assert.ok(h.settingsPanel(),'pending settings acknowledgement cannot collapse the selected banner');
+  await form.props.onSubmit({preventDefault(){}});assert.equal(h.settingsWrites.length,1);assert.equal(h.bannerUploads.length,1);
   const saved=JSON.parse(h.requests.find(request=>request.method==='PUT').body);assert.equal(saved.topImageKey,'owner/banner.png');assert.equal(saved.topImageEnabled,true);
+  h.setStoredSettings(saved);h.settingsWrites[0].resolve(Response.json({settings:saved}));await saving;await h.settle();assert.equal(h.settingsPanel(),undefined);
+  assert.equal(h.button('⚙ 기본설정').props.disabled,false);await h.click('⚙ 기본설정');
+  assert.ok(nodes(h.settingsForm()).some(node=>node.type==='img'&&node.props.src==='/api/files/owner/banner.png'));
+  assert.equal(h.requests.filter(request=>request.url==='/api/files'&&request.method==='POST').length,1);
+  assert.equal(h.requests.filter(request=>request.url==='/api/settings'&&request.method==='PUT').length,1);
  }finally{h.close();}
 });
 

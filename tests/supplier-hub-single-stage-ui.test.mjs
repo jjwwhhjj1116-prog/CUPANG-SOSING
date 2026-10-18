@@ -15,7 +15,7 @@ const flatten=tree=>typeof tree==='string'?tree:Array.isArray(tree)?tree.map(fla
 function fixture(company=companies[0],options={}){
  const clock={now:Date.now()},timers=new Map(),listeners=new Set(),calls=[],sent=[],modules=new Map(),slots=[],effects=[];
  let cursor=0,mountedKey=null,props,sequence=0;
- const saved={format:'yoofam-supplier-hub-single-package-v1',prepared:false,registered:false,remoteWrites:false,submissionReady:false,productId:'synthetic-stage-656',fingerprint:'a'.repeat(64),company:plain(company),schemaSha256:'b'.repeat(64),
+ const saved={format:'yoofam-supplier-hub-single-package-v1',prepared:false,registered:false,remoteWrites:false,submissionReady:false,productId:'synthetic-stage-656',fingerprint:'a'.repeat(64),inputFingerprint:'d'.repeat(64),company:plain(company),schemaSha256:'b'.repeat(64),
   source:{productVersion:'2026-10-14T00:00:00.000Z',contentRevision:2,optionRevision:3,quotationRevision:4,profileId:'profile-656',profileRevision:5},options:[{optionId:'option-656',optionLabel:'합성 검정'}],
   payload:{docId:null,productName:'직접 검토한 합성상품',categoryPath:'운동 > 보호대 (81452)',categoryId:5562,displayCategoryCode:'81452',scope:'Retail_Categorized_Single',productNoticeNumber:25,version:188,
    jsonDocument:[{startPage:{productName:'직접 검토한 합성상품',categoryPath:'운동 > 보호대 (81452)'},productPage:{modelNumber:'',commonAttributes:{purchasePrice:'11960',coupangSalePrice:'19930'}},imagePage:{msrpAgree:true,labelContactAgreed:true,images:{mainImage:'https://fixture.invalid/synthetic.png'}}}]},

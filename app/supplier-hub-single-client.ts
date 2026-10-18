@@ -4,7 +4,7 @@ import {parseStoredSingleReceipt,type SingleReceiptRecord} from '@/app/supplier-
 
 export type SinglePackageView = {
   format: 'yoofam-supplier-hub-single-package-v1'; prepared: boolean; registered: false; remoteWrites: false; submissionReady: false;
-  productId: string; fingerprint: string; company: SupplierHubCompany; schemaSha256: string;
+  productId: string; fingerprint: string; inputFingerprint: string; company: SupplierHubCompany; schemaSha256: string;
   source: { productVersion: string; contentRevision: number; optionRevision: number; quotationRevision: number; profileId: string | null; profileRevision: number | null };
   options: { optionId: string | null; optionLabel: string }[];
   payload: { docId: null; productName: string; categoryPath: string; categoryId: number | string; displayCategoryCode: string;
@@ -15,6 +15,7 @@ export type SinglePackageView = {
 export function singlePackageCurrent(value: SinglePackageView, view: QuotationFieldsView, productId: string) {
   return value.format === 'yoofam-supplier-hub-single-package-v1' && value.productId === productId && value.registered === false
     && value.remoteWrites === false && value.submissionReady === false && /^[a-f0-9]{64}$/.test(value.fingerprint)
+    && typeof value.inputFingerprint === 'string' && /^[a-f0-9]{64}$/.test(value.inputFingerprint) && value.inputFingerprint === view.inputFingerprint
     && value.source.productVersion === view.productVersion && value.source.contentRevision === view.contentRevision
     && value.source.optionRevision === view.optionRevision && value.source.quotationRevision === view.revision
     && value.source.profileId === view.categoryContext.profileId && value.payload.displayCategoryCode === view.categoryContext.categoryId

@@ -129,7 +129,7 @@ export function OptionQuotationPrices({productId,version,profileId,onSaved,refre
   // handlers, never evaluated while building the grid.
   // eslint-disable-next-line react-hooks/refs
   const grid=renderGrid?.(controller);
-  return <section aria-label="옵션별 견적 가격 편집" data-workspace-dirty={edits.length>0} data-workspace-saving={busy}>
+  return <section aria-label="옵션별 견적 가격 편집" data-quotation-source-step="가격" data-workspace-dirty={edits.length>0} data-workspace-saving={busy}>
     <h4>옵션별 가격</h4>
     {view&&<p>{view.categoryContext.categoryPath.join(' > ')} · {view.categoryContext.categoryId||'카테고리 미지정'}</p>}
     <p>7단계 견적서의 Supplier Hub 가격입니다. 직접 입력하면 연결된 가격 항목에 함께 반영됩니다. 복원하면 각 항목의 공통 수정값 또는 자동 계산을 사용합니다. 공식 판매처 가격은 별도 항목으로 유지됩니다.</p>

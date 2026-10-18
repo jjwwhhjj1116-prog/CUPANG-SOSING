@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { readQuotationExportSource, resolveQuotationExport, quotationExportFingerprint } from '@/app/exports/quotation-source';
+import { readQuotationExportSource, resolveQuotationExport, quotationExportFingerprint, QuotationExportError } from '@/app/exports/quotation-source';
 import { readQuotationFields, quotationSourcesCurrent } from '@/db/quotation-fields';
 import { productImageKeys } from '@/app/product-content';
 import { loadAttachments } from '@/app/exports/attachments';
@@ -9,6 +9,7 @@ import { buildSingleAssetPlan, singleAssetSelection, singleAssetPackageView, pub
 import { collectionSourceReview } from '@/app/collection-source-review';
 import { readLegalDocuments, inspectLegalDocumentStorage } from '@/app/legal-documents';
 import { fingerprint } from '@/app/automation/model';
+import { stableQuotationFieldsView, QuotationFieldsSnapshotError } from '@/app/quotation-fields-snapshot';
 
 import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 
@@ -17,6 +18,14 @@ function changed(): never { throw new SingleAssetError('준비 중 상품·견�
 /** Shared current-source proof. A read never publishes assets or contacts Hub. */
 export async function loadSinglePackage(owner:string,id:string,profileId:string|null,company:SupplierHubCompany,active:()=>Promise<void>,prepare=false,expectedFingerprint?:string){
     const saved = await readQuotationExportSource(owner, id, profileId);
+    // The visible editor also binds settings, profile interpretation and source
+    // context. Pair its exact fingerprint with this export's full source guard;
+    // product/content/option/quotation clocks alone do not identify that view.
+    const reviewed = await stableQuotationFieldsView(owner,id,profileId).catch(error => {
+      if(error instanceof QuotationFieldsSnapshotError)throw new QuotationExportError(error.message,error.status);
+      throw error;
+    });
+    if (reviewed.view.revision !== saved.state.revision || JSON.stringify(reviewed.source) !== JSON.stringify(saved.source)) changed();
     if (!saved.hubSchema || !saved.company || saved.company.code !== company.code || saved.company.name !== company.name || !saved.categoryContext.categoryId)
       throw new SingleAssetError('이 상품 회사·카테고리의 검증된 Single 원문 양식이 필요합니다.', 'SINGLE_SCHEMA');
     const config = publicDetailConfig(env as Parameters<typeof publicDetailConfig>[0]);
@@ -64,6 +73,9 @@ export async function loadSinglePackage(owner:string,id:string,profileId:string|
     const published = plan.canPrepare && await verifySingleAssets(plan, env.FILES, guard);
     await guard();
     const view = { ...singleAssetPackageView(plan, published), productId: id, requestedProfileId: profileId, fingerprint: packageFingerprint,
+      // Response metadata only: operation fingerprints, packets and receipts
+      // retain their existing contract and exact prepared body identity.
+      inputFingerprint: reviewed.view.inputFingerprint,
       source: { productVersion: saved.product.updated_at, contentRevision: saved.content.revision, optionRevision: saved.options.revision,
         quotationRevision: saved.state.revision, profileId: saved.categoryContext.profileId, profileRevision: saved.profile?.revision ?? null },
       options: resolveQuotationExport(saved).rows.filter(row => row.included).map(row => ({ optionId: row.optionId, optionLabel: row.optionLabel })),
