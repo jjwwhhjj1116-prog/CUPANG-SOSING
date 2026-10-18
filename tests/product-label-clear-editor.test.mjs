@@ -30,7 +30,7 @@ const hashes = () => Object.fromEntries(files.map(file => [file, createHash('sha
 const frozen = hashes();
 after(() => {
   assert.deepEqual(hashes(), frozen);
-  fs.writeFileSync(new URL('../outputs/step703-clear-ui-proof.json', import.meta.url), JSON.stringify({
+  fs.writeFileSync(new URL('../' + (process.env.STEP703_UI_PROOF_PATH || 'outputs/step703-clear-ui-proof.json'), import.meta.url), JSON.stringify({
     format: 'product-label-clear-editor-proof-v1', sourceHashes: frozen, cases: proofs,
     boundary: 'Actual component callbacks and model guards; API, hooks, raster and attachment are local fixtures. No live product is read or written.',
     externalRequests: 0, operatingProductWrites: 0, supplierHubWrites: 0,
@@ -45,14 +45,14 @@ test('clear all is an unsaved required-only draft and preserves archived common 
     assert.equal(writes.length, 0); assert.deepEqual(plain(f.view), before);
     assert.equal(inputs(h).length, 1); assert.equal(h.input('선택 옵션 제품명').props.value, '');
     assert.equal(h.render().props['data-workspace-dirty'], true);
-    assert.equal(h.button('한글 표시사항 생성 시작').props.disabled, true);
+    assert.equal(h.button('저장한 표시사항 PNG 미리보기').props.disabled, true);
     await h.click('정보 저장하기'); assert.equal(h.saved, 1, text(h.render()));
     assert.deepEqual(writes[0].structure, [{ id: 'productName', label: '제품명', required: true }]);
     assert.deepEqual(writes[0].changes, [{ optionId: 'red', fieldKey: 'productName', value: '' }]);
     assert.deepEqual(plain(f.view.overrides.common), before.overrides.common);
     assert.deepEqual(plain(f.view.overrides.options.blue), before.overrides.options.blue);
     assert.equal(f.view.overrides.options.red.precautions, before.overrides.options.red.precautions);
-    await h.click('한글 표시사항 생성 시작'); assert.equal(h.plans.length, 0); assert.match(text(h.render()), /한 항목 이상/u);
+    await h.click('저장한 표시사항 PNG 미리보기'); assert.equal(h.plans.length, 0); assert.match(text(h.render()), /한 항목 이상/u);
     await h.click('기본 9항목 구조로 복원'); assert.equal(writes.length, 1);
     await h.click('정보 저장하기'); assert.equal(h.saved, 2, text(h.render()));
     assert.equal(inputs(h).length, 9); assert.equal(h.input('선택 옵션 제품명').props.value, '');
@@ -65,7 +65,7 @@ test('clear all is an unsaved required-only draft and preserves archived common 
 test('discarding a clear draft reloads the original structure and values with no write', async () => {
   const { h, f, before, writes } = setup();
   try {
-    await h.idle(); await h.click('한글 표시사항 생성 시작'); assert.equal(h.plans.length, 1);
+    await h.idle(); await h.click('저장한 표시사항 PNG 미리보기'); assert.equal(h.plans.length, 1);
     await h.click('전체 삭제'); assert.equal(nodes(h.render()).some(node => node.type === 'a'), false);
     await h.click('입력 취소·저장 표시사항 다시 조회');
     assert.equal(inputs(h).length, 9); assert.equal(h.input('선택 옵션 제품명').props.value, before.rows.find(row => row.optionId === 'red').values.productName);

@@ -159,7 +159,7 @@ export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { opti
 
 /** Parse the whole document, including duplicate JSON keys. Never extract an
  * apparent JSON substring from prose or accept a partially parsed response. */
-function strictJson(text: string): unknown {
+export function strictJson(text: string): unknown {
   let offset = 0, nodes = 0;
   const white = () => { while (/[\t\r\n ]/u.test(text[offset] ?? '') && offset < text.length) offset++; };
   const string = () => { const start = offset++; let escape = false;

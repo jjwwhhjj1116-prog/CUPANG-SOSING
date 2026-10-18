@@ -27,7 +27,7 @@ const hashes = () => Object.fromEntries(files.map(file => [file, createHash('sha
 const frozen = hashes();
 after(() => {
   assert.deepEqual(hashes(), frozen);
-  if (cases.length) fs.writeFileSync(new URL('../outputs/step702-structure-ui-proof.json', import.meta.url), JSON.stringify({
+  if (cases.length) fs.writeFileSync(new URL('../' + (process.env.STEP702_UI_PROOF_PATH || 'outputs/step702-structure-ui-proof.json'), import.meta.url), JSON.stringify({
     format: 'product-label-structure-editor-proof-v1', sourceHashes: frozen, cases,
     boundary: 'Actual component callbacks and model verification; synthetic API, renderer and attachment. Actual API coverage is reported separately.',
     externalRequests: 0, productionWrites: 0, supplierHubWrites: 0,
@@ -80,7 +80,7 @@ test('primary label structure renames, reorders, removes and adds rows, then sav
     heading(h, 9).props.onChange({ target: { value: '추가 안내' } });
     h.edit('선택 옵션 추가 안내', '옵션에서 확인한 내용');
     assert.equal(h.render().props['data-workspace-dirty'], true);
-    assert.equal(h.button('한글 표시사항 생성 시작').props.disabled, true);
+    assert.equal(h.button('저장한 표시사항 PNG 미리보기').props.disabled, true);
     await h.click('정보 저장하기');
     assert.equal(h.saved, 1, text(h.render()));
     assert.deepEqual(f.view.structure.slice(0, 2).map(field => field.id), ['manufacturer', 'productName']);
@@ -92,7 +92,7 @@ test('primary label structure renames, reorders, removes and adds rows, then sav
     assert.equal(f.view.rows.find(row => row.optionId === 'blue').values[custom], '');
     assert.deepEqual(plain(f.view.overrides.common), before.overrides.common);
     assert.deepEqual(plain(f.view.overrides.options.blue), before.overrides.options.blue);
-    await h.click('한글 표시사항 생성 시작');
+    await h.click('저장한 표시사항 PNG 미리보기');
     assert.deepEqual(h.plans[0].rows.slice(0, 2).map(row => row[0]), ['검토 제조원', '제품명']);
     assert.deepEqual(h.plans[0].rows.at(-1), ['추가 안내', '옵션에서 확인한 내용']);
     await h.click('저장 표시사항 다시 조회');
@@ -127,7 +127,7 @@ test('invalid names and failed saves retain structure drafts and block PNG gener
     h.edit('선택 옵션 보관할 항목명', '보관할 내용'); await h.click('정보 저장하기');
     assert.equal(h.saved, 0); assert.equal(h.render().props['data-workspace-dirty'], true);
     assert.equal(h.input('선택 옵션 보관할 항목명').props.value, '보관할 내용');
-    assert.equal(h.button('한글 표시사항 생성 시작').props.disabled, true);
+    assert.equal(h.button('저장한 표시사항 PNG 미리보기').props.disabled, true);
     await h.click('정보 저장하기'); assert.equal(h.saved, 1, text(h.render())); assert.equal(writes.length, 1);
     assert.equal(h.input('선택 옵션 보관할 항목명').props.value, '보관할 내용');
   } finally { h.close(); }
@@ -143,7 +143,7 @@ test('default restoration preserves archived custom and other-option values and 
     await h.click('정보 저장하기'); assert.equal(h.saved, 2, text(h.render()));
     assert.equal(f.view.structure.length, 9); assert.equal(f.view.overrides.options.red[custom], '보관할 추가값');
     assert.equal(h.input('선택 옵션 추가 안내'), undefined);
-    await h.click('한글 표시사항 생성 시작'); assert.deepEqual(h.plans.at(-1).rows.map(row => row[0]), ['제품명', '제조원', '수입 및 판매원', '제조국', '원료명 및 성분명(재질)', '사용 시 주의사항']);
+    await h.click('저장한 표시사항 PNG 미리보기'); assert.deepEqual(h.plans.at(-1).rows.map(row => row[0]), ['제품명', '제조원', '수입 및 판매원', '제조국', '원료명 및 성분명(재질)', '사용 시 주의사항']);
   } finally { h.close(); }
 });
 

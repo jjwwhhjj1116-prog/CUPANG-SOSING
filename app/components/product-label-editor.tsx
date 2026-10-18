@@ -8,11 +8,13 @@ import { readProductLabelReferences, saveProductLabelReferences, verifyProductLa
 import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { quotationImageKeys } from '@/app/quotation-image-targets';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
+import { verifyProductLabelDraftResult } from '@/app/product-label-draft';
 
 type Props = { productId: string; optionId: string | null; version: string; profileId?: string; refreshToken?: string; disabled?: boolean; onSaved?: () => void;
   onTranslate?: (key: string, role: 'label', language: 'zh' | 'en', target: FreeImageQuotationRequest, intent?: 'manual') => void };
 type Preview = { scope: string; sourceKey: string; signature: string; view: ProductLabelsView; url: string; rendered: { blob: Blob; width: number; height: number } };
 type LabelDraft = { scope: string; values: ProductLabelDraft; structure?: ProductLabelStructure };
+type GeneratedReview = { scope: string; sourceKey: string; before: ProductLabelDraft; values: ProductLabelDraft; warnings: string[] };
 const hasDraft = (draft: LabelDraft) => Object.keys(draft.values).length > 0 || draft.structure !== undefined;
 const unchanged = (before: ProductLabelsView, after: ProductLabelsView) => before.productId === after.productId && before.revision === after.revision && before.inputFingerprint === after.inputFingerprint && before.productVersion === after.productVersion;
 
@@ -24,6 +26,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   const [saved, setSaved] = useState<{ scope: string; sourceKey: string; view: ProductLabelsView } | null>(null), latestSaved = useRef<typeof saved>(null);
   const [pending, setPending] = useState<LabelDraft>({ scope, values: {} }), latestDraft = useRef<LabelDraft>({ scope, values: {} });
   const [preview, setPreview] = useState<Preview | null>(null), latestPreview = useRef<Preview | null>(null);
+  const [generatedReview, setGeneratedReview] = useState<GeneratedReview | null>(null);
   const uploads = useRef(new Map<string, ProductLabelUploadCache>());
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [referencesBusy,setReferencesBusy]=useState(false),referenceBusy=useRef(false);
@@ -47,7 +50,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   function setMessage(text: string, verified?: ProductLabelsView) { setNotice({ scope, text, identity: verified ? JSON.stringify([verified.productVersion, verified.inputFingerprint]) : null }); }
   function clearPreview() { latestPreview.current = null; setPreview(null); }
   function store(body: ProductLabelsView) { latestSaved.current = { scope, sourceKey, view: body }; setSaved(latestSaved.current); }
-  function clearDraft() { latestDraft.current = { scope, values: {} }; setPending(latestDraft.current); }
+  function clearDraft() { latestDraft.current = { scope, values: {} }; setPending(latestDraft.current); setGeneratedReview(null); }
   function verify(body: ProductLabelsView) { verifyProductLabelsView(body, optionId, profileId); if (body.productId !== productId) throw Error('표시사항을 편집할 상품을 다시 확인해주세요.'); }
   function finish(controller: AbortController) { if (request.current === controller) { request.current = null; if (!controller.signal.aborted && current()) setBusy(false); } }
   async function read(signal: AbortSignal) {
@@ -86,20 +89,20 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     if (!productLabelDefinitions({ structure: before.structure ?? latestSaved.current?.view.structure }).some(field => field.key === key)) return;
     latestDraft.current = { ...before, values: { ...before.values, [key]: value } };
-    setPending(latestDraft.current); clearPreview(); setMessage('');
+    setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('');
   }
   function restoreAll() {
     if (!view || liveDisabled.current || request.current || referenceBusy.current || !current()) return;
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     latestDraft.current = { ...before, values: Object.fromEntries(productLabelDefinitions({ structure: before.structure ?? latestSaved.current?.view.structure }).map(field => [field.key, null])) as ProductLabelDraft };
-    setPending(latestDraft.current); clearPreview(); setMessage('복원할 값을 확인한 뒤 정보 저장하기를 눌러주세요.');
+    setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('복원할 값을 확인한 뒤 정보 저장하기를 눌러주세요.');
   }
   function clearAll() {
     if (!view || latestSaved.current?.view !== view || liveDisabled.current || request.current || referenceBusy.current || !current()) return;
     const before = latestDraft.current.scope === scope ? latestDraft.current : { scope, values: {} };
     const required = productLabelStructure({ structure: before.structure ?? latestSaved.current?.view.structure }).filter(field => field.required);
     latestDraft.current = { scope, structure: required, values: Object.fromEntries(required.map(field => [field.id, ''])) as ProductLabelDraft };
-    setPending(latestDraft.current); clearPreview(); setMessage('필수 제품명 항목만 남기고 현재 내용은 비웠습니다. 항목 구조는 모든 옵션에 적용됩니다. 정보 저장하기 전까지 저장본은 바뀌지 않습니다.');
+    setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('필수 제품명 항목만 남기고 현재 내용은 비웠습니다. 항목 구조는 모든 옵션에 적용됩니다. 정보 저장하기 전까지 저장본은 바뀌지 않습니다.');
   }
   function changeStructure(change: (rows: ProductLabelStructure) => ProductLabelStructure) {
     if (!view || latestSaved.current?.view !== view || liveDisabled.current || request.current || referenceBusy.current || !current()) return;
@@ -109,7 +112,7 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     if (JSON.stringify(rows) === beforeRows) return;
     const active = new Set(rows.map(row => row.id));
     latestDraft.current = { scope, structure: rows, values: Object.fromEntries(Object.entries(before.values).filter(([key]) => active.has(key as ProductLabelKey))) };
-    setPending(latestDraft.current); clearPreview(); setMessage('항목명·순서·추가·삭제는 모든 옵션에 적용됩니다. 정보 저장하기를 눌러 반영하세요.');
+    setPending(latestDraft.current); clearPreview(); setGeneratedReview(null); setMessage('항목명·순서·추가·삭제는 모든 옵션에 적용됩니다. 정보 저장하기를 눌러 반영하세요.');
   }
   function moveField(id: ProductLabelKey, offset: number) {
     changeStructure(rows => { const index = rows.findIndex(row => row.id === id), target = index + offset; if (index < 0 || target < 0 || target >= rows.length) return rows; [rows[index], rows[target]] = [rows[target], rows[index]]; return rows; });
@@ -127,6 +130,29 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
       if (!response.ok) throw Error(body.error || '표시사항을 저장하지 못했습니다. 입력은 유지됩니다.'); verify(body); verifyProductLabelSave(base.view, body, optionId, editing, editingStructure);
       store(body); clearDraft(); setMessage(`${caption} 제품 표시사항 저장 완료. 수정한 내용을 견적서 이미지에 반영하려면 다시 생성한 뒤 PNG를 견적에 연결하세요.`, body); onSaved?.();
     } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '제품 표시사항 저장 실패'); }
+    finally { finish(controller); }
+  }
+  async function generateDraft() {
+    const base = latestSaved.current;
+    if (!base || base.scope !== scope || base.sourceKey !== sourceKey || liveDisabled.current || request.current || referenceBusy.current || !current() || latestDraft.current.scope === scope && hasDraft(latestDraft.current)) return;
+    const controller = new AbortController(); request.current = controller; setBusy(true); setError(''); setMessage(''); clearPreview(); setGeneratedReview(null);
+    try {
+      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/product-label-draft${query}`, { method: 'POST', signal: controller.signal, headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ optionId, expectedRevision: base.view.revision, expectedInputFingerprint: base.view.inputFingerprint }) });
+      const body: unknown = await response.json();
+      if (controller.signal.aborted || !current()) return;
+      if (!response.ok) throw Error(body && typeof body === 'object' && 'error' in body && typeof body.error === 'string' ? body.error : '표시사항 초안을 작성하지 못했습니다. 저장된 내용은 유지됩니다.');
+      const result = verifyProductLabelDraftResult(base.view, optionId, body);
+      const latest = await read(controller.signal); if (controller.signal.aborted || !current()) return;
+      if (!unchanged(base.view, latest)) throw Error('초안 작성 중 표시사항이 변경됐습니다. 저장된 내용을 다시 확인해주세요.');
+      // Proposals stay local until the existing explicit save and exact CAS/ACK checks.
+      const values = { ...result.values } as ProductLabelDraft;
+      if (!Object.keys(values).length) { setMessage(['새로 제안할 표시사항이 없습니다.', ...result.warnings].join(' ')); return; }
+      const before = Object.fromEntries(Object.keys(values).map(key => [key, base.view.rows.find(item => item.optionId === optionId)!.values[key as ProductLabelKey]])) as ProductLabelDraft;
+      latestDraft.current = { scope, values }; setPending(latestDraft.current);
+      setGeneratedReview({ scope, sourceKey, before, values, warnings: result.warnings });
+      setMessage('내용량·재질·상품 유형의 AI 초안을 작성했습니다. 상품과 대조하고 수정한 뒤 정보 저장하기를 눌러주세요.');
+    } catch (cause) { if (!controller.signal.aborted && current()) setError(cause instanceof Error ? cause.message : '제품 표시사항 초안 작성 실패'); }
     finally { finish(controller); }
   }
   async function generate() {
@@ -176,7 +202,10 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     <small>수정한 내용을 견적서 이미지에 반영하려면 다시 생성한 뒤 PNG를 견적에 연결하세요.</small>
     {!!issues.length && <p role="alert">{[...new Set(issues)].join(' ')}</p>}
     <div className="quote-actions"><button type="button" className="btn primary" disabled={!view || disabled || busy || referencesBusy || !dirty || !!issues.length} onClick={() => void save()}>정보 저장하기</button><button type="button" className="btn ghost" disabled={!view || disabled || busy || referencesBusy} onClick={restoreAll}>전체 {optionId === null ? '자동값' : '공통·자동값'} 복원</button>
-      <button type="button" className="btn blue" disabled={!view || disabled || busy || referencesBusy || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generate()}>한글 표시사항 생성 시작</button></div>
+      <button type="button" className="btn blue" disabled={!view || disabled || busy || referencesBusy || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generateDraft()}>한글 표시사항 생성 시작</button>
+      <button type="button" className="btn ghost" disabled={!view || disabled || busy || referencesBusy || dirty || !fresh || optionId !== null && row?.included !== true} onClick={() => void generate()}>저장한 표시사항 PNG 미리보기</button></div>
+    <small>생성 시작은 상품명·수집 속성·묶음 정보로 내용량, 재질, 상품 유형의 초안을 요청합니다. 직접 수정한 값·공란은 유지합니다. 저장 후 PNG를 만들고 견적서에 연결하세요.</small>
+    {dirty && generatedReview?.scope === scope && generatedReview.sourceKey === sourceKey && <section aria-label="생성한 표시사항 초안 검토" className="panel-stack"><h4>표시사항 초안 검토</h4><table><thead><tr><th>항목</th><th>저장된 내용</th><th>AI 초안</th></tr></thead><tbody>{Object.entries(generatedReview.values).map(([key, value]) => <tr key={key}><th>{definitions.find(field => field.key === key)?.label}</th><td style={{ whiteSpace: 'pre-wrap' }}>{generatedReview.before[key as ProductLabelKey] || '(공란)'}</td><td style={{ whiteSpace: 'pre-wrap' }}>{value}</td></tr>)}</tbody></table>{generatedReview.warnings.map((warning, index) => <p key={index}>{warning}</p>)}<p>아직 저장하지 않은 제안입니다. 위 입력란에서 수정할 수 있습니다. 제조원·수입원·제조국·인증·법적 적합성 확인은 포함하지 않습니다.</p></section>}
     {dirty && <button type="button" className="btn ghost" disabled={busy} onClick={() => void load(true)}>입력 유지·최신 표시사항 조회</button>}
     <button type="button" className="btn ghost" disabled={busy} onClick={() => void load(false, true)}>{dirty ? '입력 취소·저장 표시사항 다시 조회' : '저장 표시사항 다시 조회'}</button>
     {reviewed && <><div className="product-label-preview" style={{ maxHeight: 600, overflow: 'auto' }}>
