@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {bannerFixture,bannerCompanies as companies,bannerJson} from './helpers/captured-settings-banners.mjs';
 
@@ -12,6 +13,9 @@ const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):value==null?'':String(value);
 const same=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&a.every((value,i)=>Object.is(value,b[i]));
 const target=(kind='div')=>({isContentEditable:kind==='contenteditable',closest(selector){return ['input','textarea','select','contenteditable','textbox','combobox','spinbutton'].includes(kind)&&selector?this:null;}});
+const protectionProof=[];
+function transfer(){const values=new Map();return {get types(){return [...values.keys()];},setData(key,value){values.set(key,value);},getData(key){return values.get(key)??'';},clearData(){values.clear();},effectAllowed:'none',dropEffect:'none'};}
+function dragEvent(dataTransfer){return {dataTransfer,currentTarget:{},defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){}};}
 function keyEvent(overrides={}){return {key:'Delete',target:target(),defaultPrevented:false,isComposing:false,altKey:false,ctrlKey:false,metaKey:false,shiftKey:false,stopped:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.stopped=true;},...overrides};}
 
 /** Actual component and real quote API are retained. Only the React scheduler,
@@ -42,6 +46,70 @@ async function fixture(company){
 }
 
 for(const company of companies){
+ test(`settings cards cannot remove, move, drag, translate or edit banners while body edits still save (${company.code})`,async()=>{
+  const f=await fixture(company),translated=[],edited=[],h=keyboardUI(f.request,{...f.props,onTranslate:(...args)=>translated.push(args),onEdit:(...args)=>edited.push(args)});try{
+   await h.idle();const before=await f.read(),frozen=f.snapshot(),reads=h.calls.length;
+   for(const index of [1,f.keys.length]){
+    const key=f.keys[index-1];assert.equal(h.card(key).props.draggable,false);
+    for(const suffix of ['선택 제거','위로 이동','아래로 이동','중국어 한국어 번역','영어 한국어 번역','편집하기']){const button=h.button(`상세 이미지 ${index} ${suffix}`);assert.ok(button?.props.disabled,suffix);button.props.onClick();}
+    const candidate=nodes(h.render()).find(node=>node.type==='input'&&node.props['aria-label']===`선택 옵션 상세 이미지 후보 ${before.imageKeys.indexOf(key)+1}`);assert.ok(candidate?.props.disabled);candidate.props.onChange();
+    const event=dragEvent(transfer());h.card(key).props.onDragStart(event);assert.equal(event.defaultPrevented,true);
+   }
+   const boundary=h.button('상세 이미지 2 위로 이동');assert.ok(boundary.props.disabled);boundary.props.onClick();
+   const data=transfer();h.card(f.body[1]).props.onDragStart(dragEvent(data));h.card(f.top).props.onDrop(dragEvent(data));h.card(f.body[1]).props.onDragEnd(dragEvent(data));
+   await h.idle();assert.deepEqual(h.order(),f.keys);assert.equal(h.render().props['data-workspace-dirty'],false);assert.equal(h.calls.length,reads);assert.deepEqual(translated,[]);assert.deepEqual(edited,[]);assert.equal(f.snapshot(),frozen);
+   await h.click('상세 이미지 3 중국어 한국어 번역');await h.click('상세 이미지 3 영어 한국어 번역');await h.click('상세 이미지 3 편집하기');
+   assert.deepEqual(translated.map(args=>[args[0],args[1],args[2],args[3].slotIndex]),[[f.body[1],'detail','zh',2],[f.body[1],'detail','en',2]]);assert.equal(edited[0][0],f.body[1]);assert.equal(edited[0][2].slotIndex,2);
+   await h.click('상세 이미지 3 위로 이동');assert.deepEqual(h.order(),[f.top,f.body[1],f.body[0],f.body[2],f.bottom]);await h.click('상세 이미지 4 선택 제거');await h.click('선택 옵션 이미지 저장');
+   const after=await f.read(),own=after.resolved.rows.find(row=>row.optionId===f.id);assert.deepEqual(own.fields.detailImages.value.split('\n'),[f.top,f.body[1],f.body[0],f.bottom]);assert.equal(own.fields.detailHtml.value,f.html);assert.deepEqual(plain(after.overrides.common),plain(before.overrides.common));assert.deepEqual(plain(after.overrides.options[f.other]),plain(before.overrides.options[f.other]));assert.equal(h.calls.filter(call=>call.method==='PUT').length,1);
+   protectionProof.push({kind:'cards-and-body-save',company,bannerCallbacksBlocked:true,bodyTranslationTargets:translated.length,bodyEditTargets:edited.length,explicitWrites:1,htmlAndOtherScopesPreserved:true});
+  }finally{h.close();f.close();}
+ });
+ test(`body clear retains settings and captured card callbacks cannot survive hidden/source scope ABA (${company.code})`,async()=>{
+  const f=await fixture(company),translated=[],edited=[],h=keyboardUI(f.request,{...f.props,onTranslate:(...args)=>translated.push(args),onEdit:(...args)=>edited.push(args)});try{
+   await h.idle();const frozen=f.snapshot();
+   for(const [field,value]of [['active',false],['stage','additional'],['version',new Date(Date.parse(f.props.version)+1).toISOString()],['refreshToken','another-source'],['profileId','foreign-profile'],['optionId',f.other],['disabled',true]]){
+    const controls=['선택 제거','위로 이동','중국어 한국어 번역','영어 한국어 번역','편집하기'].map(suffix=>h.button(`상세 이미지 3 ${suffix}`)),old=h.card(f.body[1]),previous=h.props[field];
+    h.props[field]=value;h.render();for(const control of controls)control.props.onClick();old.props.onDragStart(dragEvent(transfer()));h.props[field]=previous;h.render();await h.idle();for(const control of controls)control.props.onClick();old.props.onDragStart(dragEvent(transfer()));await h.idle();
+    assert.deepEqual(h.order(),f.keys,field);assert.equal(h.render().props['data-workspace-dirty'],false,field);
+   }
+   assert.deepEqual(translated,[]);assert.deepEqual(edited,[]);assert.equal(f.snapshot(),frozen);await h.click('본문 이미지 선택 비우기');assert.deepEqual(h.order(),[f.top,f.bottom]);assert.equal(f.snapshot(),frozen);await h.click('선택 옵션 이미지 저장');
+   const after=await f.read();assert.deepEqual(after.resolved.rows.find(row=>row.optionId===f.id).fields.detailImages.value.split('\n'),[f.top,f.bottom]);assert.equal(after.resolved.rows.find(row=>row.optionId===f.id).fields.detailHtml.value,f.html);
+   protectionProof.push({kind:'clear-and-stale-callbacks',company,staleScopes:7,bodyClearedWithBannersRetained:true,explicitWrites:1});
+  }finally{h.close();f.close();}
+ });
+ test(`missing role proof blocks detail card edits but additional image controls keep their original behavior (${company.code})`,async()=>{
+  const f=await fixture(company);try{
+   for(const metadata of [undefined,['foreign/file.png'],[f.top,f.top],'not-an-array']){
+    const h=keyboardUI(async(url,init)=>{const response=await f.request(url,init),body=await response.json();if(metadata===undefined)delete body.protectedDetailImageKeys;else body.protectedDetailImageKeys=metadata;return Response.json(body,{status:response.status});},{...f.props,onTranslate:()=>assert.fail('unknown banner proof must not translate'),onEdit:()=>assert.fail('unknown banner proof must not edit')});try{
+     await h.idle();const frozen=f.snapshot();for(const suffix of ['선택 제거','위로 이동','중국어 한국어 번역','편집하기']){const control=h.button(`상세 이미지 3 ${suffix}`);assert.ok(control.props.disabled);control.props.onClick();}assert.equal(h.card(f.body[1]).props.draggable,false);await h.idle();assert.deepEqual(h.order(),f.keys);assert.equal(h.render().props['data-workspace-dirty'],false);h.html('<p>HTML 직접 입력은 유지</p>');await h.idle();assert.equal(h.render().props['data-workspace-dirty'],true);assert.equal(f.snapshot(),frozen);
+    }finally{h.close();}
+   }
+   const before=await f.read(),model=f.h.load('app/quotation-image-targets.ts'),changes=model.optionImageChanges(before,f.id,{additionalImages:f.keys.join('\n')});const after=await bannerJson(await f.h.route(f.endpoint,{method:'PUT',body:{expectedRevision:before.revision,expectedInputFingerprint:before.inputFingerprint,changes}}));
+   const translated=[],h=keyboardUI(f.request,{...f.props,version:after.productVersion,stage:'additional',onTranslate:(...args)=>translated.push(args)});try{
+    await h.idle();assert.equal(h.card(f.top).props.draggable,true);await h.click('추가 이미지 1 중국어 한국어 번역');assert.equal(translated[0][0],f.top);await h.click('추가 이미지 1 선택 제거');assert.deepEqual(h.order(),f.keys.slice(1));
+   }finally{h.close();}
+   protectionProof.push({kind:'unknown-proof-and-additional-scope',company,unknownProofVariants:4,additionalBannerKeyEditable:true,automaticWrites:0});
+  }finally{f.close();}
+ });
+ test(`detail image endpoint rejects protected source and forged translate/apply while allowing body and additional proofs (${company.code})`,async()=>{
+  const f=await fixture(company);try{
+   let view=await f.read();const imageTargets=f.h.load('app/quotation-image-targets.ts'),changes=imageTargets.optionImageChanges(view,f.id,{additionalImages:f.keys.join('\n')});await bannerJson(await f.h.route(f.endpoint,{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes}}));view=await f.read();
+   // Intake fixtures append an identity byte after IEND for pool tests. This
+   // image API case instead uses a complete, unmodified synthetic PNG file.
+   const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2RkcAAAAASUVORK5CYII=','base64');for(const key of view.imageKeys)f.h.objects.set(key,new Uint8Array(png));
+   const route=f.h.load('app/api/products/[id]/image-text/route.ts'),id=f.product().id,base=`/api/products/${id}/image-text`,context={params:Promise.resolve({id})},statuses=[];
+   async function source(key,input,slotIndex,editor){const target=f.h.load('app/quotation-seo-targets.ts').exactPrimaryQuotationTarget(view.resolved.schema.fields,input),query=new URLSearchParams({sourceKey:key,role:input==='detailImages'?'detail':'additional',target:'quotation',optionId:f.id,fieldKey:target.primary,slotIndex:String(slotIndex),...(editor?{editor}:{})});const response=await route.GET(new Request('https://app.test'+base+'?'+query),context);statuses.push(response.status);return response;}
+   const frozen=f.snapshot(),requests=f.h.network.length;
+   const body=await bannerJson(await source(f.body[0],'detailImages',1));assert.equal(body.source.sourceKey,f.body[0]);await bannerJson(await source(f.top,'additionalImages',0));
+   for(const [key,slot]of [[f.top,0],[f.bottom,f.keys.length-1]])for(const editor of [undefined,'saved','saved-current-target-v1']){const reply=await bannerJson(await source(key,'detailImages',slot,editor),409);assert.match(reply.error,/설정 이미지/);}
+   const forged={...body.source,sourceKey:f.top,sourceSha256:createHash('sha256').update(f.h.objects.get(f.top)).digest('hex'),quotationTarget:{...body.source.quotationTarget,slotIndex:0}};
+   const translated=await route.POST(new Request('https://app.test'+base,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'translate',source:forged,sourceLanguage:'zh',regions:[{id:'r1',text:'中文'}]})}),context);statuses.push(translated.status);assert.match((await bannerJson(translated,409)).error,/설정 이미지/);
+   const form=new FormData();form.set('action','apply');form.set('source',JSON.stringify(forged));form.set('file',new File([f.h.objects.get(f.top)],'result.png',{type:'image/png'}));const applied=await route.POST(new Request('https://app.test'+base,{method:'POST',body:form}),context);statuses.push(applied.status);assert.match((await bannerJson(applied,409)).error,/설정 이미지/);
+   assert.equal(f.snapshot(),frozen);assert.equal(f.h.network.length,requests);assert.equal(f.h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
+   protectionProof.push({kind:'actual-local-image-api',company,statuses,providerCalls:0,productFilesAndQuotationUnchanged:true});
+  }finally{f.close();}
+ });
  test(`Delete removes only the hovered content image locally; explicit save preserves HTML, banners and other scopes (${company.code})`,async()=>{
   const f=await fixture(company),h=keyboardUI(f.request,f.props);try{
    await h.idle();const before=await f.read(),frozen=f.snapshot(),calls=h.calls.length;assert.deepEqual(plain(before.protectedDetailImageKeys),[f.top,f.bottom]);
@@ -92,3 +160,9 @@ for(const company of companies){
   }
  });
 }
+
+test.after(()=>{
+ const files=['app/components/option-image-editor.tsx','app/api/products/[id]/image-text/route.ts','tests/option-detail-keyboard.test.mjs','tests/option-image-editor.test.mjs'];
+ const proof={format:'step709-detail-banner-protection-v1',sourceHashes:Object.fromEntries(files.map(file=>[file,createHash('sha256').update(fs.readFileSync(new URL('../'+file,import.meta.url))).digest('hex')])),traces:protectionProof,boundary:'Actual component callbacks and isolated quotation/image APIs with SQLite/R2. React scheduler, auth/company and previously retained intake facts/images are synthetic. No browser, live OCR/translator, external requests, real product or Supplier Hub writes.'};
+ fs.writeFileSync(new URL('../outputs/step709-detail-banner-protection-proof.json',import.meta.url),JSON.stringify(proof,null,2)+'\n');
+});

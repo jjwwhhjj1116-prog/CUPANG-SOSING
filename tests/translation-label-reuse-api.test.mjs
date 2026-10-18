@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {translationLabelReuseFixture,companies,json} from './helpers/translation-label-reuse.mjs';
+const cases=[];
+test.after(()=>fs.writeFileSync(new URL('../outputs/step709-settings-label-api-proof.json',import.meta.url),JSON.stringify({format:'step709-label-reuse-api-proof-v1',cases,boundary:'Isolated synthetic intake/AI/PNG/schema/membership and actual API/SQLite. No external call, browser or operating product. Reuse GET/POST never invokes a provider or modifies the saved translation job/source/options/price/files.'},null,2)+'\n'));
+for(const company of companies)test(`completed intake attributes can be selected for current labels without translating again (${company.code})`,async()=>{
+ const f=await translationLabelReuseFixture(company);try{
+  const view=await f.read();assert.notEqual(view.productVersion,f.job.productVersion);const before=f.productState(),original=f.originalSnapshot(),job=f.h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(f.job.id),options=f.h.sqlite.prepare('SELECT * FROM product_options WHERE product_id=?').get(f.id),pool=f.h.sqlite.prepare('SELECT image_keys FROM products WHERE id=?').get(f.id).image_keys,source=f.h.sqlite.prepare('SELECT * FROM collection_results WHERE job_id=?').get(f.job.review.source.reference.match(/수집 요청 ([^ ]+)/u)[1]),calls=f.aiCalls;
+  assert.equal(f.productState(),before,'preview is read only');const target=view.attributes.find(pair=>pair.sourceName==='用途');assert.equal(view.fields.find(field=>field.field==='usageStandard').before,'14세이상');
+  const saved=await json(await f.apply(view,[{sourceIndex:target.sourceIndex,field:'usageStandard'}]));assert.equal(saved.applied,1);assert.equal(saved.view.contentRevision,view.contentRevision+1);assert.ok(Date.parse(saved.view.productVersion)>Date.parse(view.productVersion));
+  const content=(await json(await f.h.route(f.base+'/content'))).content;assert.equal(content.label.usageStandard.value,'운동용');assert.equal(content.label.usageStandard.provenance,'manual');const labelView=await json(await f.h.route(f.base+'/product-labels?profileId='+f.target.id));assert.equal(labelView.rows.find(row=>row.optionId===null).values.usageStandard,'운동용');assert.ok(f.h.load('app/product-label.ts').productLabelPlan(labelView,null).rows.some(row=>row[1]==='운동용'));
+  assert.deepEqual(f.h.sqlite.prepare('SELECT * FROM translation_jobs WHERE id=?').get(f.job.id),job);assert.deepEqual(f.h.sqlite.prepare('SELECT * FROM product_options WHERE product_id=?').get(f.id),options);assert.deepEqual(f.h.sqlite.prepare('SELECT * FROM collection_results WHERE job_id=?').get(source.job_id),source);assert.equal(f.h.sqlite.prepare('SELECT image_keys FROM products WHERE id=?').get(f.id).image_keys,pool);assert.equal(f.originalSnapshot(),original);assert.equal(f.aiCalls,calls);assert.deepEqual(f.h.network,[]);
+  await json(await f.apply(view,[{sourceIndex:target.sourceIndex,field:'usageStandard'}]),409);await json(await f.apply(saved.view,[{sourceIndex:target.sourceIndex,field:'usageStandard'}]),400);
+  cases.push({company,kind:'completed-intake-label-reuse',requests:f.requests,providerCallsDuringReuse:f.aiCalls-calls,actualHistoricalVersion:f.job.productVersion,currentVersionBefore:view.productVersion,currentVersionAfter:saved.view.productVersion,contentRevisionBefore:view.contentRevision,contentRevisionAfter:saved.view.contentRevision,sourceAndTranslationAndOptionsAndFilesPreserved:true,primaryLabelPlanContainsTranslatedValue:true,externalRequests:0});
+ }finally{f.close();}
+});
+test('source, primary manual blank, foreign job and atomic source edits prevent label reuse writes',async()=>{
+ for(const kind of ['receipt','primary','foreign','atomic','ignored-content']){const f=await translationLabelReuseFixture();try{
+  const view=await f.read(),target=view.attributes.find(pair=>pair.sourceName==='用途');let expected=409;
+  if(kind==='receipt'){const row=f.h.sqlite.prepare('SELECT payload FROM collection_results WHERE job_id=?').get(f.job.review.source.reference.match(/수집 요청 ([^ ]+)/u)[1]),value=JSON.parse(row.payload);value.attributes[1].value='其他';f.h.sqlite.prepare('UPDATE collection_results SET payload=? WHERE job_id=?').run(JSON.stringify(value),f.job.review.source.reference.match(/수집 요청 ([^ ]+)/u)[1]);}
+  if(kind==='primary'){const labels=await json(await f.h.route(f.base+'/product-labels?profileId='+f.target.id));await json(await f.h.route(f.base+'/product-labels?profileId='+f.target.id,{method:'PUT',body:{expectedRevision:labels.revision,expectedInputFingerprint:labels.inputFingerprint,changes:[{optionId:null,fieldKey:'usageStandard',value:''}]}}));const protectedView=await f.read();assert.equal(protectedView.fields.find(field=>field.field==='usageStandard').eligible,false);await json(await f.apply(protectedView,[{sourceIndex:target.sourceIndex,field:'usageStandard'}]),400);}
+  if(kind==='foreign')f.h.sqlite.prepare('UPDATE translation_jobs SET owner_id=? WHERE id=?').run('other-owner',f.job.id);
+  let observed=f.productState(),triggered=false;
+  if(kind==='atomic')f.state.beforeBatch=statements=>{if(!statements.some(statement=>statement.sql?.startsWith('UPDATE products AS p SET updated_at=')))return;f.state.beforeBatch=null;triggered=true;f.h.sqlite.prepare("UPDATE product_content SET payload=json_set(payload,'$.label.material.value','다른 화면 변경') WHERE product_id=?").run(f.id);observed=f.productState();};
+  if(kind==='ignored-content'){f.h.sqlite.exec("CREATE TRIGGER reject_label_content BEFORE INSERT ON product_content BEGIN SELECT RAISE(IGNORE); END");expected=503;}
+  await json(await f.apply(view,[{sourceIndex:target.sourceIndex,field:'usageStandard'}]),expected);assert.equal(f.productState(),observed);if(kind==='atomic')assert.equal(triggered,true);assert.equal(f.originalSnapshot(),f.protectedOriginal);assert.equal(f.aiCalls,1);assert.deepEqual(f.h.network,[]);
+  cases.push({company:f.company??companies[0],kind,requests:f.requests,status:expected,businessUnchangedFromExternalSnapshot:true,providerCallsDuringReuse:0,externalRequests:0});
+ }finally{f.close();}}
+});

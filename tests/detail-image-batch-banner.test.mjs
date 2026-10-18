@@ -44,11 +44,18 @@ function traceDependencies(f) {
   return { deps, trace };
 }
 const prepare = (f, deps, input = f.input) => f.model.prepareDetailImageBatch(input, signal(), () => {}, deps);
+async function withLegacySourceIssuer(f, action) {
+  // Model an already issued pre-protection proof/result inside this isolated
+  // fixture. The current server must never mint a new settings-banner proof.
+  const snapshots = f.h.load('app/quotation-fields-snapshot.ts'), stable = snapshots.stableQuotationFieldsView;
+  snapshots.stableQuotationFieldsView = async (...args) => { const saved = await stable(...args); saved.view.protectedDetailImageKeys = []; return saved; };
+  try { return await action(); } finally { snapshots.stableQuotationFieldsView = stable; }
+}
 async function cachedBanner(f) {
   const target = f.model.detailBatchSelection(f.view, f.selected, f.profile.id, 'detail');
   const quotationTarget = { kind: 'quotation', profileId: f.profile.id, optionId: f.selected, input: 'detailImages', fieldKey: target.target.primary,
     slotIndex: 0, revision: f.view.revision, inputFingerprint: f.view.inputFingerprint, optionRevision: f.view.optionRevision, value: target.value };
-  const image = await f.deps.readSource(f.id, f.view.productVersion, f.order[0], 'detail', signal(), f.deps.fetcher, quotationTarget);
+  const image = await withLegacySourceIssuer(f, () => f.deps.readSource(f.id, f.view.productVersion, f.order[0], 'detail', signal(), f.deps.fetcher, quotationTarget));
   return { ...f.input, items: [{ slotIndex: 0, sourceKey: f.order[0], status: 'ready', message: '', texts: [],
     rendered: { source: image.source, output: new Blob([png(170)], { type: 'image/png' }), width: image.width, height: image.height } }] };
 }
@@ -184,7 +191,7 @@ test('legacy unknown banner outcomes are read back as applied or skipped and nev
     try {
       await roles(f); const cached = await cachedBanner(f), entry = cached.items[0];
       const uncertain = { ...cached, items: [{ ...entry, status: 'uncertain', attempt: { image: entry.rendered, before: f.view } }] };
-      if (committed) await f.h.load('app/free-image-translation-client.ts').applyFreeImageTranslation(entry.rendered, signal(), f.deps.fetcher);
+       if (committed) await withLegacySourceIssuer(f, () => f.h.load('app/free-image-translation-client.ts').applyFreeImageTranslation(entry.rendered, signal(), f.deps.fetcher));
       const before = retained(f), writes = uploads(f);
       const recovered = await f.model.recoverDetailBatchResult(uncertain, signal(), () => {}, f.deps);
       assert.equal(recovered.items[0].status, committed ? 'applied' : 'skipped');

@@ -87,13 +87,19 @@ function quotationOverrides(saved: QuotationSnapshot, source: FreeImageSource, k
     { schema: saved.view.resolved.schema, optionIds: saved.options.rows.map(row => row.id), ownedImageKeys: [...saved.view.imageKeys, key], overrides: saved.view.overrides });
   return applyQuotationChanges(saved.view.overrides, changes);
 }
-async function quotationOriginal(owner: string, id: string, sourceKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, selection: QuotationSelection) {
+async function quotationOriginal(owner: string, id: string, sourceKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, selection: QuotationSelection, readOnlyRecovery = false) {
   const saved = await stableQuotationFieldsView(owner, id, selection.profileId), view = saved.view;
   if (view.productVersion !== current.product.updated_at || view.contentRevision !== current.content.revision) throw changed();
   const target = exactPrimaryQuotationTarget(view.resolved.schema.fields, selection.input), rows = view.resolved.rows.filter(row => row.optionId === selection.optionId);
   if (selection.fieldKey !== target.primary || target.fields.some(field => field.readOnly) || rows.length !== 1) throw changed();
   const value = rows[0].fields[target.primary]?.value;
   if (typeof value !== 'string' || target.linked.some(id => rows[0].fields[id]?.value !== value) || quotationImageKeys(value)[selection.slotIndex] !== sourceKey) throw changed();
+  if (selection.input === 'detailImages') {
+    const protectedKeys = view.protectedDetailImageKeys;
+    if (!Array.isArray(protectedKeys) || new Set(protectedKeys).size !== protectedKeys.length
+      || protectedKeys.some(key => typeof key !== 'string' || !view.imageKeys.includes(key))) throw changed();
+    if (protectedKeys.includes(sourceKey) && !readOnlyRecovery) throw new ImageTextError(409, '상단·하단 설정 이미지는 번역·편집하지 않고 유지합니다. 본문 이미지를 선택해주세요.');
+  }
   return original(owner, id, sourceKey, role, current, false, false, { kind: 'quotation', ...selection, revision: view.revision, inputFingerprint: view.inputFingerprint,
     optionRevision: view.optionRevision, bindingSha256: await quotationBinding(saved, selection.input), value });
 }
@@ -102,8 +108,8 @@ async function editorCompany(owner: string) {
   if (!user?.verifiedAccess || user.userId !== owner || !company) throw new ImageTextError(409, '승인된 회사 계정에서 편집 문서를 확인해주세요.');
   return company;
 }
-async function reopenedSource(owner: string, id: string, resultKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, selection: QuotationSelection, anchorPolicy?: 'current-target-v1') {
-  const anchor = await quotationOriginal(owner, id, resultKey, role, current, selection);
+async function reopenedSource(owner: string, id: string, resultKey: string, role: FreeImageSource['role'], current: Awaited<ReturnType<typeof state>>, selection: QuotationSelection, anchorPolicy?: 'current-target-v1', readOnlyRecovery = false) {
+  const anchor = await quotationOriginal(owner, id, resultKey, role, current, selection, readOnlyRecovery);
   if (!env.FILES) throw new ImageTextError(503, '이미지 저장소가 연결되지 않았습니다.');
   const saved = await stableQuotationFieldsView(owner, id, selection.profileId), stored = await readFreeImageEditRecord(env.FILES, owner, id, resultKey), record = stored.record,
     previous = record.source.quotationTarget, company = await editorCompany(owner);
@@ -116,12 +122,12 @@ async function reopenedSource(owner: string, id: string, resultKey: string, role
   if (source.sourceSha256 !== record.source.sourceSha256 || source.width !== record.source.width || source.height !== record.source.height) throw changed();
   return { source, editDocument: record.document };
 }
-async function freshSource(owner: string, id: string, source: FreeImageSource) {
+async function freshSource(owner: string, id: string, source: FreeImageSource, readOnlyRecovery = false) {
   if (source.productId !== id) throw new ImageTextError(400, '번역한 상품과 저장할 상품이 다릅니다.');
   const current = await state(owner, id);
   if (current.product.updated_at !== source.productVersion || current.content.revision !== source.contentRevision) throw changed();
-  const observed = source.editorSource ? (await reopenedSource(owner, id, source.editorSource.resultKey, source.role, current, source.quotationTarget!, source.editorSource.anchorPolicy)).source
-    : source.quotationTarget ? await quotationOriginal(owner, id, source.sourceKey, source.role, current, source.quotationTarget)
+  const observed = source.editorSource ? (await reopenedSource(owner, id, source.editorSource.resultKey, source.role, current, source.quotationTarget!, source.editorSource.anchorPolicy, readOnlyRecovery)).source
+    : source.quotationTarget ? await quotationOriginal(owner, id, source.sourceKey, source.role, current, source.quotationTarget, readOnlyRecovery)
     : await original(owner, id, source.sourceKey, source.role, current, true, source.optionImages !== undefined);
   if (freeImageSourceIdentity(observed) !== freeImageSourceIdentity(source)) throw changed();
   return current;
@@ -266,7 +272,9 @@ export async function POST(request: Request, context: Context) {
         const fingerprint = await digest(new TextEncoder().encode(freeImageApplyIdentity(source, [], crop, editDocumentSha256))), key = `${owner}/free-image-${id}-${fingerprint}-${input.outputSha256}.png`;
         const recovered = await replay(owner, id, source, [], key, input.outputSha256, input.outputBytes as number, crop, editDocument);
         if (recovered) return recovered;
-        await freshSource(owner, id, source);
+        // Checking an old outcome is read-only. It must not mint a new edit
+        // target or make a protected settings image eligible for another save.
+        await freshSource(owner, id, source, true);
         await storedOutput(key, source, [], input.outputSha256, input.outputBytes as number, crop, editDocument);
         return response({ source, key, applied: false, ...(crop ? { crop } : {}), ...(editDocumentSha256 ? { editDocumentSha256 } : {}) });
       }
