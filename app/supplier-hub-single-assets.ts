@@ -12,7 +12,7 @@ export const SINGLE_ASSET_PACKAGE_FORMAT = 'yoofam-supplier-hub-single-package-v
 export class SingleAssetError extends Error { constructor(message: string, public code: string, public status = 409) { super(message); } }
 type Projection = Awaited<ReturnType<typeof projectSupplierHubSingleDocument>>;
 type Issue = { code: string; level: 'error' | 'review'; message: string; optionId?: string | null; fieldId?: string };
-type Role = 'main' | 'additional' | 'detail' | 'label';
+type Role = 'main' | 'additional' | 'detail' | 'label' | 'size';
 type Selection = { optionId: string | null; fieldId: string; wire: HubWireField; role: Role; keys: string[] };
 type StorageMetadata = { size: number; httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> };
 export type SinglePublishedFile = { key: string; filename: string; byteLength: number; sha256: string; contentType: string; width: number | null; height: number | null; token: string; url: string };
@@ -27,7 +27,9 @@ const singleLabel = '제품 한글 표시사항 라벨 또는 도안 이미지';
  * (29cfa2cf13011f62da4b99032fecbf7972d541f85cbfe622a5a906389ca7faad):
  * main [343346,346330), additional [226696,227895). Current AIRocketReg
  * chunk ce8f14422c4e93a11592d886a369d633066a8a9f4cdba9f37dbb1276d798c6cc:
- * label [150334,152482), detail [131264,136334). This is SAVE evidence,
+ * label [150334,152482), detail [131264,136334), size chart
+ * [285279,286603). Size-chart SAVE assigns one uploaded image URL directly.
+ * This is SAVE evidence,
  * not proof of Hub acceptance. Detail uses the observed URL-list fallback;
  * an already saved merged image stays one file. No raster is regenerated. */
 function role(wire?: HubWireField): Role | null {
@@ -35,6 +37,7 @@ function role(wire?: HubWireField): Role | null {
   const bare = wire.name === undefined && wire.nameKey === undefined && wire.valueKey === undefined;
   if (bare && samePath(wire.path, ['imagePage', 'images', 'mainImage'])) return 'main';
   if (bare && samePath(wire.path, ['imagePage', 'images', 'additionalImage'])) return 'additional';
+  if (bare && samePath(wire.path, ['imagePage', 'images', 'sizeChartImage'])) return 'size';
   if (bare && samePath(wire.path, ['imagePage', 'details', 'detailedImage'])) return 'detail';
   if (samePath(wire.path, ['imagePage', 'images', 'labelImages']) && wire.nameKey === 'labelImageType' && wire.valueKey === 'labelImageFiles' && wire.name === singleLabel) return 'label';
   return null;
@@ -49,7 +52,9 @@ export function singleAssetSelection(projection: Projection, owner: string, owne
       || reference.keys.some(key => !key || key !== key.trim() || !isOwnedImageKey(owner, key) || !ownedKeys.includes(key))) {
       issue('SINGLE_IMAGE_REFERENCE', '현재 상품에 저장된 본인 소유 이미지의 정확한 순서를 확인해주세요.'); continue;
     }
-    if (['main', 'label'].includes(assigned) && reference.keys.length !== 1) { issue('SINGLE_IMAGE_COUNT', '대표·한글표시사항의 확인된 Single 저장 형식은 이미지 한 개입니다.'); continue; }
+    if (['main', 'label', 'size'].includes(assigned) && reference.keys.length !== 1) {
+      issue('SINGLE_IMAGE_COUNT', assigned === 'size' ? '사이즈표의 확인된 Single 저장 형식은 이미지 한 개입니다.' : '대표·한글표시사항의 확인된 Single 저장 형식은 이미지 한 개입니다.'); continue;
+    }
     selections.push({ optionId: reference.optionId, fieldId: reference.fieldId, wire: structuredClone(reference.wire), role: assigned, keys: [...reference.keys] });
     reference.keys.forEach(key => keys.add(key));
   }
