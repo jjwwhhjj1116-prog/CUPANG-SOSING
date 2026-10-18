@@ -22,7 +22,9 @@ export async function storeCollectedImage(owner:string,id:string,index:number,as
   const receipt=await readCollectionResult(owner,id);const image=receipt?.result.images[index];if(!image)return reply({error:'수신한 이미지 주소가 없습니다.'},404);
   const previous=await readCollectionImage(owner,id,index);
   const product=await findProduct(owner,link.product_id);if(!product)return reply({error:'상품을 찾을 수 없습니다.'},404);
-  const skus=(receipt?.result.options??[]).filter(option=>option.imageIndex===index).map(option=>option.sku);
+  // Product-level defaults use the common main image. A missing remote SKU is
+  // not an unmatched actual SKU and must not create a permanent import warning.
+  const skus=(receipt?.result.options??[]).filter(option=>option.imageIndex===index&&option.sku!=='').map(option=>option.sku);
   const warnings=async(key:string)=>collectedImageWarnings(await readProductContent(owner,product.id),await readProductOptions(owner,product.id),skus,key,image.role,assignToStage);
   if(previous){
    if(previous.product_id!==product.id||!productImageKeys(product.image_keys).includes(previous.object_key))return reply({error:'이 원본은 상품 이미지에서 제외되었습니다. 기존 편집을 보존하기 위해 자동 복원하지 않습니다. 선택을 해제해주세요.',code:'IMAGE_DETACHED'},409);

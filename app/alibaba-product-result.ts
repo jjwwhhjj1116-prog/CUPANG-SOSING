@@ -2,6 +2,7 @@ import { parseCollectionRequest } from '@/app/sourcing';
 import { COLLECTION_RESULT_LIMIT, validateCollectionResult } from '@/app/collection-result';
 import { parseAlibabaDescription } from '@/app/alibaba-description';
 import { selectAlibabaSourcePricing } from '@/app/alibaba-source-pricing';
+import { createAlibabaOfferDefault } from '@/app/alibaba-offer-default';
 
 type Row = Record<string, unknown>;
 function row(value: unknown): Row {
@@ -32,7 +33,8 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
   if (identity(product.offerId) !== source.offerId) throw Error('요청 상품번호와 응답이 다릅니다.');
   const minimumOrder = numeric(product.minOrderQuantity);
   if (!Number.isSafeInteger(minimumOrder) || minimumOrder < 1) throw Error('최소 주문 수량을 확인하지 못했습니다.');
-  if (!Array.isArray(product.productSkuInfos) || !product.productSkuInfos.length || product.productSkuInfos.length > 200) throw Error('실제 옵션 1~200개가 필요합니다.');
+  if (!Array.isArray(product.productSkuInfos) || product.productSkuInfos.length > 200) throw Error('실제 옵션 목록 또는 명시적인 빈 SKU 배열이 필요합니다.');
+  const offerDefault = !product.productSkuInfos.length ? createAlibabaOfferDefault(source.offerId, minimumOrder, product.productSaleInfo) : undefined;
   const sourceSkus = product.productSkuInfos.map(value => { const sku = row(value); return { sku: identity(sku.skuId), row: sku }; });
   const sourcePricing = selectAlibabaSourcePricing(sourceSkus, product.productSaleInfo);
   const images: {url: string; role: 'main' | 'additional' | 'detail'}[] = [];
@@ -51,7 +53,8 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
   if (!Array.isArray(mainImages) || !mainImages.length) throw Error('상품 이미지를 확인하지 못했습니다.');
   mainImages.forEach((value, index) => image(value, index === 0 ? 'main' : 'additional'));
   const singleSku = product.productSkuInfos.length === 1;
-  const options = sourceSkus.map((sourceSku, index) => {
+  const options = offerDefault ? [{ sku: '', name: text(product.subject, '상품명'), unitPriceCny: offerDefault.unitPriceCny,
+    minimumOrder, stock: offerDefault.stock, imageIndex: 0 }] : sourceSkus.map((sourceSku, index) => {
     const sku = sourceSku.row;
     const unitPriceCny = sourcePricing ? sourcePricing.prices[index] : numeric(sku.price);
     if (!Number.isFinite(unitPriceCny) || unitPriceCny <= 0) throw Error('옵션별 원가를 확인하지 못했습니다. 수량별·대행 가격을 임의로 적용하지 않습니다.');
@@ -77,7 +80,7 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
   const description = parseAlibabaDescription(product.description);
   description.images.forEach(url => image(url, 'detail'));
   const result = validateCollectionResult({schemaVersion: 1, sourceUrl: source.sourceUrl, provider: '1688-openapi-candidate-v1', collectedAt: new Date(now).toISOString(),
-    title: text(product.subject, '상품명'), description: description.text, options, images, ...(sourcePricing ? { priceBasis: sourcePricing.priceBasis } : {}),
+    title: text(product.subject, '상품명'), description: description.text, options, images, ...(sourcePricing ? { priceBasis: sourcePricing.priceBasis } : {}), ...(offerDefault ? { offerDefault } : {}),
     attributes: attributes.map(value => { const attribute = row(value); return {name: text(attribute.attributeName, '속성명'), value: text(attribute.value, '속성값')}; })}, source.offerId, now);
   if (new TextEncoder().encode(JSON.stringify(result)).byteLength > COLLECTION_RESULT_LIMIT) throw Error('수집 결과 크기가 한도를 초과했습니다.');
   return result;

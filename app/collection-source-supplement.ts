@@ -1,10 +1,12 @@
 import { COLLECTION_RESULT_LIMIT, validateCollectionResult, type CollectionResult } from '@/app/collection-result';
 import { collectionSourceGaps } from '@/app/collection-source-gaps';
 
-export function canSupplementCollection(result: Pick<CollectionResult, 'provider' | 'description' | 'images' | 'attributes'>) {
+export function canSupplementCollection(result: Pick<CollectionResult, 'provider' | 'description' | 'images' | 'attributes' | 'offerDefault'>) {
   // Supplements are append-only. Remaining optional gaps still show in review,
   // but retrying their image import must reuse the stored capture, not recapture.
-  return result.provider !== 'chrome-public-mobile-supplement-v1' && collectionSourceGaps(result).length > 0;
+  // The current mobile contract requires observed remote SKUs. It cannot
+  // repair a product-level default without changing its source identity.
+  return !result.offerDefault && result.provider !== 'chrome-public-mobile-supplement-v1' && collectionSourceGaps(result).length > 0;
 }
 
 /** Keep the first receipt's SKU facts and image indices. Only a separately

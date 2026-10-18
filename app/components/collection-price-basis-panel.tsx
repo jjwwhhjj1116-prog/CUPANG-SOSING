@@ -1,6 +1,10 @@
 import type { CollectionResult } from '@/app/collection-result';
 
 export function CollectionPriceBasisPanel({ result }: { result: CollectionResult }) {
+  if (result.offerDefault) return <details className="collection-price-basis">
+    <summary>원가 계산 기준 · 옵션 구분 없는 상품</summary>
+    <p>상품 가격표 첫 행의 {result.offerDefault.unitPriceCny}위안을 기본 옵션 원가로 사용했습니다. 공급자 SKU는 제공되지 않아 비워 두었습니다.</p>
+  </details>;
   const basis = result.priceBasis;
   if (!basis) return null;
   return <details className="collection-price-basis">

@@ -1,6 +1,7 @@
 import { parseCollectionRequest } from '@/app/sourcing';
 import { collectionSourceGaps } from '@/app/collection-source-gaps';
 import { validateAlibabaSourcePriceBasis, type AlibabaSourcePriceBasis } from '@/app/alibaba-source-pricing';
+import { validateAlibabaOfferDefault, type AlibabaOfferDefault } from '@/app/alibaba-offer-default';
 
 export const COLLECTION_RESULT_LIMIT = 512 * 1024;
 /** Derived from the server-validated source contract; persists with receipts. */
@@ -13,6 +14,7 @@ export type CollectionResult = {
   title: string; description: string;
   attributes?: { name: string; value: string }[];
   priceBasis?: AlibabaSourcePriceBasis;
+  offerDefault?: AlibabaOfferDefault;
   options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number; stock: number | null; imageIndex?: number; color?: string; size?: string }[];
   images: { url: string; role: 'main' | 'additional' | 'detail' }[];
 };
@@ -27,7 +29,7 @@ function text(value: unknown, max: number, required=true) {
   return value.trim();
 }
 export function validateCollectionResult(input: unknown, expectedOfferId: string, now=Date.now()): CollectionResult {
-  const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images','attributes','priceBasis']);
+  const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images','attributes','priceBasis','offerDefault']);
   if(body.schemaVersion!==1)throw new Error('지원하지 않는 수집 결과 버전입니다.');
   const source=parseCollectionRequest({urls:[body.sourceUrl]})[0];
   if(source.offerId!==expectedOfferId)throw new Error('요청한 상품번호와 수집 결과가 다릅니다.');
@@ -35,9 +37,11 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
   if(!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(timestamp)||!Number.isFinite(Date.parse(timestamp))||Date.parse(timestamp)>now+300000)throw new Error('수집 시각은 UTC 시각이어야 하며 미래일 수 없습니다.');
   if(!Array.isArray(body.options)||body.options.length<1||body.options.length>200)throw new Error('실제 옵션 1~200개가 필요합니다.');
   const skus=new Set<string>();
+  const hasOfferDefault=Object.hasOwn(body,'offerDefault');
   const options=body.options.map(value=>{
     const row=record(value,['sku','name','unitPriceCny','minimumOrder','stock','imageIndex','color','size']);
-    const sku=text(row.sku,200);if(skus.has(sku))throw new Error('중복 SKU가 있습니다.');skus.add(sku);
+    if(hasOfferDefault&&row.sku!=='')throw new Error('기본 옵션을 실제 공급자 SKU로 바꿀 수 없습니다.');
+    const sku=text(row.sku,200,!hasOfferDefault);if(skus.has(sku))throw new Error('중복 SKU가 있습니다.');skus.add(sku);
     if(typeof row.unitPriceCny!=='number'||!Number.isFinite(row.unitPriceCny)||row.unitPriceCny<=0||row.unitPriceCny>100000000)throw new Error('옵션 원가는 양수 CNY 숫자여야 합니다.');
     if(!Number.isSafeInteger(row.minimumOrder)||(row.minimumOrder as number)<1)throw new Error('최소 주문 수량을 확인해주세요.');
     if(row.stock!==null&&(!Number.isSafeInteger(row.stock)||(row.stock as number)<0))throw new Error('재고 미확인은 null, 확인된 재고는 0 이상 정수여야 합니다.');
@@ -61,7 +65,8 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
     if (!Array.isArray(body.attributes) || body.attributes.length > 50) throw new Error('상품 속성 원문은 최대 50개입니다.');
     attributes = body.attributes.map(value => { const pair = record(value, ['name', 'value']); return { name: text(pair.name, 190), value: text(pair.value, 1000) }; });
   }
-  const provider=text(body.provider,100);
+  const provider=text(body.provider,100),title=text(body.title,500);
+  const offerDefault=hasOfferDefault?validateAlibabaOfferDefault(body.offerDefault,provider,source.offerId,title,options,images,Object.hasOwn(body,'priceBasis')):undefined;
   const priceBasis=body.priceBasis!==undefined?validateAlibabaSourcePriceBasis(body.priceBasis,provider,options):undefined;
-  return {schemaVersion:1,sourceUrl:source.sourceUrl,offerId:source.offerId,provider,collectedAt:new Date(timestamp).toISOString(),title:text(body.title,500),description:text(body.description,20000,false),options,images,...(attributes !== undefined ? { attributes } : {}),...(priceBasis!==undefined?{priceBasis}:{})};
+  return {schemaVersion:1,sourceUrl:source.sourceUrl,offerId:source.offerId,provider,collectedAt:new Date(timestamp).toISOString(),title,description:text(body.description,20000,false),options,images,...(attributes !== undefined ? { attributes } : {}),...(priceBasis!==undefined?{priceBasis}:{}),...(offerDefault?{offerDefault}:{})};
 }
