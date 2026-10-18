@@ -28,6 +28,7 @@ import { quotationPriceInputs, quotationPriceTargets } from '@/app/quotation-pri
 import { quotationSeoDocumentTitle } from '@/app/seo-title-document';
 import type { DetailEditorInputs } from '@/app/detail-editor-inputs';
 import type { StageTwoMsrp } from '@/app/stage-two-msrp';
+import { readInitialLegalNotices } from '@/app/initial-legal-notices';
 
 // Base fields come from Couplus screenshots 15–23. Product attributes and preview
 // notice names for 22 kitchen-storage categories were observed in Supplier Hub
@@ -393,6 +394,7 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
   const overrides = input.overrides ?? emptyQuotationOverrides();
   if(input.packagingBasis!==undefined)validateQuotationPackagingBasis(input.packagingBasis);
   const schema = getQuotationSchema(input.categoryId, input.categoryPath,input.hubSchema,input.template);
+  const initialNotices = readInitialLegalNotices(content.initialLegalNotices, schema);
   let ownedKeys: string[] = [];
   const reviewMessages = [schema.evidence, 'Supplier Hub 최종 접수 검증 전인 편집 자료입니다.'];
   const issues = [...reviewMessages], validationIssues: string[] = [];
@@ -430,6 +432,8 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       ? literal(`${option.widthCm} × ${option.lengthCm} × ${option.heightCm} cm`, 'option') : contentValue(content.label.dimensions);
   }
   function auto(definition: QuotationField, option: ProductOption | null): Automatic {
+    const initialNotice = initialNotices.get(definition.id);
+    if (initialNotice) return initialNotice;
     // A live field keeps its category/wire identity. Shared source meanings are
     // restricted to complete, observed labels and their section/group.
     const noticeBinding=definition.hubWire&&isQuotationLegalNotice(definition)

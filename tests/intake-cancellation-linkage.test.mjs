@@ -24,7 +24,9 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(h.sqlite.prepare('SELECT id FROM products').get().id,saved.id);assert.equal(h.aiSources.length,1);assert.equal(h.stats.downloads,19);
   const quote=await h.route('/api/products/'+saved.id+'/quotation-fields');assert.equal(quote.status,200);const body=await quote.json();
   assert.equal(body.categoryContext.categoryId,'80719');assert.equal(body.resolved.rows.filter(row=>row.optionId!==null).length,6);
-  for(const row of body.resolved.rows)assert.ok(row.fields.noticeManufacturerImporter.value.includes('수입자: '+company.companyName));
+  const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+  assert.equal(content.label.importer.value,company.companyName);assert.equal(content.label.manufacturer.value,h.context.settings.manufacturer);
+  for(const row of body.resolved.rows){assert.equal(row.fields.noticeManufacturerImporter.value,'해당사항없음');assert.equal(row.fields.noticeServiceContact.value,h.context.settings.serviceContact);assert.equal(row.fields.manufacturer.value,h.context.settings.manufacturer);}
   assert.equal(h.calls.some(path=>path.includes('/supplier-hub-receipt')),false);
  }finally{h.close();}
 });

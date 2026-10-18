@@ -14,12 +14,20 @@ function snapshot(company){
  raw.properties.legalPage.properties.notices.allOf=labels.map(name=>({contains:{type:'object',properties:{noticeItemName:{type:'string',enum:[name],requirement:'필수'},noticeItemValue:{type:'string'}}}}));
  return {...value,schemaString:JSON.stringify(raw)};
 }
-for(const company of schemaCompanies)test(`saved fashion notices reach all six option rows and XLSX without replacing explicit blanks (${company.code})`,async()=>{
+for(const company of schemaCompanies)test(`legacy saved fashion notices reach all six option rows and XLSX without replacing explicit blanks (${company.code})`,async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
   const hubSchema=snapshot(company),profile=await h.load('db/category-profiles.ts').createCategoryProfile('owner',{name:'패션고시 연결 시험',categoryId:hubSchema.categoryId,categoryPath:hubSchema.categoryPath,hubSchema,template:null,mappings:[]},'cat');
   h.context.category=profile;h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');await h.intake();
   const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  // Model a retained product created before the initial-notice policy. Only
+  // this local fixture marker is removed; all saved source/category facts stay.
+  // Fresh intake keeps legal defaults through Stage6 and is covered separately
+  // by intake-initial-legal-notices.test.mjs, rather than this legacy binding test.
+  const legacyContent=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
+  assert.equal(legacyContent.initialLegalNotices?.format,'couplus-initial-legal-notices-v1');delete legacyContent.initialLegalNotices;
+  h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(legacyContent),product.id);
   let content=(await json(await h.route(base+'/content'))).content;
+  assert.equal(content.initialLegalNotices,undefined);
   const savedValues={productType:'사용자가 확인한 종류',material:'사용자가 확인한 전체 소재',dimensions:'140 × 45 mm',precautions:'사용자가 확인한 취급 주의사항'};
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{label:savedValues}}}));
   let view=await json(await h.route(base+'/quotation-fields'));

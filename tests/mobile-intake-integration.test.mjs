@@ -153,7 +153,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    assert.equal(row.skuId,receipt.result.options[index].sku);assert.equal(row.sourcePriceCny,String(receipt.result.options[index].unitPriceCny));
    assert.equal(row.title,'최종 견적서 상품명');assert.equal(row.categoryId,'80719');assert.equal(row.sourceUrl,h.sourceUrl);
    assert.equal(row.supplyPrice,String(prices[index%2][0]));assert.equal(row.salePrice,index===1?'10000':String(prices[index%2][1]));
-   assert.equal(row.noticeMaterial,'검토한 재질');assert.equal(row.packagedWeightG,'420');assert.equal(row.packagedDimensionsMm,'100*200*300');
+   assert.equal(row.noticeMaterial,'해당사항없음');assert.equal(row.packagedWeightG,'420');assert.equal(row.packagedDimensionsMm,'100*200*300');
    assert.match(row.mainImage,/^image-\d+\.png$/);assert.equal(row.altText,'선택한 상품 이미지');
    if(index===0)assert.equal(row.additionalImages,'');
   }

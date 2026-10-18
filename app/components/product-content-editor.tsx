@@ -353,8 +353,8 @@ function ContentEditor({ product, section, focusedAssetRole, onSaved, onTranslat
             <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 위로`} disabled={index===0} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,-1)}))}>↑</button>
             <button type="button" className="btn ghost" aria-label={`${labelFields[key]} 아래로`} disabled={index===draft.labelLayout.order.length-1} onClick={()=>setDraft(previous=>({...previous,labelLayout:moveLabelField(previous.labelLayout,key,1)}))}>↓</button></div>
           <label className="field"><span>{labelFields[key]} <Origin field={content.label[key]} /></span><textarea rows={2} maxLength={2000} value={draft.label[key]} onChange={event => { const value = event.target.value; setDraft(previous => ({ ...previous, ...(key==='productName'?{labelProductNameLinked:false}:{}), labelClears: [...previous.labelClears.filter(field => field !== key), ...(value.trim() ? [] : [key])], label: { ...previous.label, [key]: value } })); }} /></label>
-          {key === 'specifications' && <p className="muted">확인한 상품별 세부 사양을 입력하세요. 헬스보호대 견적서의 같은 항목에 반영됩니다.</p>}
-          {key === 'kcInformation' && <p className="muted">확인한 KC 인증정보를 입력하세요. 헬스보호대 견적의 KC 인증정보에 연결됩니다. 일반 인증·허가 사항과 별도로 저장하며, 인증번호·인증 마크 타입을 자동 판정하지 않습니다.</p>}
+          {key === 'specifications' && <p className="muted">확인한 상품별 세부 사양을 입력하세요. 견적서의 상품고시는 7단계에서 확인·수정하세요.</p>}
+          {key === 'kcInformation' && <p className="muted">확인한 KC 인증정보를 입력하세요. 견적서의 KC 인증정보는 7단계에서 확인·수정하세요. 일반 인증·허가 사항과 별도로 저장하며, 인증번호·인증 마크 타입을 자동 판정하지 않습니다.</p>}
         </div>)}</div>
         <CustomLabelEditor rows={draft.customLabels} onChange={customLabels=>setDraft(previous=>({...previous,customLabels}))}/>
       </>}

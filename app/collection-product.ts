@@ -13,6 +13,8 @@ import { initialStatuses } from '@/app/workflow';
 import { collectionKeywords, collectionSourceReference, type CollectionJob } from '@/app/sourcing';
 import type { ProductRecord } from '@/db/queries';
 import { capturedCollectionCompany } from '@/app/collection-company';
+import { createInitialLegalNotices } from '@/app/initial-legal-notices';
+import { getQuotationSchema } from '@/app/quotation-schema';
 
 export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:CollectionResult,id:string,now:string){
   if(!job.context?.category?.id)throw new Error('요청 당시 카테고리와 기본설정이 필요합니다.');
@@ -49,13 +51,16 @@ export function prepareCollectionProduct(owner:string,job:CollectionJob,receipt:
   for (const [field, setting] of [['manufacturer','manufacturer'],['importer','importer'],['contact','serviceContact']] as const) {
     if (Object.hasOwn(job.context.settings, setting)) content.label[field] = { value: settings[setting], provenance: 'manual', updatedAt: now };
   }
-  // Prepare the reviewable label together with the source draft, so entering
-  // stage six is not required to establish the stage-seven input linkage.
+  // Prepare a reviewable stage-six label without replacing the independent
+  // initial legal-notice values in the selected quotation form.
   const labelDraft = Object.fromEntries(Object.entries(content.label).map(([key,field]) => [key,field.value])) as Record<LabelField,string>;
   const dateNotice = labelDateNotice(category.categoryId, category.categoryPath, category.hubSchema);
   const autofill = fillLabelDraft(labelDraft, content, result.title, job.context.settings, category.categoryId, [], job.context.capturedAt ?? now, dateNotice);
   for (const key of autofill.filled) content.label[key] = { value: autofill.label[key], provenance: 'generated', updatedAt: now };
   content.labelProductNameLinked = autofill.filled.includes('productName');
+  const initialNotices = createInitialLegalNotices(getQuotationSchema(category.categoryId, category.categoryPath, category.hubSchema, category.template),
+    job.context.settings, now);
+  if (initialNotices) content.initialLegalNotices = initialNotices;
   const product:ProductRecord={id,owner_id:owner,source_url:result.sourceUrl,title:result.title,source_price_cny:cost,exchange_rate:policy.exchangeRate,supply_margin:policy.supplyMargin,coupang_margin:policy.coupangMargin,supply_price:price.supplyPrice,sale_price:price.salePrice,msrp:price.msrp,options_count:rows.length,...initialStatuses,registration_status:'수집 원문 반영',image_keys:'[]',goal_stage:job.goal,created_at:now,updated_at:now};
   const banners=workspaceBannerAssignments(settings,owner);
   for(const [role,key] of banners)content.assets[role]={value:[key],provenance:'manual',updatedAt:now};

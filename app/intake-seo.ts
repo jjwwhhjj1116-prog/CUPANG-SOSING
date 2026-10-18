@@ -1,4 +1,4 @@
-import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, translationAttributeCoverage, type TranslationJob } from '@/app/automation/translation';
+import { GOOGLE_TEXT_MODEL, WORKERS_TEXT_MODEL, translationAttributeCoverage, validateTranslationSource, type TranslationJob } from '@/app/automation/translation';
 import { runReviewedTranslation } from '@/app/reviewed-translation';
 import { awaitIntakeTranslation } from '@/app/intake-translation-result';
 
@@ -35,6 +35,30 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     onManualReady();
     return withWarnings(`원문 초안 저장 · 번역 미완료. ${job.error.message} 원문과 직접 수정한 값은 유지됩니다. 1~7단계에서 바로 확인·수정해주세요.`);
   };
+  const approvalPendingDraft = (job: TranslationJob): string | null => {
+    const review = job.review;
+    const timestamp = (value: unknown): value is string => typeof value === 'string'
+      && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/u.test(value) && Number.isFinite(Date.parse(value));
+    // A source draft is usable while its ordinary paid review awaits the user.
+    // This acknowledgement never approves, executes or adopts that request.
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(job.id)
+      || job.productId !== productId || !timestamp(job.productVersion) || !Number.isSafeInteger(job.contentRevision) || job.contentRevision < 0
+      || !['prepared', 'approved'].includes(job.status) || job.result !== null || job.error !== null || job.startedAt !== null || job.finishedAt !== null
+      || !timestamp(job.createdAt) || (job.status === 'prepared' ? job.approvedAt !== null : !timestamp(job.approvedAt))
+      || review?.destination !== 'OpenAI Responses API' || review.instructionsVersion !== 'sourceflow-translation-v6'
+      || typeof review.model !== 'string' || !/^[a-zA-Z0-9_.:-]{1,100}$/u.test(review.model)
+      || !Number.isInteger(review.maxOutputTokens) || review.maxOutputTokens < 256 || review.maxOutputTokens > 8000
+      || typeof review.fingerprint !== 'string' || !/^[a-f0-9]{64}$/u.test(review.fingerprint)
+      || !timestamp(review.expiresAt) || Date.parse(review.expiresAt) <= Date.now()
+      || ['optionsRetry', 'intakeOptions', 'seoRetry'].some(key => Object.hasOwn(review, key))) return null;
+    try {
+      const source = validateTranslationSource(review.source);
+      if (!source.category || !/^수집 요청 [a-f0-9-]{36} \(https:\/\/detail\.1688\.com\/offer\/[1-9]\d{0,29}\.html\)의 저장 원문$/u.test(source.reference)
+        || JSON.stringify(source) !== JSON.stringify(review.source) || review.inputCharacters !== JSON.stringify(source).length) return null;
+    } catch { return null; }
+    onManualReady();
+    return withWarnings('원문 초안 저장 · SEO 생성 승인 대기. 1단계에서 요청 내용을 확인하고 직접 승인·실행해주세요. 1~7단계의 원문·옵션·가격·이미지를 바로 확인·수정할 수 있습니다.');
+  };
   try {
     const base = `/api/products/${encodeURIComponent(productId)}`;
     let next: Record<string,unknown> = {action:'prepare-collected',intake:true};
@@ -60,6 +84,14 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     // without attempting another options request or changing current content.
     const previousFailure = failedGoogleDraft(body.job);
     if (previousFailure !== null) return previousFailure;
+    if (next.action === 'prepare-collected' && (body.autoDraft === false || body.autoDraft === undefined)
+      && (body.optionsOnly === false || body.optionsOnly === undefined)
+      && (body.intakePreserved === false || body.intakePreserved === undefined)
+      && (body.intakeSourceChanged === false || body.intakeSourceChanged === undefined)
+      && (body.productVersion === undefined || body.productVersion === body.job.productVersion)) {
+      const pendingApproval = approvalPendingDraft(body.job);
+      if (pendingApproval !== null) return pendingApproval;
+    }
     if(body.intakePreserved){
       if(!body.productVersion)throw Error('현재 상품 버전을 확인하지 못했습니다.');
       next={action:'prepare-intake-options',expectedVersion:body.productVersion};continue;

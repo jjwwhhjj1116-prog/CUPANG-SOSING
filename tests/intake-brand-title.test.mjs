@@ -126,9 +126,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.equal(product.title,original.title);assert.equal(h.aiSources[0].title,original.title);assert.equal(h.aiSources.length,1);
   assert.equal(content.seo.title.value,generated);assert.equal(content.label.productName.value,generated);
   let view=await json(await h.route(base+'/quotation-fields'));assert.equal(view.resolved.rows.length,7);
-  // Canonical first SEO reads its saved plain document; later independent
-  // content PATCH assertions below intentionally retain the legacy fallback.
-  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,generated);assert.equal(row.fields.brand.value,company.companyName);assert.equal(row.fields.noticeNameModel.value,generated);assert.equal(row.fields.model.value,'');}
+  // SEO names stay linked, while a fresh Couplus legal notice starts separately.
+  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,generated);assert.equal(row.fields.brand.value,company.companyName);assert.equal(row.fields.noticeNameModel.value,'해당사항없음');assert.equal(row.fields.model.value,'');}
   const listed=await json(await h.load('app/api/products/route.ts').GET());assert.equal(listed.products[0].content_summary.seoTitle,generated);
   const detail=()=>h.load('app/api/products/[id]/route.ts').GET(new Request('https://app.test'+base),{params:Promise.resolve({id:product.id})});
   let workspace=await json(await detail());assert.deepEqual(workspace.product.content_summary,listed.products[0].content_summary);assert.equal(workspace.product.title,original.title);
@@ -136,7 +135,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{seo:{title:reviewed}}}}));
   const requests=h.network.length;await h.intake();assert.equal(h.aiSources.length,1);assert.equal(h.network.length,requests);
   view=await json(await h.route(base+'/quotation-fields'));
-  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,row.optionId?reviewed+', '+options.rows.find(option=>option.id===row.optionId).translatedName:reviewed);assert.equal(row.fields.noticeNameModel.value,reviewed);assert.equal(row.fields.brand.value,company.companyName);}
+  for(const row of view.resolved.rows){assert.equal(row.fields.title.value,row.optionId?reviewed+', '+options.rows.find(option=>option.id===row.optionId).translatedName:reviewed);assert.equal(row.fields.noticeNameModel.value,'해당사항없음');assert.equal(row.fields.brand.value,company.companyName);}
   workspace=await json(await detail());assert.equal(workspace.product.content_summary.seoTitle,reviewed);assert.equal(workspace.product.title,original.title);
   const fields=['skuId','categoryId','sourceUrl','title','brand','noticeNameModel'],workbook=quotationWorkbook(fields);
   const sha256=Buffer.from(await webcrypto.subtle.digest('SHA-256',workbook)).toString('hex');
@@ -147,7 +146,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const reader=h.load('app/xlsx-template.ts'),archive=await reader.readXlsxArchive(await downloaded.arrayBuffer());
   for(let index=0;index<6;index++){
    const cells=reader.xlsxHeaders(reader.inspectXlsxArchive(archive),'견적서',index+2);
-   assert.equal(cells[1],'80719');assert.equal(cells[2],h.sourceUrl);assert.equal(cells[3],reviewed+', '+options.rows.filter(option=>option.included)[index].translatedName);assert.equal(cells[4],company.companyName);assert.equal(cells[5],reviewed);
+   assert.equal(cells[1],'80719');assert.equal(cells[2],h.sourceUrl);assert.equal(cells[3],reviewed+', '+options.rows.filter(option=>option.included)[index].translatedName);assert.equal(cells[4],company.companyName);assert.equal(cells[5],'해당사항없음');
   }
   assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');
   const current=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);

@@ -63,7 +63,7 @@ async function exportCells(h, profile, productId, fields) {
   return { source, resolved, rows, output, readRow: index => Array.from(reader.xlsxHeaders(archive, '견적서', index + 2)) };
 }
 
-for (const company of schemaCompanies) test(`stage-six other-goods notices, manual blanks and final overrides reach exact SKU XLSX cells (${company.code})`, async () => {
+for (const company of schemaCompanies) test(`legacy stage-six other-goods notices, manual blanks and final overrides reach exact SKU XLSX cells (${company.code})`, async () => {
   const h = mobileIntakeHarness({ companyCode: company.code, companyName: company.name }); try {
     const hubSchema = snapshot(company), api = h.load('app/api/category-profiles/route.ts');
     const response = await api.POST(new Request('https://app.test/api/category-profiles', { method: 'POST',
@@ -74,8 +74,15 @@ for (const company of schemaCompanies) test(`stage-six other-goods notices, manu
     h.context.category = profile; h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context), 'job');
     assert.match(await h.intake(), /상품 초안 저장됨/);
     const product = h.sqlite.prepare('SELECT * FROM products').get(), base = '/api/products/' + product.id;
+    // Retained pre-policy content keeps the existing label-to-notice meanings.
+    // Remove only the new marker while constructing this local legacy fixture;
+    // fresh Stage6/default isolation is in intake-initial-legal-notices.test.mjs.
+    const legacyContent = JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
+    assert.equal(legacyContent.initialLegalNotices?.format, 'couplus-initial-legal-notices-v1'); delete legacyContent.initialLegalNotices;
+    h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(legacyContent), product.id);
     const read = suffix => h.route(base + '/' + suffix).then(json);
     let content = (await read('content')).content;
+    assert.equal(content.initialLegalNotices, undefined);
     await json(await h.route(base + '/content', { method: 'PATCH', body: { expectedRevision: content.revision,
       patch: { label: Object.fromEntries(sources.map((key, index) => [key, reviewed[index]])) } } }));
     let view = await read('quotation-fields'), fields = fieldsOf(view.resolved);

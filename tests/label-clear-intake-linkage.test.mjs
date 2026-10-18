@@ -19,8 +19,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    template:{name:'synthetic.xlsx',format:'xlsx',sha256,storageKey,sheetName:'견적서',headerRow:1,headers:fields},mappings:fields.map((field,column)=>({field,column,required:false}))},'cat');
   await h.intake();const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
   const original=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
-  // Model a supported legacy record with empty labels and captured settings:
-  // initial label autofill changes the draft, not the stored document.
+  // Initial label autofill changes the stage-six draft independently of the
+  // new quotation's captured named-notice defaults.
   for(const key of cleared)original.label[key]={value:'',provenance:'unverified',updatedAt:null};
   h.sqlite.prepare('UPDATE product_content SET payload=?').run(JSON.stringify(original));
   const registration=await json(await h.route(base+'/registration-settings'));
@@ -31,7 +31,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
    assets:{main:[images[0]],additional:[images[1]],detail:[images[2]],label:[images[3]]}}}}));
   for(const key of cleared){assert.equal(saved.content.label[key].value,'');assert.equal(saved.content.label[key].provenance,'manual');}
   let view=await json(await h.route(base+'/quotation-fields'));
-  for(const row of view.resolved.rows)for(const id of ['manufacturer','noticeManufacturerImporter','noticeCountryOfOrigin','noticeServiceContact'])assert.equal(row.fields[id].value,'',id);
+  assert.deepEqual(saved.content.initialLegalNotices,original.initialLegalNotices);
+  for(const row of view.resolved.rows){assert.equal(row.fields.manufacturer.value,'');assert.equal(row.fields.noticeManufacturerImporter.value,'해당사항없음');assert.equal(row.fields.noticeCountryOfOrigin.value,'해당사항없음');assert.equal(row.fields.noticeServiceContact.value,h.context.settings.serviceContact);}
   assert.ok(view.resolved.rows.find(row=>row.included).fields.manufacturer.validationIssues.length,'required manufacturer must be reviewed, never restored silently');
   const previewBefore=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));assert.ok(previewBefore.submissionReview.issues.some(issue=>issue.kind==='error'&&issue.fieldId==='manufacturer'));
   await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
@@ -43,7 +44,7 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   ]}}));
   assert.equal((await h.route(base+'/quotation',{method:'POST',body:{action:'export',fingerprint:previewBefore.fingerprint}})).status,409);
   const requests=h.network.length;await h.intake();assert.equal(h.network.length,requests);assert.equal(h.aiSources.length,1);
-  saved=await json(await h.route(base+'/content'));for(const key of cleared)assert.equal(saved.content.label[key].provenance,'manual');
+  saved=await json(await h.route(base+'/content'));for(const key of cleared){assert.equal(saved.content.label[key].value,'');assert.equal(saved.content.label[key].provenance,'manual');}assert.deepEqual(saved.content.initialLegalNotices,original.initialLegalNotices);
   const refill=h.load('app/label-autofill.ts').fillLabelDraft(Object.fromEntries(Object.entries(saved.content.label).map(([key,field])=>[key,field.value])),saved.content,product.title,registration.settings,registration.categoryId);
   for(const key of cleared)assert.equal(refill.label[key],'');
   view=await json(await h.route(base+'/quotation-fields'));const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
@@ -55,8 +56,8 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   assert.deepEqual(plan.company,{code:company.companyCode,name:company.companyName});assert.equal(preview.rows.length,6);
   for(let index=0;index<6;index++){
    const cells=reader.xlsxHeaders(sheet,'견적서',index+2),row=Object.fromEntries(fields.map((field,column)=>[field,cells[column]]));
-   assert.equal(row.manufacturer,'7단계 확인 제조사');assert.equal(row.noticeCountryOfOrigin,index===1?'7단계 개별 제조국':'');
-   for(const id of ['noticeManufacturerImporter','noticeServiceContact'])assert.equal(row[id],'');
+   assert.equal(row.manufacturer,'7단계 확인 제조사');assert.equal(row.noticeCountryOfOrigin,index===1?'7단계 개별 제조국':'해당사항없음');
+   assert.equal(row.noticeManufacturerImporter,'해당사항없음');assert.equal(row.noticeServiceContact,h.context.settings.serviceContact);
    for(const id of ['manufacturer','noticeManufacturerImporter','noticeCountryOfOrigin','noticeServiceContact'])assert.equal(row[id],document.rows[index].fields[id].value);
   }
   const ui=submissionPackageUI({route:h.route,productId:product.id});await ui.click('견적서 + 첨부 파일 준비');await ui.click('확장에 첨부 파일 준비');ui.choose();await ui.click('등록 전송');

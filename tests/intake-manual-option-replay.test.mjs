@@ -67,7 +67,8 @@ for (const company of companies) test(`a partial intake queue resumes after manu
     const after = await json(await h.route(path + '/quotation-fields'));
     const first = after.resolved.rows.find(row => row.optionId === rows[0].id);
     assert.equal(first.fields.salePrice.value, '45000'); assert.equal(first.fields.salePrice.source, 'manual-option');
-    assert.equal(first.fields.labelImages.value, key); assert.equal(first.fields.noticeMaterial.value, '직접 검토한 재질');
+    assert.equal(first.fields.labelImages.value, key); assert.equal(first.fields.noticeMaterial.value, '해당사항없음');
+    assert.equal(afterContent.label.material.value, '직접 검토한 재질', 'source label edits survive independently of the fresh legal notice');
     const second = payload(h, 'product_options').rows.find(row => row.id === rows[1].id);
     assert.equal(second.translatedName, ''); assert.equal(second.provenance.translatedName, 'manual');
     assert.equal(product(h).supplier_hub_status, '미전송'); assert.ok(!h.network.includes('supplier.coupang.com'));

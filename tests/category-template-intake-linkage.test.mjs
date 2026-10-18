@@ -41,7 +41,10 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   }}}));
   let view=await json(await h.route(base+'/quotation-fields'));
   assert.equal(view.categoryContext.profileId,selected.id);assert.equal(view.categoryContext.categoryId,'80719');
+  assert.equal(view.resolved.rows[0].fields.noticeMaterial.value,'해당사항없음','stage-six labels do not overwrite a fresh legal notice');
+  assert.equal(JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload).label.material.value,'검토 재질');
   await json(await h.route(base+'/quotation-fields',{method:'PUT',body:{expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[
+   {fieldKey:'noticeMaterial',optionId:null,value:'검토 재질'},
    {fieldKey:'handlingReason',optionId:null,value:'해당사항없음'},
    {fieldKey:'packagedWeightG',optionId:null,value:'420'},
    {fieldKey:'packagedDimensionsMm',optionId:null,value:'100*200*300'},
@@ -60,9 +63,10 @@ for(const company of [{companyCode:'A01464742',companyName:'와이홉'},{company
   const plan=JSON.parse(new TextDecoder().decode(files.get('supplier-hub-upload-plan.json')));
   assert.deepEqual(plan.company,{code:company.companyCode,name:company.companyName});assert.equal(plan.profileId,selected.id);assert.equal(plan.categoryId,'80719');
   const output=reader.inspectXlsxArchive(await reader.readXlsxArchive(files.get(plan.quotation.file.filename)));
+  const reviewedOptions=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_options').get().payload).rows;
   for(let index=0;index<6;index++){
    const cells=reader.xlsxHeaders(output,'견적서',index+2),row=Object.fromEntries(fields.map((field,column)=>[field,cells[column]]));
-   assert.equal(row.categoryId,'80719');assert.equal(row.title,'검토한 상품명');assert.equal(row.noticeMaterial,index===1?'':'검토 재질');
+   assert.equal(row.categoryId,'80719');assert.equal(row.title,'검토한 상품명, '+reviewedOptions[index].translatedName);assert.equal(row.noticeMaterial,index===1?'':'검토 재질');
   }
   const ui=submissionPackageUI({route:h.route,productId:product.id});
   await ui.click('견적서 + 첨부 파일 준비');await ui.click('확장에 첨부 파일 준비');ui.choose();await ui.click('등록 전송');

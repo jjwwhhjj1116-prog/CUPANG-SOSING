@@ -39,7 +39,9 @@ for(const company of companies)for(const boundary of ['fetch','body']){
    assert.equal(view.categoryContext.categoryId,'80719');
    assert.equal(JSON.parse(h.sqlite.prepare('SELECT payload FROM collection_context WHERE job_id=?').get('job').payload).company.code,company.companyCode);
    assert.equal(view.resolved.rows.filter(row=>row.optionId!==null).length,6);
-   for(const row of view.resolved.rows)assert.ok(row.fields.noticeManufacturerImporter.value.includes(company.companyName));
+   const content=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content').get().payload);
+   assert.equal(content.label.importer.value,company.companyName);assert.equal(content.label.manufacturer.value,h.context.settings.manufacturer);
+   for(const row of view.resolved.rows){assert.equal(row.fields.noticeManufacturerImporter.value,'해당사항없음');assert.equal(row.fields.noticeServiceContact.value,h.context.settings.serviceContact);assert.equal(row.fields.manufacturer.value,h.context.settings.manufacturer);}
   }finally{h.close();}
  });
 

@@ -56,6 +56,8 @@ export type ProductContent = {
   detailDescriptionLinked?: boolean;
   label: Record<LabelField, ContentField<string>>;
   labelProductNameLinked?: boolean;
+  /** Server-created initial quotation notices; stage-six drafts stay separate. */
+  initialLegalNotices?: import('@/app/initial-legal-notices').InitialLegalNotices;
   labelLayout?: LabelLayout;
   customLabels?: CustomLabel[];
   /** Source-derived draft attributes are scoped to the category used for translation. */

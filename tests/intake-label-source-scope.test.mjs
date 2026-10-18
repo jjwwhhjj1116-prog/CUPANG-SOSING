@@ -84,11 +84,13 @@ test('source scope only removes automatic suggestions; explicitly reviewed mappi
     const selected = adoption.translationLabelAdoption(saved, job, product(h).updated_at, mappings);
     await json(await h.route(base + '/content', { method: 'PATCH', body: selected.input }));
     const quote = await json(await h.route(base + '/quotation-fields'));
-    assert.equal(quote.resolved.rows[1].fields.noticeMaterial.value, 'PC');
+    assert.equal(quote.resolved.rows[1].fields.noticeMaterial.value, '해당사항없음');
+    assert.equal(content(h).label.material.value, 'PC', 'reviewed label mapping is preserved without rewriting a fresh legal notice');
     assert.equal(quote.resolved.rows[1].fields.model.value, '15995');
     await json(await h.route(base + '/content', { method: 'PATCH', body: { expectedRevision: content(h).revision, patch: { label: { material: '', model: '' }, labelClears: ['material', 'model'] } } }));
     const cleared = await json(await h.route(base + '/quotation-fields'));
-    assert.equal(cleared.resolved.rows[1].fields.noticeMaterial.value, '');
+    assert.equal(cleared.resolved.rows[1].fields.noticeMaterial.value, '해당사항없음');
+    assert.equal(content(h).label.material.value, '', 'cleared label remains empty independently');
     assert.equal(cleared.resolved.rows[1].fields.model.value, '');
   } finally { h.close(); }
 });

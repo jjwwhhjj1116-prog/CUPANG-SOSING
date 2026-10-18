@@ -14,7 +14,7 @@ function snapshot(company){
  return {...value,schemaString:JSON.stringify(raw)};
 }
 
-for(const company of schemaCompanies)test(`saved stage-six notices and option colors reach a newly captured quotation and export (${company.code})`,async()=>{
+for(const company of schemaCompanies)test(`legacy stage-six notices and option colors reach a newly captured quotation and export (${company.code})`,async()=>{
  const h=mobileIntakeHarness({companyCode:company.code,companyName:company.name});try{
   const hubSchema=snapshot(company),api=h.load('app/api/category-profiles/route.ts');
   const response=await api.POST(new Request('https://app.test/api/category-profiles',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({name:'시험 최종분류',categoryId:hubSchema.categoryId,categoryPath:hubSchema.categoryPath,template:null,mappings:[],hubSchema})}));
@@ -22,8 +22,16 @@ for(const company of schemaCompanies)test(`saved stage-six notices and option co
   h.context.category=profile;h.sqlite.prepare('UPDATE collection_context SET payload=? WHERE job_id=?').run(JSON.stringify(h.context),'job');
   assert.match(await h.intake(),/상품 초안 저장됨/);
   const product=h.sqlite.prepare('SELECT * FROM products').get(),base='/api/products/'+product.id;
+  // This retained pre-policy product still uses the former Stage6 source
+  // bindings. Only the local fixture marker is removed; source/category facts
+  // stay unchanged. Fresh initial defaults through Stage6 are protected in
+  // intake-initial-legal-notices.test.mjs instead of this legacy linkage test.
+  const legacyContent=JSON.parse(h.sqlite.prepare('SELECT payload FROM product_content WHERE product_id=?').get(product.id).payload);
+  assert.equal(legacyContent.initialLegalNotices?.format,'couplus-initial-legal-notices-v1');delete legacyContent.initialLegalNotices;
+  h.sqlite.prepare('UPDATE product_content SET payload=? WHERE product_id=?').run(JSON.stringify(legacyContent),product.id);
   const read=suffix=>h.route(base+'/'+suffix).then(json);
   const content=(await read('content')).content;
+  assert.equal(content.initialLegalNotices,undefined);
   await json(await h.route(base+'/content',{method:'PATCH',body:{expectedRevision:content.revision,patch:{label:{components:'검토한 구성 설명',dimensions:'검토한 크기·중량 설명',specifications:'검토한 세부 사양',kcInformation:''},labelClears:['kcInformation']}}}));
   const view=await read('quotation-fields'),fields=Object.fromEntries(view.resolved.schema.fields.filter(field=>field.section==='legal').map(field=>[field.label,field.id]));
   const options=(await read('options')).options;

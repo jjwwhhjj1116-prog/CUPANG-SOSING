@@ -116,7 +116,10 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
    assert.ok(rows.every(option=>option.imageKey===null),'intake source images are not selected option representatives');
    for(const role of ['main','additional','detail'])assert.deepEqual(content.assets[role].value,[],`intake keeps stage ${role} pending`);
    const qr=load('app/api/products/[id]/quotation-fields/route.ts'),qc={params:Promise.resolve({id:latest.product_id})},qu='https://app.test/api/products/'+latest.product_id+'/quotation-fields';
-   let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');assert.equal(row.fields.title.value,expectedTitle+', 검정 옵션');assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
+   let view=await (await qr.GET(new Request(qu),qc)).json();const row=view.resolved.rows.find(r=>r.optionId==='collected-1');
+   // The canonical initial SEO writer saves a plain product name. An independent
+   // manual edit in the resumed case still uses the existing option-name fallback.
+   assert.equal(row.fields.title.value,automatic==='resume-completed-options'?expectedTitle+', 검정 옵션':expectedTitle);assert.equal(row.fields.supplyPrice.value,'17920');if(automatic===true){assert.equal(row.fields.basketShape.value,'사각형');assert.equal(row.fields.basketShape.source,'content');}
    for(const field of ['mainImage','additionalImages','detailImages'])assert.equal(row.fields[field].value,'',`unselected originals stay out of quotation ${field}`);
    assert.equal(content.detailDescriptionLinked,true);
    assert.equal(row.fields.detailHtml.value,'<p>검토용 설명</p>','new URL draft follows its saved SEO explanation until stage five is saved');assert.equal(row.fields.altText.value,'','fresh alternate text stays blank');
@@ -134,7 +137,9 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.equal(savedContent.status,200,await savedContent.clone().text());
     view=await (await qr.GET(new Request(qu),qc)).json();
     const stageRow=view.resolved.rows.find(r=>r.optionId==='collected-1');
-    for(const [field,value] of Object.entries({title:'1단계 수정 상품명, 검정 옵션',searchTags:'1단계 검색어',noticeMaterial:'6단계 재질',noticeCountryOfOrigin:'중국',additionalImages:[keys[2],keys[1]].join('\n'),detailImages:[keys[3],keys[4],keys[5]].join('\n'),labelImages:keys[6],detailHtml:'<p>수정 설명 &amp; 줄바꿈<br>둘째 줄</p>'}))assert.equal(stageRow.fields[field].value,value,'source-stage edit '+field);
+    for(const [field,value] of Object.entries({title:'1단계 수정 상품명, 검정 옵션',searchTags:'1단계 검색어',noticeMaterial:'해당사항없음',noticeCountryOfOrigin:'해당사항없음',additionalImages:[keys[2],keys[1]].join('\n'),detailImages:[keys[3],keys[4],keys[5]].join('\n'),labelImages:keys[6],detailHtml:'<p>수정 설명 &amp; 줄바꿈<br>둘째 줄</p>'}))assert.equal(stageRow.fields[field].value,value,'source-stage edit '+field);
+    const stageSix=JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload).label;
+    assert.equal(stageSix.material.value,'6단계 재질');assert.equal(stageSix.countryOfOrigin.value,'중국');
    }
    const edit=await qr.PUT(new Request(qu,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({expectedRevision:view.revision,expectedInputFingerprint:view.inputFingerprint,changes:[{fieldKey:'salePrice',optionId:'collected-1',value:'35000'},...(automatic==='fresh'?[{fieldKey:'title',optionId:null,value:'검토 완료 상품명'},{fieldKey:'searchTags',optionId:null,value:'검토 검색어'},{fieldKey:'additionalImages',optionId:'collected-1',value:''},{fieldKey:'detailHtml',optionId:null,value:'<p>직접 수정한 상세 설명</p>'},{fieldKey:'noticeMaterial',optionId:null,value:'검토 재질'},{fieldKey:'packagedWeightG',optionId:'collected-1',value:'420'},{fieldKey:'packagedDimensionsMm',optionId:'collected-1',value:'100*200*300'}]:[])]})}),qc);assert.equal(edit.status,200);
    assert.match(await run(),/저장된 SEO·옵션값/);assert.equal(generations,expectedGenerations);assert.equal(sqlite.prepare('SELECT count(*) n FROM translation_jobs').get().n,expectedGenerations);
@@ -181,7 +186,7 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     const cells=reader.xlsxHeaders(reader.inspectXlsxArchive(archive),'견적서',2);
     const actual=Object.fromEntries(fields.map((field,index)=>[field,cells[index]]));
     for(const [field,value] of Object.entries(expected))assert.equal(actual[field],value,`XLSX retains reviewed ${field}`);
-    assert.equal(actual.noticeCountryOfOrigin,'중국');
+    assert.equal(actual.noticeCountryOfOrigin,'해당사항없음');
     assert.equal(actual.categoryId,'80719');assert.equal(actual.category,context.category.categoryPath.join(' > ')+' (80719)');assert.equal(actual.supplyPrice,'17920');assert.equal(actual.msrp,'38830');
     assert.match(actual.mainImage,/^image-\d+\.png$/);
     const packaged=await exportRequest({action:'export',fingerprint:preview.fingerprint});
@@ -212,7 +217,8 @@ for(const automatic of [false,true,'hidden-off-direct','hidden-off-rule','many',
     assert.equal((await exportRequest({action:'export',fingerprint:refreshed.fingerprint})).status,409,'editing a source stage invalidates a prepared package');
     const finalPreview=await(await exportRequest({action:'preview'})).json();
     assert.equal(finalPreview.rows[0][fields.indexOf('title')],'검토 완료 상품명','final quotation override survives later source edits');
-    assert.equal(finalPreview.rows[0][fields.indexOf('noticeCountryOfOrigin')],'대한민국','unoverridden source edit reaches Excel');
+    assert.equal(finalPreview.rows[0][fields.indexOf('noticeCountryOfOrigin')],'해당사항없음','source label edit does not overwrite a fresh legal notice');
+    assert.equal(JSON.parse(sqlite.prepare('SELECT payload FROM product_content').get().payload).label.countryOfOrigin.value,'대한민국');
     assert.equal(finalPreview.rows[0][fields.indexOf('salePrice')],36000);
     assert.notEqual(finalPreview.fingerprint,refreshed.fingerprint);
     // Editing the selling pack after reviewing a quotation must recalculate
