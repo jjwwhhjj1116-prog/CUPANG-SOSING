@@ -118,13 +118,16 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     const serviceStopped=job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
       &&job.review.instructionsVersion==='sourceflow-translation-v6'&&job.result.model===GOOGLE_TEXT_MODEL
       &&Number.isInteger(stoppedStatus)&&(stoppedStatus===429||(stoppedStatus??0)>=500&&(stoppedStatus??0)<=599);
-    const descriptionAbsent=!body.optionsOnly&&job.result.model===job.review.model
+    const canonicalInitialResult=!body.optionsOnly&&job.result.model===job.review.model
       &&(job.review.destination==='Google 번역'&&job.review.model===GOOGLE_TEXT_MODEL
         ||job.review.destination==='Cloudflare Workers AI'&&job.review.model===WORKERS_TEXT_MODEL)
       &&job.review.instructionsVersion==='sourceflow-translation-v6'
-      &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry')
-      &&typeof job.review.source.description==='string'&&!!job.review.source.description.trim()
+      &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry');
+    const titleAbsent=canonicalInitialResult&&typeof job.review.source.title==='string'&&!!job.review.source.title.trim()
+      &&typeof job.result.draft.title==='string'&&!job.result.draft.title.trim();
+    const descriptionAbsent=canonicalInitialResult&&typeof job.review.source.description==='string'&&!!job.review.source.description.trim()
       &&typeof job.result.draft.description==='string'&&!job.result.draft.description.trim();
+    let titleMissing=false;
     let descriptionMissing=false;
     let guidanceMissing=false;
     let partial=!!coverage?.missingSourceIndexes.length||serviceStopped;
@@ -132,7 +135,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
       onReviewRequired();
       const missing=coverage?.missingSourceIndexes.length??0;
       const reason=(serviceStopped?`Google 번역 HTTP ${stoppedStatus} 응답으로 남은 자동 요청을 중단했습니다.${missing?` 속성·옵션 번역 ${missing}개가 누락됐습니다.`:''}`
-        :missing?`생성 결과에서 속성·옵션 번역 ${missing}개가 누락됐습니다.`:'')+(descriptionMissing?' 상품 설명 번역을 받지 못했습니다.':'')
+        :missing?`생성 결과에서 속성·옵션 번역 ${missing}개가 누락됐습니다.`:'')+(titleMissing?' 상품명 번역을 받지 못했습니다.':'')+(descriptionMissing?' 상품 설명 번역을 받지 못했습니다.':'')
         +(guidanceMissing?' 입력한 특징·타겟의 SEO 구성안을 확인·수정해야 합니다.':'');
       return withWarnings(`검토 필요 · 상품 초안을 저장했습니다. ${reason} 미완료 항목은 번역 완료로 처리하지 않았으며 원문과 직접 수정한 값은 유지합니다. 1~7단계에서 확인·수정해주세요.${remainder}`);
     };
@@ -140,7 +143,7 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
     const send=async(action:'preview'|'apply',fingerprint?:string)=>{
       const response=await fetcher(`${base}/translation-apply`,{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({action,jobId:job.id,expectedVersion:applyVersion,...(body.optionsOnly?{scope:'options'}:{}),...(fingerprint?{fingerprint}:{})})});
       const value=await response.json() as {error?:string;productId?:string;productVersion?:string;contentRevision?:number;preview?:unknown[];fingerprint?:string;applied?:number;
-        intakeSeoCoverage?:{jobId?:unknown;contentRevision?:unknown;missingDescription?:unknown};
+        intakeSeoCoverage?:{jobId?:unknown;contentRevision?:unknown;missingTitle?:unknown;missingDescription?:unknown};
         intakeSeoGuidance?:{jobId?:unknown;contentRevision?:unknown;needsReview?:unknown;warnings?:unknown}};
       if(!response.ok)throw Error(value.error||'SEO 초안 반영 상태를 확인해주세요.');
       return value;
@@ -163,11 +166,13 @@ export async function prepareIntakeSeo(productId: string, fetcher: typeof fetch,
       guidanceMissing=proof.needsReview;partial||=guidanceMissing;
       for(const value of proof.warnings as string[])warnings.add(`SEO 입력 검토: ${value}`);
     }
-    if(descriptionAbsent){
+    if(titleAbsent||descriptionAbsent){
       const proof=preview.intakeSeoCoverage;
       if(!proof||proof.jobId!==job.id||!Number.isSafeInteger(preview.contentRevision)||(preview.contentRevision??-1)<0
-        ||proof.contentRevision!==preview.contentRevision||typeof proof.missingDescription!=='boolean')throw Error('현재 저장된 상품 설명과 번역 누락 상태를 확인하지 못했습니다.');
-      descriptionMissing=proof.missingDescription;partial||=descriptionMissing;
+        ||proof.contentRevision!==preview.contentRevision||titleAbsent&&typeof proof.missingTitle!=='boolean'
+        ||descriptionAbsent&&typeof proof.missingDescription!=='boolean')throw Error(`현재 저장된 ${titleAbsent?'상품명':'상품 설명'}과 번역 누락 상태를 확인하지 못했습니다.`);
+      titleMissing=titleAbsent&&proof.missingTitle===true;descriptionMissing=descriptionAbsent&&proof.missingDescription===true;
+      partial||=titleMissing||descriptionMissing;
     }
     if(!preview.preview.length){
       // A completed partial response remains reusable, but is not evidence that

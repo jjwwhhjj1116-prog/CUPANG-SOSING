@@ -182,9 +182,12 @@ export async function POST(request: Request, context: Context) {
         ||job.review.destination==='Cloudflare Workers AI'&&job.review.model===WORKERS_TEXT_MODEL)
       &&job.review.instructionsVersion==='sourceflow-translation-v6'
       &&!Object.hasOwn(job.review,'optionsRetry')&&!Object.hasOwn(job.review,'intakeOptions')&&!Object.hasOwn(job.review,'seoRetry')
-      &&job.review.source.description.trim()&&!job.result.draft.description.trim()){
+      &&(job.review.source.title.trim()&&!job.result.draft.title.trim()
+        ||job.review.source.description.trim()&&!job.result.draft.description.trim())){
       const initial=await findIntakeTranslation(owner,id);
-      if(initial?.id===job.id)intakeSeoCoverage={jobId:job.id,contentRevision:content.revision,missingDescription:content.seo.description.provenance!=='manual'};
+      if(initial?.id===job.id)intakeSeoCoverage={jobId:job.id,contentRevision:content.revision,
+        ...(job.review.source.title.trim()&&!job.result.draft.title.trim()?{missingTitle:content.seo.title.provenance!=='manual'}:{}),
+        ...(job.review.source.description.trim()&&!job.result.draft.description.trim()?{missingDescription:content.seo.description.provenance!=='manual'}:{})};
     }
     const preview = { scope, productId: id, productVersion: product.updated_at, contentRevision: content.revision, optionRevision: options.revision, fingerprint: digest, preview: plan.preview, skipped: plan.skipped,
       ...(intakeSeoCoverage?{intakeSeoCoverage}:{}),

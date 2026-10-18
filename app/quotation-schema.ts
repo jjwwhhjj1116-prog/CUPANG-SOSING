@@ -625,6 +625,9 @@ export function resolveQuotationFields(input: QuotationResolverInput): ResolvedQ
       const source: QuotationSource = weightManual?.source ?? (manualOption ? 'manual-option' : manualCommon ? 'manual-common' : automatic.source);
       const validationIssues = [...quotationValueIssues(definition, value, ownedKeys, source), ...(!weightManual && !manualOption && !manualCommon ? automatic.issues ?? [] : [])];
       const reviewMessages: string[] = [];
+      if (definition.id === 'title' && source === 'content'
+        && content.seo.title.provenance === 'collected' && /\p{Script=Han}/u.test(content.seo.title.value))
+        reviewMessages.push('수집 원문의 중국어 상품명이 남아 있습니다. 1단계에서 상품명을 확인하고 번역·수정해주세요.');
       if (definition.id === 'detailHtml' && source === 'content') {
         const description = currentDetailContent(content).description;
         if (description.provenance === 'collected' && /\p{Script=Han}/u.test(description.value))

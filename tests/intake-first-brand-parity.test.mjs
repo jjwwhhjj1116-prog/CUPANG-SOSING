@@ -28,11 +28,15 @@ after(() => {
  * child preview are isolated; generating still prepares the real reviewed job. */
 function seoUi(f) {
   const slots = [], effects = [], layouts = [], storage = new Map(), creates = [], calls = []; let cursor = 0, mounted = true;
-  const effect = (queue, fn, deps) => { const i = cursor++, old = slots[i]; if (!old || deps.some((value, j) => !Object.is(value, old.deps[j]))) {
+  const sameDeps = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, i) => Object.is(value, right[i]));
+  const effect = (queue, fn, deps) => { const i = cursor++, old = slots[i]; if (!old || !sameDeps(deps, old.deps)) {
     slots[i] = { deps, cleanup: old?.cleanup }; queue.push(() => { old?.cleanup?.(); slots[i].cleanup = fn(); }); } };
   const hooks = { useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial;
     return [slots[i], value => { if (mounted) slots[i] = typeof value === 'function' ? value(slots[i]) : value; }]; },
-    useRef(initial) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); }, useEffect(fn, deps) { effect(effects, fn, deps); }, useLayoutEffect(fn, deps) { effect(layouts, fn, deps); } };
+    useRef(initial) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); },
+    useMemo(fn, deps) { const i = cursor++, old = slots[i]; if (!old || !sameDeps(deps, old.deps)) slots[i] = { deps, value: fn() }; return slots[i].value; },
+    useCallback(fn, deps) { return hooks.useMemo(() => fn, deps); },
+    useEffect(fn, deps) { effect(effects, fn, deps); }, useLayoutEffect(fn, deps) { effect(layouts, fn, deps); } };
   const helper = f.h.load('app/seo-workspace-draft.ts'), exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../app/components/seo-workspace-generator.tsx', import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
@@ -50,7 +54,7 @@ function seoUi(f) {
     const tree = outer.type(outer.props); layouts.splice(0).forEach(fn => fn()); effects.splice(0).forEach(fn => fn()); return tree; };
   const until = async predicate => { const deadline = Date.now() + 10000; while (!predicate()) { assert.ok(Date.now() < deadline, 'SEO component did not settle: ' + text(render())); render(); await new Promise(done => setImmediate(done)); } };
   render();
-  return { render, calls, creates, storage, until, input: () => nodes(render()).find(node => node.props?.['aria-label'] === 'SEO 브랜드'),
+  return { render, calls, creates, storage, until, input: (label = 'SEO 브랜드') => nodes(render()).find(node => node.props?.['aria-label'] === label),
     button: () => nodes(render()).find(node => node.type === 'button' && ['AI로 자동 생성', '한국어 초안 자동 작성'].includes(text(node))),
     close() { mounted = false; slots.forEach(slot => slot?.cleanup?.()); } };
 }
@@ -114,12 +118,26 @@ for (const company of companies) for (const provider of ['workers', 'google']) t
     for (const row of view.resolved.rows) { assert.equal(row.fields.title.value, expected); assert.equal(row.fields.brand.value, company.name); }
     const jobs = h.sqlite.prepare('SELECT * FROM translation_jobs WHERE product_id=?').all(product.id), canonical = plain(jobs[0]); assert.equal(jobs.length, 1); assert.equal(canonical.status, 'completed');
     assert.ok(!JSON.parse(canonical.result).draft.title.includes('보조브랜드')); assert.ok(f.queries.every(q => !q.includes(company.name) && !q.includes('보조브랜드') && !q.includes(f.features)), 'owner input never becomes supplier/provider text');
-    const beforeUi = f.state(), objects = f.objects(); ui = seoUi(f); await ui.until(() => ui.button() && !ui.button().props.disabled);
+    const beforeUi = f.state(), objects = f.objects(), target = provider === 'workers' ? '직접 입력한 타겟' : f.keywords;
+    const enterRequiredTarget = async () => {
+      await ui.until(() => ui.input()?.props.value === f.brand.split(',')[0] && !ui.input().props.disabled);
+      assert.equal(ui.input('SEO 타겟 키워드').props.value, f.keywords);
+      if (provider === 'workers') {
+        assert.equal(ui.button().props.disabled, true, 'A blank required target cannot generate a new draft');
+        ui.input('SEO 타겟 키워드').props.onChange({ target: { value: target } });
+      }
+    };
+    ui = seoUi(f); await enterRequiredTarget(); await ui.until(() => ui.button() && !ui.button().props.disabled);
     assert.equal(ui.input().props.value, f.brand.split(',')[0]); assert.ok(ui.calls.every(call => call.method === 'GET')); assert.equal(f.state(), beforeUi);
-    ui.close(); ui = seoUi(f); await ui.until(() => ui.button() && !ui.button().props.disabled); assert.equal(ui.input().props.value, f.brand.split(',')[0]);
-    const explicitBrand = '직접 브랜드, 직접 보조'; ui.input().props.onChange({ target: { value: explicitBrand } }); ui.button().props.onClick();
+    ui.close(); ui = seoUi(f); await enterRequiredTarget(); await ui.until(() => ui.button() && !ui.button().props.disabled); assert.equal(ui.input().props.value, f.brand.split(',')[0]);
+    const explicitBrand = '직접 브랜드, 직접 보조'; ui.input().props.onChange({ target: { value: explicitBrand } });
+    const beforeRerenderCalls = ui.calls.length; ui.render(); ui.render();
+    assert.equal(ui.input().props.value, explicitBrand); assert.equal(ui.input('SEO 타겟 키워드').props.value, target);
+    assert.equal(ui.input('SEO 상품 특징').props.value, f.features); assert.equal(ui.calls.length, beforeRerenderCalls);
+    assert.equal(ui.creates.length, 0); assert.equal(f.state(), beforeUi); ui.button().props.onClick();
     await ui.until(() => ui.creates.length === 1 && [...ui.storage.values()].some(raw => JSON.parse(raw).jobId));
-    assert.equal(ui.creates[0].memo.brand, explicitBrand); assert.equal(JSON.parse([...ui.storage.values()][0]).memo.brand, explicitBrand); assert.equal(f.state(), beforeUi); ui.close(); ui = null;
+    assert.equal(ui.creates[0].memo.brand, explicitBrand); assert.equal(JSON.parse([...ui.storage.values()][0]).memo.brand, explicitBrand); assert.equal(f.state(), beforeUi);
+    assert.deepEqual(ui.creates[0].memo, { brand: explicitBrand, features: f.features, keywords: target }); ui.close(); ui = null;
     let cells = null;
     if (f.profile.template) {
       const preview = await json(await h.route(base + '/quotation', { method: 'POST', body: { action: 'preview', profileId: f.profile.id } }));
