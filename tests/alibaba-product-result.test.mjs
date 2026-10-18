@@ -83,7 +83,7 @@ test('single explicit SKU without variant attributes preserves source facts thro
  const receipt=parse(f,url);const option=receipt.options[0];
  assert.equal(option.name,product.subject);assert.equal(option.sku,'5627721589407');
  assert.equal(option.unitPriceCny,25.6);assert.equal(option.stock,0);assert.equal(option.minimumOrder,2);
- assert.equal(option.color,undefined);assert.equal(option.size,undefined);assert.equal(option.imageIndex,undefined);
+ assert.equal(option.color,undefined);assert.equal(option.size,undefined);assert.equal(option.imageIndex,0);
  const settings=load('app/workspace-settings.ts').defaultSettings;
  const draft=load('app/collection-product.ts').prepareCollectionProduct('owner',{offer_id:receipt.offerId,source_url:url,
  context:{category:{id:'80719',categoryId:'80719',categoryPath:['주방용품','주방수납/정리','주방수납바구니/바스켓']},settings}},receipt,'single',new Date().toISOString());

@@ -60,7 +60,11 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
     if (!Number.isFinite(unitPriceCny) || unitPriceCny <= 0) throw Error('옵션별 원가를 확인하지 못했습니다. 수량별·대행 가격을 임의로 적용하지 않습니다.');
     if (!Array.isArray(sku.skuAttributes) || (!sku.skuAttributes.length && !singleSku)) throw Error('옵션 속성을 확인하지 못했습니다.');
     const attributes = sku.skuAttributes.map(row);
-    const indices = attributes.filter(attribute => attribute.skuImageUrl != null && attribute.skuImageUrl !== '').map(attribute => image(attribute.skuImageUrl, 'additional'));
+    // Retain both observed variant-image candidates. The source client selects
+    // the first, then second, then first gallery image for this actual SKU.
+    // Binding that fallback keeps later common-image edits from replacing it.
+    const variantImages = attributes.slice(0, 2).filter(attribute => attribute.skuImageUrl != null && attribute.skuImageUrl !== '').map(attribute => image(attribute.skuImageUrl, 'additional'));
+    const imageIndex = variantImages[0] ?? 0;
     const stock = sku.amountOnSale == null ? null : numeric(sku.amountOnSale);
     const optionAttribute = (names: string[]) => {
       // The request uses country=en; match explicit translated attribute names
@@ -73,7 +77,7 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
     const color = optionAttribute(['颜色','色彩','색상','color','colour']);
     const size = optionAttribute(['尺码','尺寸','사이즈','size']);
     return {sku: sourceSku.sku, name: attributes.length ? attributes.map(attribute => text(attribute.value, '옵션명')).join(' / ') : text(product.subject, '상품명'), unitPriceCny, minimumOrder, stock,
-      ...(indices.length ? {imageIndex: indices[0]} : {}), ...(color ? {color} : {}), ...(size ? {size} : {})};
+      imageIndex, ...(color ? {color} : {}), ...(size ? {size} : {})};
   });
   const attributes = product.productAttribute == null ? [] : product.productAttribute;
   if (!Array.isArray(attributes)) throw Error('상품 속성 구조를 확인해주세요.');

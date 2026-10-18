@@ -28,14 +28,19 @@ export function supportsMobileTransport(api){
 }
 
 function prepareTransport(api){
-  if(!initialized.has(api))initialized.set(api,(async()=>{
+  if(initialized.has(api))return initialized.get(api);
+  const pending=(async()=>{
     // A worker interrupted between request and finally must not retain even
     // anonymous transport values. No other extension's rules are accessible.
     const stale=(await api.declarativeNetRequest.getSessionRules()).filter(rule=>rule.id>1000000000&&rule.id<2000000000
       &&rule.condition?.initiatorDomains?.length===1&&rule.condition.initiatorDomains[0]===api.runtime.id).map(rule=>rule.id);
     if(stale.length)await api.declarativeNetRequest.updateSessionRules({removeRuleIds:stale,addRules:[]});
-  })());
-  return initialized.get(api);
+  })();
+  initialized.set(api,pending);
+  // Every current caller must observe the failed preparation. A later explicit
+  // capture can recheck cleanup instead of reusing a permanently rejected task.
+  void pending.catch(()=>{if(initialized.get(api)===pending)initialized.delete(api);});
+  return pending;
 }
 
 /** Anonymous requests from this service worker only. Chrome fetch hides
