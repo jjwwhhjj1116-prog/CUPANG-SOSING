@@ -24,6 +24,8 @@ import type {SupplierHubCompany} from '@/app/supplier-hub-company';
 import type {CollectionContext,CollectionJob} from '@/app/sourcing';
 import {ensureSupplierHubReceiptDatabase} from '@/db/supplier-hub-receipts';
 import {ensureSingleReceiptDatabase} from '@/db/supplier-hub-single-receipts';
+import {validateHubSchemaSnapshot,compileHubQuotationSchema} from '@/app/supplier-hub-schema';
+import type {CategoryProfile} from '@/app/category-profiles';
 
 type SourceImage={index:number;key:string;operationId:string;createdAt:string};
 type SourceRow={id:string;owner_id:string;offer_id:string;source_url:string;goal:string;status:string;created_at:string;updated_at:string;source_context:string;original_receipt:string;receipt_payload:string;received_at:string;product_id:string;product_version:string;image_keys:string;pricing_policy:string|null;content_revision:number;content_payload:string|null;option_revision:number;option_payload:string|null;quotation_revision:number;quotation_payload:string|null;source_images:string;busy:number};
@@ -35,6 +37,26 @@ const select=`SELECT j.*,c.payload AS source_context,r.payload AS original_recei
  COALESCE((SELECT revision FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id),0) AS option_revision,(SELECT payload FROM product_options WHERE product_id=p.id AND owner_id=p.owner_id) AS option_payload,
  COALESCE((SELECT revision FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id),0) AS quotation_revision,(SELECT payload FROM product_quotation_fields WHERE product_id=p.id AND owner_id=p.owner_id) AS quotation_payload,${sourceImagesSql} AS source_images,${busySql} AS busy ${joins}`;
 const conflict=(message='자료·기본설정·카테고리가 변경되었습니다. 기존 상품은 유지되며 새 초안 내용을 다시 확인해주세요.')=>new CollectionForkError(409,message);
+function verifySingleTarget(profile:CategoryProfile){
+ try{
+  if(profile.template!==null||!profile.hubSchema)throw Error();
+  const snapshot=validateHubSchemaSnapshot(profile.hubSchema,profile.categoryId,profile.categoryPath);
+  if(compileHubQuotationSchema(snapshot).unsupported.length)throw Error();
+  const read=(keys:string[],scope=false)=>{
+   const values=keys.filter(key=>Object.hasOwn(snapshot.metadata,key)).map(key=>snapshot.metadata[key]);
+   if(!values.length||values.some(value=>String(value)!==String(values[0]))
+    ||values.some(value=>scope?value!=='Retail_Categorized_Single':typeof value==='number'?!Number.isSafeInteger(value)||value<0:typeof value!=='string'||!/^\d{1,20}$/.test(value)))throw Error();
+   return String(values[0]);
+  };
+  const scope=read(['scopeType','scope'],true),category=read(['kanCategoryId','categoryId']),notice=read(['noticeNumber','productNoticeNumber']),version=read(['version']);
+  const raw=JSON.parse(snapshot.schemaString) as {metadata?:unknown};
+  if(category==='0'||typeof raw.metadata!=='string')throw Error();
+  const metadata=new Map<string,string>();for(const part of raw.metadata.split(';')){
+   const colon=part.indexOf(':'),key=part.slice(0,colon);if(colon<1||!/^\w+$/.test(key)||metadata.has(key))throw Error();metadata.set(key,part.slice(colon+1));
+  }
+  if(metadata.get('scope')!==scope||metadata.get('categoryId')!==category||metadata.get('productNoticeCategoryId')!==notice||metadata.get('version')!==version)throw Error();
+ }catch{throw conflict('현재 회사·카테고리·고시·버전이 일치하는 개별 견적 양식 또는 공식 Excel을 연결해주세요.');}
+}
 const pendingActivitySql=`(EXISTS(SELECT 1 FROM translation_jobs t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id)
  OR EXISTS(SELECT 1 FROM image_jobs t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id)
  OR EXISTS(SELECT 1 FROM supplier_hub_receipts t WHERE t.owner_id=j.owner_id AND t.product_id=cp.product_id)
@@ -72,8 +94,9 @@ export async function prepareCollectionNewDraft(owner:string,company:SupplierHub
  if(offerId!==source.offer_id||result.sourceUrl!==source.source_url||JSON.stringify(result)!==JSON.stringify(payload))throw conflict('저장된 원문의 상품번호·주소·내용을 확인하지 못했습니다.');
  const profile=await getCategoryProfile(owner,input.profileId);if(!profile)throw new CollectionForkError(404,'선택한 새 카테고리를 찾을 수 없습니다.');
  if(profile.revision!==input.expectedProfileRevision)throw conflict('새 카테고리의 양식이 변경되었습니다. 다시 선택해주세요.');validateCategoryIdentity(profile);
- if(!profile.hubSchema||profile.hubSchema.company.code!==company.code||profile.hubSchema.company.name!==company.name||!profile.template?.workbookEvidence)throw conflict('현재 승인 회사의 공식 견적서가 연결된 카테고리를 선택해주세요.');
- await validateStoredTemplate(owner,profile.template,profile.hubSchema);
+ if(!profile.hubSchema||profile.hubSchema.company.code!==company.code||profile.hubSchema.company.name!==company.name)throw conflict('현재 승인 회사의 견적 양식이 연결된 카테고리를 선택해주세요.');
+ if(profile.template?.workbookEvidence)await validateStoredTemplate(owner,profile.template,profile.hubSchema);
+ else verifySingleTarget(profile);
  const profileRow=await db.prepare('SELECT payload,revision FROM category_profiles WHERE owner_id=? AND id=?').bind(owner,input.profileId).first<{payload:string;revision:number}>();if(!profileRow||profileRow.revision!==profile.revision)throw conflict();
  const saved=await getSettings(owner),settings=savedRegistrationSettings(saved?JSON.parse(saved.payload):null);
  const images=JSON.parse(source.source_images) as SourceImage[];

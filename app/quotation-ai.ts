@@ -30,7 +30,7 @@ export type QuotationAiPlan = {
   category: { id: string; path: string[] }; hiddenEnabled: boolean;
   scope: { optionId: string | null; applyToAllOptions: boolean };
   clocks: { ownerId: string; productVersion: string; contentRevision: number; optionRevision: number; quotationRevision: number; profileId: string; profileRevision: number };
-  facts: { title: string; seoTitle: string; description: string; attributes: { name: string; value: string; provenance: string }[];
+  facts: { title: string; seoTitle: string; description: string; attributes: { name: string; value: string; provenance: string; sourceName?: string }[];
     options: { optionId: string | null; originalName: string; translatedName: string; color: string; size: string; unitsPerPack: number | null }[] };
   fields: QuotationAiField[]; targets: QuotationAiTarget[]; warnings: string[]; createdAt: string;
 };
@@ -120,6 +120,24 @@ export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { opti
   for (const row of saved.options.rows) {
     if (!/^[A-Za-z0-9_-]{1,80}$/u.test(row.id) || ids.has(row.id) || typeof row.included !== 'boolean') fail('AI_SCOPE', '옵션 고유번호 또는 포함 상태를 확인해주세요.'); ids.add(row.id);
   }
+  // These values are produced by source translation, outside ContentPatch.
+  // They are supporting facts, never field bindings or verified human input.
+  // A category change cannot carry old-category hints into a new quotation.
+  const categoryAttributes = saved.content.categoryAttributes;
+  const categoryFacts: QuotationAiPlan['facts']['attributes'] = [];
+  if (categoryAttributes?.categoryId === snapshot.categoryId) {
+    if (!textSafe(categoryAttributes.jobId) || !categoryAttributes.jobId.trim() || categoryAttributes.jobId.length > 100
+      || !Array.isArray(categoryAttributes.values) || categoryAttributes.values.length > 50)
+      fail('AI_SOURCE', '저장한 카테고리 속성의 원문 연결을 확인해주세요.');
+    for (const pair of categoryAttributes.values) {
+      if (!object(pair) || !textSafe(pair.name) || !pair.name.trim() || pair.name.length > 200
+        || !textSafe(pair.value) || !pair.value.trim() || pair.value.length > 2000
+        || pair.sourceName !== undefined && (!textSafe(pair.sourceName) || !pair.sourceName.trim() || pair.sourceName.length > 200))
+        fail('AI_SOURCE', '저장한 카테고리 속성의 이름·내용을 확인해주세요.');
+      categoryFacts.push({ name: pair.name, value: pair.value, provenance: 'category-source-translation',
+        ...(pair.sourceName !== undefined ? { sourceName: pair.sourceName } : {}) });
+    }
+  }
   const hiddenEnabled = saved.settings.hiddenAttributes === true, fields = supportedFields(snapshot, hiddenEnabled);
   const resolved = resolveQuotationFields({ categoryId: snapshot.categoryId, categoryPath: snapshot.categoryPath, product: saved.product, content: saved.content,
     options: saved.options, settings: saved.settings, overrides: saved.state.overrides, hubSchema: snapshot,
@@ -140,8 +158,8 @@ export function buildQuotationAiPlan(saved: QuotationExportSource, scope: { opti
   };
   const facts: QuotationAiPlan['facts'] = { title: excerpt(saved.product.title, 2000, '원문 상품명'), seoTitle: excerpt(saved.content.seo.title.value, 2000, '저장 상품명'),
     description: excerpt(saved.content.detail?.description?.value || saved.content.seo.description.value, 6000, '저장 상품 설명'),
-    attributes: (['material', 'components', 'dimensions', 'precautions', 'washingPrecautions', 'specifications', 'productType'] as const)
-      .filter(key => saved.content.label[key]?.value).map(key => ({ name: key, value: excerpt(saved.content.label[key].value, 2000, '저장 상품 속성'), provenance: saved.content.label[key].provenance })),
+    attributes: [...(['material', 'components', 'dimensions', 'precautions', 'washingPrecautions', 'specifications', 'productType'] as const)
+      .filter(key => saved.content.label[key]?.value).map(key => ({ name: key, value: excerpt(saved.content.label[key].value, 2000, '저장 상품 속성'), provenance: saved.content.label[key].provenance })), ...categoryFacts],
     options: targets.map(row => { const option = saved.options.rows.find(item => item.id === row.optionId); return { optionId: row.optionId,
       originalName: excerpt(option?.originalName ?? '', 1000, '옵션 원문명'), translatedName: excerpt(option?.translatedName ?? row.optionLabel, 1000, '옵션 번역명'),
       color: excerpt(option?.color ?? '', 200, '옵션 색상'), size: excerpt(option?.size ?? '', 200, '옵션 사이즈'), unitsPerPack: option?.unitsPerPack ?? null }; }) };
