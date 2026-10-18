@@ -10,6 +10,7 @@ import { quotationImageKeys } from '@/app/quotation-image-targets';
 import type { FreeImageQuotationRequest } from '@/app/free-image-translation-client';
 import { verifyProductLabelDraftResult } from '@/app/product-label-draft';
 import { readProductLabelRewrite, rewriteProductLabels, ProductLabelRewriteError, type ProductLabelRewriteInput } from '@/app/product-label-rewrite';
+import { readCurrentProductLabelResult, type CurrentProductLabelResult } from '@/app/product-label-result';
 
 type Props = { productId: string; optionId: string | null; version: string; profileId?: string; refreshToken?: string; disabled?: boolean; active?: boolean; onSaved?: () => void;
   onTranslate?: (key: string, role: 'label', language: 'zh' | 'en', target: FreeImageQuotationRequest, intent?: 'manual') => void };
@@ -34,6 +35,8 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [referencesBusy,setReferencesBusy]=useState(false),referenceBusy=useRef(false);
   const [referencesDirty,setReferencesDirty]=useState(false),referenceDirty=useRef(false);
+  const [savedResult,setSavedResult]=useState<{token:object;value:CurrentProductLabelResult}|null>(null);
+  const [resultError,setResultError]=useState<{token:object;message:string}|null>(null);
   const [rewritePending,setRewritePending]=useState<{scope:string;input:ProductLabelRewriteInput}|null>(null),liveRewrite=useRef<typeof rewritePending>(null);
   const [dragging,setDragging]=useState<{id:ProductLabelKey;over:ProductLabelKey|null;token:object}|null>(null),[dragReset,setDragReset]=useState(0);
   const labelDrag=useRef<LabelDrag|null>(null),dragEpoch=useRef<object|null>(null),liveActive=useRef(active);
@@ -55,6 +58,33 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
   const rewriteUncertain=rewritePending?.scope===scope;
   const rewriteWaiting=()=>liveRewrite.current?.scope===scope;
   const reviewed = preview?.scope === scope && preview.sourceKey === sourceKey && !dirty && fresh ? preview : null;
+  // A canonical name is only a receipt lookup candidate. Completion requires
+  // the authenticated receipt and a second, unchanged source read below.
+  const canCheckResult=!!view&&active&&fresh&&!dirty&&!busy&&!referencesBusy&&!referencesDirty&&!rewriteUncertain&&!reviewed
+    &&view.imageKeys.some(key=>/\/quotation-label-[a-f0-9]{64}\.png$/.test(key));
+  const resultContext=JSON.stringify([scope,sourceKey,canCheckResult,busy,referencesBusy,referencesDirty,dirty,rewriteUncertain,active,reviewed?.signature]);
+  const [resultClock,setResultClock]=useState({context:resultContext,view,token:{}});
+  if(resultClock.context!==resultContext||resultClock.view!==view)setResultClock({context:resultContext,view,token:{}});
+  const resultToken=resultClock.context===resultContext&&resultClock.view===view?resultClock.token:null;
+  const liveResultToken=useRef<object|null>(null);
+  useLayoutEffect(()=>{liveResultToken.current=resultToken;return()=>{liveResultToken.current=null;};},[resultToken]);
+  const completed=canCheckResult&&resultToken&&savedResult?.token===resultToken&&savedResult.value.result
+    &&JSON.stringify(savedResult.value.references.view)===JSON.stringify(view)?savedResult.value.result:null;
+  useEffect(()=>{
+    if(!canCheckResult||!resultToken||!view)return;
+    const token=resultToken,snapshot=view,controller=new AbortController();let listening=true;
+    const valid=()=>listening&&!controller.signal.aborted&&current()&&liveResultToken.current===token
+      &&latestSaved.current?.view===snapshot&&latestSaved.current.sourceKey===sourceKey;
+    const scopedFetch:typeof fetch=async(url,init)=>{if(!valid())throw Error('표시사항 확인 대상이 변경되었습니다.');const response=await fetch(url,{...init,signal:controller.signal});if(!valid())throw Error('표시사항 확인 대상이 변경되었습니다.');return response;};
+    void(async()=>{try{
+      const value=await readCurrentProductLabelResult({productId,optionId,endpoint,quotationEndpoint},scopedFetch);
+      if(valid()&&JSON.stringify(value.references.view)===JSON.stringify(snapshot)){setSavedResult({token,value});setResultError(null);}
+    }catch(cause){if(valid())setResultError({token,message:cause instanceof Error?cause.message:'저장된 생성 라벨을 확인하지 못했습니다.'});}})();
+    return()=>{listening=false;controller.abort();};
+    // Read-only completion never locks local editing. The token invalidates
+    // pending reads on edits, child reference activity and source transitions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[canCheckResult,resultToken,view,scope,sourceKey]);
   const row = view?.rows.find(row => row.optionId === optionId), caption = optionId === null ? '상품 공통' : '선택 옵션';
   const message = notice.scope === scope ? notice.text : '';
   const dragContext=JSON.stringify([scope,sourceKey,active,disabled,busy,referencesBusy,referencesDirty,rewriteUncertain,saved?.sourceKey,view?.revision,view?.inputFingerprint,structure??view?.structure,draft,dragReset]);
@@ -270,6 +300,15 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
     {referencesDirty && <p role="status">최종 라벨 선택을 저장하거나 취소한 뒤 표시사항을 수정하세요.</p>}
     {rewriteUncertain&&<p role="status">재작성 요청 결과를 아직 확인하지 못했습니다. 결과를 조회하거나 저장본을 다시 확인해주세요.</p>}
     {view?.renderEpoch!==undefined&&<p>재작성 이후의 생성 PNG만 유효합니다. 직접 올린 라벨과 원본 파일은 보관합니다.</p>}
+    {resultError?.token===resultToken&&<p role="status">저장된 생성 라벨을 확인하지 못했습니다. {resultError.message}</p>}
+    {completed&&<section className="product-label-completed" aria-label={`${caption} 표시사항 생성 완료`}>
+      <h4>표시 정보 결과</h4><div className="product-label-preview" style={{maxHeight:600,overflow:'auto'}}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- Use the authenticated saved PNG, not an unsaved canvas preview. */}
+        <img src={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} alt={`${caption} 생성 완료 표시사항`} data-current-label-result style={{width:'100%',height:'auto'}}/>
+      </div><div className="quote-actions"><a className="btn ghost" href={`/api/files/${completed.key.split('/').map(encodeURIComponent).join('/')}`} download={completed.key.split('/').at(-1)}>이미지 다운로드</a>
+        <button type="button" className="btn ghost" disabled={!active||disabled} onClick={()=>void rewrite()}>재작성</button></div>
+    </section>}
+    {!busy&&!completed&&<>
     {view && <><div className="product-label-rows">{definitions.map((field, index) => <div className={`product-label-row product-label-structure-row product-label-sortable field${visibleDrag?.id===field.key?' label-dragging':''}${visibleDrag?.over===field.key&&visibleDrag.id!==field.key?' label-drag-over':''}`} key={field.key} data-label-sort-id={field.key} onDragOver={event=>overRow(field.key,event)} onDrop={event=>dropRow(field.key,event)}><button type="button" className="product-label-reorder-handle" aria-label={`${caption} ${field.label} 순서 이동`} title="끌어서 순서 이동" draggable={active&&!disabled&&!busy&&!referencesBusy&&!referencesDirty&&!rewriteUncertain&&fresh} disabled={!active||disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||!fresh} onDragStart={event=>beginDrag(field.key,event)} onDragEnd={endDrag}>⠿</button><label><span>항목명{field.required ? ' · 필수' : ''}</span><input aria-label={`${caption} 표시사항 항목 ${index + 1} 이름`} value={field.label} maxLength={80} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain} onChange={event => { const label = event.target.value; changeStructure(rows => rows.map(row => row.id === field.key ? { ...row, label } : row)); }} /></label><label><span>{field.label}</span><textarea aria-label={`${caption} ${field.label}`} value={productLabelValue(view, optionId, field.key, draft) ?? ''} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain} onChange={event => edit(field.key, event.target.value)} /></label>
       <div className="quote-actions"><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 위로`} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||index === 0} onClick={() => moveField(field.key, -1)}>↑</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 아래로`} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||index === definitions.length - 1} onClick={() => moveField(field.key, 1)}>↓</button><button type="button" className="btn ghost" aria-label={`${caption} 표시사항 항목 ${index + 1} 삭제`} disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain||field.required} onClick={() => changeStructure(rows => rows.filter(row => row.id !== field.key || row.required))}>삭제</button>
       <button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain} onClick={() => edit(field.key, '')}>{field.label} 비우기</button><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain} onClick={() => edit(field.key, null)}>{field.label} {optionId === null ? '자동값' : '공통·자동값'} 복원</button></div>
@@ -291,10 +330,13 @@ export function ProductLabelEditor({ productId, optionId, version, profileId, re
       <img src={reviewed.url} alt={`${caption} 저장된 제품 표시사항 PNG`} width={reviewed.rendered.width} height={reviewed.rendered.height} style={{ width: '100%', height: 'auto' }} /></div>
       <div className="quote-actions"><a className="btn ghost" href={reviewed.url} download="yoofam-product-label.png">표시사항 PNG 다운로드</a><button type="button" className="btn ghost" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain} onClick={() => void generate()}>저장한 값으로 다시 생성</button><button type="button" className="btn primary" disabled={disabled||busy||referencesBusy||referencesDirty||rewriteUncertain} onClick={() => void attach()}>PNG 업로드·견적에 연결</button></div>
     </>}
+    </>}
+    <details open={!completed} hidden={busy} className="product-label-reference-details"><summary>최종 라벨 연결 편집</summary>
     <ProductLabelReferenceEditor productId={productId} optionId={optionId} version={version} profileId={profileId} refreshToken={refreshToken} disabled={disabled||busy||dirty||rewriteUncertain} onTranslate={onTranslate}
       beforeSave={()=>current()&&!liveDisabled.current&&!request.current&&!rewriteWaiting()&&!(latestDraft.current.scope===scope&&hasDraft(latestDraft.current))}
       onBusyChange={value=>{if(!current()||referenceBusy.current===value)return;referenceBusy.current=value;if(value)invalidateDrag();setReferencesBusy(value);}}
       onEditingChange={value=>{if(!current()||referenceDirty.current===value)return;referenceDirty.current=value;if(value)invalidateDrag();setReferencesDirty(value);}} onSaved={()=>{clearPreview();onSaved?.();}}/>
+    </details>
   </section>;
 }
 
