@@ -14,7 +14,7 @@ const childModules=new Map(ast.statements.filter(node=>ts.isImportDeclaration(no
  return [node.moduleSpecifier.text,exports];
 }));
 function harness(rejectPrice=false,props={}){
- let cursor=0,saved=0;const slots=[],effects=[],modules=new Map();
+ let cursor=0,saved=0;const slots=[],effects=[],layoutEffects=[],modules=new Map();
  const sameDeps=(before,after)=>Array.isArray(before)&&Array.isArray(after)&&before.length===after.length&&after.every((value,index)=>Object.is(value,before[index]));
  const hooks={
   useState(initial){const slot=cursor++;if(!(slot in slots))slots[slot]=typeof initial==='function'?initial():initial;return [slots[slot],next=>{slots[slot]=typeof next==='function'?next(slots[slot]):next;}];},
@@ -22,6 +22,7 @@ function harness(rejectPrice=false,props={}){
   useCallback(callback,deps){const slot=cursor++,previous=slots[slot];if(!previous||!sameDeps(previous.deps,deps))slots[slot]={value:callback,deps};return slots[slot].value;},
   useMemo(factory,deps){const slot=cursor++,previous=slots[slot];if(!previous||!sameDeps(previous.deps,deps))slots[slot]={value:factory(),deps};return slots[slot].value;},
   useEffect(effect,deps){const slot=cursor++,previous=slots[slot];if(!previous||!sameDeps(previous.deps,deps)){const entry={deps,cleanup:previous?.cleanup};slots[slot]=entry;effects.push(()=>{entry.cleanup?.();entry.cleanup=effect();});}},
+  useLayoutEffect(effect,deps){const slot=cursor++,previous=slots[slot];if(!previous||!sameDeps(previous.deps,deps)){const entry={deps,cleanup:previous?.cleanup};slots[slot]=entry;layoutEffects.push(()=>{entry.cleanup?.();entry.cleanup=effect();});}},
  };
  // Run the real module and its pure imports. Child editors stay inert so these
  // callback/navigation checks cannot start a network or product operation.
@@ -40,13 +41,15 @@ function harness(rejectPrice=false,props={}){
  }
  const {DetailPanel}=load('app/components/dashboard-client.tsx');
  const render=()=>{cursor=0;const tree=DetailPanel({tab:'SEO',product:{id:'p',updated_at:'unchanged',image_keys:'[]'},settings:{},onSaved:()=>{saved++;},
-  onSavePrice:async()=>{if(rejectPrice)throw Error('save failed');},onBeforeSeoGenerate:()=>true,onBeforeFreeImageApply:()=>true,onPrepareSubmission(){},onReviewPackaging(){},onManageCategories(){},onUpload(){},...props});effects.splice(0).forEach(effect=>effect());return tree;};
+  onSavePrice:async()=>{if(rejectPrice)throw Error('save failed');},onBeforeSeoGenerate:()=>true,onBeforeFreeImageApply:()=>true,onPrepareSubmission(){},onReviewPackaging(){},onManageCategories(){},onUpload(){},...props});layoutEffects.splice(0).forEach(effect=>effect());effects.splice(0).forEach(effect=>effect());return tree;};
  const nodes=x=>Array.isArray(x)?x.flatMap(nodes):x&&typeof x==='object'?[x,...nodes(x.props?.children)]:[];
  const component=(type,predicate=()=>true)=>{const found=nodes(render()).filter(n=>n.type===type&&predicate(n.props));assert.equal(found.length,1,'Expected one '+type);return found[0];};
  return {component,saves:()=>saved};
 }
 test('each saved source refreshes quotation even when the product timestamp stays unchanged',()=>{
- for(const [name,callback,predicate] of [['ProductContentEditor','onSaved'],['ProductOptionsEditor','onSaved',props=>!props.seoView],['SeoWorkspaceEditor','onSaved'],['DocumentImagePanel','onSaved',props=>props.section==='label'],['DocumentImagePanel','onSaved',props=>props.section==='size'],['ImageGenerationPanel','onProductChanged'],['TranslationPanel','onContentSaved']]){
+ // The size source now has its own workspace (already true in the unchanged
+ // HEAD baseline); test the same actual onSaved → quotation refresh contract.
+ for(const [name,callback,predicate] of [['ProductContentEditor','onSaved'],['ProductOptionsEditor','onSaved',props=>!props.seoView],['SeoWorkspaceEditor','onSaved'],['DocumentImagePanel','onSaved',props=>props.section==='label'],['SizeChartWorkspace','onSaved'],['ImageGenerationPanel','onProductChanged'],['TranslationPanel','onContentSaved']]){
   const h=harness(),before=h.component('QuotationPanel').props.refreshToken;
   h.component(name,predicate).props[callback]();
   assert.notEqual(h.component('QuotationPanel').props.refreshToken,before,name);assert.equal(h.saves(),1);

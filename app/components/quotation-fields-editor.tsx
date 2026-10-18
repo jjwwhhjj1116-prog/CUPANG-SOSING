@@ -585,7 +585,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           setApplyAll(false);setBulk(null);setMessage('검토한 AI 초안을 입력란에 반영했습니다. 확인·수정한 뒤 견적 입력 저장을 눌러주세요.');
         }}/>
       <SupplierHubSingleReview productId={productId} profileId={profileId} view={view} disabled={dirty || busy || loading || conflicts.length > 0} onReceiptSaved={onReceiptSaved}/>
-      <QuotationWorkbookReview key={JSON.stringify([view.revision, view.inputFingerprint, changes])} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={(selections, basis) => {
+      <QuotationWorkbookReview key={`workbook:${JSON.stringify([view.revision, view.inputFingerprint, changes])}`} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={(selections, basis) => {
         const current = modelActionState.current;
         if (current.view !== view || current.changes !== changes || current.busy || current.loading || current.conflicts.length || activeWrite.current) return false;
         try {
@@ -596,7 +596,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
           return true;
         } catch (cause) { setError(cause instanceof Error ? cause.message : '이전 Excel 입력을 확인해주세요.'); return false; }
       }}/>
-      <LegacyQuotationImport key={JSON.stringify([view.revision, view.inputFingerprint, changes])} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={keys => {
+      <LegacyQuotationImport key={`legacy:${JSON.stringify([view.revision, view.inputFingerprint, changes])}`} view={view} changes={changes} disabled={busy || loading || conflicts.length > 0} onApply={keys => {
         try { setChanges(importLegacyQuotationDraft(view, changes, keys)); setBulk(null); setError(''); setMessage('선택한 이전 입력을 초안에 반영했습니다. 현재 분류에 저장하려면 견적 입력 저장을 눌러주세요.'); }
         catch (cause) { setError(cause instanceof Error ? cause.message : '이전 입력을 확인해주세요.'); }
       }}/>

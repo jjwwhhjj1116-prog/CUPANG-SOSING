@@ -4,7 +4,7 @@ import { mobileIntakeHarness } from './mobile-intake.mjs';
 export const companies = [{ code: 'A01526306', name: '유앤채' }, { code: 'A01464742', name: '와이홉' }];
 export const categoryPath = ['스포츠/레져', '헬스/요가', '헬스기구/용품', '헬스보호대'];
 export const plain = value => JSON.parse(JSON.stringify(value));
-export const module = providedOptionModule;
+export { providedOptionModule as module };
 const object = (properties, required = []) => ({ type: 'object', properties, required });
 const named = (nameKey, valueKey, entries) => ({ type: 'array', items: {}, allOf: entries.map(([name, value]) => ({ contains: object({
   [nameKey]: { type: 'string', enum: [name], requirement: '필수' }, [valueKey]: value,
@@ -33,7 +33,7 @@ export function syntheticSnapshot(company = companies[0]) {
     metadata: { kanCategoryId: 765432, noticeNumber: 25, scopeType: 'Retail_Categorized_Single', version: 188 }, draftInitialization: 'couplus-required-v1', inputBindings: 'couplus-paths-v1', settingsInitialization: 'couplus-options-v1' };
 }
 export function projectionFixture(snapshot = syntheticSnapshot()) {
-  const schema = module('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId, snapshot.categoryPath, snapshot);
+  const schema = providedOptionModule('app/quotation-schema.ts').getQuotationSchema(snapshot.categoryId, snapshot.categoryPath, snapshot);
   const fields = Object.fromEntries(schema.fields.map(field => [field.id, { value: '', source: 'empty', needsReview: true, issues: [], validationIssues: [] }]));
   const row = { optionId: 'synthetic-one', optionLabel: '검정', included: true, fields };
   const resolved = { schema, rows: [row], issues: [], reviewMessages: [], validationIssues: [] };

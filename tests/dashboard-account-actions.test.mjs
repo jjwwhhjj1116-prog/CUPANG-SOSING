@@ -64,6 +64,9 @@ function harness({workspaceOwnerId='test-owner',settingsBody={settings:{brand:'�
  }
  const stubs=new Map();
  function componentModule(name){
+  // This presentation-only wrapper must not swallow the real parent's child
+  // props. Its modal behavior is covered by the dedicated dialog tests.
+  if(name==='detail-image-edit-dialog')return{DetailImageEditDialog:props=>{components.set(name,props);return props.children;}};
   let component=stubs.get(name);if(!component){component=props=>{components.set(name,props);componentMounts.set(name,active);componentCounts.set(name,(componentCounts.get(name)??0)+1);
    if(name==='option-seo-editor'||name==='product-content-editor'||name==='seo-workspace-editor'){
     const [draft,setDraft]=hooks.useState('');
@@ -320,13 +323,18 @@ test('unmounting a pending deletion preflight aborts it and retained callbacks c
 test('detail image translation parent targets the free editor while rejecting missing images and paid or free busy work',async()=>{
  const h=harness();try{
   await h.settle();h.component('registration-board').onOpen(h.products[0],'상세 이미지');await h.settle();const source=JSON.parse(h.products[0].image_keys)[0];
+  const closeCleanEditor=async()=>{h.component('free-image-translation-panel').onCloseGuard(()=>true);h.component('detail-image-edit-dialog').onClose();await h.settle();assert.equal(h.component('detail-image-edit-dialog').open,false);};
   assert.equal(h.component('free-image-translation-panel').translationTarget,undefined);
   for(const [language,sequence]of [['zh',1],['en',2],['zh',3]]){
    h.component('product-content-editor').onTranslateImage(source,language);await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),{sourceKey:source,sourceLanguage:language,sequence});
+   // A real user must close the clean Stage5 dialog before pressing another
+   // background source button. Keep every original sequence/target assertion.
+   await closeCleanEditor();
   }
   const previous=plain(h.component('free-image-translation-panel').translationTarget);h.component('product-content-editor').onTranslateImage('other-owner/foreign.png','en');await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),previous);
   h.component('image-generation-panel').onBusyChange(true);await h.settle();assert.equal(h.component('product-content-editor').imageProcessingBusy,true);h.component('product-content-editor').onTranslateImage(source,'en');await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),previous);
   h.component('image-generation-panel').onBusyChange(false);await h.settle();h.component('product-content-editor').onTranslateImage(source,'en');await h.settle();assert.equal(h.component('free-image-translation-panel').translationTarget.sequence,4);
+  await closeCleanEditor();
   assert.equal(h.component('image-generation-panel').translationTarget,undefined);
   h.component('free-image-translation-panel').onBusyChange(true);h.component('product-content-editor').onTranslateImage(source,'zh','detailTop');await h.settle();assert.equal(h.component('free-image-translation-panel').translationTarget.sequence,4);
   h.component('free-image-translation-panel').onBusyChange(false);h.component('product-content-editor').onTranslateImage(source,'zh','detailTop');await h.settle();assert.deepEqual(plain(h.component('free-image-translation-panel').translationTarget),{sourceKey:source,sourceLanguage:'zh',sequence:5,role:'detailTop'});

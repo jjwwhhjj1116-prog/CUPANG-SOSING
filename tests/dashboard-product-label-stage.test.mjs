@@ -28,6 +28,9 @@ function harness() {
     useEffect(fn, deps) { const instance = active, slot = instance.index++, old = instance.slots[slot]; if (!old || !deps || deps.some((value, i) => !Object.is(value, old.deps[i]))) { const value = { deps, cleanup: old?.cleanup }; instance.slots[slot] = value; effects.push(() => { value.cleanup?.(); value.cleanup = fn(); }); } },
   };
   function componentModule(name) {
+    // The Stage5 presentation wrapper also contains the retained Stage6 panel.
+    // Render its children so these label scope/mount assertions still run.
+    if (name === 'detail-image-edit-dialog') return { DetailImageEditDialog: received => received.children };
     if (!components.has(name)) {
       const child = received => {
         const [draft, setDraft] = hooks.useState(''), [busy, setBusy] = hooks.useState(false), instance = active;

@@ -30,14 +30,14 @@ function harness(fetcher,{workspaceOwnerId='test-owner',onRestored=async()=>{}}=
 
 test('removed-product dialog exposes restore only after a fresh response belonging to the workspace owner',async()=>{
  const pending=deferred(),row=removed();const h=harness(()=>pending.promise);try{
-  assert.equal(h.buttons().length,0);assert.equal(h.requests.length,1);assert.equal(h.requests[0].url,'/api/products?removed=only');assert.equal(h.requests[0].init.cache,'no-store');
-  pending.resolve(Response.json({products:[row]}));await h.settle();assert.equal(h.buttons().length,1);assert.match(text(h.render()),/보관 상품 removed-a/);assert.equal(h.requests.length,1);assert.equal(h.restored,0);
+  assert.equal(h.buttons().length,0);assert.equal(h.requests.length,1);assert.equal(h.requests[0].url,'/api/products/removed');assert.equal(h.requests[0].init.cache,'no-store');
+  pending.resolve(Response.json({nextCursor:null,products:[row]}));await h.settle();assert.equal(h.buttons().length,1);assert.match(text(h.render()),/보관 상품 removed-a/);assert.equal(h.requests.length,1);assert.equal(h.restored,0);
  }finally{h.close();}
 });
 
 test('removed list displays saved registration metadata and restores the unchanged UUID and clock',async()=>{
  const row={...removed('14b09f83-6365-426f-b394-080af6bb5ddd'),registration_number:'261015003001'},legacy=removed('abcdef12-legacy');
- const before=JSON.stringify([row,legacy]),h=harness(async(_url,init)=>init.method==='DELETE'?Response.json({productId:row.id,restored:true}):Response.json({products:[row,legacy]}));
+ const before=JSON.stringify([row,legacy]),h=harness(async(_url,init)=>init.method==='DELETE'?Response.json({productId:row.id,restored:true}):Response.json({nextCursor:null,products:[row,legacy]}));
  try{
   await h.settle();const cells=nodes(h.render()).filter(node=>node.type==='tr'&&node.key).map(node=>nodes(node).find(cell=>cell.type==='td')).map(text);
   assert.deepEqual(cells,['261015003001','YP-ABCDEF12']);assert.equal(JSON.stringify([row,legacy]),before);
@@ -48,8 +48,8 @@ test('removed list displays saved registration metadata and restores the unchang
 });
 
 test('foreign-owner and malformed removal lists expose no restore controls and can recover through a fresh read',async()=>{
- for(const body of [{products:[removed('foreign','other-owner')]},{products:[removed(),removed('foreign','other-owner')]},{products:null},{},{products:[null]},{products:[{...removed(),updated_at:''}]},{products:[{...removed(),removed_at:''}]}]){
-  let attempt=0;const h=harness(async()=>Response.json(++attempt===1?body:{products:[removed()]}));try{
+ for(const body of [{nextCursor:null,products:[removed('foreign','other-owner')]},{nextCursor:null,products:[removed(),removed('foreign','other-owner')]},{nextCursor:null,products:null},{},{nextCursor:null,products:[null]},{nextCursor:null,products:[{...removed(),updated_at:''}]},{nextCursor:null,products:[{...removed(),removed_at:''}]}]){
+  let attempt=0;const h=harness(async()=>Response.json(++attempt===1?body:{nextCursor:null,products:[removed()]}));try{
    await h.settle();assert.equal(h.buttons().length,0);assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));assert.equal(h.restored,0);
    h.refresh();await h.settle();assert.equal(h.buttons().length,1);assert.ok(h.requests.every(request=>!request.init.method));
   }finally{h.close();}
@@ -57,7 +57,7 @@ test('foreign-owner and malformed removal lists expose no restore controls and c
 });
 
 test('restore sends the exact product/version/removal timestamp once and keeps other removed rows',async()=>{
- const row=removed(),other=removed('removed-b'),pending=deferred();const h=harness(async(_url,init)=>init.method==='DELETE'?pending.promise:Response.json({products:[row,other]}));try{
+ const row=removed(),other=removed('removed-b'),pending=deferred();const h=harness(async(_url,init)=>init.method==='DELETE'?pending.promise:Response.json({nextCursor:null,products:[row,other]}));try{
   await h.settle();const clicked=h.buttons()[0].props.onClick;clicked();clicked();await h.settle();
   const writes=h.requests.filter(request=>request.init.method==='DELETE');assert.equal(writes.length,1);assert.equal(writes[0].url,'/api/products/'+row.id);assert.deepEqual(JSON.parse(writes[0].init.body),{action:'restore',expectedVersion:row.updated_at,expectedRemovedAt:row.removed_at});assert.equal(writes[0].init.headers['content-type'],'application/json');
   assert.ok(nodes(h.render()).filter(node=>node.type==='button').every(node=>node.props.disabled));assert.deepEqual(h.busyChanges,[true]);
@@ -67,7 +67,7 @@ test('restore sends the exact product/version/removal timestamp once and keeps o
 
 test('failed or malformed restore results preserve the row and release the lock for retry',async()=>{
  const row=removed();for(const reply of [()=>Response.json({error:'버전 변경'},{status:409}),()=>Response.json({productId:'wrong-product',restored:true}),()=>Response.json({productId:row.id,restored:false}),()=>Response.json({}),()=>Response.json(null),()=>new Response('not-json',{headers:{'content-type':'application/json'}})]){
-  let writes=0;const h=harness(async(_url,init)=>init.method==='DELETE'?(++writes===1?reply():Response.json({productId:row.id,restored:true})):Response.json({products:[row]}));try{
+  let writes=0;const h=harness(async(_url,init)=>init.method==='DELETE'?(++writes===1?reply():Response.json({productId:row.id,restored:true})):Response.json({nextCursor:null,products:[row]}));try{
    await h.settle();h.buttons()[0].props.onClick();await h.settle();assert.equal(h.restored,0);assert.equal(h.buttons().length,1);assert.equal(h.buttons()[0].props.disabled,false);assert.ok(nodes(h.render()).some(node=>node.props?.role==='alert'));assert.deepEqual(h.busyChanges,[true,false]);
    h.buttons()[0].props.onClick();await h.settle();assert.equal(h.restored,1);assert.equal(h.buttons().length,0);assert.equal(writes,2);
   }finally{h.close();}
@@ -75,16 +75,16 @@ test('failed or malformed restore results preserve the row and release the lock 
 });
 
 test('closing aborts an outstanding read and ignores its late response',async()=>{
- const pending=deferred(),h=harness(()=>pending.promise);h.close();assert.equal(h.requests[0].init.signal.aborted,true);pending.resolve(Response.json({products:[removed()]}));await h.settle();assert.equal(h.lateWrites,0);assert.equal(h.restored,0);assert.deepEqual(h.busyChanges,[false]);
+ const pending=deferred(),h=harness(()=>pending.promise);h.close();assert.equal(h.requests[0].init.signal.aborted,true);pending.resolve(Response.json({nextCursor:null,products:[removed()]}));await h.settle();assert.equal(h.lateWrites,0);assert.equal(h.restored,0);assert.deepEqual(h.busyChanges,[false]);
 });
 
 test('closing aborts an outstanding restore and emits busy cleanup without late state or parent updates',async()=>{
- const pending=deferred(),h=harness(async(_url,init)=>init.method==='DELETE'?pending.promise:Response.json({products:[removed()]}));await h.settle();h.buttons()[0].props.onClick();await h.settle();h.close();
+ const pending=deferred(),h=harness(async(_url,init)=>init.method==='DELETE'?pending.promise:Response.json({nextCursor:null,products:[removed()]}));await h.settle();h.buttons()[0].props.onClick();await h.settle();h.close();
  assert.equal(h.requests.find(request=>request.init.method==='DELETE').init.signal.aborted,true);assert.deepEqual(h.busyChanges,[true,false]);pending.resolve(Response.json({productId:'removed-a',restored:true}));await h.settle();assert.equal(h.restored,0);assert.equal(h.lateWrites,0);assert.deepEqual(h.busyChanges,[true,false]);
 });
 
 test('changing owner aborts the old restore and releases its busy state before loading the new account',async()=>{
- const pending=deferred();let owner='test-owner';const h=harness(async(_url,init)=>init.method==='DELETE'?pending.promise:Response.json({products:[removed(owner==='test-owner'?'removed-a':'removed-b',owner)]}));try{
+ const pending=deferred();let owner='test-owner';const h=harness(async(_url,init)=>init.method==='DELETE'?pending.promise:Response.json({nextCursor:null,products:[removed(owner==='test-owner'?'removed-a':'removed-b',owner)]}));try{
   await h.settle();h.buttons()[0].props.onClick();await h.settle();owner='other-owner';h.changeOwner(owner);await h.settle();
   assert.equal(h.requests.find(request=>request.init.method==='DELETE').init.signal.aborted,true);assert.deepEqual(h.busyChanges,[true,false]);assert.equal(h.buttons().length,1);assert.equal(h.buttons()[0].props.disabled,false);
   pending.resolve(Response.json({productId:'removed-a',restored:true}));await h.settle();assert.equal(h.restored,0);assert.match(text(h.render()),/보관 상품 removed-b/);assert.deepEqual(h.busyChanges,[true,false]);

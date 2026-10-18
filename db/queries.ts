@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import type { PricePolicy } from '@/app/pricing';
 import type { QuotationFieldsState, QuotationSourceGuard } from '@/db/quotation-fields';
 import { productRegistrationCounterSchema, productRegistrationSchema, productRegistrationOptionsSchema, prepareProductRegistration, withRegistrationNumber } from '@/db/product-registration';
+import type { RemovedProductsQuery } from '@/app/product-removal-pagination';
 
 export type ProductRecord = {
   id: string; owner_id: string; source_url: string; title: string;
@@ -73,6 +74,21 @@ export async function listProducts(ownerId: string, removed: 'exclude' | 'only' 
           ) ORDER BY p.updated_at DESC LIMIT 200`,
   ).bind(ownerId).all<ProductRecord | RemovedProductRecord>();
   return result.results.map(withRegistrationNumber);
+}
+
+/** All removed records remain reachable without changing the legacy list API. */
+export async function listRemovedProductsPage(ownerId:string,query:RemovedProductsQuery){
+  await ensureDatabase();
+  const cursor=query.cursor;
+  const result=await database().prepare(`SELECT p.*,r.removed_at,
+    (SELECT registration_number FROM product_registration_numbers n WHERE n.product_id=p.id AND n.owner_id=p.owner_id) AS registration_number
+    FROM product_removals r INNER JOIN products p ON p.id=r.product_id AND p.owner_id=r.owner_id
+    WHERE r.owner_id=?${cursor?' AND (r.removed_at<? OR (r.removed_at=? AND r.product_id<?))':''}
+    ORDER BY r.removed_at DESC,r.product_id DESC LIMIT ?`)
+    .bind(ownerId,...(cursor?[cursor.removedAt,cursor.removedAt,cursor.id]:[]),query.limit+1).all<RemovedProductRecord>();
+  const products=result.results.slice(0,query.limit).map(withRegistrationNumber);
+  const last=products.at(-1);
+  return{products,next:result.results.length>query.limit&&last?{removedAt:last.removed_at,id:last.id}:null};
 }
 
 export async function insertProduct(product: ProductRecord, policy?: PricePolicy) {

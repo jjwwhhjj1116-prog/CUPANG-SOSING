@@ -27,6 +27,8 @@ export function DetailImageBatchPanel(props: Props) {
   const [batch, setBatch] = useState<DetailImageBatch | null>(null), latestBatch = useRef<DetailImageBatch | null>(null);
   const [language, setLanguage] = useState<'zh' | 'en'>('zh'), [reviewed, setReviewed] = useState<number[]>([]), liveReviewed = useRef<number[]>([]);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
+  const readBasis = JSON.stringify([productId, optionId, profileId ?? null, stage, version, refreshToken ?? null]);
+  const idleRead = useRef<{ basis: string; controller: AbortController | null } | null>(null);
   const prepareScope = JSON.stringify([scope, version, refreshToken, active, disabled]);
   const [prepareClock, setPrepareClock] = useState({ scope: prepareScope, token: {} });
   if (prepareClock.scope !== prepareScope) setPrepareClock({ scope: prepareScope, token: {} });
@@ -52,18 +54,35 @@ export function DetailImageBatchPanel(props: Props) {
     operation.current = null; onBusyChange?.(false); if (mounted.current) setBusy(false);
   }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; operation.current?.abort(); operation.current = null; controls.current.onBusyChange?.(false); }; }, []);
-  useEffect(() => {
-    if (!active) { operation.current?.abort(); if (operation.current) finish(operation.current); return; }
-    if (latestBatch.current) return;
+  async function loadSavedView(explicit = false) {
+    if (latestBatch.current || !explicit && idleRead.current?.basis === readBasis) return;
     const controller = begin(); if (!controller) return;
-    void readDetailBatchView(basis, controller.signal).then(value => {
-      if (!valid(controller)) return;
+    const attempt = { basis: readBasis, controller: controller as AbortController | null }; idleRead.current = attempt;
+    const currentRead = () => valid(controller) && idleRead.current === attempt && readBasis === JSON.stringify([
+      controls.current.productId, controls.current.optionId, controls.current.profileId ?? null, controls.current.stage ?? 'detail', controls.current.version, controls.current.refreshToken ?? null]);
+    try {
+      const value = await readDetailBatchView(basis, controller.signal);
+      if (!currentRead()) return;
       if (value.productVersion !== controls.current.version) throw Error('상품 저장 상태가 변경됐습니다. 상품을 다시 열어주세요.');
       latestSaved.current = value; setSaved(value);
-    }).catch(cause => { if (valid(controller)) setError(cause instanceof Error ? cause.message : `${label} 조회 실패`); }).finally(() => finish(controller));
-    // Source refreshes never discard completed previews or uncertain saves.
+    } catch (cause) { if (currentRead()) setError(cause instanceof Error ? cause.message : `${label} 조회 실패`); }
+    finally {
+      if (idleRead.current === attempt) { if (controller.signal.aborted) idleRead.current = null; else attempt.controller = null; }
+      finish(controller);
+    }
+  }
+  useEffect(() => {
+    const reading = idleRead.current;
+    if (reading?.controller && (reading.basis !== readBasis || !active)) {
+      reading.controller.abort(); finish(reading.controller); idleRead.current = null;
+    }
+    if (!active) { operation.current?.abort(); if (operation.current) finish(operation.current); return; }
+    void loadSavedView();
+    // Sibling busy/unlock transitions are not new source data. Latch both a
+    // completed read and a reported failure; explicit retry still reads again.
+    // Aborted/skipped reads resume after unlock or a real source-basis change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, active, disabled, version, refreshToken]);
+  }, [readBasis, active, disabled, busy]);
   function permission() {
     if (controls.current.beforeApply && !controls.current.beforeApply()) { setError('이미지 순서·HTML 등 수정한 입력을 먼저 저장한 뒤 진행해주세요.'); return false; }
     return true;
@@ -137,6 +156,7 @@ export function DetailImageBatchPanel(props: Props) {
       : <button type="button" className="btn blue" disabled={locked || uncertain || !count || !capacity} onClick={() => void prepare()}>{batch ? '현재 추가 목록으로 번역 다시 준비' : '모든 이미지 일괄 처리'}</button>}
     {busy && <button type="button" className="btn ghost" onClick={() => { const controller = operation.current; controller?.abort(); if (controller) finish(controller); setMessage('작업을 중단했습니다. 준비한 결과와 확인된 저장 결과는 보존했습니다.'); }}>일괄 이미지 작업 중단</button>}
     {error && <p role="alert">{error}</p>}{eligibilityError && <p role="alert">{eligibilityError}</p>}{message && <p role="status">{message}</p>}
+    {error && !batch && <button type="button" className="btn ghost" disabled={locked} onClick={() => void loadSavedView(true)}>저장 이미지 다시 확인</button>}
     {stale && <p role="status">상품 저장 상태가 변경됐습니다. 준비한 결과는 유지됩니다. 저장 결과 확인이 필요한 항목부터 확인하고 최신 목록으로 다시 준비해주세요.</p>}
     {batch && <div className="panel-stack">{batch.items.map(item => <article key={`${item.slotIndex}:${item.sourceKey}`} className="panel-stack" aria-label={`일괄 ${label} ${item.slotIndex + 1}`}>
       <h5>{label} {item.slotIndex + 1} · {({ pending: '준비 중', ready: '검토 대기', skipped: '설정 배너 · 원본 유지', failed: '원본 유지', applied: '적용 완료', uncertain: '저장 확인 필요' })[item.status]}</h5>

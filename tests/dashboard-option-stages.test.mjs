@@ -43,6 +43,9 @@ function harness(initial = {}) {
     },
   };
   function componentModule(name) {
+    // Keep this wrapper transparent; retain the stateful editor mocks and all
+    // scope/mount assertions below instead of turning the child into null.
+    if (name === 'detail-image-edit-dialog') return { DetailImageEditDialog: received => received.children };
     if (!stubs.has(name)) {
       const child = received => {
         const [draft, setDraft] = hooks.useState(''), [saving, setSaving] = hooks.useState(false);

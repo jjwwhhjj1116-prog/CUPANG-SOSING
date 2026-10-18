@@ -7,8 +7,12 @@ import {createRequire} from 'node:module';
 const native=createRequire(import.meta.url);
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[];
 function harness(){
- const slots=[],cache=new Map(),components=new Map();let cursor=0,allowed=true,checks=0;
- const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},useMemo:fn=>fn(),useCallback:fn=>fn,useEffect(){}};
+ const slots=[],cache=new Map(),components=new Map(),effects=[],layouts=[];let cursor=0,allowed=true,checks=0;
+ const sameDeps=(before,after)=>Array.isArray(before)&&Array.isArray(after)&&before.length===after.length&&after.every((value,index)=>Object.is(value,before[index]));
+ const effect=(queue,callback,deps)=>{const index=cursor++,previous=slots[index];if(!previous||!sameDeps(previous.deps,deps)){const next={deps,cleanup:previous?.cleanup};slots[index]=next;queue.push(()=>{next.cleanup?.();next.cleanup=callback();});}};
+ const hooks={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],value=>slots[index]=typeof value==='function'?value(slots[index]):value];},useRef(initial){const index=cursor++;return slots[index]??(slots[index]={current:initial});},
+  useMemo(fn,deps){const index=cursor++,previous=slots[index];if(!previous||!sameDeps(previous.deps,deps))slots[index]={deps,value:fn()};return slots[index].value;},useCallback(fn,deps){return hooks.useMemo(()=>fn,deps);},
+  useEffect(callback,deps){effect(effects,callback,deps);},useLayoutEffect(callback,deps){effect(layouts,callback,deps);}};
  function load(file){
   if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
   const source=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8')+(file.endsWith('dashboard-client.tsx')?'\nexport {DetailPanel};':'');
@@ -22,7 +26,7 @@ function harness(){
  const Detail=load('app/components/dashboard-client.tsx').DetailPanel;
  const product={id:'p',title:'상품',source_price_cny:2,image_keys:'["owner/a.png"]',updated_at:'2026-10-13T00:00:00Z'};
  const settings=load('app/workspace-settings.ts').defaultSettings;
- function render(tab='추가 이미지'){cursor=0;return Detail({tab,product,settings,focusedOptionId:'red',preferredProfileId:'cat',onUpload(){},onSaved(){},onManageCategories(){},onSavePrice:async()=>{},onBeforeFreeImageApply(){checks++;return allowed;}});}
+ function render(tab='추가 이미지'){cursor=0;const tree=Detail({tab,product,settings,focusedOptionId:'red',preferredProfileId:'cat',onUpload(){},onSaved(){},onManageCategories(){},onSavePrice:async()=>{},onBeforeFreeImageApply(){checks++;return allowed;}});layouts.splice(0).forEach(callback=>callback());effects.splice(0).forEach(callback=>callback());return tree;}
  const aliases={FreeImageTranslationPanel:'free-image-translation-panel:default',ImageGenerationPanel:'image-generation-panel:default'};
  const component=(name,tab,stage)=>nodes(render(tab)).find(node=>node.type?.label?.endsWith(aliases[name]??':'+name)&&(stage===undefined||node.props.stage===stage));
  return{render,component,get checks(){return checks;},permission(value){allowed=value;}};

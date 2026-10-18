@@ -10,6 +10,7 @@ import { readLatestDetailWorkspaceForEditor, type DetailWorkspaceEditorContext }
 import { attachDetailWorkspaceFiles, readLatestDetailWorkspaceAfterAttachment, recoverDetailWorkspaceFiles, type DetailWorkspaceAttachmentAttempt } from '@/app/detail-workspace-attachment-client';
 import { DetailWorkspaceCompositePanel } from '@/app/components/detail-workspace-composite-panel';
 import { DetailWorkspaceRebasePanel } from '@/app/components/detail-workspace-rebase-panel';
+import { DetailImageEditDialog } from '@/app/components/detail-image-edit-dialog';
 
 type Props = { productId: string; optionId: string; profileId?: string; view: QuotationFieldsView; disabled?: boolean; stageActive?: boolean;
   beforeAdopt?: () => boolean; onAdopt: (keys: string[]) => void; onBusyChange?: (busy: boolean) => void; onFilesAttached?: (view: QuotationFieldsView) => void; onRefreshRequested?: () => void; onCompositeSaved?: (view: QuotationFieldsView) => void };
@@ -196,6 +197,10 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
       imageKeys: [...new Set([...view.imageKeys, ...record.files.map(file => file.key)])], generation };
     liveEditor.current = next; editorStatus.current = { busy: false, dirty: false }; editorCloseGuard.current = null; setEditor(next); setEditorBusy(false); setEditorDirty(false); setError(''); controls.current.onBusyChange?.(true);
   }
+  function closePhotoEditor(opened: PhotoEditor) {
+    if (liveEditor.current !== opened || editorStatus.current.busy || editorStatus.current.dirty || operation.current || pending.current || attachment.current || !editorCloseGuard.current?.()) return;
+    liveEditor.current = null; setEditor(null); controls.current.onBusyChange?.(false);
+  }
   async function photoSaved(opened: PhotoEditor, reply: DetailWorkspaceView, token: object | null) {
     const current = liveWork.current;
     if (!current || liveEditor.current !== opened || !valid(token) || !same(current.document, opened.context.saved.workspace?.document)) return;
@@ -305,16 +310,18 @@ export function DetailWorkspaceForm({ productId, optionId, profileId, view, disa
         const latest = liveWork.current; if (!valid(generation) || latest !== work || latest && (!validMargin(latest) || !latest.reply.workspace || !same(latest.document, latest.reply.workspace.document))) return;
         liveWork.current = null; setWork(null); setCandidate(''); setMessage('최신 배너 기준을 조회했습니다. 이전 요청 결과는 단정하지 않았습니다. 최신 상품 기준에서 변경 내용을 다시 확인해주세요.'); controls.current.onRefreshRequested?.();
       }} />
-    {editor && <section aria-label="선택한 작업 사진 편집"><FreeImageTranslationPanel productId={productId} version={editor.context.selection.view.productVersion} imageKeys={editor.imageKeys}
+    {editor && <DetailImageEditDialog open identity={JSON.stringify([productId,optionId,profileId??null,view.productVersion,editor.target])} blocked={editorBusy||editorDirty||busy}
+      canClose={()=>liveEditor.current===editor&&!editorStatus.current.busy&&!editorStatus.current.dirty&&!operation.current&&!pending.current&&!attachment.current&&editorCloseGuard.current?.()===true}
+      onClose={()=>closePhotoEditor(editor)}><section aria-label="선택한 작업 사진 편집"><FreeImageTranslationPanel productId={productId} version={editor.context.selection.view.productVersion} imageKeys={editor.imageKeys}
       translationTarget={editor.target} workspaceContext={editor.context} active={stageActive} disabled={disabled || stale || busy}
       beforeApply={() => liveEditor.current === editor && valid(generation) && !operation.current && !pending.current && !attachment.current && same(liveWork.current?.document, editor.context.saved.workspace?.document)}
       onBusyChange={value => { if (liveEditor.current !== editor || editorStatus.current.busy === value) return; editorStatus.current = { ...editorStatus.current, busy: value }; setEditorBusy(value); }}
       onEditingChange={value => { if (liveEditor.current !== editor || editorStatus.current.dirty === value) return; editorStatus.current = { ...editorStatus.current, dirty: value }; setEditorDirty(value); }}
       onCloseGuard={guard => { if (liveEditor.current === editor) editorCloseGuard.current = guard; }}
       onWorkspaceSaved={reply => void photoSaved(editor, reply, generation)} />
-      <button type="button" className="btn ghost" disabled={editorBusy || editorDirty || busy} onClick={() => { if (liveEditor.current !== editor || editorStatus.current.busy || editorStatus.current.dirty || !editorCloseGuard.current?.()) return; liveEditor.current = null; setEditor(null); controls.current.onBusyChange?.(false); }}>작업 사진 편집 닫기</button>
+      <button type="button" className="btn ghost" disabled={editorBusy || editorDirty || busy} onClick={() => closePhotoEditor(editor)}>작업 사진 편집 닫기</button>
       <p>편집을 계속할 수 없으면 현재 편집 초안 대신 최신 서버 구성을 읽기로 다시 열 수 있습니다. 이전 요청의 성공 여부는 단정하지 않습니다.</p>
-      <button type="button" className="btn ghost" disabled={editorBusy || busy || disabled || !stageActive} onClick={() => void latestEditor(editor)}>최신 구성으로 다시 열기</button></section>}
+      <button type="button" className="btn ghost" disabled={editorBusy || busy || disabled || !stageActive} onClick={() => void latestEditor(editor)}>최신 구성으로 다시 열기</button></section></DetailImageEditDialog>}
     {attaching && <div><p role="status">상품 이미지에 추가한 결과를 확인할 때까지 현재 구성을 유지합니다.</p><button type="button" className="btn ghost" disabled={busy || disabled || !stageActive} onClick={() => void recoverAttachment()}>상품 이미지 추가 결과 확인</button>
       {attachmentRetry && <button type="button" className="btn ghost" disabled={busy || disabled || !stageActive} onClick={() => void attachFiles(true)}>같은 편집 결과 다시 추가</button>}</div>}
     {attaching && <button type="button" className="btn ghost" disabled={busy || disabled || !stageActive} onClick={() => void latestAttachment()}>최신 상태로 다시 열기</button>}

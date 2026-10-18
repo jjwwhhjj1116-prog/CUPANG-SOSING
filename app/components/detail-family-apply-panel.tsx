@@ -22,6 +22,8 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
   const [copyEditor, setCopyEditor] = useState(false);
   const [corrupt, setCorrupt] = useState(false), [checkedList, setCheckedList] = useState(false);
   const mounted = useRef(true), root = useRef<HTMLElement>(null), operation = useRef<AbortController | null>(null), pending = useRef<Review | null>(null);
+  const readBasis = JSON.stringify([productId, profileId ?? null, version, refreshToken ?? null]);
+  const catalogRead = useRef<{ basis: string; controller: AbortController | null } | null>(null);
   const sourceKey = JSON.stringify([active, disabled, version, refreshToken]);
   const [clock, setClock] = useState({ key: sourceKey, token: {} });
   if (clock.key !== sourceKey) setClock({ key: sourceKey, token: {} });
@@ -58,9 +60,11 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
     return () => { if (prior?.isConnected) prior.focus(); };
   }, [open, active]);
 
-  async function load() {
+  async function load(automatic = false) {
     if (!controls.current.active || controls.current.disabled || operation.current || pending.current) return;
+    if (automatic && catalogRead.current?.basis === readBasis) return;
     const controller = new AbortController(), generation = ++sequence.current; operation.current = controller; setBusy(true); setError('');
+    const attempt = { basis: readBasis, controller: controller as AbortController | null }; catalogRead.current = attempt;
     try {
       const saved = await readDetailFamilyCatalog(productId, profileId, controller.signal);
       if (!mounted.current || controller.signal.aborted || generation !== sequence.current) return;
@@ -70,15 +74,20 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
       setSelected(previous => opened.current ? previous.filter(id => eligible.includes(id)) : eligible.length <= 19 ? eligible : []);
       setCopyEditor(previous => opened.current ? previous && !!saved.editor : !!saved.editor);
     } catch (cause) { if (mounted.current && !controller.signal.aborted && generation === sequence.current) setError(errorText(cause)); }
-    finally { if (operation.current === controller) { operation.current = null; if (mounted.current) setBusy(false); } }
+    finally {
+      if (catalogRead.current === attempt) { if (controller.signal.aborted) catalogRead.current = null; else attempt.controller = null; }
+      if (operation.current === controller) { operation.current = null; if (mounted.current) setBusy(false); }
+    }
   }
   useEffect(() => {
     let disposed = false;
-    void Promise.resolve().then(() => { if (!disposed && !liveReview.current && !opened.current && !pending.current) void load(); });
+    void Promise.resolve().then(() => { if (!disposed && !liveReview.current && !opened.current && !pending.current) void load(true); });
     return () => { disposed = true; };
-    // Re-reading never discards a pending write or a reviewed selection.
+    // A completed/error catalog read stays with its exact source basis. A
+    // sibling unlock does not retry it; the explicit reload button still does.
+    // Aborted/skipped reads resume, without replacing pending or reviewed work.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId, profileId, version, refreshToken, active, disabled]);
+  }, [readBasis, active, disabled, busy]);
   const canEnter = () => mounted.current && controls.current.active && !controls.current.disabled && !operation.current;
   function start() {
     if (!canEnter() || uncertain || !catalog?.sourceReady || !catalog.targets.some(target => target.eligible) || catalog.sourceVersion !== controls.current.version) return;
@@ -101,6 +110,9 @@ export function DetailFamilyApplyForm({ productId, profileId, version, refreshTo
   }
   function finish(result: DetailFamilyResult | null) {
     try { sessionStorage.removeItem(storage); } catch { /* Immutable server evidence is still available for read-only recovery. */ }
+    // Finishing an explicit save/recovery does not add a catalog request.
+    // A parent source refresh or the explicit reload button owns that read.
+    catalogRead.current = { basis: readBasis, controller: null };
     pending.current = null; liveReview.current = null; opened.current = false; setUncertain(false); setReview(null); setOpen(false); setAccepted(false);
     setMessage(!result ? '이 요청의 저장 기록이 없습니다. 최신 대상을 다시 확인해주세요.' : result.current
       ? `분할 상품 ${result.receipt.targets.length}개에 상세 적용을 완료했습니다. 대상별 견적을 확인해주세요.`
