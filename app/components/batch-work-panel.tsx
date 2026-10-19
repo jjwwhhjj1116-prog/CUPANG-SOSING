@@ -5,11 +5,15 @@ import { runBatchProduct } from '@/app/batch-work';
 import { BatchLabelPanel } from '@/app/components/batch-label-panel';
 import { BatchTranslationPanel } from '@/app/components/batch-translation-panel';
 import { BatchImageWorkPanel } from '@/app/components/batch-image-work-panel';
+import { BatchLabelDraftPanel } from '@/app/components/batch-label-draft-panel';
 type Item = {id:string;title:string;updated_at:string};
 type Result = {status:'waiting'|'running'|'done'|'failed';message:string};
 export function BatchWorkPanel({products,onOpen,onBusyChange}:{products:Item[];onOpen:(id:string,step?:'대표 이미지'|'견적서'|'작업')=>void;onBusyChange?:(busy:boolean)=>void}) {
   const [busy,setBusy]=useState(false);const [results,setResults]=useState<Record<string,Result>>({});
-  const [mode,setMode]=useState<'pricing'|'translation'|'labels'|'images'>('pricing');
+  const [mode,setMode]=useState<'pricing'|'translation'|'labels'|'images'|'labelDrafts'>('pricing');
+  const [labelProducts,setLabelProducts]=useState<Item[]>(products),[draftProducts,setDraftProducts]=useState<Item[]>(products);
+  const [draftBusy,setDraftBusy]=useState(false),[draftPending,setDraftPending]=useState(false);
+  const draftBusyRef=useRef(false),draftPendingRef=useRef(false);
   const [imageProducts,setImageProducts]=useState<Item[]>(products),[imageAutoPrepare,setImageAutoPrepare]=useState(false);
   const [imagesBusy,setImagesBusy]=useState(false),[imagesPending,setImagesPending]=useState(false);
   const imagesBusyRef=useRef(false),imagesPendingRef=useRef(false);
@@ -18,11 +22,13 @@ export function BatchWorkPanel({products,onOpen,onBusyChange}:{products:Item[];o
   const changeLabelsBusy=(value:boolean)=>{labelsBusyRef.current=value;setLabelsBusy(value);busyCallback.current?.(value);};
   const changeImagesBusy=(value:boolean)=>{imagesBusyRef.current=value;setImagesBusy(value);busyCallback.current?.(value||imagesPendingRef.current);};
   const changeImagesPending=(value:boolean)=>{imagesPendingRef.current=value;setImagesPending(value);busyCallback.current?.(value||imagesBusyRef.current);};
+  const changeDraftBusy=(value:boolean)=>{draftBusyRef.current=value;setDraftBusy(value);busyCallback.current?.(value||draftPendingRef.current);};
+  const changeDraftPending=(value:boolean)=>{draftPendingRef.current=value;setDraftPending(value);busyCallback.current?.(value||draftBusyRef.current);};
   const stop=useRef(false);const keys=useRef(new Map<string,string>());
   const controller=useRef<AbortController|null>(null);
   useEffect(()=>()=>{stop.current=true;controller.current?.abort();busyCallback.current?.(false);},[]);
   async function run() {
-    if(controller.current||labelsBusyRef.current||imagesBusyRef.current||imagesPendingRef.current)return;
+    if(controller.current||labelsBusyRef.current||imagesBusyRef.current||imagesPendingRef.current||draftBusyRef.current||draftPendingRef.current)return;
     const active=new AbortController();controller.current=active;setBusy(true);busyCallback.current?.(true);stop.current=false;
     const preparedProducts:Item[]=[];
     for(const product of products) {
@@ -43,13 +49,15 @@ export function BatchWorkPanel({products,onOpen,onBusyChange}:{products:Item[];o
     busyCallback.current?.(false);
     if(!active.signal.aborted){setBusy(false);if(!stop.current&&preparedProducts.length){setImageProducts(preparedProducts);setImageAutoPrepare(true);setMode('images');}}
   }
-  const productResults=<ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong><p role="status">{results[product.id]?.message??'실행 대기'}</p><button className="btn ghost" disabled={busy||imagesBusy||imagesPending} onClick={()=>onOpen(product.id,'대표 이미지')}>이미지 초안 검토</button><button className="btn ghost" disabled={busy||imagesBusy||imagesPending} onClick={()=>onOpen(product.id,'견적서')}>견적 초안 검토</button><button className="btn ghost" disabled={busy||imagesBusy||imagesPending} onClick={()=>onOpen(product.id,'작업')}>상품별 작업 열기</button></li>)}</ul>;
-  if(mode==='images')return <div className="modal-form" data-workspace-saving={imagesBusy} data-workspace-dirty={imagesPending}><button type="button" className="btn ghost" disabled={imagesBusy||imagesPending} onClick={()=>{if(!imagesBusyRef.current&&!imagesPendingRef.current)setMode('pricing');}}>← 초안 준비 작업</button>{productResults}<BatchImageWorkPanel products={imageProducts} autoPrepare={imageAutoPrepare} onBusyChange={changeImagesBusy} onPendingChange={changeImagesPending}/></div>;
-  if(mode==='labels')return <div className="modal-form" data-workspace-saving={labelsBusy}><button type="button" className="btn ghost" disabled={labelsBusy} onClick={()=>{if(!labelsBusyRef.current)setMode('pricing');}}>← 초안 준비 작업</button><BatchLabelPanel products={products} onOpen={onOpen} onBusyChange={changeLabelsBusy}/></div>;
+  const productResults=<ul className="batch-work-list">{products.map(product=><li key={product.id}><strong>{product.title}</strong><p role="status">{results[product.id]?.message??'실행 대기'}</p><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending} onClick={()=>onOpen(product.id,'대표 이미지')}>이미지 초안 검토</button><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending} onClick={()=>onOpen(product.id,'견적서')}>견적 초안 검토</button><button className="btn ghost" disabled={busy||imagesBusy||imagesPending||draftBusy||draftPending} onClick={()=>onOpen(product.id,'작업')}>상품별 작업 열기</button></li>)}</ul>;
+  if(mode==='images')return <div className="modal-form" data-workspace-saving={imagesBusy} data-workspace-dirty={imagesPending}><button type="button" className="btn ghost" disabled={imagesBusy||imagesPending} onClick={()=>{if(!imagesBusyRef.current&&!imagesPendingRef.current)setMode('pricing');}}>← 초안 준비 작업</button><button type="button" className="btn blue" disabled={imagesBusy||imagesPending} onClick={()=>{if(imagesBusyRef.current||imagesPendingRef.current)return;setDraftProducts(imageProducts);setMode('labelDrafts');}}>다음: 한글표시사항 초안 작성</button>{productResults}<BatchImageWorkPanel products={imageProducts} autoPrepare={imageAutoPrepare} onBusyChange={changeImagesBusy} onPendingChange={changeImagesPending}/></div>;
+  if(mode==='labelDrafts')return <div className="modal-form" data-workspace-saving={draftBusy} data-workspace-dirty={draftPending}><button type="button" className="btn ghost" disabled={draftBusy||draftPending} onClick={()=>{if(!draftBusyRef.current&&!draftPendingRef.current)setMode('pricing');}}>← 초안 준비 작업</button>{productResults}<BatchLabelDraftPanel products={draftProducts} autoGenerateDraft onBusyChange={changeDraftBusy} onPendingChange={changeDraftPending}/><button type="button" className="btn blue" disabled={draftBusy||draftPending} onClick={()=>{if(draftBusyRef.current||draftPendingRef.current)return;setLabelProducts(draftProducts);setMode('labels');}}>다음: 저장한 표시사항 PNG 일괄 생성·연결</button></div>;
+  if(mode==='labels')return <div className="modal-form" data-workspace-saving={labelsBusy}><button type="button" className="btn ghost" disabled={labelsBusy} onClick={()=>{if(!labelsBusyRef.current)setMode('pricing');}}>← 초안 준비 작업</button><BatchLabelPanel products={labelProducts} onOpen={onOpen} onBusyChange={changeLabelsBusy}/></div>;
   if(mode==='translation')return <div className="modal-form"><button type="button" className="btn ghost" onClick={()=>setMode('pricing')}>← 초안 준비 작업</button><BatchTranslationPanel products={products} onOpen={onOpen}/></div>;
   return <div className="modal-form">
     <button type="button" className="btn blue" disabled={busy} onClick={()=>setMode('translation')}>완료된 번역 모아서 검토·적용</button>
-    <button type="button" className="btn blue" disabled={busy} onClick={()=>setMode('labels')}>선택 상품 표시사항 PNG 일괄 생성·연결</button>
+    <button type="button" className="btn blue" disabled={busy} onClick={()=>{setDraftProducts(products);setMode('labelDrafts');}}>선택 상품 표시사항 초안 작성·검토</button>
+    <button type="button" className="btn blue" disabled={busy} onClick={()=>{setLabelProducts(products);setMode('labels');}}>선택 상품 표시사항 PNG 일괄 생성·연결</button>
     <button type="button" className="btn blue" disabled={busy} onClick={()=>{setImageProducts(products);setImageAutoPrepare(false);setMode('images');}}>대표·추가·상세 이미지 모아서 번역</button>
     <p>선택한 {products.length}개 상품의 저장된 원본으로 대표·추가·상세 이미지와 옵션 이미지 초안을 준비하고 가격을 확인합니다. 직접 수정한 값·공란·이미지 순서는 유지합니다.</p>
     <p>초안·가격 확인 후 기본설정에서 이미지 번역이 켜져 있으면 무료 이미지 번역을 준비합니다. 결과를 검토·수정한 뒤 견적서에서 등록전송을 진행해주세요.</p>
