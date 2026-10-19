@@ -23,7 +23,8 @@ const yoofamSingleConfirmation=(()=>{
       const dialog=element('section',undefined,overlay);dialog.className='dialog';dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-labelledby','yoofam-single-confirm-title');dialog.tabIndex=-1;
       const stage=input.challenge.stage,label=stage==='productPage'?'가격 정보 약관 확인':stage==='imagePage'?'표시사항 연락처 약관 확인':'개별 견적서 제출 확인';
       const heading=element('h2',label,dialog);heading.id='yoofam-single-confirm-title';
-      const context=element('p',`${input.identity.company.name} · ${input.identity.company.code}\n상품 ${input.identity.productId} · 옵션 ${input.identity.optionId}\n문서 ${input.challenge.docId}`,dialog);context.className='context';
+      const memberLabel=Array.isArray(input.identity.members)?`포함 옵션 ${input.identity.members.length}개`: `옵션 ${input.identity.optionId}`;
+      const context=element('p',`${input.identity.company.name} · ${input.identity.company.code}\n상품 ${input.identity.productId} · ${memberLabel}\n문서 ${input.challenge.docId}`,dialog);context.className='context';
       element('p',stage==='productPage'||stage==='imagePage'?'Supplier Hub에 표시된 아래 약관을 읽고 현재 단계의 동의를 확인해주세요.':'작성한 상품·옵션과 견적 내용을 확인한 뒤 제출해주세요.',dialog);
       const addChoice=(key,text)=>{
         const label=element('label',undefined,dialog);label.className='choice';const box=element('input',undefined,label);box.type='checkbox';box.checked=false;

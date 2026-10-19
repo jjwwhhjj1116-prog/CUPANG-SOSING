@@ -11,7 +11,11 @@ import {readAppSupplierHubCatalog} from './catalog.mjs';
 import {readOwnedProductTransferHistory} from './product-history.mjs';
 import {readAppCompanyRegistrations} from './company-registration.mjs';
 import {dispatchSingleDocument} from './single-dispatch.mjs';
+import {dispatchProductDocument} from './product-document-dispatch.mjs';
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type==='YOOFAM_PRODUCT_DOCUMENT_REQUEST'){
+    dispatchProductDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message,code:error.code}));return true;
+  }
   if(message?.type==='YOOFAM_SINGLE_DOCUMENT_REQUEST'){
     dispatchSingleDocument(message,sender).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message,code:error.code}));return true;
   }

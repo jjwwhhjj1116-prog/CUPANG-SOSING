@@ -2,17 +2,18 @@
 window.addEventListener('message',async event=>{
   if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='YOOFAM_HUB_HANDOFF'||!/^[a-f0-9-]{36}$/.test(event.data.requestId||''))return;
   const {requestId,type}=event.data;
-  if(!['PING','PREPARE','RESULT','TRANSMIT','VALIDATE','REFRESH','REGISTRATION','COMPANY_REGISTRATIONS','HISTORY','CATEGORIES','SCHEMA','TEMPLATE','SINGLE_DOCUMENT'].includes(type))return;
+  if(!['PING','PREPARE','RESULT','TRANSMIT','VALIDATE','REFRESH','REGISTRATION','COMPANY_REGISTRATIONS','HISTORY','CATEGORIES','SCHEMA','TEMPLATE','SINGLE_DOCUMENT','PRODUCT_DOCUMENT'].includes(type))return;
   let result;
   try{
-    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',VALIDATE:'YOOFAM_RESUME_VALIDATION',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',COMPANY_REGISTRATIONS:'YOOFAM_QUERY_COMPANY_REGISTRATIONS',HISTORY:'YOOFAM_GET_PRODUCT_TRANSMISSIONS',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH',SCHEMA:'YOOFAM_READ_CATEGORY_SCHEMA',TEMPLATE:'YOOFAM_READ_CATEGORY_TEMPLATE',SINGLE_DOCUMENT:'YOOFAM_SINGLE_DOCUMENT_REQUEST'};
+    const commands={PREPARE:'YOOFAM_PREPARE_PACKAGE',RESULT:'YOOFAM_GET_RESULT',TRANSMIT:'YOOFAM_TRANSMIT_PACKAGE',VALIDATE:'YOOFAM_RESUME_VALIDATION',REFRESH:'YOOFAM_REFRESH_RESULT',REGISTRATION:'YOOFAM_REFRESH_REGISTRATION',COMPANY_REGISTRATIONS:'YOOFAM_QUERY_COMPANY_REGISTRATIONS',HISTORY:'YOOFAM_GET_PRODUCT_TRANSMISSIONS',CATEGORIES:'YOOFAM_READ_CATEGORY_BRANCH',SCHEMA:'YOOFAM_READ_CATEGORY_SCHEMA',TEMPLATE:'YOOFAM_READ_CATEGORY_TEMPLATE',SINGLE_DOCUMENT:'YOOFAM_SINGLE_DOCUMENT_REQUEST',PRODUCT_DOCUMENT:'YOOFAM_PRODUCT_DOCUMENT_REQUEST'};
     const version=type==='PING'?chrome.runtime.getManifest().version:'';
     const [major,minor,patch]=version.split('.').map(Number);
     // An app reload may inject updated disk content while the old unpacked
     // worker is still loaded. Do not advertise the new store action until the
     // installed manifest has been reloaded to its actual supporting release.
     const originalFileObservationCas=major>0||major===0&&(minor>2||minor===2&&patch>=64);
-    result=type==='PING'?{ok:true,version,categoryCatalog:true,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
+    const productDocumentPreview=major>0||major===0&&(minor>2||minor===2&&patch>=79);
+    result=type==='PING'?{ok:true,version,categoryCatalog:true,categorySchema:true,categoryTemplate:true,categoryExcelSchema:true,legalDocumentAttachments:true,validationResume:true,companyMenuRecovery:true,attachmentLifecycleRecovery:true,exactAgreementLabels:true,acceptedReceiptRefreshRecovery:true,pendingReceiptRefreshRecovery:true,registrationObservationCas:true,originalFileObservationCas,productDocumentPreview,productTransmissionHistory:true,historicalReceiptLookup:true,resultTableRefreshObservation:true,popupWindowBinding:true,publicMobileCapture:true,publicSingleSkuCapture:true,companyRegistrationStatus:true,companyBinding:true,directTransmission:true,latestSourceBinding:true,savedSubmission:true,durableAttachmentRecovery:true,imageIntegrityBinding:true,registrationLookup:true,registrationPages:true,serverReceiptRecovery:true,serverReceiptReplayProtection:true}:await chrome.runtime.sendMessage({...event.data.payload,type:commands[type]});
   }catch{result={ok:false,error:'확장 연결을 새로고침한 뒤 다시 준비해주세요.'};}
   window.postMessage({channel:'YOOFAM_HUB_HANDOFF_RESULT',requestId,result},location.origin);
 });

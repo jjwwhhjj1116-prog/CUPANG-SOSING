@@ -30,7 +30,7 @@ function fixture(company=companies[0],options={}){
  const clearTimer=id=>timers.delete(id);
  class LocalDate extends Date{static now(){return clock.now;}}
  const hook=(effect,deps,layout)=>{const i=cursor++,old=slots[i];if(!old||!deps||deps.some((item,j)=>!Object.is(item,old.deps[j]))){old?.cleanup?.();slots[i]={deps,cleanup:null};const run=()=>{slots[i].cleanup=effect();};if(layout)run();else effects.push(run);}};
- const react={useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useLayoutEffect:(effect,deps)=>hook(effect,deps,true),useEffect:(effect,deps)=>hook(effect,deps,false)};
+ const react={useCallback(callback,deps){const i=cursor++,old=slots[i];if(!old||deps.some((value,index)=>!Object.is(value,old.deps[index])))slots[i]={callback,deps};return slots[i].callback;},useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],next=>{slots[i]=typeof next==='function'?next(slots[i]):next;}];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useLayoutEffect:(effect,deps)=>hook(effect,deps,true),useEffect:(effect,deps)=>hook(effect,deps,false)};
  f.fetch=async(url,init)=>{if(url==='/api/supplier-hub/catalog-context')return Response.json(f.actor);if(String(url).includes('/supplier-hub-single-package')){if(init?.method==='POST')saved.prepared=true;return Response.json(saved);}
   if(String(url).includes('/supplier-hub-single-receipt')){
    if(init?.method==='POST'){
@@ -42,7 +42,7 @@ function fixture(company=companies[0],options={}){
   }throw Error('Unexpected/forbidden URL '+url);};
  const load=file=>{if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,
   {exports,Error,Date:LocalDate,URL,TextEncoder,TextDecoder,Uint8Array,AbortController,structuredClone,crypto:webcrypto,window:win,setTimeout:setTimer,clearTimeout:clearTimer,
-   fetch:async(url,init)=>{calls.push({url,method:init?.method??'GET',body:init?.body?JSON.parse(init.body):undefined,signal:init?.signal});return f.fetch(url,init);},require:name=>name==='react'?react:name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name)});return exports;};
+   fetch:async(url,init)=>{calls.push({url,method:init?.method??'GET',body:init?.body?JSON.parse(init.body):undefined,signal:init?.signal});return f.fetch(url,init);},require:name=>name==='react'?react:name==='@/app/components/supplier-hub-product-transport'?{SupplierHubProductTransport:()=>null}:name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name)});return exports;};
  f.client=load('app/supplier-hub-single-client.ts');
  f.load=load;
  props={productId:saved.productId,profileId:'profile-656',view,disabled:false,onReceiptSaved:options.onReceiptSaved};

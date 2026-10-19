@@ -24,7 +24,7 @@ function validHubTab(tab,windowId){
 
 /** Read current API output in the original app's own frame. No prepare POST,
  * public-image publication or Supplier Hub request is made here. */
-export async function singleDocumentAppSourcePage(input){
+export async function singleDocumentAppSourcePage(input,wholeProduct=false){
   const expected=input.identity,canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
   if(!['https://sourceflow.jjwwhhjj1116.workers.dev','http://localhost:3000','http://127.0.0.1:3000'].includes(location.origin)||location.origin!==expected.origin)throw Error('원래 앱의 저장본 조회가 아닙니다.');
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
@@ -39,8 +39,9 @@ export async function singleDocumentAppSourcePage(input){
     if(before.ownerId!==expected.ownerId||canon(before.company)!==canon(expected.company))throw Error('현재 승인 회원·회사가 다릅니다.');
     const accountContext=await sha(JSON.stringify(['sourceflow-managed-product-account-v1',before.ownerId,before.company.code,before.company.name]));
     if(accountContext!==expected.accountContext)throw Error('현재 회원 회사 연결이 변경되었습니다.');
-    const path='/api/products/'+encodeURIComponent(expected.productId)+'/supplier-hub-single-package?profileId='+encodeURIComponent(expected.profileId),view=await read(path);
-    if(view?.format!=='yoofam-supplier-hub-single-package-v1'||view.prepared!==true||view.review?.canPrepare!==true||view.productId!==expected.productId||view.requestedProfileId!==expected.profileId
+    const requested=wholeProduct?expected.requestedProfileId:expected.profileId;
+    const path='/api/products/'+encodeURIComponent(expected.productId)+'/supplier-hub-single-package'+(requested===null?'':'?profileId='+encodeURIComponent(requested)),view=await read(path);
+    if(view?.format!=='yoofam-supplier-hub-single-package-v1'||view.prepared!==true||view.review?.canPrepare!==true||view.productId!==expected.productId||view.requestedProfileId!==requested
       ||view.fingerprint!==expected.fingerprint||view.schemaSha256!==expected.schemaSha256||canon(view.company)!==canon(expected.company)||view.source?.profileId!==expected.profileId
       ||view.registered!==false||view.remoteWrites!==false||view.submissionReady!==false||view.humanAgreementsConfirmed!==false||!Array.isArray(view.payload?.jsonDocument)
       ||view.payload.docId!==null||view.payload.scope!=='Retail_Categorized_Single'||view.payload.displayCategoryCode!==expected.categoryId||!Array.isArray(view.review.fields)
@@ -49,11 +50,20 @@ export async function singleDocumentAppSourcePage(input){
     if(canon(source)!==canon(expected.source))throw Error('상품·견적서 저장 버전이 변경되었습니다.');
     const rows=view.review.fields.filter(field=>Array.isArray(field.path)&&canon(field.path)===canon(['startPage','productName'])&&field.name===undefined);
     if(rows.length!==view.payload.jsonDocument.length||new Set(rows.map(row=>row.optionId)).size!==rows.length)throw Error('Single 포함 옵션과 문서 순서 연결이 다릅니다.');
-    const matches=rows.map((row,index)=>({row,index})).filter(({row})=>row.optionId===expected.optionId);
-    if(matches.length!==1)throw Error('선택한 저장 옵션이 최종 문서에 없습니다.');
-    const document=view.payload.jsonDocument[matches[0].index],body={...view.payload,productName:document.startPage.productName,categoryPath:document.startPage.categoryPath,jsonDocument:[document]};
+    let body;
+    if(wholeProduct){
+      if(Object.hasOwn(expected,'optionId')||view.inputFingerprint!==expected.inputFingerprint||!Array.isArray(expected.members)||!expected.members.length
+        ||expected.members.length>200||rows.length!==expected.members.length||!Array.isArray(view.options)||view.options.length!==rows.length
+        ||rows.some((row,index)=>row.optionId!==expected.members[index].optionId||expected.members[index].documentIndex!==index
+          ||view.options[index].optionId!==row.optionId||view.options[index].optionLabel!==expected.members[index].optionLabel))throw Error('포함 옵션 전체와 문서 순서가 변경되었습니다.');
+      body=view.payload;
+    }else{
+      const matches=rows.map((row,index)=>({row,index})).filter(({row})=>row.optionId===expected.optionId);
+      if(matches.length!==1)throw Error('선택한 저장 옵션이 최종 문서에 없습니다.');
+      const document=view.payload.jsonDocument[matches[0].index];body={...view.payload,productName:document.startPage.productName,categoryPath:document.startPage.categoryPath,jsonDocument:[document]};
+    }
     const originalBodySha256=await sha(canon(body)),deferred=JSON.parse(JSON.stringify(body));
-    for(const key of ['msrpAgree','labelContactAgreed'])if(deferred.jsonDocument[0].imagePage&&Object.hasOwn(deferred.jsonDocument[0].imagePage,key))deferred.jsonDocument[0].imagePage[key]=false;
+    for(const document of deferred.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])if(document.imagePage&&Object.hasOwn(document.imagePage,key))document.imagePage[key]=false;
     const preparedBodySha256=await sha(canon(deferred));
     if(originalBodySha256!==input.bodySha256||preparedBodySha256!==input.preparedBodySha256)throw Error('준비한 개별 옵션의 정확한 본문과 최신 GET 자료가 다릅니다.');
     const after=await read('/api/supplier-hub/catalog-context');if(canon(after)!==canon(before)||controller.signal.aborted)throw Error('조회 중 승인 회원 회사가 변경되었습니다.');
@@ -101,7 +111,9 @@ export async function singleDocumentHubRequestPage(input){
     if(typeof input.operationId!=='string'||!input.operationId.startsWith(binding.requestId+':'))throw Error('원래 개별 문서 요청을 확인해주세요.');
     if(input.path.endsWith('/create')){
       if(record)throw Error('문서 생성은 이미 요청했습니다. 읽기로 확인해주세요.');
-      if(input.body?.docId!==null||input.body.scope!=='Retail_Categorized_Single'||!Array.isArray(input.body.jsonDocument)||input.body.jsonDocument.length!==1)throw Error('새 단일 옵션 문서가 아닙니다.');
+      const members=binding.identity.members,group=Array.isArray(members)&&!Object.hasOwn(binding.identity,'optionId');
+      if(input.body?.docId!==null||input.body.scope!=='Retail_Categorized_Single'||!Array.isArray(input.body.jsonDocument)
+        ||(group?members.length<1||members.length>200||members.some((member,index)=>member.documentIndex!==index)||input.body.jsonDocument.length!==members.length:input.body.jsonDocument.length!==1))throw Error('새 문서의 포함 옵션 구성이 다릅니다.');
       // Do not overwrite an existing form the user has been editing.
       const values=Array.from(document.querySelectorAll('.rsc-text-input input')).map(node=>node.value||'');
       if(values.some(value=>value.trim()))throw Error('현재 Supplier Hub에서 작업 중인 상품을 보존했습니다.');
@@ -287,7 +299,12 @@ export function singleDocumentReceiptPage(input){
   return {registered:false,receiptVerified:false,docId:input.docId,completionText:text==='상품 등록 완료'?text:null};
 }
 
-export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now}={}){
+export function createSingleDocumentBrowserAdapter(options={}){
+  return createSupplierHubDocumentBrowserAdapter(options,{wholeProduct:false});
+}
+export function createSupplierHubDocumentBrowserAdapter({api=globalThis.chrome,now=Date.now}={},contract){
+  if(!contract||Object.keys(contract).length!==1||typeof contract.wholeProduct!=='boolean')throw new TypeError('A trusted browser source contract is required.');
+  const wholeProduct=contract.wholeProduct,sourceType=wholeProduct?'YOOFAM_VERIFY_PRODUCT_DOCUMENT_SOURCE':'YOOFAM_VERIFY_SINGLE_DOCUMENT_SOURCE',confirmationType=wholeProduct?'YOOFAM_CONFIRM_PRODUCT_DOCUMENT_ACTION':'YOOFAM_CONFIRM_SINGLE_DOCUMENT_ACTION';
   if(!api?.tabs||!api?.scripting||['get','create','update','sendMessage'].some(key=>typeof api.tabs[key]!=='function')||typeof api.scripting.executeScript!=='function')throw new TypeError('Owned Chrome tab adapter is required.');
   const sourceBindings=new Map(),baselines=new Map(),pageRecords=new Map(),frameDocuments=new Map(),liveWatches=new Map();
   const requireWatch=entry=>{try{entry.watch.assertCurrent(entry.expected);}catch{fail('TAB_CHANGED','불러온 새 문서의 관찰이 중단됐습니다. 다른 문서를 클릭하거나 전송하지 않았습니다.');}};
@@ -298,14 +315,15 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
   }
   async function readSourceUnchecked(input){
     await appCurrent(input.identity);
-    const response=await api.tabs.sendMessage(input.identity.appTabId,{type:'YOOFAM_VERIFY_SINGLE_DOCUMENT_SOURCE',expected:copy(input)},{frameId:0});await appCurrent(input.identity);
+    if(wholeProduct?Object.hasOwn(input.identity,'optionId')||!Array.isArray(input.identity.members):Object.hasOwn(input.identity,'members'))fail('SOURCE_CHANGED','문서 전송 방식이 다릅니다.');
+    const response=await api.tabs.sendMessage(input.identity.appTabId,{type:sourceType,expected:copy(input)},{frameId:0});await appCurrent(input.identity);
     const good=response?.ok===true&&response.current===true&&response.submissionReady===true&&response.priorDocumentClear===true
       &&equal(response.identity,input.identity)&&response.bodySha256===input.bodySha256&&HASH.test(input.preparedBodySha256||'')&&HASH.test(input.packetDigest||'')
       &&ID.test(response.sessionId||'')&&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=60000;
     if(!good){sourceBindings.delete(canonical(input.identity));return {current:false,submissionReady:false,priorDocumentClear:false,identity:input.identity,bodySha256:input.bodySha256,sessionId:'invalid-source'};}
-    const [fresh]=await api.scripting.executeScript({target:{tabId:input.identity.appTabId,frameIds:[0]},func:singleDocumentAppSourcePage,args:[copy(input)]});await appCurrent(input.identity);
+    const [fresh]=await api.scripting.executeScript({target:{tabId:input.identity.appTabId,frameIds:[0]},func:singleDocumentAppSourcePage,args:[copy(input),wholeProduct]});await appCurrent(input.identity);
     if(fresh?.frameId!==undefined&&fresh.frameId!==0||fresh?.result?.current!==true||!equal(fresh.result.identity,input.identity)||fresh.result.bodySha256!==input.bodySha256||fresh.result.preparedBodySha256!==input.preparedBodySha256)fail('SOURCE_CHANGED','최신 Single 준비 GET의 정확한 본문을 확인하지 못했습니다.');
-    const after=await api.tabs.sendMessage(input.identity.appTabId,{type:'YOOFAM_VERIFY_SINGLE_DOCUMENT_SOURCE',expected:copy(input)},{frameId:0});await appCurrent(input.identity);
+    const after=await api.tabs.sendMessage(input.identity.appTabId,{type:sourceType,expected:copy(input)},{frameId:0});await appCurrent(input.identity);
     if(after?.ok!==true||after.sessionId!==response.sessionId||!equal(after.identity,input.identity)||after.current!==true||after.submissionReady!==true||after.priorDocumentClear!==true
       ||after.bodySha256!==input.bodySha256||!Number.isSafeInteger(after.checkedAt)||Math.abs(now()-after.checkedAt)>60000)fail('SOURCE_CHANGED','조회 중 회원 세션·개별 전송 연결이 변경되었습니다.');
     const binding={identity:copy(input.identity),identityDigest:await digest(input.identity),packetDigest:input.packetDigest,preparedBodySha256:input.preparedBodySha256,originalBodySha256:input.bodySha256,sessionId:response.sessionId,requestId:input.requestId};
@@ -373,7 +391,7 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
     // Axios' response.data is the document itself in the observed Hub loader;
     // do not accept a guessed {data, body, document} wrapper or a list row.
     if(response?.ok!==true||!document||typeof document!=='object'||Array.isArray(document)||!equal(document.docId,docId)
-      ||!['UNFINISHED','REJECTED'].includes(document.status)||!Array.isArray(document.jsonDocument)||document.jsonDocument.length!==1
+      ||!['UNFINISHED','REJECTED'].includes(document.status)||!Array.isArray(document.jsonDocument)||document.jsonDocument.length!==(wholeProduct?input.identity.members.length:1)
       ||document.scope!=='Retail_Categorized_Single')return null;
     const fields=['docId','productName','categoryPath','categoryId','displayCategoryCode','jsonDocument','scope','productNoticeNumber','version','remark'];
     const body=Object.fromEntries(fields.filter(key=>Object.hasOwn(document,key)).map(key=>[key,document[key]]));
@@ -435,7 +453,7 @@ export function createSingleDocumentBrowserAdapter({api=globalThis.chrome,now=Da
     readAgreements:async input=>{const {binding}=await owned(input);return execute(input.tab,input.identity,singleDocumentAgreementPage,[{binding,docId:input.docId,action:'read'}]);},
     verifyHumanConfirmation:async input=>{
       const first=await bindingFor(input.identity),prior=sourceBindings.get(canonical(input.identity));
-      await appCurrent(input.identity);const response=await api.tabs.sendMessage(input.identity.appTabId,{type:'YOOFAM_CONFIRM_SINGLE_DOCUMENT_ACTION',expected:{...copy(input),sourceExpected:copy(prior.input),sessionId:first.sessionId,identityDigest:first.identityDigest}},{frameId:0});await appCurrent(input.identity);
+      await appCurrent(input.identity);const response=await api.tabs.sendMessage(input.identity.appTabId,{type:confirmationType,expected:{...copy(input),sourceExpected:copy(prior.input),sessionId:first.sessionId,identityDigest:first.identityDigest}},{frameId:0});await appCurrent(input.identity);
       const binding=await bindingFor(input.identity);
       return {confirmed:response?.ok===true&&response.userInitiated===true&&response.challengeId===input.challenge.id&&response.identityDigest===binding.identityDigest
         &&first.sessionId===binding.sessionId&&Number.isSafeInteger(response.checkedAt)&&Math.abs(now()-response.checkedAt)<=5000,challengeId:input.challenge.id,identityDigest:binding.identityDigest,confirmedAt:response.checkedAt};

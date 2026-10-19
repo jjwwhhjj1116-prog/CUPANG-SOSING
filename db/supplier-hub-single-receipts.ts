@@ -1,7 +1,8 @@
 import {env} from 'cloudflare:workers';
 import {sourceGuard,type QuotationSourceGuard} from '@/db/quotation-fields';
 import {matchesWorkspaceAccount,type WorkspaceMember} from '@/app/workspace-members';
-import {parseStoredSingleReceipt,singleReceiptCanonical,singleReceiptSummary,SingleReceiptError,type SingleReceiptObservation,type SingleReceiptRecord,type SingleReceiptSummary} from '@/app/supplier-hub-single-receipt';
+import {parseStoredSingleReceipt,singleReceiptCanonical,SingleReceiptError,type SingleReceiptObservation,type SingleReceiptRecord} from '@/app/supplier-hub-single-receipt';
+import {parseStoredNativeReceipt,nativeReceiptSummary,type NativeReceiptRecord,type NativeReceiptSummary,type ProductReceiptObservation,type ProductReceiptRecord} from '@/app/supplier-hub-product-receipt';
 
 export type SingleReceiptMember=Pick<WorkspaceMember,'id'|'email'|'role'|'companyCode'|'companyName'>;
 export const singleReceiptSchema=`CREATE TABLE IF NOT EXISTS supplier_hub_single_receipts (
@@ -13,13 +14,13 @@ export async function ensureSingleReceiptDatabase(){if(!env.DB)throw new SingleR
 type Row={owner_id:string;product_id:string;request_id:string;observed_at:number;payload:string;created_at:string};
 const timestamp=(value:string)=>Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;
 function parsedRow(row:Row,owner:string,productId:string){
-  const record=parseStoredSingleReceipt(row.payload);
+  const record=parseStoredNativeReceipt(row.payload);
   if(row.owner_id!==owner||row.product_id!==productId||record.productId!==productId||record.identity.ownerId!==owner||record.requestId!==row.request_id
     ||record.receipt.observedAt!==row.observed_at||!timestamp(row.created_at)||Date.parse(row.created_at)>Date.parse(record.recordedAt))
     throw new SingleReceiptError('개별 접수 이력의 회원·문서·저장 시각 연결이 다릅니다.');
   return record;
 }
-function memberGuard(owner:string,member:SingleReceiptMember|undefined,record:SingleReceiptRecord){
+function memberGuard(owner:string,member:SingleReceiptMember|undefined,record:NativeReceiptRecord){
   if(!member||member.id!==owner||member.companyCode!==record.company.code||member.companyName!==record.company.name||!matchesWorkspaceAccount(member))return {sql:'0',args:[] as string[]};
   return {sql:"EXISTS(SELECT 1 FROM members m WHERE m.id=p.owner_id AND m.id=? AND m.email=? AND m.role=? AND m.status='approved' AND m.company_code=? AND m.company_name=?)",
     args:[member.id,member.email,member.role,member.companyCode,member.companyName]};
@@ -30,11 +31,15 @@ const immutable=(column:string)=>`json_remove(${column},'$.recordedAt','$.receip
 /** Atomically retain a Chrome receipt without mutating any product/input.
  * A current approved member, exact source and quotation revision are required
  * inside BOTH the write and the idempotent fallback read. */
-export async function saveSingleReceipt(owner:string,productId:string,observation:SingleReceiptObservation,source:QuotationSourceGuard,quotationRevision:number,member?:SingleReceiptMember):Promise<SingleReceiptRecord|null>{
+async function saveNativeReceipt(owner:string,productId:string,observation:SingleReceiptObservation|ProductReceiptObservation,source:QuotationSourceGuard,quotationRevision:number,member?:SingleReceiptMember):Promise<NativeReceiptRecord|null>{
   if(Object.hasOwn(observation,'recordedAt'))throw new SingleReceiptError('접수 기록의 저장 시각은 서버에서 정합니다.');
-  const now=new Date().toISOString(),record=parseStoredSingleReceipt({...observation,recordedAt:now});
+  const now=new Date().toISOString(),record=parseStoredNativeReceipt({...observation,recordedAt:now});
+  const profileMatches=record.format==='yoofam-single-receipt-v1'
+    ?source.profile?.id===record.profileId&&source.profile.revision===record.source.profileRevision
+    :source.profile?source.profile.id===record.profileId&&source.profile.revision===record.source.profileRevision
+      :record.requestedProfileId===null&&record.source.profileRevision===null;
   if(record.identity.ownerId!==owner||record.productId!==productId||record.source.productVersion!==source.productVersion||record.source.contentRevision!==source.contentRevision
-    ||record.source.optionRevision!==source.optionRevision||record.source.quotationRevision!==quotationRevision||source.profile?.id!==record.profileId||source.profile.revision!==record.source.profileRevision
+    ||record.source.optionRevision!==source.optionRevision||record.source.quotationRevision!==quotationRevision||!profileMatches
     ||!Number.isSafeInteger(quotationRevision)||quotationRevision<0)return null;
   const db=await ensureSingleReceiptDatabase(),guard=sourceGuard(owner,productId,source),authorization=memberGuard(owner,member,record),payload=singleReceiptCanonical(record);
   const sql=`INSERT INTO supplier_hub_single_receipts(owner_id,product_id,request_id,observed_at,payload,created_at)
@@ -62,23 +67,38 @@ export async function saveSingleReceipt(owner:string,productId:string,observatio
     .bind(...guard.args,quotationRevision,...authorization.args,record.requestId,record.receipt.observedAt,payload).first<Row>();
   return previous?parsedRow(previous,owner,productId):null;
 }
+export async function saveSingleReceipt(owner:string,productId:string,observation:SingleReceiptObservation,source:QuotationSourceGuard,quotationRevision:number,member?:SingleReceiptMember):Promise<SingleReceiptRecord|null>{
+  parseStoredSingleReceipt({...observation,recordedAt:new Date().toISOString()});
+  const result=await saveNativeReceipt(owner,productId,observation,source,quotationRevision,member);
+  if(result&&result.format!=='yoofam-single-receipt-v1')throw new SingleReceiptError('기존 옵션 접수 형식과 저장 결과가 다릅니다.');return result;
+}
+export async function saveProductReceipt(owner:string,productId:string,observation:ProductReceiptObservation,source:QuotationSourceGuard,quotationRevision:number,member?:SingleReceiptMember):Promise<ProductReceiptRecord|null>{
+  const candidate=parseStoredNativeReceipt({...observation,recordedAt:new Date().toISOString()});
+  if(candidate.format!=='yoofam-product-document-receipt-v1')throw new SingleReceiptError('전체 상품 문서 접수 형식을 확인해주세요.');
+  const result=await saveNativeReceipt(owner,productId,observation,source,quotationRevision,member);
+  if(result&&result.format!=='yoofam-product-document-receipt-v1')throw new SingleReceiptError('전체 상품 접수 형식과 저장 결과가 다릅니다.');return result;
+}
 async function rowsFor(owner:string,productId:string,database?:Awaited<ReturnType<typeof ensureSingleReceiptDatabase>>){
   const db=database??await ensureSingleReceiptDatabase(),rows=await db.prepare(`SELECT owner_id,product_id,request_id,observed_at,payload,created_at FROM supplier_hub_single_receipts
     WHERE owner_id=? AND product_id=? ORDER BY rowid DESC LIMIT 201`).bind(owner,productId).all<Row>();
   if(!Array.isArray(rows.results)||rows.results.length>200)throw new SingleReceiptError('상품의 전체 개별 접수 이력 조회 범위를 초과했습니다.');
   return rows.results.map(row=>({row,record:parsedRow(row,owner,productId)}));
 }
-export async function readSingleReceiptHistory(owner:string,productId:string):Promise<SingleReceiptRecord[]>{return (await rowsFor(owner,productId)).map(value=>value.record);}
+export async function readNativeReceiptHistory(owner:string,productId:string):Promise<NativeReceiptRecord[]>{return (await rowsFor(owner,productId)).map(value=>value.record);}
+// Validate every native row before filtering. Unknown or malformed group data
+// cannot silently disappear from an otherwise successful legacy history read.
+export async function readSingleReceiptHistory(owner:string,productId:string):Promise<SingleReceiptRecord[]>{return (await readNativeReceiptHistory(owner,productId)).filter((record):record is SingleReceiptRecord=>record.format==='yoofam-single-receipt-v1');}
 /** Server insertion order chooses the latest transmission. Re-observing an
  * old request cannot move it ahead of a later inserted option/document. */
-export async function readSingleReceiptSummaries(owner:string,products:{id:string}[]):Promise<Record<string,SingleReceiptSummary|null>>{
-  const result:Record<string,SingleReceiptSummary|null>={};
+export async function readSingleReceiptSummaries(owner:string,products:{id:string}[]):Promise<Record<string,NativeReceiptSummary|null>>{
+  const result:Record<string,NativeReceiptSummary|null>={};
   if(!products.length)return result;let db:Awaited<ReturnType<typeof ensureSingleReceiptDatabase>>;
   try{db=await ensureSingleReceiptDatabase();}catch{for(const {id}of products)result[id]=null;return result;}
   for(const {id}of products){try{
     const values=await rowsFor(owner,id,db),latest=values[0];if(!latest)continue;
-    const optionCount=new Set(values.filter(value=>value.record.fingerprint===latest.record.fingerprint).map(value=>value.record.optionId)).size;
-    result[id]=singleReceiptSummary(latest.record,latest.row.created_at,optionCount);
+    const optionCount=new Set(values.filter(value=>value.record.format==='yoofam-single-receipt-v1'&&value.record.fingerprint===latest.record.fingerprint)
+      .map(value=>(value.record as SingleReceiptRecord).optionId)).size;
+    result[id]=nativeReceiptSummary(latest.record,latest.row.created_at,optionCount);
   }catch{result[id]=null;}}
   return result;
 }

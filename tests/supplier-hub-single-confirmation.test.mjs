@@ -47,7 +47,7 @@ async function fixture(stage='productPage'){
     window,document,MutationObserver:Observer,setTimeout:setTimer,clearTimeout:clearTimer,location:{origin:new URL(SINGLE_SENDER.url).origin},
     chrome:{runtime:{id:'extension',onMessage:{addListener:fn=>handler=fn}}},fetch:async(path,init)=>{
       requests.push({path,init});await hook?.(path,requests.length);
-      const response=Response.json(path.includes('catalog-context')?actor:path.includes('supplier-hub-receipt')?{history:{productId:packet.productId,blocked:false}}:value);
+      const response=Response.json(path.includes('catalog-context')?actor:path.includes('supplier-hub-product-receipt')?{format:'yoofam-native-receipt-history-v1',productId:packet.productId,receipts:[]}:path.includes('supplier-hub-receipt')?{history:{productId:packet.productId,blocked:false}}:value);
       Object.defineProperty(response,'url',{value:new URL(SINGLE_SENDER.url).origin+path});return response;
     }};
   vm.createContext(scope);vm.runInContext(uiSource,scope);vm.runInContext(bridgeSource,scope);
@@ -90,7 +90,7 @@ for(const stage of ['productPage','imagePage',null,'logisticsPage'])test(`${stag
   for(const box of boxes)h.click(box);h.click(confirm,false);assert.equal(operation.reply,undefined);assert.ok(h.host());
   h.click(confirm);const result=await cleanupResult(h,operation);
   assert.deepEqual(result,{ok:true,userInitiated:true,challengeId:h.expected.challenge.id,identityDigest:h.context.identityDigest,checkedAt:h.now});
-  assert.equal(h.requests.length,12);assert.ok(h.requests.every(row=>row.init.method===undefined));
+  assert.equal(h.requests.length,15);assert.ok(h.requests.every(row=>row.init.method===undefined));
 });
 
 for(const mode of ['cancel','escape','overlay','hidden','pagehide','removed','expired'])test(`${mode} cancels confirmation and removes every UI/lifecycle resource`,async()=>{
@@ -102,11 +102,11 @@ for(const mode of ['cancel','escape','overlay','hidden','pagehide','removed','ex
   if(mode==='pagehide')h.window.emit('pagehide');
   if(mode==='removed')h.host().remove();
   if(mode==='expired')h.advance(120001);
-  const result=await cleanupResult(h,operation);assert.equal(result.ok,false);assert.equal(result.userInitiated,undefined);assert.equal(h.requests.length,8);
+  const result=await cleanupResult(h,operation);assert.equal(result.ok,false);assert.equal(result.userInitiated,undefined);assert.equal(h.requests.length,10);
 });
 
 test('one active request locks synchronously even before the source pre-read finishes',async()=>{
-  const h=await fixture(),held=deferred();h.setHook((path,count)=>count===5?held.promise:undefined);
+  const h=await fixture(),held=deferred();h.setHook((path,count)=>count===6?held.promise:undefined);
   const first=h.request(),second=h.request();assert.equal(second.returned,undefined);assert.equal(second.reply.ok,false);assert.equal(h.host(),undefined);
   held.resolve();await settleUntil(()=>h.host());h.click(h.find('button','취소'));assert.equal((await cleanupResult(h,first)).ok,false);
   const next=h.request();await settleUntil(()=>h.host());h.approve();assert.equal((await cleanupResult(h,next)).ok,true);
@@ -114,7 +114,7 @@ test('one active request locks synchronously even before the source pre-read fin
 
 test('changed challenge text cannot authorize the immutable displayed request',async()=>{
   const h=await fixture(),operation=h.request();await settleUntil(()=>h.host());h.expected.challenge.items[0].termsText+=' changed';h.approve();
-  const result=await cleanupResult(h,operation);assert.equal(result.ok,false);assert.equal(h.requests.length,8);
+  const result=await cleanupResult(h,operation);assert.equal(result.ok,false);assert.equal(h.requests.length,10);
 });
 
 for(const change of ['actor','source','session-aba'])test(`post-click fresh ${change} proof rejects consent`,async()=>{
@@ -130,14 +130,14 @@ for(const change of ['actor','source','session-aba'])test(`post-click fresh ${ch
 });
 
 test('absolute expiry cancels a stalled pre-read and prevents a late prompt',async()=>{
-  const h=await fixture(),held=deferred();h.setHook((path,count)=>count===5?held.promise:undefined);const operation=h.request();
-  await settleUntil(()=>h.requests.length===5);h.advance(120001);assert.equal((await cleanupResult(h,operation)).ok,false);
+  const h=await fixture(),held=deferred();h.setHook((path,count)=>count===6?held.promise:undefined);const operation=h.request();
+  await settleUntil(()=>h.requests.length===6);h.advance(120001);assert.equal((await cleanupResult(h,operation)).ok,false);
   held.resolve();await new Promise(resolve=>setTimeout(resolve,10));assert.equal(h.host(),undefined);assert.equal(h.timers.size,0);
 });
 
 test('absolute expiry while post-read is stalled cannot return late authorization',async()=>{
-  const h=await fixture(),held=deferred();h.setHook((path,count)=>count===9?held.promise:undefined);const operation=h.request();await settleUntil(()=>h.host());h.approve();
-  await settleUntil(()=>h.requests.length===9);h.advance(120001);assert.equal((await cleanupResult(h,operation)).ok,false);
+  const h=await fixture(),held=deferred();h.setHook((path,count)=>count===11?held.promise:undefined);const operation=h.request();await settleUntil(()=>h.host());h.approve();
+  await settleUntil(()=>h.requests.length===11);h.advance(120001);assert.equal((await cleanupResult(h,operation)).ok,false);
   held.resolve();await new Promise(resolve=>setTimeout(resolve,10));assert.equal(operation.reply.ok,false);assert.equal(h.host(),undefined);
 });
 
@@ -163,7 +163,7 @@ const invalid=[
   ['too many items',v=>v.challenge.items=Array(21).fill(v.challenge.items[0])],['unexpected confirmation token',v=>v.confirmation.token='reusable'],
 ];
 for(const [name,change] of invalid)test(`malformed ${name} fails synchronously without source read or UI`,async()=>{
-  const h=await fixture();change(h.expected);const operation=h.request();assert.equal(operation.returned,undefined);assert.equal(operation.reply.ok,false);assert.equal(h.requests.length,4);h.cleaned();
+  const h=await fixture();change(h.expected);const operation=h.request();assert.equal(operation.returned,undefined);assert.equal(operation.reply.ok,false);assert.equal(h.requests.length,5);h.cleaned();
 });
 
 test('wrong identity digest or changed prepared body fails before prompt even with syntactically valid hashes',async()=>{
@@ -182,5 +182,5 @@ test('empty item final challenge only works for logisticsPage and explicit submi
 });
 
 test('a hidden document never displays a trusted prompt or sends an authorization',async()=>{
-  const h=await fixture();h.document.visibilityState='hidden';assert.equal((await cleanupResult(h,h.request())).ok,false);assert.equal(h.requests.length,4);
+  const h=await fixture();h.document.visibilityState='hidden';assert.equal((await cleanupResult(h,h.request())).ok,false);assert.equal(h.requests.length,5);
 });

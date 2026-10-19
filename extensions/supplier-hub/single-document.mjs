@@ -128,7 +128,7 @@ function targetValid(target,context,requestId){
     &&target.windowId===context.identity.windowId&&target.origin===SINGLE_DOCUMENT_ORIGIN&&target.requestId===requestId&&target.packetDigest===context.packetDigest;
 }
 function checkpointValid(state,context){
-  if(!object(state)||state.format!==SINGLE_DOCUMENT_FORMAT||state.key!==context.key||state.laneKey!==context.laneKey||state.packetDigest!==context.packetDigest||state.identityDigest!==context.identityDigest||state.bodySha256!==context.bodySha256||state.originalBodySha256!==context.originalBodySha256
+  if(!object(state)||state.format!==context.packet.format||state.key!==context.key||state.laneKey!==context.laneKey||state.packetDigest!==context.packetDigest||state.identityDigest!==context.identityDigest||state.bodySha256!==context.bodySha256||state.originalBodySha256!==context.originalBodySha256
     ||!same(state.identity,context.identity)||!ID.test(state.requestId||'')||!STATES.has(state.state)||!revision(state.sequence)
     ||!Number.isSafeInteger(state.updatedAt)||state.updatedAt<=0||!Array.isArray(state.baselineDocIds)||state.baselineDocIds.some(id=>!identifier(id))
     ||!Array.isArray(state.validatedSteps)||!same(state.validatedSteps,[2,3,4,5].slice(0,state.validatedSteps.length))
@@ -173,6 +173,9 @@ function checkpointValid(state,context){
   return state;
 }
 function receiptValid(receipt,state,context,time){
+  // A whole-product document receipt is not a scalar catalog SKU join. Keep
+  // this document-level contract distinct until every member is proven.
+  if(Array.isArray(context.identity.members)&&(!object(receipt)||receipt.sourceStatus===undefined||receipt.state==='registered'||Object.hasOwn(receipt,'skuId')))return false;
   if(object(receipt)&&receipt.sourceStatus!==undefined){
     const nativeStates={SUBMITTED:'pending',REJECTED:'rejected',FINISHED:'accepted'};
     if(!Object.hasOwn(nativeStates,receipt.sourceStatus)||nativeStates[receipt.sourceStatus]!==receipt.state||receipt.evidence!=='document-receipt'||receipt.registered!==false
@@ -186,7 +189,7 @@ function receiptValid(receipt,state,context,time){
     &&(receipt.state!=='registered'||receipt.evidence==='document-and-sku'&&identifier(receipt.skuId));
 }
 function result(state,extra={}){
-  return {format:SINGLE_DOCUMENT_FORMAT,requestId:state.requestId,identity:clone(state.identity),identityDigest:state.identityDigest,packetDigest:state.packetDigest,originalBodySha256:state.originalBodySha256,preparedBodySha256:state.bodySha256,state:state.state,
+  return {format:state.format,requestId:state.requestId,identity:clone(state.identity),identityDigest:state.identityDigest,packetDigest:state.packetDigest,originalBodySha256:state.originalBodySha256,preparedBodySha256:state.bodySha256,state:state.state,
     docId:state.docId,registered:state.state==='registered',success:state.state==='registered',needsRecovery:['target-requested','create-requested','update-requested','validation-requested','stage-consent-requested','consent-requested','submit-requested'].includes(state.state),
     ...(state.challenge&&['awaiting-stage-consent','awaiting-consent'].includes(state.state)?{challenge:clone(state.challenge)}:{}),...(state.receipt?{receipt:clone(state.receipt)}:{}),...extra};
 }
@@ -201,7 +204,15 @@ function result(state,extra={}){
  * dispatch/click; the core's preceding read cannot make a browser action atomic.
  * All store claim/CAS operations must be atomic and committed before resolving;
  * claim also reserves next.laneKey across packets, except positive rejection. */
-export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
+export function createSingleDocumentReceiver(options){
+  return createSupplierHubDocumentReceiver(options,{format:SINGLE_DOCUMENT_FORMAT,identity:singleDocumentIdentity});
+}
+
+/** The transport contract is supplied by trusted extension modules, never by
+ * packet data. Legacy single-option validation remains its original wrapper.
+ * Both wrappers share durable write/recovery/consent handling below. */
+export function createSupplierHubDocumentReceiver({adapter,store,now=Date.now},contract){
+  if(!object(contract)||Object.keys(contract).length!==2||typeof contract.format!=='string'||!contract.format||typeof contract.identity!=='function')throw new TypeError('A trusted document transport contract is required.');
   const required=['readSource','createTarget','readTab','hubRequest','readDocument','recoverWrite','readValidation','navigate','readAgreements','verifyHumanConfirmation','confirmAgreements','submit','observeReceipt'];
   if(!adapter||required.some(key=>typeof adapter[key]!=='function')||!store||['get','claim','compareAndSet'].some(key=>typeof store[key]!=='function')||typeof now!=='function')throw new TypeError('Single document adapter/store contract is required.');
   const active=new Set();
@@ -229,11 +240,12 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
       operationId:state.operationId,operation:recovery?(state.state==='create-requested'?'create':'update'):'readback',docId:state.docId,baselineDocIds:state.baselineDocIds,expectedBody:state.docId===null?context.packet.body:withDoc(context.packet,state.docId)});
     let body=proof?.body;
     if(object(body)&&((state.stageConsents??[]).length||afterConsent)){
-      body=clone(body);const page=body.jsonDocument?.[0]?.imagePage;
+      body=clone(body);
+      if(!Array.isArray(body.jsonDocument))fail('READBACK_UNCONFIRMED','동의 이후의 전체 옵션 문서 배열을 확인해주세요.');
       const allowed=afterConsent?['msrpAgree','labelContactAgreed']:(state.stageConsents??[]).map(entry=>STAGE_FLAGS[entry.stage].key);
-      for(const key of allowed)if(page&&Object.hasOwn(page,key)){
+      for(const document of body.jsonDocument??[])for(const key of allowed){const page=document?.imagePage;if(page&&Object.hasOwn(page,key)){
         if(typeof page[key]!=='boolean')fail('READBACK_UNCONFIRMED','동의 항목 이외의 문서 변경을 확인해주세요.');page[key]=false;
-      }
+      }}
     }
     if(!object(proof)||!identifier(proof.docId)||!same(proof.company,context.packet.company)||proof.identityDigest!==context.identityDigest
       ||state.baselineDocIds.some(id=>same(id,proof.docId))||state.docId!==null&&!same(proof.docId,state.docId)
@@ -276,7 +288,7 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
     if(value.readyForConsent===true&&value.readyForSubmit===false){
       const stage=value.stage;
       if(stage!==STAGES[(state.stageConsents??[]).length]||typeof adapter.readStageAgreements!=='function'||typeof adapter.confirmStageAgreements!=='function'
-        ||!Object.hasOwn(context.packet.body.jsonDocument[0].imagePage??{},STAGE_FLAGS[stage]?.key))fail('AGREEMENT_REVIEW','현재 단계의 동의와 원문 양식 연결을 확인해주세요.');
+        ||!context.packet.body.jsonDocument.every(document=>Object.hasOwn(document.imagePage??{},STAGE_FLAGS[stage]?.key)))fail('AGREEMENT_REVIEW','현재 단계의 동의와 원문 양식 연결을 확인해주세요.');
       return save(context,state,{state:'awaiting-stage-consent',challenge:await challenge(context,state,stage)});
     }
     if(value.readyForSubmit!==true)fail('NAVIGATION','새 문서 최종 등록 화면을 확인하지 못했습니다.');
@@ -325,14 +337,15 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
     return state;
   }
   async function operate(packet,sender,action,details){
-    const context=await singleDocumentIdentity(packet,sender);
-    if(active.has(context.key))return {format:SINGLE_DOCUMENT_FORMAT,requestId:packet.requestId,state:'busy',registered:false,success:false};
+    const context=await contract.identity(packet,sender,action);
+    if(!object(context)||context.packet?.format!==contract.format)fail('PACKET','요청한 문서 전송 형식과 검증한 자료가 다릅니다.');
+    if(active.has(context.key))return {format:context.packet.format,requestId:packet.requestId,state:'busy',registered:false,success:false};
     active.add(context.key);let state;
     try{
       state=await get(context);
       if(action==='start'){
         if(state){await guard(context,state);return result(state,{duplicate:true});}
-        state={format:SINGLE_DOCUMENT_FORMAT,key:context.key,laneKey:context.laneKey,identity:context.identity,identityDigest:context.identityDigest,bodySha256:context.bodySha256,originalBodySha256:context.originalBodySha256,packetDigest:context.packetDigest,
+        state={format:context.packet.format,key:context.key,laneKey:context.laneKey,identity:context.identity,identityDigest:context.identityDigest,bodySha256:context.bodySha256,originalBodySha256:context.originalBodySha256,packetDigest:context.packetDigest,
           requestId:context.packet.requestId,state:'prepared',sequence:0,updatedAt:clock(),docId:null,tab:null,ownedTarget:null,sessionId:null,baselineDocIds:[],validatedSteps:[],stageConsents:[],challenge:null,receipt:null};
         if(await store.claim(context.key,safeValue(state))!==true){state=await get(context);if(!state)fail('CHECKPOINT_CONFLICT','같은 옵션의 다른 개별 전송 기록을 먼저 확인해주세요.');await guard(context,state);return result(state,{duplicate:true});}
         state=await continuation(context,state);return result(state);
@@ -429,7 +442,7 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
       // The saved requested state wins, including a write whose caller lost
       // its response or checkpoint CAS. Never replay/merge guessed ACKs.
       const failure={code:error instanceof SingleDocumentError?error.code:'ADAPTER_FAILURE',message:error instanceof SingleDocumentError?error.message:'요청 결과를 확정하지 못했습니다. 현재 전송 기록을 조회해주세요.'};
-      if(['SOURCE_CHANGED','TAB_CHANGED'].includes(failure.code))return {format:SINGLE_DOCUMENT_FORMAT,requestId:context.packet.requestId,state:'scope-blocked',registered:false,success:false,needsRecovery:false,error:failure};
+      if(['SOURCE_CHANGED','TAB_CHANGED'].includes(failure.code))return {format:context.packet.format,requestId:context.packet.requestId,state:'scope-blocked',registered:false,success:false,needsRecovery:false,error:failure};
       const latest=await get(context);if(latest)return result(latest,{error:failure});
       throw error;
     }finally{active.delete(context.key);}
@@ -441,6 +454,7 @@ export function createSingleDocumentReceiver({adapter,store,now=Date.now}){
       submitRequestedAt:state.submitRequestedAt??state.humanConfirmedAt,expectedBody:withDoc(context.packet,state.docId),baselineDocIds:state.baselineDocIds,previousReceipt:state.receipt});
     if(!receiptValid(receipt,state,context,clock()))fail('RECEIPT_UNCONFIRMED','새 문서와 연결된 실제 접수·SKU 증거를 확인하지 못했습니다.');
     if(state.receipt?.receiptId!==undefined&&(!same(receipt.receiptId,state.receipt.receiptId)||state.state==='accepted'&&receipt.state==='pending'))fail('RECEIPT_CHANGED','원래 확인한 접수 식별값을 다른 관찰로 바꿀 수 없습니다.');
+    if(context.packet.format!==SINGLE_DOCUMENT_FORMAT&&state.state==='rejected'&&receipt.state!=='rejected')fail('RECEIPT_CHANGED','원래 전체 상품 문서의 반려 결과를 다른 상태로 바꿀 수 없습니다.');
     if(state.state==='registered'&&(receipt.state!=='registered'||!same(receipt.skuId,state.receipt.skuId)))fail('RECEIPT_CHANGED','원래 확인한 등록 식별값을 다른 관찰로 바꿀 수 없습니다.');
     if(state.receipt&&receipt.observedAt<state.receipt.observedAt)fail('RECEIPT_CHANGED','더 오래된 등록 결과를 반영하지 않습니다.');
     await guard(context,state);state=await save(context,state,{state:receipt.state,receipt});return result(state);
@@ -459,7 +473,7 @@ export function createSingleDocumentStore(indexedDBApi=globalThis.indexedDB){
     request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
   });
   async function transact(action,key,expected,next){
-    if(typeof key!=='string'||!/^single-document:[a-f0-9]{64}$/.test(key))fail('CHECKPOINT','개별 전송 기록 키를 확인해주세요.');
+    if(typeof key!=='string'||! /^(?:single|product)-document:[a-f0-9]{64}$/.test(key))fail('CHECKPOINT','개별 전송 기록 키를 확인해주세요.');
     const db=await open();
     try{return await new Promise((resolve,reject)=>{
       const transaction=db.transaction('operations',action==='get'?'readonly':'readwrite'),table=transaction.objectStore('operations');let outcome;
@@ -471,7 +485,7 @@ export function createSingleDocumentStore(indexedDBApi=globalThis.indexedDB){
           else if(action==='claim'){
             outcome=false;
             if(current===undefined){
-              if(!/^single-document-lane:[a-f0-9]{64}$/.test(next?.laneKey||''))fail('CHECKPOINT','개별 옵션 전송 기록을 확인해주세요.');
+              if(!/^(?:single|product)-document-lane:[a-f0-9]{64}$/.test(next?.laneKey||''))fail('CHECKPOINT','개별 옵션 전송 기록을 확인해주세요.');
               const lane=table.get(next.laneKey);
               lane.onsuccess=()=>{
                 const claim=()=>{table.add(clone(next),key);table.put({key},next.laneKey);outcome=true;};

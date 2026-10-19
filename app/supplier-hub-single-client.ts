@@ -111,7 +111,7 @@ export async function previewSingleDocument(packet:SingleDocumentPacket,signal:A
     throw new SingleDocumentBridgeError('확장에 전달한 옵션·본문 식별값이 다릅니다.',false,'SINGLE_REPLY_IDENTITY');
   return freezeSingleJson({packet,preview:structuredClone(result) as SingleDocumentPreview,packetDigest:proof.packetDigest,origin});
 }
-export function validateSingleConsentChallenge(value:unknown,session:SingleDocumentSession,state:string,docId:unknown,time=Date.now()):SingleConsentChallenge{
+export function validateSingleConsentChallenge(value:unknown,session:Pick<SingleDocumentSession,'packetDigest'>,state:string,docId:unknown,time=Date.now()):SingleConsentChallenge{
   if(!singleExact(value,['id','docId','packetDigest','issuedAt','expiresAt','items'],['stage'])||!singleHash.test(String(value.id))||!singleIdentifier(value.docId)||value.docId!==docId||value.packetDigest!==session.packetDigest
     ||!Number.isSafeInteger(value.issuedAt)||Number(value.issuedAt)<=0||Number(value.issuedAt)>time+5000||value.expiresAt!==Number(value.issuedAt)+120000||time>=Number(value.expiresAt)
     ||!Array.isArray(value.items)||value.items.length>20||value.stage!==undefined&&!['productPage','imagePage','logisticsPage'].includes(String(value.stage)))throw Error('현재 문서의 동의 요청이 다르거나 만료됐습니다.');

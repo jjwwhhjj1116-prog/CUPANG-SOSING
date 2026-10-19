@@ -52,7 +52,7 @@ import { parseWorkspaceSettingsScope, type WorkspaceSettingsScope } from '@/app/
 import { requestErrorMessage } from '@/app/request-error';
 import { productRemovalDecision, type ProductRemovalDecision } from '@/app/product-removal-policy';
 import type { SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
-import type { SingleReceiptSummary } from '@/app/supplier-hub-single-receipt';
+import type { NativeReceiptSummary } from '@/app/supplier-hub-product-receipt';
 import { PriceEditor, type PriceSaveOptions } from '@/app/components/price-editor';
 import { quotationCsv, pricePolicy, type PricePolicy } from '@/app/pricing';
 import { collectionBlock, collectionJobProgress, type CollectionJob } from '@/app/sourcing';
@@ -67,7 +67,7 @@ type Product = {
   owner_id?: string;
   removal_policy?: ProductRemovalDecision | null;
   hub_receipt?: SupplierHubReceiptSummary | null;
-  hub_single_receipt?: SingleReceiptSummary | null;
+  hub_single_receipt?: NativeReceiptSummary | null;
   pricing_policy?: string | null;
   source_image_key?: string | null;
   content_summary?: RegistrationContentSummary | null;

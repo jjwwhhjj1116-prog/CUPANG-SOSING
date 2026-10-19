@@ -1,13 +1,13 @@
 import { parseStoredSupplierHubReceipt, supplierHubReceiptObservationTime, supplierHubReceiptOrder, supplierHubReceiptSummary, type SupplierHubReceiptSummary } from '@/app/supplier-hub-receipt';
 import { supplierHubCompany } from '@/app/supplier-hub-company';
-import {parseStoredSingleReceipt,singleReceiptSummary,isSingleReceiptSummary,type SingleReceiptSummary} from '@/app/supplier-hub-single-receipt';
+import {parseStoredNativeReceipt,nativeReceiptSummary,isNativeReceiptSummary,type NativeReceiptSummary} from '@/app/supplier-hub-product-receipt';
 
 export type ProductRemovalDecision = {
   blocked: boolean;
   code: 'PRODUCT_HUB_TRANSMITTED' | 'PRODUCT_HUB_EVIDENCE_UNCONFIRMED' | null;
   reason: string;
   receipt: SupplierHubReceiptSummary | null;
-  singleReceipt?: SingleReceiptSummary | null;
+  singleReceipt?: NativeReceiptSummary | null;
 };
 export type ProductRemovalReceiptRow = { fingerprint: string; payload: string; observed_at: number; evidence_order: number };
 export type ProductRemovalSingleReceiptRow={owner_id:string;product_id:string;request_id:string;observed_at:number;payload:string;created_at:string};
@@ -49,12 +49,12 @@ export function productRemovalDecisionFromReceipts(rows: readonly ProductRemoval
       } else if (!latestBlocking || summary.observedAt >= latestBlocking.observedAt) latestBlocking = summary;
     } catch { unknown = true; }
   }
-  let latestSingleRejected:SingleReceiptSummary|null=null,latestSingleBlocking:SingleReceiptSummary|null=null;
+  let latestSingleRejected:NativeReceiptSummary|null=null,latestSingleBlocking:NativeReceiptSummary|null=null;
   for(const row of singleRows){
-    try{const receipt=parseStoredSingleReceipt(row.payload);
+    try{const receipt=parseStoredNativeReceipt(row.payload);
       if(receipt.requestId!==row.request_id||receipt.productId!==row.product_id||receipt.identity.ownerId!==row.owner_id||receipt.receipt.observedAt!==row.observed_at
         ||typeof row.created_at!=='string'||!Number.isFinite(Date.parse(row.created_at)))throw Error('개별 전송 기록과 저장 키가 다릅니다.');
-      const summary=singleReceiptSummary(receipt,row.created_at);if(!isSingleReceiptSummary(summary))throw Error('개별 전송 요약을 확인하지 못했습니다.');
+      const summary=nativeReceiptSummary(receipt,row.created_at);if(!isNativeReceiptSummary(summary))throw Error('문서 전송 요약을 확인하지 못했습니다.');
       if(summary.state==='rejected'){if(!latestSingleRejected||summary.observedAt>=latestSingleRejected.observedAt)latestSingleRejected=summary;}
       else if(!latestSingleBlocking||summary.observedAt>=latestSingleBlocking.observedAt)latestSingleBlocking=summary;
     }catch{unknown=true;}
@@ -69,15 +69,15 @@ export function productRemovalDecisionFromReceipts(rows: readonly ProductRemoval
  * reads never become permission to delete. A legacy positive summary still
  * explains the known transmission, but a latest failure cannot clear history.
  */
-export function productRemovalDecision(product: { removal_policy?: ProductRemovalDecision | null; hub_receipt?: SupplierHubReceiptSummary | null;hub_single_receipt?:SingleReceiptSummary|null }): ProductRemovalDecision {
+export function productRemovalDecision(product: { removal_policy?: ProductRemovalDecision | null; hub_receipt?: SupplierHubReceiptSummary | null;hub_single_receipt?:NativeReceiptSummary|null }): ProductRemovalDecision {
   const decision = product.removal_policy;
   const summary = product.hub_receipt;
   const positiveSummary = validSummary(summary) && (summary.label !== '파일 반려' || Boolean(summary.quotationId) || summary.issuedSkus > 0);
-  const single=product.hub_single_receipt,positiveSingle=isSingleReceiptSummary(single)&&single.state!=='rejected';
+  const single=product.hub_single_receipt,positiveSingle=isNativeReceiptSummary(single)&&single.state!=='rejected';
   const fallback=()=>positiveSummary?transmitted(summary!):positiveSingle?{blocked:true as const,code:'PRODUCT_HUB_TRANSMITTED' as const,reason:PRODUCT_HUB_REMOVAL_REASON,receipt:null,singleReceipt:single}:unconfirmedProductRemovalDecision();
   if (decision && typeof decision.blocked === 'boolean' && typeof decision.reason === 'string'
-    && (decision.receipt === null || validSummary(decision.receipt))&&(decision.singleReceipt===undefined||decision.singleReceipt===null||isSingleReceiptSummary(decision.singleReceipt))) {
-    const positiveDecisionSingle=isSingleReceiptSummary(decision.singleReceipt)&&decision.singleReceipt.state!=='rejected';
+    && (decision.receipt === null || validSummary(decision.receipt))&&(decision.singleReceipt===undefined||decision.singleReceipt===null||isNativeReceiptSummary(decision.singleReceipt))) {
+    const positiveDecisionSingle=isNativeReceiptSummary(decision.singleReceipt)&&decision.singleReceipt.state!=='rejected';
     if (!decision.blocked && decision.code === null && decision.reason === ''
       && !positiveDecisionSingle&&(decision.receipt === null || decision.receipt.label === '파일 반려' && !decision.receipt.quotationId && decision.receipt.issuedSkus === 0)) return positiveSummary||positiveSingle ? fallback() : decision;
     if (decision.blocked && decision.code === 'PRODUCT_HUB_TRANSMITTED' && decision.reason === PRODUCT_HUB_REMOVAL_REASON

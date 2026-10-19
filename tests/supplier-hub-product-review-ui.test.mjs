@@ -10,7 +10,8 @@ import { dispatchSingleDocument } from '../extensions/supplier-hub/single-dispat
 
 // Reuse the ordered hooks, keyed child remount, real Single client/dispatch and
 // local fetch/bridge fixture declarations, without registering its test suite.
-// Only the new GET-only product-document helper is mocked at its UI boundary.
+// Mock the GET-only helper and the separate transport child at this parent
+// boundary. The actual child/client are covered by product-transport-ui tests.
 const fixtureUrl = new URL('./supplier-hub-single-stage-ui.test.mjs', import.meta.url);
 const source = fs.readFileSync(fixtureUrl, 'utf8');
 const ast = ts.createSourceFile(fixtureUrl.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS), parts = [];
@@ -19,10 +20,10 @@ for (const statement of ast.statements) {
   if (ts.isForOfStatement(statement) || ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression) && statement.expression.expression.getText(ast) === 'test') break;
   parts.push(statement.getText(ast));
 }
-const originalRequire = "require:name=>name==='react'?react:name.startsWith('@/')?load";
+const originalRequire = "require:name=>name==='react'?react:";
 assert.equal(parts.join('\n').split(originalRequire).length - 1, 1, 'one explicit dependency boundary');
 const declarations = parts.join('\n').replace(originalRequire,
-  "require:name=>name==='@/app/supplier-hub-product-document'?productDocumentHelper:name==='react'?react:name.startsWith('@/')?load")
+  "require:name=>name==='@/app/supplier-hub-product-document'?productDocumentHelper:name==='react'?react:")
   .replaceAll('import.meta.url', JSON.stringify(fixtureUrl.href));
 const plain = value => JSON.parse(JSON.stringify(value));
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value == null ? '' : String(value);

@@ -88,6 +88,7 @@ export async function singleBrowserFixture(company=SINGLE_COMPANIES[0],options={
     calls.push({name:'app-fetch',url,init:{...init,signal:undefined}});f.appReads++;
     if(options.beforeAppFetch)await options.beforeAppFetch(url,init,f);
     if(url.endsWith('/catalog-context'))return response(url,{ownerId:f.ownerId,company:f.company});
+    if(url.endsWith('/supplier-hub-product-receipt'))return response(url,{format:'yoofam-native-receipt-history-v1',productId:packet.productId,receipts:[]});
     const packageView={format:'yoofam-supplier-hub-single-package-v1',prepared:true,registered:false,remoteWrites:false,submissionReady:false,humanAgreementsConfirmed:false,
       productId:packet.productId,requestedProfileId:packet.profileId,fingerprint:packet.fingerprint,company:clone(company),schemaSha256:packet.schemaSha256,
       source:{...packet.source,profileId:packet.profileId},payload:clone(packet.body),manifest:[{optionId:packet.optionId,files:[{published:true,verification:'stored-body-sha256',url:'https://image.example.test/main.jpg'}]}],

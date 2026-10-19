@@ -1,11 +1,12 @@
 'use client';
-import {useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import type {QuotationFieldsView} from '@/app/quotation-schema';
 import {singlePackageCurrent,singlePackagePacket,previewSingleDocument,runSingleDocument,verifySingleDocumentObservation,readSingleCatalogContext,singleConsentConfirmation,SingleDocumentBridgeError,
   readSingleReceiptHistory,saveSingleReceiptObservation,singleReceiptSaveAttempt,
   type SinglePackageView,type SingleDocumentSession,type SingleDocumentState,type SingleDocumentAction,type SingleReceiptSaveAttempt} from '@/app/supplier-hub-single-client';
 import type {SingleReceiptRecord} from '@/app/supplier-hub-single-receipt';
 import {reviewCurrentSupplierHubProductDocument,type SupplierHubProductDocumentReview} from '@/app/supplier-hub-product-document';
+import {SupplierHubProductTransport} from '@/app/components/supplier-hub-product-transport';
 
 type Props={productId:string;profileId?:string;view:QuotationFieldsView;disabled:boolean;onReceiptSaved?:()=>void};
 const sourceKey=({productId,profileId,view}:Omit<Props,'disabled'>)=>JSON.stringify([productId,profileId,view.productVersion,view.contentRevision,view.optionRevision,view.revision,view.inputFingerprint]);
@@ -18,6 +19,8 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
   const [history,setHistory]=useState<SingleReceiptRecord[]>([]),[historyLoading,setHistoryLoading]=useState(true),[historyError,setHistoryError]=useState('');
   const [saveError,setSaveError]=useState(''),[saveAttempt,setSaveAttempt]=useState<SingleReceiptSaveAttempt|null>(null);
   const [productReview,setProductReview]=useState<SupplierHubProductDocumentReview|null>(null),productReviewRef=useRef<SupplierHubProductDocumentReview|null>(null);
+  const [productLocked,setProductLocked]=useState(false),productLockRef=useRef(false);
+  const lockProduct=useCallback((value:boolean)=>{productLockRef.current=value;setProductLocked(value);},[]);
   function setFullReview(value:SupplierHubProductDocumentReview|null){productReviewRef.current=value;setProductReview(value);}
   const key=sourceKey({productId,profileId,view}),current=useRef({key,view,disabled,mounted:true,onReceiptSaved}),pending=useRef<AbortController|null>(null),generation=useRef(0);
   const historyPending=useRef<AbortController|null>(null),receiptAttempt=useRef<SingleReceiptSaveAttempt|null>(null);
@@ -47,7 +50,7 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
     },Math.max(0,challenge.expiresAt-Date.now()));
     return()=>clearTimeout(timer);
   },[state?.challenge]);
-  const canEnter=()=>current.current.mounted&&!current.current.disabled&&current.current.key===key&&!pending.current;
+  const canEnter=()=>current.current.mounted&&!current.current.disabled&&current.current.key===key&&!pending.current&&!productLockRef.current;
   function begin(){const controller=new AbortController(),sequence=++generation.current;pending.current=controller;setBusy(true);setError('');return {controller,active:()=>current.current.mounted&&!current.current.disabled&&current.current.key===key&&!controller.signal.aborted&&generation.current===sequence&&pending.current===controller,finish:()=>{if(pending.current===controller){pending.current=null;if(current.current.mounted)setBusy(false);}}};}
   async function persist(attempt:SingleReceiptSaveAttempt,task:ReturnType<typeof begin>){
     if(!task.active()||receiptAttempt.current!==attempt)return;
@@ -155,9 +158,11 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
     }}finally{task.finish();}
   }
   const challenge=state?.challenge,required=challenge?.items.filter(item=>item.required)??[],canConfirm=Boolean(session?.preview.liveVerified&&challenge&&!expired&&!uncertain&&required.every(item=>approved[item.key]));
+  const errors=data?.review.issues.filter(issue=>issue.level==='error')??[];
+  const notices=[...new Set(data?.review.issues.filter(issue=>issue.level!=='error').map(issue=>issue.message)??[])];
   return <section className="quotation-fields-notice" aria-label="개별 견적서 전송 자료" aria-busy={busy||historyLoading}>
-    <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||Boolean(session)} onClick={()=>void read()}>개별 견적 자료 검토</button>
-      <button type="button" className="btn primary" disabled={disabled||busy||!data?.review.canPrepare||data.prepared||Boolean(session)} onClick={()=>void read(true)}>이미지 전송 자료 준비</button></div>
+    <div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||productLocked||Boolean(session)} onClick={()=>void read()}>개별 견적 자료 검토</button>
+      <button type="button" className="btn primary" disabled={disabled||busy||productLocked||!data?.review.canPrepare||data.prepared||Boolean(session)} onClick={()=>void read(true)}>이미지 전송 자료 준비</button></div>
     {error&&<p role="alert">{error}</p>}
     <section aria-label="보관된 개별 등록 파일 확인 이력"><h4>보관된 등록 파일 확인 이력</h4>
       {historyLoading&&<p role="status">확인 이력을 불러오는 중입니다.</p>}
@@ -181,9 +186,10 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
       <button type="button" className="btn ghost" disabled={disabled||busy||!saveAttempt} onClick={()=>void retrySave()}>확인 결과 저장 다시 시도</button></section>}
     {data&&<><p>{data.company.name} · {data.payload.categoryPath} · 포함 옵션 {data.options.length}개</p>
       <p>{data.prepared?'저장한 값과 이미지 파일의 전송 자료가 준비됐습니다.':'저장한 값과 이미지 파일을 확인한 뒤 자료를 준비하세요.'} {state?.state==='registered'?'해당 문서의 접수·SKU 증거를 확인했습니다.':'이 자료 준비만으로 Supplier Hub 접수가 완료되는 것은 아닙니다.'}</p>
-      {data.review.issues.length>0&&<ul>{data.review.issues.map((issue,index)=><li key={index}>{issue.message}</li>)}</ul>}
+      {errors.length>0&&<ul>{errors.map((issue,index)=><li key={index}>{issue.message}</li>)}</ul>}
+      {notices.length>0&&<details><summary>견적서 검토 안내 {notices.length}개</summary><ul>{notices.map(message=><li key={message}>{message}</li>)}</ul></details>}
       <div className="quotation-fields-bulk-table"><table><thead><tr><th>옵션</th><th>대표·추가·상세·사이즈표·표시사항 이미지</th></tr></thead><tbody>{data.options.map(option=><tr key={option.optionId??'common'}><td>{option.optionLabel}</td><td>{data.manifest.filter(item=>item.optionId===option.optionId).map(item=>`${({main:'대표',additional:'추가',detail:'상세',label:'표시사항',size:'사이즈표'})[item.role as 'main']??item.role} ${item.files.length}개`).join(' · ')}</td></tr>)}</tbody></table></div>
-      {data.prepared&&<div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||!data.review.canPrepare||Boolean(session)||uncertain||Boolean(saveAttempt)} onClick={()=>void reviewProduct()}>포함 옵션 전체 문서 확인</button></div>}
+      {data.prepared&&<div className="quote-actions"><button type="button" className="btn ghost" disabled={disabled||busy||productLocked||!data.review.canPrepare||Boolean(session)||uncertain||Boolean(saveAttempt)} onClick={()=>void reviewProduct()}>포함 옵션 전체 문서 확인</button></div>}
       {productReview&&productReview.identity.fingerprint===data.fingerprint&&singlePackageCurrent(data,view,productId)&&<section aria-label="포함 옵션 전체 견적 문서">
         <h4>포함 옵션 {productReview.members.length}개 · 견적 문서 1개</h4>
         <p>저장한 모든 포함 옵션을 같은 순서로 문서 하나에 구성했습니다. 상품명·모델명·금액을 확인해주세요. 이 확인은 등록 요청을 전송하지 않습니다.</p>
@@ -194,10 +200,15 @@ function SingleReviewContent({productId,profileId,view,disabled,onReceiptSaved}:
           const text=(value:unknown)=>typeof value==='string'||typeof value==='number'?String(value):'';
           return <tr key={member.optionId}><td>{member.optionLabel}</td><td>{text(start.productName)}</td><td>{text(product.modelNumber)}</td><td>{text(prices.purchasePrice)}</td><td>{text(prices.coupangSalePrice)}</td><td>{text(prices.msrp)}</td></tr>;
         })}</tbody></table></div>
-        <button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>closeProductReview(productReview)}>전체 문서 확인 닫기</button>
+        <SupplierHubProductTransport key={productReview.reviewDigest} review={productReview} disabled={disabled||busy||Boolean(session)||uncertain} onLockChange={lockProduct} onReceiptSaved={onReceiptSaved}
+          refresh={async signal=>{
+            if(!current.current.mounted||current.current.disabled||productReviewRef.current!==productReview||latest.current.data!==data)throw Error('현재 전체 상품 검토가 변경되었습니다.');
+            return reviewCurrentSupplierHubProductDocument({productId,profileId,packageView:data,quotationView:current.current.view,signal,fetcher:fetch});
+          }}/>
+        <button type="button" className="btn ghost" disabled={disabled||busy||productLocked} onClick={()=>closeProductReview(productReview)}>전체 문서 확인 닫기</button>
       </section>}
-      {data.prepared&&<div className="quote-actions"><label className="field"><span>개별 전송 옵션</span><select aria-label="개별 전송 옵션" value={optionId} disabled={disabled||busy||Boolean(session)} onChange={event=>{if(!canEnter()||latest.current.session)return;latest.current.optionId=event.target.value;setOptionId(event.target.value);}}><option value="">옵션 1개를 선택하세요</option>{data.options.filter(option=>typeof option.optionId==='string').map(option=><option key={option.optionId!} value={option.optionId!}>{option.optionLabel}</option>)}</select></label>
-        <button type="button" className="btn ghost" disabled={disabled||busy||!optionId||Boolean(session)} onClick={()=>void connect()}>개별 전송 자료 확인</button></div>}
+      {data.prepared&&<div className="quote-actions"><label className="field"><span>개별 전송 옵션</span><select aria-label="개별 전송 옵션" value={optionId} disabled={disabled||busy||productLocked||Boolean(session)} onChange={event=>{if(!canEnter()||latest.current.session)return;latest.current.optionId=event.target.value;setOptionId(event.target.value);}}><option value="">옵션 1개를 선택하세요</option>{data.options.filter(option=>typeof option.optionId==='string').map(option=><option key={option.optionId!} value={option.optionId!}>{option.optionLabel}</option>)}</select></label>
+        <button type="button" className="btn ghost" disabled={disabled||busy||productLocked||!optionId||Boolean(session)} onClick={()=>void connect()}>개별 전송 자료 확인</button></div>}
     </>}
     {session&&session.preview.liveVerified!==true&&<p role="status">개별 문서의 실제 등록 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
     {session&&!state&&!uncertain&&!saveAttempt&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>closePreview(session)}>개별 자료 확인 닫기</button>}

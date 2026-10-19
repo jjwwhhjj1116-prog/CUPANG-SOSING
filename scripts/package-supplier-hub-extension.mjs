@@ -14,6 +14,11 @@ const files=fs.readdirSync(folder,{withFileTypes:true}).sort((a,b)=>a.name<b.nam
 });
 const manifest=JSON.parse(new TextDecoder().decode(files.find(file=>file.name==='manifest.json')?.data));
 if(manifest.manifest_version!==3||manifest.background.service_worker!=='handoff-worker.mjs'||!/^0\.2\.\d+$/.test(manifest.version))throw Error('Chrome 확장 배포 정보를 확인해주세요.');
+// Whole-product preview is a separate contract. Never ship an extension that
+// advertises it while omitting a runtime dependency or its source verifier.
+const productDocumentFiles=['product-document.mjs','product-document.d.mts','product-document-receiver.mjs','product-document-dispatch.mjs','product-document-adapter.mjs'];
+if(productDocumentFiles.some(name=>!files.some(file=>file.name===name))||!manifest.content_scripts?.some(entry=>entry.js?.includes('single-content.js')))
+ throw Error('전체 상품 견적 확인 확장의 실행 파일을 확인해주세요.');
 const exports={};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('app/exports/zip.ts',root),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,Uint8Array,Uint32Array,DataView});
 const archive=new Uint8Array(exports.zipFiles(files)),unpacked=readPackageZip(archive);
