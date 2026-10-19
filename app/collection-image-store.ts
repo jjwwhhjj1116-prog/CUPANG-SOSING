@@ -11,6 +11,7 @@ import {readCollectionImage,saveCollectionImage,CollectionImageCancelledError} f
 import {productImageKeys} from '@/app/product-content';
 import {MAX_IMAGE_BYTES, PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-files';
 import {downloadCollectionImage,collectedImageWarnings} from '@/app/collection-image';
+import {collectionCommonImageCandidate} from '@/app/collection-gallery';
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{'cache-control':'no-store'}});
 
 /** Re-read the draft for each commit. Prefetch is internal and can only use the immutable receipt. */
@@ -25,7 +26,8 @@ export async function storeCollectedImage(owner:string,id:string,index:number,as
   // Product-level defaults use the common main image. A missing remote SKU is
   // not an unmatched actual SKU and must not create a permanent import warning.
   const skus=(receipt?.result.options??[]).filter(option=>option.imageIndex===index&&option.sku!=='').map(option=>option.sku);
-  const warnings=async(key:string)=>collectedImageWarnings(await readProductContent(owner,product.id),await readProductOptions(owner,product.id),skus,key,image.role,assignToStage);
+  const commonStageAllowed=collectionCommonImageCandidate(receipt!.result,index);
+  const warnings=async(key:string)=>collectedImageWarnings(await readProductContent(owner,product.id),await readProductOptions(owner,product.id),skus,key,image.role,assignToStage,commonStageAllowed);
   if(previous){
    if(previous.product_id!==product.id||!productImageKeys(product.image_keys).includes(previous.object_key))return reply({error:'이 원본은 상품 이미지에서 제외되었습니다. 기존 편집을 보존하기 위해 자동 복원하지 않습니다. 선택을 해제해주세요.',code:'IMAGE_DETACHED'},409);
    if(!env.FILES)return reply({error:'이미지 저장소 연결이 필요합니다.'},503);
@@ -43,7 +45,7 @@ export async function storeCollectedImage(owner:string,id:string,index:number,as
   if(!latestJob || latestJob.status==='cancelled')return reply({code:'COLLECTION_CANCELLED',error:'취소된 수집 요청입니다. 내려받은 이미지를 상품에 반영하지 않았습니다.'},409);
   const stored=await env.FILES.put(downloaded.key,downloaded.bytes,{httpMetadata:{contentType:downloaded.contentType},customMetadata:{imageValidation:'header-v1',provenance:'collected',...imageDimensionMetadata(downloaded.bytes)}});
   if(!stored)throw new Error('이미지 저장 확인 실패');
-  const saved=await saveCollectionImage(owner,id,index,downloaded.key,image.role,product,current,skus,assignToStage);
+  const saved=await saveCollectionImage(owner,id,index,downloaded.key,image.role,product,current,skus,assignToStage,commonStageAllowed);
   return reply({key:saved.object_key,warnings:await warnings(saved.object_key),message:'원본 이미지를 저장했습니다. 번역·가공은 실행하지 않았습니다.'});
  }catch(error){
   if(error instanceof CollectionImageCancelledError)return reply({code:'COLLECTION_CANCELLED',error:error.message},409);

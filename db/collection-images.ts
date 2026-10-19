@@ -97,9 +97,9 @@ export async function readOptionSourceImages(owner:string,product:Pick<ProductRe
  for(const option of options.rows){const key=sources.get(option.supplierSku);if(key&&counts.get(option.supplierSku)===1)images[option.id]=key;}
  return images;
 }
-export async function saveCollectionImage(owner:string,jobId:string,index:number,key:string,role:'main'|'additional'|'detail',product:ProductRecord,current:ProductContent,skus:readonly string[]=[],assignToStage = true){
+export async function saveCollectionImage(owner:string,jobId:string,index:number,key:string,role:'main'|'additional'|'detail',product:ProductRecord,current:ProductContent,skus:readonly string[]=[],assignToStage = true,commonStageAllowed=true){
  const db=await database();const operation=crypto.randomUUID();const now=new Date(Math.max(Date.now(),Date.parse(product.updated_at)+1)).toISOString();
- const next=attachCollectedImage(current,JSON.parse(product.image_keys),key,role,now,assignToStage);
+ const next=attachCollectedImage(current,JSON.parse(product.image_keys),key,role,now,assignToStage&&commonStageAllowed);
  const options=await readProductOptions(owner,product.id);
  // Intake originals belong to the image library. Choosing a source file is a
  // separate step-three action, not evidence of a finished quotation image.

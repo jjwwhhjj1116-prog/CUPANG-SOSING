@@ -2,6 +2,7 @@ import { parseCollectionRequest } from '@/app/sourcing';
 import { collectionSourceGaps } from '@/app/collection-source-gaps';
 import { validateAlibabaSourcePriceBasis, type AlibabaSourcePriceBasis } from '@/app/alibaba-source-pricing';
 import { validateAlibabaOfferDefault, type AlibabaOfferDefault } from '@/app/alibaba-offer-default';
+import {validateCollectionSourceGallery,type CollectionSourceGallery} from '@/app/collection-gallery';
 
 export const COLLECTION_RESULT_LIMIT = 512 * 1024;
 /** Derived from the server-validated source contract; persists with receipts. */
@@ -15,6 +16,7 @@ export type CollectionResult = {
   attributes?: { name: string; value: string }[];
   priceBasis?: AlibabaSourcePriceBasis;
   offerDefault?: AlibabaOfferDefault;
+  sourceGallery?: CollectionSourceGallery;
   options: { sku: string; name: string; unitPriceCny: number; minimumOrder: number; stock: number | null; imageIndex?: number; color?: string; size?: string }[];
   images: { url: string; role: 'main' | 'additional' | 'detail' }[];
 };
@@ -29,7 +31,7 @@ function text(value: unknown, max: number, required=true) {
   return value.trim();
 }
 export function validateCollectionResult(input: unknown, expectedOfferId: string, now=Date.now()): CollectionResult {
-  const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images','attributes','priceBasis','offerDefault']);
+  const body=record(input,['schemaVersion','sourceUrl','provider','collectedAt','title','description','options','images','attributes','priceBasis','offerDefault','sourceGallery']);
   if(body.schemaVersion!==1)throw new Error('지원하지 않는 수집 결과 버전입니다.');
   const source=parseCollectionRequest({urls:[body.sourceUrl]})[0];
   if(source.offerId!==expectedOfferId)throw new Error('요청한 상품번호와 수집 결과가 다릅니다.');
@@ -68,5 +70,6 @@ export function validateCollectionResult(input: unknown, expectedOfferId: string
   const provider=text(body.provider,100),title=text(body.title,500);
   const offerDefault=hasOfferDefault?validateAlibabaOfferDefault(body.offerDefault,provider,source.offerId,title,options,images,Object.hasOwn(body,'priceBasis')):undefined;
   const priceBasis=body.priceBasis!==undefined?validateAlibabaSourcePriceBasis(body.priceBasis,provider,options):undefined;
-  return {schemaVersion:1,sourceUrl:source.sourceUrl,offerId:source.offerId,provider,collectedAt:new Date(timestamp).toISOString(),title,description:text(body.description,20000,false),options,images,...(attributes !== undefined ? { attributes } : {}),...(priceBasis!==undefined?{priceBasis}:{}),...(offerDefault?{offerDefault}:{})};
+  const sourceGallery=Object.hasOwn(body,'sourceGallery')?validateCollectionSourceGallery(body.sourceGallery,provider,images):undefined;
+  return {schemaVersion:1,sourceUrl:source.sourceUrl,offerId:source.offerId,provider,collectedAt:new Date(timestamp).toISOString(),title,description:text(body.description,20000,false),options,images,...(attributes !== undefined ? { attributes } : {}),...(priceBasis!==undefined?{priceBasis}:{}),...(offerDefault?{offerDefault}:{}),...(sourceGallery?{sourceGallery}:{})};
 }

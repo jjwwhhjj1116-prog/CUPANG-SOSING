@@ -51,7 +51,7 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
   }
   const mainImages = row(product.productImage).images;
   if (!Array.isArray(mainImages) || !mainImages.length) throw Error('상품 이미지를 확인하지 못했습니다.');
-  mainImages.forEach((value, index) => image(value, index === 0 ? 'main' : 'additional'));
+  const galleryImageIndices=[...new Set(mainImages.map((value,index)=>image(value,index===0?'main':'additional')))];
   const singleSku = product.productSkuInfos.length === 1;
   const options = offerDefault ? [{ sku: '', name: text(product.subject, '상품명'), unitPriceCny: offerDefault.unitPriceCny,
     minimumOrder, stock: offerDefault.stock, imageIndex: 0 }] : sourceSkus.map((sourceSku, index) => {
@@ -84,7 +84,7 @@ export function parseAlibabaProduct(payload: unknown, sourceUrl: string, now = D
   const description = parseAlibabaDescription(product.description);
   description.images.forEach(url => image(url, 'detail'));
   const result = validateCollectionResult({schemaVersion: 1, sourceUrl: source.sourceUrl, provider: '1688-openapi-candidate-v1', collectedAt: new Date(now).toISOString(),
-    title: text(product.subject, '상품명'), description: description.text, options, images, ...(sourcePricing ? { priceBasis: sourcePricing.priceBasis } : {}), ...(offerDefault ? { offerDefault } : {}),
+    title: text(product.subject, '상품명'), description: description.text, options, images, sourceGallery:{format:'1688-openapi-gallery-v1',imageIndices:galleryImageIndices}, ...(sourcePricing ? { priceBasis: sourcePricing.priceBasis } : {}), ...(offerDefault ? { offerDefault } : {}),
     attributes: attributes.map(value => { const attribute = row(value); return {name: text(attribute.attributeName, '속성명'), value: text(attribute.value, '속성값')}; })}, source.offerId, now);
   if (new TextEncoder().encode(JSON.stringify(result)).byteLength > COLLECTION_RESULT_LIMIT) throw Error('수집 결과 크기가 한도를 초과했습니다.');
   return result;

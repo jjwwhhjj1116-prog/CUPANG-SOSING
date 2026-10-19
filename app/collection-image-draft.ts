@@ -2,6 +2,7 @@ import type { CollectionResult } from '@/app/collection-result';
 import type { ProductContent } from '@/app/product-content';
 import type { ProductOptions } from '@/app/product-options';
 import { isOwnedImageKey } from '@/app/image-files';
+import {collectionCommonImageCandidate} from '@/app/collection-gallery';
 
 export type CollectedImageLink = { imageIndex: number; key: string };
 
@@ -17,7 +18,7 @@ export function collectedImageDraft(owner: string, receipt: CollectionResult, li
   for (const role of ['main', 'additional', 'detail'] as const) {
     const current = content.assets[role];
     if (!['unverified', 'collected'].includes(current.provenance) || current.provenance === 'unverified' && current.value.length) continue;
-    const candidates = [...new Set(receipt.images.flatMap((image, index) => image.role === role && available.has(index) ? [available.get(index)!] : []))];
+    const candidates = [...new Set(receipt.images.flatMap((image, index) => image.role === role && collectionCommonImageCandidate(receipt,index) && available.has(index) ? [available.get(index)!] : []))];
     // A prior non-receipt reference or removed file is existing work, not an
     // invitation to replace the entire field with these source images.
     if (current.value.some(key => !candidates.includes(key))) continue;

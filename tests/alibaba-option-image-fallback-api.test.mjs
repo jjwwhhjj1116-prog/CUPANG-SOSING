@@ -31,7 +31,8 @@ for(const company of schemaCompanies)test(`actual SKU image priorities reach sta
    assert.equal(row.imageKey,originals.get(parsed.options[i].imageIndex));assert.equal(row.provenance.imageKey,'collected');
    assert.equal(options.sourceImageKeys[row.id],row.imageKey);assert.equal(row.provenance.translatedName,'translated');
   }
-  assert.deepEqual(content.assets.main.value,[originals.get(0)]);assert.deepEqual(content.assets.additional.value,[originals.get(1),originals.get(2),originals.get(3)]);assert.deepEqual(content.assets.detail.value,[originals.get(4)]);
+  assert.deepEqual(plain(parsed.sourceGallery),{format:'1688-openapi-gallery-v1',imageIndices:[0,1]});
+  assert.deepEqual(content.assets.main.value,[originals.get(0)]);assert.deepEqual(content.assets.additional.value,[originals.get(1)]);assert.deepEqual(content.assets.detail.value,[originals.get(4)]);
   assert.ok(h.objects.has(originals.get(2)),'nonselected valid second candidate is downloaded and remains editable');
   assert.equal(h.stats.downloads,5);assert.equal(h.objects.size,5);assert.equal(h.aiSources.length,1);assert.equal(product.supplier_hub_status,'미전송');
   assert.ok(h.network.every(host=>host==='cbu01.alicdn.com'),'only synthetic allowlisted CDN media is served; unselected attribute URLs are never fetched');
