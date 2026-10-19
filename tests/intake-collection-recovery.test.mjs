@@ -39,7 +39,8 @@ for(const variant of ['network','body-stream','html-200','html-502','json-500','
  assert.match(message,/상품 추가 완료/);assert.equal(f.imports.length,1);assert.equal(f.imports[0][0].received_at,receivedAt);
  assert.equal(f.jobs.at(-1).product_id,'saved-product');assert.equal(f.seo.length,0);assert.equal(JSON.stringify(originalJob),before);
  assert.deepEqual(requests.map(item=>[item.path,item.init.method]),[['/api/collection-jobs/job/collect','POST'],['/api/collection-jobs/job/result','GET']]);
- assert.equal(requests[1].init.cache,'no-store');assert.ok(requests.every(item=>item.init.signal===controller.signal));
+ assert.equal(requests[1].init.cache,'no-store');assert.ok(requests.every(item=>item.init.signal!==controller.signal&&!item.init.signal.aborted));
+ assert.notEqual(requests[0].init.signal,requests[1].init.signal,'Each bounded request has an independent cancellation scope');assert.equal(controller.signal.aborted,false);
 });
 
 for(const variant of ['null','wrong-job','wrong-offer','wrong-source','changed-source-url','invalid-source','invalid-time','get-failure','get-html','get-network'])test(`failed receipt recovery ${variant} never imports or captures`,async()=>{

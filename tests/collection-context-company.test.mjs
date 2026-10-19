@@ -141,7 +141,13 @@ test('truly unrecorded legacy company stays ambiguous and cannot become a transm
     const original = stored(h), source = await h.load('app/exports/quotation-source.ts').readQuotationExportSource('owner', product.id, null);
     assert.equal(source.company, null, 'today’s membership cannot establish a missing historical identity');
     const view = await json(await h.route(base + '/quotation-fields'));
-    assert.equal(view.resolved.rows[0].fields.noticeManufacturerImporter.value.includes(h.context.settings.importer), true);
+    assert.equal(view.resolved.rows.length, 7, 'one common row and six option rows');
+    assert.equal(view.resolved.rows.filter(row => row.optionId === null).length, 1);
+    assert.equal(view.resolved.rows.filter(row => row.optionId !== null).length, 6);
+    for (const row of view.resolved.rows) {
+      assert.equal(row.fields.noticeManufacturerImporter.value, '해당사항없음', 'initial legal notices are independent of supplier/settings names');
+      assert.equal(row.fields.noticeManufacturerImporter.source, 'couplus-default');
+    }
     await assert.rejects(() => h.load('app/exports/quotation-source.ts').readMappedQuotationSource('owner', product.id, null), /회사 코드·이름이 기록되지 않은 초안/);
     assert.equal((await h.route(base + '/quotation', { method: 'POST', body: { action: 'source' } })).status, 409);
     assert.equal(stored(h), original, 'ambiguous legacy records are neither inferred nor rewritten');
