@@ -78,7 +78,7 @@ test('invalid policy blocks recalculation/save and disabled minimum keeps ratio 
   const h = mobileIntakeHarness();
   try {
     const ui = stageTwoPriceUI({ load: h.load }); ui.field('환율 (원/CNY)').props.onChange({ target: { value: '' } });
-    assert.equal(ui.button('일괄 재계산').props.disabled, true); ui.button('일괄 재계산').props.onClick(); await ui.submit(); assert.equal(ui.writes, 0); assert.equal(ui.policy().recalculationMode, undefined);
+    assert.equal(ui.button('일괄 재계산').props.disabled, true); ui.button('일괄 재계산').props.onClick(); await ui.submit(); assert.equal(ui.writes, 0); assert.equal(ui.policy().recalculationMode, mode, 'invalid input retains local intent without saving it');
     ui.field('환율 (원/CNY)').props.onChange({ target: { value: '350' } }); ui.field('최소 공급 마진 보장').props.onChange({ target: { checked: false } }); ui.button('일괄 재계산').props.onClick();
     assert.equal(ui.policy().minimumMargin, 0); assert.equal(h.load('app/pricing.ts').calculatePrice(25.6, ui.policy()).supplyPrice, 17920);
     const clean = stageTwoPriceUI({ load: h.load }); clean.update({ ...observed, recalculationMode: mode }); assert.equal(clean.policy().recalculationMode, mode); assert.equal(clean.render().props['data-workspace-dirty'], false);

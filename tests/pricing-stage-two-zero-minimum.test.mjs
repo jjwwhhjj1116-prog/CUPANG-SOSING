@@ -45,17 +45,17 @@ test('bulk preview identity keeps legacy bytes but rejects ON/OFF changes with t
  assert.equal(tools.applyOptionBulk(rows,preview,on)[0].unitsPerPack,3);assert.equal(JSON.stringify(rows),before);
 });
 
-test('real editor retains ON when the amount becomes zero, then explicitly stages cost plus zero',async()=>{
+test('real editor retains ON and stages cost plus zero directly when the amount changes',async()=>{
  const saved=[],ui=zeroMinimumUI({onSave:async value=>saved.push(plain(value))});ui.field('최소 공급 마진 (원)').props.onChange({target:{value:'0'}});
- assert.equal(ui.field('최소 공급 마진 보장').props.checked,true);assert.equal(ui.policy().recalculationMinimumEnabled,true);assert.equal(ui.policy().recalculationMode,undefined);
- assert.match(text(ui.render()),/17,920원/);ui.button('일괄 재계산').props.onClick();assert.match(text(ui.render()),/8,960원/);assert.match(text(ui.render()),/판매 묶음 원가에 최소 공급 마진액/);assert.equal(ui.writes,0);
+ assert.equal(ui.field('최소 공급 마진 보장').props.checked,true);assert.equal(ui.policy().recalculationMinimumEnabled,true);assert.equal(ui.policy().recalculationMode,mode);
+ assert.match(text(ui.render()),/8,960원/);ui.button('일괄 재계산').props.onClick();assert.match(text(ui.render()),/8,960원/);assert.match(text(ui.render()),/판매 묶음 원가에 최소 공급 마진액/);assert.equal(ui.writes,0);
  await ui.submit();assert.equal(saved[0].minimumMargin,0);assert.equal(saved[0].recalculationMinimumEnabled,true);assert.equal(saved[0].recalculationMode,mode);assert.equal(ui.render().props['data-workspace-dirty'],false);
 });
 
-test('real editor restores cached zero through OFF/ON and retains zero on reopen',()=>{
+test('real editor restores cached zero through OFF/ON and retains zero on reopen',async()=>{
  const initial={...zero,recalculationMinimumEnabled:true},ui=zeroMinimumUI({initial});assert.equal(ui.field('최소 공급 마진 보장').props.checked,true);
  for(let i=0;i<2;i++){ui.field('최소 공급 마진 보장').props.onChange({target:{checked:false}});assert.equal(ui.policy().recalculationMinimumEnabled,false);assert.equal(ui.field('최소 공급 마진 (원)'),undefined);assert.equal(ui.policy().minimumMargin,0);assert.match(text(ui.render()),/17,920원/);ui.field('최소 공급 마진 보장').props.onChange({target:{checked:true}});assert.equal(ui.policy().recalculationMinimumEnabled,true);assert.equal(ui.field('최소 공급 마진 (원)').props.value,0);assert.match(text(ui.render()),/8,960원/);}
- assert.equal(ui.render().props['data-workspace-dirty'],false);const reopened=zeroMinimumUI({initial:plain(ui.policy())});assert.equal(reopened.field('최소 공급 마진 보장').props.checked,true);assert.equal(reopened.policy().minimumMargin,0);
+ assert.equal(ui.render().props['data-workspace-dirty'],true,'explicit controls stage recalculation even when the amount returns to zero');assert.equal(ui.writes,0);await ui.submit();assert.equal(ui.render().props['data-workspace-dirty'],false);const reopened=zeroMinimumUI({initial:plain(ui.policy())});assert.equal(reopened.field('최소 공급 마진 보장').props.checked,true);assert.equal(reopened.policy().minimumMargin,0);
 });
 
 test('switch-only external updates and dirty drafts use the actual samePolicy comparison',()=>{

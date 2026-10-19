@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { createRequire } from 'node:module';
 import { webcrypto } from 'node:crypto';
 import { memoryDatabase, runtimeDDL } from '../../scripts/check-db-schema.mjs';
+import * as rejectionDetails from '../../extensions/supplier-hub/rejection-details.mjs';
 
 const native = createRequire(import.meta.url);
 export const priceTableCompanies = [{ code: 'A01464742', name: '와이홉' }, { code: 'A01526306', name: '유앤채' }];
@@ -60,6 +61,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     { exports, Error, RangeError, Date, URL, URLSearchParams, Response, Request, Headers, Blob, TextEncoder, TextDecoder,
       Uint8Array, DataView, AbortController, structuredClone, crypto: webcrypto, process: { env: { NODE_ENV: 'production' } },...(fileStorage?{File,FormData,CompressionStream,DecompressionStream}:{}),
       fetch: request, require(name) {
+        if(name==='../extensions/supplier-hub/rejection-details.mjs'||name==='@/extensions/supplier-hub/rejection-details.mjs')return rejectionDetails;
         if (name in deps) return deps[name]; if (name === 'react') return hooks;
         if (name === 'react/jsx-runtime') return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };
         if (name.endsWith('.css')) return {};
@@ -114,6 +116,7 @@ export async function optionPriceTableUI(company = priceTableCompanies[0], { cou
     rows() { return load('db/product-options.ts').readProductOptions(owner, productId); },
     holdSave() { let release, arrive; const promise = new Promise(done => { release = done; }), arrived = new Promise(done => { arrive = done; }); heldSave = { promise, arrived: arrive }; return { release, arrived }; },
     changeProductVersion(value) { currentProduct = { ...currentProduct, updated_at: value }; },
+    async reloadProduct() { currentProduct = await load('db/queries.ts').findProduct(owner,productId); },
     selectProfile(value){profileId=value;render();},locks({policy:policyValue,files,allowed}={}){if(policyValue!==undefined)policyLocked=policyValue;if(files!==undefined)fileBusy=files;if(allowed!==undefined)allowCommit=allowed;render();},
     get saved() { return saveCount; }, close() { for (const instance of instances.values()) for (const slot of instance.slots) slot?.cleanup?.(); closed = true; sqlite.close(); },
   };

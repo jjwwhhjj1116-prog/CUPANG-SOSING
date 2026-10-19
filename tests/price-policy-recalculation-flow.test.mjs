@@ -21,7 +21,7 @@ const hashes = () => Object.fromEntries(files.map(file => [file, sha(fs.readFile
 const frozen = hashes();
 after(() => {
   assert.deepEqual(hashes(), frozen);
-  if (proof.length) fs.writeFileSync(new URL('../outputs/step698-policy-api-proof.json', import.meta.url), JSON.stringify({ format: 'local-policy-recalculation-api-proof-v1', sourceHashes: frozen,
+  if (proof.length) fs.writeFileSync(new URL('../outputs/step739-policy-api-proof.json', import.meta.url), JSON.stringify({ format: 'local-policy-recalculation-api-proof-v1', sourceHashes: frozen,
     officialWorkbookAvailable: officialAvailable, cases: proof, externalRequests: 0, browserActions: 0, supplierHubWrites: 0,
     boundary: 'Actual DetailPanel/PriceEditor/ProductOptionsEditor callbacks and API handlers, fixture authentication, isolated SQLite and R2 map. The previously recorded Unand workbook is reused for Waihop locally. No newly obtained workbook or live Supplier Hub operation is claimed.' }, null, 2) + '\n');
 });
@@ -67,8 +67,16 @@ async function fixture(company = priceTableCompanies[0], { official = false, cou
 const row = (view, id = 'price-001') => view.resolved.rows.find(value => value.optionId === id).fields;
 const values = fields => ['supplyPrice', 'salePrice', 'msrp'].map(key => fields[key].value);
 const currentScope = (state, categoryId) => categoryId ? state.categoryOverrides['category:' + categoryId] : state.overrides;
+// Legacy callers may still save a policy without requesting price replacement.
+// Actual Stage2 controls now explicitly request the Couplus recalculation.
+async function legacyPolicySave(f,changes){
+  const current=await f.options();
+  await json(await f.h.request(f.base+'/pricing',{method:'POST',body:JSON.stringify({policy:{...current.pricing.policy,...changes},expectedVersion:current.productVersion,...(f.profile?{profileId:f.profile.id}:{})})}));
+  await f.h.reloadProduct();
+  await f.refresh();
+}
 
-for (const company of priceTableCompanies) test(`policy save updates only derived MSRP; explicit recalculation replaces current scoped prices through actual UI/API/Excel (${company.code})`, async () => {
+for (const company of priceTableCompanies) test(`legacy API policy save updates derived MSRP; explicit UI recalculation replaces scoped prices through API/Excel (${company.code})`, async () => {
   const f = await fixture(company, { official: true }), { h } = f, other = await optionPriceTableUI(priceTableCompanies.find(value => value.code !== company.code), { count: 1, integrated: true });
   try {
     const source = await f.options(), options = h.load('app/product-options.ts').optionInputs(source.options); options[3].included = false;
@@ -79,7 +87,7 @@ for (const company of priceTableCompanies) test(`policy save updates only derive
       { fieldKey: 'packagedWeightG', optionId: 'price-001', value: '420' }, ...(osrp ? [{ fieldKey: osrp.id, optionId: 'price-001', value: '76500' }] : [])]);
     change(h, '가격 옵션 1 판매가', '9000'); await f.saveGrid(); view = await f.quote(); assert.equal(row(view).msrp.value, '11700');
     const sourceBefore = f.stable(), objectsBefore = f.objectSnapshot(), otherBefore = database(other), sourceOptions = plain((await f.options()).options), numbers = plain((await f.options()).optionRegistrationNumbers);
-    policyChange(h, '시장가격 배수', '1.5'); await policySave(h); view = await f.quote();
+    await legacyPolicySave(f,{msrpMultiple:1.5}); view = await f.quote();
     assert.equal(row(view).salePrice.value, '9000'); assert.equal(row(view).msrp.value, '13500'); assert.equal(view.stageTwoMsrp['price-001'].value, '13500');
     assert.equal(row(view, 'price-002').msrp.value, '25000'); assert.equal(row(view, 'price-003').msrp.value, ''); assert.equal(h.writes.filter(write => write.kind === 'pricing').at(-1).recalculate, undefined);
     const ordinaryBook = await f.workbook(); if (ordinaryBook) { assert.deepEqual(plain(ordinaryBook.cells[0].slice(29, 32)), ['4050', '9000', '13500']); assert.equal(ordinaryBook.cells[1][31], '25000'); assert.equal(ordinaryBook.cells[2][31], ''); }
@@ -91,7 +99,7 @@ for (const company of priceTableCompanies) test(`policy save updates only derive
     retained.categoryOverrides ??= {}; retained.categoryOverrides['category:991234'] = { common: { supplyPrice: '321', title: '다른 분류 보존' }, options: { 'price-001': { msrp: '654' } } };
     retained.detailSaveBackups = { 'category:991234': [{ receipt: { uploadId: 'a'.repeat(64), key: f.owner + '/images/local-history.png', sha256: 'b'.repeat(64), bytes: 1, revision: 1, beforeRevision: 0, sourceOptionId: 'price-001', categoryId: '991234', optionIds: ['price-001'] }, before: [{ fieldKey: 'title', optionId: 'price-001', value: '이전 상세 제목' }], sources: [], beforeProductVersion: view.productVersion, beforeInputFingerprint: view.inputFingerprint, updatedAt: view.productVersion }] };
     f.writeState(retained); await f.refresh();
-    policyChange(h, '환율 (원/CNY)', '400'); policyChange(h, '최소 공급 마진 (원)', '5000'); await policySave(h); view = await f.quote();
+    await legacyPolicySave(f,{exchangeRate:400,minimumMargin:5000}); view = await f.quote();
     assert.deepEqual(values(row(view, 'price-003')), ['8000', '14000', '18200'], 'ordinary policy save never clears manual prices');
     assert.equal(row(view, 'price-002').msrp.value, '25000'); assert.equal(view.stageTwoMsrp['price-001'].value, '13500');
     const beforeClick = database(h), beforeWrites = h.writes.length; h.node('가격 옵션 1 선택').props.onChange({ target: { checked: true } }); h.button('일괄 재계산').props.onClick();
@@ -116,7 +124,7 @@ test('ordinary legacy policy save keeps common prices and MSRP blank byte-for-by
   const f = await fixture(priceTableCompanies[0], { count: 1 }), { h } = f;
   try {
     const view = await f.quote(); await f.write([...f.paired(view, 'supplyPrice', null, '8000'), ...f.paired(view, 'salePrice', null, '14000'), ...f.paired(view, 'msrp', null, '')]);
-    const before = f.state(); policyChange(h, '시장가격 배수', '1.5'); await policySave(h);
+    const before = f.state(); await legacyPolicySave(f,{msrpMultiple:1.5});
     assert.deepEqual(f.state(), before); assert.deepEqual(values(row(await f.quote())), ['8000', '14000', '']);
     h.button('일괄 재계산').props.onClick(); await policySave(h); const saved = await f.quote();
     assert.deepEqual(saved.overrides.common, {}); assert.deepEqual(values(row(saved)), ['4050', '6750', '10130']); assert.equal(saved.stageTwoMsrp, undefined);
