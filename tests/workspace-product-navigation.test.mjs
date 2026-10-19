@@ -20,7 +20,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
  const product=id=>({id,owner_id:'test-owner',title:'상품 '+id,source_url:'https://detail.1688.com/offer/'+(id==='a'?'813724060928':'813724060929')+'.html',created_at:now,updated_at:now,image_keys:'[]',options_count:1,source_price_cny:1,exchange_rate:200,supply_margin:50,coupang_margin:40,supply_price:400,sale_price:700,msrp:1000,seo_status:'대기',image_status:'대기',quote_status:'대기',registration_status:'검토 대기',supplier_hub_status:'미전송',goal_stage:'work'});
  const products=[batch?.product??product('b')];
  const profiles=['a','b'].map(id=>({id:'profile-'+id,name:'양식 '+id,revision:1,categoryId:'80719',categoryPath:['바스켓'],mappings:[],template:{name:id+'.xlsx',format:'xlsx',headerRow:1,headers:['상품명'],sheetName:'견적서'}}));
- let quotationEditor,packagingEditor,optionBoard,labelBatch,quotationDirty=false,quotationBusy=false;
+ let quotationEditor,packagingEditor,optionBoard,labelBatch,seoBatch,quotationDirty=false,quotationBusy=false;
  const hooks={
   useState(initial){const instance=active,index=instance.index++;if(!(index in instance.slots))instance.slots[index]=typeof initial==='function'?initial():initial;return[instance.slots[index],value=>{if(!instance.mounted){if(instance.name==='DashboardClient')lateDashboardWrites++;return;}instance.slots[index]=typeof value==='function'?value(instance.slots[index]):value;}];},
   useRef(initial){const index=active.index++;return active.slots[index]??(active.slots[index]={current:initial});},
@@ -74,6 +74,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
     if(name==='@/app/components/intake-queue-panel')return{IntakeQueuePanel:props=>{intakeSettings=props.settings;return null;}};
     if(name==='@/app/components/product-option-board')return{ProductOptionBoard:props=>{optionBoard=props;return null;}};
     if(captureLabelBatch&&name==='@/app/components/batch-label-panel')return{BatchLabelPanel:props=>{labelBatch=props;return null;}};
+    if(batch&&name==='@/app/components/batch-seo-work-panel')return{BatchSeoWorkPanel:props=>{seoBatch=props;return null;}};
     if(submission&&name==='@/app/components/quotation-fields-editor')return{QuotationFieldsEditor:props=>{quotationEditor={...props,mount:active,onDirtyChange(value){quotationDirty=value;props.onDirtyChange(value);}};return {type:'div',props:{'data-workspace-dirty':quotationDirty,'data-workspace-saving':quotationBusy}};}};
     if(packaging&&name==='@/app/components/product-options-editor')return{ProductOptionsEditor:props=>{packagingEditor=props;return null;}};
     if(name.startsWith('@/app/components/')&&!implemented.has(name.split('/').at(-1)))return new Proxy({},{get:()=>()=>null});
@@ -109,7 +110,7 @@ function harness({submission=false,batch,integration,packaging=false,captureLabe
  const settle=async()=>{for(let i=0;i<12;i++){render();await new Promise(resolve=>setImmediate(resolve));}};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&text(node)===label);
  return{requests,archiveReads,settingsReads,settingsWrites,bannerUploads,productReads,product,render,settle,button,get lateDashboardWrites(){return lateDashboardWrites;},get intakeSettings(){return intakeSettings;},get quotationEditor(){return quotationEditor;},
-  get packagingEditor(){return packagingEditor;},get labelBatch(){return labelBatch;},setQuotationBusy(value){quotationBusy=value;},
+  get packagingEditor(){return packagingEditor;},get labelBatch(){return labelBatch;},get seoBatch(){return seoBatch;},setQuotationBusy(value){quotationBusy=value;},
   setStoredSettings(value){storedSettings=value;},deferSettings(){holdSettings=true;},deferSettingsWrite(){holdSettingsWrite=true;},
   deferProduct(){holdProductRead=true;},
   settingsPanel:()=>nodes(render()).find(node=>node.props?.id==='workspace-settings-panel'),
@@ -358,7 +359,12 @@ async function batchFixture(){
   :api.route(url,{method:init.method??'GET',body:init.body});
  const optionId=(await (await request(base+'/options')).json()).options.rows[0].id;
  const h=harness({batch:{product,request}});
- const start=async()=>{await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']===product.title+' 선택').props.onChange({target:{checked:true}});await h.click('작업 개시');await h.click('선택 상품 초안 준비·가격 확인');};
+ const start=async()=>{await h.settle();nodes(h.render()).find(node=>node.props?.['aria-label']===product.title+' 선택').props.onChange({target:{checked:true}});await h.click('작업 개시');await h.click('선택 상품 초안 준비·가격 확인');
+  assert.ok(h.seoBatch,'the real batch panel first opens the SEO decision queue');
+  assert.equal(h.requests.some(row=>row.url===base+'/work-draft'),false,'pricing/image preparation waits for SEO decisions');
+  // This navigation fixture isolates the queue child. Its actual generation,
+  // review and apply boundaries have separate API/UI tests.
+  h.seoBatch.onBusyChange(false);h.seoBatch.onPendingChange(false);h.seoBatch.onComplete(h.seoBatch.products);await h.settle();};
  return{api,h,product,base,optionId,request,start,close(){h.close();api.close();}};
 }
 

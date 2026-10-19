@@ -7,25 +7,30 @@ type Props = {
   scope?: 'all' | 'options'; productId: string; version: string; jobId: string; disabled: boolean; onSaved?: () => void; beforeApply?: () => boolean;
   seoComposition?: SeoGuidanceComposition;
   onBusyChange?: (busy: boolean) => void;
+  onUncertainChange?: (uncertain: boolean) => void;
 };
 export function TranslationIntegratedPreview(props: Props) {
   return <TranslationIntegratedPreviewContent key={JSON.stringify([props.productId, props.version, props.jobId, props.scope ?? 'all', props.seoComposition ?? null])} {...props} />;
 }
-function TranslationIntegratedPreviewContent({ productId, version, jobId, disabled, onSaved, beforeApply, scope = 'all', seoComposition, onBusyChange }: Props) {
+function TranslationIntegratedPreviewContent({ productId, version, jobId, disabled, onSaved, beforeApply, scope = 'all', seoComposition, onBusyChange, onUncertainChange }: Props) {
   const [plan, setPlan] = useState<Preview | null>(null), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [done, setDone] = useState(false);
   const active = useRef<AbortController | null>(null);
   const mounted = useRef(true), liveDisabled = useRef(disabled);
   const busyCallback=useRef(onBusyChange);
+  const uncertain=useRef(false),uncertainCallback=useRef(onUncertainChange);
+  useLayoutEffect(()=>{uncertainCallback.current=onUncertainChange;},[onUncertainChange]);
   useLayoutEffect(()=>{busyCallback.current=onBusyChange;},[onBusyChange]);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; active.current?.abort(); busyCallback.current?.(false); }; }, []);
   useLayoutEffect(() => { liveDisabled.current = disabled; }, [disabled]);
   useEffect(() => () => { active.current?.abort(); }, []);
   async function run(action: 'preview' | 'apply') {
     if (!mounted.current || liveDisabled.current || done || active.current || (action === 'apply' && !plan)) return;
+    if(action==='apply'&&uncertain.current)return;
     if (action === 'apply' && beforeApply && !beforeApply()) return;
     const controller = new AbortController(); active.current = controller; busyCallback.current?.(true); setBusy(true); setMessage('');
+    let response:Response|undefined;
     try {
-      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/translation-apply`, { method: 'POST', signal: controller.signal,
+      response = await fetch(`/api/products/${encodeURIComponent(productId)}/translation-apply`, { method: 'POST', signal: controller.signal,
         headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, jobId, ...(scope === 'options' ? { scope } : {}), ...(seoComposition ? {seoComposition} : {}), expectedVersion: version, ...(action === 'apply' ? { fingerprint: plan!.fingerprint } : {}) }) });
       const raw: unknown = await response.json();
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error('응답 형식이 올바르지 않습니다.');
@@ -43,9 +48,9 @@ function TranslationIntegratedPreviewContent({ productId, version, jobId, disabl
         if (result.productId !== productId || typeof result.productVersion !== 'string' || !Number.isFinite(Date.parse(result.productVersion))
           || !Number.isFinite(Date.parse(version)) || Date.parse(result.productVersion) <= Date.parse(version) || result.contentRevision !== plan!.contentRevision + 1
           || result.optionRevision !== plan!.optionRevision + 1 || result.applied !== plan!.preview.length) throw Error('통합 저장 응답이 일치하지 않습니다. 저장본을 다시 조회해주세요.');
-        setDone(true); setPlan(null); setMessage(`${scope === 'options' ? '옵션' : 'SEO·표시사항·옵션'} ${result.applied}개 항목을 함께 저장했습니다.`); onSaved?.();
+        uncertain.current=false;uncertainCallback.current?.(false);setDone(true); setPlan(null); setMessage(`${scope === 'options' ? '옵션' : 'SEO·표시사항·옵션'} ${result.applied}개 항목을 함께 저장했습니다.`); onSaved?.();
       }
-    } catch (error) { if (!controller.signal.aborted) { setPlan(null); setMessage(error instanceof Error ? error.message : '저장 여부를 다시 조회해주세요.'); } }
+    } catch (error) { if (!controller.signal.aborted&&mounted.current) { if(action==='apply'&&(!response||response.ok||response.status>=500)){uncertain.current=true;uncertainCallback.current?.(true);}setPlan(null); setMessage(error instanceof Error ? error.message : '저장 여부를 다시 조회해주세요.'); } }
     finally { if (active.current === controller) { active.current = null; if(mounted.current)busyCallback.current?.(false); } if (!controller.signal.aborted&&mounted.current) setBusy(false); }
   }
   return <fieldset disabled={disabled || busy || done} data-workspace-saving={busy} data-quotation-source-step="SEO" aria-label={scope === 'options' ? '옵션 번역 적용' : 'SEO 표시사항 옵션 통합 적용'}>
