@@ -63,5 +63,21 @@ test('saved original linked to an existing product is never probed or re-importe
  const f=fixture({current:{...job,product_id:'working-product'}});assert.match(await f.run(),/기존 상품 열기/);assert.equal(f.probes.length,0);assert.equal(f.calls.length,0);assert.equal(f.imports.length,0);
 });
 test('already-received source never uses the new existing-page probe',async()=>{
- const f=fixture({current:{...job,received_at:receivedAt}});await f.run();assert.equal(f.probes.length,0);assert.deepEqual(f.calls.map(row=>row.method),['GET']);assert.equal(f.imports.length,1);
+ const f=fixture({current:{...job,received_at:receivedAt}});const message=await f.run();assert.equal(f.probes.length,0);assert.deepEqual(f.calls.map(row=>row.method),['GET']);assert.equal(f.imports.length,1);
+ assert.equal(f.full.length,0,'validated saved JSON-LD provenance preserves the bounded capture policy');
+ assert.ok(f.calls.every(row=>!row.path.endsWith('/source-supplement')));assert.doesNotMatch(message,/상세 원문 보완 미완료/);
+ assert.ok(f.progress.every(message=>!message.includes('현재 Chrome')));
+});
+
+for(const retry of ['stale-job','linked-product'])test(`saved JSON-LD receipt ${retry} reuses source without an invocation-local DOM candidate`,async()=>{
+ const current=retry==='linked-product'?{...job,received_at:receivedAt,product_id:'working-product'}:job;
+ const f=fixture({current,probe:async()=>null});const message=await f.run();assert.equal(f.full.length,0);
+ assert.deepEqual(f.calls.map(row=>[row.path.split('/').at(-1),row.method]),[[retry==='stale-job'?'collect':'result',retry==='stale-job'?'POST':'GET']]);
+ assert.equal(f.imports.length,1);assert.equal(f.imports[0][0].received_at,receivedAt);assert.doesNotMatch(message,/상세 원문 보완 미완료/);
+ assert.ok(f.calls.every(row=>!row.path.endsWith('/source-supplement')));assert.ok(f.progress.every(message=>!message.includes('현재 Chrome')));
+});
+
+test('already-received sparse API source still attempts the guarded supplement path',async()=>{
+ const f=fixture({current:{...job,received_at:receivedAt},request:async()=>{const body=receipt();body.receipt.result.provider='1688-openapi-candidate-v1';return Response.json(body);}});
+ const message=await f.run();assert.equal(f.probes.length,0);assert.equal(f.full.length,1);assert.equal(f.imports.length,1);assert.match(message,/상세 원문 보완 미완료/);
 });

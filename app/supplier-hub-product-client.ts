@@ -17,7 +17,8 @@ export class ProductDocumentBridgeError extends Error{constructor(message:string
 export type ProductDocumentPreview={format:string;requestId:string;identity:ProductReceiptIdentity;identityDigest:string;packetDigest:string;productId:string;fingerprint:string;
   members:ProductReceiptIdentity['members'];reviewDigest:string;preparedBodySha256:string;originalBodySha256:string;liveVerified:boolean;remoteWrites:false;registered:false};
 export type ProductDocumentSession={packet:ProductDocumentPacket;preview:ProductDocumentPreview;packetDigest:string;origin:string};
-export type ProductDocumentState=SingleDocumentState&{duplicate?:boolean;recovered?:boolean};
+export type ProductValidationRejection={evidence:'document-validation-rejection';operationId:string;step:number;validatedSteps:number[];checkpointSequence:number;rejectedAt:number;submitted:false;consented:false};
+export type ProductDocumentState=SingleDocumentState&{duplicate?:boolean;recovered?:boolean;validationRejection?:ProductValidationRejection};
 export type ProductReceiptSaveAttempt={packet:ProductDocumentPacket;observation:ProductDocumentState};
 type Scope={productId:string;profileId?:string};
 type Actor={ownerId:string;company:SupplierHubCompany};
@@ -82,7 +83,7 @@ export async function runProductDocument(session:ProductDocumentSession,action:S
   if(signal.aborted)throw new ProductDocumentBridgeError('전체 상품 견적 작업을 취소했습니다.',false);
   const value=await productDocumentExchange(action,session.packet,signal,confirmation);
   try{
-    if(!exact(value,['format','requestId','identity','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','state','docId','registered','success','needsRecovery'],['challenge','error','receipt','duplicate','recovered']))return fail();
+    if(!exact(value,['format','requestId','identity','identityDigest','packetDigest','originalBodySha256','preparedBodySha256','state','docId','registered','success','needsRecovery'],['challenge','error','receipt','duplicate','recovered','validationRejection']))return fail();
     if(signal.aborted||value.format!==FORMAT||value.requestId!==session.packet.requestId||value.identityDigest!==session.preview.identityDigest||value.packetDigest!==expected.packetDigest
       ||value.originalBodySha256!==expected.originalBodySha256||value.preparedBodySha256!==expected.preparedBodySha256||value.registered!==false||value.success!==false||typeof value.needsRecovery!=='boolean'
       ||!['prepared','target-requested','target-created','create-requested','created','update-requested','updated','validation-requested','validated','validation-rejected','navigation-requested','awaiting-stage-consent','stage-consent-requested','awaiting-consent','consent-requested','submit-requested','pending','accepted','rejected'].includes(String(value.state))
@@ -92,6 +93,14 @@ export async function runProductDocument(session:ProductDocumentSession,action:S
     if(beforeCreate?result.docId!==null:!identifier(result.docId))fail();
     if(['awaiting-stage-consent','awaiting-consent'].includes(result.state))result.challenge=validateSingleConsentChallenge(result.challenge,session,result.state,result.docId);
     else if(result.challenge!==undefined)fail();
+    if(result.state==='validation-rejected'){
+      const rejection=result.validationRejection;
+      if(!exact(rejection,['evidence','operationId','step','validatedSteps','checkpointSequence','rejectedAt','submitted','consented'])||rejection.evidence!=='document-validation-rejection'
+        ||![2,3,4,5].includes(Number(rejection.step))||!Number.isSafeInteger(rejection.step)||rejection.operationId!==result.requestId+':validate:'+rejection.step
+        ||!Array.isArray(rejection.validatedSteps)||!same(rejection.validatedSteps,[2,3,4,5].slice(0,Number(rejection.step)-2))
+        ||!Number.isSafeInteger(rejection.checkpointSequence)||Number(rejection.checkpointSequence)<1||!Number.isSafeInteger(rejection.rejectedAt)||Number(rejection.rejectedAt)<=0||Number(rejection.rejectedAt)>Date.now()+5000
+        ||rejection.submitted!==false||rejection.consented!==false||result.needsRecovery!==false)fail();
+    }else if(result.validationRejection!==undefined)fail();
     if(['pending','accepted','rejected'].includes(result.state)){
       if(result.needsRecovery!==false)fail();const observation=Object.fromEntries(Object.entries(result).filter(([key])=>!['error','duplicate','recovered'].includes(key)));
       await validateProductReceiptObservation(observation,session.packet.review,session.origin);

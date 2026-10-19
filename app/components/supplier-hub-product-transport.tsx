@@ -7,7 +7,8 @@ import {previewProductDocument,runProductDocument,readNativeReceiptHistory,saveP
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
 import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
-  pendingProductRejection,clearRejectedProductDocumentPending,type ProductDocumentPending} from '@/app/supplier-hub-product-pending';
+  readProductDocumentRejections,productDocumentRejectionKey,assertProductDocumentNotRejected,
+  pendingProductRejection,clearRejectedProductDocumentPending,clearValidationRejectedProductDocumentPending,type ProductDocumentPending} from '@/app/supplier-hub-product-pending';
 
 type Props={review:SupplierHubProductDocumentReview;disabled:boolean;refresh:(signal:AbortSignal)=>Promise<SupplierHubProductDocumentReview>;
   onLockChange:(locked:boolean)=>void;onReceiptSaved?:()=>void};
@@ -28,7 +29,7 @@ export function SupplierHubProductTransport(props:Props){
   useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();historyPending.current?.abort();current.current.props.onLockChange(false);},[]);
   useEffect(()=>{
     const load=(changed=false)=>{if(!current.current.mounted||current.current.props.review!==review)return;
-      try{const value=readProductDocumentPending(review);
+      try{const value=readProductDocumentPending(review);readProductDocumentRejections(review);
         if(changed&&(current.current.session||pending.current)&&JSON.stringify(value)!==JSON.stringify(current.current.intent))throw Error('다른 탭에서 이 상품의 전송 기록이 변경되었습니다. 원래 문서의 결과를 다시 확인해주세요.');
         current.current.intent=value;setIntent(value);
         if(value&&!productDocumentPendingCurrent(value,review))throw Error('이 상품에 이전 저장값의 미확정 전송이 있습니다. 원래 상품·견적서를 복원하여 같은 문서의 결과를 확인해주세요.');
@@ -36,7 +37,7 @@ export function SupplierHubProductTransport(props:Props){
       }catch(cause){pending.current?.abort();pending.current=null;setBusy(false);current.current.intentError=cause instanceof Error?cause.message:'이전 전송 기록 확인 실패';setIntentError(current.current.intentError);}
       current.current.intentReady=true;setIntentReady(true);
     };
-    load();const storage=(event:StorageEvent)=>{if(event.key===null||event.key===productDocumentPendingKey(review))load(true);};
+    load();const storage=(event:StorageEvent)=>{if(event.key===null||event.key===productDocumentPendingKey(review)||event.key===productDocumentRejectionKey(review))load(true);};
     window.addEventListener('storage',storage);return()=>window.removeEventListener('storage',storage);
   },[review]);
   useEffect(()=>{
@@ -75,11 +76,12 @@ export function SupplierHubProductTransport(props:Props){
     if(!canEnter()||current.current.session||current.current.unsaved)return;const task=begin();
     try{await fresh(task);if(!task.active())return;const saved=readProductDocumentPending(review);
       if(saved)assertProductDocumentPending(review,saved);
+      else assertProductDocumentNotRejected(review);
       // Only the TTL envelope is refreshed. The original operation UUID,
       // reviewed body and browser identity must remain exact for read recovery.
       const packet=await createProductDocumentPacket(review,saved?{requestId:saved.requestId,createdAt:Date.now(),now:Date.now()}:{}),result=await previewProductDocument(packet,task.controller.signal);
       await fresh(task);if(!task.active())return;if(saved)assertProductDocumentPending(review,saved,result);
-      else if(readProductDocumentPending(review)!==null)throw Error('다른 탭에서 이 상품의 전송을 시작했습니다. 원래 문서의 결과를 확인해주세요.');
+      else {assertProductDocumentNotRejected(review);if(readProductDocumentPending(review)!==null)throw Error('다른 탭에서 이 상품의 전송을 시작했습니다. 원래 문서의 결과를 확인해주세요.');}
       current.current.intent=saved;setIntent(saved);current.current.session=result;current.current.uncertain=Boolean(saved);setSession(result);setUncertain(Boolean(saved));
     }catch(cause){if(task.active())setError(cause instanceof Error?cause.message:'전체 견적 전송 자료 확인 실패');}finally{task.finish();}
   }
@@ -93,9 +95,28 @@ export function SupplierHubProductTransport(props:Props){
     }catch(cause){if(task.active())setError(cause instanceof Error?cause.message:'확인한 접수 결과를 보관하지 못했습니다. 결과는 화면에 유지했습니다.');}
   }
   async function retrySave(){if(!canEnter()||!current.current.unsaved)return;const task=begin();try{await persist(current.current.unsaved,task);}finally{task.finish();}}
+  async function releaseValidationRejection(expected:ProductDocumentSession){
+    if(!canEnter())return;const before=current.current,saved=before.intent,original=before.state;
+    if(before.session!==expected||!saved||original?.state!=='validation-rejected'||before.uncertain||before.unsaved||!expected.preview.liveVerified)return;
+    const task=begin();
+    const active=()=>task.active()&&current.current.session===expected&&current.current.state===original&&current.current.intent===saved&&!current.current.uncertain&&!current.current.unsaved;
+    try{
+      await fresh(task);if(!active())return;assertProductDocumentPending(review,saved,expected);
+      const result=await runProductDocument(expected,'recover',task.controller.signal);await fresh(task);if(!active())return;
+      verifySingleDocumentObservation(original,result);
+      if(result.state!=='validation-rejected'||result.docId!==original.docId||JSON.stringify(result.validationRejection)!==JSON.stringify(original.validationRejection))throw Error('원래 문서의 제출 전 검증 반려를 확인하지 못했습니다. 같은 문서의 저장 결과를 다시 확인해주세요.');
+      const removed=await clearValidationRejectedProductDocumentPending(review,saved,expected,result,task.controller.signal,async()=>{
+        await fresh(task);return active();
+      });
+      if(!removed||!active())return;
+      current.current.intent=null;current.current.session=null;current.current.state=null;current.current.approved={};current.current.expired=false;current.current.intentError='';
+      setIntent(null);setSession(null);setState(null);setApproved({});setExpired(false);setIntentError('');
+      setError('제출 전 단계 검증 반려를 확인했습니다. 상품·견적서를 수정한 뒤 전체 전송 자료를 다시 확인해주세요.');
+    }catch(cause){if(task.alive())setError(cause instanceof Error?cause.message:'검증 반려 기록을 확인하지 못했습니다. 원래 전송 요청을 보관했습니다.');}finally{task.finish();}
+  }
   async function operate(action:SingleDocumentAction,expected:ProductDocumentSession,challengeId?:string){
     if(!canEnter())return;const before=current.current;
-    if(before.session!==expected||!expected.preview.liveVerified||before.unsaved||before.uncertain&&action!=='recover'
+    if(before.session!==expected||!expected.preview.liveVerified||before.unsaved||before.state?.state==='validation-rejected'&&!before.uncertain||before.uncertain&&action!=='recover'
       ||action==='start'&&(before.state||before.uncertain)||action==='confirm'&&(before.expired||before.state?.challenge?.id!==challengeId)
       ||action==='recover'&&!before.uncertain&&!before.expired)return;
     let confirmation;
@@ -125,7 +146,7 @@ export function SupplierHubProductTransport(props:Props){
       setError(cause instanceof Error?cause.message:'전체 상품 견적 응답 확인 실패');
     }}finally{task.finish();}
   }
-  const challenge=state?.challenge,terminal=Boolean(state&&['pending','accepted','rejected','scope-blocked'].includes(state.state));
+  const challenge=state?.challenge,terminal=Boolean(state&&['pending','accepted','rejected','validation-rejected','scope-blocked'].includes(state.state));
   const canConfirm=Boolean(session?.preview.liveVerified&&challenge&&!expired&&!uncertain&&challenge.items.filter(item=>item.required).every(item=>approved[item.key]));
   return <section aria-label="전체 상품 견적 전송" aria-busy={busy||!intentReady}>
     <div className="quote-actions"><button type="button" className="btn primary" disabled={disabled||busy||!intentReady||Boolean(intentError)||Boolean(session)} onClick={()=>void connect()}>{intent?'이전 문서 전송 자료 확인':'전체 옵션 전송 자료 확인'}</button>
@@ -138,6 +159,7 @@ export function SupplierHubProductTransport(props:Props){
     {session?.preview.liveVerified&&<>
       {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operate('start',session)}>전체 상품 견적 등록 시작</button>}
       {uncertain&&<><p role="status">응답이 확정되지 않았습니다. 같은 요청을 다시 보내지 않고 저장 결과를 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operate('recover',session)}>같은 문서 저장 결과 확인</button></>}
+      {state?.state==='validation-rejected'&&!uncertain&&<><p role="status">제출 전 단계 검증에서 반려되었습니다. 저장된 반려 기록을 다시 확인한 뒤 상품·견적서를 수정할 수 있습니다.</p><button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void releaseValidationRejection(session)}>검증 반려 확인 · 수정 허용</button></>}
       {state&&!terminal&&!uncertain&&(!challenge||expired)&&state.state!=='target-requested'&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operate(expired?'recover':'resume',session)}>현재 문서 단계 계속 확인</button>}
       {state&&['pending','accepted'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operate('observe',session)}>접수 결과 조회</button>}
       {challenge&&<section aria-label="전체 문서 단계별 동의"><h5>{challenge.stage?stageLabels[challenge.stage]:'최종 제출'} 동의 확인</h5>

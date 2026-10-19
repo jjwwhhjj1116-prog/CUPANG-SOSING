@@ -163,6 +163,10 @@ function checkpointValid(state,context){
     &&(!state.challenge||!Number.isSafeInteger(state.humanConfirmedAt)||state.humanConfirmedAt<state.challenge.issuedAt||state.humanConfirmedAt>state.challenge.expiresAt))fail('CHECKPOINT','현재 사용자의 제출 확인 기록이 없습니다.');
   if(state.state==='validation-requested'&&(![2,3,4,5].includes(state.requestedStep)||state.requestedStep!==2+state.validatedSteps.length
     ||state.operationId!==state.requestId+':validate:'+state.requestedStep))fail('CHECKPOINT','단계 검증 요청 기록을 확인해주세요.');
+  if(state.state==='validation-rejected'&&(![2,3,4,5].includes(state.requestedStep)||state.requestedStep!==2+state.validatedSteps.length
+    ||state.operationId!==state.requestId+':validate:'+state.requestedStep||state.sequence<1
+    ||!Array.isArray(state.validationErrors)||state.validationErrors.length>200||state.validationErrors.some(error=>!object(error)||typeof error.columnName!=='string'||error.columnName.length>500||typeof error.message!=='string'||error.message.length>2000)
+    ||stages.length!==0||state.challenge!==null||state.receipt!==null||state.humanConfirmedAt!==undefined||state.submitRequestedAt!==undefined))fail('CHECKPOINT','제출 전 단계 검증 반려 기록을 확인해주세요.');
   for(const [phase,operation] of [['create-requested','create'],['update-requested','update'],['consent-requested','consent'],['submit-requested','submit']])
     if(state.state===phase&&state.operationId!==state.requestId+':'+operation)fail('CHECKPOINT','원래 문서 요청 기록을 확인해주세요.');
   if(state.state==='stage-consent-requested'&&(state.operationId!==state.requestId+':stage-consent:'+state.challenge.stage||!Number.isSafeInteger(state.humanConfirmedAt)
@@ -191,7 +195,9 @@ function receiptValid(receipt,state,context,time){
 function result(state,extra={}){
   return {format:state.format,requestId:state.requestId,identity:clone(state.identity),identityDigest:state.identityDigest,packetDigest:state.packetDigest,originalBodySha256:state.originalBodySha256,preparedBodySha256:state.bodySha256,state:state.state,
     docId:state.docId,registered:state.state==='registered',success:state.state==='registered',needsRecovery:['target-requested','create-requested','update-requested','validation-requested','stage-consent-requested','consent-requested','submit-requested'].includes(state.state),
-    ...(state.challenge&&['awaiting-stage-consent','awaiting-consent'].includes(state.state)?{challenge:clone(state.challenge)}:{}),...(state.receipt?{receipt:clone(state.receipt)}:{}),...extra};
+    ...(state.challenge&&['awaiting-stage-consent','awaiting-consent'].includes(state.state)?{challenge:clone(state.challenge)}:{}),...(state.receipt?{receipt:clone(state.receipt)}:{}),
+    ...(Array.isArray(state.identity.members)&&state.state==='validation-rejected'?{validationRejection:{evidence:'document-validation-rejection',operationId:state.operationId,step:state.requestedStep,
+      validatedSteps:clone(state.validatedSteps),checkpointSequence:state.sequence,rejectedAt:state.updatedAt,submitted:false,consented:false}}:{}),...extra};
 }
 
 /** Explicit adapters only; importing this module performs no browser/network

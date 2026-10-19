@@ -10,7 +10,8 @@ import { createHash, webcrypto } from 'node:crypto';
 import { createProductDocumentPacket } from '../extensions/supplier-hub/product-document.mjs';
 import { productDocumentIdentity } from '../extensions/supplier-hub/product-document-receiver.mjs';
 import { singleDocumentIdentity } from '../extensions/supplier-hub/single-document.mjs';
-import { singlePacket, SINGLE_COMPANIES, SINGLE_SENDER } from './helpers/supplier-hub-single-document.mjs';
+import { singlePacket, singleDocumentFixture, SINGLE_COMPANIES, SINGLE_SENDER } from './helpers/supplier-hub-single-document.mjs';
+import {productValidationRejectionFixture} from './helpers/product-validation-rejection.mjs';
 
 const fixtureURL = new URL('./supplier-hub-product-client.test.mjs', import.meta.url), source = fs.readFileSync(fixtureURL, 'utf8');
 const ast = ts.createSourceFile(fixtureURL.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS), parts = [];
@@ -25,6 +26,8 @@ const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof
 const text = tree => Array.isArray(tree) ? tree.map(text).join(' ') : tree && typeof tree === 'object' ? text(tree.props?.children) : tree == null ? '' : String(tree);
 const turn = () => new Promise(resolve => setImmediate(resolve)), deferred = () => { let resolve; const promise = new Promise(done => resolve = done); return { promise, resolve }; };
 const open = '전체 옵션 전송 자료 확인', start = '전체 상품 견적 등록 시작', close = '전송 자료 확인 닫기', recover = '같은 문서 저장 결과 확인';
+const release='검증 반려 확인 · 수정 허용';
+const validationRejected=(f,requestId)=>f.state('validation-rejected',{requestId,validationRejection:{evidence:'document-validation-rejection',operationId:requestId+':validate:2',step:2,validatedSteps:[],checkpointSequence:8,rejectedAt:f.clock.now,submitted:false,consented:false}});
 after(() => fs.writeFileSync(new URL('../outputs/step728-product-transport-ui-proof.json', import.meta.url), JSON.stringify({ cases,
   boundary: 'Actual product transport component and actual app client/packet/receipt functions. React hook scheduling, window bridge, clock and local API are isolated; live:true is synthetic test ACK only. No Chrome/Hub/source collection/actual acceptance.',
   externalRequests: 0, realProductWrites: 0, hubWrites: 0, actualReceiptVerified: false }, null, 2) + '\n'));
@@ -160,10 +163,11 @@ test('storage failure and cross-tab descriptor replacement block a new native mu
 test('durably saved terminal rejection clears only its operation so a later proposal is not falsely blocked',async()=>{
  const stored=new Map(),h=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
   await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation('REJECTED'),requestId:payload.packet.requestId});
-  await h.click(start);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);assert.equal(stored.size,0);assert.match(h.text(),/반려/);
+  await h.click(start);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);assert.equal(stored.size,1);assert.match(h.text(),/반려/);
  }finally{h.close();}
  const reopened=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
   await reopened.idle();assert.ok(reopened.button(open));assert.equal(reopened.button('이전 문서 전송 자료 확인'),undefined);assert.equal(reopened.f.sent.length,0);
+  await reopened.click(open);assert.equal(reopened.f.sent.length,0);assert.match(reopened.text(),/상품·견적서를 수정/);
  }finally{reopened.close();}
 });
 
@@ -195,6 +199,160 @@ test('late rejected history cannot delete the descriptor under a connected recov
   held.resolve(Response.json({format:'yoofam-native-receipt-history-v1',productId:next.f.review.identity.productId,receipts:[rejected]}));
   await next.wait(()=>next.text().includes('보관된 문서 확인 이력'));await turn();next.flush();assert.equal(stored.size,1);assert.ok(next.button(recover));
   next.f.bridge=async payload=>({...next.f.observation('REJECTED'),requestId:payload.packet.requestId});await next.click(recover);
-  assert.equal(stored.size,0);assert.equal(next.f.sent.filter(row=>row.payload.action==='start').length,0);assert.match(next.text(),/반려/);
+  assert.equal(stored.size,1);assert.equal(next.f.sent.filter(row=>row.payload.action==='start').length,0);assert.match(next.text(),/반려/);
  }finally{next.close();}
+});
+
+for(const company of SINGLE_COMPANIES)test(company.name+': actual receiver step-2 rejection survives lost ACK/remount and permits only explicit corrected review',async()=>{
+ const stored=new Map(),first=await fixture(company,{verified:true,stored});let nativeReceiver,original;
+ try{
+  await first.idle();await first.click(open);original=first.f.sent[0].payload.packet;
+  nativeReceiver=await productValidationRejectionFixture(original,{now:first.f.clock.now});
+  first.f.bridge=async payload=>{assert.equal(payload.action,'start');const result=await nativeReceiver.receiver.start(payload.packet,SINGLE_SENDER);assert.equal(result.state,'validation-rejected');return undefined;};
+  first.button(start).props.onClick();first.flush();await first.wait(()=>nativeReceiver.storage.get(nativeReceiver.context.key)?.state==='validation-rejected');first.f.advance(60001);await first.idle();
+  assert.equal(nativeReceiver.creates,1);assert.equal(nativeReceiver.updates,1);assert.equal(nativeReceiver.validations,1);assert.equal(stored.size,1);assert.ok(first.button(recover));assert.equal(first.button(release),undefined);
+ }finally{first.close();}
+ const next=await fixture(company,{verified:true,stored});try{
+  next.f.clock.now=original.createdAt+240001;nativeReceiver.now=next.f.clock.now;nativeReceiver.remount();await next.idle();assert.equal(next.f.sent.length,0);
+  next.f.bridge=async payload=>payload.action==='preview'?{...next.f.preview(),requestId:payload.packet.requestId}:nativeReceiver.receiver.recover(payload.packet,SINGLE_SENDER);
+  await next.click('이전 문서 전송 자료 확인');await next.click(recover);assert.ok(next.button(release));assert.equal(next.button('현재 문서 단계 계속 확인'),undefined);assert.equal(stored.size,1,'reading rejection alone never releases reservation');
+  const held=next.button(release).props.onClick;await next.click(release);assert.equal(stored.size,1,'compact rejected identity survives release');assert.ok(next.button(open));assert.equal(next.button(start),undefined);assert.equal(next.locks.at(-1),false);
+  held();next.flush();assert.deepEqual(plain(next.f.sent.map(row=>row.payload.action)),['preview','recover','recover']);
+  assert.ok(next.f.sent.every(row=>row.payload.packet.requestId===original.requestId));assert.equal(nativeReceiver.creates,1);assert.equal(nativeReceiver.updates,1);assert.equal(nativeReceiver.validations,1);assert.equal(next.f.calls.some(row=>row.method==='POST'),false);nativeReceiver.assertPreserved();
+ }finally{next.close();}
+ const corrected=await fixture(company,{verified:true,stored});let secondReceiver;try{
+  const changed=plain(corrected.f.review);changed.body.jsonDocument[1].productPage.supplyPrice=4321;changed.identity.source.quotationRevision++;
+  const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+  const hash=value=>createHash('sha256').update(canonical(value)).digest('hex'),deferredBody=plain(changed.body);
+  for(const document of deferredBody.jsonDocument)for(const key of ['msrpAgree','labelContactAgreed'])if(Object.hasOwn(document.imagePage??{},key))document.imagePage[key]=false;
+  changed.originalBodySha256=hash(changed.body);changed.preparedBodySha256=hash(deferredBody);changed.reviewDigest=hash({format:changed.format,type:changed.type,identity:changed.identity,members:changed.members,originalBodySha256:changed.originalBodySha256,preparedBodySha256:changed.preparedBodySha256});
+  corrected.f.review=changed;corrected.render({...corrected.props(),review:changed});await corrected.idle();assert.equal(corrected.f.sent.length,0);
+  corrected.f.bridge=async payload=>{
+   if(payload.action==='preview'){const context=await productDocumentIdentity(payload.packet,SINGLE_SENDER,{now:corrected.f.clock.now});return {...corrected.f.preview(),requestId:payload.packet.requestId,identity:context.identity,identityDigest:context.identityDigest,packetDigest:context.packetDigest,reviewDigest:changed.reviewDigest,preparedBodySha256:changed.preparedBodySha256,originalBodySha256:changed.originalBodySha256};}
+   assert.equal(payload.action,'start');secondReceiver=await productValidationRejectionFixture(payload.packet,{now:corrected.f.clock.now,storage:nativeReceiver.storage,documents:nativeReceiver.documents});return secondReceiver.receiver.start(payload.packet,SINGLE_SENDER);
+  };
+  await corrected.click(open);assert.ok(corrected.button(start));assert.equal(secondReceiver,undefined);assert.notEqual(corrected.f.sent[0].payload.packet.requestId,original.requestId);
+  await corrected.click(start);assert.equal(secondReceiver.creates,1,corrected.text());assert.equal(nativeReceiver.creates,1);assert.equal(secondReceiver.validations,1);assert.equal(stored.size,2,'prior rejection and new pending are both durable');secondReceiver.assertPreserved();
+  cases.push({name:'actual validation rejection recovery '+company.code,step:2,lostAck:true,remount:true,explicitRecoveries:2,correctedBody:true,oldOperationCreates:1,syntheticCorrectedCreates:1,realProductWrites:0,hubWrites:0});
+ }finally{corrected.close();nativeReceiver.close();}
+});
+
+test('validation rejection release rejects missing/altered proof, uncertain/error ACK and changed document or account',async()=>{
+ for(const mode of ['missing','step','sequence','submitted','extra','error','unrecovered','uncertain','doc','request','owner','proof-change']){
+  const h=await fixture(SINGLE_COMPANIES[0],{verified:true});try{
+   await h.idle();await h.click(open);let original;
+   h.f.bridge=async payload=>{const result=validationRejected(h.f,payload.packet.requestId);original=plain(result);return result;};await h.click(start);assert.ok(h.button(release));
+   h.f.bridge=async()=>{const result={...plain(original),recovered:true};
+    if(mode==='missing')delete result.validationRejection;
+    if(mode==='step')result.validationRejection.step=3;
+    if(mode==='sequence')result.validationRejection.checkpointSequence=0;
+    if(mode==='submitted')result.validationRejection.submitted=true;
+    if(mode==='extra')result.validationRejection.unknown=true;
+    if(mode==='error')result.error={code:'SOURCE_CHANGED',message:'합성 조회 실패'};
+    if(mode==='unrecovered')delete result.recovered;
+    if(mode==='uncertain')result.needsRecovery=true;
+    if(mode==='doc')result.docId='another-document';
+    if(mode==='request')result.requestId='00000000-0000-4000-8000-000000000735';
+    if(mode==='owner')result.identity.ownerId='different-owner';
+    if(mode==='proof-change')result.validationRejection.checkpointSequence++;
+    return result;
+   };
+   await h.click(release);assert.equal(h.stored.size,1,mode);assert.equal(h.button(start),undefined);assert.equal(h.f.sent.filter(row=>row.payload.action==='start').length,1);assert.equal(h.f.calls.some(row=>row.method==='POST'),false);
+  }finally{h.close();}
+ }
+ cases.push({name:'validation release malformed or changed proof',negativeCases:12,reservationsPreserved:true});
+});
+
+test('validation release timeout, owner change inside lock, stale callback and replaced reservation retain original safety',async()=>{
+ for(const mode of ['timeout','owner-lock','scope-lock','replacement']){
+  const h=await fixture(SINGLE_COMPANIES[0],{verified:true}),held=deferred();try{
+   await h.idle();await h.click(open);let original;h.f.bridge=async payload=>original=validationRejected(h.f,payload.packet.requestId);await h.click(start);
+   const oldRelease=h.button(release).props.onClick;
+   if(mode==='timeout'){
+    h.f.bridge=async()=>undefined;oldRelease();h.flush();await h.wait(()=>h.f.sent.length===3);h.f.advance(60001);await h.idle();assert.equal(h.stored.size,1);assert.ok(h.button(release));
+   }else{
+    h.f.bridge=async()=>({...plain(original),recovered:true});let waiting;
+    h.f.window.navigator.locks.request=async(_name,_options,run)=>{waiting=true;await held.promise;return run();};oldRelease();h.flush();await h.wait(()=>waiting);
+    if(mode==='owner-lock')h.f.actor.ownerId='new-owner';
+    if(mode==='scope-lock')h.render({...h.props(),review:{...h.props().review,reviewDigest:'e'.repeat(64)}});
+    if(mode==='replacement'){const [key,raw]=[...h.stored][0];h.stored.set(key,JSON.stringify({...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000736'}));}
+    held.resolve();await h.idle();assert.equal(h.stored.size,1);oldRelease();h.flush();await h.idle();assert.equal(h.stored.size,1);
+   }
+   assert.equal(h.f.sent.filter(row=>row.payload.action==='start').length,1);assert.equal(h.f.calls.some(row=>row.method==='POST'),false);
+  }finally{h.close();}
+ }
+ cases.push({name:'validation release delayed boundaries',timeouts:1,ownerScopeOrReservationChanges:3,reservationsPreserved:true});
+});
+
+test('native committed rejection validates stage, sequence, errors and absence of consent/submit while legacy Single output stays compatible',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{verified:true});let nativeReceiver;try{
+  await h.idle();await h.click(open);const packet=h.f.sent[0].payload.packet;nativeReceiver=await productValidationRejectionFixture(packet,{now:h.f.clock.now});
+  const result=await nativeReceiver.receiver.start(packet,SINGLE_SENDER);assert.equal(result.validationRejection.step,2);assert.deepEqual(result.validationRejection.validatedSteps,[]);
+  const saved=nativeReceiver.storage.get(nativeReceiver.context.key);
+  for(const patch of [{requestedStep:3},{operationId:'wrong:validate:2'},{sequence:0},{validationErrors:['bad']},{validationErrors:[{columnName:'x',message:'x'.repeat(2001)}]},
+   {humanConfirmedAt:h.f.clock.now},{submitRequestedAt:h.f.clock.now},{receipt:{}},{challenge:{}},{stageConsents:[{}]}]){
+   nativeReceiver.storage.force(nativeReceiver.context.key,{...plain(saved),...patch});
+   await assert.rejects(nativeReceiver.receiver.recover(packet,SINGLE_SENDER),error=>error.code==='CHECKPOINT');
+  }
+  nativeReceiver.storage.force(nativeReceiver.context.key,saved);const recovered=await nativeReceiver.receiver.recover(packet,SINGLE_SENDER);assert.equal(recovered.recovered,true);assert.deepEqual(recovered.validationRejection,result.validationRejection);
+  assert.equal(nativeReceiver.creates,1);assert.equal(nativeReceiver.updates,1);assert.equal(nativeReceiver.validations,1);nativeReceiver.assertPreserved();
+ }finally{h.close();nativeReceiver?.close();}
+ const legacy=await singleDocumentFixture(SINGLE_COMPANIES[0],{validationResponse:()=>({code:200,data:[{success:false,errors:[]}]})});try{
+  const result=await legacy.receiver.start(legacy.packet,legacy.sender);assert.equal(result.state,'validation-rejected');assert.equal(Object.hasOwn(result,'validationRejection'),false);
+  const recovered=await legacy.receiver.recover(legacy.packet,legacy.sender);assert.equal(recovered.recovered,true);assert.equal(Object.hasOwn(recovered,'validationRejection'),false);assert.equal(legacy.submitted,0);legacy.assertPreserved();
+ }finally{legacy.close();}
+ cases.push({name:'native checkpoint proof and Single compatibility',corruptCheckpointsRejected:10,productOnlyWireField:true,syntheticLegacySubmit:0});
+});
+
+test('unchanged review after validation release is blocked before preview across remount without a new UUID reservation',async()=>{
+ const stored=new Map(),h=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});let local;try{
+  await h.idle();await h.click(open);const original=h.f.sent[0].payload.packet;local=await productValidationRejectionFixture(original,{now:h.f.clock.now});
+  h.f.bridge=async payload=>payload.action==='preview'?{...h.f.preview(),requestId:payload.packet.requestId}:payload.action==='start'?local.receiver.start(payload.packet,SINGLE_SENDER):local.receiver.recover(payload.packet,SINGLE_SENDER);
+  await h.click(start);await h.click(release);assert.equal(stored.size,1);const sent=h.f.sent.length;await h.click(open);
+  assert.equal(h.f.sent.length,sent);assert.match(h.text(),/상품·견적서를 수정/);assert.equal(h.button(start),undefined);assert.equal(h.locks.at(-1),false);assert.equal(local.creates,1);
+  assert.ok([...stored.keys()].every(key=>!key.startsWith('yoofam-product-document-pending:')));
+ }finally{h.close();}
+ const reopened=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
+  await reopened.idle();await reopened.click(open);assert.equal(reopened.f.sent.length,0);assert.match(reopened.text(),/상품·견적서를 수정/);assert.equal(reopened.button(start),undefined);assert.equal(stored.size,1);
+ }finally{reopened.close();local?.close();}
+ cases.push({name:'unchanged rejected identity after release',actualReceiverReproductionConfirmedBeforeFix:true,remount:true,newPreviews:0,newReservations:0,nativeCreates:1});
+});
+
+test('a stale preview cannot claim after another tab releases the same rejected review into the ledger',async()=>{
+ const stored=new Map(),old=await fixture(SINGLE_COMPANIES[0],{verified:true,stored}),other=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
+  await old.idle();await other.idle();await old.click(open);const staleStart=old.button(start).props.onClick;
+  await other.click(open);let original;other.f.bridge=async payload=>original=validationRejected(other.f,payload.packet.requestId);await other.click(start);
+  other.f.bridge=async()=>({...plain(original),recovered:true});await other.click(release);assert.equal(stored.size,1);
+  staleStart();old.flush();await old.idle();assert.deepEqual(plain(old.f.sent.map(row=>row.payload.action)),['preview']);assert.match(old.text(),/상품·견적서를 수정/);
+  assert.ok([...stored.keys()].every(key=>!key.startsWith('yoofam-product-document-pending:')));
+ }finally{old.close();other.close();}
+ cases.push({name:'stale preview after rejected ledger commit',startDispatches:0,newReservations:0});
+});
+
+test('a durable ledger written before failed pending deletion still permits the original explicit recovery and release',async()=>{
+ const stored=new Map(),h=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});let local;try{
+  await h.idle();await h.click(open);const packet=h.f.sent[0].payload.packet;local=await productValidationRejectionFixture(packet,{now:h.f.clock.now});
+  h.f.bridge=async payload=>payload.action==='start'?local.receiver.start(payload.packet,SINGLE_SENDER):local.receiver.recover(payload.packet,SINGLE_SENDER);await h.click(start);
+  const remove=h.f.window.localStorage.removeItem;h.f.window.localStorage.removeItem=()=>{throw Error('synthetic pending deletion failed');};await h.click(release);assert.equal(stored.size,2);assert.ok(h.button(release));
+  h.f.window.localStorage.removeItem=remove;
+ }finally{h.close();}
+ const reopened=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
+  await reopened.idle();reopened.f.bridge=async payload=>payload.action==='preview'?{...reopened.f.preview(),requestId:payload.packet.requestId}:local.receiver.recover(payload.packet,SINGLE_SENDER);
+  await reopened.click('이전 문서 전송 자료 확인');await reopened.click(recover);await reopened.click(release);assert.equal(stored.size,1);
+  assert.equal(local.creates,1);assert.equal(local.validations,1);assert.ok([...stored.keys()].every(key=>!key.startsWith('yoofam-product-document-pending:')));
+ }finally{reopened.close();local?.close();}
+ cases.push({name:'ledger before failed pending delete',remountRecovery:true,duplicateLedgerRecords:0,nativeCreates:1});
+});
+
+test('strict valid native REJECTED receipt with later observedAt can finish ledger release after failed pending deletion',async()=>{
+ const stored=new Map(),h=await fixture(SINGLE_COMPANIES[0],{verified:true,stored,beforeSaveReply:async(record,f)=>{record.receipt.observedAt=f.clock.now;}});try{
+  await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation('REJECTED'),requestId:payload.packet.requestId});
+  const remove=h.f.window.localStorage.removeItem;h.f.window.localStorage.removeItem=()=>{throw Error('native pending delete failed');};await h.click(start);
+  assert.equal(stored.size,2);assert.ok(h.button('확인 결과 저장 다시 시도'));const [key,before]=[...stored].find(([name])=>name.startsWith('yoofam-product-document-rejections:'));
+  h.f.window.localStorage.removeItem=remove;h.f.advance(1);await h.click('확인 결과 저장 다시 시도');
+  assert.equal(stored.size,1);assert.equal(stored.get(key),before,'first exact stored native rejection is retained');assert.equal(h.button('확인 결과 저장 다시 시도'),undefined);
+  assert.equal(h.f.calls.filter(row=>row.method==='POST').length,2);assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview','start']);
+  assert.ok(h.f.history[0].receipt.observedAt>JSON.parse(before)[0].receiptRejection.observedAt);
+ }finally{h.close();}
+ cases.push({name:'native rejected refreshed timestamp retry',actualStrictNativeRecord:true,localReceiptSaveAttempts:2,nativeStartDispatches:1,originalLedgerPreserved:true});
 });

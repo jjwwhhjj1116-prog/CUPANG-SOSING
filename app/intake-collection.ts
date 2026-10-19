@@ -24,7 +24,6 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  let supplementNotice='';
  let source:ReturnType<typeof validateCollectionReceiptResponse>=null;
  let repairedExistingSource=false;
- let usedExistingPage=false;
  if(!job.received_at){
   reportProgress('상품 페이지에서 정보 가져오는 중');
   let existing:BrowserProductCapture|null=null;
@@ -47,7 +46,6 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
   if(options.signal.aborted)return;
   if(!acknowledgement||acknowledgement.kind!=='received')throw Error(acknowledgement?.error||'상품 정보를 가져오지 못했습니다.');
   source=acknowledgement.source;
-  usedExistingPage=existing!==null&&source.provider==='chrome-product-jsonld-v1';
   received={...job,received_at:acknowledgement.receivedAt};
  } else if(!Number.isFinite(Date.parse(job.received_at)))throw Error('원문 저장 시각을 확인하지 못했습니다.');
  else if(options.captureFromBrowser){
@@ -73,10 +71,11 @@ export async function collectIntakeProduct(job:CollectionJob,options:{signal:Abo
  // gap for review, but repeating that capture cannot make it a new intake.
  const reuseCapturedMobileSource=partialMobileSource||fullMobileSource;
  const storedSourceFork=job.context?.forkedFrom?.kind==='stored-source-new-draft-v1'&&job.context.forkedFrom.requestId===job.id&&job.context.forkedFrom.sourceJobId!==job.id;
- // The existing-page shortcut has already read its complete supported source.
- // Optional description/image/attribute gaps stay reviewable; do not immediately
- // repeat capture through mobile/new tabs. Explicit source repair remains available.
- if(source&&!storedSourceFork&&!reuseCapturedMobileSource&&!usedExistingPage&&canSupplementCollection(source)&&options.captureFromBrowser){
+ // JSON-LD provenance survives receipt recovery and linked-product/image retries.
+ // Its supported source was already read, even when this invocation has no DOM
+ // candidate. Optional gaps stay reviewable through explicit source repair.
+ const reuseCapturedJsonLdSource=source?.provider==='chrome-product-jsonld-v1';
+ if(source&&!storedSourceFork&&!reuseCapturedMobileSource&&!reuseCapturedJsonLdSource&&canSupplementCollection(source)&&options.captureFromBrowser){
   reportProgress('현재 Chrome에서 상세 이미지·상품 속성 보완 중');
   try{
    let expectedProductVersion:string|undefined;
