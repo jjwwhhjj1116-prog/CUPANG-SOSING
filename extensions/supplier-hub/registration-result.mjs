@@ -33,6 +33,28 @@ export function readSupplierHubRegistration(quotationId, pageRequest) {
       || text.replace(/\s/g, '') !== id.slice(0, 8) + '...(' + estimation + ')') return null;
     return id;
   }
+  // A rejection-history button is an action, not the current review status.
+  function reviewStatus(cell) {
+    const text = normalize(cell.innerText);
+    const labels = { '상품 검수중': '', '상품 검수 완료': 'text-success', '상품 검수 반려': 'text-danger' };
+    const children = Array.from(cell.children ?? []);
+    const controls = Array.from(cell.querySelectorAll('button,a,input,select,textarea,[role="button"]'));
+    // Text-only rendered cells are also used by the standard table contract.
+    if (!children.length && !controls.length) return Object.hasOwn(labels, text) ? text : null;
+    if (children.length !== 1 || children[0].tagName !== 'DIV') return null;
+    const root = children[0], parts = Array.from(root.children), label = parts[0];
+    const status = normalize(label?.innerText);
+    if (!Object.hasOwn(labels, status) || label?.tagName !== 'DIV' || label.children.length
+      || normalize(label.getAttribute('class')) !== labels[status] || parts.length < 1 || parts.length > 2) return null;
+    const history = parts[1];
+    if (history) {
+      const classes = normalize(history.getAttribute('class')).split(' ').sort().join(' ');
+      if (history.tagName !== 'BUTTON' || history.getAttribute('type') !== null || history.children.length
+        || classes !== 'btn btn-block btn-default btn-xs mt-1' || normalize(history.innerText) !== '반려내역'
+        || controls.length !== 1 || controls[0] !== history || !history.getClientRects().length) return null;
+    } else if (controls.length) return null;
+    return text.replace(/\s/g, '') === (status + (history ? '반려내역' : '')).replace(/\s/g, '') ? status : null;
+  }
   const headings=['상품명','상품 등록일','카테고리','바코드','원본 견적서','견적서 ID','SKU ID','상태','등록 진행 단계'];
   const tables=Array.from(document.querySelectorAll('table')).filter(table=>table.getClientRects().length&&Array.from(table.querySelectorAll('thead th')).map(cell=>normalize(cell.innerText.replace(/\?/g,''))).join('|')===headings.join('|'));
   if(tables.length!==1)throw Error('상품 등록 결과 표를 확인하지 못했습니다.');
@@ -44,6 +66,9 @@ export function readSupplierHubRegistration(quotationId, pageRequest) {
     const fullId = quotationIdentity(cells[5]);
     if (fullId === null || fullId !== quotationId) return [];
     const values=cells.map(cell=>normalize(cell.innerText));
+    const status = reviewStatus(cells[7]);
+    if (status === null) throw Error('현재 상품 검수 상태와 부가 버튼을 구분하지 못했습니다.');
+    values[7] = status;
     const skuCopies=Array.from(cells[6].querySelectorAll('button[data-clipboard-text]')).filter(button=>button.getClientRects().length);
     if(skuCopies.length>1)throw Error('SKU ID 복사 버튼이 중복되어 결과를 확인하지 못했습니다.');
     if(skuCopies.length===1){

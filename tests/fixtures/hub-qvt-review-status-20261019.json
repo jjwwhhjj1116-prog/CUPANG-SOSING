@@ -1,0 +1,6 @@
+{
+  "pending": "<td><div><div class=\"\">상품 검수중</div></div></td>",
+  "rejected": "<td><div><div class=\"text-danger\">상품 검수 반려</div></div></td>",
+  "completed": "<td><div><div class=\"text-success\">상품 검수 완료</div></div></td>",
+  "completedWithHistory": "<td><div><div class=\"text-success\">상품 검수 완료</div><button class=\"btn btn-default btn-xs btn-block mt-1\">반려내역</button></div></td>"
+}
