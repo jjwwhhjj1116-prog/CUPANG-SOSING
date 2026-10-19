@@ -29,6 +29,22 @@
 
 타입 검사, 변경3파일 린트, Cloudflare 운영 빌드와 artifact 검사가 통과했다. 확장0.2.88의 모바일 모듈·ZIP도 기존 SHA `49ab5aad5a4507ea17bf2c3f811c7b1054c316bbab24695c6936679e8022c2fc`와 일치한다. 이번 수정에 확장 업데이트는 필요 없다.
 
+## 운영 배포 후 확인
+
+수정 commit `a36e68d63c320c4a38b7d1a579cf89faee0515d6`를 main에 푸시하고 기존 sourceflow Worker에 배포했다. Worker version은 `eb4e36fc-4c5e-42bc-be05-65bd9662cff1`이다. `--keep-vars`를 사용했으며 새 리소스 생성·migration 적용·회원/회사정보 변경은 없었다.
+
+같은 기존 Chrome4의 앱 탭을 새로고침하고 `상품관리(신규) → 상품 등록 상태`에서 2026-06-21~2026-10-19, `상품 검수 완료` 조건으로 새 조회를 실행했다. 로딩 표시 후 유앤채37행이 반환됐으며 오류는 없었다.37행의 현재 상태는 모두 `상품 검수 완료`, 진행 단계는 모두 `검수 완료`, 요약 사유는 모두 `—`였다. 열 이름도 `진행 단계`로 반영됐다. 이는 회사 전체 조회만 실행한 결과이며 어떠한 기존 상품·견적서를 수정/전송하지 않았다.
+
+로컬 증거:
+
+| 파일 | SHA-256 |
+| --- | --- |
+| `outputs/step744-live-completed.png` | `e7cc1dc02c12b00ce37fd1af68eaed930b24c1eaa913ad075807945a6bb35f81` |
+| `outputs/step744-live-completed.ax.txt` | `bb4fa851b54dc12b3f6cb91918f92a7aa28b04d87cecec5ad74329df1e933365` |
+| `outputs/step744-hub-category-selected.ax.txt` | `ffc237396f5dc4968172eca1d7baae6546da24d746cdd067e1b04275634209c0` |
+
+실제 사업 데이터가 담긴 화면/AX는 outputs에만 보관하고 저장소에는 넣지 않았다. 앱 화면은 검수가 끝난 완료 조회 결과로 유지했다.
+
 ## 남은 완료 조건
 
 새 1688 URL의 실제 원문 수집, 해당 leaf의 실제 내부 양식 metadata 대응, 사람이 수정한 새 문서의 native 전송과 신규 발급 접수번호는 아직 확인하지 못했다. 이전에 도구가 거절한1688/Open1688 주소를 재시도하거나 다른 경로로 우회하지 않았다. 두 native live gate는 false를 유지한다. 이 회차 결과로 전체 동등 구현 또는 실제 접수를 완료했다고 보고할 수 없다.
