@@ -20,6 +20,7 @@ import { validOptionRegistrationNumbers } from '@/app/product-registration';
 import { PriceSelectionDialog } from '@/app/components/price-selection-dialog';
 import { createBundleAddDraft, verifyBundleAddReceipt, type BundleAddition, type BundleAddReceipt } from '@/app/option-bundles';
 import { verifyOptionPriceView } from '@/app/option-price-save';
+import { applyOptionNameChanges } from '@/app/option-seo-names';
 
 type Props = { product: { id: string; title: string; image_keys: string; updated_at?: string; registration_number?: string }; profileId?:string;refreshToken?:string;onSaved?: () => void; onReviewPackaging?: (optionId: string | null) => void; imageView?: boolean; imageProcessingBusy?: boolean; pricingView?: boolean; seoView?: boolean; focusedOptionId?: string; initialBulkAction?: 'remove';
   editableQuotationPrices?:boolean;pricePolicyLocked?:boolean;beforePriceCommit?:()=>boolean;onPriceBusyChange?:(busy:boolean,operation:object)=>void;
@@ -147,7 +148,7 @@ function OptionsEditor({ product, onSaved, onReviewPackaging, pricingView = fals
       if (!response.ok || !body.options) { if (response.status === 409) setConflict(true); throw new Error(body.error || '옵션을 저장하지 못했습니다.'); }
       verifyOptionsRegistrationDisplay(body,product.id,registrationParent.current);
       if(seoView){
-        const expected=optionInputs(saved.options).map(row=>editedNames.has(row.id)?{...row,translatedName:rows.find(value=>value.id===row.id)!.translatedName}:row);
+        const expected=optionInputs(applyOptionNameChanges(saved.options,changes,body.productVersion));
         confirmOptionTranslationSave(body,saved.options,saved.productVersion,expected);
         if(changes.some(change=>body.options.rows.find(row=>row.id===change.optionId)?.provenance.translatedName!=='manual'))throw Error('옵션명 저장 결과를 확인하지 못했습니다. 입력을 유지합니다.');
         applyLoaded(body);setMessage(`한국어 옵션명 ${changes.length}개 저장 완료`);onSaved?.();return;

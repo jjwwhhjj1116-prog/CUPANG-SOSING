@@ -48,6 +48,7 @@ for(const flow of ['upload-response','attached-response','saved-response','compl
   assert.equal(plans.length,6,'reopening a partial label does not render its saved PNG again in the batch');
   const initialLabels=ui.view.resolved.rows.filter(row=>row.included).map(row=>row.fields.labelImages.value.split('\n'));
   assert.ok(initialLabels.every(keys=>keys.length===2&&keys[0]===images[3]));assert.equal(new Set(initialLabels.map(keys=>keys[1])).size,6);
+  const replacedLabel=initialLabels[0][1],replacedBytes=h.objects.get(replacedLabel).slice();
   ui.close();ui=open();await ui.idle();
   const price=ui.field('salePrice');price.props.onChange({target:{value:'20000'}});await ui.click('견적 입력 저장');await ui.click('전체 포함 옵션 라벨 생성·연결');
   assert.equal(calls.filter(call=>call.path==='/api/files').length,6);assert.equal(plans.length,6,'fresh form and price edit reuse all six server files');
@@ -56,7 +57,8 @@ for(const flow of ['upload-response','attached-response','saved-response','compl
   ui.close();ui=open();await ui.idle();await ui.click('전체 포함 옵션 라벨 생성·연결');
   assert.equal(calls.filter(call=>call.path==='/api/files').length,7);assert.equal(plans.length,7);
   const labels=ui.view.resolved.rows.filter(row=>row.included).map(row=>row.fields.labelImages.value.split('\n'));
-  assert.deepEqual(labels[0].slice(0,2),initialLabels[0]);assert.equal(labels[0].length,3);assert.deepEqual(labels.slice(1),initialLabels.slice(1));
+  assert.equal(labels[0].length,2);assert.equal(labels[0][0],initialLabels[0][0]);assert.notEqual(labels[0][1],replacedLabel,'the revised option replaces its server-proven stale PNG reference');assert.deepEqual(labels.slice(1),initialLabels.slice(1));
+  assert.ok(ui.view.imageKeys.includes(replacedLabel));assert.deepEqual(h.objects.get(replacedLabel),replacedBytes,'replacing a quote reference preserves the original stored PNG');
   assert.deepEqual(ui.alerts(),[]);assert.equal(calls.some(call=>call.status===409),false);
   const sourceRequests=h.network.length;await h.intake();assert.equal(h.network.length,sourceRequests);assert.equal(h.aiSources.length,1);
   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
@@ -75,7 +77,7 @@ for(const flow of ['upload-response','attached-response','saved-response','compl
   const sent=submission.calls.find(call=>call.action==='transmit');assert.ok(sent);assert.deepEqual(submission.alerts(),[]);
   assert.deepEqual(sent.files.company,{code:company.companyCode,name:company.companyName});assert.equal(sent.files.includedOptions,6);
   assert.deepEqual(Buffer.from(sent.files.quotation[0].base64,'base64'),Buffer.from(files.get(plan.quotation.file.filename)));
-  assert.equal(sent.files.labelImages.length,8,'one existing label, six initial option labels and one changed option label');
+  assert.equal(sent.files.labelImages.length,7,'one existing label and the six current option labels; the superseded PNG is not exported');
   assert.deepEqual(sent.files.labelImages.map(file=>file.name).sort(),plan.labelImages.map(file=>file.filename).sort());
   for(const image of sent.files.labelImages)assert.deepEqual(Buffer.from(image.base64,'base64'),Buffer.from(files.get(plan.labelImages.find(item=>item.filename===image.name).archivePath)));
   assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');

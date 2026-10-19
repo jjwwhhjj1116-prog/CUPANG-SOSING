@@ -32,7 +32,7 @@ for(const failure of ['saved-response','attached-response','attachment-rejected'
   h.bindings.FILES.get=async(key,options)=>{const object=await get(key);if(!object)return null;const bytes=new Uint8Array(await object.arrayBuffer());return{...object,body:new Response(bytes.slice(0,options?.range?.length??bytes.length)).body};};
   const calls=[],plans=[];let failed=false,recoveryReadFailures=0;
   const request=async(path,init={})=>{
-   if(path===endpoint&&!init.method&&failed&&failure==='read-recovery'&&recoveryReadFailures<2){recoveryReadFailures++;return Response.json({error:'single recovery read unavailable'},{status:503});}
+   if(path===endpoint&&!init.method&&failed&&failure==='read-recovery'&&recoveryReadFailures<3){recoveryReadFailures++;return Response.json({error:'single recovery read unavailable'},{status:503});}
    if(!failed&&path.endsWith('/attachments')&&failure==='attachment-rejected'){failed=true;calls.push({path,method:'POST',status:503,body:JSON.parse(init.body)});return Response.json({error:'single attachment rejected'},{status:503});}
    const response=path==='/api/files'?await h.load('app/api/files/route.ts').POST(new Request('https://app.test/api/files',{method:'POST',body:init.body})):await h.route(path,{method:init.method??'GET',...(typeof init.body==='string'?{body:JSON.parse(init.body)}:{})});
    const body=typeof init.body==='string'?JSON.parse(init.body):null;calls.push({path,method:init.method??'GET',status:response.status,body});
@@ -43,14 +43,15 @@ for(const failure of ['saved-response','attached-response','attachment-rejected'
   await ui.idle();const before=ui.view;
   await ui.click('저장된 견적 값으로 PNG 미리보기');await ui.click('PNG 업로드·선택 옵션 견적에 연결');
   assert.equal(failed,true);assert.equal(ui.savedNotifications,1,'single failure also invalidates stale quotation previews');
-  assert.ok(ui.alerts().some(message=>message.includes(failure==='attachment-rejected'?'single attachment rejected':'single saved response lost')));
+  if(['saved-response','attached-response'].includes(failure))assert.deepEqual(ui.alerts(),[],'committed attachment and reference ACK loss is recovered by exact readback');
+  else assert.ok(ui.alerts().some(message=>message.includes(failure==='attachment-rejected'?'single attachment rejected':'single recovery read unavailable')));
   if(failure==='read-recovery'){
-   assert.equal(recoveryReadFailures,1);assert.equal(ui.view.revision,before.revision);assert.equal(ui.fieldDisabled('salePrice'),true);
-   await ui.click('기본값 다시 반영');assert.equal(recoveryReadFailures,2);assert.equal(ui.fieldDisabled('salePrice'),true);
-   assert.ok(ui.alerts().some(message=>message.includes('single saved response lost')&&message.includes('single recovery read unavailable')));
+   assert.equal(recoveryReadFailures,2,'the failed receipt read and the parent recovery refresh both remain read-only');assert.equal(ui.view.revision,before.revision);assert.equal(ui.fieldDisabled('salePrice'),true);
+   await ui.click('기본값 다시 반영');assert.equal(recoveryReadFailures,3);assert.equal(ui.fieldDisabled('salePrice'),true);
+   assert.ok(ui.alerts().some(message=>message.includes('single recovery read unavailable')),'the unconfirmed readback remains visible until an explicit successful read');
    await ui.click('기본값 다시 반영');
   }
-  assert.equal(ui.view.revision,before.revision+(['attached-response','attachment-rejected'].includes(failure)?0:1));
+  assert.equal(ui.view.revision,before.revision+(failure==='attachment-rejected'?0:1));
   if(failure==='attachment-rejected')assert.equal(ui.view.inputFingerprint,before.inputFingerprint);else assert.notEqual(ui.view.inputFingerprint,before.inputFingerprint);
   const price=ui.field('salePrice');price.props.onChange({target:{value:'20000'}});await ui.click('견적 입력 저장');assert.deepEqual(ui.alerts(),[]);
   await ui.click('저장된 견적 값으로 PNG 미리보기');await ui.click('PNG 업로드·선택 옵션 견적에 연결');
@@ -58,13 +59,15 @@ for(const failure of ['saved-response','attached-response','attachment-rejected'
   assert.equal(calls.filter(call=>call.path==='/api/files').length,1);assert.equal(calls.filter(call=>call.path.endsWith('/attachments')).length,failure==='attachment-rejected'?2:1);
   assert.equal(calls.filter(call=>call.method==='PUT'&&call.body.changes[0].fieldKey==='labelImages').length,1);
   const oldLabel=ui.view.resolved.rows.find(row=>row.optionId==='collected-1').fields.labelImages.value.split('\n')[1];assert.ok(oldLabel);
+  const oldBytes=h.objects.get(oldLabel).slice();
   const model=ui.field('model');model.props.onChange({target:{value:'REVISED-LABEL'}});await ui.click('견적 입력 저장');
   await ui.click('저장된 견적 값으로 PNG 미리보기');await ui.click('PNG 업로드·선택 옵션 견적에 연결');
   assert.equal(plans.length,2,'changed PNG contents invalidate the old reviewed file');
   assert.equal(calls.filter(call=>call.path==='/api/files').length,2);assert.equal(calls.filter(call=>call.path.endsWith('/attachments')).length,failure==='attachment-rejected'?3:2);
   assert.equal(calls.some(call=>call.status===409),false);
   const labels=ui.view.resolved.rows.filter(row=>row.included).map(row=>row.fields.labelImages.value.split('\n'));
-  assert.equal(labels[0].length,3);assert.equal(labels[0][0],images[3]);assert.equal(labels[0][1],oldLabel);assert.notEqual(labels[0][2],oldLabel);
+  assert.equal(labels[0].length,2);assert.equal(labels[0][0],images[3]);assert.notEqual(labels[0][1],oldLabel);
+  assert.ok(ui.view.imageKeys.includes(oldLabel));assert.deepEqual(h.objects.get(oldLabel),oldBytes,'the old generated object survives while only the current reference is exported');
   assert.ok(labels.slice(1).every(keys=>keys.length===1&&keys[0]===images[3]));
   await ui.click('저장된 견적 값으로 PNG 미리보기');await ui.click('PNG 업로드·선택 옵션 견적에 연결');
   assert.equal(plans.length,2);assert.equal(calls.filter(call=>call.path==='/api/files').length,2);assert.deepEqual(ui.alerts(),[]);
@@ -85,7 +88,7 @@ for(const failure of ['saved-response','attached-response','attachment-rejected'
   const sent=submission.calls.find(call=>call.action==='transmit');assert.ok(sent);assert.deepEqual(submission.alerts(),[]);
   assert.deepEqual(sent.files.company,{code:company.companyCode,name:company.companyName});assert.equal(sent.files.includedOptions,6);
   assert.deepEqual(Buffer.from(sent.files.quotation[0].base64,'base64'),Buffer.from(files.get(plan.quotation.file.filename)));
-  assert.equal(sent.files.labelImages.length,3,'one existing label and exactly two reviewed versions of the first option');
+  assert.equal(sent.files.labelImages.length,2,'one manual label and the current reviewed PNG of the first option');
   assert.deepEqual(sent.files.labelImages.map(file=>file.name).sort(),plan.labelImages.map(file=>file.filename).sort());
   for(const image of sent.files.labelImages)assert.deepEqual(Buffer.from(image.base64,'base64'),Buffer.from(files.get(plan.labelImages.find(item=>item.filename===image.name).archivePath)));
   assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');

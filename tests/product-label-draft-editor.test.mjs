@@ -60,7 +60,7 @@ test('label generation requests the three-field draft once, stages an actual bef
     assert.ok(changes.every(change=>change.optionId==='red'));assert.equal(f.view.overrides.options.red.netContents,'검수한 2개');
     assert.deepEqual(plain(f.view.overrides.options.blue),before.overrides.options.blue);assert.deepEqual(plain(f.view.overrides.common),before.overrides.common);
     assert.equal(h.plans.length,0);assert.equal(h.attachments.length,0);
-    cases.push({name:'review and explicit save',requests:1,writes:1,sourceAndOtherOptionPreserved:true,editedBeforeSave:true,rasterAndAttachmentWrites:0});
+    cases.push({name:'review and explicit save',requests:1,writes:1,sourceAndOtherOptionPreserved:true,editedBeforeSave:true,completionBoundary:'mocked; full chain covered separately',renderedPlans:0,attachmentFixtureCalls:0});
   }finally{h.close();}
 });
 

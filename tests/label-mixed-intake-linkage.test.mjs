@@ -43,7 +43,7 @@ for(const flow of ['single-first','preview-first','single-response-loss','batch-
   if(flow!=='batch-first'){
    await ui.click('저장된 견적 값으로 PNG 미리보기');
    if(flow!=='preview-first')await ui.click('PNG 업로드·선택 옵션 견적에 연결');
-   if(flow==='single-response-loss')assert.ok(ui.alerts().some(message=>message.includes('mixed label saved response lost')));
+   if(flow==='single-response-loss'){assert.equal(failed,true);assert.deepEqual(ui.alerts(),[],'the exact committed label is recovered by GET after its lost ACK');assert.equal(calls.filter(call=>call.method==='PUT'&&call.body.changes[0].fieldKey==='labelImages').length,1);}
   }
   await ui.click('전체 포함 옵션 라벨 생성·연결');
   assert.equal(plans.length,6,'a reviewed PNG and already uploaded option do not render again in the batch');
@@ -51,6 +51,7 @@ for(const flow of ['single-first','preview-first','single-response-loss','batch-
   const initialLabels=ui.view.resolved.rows.filter(row=>row.included).map(row=>row.fields.labelImages.value.split('\n'));
   assert.ok(initialLabels.every(keys=>keys.length===2&&keys[0]===images[3]),'keep the existing label and one generated label per option');
   assert.equal(new Set(initialLabels.map(keys=>keys[1])).size,6,'different option identities cannot share uploaded keys');
+  const replacedLabel=initialLabels[0][1],replacedBytes=h.objects.get(replacedLabel).slice();
   for(const optionId of ['collected-1','collected-2']){
    ui.selectOption(optionId);
    await ui.click('저장된 견적 값으로 PNG 미리보기');await ui.click('PNG 업로드·선택 옵션 견적에 연결');
@@ -72,7 +73,8 @@ for(const flow of ['single-first','preview-first','single-response-loss','batch-
   assert.equal(calls.filter(call=>call.method==='PUT'&&call.body.changes[0].fieldKey==='labelImages').length,7);
   assert.equal(calls.some(call=>call.status===409),false);assert.deepEqual(ui.alerts(),[]);
   const labels=ui.view.resolved.rows.filter(row=>row.included).map(row=>row.fields.labelImages.value.split('\n'));
-  assert.deepEqual(labels[0].slice(0,2),initialLabels[0]);assert.equal(labels[0].length,3);assert.notEqual(labels[0][2],initialLabels[0][1]);
+  assert.equal(labels[0].length,2);assert.equal(labels[0][0],initialLabels[0][0]);assert.notEqual(labels[0][1],replacedLabel);
+  assert.ok(ui.view.imageKeys.includes(replacedLabel));assert.deepEqual(h.objects.get(replacedLabel),replacedBytes,'the superseded generated reference is replaced without deleting its original bytes');
   assert.deepEqual(labels.slice(1),initialLabels.slice(1),'other SKU labels stay unchanged');
   const sourceRequests=h.network.length;await h.intake();assert.equal(h.network.length,sourceRequests);assert.equal(h.aiSources.length,1);
   const preview=await json(await h.route(base+'/quotation',{method:'POST',body:{action:'preview'}}));
@@ -91,7 +93,7 @@ for(const flow of ['single-first','preview-first','single-response-loss','batch-
   const sent=submission.calls.find(call=>call.action==='transmit');assert.ok(sent);assert.deepEqual(submission.alerts(),[]);
   assert.deepEqual(sent.files.company,{code:company.companyCode,name:company.companyName});assert.equal(sent.files.includedOptions,6);
   assert.deepEqual(Buffer.from(sent.files.quotation[0].base64,'base64'),Buffer.from(files.get(plan.quotation.file.filename)));
-  assert.equal(sent.files.labelImages.length,8,'one existing label, six initial option labels and one changed option label');
+  assert.equal(sent.files.labelImages.length,7,'one manual label and the six current option labels; superseded generated PNG is not exported');
   assert.deepEqual(sent.files.labelImages.map(file=>file.name).sort(),plan.labelImages.map(file=>file.filename).sort());
   for(const image of sent.files.labelImages)assert.deepEqual(Buffer.from(image.base64,'base64'),Buffer.from(files.get(plan.labelImages.find(item=>item.filename===image.name).archivePath)));
   assert.equal(h.sqlite.prepare('SELECT supplier_hub_status FROM products').get().supplier_hub_status,'미전송');

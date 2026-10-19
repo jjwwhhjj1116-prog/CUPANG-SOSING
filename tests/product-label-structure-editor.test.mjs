@@ -102,18 +102,19 @@ test('primary label structure renames, reorders, removes and adds rows, then sav
   } finally { h.close(); }
 });
 
-test('metadata-only lost acknowledgement is recovered by GET without another write', async () => {
+test('metadata-only lost acknowledgement is recovered inline by GET before mocked completion without another write', async () => {
   let lose = true;
   const { h, writes } = setup((url, init, reply) => { const result = reply(url, init); if (init?.method === 'PUT' && lose) { lose = false; throw Error('합성 응답 유실'); } return result; });
   try {
     await h.idle(); heading(h, 2).props.onChange({ target: { value: '직접 바꾼 이름' } });
     await h.click('정보 저장하기');
-    assert.equal(h.saved, 0); assert.equal(writes.length, 1); assert.deepEqual(writes[0].changes, []);
+    assert.equal(h.saved, 1); assert.equal(writes.length, 1); assert.deepEqual(writes[0].changes, []);
+    const recovery = h.calls.slice(h.calls.findIndex(call => call.init?.method === 'PUT') + 1);
+    assert.ok(recovery.length > 0); assert.ok(recovery.every(call => (call.init?.method ?? 'GET') === 'GET'), 'lost ACK recovery only reads before the mocked completion boundary');
     assert.equal(heading(h, 2).props.value, '직접 바꾼 이름');
-    await h.click('입력 유지·최신 표시사항 조회');
     assert.equal(h.saved, 1, text(h.render())); assert.equal(writes.length, 1);
     assert.equal(h.render().props['data-workspace-dirty'], false);
-    cases.push({ name: 'metadata lost ACK', writes: 1, recoveryWrites: 0, exactStructureRecovered: true });
+    cases.push({ name: 'metadata lost ACK', writes: 1, inlineReadOnlyRecovery: true, completionBoundary: 'mocked', exactStructureRecovered: true });
   } finally { h.close(); }
 });
 

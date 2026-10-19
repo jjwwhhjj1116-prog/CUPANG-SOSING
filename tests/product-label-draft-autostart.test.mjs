@@ -95,13 +95,12 @@ test('provider failure or changed post-result source consumes the automatic atte
  cases.push({name:'failed attempt',automaticRetries:0,falseConfirmedCallbacks:0});
 });
 
-test('lost save ACK reports no confirmed view until exact read-only recovery, and PNG retention blocks leaving until attach ACK',async()=>{
+test('lost text ACK recovers within the explicit save and PNG retry retains its recipe without another text write',async()=>{
  const f=fixture(),before=plain(f.view);let lost=true,attachmentLost=true;const key='owner/quotation-label-'+sha('synthetic retained PNG')+'.png';
  const h=editor((url,init)=>{const response=f.reply(url,init);if(init?.method==='PUT'&&lost){lost=false;throw Error('합성 저장 ACK 유실');}return response;},{attach:async(input,request)=>{input.onUploaded(key);if(attachmentLost){attachmentLost=false;throw Error('합성 PNG 연결 미확정');}assert.equal(input.uploadedKey,key);f.view.imageKeys.push(key);f.view.quotationRevision++;f.source();return{view:await(await request(input.endpoint,{cache:'no-store'})).json(),quotation:{},key};}});try{
-  await h.idle();h.edit('선택 옵션 내용량','직접 확인한 2개');await h.click('정보 저장하기');assert.equal(h.notifications.views.length,0);assert.equal(h.saved,0);assert.equal(h.notifications.dirty.at(-1),true);assert.equal(f.view.revision,before.revision+1);
-  await h.click('입력 유지·최신 표시사항 조회');assert.equal(puts(h).length,1);assert.equal(h.notifications.views.length,1);assert.deepEqual(h.notifications.views[0],plain(f.view));assert.equal(h.notifications.dirty.at(-1),false);
-  await h.click('저장한 표시사항 PNG 미리보기');assert.equal(h.notifications.dirty.at(-1),true);assert.equal(h.notifications.views.length,1);await h.click('PNG 업로드·견적에 연결');assert.equal(h.notifications.dirty.at(-1),true);assert.equal(h.notifications.views.length,1);assert.match(text(h.render()),/업로드한 파일은 보존/);
-  await h.click('PNG 업로드·견적에 연결');assert.equal(h.attachments.length,2);assert.equal(h.plans.length,1);assert.equal(h.notifications.views.length,2);assert.deepEqual(h.notifications.views[1],plain(f.view));assert.equal(h.notifications.dirty.at(-1),false);assert.equal(h.saved,2);
+  await h.idle();h.edit('선택 옵션 내용량','직접 확인한 2개');await h.click('정보 저장하기');assert.equal(h.notifications.views.length,1);assert.equal(h.saved,1);assert.equal(h.notifications.dirty.at(-1),true);assert.equal(f.view.revision,before.revision+1);assert.equal(puts(h).length,1);
+  assert.match(text(h.render()),/PNG·견적 연결은 완료되지 않았습니다/);assert.equal(h.plans.length,1);assert.equal(h.button('정보 저장하기').props.disabled,false);
+  await h.click('정보 저장하기');assert.equal(puts(h).length,1);assert.equal(h.attachments.length,2);assert.equal(h.plans.length,1);assert.equal(h.notifications.views.length,2);assert.deepEqual(h.notifications.views[1],plain(f.view));assert.equal(h.notifications.dirty.at(-1),false);assert.equal(h.saved,2);
  }finally{h.close();}cases.push({name:'save and PNG ACK boundaries',savePuts:1,readOnlyRecovery:true,retainedPngProtected:true,confirmedCallbacks:2});
 });
 

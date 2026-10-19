@@ -74,17 +74,17 @@ test('discarding a clear draft reloads the original structure and values with no
   } finally { h.close(); }
 });
 
-test('a committed clear with lost acknowledgement recovers the exact structure and blank without duplicate PUT', async () => {
+test('a committed clear with lost acknowledgement recovers inline before the mocked completion boundary without duplicate PUT', async () => {
   let lose = true;
   const { h, writes } = setup((url, init, reply) => { const result = reply(url, init); if (init?.method === 'PUT' && lose) { lose = false; throw Error('합성 응답 유실'); } return result; });
   try {
     await h.idle(); await h.click('전체 삭제'); await h.click('정보 저장하기');
-    assert.equal(h.saved, 0); assert.equal(writes.length, 1); assert.equal(h.render().props['data-workspace-dirty'], true);
-    await h.click('입력 유지·최신 표시사항 조회');
     assert.equal(h.saved, 1, text(h.render())); assert.equal(writes.length, 1);
+    const recovery = h.calls.slice(h.calls.findIndex(call => call.init?.method === 'PUT') + 1);
+    assert.ok(recovery.length > 0); assert.ok(recovery.every(call => (call.init?.method ?? 'GET') === 'GET'), 'lost ACK recovery only reads before the mocked completion boundary');
     assert.equal(inputs(h).length, 1); assert.equal(h.input('선택 옵션 제품명').props.value, '');
     assert.equal(h.render().props['data-workspace-dirty'], false);
-    proofs.push({ name: 'lost clear ACK', writes: 1, recoveryWrites: 0, exactBlankAndStructureRecovered: true });
+    proofs.push({ name: 'lost clear ACK', writes: 1, inlineReadOnlyRecovery: true, completionBoundary: 'mocked', exactBlankAndStructureRecovered: true });
   } finally { h.close(); }
 });
 
@@ -96,8 +96,10 @@ test('clear callbacks are blocked during a write and cannot affect another optio
   try {
     await h.idle(); const clear = h.button('전체 삭제').props.onClick;
     h.edit('선택 옵션 제품명', '검수 중 입력'); h.button('정보 저장하기').props.onClick();
-    clear(); assert.equal(inputs(h).length, 9); assert.equal(h.input('선택 옵션 제품명').props.value, '검수 중 입력');
+    clear(); assert.equal(h.render().props['data-workspace-saving'], true); assert.equal(inputs(h).length, 0, 'the busy editor hides its form instead of exposing mutable controls');
     held.resolve(reply(pending.url, pending.init)); await h.idle(); assert.equal(writes.length, 1); assert.equal(h.saved, 1, text(h.render()));
+    assert.equal(inputs(h).length, 9); assert.equal(h.input('선택 옵션 제품명').props.value, '검수 중 입력');
+    assert.equal(Object.hasOwn(writes[0], 'structure'), false, 'the captured clear callback cannot replace the saved structure');
     const oldClear = h.button('전체 삭제').props.onClick;
     h.select('blue'); await h.idle(); oldClear();
     assert.equal(inputs(h).length, 9); assert.equal(h.input('선택 옵션 제품명').props.value, '다른 옵션 제품명');

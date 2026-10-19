@@ -431,8 +431,10 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   const initialTarget = useRef(navigationTarget); const pendingFocus = useRef<string | null>(null);
   const requests = useRef(0); const observedRefresh = useRef(refreshToken); const prefix = useId();
   const activeWrite = useRef<AbortController | null>(null);
+  const explicitRefreshAction = useRef<{ endpoint: string; view: QuotationFieldsView | null; optionId: string | null; changes: QuotationEditorChange[]; conflicts: Conflict[]; recovery: string; run: () => Promise<void> } | null>(null);
   const aiDraftApplied = useRef(false);
   function setChanges(next: QuotationEditorChange[] | ((previous: QuotationEditorChange[]) => QuotationEditorChange[])) {
+    explicitRefreshAction.current = null;
     aiDraftApplied.current = typeof next === 'function' || next.length > 0;
     commitChanges(next);
   }
@@ -468,6 +470,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   }, [loading, view, active, selectedOption, prefix]);
   const refresh = useCallback(async (discard = false, afterConflict = false, labelFailure?: string) => {
     if (activeWrite.current && !afterConflict) return;
+    explicitRefreshAction.current = null;
     // Block an already captured model action before React commits loading.
     // The refreshed view's effect releases this lock after success or failure.
     modelActionState.current = { ...modelActionState.current, loading: true };
@@ -489,6 +492,18 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
     }
     finally { if (id === requests.current) setLoading(false); }
   }, [endpoint, view, changes, conflicts, selectedOption, labelRecovery]);
+  const explicitRefreshBlocked = loading || operationBusy || splitBusy || splitDrafting || Boolean(labelRecovery) && (dirty || conflicts.length > 0);
+  useEffect(() => {
+    explicitRefreshAction.current = explicitRefreshBlocked ? null : { endpoint, view, optionId: selectedOption, changes, conflicts, recovery: labelRecovery, run: () => refresh() };
+    return () => { explicitRefreshAction.current = null; };
+  }, [explicitRefreshBlocked, endpoint, view, selectedOption, changes, conflicts, labelRecovery, refresh]);
+  function refreshExplicitly() {
+    const current = explicitRefreshAction.current;
+    if (!current || activeWrite.current || current.endpoint !== endpoint || current.view !== view || current.optionId !== selectedOption
+      || current.changes !== changes || current.conflicts !== conflicts || current.recovery !== labelRecovery) return;
+    explicitRefreshAction.current = null;
+    void current.run();
+  }
   useEffect(() => {
     if (observedRefresh.current === refreshToken || busy || loading) return;
     observedRefresh.current = refreshToken;
@@ -561,20 +576,20 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
   if (view && changes.length) try { savePlan = quotationSavePlan(view, changes, selectedOption, applyAll); validateQuotationChanges(savePlan.changes, { schema: view.resolved.schema, optionIds: view.resolved.rows.flatMap(item => item.optionId === null ? [] : [item.optionId]), ownedImageKeys: view.imageKeys, overrides: view.overrides }); } catch (cause) { hasInvalidDraft = true; invalidDraftMessage = cause instanceof Error ? cause.message : '수정한 필드의 입력 오류를 확인해주세요.'; }
 
   return <section className="quotation-fields" aria-busy={loading || operationBusy || splitBusy} data-workspace-dirty={dirty || splitDrafting} data-workspace-saving={operationBusy || splitBusy}>
-    <div className="quotation-fields-heading"><div><h3>카테고리별 견적 입력</h3><p>저장 자료를 자동으로 채우고, 필요한 항목만 직접 수정합니다.</p></div><button type="button" className="btn ghost" disabled={loading || busy} onClick={() => void refresh()}>기본값 다시 반영</button></div>
+    <div className="quotation-fields-heading"><div><h3>카테고리별 견적 입력</h3><p>저장 자료를 자동으로 채우고, 필요한 항목만 직접 수정합니다.</p></div><button type="button" className="btn ghost" disabled={explicitRefreshBlocked} onClick={refreshExplicitly}>기본값 다시 반영</button></div>
     {loading && <p role="status">최신 견적 입력을 확인하는 중입니다.</p>}
     {error && <p role="alert" className="collection-error">{error}</p>}
     {message && <p role="status" className="quotation-fields-notice">{message}</p>}
     {schema && <div className="quotation-fields-category"><strong>{schema.categoryPath.join(' › ') || '카테고리 미연결'}{schema.categoryId ? ` · ${schema.categoryId}` : ''}</strong><small>{schema.status !== 'observed' && '이 카테고리의 세부 규격은 미확인입니다. '}{schema.evidence}</small></div>}
     {view && <>
-      <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section, fieldId) => { setSelectedOption(optionId); setApplyAll(false); openSection(section, fieldId, optionId !== selectedOption); setBulk(null); }}/>
+      <QuotationOptionOverview view={view} changes={changes} disabled={busy || loading} onOpen={(optionId, section, fieldId) => { explicitRefreshAction.current = null; setSelectedOption(optionId); setApplyAll(false); openSection(section, fieldId, optionId !== selectedOption); setBulk(null); }}/>
       <QuotationExposedDuplicates resolved={view.resolved} numbers={view.optionRegistrationNumbers} disabled={busy || loading || conflicts.length > 0}
         readValue={(optionId, fieldId) => resolveQuotationEditorCell(view, changes, optionId, fieldId).value}
-        onOpen={(optionId, fieldId) => { setSelectedOption(optionId); setApplyAll(false); openSection('product', fieldId, optionId !== selectedOption); setBulk(null); }}/>
+        onOpen={(optionId, fieldId) => { explicitRefreshAction.current = null; setSelectedOption(optionId); setApplyAll(false); openSection('product', fieldId, optionId !== selectedOption); setBulk(null); }}/>
       <ProductOptionSplitPanel productId={productId} profileId={profileId} view={view} disabled={dirty || operationBusy || Boolean(labelRecovery) || loading || conflicts.length > 0}
-        onBusyChange={setSplitBusy} onDraftChange={setSplitDrafting} onCommitted={() => { onSaved?.(); void refresh(); }} />
+        onBusyChange={next => { if (next) explicitRefreshAction.current = null; setSplitBusy(next); }} onDraftChange={next => { if (next) explicitRefreshAction.current = null; setSplitDrafting(next); }} onCommitted={() => { onSaved?.(); void refresh(); }} />
       <QuotationAiPanel productId={productId} profileId={profileId} view={view} optionId={selectedOption} disabled={dirty || busy || loading || conflicts.length > 0}
-        onBusyChange={next=>{modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
+        onBusyChange={next=>{if(next)explicitRefreshAction.current=null;modelActionState.current={...modelActionState.current,busy:next||Boolean(labelRecovery)};setBusy(next);}}
         onApply={proposals=>{
           const current=modelActionState.current;
           if(current.view!==view||current.busy||current.loading||current.conflicts.length||changes.length||aiDraftApplied.current||activeWrite.current)return;
@@ -602,7 +617,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       }}/>
       {optionLimitIssue && <p className="quotation-fields-notice" role="alert">{optionLimitIssue}</p>}
       {!view.resolved.rows.some(item => item.included) && <p className="quotation-fields-notice" role="alert">견적에 포함된 옵션이 없습니다. 옵션 설정에서 상품 옵션을 추가하거나 포함을 선택해주세요. 공통 입력은 보존되지만 견적서 출력 대상은 아닙니다.</p>}
-      <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { const next = event.target.value || null; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${optionRegistrationLabel(item.optionId,item.optionLabel,view.optionRegistrationNumbers)}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
+      <div className="quotation-fields-toolbar"><label className="field"><span>편집할 옵션</span><select value={selectedOption ?? ''} disabled={loading || busy} onChange={event => { explicitRefreshAction.current = null; const next = event.target.value || null; modelActionState.current = { ...modelActionState.current, selectedOption: next }; setSelectedOption(next); setApplyAll(false); setBulk(null); }}>{!row && <option value={selectedOption ?? ''} disabled>선택한 옵션 없음 · 다시 선택해주세요</option>}{view.resolved.rows.map(item => <option key={item.optionId ?? 'common'} value={item.optionId ?? ''}>{item.optionId === null ? '상품 공통값' : `${optionRegistrationLabel(item.optionId,item.optionLabel,view.optionRegistrationNumbers)}${item.included ? '' : ' · 견적 제외'}`}</option>)}</select></label><small>{selectedOption === null ? '공통 수정은 별도로 수정하지 않은 옵션에도 적용됩니다. 옵션별 입력은 개별 값을 우선 사용합니다.' : '선택한 옵션만 수정합니다. 다른 옵션에도 같은 값을 넣으려면 항목을 선택한 뒤 적용 범위를 확인하세요.'}</small></div>
       {!row && <p role="alert" className="quotation-fields-notice">선택한 옵션이 현재 상품에 없습니다. 공통값으로 자동 전환하지 않았습니다. 편집할 옵션을 다시 선택해주세요. 미저장 입력은 유지됩니다.</p>}
       <div className="quotation-fields-summary"><span>현재 옵션 필수 미입력 <b>{missingRequired}개</b></span><span>입력 확인 <b>{allIssues.length}건</b></span><span>미저장 수정 <b>{changes.length}개</b></span></div>
       {packagingReconfirmation.length>0&&<div className="quotation-fields-notice"><p>직접 입력한 포장값의 판매 구성 수량이 바뀌었습니다. 현재 구성의 실제 포장 무게·치수를 확인한 뒤 저장해주세요. 입력값은 그대로 유지됩니다.</p><button type="button" className="btn ghost" disabled={busy||loading||dirty||conflicts.length>0} onClick={()=>{
@@ -698,7 +713,7 @@ function QuotationFieldsForm({ navigationTarget, productId, profileId, refreshTo
       {(view.resolved.issues.length > 0 || allIssues.length > 0) && <details className="quotation-fields-notice"><summary>입력·검토 안내 {view.resolved.issues.length + allIssues.length}건</summary><ul>{view.resolved.issues.map((issue, index) => <li key={`global-${index}`}>{issue}</li>)}{allIssues.map(({ field, issue }, index) => <li key={`${field.id}-${index}`}><button type="button" className="quotation-field-text-button" disabled={busy || loading} onClick={() => openSection(field.section, field.id)}>{field.label}</button>: {issue}</li>)}</ul></details>}
       {hasInvalidDraft && <p className="quotation-field-issue" role="status">{invalidDraftMessage} 필수 항목의 공란은 작성 중 상태로 저장할 수 있습니다.</p>}
       {row && <QuotationTranslatedAttributes key={`translation:${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} productId={productId} view={view} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} onApply={items=>items.forEach(item=>edit(item.fieldKey,item.value,item.optionId))} />}
-      {row && <QuotationLabelPanel key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} view={view} productId={productId} endpoint={endpoint} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} batchCache={labelBatchCache} uploadCache={labelUploadCache} onBusyChange={setBusy} onFailed={async message=>{setLabelRecovery(message);setMessage('');onSaved?.();await refresh(false,false,message);}} onAttached={(saved,batch)=>{setView(saved);setMessage(batch?.stopped ? `라벨 ${batch.completed}/${batch.total}건을 저장하고 중지했습니다. 저장 결과를 반영했으며 전체 생성·연결을 다시 누르면 이어서 진행합니다.` : '표시사항 PNG를 처리한 옵션의 라벨 이미지에 추가했습니다. 기존 첨부는 유지했습니다.');onSaved?.();}} />}
+      {row && <QuotationLabelPanel key={`${view.inputFingerprint}:${view.revision}:${selectedOption??'common'}`} view={view} productId={productId} endpoint={endpoint} optionId={selectedOption} disabled={dirty || loading || busy || conflicts.length > 0} batchCache={labelBatchCache} uploadCache={labelUploadCache} onBusyChange={next=>{if(next)explicitRefreshAction.current=null;setBusy(next);}} onFailed={async message=>{setLabelRecovery(message);setMessage('');onSaved?.();await refresh(false,false,message);}} onAttached={(saved,batch)=>{setView(saved);setMessage(batch?.stopped ? `라벨 ${batch.completed}/${batch.total}건을 저장하고 중지했습니다. 저장 결과를 반영했으며 전체 생성·연결을 다시 누르면 이어서 진행합니다.` : '표시사항 PNG를 처리한 옵션의 라벨 이미지에 추가했습니다. 기존 첨부는 유지했습니다.');onSaved?.();}} />}
     </>}
   </section>;
 }

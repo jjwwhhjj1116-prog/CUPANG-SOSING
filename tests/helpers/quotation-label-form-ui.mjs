@@ -11,9 +11,9 @@ const same=(before,after)=>before&&after&&before.length===after.length&&before.e
 /** Execute both real React components, including child keys and effect cleanup.
  * Rendering PNG pixels is a fixture; all saves use the supplied real API. */
 export function quotationLabelFormUI({productId,load,request,renderDocument}){
- const modules=new Map(),form={slots:[],pending:[],cursor:0};let current=form,child=null,childKey=null,remounts=0,savedNotifications=0;
+ const modules=new Map(),form={slots:[],pending:[],cursor:0};let current=form,child=null,childKey=null,remounts=0,savedNotifications=0,renderNeeded=true,rendered;
  const hooks={
-  useState(initial){const target=current,i=target.cursor++;if(!(i in target.slots))target.slots[i]=typeof initial==='function'?initial():initial;return[target.slots[i],value=>target.slots[i]=typeof value==='function'?value(target.slots[i]):value];},
+  useState(initial){const target=current,i=target.cursor++;if(!(i in target.slots))target.slots[i]=typeof initial==='function'?initial():initial;return[target.slots[i],value=>{const next=typeof value==='function'?value(target.slots[i]):value;if(!Object.is(next,target.slots[i])){target.slots[i]=next;renderNeeded=true;}}];},
   useRef(initial){const target=current,i=target.cursor++;return target.slots[i]??(target.slots[i]={current:initial});},
   useCallback(fn,deps){const target=current,i=target.cursor++,previous=target.slots[i];if(!previous||!same(previous.deps,deps))target.slots[i]={value:fn,deps};return target.slots[i].value;},
   useId(){const target=current,i=target.cursor++;return target.slots[i]??(target.slots[i]='test-label');},
@@ -37,7 +37,11 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
  const props={productId,navigationTarget:{optionId:'collected-1',fieldId:'salePrice',categoryId:'80719'},onSaved(){savedNotifications++;}};
  const finish=instance=>{const effects=instance.pending.splice(0);effects.forEach(fn=>fn());};
  const cleanup=instance=>instance?.slots.forEach(value=>value?.cleanup?.());
- function render(){
+ function render(force=false){
+  // Waiting for network/crypto does not rerender React without a state update.
+  // Keep explicit fixture render() available for externally changed refs/props.
+  if(!force&&!renderNeeded&&rendered)return rendered;
+  renderNeeded=false;
   current=form;form.cursor=0;const wrapper=Form(props),tree=wrapper.type(wrapper.props);finish(form);
   const boundary=nodes(tree).find(node=>node.type===Panel);
   let panel=null;
@@ -45,7 +49,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
    if(childKey!==boundary.key){cleanup(child);child={slots:[],pending:[],cursor:0};childKey=boundary.key;remounts++;}
    current=child;child.cursor=0;panel=Panel(boundary.props);finish(child);
   }
-  return{tree,panel,boundary};
+  rendered={tree,panel,boundary};return rendered;
  }
  const all=()=>{const value=render();return[...nodes(value.tree),...nodes(value.panel)];};
  const button=label=>all().find(node=>node.type==='button'&&text(node.props.children).startsWith(label));
@@ -55,7 +59,7 @@ export function quotationLabelFormUI({productId,load,request,renderDocument}){
   await new Promise(resolve=>setImmediate(resolve));render();
  }
  function start(label){const node=button(label);if(!node||node.props.disabled)throw Error('Button unavailable: '+label);node.props.onClick();}
- return{render,idle,start,button,async click(label){start(label);await idle();},stop(){start('일괄 작업 중지');},
+ return{render:()=>render(true),idle,start,button,async click(label){start(label);await idle();},stop(){start('일괄 작업 중지');},
   get view(){return render().boundary?.props.view;},get remounts(){return remounts;},get savedNotifications(){return savedNotifications;},
   selectOption(optionId){const node=all().find(node=>node.type==='select'&&nodes(node.props.children).some(item=>item.type==='option'&&item.props.value===optionId));if(!node||node.props.disabled)throw Error('Option unavailable: '+optionId);node.props.onChange({target:{value:optionId}});render();},
   field(id){return all().find(node=>['input','textarea'].includes(node.type)&&node.props.id?.endsWith('-'+id));},

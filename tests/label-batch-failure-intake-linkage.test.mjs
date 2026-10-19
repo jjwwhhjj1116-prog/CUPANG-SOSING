@@ -46,8 +46,10 @@ for(const failure of ['render','saved-response','attached-response','read-recove
   await ui.click('전체 포함 옵션 라벨 생성·연결');
   assert.equal(failed,true);
   assert.equal(ui.savedNotifications,1,'batch failure invalidates old previews even if the saved-view read fails');
-  assert.equal(plans.length,['saved-response','attached-response'].includes(failure)?1:2);
-  assert.ok(ui.alerts().some(message=>message.includes(failure==='saved-response'?'saved response lost':failure==='attached-response'?'attachment response lost':'second label rendering failed')),'original failure stays visible after reloading');
+  const recoveredAck=['saved-response','attached-response'].includes(failure);
+  assert.equal(plans.length,recoveredAck?6:2);
+  if(recoveredAck)assert.deepEqual(ui.alerts(),[],'exact receipt readback recovers ACK loss and the batch completes without duplicate writes');
+  else assert.ok(ui.alerts().some(message=>message.includes('second label rendering failed')),'an actual render failure stays visible after reloading');
   if(failure==='read-recovery'){
    assert.equal(recoveryReadFailures,1,'failure recovery attempts a latest saved-view read');
    assert.equal(ui.view.revision,before.revision,'a failed read must not invent a new view');
@@ -59,10 +61,9 @@ for(const failure of ['render','saved-response','attached-response','read-recove
    assert.ok(ui.alerts().some(message=>message.includes('second label rendering failed')&&message.includes('recovery read unavailable')),'repeated reload failure retains the original cause');
    await ui.click('기본값 다시 반영');
   }
-  assert.equal(ui.view.revision,before.revision+(failure==='attached-response'?0:1));
+  assert.equal(ui.view.revision,before.revision+(recoveredAck?6:1));
   assert.notEqual(ui.view.inputFingerprint,before.inputFingerprint);
-  if(failure==='attached-response')assert.equal(ui.view.resolved.rows.find(row=>row.optionId==='collected-1').fields.labelImages.value,images[3]);
-  else {
+  {
    const key=ui.view.resolved.rows.find(row=>row.optionId==='collected-1').fields.labelImages.value.split('\n')[1];
    assert.match(key,/^owner\/quotation-label-[a-f0-9]{64}\.png$/);
    const stored=await h.bindings.FILES.head(key);
