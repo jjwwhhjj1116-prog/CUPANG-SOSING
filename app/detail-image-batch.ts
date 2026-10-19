@@ -1,5 +1,6 @@
-import { applyQuotationChanges, type QuotationFieldsView } from '@/app/quotation-schema';
+import { applyQuotationChanges, duplicateQuotationImageIssue, quotationImageRoleIssues, type QuotationFieldsView } from '@/app/quotation-schema';
 import { exactDetailHtmlTarget, optionImageTargets, quotationImageKeys } from '@/app/quotation-image-targets';
+import { exactPrimaryQuotationTarget } from '@/app/quotation-seo-targets';
 import { PRODUCT_IMAGE_POOL_LIMIT } from '@/app/image-pool-limit';
 import {
   applyFreeImageTranslation, FreeImageApplyError, readFreeImageSource, recognizeFreeImage,
@@ -14,7 +15,7 @@ export type DetailBatchItem = {
 };
 export type DetailImageBatch = {
   productId: string; optionId: string; profileId: string | null; language: 'zh' | 'en';
-  stage?: 'detail' | 'additional';
+  stage?: 'main' | 'detail' | 'additional';
   view: QuotationFieldsView; items: DetailBatchItem[];
 };
 type Dependencies = {
@@ -35,27 +36,28 @@ export function detailBatchCapacity(view: Pick<QuotationFieldsView, 'imageKeys'>
   return PRODUCT_IMAGE_POOL_LIMIT - view.imageKeys.length;
 }
 
-export function detailBatchSelection(view: QuotationFieldsView, optionId: string, profileId: string | null, stage: 'detail' | 'additional' = 'detail') {
+export function detailBatchSelection(view: QuotationFieldsView, optionId: string, profileId: string | null, stage: 'main' | 'detail' | 'additional' = 'detail') {
   if (!view || !Number.isFinite(Date.parse(view.productVersion)) || !/^[a-f0-9]{64}$/.test(view.inputFingerprint)
     || ![view.revision, view.contentRevision, view.optionRevision].every(value => Number.isSafeInteger(value) && value >= 0)
     || !Array.isArray(view.imageKeys) || view.imageKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(view.imageKeys).size !== view.imageKeys.length
     || !view.overrides?.common || !view.overrides.options || !Array.isArray(view.resolved?.schema?.fields)
     || !Array.isArray(view.resolved.rows) || !Array.isArray(view.automatic?.rows)
     || !/^[A-Za-z0-9_-]{1,80}$/.test(optionId) || !view.categoryContext
-    || profileId !== null && view.categoryContext.profileId !== profileId || !['detail', 'additional'].includes(stage)) throw changed();
-  const target = optionImageTargets(view.resolved.schema.fields)[stage === 'additional' ? 'additionalImages' : 'detailImages'];
+    || profileId !== null && view.categoryContext.profileId !== profileId || !['main', 'detail', 'additional'].includes(stage)) throw changed();
+  const target = stage === 'main' ? exactPrimaryQuotationTarget(view.resolved.schema.fields, 'mainImage')
+    : optionImageTargets(view.resolved.schema.fields)[stage === 'additional' ? 'additionalImages' : 'detailImages'];
   const rows = view.resolved.rows.filter(row => row.optionId === optionId), value = rows[0]?.fields[target.primary]?.value;
   if (rows.length !== 1 || rows[0].included !== true || typeof value !== 'string' || target.fields.some(field => field.readOnly)
     || target.linked.some(id => rows[0].fields[id]?.value !== value)) throw changed();
-  const keys = quotationImageKeys(value), limit = Math.min(30, ...target.fields.map(field => field.maxItems ?? 30));
+  const keys = quotationImageKeys(value), limit = Math.min(stage === 'main' ? 1 : 30, ...target.fields.map(field => field.maxItems ?? 30));
   if (keys.length > limit || new Set(keys).size !== keys.length || keys.some(key => !view.imageKeys.includes(key))) throw changed();
   return { target, value, keys };
 }
 /** Keep the saved field and its slot positions intact. Settings banners are
  * display content, not translation inputs, regardless of their list position. */
-export function detailBatchTranslationSlots(view: QuotationFieldsView, optionId: string, profileId: string | null, stage: 'detail' | 'additional' = 'detail') {
+export function detailBatchTranslationSlots(view: QuotationFieldsView, optionId: string, profileId: string | null, stage: 'main' | 'detail' | 'additional' = 'detail') {
   const { keys } = detailBatchSelection(view, optionId, profileId, stage);
-  if (stage === 'additional') return { keys, slots: keys.map((_, index) => index), protectedSlots: [] as number[] };
+  if (stage === 'main' || stage === 'additional') return { keys, slots: keys.map((_, index) => index), protectedSlots: [] as number[] };
   const protectedKeys = view.protectedDetailImageKeys;
   if (!Array.isArray(protectedKeys) || protectedKeys.length > PRODUCT_IMAGE_POOL_LIMIT || new Set(protectedKeys).size !== protectedKeys.length
     || protectedKeys.some(key => typeof key !== 'string' || !view.imageKeys.includes(key)))
@@ -77,7 +79,7 @@ export async function readDetailBatchView(batch: Pick<DetailImageBatch, 'product
 }
 function targetFor(batch: DetailImageBatch, slotIndex: number) {
   const selected = detailBatchSelection(batch.view, batch.optionId, batch.profileId, batch.stage);
-  return { kind: 'quotation' as const, profileId: batch.profileId, optionId: batch.optionId, input: batch.stage === 'additional' ? 'additionalImages' as const : 'detailImages' as const,
+  return { kind: 'quotation' as const, profileId: batch.profileId, optionId: batch.optionId, input: batch.stage === 'main' ? 'mainImage' as const : batch.stage === 'additional' ? 'additionalImages' as const : 'detailImages' as const,
     fieldKey: selected.target.primary, slotIndex, revision: batch.view.revision, inputFingerprint: batch.view.inputFingerprint,
     optionRevision: batch.view.optionRevision, value: selected.value };
 }
@@ -90,7 +92,7 @@ export async function prepareDetailImageBatch(input: Omit<DetailImageBatch, 'ite
   onProgress: (batch: DetailImageBatch, message: string) => void = () => {}, deps: Dependencies = {}): Promise<DetailImageBatch> {
   signal.throwIfAborted();
   const selected = detailBatchTranslationSlots(input.view, input.optionId, input.profileId, input.stage);
-  const label = input.stage === 'additional' ? '추가 이미지' : '상세 이미지', role = input.stage === 'additional' ? 'additional' : 'detail';
+  const label = input.stage === 'main' ? '대표 이미지' : input.stage === 'additional' ? '추가 이미지' : '상세 이미지', role = input.stage === 'main' ? 'main' : input.stage === 'additional' ? 'additional' : 'detail';
   if (!selected.keys.length) throw Error(`저장한 선택 옵션의 ${label}를 먼저 선택해주세요.`);
   if (!selected.slots.length) throw Error('번역할 본문 이미지가 없습니다. 상단·하단 설정 이미지는 그대로 유지합니다.');
   if (!detailBatchCapacity(input.view)) throw Error('새 번역 결과를 저장할 이미지 공간이 없습니다. 원본을 유지했으며 일괄 번역을 시작하지 않았습니다.');
@@ -152,7 +154,13 @@ function verifyCommit(batch: DetailImageBatch, before: QuotationFieldsView, afte
     for (const [id, field] of Object.entries(row.fields)) {
       if (row.optionId === batch.optionId && prior.target.linked.includes(id)) {
         if (stored.fields[id]?.value !== value || stored.fields[id]?.source !== 'manual-option') throw changed();
-      } else if (!(batch.stage !== 'additional' && row.optionId === batch.optionId && html.includes(id) && !['manual-common', 'manual-option'].includes(field.source))
+      } else if (batch.stage === 'main' && row.optionId === batch.optionId && id === 'detailImages') {
+        // Its saved detail value stays exact; replacing main can only change
+        // the resolver's main/detail duplicate reminder on this same row.
+        const issues = [...field.issues.filter(issue => issue !== duplicateQuotationImageIssue), ...quotationImageRoleIssues(value, field.value)];
+        const expected = { ...field, issues, needsReview: Boolean(before.resolved.schema.fields.find(field => field.id === id)?.reviewRequired) || issues.length > 0 };
+        if (!same(stored.fields[id], expected)) throw changed();
+      } else if (!((batch.stage === undefined || batch.stage === 'detail') && row.optionId === batch.optionId && html.includes(id) && !['manual-common', 'manual-option'].includes(field.source))
         && !same(stored.fields[id], field)) throw changed();
     }
   }
@@ -171,7 +179,7 @@ export async function applyDetailBatchResult(batch: DetailImageBatch, slotIndex:
   if (!detailBatchCapacity(current)) throw Error('새 번역 결과를 저장할 이미지 공간이 없습니다. 원본을 유지했으며 업로드하지 않았습니다.');
   const selected = detailBatchSelection(current, batch.optionId, batch.profileId, batch.stage);
   if (selected.keys[slotIndex] !== entry.sourceKey) throw changed();
-  const refreshed = await (deps.readSource ?? readFreeImageSource)(batch.productId, current.productVersion, entry.sourceKey, batch.stage === 'additional' ? 'additional' : 'detail', signal, deps.fetcher, targetFor(batch, slotIndex));
+  const refreshed = await (deps.readSource ?? readFreeImageSource)(batch.productId, current.productVersion, entry.sourceKey, batch.stage === 'main' ? 'main' : batch.stage === 'additional' ? 'additional' : 'detail', signal, deps.fetcher, targetFor(batch, slotIndex));
   const old = entry.rendered.source, fresh = refreshed.source;
   const oldTarget = old.quotationTarget, freshTarget = fresh.quotationTarget;
   if (old.productId !== fresh.productId || old.role !== fresh.role || old.sourceKey !== fresh.sourceKey || old.sourceSha256 !== fresh.sourceSha256 || old.width !== fresh.width || old.height !== fresh.height

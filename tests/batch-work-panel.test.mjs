@@ -11,7 +11,7 @@ function harness(prepare,onBusyChange){
  const state=[],refs=[],effects=[],cleanups=[],requests=[],opened=[],cache=new Map();let si=0,ri=0,first=true;
  const hooks={useState(initial){const i=si++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];},useRef(initial){const i=ri++;return refs[i]??(refs[i]={current:initial});},useEffect(fn){if(first)effects.push(fn);},useLayoutEffect(fn){fn();}};
  const fetcher=async function(url,init){assert.equal(this,undefined,'native fetch cannot receive helper options as its receiver');requests.push({url,init});if(url==='/api/products/p')return Response.json({product:{id:'p',updated_at:version}});if(url.endsWith('/work-draft'))return prepare();assert.equal(url,'/api/products/p/automation');const body=JSON.parse(init.body);return Response.json({workflow:{productId:'p',productVersion:body.expectedVersion,stages:[{id:'pricing',status:'complete'},{id:'mainImage',status:'draft'},{id:'additionalImages',status:'draft'},{id:'detailImage',status:'draft'},{id:'quotation',status:'blocked'}]}});};
- function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,crypto,fetch:fetcher,require:name=>name==='react'?hooks:name.includes('/batch-label-panel')?{BatchLabelPanel:()=>null}:name.includes('/batch-translation-panel')?{BatchTranslationPanel:()=>null}:name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name)});return exports;}
+ function load(file){if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../'+file,import.meta.url),'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,AbortController,crypto,fetch:fetcher,require:name=>name==='react'?hooks:name.includes('/batch-label-panel')?{BatchLabelPanel:()=>null}:name.includes('/batch-image-work-panel')?{BatchImageWorkPanel:()=>null}:name.includes('/batch-translation-panel')?{BatchTranslationPanel:()=>null}:name.startsWith('@/')?load(name.slice(2)+'.ts'):native(name)});return exports;}
  const component=load('app/components/batch-work-panel.tsx').BatchWorkPanel;
  const render=()=>{si=0;ri=0;const tree=component({products:[{id:'p',title:'검토 상품',updated_at:version}],onOpen:(...values)=>opened.push(values),onBusyChange});if(first){first=false;effects.forEach(fn=>cleanups.push(fn()));}return tree;};
  const button=label=>nodes(render()).find(node=>node.type==='button'&&node.props.children===label);
@@ -30,6 +30,11 @@ test('work panel explicitly prepares drafts once, uses the saved version and ope
  const status=nodes(h.render()).find(node=>node.props.role==='status').props.children;
  assert.match(status,/원본 이미지 초안/);assert.match(status,/가격 확인됨/);assert.match(status,/저장 초안 3단계/);assert.ok(!status.includes('이미지 완료'));
  assert.equal(h.button('이미지 초안 검토').props.disabled,false);
+ const imageReview=nodes(h.render()).find(node=>typeof node.type==='function'&&node.props.onPendingChange);
+ assert.ok(imageReview,'work start advances into the image review queue');assert.equal(imageReview.props.autoPrepare,true);
+ imageReview.props.onPendingChange(true);assert.equal(h.button('이미지 초안 검토').props.disabled,true);
+ h.button('← 초안 준비 작업').props.onClick();assert.ok(nodes(h.render()).some(node=>node.props.onPendingChange),'pending preview cannot be discarded by back navigation');
+ imageReview.props.onPendingChange(false);assert.equal(h.button('이미지 초안 검토').props.disabled,false);
 });
 
 test('label running and uncertain-save callbacks keep the parent mode and release navigation only after resolution',()=>{
