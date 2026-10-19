@@ -271,6 +271,8 @@ export function singleDocumentAgreementPage(input){
 
 export function singleDocumentSubmitPage(input){
   const canon=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?'['+value.map(canon).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canon(value[key])).join(',')+'}';
+  // Match the prepared packet's numeric wire domain without changing its type.
+  const numeric=value=>Number.isSafeInteger(value)&&value>=0||typeof value==='string'&&/^\d{1,20}$/.test(value);
   if(location.origin!=='https://supplier.coupang.com'||location.pathname!=='/sr/registration/step/logisticsPage')throw Error('최종 개별 등록 화면이 변경되었습니다.');
   const codes=Array.from((document.body.innerText||'').matchAll(/Company Code:\s*(A\d+)\b/g),match=>match[1]),data=document.documentElement.dataset;
   const records=JSON.parse(data.yoofamSingleDocumentRecords||'{}'),record=records[input.binding.packetDigest];
@@ -284,7 +286,7 @@ export function singleDocumentSubmitPage(input){
   }
   const buttons=Array.from(document.querySelectorAll('button[type="submit"]')).filter(node=>visible(node)&&!node.disabled&&node.getAttribute('aria-disabled')!=='true');if(buttons.length!==1)throw Error('최종 등록 버튼을 확인하지 못했습니다.');
   if(input.expectedBody?.docId!==input.docId||input.expectedBody?.productName!==input.expectedBody?.jsonDocument?.[0]?.startPage?.productName
-    ||input.expectedBody?.categoryPath!==input.expectedBody?.jsonDocument?.[0]?.startPage?.categoryPath||!Number.isSafeInteger(input.expectedBody?.version)||input.expectedBody.version<1)throw Error('제출한 새 문서의 상품·카테고리·버전을 확인해주세요.');
+    ||input.expectedBody?.categoryPath!==input.expectedBody?.jsonDocument?.[0]?.startPage?.categoryPath||!numeric(input.expectedBody?.version))throw Error('제출한 새 문서의 상품·카테고리·버전을 확인해주세요.');
   record.submitProof={docId:input.docId,operationId:input.operationId,identityDigest:input.binding.identityDigest,preparedBodySha256:input.binding.preparedBodySha256,
     version:input.expectedBody.version,productName:input.expectedBody.productName,categoryPath:input.expectedBody.categoryPath,requestedAt:Date.now()};
   record.submitOperationId=input.operationId;record.state='submit-requested';records[input.binding.packetDigest]=record;data.yoofamSingleDocumentRecords=JSON.stringify(records);

@@ -6,6 +6,8 @@ import {previewProductDocument,runProductDocument,readNativeReceiptHistory,saveP
   type ProductDocumentSession,type ProductDocumentState,ProductDocumentBridgeError} from '@/app/supplier-hub-product-client';
 import {singleConsentConfirmation,verifySingleDocumentObservation,type SingleDocumentAction} from '@/app/supplier-hub-single-client';
 import type {NativeReceiptRecord} from '@/app/supplier-hub-product-receipt';
+import {readProductDocumentPending,productDocumentPendingKey,productDocumentPendingCurrent,assertProductDocumentPending,claimProductDocumentPending,
+  pendingProductRejection,clearRejectedProductDocumentPending,type ProductDocumentPending} from '@/app/supplier-hub-product-pending';
 
 type Props={review:SupplierHubProductDocumentReview;disabled:boolean;refresh:(signal:AbortSignal)=>Promise<SupplierHubProductDocumentReview>;
   onLockChange:(locked:boolean)=>void;onReceiptSaved?:()=>void};
@@ -19,14 +21,33 @@ export function SupplierHubProductTransport(props:Props){
   const [approved,setApproved]=useState<Record<string,boolean>>({}),[expired,setExpired]=useState(false);
   const [history,setHistory]=useState<NativeReceiptRecord[]>([]),[historyError,setHistoryError]=useState('');
   const [unsaved,setUnsaved]=useState<{packet:ProductDocumentSession['packet'];observation:ProductDocumentState}|null>(null);
-  const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
-  useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved};});
-  useLayoutEffect(()=>{onLockChange(busy||Boolean(session)||Boolean(unsaved));},[busy,session,unsaved,onLockChange]);
+  const [intent,setIntent]=useState<ProductDocumentPending|null>(null),[intentReady,setIntentReady]=useState(false),[intentError,setIntentError]=useState('');
+  const current=useRef({props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError}),pending=useRef<AbortController|null>(null),historyPending=useRef<AbortController|null>(null);
+  useLayoutEffect(()=>{current.current={props,mounted:true,session,state,uncertain,expired,approved,unsaved,intent,intentReady,intentError};});
+  useLayoutEffect(()=>{onLockChange(busy||Boolean(session)||Boolean(unsaved)||Boolean(intent)||Boolean(intentError));},[busy,session,unsaved,intent,intentError,onLockChange]);
   useLayoutEffect(()=>()=>{current.current.mounted=false;pending.current?.abort();historyPending.current?.abort();current.current.props.onLockChange(false);},[]);
   useEffect(()=>{
+    const load=(changed=false)=>{if(!current.current.mounted||current.current.props.review!==review)return;
+      try{const value=readProductDocumentPending(review);
+        if(changed&&(current.current.session||pending.current)&&JSON.stringify(value)!==JSON.stringify(current.current.intent))throw Error('다른 탭에서 이 상품의 전송 기록이 변경되었습니다. 원래 문서의 결과를 다시 확인해주세요.');
+        current.current.intent=value;setIntent(value);
+        if(value&&!productDocumentPendingCurrent(value,review))throw Error('이 상품에 이전 저장값의 미확정 전송이 있습니다. 원래 상품·견적서를 복원하여 같은 문서의 결과를 확인해주세요.');
+        current.current.intentError='';setIntentError('');
+      }catch(cause){pending.current?.abort();pending.current=null;setBusy(false);current.current.intentError=cause instanceof Error?cause.message:'이전 전송 기록 확인 실패';setIntentError(current.current.intentError);}
+      current.current.intentReady=true;setIntentReady(true);
+    };
+    load();const storage=(event:StorageEvent)=>{if(event.key===null||event.key===productDocumentPendingKey(review))load(true);};
+    window.addEventListener('storage',storage);return()=>window.removeEventListener('storage',storage);
+  },[review]);
+  useEffect(()=>{
     const controller=new AbortController();historyPending.current=controller;
-    void readNativeReceiptHistory({productId:review.identity.productId},controller.signal,fetch).then(rows=>{
-      if(current.current.mounted&&!controller.signal.aborted&&current.current.props.review===review){setHistory(rows);setHistoryError('');}
+    void readNativeReceiptHistory({productId:review.identity.productId},controller.signal,fetch).then(async rows=>{
+      if(current.current.mounted&&!controller.signal.aborted&&current.current.props.review===review){setHistory(rows);setHistoryError('');
+        const saved=readProductDocumentPending(review),rejected=saved&&rows.find(row=>pendingProductRejection(saved,row));
+        if(saved&&rejected){const removed=await clearRejectedProductDocumentPending(review,saved,rejected,controller.signal,
+          ()=>current.current.mounted&&current.current.props.review===review&&!pending.current&&!current.current.session&&!current.current.unsaved);
+          if(removed&&current.current.mounted&&!controller.signal.aborted&&current.current.props.review===review){current.current.intent=null;current.current.intentError='';setIntent(null);setIntentError('');}}
+      }
     }).catch(cause=>{if(current.current.mounted&&!controller.signal.aborted)setHistoryError(cause instanceof Error?cause.message:'접수 이력 조회 실패');});
     return()=>{controller.abort();if(historyPending.current===controller)historyPending.current=null;};
   },[review]);
@@ -40,7 +61,7 @@ export function SupplierHubProductTransport(props:Props){
       setError('동의 확인 시간이 만료됐습니다. 같은 문서의 현재 동의 내용을 다시 확인해주세요.');
     },Math.max(0,challenge.expiresAt-Date.now()));return()=>clearTimeout(timer);
   },[state?.challenge]);
-  const canEnter=()=>current.current.mounted&&!current.current.props.disabled&&!pending.current&&current.current.props.review===review;
+  const canEnter=()=>current.current.mounted&&!current.current.props.disabled&&!pending.current&&current.current.props.review===review&&current.current.intentReady&&!current.current.intentError;
   function begin(){const controller=new AbortController();pending.current=controller;setBusy(true);setError('');current.current.props.onLockChange(true);
     return {controller,alive:()=>current.current.mounted&&current.current.props.review===review&&!controller.signal.aborted&&pending.current===controller,
       active:()=>current.current.mounted&&current.current.props.review===review&&!current.current.props.disabled&&!controller.signal.aborted&&pending.current===controller,
@@ -52,13 +73,22 @@ export function SupplierHubProductTransport(props:Props){
   }
   async function connect(){
     if(!canEnter()||current.current.session||current.current.unsaved)return;const task=begin();
-    try{await fresh(task);if(!task.active())return;const packet=await createProductDocumentPacket(review),result=await previewProductDocument(packet,task.controller.signal);
-      await fresh(task);if(!task.active())return;current.current.session=result;setSession(result);
+    try{await fresh(task);if(!task.active())return;const saved=readProductDocumentPending(review);
+      if(saved)assertProductDocumentPending(review,saved);
+      // Only the TTL envelope is refreshed. The original operation UUID,
+      // reviewed body and browser identity must remain exact for read recovery.
+      const packet=await createProductDocumentPacket(review,saved?{requestId:saved.requestId,createdAt:Date.now(),now:Date.now()}:{}),result=await previewProductDocument(packet,task.controller.signal);
+      await fresh(task);if(!task.active())return;if(saved)assertProductDocumentPending(review,saved,result);
+      else if(readProductDocumentPending(review)!==null)throw Error('다른 탭에서 이 상품의 전송을 시작했습니다. 원래 문서의 결과를 확인해주세요.');
+      current.current.intent=saved;setIntent(saved);current.current.session=result;current.current.uncertain=Boolean(saved);setSession(result);setUncertain(Boolean(saved));
     }catch(cause){if(task.active())setError(cause instanceof Error?cause.message:'전체 견적 전송 자료 확인 실패');}finally{task.finish();}
   }
   async function persist(attempt:NonNullable<typeof unsaved>,task:ReturnType<typeof begin>){
     try{const result=await saveProductReceiptObservation(attempt,task.controller.signal,fetch);if(!task.active()||current.current.unsaved!==attempt)return;
       historyPending.current?.abort();historyPending.current=null;setHistory(rows=>[result,...rows.filter(row=>row.requestId!==result.requestId)]);setHistoryError('');
+      const saved=current.current.intent;if(saved&&result.receipt.sourceStatus==='REJECTED'){
+        await clearRejectedProductDocumentPending(review,saved,result,task.controller.signal);if(!task.active())return;current.current.intent=null;setIntent(null);
+      }
       current.current.unsaved=null;setUnsaved(null);try{current.current.props.onReceiptSaved?.();}catch{/* Stored receipt remains confirmed. */}
     }catch(cause){if(task.active())setError(cause instanceof Error?cause.message:'확인한 접수 결과를 보관하지 못했습니다. 결과는 화면에 유지했습니다.');}
   }
@@ -73,6 +103,14 @@ export function SupplierHubProductTransport(props:Props){
       catch(cause){setError(cause instanceof Error?cause.message:'필수 약관을 확인해주세요.');return;}}
     const task=begin();let dispatched=false;
     try{await fresh(task);if(!task.active()||current.current.session!==expected)return;
+      if(action==='start'){
+        const saved=await claimProductDocumentPending(review,expected,task.controller.signal);
+        if(task.alive()){current.current.intent=saved;current.current.uncertain=true;setIntent(saved);setUncertain(true);}if(!task.active())return;
+        // Waiting for another tab's short storage lock cannot authorize the
+        // account/source that was current before that wait.
+        await fresh(task);if(!task.active()||current.current.session!==expected)return;
+      }
+      const saved=current.current.intent;if(!saved)throw Error('원래 전송 요청의 보관 기록을 확인해주세요.');assertProductDocumentPending(review,saved,expected);
       dispatched=true;const result=await runProductDocument(expected,action,task.controller.signal,confirmation);
       await fresh(task);if(!task.active()||current.current.session!==expected)return;
       if(before.state?.state==='rejected'&&result.state!=='rejected')throw new ProductDocumentBridgeError('이미 반려된 문서의 상태를 다른 접수 결과로 바꿀 수 없습니다. 이전 결과를 유지했습니다.',false,'PRODUCT_RECEIPT_CHANGED');
@@ -89,14 +127,16 @@ export function SupplierHubProductTransport(props:Props){
   }
   const challenge=state?.challenge,terminal=Boolean(state&&['pending','accepted','rejected','scope-blocked'].includes(state.state));
   const canConfirm=Boolean(session?.preview.liveVerified&&challenge&&!expired&&!uncertain&&challenge.items.filter(item=>item.required).every(item=>approved[item.key]));
-  return <section aria-label="전체 상품 견적 전송" aria-busy={busy}>
-    <div className="quote-actions"><button type="button" className="btn primary" disabled={disabled||busy||Boolean(session)} onClick={()=>void connect()}>전체 옵션 전송 자료 확인</button>
+  return <section aria-label="전체 상품 견적 전송" aria-busy={busy||!intentReady}>
+    <div className="quote-actions"><button type="button" className="btn primary" disabled={disabled||busy||!intentReady||Boolean(intentError)||Boolean(session)} onClick={()=>void connect()}>{intent?'이전 문서 전송 자료 확인':'전체 옵션 전송 자료 확인'}</button>
       {session&&!state&&!uncertain&&!unsaved&&<button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>{if(!canEnter()||current.current.session!==session)return;current.current.session=null;setSession(null);setError('');}}>전송 자료 확인 닫기</button>}</div>
     {error&&<p role="alert">{error}</p>}
+    {intentError&&<p role="alert">{intentError}</p>}
+    {intent&&!session&&<p role="status">이 상품의 이전 전송 요청이 보관되어 있습니다. 같은 요청의 저장 결과만 확인하며 새 등록을 시작하지 않습니다.</p>}
     {session&&<p>회사 {review.identity.company.name} · 포함 옵션 {session.packet.review.members.length}개 · 견적 문서 1개 · 전체 본문 대조 완료</p>}
     {session&&!session.preview.liveVerified&&<p role="status">전체 문서의 실제 접수 연결을 검수 중입니다. 현재 상품은 전송하지 않았습니다.</p>}
     {session?.preview.liveVerified&&<>
-      {!state&&!uncertain&&<button type="button" className="btn primary" disabled={disabled||busy} onClick={()=>void operate('start',session)}>전체 상품 견적 등록 시작</button>}
+      {!state&&!uncertain&&!intent&&<button type="button" className="btn primary" disabled={disabled||busy||Boolean(intentError)} onClick={()=>void operate('start',session)}>전체 상품 견적 등록 시작</button>}
       {uncertain&&<><p role="status">응답이 확정되지 않았습니다. 같은 요청을 다시 보내지 않고 저장 결과를 조회합니다.</p><button type="button" className="btn ghost" disabled={disabled||busy} onClick={()=>void operate('recover',session)}>같은 문서 저장 결과 확인</button></>}
       {state&&!terminal&&!uncertain&&(!challenge||expired)&&state.state!=='target-requested'&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operate(expired?'recover':'resume',session)}>현재 문서 단계 계속 확인</button>}
       {state&&['pending','accepted'].includes(state.state)&&!uncertain&&<button type="button" className="btn ghost" disabled={disabled||busy||Boolean(unsaved)} onClick={()=>void operate('observe',session)}>접수 결과 조회</button>}

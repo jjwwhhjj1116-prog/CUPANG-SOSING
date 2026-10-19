@@ -31,22 +31,29 @@ after(() => fs.writeFileSync(new URL('../outputs/step728-product-transport-ui-pr
 
 async function fixture(company = SINGLE_COMPANIES[0], options = {}) {
   const f = await factory.fixture(company, options), slots = [], effects = [], refreshCalls = [], locks = []; let cursor = 0, sequence = 100000, props;
+  const stored=options.stored??new Map(),storageListeners=new Set(),events=f.window.addEventListener,removeEvents=f.window.removeEventListener;
+  f.window.localStorage={getItem:key=>{if(options.storageReadError)throw Error('storage unavailable');return stored.get(key)??null;},setItem:(key,value)=>{if(options.storageWriteError)throw Error('storage unavailable');stored.set(key,value);},removeItem:key=>stored.delete(key)};
+  f.window.navigator={locks:{request:async(_name,_options,run)=>run()}};
+  f.window.addEventListener=(type,fn)=>type==='storage'?storageListeners.add(fn):events(type,fn);
+  f.window.removeEventListener=(type,fn)=>type==='storage'?storageListeners.delete(fn):removeEvents(type,fn);
+  const originalBridge=f.bridge;
+  f.bridge=async payload=>{const result=await originalBridge(payload);return result&&{...result,requestId:payload.packet.requestId};};
   const hook = (effect, deps, layout) => { const index = cursor++, old = slots[index]; if (!old || !deps || deps.some((dep, i) => !Object.is(dep, old.deps[i]))) { old?.cleanup?.(); slots[index] = { deps, cleanup: null }; const run = () => slots[index].cleanup = effect(); if (layout) run(); else effects.push(run); } };
   const react = { useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], value => slots[index] = typeof value === 'function' ? value(slots[index]) : value]; }, useRef(value) { const index = cursor++; if (!(index in slots)) slots[index] = { current: value }; return slots[index]; }, useEffect: (fn, deps) => hook(fn, deps, false), useLayoutEffect: (fn, deps) => hook(fn, deps, true) };
   class LocalDate extends Date { static now() { return f.clock.now; } }
   const exports = {}, component = 'app/components/supplier-hub-product-transport.tsx';
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL('../' + component, import.meta.url), 'utf8'), { fileName: component, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-    { exports, Error, Date: LocalDate, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
+    { exports, Error, Date: LocalDate, window:f.window, AbortController, fetch: f.fetch, setTimeout: (fn, delay) => { const id = ++sequence; f.timers.set(id, { fn, due: f.clock.now + delay }); return id; }, clearTimeout: id => f.timers.delete(id),
       require: name => name === 'react' ? react : name === '@/app/supplier-hub-product-client' ? f.client : name.startsWith('@/') ? f.load(name.slice(2) + '.ts') : name.endsWith('product-document.mjs') ? {
-        // The actual builder is deterministic only for request time/UUID, as in
-        // a seeded browser. Every body/member/hash validation remains real.
-        createProductDocumentPacket: review => createProductDocumentPacket(review, { requestId: f.packet.requestId, createdAt: f.clock.now, now: f.clock.now }),
+        // Each fresh preview gets a different real UUID. Recovery must supply
+        // its original UUID explicitly; a constant test seed cannot mask loss.
+        createProductDocumentPacket: (review,value={}) => createProductDocumentPacket(review, { ...value,createdAt:value.createdAt??f.clock.now,now:f.clock.now }),
       } : native(name) });
   props = { review: f.review, disabled: false, refresh: async signal => { refreshCalls.push(signal); return f.refresh(signal); }, onLockChange: value => locks.push(value) };
   f.refresh = async () => { if (f.actor.ownerId !== f.review.identity.ownerId || JSON.stringify(f.actor.company) !== JSON.stringify(f.review.identity.company)) throw Error('현재 회원 회사가 변경되었습니다.'); return plain(f.review); };
   const render = (next = props) => { props = next; cursor = 0; return exports.SupplierHubProductTransport(props); };
   const flush = () => { render(); effects.splice(0).forEach(fn => fn()); };
-  const h = { f, refreshCalls, locks, render, flush, props: () => props, text: () => text(render()), button: label => nodes(render()).find(node => node.type === 'button' && node.props.children === label),
+  const h = { f, stored,refreshCalls, locks, render, flush, props: () => props, text: () => text(render()), button: label => nodes(render()).find(node => node.type === 'button' && node.props.children === label),storageChanged(key){for(const fn of storageListeners)fn({key});flush();},
     async wait(predicate) { for (let count = 0; count < 400; count++) { flush(); if (predicate()) return; await turn(); } assert.fail('Product UI boundary timeout'); },
     async idle() { await h.wait(() => !render().props['aria-busy']); }, async click(label) { const node = h.button(label); assert.ok(node, label); assert.equal(Boolean(node.props.disabled), false, label); node.props.onClick(); await h.idle(); },
     close() { for (const slot of slots) slot?.cleanup?.(); } };
@@ -120,4 +127,74 @@ test('mixed native history labels group versus scalar documents without a SKU re
     assert.equal(h.text().includes('등록 완료'), false); assert.equal(h.f.sent.length, 0); assert.ok(h.f.calls.every(call => call.method === 'GET'));
     cases.push({ name: 'mixed receipt labels', groupAndScalarDistinct: true, skuClaim: false, nativeActions: 0 });
   } finally { h.close(); }
+});
+
+test('unmount and an expired envelope restore the original operation UUID for explicit read recovery only',async()=>{
+ const stored=new Map(),first=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});let original;
+ try{
+  await first.idle();await first.click(open);first.f.bridge=async()=>undefined;first.button(start).props.onClick();first.flush();await first.wait(()=>first.f.sent.length===2);
+  original=first.f.sent[1].payload.packet;first.f.advance(60001);await first.idle();assert.equal(stored.size,1);assert.equal(first.button(start),undefined);
+ }finally{first.close();}
+ const next=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
+  next.f.clock.now=original.createdAt+240001;await next.idle();assert.equal(next.f.sent.length,0,'mount never dispatches a preview/start/recovery');
+  assert.notEqual(next.f.packet.requestId,original.requestId,'a new mount has a different default UUID');assert.equal(next.button(start),undefined);assert.ok(next.button('이전 문서 전송 자료 확인'));
+  next.f.bridge=async payload=>payload.action==='preview'?{...next.f.preview(),requestId:payload.packet.requestId}:{...next.f.state('created'),requestId:original.requestId};
+  await next.click('이전 문서 전송 자료 확인');assert.deepEqual(plain(next.f.sent.map(row=>row.payload.action)),['preview']);assert.ok(next.button(recover));assert.equal(next.button(start),undefined);
+  await next.click(recover);assert.deepEqual(plain(next.f.sent.map(row=>row.payload.action)),['preview','recover']);assert.ok(next.f.sent.every(row=>row.payload.packet.requestId===original.requestId));
+  assert.ok(next.f.sent[0].payload.packet.createdAt>original.createdAt+120000);assert.equal(JSON.parse([...stored.values()][0]).createdAt,original.createdAt,'audit timestamp is not renewed');
+  assert.equal(next.f.calls.some(row=>row.method==='POST'),false);assert.equal(stored.size,1,'an in-progress operation remains reserved');
+ }finally{next.close();}
+});
+
+test('storage failure and cross-tab descriptor replacement block a new native mutation',async()=>{
+ const broken=await fixture(SINGLE_COMPANIES[0],{verified:true,storageWriteError:true});try{
+  await broken.idle();await broken.click(open);await broken.click(start);assert.deepEqual(plain(broken.f.sent.map(row=>row.payload.action)),['preview']);assert.equal(broken.stored.size,0);
+ }finally{broken.close();}
+ const h=await fixture(SINGLE_COMPANIES[0],{verified:true});try{
+  await h.idle();await h.click(open);h.f.bridge=async()=>undefined;h.button(start).props.onClick();h.flush();await h.wait(()=>h.f.sent.length===2);
+  const [key,raw]=[...h.stored][0],other={...JSON.parse(raw),requestId:'00000000-0000-4000-8000-000000000739'};h.stored.set(key,JSON.stringify(other));h.storageChanged(key);await h.idle();
+  assert.match(h.text(),/다른 탭/);assert.equal(h.f.sent.length,2);assert.equal(h.button(start),undefined);h.button(recover)?.props.onClick();await h.idle();assert.equal(h.f.sent.length,2);
+ }finally{h.close();}
+});
+
+test('durably saved terminal rejection clears only its operation so a later proposal is not falsely blocked',async()=>{
+ const stored=new Map(),h=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
+  await h.idle();await h.click(open);h.f.bridge=async payload=>({...h.f.observation('REJECTED'),requestId:payload.packet.requestId});
+  await h.click(start);assert.equal(h.f.calls.filter(row=>row.method==='POST').length,1);assert.equal(stored.size,0);assert.match(h.text(),/반려/);
+ }finally{h.close();}
+ const reopened=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
+  await reopened.idle();assert.ok(reopened.button(open));assert.equal(reopened.button('이전 문서 전송 자료 확인'),undefined);assert.equal(reopened.f.sent.length,0);
+ }finally{reopened.close();}
+});
+
+test('owner changes while the descriptor lock is pending cannot dispatch a stale start',async()=>{
+ const h=await fixture(SINGLE_COMPANIES[0],{verified:true}),held=deferred();try{
+  await h.idle();await h.click(open);let locked;
+  h.f.window.navigator.locks.request=async(_name,_options,run)=>{locked=run;await held.promise;return run();};
+  h.button(start).props.onClick();h.flush();await h.wait(()=>Boolean(locked));h.f.actor.ownerId='different-member';held.resolve();await h.idle();
+  assert.deepEqual(plain(h.f.sent.map(row=>row.payload.action)),['preview']);assert.equal(h.stored.size,1,'unconfirmed intent is retained rather than discarded');assert.equal(h.button(start),undefined);assert.match(h.text(),/회원 회사/);
+ }finally{h.close();}
+});
+
+test('changed source on remount keeps the old descriptor and cannot preview or start a new operation',async()=>{
+ const stored=new Map(),h=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
+  await h.idle();await h.click(open);h.f.bridge=async()=>undefined;h.button(start).props.onClick();h.flush();await h.wait(()=>h.f.sent.length===2);h.f.advance(60001);await h.idle();
+ }finally{h.close();}
+ const next=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});try{
+  const changed={...next.props().review,reviewDigest:'e'.repeat(64)};next.render({...next.props(),review:changed});await next.idle();
+  assert.match(next.text(),/이전 저장값/);assert.equal(next.f.sent.length,0);assert.equal(next.button(start),undefined);assert.equal(stored.size,1);
+ }finally{next.close();}
+});
+
+test('late rejected history cannot delete the descriptor under a connected recovery session',async()=>{
+ const stored=new Map(),first=await fixture(SINGLE_COMPANIES[0],{verified:true,stored});let original;
+ try{await first.idle();await first.click(open);first.f.bridge=async()=>undefined;first.button(start).props.onClick();first.flush();await first.wait(()=>first.f.sent.length===2);original=first.f.sent[1].payload.packet;first.f.advance(60001);await first.idle();}finally{first.close();}
+ const held=deferred(),next=await fixture(SINGLE_COMPANIES[0],{verified:true,stored,historyResponse:()=>held.promise});try{
+  await next.idle();await next.click('이전 문서 전송 자료 확인');assert.ok(next.button(recover));
+  const rejected=await factory.groupRecord(next.f,'REJECTED');rejected.requestId=original.requestId;
+  held.resolve(Response.json({format:'yoofam-native-receipt-history-v1',productId:next.f.review.identity.productId,receipts:[rejected]}));
+  await next.wait(()=>next.text().includes('보관된 문서 확인 이력'));await turn();next.flush();assert.equal(stored.size,1);assert.ok(next.button(recover));
+  next.f.bridge=async payload=>({...next.f.observation('REJECTED'),requestId:payload.packet.requestId});await next.click(recover);
+  assert.equal(stored.size,0);assert.equal(next.f.sent.filter(row=>row.payload.action==='start').length,0);assert.match(next.text(),/반려/);
+ }finally{next.close();}
 });
